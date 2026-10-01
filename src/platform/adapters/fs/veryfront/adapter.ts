@@ -90,6 +90,7 @@ const MapPrototypeGet = Map.prototype.get;
 const MapPrototypeSet = Map.prototype.set;
 const StringPrototypeCharCodeAt = String.prototype.charCodeAt;
 const StringPrototypeEndsWith = String.prototype.endsWith;
+const StringPrototypeIndexOf = String.prototype.indexOf;
 const StringPrototypeSlice = String.prototype.slice;
 const StringPrototypeSplit = String.prototype.split;
 const StringPrototypeStartsWith = String.prototype.startsWith;
@@ -444,27 +445,28 @@ function joinDiscoveryPath(root: string, relativePath: string): string {
   return root === "" ? relativePath : `${root}/${relativePath}`;
 }
 
-type ActiveSkillDirectories = {
-  count: number;
-  members: Map<string, true>;
-  values: Map<number, string>;
-};
-
-function addActiveSkillDirectory(active: ActiveSkillDirectories, path: string): void {
-  if (IntrinsicReflectApply(MapPrototypeGet, active.members, [path]) === true) return;
-  IntrinsicReflectApply(MapPrototypeSet, active.members, [path, true]);
-  IntrinsicReflectApply(MapPrototypeSet, active.values, [active.count, path]);
-  active.count += 1;
+function addActiveSkillDirectory(active: Map<string, true>, path: string): void {
+  IntrinsicReflectApply(MapPrototypeSet, active, [path, true]);
 }
 
-function collectActiveSkillDirectories(
+async function collectActiveSkillDirectories(
   files: SourceSnapshotFile[],
   paths: SourceSnapshotMarkdownPaths,
-): { projectPaths: Map<number, string>; skillDirectories: ActiveSkillDirectories } | undefined {
+): Promise<
+  {
+    fileCount: number;
+    projectPaths: Map<number, string>;
+    records: Map<number, SourceSnapshotRecord>;
+    skillDirectories: Map<string, true>;
+  } | undefined
+> {
   const seenPaths = new IntrinsicMap<string, true>();
   const projectPaths = new IntrinsicMap<number, string>();
-  for (let fileIndex = 0; fileIndex < files.length; fileIndex++) {
-    const path = captureSourceSnapshotRecord(files[fileIndex]!)[0];
+  const records = new IntrinsicMap<number, SourceSnapshotRecord>();
+  const fileCount = files.length;
+  for (let fileIndex = 0; fileIndex < fileCount; fileIndex++) {
+    const record = captureSourceSnapshotRecord(files[fileIndex]!);
+    const path = record[0];
     if (
       typeof path !== "string" ||
       IntrinsicReflectApply(MapPrototypeGet, seenPaths, [path]) === true
@@ -472,14 +474,27 @@ function collectActiveSkillDirectories(
       return undefined;
     }
     IntrinsicReflectApply(MapPrototypeSet, seenPaths, [path, true]);
+    IntrinsicReflectApply(MapPrototypeSet, records, [fileIndex, record]);
     const projectPath = IntrinsicReflectApply(StringPrototypeCharCodeAt, path, [0]) === 47
       ? IntrinsicReflectApply(StringPrototypeSlice, path, [1]) as string
       : path;
     IntrinsicReflectApply(MapPrototypeSet, projectPaths, [fileIndex, projectPath]);
+    if ((fileIndex + 1) % SOURCE_SNAPSHOT_YIELD_RECORDS === 0) {
+      await yieldSourceSnapshotTask();
+    }
+  }
+
+  if (paths.agent.length === 0 && paths.skill.length === 0) {
+    return {
+      fileCount,
+      projectPaths,
+      records,
+      skillDirectories: new IntrinsicMap<string, true>(),
+    };
   }
 
   const agentDirectories = new IntrinsicMap<string, true>();
-  for (let fileIndex = 0; fileIndex < files.length; fileIndex++) {
+  for (let fileIndex = 0; fileIndex < fileCount; fileIndex++) {
     const projectPath = IntrinsicReflectApply(MapPrototypeGet, projectPaths, [fileIndex]) as string;
     for (let rootIndex = 0; rootIndex < paths.agent.length; rootIndex++) {
       const root = paths.agent[rootIndex]!;
@@ -496,14 +511,13 @@ function collectActiveSkillDirectories(
         ]);
       }
     }
+    if ((fileIndex + 1) % SOURCE_SNAPSHOT_YIELD_RECORDS === 0) {
+      await yieldSourceSnapshotTask();
+    }
   }
 
-  const skillDirectories: ActiveSkillDirectories = {
-    count: 0,
-    members: new IntrinsicMap<string, true>(),
-    values: new IntrinsicMap<number, string>(),
-  };
-  for (let fileIndex = 0; fileIndex < files.length; fileIndex++) {
+  const skillDirectories = new IntrinsicMap<string, true>();
+  for (let fileIndex = 0; fileIndex < fileCount; fileIndex++) {
     const projectPath = IntrinsicReflectApply(MapPrototypeGet, projectPaths, [fileIndex]) as string;
     for (let rootIndex = 0; rootIndex < paths.skill.length; rootIndex++) {
       const root = paths.skill[rootIndex]!;
@@ -538,34 +552,55 @@ function collectActiveSkillDirectories(
         );
       }
     }
+    if ((fileIndex + 1) % SOURCE_SNAPSHOT_YIELD_RECORDS === 0) {
+      await yieldSourceSnapshotTask();
+    }
   }
 
-  return { projectPaths, skillDirectories };
+  return { fileCount, projectPaths, records, skillDirectories };
+}
+
+function hasActiveSkillPayloadPrefix(
+  projectPath: string,
+  marker: string,
+  skillDirectories: Map<string, true>,
+): boolean {
+  let offset = 0;
+  while (offset < projectPath.length) {
+    const markerIndex = IntrinsicReflectApply(StringPrototypeIndexOf, projectPath, [
+      marker,
+      offset,
+    ]) as number;
+    if (markerIndex < 0) return false;
+    const skillDirectory = IntrinsicReflectApply(StringPrototypeSlice, projectPath, [
+      0,
+      markerIndex,
+    ]) as string;
+    if (IntrinsicReflectApply(MapPrototypeGet, skillDirectories, [skillDirectory]) === true) {
+      return true;
+    }
+    offset = markerIndex + 1;
+  }
+  return false;
 }
 
 function isRuntimeReadableSkillFile(
   projectPath: string,
-  skillDirectories: ActiveSkillDirectories,
+  skillDirectories: Map<string, true>,
 ): boolean {
-  for (let index = 0; index < skillDirectories.count; index++) {
-    const skillDirectory = IntrinsicReflectApply(
-      MapPrototypeGet,
-      skillDirectories.values,
-      [index],
-    ) as string;
-    const relativePath = relativeDiscoveryPath(projectPath, skillDirectory);
-    if (relativePath === undefined) continue;
-    if (relativePath === "SKILL.md") return true;
-    const segments = IntrinsicReflectApply(StringPrototypeSplit, relativePath, ["/"]) as string[];
-    if (
-      segments.length >= 2 &&
-      (segments[0] === "references" || segments[0] === "resources" ||
-        segments[0] === "assets" || segments[0] === "scripts")
-    ) {
+  if (IntrinsicReflectApply(StringPrototypeEndsWith, projectPath, ["/SKILL.md"]) === true) {
+    const skillDirectory = IntrinsicReflectApply(StringPrototypeSlice, projectPath, [
+      0,
+      -9,
+    ]) as string;
+    if (IntrinsicReflectApply(MapPrototypeGet, skillDirectories, [skillDirectory]) === true) {
       return true;
     }
   }
-  return false;
+  return hasActiveSkillPayloadPrefix(projectPath, "/references/", skillDirectories) ||
+    hasActiveSkillPayloadPrefix(projectPath, "/resources/", skillDirectories) ||
+    hasActiveSkillPayloadPrefix(projectPath, "/assets/", skillDirectories) ||
+    hasActiveSkillPayloadPrefix(projectPath, "/scripts/", skillDirectories);
 }
 
 function isRetainedMarkdownDefinition(
@@ -591,13 +626,17 @@ async function computeSourceSnapshotFingerprint(
   // A modular sum of cryptographic per-record digests is independent of list
   // order and keeps the hash accumulator fixed-size. Reject invalid or repeated
   // paths before hashing because filesystem indexing requires one record per path.
-  const activeSkills = collectActiveSkillDirectories(files, markdownPaths);
+  const activeSkills = await collectActiveSkillDirectories(files, markdownPaths);
   if (!activeSkills) return undefined;
   const accumulator = new IntrinsicUint8Array(SOURCE_SNAPSHOT_DIGEST_BYTES);
   const budget: SourceSnapshotHashBudget = { codeUnits: 0 };
   let includedFileCount = 0;
-  for (let fileIndex = 0; fileIndex < files.length; fileIndex++) {
-    const record = captureSourceSnapshotRecord(files[fileIndex]!);
+  for (let fileIndex = 0; fileIndex < activeSkills.fileCount; fileIndex++) {
+    const record = IntrinsicReflectApply(
+      MapPrototypeGet,
+      activeSkills.records,
+      [fileIndex],
+    ) as SourceSnapshotRecord;
     const projectPath = IntrinsicReflectApply(
       MapPrototypeGet,
       activeSkills.projectPaths,
@@ -619,6 +658,10 @@ async function computeSourceSnapshotFingerprint(
       ((isKnowledgeMarkdown && !isRetainedKnowledgeMarkdown) ||
         (isEvalReport && !isRetainedRuntimeSkillFile))
     ) {
+      if ((fileIndex + 1) % SOURCE_SNAPSHOT_YIELD_RECORDS === 0) {
+        await yieldSourceSnapshotTask();
+        budget.codeUnits = 0;
+      }
       continue;
     }
     includedFileCount++;

@@ -1257,6 +1257,11 @@ describe("VeryfrontFSAdapter", () => {
         { path: "knowledge/global/SKILL.md", content: "global skill" },
         { path: "knowledge/global/references/nested/guide.md", content: "global guide" },
         { path: "knowledge/global/scripts/check.md", content: "script" },
+        { path: "knowledge/references/SKILL.md", content: "allowed-word skill" },
+        {
+          path: "knowledge/references/references/nested/guide.md",
+          content: "allowed-word guide",
+        },
         { path: "knowledge/reviewer/AGENT.md", content: "reviewer" },
         { path: "knowledge/reviewer/SKILL.md", content: "colocated skill" },
         { path: "knowledge/reviewer/resources/policies/policy.md", content: "policy" },
@@ -1288,6 +1293,7 @@ describe("VeryfrontFSAdapter", () => {
         const path of [
           "knowledge/global/references/nested/guide.md",
           "knowledge/global/scripts/check.md",
+          "knowledge/references/references/nested/guide.md",
           "knowledge/reviewer/resources/policies/policy.md",
           "knowledge/reviewer/skills/research/assets/checklists/checklist.md",
         ]
@@ -1551,6 +1557,72 @@ describe("VeryfrontFSAdapter", () => {
 
       assertEquals(await adapter.getSourceSnapshotFingerprint(), undefined);
       assertEquals(inheritedGetterCalls, 0);
+    });
+
+    it("captures each source snapshot record once before marker analysis", async () => {
+      let contentDescriptorReads = 0;
+      const mutableRecord = new Proxy({}, {
+        getOwnPropertyDescriptor: (_target, key) => {
+          if (key === "path") {
+            return {
+              value: "agents/support.ts",
+              writable: true,
+              enumerable: true,
+              configurable: true,
+            };
+          }
+          if (key === "content") {
+            contentDescriptorReads += 1;
+            return {
+              value: contentDescriptorReads === 1 ? "first" : "second",
+              writable: true,
+              enumerable: true,
+              configurable: true,
+            };
+          }
+          return undefined;
+        },
+      });
+      const mutableAdapter = createAdapter();
+      (mutableAdapter as unknown as { sourceSnapshotFiles: unknown[] }).sourceSnapshotFiles = [
+        mutableRecord,
+      ];
+      const captured = await mutableAdapter.getSourceSnapshotFingerprint();
+
+      const stableAdapter = createAdapter();
+      (stableAdapter as unknown as { sourceSnapshotFiles: Array<Record<string, unknown>> })
+        .sourceSnapshotFiles = [{ path: "agents/support.ts", content: "first" }];
+      const expected = await stableAdapter.getSourceSnapshotFingerprint();
+
+      assertEquals(contentDescriptorReads, 1);
+      assertEquals(captured, expected);
+    });
+
+    it("yields while capturing a large source snapshot for marker analysis", async () => {
+      const adapter = createAdapter();
+      let timerRan = false;
+      let timerRanBeforeLateCapture = false;
+      const files: Array<{ path: string; content?: string }> = [];
+      for (let index = 0; index < 300; index++) {
+        files.push({ path: `knowledge/churn/note-${index}.md`, content: "data" });
+      }
+      files[256] = new Proxy(files[256]!, {
+        getOwnPropertyDescriptor: (target, key) => {
+          if (key === "path") timerRanBeforeLateCapture = timerRan;
+          return Object.getOwnPropertyDescriptor(target, key);
+        },
+      });
+      (adapter as unknown as { sourceSnapshotFiles: typeof files }).sourceSnapshotFiles = files;
+      const timer = setTimeout(() => {
+        timerRan = true;
+      }, 0);
+      try {
+        await adapter.getSourceSnapshotFingerprint({ purpose: "agent-config" });
+      } finally {
+        clearTimeout(timer);
+      }
+
+      assertEquals(timerRanBeforeLateCapture, true);
     });
 
     it("fingerprints a snapshot larger than the former aggregate byte cap", async () => {
