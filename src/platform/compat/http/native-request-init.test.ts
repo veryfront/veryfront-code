@@ -239,6 +239,20 @@ describe("platform/compat/http/native-request-init", () => {
     assertEquals({ ...init.headers as Record<string, string> }, { "x-a": "1", "x-b": "2" });
   });
 
+  it("normalises each header value before joining repeats, as Headers does", () => {
+    const init = createNativeRequestInit(undefined, {
+      headers: [["x-test", "a\r\n"], ["x-test", " b "]],
+    });
+
+    assertEquals((init.headers as Record<string, string>)["x-test"], "a, b");
+    assertEquals(
+      new Request("https://api.example.test/", init).headers.get("x-test"),
+      new Request("https://api.example.test/", {
+        headers: [["x-test", "a\r\n"], ["x-test", " b "]],
+      }).headers.get("x-test"),
+    );
+  });
+
   it("reads only own init fields", () => {
     const inherited = Object.create({ method: "DELETE" }) as RequestInit;
     inherited.headers = { accept: "*/*" };

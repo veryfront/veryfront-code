@@ -39,6 +39,8 @@ const ObjectHasOwn = Object.hasOwn;
 const ObjectKeys = Object.keys;
 const NativeString = String;
 const StringToLowerCase = String.prototype.toLowerCase;
+const StringCharCodeAt = String.prototype.charCodeAt;
+const StringSlice = String.prototype.slice;
 const HeadersAppend = NativeHeaders.prototype.append;
 const HeadersEntries = NativeHeaders.prototype.entries;
 const HeadersIteratorNext = Object.getPrototypeOf(new NativeHeaders().entries()).next as (
@@ -336,9 +338,33 @@ export function toNativeHeaderRecord(headers: Headers): Record<string, string> {
   }
 }
 
+function isHttpWhitespace(code: number): boolean {
+  return code === 0x20 || code === 0x09 || code === 0x0a || code === 0x0d;
+}
+
+/** Fetch's header-value normalisation: strip leading and trailing HTTP whitespace. */
+function normalizeHeaderValue(value: string): string {
+  let start = 0;
+  let end = value.length;
+  while (
+    start < end &&
+    isHttpWhitespace(IntrinsicReflectApply(StringCharCodeAt, value, [start]) as number)
+  ) {
+    start++;
+  }
+  while (
+    end > start &&
+    isHttpWhitespace(IntrinsicReflectApply(StringCharCodeAt, value, [end - 1]) as number)
+  ) {
+    end--;
+  }
+  return IntrinsicReflectApply(StringSlice, value, [start, end]) as string;
+}
+
 function appendToRecord(record: Record<string, string>, name: unknown, value: unknown): void {
   const key = IntrinsicReflectApply(StringToLowerCase, NativeString(name), []) as string;
-  const text = NativeString(value);
+  // Each value is normalised before it is joined, as Headers would do.
+  const text = normalizeHeaderValue(NativeString(value));
   if (key === SET_COOKIE) {
     keepSetCookieApart(record, text);
     return;
