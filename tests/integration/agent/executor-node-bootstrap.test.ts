@@ -70,6 +70,7 @@ if (typeof Deno !== "undefined") {
       async () => {
         const root = new URL("../../../", import.meta.url);
         const child = spawn("node", [
+          "--experimental-transform-types",
           "--import",
           fileURLToPath(new URL("tests/node/resolver.mjs", root)),
           "--test",

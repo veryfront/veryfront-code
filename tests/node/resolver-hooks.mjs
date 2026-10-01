@@ -9,6 +9,7 @@
  */
 
 import { existsSync, readFileSync, statSync } from "node:fs";
+import { createRequire } from "node:module";
 import { dirname, resolve as pathResolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
@@ -338,7 +339,7 @@ function resolveJsrStdSpecifier(specifier) {
   return findActualFile(stdTarget.replace(/^\.\//, ""));
 }
 
-export async function resolve(specifier, context, nextResolve) {
+export function resolve(specifier, context, nextResolve) {
   // Strip query strings from specifier for matching
   let cleanSpecifier = specifier;
   let querySuffix = "";
@@ -471,5 +472,38 @@ export async function load(url, context, nextLoad) {
   }
 
   // Let Node handle everything else
+  return nextLoad(url, context);
+}
+
+const requireFromResolver = createRequire(import.meta.url);
+let syncEsbuild;
+
+/** Native-transform fixture loader: avoid asynchronous hook messages per import. */
+export function loadSync(url, context, nextLoad) {
+  if (!url.startsWith("file://")) return nextLoad(url, context);
+  const filePath = fileURLToPath(url);
+  if (filePath.endsWith(".json")) {
+    return { shortCircuit: true, format: "json", source: readFileSync(filePath, "utf-8") };
+  }
+  if (filePath.endsWith(".ts") && !filePath.endsWith(".d.ts")) {
+    return {
+      shortCircuit: true,
+      format: "module-typescript",
+      source: readFileSync(filePath, "utf-8"),
+    };
+  }
+  if (filePath.endsWith(".tsx") || filePath.endsWith(".jsx")) {
+    syncEsbuild ??= requireFromResolver("esbuild");
+    const result = syncEsbuild.transformSync(readFileSync(filePath, "utf-8"), {
+      loader: filePath.endsWith(".tsx") ? "tsx" : "jsx",
+      format: "esm",
+      sourcefile: filePath,
+      sourcemap: process.sourceMapsEnabled ? "inline" : false,
+      jsx: "automatic",
+      jsxImportSource: "react",
+      target: "node20",
+    });
+    return { shortCircuit: true, format: "module", source: result.code };
+  }
   return nextLoad(url, context);
 }
