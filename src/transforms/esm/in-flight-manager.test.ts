@@ -727,13 +727,20 @@ describe("transforms/esm/in-flight-manager", () => {
       importMap: { imports: {} },
     };
 
-    function recordingBackend(): { backend: CacheBackend; entries: Map<string, string> } {
+    function recordingBackend(codeWrite?: { visible: () => void; release: Promise<void> }): {
+      backend: CacheBackend;
+      entries: Map<string, string>;
+    } {
       const entries = new Map<string, string>();
       const backend: CacheBackend = {
         type: "memory",
         get: (key) => Promise.resolve(entries.get(key) ?? null),
         set: (key, value) => {
           entries.set(key, value);
+          if (codeWrite && key.startsWith(`${VERSION}:code:`)) {
+            codeWrite.visible();
+            return codeWrite.release;
+          }
           return Promise.resolve();
         },
         del: (key) => {
@@ -756,14 +763,23 @@ describe("transforms/esm/in-flight-manager", () => {
     }
 
     it("writes and records the refresh when no timestamp exists", async () => {
-      const { backend, entries } = recordingBackend();
+      const codeVisible = Promise.withResolvers<void>();
+      const releaseCodeWrite = Promise.withResolvers<void>();
+      const { backend, entries } = recordingBackend({
+        visible: () => codeVisible.resolve(),
+        release: releaseCodeWrite.promise,
+      });
       __setDistributedCacheAccessorForTests(() => Promise.resolve(backend));
       const map = new Map<string, number>();
 
       try {
         refresh("hash-cold", map);
+        await codeVisible.promise;
+        assertEquals(entries.get(`${VERSION}:code:hash-cold`), "const a = 1;");
+        assertEquals(map.has("hash-cold"), false, "a visible code key is not refresh completion");
+        releaseCodeWrite.resolve();
 
-        await waitFor(() => entries.has(`${VERSION}:code:hash-cold`), {
+        await waitFor(() => map.has("hash-cold"), {
           timeout: 3_000,
           interval: 10,
         });
@@ -773,6 +789,8 @@ describe("transforms/esm/in-flight-manager", () => {
           "a completed refresh records its timestamp",
         );
       } finally {
+        releaseCodeWrite.resolve();
+        await waitFor(() => map.has("hash-cold"), { timeout: 3_000, interval: 10 });
         __setDistributedCacheAccessorForTests(null);
       }
     });
@@ -785,13 +803,14 @@ describe("transforms/esm/in-flight-manager", () => {
 
       try {
         refresh("hash-recent", map);
-        // A cold hash queued afterwards proves the write path drained.
+        // A cold hash timestamp proves its complete write path drained.
         refresh("hash-control", map);
 
-        await waitFor(() => entries.has(`${VERSION}:code:hash-control`), {
+        await waitFor(() => map.has("hash-control"), {
           timeout: 3_000,
           interval: 10,
         });
+        assertEquals(entries.get(`${VERSION}:code:hash-control`), "const a = 1;");
         assertEquals(
           entries.has(`${VERSION}:code:hash-recent`),
           false,
@@ -816,10 +835,11 @@ describe("transforms/esm/in-flight-manager", () => {
       try {
         refresh("hash-stale", map);
 
-        await waitFor(() => entries.has(`${VERSION}:code:hash-stale`), {
+        await waitFor(() => (map.get("hash-stale") ?? 0) > stale, {
           timeout: 3_000,
           interval: 10,
         });
+        assertEquals(entries.get(`${VERSION}:code:hash-stale`), "const a = 1;");
         assertEquals(
           (map.get("hash-stale") ?? 0) > stale,
           true,

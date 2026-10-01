@@ -1,6 +1,11 @@
 import "#veryfront/schemas/_test-setup.ts";
 
-import { assertEquals, assertRejects, assertStringIncludes } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertRejects,
+  assertStrictEquals,
+  assertStringIncludes,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { computeHashBytes } from "#veryfront/utils";
 import { FakeTime } from "#std/testing/time";
@@ -482,6 +487,121 @@ describe("release-assets/dependency-artifact-builder", () => {
     await assertRejects(() => build, Error, "run cancelled");
     assertEquals(upstreamSignal?.aborted, true);
     assertEquals(events, []);
+  });
+
+  it("settles a non-cooperative upstream fetch on caller abort without advancing the upstream timeout", async () => {
+    const controller = new AbortController();
+    const reason = new Error("run cancelled");
+    const { client, events } = recordingClient();
+    const upstreamSignals: AbortSignal[] = [];
+    let build!: ReturnType<typeof runDependencyArtifactBuild>;
+    let settled = false;
+
+    {
+      using time = new FakeTime();
+      build = runDependencyArtifactBuild(buildTaskInput(), client, {
+        signal: controller.signal,
+        fetch: ((_input: RequestInfo | URL, init?: RequestInit) => {
+          if (init?.signal) upstreamSignals.push(init.signal);
+          return new Promise<Response>(() => undefined);
+        }) as typeof fetch,
+        limits: { timeoutMs: CONTROLLED_TIMEOUT_MS },
+      });
+      build.then(() => settled = true, () => settled = true);
+
+      await time.tickAsync(0);
+      assertEquals(upstreamSignals.length, 1);
+      controller.abort(reason);
+      await time.tickAsync(0);
+      assertEquals(settled, true);
+    }
+
+    const rejection = await assertRejects(() => settleBeforeWatchdog(build));
+    assertStrictEquals(rejection, reason);
+    assertEquals(upstreamSignals[0]?.aborted, true);
+    assertStrictEquals(upstreamSignals[0]?.reason, reason);
+    assertEquals(events, []);
+  });
+
+  it("settles a non-cooperative upstream body read on caller abort and cancels the body once", async () => {
+    const rootUrl = dependencyArtifactUpstreamUrl(standardIdentity);
+    const controller = new AbortController();
+    const reason = new Error("run cancelled");
+    const { client, events } = recordingClient();
+    const bodyCancelReasons: unknown[] = [];
+    const body = new ReadableStream<Uint8Array>({
+      cancel: (cancelReason) => {
+        bodyCancelReasons.push(cancelReason);
+        return new Promise<void>(() => undefined);
+      },
+    });
+    let build!: ReturnType<typeof runDependencyArtifactBuild>;
+    let settled = false;
+
+    {
+      using time = new FakeTime();
+      build = runDependencyArtifactBuild(buildTaskInput(), client, {
+        signal: controller.signal,
+        fetch: (async (input: RequestInfo | URL) => {
+          assertEquals(String(input), rootUrl);
+          return new Response(body, {
+            headers: { "content-type": "text/javascript" },
+          });
+        }) as typeof fetch,
+        limits: { timeoutMs: CONTROLLED_TIMEOUT_MS },
+      });
+      build.then(() => settled = true, () => settled = true);
+
+      await time.tickAsync(0);
+      assertEquals(bodyCancelReasons, []);
+      controller.abort(reason);
+      await time.tickAsync(0);
+      assertEquals(settled, true);
+    }
+
+    const rejection = await assertRejects(() => settleBeforeWatchdog(build));
+    assertStrictEquals(rejection, reason);
+    assertEquals(bodyCancelReasons.length, 1);
+    assertStrictEquals(bodyCancelReasons[0], reason);
+    assertEquals(events, []);
+  });
+
+  it("removes its caller cancellation listeners once upstream fetching finishes", async () => {
+    const rootUrl = dependencyArtifactUpstreamUrl(standardIdentity);
+    const controller = new AbortController();
+    const signal = controller.signal;
+    const addEventListener = signal.addEventListener.bind(signal);
+    const removeEventListener = signal.removeEventListener.bind(signal);
+    const active = new Set<EventListenerOrEventListenerObject>();
+    let added = 0;
+    signal.addEventListener = ((
+      type: string,
+      listener: EventListenerOrEventListenerObject,
+      options?: boolean | AddEventListenerOptions,
+    ) => {
+      if (type === "abort") {
+        added++;
+        active.add(listener);
+      }
+      addEventListener(type, listener, options);
+    }) as typeof signal.addEventListener;
+    signal.removeEventListener = ((
+      type: string,
+      listener: EventListenerOrEventListenerObject,
+      options?: boolean | EventListenerOptions,
+    ) => {
+      if (type === "abort") active.delete(listener);
+      removeEventListener(type, listener, options);
+    }) as typeof signal.removeEventListener;
+
+    await buildDependencyArtifactGraph(standardIdentity, {
+      signal,
+      fetch: fixtureFetch({ [rootUrl]: response("export const value = 1;") }),
+      limits: { timeoutMs: CONTROLLED_TIMEOUT_MS },
+    });
+
+    assertEquals(added, 1);
+    assertEquals(active.size, 0);
   });
 
   it("does not start an upstream fetch after its deadline expires", async () => {

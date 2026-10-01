@@ -29,6 +29,16 @@ import {
 } from "#veryfront/release-assets/manifest-cache.ts";
 import { RELEASE_ASSET_MANIFEST_ENV_FLAG } from "#veryfront/release-assets/constants.ts";
 import { runWithRequestContext } from "./request-context.ts";
+import { FSAdapterWrapper } from "../wrapper.ts";
+import { createMockAdapter } from "#veryfront/platform/adapters/mock.ts";
+import {
+  __setHostedConfigEvaluatorForTests,
+  clearConfigCache,
+  getHostedConfig,
+} from "#veryfront/config/loader.ts";
+import { prepareDeclarativeConfigContext } from "#veryfront/config/declarative-evaluator.ts";
+import { createNotFoundLikeError } from "./read-operations-helpers.ts";
+import { VeryfrontAPIOperations } from "../../veryfront-api-client/operations.ts";
 
 describe("VeryfrontFSAdapter", () => {
   afterEach(() => {
@@ -2653,6 +2663,210 @@ describe("VeryfrontFSAdapter", () => {
 
       assertEquals(listAllFilesCalls, 3);
       assertEquals(await adapter.readTextFile("pages/index.tsx"), "draft");
+    });
+
+    it("loads hosted TypeScript config with one branch pagination pass per new adapter", async () => {
+      const preparedContext = await prepareDeclarativeConfigContext({
+        environmentName: "preview",
+        environment: {},
+      });
+      __setHostedConfigEvaluatorForTests(async () => ({ title: "hosted snapshot" }));
+      try {
+        for (const token of ["credential-a", "credential-b"]) {
+          const adapter = createAdapter({
+            veryfront: {
+              apiBaseUrl: "https://api.example.com",
+              apiToken: token,
+              projectSlug: "test-project",
+              contentSource: { type: "branch", branch: "main" },
+              cache: { enabled: false },
+            },
+          });
+          const client = (adapter as unknown as {
+            client: {
+              initialize: () => Promise<void>;
+              getProjectSlug: () => string;
+              getProjectId: () => string;
+              getCachedProject: () => { provider: string; layout: string };
+              operations: Pick<VeryfrontAPIOperations, "listBranchFiles" | "listAllBranchFiles">;
+            };
+          }).client;
+          client.initialize = () => Promise.resolve();
+          client.getProjectSlug = () => "test-project";
+          client.getProjectId = () => "project-123";
+          client.getCachedProject = () => ({ provider: "veryfront", layout: "default" });
+          const cursors: Array<string | undefined> = [];
+          // Stub the instance's page source, retaining the real pagination loop.
+          // No HTTP transport or host fetch state is involved in this unit test.
+          client.operations = {
+            listAllBranchFiles: VeryfrontAPIOperations.prototype.listAllBranchFiles,
+            listBranchFiles: (_project, _branch, options = {}) => {
+              cursors.push(options.cursor);
+              return Promise.resolve({
+                files: options.cursor
+                  ? [{
+                    path: "veryfront.config.ts",
+                    size: 44,
+                    type: "file",
+                    updated_at: "2026-10-01T00:00:00Z",
+                    content: 'export default { title: "hosted snapshot" };',
+                  }]
+                  : [{
+                    path: "pages/index.tsx",
+                    content: "export default null;",
+                    size: 20,
+                    type: "page",
+                    updated_at: "2026-10-01T00:00:00Z",
+                  }],
+                page_info: {
+                  self: null,
+                  first: null,
+                  prev: null,
+                  next: options.cursor ? null : "page-2",
+                },
+              });
+            },
+          };
+          (adapter as unknown as { wsManager: { connect: () => void } }).wsManager.connect =
+            () => {};
+          const runtime = createMockAdapter();
+          Object.assign(runtime, { fs: new FSAdapterWrapper(adapter) });
+          try {
+            await runWithRequestContext(
+              { projectSlug: "test-project", projectId: "project-123", token, branch: "main" },
+              async () => {
+                const config = await getHostedConfig("/", runtime, {
+                  cacheKey: "project-123",
+                  sourceContext: { productionMode: false, branch: "main" },
+                  preparedContext,
+                });
+                assertEquals(config.title, "hosted snapshot");
+                assertEquals(cursors, [undefined, "page-2"]);
+              },
+            );
+          } finally {
+            adapter.dispose();
+            clearConfigCache();
+          }
+        }
+      } finally {
+        __setHostedConfigEvaluatorForTests(undefined);
+        clearConfigCache();
+      }
+    });
+
+    for (
+      const scenario of [
+        "expired lease",
+        "pending invalidation",
+        "indexed without content",
+        "different request authority",
+        "different branch",
+      ] as const
+    ) {
+      it(`recovers a missing config candidate after ${scenario}`, async () => {
+        const adapter = createAdapter({
+          veryfront: {
+            apiBaseUrl: "https://api.example.com",
+            apiToken: "test-token",
+            projectSlug: "test-project",
+            contentSource: { type: "branch", branch: "main" },
+            cache: { enabled: false },
+          },
+        });
+        const internals = adapter as unknown as {
+          sourceSnapshotCheckedAt: number;
+          client: {
+            initialize: () => Promise<void>;
+            getProjectSlug: () => string;
+            getProjectId: () => string;
+            getCachedProject: () => { provider: string; layout: string };
+            listAllFiles: () => Promise<Array<{ path: string; content?: string }>>;
+            getFileContent: (path: string) => Promise<string>;
+          };
+          wsManager: { connect: () => void };
+        };
+        const client = internals.client;
+        client.initialize = () => Promise.resolve();
+        client.getProjectSlug = () => "test-project";
+        client.getProjectId = () => "project-123";
+        client.getCachedProject = () => ({ provider: "veryfront", layout: "default" });
+        let listingPasses = 0;
+        client.listAllFiles = () => {
+          listingPasses++;
+          return Promise.resolve(
+            listingPasses === 1
+              ? scenario === "indexed without content" ? [{ path: "veryfront.config.js" }] : []
+              : [{ path: "veryfront.config.js", content: "export default {};" }],
+          );
+        };
+        client.getFileContent = (path) =>
+          listingPasses > 1
+            ? Promise.resolve("export default {};")
+            : Promise.reject(createNotFoundLikeError(path));
+        internals.wsManager.connect = () => {};
+        const prefix = buildFileCacheKeyPrefix({
+          sourceType: "branch",
+          projectSlug: "test-project",
+          branch: "main",
+        });
+        try {
+          await adapter.initialize();
+          if (scenario === "expired lease") internals.sourceSnapshotCheckedAt = Date.now() - 30_001;
+          if (scenario === "pending invalidation") addPendingInvalidation(prefix);
+          const read = () => adapter.readTextFile("/veryfront.config.js");
+          const content =
+            scenario === "different request authority" || scenario === "different branch"
+              ? await runWithRequestContext(
+                {
+                  projectSlug: "test-project",
+                  token: "another-token",
+                  branch: scenario === "different branch" ? "draft" : "main",
+                },
+                read,
+              )
+              : await read();
+          assertEquals(content, "export default {};");
+          assertEquals(listingPasses, 2);
+        } finally {
+          removePendingInvalidation(prefix);
+          adapter.dispose();
+        }
+      });
+    }
+
+    it("does not refresh for any absent root config candidate in a fresh complete snapshot", async () => {
+      const adapter = createAdapter();
+      const client = adapter as unknown as {
+        client: {
+          initialize: () => Promise<void>;
+          getProjectSlug: () => string;
+          getProjectId: () => string;
+          getCachedProject: () => { provider: string; layout: string };
+          listAllFiles: () => Promise<Array<{ path: string; content?: string }>>;
+        };
+        wsManager: { connect: () => void };
+      };
+      let listingPasses = 0;
+      client.client.initialize = () => Promise.resolve();
+      client.client.getProjectSlug = () => "test-project";
+      client.client.getProjectId = () => "project-123";
+      client.client.getCachedProject = () => ({ provider: "veryfront", layout: "default" });
+      client.client.listAllFiles = () => {
+        listingPasses++;
+        return Promise.resolve([]);
+      };
+      client.wsManager.connect = () => {};
+      try {
+        for (
+          const path of ["/veryfront.config.js", "/veryfront.config.ts", "/veryfront.config.mjs"]
+        ) {
+          await assertRejects(() => adapter.readTextFile(path));
+        }
+        assertEquals(listingPasses, 1);
+      } finally {
+        adapter.dispose();
+      }
     });
 
     it("refreshes a stale branch snapshot once when a pushed file is missing", async () => {

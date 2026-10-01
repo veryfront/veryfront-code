@@ -10,6 +10,7 @@ import { getBaseLogger } from "#veryfront/utils";
 import { errorToResponse, isVeryfrontError } from "#veryfront/errors";
 import { getRequestTimeout, HTTP_GATEWAY_TIMEOUT, TIMEOUT_SENTINEL } from "./request-utils.ts";
 import { ErrorPages } from "../utils/error-html.ts";
+import { completeOnResponseBodyConsumption } from "#veryfront/platform/compat/http/response-lifecycle.ts";
 
 const baseLogger = getBaseLogger("SERVER");
 
@@ -20,6 +21,8 @@ interface RequestTimeoutOptions {
   signal?: AbortSignal;
   /** Override the configured timeout. Intended for focused tests. */
   timeoutMs?: number;
+  /** Keep the drain promise pending until the returned response body settles. */
+  settleResponseBody?: boolean;
 }
 
 /**
@@ -59,9 +62,26 @@ export async function withRequestTimeout(
 
   // settled resolves when the handler finishes regardless of outcome, giving
   // callers a hook to defer in-flight decrements until work truly completes.
-  const settled = handlerPromise.then(
-    () => undefined,
-    () => undefined,
+  const settlement = Promise.withResolvers<void>();
+  const settled = settlement.promise;
+  const settledHandler = handlerPromise.then(
+    (response) => {
+      if (options.settleResponseBody && response.body) {
+        return completeOnResponseBodyConsumption(
+          response,
+          () => settlement.resolve(),
+          controller.signal,
+          undefined,
+          { errorOnAbort: true },
+        );
+      }
+      settlement.resolve();
+      return response;
+    },
+    (error) => {
+      settlement.resolve();
+      throw error;
+    },
   );
   void settled.then(() => options.signal?.removeEventListener("abort", abortFromParent));
 
@@ -69,7 +89,7 @@ export async function withRequestTimeout(
 
   try {
     const response = await Promise.race([
-      handlerPromise,
+      settledHandler,
       new Promise<never>((_, reject) => {
         timeoutId = setTimeout(() => reject(TIMEOUT_SENTINEL), timeoutMs);
       }),

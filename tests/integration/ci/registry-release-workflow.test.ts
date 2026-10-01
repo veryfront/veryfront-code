@@ -721,7 +721,7 @@ printf '%064d  %s\n' 0 "$1"
           asRecord(versionStep.env, "prerelease version environment"),
           {
             BASE_VERSION: "${{ needs.version-check.outputs.version }}",
-            RUN_NUMBER: "${{ github.run_number }}",
+            RUN_NUMBER: "${{ needs.tested-run.outputs.release_number }}",
           },
         );
         assertStringIncludes(

@@ -33,7 +33,10 @@ import {
   registerRuntimeInferenceCredential,
   type RuntimeAgentStreamExecutionDeps,
 } from "#veryfront/internal-agents/run-stream.ts";
-import { createRuntimeAgentFromMarkdownDefinition } from "#veryfront/agent/runtime/agent-markdown-adapter.ts";
+import {
+  createRuntimeAgentFromMarkdownDefinition,
+  inheritRuntimeAgentMarkdownDefinition,
+} from "#veryfront/agent/runtime/agent-markdown-adapter.ts";
 import {
   bindRemoteToolSourceToProject,
   getRequestedUnresolvedBooleanToolNames,
@@ -1363,6 +1366,12 @@ export class AgentStreamHandler extends BaseHandler {
                           availableToolNames: runtimeInput.tools.map((tool) => tool.name),
                           conversationId: runtimeInput.threadId,
                         });
+                        // The remote-tool wrappers clone the agent; keep its
+                        // markdown definition so fail-closed selectors survive.
+                        inheritRuntimeAgentMarkdownDefinition(
+                          runtimeBaseAgent as Agent,
+                          runtimeAgent,
+                        );
 
                         // Source-defined MCP tool headers resolve these via
                         // _getProjectEnv(); they are the same variables the source

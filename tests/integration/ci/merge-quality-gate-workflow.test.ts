@@ -18,6 +18,7 @@ const REQUIRED_DEPENDENCIES = [
   "tests-binary-e2e",
   "tests-e2e-rsc-browser",
   "sonar-quality-gate",
+  "tested-run",
 ] as const;
 const RESULT_ENV = {
   SOURCE_CHECKS_RESULT: "${{ needs.ci.result }}",
@@ -34,9 +35,16 @@ const SONAR_REQUIRED_CONDITION =
   "(github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && (github.event_name != 'pull_request' || github.event.pull_request.user.login != 'dependabot[bot]')";
 const SONAR_REQUIRED_EXPRESSION = `\${{ ${SONAR_REQUIRED_CONDITION} }}`;
 const SONAR_COVERAGE_JOB_EXPRESSION =
-  `\${{ needs.coverage-shards.result == 'success' && needs.coverage-node-executor.result == 'success' && needs.coverage-integration-client.result == 'success' && (${SONAR_REQUIRED_CONDITION}) }}`;
+  `\${{ !cancelled() && (needs.tested-run.outputs.reuse == 'true' || (needs.coverage-shards.result == 'success' && needs.coverage-node-executor.result == 'success' && needs.coverage-integration-client.result == 'success')) && (${SONAR_REQUIRED_CONDITION}) }}`;
 const SONAR_JOB_EXPRESSION =
-  `\${{ needs.sonar-coverage.result == 'success' && (${SONAR_REQUIRED_CONDITION}) }}`;
+  `\${{ !cancelled() && needs.sonar-coverage.result == 'success' && (${SONAR_REQUIRED_CONDITION}) }}`;
+const REUSED_RUN_ID_EXPRESSION =
+  "${{ needs.tested-run.outputs.reuse == 'true' && needs.tested-run.outputs.run_id || '' }}";
+const TESTED_RUN_ID_EXPRESSION = "${{ needs.tested-run.outputs.run_id || github.run_id }}";
+const TESTED_RUN_DOWNLOAD = {
+  "run-id": TESTED_RUN_ID_EXPRESSION,
+  "github-token": "${{ github.token }}",
+};
 const SONAR_GATE_JOB_EXPRESSION = `\${{ always() && ${SONAR_REQUIRED_CONDITION} }}`;
 const SONAR_JOB_TIMEOUT_MINUTES = 28;
 const SONAR_QUALITY_GATE_TIMEOUT_SECONDS = 1200;
@@ -44,6 +52,9 @@ const SONAR_CHECK_NAME = "SonarQube Cloud quality gate";
 const SONAR_SCAN_CHECK_NAME = "SonarQube Cloud scan";
 const MERGE_QUEUE_RESPONSE_TIMEOUT_MINUTES = 70;
 const MERGE_QUEUE_SCHEDULING_HEADROOM_MINUTES = 8;
+// tested-run waits for a queue run only on main. In a merge-queue run every
+// step skips and the job finishes within seconds of starting.
+const MERGE_QUEUE_JOB_MINUTES: Record<string, number> = { "tested-run": 0 };
 
 function asRecord(value: unknown, context: string): YamlRecord {
   assert(
@@ -110,11 +121,12 @@ function longestJobPathMinutes(
   );
 
   const job = asRecord(jobs[jobName], `${jobName} job`);
-  const timeout = Number(job["timeout-minutes"]);
+  const configuredTimeout = Number(job["timeout-minutes"]);
   assert(
-    Number.isFinite(timeout) && timeout > 0,
+    Number.isFinite(configuredTimeout) && configuredTimeout > 0,
     `${jobName} must have a positive timeout-minutes value`,
   );
+  const timeout = MERGE_QUEUE_JOB_MINUTES[jobName] ?? configuredTimeout;
 
   active.add(jobName);
   const dependencies = jobNeeds(job, `${jobName} job`);
@@ -168,7 +180,7 @@ function sonarGateStep(job: YamlRecord): YamlRecord {
 
 async function runGate(
   overrides: Partial<Record<keyof typeof RESULT_ENV, string>> = {},
-  options: { sonarRequired?: boolean } = {},
+  options: { sonarRequired?: boolean; reusedRunId?: string } = {},
 ): Promise<Deno.CommandOutput> {
   const job = await readMergeGate();
   const step = gateStep(job);
@@ -183,6 +195,7 @@ async function runGate(
     env: {
       ...env,
       SONAR_REQUIRED: String(options.sonarRequired ?? true),
+      REUSED_RUN_ID: options.reusedRunId ?? "",
     },
     stdout: "piped",
     stderr: "piped",
@@ -243,6 +256,7 @@ describe("merge quality gate workflow", () => {
     assertEquals(
       asRecord(step.env, "merge quality gate result env"),
       {
+        REUSED_RUN_ID: REUSED_RUN_ID_EXPRESSION,
         SONAR_REQUIRED: SONAR_REQUIRED_EXPRESSION,
         ...RESULT_ENV,
       },
@@ -342,7 +356,17 @@ describe("merge quality gate workflow", () => {
       step.name === "Upload merged Sonar coverage"
     );
 
+    assertEquals(asRecord(producer.permissions, "sonar coverage permissions"), {
+      actions: "read",
+      contents: "read",
+    });
+    assertEquals(asRecord(producerSteps[downloadIndex].with, "unit coverage options"), {
+      path: "coverage-profiles",
+      pattern: "coverage-shard-*",
+      ...TESTED_RUN_DOWNLOAD,
+    });
     assertEquals(producer.needs, [
+      "tested-run",
       "coverage-shards",
       "coverage-node-executor",
       "coverage-integration-client",
@@ -364,6 +388,7 @@ describe("merge quality gate workflow", () => {
       {
         name: "coverage-native-executor",
         path: "coverage-profiles/coverage-native-executor",
+        ...TESTED_RUN_DOWNLOAD,
       },
     );
     assertEquals(
@@ -374,6 +399,7 @@ describe("merge quality gate workflow", () => {
       {
         name: "coverage-integration-client",
         path: "coverage-profiles/coverage-integration-client",
+        ...TESTED_RUN_DOWNLOAD,
       },
     );
     assert(
@@ -438,7 +464,9 @@ describe("merge quality gate workflow", () => {
     const sonarDownloadIndex = steps.findIndex((step) =>
       step.name === "Download merged Sonar coverage"
     );
-    const scanIndex = steps.findIndex((step) => step.name === "SonarQube Cloud scan");
+    const scanIndex = steps.findIndex((step) =>
+      step.name === "Scan with one Sonar server-error retry"
+    );
     assertEquals(
       asRecord(
         steps[sonarDownloadIndex].with,
@@ -453,12 +481,94 @@ describe("merge quality gate workflow", () => {
       scanIndex > sonarDownloadIndex,
       "sonar must scan after downloading merged coverage",
     );
-    for (const step of steps) {
+    const fetchIndex = steps.findIndex((step) =>
+      step.name ===
+        "Fetch the pinned official Sonar action outside the scan workspace"
+    );
+    const nodeIndex = steps.findIndex((step) =>
+      step.name === "Set up Node for the pinned Sonar action"
+    );
+    assert(
+      nodeIndex > sonarDownloadIndex && fetchIndex > nodeIndex &&
+        scanIndex > fetchIndex,
+    );
+    assertEquals(asRecord(steps[nodeIndex].with, "Sonar Node inputs"), {
+      "node-version": "24",
+    });
+    const fetchStep = steps[fetchIndex];
+    assertEquals(fetchStep.shell, "bash");
+    assertEquals(
+      fetchStep.env,
+      undefined,
+      "fetching the official action receives no secrets",
+    );
+    assertEquals(
+      fetchStep.run,
+      `set -euo pipefail
+action_dir="$RUNNER_TEMP/sonarqube-scan-action"
+action_ref=SonarSource/sonarqube-scan-action@22918119ff8e1ca75a623e15c8296b6ea4fbe28f # v8.2.1
+action_repository="\${action_ref%@*}"
+action_sha="\${action_ref##*@}"
+git init "$action_dir"
+git -C "$action_dir" fetch --depth=1 "https://github.com/$action_repository.git" "$action_sha"
+test "$(git -C "$action_dir" rev-parse FETCH_HEAD)" = "$action_sha"
+git -C "$action_dir" checkout --detach FETCH_HEAD
+`,
+      "the fetch shell must run only the reviewed pinned upstream checkout",
+    );
+    const scanStep = steps[scanIndex];
+    assertEquals(scanStep.shell, "bash");
+    assertEquals(scanStep["continue-on-error"], undefined);
+    assertEquals(
+      scanStep.run,
+      `set -euo pipefail
+# Preserve the official action and its signature verification. Only a
+# failed Compute Engine task may retry; a red quality gate never does.
+for attempt in 1 2; do
+  log="$RUNNER_TEMP/sonar-attempt-$attempt.log"
+  echo "Sonar scan attempt $attempt of 2"
+  set +e
+  node "$RUNNER_TEMP/sonarqube-scan-action/dist/index.js" 2>&1 | tee "$log"
+  statuses=("\${PIPESTATUS[@]}")
+  set -e
+  if [ "\${statuses[1]}" -ne 0 ]; then
+    exit "\${statuses[1]}"
+  fi
+  status="\${statuses[0]}"
+  if [ "$status" -eq 0 ] || [ "$attempt" -eq 2 ]; then
+    exit "$status"
+  fi
+  if ! grep -Fq 'CE Task finished abnormally' "$log" || grep -Fq 'QUALITY GATE STATUS: FAILED' "$log"; then
+    exit "$status"
+  fi
+  echo "::warning::Retrying Sonar once after CE Task finished abnormally"
+done
+`,
+      "the secret-bearing shell may execute only the pinned upstream scanner and bounded classifier",
+    );
+    assertEquals(asRecord(scanStep.env, "Sonar scan environment"), {
+      SONAR_TOKEN: "\${{ secrets.SONAR_TOKEN }}",
+      INPUT_ARGS: "",
+      INPUT_PROJECTBASEDIR: ".",
+      INPUT_SCANNERVERSION: "8.1.0.6389",
+      INPUT_SCANNERBINARIESURL: "https://binaries.sonarsource.com/Distribution/sonar-scanner-cli",
+      INPUT_SKIPSIGNATUREVERIFICATION: "false",
+      INPUT_SCANNERBINARIESAUTHHEADER: "",
+    });
+    const retryContract = await readRepoFile(
+      ".github/workflows/sonar-retry-contract.yml",
+    );
+    assertStringIncludes(retryContract, "mixed gate and server text");
+    assertStringIncludes(retryContract, "failed log capture");
+    assertStringIncludes(retryContract, "wrapper], env=env");
+    for (const [index, step] of steps.entries()) {
+      if (index === fetchIndex || index === scanIndex) continue;
       assertEquals(
         step.run,
         undefined,
-        "the job holding SONAR_TOKEN must run no shell steps",
+        "only the pinned upstream fetch and scan may run shell",
       );
+      assert(step.env === undefined, "other Sonar steps receive no secrets");
       assert(
         typeof step.uses === "string" && !step.uses.startsWith("./"),
         "the job holding SONAR_TOKEN must not run repository actions",
@@ -492,7 +602,10 @@ describe("merge quality gate workflow", () => {
   it("uploads raw shard reports so block ids are normalized only in the final merge", async () => {
     const jobs = asRecord((await readWorkflow()).jobs, "cicd workflow jobs");
     const shards = asRecord(jobs["coverage-shards"], "coverage shards job");
-    assert(Array.isArray(shards.steps), "coverage shard steps must be an array");
+    assert(
+      Array.isArray(shards.steps),
+      "coverage shard steps must be an array",
+    );
     const steps = shards.steps.map((step) => asRecord(step, "coverage shard step"));
     const runCommands = steps.map((step) => String(step.run ?? "")).join("\n");
     assertEquals(runCommands.includes("mergeLcovReports"), false);
@@ -512,7 +625,7 @@ describe("merge quality gate workflow", () => {
       jobs["coverage-node-executor"],
       "native executor coverage job",
     );
-    assertEquals(native.needs, undefined);
+    assertEquals(native.needs, ["tested-run"]);
     assert(Number(native["timeout-minutes"]) <= 10);
     assert(Array.isArray(native.steps));
     const steps = native.steps.map((step) => asRecord(step, "native coverage step"));
@@ -622,7 +735,7 @@ describe("merge quality gate workflow", () => {
     assertEquals(matrix.shard, [1, 2, 3, 4]);
     assertEquals("unit-tests" in jobs, false);
     assertEquals(coverage.name, "coverage gate");
-    assertEquals(coverage.needs, ["coverage-shards"]);
+    assertEquals(coverage.needs, ["coverage-shards", "tested-run"]);
     assertStringIncludes(
       await readRepoFile("scripts/test/coverage-ci.ts"),
       'readOption(args, "--threshold") ?? "80"',
@@ -695,6 +808,39 @@ describe("merge quality gate workflow", () => {
           `${resultName} finished with ${dependencyResult}`,
         );
       }
+    }
+  });
+
+  it("accepts tests skipped because main reuses the green merge-queue run", async () => {
+    const skipped = Object.fromEntries(
+      Object.keys(RESULT_ENV)
+        .filter((name) => name !== "SONAR_RESULT")
+        .map((name) => [name, "skipped"]),
+    );
+    const result = await runGate(skipped, { reusedRunId: "36825693208" });
+
+    assertEquals(result.code, 0);
+    assertStringIncludes(
+      new TextDecoder().decode(result.stdout),
+      "COVERAGE_RESULT passed in merge-queue run 36825693208",
+    );
+  });
+
+  it("still requires Sonar and real failures when main reuses the merge-queue run", async () => {
+    for (
+      const [resultName, dependencyResult] of [
+        ["SONAR_RESULT", "skipped"],
+        ["SONAR_RESULT", "failure"],
+        ["COVERAGE_RESULT", "failure"],
+        ["INTEGRATION_TESTS_RESULT", "cancelled"],
+      ] as const
+    ) {
+      const result = await runGate(
+        { [resultName]: dependencyResult },
+        { reusedRunId: "36825693208" },
+      );
+
+      assertEquals(result.code, 1, `${resultName}=${dependencyResult} must fail the merge gate`);
     }
   });
 

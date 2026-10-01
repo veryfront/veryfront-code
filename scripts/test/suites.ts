@@ -169,6 +169,7 @@ export const UNIT_CWD_FILES: readonly string[] = Object.freeze([
 /** Tests that require a quiet process because they own process-global lifecycle or measurement. */
 export const UNIT_SERIAL_FILES: readonly string[] = Object.freeze([
   "extensions/ext-bundler-esbuild/src/esbuild-bundler.test.ts",
+  "src/agent/child-run/result-summary.test.ts",
   "src/transforms/mdx/esm-module-loader/utils/source-spans.test.ts",
 ]);
 

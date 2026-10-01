@@ -1224,6 +1224,44 @@ function createSeededSubWorkflowNodeStates(
   return { seededNodeStates, ownedNodeIds };
 }
 
+/**
+ * Whether a persisted state may hold loop output, whatever node now uses its id.
+ * Loop output always carries all three result keys. Step and sub-workflow states
+ * record their input or a durable input marker; loop states never do.
+ */
+function mayHoldLoopPublication(state: NodeState): boolean {
+  const { output } = state;
+  return !Object.hasOwn(state, "input") && state._stepInputRecorded !== true &&
+    state._subWorkflowInputParsed !== true &&
+    typeof output === "object" && output !== null && !Array.isArray(output) &&
+    Object.hasOwn(output, "exitReason") && Object.hasOwn(output, "iterations") &&
+    Object.hasOwn(output, "previousResults");
+}
+
+function legacyLoopContextError(nodeId: string): Error {
+  return INVALID_ARGUMENT.create({
+    detail: `Legacy nested-loop context cannot be restored for "${nodeId}": ` +
+      "the retained state does not identify the original publication. " +
+      "Resume from a checkpoint containing the original child context.",
+  });
+}
+
+/**
+ * Refuse a child without a context snapshot when any completed state it owns may
+ * be loop output, including states whose ids the current definition dropped.
+ */
+function assertNoLegacyLoopPublication(
+  ownerPath: string,
+  nodeStates: Readonly<Record<string, NodeState>>,
+): void {
+  for (const [nodeId, state] of Object.entries(nodeStates)) {
+    if (
+      state._subWorkflowOwnerPath === ownerPath && state.status === "completed" &&
+      mayHoldLoopPublication(state)
+    ) throw legacyLoopContextError(nodeId);
+  }
+}
+
 function restorePublishedChildOutputs(
   nodes: readonly WorkflowNode[],
   nodeStates: Readonly<Record<string, NodeState>>,
@@ -1232,10 +1270,20 @@ function restorePublishedChildOutputs(
   resumeContext: Readonly<WorkflowContext>,
   restoreOutputs = true,
   capturedWaits?: ReadonlyMap<string, string | null>,
+  requireExactPublication = false,
 ): void {
   for (const node of nodes) {
     const state = nodeStates[node.id];
     if (state?._subWorkflowOwnerPath && state._subWorkflowOwnerPath !== ownerPath) continue;
+    if (
+      requireExactPublication && state?.status === "completed" &&
+      (node.config.type === "loop" || mayHoldLoopPublication(state))
+    ) {
+      // Legacy loop output flattens callback updates over framework metadata.
+      // The current definition cannot prove which callbacks produced that row,
+      // nor that the node with this id is still the loop that produced it.
+      throw legacyLoopContextError(node.id);
+    }
     if (node.config.type === "parallel") {
       restorePublishedChildOutputs(
         node.config.nodes,
@@ -1245,6 +1293,7 @@ function restorePublishedChildOutputs(
         resumeContext,
         restoreOutputs,
         capturedWaits,
+        requireExactPublication,
       );
     } else if (node.config.type === "branch") {
       const output = state?.output;
@@ -1264,6 +1313,7 @@ function restorePublishedChildOutputs(
         resumeContext,
         restoreOutputs,
         capturedWaits,
+        requireExactPublication,
       );
     } else if (state?.status === "completed" && (restoreOutputs || node.config.type === "wait")) {
       if (
@@ -2037,6 +2087,8 @@ export class DAGExecutor {
         ) {
           result.state._subWorkflowContext = nodeStates[nodeId]!._subWorkflowContext;
           result.state._subWorkflowContextWaits = nodeStates[nodeId]!._subWorkflowContextWaits;
+          const completedChildIds = nodeStates[nodeId]!._subWorkflowCompletedChildIds;
+          if (completedChildIds) result.state._subWorkflowCompletedChildIds = completedChildIds;
         }
         // A failing node returns a failed state rather than throwing, so the span's own
         // catch never runs. Without this the span stays UNSET and a failed run is
@@ -2235,6 +2287,7 @@ export class DAGExecutor {
       nodeId: node.id,
       status: result.success ? "completed" : "failed",
       input: context.input,
+      _stepInputRecorded: true,
       output: result.output,
       error: result.error,
       attempt: 1,
@@ -2564,112 +2617,139 @@ export class DAGExecutor {
       input = preparedState.input;
     }
 
-    const steps = typeof workflowDef.steps === "function"
-      ? workflowDef.steps({ input, context })
-      : workflowDef.steps;
-    abortSignal?.throwIfAborted();
-
     const ownerPath = subWorkflowOwnerPath(scope.subWorkflowPath, node.id);
     scope.subWorkflowReservationOwners.set(ownerPath, node.id);
+    const completedChildIds = previousState?._subWorkflowCompletedChildIds;
+    const completedContext = previousState?._subWorkflowContext;
+    let result: DAGExecutionResult;
+    let producedNodeIds: Set<string>;
+    // Undefined when a completed child graph is reused instead of rebuilt.
+    let steps: WorkflowNode[] | undefined;
+    if (completedChildIds && completedContext) {
+      // Output selection is a separate phase. A completed graph must not be
+      // rebuilt against parent context published by concurrently settled nodes.
+      result = {
+        completed: true,
+        waiting: false,
+        context: { input, ...cloneExecutionState(completedContext, "Completed child context") },
+        nodeStates: {},
+      };
+      producedNodeIds = new Set(completedChildIds);
+      scope.subWorkflowNodeIds.set(ownerPath, producedNodeIds);
+    } else {
+      steps = typeof workflowDef.steps === "function"
+        ? workflowDef.steps({ input, context })
+        : workflowDef.steps;
+      abortSignal?.throwIfAborted();
 
-    // A sub-workflow is a separate definition with its own id space, so a child
-    // may legally repeat an id declared by an ancestor graph -- duplicate-id
-    // validation is per-graph. That makes the collision ambiguous here: the
-    // scheduler treats any completed or skipped state as a satisfied node, so a
-    // completed ancestor `review` would mark a nested `waitForApproval("review")`
-    // done and let its dependents publish without ever raising the approval.
-    // Refuse the run instead, matching how map and loop reject generated child
-    // ids that collide with the parent graph.
-    const childNodeIds = collectSubWorkflowNodeIds(steps, nodeStates);
-    const collidingChildId = [...childNodeIds].find((childId) =>
-      scope.declaredNodeIds.has(childId)
-    );
-    if (collidingChildId) {
-      throw INVALID_ARGUMENT.create({
-        detail: `SubWorkflow node "${node.id}" declares child id "${collidingChildId}", ` +
-          "which collides with a declared node in the parent graph",
+      // A sub-workflow is a separate definition with its own id space, so a child
+      // may legally repeat an id declared by an ancestor graph -- duplicate-id
+      // validation is per-graph. That makes the collision ambiguous here: the
+      // scheduler treats any completed or skipped state as a satisfied node, so a
+      // completed ancestor `review` would mark a nested `waitForApproval("review")`
+      // done and let its dependents publish without ever raising the approval.
+      // Refuse the run instead, matching how map and loop reject generated child
+      // ids that collide with the parent graph.
+      const childNodeIds = collectSubWorkflowNodeIds(steps, nodeStates);
+      const collidingChildId = [...childNodeIds].find((childId) =>
+        scope.declaredNodeIds.has(childId)
+      );
+      if (collidingChildId) {
+        throw INVALID_ARGUMENT.create({
+          detail: `SubWorkflow node "${node.id}" declares child id "${collidingChildId}", ` +
+            "which collides with a declared node in the parent graph",
+        });
+      }
+
+      // Carry forward only the states this sub-workflow itself produced, so a
+      // completed ancestor node can never stand in for a child that shares its id
+      // on a path the static check above cannot see (a nested loop whose steps are
+      // generated at runtime). Everything else stays out of the child keyspace.
+      const { seededNodeStates, ownedNodeIds } = createSeededSubWorkflowNodeStates(
+        ownerPath,
+        childNodeIds,
+        nodeStates,
+        scope,
+      );
+
+      // Preserve the exact publication order in the saved child context, then
+      // overlay wait decisions committed after that snapshot was captured.
+      const savedContext = nodeStates[node.id]?._subWorkflowContext;
+      const capturedWaits = nodeStates[node.id]?._subWorkflowContextWaits;
+      const childContext: WorkflowContext = savedContext
+        ? { input, ...cloneExecutionState(savedContext, "Sub-workflow context") }
+        : { input };
+      if (savedContext === undefined) assertNoLegacyLoopPublication(ownerPath, nodeStates);
+      restorePublishedChildOutputs(
+        steps,
+        seededNodeStates,
+        childContext,
+        ownerPath,
+        scope.resumeContext,
+        savedContext === undefined,
+        capturedWaits === undefined
+          ? undefined
+          : new Map(capturedWaits.map(({ nodeId, waitInstanceId }) => [nodeId, waitInstanceId])),
+        // Legacy retries and wait resumes cannot reconstruct loop publications.
+        savedContext === undefined,
+      );
+
+      const subRunId = `${node.id}_sub_${generateId()}`;
+      // The sub-run record is synthetic and never persisted, so its id is a debugging
+      // attribute only — `workflow.run_id` keeps pointing at the root run.
+      setActiveSpanAttributes({
+        "workflow.sub_run_id": subRunId,
+        "workflow.sub_workflow_id": workflowDef.id,
       });
+
+      result = await this.executeUnwrapped(
+        steps,
+        {
+          id: subRunId,
+          workflowId: workflowDef.id,
+          status: "running",
+          input,
+          nodeStates: seededNodeStates,
+          currentNodes: [],
+          context: childContext,
+          checkpoints: [],
+          pendingApprovals: [],
+          createdAt: new Date(),
+          sourceIntegrationPolicy: captureWorkflowSourceIntegrationPolicy(),
+        },
+        { ...scope, subWorkflowPath: ownerPath },
+        undefined,
+        abortSignal,
+      );
+      abortSignal?.throwIfAborted();
+
+      // Tag every newly produced state with its owner path. This metadata survives
+      // executor restarts, when the in-memory ownership map is rebuilt from the
+      // persisted root node-state map. Nested states retain their more specific
+      // owner path so an enclosing sub-workflow can still rehydrate them.
+      const ownedResult = ownSubWorkflowResultNodeStates(
+        result.nodeStates,
+        ownerPath,
+        scope.declaredNodeIds,
+        ownedNodeIds,
+      );
+      const { ownedResultNodeStates } = ownedResult;
+      producedNodeIds = ownedResult.producedNodeIds;
+      // A map materializes each WorkflowDefinition item as a generated
+      // sub-workflow wrapper. Track that wrapper too, or its completed ownerless
+      // state can be seeded into a later sibling that declares the same child id.
+      producedNodeIds.add(node.id);
+      scope.subWorkflowNodeIds.set(ownerPath, producedNodeIds);
+
+      // Diff the sub-run against the states it actually started from. Diffing the
+      // parent's whole map would report every state withheld above as deleted and
+      // strand the nodes that produced them.
+      applyRecordPatch(nodeStates, createRecordPatch(seededNodeStates, ownedResultNodeStates));
+
+      if (result.completed) {
+        nodeStates[node.id]!._subWorkflowCompletedChildIds = [...producedNodeIds];
+      }
     }
-
-    // Carry forward only the states this sub-workflow itself produced, so a
-    // completed ancestor node can never stand in for a child that shares its id
-    // on a path the static check above cannot see (a nested loop whose steps are
-    // generated at runtime). Everything else stays out of the child keyspace.
-    const { seededNodeStates, ownedNodeIds } = createSeededSubWorkflowNodeStates(
-      ownerPath,
-      childNodeIds,
-      nodeStates,
-      scope,
-    );
-
-    // Preserve the exact publication order in the saved child context, then
-    // overlay wait decisions committed after that snapshot was captured.
-    const savedContext = nodeStates[node.id]?._subWorkflowContext;
-    const capturedWaits = nodeStates[node.id]?._subWorkflowContextWaits;
-    const childContext: WorkflowContext = savedContext
-      ? { input, ...cloneExecutionState(savedContext, "Sub-workflow context") }
-      : { input };
-    restorePublishedChildOutputs(
-      steps,
-      seededNodeStates,
-      childContext,
-      ownerPath,
-      scope.resumeContext,
-      savedContext === undefined,
-      capturedWaits === undefined
-        ? undefined
-        : new Map(capturedWaits.map(({ nodeId, waitInstanceId }) => [nodeId, waitInstanceId])),
-    );
-
-    const subRunId = `${node.id}_sub_${generateId()}`;
-    // The sub-run record is synthetic and never persisted, so its id is a debugging
-    // attribute only — `workflow.run_id` keeps pointing at the root run.
-    setActiveSpanAttributes({
-      "workflow.sub_run_id": subRunId,
-      "workflow.sub_workflow_id": workflowDef.id,
-    });
-
-    const result = await this.executeUnwrapped(
-      steps,
-      {
-        id: subRunId,
-        workflowId: workflowDef.id,
-        status: "running",
-        input,
-        nodeStates: seededNodeStates,
-        currentNodes: [],
-        context: childContext,
-        checkpoints: [],
-        pendingApprovals: [],
-        createdAt: new Date(),
-        sourceIntegrationPolicy: captureWorkflowSourceIntegrationPolicy(),
-      },
-      { ...scope, subWorkflowPath: ownerPath },
-      undefined,
-      abortSignal,
-    );
-    abortSignal?.throwIfAborted();
-
-    // Tag every newly produced state with its owner path. This metadata survives
-    // executor restarts, when the in-memory ownership map is rebuilt from the
-    // persisted root node-state map. Nested states retain their more specific
-    // owner path so an enclosing sub-workflow can still rehydrate them.
-    const { ownedResultNodeStates, producedNodeIds } = ownSubWorkflowResultNodeStates(
-      result.nodeStates,
-      ownerPath,
-      scope.declaredNodeIds,
-      ownedNodeIds,
-    );
-    // A map materializes each WorkflowDefinition item as a generated
-    // sub-workflow wrapper. Track that wrapper too, or its completed ownerless
-    // state can be seeded into a later sibling that declares the same child id.
-    producedNodeIds.add(node.id);
-    scope.subWorkflowNodeIds.set(ownerPath, producedNodeIds);
-
-    // Diff the sub-run against the states it actually started from. Diffing the
-    // parent's whole map would report every state withheld above as deleted and
-    // strand the nodes that produced them.
-    applyRecordPatch(nodeStates, createRecordPatch(seededNodeStates, ownedResultNodeStates));
 
     const stalledWaitingNodes = result.stalledWaitNodes ??
       (result.stalledWaitNode === undefined
@@ -2688,11 +2768,13 @@ export class DAGExecutor {
         result.context,
         "Sub-workflow context",
       );
-      currentState._subWorkflowContextWaits = captureCompletedChildWaits(
-        steps,
-        result.nodeStates,
-        ownerPath,
-      );
+      if (steps) {
+        currentState._subWorkflowContextWaits = captureCompletedChildWaits(
+          steps,
+          result.nodeStates,
+          ownerPath,
+        );
+      }
     }
 
     let finalOutput: unknown = result.context;
