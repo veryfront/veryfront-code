@@ -3,6 +3,8 @@ import type { DAGInternalExecutionResult } from "./types.ts";
 
 export interface ChildGraphExecutionOptions {
   maxConcurrency?: number;
+  /** Persisted private-loop snapshot captured before root wait reconciliation. */
+  resumeWaitBoundaryNodeStates?: Readonly<Record<string, NodeState>>;
 }
 
 export type ExecuteChildGraph = (

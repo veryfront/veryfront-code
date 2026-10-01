@@ -4,7 +4,7 @@ import {
   NOT_SUPPORTED,
   ORCHESTRATION_ERROR,
   RESOURCE_NOT_FOUND,
-  type VeryfrontError,
+  VeryfrontError,
 } from "#veryfront/errors";
 import { getActiveTraceparent } from "#veryfront/observability/tracing/otlp-setup.ts";
 import {
@@ -37,6 +37,12 @@ import {
   MAX_WORKFLOW_CHILD_RUN_ID_CODE_UNITS,
 } from "../limits.ts";
 import { isCanonicalNonEmptyString } from "../dsl/validation.ts";
+import {
+  INPUT_VALIDATION_FAILED_CODE,
+  OutputSchemaValidationError,
+  readSchemaValidationErrors,
+} from "#veryfront/schemas/validation-errors.ts";
+import type { WorkflowExecutionError } from "../executor/output-validation.ts";
 
 const logger = baseLogger.component("workflow-run-control");
 
@@ -66,11 +72,10 @@ export interface WorkflowRunControlExecuteResult {
   nodeStates: Record<string, NodeState>;
   error?: string;
   /**
-   * Registry-typed cause for a refusal the executor reports through `error`
-   * instead of throwing, so the run fails under the same slug a thrown refusal
-   * would carry.
+   * Structured cause for a failure the executor reports through `error`
+   * instead of throwing, preserving registry slugs or output-validation details.
    */
-  errorCause?: VeryfrontError;
+  errorCause?: WorkflowExecutionError;
 }
 
 export interface WorkflowRunControlExecuteInput {
@@ -99,6 +104,8 @@ export interface WorkflowRunControlExecuteInput {
    * `input`.
    */
   selectOutput?(context: WorkflowContext): unknown;
+  /** Parse and validate the selected or default final output before persistence. */
+  parseOutput?(output: unknown): unknown;
   onError?(
     run: WorkflowRun,
     error: Error,
@@ -1334,6 +1341,18 @@ async function failRun(
   if (!input.isCurrentExecution(run.id, executionController)) return false;
 
   const publicContext = toPersistedWorkflowContext(result.context);
+  const validationErrors =
+    error instanceof VeryfrontError && error.slug === "input-validation-failed"
+      ? readSchemaValidationErrors((error.context as { errors?: unknown } | undefined)?.errors)
+      : undefined;
+  const structuredError = error instanceof OutputSchemaValidationError
+    ? { code: error.code, detail: error.detail }
+    : validationErrors
+    ? {
+      code: INPUT_VALIDATION_FAILED_CODE,
+      detail: { errors: validationErrors },
+    }
+    : {};
   return await updateRunIfStatus(
     backend,
     run.id,
@@ -1345,6 +1364,7 @@ async function failRun(
       error: {
         message: error.message,
         stack: error.stack,
+        ...structuredError,
       },
       completedAt: new Date(),
     },
@@ -1457,8 +1477,13 @@ function selectFinalOutput(
   context: WorkflowContext,
 ): unknown {
   const publicContext = toPersistedWorkflowContext(context);
-  if (!input.selectOutput) return determineOutput(publicContext);
-  return toJsonOutput(input.selectOutput(publicContext));
+  if (!input.selectOutput) {
+    const output = determineOutput(publicContext);
+    input.parseOutput?.(output);
+    return output;
+  }
+  const selected = input.selectOutput(publicContext);
+  return toJsonOutput(input.parseOutput ? input.parseOutput(selected) : selected);
 }
 
 function determineOutput(context: WorkflowContext): unknown {

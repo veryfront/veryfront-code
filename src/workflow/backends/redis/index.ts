@@ -31,9 +31,17 @@ import {
 } from "../types.ts";
 import { agentLogger, safeJsonParse } from "#veryfront/utils";
 import {
+  collectWorkflowJsonRecords,
+  isDeferredWorkflowJsonValue,
+  prepareNodeStatesUserData,
   prepareWorkflowJson,
+  resolveDeferredWorkflowJsonValue,
   serializeWorkflowContext,
   serializeWorkflowJson,
+  WORKFLOW_CHECKPOINT_RECORD,
+  WORKFLOW_NODE_RECORD,
+  WORKFLOW_RESUME_ENVELOPE_RECORD,
+  type WorkflowJsonRecords,
 } from "../../context-serialization.ts";
 import { requeueRun } from "../shared/requeue-run.ts";
 import {
@@ -1804,6 +1812,16 @@ export class RedisBackend implements WorkflowBackend {
     if (config.client) this.client = config.client;
   }
 
+  prepareNodeStatesForPersistence(
+    runId: string | undefined,
+    nodeStates: WorkflowRun["nodeStates"],
+    records?: WorkflowJsonRecords,
+  ): WorkflowRun["nodeStates"] {
+    return prepareNodeStatesUserData(nodeStates, runId, {
+      strictContext: this.config.strictContext,
+    }, records);
+  }
+
   private storagePrefix(): string {
     return `${this.config.prefix}${REDIS_STORAGE_SCHEMA_NAMESPACE}`;
   }
@@ -1910,6 +1928,7 @@ export class RedisBackend implements WorkflowBackend {
     const context = serializeWorkflowContext(run.context, run.id, {
       strictContext: this.config.strictContext,
     });
+    const nodeStates = this.serializeNodeStates(run.nodeStates, run.id);
     return {
       id: run.id,
       workflowId: run.workflowId,
@@ -1922,7 +1941,7 @@ export class RedisBackend implements WorkflowBackend {
       sourceIntegrationPolicy: JSON.stringify(sourceIntegrationPolicy),
       input: JSON.stringify(run.input),
       output: run.output !== undefined ? JSON.stringify(run.output) : "",
-      nodeStates: JSON.stringify(run.nodeStates),
+      nodeStates,
       currentNodes: JSON.stringify(run.currentNodes),
       context,
       error: run.error ? JSON.stringify(run.error) : "",
@@ -1949,8 +1968,13 @@ export class RedisBackend implements WorkflowBackend {
     const preparedContext = patchContext !== undefined
       ? prepareWorkflowJson(patchContext, "context", runId, {
         strictContext: this.config.strictContext,
-      })
+      }, WORKFLOW_NODE_RECORD)
       : undefined;
+    // Node states carry the same step values as `output`, so they are prepared
+    // before it for a named diagnostic instead of the native JSON error.
+    const preparedNodeStates = patch.nodeStates === undefined
+      ? undefined
+      : this.serializeNodeStates(patch.nodeStates, runId);
     const fields: Record<string, string> = {};
     const completion = Object.hasOwn(patch, "completedAt")
       ? serializeCompletionInstant(patch.completedAt)
@@ -1970,7 +1994,7 @@ export class RedisBackend implements WorkflowBackend {
       "output",
       patch.output !== undefined ? JSON.stringify(patch.output) : "",
     );
-    setDefinedField("nodeStates", patch.nodeStates, JSON.stringify(patch.nodeStates));
+    if (preparedNodeStates !== undefined) fields.nodeStates = preparedNodeStates;
     setNonEmptyArrayField("nodeStateDeletes", patch.nodeStateDeletes);
     setDefinedField("currentNodes", patch.currentNodes, JSON.stringify(patch.currentNodes));
     setDefinedField("context", preparedContext, preparedContext?.serialized ?? "");
@@ -1995,21 +2019,34 @@ export class RedisBackend implements WorkflowBackend {
     return fields;
   }
 
+  /** Encode node states with their step data under the run's context policy. */
+  private serializeNodeStates(nodeStates: WorkflowRun["nodeStates"], runId?: string): string {
+    return JSON.stringify(this.prepareNodeStatesForPersistence(runId, nodeStates));
+  }
+
   private serializeCheckpointNodeStates(
     runId: string,
     nodeStates: Checkpoint["nodeStates"],
+    records?: WorkflowJsonRecords,
   ): string {
     return prepareWorkflowJson(
-      this.normalizeCheckpointNodeStates(nodeStates),
+      this.normalizeCheckpointNodeStates(
+        this.prepareNodeStatesForPersistence(runId, nodeStates, records),
+      ),
       "checkpoint.nodeStates",
       runId,
       { strictContext: false },
+      WORKFLOW_NODE_RECORD,
+      records,
     ).serialized;
   }
 
   private normalizeCheckpointNodeStates(
     nodeStates: Checkpoint["nodeStates"],
   ): Record<string, unknown> {
+    // An owned checkpoint defers the whole map when it holds a `toJSON` hook.
+    // The deferred value has no own entries, so it is encoded as it is.
+    if (isDeferredWorkflowJsonValue(nodeStates as unknown)) return nodeStates;
     const normalizedNodeStates: Record<string, unknown> = {};
     for (const [nodeId, nodeState] of Object.entries(nodeStates)) {
       const normalizedNodeState: Record<string, unknown> = { ...nodeState };
@@ -2027,13 +2064,17 @@ export class RedisBackend implements WorkflowBackend {
   private serializeCheckpoint(runId: string, checkpoint: Checkpoint): string {
     // Checked before the rest of the checkpoint is encoded below, so a value
     // JSON refuses is named by its path rather than by the native error.
+    // The fields are encoded separately, so they share the checkpoint's records.
+    const records = collectWorkflowJsonRecords(checkpoint, WORKFLOW_CHECKPOINT_RECORD);
     const { serialized: context } = prepareWorkflowJson(
       checkpoint.context,
       "checkpoint.context",
       runId,
       { strictContext: this.config.strictContext },
+      WORKFLOW_NODE_RECORD,
+      records,
     );
-    const nodeStates = this.serializeCheckpointNodeStates(runId, checkpoint.nodeStates);
+    const nodeStates = this.serializeCheckpointNodeStates(runId, checkpoint.nodeStates, records);
     const {
       context: _context,
       nodeStates: _nodeStates,
@@ -2044,9 +2085,12 @@ export class RedisBackend implements WorkflowBackend {
       ...checkpointMetadata,
       timestamp: checkpoint.timestamp.toISOString(),
     });
-    const normalizedResumeEnvelope = _resumeEnvelope === undefined ? undefined : {
-      ..._resumeEnvelope,
-      nodeStates: this.normalizeCheckpointNodeStates(_resumeEnvelope.nodeStates),
+    const resolvedResumeEnvelope = resolveDeferredWorkflowJsonValue(_resumeEnvelope);
+    const normalizedResumeEnvelope = resolvedResumeEnvelope === undefined ? undefined : {
+      ...resolvedResumeEnvelope,
+      nodeStates: this.normalizeCheckpointNodeStates(
+        this.prepareNodeStatesForPersistence(runId, resolvedResumeEnvelope.nodeStates, records),
+      ),
     };
     const resumeEnvelope = normalizedResumeEnvelope === undefined
       ? ""
@@ -2056,6 +2100,8 @@ export class RedisBackend implements WorkflowBackend {
           "checkpoint._resumeEnvelope",
           runId,
           { strictContext: false },
+          WORKFLOW_RESUME_ENVELOPE_RECORD,
+          records,
         ).serialized
       }`;
     return `${
@@ -2121,6 +2167,27 @@ export class RedisBackend implements WorkflowBackend {
       ],
     );
     return Number(result) === 1;
+  }
+
+  private deserializeNodeStates(nodeStates: Checkpoint["nodeStates"]): Checkpoint["nodeStates"] {
+    for (const state of Object.values(nodeStates)) {
+      if (state.startedAt !== undefined) state.startedAt = new Date(state.startedAt);
+      if (state.completedAt !== undefined) state.completedAt = new Date(state.completedAt);
+    }
+    return nodeStates;
+  }
+
+  private deserializeCheckpoint(raw: string): Checkpoint {
+    const data: Checkpoint = JSON.parse(raw);
+    data.timestamp = new Date(data.timestamp);
+    data.nodeStates = this.deserializeNodeStates(data.nodeStates);
+    if (data._resumeEnvelope !== undefined) {
+      data._resumeEnvelope = {
+        ...data._resumeEnvelope,
+        nodeStates: this.deserializeNodeStates(data._resumeEnvelope.nodeStates),
+      };
+    }
+    return data;
   }
 
   private deserializeRun(data: Record<string, string>): WorkflowRun {
@@ -2200,7 +2267,9 @@ export class RedisBackend implements WorkflowBackend {
       sourceIntegrationPolicy,
       input: parseJsonOr(data.id, "input", data.input, undefined),
       output: parseJsonOr(data.id, "output", data.output, undefined),
-      nodeStates: parseJsonOr(data.id, "nodeStates", data.nodeStates, {}),
+      nodeStates: this.deserializeNodeStates(
+        parseJsonOr(data.id, "nodeStates", data.nodeStates, {}),
+      ),
       currentNodes: parseJsonOr(data.id, "currentNodes", data.currentNodes, []),
       context: parseJsonOr(data.id, "context", data.context, { input: undefined }),
       checkpoints: [],
@@ -2988,18 +3057,14 @@ export class RedisBackend implements WorkflowBackend {
     const raw = await client.lindex(this.checkpointsKey(runId), -1);
     if (!raw) return null;
 
-    const data = JSON.parse(raw);
-    return { ...data, timestamp: new Date(data.timestamp) };
+    return this.deserializeCheckpoint(raw);
   }
 
   async getCheckpoints(runId: string): Promise<Checkpoint[]> {
     const client = await this.ensureClient();
     const rawList = await client.lrange(this.checkpointsKey(runId), 0, -1);
 
-    return rawList.map((raw) => {
-      const data = JSON.parse(raw);
-      return { ...data, timestamp: new Date(data.timestamp) };
-    });
+    return rawList.map((raw) => this.deserializeCheckpoint(raw));
   }
 
   async savePendingApproval(runId: string, approval: PersistedPendingApproval): Promise<void> {

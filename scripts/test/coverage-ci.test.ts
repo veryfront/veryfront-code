@@ -33,6 +33,19 @@ describe("coverage CI command", () => {
     assert(args.includes(LOOPBACK_ALLOW_NET));
   });
 
+  it("can isolate process-wide measurements without dropping coverage", () => {
+    const args = buildDenoTestCommandArgs({
+      coverageDir: "coverage-shard-1",
+      files: [
+        "src/transforms/mdx/esm-module-loader/utils/source-spans.test.ts",
+      ],
+      parallel: false,
+    });
+
+    assertEquals(args.includes("--parallel"), false);
+    assert(args.includes("--coverage=coverage-shard-1"));
+  });
+
   it("reports on cli/ as well as src/", () => {
     const args = buildCoverageCommandArgs(["coverage-shard-1"]);
 
@@ -116,6 +129,77 @@ describe("mergeLcovReports", () => {
         "BRDA:10,1,0,0",
         "BRF:3",
         "BRH:2",
+        "end_of_record",
+      ].join("\n"),
+    );
+  });
+
+  it("merges the same condition when Deno assigns different block ids", () => {
+    const merged = mergeLcovReports([
+      "SF:src/nested.ts\nDA:6,1\nBRDA:6,3,0,1\nBRDA:6,3,1,-\nend_of_record",
+      "SF:src/nested.ts\nDA:6,1\nBRDA:6,2,0,-\nBRDA:6,2,1,1\nend_of_record",
+    ]);
+
+    assertEquals(
+      merged,
+      [
+        "SF:src/nested.ts",
+        "DA:6,2",
+        "LH:1",
+        "LF:1",
+        "BRDA:6,0,0,1",
+        "BRDA:6,0,1,1",
+        "BRF:2",
+        "BRH:2",
+        "end_of_record",
+      ].join("\n"),
+    );
+  });
+
+  it("keeps emitted block ids when a report omits a block on the line", () => {
+    const merged = mergeLcovReports([
+      "SF:src/nested.ts\nDA:6,1\nBRDA:6,2,0,1\nBRDA:6,2,1,-\nBRDA:6,3,0,-\nBRDA:6,3,1,1\nend_of_record",
+      "SF:src/nested.ts\nDA:6,1\nBRDA:6,3,0,1\nBRDA:6,3,1,-\nend_of_record",
+    ]);
+
+    assertEquals(
+      merged,
+      [
+        "SF:src/nested.ts",
+        "DA:6,2",
+        "LH:1",
+        "LF:1",
+        "BRDA:6,2,0,1",
+        "BRDA:6,2,1,0",
+        "BRDA:6,3,0,1",
+        "BRDA:6,3,1,1",
+        "BRF:4",
+        "BRH:3",
+        "end_of_record",
+      ].join("\n"),
+    );
+  });
+
+  it("keeps emitted block ids when the branch shapes on the line differ", () => {
+    const merged = mergeLcovReports([
+      "SF:src/nested.ts\nDA:6,1\nBRDA:6,2,0,1\nBRDA:6,2,1,-\nend_of_record",
+      "SF:src/nested.ts\nDA:6,1\nBRDA:6,3,0,-\nBRDA:6,3,1,1\nBRDA:6,3,2,1\nend_of_record",
+    ]);
+
+    assertEquals(
+      merged,
+      [
+        "SF:src/nested.ts",
+        "DA:6,2",
+        "LH:1",
+        "LF:1",
+        "BRDA:6,2,0,1",
+        "BRDA:6,2,1,0",
+        "BRDA:6,3,0,0",
+        "BRDA:6,3,1,1",
+        "BRDA:6,3,2,1",
+        "BRF:5",
+        "BRH:3",
         "end_of_record",
       ].join("\n"),
     );

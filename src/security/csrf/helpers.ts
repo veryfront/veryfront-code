@@ -7,6 +7,7 @@
  * @module security/csrf/helpers
  */
 
+import { constantTimeEqual } from "#veryfront/security/utils/constant-time.ts";
 import { base64urlEncodeBytes } from "#veryfront/utils/base64url.ts";
 import { parseCookiesFromHeaders } from "#veryfront/utils/cookie-utils.ts";
 import { isProxyTopologyTrusted } from "#veryfront/platform/compat/proxy-topology.ts";
@@ -110,22 +111,6 @@ function generateCsrfTokenCookie(
   return { token, setCookie: parts.join("; ") };
 }
 
-const encoder = new TextEncoder();
-
-/** Constant-time string comparison to prevent timing attacks */
-function timingSafeEqual(a: string, b: string): boolean {
-  const aBytes = encoder.encode(a);
-  const bBytes = encoder.encode(b);
-  const len = Math.max(aBytes.length, bBytes.length);
-  // Use bitwise OR to accumulate differences without short-circuiting.
-  // Pad the shorter side with 0xFF to guarantee a mismatch without leaking length via timing.
-  let result = aBytes.length !== bBytes.length ? 1 : 0;
-  for (let i = 0; i < len; i++) {
-    result |= (aBytes[i] ?? 0xff) ^ (bBytes[i] ?? 0xff);
-  }
-  return result === 0;
-}
-
 /** Validate CSRF token by comparing header and cookie */
 export function validateCsrf(
   req: Request,
@@ -152,7 +137,7 @@ export function validateCsrf(
 
     let matches = false;
     for (const cookieToken of cookieTokens) {
-      if (cookieToken) matches = timingSafeEqual(cookieToken, headerToken) || matches;
+      if (cookieToken) matches = constantTimeEqual(cookieToken, headerToken) || matches;
     }
     return matches;
   } catch {

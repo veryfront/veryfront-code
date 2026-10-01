@@ -62,6 +62,11 @@ describe("workflow/runtime/public-run", () => {
       step: {
         ...completedState("step", nestedUserOutput),
         _subWorkflowOwnerPath: "internal-owner",
+        _stepInputRecorded: true,
+        _subWorkflowCompletedChildIds: ["child"],
+        _loopOutputRetry: { context: leakedContext, iteration: 0 },
+        _subWorkflowContext: { private: frameworkTenant },
+        _subWorkflowContextWaits: [{ nodeId: "private-wait", waitInstanceId: "private-instance" }],
         _activeCompositeChildIds: ["waiting-child"],
         _completedCompositeChildIds: ["finished-child"],
       },
@@ -195,6 +200,9 @@ describe("workflow/runtime/public-run", () => {
     assertEquals(output.step, nestedUserOutput);
     assertEquals(output.parent, contextShapedUserOutput);
     assertEquals(output.mapLike, [contextShapedUserOutput]);
+    assertEquals(projected.nodeStates.step?._stepInputRecorded, undefined);
+    assertEquals(projected.checkpoints[0]?.nodeStates.step?._stepInputRecorded, undefined);
+    assertEquals(run.nodeStates.step?._stepInputRecorded, true);
     assertEquals(projected.nodeStates.step?.output, nestedUserOutput);
     assertEquals(projected.nodeStates.parent?.output, contextShapedUserOutput);
     assertEquals(projected.nodeStates.mapLike?.output, [contextShapedUserOutput]);
@@ -225,6 +233,10 @@ describe("workflow/runtime/public-run", () => {
     assertEquals(projected.checkpoints[0]?.context.env, undefined);
     for (const states of [projected.nodeStates, projected.checkpoints[0]!.nodeStates]) {
       assertEquals(states.step?._subWorkflowOwnerPath, undefined);
+      assertEquals(states.step?._subWorkflowCompletedChildIds, undefined);
+      assertEquals(states.step?._loopOutputRetry, undefined);
+      assertEquals(states.step?._subWorkflowContext, undefined);
+      assertEquals(states.step?._subWorkflowContextWaits, undefined);
       assertEquals(states.step?._activeCompositeChildIds, undefined);
       assertEquals(states.step?._completedCompositeChildIds, undefined);
     }

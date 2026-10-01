@@ -37,6 +37,7 @@ const numberIsNaN = Number.isNaN;
 const NumberValueOf = Number.prototype.valueOf;
 const ObjectConstructor = Object;
 const objectCreate = Object.create;
+const objectFreeze = Object.freeze;
 const objectDefineProperty = Object.defineProperty;
 const objectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 const objectGetOwnPropertySymbols = Object.getOwnPropertySymbols;
@@ -109,6 +110,12 @@ export function deferWorkflowJsonValue(value: JsonTraversalReference): object {
 export function isDeferredWorkflowJsonValue(value: unknown): value is object {
   return typeof value === "object" && value !== null &&
     reflectApply(weakMapGet, deferredWorkflowJsonSources, [value]) !== undefined;
+}
+
+/** @internal Read a deferred owned-checkpoint value after its persistence fence passes. */
+export function resolveDeferredWorkflowJsonValue<T>(value: T): T {
+  if (typeof value !== "object" || value === null) return value;
+  return (reflectApply(weakMapGet, deferredWorkflowJsonSources, [value]) as T | undefined) ?? value;
 }
 
 /** @internal Stabilizes inherited `toJSON` lookup on an owned persistence clone. */
@@ -358,6 +365,7 @@ function canSnapshotJsonTailWithoutReplacer(
   active: Set<JsonTraversalReference>,
   applyRootToJson: boolean,
   nonPlainBuiltinCache: WeakMap<JsonTraversalReference, boolean>,
+  records?: WorkflowJsonRecords,
 ): boolean {
   if (!canIdentifyProxyWithoutHooks) return false;
 
@@ -394,7 +402,9 @@ function canSnapshotJsonTailWithoutReplacer(
     if (isUnsafeJsonTailReference(reference, active, nonPlainBuiltinCache)) return false;
 
     const isArray = arrayIsArray(reference);
-    const inspectToJson = applyRootToJson || reference !== root;
+    const isRecord = records !== undefined &&
+      reflectApply(weakMapGet, records, [reference]) !== undefined;
+    const inspectToJson = (applyRootToJson || reference !== root) && !isRecord;
     if (!hasSafeJsonTailPrototype(reference, isArray, inspectToJson)) return false;
     reflectApply(setAdd, localActive, [reference]);
     appendJsonTailScanFrame(pending, { kind: "exit", value: reference });
@@ -578,11 +588,18 @@ function appendJsonTailEncodingFrame(
   defineArrayElement(frames, frames.length, frame);
 }
 
-function prepareJsonTailValue(value: unknown, key: string, applyToJson: boolean): unknown {
+function prepareJsonTailValue(
+  value: unknown,
+  key: string,
+  applyToJson: boolean,
+  records?: WorkflowJsonRecords,
+): unknown {
   let prepared = value;
   const type = typeof prepared;
+  const isRecord = records !== undefined && type === "object" && prepared !== null &&
+    reflectApply(weakMapGet, records, [prepared]) !== undefined;
   if (
-    applyToJson &&
+    applyToJson && !isRecord &&
     (type === "object" && prepared !== null || type === "function" || type === "bigint")
   ) {
     const receiver = type === "bigint"
@@ -605,8 +622,9 @@ function encodeJsonTailIteratively(
   key: string,
   outerActive: Set<JsonTraversalReference>,
   applyRootToJson: boolean,
+  records?: WorkflowJsonRecords,
 ): { containsRawJson: boolean; serialized: string | undefined } {
-  const preparedRoot = prepareJsonTailValue(root, key, applyRootToJson);
+  const preparedRoot = prepareJsonTailValue(root, key, applyRootToJson, records);
   if (isOmittedJsonObjectValue(preparedRoot)) {
     return { containsRawJson: false, serialized: undefined };
   }
@@ -641,6 +659,7 @@ function encodeJsonTailIteratively(
         reflectGet(frame.value, indexKey),
         indexKey,
         true,
+        records,
       );
       appendJsonTailEncodingFrame(frames, frame);
       if (isOmittedJsonObjectValue(nested)) append("null");
@@ -657,6 +676,7 @@ function encodeJsonTailIteratively(
           reflectGet(frame.value, nestedKey),
           nestedKey,
           true,
+          records,
         );
         if (!isOmittedJsonObjectValue(nested)) break;
         nestedKey = undefined;
@@ -746,6 +766,7 @@ function normalizeJsonTail(
   active: Set<JsonTraversalReference>,
   state: JsonSerializationState,
   applyRootToJson: boolean,
+  records?: WorkflowJsonRecords,
 ): NormalizedJsonValue | typeof OMIT_JSON_VALUE {
   // This branch has proved the tail contains only inert JSON data: no hooks,
   // accessors, proxies, exotic objects, raw tokens, cycles, or aliases. Encode
@@ -758,6 +779,7 @@ function normalizeJsonTail(
       active,
       applyRootToJson,
       state.nonPlainBuiltinCache,
+      records,
     )
   ) {
     state.requiresIterativeEncoding = true;
@@ -769,6 +791,7 @@ function normalizeJsonTail(
     key,
     active,
     applyRootToJson,
+    records,
   );
   if (serialized === undefined) return OMIT_JSON_VALUE;
   state.requiresIterativeEncoding = true;
@@ -1017,11 +1040,110 @@ function unboxAsJsonWould(
   return reflectApply(BigIntValueOf, value as bigint, []);
 }
 
+/**
+ * @internal Marks where a persisted value holds a framework record.
+ *
+ * A record is an object the framework builds and keys by name, such as
+ * `context`, which is keyed by node id. Its own keys are data, so the record
+ * itself never has a `toJSON` hook: a node named `toJSON` is that node's value,
+ * checked and reported under its own path like any other, and it cannot replace
+ * the values of every other node. `fields` gives the shape of named children
+ * that are records too. Every other child, and everything below it, is an
+ * ordinary value with full `JSON.stringify` semantics.
+ */
+export interface WorkflowJsonRecordShape {
+  readonly fields?: Readonly<Record<string, WorkflowJsonRecordShape>>;
+}
+
+function recordShape(
+  fields?: Record<string, WorkflowJsonRecordShape>,
+): WorkflowJsonRecordShape {
+  if (fields === undefined) return objectFreeze(objectCreate(null));
+  const ownedFields = objectCreate(null) as Record<string, WorkflowJsonRecordShape>;
+  for (const key of objectKeys(fields)) ownedFields[key] = fields[key]!;
+  const shape = objectCreate(null) as { fields?: Record<string, WorkflowJsonRecordShape> };
+  shape.fields = objectFreeze(ownedFields);
+  return objectFreeze(shape);
+}
+
+/** @internal A record keyed by node id: `context`, or node states. */
+export const WORKFLOW_NODE_RECORD: WorkflowJsonRecordShape = recordShape();
+
+/** @internal A resume envelope, which carries copies of the run's node-keyed records. */
+export const WORKFLOW_RESUME_ENVELOPE_RECORD: WorkflowJsonRecordShape = recordShape({
+  context: WORKFLOW_NODE_RECORD,
+  nodeStates: WORKFLOW_NODE_RECORD,
+  graphAdmission: recordShape({ stepsEvaluationContext: WORKFLOW_NODE_RECORD }),
+});
+
+/** @internal A checkpoint, whose node-keyed records sit at fixed fields. */
+export const WORKFLOW_CHECKPOINT_RECORD: WorkflowJsonRecordShape = recordShape({
+  context: WORKFLOW_NODE_RECORD,
+  nodeStates: WORKFLOW_NODE_RECORD,
+  _resumeEnvelope: WORKFLOW_RESUME_ENVELOPE_RECORD,
+});
+
+/** @internal The record shape of a record's child, or undefined for an ordinary value. */
+export function workflowJsonFieldShape(
+  shape: WorkflowJsonRecordShape | undefined,
+  key: string | symbol,
+): WorkflowJsonRecordShape | undefined {
+  const fields = shape?.fields;
+  if (fields === undefined || typeof key !== "string" || !objectHasOwn(fields, key)) {
+    return undefined;
+  }
+  return fields[key];
+}
+
+/**
+ * @internal The framework records of one persisted value, by identity.
+ *
+ * The same record can sit in more than one field of a checkpoint, such as a
+ * node state whose output is the live `context`, and a backend can encode those
+ * fields in separate calls. Every call that gets the same records treats such a
+ * reference as the record, whichever field reaches it.
+ */
+export type WorkflowJsonRecords = WeakMap<object, WorkflowJsonRecordShape>;
+
+/** @internal Collect the records that `shape` marks in `value`. */
+export function collectWorkflowJsonRecords(
+  value: unknown,
+  shape: WorkflowJsonRecordShape,
+): WorkflowJsonRecords {
+  const records: WorkflowJsonRecords = new WeakMapConstructor();
+  // Reading a field of an unidentified Proxy would run its hooks.
+  if (!canIdentifyProxyWithoutHooks) return records;
+  const pending: Array<readonly [unknown, WorkflowJsonRecordShape]> = [[value, shape]];
+  while (pending.length > 0) {
+    const [candidate, candidateShape] = pending[pending.length - 1]!;
+    pending.length -= 1;
+    if (typeof candidate !== "object" || candidate === null) continue;
+    const source = (reflectApply(weakMapGet, deferredWorkflowJsonSources, [candidate]) ??
+      candidate) as JsonTraversalReference;
+    if (
+      isProxyWithoutHooks(source) ||
+      reflectApply(weakMapGet, records, [source]) !== undefined
+    ) continue;
+    reflectApply(weakMapSet, records, [source, candidateShape]);
+    const fields = candidateShape.fields;
+    if (fields === undefined) continue;
+    for (const key of objectKeys(fields)) {
+      const descriptor = objectGetOwnPropertyDescriptor(source, key);
+      if (descriptor !== undefined && "value" in descriptor) {
+        pending[pending.length] = [descriptor.value, fields[key]!];
+      }
+    }
+  }
+  return records;
+}
+
 /** Build the exact value JSON will encode, collecting what it cannot carry. */
 function normalizeAndFindUnrepresentableValues(
   root: unknown,
   label: string,
   options: WorkflowJsonSerializationOptions = {},
+  rootShape?: WorkflowJsonRecordShape,
+  records?: WorkflowJsonRecords,
 ): {
   normalized: unknown;
   requiresIterativeEncoding: boolean;
@@ -1174,12 +1296,14 @@ function normalizeAndFindUnrepresentableValues(
     recordArrayPrototype(value, path);
   };
 
+  const recordShapes: WorkflowJsonRecords = records ?? new WeakMapConstructor();
   const normalize = (
     value: unknown,
     path: string,
     key: string,
     applyToJson: boolean,
     depth: number,
+    shape?: WorkflowJsonRecordShape,
   ): NormalizedJsonValue | typeof OMIT_JSON_VALUE => {
     if (value === null) return null;
 
@@ -1194,7 +1318,18 @@ function normalizeAndFindUnrepresentableValues(
         recordLossy(path, "deferred checkpoint value");
         return null;
       }
-      return normalize(deferredSource, path, key, true, depth);
+      return normalize(deferredSource, path, key, true, depth, shape);
+    }
+    // A reference back to a record, such as a context that holds itself, is
+    // that record, so it has no `toJSON` hook either; the cycle is reported.
+    if (type === "object") {
+      if (shape === undefined) {
+        shape = reflectApply(weakMapGet, recordShapes, [value]) as
+          | WorkflowJsonRecordShape
+          | undefined;
+      } else {
+        reflectApply(weakMapSet, recordShapes, [value, shape]);
+      }
     }
     if (
       options.strictContext === true &&
@@ -1218,7 +1353,7 @@ function normalizeAndFindUnrepresentableValues(
       return value as RawJsonValue;
     }
     if (
-      applyToJson &&
+      applyToJson && shape === undefined &&
       (type === "object" || type === "function" || type === "bigint")
     ) {
       const receiver = type === "bigint"
@@ -1286,7 +1421,14 @@ function normalizeAndFindUnrepresentableValues(
         return nested as NormalizedJsonValue;
       }
       try {
-        return normalizeJsonTail(nested, key, active, serializationState, applyToJson);
+        return normalizeJsonTail(
+          nested,
+          key,
+          active,
+          serializationState,
+          applyToJson,
+          recordShapes,
+        );
       } catch (error) {
         if (error === ACTIVE_JSON_TAIL_REFERENCE) {
           recordFatal(path, "circular reference");
@@ -1389,6 +1531,7 @@ function normalizeAndFindUnrepresentableValues(
           childKey,
           true,
           depth + 1,
+          workflowJsonFieldShape(shape, childKey),
         );
         if (normalized !== OMIT_JSON_VALUE) result[childKey] = normalized;
       }
@@ -1417,7 +1560,7 @@ function normalizeAndFindUnrepresentableValues(
     }
   };
 
-  const normalized = normalize(root, label, "", true, 0);
+  const normalized = normalize(root, label, "", true, 0, rootShape);
 
   return {
     normalized: normalized === OMIT_JSON_VALUE ? undefined : normalized,
@@ -1470,23 +1613,33 @@ function formatPaths(samples: readonly UnrepresentableValue[], total: number): s
  * field would raise on the same value.
  *
  * Scope, stated plainly because the ordering above is easy to read as more:
- * only `context` is checked. A run's `input`, `output`, `nodeStates`,
- * `currentNodes`, and `error` are encoded directly, so nothing here inspects
- * them. That is deliberate for now: `nodeStates` carries a `Date` on every
- * node, so checking it would report the framework's own timestamps on every
- * run. Anything the framework writes into `context` has to obey the same rule
- * it asks of a step, which is why the loop encodes its child node states
- * rather than being exempted from the check.
+ * `context` is checked here, and the user data plus resumable child-context
+ * snapshots in `nodeStates` are checked by `prepareNodeStatesUserData`. A run's
+ * `input`, `output`, `currentNodes`, and `error` are encoded directly. A node
+ * state's own timestamps stay outside the check, because they are the
+ * framework's `Date`s rather than step data.
+ * Anything the framework writes into `context` has to obey the same rule it
+ * asks of a step, which is why the loop encodes its child node states rather
+ * than being exempted from the check.
+ *
+ * `shape` marks the framework records in `value`, such as `context`, which is
+ * keyed by node id. A record never has a `toJSON` hook, so a node id cannot
+ * act as one; see `WorkflowJsonRecordShape`. Without it, `value` is encoded
+ * exactly as `JSON.stringify` would encode it. `records` carries the records
+ * of the whole value across separate calls; see `WorkflowJsonRecords`.
+ *
+ * @internal Prepare the exact JSON value and encoded string for durable storage.
  */
-/** @internal Prepare the exact JSON value and encoded string for durable storage. */
 export function prepareWorkflowJson(
   value: unknown,
   label: string,
   runId?: string,
   options: WorkflowJsonSerializationOptions = {},
+  shape?: WorkflowJsonRecordShape,
+  records?: WorkflowJsonRecords,
 ): { normalized: unknown; serialized: string } {
   const { normalized, requiresIterativeEncoding, unrepresentable } =
-    normalizeAndFindUnrepresentableValues(value, label, options);
+    normalizeAndFindUnrepresentableValues(value, label, options, shape, records);
   const { fatal, fatalCount, lossy, lossyCount } = unrepresentable;
 
   if (fatalCount > 0) {
@@ -1542,8 +1695,10 @@ export function serializeWorkflowJson(
   label: string,
   runId?: string,
   options?: WorkflowJsonSerializationOptions,
+  shape?: WorkflowJsonRecordShape,
+  records?: WorkflowJsonRecords,
 ): string {
-  return prepareWorkflowJson(value, label, runId, options).serialized;
+  return prepareWorkflowJson(value, label, runId, options, shape, records).serialized;
 }
 
 /** Serialize a workflow context for durable storage. */
@@ -1552,5 +1707,92 @@ export function serializeWorkflowContext(
   runId?: string,
   options?: WorkflowJsonSerializationOptions,
 ): string {
-  return serializeWorkflowJson(context, "context", runId, options);
+  return serializeWorkflowJson(context, "context", runId, options, WORKFLOW_NODE_RECORD);
+}
+
+/** The node-state fields that carry step data or a resumable child-context snapshot. */
+const NODE_STATE_USER_DATA_FIELDS = ["input", "output", "_subWorkflowContext"] as const;
+
+type NodeStateUserDataField = typeof NODE_STATE_USER_DATA_FIELDS[number];
+
+/**
+ * @internal Apply the context persistence policy to user context in node states.
+ *
+ * A node state's `input` and `output` hold what a step received and returned,
+ * so they are the same user data `context` holds. `_subWorkflowContext` is the
+ * resumable snapshot of that same context while a nested workflow is incomplete.
+ * Leaving any of these outside the policy made Redis rewrite a `Date` and fail
+ * on a BigInt while the memory backend kept both, and `strictContext` saw neither.
+ *
+ * Each field is checked across all nodes in one pass, so a diagnostic names the
+ * field (`nodeStates.output.<redacted>...`) and a write logs at most one warning
+ * per field. `input` is checked before `output`, so a write with bad values in
+ * both reports `input`. A top-level step's lossy output is also in `context`,
+ * so it is reported for both. The returned states hold the JSON form a durable backend reads
+ * back; fields JSON omits are removed. `startedAt` and `completedAt` are left
+ * as they are.
+ */
+export function prepareNodeStatesUserData<
+  T extends { input?: unknown; output?: unknown; _subWorkflowContext?: unknown },
+>(
+  nodeStates: Readonly<Record<string, T>>,
+  runId: string | undefined,
+  options: WorkflowJsonSerializationOptions,
+  records?: WorkflowJsonRecords,
+): Record<string, T> {
+  nodeStates = resolveDeferredWorkflowJsonValue(nodeStates);
+  const prepared: Record<string, T> = {};
+  for (const nodeId of objectKeys(nodeStates)) {
+    // Defined rather than assigned, so a node id such as `__proto__` stays an own key.
+    objectDefineProperty(prepared, nodeId, {
+      value: { ...nodeStates[nodeId]! },
+      enumerable: true,
+      configurable: true,
+      writable: true,
+    });
+  }
+
+  for (const field of NODE_STATE_USER_DATA_FIELDS) {
+    const values = collectNodeStateField(prepared, field);
+    if (values === undefined) continue;
+    const persisted = jsonParse(
+      serializeWorkflowJson(
+        values,
+        `nodeStates.${field}`,
+        runId,
+        options,
+        WORKFLOW_NODE_RECORD,
+        records,
+      ),
+    ) as Record<string, unknown>;
+    for (const nodeId of objectKeys(values)) {
+      if (objectHasOwn(persisted, nodeId)) prepared[nodeId]![field] = persisted[nodeId];
+      else delete prepared[nodeId]![field];
+    }
+  }
+  return prepared;
+}
+
+function collectNodeStateField(
+  nodeStates: Record<
+    string,
+    { input?: unknown; output?: unknown; _subWorkflowContext?: unknown }
+  >,
+  field: NodeStateUserDataField,
+): Record<string, unknown> | undefined {
+  let values: Record<string, unknown> | undefined;
+  for (const nodeId of objectKeys(nodeStates)) {
+    if (!objectHasOwn(nodeStates[nodeId]!, field)) continue;
+    const value = nodeStates[nodeId]![field];
+    // A plain object, because strict mode reports any other prototype as lossy,
+    // with defined keys so a node id such as `__proto__` stays an own key.
+    values ??= {};
+    objectDefineProperty(values, nodeId, {
+      value,
+      enumerable: true,
+      configurable: true,
+      writable: true,
+    });
+  }
+  return values;
 }

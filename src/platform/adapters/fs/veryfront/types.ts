@@ -1,5 +1,6 @@
 import type {
   ResolveFileOptions,
+  SourceSnapshotFingerprintOptions,
   SourceSnapshotFreshnessOptions,
 } from "#veryfront/platform/adapters/base.ts";
 import type { Project } from "../../veryfront-api-client/index.ts";
@@ -63,7 +64,9 @@ export interface FSAdapter {
    */
   readonly sourceSnapshotFreshnessOptionsVersion?: 1;
   getSourceSnapshotVersion?(): number | undefined | Promise<number | undefined>;
-  getSourceSnapshotFingerprint?(): string | undefined | Promise<string | undefined>;
+  getSourceSnapshotFingerprint?(
+    options?: SourceSnapshotFingerprintOptions,
+  ): string | undefined | Promise<string | undefined>;
   /**
    * Stable name for the source context the snapshot currently targets. See
    * `FileSystemAdapter.getSourceSnapshotIdentity` in

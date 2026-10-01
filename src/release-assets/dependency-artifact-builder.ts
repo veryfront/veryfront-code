@@ -74,6 +74,7 @@ export interface DependencyArtifactBuilderDeps {
   limits?: Partial<DependencyArtifactBuildLimits>;
   now?: () => number;
   recordMetric?: (metric: DependencyArtifactBuildMetric) => void;
+  signal?: AbortSignal;
 }
 
 const DEFAULT_LIMITS: DependencyArtifactBuildLimits = {
@@ -367,7 +368,7 @@ function mergeLimits(
 
 interface UpstreamDeadline {
   readonly signal: AbortSignal;
-  race<T>(operation: () => Promise<T>, cleanup?: () => void): Promise<T>;
+  race<T>(operation: () => Promise<T>, cleanup?: (reason: unknown) => void): Promise<T>;
   dispose(): void;
 }
 
@@ -378,7 +379,12 @@ function upstreamTimeoutError(): DependencyArtifactBuildError {
   );
 }
 
-function createUpstreamDeadline(timeoutMs: number): UpstreamDeadline {
+/**
+ * Bounds upstream operations by the internal timeout and the caller's signal.
+ * Either one settles the active race at once, even when the operation ignores
+ * its AbortSignal, and runs the operation's cleanup once with the stop reason.
+ */
+function createUpstreamDeadline(timeoutMs: number, callerSignal?: AbortSignal): UpstreamDeadline {
   if (
     !Number.isSafeInteger(timeoutMs) ||
     timeoutMs < 0 ||
@@ -393,39 +399,51 @@ function createUpstreamDeadline(timeoutMs: number): UpstreamDeadline {
   const controller = new AbortController();
   const expiresAt = performance.now() + timeoutMs;
   const timeoutError = upstreamTimeoutError();
-  let expired = false;
+  let stopped = false;
   let disposed = false;
-  let activeOperation: { token: object; cleanup?: () => void } | undefined;
-  let rejectDeadline!: (error: DependencyArtifactBuildError) => void;
-  const deadline = new Promise<never>((_resolve, reject) => {
-    rejectDeadline = reject;
+  let activeOperation: { token: object; cleanup?: (reason: unknown) => void } | undefined;
+  let rejectStop!: (reason: unknown) => void;
+  const stop = new Promise<never>((_resolve, reject) => {
+    rejectStop = reject;
   });
+  // The stop promise may settle between races; only races observe it.
+  stop.catch(() => undefined);
 
-  const expire = (): void => {
-    if (expired || disposed) return;
-    expired = true;
-    rejectDeadline(timeoutError);
-    controller.abort(timeoutError);
+  const settle = (reason: unknown): void => {
+    if (stopped || disposed) return;
+    stopped = true;
+    rejectStop(reason);
+    const cleanup = activeOperation?.cleanup;
+    activeOperation = undefined;
     try {
-      activeOperation?.cleanup?.();
+      cleanup?.(reason);
     } catch {
-      // Cancellation is best-effort cleanup; the deadline rejection is authoritative.
+      // Cancellation is best-effort cleanup; the stop rejection is authoritative.
     }
   };
+  const expire = (): void => {
+    if (stopped || disposed) return;
+    controller.abort(timeoutError);
+    settle(timeoutError);
+  };
+  const onCallerAbort = (): void => settle(callerSignal?.reason);
   const timeout = setTimeout(expire, timeoutMs);
+  callerSignal?.addEventListener("abort", onCallerAbort, { once: true });
+  if (callerSignal?.aborted) onCallerAbort();
+  const signal = callerSignal
+    ? AbortSignal.any([callerSignal, controller.signal])
+    : controller.signal;
 
   return {
-    signal: controller.signal,
-    async race<T>(operation: () => Promise<T>, cleanup?: () => void): Promise<T> {
-      if (expired || performance.now() >= expiresAt) {
-        expire();
-        return await deadline;
-      }
+    signal,
+    async race<T>(operation: () => Promise<T>, cleanup?: (reason: unknown) => void): Promise<T> {
+      if (!stopped && performance.now() >= expiresAt) expire();
+      if (stopped) return await stop;
 
       const token = {};
       activeOperation = { token, cleanup };
       try {
-        return await Promise.race([operation(), deadline]);
+        return await Promise.race([operation(), stop]);
       } finally {
         if (activeOperation?.token === token) activeOperation = undefined;
       }
@@ -435,6 +453,7 @@ function createUpstreamDeadline(timeoutMs: number): UpstreamDeadline {
       disposed = true;
       activeOperation = undefined;
       clearTimeout(timeout);
+      callerSignal?.removeEventListener("abort", onCallerAbort);
     },
   };
 }
@@ -447,6 +466,7 @@ async function fetchSourceModules(
   identity: DependencyArtifactIdentity,
   fetcher: typeof fetch,
   limits: DependencyArtifactBuildLimits,
+  callerSignal?: AbortSignal,
 ): Promise<{
   modules: Map<string, DependencyArtifactSourceModule>;
   rootId: string;
@@ -455,7 +475,7 @@ async function fetchSourceModules(
   const externals = profileExternals(identity);
   const modules = new Map<string, DependencyArtifactSourceModule>();
   let totalBytes = 0;
-  const deadline = createUpstreamDeadline(limits.timeoutMs);
+  const deadline = createUpstreamDeadline(limits.timeoutMs, callerSignal);
 
   async function fetchAllowedModule(moduleId: string): Promise<{
     response: Response;
@@ -463,6 +483,7 @@ async function fetchSourceModules(
   }> {
     let currentUrl = resolveAllowedUpstreamUrl(moduleId, moduleId);
     for (let redirectCount = 0; redirectCount <= MAX_UPSTREAM_REDIRECTS; redirectCount++) {
+      callerSignal?.throwIfAborted();
       let response: Response;
       try {
         response = await deadline.race(() =>
@@ -476,6 +497,7 @@ async function fetchSourceModules(
           })
         );
       } catch (error) {
+        callerSignal?.throwIfAborted();
         if (
           deadline.signal.aborted ||
           (error instanceof Error && error.name === "AbortError")
@@ -516,6 +538,7 @@ async function fetchSourceModules(
   }
 
   async function visit(moduleId: string, depth: number): Promise<void> {
+    callerSignal?.throwIfAborted();
     if (modules.has(moduleId)) return;
     if (depth > limits.maxDepth) {
       throw new DependencyArtifactBuildError(
@@ -531,6 +554,7 @@ async function fetchSourceModules(
     }
 
     const { response, finalUrl } = await fetchAllowedModule(moduleId);
+    callerSignal?.throwIfAborted();
 
     if (!response.ok) {
       cancelResponseBody(response);
@@ -560,6 +584,7 @@ async function fetchSourceModules(
     try {
       bytes = await readBoundedResponseBytes(response, totalBytes, limits, deadline);
     } catch (error) {
+      callerSignal?.throwIfAborted();
       if (
         error instanceof DependencyArtifactBuildError ||
         error instanceof DependencyArtifactGraphError
@@ -595,6 +620,7 @@ async function fetchSourceModules(
     };
     modules.set(moduleId, module);
     for (const specifier of await readDependencyArtifactModuleSpecifiers(module)) {
+      callerSignal?.throwIfAborted();
       const resolution = resolveUpstreamImport(specifier, finalUrl, externals);
       if (resolution.kind === "external") continue;
       if (resolution.kind === "invalid") {
@@ -651,7 +677,7 @@ async function readBoundedResponseBytes(
     while (true) {
       const { done, value } = await deadline.race(
         () => reader.read(),
-        () => void reader.cancel(upstreamTimeoutError()).catch(() => undefined),
+        (reason) => void reader.cancel(reason).catch(() => undefined),
       );
       if (done) break;
       size += value.byteLength;
@@ -697,7 +723,9 @@ export async function buildDependencyArtifactGraph(
     identity,
     deps.fetch ?? fetch,
     limits,
+    deps.signal,
   );
+  deps.signal?.throwIfAborted();
   const externals = profileExternals(identity);
   return await materializeDependencyArtifactGraph({
     modules,
@@ -764,6 +792,7 @@ export async function runDependencyArtifactBuild(
   recordMetric({ event: "claim" });
 
   try {
+    deps.signal?.throwIfAborted();
     if (input.policy.decision !== "allow") {
       const failedResult: DependencyArtifactBuildResultBody = {
         outcome: "failed",
@@ -774,6 +803,7 @@ export async function runDependencyArtifactBuild(
         ...(input.policy.decision === "too_young" ? { retry_after: input.policy.retry_after } : {}),
       };
       await reportFailedResult(client, input, failedResult);
+      deps.signal?.throwIfAborted();
       const durationMs = Math.max(0, now() - startedAt);
       recordMetric({
         event: "failure",
@@ -792,8 +822,10 @@ export async function runDependencyArtifactBuild(
     }
 
     const built = await buildDependencyArtifactGraph(input.identity, deps);
+    deps.signal?.throwIfAborted();
     const assets = uniqueAssets(built.assets);
     for (const asset of assets) {
+      deps.signal?.throwIfAborted();
       if (await computeHashBytes(asset.bytes) !== asset.contentHash) {
         throw new DependencyArtifactBuildError(
           "hash_mismatch",
@@ -807,6 +839,7 @@ export async function runDependencyArtifactBuild(
         contentType: asset.contentType,
         bytes: asset.bytes,
       });
+      deps.signal?.throwIfAborted();
     }
 
     const publication: DependencyArtifactBuildResultBody = {
@@ -826,6 +859,7 @@ export async function runDependencyArtifactBuild(
       attemptCount: input.attempt_count,
       result: publication,
     });
+    deps.signal?.throwIfAborted();
     if (published.state !== "ready") {
       throw new DependencyArtifactBuildError(
         "result_state_mismatch",
@@ -852,6 +886,7 @@ export async function runDependencyArtifactBuild(
       durationMs,
     };
   } catch (error) {
+    deps.signal?.throwIfAborted();
     const code = failureCode(error);
     const result: DependencyArtifactBuildResultBody = {
       outcome: "failed",

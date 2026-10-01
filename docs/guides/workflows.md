@@ -90,6 +90,11 @@ Workflow context must be JSON-representable. Veryfront stores suspended workflow
 runs as JSON, and the memory backend applies the same persistence contract as
 durable backends so local development and production read back the same values.
 
+The same rules apply to the step input and output that each node state stores.
+This includes the results that a nested workflow holds while it waits for an
+approval or event. Their paths start with `nodeStates.input` or
+`nodeStates.output`.
+
 Use plain JSON values in step output: strings, numbers, booleans, null, arrays,
 and plain objects. Values that JSON cannot encode, such as `BigInt` or circular
 references, fail persistence with a redacted context path. Veryfront keeps the
@@ -568,10 +573,14 @@ export default workflow({
     }),
     step("write", { agent: "writer" }),
   ],
+  output: (context) => ({ article: (context.write as { text: string }).text }),
   onError: (error, ctx) => console.error("Failed:", error),
   onComplete: (result) => console.log("Done:", result),
 });
 ```
+
+The writer returns the article as text. The `output` selector takes that text
+from the write step and returns the `{ article }` object declared by `outputSchema`.
 
 ### Select the final output
 
@@ -601,18 +610,38 @@ export default workflow({
 });
 ```
 
-When a workflow declares both `output` and `outputSchema`, the schema checks the
-selected value before the run completes. The parsed value is stored as the
-output. A value that fails the schema fails the run, so it is never stored as a
-completed output. Without `output`, the output keeps the default shape above.
+`outputSchema` checks the selected value, or the default output when no
+`output` selector is declared, before the run completes. A selected output
+stores the parsed value. A valid default output keeps its original shape and
+values. A mismatch fails with
+`error.code: "OUTPUT_VALIDATION_FAILED"` and `{ path, message }` entries in
+`error.detail.errors`, so invalid output is never stored as completed.
 
 A workflow nested with `subWorkflow` or `map` hands its parent the same selected
 output. The node's own `output` mapper, when declared, receives that value.
 
+When a nested workflow resumes after a wait, downstream steps and its output
+selector receive completed child outputs without rerunning those steps.
+Completed wait values retain approval decision and event delivery metadata.
+Later child updates stay intact when the workflow resumes again or retries its
+output selector. Saved child contexts follow the same persistence policy as
+the durable workflow context.
+
 A started run's steps receive the parsed input: `inputSchema` transforms and
 defaults apply before the first step runs. The run keeps the input as it was
-submitted. A workflow nested with `subWorkflow` or `map` receives the input its
-parent passes as is; its `inputSchema` is not applied.
+submitted. A workflow nested with `subWorkflow` or `map` also parses the input its
+parent passes through its own `inputSchema` before building or running child steps.
+Invalid input fails the parent run with `INPUT_VALIDATION_FAILED` and validation
+errors containing JSON Pointer paths. A paused nested workflow reuses its parsed
+input when it resumes.
+
+Nested workflow retries and resumes use the retained child-context snapshot without
+repeating completed steps or loop callbacks. Older nested runs with completed loops
+and no retained child context fail with an explicit legacy compatibility error when
+they are retried or resumed after a wait. Loop output mixes completion callback
+updates with framework metadata, and iteration history does not prove the original
+final publication. The current workflow definition cannot recover that provenance.
+Resume such a run from a checkpoint that retains the original child context.
 
 A run that pauses on an approval or an event has no output until it completes.
 

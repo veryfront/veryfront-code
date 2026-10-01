@@ -35,3 +35,13 @@ export function scopeToRequestAuthority(scope: string): string {
   const authority = getRequestAuthorityCacheVariant();
   return authority ? `${scope}|${authority.length}:${authority}` : scope;
 }
+
+/**
+ * Scope a file-list cache key to the active request credential. Every writer
+ * and reader of an adapter's listing must agree on this key, or a hosted read
+ * misses the listing its own adapter just fetched and lists the source again.
+ */
+export function scopeFileListCacheKeyToRequestAuthority(cacheKey: string): string {
+  const authority = getRequestAuthorityCacheVariant();
+  return authority ? `${cacheKey}|${authority}` : cacheKey;
+}

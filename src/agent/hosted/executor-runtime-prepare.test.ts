@@ -183,6 +183,38 @@ async function prepare(
 describe("executor runtime preparation", () => {
   beforeEach(seedServedCatalogForTests);
   afterEach(__resetVeryfrontCloudCatalogForTests);
+  it("carries a verified resume call through preparation into runtime execution", async () => {
+    const executions: unknown[] = [];
+    const lookup = tool({
+      id: "lookup",
+      description: "Lookup one record",
+      inputSchema: defineSchema((v) => v.object({ query: v.string() }))(),
+      execute: (input) => {
+        executions.push(input);
+        return { matches: ["record-1"] };
+      },
+    });
+    const resumeToolCall = {
+      id: "call-lookup:resume-1",
+      name: "lookup",
+      input: { query: "open" },
+    };
+    const f = fixture({
+      config: { tools: { lookup } },
+      grant: { ...grant, allowedToolNames: ["lookup"] },
+    });
+    try {
+      const events = await Array.fromAsync(
+        await preparedStream(f, { agentId: "coder", serverResolvedResumeToolCall: resumeToolCall }),
+      );
+      assertEquals(executions, [{ query: "open" }]);
+      assertEquals(JSON.stringify(events).includes(resumeToolCall.id), true);
+      assertEquals(JSON.stringify(events).includes('"query":"open"'), true);
+    } finally {
+      await f.owner.close();
+    }
+  });
+
   it("extracts inline tools under the source policy in the full-runtime profile", async () => {
     const policy = { schemaVersion: 1 as const, mode: "allowlist" as const, integrations: {} };
     const observed: unknown[] = [];
@@ -563,10 +595,35 @@ describe("executor runtime preparation", () => {
   }
 
   it("rejects source, mode, and authority fields from wire preparation", async () => {
-    const values: JsonValue[] = [{ agentId: "coder", source }, {
-      agentId: "coder",
-      execution: { kind: "ephemeral" },
-    }, { agentId: "coder", authToken: "synthetic" }];
+    const values: JsonValue[] = [
+      { agentId: "coder", source },
+      {
+        agentId: "coder",
+        execution: { kind: "ephemeral" },
+      },
+      { agentId: "coder", authToken: "synthetic" },
+      {
+        agentId: "coder",
+        serverResolvedResumeToolCall: { id: "call:resume-1", name: "lookup" },
+      },
+      {
+        agentId: "coder",
+        serverResolvedResumeToolCall: {
+          id: "call:resume-1",
+          name: "lookup",
+          input: {},
+          counterfeit: true,
+        },
+      },
+      {
+        agentId: "coder",
+        serverResolvedResumeToolCall: {
+          id: "call:resume-1",
+          name: "lookup",
+          input: { query: undefined },
+        },
+      } as unknown as JsonValue,
+    ];
     for (const value of values) {
       const f = fixture();
       try {

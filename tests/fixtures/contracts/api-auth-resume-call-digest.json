@@ -1,0 +1,26 @@
+{
+  "contractId": "veryfront.resume-tool-call.sha256.v1",
+  "resumeToolCall": {
+    "id": "call-inbox:resume-1",
+    "name": "outlook__list_threads",
+    "input": {
+      "folder": "inbox",
+      "nested": {
+        "1": "first",
+        "2": "second",
+        "z": "café 東京",
+        "a": [
+          true,
+          null,
+          {
+            "__proto__": {
+              "safe": "data"
+            }
+          }
+        ]
+      }
+    }
+  },
+  "serialized": "{\"id\":\"call-inbox:resume-1\",\"name\":\"outlook__list_threads\",\"input\":{\"folder\":\"inbox\",\"nested\":{\"1\":\"first\",\"2\":\"second\",\"z\":\"café 東京\",\"a\":[true,null,{\"__proto__\":{\"safe\":\"data\"}}]}}}",
+  "sha256": "08b27aaf133e41bf9d3b3c45289b72cdbba18ef5ed13e5c1d282c5e9e5e3f685"
+}

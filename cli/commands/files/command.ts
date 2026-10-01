@@ -179,12 +179,16 @@ export async function putRemoteFileFromLocal(
   projectSlug: string,
   remotePath: string,
   localPath: string,
+  signal?: AbortSignal,
 ): Promise<{ path: string }> {
   const fs = createFileSystem();
+  signal?.throwIfAborted();
   const content = await fs.readTextFile(localPath);
+  signal?.throwIfAborted();
   const result = await client.put<{ path: string }>(buildRemoteFileUrl(projectSlug, remotePath), {
     content,
-  });
+  }, signal ? { signal, retryPolicy: "none" } : undefined);
+  signal?.throwIfAborted();
   return { path: result.path ?? normalizeProjectFilePath(remotePath) };
 }
 

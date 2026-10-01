@@ -5764,72 +5764,57 @@ export default config as const;
         assertEquals(error.message.includes("alice"), false);
       });
 
-      /**
-       * Fastest of `runs` timed `loadFailure` calls, with the error it raised.
-       *
-       * A single timing is the wrong instrument here. `loadFailure` writes a temp
-       * file and loads a module, which costs tens of milliseconds before any
-       * redaction runs, while the backtracking these two tests exist to catch
-       * costs about 16ms at 100k characters when it is bounded. The signal is
-       * therefore smaller than the harness noise, and one scheduler hiccup on a
-       * shared runner is enough to fail the ratio: this went red at
-       * `probe 5450ms vs control 39ms` on a change measured to leave every
-       * pattern's cost byte-identical.
-       *
-       * Noise only ever adds time, so the minimum of several runs is the closest
-       * available estimate of the true cost. Unbounded backtracking is not
-       * intermittent -- it is paid on every run -- so taking the minimum cannot
-       * hide the thing being guarded against, which is what makes this safe
-       * rather than a way of making a red test green.
-       */
-      async function fastestLoad(
+      async function measureLoadCause(
         prefix: string,
         source: string,
-        runs = 3,
       ): Promise<{ ms: number; error: VeryfrontError }> {
-        const start = Date.now();
-        let error = await loadFailure(prefix, source);
-        let ms = Date.now() - start;
-        for (let run = 1; run < runs; run += 1) {
-          const runStart = Date.now();
-          error = await loadFailure(prefix, source);
-          ms = Math.min(ms, Date.now() - runStart);
-        }
-
-        return { ms, error };
+        const output = await new Deno.Command(Deno.execPath(), {
+          args: [
+            "eval",
+            "--config=deno.json",
+            `
+              import { cpuUsage } from "node:process";
+              import { __summarizeConfigLoadCauseForTests as summarize } from ${
+              JSON.stringify(new URL("./loader.ts", import.meta.url).href)
+            };
+              let failure;
+              try { ${source} } catch (error) { failure = error; }
+              summarize(new Error("warmup"));
+              const start = cpuUsage();
+              const summary = summarize(failure);
+              const elapsed = cpuUsage(start);
+              console.log(JSON.stringify({ ms: (elapsed.user + elapsed.system) / 1000, summary }));
+            `,
+          ],
+          cwd: new URL("../../", import.meta.url),
+          stdout: "piped",
+          stderr: "piped",
+        }).output();
+        assertEquals(output.code, 0, new TextDecoder().decode(output.stderr));
+        const measured = JSON.parse(new TextDecoder().decode(output.stdout));
+        const error = await loadFailure(prefix, source);
+        assertStringIncludes(error.message, measured.summary);
+        return { ms: measured.ms, error };
       }
 
       it("summarizes a very long cause in time proportional to its length", async () => {
-        // A wall-clock bound would couple this to runner speed, and a partial
-        // reintroduction of backtracking that stayed under it would pass
-        // silently. Instead time two inputs of the SAME length on the SAME
-        // machine, differing only in whether the pathological retry can start:
-        // digits cannot begin a scheme, letters can, so the ratio isolates the
-        // backtracking cost from the harness overhead both inputs pay.
-        //
-        // That overhead is the same in expectation but NOT run to run, which is
-        // why each side is the fastest of several runs -- see `fastestLoad`. A
-        // single pair of timings failed here once at 5450ms vs 39ms on a change
-        // measured to leave every pattern's cost unchanged.
         const size = 100000;
-
-        const control = await fastestLoad(
+        const control = await measureLoadCause(
           "vf-config-long-control-",
           `throw new Error("1".repeat(${size}));\n`,
         );
         const controlMs = Math.max(1, control.ms);
-        const { ms: probeMs, error } = await fastestLoad(
+        const { ms: probeMs, error } = await measureLoadCause(
           "vf-config-long-probe-",
           `throw new Error("a".repeat(${size}));\n`,
         );
-
-        // Bounded, the two are within noise of each other. Unbounded, the probe
-        // measured ~17.9s against an unchanged control.
         assertEquals(
           probeMs < controlMs * 20,
           true,
-          `probe ${probeMs}ms vs control ${controlMs}ms`,
+          `probe ${probeMs} CPU ms vs control ${controlMs} CPU ms`,
         );
+        assertStringIncludes(control.error.message, `${"1".repeat(199)}…`);
+        assertStringIncludes(error.message, `${"a".repeat(199)}…`);
         assertEquals(error.slug, CONFIG_PARSE_ERROR_SLUG);
       });
 
@@ -5846,12 +5831,12 @@ export default config as const;
         // is how this guard silently went vacuous once, and why it is `ab://`.
         const repeats = 20000;
 
-        const control = await fastestLoad(
+        const control = await measureLoadCause(
           "vf-config-starts-control-",
           `throw new Error("1b://(".repeat(${repeats}));\n`,
         );
         const controlMs = Math.max(1, control.ms);
-        const { ms: probeMs, error } = await fastestLoad(
+        const { ms: probeMs, error } = await measureLoadCause(
           "vf-config-starts-probe-",
           `throw new Error("ab://(".repeat(${repeats}));\n`,
         );
@@ -5866,12 +5851,12 @@ export default config as const;
 
       it("bounds CSI scheme reconstruction after an ordinary sequence", async () => {
         const size = 200000;
-        const control = await fastestLoad(
+        const control = await measureLoadCause(
           "vf-config-long-csi-control-",
           `throw new Error("a".repeat(${size}));\n`,
         );
         const controlMs = Math.max(1, control.ms);
-        const { ms: probeMs, error } = await fastestLoad(
+        const { ms: probeMs, error } = await measureLoadCause(
           "vf-config-long-csi-probe-",
           `throw new Error(String.fromCharCode(27) + "[31m" + "a".repeat(${size}));\n`,
         );
@@ -5886,12 +5871,12 @@ export default config as const;
 
       it("bounds reconstruction for a CSI-dense config error", async () => {
         const repeats = 20000;
-        const control = await fastestLoad(
+        const control = await measureLoadCause(
           "vf-config-dense-csi-control-",
           `throw new Error("aaaaa".repeat(${repeats}));\n`,
         );
         const controlMs = Math.max(1, control.ms);
-        const { ms: probeMs, error } = await fastestLoad(
+        const { ms: probeMs, error } = await measureLoadCause(
           "vf-config-dense-csi-probe-",
           `throw new Error((String.fromCharCode(27) + "[31m").repeat(${repeats}));\n`,
         );
@@ -5907,12 +5892,12 @@ export default config as const;
       it("skips reconstruction for formatting CSI after long literal spans", async () => {
         const gap = 4096;
         const repeats = 32;
-        const control = await fastestLoad(
+        const control = await measureLoadCause(
           "vf-config-spaced-csi-control-",
           `throw new Error("a".repeat(${gap + 5}).repeat(${repeats}));\n`,
         );
         const controlMs = Math.max(1, control.ms);
-        const { ms: probeMs, error } = await fastestLoad(
+        const { ms: probeMs, error } = await measureLoadCause(
           "vf-config-spaced-csi-probe-",
           `throw new Error(("a".repeat(${gap}) + String.fromCharCode(27) + "[31m").repeat(${repeats}));\n`,
         );
@@ -5928,12 +5913,12 @@ export default config as const;
       it("bounds total prefix reconstruction for colon-bearing CSI", async () => {
         const gap = 4096;
         const repeats = 32;
-        const control = await fastestLoad(
+        const control = await measureLoadCause(
           "vf-config-spaced-colon-csi-control-",
           `throw new Error("a".repeat(${gap + 4}).repeat(${repeats}));\n`,
         );
         const controlMs = Math.max(1, control.ms);
-        const { ms: probeMs, error } = await fastestLoad(
+        const { ms: probeMs, error } = await measureLoadCause(
           "vf-config-spaced-colon-csi-probe-",
           `throw new Error(("a".repeat(${gap}) + String.fromCharCode(27) + "[:H").repeat(${repeats}));\n`,
         );

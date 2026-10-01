@@ -131,6 +131,19 @@ class DelayedActivationBackend extends MemoryBackend {
   }
 }
 
+class CompletionPatchBackend extends MemoryBackend {
+  completionPatch: Partial<WorkflowRun> | undefined;
+
+  override async updateRunIfStatus(
+    runId: string,
+    expectedStatuses: WorkflowRun["status"][],
+    patch: Partial<WorkflowRun>,
+  ): Promise<boolean> {
+    if (patch.status === "completed") this.completionPatch = patch;
+    return await super.updateRunIfStatus(runId, expectedStatuses, patch);
+  }
+}
+
 class LosingLockBackend extends MemoryBackend {
   readonly extensionAttempted = Promise.withResolvers<void>();
   releaseCalls = 0;
@@ -807,6 +820,32 @@ describe("workflow/runtime/workflow-run-control execute", () => {
       env: { PUBLIC_VALUE: "kept" },
       finish: { ok: true },
     });
+  });
+
+  it("preserves the legacy default output shape after validation", async () => {
+    const backend = new CompletionPatchBackend();
+    const run = { ...createRun("default-output-shape"), status: "running" as const };
+    await backend.createRun(run);
+    const completedAt = new Date("2026-01-02T03:04:05.000Z");
+    const defaultOutput = {
+      finish: { ok: true, optional: undefined, completedAt },
+    };
+    let validatedOutput: unknown;
+
+    await execute(
+      backend,
+      run,
+      () => completedResult({ input: {}, ...defaultOutput }),
+      {
+        parseOutput: (output) => {
+          validatedOutput = output;
+          return output;
+        },
+      },
+    );
+
+    assertEquals(validatedOutput, defaultOutput);
+    assertEquals(backend.completionPatch?.output, defaultOutput);
   });
 
   it("stores the selected value as the workflow's final output", async () => {

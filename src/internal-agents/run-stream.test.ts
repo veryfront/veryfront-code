@@ -44,6 +44,7 @@ import { __resetLoggerConfigForTests, type LogEntry } from "#veryfront/utils/log
 import type { AgentRunEventSink } from "#veryfront/runtime/model-call-context.ts";
 import { getActiveRunEventSinks } from "#veryfront/runtime/run-event-sink-context.ts";
 import type { ProviderReplayCheckpoint } from "#veryfront/agent/runtime/provider-replay.ts";
+import { scriptedModel } from "#veryfront/agent/runtime/model-runtime.test-helpers.ts";
 import { AgentRunSessionManager } from "./session-manager.ts";
 import {
   buildMergedTools,
@@ -556,16 +557,22 @@ describe("internal-agents/run-stream", () => {
     assertEquals(Object.keys(mergedTools ?? {}), ["unrelated_tool"]);
   });
 
-  it("rejects every request-injected tool when an unrestricted selector fails closed", () => {
+  it("merges request client tools for a markdown all-tools agent with denied tools", async () => {
     const sessionManager = new AgentRunSessionManager();
     const runtimeAgent = createRuntimeAgentFromMarkdownDefinition({
-      id: "fail-closed-injected",
-      name: "Fail Closed Injected",
-      description: "Does not accept injected project tools",
-      instructions: "Do not use project tools.",
+      id: "denied-lookup-agent",
+      name: "Denied Lookup Agent",
+      description: "All tools except update_file",
+      instructions: "Use lookup_reference to answer.",
       tools: true,
       deniedTools: ["update_file"],
     });
+    const lookupReferenceSchema = {
+      type: "object" as const,
+      required: ["code"],
+      properties: { code: { type: "string" as const } },
+    };
+    sessionManager.startRun({ runId: "run_1", threadId: "thread" });
 
     const mergedTools = buildMergedTools(
       runtimeAgent,
@@ -574,15 +581,39 @@ describe("internal-agents/run-stream", () => {
         threadId: crypto.randomUUID(),
         messages: [],
         tools: [
+          {
+            name: "lookup_reference",
+            description: "Client lookup",
+            parameters: lookupReferenceSchema,
+          },
           { name: "update_file", description: "Denied tool" },
-          { name: "unrelated_tool", description: "Another project tool" },
+          { name: "veryfront__update_file", description: "Denied tool alias" },
+          // Server-executed tools the control plane injects stay failed closed.
+          { name: "invoke_agent", description: "Delegate" },
+          { name: "veryfront__invoke_agent", description: "Delegate" },
+          { name: "web_search", description: "Search" },
+          { name: "web_fetch", description: "Fetch" },
+          { name: "form_input", description: "Form" },
+          { name: "studio_todo_write", description: "Todos" },
         ],
         context: [],
       } as Parameters<typeof buildMergedTools>[1],
       sessionManager,
     );
 
-    assertEquals(mergedTools, undefined);
+    assertEquals(Object.keys(mergedTools ?? {}), ["lookup_reference"]);
+    const lookupReference = mergedTools?.lookup_reference as Tool;
+    assertEquals(lookupReference.description, "Client lookup");
+    assertEquals(lookupReference.inputSchemaJson, lookupReferenceSchema);
+    // The wrapper parks on the caller's result instead of executing server-side.
+    const result = executeConfiguredTool(
+      "lookup_reference",
+      { code: "A1" },
+      mergedTools,
+      { toolCallId: "lookup" },
+    );
+    sessionManager.submitToolResult("run_1", { toolCallId: "lookup", result: { title: "A1" } });
+    assertEquals(await result, { title: "A1" });
   });
 
   it("applies owned short-name denials to registered-name injected tools", () => {
@@ -979,6 +1010,120 @@ describe("internal-agents/run-stream", () => {
       true,
     );
     assertEquals(JSON.stringify(frames).includes("ordered-signature"), false);
+  });
+
+  it("does not deadlock the real runtime while publishing an aliased batch before dispatch", async () => {
+    const sessionManager = new AgentRunSessionManager();
+    const messageId = crypto.randomUUID();
+    const runId = "run_real_aliased_parallel_delegation";
+    const model = scriptedModel([{
+      toolCalls: [
+        { id: "child-1", name: "veryfront__invoke_agent", input: '{}{"task":"first"}' },
+        { id: "child-2", name: "veryfront__invoke_agent", input: '{}{"task":"second"}' },
+      ],
+    }], {
+      modelId: "anthropic/hosted-aliased-parallel-delegation",
+      provider: "anthropic",
+      only: "stream",
+    });
+    const runtimeAgent = createAgent({
+      id: "hosted-aliased-parallel-delegation",
+      model: "anthropic/hosted-aliased-parallel-delegation",
+      system: "Delegate twice.",
+      skills: false,
+      maxSteps: 1,
+      resolveModelTransport: () => ({ model }),
+    });
+    const response = await createRuntimeAgentStreamResponse(
+      {
+        threadId: crypto.randomUUID(),
+        runId,
+        messageId,
+        messages: [{ id: "user-1", role: "user", content: "Delegate both tasks" }],
+        tools: [{ name: "veryfront__invoke_agent" }],
+        context: [],
+      },
+      runtimeAgent,
+      {
+        sessionManager,
+        providerReplayCheckpointEmissionEnabled: true,
+        persistProviderReplayCheckpoint: () => Promise.resolve(),
+      },
+    );
+    sessionManager.prepareForToolResult(runId, "child-1");
+    sessionManager.prepareForToolResult(runId, "child-2");
+    sessionManager.submitToolResult(runId, {
+      toolCallId: "child-1",
+      result: { result: "first complete" },
+    });
+    sessionManager.submitToolResult(runId, {
+      toolCallId: "child-2",
+      result: { result: "second complete" },
+    });
+    const body = await response.text();
+    const frames = parseSseFrames(body);
+    const replayBoundary = frames.find((frame) =>
+      frame.event === PROVIDER_REPLAY_TURN_COMPLETE_SSE_EVENT_NAME
+    )?.data as Record<string, unknown>;
+    const firstToolArgs = frames.find((frame) => frame.event === "ToolCallArgs")?.data as Record<
+      string,
+      unknown
+    >;
+
+    assertEquals(body.includes(PROVIDER_REPLAY_TURN_COMPLETE_SSE_EVENT_NAME), true);
+    assertEquals(
+      body.indexOf(PROVIDER_REPLAY_TURN_COMPLETE_SSE_EVENT_NAME) <
+        body.indexOf("event: ToolCallStart"),
+      true,
+    );
+    assertStringIncludes(body, '"toolName":"veryfront__invoke_agent"');
+    assertEquals(
+      (replayBoundary.invokeAgentToolCalls as Array<Record<string, unknown>>)[0]?.toolArgsJson,
+      '{"task":"first"}',
+    );
+    assertEquals(firstToolArgs.delta, '{"task":"first"}');
+  });
+
+  it("does not expose a hidden authorized invoke_agent call as dispatchable", async () => {
+    const model = scriptedModel([{
+      toolCalls: [
+        { id: "hidden-child", name: "invoke_agent", input: { task: "hidden" } },
+      ],
+    }], {
+      modelId: "anthropic/hosted-hidden-delegation",
+      provider: "anthropic",
+      only: "stream",
+    });
+    const runtimeAgent = createAgent(
+      {
+        id: "hosted-hidden-delegation",
+        model: "anthropic/hosted-hidden-delegation",
+        system: "Delegate once.",
+        skills: false,
+        tools: true,
+        maxSteps: 1,
+        resolveModelTransport: () => ({ model }),
+        __vfToolLoadingMode: "deferred",
+      } as Parameters<typeof createAgent>[0],
+    );
+    const response = await createRuntimeAgentStreamResponse(
+      {
+        threadId: crypto.randomUUID(),
+        runId: "run_hidden_delegation",
+        messages: [{ id: "user-1", role: "user", content: "Delegate the task" }],
+        tools: [{ name: "invoke_agent" }],
+        context: [],
+      },
+      runtimeAgent,
+      { sessionManager: new AgentRunSessionManager() },
+    );
+    const frames = parseSseFrames(await response.text());
+    const hiddenCallFrames = frames.filter((frame) =>
+      (frame.data as Record<string, unknown>).toolCallId === "hidden-child"
+    );
+
+    assertEquals(model.toolNames().includes("invoke_agent"), false);
+    assertEquals(hiddenCallFrames.some((frame) => frame.event === "ToolCallEnd"), false);
   });
 
   it("fails closed when checkpoint emission has no runtime message identity", async () => {
