@@ -155,6 +155,50 @@ describe("DAGExecutor", () => {
     executor = new DAGExecutor({ stepExecutor });
   });
 
+  describe("nested output exception replay", () => {
+    for (const generatedByMap of [false, true]) {
+      it(`restores completed child outputs after ${generatedByMap ? "map" : "direct"} nested output throws`, async () => {
+        let childExecutions = 0;
+        let outputCalls = 0;
+        const childExecutor = new MockStepExecutor(new Map(), (_node, context) => {
+          childExecutions++;
+          return { success: true, output: context.input, executionTime: 0 };
+        });
+        const workflow: WorkflowDefinition = {
+          id: "child-workflow",
+          steps: [step("child-read", { tool: "read" })],
+          output: (context) => {
+            if (++outputCalls === 1) throw new Error("output selection failed");
+            return { input: context.input, read: context["child-read"] };
+          },
+        };
+        const nodes = generatedByMap
+          ? [map("children", { items: [{ n: 1 }], processor: workflow })]
+          : [subWorkflow("child", { workflow, input: { n: 1 } })];
+        const first = await new DAGExecutor({ stepExecutor: childExecutor }).execute(
+          nodes,
+          createTestRun(),
+        );
+        assertEquals(first.completed, false);
+        assertStringIncludes(first.error ?? "", "output selection failed");
+        const childId = generatedByMap ? "children_0/child-read" : "child-read";
+        assertEquals(first.nodeStates[childId]?.status, "completed");
+        assertEquals(first.nodeStates[childId]?.output, { n: 1 });
+        const retried = await new DAGExecutor({ stepExecutor: childExecutor }).execute(
+          nodes,
+          createTestRun({ nodeStates: first.nodeStates, context: first.context }),
+        );
+        assertEquals(retried.completed, true);
+        const expected = { input: { n: 1 }, read: { n: 1 } };
+        assertEquals(
+          retried.context[generatedByMap ? "children" : "child"],
+          generatedByMap ? [expected] : expected,
+        );
+        assertEquals(childExecutions, 1);
+      });
+    }
+  });
+
   describe("simple sequential execution", () => {
     it("should execute a single step node", async () => {
       const nodes: WorkflowNode[] = [{ id: "step1", config: { type: "step" } as any }];

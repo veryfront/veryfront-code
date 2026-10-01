@@ -2502,6 +2502,21 @@ export class DAGExecutor {
       scope,
     );
 
+    // Completed children are skipped on replay. Rebuild their local output
+    // keys from the owned states before output selection or dependent steps run.
+    // Descendant sub-workflows keep their outputs in their own context.
+    const childContext: WorkflowContext = { input };
+    for (const [childId, childState] of Object.entries(seededNodeStates)) {
+      if (
+        childState.status === "completed" &&
+        (childState._subWorkflowOwnerPath === undefined ||
+          childState._subWorkflowOwnerPath === ownerPath) &&
+        Object.hasOwn(childState, "output")
+      ) {
+        applyContextPatch(childContext, createSetContextPatch({ [childId]: childState.output }));
+      }
+    }
+
     const subRunId = `${node.id}_sub_${generateId()}`;
     // The sub-run record is synthetic and never persisted, so its id is a debugging
     // attribute only — `workflow.run_id` keeps pointing at the root run.
@@ -2519,7 +2534,7 @@ export class DAGExecutor {
         input,
         nodeStates: seededNodeStates,
         currentNodes: [],
-        context: { input },
+        context: childContext,
         checkpoints: [],
         pendingApprovals: [],
         createdAt: new Date(),

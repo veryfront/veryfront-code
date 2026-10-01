@@ -239,6 +239,51 @@ describe("WorkflowClient", () => {
     assertEquals(Object.keys((run?.nodeStates.triage?.output ?? {}) as object), ["category"]);
   });
 
+  it("restores completed nested child output when retrying an output exception (#2223)", async () => {
+    let childExecutions = 0;
+    let outputCalls = 0;
+    const childReadTool: Tool = {
+      id: "retry-nested-child-read",
+      type: "function",
+      description: "Return the nested workflow input",
+      inputSchema: defineSchema((v) => v.object({ n: v.number() }))(),
+      execute: (input) => {
+        childExecutions++;
+        return Promise.resolve(input);
+      },
+    };
+    const child = workflow({
+      id: "retry-nested-output-child",
+      steps: [step("child-read", { tool: childReadTool })],
+      output: (context): unknown => {
+        if (++outputCalls === 1) throw new Error("output selection failed");
+        return { input: context.input, read: context["child-read"] };
+      },
+    });
+    client.register(workflow({
+      id: "retry-nested-output-parent",
+      steps: [subWorkflow("child", { workflow: child.definition, input: { n: 1 } })],
+    }));
+
+    const handle = await client.start("retry-nested-output-parent", {});
+    await handle.settled();
+
+    const failed = await client.getRun(handle.runId);
+    assertEquals(failed?.status, "failed");
+    assertEquals(failed?.nodeStates["child-read"]?.status, "completed");
+    assertEquals(failed?.nodeStates["child-read"]?.output, { n: 1 });
+    assertEquals(failed?.checkpoints, []);
+
+    await client.retry(handle.runId);
+    await waitFor(async () => (await client.getRun(handle.runId))?.status === "completed");
+
+    const completed = await client.getRun(handle.runId);
+    assertEquals(completed?.output, {
+      child: { input: { n: 1 }, read: { n: 1 } },
+    });
+    assertEquals(childExecutions, 1);
+  });
+
   it("selects a map workflow processor's output by its declared step ids (#2107)", async () => {
     const processor = workflow({
       id: "selecting-map-processor",
