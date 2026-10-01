@@ -10,9 +10,9 @@ protects a distinct delivery boundary.
 four-shard coverage dependency with its 80 percent floor, integration tests,
 the full Node and Bun runtime suites, binary end-to-end tests, and RSC browser
 end-to-end tests to succeed for pull requests and merge queue runs. On main
-pushes, the same dependency checks run as the first step of each publisher,
+pushes selecting a publisher, the same dependency checks run as the first step of each publisher,
 before any checkout or publication. The named merge check remains on all other
-events. Sonar analysis is also mandatory for merge queue runs, main pushes,
+events and on main pushes with no release selected. Sonar analysis is also mandatory for merge queue runs, main pushes,
 manually dispatched runs, and trusted pull requests. The scanner waits for the
 server-side SonarQube Cloud Quality Gate, so the required
 `SonarQube Cloud quality gate` check fails when that gate fails rather than only
@@ -27,7 +27,7 @@ reporting remains advisory.
 The scanner emits the diagnostic `SonarQube Cloud scan` check.
 `SonarQube Cloud quality gate` is the only Sonar check required by the ruleset
 and depends on that scanner result on pull requests and merge queue runs.
-On main pushes, the scanner checks its own outcome as its last step, retaining
+On main pushes selecting a publisher, the scanner checks its own outcome as its last step, retaining
 the same server-side gate without acquiring another runner.
 
 The active merge queue ruleset gives required checks at least 70 minutes to

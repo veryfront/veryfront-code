@@ -637,8 +637,8 @@ jobs:
     name: SonarQube Cloud quality gate
     runs-on: ubuntu-latest
     timeout-minutes: 2
-    needs: [sonar]
-    if: ${{ always() && !(github.event_name == 'push' && github.ref == 'refs/heads/main') && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && (github.event_name != 'pull_request' || github.event.pull_request.user.login != 'dependabot[bot]') }}
+    needs: [sonar, version-check]
+    if: ${{ always() && !(github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.version-check.result == 'success' && (needs.version-check.outputs.is_stable == 'false' || needs.version-check.outputs.stable_release_requested == 'true')) && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && (github.event_name != 'pull_request' || github.event.pull_request.user.login != 'dependabot[bot]') }}
     steps:
       - name: Require server-side quality gate
         env:
@@ -710,7 +710,8 @@ jobs:
       - tests-binary-e2e
       - tests-e2e-rsc-browser
       - sonar-quality-gate
-    if: ${{ always() && !(github.event_name == 'push' && github.ref == 'refs/heads/main') }}
+      - version-check
+    if: ${{ always() && !(github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.version-check.result == 'success' && (needs.version-check.outputs.is_stable == 'false' || needs.version-check.outputs.stable_release_requested == 'true')) }}
     steps:
       - name: Require merge correctness dependencies
         env:

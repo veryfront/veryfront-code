@@ -18,6 +18,7 @@ const REQUIRED_DEPENDENCIES = [
   "tests-binary-e2e",
   "tests-e2e-rsc-browser",
   "sonar-quality-gate",
+  "version-check",
 ] as const;
 const RESULT_ENV = {
   SOURCE_CHECKS_RESULT: "${{ needs.ci.result }}",
@@ -37,7 +38,8 @@ const SONAR_COVERAGE_JOB_EXPRESSION =
   `\${{ needs.coverage-shards.result == 'success' && needs.coverage-node-executor.result == 'success' && needs.coverage-integration-client.result == 'success' && (${SONAR_REQUIRED_CONDITION}) }}`;
 const SONAR_JOB_EXPRESSION =
   `\${{ needs.sonar-coverage.result == 'success' && (${SONAR_REQUIRED_CONDITION}) }}`;
-const MAIN_PUSH_CONDITION = "(github.event_name == 'push' && github.ref == 'refs/heads/main')";
+const MAIN_PUSH_CONDITION =
+  "(github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.version-check.result == 'success' && (needs.version-check.outputs.is_stable == 'false' || needs.version-check.outputs.stable_release_requested == 'true'))";
 const SONAR_GATE_JOB_EXPRESSION =
   `\${{ always() && !${MAIN_PUSH_CONDITION} && ${SONAR_REQUIRED_CONDITION} }}`;
 const SONAR_JOB_TIMEOUT_MINUTES = 28;
@@ -112,6 +114,15 @@ function longestJobPathMinutes(
   );
 
   const job = asRecord(jobs[jobName], `${jobName} job`);
+  // Release selection is a main-only dependency; it never acquires a runner
+  // on the merge queue path whose response budget this contract measures.
+  if (jobName === "version-check") {
+    assertEquals(
+      job.if,
+      "${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && github.ref == 'refs/heads/main' }}",
+    );
+    return 0;
+  }
   const timeout = Number(job["timeout-minutes"]);
   assert(
     Number.isFinite(timeout) && timeout > 0,
@@ -166,6 +177,36 @@ function sonarGateStep(job: YamlRecord): YamlRecord {
   );
   assert(step, "SonarQube Cloud quality gate must require the scanner result");
   return asRecord(step, "SonarQube Cloud quality gate result step");
+}
+
+async function runStandaloneGateCondition(
+  job: YamlRecord,
+  overrides: Record<string, string>,
+): Promise<boolean> {
+  const context: Record<string, string> = {
+    "github.event_name": "push",
+    "github.ref": "refs/heads/main",
+    "github.repository": "veryfront/veryfront-code",
+    "github.event.pull_request.head.repo.full_name": "veryfront/veryfront-code",
+    "github.event.pull_request.user.login": "contributor",
+    "needs.version-check.result": "success",
+    "needs.version-check.outputs.is_stable": "false",
+    "needs.version-check.outputs.stable_release_requested": "false",
+    ...overrides,
+  };
+  const expression = String(job.if).slice(3, -2).replaceAll("always()", "1 == 1")
+    .replace(/(?:github|needs)\.[a-zA-Z0-9_.-]+/g, (name) => {
+      assert(name in context, `missing workflow condition fixture: ${name}`);
+      assert(!context[name].includes("'"));
+      return `'${context[name]}'`;
+    }).replace(/!(?!=)/g, "! ").replaceAll("(", " ( ").replaceAll(")", " ) ");
+  const output = await new Deno.Command("bash", {
+    args: ["-c", `[[ ${expression} ]]`],
+    stdout: "piped",
+    stderr: "piped",
+  }).output();
+  assert(output.code === 0 || output.code === 1, new TextDecoder().decode(output.stderr));
+  return output.code === 0;
 }
 
 async function runGate(
@@ -267,6 +308,49 @@ describe("merge quality gate workflow", () => {
     }
   });
 
+  it("keeps standalone gates on main when no publisher is selected", async () => {
+    const jobs = asRecord((await readWorkflow()).jobs, "jobs");
+    for (const name of ["sonar-quality-gate", "quality-gate-merge"]) {
+      const job = asRecord(jobs[name], name);
+      assert(jobNeeds(job, name).includes("version-check"));
+      assertStringIncludes(String(job.if), "needs.version-check.result == 'success'");
+      assertStringIncludes(
+        String(job.if),
+        "needs.version-check.outputs.is_stable == 'false' || needs.version-check.outputs.stable_release_requested == 'true'",
+      );
+    }
+  });
+
+  it("selects folding only for main pushes that will publish", async () => {
+    const jobs = asRecord((await readWorkflow()).jobs, "jobs");
+    for (const name of ["sonar-quality-gate", "quality-gate-merge"]) {
+      const job = asRecord(jobs[name], name);
+      for (
+        const [overrides, expected] of [
+          [{}, false],
+          [{ "needs.version-check.outputs.is_stable": "true" }, true],
+          [{
+            "needs.version-check.outputs.is_stable": "true",
+            "needs.version-check.outputs.stable_release_requested": "true",
+          }, false],
+          [{ "needs.version-check.result": "failure" }, true],
+          [{ "github.event_name": "pull_request", "github.ref": "refs/pull/123/merge" }, true],
+          [{
+            "github.event_name": "merge_group",
+            "github.ref": "refs/heads/gh-readonly-queue/main/test",
+          }, true],
+          [{ "github.event_name": "workflow_dispatch" }, true],
+        ] as [Record<string, string>, boolean][]
+      ) {
+        assertEquals(
+          await runStandaloneGateCondition(job, overrides),
+          expected,
+          `${name} condition for ${JSON.stringify(overrides)}`,
+        );
+      }
+    }
+  });
+
   it("exposes one stable check name for branch protection", async () => {
     const gate = await readMergeGate();
 
@@ -348,7 +432,7 @@ describe("merge quality gate workflow", () => {
     );
     assertEquals(sonar.name, SONAR_SCAN_CHECK_NAME);
     assertEquals(sonarGate.name, SONAR_CHECK_NAME);
-    assertEquals(sonarGate.needs, ["sonar"]);
+    assertEquals(sonarGate.needs, ["sonar", "version-check"]);
     assertEquals(sonarGate.if, SONAR_GATE_JOB_EXPRESSION);
     const sonarProperties = parseProperties(
       await readRepoFile("sonar-project.properties"),

@@ -383,7 +383,7 @@ describe("repository hardening", () => {
           assertEquals(
             jobIf.trim(),
             jobName === "quality-gate-merge"
-              ? "if: ${{ always() && !(github.event_name == 'push' && github.ref == 'refs/heads/main') }}"
+              ? "if: ${{ always() && !(github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.version-check.result == 'success' && (needs.version-check.outputs.is_stable == 'false' || needs.version-check.outputs.stable_release_requested == 'true')) }}"
               : "if: ${{ always() }}",
             `expected trusted aggregate ${jobName} to run and inspect skipped dependencies`,
           );
