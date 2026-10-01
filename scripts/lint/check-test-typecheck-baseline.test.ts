@@ -164,3 +164,28 @@ Deno.test("runDenoCheck kills a child that exceeds its deadline", async () => {
   assert(result.output.includes("deadline and was killed"));
   assert(performance.now() - startedAt < 2_000);
 });
+
+Deno.test("runDenoCheck pins child dependency resolution to the frozen repository lock", async () => {
+  const files = ["src/first.test.ts", "cli/second.test.ts"];
+  for (const kind of ["clean", "baseline"] as const) {
+    const result = await runDenoCheck(
+      { kind, files },
+      {
+        prefixArgs: [
+          "eval",
+          "--no-config",
+          "--no-lock",
+          "console.log(JSON.stringify(Deno.args))",
+          "--",
+        ],
+      },
+    );
+    assertEquals(result.success, true);
+    assertEquals(JSON.parse(result.output), [
+      "check",
+      "--frozen",
+      "--lock=deno.lock",
+      ...files,
+    ]);
+  }
+});
