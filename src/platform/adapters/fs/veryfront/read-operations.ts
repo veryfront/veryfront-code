@@ -27,6 +27,7 @@ import { currentRequestContext } from "#veryfront/platform/request-context-acces
 import {
   getRequestAuthorityCacheVariant,
   requestAuthorityFingerprint,
+  scopeFileListCacheKeyToRequestAuthority,
 } from "./request-authority.ts";
 
 export {
@@ -701,12 +702,9 @@ export class ReadOperations {
       requestBranch,
       cacheVariant,
     });
-    const baseFileListCacheKey = effectiveContentContext
-      ? buildFileListCacheKey(effectiveContentContext)
+    const fileListCacheKey = effectiveContentContext
+      ? scopeFileListCacheKeyToRequestAuthority(buildFileListCacheKey(effectiveContentContext))
       : undefined;
-    const fileListCacheKey = baseFileListCacheKey && authorityCacheVariant
-      ? `${baseFileListCacheKey}|${authorityCacheVariant}`
-      : baseFileListCacheKey;
 
     logger.debug("fetchContent context", {
       path: normalizedPath,

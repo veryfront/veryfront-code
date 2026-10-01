@@ -5,6 +5,7 @@ import type { VeryfrontFSAdapter } from "./adapter.ts";
 import { buildFileCacheKeyPrefix, buildFileListCacheKey } from "./cache-keys.ts";
 import { addPendingInvalidation, removePendingInvalidation } from "./invalidation-state.ts";
 import { createAdapter, waitFor } from "./adapter.test-helpers.ts";
+import { runWithRequestContext } from "./request-context.ts";
 
 interface StubFile {
   path: string;
@@ -964,5 +965,110 @@ describe("file list fan-out (issue inbox#32)", () => {
       "export const Welcome = 1;",
       "the recovered snapshot must serve the missed file's content",
     );
+  });
+
+  for (const cacheEnabled of [true, false]) {
+    it(
+      `lists sources once for a fresh credential across config load and discovery (cache ${
+        cacheEnabled ? "enabled" : "disabled"
+      })`,
+      async () => {
+        const files: StubFile[] = [
+          { path: "veryfront.config.ts", content: "export default {};" },
+          { path: "agents/assistant.ts", content: "export default {};" },
+          { path: "tools/search.ts", content: "export default {};" },
+        ];
+        const fingerprints: Array<string | undefined> = [];
+
+        // Hosted requests select one adapter per credential, so every new
+        // credential initializes a fresh adapter inside its own request.
+        for (const token of ["credential-a", "credential-b"]) {
+          const adapter = createAdapter({
+            veryfront: {
+              apiBaseUrl: "https://api.example.com",
+              apiToken: "test-token",
+              projectSlug: "test-project",
+              cache: { enabled: cacheEnabled },
+            },
+          });
+          const counts = stubClient(adapter, files);
+          const internals = adapter as unknown as {
+            client: {
+              initialize: () => Promise<void>;
+              getProjectSlug: () => string;
+              getProjectId: () => string;
+              getCachedProject: () => { provider: string; layout: string };
+            };
+            wsManager: { connect: (_projectId: string) => void };
+          };
+          internals.client.initialize = () => Promise.resolve();
+          internals.client.getProjectSlug = () => "test-project";
+          internals.client.getProjectId = () => "project-123";
+          internals.client.getCachedProject = () => ({ provider: "veryfront", layout: "default" });
+          internals.wsManager.connect = () => {};
+          adapter.setContentContext({
+            sourceType: "branch",
+            projectSlug: "test-project",
+            branch: "main",
+          });
+
+          await runWithRequestContext(
+            { projectSlug: "test-project", projectId: "project-123", token, branch: "main" },
+            async () => {
+              await adapter.initialize();
+              await adapter.ensureSourceSnapshotFresh("config-load", undefined, true);
+              await adapter.readTextFile("veryfront.config.ts");
+              await adapter.ensureSourceSnapshotFresh("primitive-discovery");
+              await adapter.stat("agents");
+              await adapter.readdir("agents");
+              await adapter.readTextFile("agents/assistant.ts");
+              fingerprints.push(await adapter.getSourceSnapshotFingerprint());
+            },
+          );
+
+          assertEquals(
+            counts.listingRequests,
+            1,
+            `${token} must reuse the listing its adapter fetched during initialization`,
+          );
+          assertEquals(counts.getFileContent, 0, "the listing must answer every read");
+          adapter.dispose();
+        }
+
+        assertEquals(typeof fingerprints[0], "string");
+        assertEquals(
+          fingerprints[1],
+          fingerprints[0],
+          "identical sources must report one content fingerprint across credentials",
+        );
+      },
+    );
+  }
+
+  it("applies a branch poke delivered inside a credential-scoped request context", async () => {
+    const { adapter, counts } = createDraftAdapter([
+      { path: "pages/index.tsx", content: "export default 'before';" },
+    ]);
+    const internals = adapter as unknown as {
+      replaceSourceSnapshot: (
+        cacheKey: string,
+        files: Array<{ path: string; content?: string }>,
+      ) => Promise<number | undefined>;
+    };
+    const context = adapter.getContentContext()!;
+
+    // Hosted adapters connect their WebSocket inside the initializing request,
+    // so poke handlers run with that request's credential context.
+    await runWithRequestContext(
+      { projectSlug: "test-project", token: "credential-a", branch: "main" },
+      async () => {
+        const applied = await internals.replaceSourceSnapshot(buildFileListCacheKey(context), [
+          { path: "pages/index.tsx", content: "export default 'after';" },
+        ]);
+        assertEquals(typeof applied, "number", "the poked snapshot must be applied");
+        assertEquals(await adapter.readTextFile("pages/index.tsx"), "export default 'after';");
+      },
+    );
+    assertEquals(counts.listingRequests, 0, "the poked listing must answer the read");
   });
 });
