@@ -3733,6 +3733,60 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     assertStringIncludes(response.error, "/n");
   });
 
+  it("reports nested default output schema failures with structured validation errors (#2215)", async () => {
+    const definition = workflow({
+      id: "parent-invalid-nested-output",
+      steps: [subWorkflow("child", {
+        workflow: {
+          id: "invalid-nested-output",
+          outputSchema: defineSchema((v) => v.object({ n: v.number() }))(),
+          steps: [
+            step("n", {
+              tool: tool({
+                id: "invalid-nested-number",
+                description: "Return an invalid nested number",
+                inputSchema: defineSchema((v) => v.object({}).passthrough())(),
+                execute: () => Promise.resolve("x"),
+              }),
+            }),
+          ],
+        },
+      })],
+    }).definition as unknown as WorkflowDefinition;
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      findWorkflowById: async () => ({
+        id: "parent-invalid-nested-output",
+        filePath: "workflows/parent-invalid-nested-output.ts",
+        exportName: "default",
+        definition,
+      }),
+      createWorkflowClient: () => createWorkflowClient(),
+    }));
+    const body = {
+      runId: "run_workflow_invalid_nested_output_1",
+      kind: "workflow",
+      target: "workflow:parent-invalid-nested-output",
+      projectId: "proj-1",
+    };
+    const { request, publicKeyPem } = await signedRequest(
+      "/api/control-plane/runs/run_workflow_invalid_nested_output_1/execute",
+      body,
+    );
+
+    const result = await handler.handle(request, createCtx(publicKeyPem));
+
+    assertExists(result.response);
+    assertEquals(result.response.status, 200);
+    const response = await result.response.json();
+    assertEquals(response.success, false);
+    assertEquals(response.result, undefined);
+    assertEquals(response.error_code, "OUTPUT_VALIDATION_FAILED");
+    assertEquals(response.error_detail, {
+      errors: [{ path: "/n", message: "Invalid input: expected number, received string" }],
+    });
+    assertStringIncludes(response.error, "/n");
+  });
+
   it("#2108 returns the declared workflow input and output schema identities on the wire", async () => {
     const inputSchema = defineSchema((v) => v.object({ ticketText: v.string() }))();
     const outputSchema = defineSchema((v) =>

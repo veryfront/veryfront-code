@@ -42,6 +42,7 @@ import {
   OutputSchemaValidationError,
   readSchemaValidationErrors,
 } from "#veryfront/schemas/validation-errors.ts";
+import type { WorkflowExecutionError } from "../executor/output-validation.ts";
 
 const logger = baseLogger.component("workflow-run-control");
 
@@ -71,11 +72,10 @@ export interface WorkflowRunControlExecuteResult {
   nodeStates: Record<string, NodeState>;
   error?: string;
   /**
-   * Registry-typed cause for a refusal the executor reports through `error`
-   * instead of throwing, so the run fails under the same slug a thrown refusal
-   * would carry.
+   * Structured cause for a failure the executor reports through `error`
+   * instead of throwing, preserving registry slugs or output-validation details.
    */
-  errorCause?: VeryfrontError;
+  errorCause?: WorkflowExecutionError;
 }
 
 export interface WorkflowRunControlExecuteInput {

@@ -43,11 +43,7 @@ import { env as getProcessEnv, unrefTimer } from "#veryfront/compat/process.ts";
 import { mergeInjectedWorkflowEnv } from "#veryfront/runs/runtime-env.ts";
 import { DAGExecutor } from "./dag-executor.ts";
 import { parseWorkflowInput } from "./workflow-input.ts";
-import {
-  formatSchemaValidationErrors,
-  OutputSchemaValidationError,
-  toSchemaValidationErrors,
-} from "#veryfront/schemas/validation-errors.ts";
+import { parseWorkflowOutput } from "./output-validation.ts";
 import { CheckpointManager } from "./checkpoint-manager.ts";
 import { runWithWorkflowTenant, StepExecutor, type StepExecutorConfig } from "./step-executor.ts";
 import { retryTelemetryErrorType } from "./retry-policy.ts";
@@ -87,18 +83,6 @@ function requireDurableWorkflowSourceContext(): void {
   }
 }
 
-function parseWorkflowOutput(workflow: WorkflowDefinition, output: unknown): unknown {
-  if (!workflow.outputSchema) return output;
-  const result = workflow.outputSchema.safeParse(output);
-  if (result.success) return result.data;
-  const errors = toSchemaValidationErrors(result.issues ?? []);
-  throw new OutputSchemaValidationError(
-    `Workflow "${workflow.id}" output failed outputSchema validation: ${
-      formatSchemaValidationErrors(errors)
-    }`,
-    errors,
-  );
-}
 /** Default polling interval for waiting on workflow result */
 const DEFAULT_RESULT_POLL_INTERVAL_MS = 1_000;
 

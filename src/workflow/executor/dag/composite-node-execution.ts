@@ -1,4 +1,4 @@
-import { TIMEOUT_ERROR, VeryfrontError } from "#veryfront/errors";
+import { TIMEOUT_ERROR } from "#veryfront/errors";
 import { ensureError } from "#veryfront/errors/veryfront-error.ts";
 import { sleep } from "#veryfront/utils";
 import {
@@ -14,6 +14,7 @@ import {
 } from "../retry-policy.ts";
 import { createSetContextPatch } from "./context-patch.ts";
 import type { NodeExecutionResult } from "./types.ts";
+import { isWorkflowExecutionError } from "../output-validation.ts";
 
 /**
  * An ownership-fenced write was refused: another worker owns the run row, so
@@ -124,7 +125,7 @@ export async function executeCompositeNodeWithPolicy(
         },
         contextPatch: createSetContextPatch(),
         waiting: false,
-        errorCause: error instanceof VeryfrontError ? error : undefined,
+        errorCause: isWorkflowExecutionError(error) ? error : undefined,
       };
     }
   }

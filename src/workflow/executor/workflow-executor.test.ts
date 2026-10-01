@@ -16,6 +16,7 @@ import {
   dependsOn,
   parallel,
   step,
+  subWorkflow,
   waitForApproval,
   waitForEvent,
   waitForRuns,
@@ -2753,6 +2754,44 @@ describe("workflow/executor/workflow-executor final output selection (#2107)", (
     assertEquals(run?.output, { n: "42", extra: "retained" });
     assertEquals(completedOutput, { n: "42", extra: "retained" });
     assertEquals(completed, 1);
+  });
+
+  it("persists a typed failure when a nested default output violates its schema", async () => {
+    const { executor, backend } = executorWith({
+      id: "parent-with-invalid-child-output",
+      steps: [subWorkflow("child", {
+        workflow: {
+          id: "invalid-child-output",
+          outputSchema: defineSchema((v) => v.object({ amount: v.number() }))(),
+          steps: [
+            step("amount", {
+              tool: createTool("nested-amount", () => "not-a-number"),
+            }),
+          ],
+        },
+      })],
+    });
+
+    const handle = await executor.start("parent-with-invalid-child-output", {});
+    await handle.settled();
+
+    const run = await backend.getRun(handle.runId);
+    assertEquals(run?.status, "failed");
+    assertEquals(run?.output, undefined);
+    assertEquals(run?.nodeStates.child?.status, "failed");
+    assertEquals(
+      (run?.error as unknown as { code?: string })?.code,
+      "OUTPUT_VALIDATION_FAILED",
+    );
+    assertEquals(
+      (run?.error as unknown as { detail?: unknown })?.detail,
+      {
+        errors: [{
+          path: "/amount",
+          message: "Invalid input: expected number, received string",
+        }],
+      },
+    );
   });
 
   it("keeps the default output without a selector: every step's output by step id", async () => {
