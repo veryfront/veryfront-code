@@ -25,6 +25,8 @@ interface DiscoveryRecord {
   promise: Promise<DiscoveryResult>;
   sourceSnapshotVersion?: number;
   sourceFingerprint?: string;
+  /** Set only when this record owns and performs mutable partial-result cleanup. */
+  discardedAfterCompletion?: boolean;
   /** Set when the result has errors: rediscover once the clock reaches it. */
   retryAt?: number;
 }
@@ -220,6 +222,9 @@ export async function ensureProjectDiscovery(ctx: HandlerContext): Promise<Disco
   // replace this key while the hash is pending. Join a replacement only when
   // its concrete fingerprint proves it owns the same source bytes.
   const currentExisting = discoveredProjects.get<DiscoveryRecord>(key);
+  if (currentExisting === undefined && existing?.discardedAfterCompletion === true) {
+    return await ensureProjectDiscovery(ctx);
+  }
   if (currentExisting !== existing) {
     if (
       currentExisting &&
@@ -252,6 +257,12 @@ export async function ensureProjectDiscovery(ctx: HandlerContext): Promise<Disco
       await currentExisting.promise;
       const settledExisting = discoveredProjects.get<DiscoveryRecord>(key);
       if (settledExisting !== currentExisting) {
+        if (
+          settledExisting === undefined &&
+          currentExisting.discardedAfterCompletion === true
+        ) {
+          return await ensureProjectDiscovery(ctx);
+        }
         throwProjectDiscoveryFailure(
           ctx,
           new Error("Primitive discovery cache changed while awaiting the current generation"),
@@ -361,6 +372,7 @@ export async function ensureProjectDiscovery(ctx: HandlerContext): Promise<Disco
         // Mutable sources retry at once: the failing file may already be fixed.
         const current = discoveredProjects.get<DiscoveryRecord>(key);
         if (current === discovery) {
+          discovery.discardedAfterCompletion = true;
           discoveredProjects.delete(key);
         }
       }

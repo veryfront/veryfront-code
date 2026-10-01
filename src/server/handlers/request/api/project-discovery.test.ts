@@ -689,7 +689,86 @@ describe(
       assertStrictEquals(await ensureProjectDiscovery(second), outcome.value);
     });
 
-    it("does not resurrect fallback discovery evicted while another generation waits", async () => {
+    for (const phase of ["fingerprint", "owner-wait"]) {
+      it(`rebuilds after partial fallback cleanup during ${phase}`, async () => {
+        agentRegistry.clearAll();
+        toolRegistryInternal.clearAll();
+        const projectSlug = `partial-fallback-discovery-${phase}`;
+        const first = createHandlerContext("/partial-fallback", projectSlug, "preview");
+        const second = createHandlerContext("/partial-fallback", projectSlug, "preview");
+        first.adapter.fs.getSourceSnapshotVersion = () => 1;
+        second.adapter.fs.getSourceSnapshotVersion = () => 2;
+        const firstFingerprintStarted = Promise.withResolvers<void>();
+        const secondFingerprintStarted = Promise.withResolvers<void>();
+        const firstFingerprint = Promise.withResolvers<string | undefined>();
+        const secondFingerprint = Promise.withResolvers<string | undefined>();
+        first.adapter.fs.getSourceSnapshotFingerprint = () => {
+          firstFingerprintStarted.resolve();
+          return firstFingerprint.promise;
+        };
+        second.adapter.fs.getSourceSnapshotFingerprint = () => {
+          secondFingerprintStarted.resolve();
+          return secondFingerprint.promise;
+        };
+        await first.adapter.fs.writeFile(
+          `${first.projectDir}/tools/broken-tool.ts`,
+          'throw new Error("partial fallback failure");\n',
+        );
+        await writeAgentFile(second, "recovered-fallback-agent", "RECOVERED");
+
+        const firstEnumerationStarted = Promise.withResolvers<void>();
+        const resumeFirstEnumeration = Promise.withResolvers<void>();
+        const firstReadDir = first.adapter.fs.readDir.bind(first.adapter.fs);
+        let pauseFirstEnumeration = true;
+        first.adapter.fs.readDir = async function* (path) {
+          if (pauseFirstEnumeration) {
+            pauseFirstEnumeration = false;
+            firstEnumerationStarted.resolve();
+            await resumeFirstEnumeration.promise;
+          }
+          yield* firstReadDir(path);
+        };
+        const secondReadDir = second.adapter.fs.readDir.bind(second.adapter.fs);
+        let secondEnumerationCount = 0;
+        second.adapter.fs.readDir = async function* (path) {
+          secondEnumerationCount++;
+          yield* secondReadDir(path);
+        };
+
+        const firstDiscovery = ensureProjectDiscovery(first);
+        let secondDiscovery: ReturnType<typeof ensureProjectDiscovery>;
+        if (phase === "fingerprint") {
+          await firstFingerprintStarted.promise;
+          firstFingerprint.resolve(undefined);
+          await firstEnumerationStarted.promise;
+          secondDiscovery = ensureProjectDiscovery(second);
+          await secondFingerprintStarted.promise;
+          resumeFirstEnumeration.resolve();
+          await firstDiscovery;
+          secondFingerprint.resolve(undefined);
+        } else {
+          secondDiscovery = ensureProjectDiscovery(second);
+          await Promise.all([firstFingerprintStarted.promise, secondFingerprintStarted.promise]);
+          firstFingerprint.resolve(undefined);
+          await firstEnumerationStarted.promise;
+          secondFingerprint.resolve(undefined);
+          resumeFirstEnumeration.resolve();
+        }
+        const secondOutcome = secondDiscovery.then(
+          (value) => ({ value, error: undefined }),
+          (error: unknown) => ({ value: undefined, error }),
+        );
+
+        assertEquals((await firstDiscovery).errors.length, 1);
+        const outcome = await secondOutcome;
+        if (outcome.error) throw outcome.error;
+        assertEquals(outcome.value?.errors.length, 0);
+        assertEquals(secondEnumerationCount > 0, true);
+        assertStrictEquals(await ensureProjectDiscovery(second), outcome.value);
+      });
+    }
+
+    it("does not resurrect partial fallback discovery evicted while another generation waits", async () => {
       const projectSlug = "evicted-fallback-discovery";
       const first = createHandlerContext("/evicted-fallback", projectSlug, "preview");
       const second = createHandlerContext("/evicted-fallback", projectSlug, "preview");
@@ -707,7 +786,10 @@ describe(
         secondFingerprintStarted.resolve();
         return secondFingerprint.promise;
       };
-      await writeAgentFile(first, "evicted-fallback-agent", "FIRST");
+      await first.adapter.fs.writeFile(
+        `${first.projectDir}/tools/broken-tool.ts`,
+        'throw new Error("evicted partial fallback failure");\n',
+      );
       await writeAgentFile(second, "evicted-fallback-agent", "SECOND");
 
       const firstEnumerationStarted = Promise.withResolvers<void>();
@@ -738,7 +820,7 @@ describe(
       clearProjectDiscoveryCacheForScope(`${projectSlug}:preview:main`);
       resumeFirstEnumeration.resolve();
 
-      await firstDiscovery;
+      assertEquals((await firstDiscovery).errors.length, 1);
       await secondFailure;
       await ensureProjectDiscovery(second);
     });
