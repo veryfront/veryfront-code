@@ -49,6 +49,7 @@ import {
 
 const IntrinsicReflectApply = Reflect.apply;
 const JsonParse = JSON.parse;
+const NumberIsFinite = Number.isFinite;
 const RequestHeadersGetter = Object.getOwnPropertyDescriptor(Request.prototype, "headers")?.get;
 const HeadersGet = Headers.prototype.get;
 const StringTrim = String.prototype.trim;
@@ -214,7 +215,13 @@ async function parseRequestJson(
     return null;
   }
   try {
-    return IntrinsicReflectApply(JsonParse, JSON, [body]);
+    return IntrinsicReflectApply(JsonParse, JSON, [body, (_key: string, value: unknown) => {
+      // JSON overflow must not authenticate as null when the replay digest is serialized.
+      if (typeof value === "number" && !NumberIsFinite(value)) {
+        throw new TypeError("JSON numbers must be finite");
+      }
+      return value;
+    }]);
   } catch {
     return null;
   }
