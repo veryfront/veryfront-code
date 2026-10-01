@@ -64,6 +64,12 @@ class FailingApprovalScanBackend extends MemoryBackend {
 
 class CountingApprovalScanBackend extends MemoryBackend {
   scans = 0;
+  approvalChecks = 0;
+
+  override listPendingApprovals(...args: Parameters<MemoryBackend["listPendingApprovals"]>) {
+    this.approvalChecks++;
+    return super.listPendingApprovals(...args);
+  }
 
   override listApprovalDecisionClaims(): ReturnType<MemoryBackend["listApprovalDecisionClaims"]> {
     this.scans++;
@@ -72,6 +78,23 @@ class CountingApprovalScanBackend extends MemoryBackend {
 }
 
 describe("WorkflowClient shutdown", () => {
+  it("refuses queued maintenance checks after approval quiescence", async () => {
+    const backend = new CountingApprovalScanBackend();
+    const client = createWorkflowClient({ backend });
+    const manager = client.getApprovalManager();
+    try {
+      await manager.checkApprovalDecisionClaims();
+      assertEquals(backend.scans, 1);
+      manager.beginShutdown();
+      await manager.checkApprovalDecisionClaims();
+      await manager.checkExpiredApprovals();
+      assertEquals(backend.scans, 1);
+      assertEquals(backend.approvalChecks, 0);
+    } finally {
+      await client.destroy();
+    }
+  });
+
   it("quiesces maintenance before draining a blocked approval scan", async () => {
     using time = new FakeTime();
     const backend = new CountingMaintenanceBackend();
