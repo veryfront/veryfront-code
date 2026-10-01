@@ -3,6 +3,7 @@ import {
   buildTestProcessEnv,
   LOOPBACK_TEST_PERMISSIONS,
   partitionDenoSuiteFiles,
+  shouldRunDenoBatchInParallel,
   UNIT_DENO_TEST_ENV,
 } from "./suites.ts";
 
@@ -16,6 +17,7 @@ export interface ShardSpec {
 export interface DenoTestCommandOptions {
   coverageDir: string;
   files: readonly string[];
+  parallel?: boolean;
 }
 
 interface LcovLineRecord {
@@ -49,7 +51,7 @@ export function buildDenoTestCommandArgs(
     "test",
     "--preload=src/testing/preload.ts",
     "--no-check",
-    "--parallel",
+    ...((options.parallel ?? true) ? ["--parallel"] : []),
     // Leaks here are load-dependent and do not reproduce on demand, so the
     // first failure has to carry the stack rather than advise a rerun.
     "--trace-leaks",
@@ -195,7 +197,11 @@ async function runShard(args: string[]): Promise<void> {
 
   for (const batch of partitionDenoSuiteFiles(files, null)) {
     await runDeno(
-      buildDenoTestCommandArgs({ coverageDir, files: batch }),
+      buildDenoTestCommandArgs({
+        coverageDir,
+        files: batch,
+        parallel: shouldRunDenoBatchInParallel(true, batch),
+      }),
       { ...UNIT_COVERAGE_ENV },
     );
   }
