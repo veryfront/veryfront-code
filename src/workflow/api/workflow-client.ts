@@ -572,6 +572,8 @@ export class WorkflowClient {
   }
 
   async destroy(): Promise<void> {
+    this.approvalManager.beginShutdown();
+    this.eventWaitManager.stop();
     try {
       await this.approvalManager.waitForDecisionClaimRecovery();
     } catch (error) {
@@ -579,7 +581,6 @@ export class WorkflowClient {
       logger.debug("Approval decision recovery failed during shutdown", error);
     } finally {
       this.approvalManager.stop();
-      this.eventWaitManager.stop();
       await this.backend.destroy();
     }
     logger.debug("Destroyed");

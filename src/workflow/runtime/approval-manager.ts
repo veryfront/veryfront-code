@@ -246,6 +246,7 @@ export class ApprovalManager {
   private config: ApprovalManagerConfig;
   private expirationTimer?: ReturnType<typeof setInterval>;
   private destroyed = false;
+  private shuttingDown = false;
   private responseSchemas = new Map<string, Schema<unknown>>();
   private activeDecisionClaims = new Set<string>();
   private decisionClaimReconciliation?: Promise<void>;
@@ -565,6 +566,7 @@ export class ApprovalManager {
   checkApprovalDecisionClaims(): Promise<void> {
     if (this.destroyed) return Promise.resolve();
     if (this.decisionClaimReconciliation) return this.decisionClaimReconciliation;
+    if (this.shuttingDown) return Promise.resolve();
 
     const reconciliation = this.reconcileApprovalDecisionClaims();
     this.decisionClaimReconciliation = reconciliation;
@@ -798,7 +800,7 @@ export class ApprovalManager {
   }
 
   private scheduleDecisionClaimRecovery(delayMs: number): void {
-    if (this.destroyed) return;
+    if (this.destroyed || this.shuttingDown) return;
     const dueAt = Date.now() + Math.max(1, delayMs);
     if (
       this.decisionClaimRecoveryTimer !== undefined &&
@@ -813,7 +815,7 @@ export class ApprovalManager {
     this.decisionClaimRecoveryTimer = setTimeout(() => {
       this.decisionClaimRecoveryTimer = undefined;
       this.decisionClaimRecoveryAt = undefined;
-      if (this.destroyed) return;
+      if (this.destroyed || this.shuttingDown) return;
       void this.checkApprovalDecisionClaims().catch((error) => {
         logger.error("Approval decision claim recovery failed", error);
       });
@@ -992,7 +994,7 @@ export class ApprovalManager {
 
   /** Check and expire stale approvals */
   async checkExpiredApprovals(targetRunId?: string): Promise<void> {
-    if (this.destroyed) {
+    if (this.destroyed || this.shuttingDown) {
       return;
     }
 
@@ -1089,6 +1091,12 @@ export class ApprovalManager {
   /** Stop the approval manager */
   stop(): void {
     this.destroyed = true;
+    this.beginShutdown();
+  }
+
+  /** Stop background checks while allowing existing decision recovery to finish. */
+  beginShutdown(): void {
+    this.shuttingDown = true;
 
     if (this.decisionClaimRecoveryTimer !== undefined) {
       clearTimeout(this.decisionClaimRecoveryTimer);
@@ -1101,11 +1109,9 @@ export class ApprovalManager {
       this.decisionClaimCheckTimer = undefined;
     }
 
-    if (!this.expirationTimer) {
-      return;
+    if (this.expirationTimer !== undefined) {
+      clearInterval(this.expirationTimer);
+      this.expirationTimer = undefined;
     }
-
-    clearInterval(this.expirationTimer);
-    this.expirationTimer = undefined;
   }
 }

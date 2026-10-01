@@ -1,5 +1,6 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
+import { FakeTime } from "#std/testing/time";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { __subscribeLogRecordEmitter } from "#veryfront/utils/logger/logger.ts";
 import { MemoryBackend } from "../backends/memory.ts";
@@ -33,6 +34,21 @@ class BlockingApprovalScanBackend extends MemoryBackend {
   }
 }
 
+class CountingMaintenanceBackend extends BlockingApprovalScanBackend {
+  approvalChecks = 0;
+  eventChecks = 0;
+
+  override listPendingApprovals(...args: Parameters<MemoryBackend["listPendingApprovals"]>) {
+    this.approvalChecks++;
+    return super.listPendingApprovals(...args);
+  }
+
+  override listPendingEventWaits(...args: Parameters<MemoryBackend["listPendingEventWaits"]>) {
+    this.eventChecks++;
+    return super.listPendingEventWaits(...args);
+  }
+}
+
 class FailingApprovalScanBackend extends MemoryBackend {
   closed = false;
 
@@ -56,6 +72,32 @@ class CountingApprovalScanBackend extends MemoryBackend {
 }
 
 describe("WorkflowClient shutdown", () => {
+  it("quiesces maintenance before draining a blocked approval scan", async () => {
+    using time = new FakeTime();
+    const backend = new CountingMaintenanceBackend();
+    const client = createWorkflowClient({
+      backend,
+      approval: { expirationCheckInterval: 5, decisionClaimCheckInterval: 5 },
+      eventWait: { expirationCheckInterval: 5, claimRecoveryCheckInterval: 0 },
+    });
+    try {
+      await backend.scanStarted.promise;
+      const shutdown = client.destroy();
+      try {
+        await time.tickAsync(20);
+        assertEquals(backend.approvalChecks, 0);
+        assertEquals(backend.eventChecks, 0);
+        assertEquals(backend.closed, false);
+      } finally {
+        backend.continueScan.resolve();
+        await shutdown;
+      }
+    } finally {
+      backend.continueScan.resolve();
+      await client.destroy();
+    }
+  });
+
   it("does not start disabled approval recovery during shutdown", async () => {
     const backend = new CountingApprovalScanBackend();
     const client = createWorkflowClient({
