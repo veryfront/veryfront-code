@@ -1054,6 +1054,48 @@ describe("internal-agents/run-stream", () => {
     assertEquals(firstToolArgs.delta, '{"task":"first"}');
   });
 
+  it("does not expose a hidden authorized invoke_agent call as dispatchable", async () => {
+    const model = scriptedModel([{
+      toolCalls: [
+        { id: "hidden-child", name: "invoke_agent", input: { task: "hidden" } },
+      ],
+    }], {
+      modelId: "anthropic/hosted-hidden-delegation",
+      provider: "anthropic",
+      only: "stream",
+    });
+    const runtimeAgent = createAgent(
+      {
+        id: "hosted-hidden-delegation",
+        model: "anthropic/hosted-hidden-delegation",
+        system: "Delegate once.",
+        skills: false,
+        tools: true,
+        maxSteps: 1,
+        resolveModelTransport: () => ({ model }),
+        __vfToolLoadingMode: "deferred",
+      } as Parameters<typeof createAgent>[0],
+    );
+    const response = await createRuntimeAgentStreamResponse(
+      {
+        threadId: crypto.randomUUID(),
+        runId: "run_hidden_delegation",
+        messages: [{ id: "user-1", role: "user", content: "Delegate the task" }],
+        tools: [{ name: "invoke_agent" }],
+        context: [],
+      },
+      runtimeAgent,
+      { sessionManager: new AgentRunSessionManager() },
+    );
+    const frames = parseSseFrames(await response.text());
+    const hiddenCallFrames = frames.filter((frame) =>
+      (frame.data as Record<string, unknown>).toolCallId === "hidden-child"
+    );
+
+    assertEquals(model.toolNames().includes("invoke_agent"), false);
+    assertEquals(hiddenCallFrames.some((frame) => frame.event === "ToolCallEnd"), false);
+  });
+
   it("fails closed when checkpoint emission has no runtime message identity", async () => {
     const sessionManager = new AgentRunSessionManager();
     const agent = {
