@@ -32,6 +32,7 @@ async function fixture(
     content: [],
   }),
   outputSchema?: AgentConfig["outputSchema"],
+  middleware?: AgentConfig["middleware"],
 ) {
   const dispatched: string[] = [];
   const model = Object.assign(scriptedModel(turns, { modelId: "hosted/fail-run" }), {
@@ -59,6 +60,7 @@ async function fixture(
       tools: { veryfront__finalized: true, veryfront__marker: true },
       maxSteps: 3,
       outputSchema,
+      middleware,
       resolveRuntimeState: ({ context }) => ({
         context: {
           runId: context?.runId,
@@ -81,6 +83,47 @@ async function fixture(
 }
 
 describe("runtime finalized terminal control", () => {
+  for (const streaming of [false, true]) {
+    it(`passes finalized success through output middleware; stream=${streaming}`, async () => {
+      let processed = 0;
+      await fixture(
+        [{ toolCalls: [{ ...failCall, input: { status: "completed", output: "secret" } }] }],
+        async (runtime) => {
+          if (streaming) {
+            const body = await new Response(
+              await runtime.stream([{
+                id: "input-1",
+                role: "user",
+                parts: [{ type: "text", text: "run" }],
+              }], { runId: "run-current" }),
+            ).text();
+            assert(body.includes("REDACTED"));
+            assert(!body.includes('"delta":"secret"'));
+          } else {
+            assertEquals(
+              (await runtime.generate("run", { runId: "run-current" })).text,
+              "REDACTED",
+            );
+          }
+          assertEquals(processed, 1);
+        },
+        () => ({
+          content: [],
+          structuredContent: {
+            completed: true,
+            run: { run_id: "run-current", status: "completed", output: "secret" },
+          },
+        }),
+        undefined,
+        [async (_context, next) => {
+          const response = await next();
+          processed++;
+          return { ...response, text: "REDACTED", object: "REDACTED" };
+        }],
+      );
+    });
+  }
+
   it("returns committed output for finalized success without further model or tools", async () => {
     const output = { ingested: 3 };
     await fixture(

@@ -36,7 +36,7 @@ it("keeps terminal credentials private and pins transport to the bound project e
       runId: "run-1",
     });
   });
-  assertEquals(fallbackCalls, 1);
+  assertEquals(fallbackCalls, 2);
 });
 
 it("keeps ordinary platform operations on the active project without terminal credentials", async () => {
@@ -65,4 +65,32 @@ it("keeps ordinary platform operations on the active project without terminal cr
     await source.listTools();
     await source.executeTool("get_project", {}, { runId: "run-1" });
   });
+});
+
+it("preserves the deployment transport for a pinned private terminal endpoint", async () => {
+  const request = {
+    projectId: "project-1",
+    durableRootRun: { runId: "run-1" },
+  } as ParsedHostedChatRequest;
+  registerHostedTerminalCredential(request, "terminal-secret");
+  let dispatched = 0;
+  const factory = hostedTerminalToolSourceFactory(request, "http://api.internal/mcp", (config) => ({
+    id: config.id ?? "private",
+    listTools: async () => [],
+    executeTool: async (_name, _args, context) => {
+      dispatched++;
+      assertEquals(config.endpoint, "http://api.internal/projects/project-1/mcp");
+      const headers = typeof config.headers === "function"
+        ? await config.headers(context)
+        : config.headers;
+      assertEquals(new Headers(headers).get(RUN_TERMINAL_TOKEN_HEADER), "terminal-secret");
+      return { completed: true };
+    },
+  }));
+  await factory({ endpoint: "http://api.internal/mcp" }, { kind: "veryfront-api" }).executeTool(
+    "finalized",
+    { status: "completed", output: "done" },
+    { runId: "run-1" },
+  );
+  assertEquals(dispatched, 1);
 });

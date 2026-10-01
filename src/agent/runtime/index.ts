@@ -2616,6 +2616,11 @@ export class AgentRuntime {
                     outputSchema,
                   )
                 );
+              } catch (error) {
+                const terminalResponse = terminalCompletionResponse(error);
+                if (!terminalResponse) throw error;
+                this.status = "completed";
+                return terminalResponse;
               } finally {
                 abortGuard.revoke();
               }
@@ -2636,11 +2641,6 @@ export class AgentRuntime {
         await turnPersistence.commit();
         return response;
       }).catch(async (error) => {
-        const terminalResponse = terminalCompletionResponse(error);
-        if (terminalResponse) {
-          this.status = "completed";
-          return terminalResponse;
-        }
         // A cancellation keeps the relay's neutral default: only a real
         // failure hands the relay the sanitized provider cause.
         // Same rule as the stream path: the relay writes a public RunError, so
@@ -2694,6 +2694,7 @@ export class AgentRuntime {
     abortSignal?: AbortSignal,
     options?: { outputSchema?: unknown },
   ): Promise<ReadableStream<Uint8Array>> {
+    const callerAbortSignal = abortSignal;
     const outputSchema = this.resolveOutputSchema(options?.outputSchema);
     const terminalControl = createTerminalRunControl(
       context,
@@ -2803,8 +2804,9 @@ export class AgentRuntime {
       const runtimeStream = createPrivateReadableStream<Uint8Array>({
         start: async (controller) => {
           let streamedResponseText = "";
+          let terminalCompleted = false;
           try {
-            throwIfAborted(streamAbortSignal);
+            throwIfAborted(terminalCompleted ? callerAbortSignal : streamAbortSignal);
             this.status = "streaming";
 
             const messageId = generateMessageId();
@@ -2860,6 +2862,12 @@ export class AgentRuntime {
                       outputSchema,
                     )
                   );
+                } catch (error) {
+                  const terminalResponse = terminalCompletionResponse(error);
+                  if (!terminalResponse) throw error;
+                  terminalCompleted = true;
+                  this.status = "completed";
+                  return terminalResponse;
                 } finally {
                   abortScope.revoke();
                 }
@@ -2874,7 +2882,7 @@ export class AgentRuntime {
               );
             }
             await turnPersistence.commit();
-            throwIfAborted(streamAbortSignal);
+            throwIfAborted(terminalCompleted ? callerAbortSignal : streamAbortSignal);
             if (response.text.length > 0 && streamedResponseText.length === 0) {
               sendSSE(controller, encoder, { type: "text-start", id: textPartId });
               sendSSE(controller, encoder, {
@@ -2886,7 +2894,7 @@ export class AgentRuntime {
               sendSSE(controller, encoder, { type: "text-end", id: textPartId });
             }
             callbacks?.onFinish?.(response);
-            throwIfAborted(streamAbortSignal);
+            throwIfAborted(terminalCompleted ? callerAbortSignal : streamAbortSignal);
 
             const finishUsage = buildStreamFinishUsage(response.usage);
             const finishReason = getResponseFinishReason(response);
@@ -2905,30 +2913,6 @@ export class AgentRuntime {
               await turnPersistence.finalize();
             } catch (finalizationError) {
               error = finalizationError;
-            }
-            const terminalResponse = terminalCompletionResponse(error);
-            if (terminalResponse) {
-              this.status = "completed";
-              if (terminalResponse.text.length > 0 && streamedResponseText.length === 0) {
-                sendSSE(controller, encoder, { type: "text-start", id: textPartId });
-                sendSSE(controller, encoder, {
-                  type: "text-delta",
-                  id: textPartId,
-                  delta: terminalResponse.text,
-                });
-                callbacks?.onChunk?.(terminalResponse.text);
-                sendSSE(controller, encoder, { type: "text-end", id: textPartId });
-              }
-              callbacks?.onFinish?.(terminalResponse);
-              sendSSE(controller, encoder, {
-                type: "message-finish",
-                object: terminalResponse.object,
-                ...(terminalResponse.usage
-                  ? { totalUsage: buildStreamFinishUsage(terminalResponse.usage) }
-                  : {}),
-              });
-              closeSSEStream(controller);
-              return;
             }
             // Resolve the sanitized event first so the replay relay fails with
             // the same cause the stream reports, instead of a manufactured one.

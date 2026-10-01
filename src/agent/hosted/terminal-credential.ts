@@ -1,8 +1,5 @@
 import { createPrivateWeakStore } from "#veryfront/security/private-weak-store.ts";
-import {
-  createRemoteMCPToolSource,
-  type RemoteMCPToolSourceConfig,
-} from "#veryfront/tool/remote-mcp.ts";
+import { type RemoteMCPToolSourceConfig } from "#veryfront/tool/remote-mcp.ts";
 import type { RemoteToolSource } from "#veryfront/tool/types.ts";
 import type { ParsedHostedChatRequest } from "./chat-request-parser.ts";
 import {
@@ -34,7 +31,7 @@ export function registerHostedTerminalCredential(
   });
 }
 
-/** The credential only reaches the bound platform endpoint through a built-in source. */
+/** The credential only reaches the bound platform endpoint through the trusted deployment transport. */
 export function hostedTerminalToolSourceFactory(
   request: ParsedHostedChatRequest | undefined,
   apiMcpUrl: string,
@@ -46,7 +43,7 @@ export function hostedTerminalToolSourceFactory(
   return (config, server) => {
     if (server?.kind !== "veryfront-api") return fallback(config);
     const ordinary = fallback(config);
-    const terminal = createRemoteMCPToolSource({
+    const terminal = fallback({
       ...config,
       endpoint: expectedEndpoint,
       headers: async (context) => {
