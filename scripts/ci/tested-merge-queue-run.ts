@@ -40,6 +40,7 @@ export interface WorkflowRun {
   readonly status: string;
   readonly conclusion: string | null;
   readonly created_at: string;
+  readonly run_attempt?: number;
 }
 
 export interface RunArtifact {
@@ -140,6 +141,11 @@ async function earlierReleaseBlocks(
     .filter((run) => run.run_number > queueRun.run_number && run.run_number < input.runNumber)
     .sort((left, right) => left.run_number - right.run_number);
   for (const run of landedEarlier) {
+    // A rerun always publishes under its own run number, whatever an earlier
+    // attempt recorded, and that number is above this queue run's.
+    if ((run.run_attempt ?? 1) > 1 && run.status !== "completed") {
+      return `main run ${run.id} landed earlier and is rerunning under release number ${run.run_number}`;
+    }
     let current = run;
     let releaseNumber = releaseNumberOf(await client.listArtifacts(run.id));
     // An earlier run usually decides within a minute of starting; wait for it

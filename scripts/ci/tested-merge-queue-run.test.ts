@@ -300,6 +300,36 @@ describe("tested merge-queue run release source", () => {
     assertEquals(source.reuse && source.releaseNumber, 21200);
   });
 
+  it("falls back while an earlier main run is rerunning under its own number", async () => {
+    // Attempt 1 of run 40 reused queue number 21190; its rerun will publish
+    // 21209 for older code, so this run cannot take the lower 21200.
+    const source = await decideReleaseSource(
+      new FakeActions(
+        [run({ id: 5, run_number: 21200 })],
+        new Map([
+          [5, artifacts(...REQUIRED)],
+          [40, artifacts("release-number-21190")],
+        ]),
+        [run({
+          id: 40,
+          run_number: 21209,
+          event: "push",
+          status: "in_progress",
+          conclusion: null,
+          run_attempt: 2,
+        })],
+      ),
+      INPUT,
+      fakeClock(),
+    );
+
+    assertEquals(source.reuse, false);
+    assertEquals(
+      source.message,
+      `no tested run for ${SHA}, running full pipeline (main run 40 landed earlier and is rerunning under release number 21209)`,
+    );
+  });
+
   it("reads the largest number an earlier rerun recorded", async () => {
     const source = await decideReleaseSource(
       new FakeActions(
