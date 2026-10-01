@@ -13,6 +13,7 @@ import {
   appendRetainedCheckpoint,
   cloneCheckpointForPersistence,
   cloneOwnedCheckpointForPersistence,
+  cloneRetainedCheckpoint,
   deleteOldestCheckpointOccurrences,
 } from "./checkpoint-retention.ts";
 import { MemoryBackend } from "./memory.ts";
@@ -1232,6 +1233,176 @@ describe("workflow checkpoint retention", () => {
       deepLeaf(owned?._resumeEnvelope?.nodeStates["deep-owned"]?.output, depth),
       "stored",
     );
+  });
+
+  describe("a node id named toJSON", () => {
+    function hijackingContext(calls: string[]): WorkflowContext {
+      return {
+        input: {},
+        toJSON: () => {
+          calls.push("toJSON");
+          return { hijacked: "" };
+        },
+        other: { keep: 1 },
+      };
+    }
+
+    function hijackingCheckpoint(id: string, calls: string[]): Checkpoint {
+      return {
+        ...checkpoint(id),
+        context: hijackingContext(calls),
+        _resumeEnvelope: {
+          ...deepResumeEnvelope(id, 0),
+          context: hijackingContext(calls),
+          graphAdmission: {
+            ...deepResumeEnvelope(id, 0).graphAdmission,
+            stepsEvaluationContext: hijackingContext(calls),
+          },
+        },
+      };
+    }
+
+    it("does not retry a throwing resume-envelope getter", () => {
+      let calls = 0;
+      const resumeEnvelope = deepResumeEnvelope("throwing-getter", 0);
+      Object.defineProperty(resumeEnvelope.context, "step", {
+        configurable: true,
+        enumerable: true,
+        get() {
+          calls++;
+          if (calls === 1) throw new Error("first getter failure");
+          return { keep: 1 };
+        },
+      });
+
+      assertThrows(
+        () =>
+          cloneRetainedCheckpoint({
+            ...checkpoint("throwing-getter"),
+            _resumeEnvelope: resumeEnvelope,
+          }),
+        Error,
+        "first getter failure",
+      );
+      assertEquals(calls, 1);
+    });
+
+    it("is not called while snapshotting a checkpoint for persistence", async () => {
+      const calls: string[] = [];
+      const backend = new MemoryBackend();
+      await backend.createRun(run("to-json-snapshot"));
+
+      const snapshot = cloneCheckpointForPersistence(hijackingCheckpoint("snapshot", calls));
+      // The resume envelope is checked separately below, because a callable in
+      // it cannot be retained in memory at all.
+      await backend.saveCheckpoint("to-json-snapshot", {
+        ...snapshot,
+        _resumeEnvelope: undefined,
+      });
+
+      assertEquals(calls, []);
+      assertEquals(Object.keys(snapshot.context), ["input", "toJSON", "other"]);
+      assertEquals(Object.keys(snapshot._resumeEnvelope!.context), ["input", "toJSON", "other"]);
+      assertEquals(
+        Object.keys(snapshot._resumeEnvelope!.graphAdmission.stepsEvaluationContext),
+        ["input", "toJSON", "other"],
+      );
+      assertEquals((await backend.getLatestCheckpoint("to-json-snapshot"))?.context, {
+        input: {},
+        other: { keep: 1 },
+      });
+    });
+
+    it("treats a reference back to a snapshotted context as the context", async () => {
+      const calls: string[] = [];
+      const backend = new MemoryBackend();
+      await backend.createRun(run("to-json-self"));
+      const context = hijackingContext(calls);
+      context.self = { ref: context };
+
+      const snapshot = cloneCheckpointForPersistence({ ...checkpoint("self"), context });
+      await assertRejects(
+        () => backend.saveCheckpoint("to-json-self", snapshot),
+        VeryfrontError,
+        "circular reference",
+      );
+      assertEquals(calls, []);
+    });
+
+    it("is not called through a context shared into owned node states", async () => {
+      const calls: string[] = [];
+      const context = hijackingContext(calls);
+      const workerId = "run-execution:to-json-shared";
+      const backend = new MemoryBackend();
+      await backend.createRun(run("to-json-shared", workerId));
+
+      // Only the owned clone defers a callable in node states. Any other
+      // callable in node states cannot be retained in memory at all.
+      const saved = await backend.saveCheckpointIfStatusAndWorker(
+        "to-json-shared",
+        "to-json-shared",
+        ["running"],
+        workerId,
+        cloneOwnedCheckpointForPersistence({
+          ...checkpoint("shared", "a"),
+          context,
+          nodeStates: { a: { nodeId: "a", status: "completed", attempt: 1, output: context } },
+        }),
+      );
+
+      assertEquals(saved, true);
+      assertEquals(calls, []);
+      const latest = await backend.getLatestCheckpoint("to-json-shared");
+      assertEquals(latest?.context, { input: {}, other: { keep: 1 } });
+      assertEquals(latest?.nodeStates.a?.output, { input: {}, other: { keep: 1 } });
+    });
+
+    it("is not called while persisting an owned checkpoint", async () => {
+      const calls: string[] = [];
+      const backend = new MemoryBackend();
+      const workerId = "run-execution:to-json-owner";
+      await backend.createRun(run("to-json-owned", workerId));
+
+      const saved = await backend.saveCheckpointIfStatusAndWorker(
+        "to-json-owned",
+        "to-json-owned",
+        ["running"],
+        workerId,
+        cloneOwnedCheckpointForPersistence(hijackingCheckpoint("owned", calls)),
+      );
+
+      assertEquals(saved, true);
+      assertEquals(calls, []);
+      const latest = await backend.getLatestCheckpoint("to-json-owned");
+      assertEquals(latest?.context, { input: {}, other: { keep: 1 } });
+      assertEquals(latest?._resumeEnvelope?.context, { input: {}, other: { keep: 1 } });
+      assertEquals(latest?._resumeEnvelope?.graphAdmission.stepsEvaluationContext, {
+        input: {},
+        other: { keep: 1 },
+      });
+    });
+
+    it("reports an owned callable node under its own strict context path", async () => {
+      const calls: string[] = [];
+      const backend = new MemoryBackend({ strictContext: true });
+      const workerId = "run-execution:to-json-strict-owner";
+      await backend.createRun(run("to-json-strict-owned", workerId));
+
+      await assertRejects(
+        () =>
+          backend.saveCheckpointIfStatusAndWorker(
+            "to-json-strict-owned",
+            "to-json-strict-owned",
+            ["running"],
+            workerId,
+            cloneOwnedCheckpointForPersistence(hijackingCheckpoint("strict-owned", calls)),
+          ),
+        VeryfrontError,
+        "checkpoint.context.<redacted> (function)",
+      );
+
+      assertEquals(calls, []);
+    });
   });
 
   it("removes only the older twin when a duplicate ID is deleted once", async () => {

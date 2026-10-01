@@ -447,6 +447,39 @@ describe("MemoryBackend", () => {
       });
     });
 
+    it("treats a node id named toJSON as data in created, patched and checkpointed context", async () => {
+      const calls: string[] = [];
+      const hijack = () => {
+        calls.push("toJSON");
+        return { hijacked: "" };
+      };
+      const runId = "run-context-to-json-node";
+      await backend.createRun(createTestRun(runId, {
+        context: { input: {}, toJSON: hijack, created: { keep: 1 } },
+      }));
+      await backend.updateRun(runId, {
+        context: { toJSON: hijack, patched: { keep: 2 } },
+      });
+      await backend.saveCheckpoint(runId, {
+        id: "cp-to-json-node",
+        nodeId: "toJSON",
+        timestamp: new Date(1),
+        context: { input: {}, toJSON: hijack, checkpointed: { keep: 3 } },
+        nodeStates: {},
+      });
+
+      assertEquals(calls, []);
+      assertEquals((await backend.getRun(runId))?.context, {
+        input: {},
+        created: { keep: 1 },
+        patched: { keep: 2 },
+      });
+      assertEquals((await backend.getLatestCheckpoint(runId))?.context, {
+        input: {},
+        checkpointed: { keep: 3 },
+      });
+    });
+
     it("derives omitted context keys from the pre-serialization key snapshot", async () => {
       const runId = "run-context-key-snapshot";
       await backend.createRun(createTestRun(runId, {
@@ -1500,6 +1533,39 @@ describe("MemoryBackend", () => {
         message,
       );
       assertEquals((await backend.getRun("run-bigint-sub-workflow-write"))?.nodeStates, {});
+    });
+
+    it("treats a node id named toJSON as data in node-state input and output", async () => {
+      const calls: string[] = [];
+      const hijack = () => {
+        calls.push("toJSON");
+        return { hijacked: "" };
+      };
+      await backend.createRun(createTestRun("run-node-state-to-json", {
+        nodeStates: {
+          toJSON: {
+            nodeId: "toJSON",
+            status: "completed",
+            attempt: 1,
+            input: hijack,
+            output: hijack,
+          },
+          other: {
+            nodeId: "other",
+            status: "completed",
+            attempt: 1,
+            input: { keep: "input" },
+            output: { keep: "output" },
+          },
+        },
+      }));
+
+      assertEquals(calls, []);
+      const nodeStates = (await backend.getRun("run-node-state-to-json"))?.nodeStates;
+      assertEquals(Object.hasOwn(nodeStates?.toJSON ?? {}, "input"), false);
+      assertEquals(Object.hasOwn(nodeStates?.toJSON ?? {}, "output"), false);
+      assertEquals(nodeStates?.other?.input, { keep: "input" });
+      assertEquals(nodeStates?.other?.output, { keep: "output" });
     });
 
     it("rejects node-state user data JSON cannot encode, naming the field (#2242)", async () => {
