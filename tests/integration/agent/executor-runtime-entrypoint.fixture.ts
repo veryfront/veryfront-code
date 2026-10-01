@@ -11,7 +11,7 @@ import { assert, assertEquals, assertRejects } from "#veryfront/testing/assert.t
 import { it } from "#veryfront/testing/bdd.ts";
 import { createExecutorChannel } from "#veryfront/agent/executor/channel.ts";
 import { connectExecutorTransport } from "#veryfront/agent/hosted/executor-node-transport.ts";
-import { startExecutorRuntimeEntrypoint } from "#veryfront/agent/hosted/executor-runtime-entrypoint.ts";
+import type { startExecutorRuntimeEntrypoint } from "#veryfront/agent/hosted/executor-runtime-entrypoint.ts";
 import { generateCsrfToken } from "#veryfront/security/csrf/helpers.ts";
 import type { JsonValue } from "#veryfront/schemas/index.ts";
 
@@ -21,6 +21,9 @@ const resolver = fileURLToPath(new URL("tests/node/resolver.mjs", root));
 /** Register beside the fixed-port bootstrap tests so Deno file parallelism cannot race port 8081. */
 export function registerExecutorRuntimeEntrypointTests(): void {
   it("rejects missing first-party runtime contracts before reading an allocation key", async () => {
+    const { startExecutorRuntimeEntrypoint } = await import(
+      "#veryfront/agent/hosted/executor-runtime-entrypoint.ts"
+    );
     let keyReads = 0;
     let executor: Awaited<ReturnType<typeof startExecutorRuntimeEntrypoint>> | undefined;
     const values: Record<string, string> = {

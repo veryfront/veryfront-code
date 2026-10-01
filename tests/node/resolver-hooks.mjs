@@ -162,14 +162,26 @@ function resolveStdCompatTarget(specifier) {
   return null;
 }
 
+const importMapPrefixes = new WeakMap();
+
 function resolveFromMap(map, specifier) {
   // 1. Direct match (highest priority)
   if (map[specifier]) {
     return map[specifier];
   }
 
+  let prefixes = importMapPrefixes.get(map);
+  if (!prefixes) {
+    const entries = Object.entries(map);
+    prefixes = {
+      wildcard: entries.filter(([prefix]) => prefix.endsWith("/*")),
+      directory: entries.filter(([prefix]) => prefix.endsWith("/")),
+    };
+    importMapPrefixes.set(map, prefixes);
+  }
+
   // 2. Prefix match with wildcard (e.g., #veryfront/testing/* -> ./src/testing/*.ts)
-  for (const [prefix, target] of Object.entries(map)) {
+  for (const [prefix, target] of prefixes.wildcard) {
     if (prefix.endsWith("/*") && specifier.startsWith(prefix.slice(0, -1))) {
       let suffix = specifier.slice(prefix.length - 1);
       // If target ends with *.ts and suffix also ends with .ts, strip .ts from suffix
@@ -181,7 +193,7 @@ function resolveFromMap(map, specifier) {
   }
 
   // 3. Prefix match without wildcard (e.g., #veryfront/ -> ./src/)
-  for (const [prefix, target] of Object.entries(map)) {
+  for (const [prefix, target] of prefixes.directory) {
     if (prefix.endsWith("/") && !prefix.endsWith("/*") && specifier.startsWith(prefix)) {
       const suffix = specifier.slice(prefix.length);
       return target + suffix;

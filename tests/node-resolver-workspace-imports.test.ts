@@ -141,6 +141,57 @@ describe("tests/node-resolver-workspace-imports", () => {
     }
   });
 
+  it("indexes immutable member prefixes once while preserving alias precedence", async () => {
+    const scopeDir = mkdtempSync(join(tmpdir(), "veryfront-node-resolver-prefixes-"));
+    let enumerations = 0;
+    const imports = new Proxy(
+      Object.freeze({
+        "#fixture/direct": "./direct.ts",
+        "#fixture/*": "./first.ts",
+        "#fixture/nested/*": "./second.ts",
+        "#fixture/": "./",
+        "#directory/": "./",
+      }),
+      {
+        ownKeys(target) {
+          enumerations++;
+          return Reflect.ownKeys(target);
+        },
+      },
+    );
+    const scope = { dir: scopeDir, imports };
+    scopes.push(scope);
+    try {
+      for (const name of ["direct", "first", "second"]) {
+        writeFileSync(join(scopeDir, `${name}.ts`), "export {};\n");
+      }
+      for (let pass = 0; pass < 2; pass++) {
+        for (
+          const [specifier, target] of [
+            ["#fixture/direct", "direct.ts"],
+            ["#fixture/nested/value", "first.ts"],
+            ["#directory/second.ts", "second.ts"],
+          ]
+        ) {
+          assertEquals(
+            await resolve(
+              specifier,
+              { parentURL: pathToFileURL(join(scopeDir, "consumer.ts")).href },
+              () => {
+                throw new Error("unexpected fallback to Node resolution");
+              },
+            ),
+            { shortCircuit: true, url: pathToFileURL(join(scopeDir, target)).href },
+          );
+        }
+      }
+      assertEquals(enumerations, 1);
+    } finally {
+      scopes.splice(scopes.indexOf(scope), 1);
+      rmSync(scopeDir, { recursive: true, force: true });
+    }
+  });
+
   describe("bareSpecifierFromRemoteTarget", () => {
     it("keeps the subpath an esm.sh target points at", () => {
       assertEquals(

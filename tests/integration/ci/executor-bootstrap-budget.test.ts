@@ -96,6 +96,7 @@ it("does not eagerly load unrelated profile tooling before cold executor tests",
       "executor-project-tools.ts",
       "executor-http.ts",
       "application-configuration.ts",
+      "executor-runtime-entrypoint.ts",
     ]
   ) {
     assertEquals(
