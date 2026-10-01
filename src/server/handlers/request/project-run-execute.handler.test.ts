@@ -2311,6 +2311,90 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     );
   });
 
+  it("preserves the style build failure when failed-status reporting is unavailable", async () => {
+    const body = {
+      runId: "run_style_artifact_failure_report_unavailable",
+      kind: "task",
+      target: "task:style-artifact-build",
+      projectId: "proj-1",
+      config: {
+        environment_name: "Preview",
+        style_profile_hash: "queued-profile-hash",
+      },
+    };
+    const { request, publicKeyPem } = await signedRequest(
+      "/api/control-plane/runs/run_style_artifact_failure_report_unavailable/execute",
+      body,
+      { "x-token": "test-token" },
+    );
+    const { ctx } = createStyleArtifactCtx(publicKeyPem, {
+      files: [],
+      stylesheet: "@tailwind utilities;",
+    });
+
+    const result = await withMockFetch(
+      (() =>
+        Promise.resolve(
+          new Response(JSON.stringify({ error: "style result API unavailable" }), {
+            status: 400,
+            headers: { "Content-Type": "application/json" },
+          }),
+        )) as typeof fetch,
+      async () => await new ProjectRunExecuteHandler().handle(request, ctx),
+    );
+
+    assertExists(result.response);
+    const json = await result.response.json();
+    assertEquals(json.success, false);
+    assertStringIncludes(json.error, "Style profile hash mismatch");
+  });
+
+  it("preserves cancellation while a style build failure is being reported", async () => {
+    const controller = new AbortController();
+    const reportingStarted = Promise.withResolvers<void>();
+    const body = {
+      runId: "run_style_artifact_cancel_failure_report",
+      kind: "task",
+      target: "task:style-artifact-build",
+      projectId: "proj-1",
+      config: {
+        environment_name: "Preview",
+        style_profile_hash: "queued-profile-hash",
+      },
+    };
+    const signed = await signedRequest(
+      "/api/control-plane/runs/run_style_artifact_cancel_failure_report/execute",
+      body,
+      { "x-token": "test-token" },
+    );
+    const request = new Request(signed.request, { signal: controller.signal });
+    const { ctx } = createStyleArtifactCtx(signed.publicKeyPem, {
+      files: [],
+      stylesheet: "@tailwind utilities;",
+    });
+
+    const pending = withMockFetch(
+      ((_input, init) => {
+        const signal = observeFetchRequestInit(init).signal;
+        reportingStarted.resolve();
+        if (!signal) return Promise.reject(new Error("missing abort signal"));
+        return new Promise<Response>((_resolve, reject) =>
+          signal.addEventListener("abort", () => reject(signal.reason), { once: true })
+        );
+      }) as typeof fetch,
+      async () => await new ProjectRunExecuteHandler().handle(request, ctx),
+    );
+
+    await reportingStarted.promise;
+    controller.abort(new Error("run cancelled during failed style reporting"));
+    const result = await pending;
+
+    assertExists(result.response);
+    const json = await result.response.json();
+    assertEquals(json.success, false);
+    assertEquals(json.error, "run cancelled during failed style reporting");
+  });
+
   it("does not publish a ready or failed style artifact after cancellation", async () => {
     const controller = new AbortController();
     const body = {
