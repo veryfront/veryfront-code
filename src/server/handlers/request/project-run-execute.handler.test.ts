@@ -5317,6 +5317,60 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     assertEquals(payload.waiting.pending_approvals, ["review"]);
   });
 
+  it("cancels a run that advances past its pause after the request aborts", async () => {
+    const controller = new AbortController();
+    let status = "waiting";
+    let cancellations = 0;
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      createWorkflowClient: () => ({
+        statePersistence: "durable",
+        register: () => {},
+        cancel: () => {
+          cancellations++;
+          status = "cancelled";
+          return Promise.resolve();
+        },
+        start: (_id, _input, options) =>
+          Promise.resolve({
+            runId: options!.runId!,
+            // The abort lands after the last poll saw the pause, and a delay
+            // expires while the execution settles.
+            settled: () => {
+              controller.abort();
+              status = "running";
+              return Promise.resolve();
+            },
+          }),
+        getRun: () =>
+          Promise.resolve({
+            status,
+            pendingApprovals: status === "waiting" ? [{ id: "approval", nodeId: "review" }] : [],
+          }),
+        getPendingEventWaits: () => Promise.resolve([]),
+        destroy: () => Promise.resolve(),
+      }),
+    }));
+    const runId = "run_advanced_after_abort";
+    const { request, publicKeyPem } = await signedRequest(
+      `/api/control-plane/runs/${runId}/execute`,
+      {
+        runId,
+        kind: "workflow",
+        target: "workflow:publish",
+        projectId: "proj-1",
+      },
+    );
+    const result = await handler.handle(
+      new Request(request, { signal: controller.signal }),
+      createCtx(publicKeyPem),
+    );
+    assertExists(result.response);
+    const payload = await result.response.json();
+    assertEquals(payload.success, false);
+    assertEquals(payload.error, "Workflow run cancelled");
+    assertEquals(cancellations, 1);
+  });
+
   // veryfront-issue-inbox#2102 and #2110: a waiting run the control plane
   // dispatches again under the same run id is continued, never started anew.
   function resumableClient(initial: Record<string, unknown>) {

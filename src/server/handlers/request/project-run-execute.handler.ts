@@ -1620,7 +1620,15 @@ async function runDiscoveredWorkflow(
       }
       run = await waitForWorkflowResult(client, handle.runId, signal, deps);
       await handle.settled?.();
-      if (run.status === "waiting") run = await client.getRun(handle.runId) ?? run;
+      if (run.status === "waiting") {
+        const refreshed = await client.getRun(handle.runId) ?? run;
+        // An expiring delay or a delivered event can advance the run past the
+        // polled pause while it settles: poll it again, which also cancels it
+        // when the request was aborted meanwhile.
+        run = refreshed.status === "waiting" || isTerminalWorkflowStatus(refreshed.status)
+          ? refreshed
+          : await waitForWorkflowResult(client, handle.runId, signal, deps);
+      }
     }
     const durationMs = Math.max(0, deps.now() - startedAt);
 
