@@ -587,6 +587,7 @@ describe("internal-agents/run-stream", () => {
             parameters: lookupReferenceSchema,
           },
           { name: "update_file", description: "Denied tool" },
+          { name: "veryfront__update_file", description: "Denied tool alias" },
           // Server-executed tools the control plane injects stay failed closed.
           { name: "invoke_agent", description: "Delegate" },
           { name: "veryfront__invoke_agent", description: "Delegate" },

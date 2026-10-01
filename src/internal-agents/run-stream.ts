@@ -310,8 +310,10 @@ const controlPlaneNames = [
   "studio_todo_write",
 ];
 
-function isControlPlaneToolName(toolName: string): boolean {
-  return controlPlaneNames.some((name) => toolName === name || toolName === `veryfront__${name}`);
+// Control-plane tools and the reserved `veryfront__` platform namespace are
+// executed or aliased server-side, so they never count as client tools.
+function isPlatformToolName(toolName: string): boolean {
+  return toolName.startsWith("veryfront__") || controlPlaneNames.includes(toolName);
 }
 
 const CHILD_RUN_CONTROL_PLANE_TOOL_NAMES = new Set([
@@ -455,7 +457,7 @@ export function buildMergedTools(
   const injectedTools = Object.fromEntries(
     input.tools
       .filter((tool) =>
-        (!failClosedUnrestrictedSelector || !isControlPlaneToolName(tool.name)) &&
+        (!failClosedUnrestrictedSelector || !isPlatformToolName(tool.name)) &&
         (!authoritativeSourceToolNames.has(tool.name) ||
           (tool.name === INVOKE_AGENT_TOOL_ID && controlPlaneOwnsDelegation)) &&
         !isExplicitlyDeniedToolName(
