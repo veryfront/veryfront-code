@@ -1403,6 +1403,16 @@ async function runDiscoveredWorkflow(
     },
   );
   let activeResume: Promise<unknown> | undefined;
+  let stopped: Promise<boolean> | undefined;
+  let stopAcknowledgement: Promise<void> | undefined;
+  const acknowledgeSettledStop = () => {
+    if (!stopped || stopAcknowledgement) return;
+    stopAcknowledgement = stopped.then(async (confirmed) => {
+      if (confirmed) await acknowledgeStop?.();
+    });
+  };
+  // Retain local settlement evidence through cleanup, while the caller can still abort.
+  signal.addEventListener("abort", acknowledgeSettledStop, { once: true });
   try {
     client.register(workflow.definition);
     // The run was cancelled while the workflow was being loaded: do not start or resume it.
@@ -1485,15 +1495,22 @@ async function runDiscoveredWorkflow(
     }
     const durationMs = Math.max(0, deps.now() - startedAt);
 
-    if (
-      signal.aborted && isTerminalWorkflowStatus(run.status) &&
-      await client.waitForExecutionStopped?.(request.runId)
-    ) await acknowledgeStop?.();
+    if (isTerminalWorkflowStatus(run.status)) {
+      stopped = (client.waitForExecutionStopped?.(request.runId) ?? Promise.resolve(false))
+        .catch(() => false);
+      if (signal.aborted) {
+        acknowledgeSettledStop();
+        await stopAcknowledgement;
+      }
+    }
 
     // The cancel can arrive after the last poll, while the pause is persisted.
     if (run.status === "waiting" && signal.aborted) {
       await client.cancel(request.runId);
-      if (await client.waitForExecutionStopped?.(request.runId)) await acknowledgeStop?.();
+      stopped = (client.waitForExecutionStopped?.(request.runId) ?? Promise.resolve(false))
+        .catch(() => false);
+      acknowledgeSettledStop();
+      await stopAcknowledgement;
       return {
         success: false,
         result: run.output,
@@ -1575,20 +1592,25 @@ async function runDiscoveredWorkflow(
       duration_ms: durationMs,
     };
   } finally {
-    if (activeResume) {
-      // A timed-out request must not destroy resources still used by durable execution.
-      void activeResume.then(() => client.destroy(), () => client.destroy()).catch((error) => {
-        serverLogger.warn("[project-run-execute] Failed to destroy workflow client", {
-          runId: request.runId,
-          errorName: error instanceof Error ? error.name : "unknown",
+    try {
+      if (activeResume) {
+        // A timed-out request must not destroy resources still used by durable execution.
+        void activeResume.then(() => client.destroy(), () => client.destroy()).catch((error) => {
+          serverLogger.warn("[project-run-execute] Failed to destroy workflow client", {
+            runId: request.runId,
+            errorName: error instanceof Error ? error.name : "unknown",
+          });
         });
-      });
-    } else {
-      await destroyWorkflowClient(
-        client,
-        request.runId,
-        deps.workflowClientDestroyTimeoutMs ?? DEFAULT_WORKFLOW_CLIENT_DESTROY_TIMEOUT_MS,
-      );
+      } else {
+        await destroyWorkflowClient(
+          client,
+          request.runId,
+          deps.workflowClientDestroyTimeoutMs ?? DEFAULT_WORKFLOW_CLIENT_DESTROY_TIMEOUT_MS,
+        );
+      }
+    } finally {
+      signal.removeEventListener("abort", acknowledgeSettledStop);
+      await stopAcknowledgement;
     }
   }
 }

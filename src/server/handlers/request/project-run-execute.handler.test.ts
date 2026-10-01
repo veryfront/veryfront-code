@@ -7157,6 +7157,51 @@ describe("server/handlers/request/project-run-execute.handler cancellation", () 
     assertEquals(callbacks, 1);
   });
 
+  for (const status of ["completed", "failed"] as const) {
+    for (const owned of [true, false]) {
+      it(`acknowledges cancellation during ${status} workflow cleanup only with local settlement (owned: ${owned})`, async () => {
+        const controller = new AbortController();
+        const cleanup = Promise.withResolvers<void>();
+        const releaseCleanup = Promise.withResolvers<void>();
+        let callbacks = 0;
+        const handler = new ProjectRunExecuteHandler(createDeps({
+          createWorkflowClient: () => ({
+            register: () => {},
+            start: async () => ({ runId: "run_cleanup_ack", settled: async () => {} }),
+            getRun: async () => ({ status }),
+            cancel: async () => {},
+            waitForExecutionStopped: async () => owned,
+            destroy: async () => {
+              cleanup.resolve();
+              await releaseCleanup.promise;
+            },
+          }),
+        }));
+        const signed = await signedRequest("/api/control-plane/runs/run_cleanup_ack/execute", {
+          runId: "run_cleanup_ack",
+          kind: "workflow",
+          target: "workflow:publish",
+          projectId: "proj-1",
+        }, { "x-veryfront-run-stop-token": "opaque-stop-capability" });
+        await withMockFetch(async () => {
+          callbacks += 1;
+          return Response.json({ acknowledged: true });
+        }, async () => {
+          const pending = handler.handle(
+            new Request(signed.request, { signal: controller.signal }),
+            createCtx(signed.publicKeyPem),
+          );
+          await cleanup.promise;
+          assertEquals(callbacks, 0);
+          controller.abort(new Error("Run cancelled during cleanup"));
+          releaseCleanup.resolve();
+          await pending;
+        });
+        assertEquals(callbacks, owned ? 1 : 0);
+      });
+    }
+  }
+
   for (const outcome of ["normal", "no-credential", "callback-failure"] as const) {
     it(`stop acknowledgement handles ${outcome} without changing the execution result`, async () => {
       const controller = new AbortController();
