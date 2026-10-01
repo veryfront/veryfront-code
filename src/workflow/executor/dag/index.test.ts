@@ -1001,10 +1001,17 @@ describe("DAGExecutor", () => {
       const processor: WorkflowDefinition = {
         id: "mapped-output",
         outputSchema: defineSchema((v) => v.object({ value: v.number() }))(),
-        steps: [step("value", { tool: "noop" })],
+        steps: () => [step("value", { tool: "noop" })],
       };
 
-      const result = await executor.execute(
+      const exec = new DAGExecutor({
+        stepExecutor: new MockStepExecutor(
+          new Map(),
+          () => ({ success: true, output: "invalid", executionTime: 1 }),
+        ),
+      });
+
+      const result = await exec.execute(
         [map("batch", { items: [{}], processor })],
         createTestRun(),
       );
@@ -1015,6 +1022,63 @@ describe("DAGExecutor", () => {
         (result.errorCause as unknown as { code?: string })?.code,
         "OUTPUT_VALIDATION_FAILED",
       );
+      assertEquals(
+        (result.errorCause as unknown as { detail?: unknown })?.detail,
+        {
+          errors: [{
+            path: "/value",
+            message: "Invalid input: expected number, received string",
+          }],
+        },
+      );
+    });
+
+    it("validates mapped defaults against declared keys and preserves namespaced output", async () => {
+      const processor: WorkflowDefinition = {
+        id: "mapped-output",
+        outputSchema: defineSchema((v) => v.object({ value: v.number() }))(),
+        steps: [step("value", { tool: "noop" })],
+      };
+      const exec = new DAGExecutor({
+        stepExecutor: new MockStepExecutor(
+          new Map(),
+          () => ({ success: true, output: 42, executionTime: 1 }),
+        ),
+      });
+
+      const result = await exec.execute(
+        [map("batch", { items: [{}], processor })],
+        createTestRun(),
+      );
+
+      assertEquals(result.completed, true);
+      assertEquals(result.nodeStates.batch?.output, [{
+        input: {},
+        "batch_0/value": 42,
+      }]);
+    });
+
+    it("keeps parsed selected outputs for mapped workflow definitions", async () => {
+      const processor: WorkflowDefinition = {
+        id: "mapped-selected-output",
+        outputSchema: defineSchema((v) => v.object({ value: v.coerce.number() }))(),
+        output: (context) => ({ value: context.value }),
+        steps: [step("value", { tool: "noop" })],
+      };
+      const exec = new DAGExecutor({
+        stepExecutor: new MockStepExecutor(
+          new Map(),
+          () => ({ success: true, output: "42", executionTime: 1 }),
+        ),
+      });
+
+      const result = await exec.execute(
+        [map("batch", { items: [{}], processor })],
+        createTestRun(),
+      );
+
+      assertEquals(result.completed, true);
+      assertEquals(result.nodeStates.batch?.output, [{ value: 42 }]);
     });
 
     it("namespaces composite descendants for every mapped item", async () => {

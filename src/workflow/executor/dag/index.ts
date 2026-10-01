@@ -58,6 +58,7 @@ import {
   isCanonicalNonEmptyString,
   namespaceWorkflowDefinition,
   rebaseCompositeDescendants,
+  workflowOutputValidationContext,
 } from "#veryfront/workflow/dsl/validation.ts";
 import type { ChildGraphExecutionOptions } from "./node-strategy-types.ts";
 import {
@@ -2571,7 +2572,10 @@ export class DAGExecutor {
     } else if (result.completed && workflowDef.outputSchema) {
       // A default output remains the complete child context for compatibility.
       // Parse only to validate it; schemas may coerce or strip their returned value.
-      parseWorkflowOutput(workflowDef, finalOutput);
+      parseWorkflowOutput(
+        workflowDef,
+        workflowOutputValidationContext(workflowDef, result.context),
+      );
     }
     if (result.completed && config.output) {
       finalOutput = config.output(finalOutput);

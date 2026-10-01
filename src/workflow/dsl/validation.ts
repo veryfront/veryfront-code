@@ -4,6 +4,11 @@ import type { WorkflowDefinition, WorkflowNode, WorkflowNodeConfig } from "../ty
 const numberIsSafeInteger = Number.isSafeInteger;
 const reflectApply = Reflect.apply;
 const stringTrim = String.prototype.trim;
+const outputValidationContextView = Symbol("workflowOutputValidationContextView");
+
+type NamespacedWorkflowDefinition = WorkflowDefinition & {
+  [outputValidationContextView]?: (context: Record<string, unknown>) => Record<string, unknown>;
+};
 
 export function isCanonicalNonEmptyString(value: unknown): value is string {
   return typeof value === "string" && value.length > 0 &&
@@ -188,7 +193,7 @@ function rebaseWorkflowDefinition(
   const { steps, output } = definition;
   // Declared ids the rebase left unchanged (already carrying the new prefix).
   const kept = new Set<string>();
-  return {
+  const rebased: NamespacedWorkflowDefinition = {
     ...definition,
     steps: Array.isArray(steps)
       ? rebaseWorkflowNodes(oldPrefix, newPrefix, steps, kept)
@@ -198,7 +203,19 @@ function rebaseWorkflowDefinition(
     ...(output === undefined
       ? {}
       : { output: (context) => output(rebaseContextKeys(newPrefix, oldPrefix, context, kept)) }),
+    [outputValidationContextView]: (context: Record<string, unknown>) =>
+      rebaseContextKeys(newPrefix, oldPrefix, context, kept),
   };
+  return rebased;
+}
+
+/** Present a namespaced workflow context under the step ids its schema declares. */
+export function workflowOutputValidationContext(
+  definition: WorkflowDefinition,
+  context: Record<string, unknown>,
+): Record<string, unknown> {
+  const view = (definition as NamespacedWorkflowDefinition)[outputValidationContextView];
+  return view?.(context) ?? context;
 }
 
 function rebaseContextKeys<T extends Record<string, unknown>>(
