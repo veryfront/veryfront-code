@@ -391,6 +391,49 @@ describe(
       assertEquals(second.tools.get("resolution_tool")?.description, "TypeScript candidate");
     });
 
+    it("reuses imported agent modules across identical source snapshots", async () => {
+      agentRegistry.clearAll();
+      toolRegistryInternal.clearAll();
+      const ctx = createHandlerContext(
+        "/identical-preview-snapshots",
+        "identical-preview-snapshots",
+        "preview",
+      );
+      let version = 1;
+      let fingerprint: string | undefined = "same-content-fingerprint";
+      const fs = ctx.adapter.fs as typeof ctx.adapter.fs & {
+        getSourceSnapshotVersion: () => number;
+        getSourceSnapshotFingerprint: () => Promise<string | undefined>;
+      };
+      fs.getSourceSnapshotVersion = () => version;
+      fs.getSourceSnapshotFingerprint = () => Promise.resolve(fingerprint);
+      await writeAgentFile(ctx, "snapshot-agent", "UNCHANGED");
+      await ensureProjectDiscovery(ctx);
+      const first = getAgent("snapshot-agent");
+      assertExists(first);
+
+      // A new credential-scoped adapter can observe the same bytes under a
+      // different process-local generation. It must not re-bundle every module.
+      version = 2;
+      await ensureProjectDiscovery(ctx);
+      assertStrictEquals(getAgent("snapshot-agent"), first);
+
+      // Changed content must get a fresh compilation namespace, even if the
+      // entry itself is unchanged (a new resolution candidate can matter).
+      version = 3;
+      fingerprint = "changed-content-fingerprint";
+      await ensureProjectDiscovery(ctx);
+      const changed = getAgent("snapshot-agent");
+      assertExists(changed);
+      assertNotStrictEquals(changed, first);
+
+      // An unavailable fingerprint must retain the generation-based fallback.
+      version = 4;
+      fingerprint = undefined;
+      await ensureProjectDiscovery(ctx);
+      assertNotStrictEquals(getAgent("snapshot-agent"), changed);
+    });
+
     it("reuses preview discovery for one source snapshot generation", async () => {
       agentRegistry.clearAll();
       toolRegistryInternal.clearAll();
