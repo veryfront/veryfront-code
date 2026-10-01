@@ -70,6 +70,9 @@ is refused. The key starts with `vf_` and is bound to its project.
 The examples read it from `VERYFRONT_API_KEY`, a name for your own code only.
 The Veryfront CLI and SDK read `VERYFRONT_API_TOKEN`, described above.
 
+For a one-snippet setup per tool, including Claude Code, Codex, and the Vercel
+AI SDK, see the [AI Gateway quickstart](./ai-gateway-quickstart.md).
+
 Set the project API key in your shell before running the examples:
 
 ```bash
