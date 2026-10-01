@@ -1,3 +1,4 @@
+import { VERYFRONT_CONFIG_FILES } from "#veryfront/config/config-files.ts";
 import { logger as baseLogger } from "#veryfront/utils";
 import { awaitAbortable, throwIfAborted } from "#veryfront/utils/abort.ts";
 import { createHash, type Hash } from "node:crypto";
@@ -74,6 +75,7 @@ const SOURCE_SNAPSHOT_YIELD_RECORDS = 256;
 const SOURCE_SNAPSHOT_DIGEST_BYTES = 32;
 const DateNow = Date.now;
 const IntrinsicArrayIsArray = Array.isArray;
+const ArrayPrototypeSome = Array.prototype.some;
 const IntrinsicReflectApply = Reflect.apply;
 const IntrinsicPerformance = performance;
 const PerformanceNow = IntrinsicPerformance.now;
@@ -1375,6 +1377,28 @@ export class VeryfrontFSAdapter implements FSAdapter {
   #shouldRecoverBranchMiss(path: string, error: unknown): boolean {
     if (this.contentContext?.sourceType !== "branch") return false;
     if (!isNotFoundLikeError(error)) return false;
+    // Hosted config tries several root candidates. An absent candidate in the
+    // current complete listing needs no second branch listing. Other files
+    // still recover immediately because they may have just been written.
+    const normalizedPath = this.normalizer.normalize(path);
+    const context = this.getEffectiveContentContext();
+    const snapshotAge = currentTime() - this.sourceSnapshotCheckedAt;
+    if (
+      IntrinsicReflectApply(ArrayPrototypeSome, VERYFRONT_CONFIG_FILES, [
+        (candidate: string) => candidate === normalizedPath,
+      ]) &&
+      this.sourceSnapshotIdentity === this.#getCurrentSourceSnapshotIdentity() &&
+      snapshotAge >= 0 && snapshotAge < BRANCH_SOURCE_SNAPSHOT_FRESHNESS_MS &&
+      context && !this.#isPersistentCacheInvalidated(buildFileCacheKeyPrefix(context))
+    ) {
+      const cacheKey = this.getCurrentFileListCacheKey();
+      const files = cacheKey ? this.readRetainedFileList(cacheKey) : undefined;
+      if (
+        files && !IntrinsicReflectApply(ArrayPrototypeSome, files, [
+          (file: { path: string }) => file.path === normalizedPath,
+        ])
+      ) return false;
+    }
     // The index was built from a listing already fetched for this snapshot, and
     // it says the path is absent. Recovering here re-derives that answer per
     // probe, so a page trying N candidate spellings pays N recoveries to be
