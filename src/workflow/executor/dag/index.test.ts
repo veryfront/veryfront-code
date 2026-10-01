@@ -22,6 +22,7 @@ import {
 import { beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { DAGExecutor } from "./index.ts";
 import { defineSchema } from "#veryfront/schemas/index.ts";
+import { NodeStateSchema } from "../../schemas/workflow.schema.ts";
 import type {
   Checkpoint,
   LoopExecutionContext,
@@ -153,6 +154,239 @@ describe("DAGExecutor", () => {
   beforeEach(() => {
     stepExecutor = createMockStepExecutor();
     executor = new DAGExecutor({ stepExecutor });
+  });
+
+  describe("nested output exception replay", () => {
+    it("builds replayed dynamic steps from the retained input when the retry context changes", async () => {
+      const builderInputs: unknown[] = [];
+      let childExecutions = 0;
+      let outputCalls = 0;
+      const childExecutor = new MockStepExecutor(new Map(), (_node, context) => {
+        childExecutions++;
+        return { success: true, output: context.input, executionTime: 0 };
+      });
+      const nodes = [
+        subWorkflow("child", {
+          input: (context: WorkflowContext) => context.retryInput ?? { n: 1 },
+          workflow: {
+            id: "dynamic-child",
+            steps: ({ input }) => {
+              builderInputs.push(input);
+              return [step(`read-${(input as { n: number }).n}`, { tool: "read" })];
+            },
+            output: (context) => {
+              if (++outputCalls === 1) throw new Error("output selection failed");
+              return { input: context.input, read: context["read-1"] };
+            },
+          },
+        }),
+      ];
+      const first = await new DAGExecutor({ stepExecutor: childExecutor }).execute(
+        nodes,
+        createTestRun(),
+      );
+      assertEquals(first.completed, false);
+      const retried = await new DAGExecutor({ stepExecutor: childExecutor }).execute(
+        nodes,
+        createTestRun({
+          nodeStates: first.nodeStates,
+          context: { ...first.context, retryInput: { n: 2 } },
+        }),
+      );
+      assertEquals(retried.completed, true);
+      assertEquals(builderInputs, [{ n: 1 }, { n: 1 }]);
+      assertEquals(retried.context.child, { input: { n: 1 }, read: { n: 1 } });
+      assertEquals(childExecutions, 1);
+    });
+
+    for (const scenario of ["loop child", "dependent callback"] as const) {
+      it(`preserves ${scenario} writes when retrying nested output selection`, async () => {
+        let childExecutions = 0;
+        let firstContext: WorkflowContext | undefined;
+        const childExecutor = new MockStepExecutor(new Map(), () => {
+          childExecutions++;
+          return { success: true, output: { n: 1 }, executionTime: 0 };
+        });
+        const prerequisite = loop("prerequisite", {
+          steps: [],
+          maxIterations: 1,
+          while: () => false,
+          onComplete: () => ({ selected: "prerequisite" }),
+        });
+        const nodes = [subWorkflow("child", {
+          input: { n: 1 },
+          workflow: {
+            id: "loop-context-child",
+            steps: scenario === "loop child"
+              ? [
+                loop("repeat", {
+                  steps: [step("read", { tool: "read" })],
+                  maxIterations: 1,
+                  while: () => true,
+                }),
+              ]
+              : [{
+                ...loop("dependent", {
+                  steps: [],
+                  maxIterations: 1,
+                  while: () => false,
+                  onComplete: () => ({ selected: "dependent" }),
+                }),
+                dependsOn: ["prerequisite"],
+              }, prerequisite],
+            output: (context) => {
+              if (firstContext === undefined) {
+                firstContext = structuredClone(context);
+                throw new Error("output selection failed");
+              }
+              return context;
+            },
+          },
+        })];
+        const first = await new DAGExecutor({ stepExecutor: childExecutor }).execute(
+          nodes,
+          createTestRun(),
+        );
+        assertEquals(first.completed, false);
+        const retried = await new DAGExecutor({ stepExecutor: childExecutor }).execute(
+          nodes,
+          createTestRun({ nodeStates: first.nodeStates, context: first.context }),
+        );
+        assertEquals(retried.completed, true);
+        assertEquals(retried.context.child, firstContext);
+        assertEquals(childExecutions, scenario === "loop child" ? 1 : 0);
+      });
+    }
+
+    for (const completion of ["onComplete", "onMaxIterations"] as const) {
+      it(`restores loop ${completion} context keys after an output exception`, async () => {
+        let completionCalls = 0;
+        let firstContext: WorkflowContext | undefined;
+        const nodes = [subWorkflow("child", {
+          input: { n: 1 },
+          workflow: {
+            id: "loop-child",
+            steps: [loop("repeat", {
+              steps: [],
+              maxIterations: 1,
+              while: () => completion === "onMaxIterations",
+              [completion]: () => {
+                completionCalls++;
+                return { selected: { n: 1 }, iterations: "user value" };
+              },
+            })],
+            output: (context) => {
+              if (firstContext === undefined) {
+                firstContext = structuredClone(context);
+                throw new Error("output selection failed");
+              }
+              return context;
+            },
+          },
+        })];
+        const first = await executor.execute(nodes, createTestRun());
+        assertEquals(first.completed, false);
+        const retried = await new DAGExecutor({ stepExecutor }).execute(
+          nodes,
+          createTestRun({
+            nodeStates: Object.fromEntries(
+              Object.entries(first.nodeStates).map((
+                [id, state],
+              ) => [id, NodeStateSchema.parse(state)]),
+            ),
+            context: first.context,
+          }),
+        );
+        assertEquals(retried.completed, true);
+        assertEquals(retried.context.child, firstContext);
+        assertEquals(completionCalls, 1);
+      });
+    }
+
+    for (const composite of ["parallel", "branch", "map"] as const) {
+      it(`preserves published context keys when replaying a completed ${composite}`, async () => {
+        let childExecutions = 0;
+        let firstContext: WorkflowContext | undefined;
+        const childExecutor = new MockStepExecutor(new Map(), () => {
+          childExecutions++;
+          return { success: true, output: { n: 1 }, executionTime: 0 };
+        });
+        const child = step("read", { tool: "read" });
+        const compositeNode: WorkflowNode = composite === "parallel"
+          ? parallel("internal", [child])
+          : composite === "branch"
+          ? { id: "internal", config: { type: "branch", condition: () => true, then: [child] } }
+          : map("internal", { items: [{ n: 1 }], processor: { id: "processor", steps: [child] } });
+        const nodes = [subWorkflow("child", {
+          input: { n: 1 },
+          workflow: {
+            id: "composite-child",
+            steps: [compositeNode],
+            output: (context) => {
+              if (firstContext === undefined) {
+                firstContext = structuredClone(context);
+                throw new Error("output selection failed");
+              }
+              return context;
+            },
+          },
+        })];
+        const first = await new DAGExecutor({ stepExecutor: childExecutor }).execute(
+          nodes,
+          createTestRun(),
+        );
+        assertEquals(first.completed, false);
+        const retried = await new DAGExecutor({ stepExecutor: childExecutor }).execute(
+          nodes,
+          createTestRun({ nodeStates: first.nodeStates, context: first.context }),
+        );
+        assertEquals(retried.completed, true);
+        assertEquals(retried.context.child, firstContext);
+        assertEquals(childExecutions, 1);
+      });
+    }
+
+    for (const generatedByMap of [false, true]) {
+      it(`restores completed child outputs after ${generatedByMap ? "map" : "direct"} nested output throws`, async () => {
+        let childExecutions = 0;
+        let outputCalls = 0;
+        const childExecutor = new MockStepExecutor(new Map(), (_node, context) => {
+          childExecutions++;
+          return { success: true, output: context.input, executionTime: 0 };
+        });
+        const workflow: WorkflowDefinition = {
+          id: "child-workflow",
+          steps: [step("child-read", { tool: "read" })],
+          output: (context) => {
+            if (++outputCalls === 1) throw new Error("output selection failed");
+            return { input: context.input, read: context["child-read"] };
+          },
+        };
+        const nodes = generatedByMap
+          ? [map("children", { items: [{ n: 1 }], processor: workflow })]
+          : [subWorkflow("child", { workflow, input: { n: 1 } })];
+        const first = await new DAGExecutor({ stepExecutor: childExecutor }).execute(
+          nodes,
+          createTestRun(),
+        );
+        assertEquals(first.completed, false);
+        assertStringIncludes(first.error ?? "", "output selection failed");
+        const childId = generatedByMap ? "children_0/child-read" : "child-read";
+        assertEquals(first.nodeStates[childId]?.status, "completed");
+        assertEquals(first.nodeStates[childId]?.output, { n: 1 });
+        const retried = await new DAGExecutor({ stepExecutor: childExecutor }).execute(
+          nodes,
+          createTestRun({ nodeStates: first.nodeStates, context: first.context }),
+        );
+        assertEquals(retried.completed, true);
+        const expected = { input: { n: 1 }, read: { n: 1 } };
+        assertEquals(
+          retried.context[generatedByMap ? "children" : "child"],
+          generatedByMap ? [expected] : expected,
+        );
+        assertEquals(childExecutions, 1);
+      });
+    }
   });
 
   describe("simple sequential execution", () => {
