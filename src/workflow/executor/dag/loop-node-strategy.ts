@@ -108,8 +108,8 @@ export function toPersistedNodeStates(
       ...(state._subWorkflowOwnerPath !== undefined
         ? { _subWorkflowOwnerPath: state._subWorkflowOwnerPath }
         : {}),
-      ...(state._compositeContextPatch !== undefined
-        ? { _compositeContextPatch: state._compositeContextPatch }
+      ...(state._subWorkflowContext !== undefined
+        ? { _subWorkflowContext: state._subWorkflowContext }
         : {}),
       ...(state._activeCompositeChildIds !== undefined
         ? { _activeCompositeChildIds: [...state._activeCompositeChildIds] }
@@ -409,8 +409,6 @@ export async function executeLoopNodeStrategy(
   ) {
     contextPatch.delete.push(loopStateKey);
   }
-
-  state._compositeContextPatch = contextPatch;
 
   return {
     state,

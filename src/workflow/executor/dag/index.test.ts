@@ -157,6 +157,65 @@ describe("DAGExecutor", () => {
   });
 
   describe("nested output exception replay", () => {
+    for (const scenario of ["loop child", "dependent callback"] as const) {
+      it(`preserves ${scenario} writes when retrying nested output selection`, async () => {
+        let childExecutions = 0;
+        let firstContext: WorkflowContext | undefined;
+        const childExecutor = new MockStepExecutor(new Map(), () => {
+          childExecutions++;
+          return { success: true, output: { n: 1 }, executionTime: 0 };
+        });
+        const prerequisite = loop("prerequisite", {
+          steps: [],
+          maxIterations: 1,
+          while: () => false,
+          onComplete: () => ({ selected: "prerequisite" }),
+        });
+        const nodes = [subWorkflow("child", {
+          input: { n: 1 },
+          workflow: {
+            id: "loop-context-child",
+            steps: scenario === "loop child"
+              ? [
+                loop("repeat", {
+                  steps: [step("read", { tool: "read" })],
+                  maxIterations: 1,
+                  while: () => true,
+                }),
+              ]
+              : [{
+                ...loop("dependent", {
+                  steps: [],
+                  maxIterations: 1,
+                  while: () => false,
+                  onComplete: () => ({ selected: "dependent" }),
+                }),
+                dependsOn: ["prerequisite"],
+              }, prerequisite],
+            output: (context) => {
+              if (firstContext === undefined) {
+                firstContext = structuredClone(context);
+                throw new Error("output selection failed");
+              }
+              return context;
+            },
+          },
+        })];
+        const first = await new DAGExecutor({ stepExecutor: childExecutor }).execute(
+          nodes,
+          createTestRun(),
+        );
+        assertEquals(first.completed, false);
+        const retried = await new DAGExecutor({ stepExecutor: childExecutor }).execute(
+          nodes,
+          createTestRun({ nodeStates: first.nodeStates, context: first.context }),
+        );
+        assertEquals(retried.completed, true);
+        assertEquals(retried.context.child, firstContext);
+        assertEquals(childExecutions, scenario === "loop child" ? 1 : 0);
+      });
+    }
+
     for (const completion of ["onComplete", "onMaxIterations"] as const) {
       it(`restores loop ${completion} context keys after an output exception`, async () => {
         let completionCalls = 0;

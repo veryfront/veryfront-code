@@ -1231,10 +1231,6 @@ function restorePublishedChildOutputs(
   for (const node of nodes) {
     const state = nodeStates[node.id];
     if (state?._subWorkflowOwnerPath && state._subWorkflowOwnerPath !== ownerPath) continue;
-    if (state?.status === "completed" && state._compositeContextPatch) {
-      applyContextPatch(context, state._compositeContextPatch);
-      continue;
-    }
     if (node.config.type === "parallel") {
       restorePublishedChildOutputs(node.config.nodes, nodeStates, context, ownerPath);
     } else if (node.config.type === "branch") {
@@ -1981,6 +1977,13 @@ export class DAGExecutor {
           scope,
           abortSignal,
         );
+        if (
+          node.config.type === "subWorkflow" &&
+          (result.state.status === "running" || result.state.status === "failed") &&
+          nodeStates[nodeId]?._subWorkflowContext
+        ) {
+          result.state._subWorkflowContext = nodeStates[nodeId]!._subWorkflowContext;
+        }
         // A failing node returns a failed state rather than throwing, so the span's own
         // catch never runs. Without this the span stays UNSET and a failed run is
         // indistinguishable from a successful one in any trace backend.
@@ -2534,10 +2537,15 @@ export class DAGExecutor {
       scope,
     );
 
-    // Completed children are skipped on replay. Restore only the keys their
-    // graph publishes, not internal composite or map-processor state ids.
-    const childContext: WorkflowContext = { input };
-    restorePublishedChildOutputs(steps, seededNodeStates, childContext, ownerPath);
+    // Replay the exact child context, including loop writes and their order.
+    // Older states without a snapshot can still restore declared child outputs.
+    const savedContext = nodeStates[node.id]?._subWorkflowContext;
+    const childContext: WorkflowContext = savedContext
+      ? { input, ...cloneExecutionState(savedContext, "Sub-workflow context") }
+      : { input };
+    if (!savedContext) {
+      restorePublishedChildOutputs(steps, seededNodeStates, childContext, ownerPath);
+    }
 
     const subRunId = `${node.id}_sub_${generateId()}`;
     // The sub-run record is synthetic and never persisted, so its id is a debugging
@@ -2597,6 +2605,16 @@ export class DAGExecutor {
     const waiting = result.waiting || waitingNodes !== undefined;
     const waitingNode = result.waitingNode ?? waitingNodes?.[0]?.nodeId;
     const waitingConfig = result.waitingConfig ?? waitingNodes?.[0]?.waitConfig;
+
+    // Keep child work before output selection can throw. The node policy returns
+    // a failed wrapper, so executeNode carries this snapshot into that state.
+    const currentState = nodeStates[node.id];
+    if (currentState) {
+      currentState._subWorkflowContext = cloneExecutionState(
+        result.context,
+        "Sub-workflow context",
+      );
+    }
 
     let finalOutput: unknown = result.context;
     if (result.completed && workflowDef.output) {
