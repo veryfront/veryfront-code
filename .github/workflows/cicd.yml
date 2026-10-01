@@ -33,7 +33,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        check: [test-layout, format, lint, typecheck]
+        check: [test-layout, format, lint, typecheck, test-typecheck]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -86,21 +86,41 @@ jobs:
           case "${{ matrix.check }}" in
             test-layout) deno task test:layout ;;
             format) deno task fmt:check ;;
-            # The chain lives in the lint:ci task so a contributor can run this
-            # shard locally instead of learning what it covers from a red CI run.
-            lint) deno task lint:ci ;;
+            # Keep the local lint:ci task intact. CI runs its test typecheck
+            # concurrently, and fails closed if the task chain changes shape.
+            lint)
+              deno eval '
+                const chain = JSON.parse(Deno.readTextFileSync("deno.json"))
+                  .tasks["lint:ci"].split(" && ");
+                const check = "deno task lint:test-typecheck";
+                if (chain.filter((command) => command === check).length !== 1) {
+                  throw new Error("expected one test typecheck in lint:ci");
+                }
+                const status = await new Deno.Command("bash", {
+                  args: ["-e", "-o", "pipefail", "-c",
+                    chain.filter((command) => command !== check).join(" && ")],
+                  stdout: "inherit", stderr: "inherit",
+                }).spawn().status;
+                Deno.exit(status.code);
+              '
+              ;;
             typecheck) deno task typecheck ;;
+            test-typecheck) deno task lint:test-typecheck ;;
           esac
 
   # ============================================
   # CI: Tests
   # ============================================
 
-  tests:
+  tests-integration:
     if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
     runs-on: ubuntu-latest
     timeout-minutes: 35
-    name: tests (integration)
+    name: "tests (integration shard ${{ matrix.shard }}/2)"
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -109,7 +129,7 @@ jobs:
         timeout-minutes: 10
         with:
           warm-cache: "true"
-          warm-redis-cache: "true"
+          warm-redis-cache: ${{ matrix.shard == 1 }}
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
         with:
           node-version: "24"
@@ -118,25 +138,78 @@ jobs:
         timeout-minutes: 20
         uses: ./.github/actions/install-chromium
       - name: Install Node resolver test dependencies
+        if: ${{ matrix.shard == 2 }}
         run: |
           npm ci --ignore-scripts --prefix tests/node/resolver-dependencies
           mkdir -p node_modules npm/node_modules
           cp -R tests/node/resolver-dependencies/node_modules/. npm/node_modules/
       - name: Run Node cache-link compatibility tests
+        if: ${{ matrix.shard == 2 }}
         run: node ./tests/node/run-tests.mjs 'src/utils/cache-dir.test.ts'
       # The pinned egress transport is Node/Bun-only, so the Deno lanes skip its
       # tests entirely. Without this step nothing in CI exercises it, which is
       # how it shipped omitting the request headers `fetch` normally supplies.
       - name: Run Node egress transport tests
+        if: ${{ matrix.shard == 2 }}
         run: node ./tests/node/run-tests.mjs 'src/platform/compat/http/pinned-fetch.test.ts'
-      - uses: nick-fields/retry@ad984534de44a9489a53aefd81eb77f87c70dc60 # v4.0.0
-        with:
-          timeout_minutes: 10
-          max_attempts: 3
-          retry_wait_seconds: 10
-          command: VF_DISABLE_LRU_INTERVAL=1 deno task test:integration --no-lock
+      - name: Generate integration inputs
+        run: deno task generate
+      - name: Run integration shard
+        env:
+          INTEGRATION_SHARD: ${{ matrix.shard }}
+        run: |
+          deno eval --config=scripts/test.deno.json '
+            import { planSuiteFiles } from "./scripts/test/run-suite.ts";
+            import {
+              buildDenoSuiteCommandArgs, DENO_SUITE_PROFILES,
+            } from "./scripts/test/run-deno-suite.ts";
+            import {
+              buildTestProcessEnv, partitionDenoSuiteFiles,
+              shouldRunDenoBatchInParallel,
+            } from "./scripts/test/suites.ts";
+            const index = Number(Deno.env.get("INTEGRATION_SHARD"));
+            const suite = "integration:legacy-tests-root";
+            const profile = DENO_SUITE_PROFILES[suite];
+            const plan = await planSuiteFiles({
+              suite, shard: { index, total: 2 },
+            });
+            if (!plan.files.length) throw new Error("empty integration shard");
+            console.log(`Integration shard ${index}/2: ${plan.files.length} files`);
+            const batches = partitionDenoSuiteFiles(plan.files, profile.maxFilesPerProcess);
+            for (const files of batches) {
+              const status = await new Deno.Command("deno", {
+                args: buildDenoSuiteCommandArgs(suite, files, {
+                  parallel: shouldRunDenoBatchInParallel(profile.parallel, files),
+                  passthroughArgs: ["--no-lock"],
+                }),
+                clearEnv: true,
+                env: buildTestProcessEnv(Deno.env.toObject(), profile.env),
+                stdin: "inherit", stdout: "inherit", stderr: "inherit",
+              }).spawn().status;
+              if (!status.success) Deno.exit(status.code);
+            }
+          '
       - name: Run CLI integration tests
+        if: ${{ matrix.shard == 2 }}
         run: deno task test:integration:cli --no-lock
+
+  # Preserve the required check name. Matrix results fail if either shard fails,
+  # is cancelled or is skipped; the merge gate also requires this aggregate.
+  tests:
+    name: tests (integration)
+    needs: [tests-integration]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Require both integration shards
+        env:
+          INTEGRATION_RESULT: ${{ needs.tests-integration.result }}
+        run: |
+          if [ "$INTEGRATION_RESULT" != "success" ]; then
+            echo "::error::Integration shards finished with $INTEGRATION_RESULT"
+            exit 1
+          fi
 
   tests-node:
     if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
