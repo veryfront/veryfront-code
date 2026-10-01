@@ -111,6 +111,11 @@ export function toPersistedNodeStates(
       ...(state._subWorkflowContext !== undefined
         ? { _subWorkflowContext: state._subWorkflowContext }
         : {}),
+      ...(state._subWorkflowContextWaits !== undefined
+        ? {
+          _subWorkflowContextWaits: state._subWorkflowContextWaits.map((wait) => ({ ...wait })),
+        }
+        : {}),
       ...(state._activeCompositeChildIds !== undefined
         ? { _activeCompositeChildIds: [...state._activeCompositeChildIds] }
         : {}),
@@ -274,19 +279,25 @@ export async function executeLoopNodeStrategy(
     // Only rehydrate once; subsequent iterations start fresh.
     resumeIterationNodeStates = undefined;
 
-    const result = await runtime.executeChildGraph(steps, {
-      id: `${node.id}_iter_${iteration}`,
-      workflowId: "",
-      status: "running",
-      input: context.input,
-      nodeStates: iterationNodeStates,
-      currentNodes: [],
-      context: { ...context, _loop: loopContext },
-      checkpoints: [],
-      pendingApprovals: [],
-      createdAt: new Date(),
-      sourceIntegrationPolicy: captureWorkflowSourceIntegrationPolicy(),
-    });
+    const result = await runtime.executeChildGraph(
+      steps,
+      {
+        id: `${node.id}_iter_${iteration}`,
+        workflowId: "",
+        status: "running",
+        input: context.input,
+        nodeStates: iterationNodeStates,
+        currentNodes: [],
+        context: { ...context, _loop: loopContext },
+        checkpoints: [],
+        pendingApprovals: [],
+        createdAt: new Date(),
+        sourceIntegrationPolicy: captureWorkflowSourceIntegrationPolicy(),
+      },
+      resumingIterationNodeStates
+        ? { resumeWaitBoundaryNodeStates: resumingIterationNodeStates }
+        : undefined,
+    );
     runtime.abortSignal?.throwIfAborted();
 
     const stalledWaitingNodes = result.stalledWaitNodes ??

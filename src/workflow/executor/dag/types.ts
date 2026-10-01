@@ -42,6 +42,8 @@ export interface ExecutionScope {
    * record can tell them apart.
    */
   resumingWait: boolean;
+  /** Durable context for wait outcomes in the current persisted keyspace. */
+  resumeContext: Readonly<WorkflowContext>;
   /** Declared node ids in this graph and every graph that contains it. */
   declaredNodeIds: ReadonlySet<string>;
   /** Child node ids owned by each sub-workflow node, preventing sibling state leakage. */

@@ -19,10 +19,11 @@ import {
 import { beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { __subscribeLogRecordEmitter, type LogEntry } from "#veryfront/utils/logger/logger.ts";
 import { createWorkflowClient, type WorkflowClient } from "../../api/workflow-client.ts";
-import { workflow } from "../../dsl/workflow.ts";
+import { dependsOn, workflow } from "../../dsl/workflow.ts";
 import { map } from "../../dsl/map.ts";
 import { step } from "../../dsl/step.ts";
-import { waitForApproval } from "../../dsl/wait.ts";
+import { subWorkflow } from "../../dsl/sub-workflow.ts";
+import { waitForApproval, waitForEvent } from "../../dsl/wait.ts";
 import { defineSchema } from "#veryfront/schemas/index.ts";
 import type { Tool } from "#veryfront/tool";
 import { RedisBackend } from "./index.ts";
@@ -46,7 +47,6 @@ import type {
   RunExecutionInfo,
   RunExecutor,
 } from "../../worker/executors/types.ts";
-
 const UNRESTRICTED_SOURCE_INTEGRATION_POLICY = normalizeSourceIntegrationPolicy(undefined);
 const jsonRawSupport = JSON as typeof JSON & {
   rawJSON(source: string): unknown;
@@ -1672,6 +1672,231 @@ describe("RedisBackend", () => {
     }
   });
 
+  describe("WorkflowClient nested approval resume", () => {
+    for (const generatedByMap of [false, true]) {
+      it(
+        `restores completed child output through a ${
+          generatedByMap ? "map" : "direct"
+        } workflow wrapper (#2244)`,
+        async () => {
+          let stampExecutions = 0;
+          const observed: unknown[] = [];
+          const decisions: unknown[] = [];
+          const stampTool: Tool = {
+            id: `redis-${generatedByMap ? "map" : "direct"}-stamp`,
+            type: "function",
+            description: "Stamp the nested workflow input",
+            inputSchema: defineSchema((v) => v.object({}).passthrough())(),
+            execute: () => {
+              stampExecutions++;
+              return Promise.resolve({ when: "x" });
+            },
+          };
+          const observeTool: Tool = {
+            id: `redis-${generatedByMap ? "map" : "direct"}-observe`,
+            type: "function",
+            description: "Observe the restored nested stamp",
+            inputSchema: defineSchema((v) => v.object({ when: v.string() }))(),
+            execute: (input) => {
+              observed.push(input);
+              return Promise.resolve(input);
+            },
+          };
+          const child = workflow({
+            id: `redis-${generatedByMap ? "map" : "direct"}-resume-child`,
+            steps: [
+              step("stamp", { tool: stampTool }),
+              dependsOn(
+                waitForApproval("child-review", { message: "Approve the stamp" }),
+                "stamp",
+              ),
+              dependsOn(
+                step("observe", {
+                  tool: observeTool,
+                  input: (context) => {
+                    decisions.push(
+                      context[generatedByMap ? "children_0/child-review" : "child-review"],
+                    );
+                    return context[generatedByMap ? "children_0/stamp" : "stamp"];
+                  },
+                }),
+                "child-review",
+              ),
+            ],
+            output: (context) => context.observe,
+          });
+          const parent = workflow({
+            id: `redis-${generatedByMap ? "map" : "direct"}-resume-parent`,
+            steps: generatedByMap
+              ? [
+                map("children", {
+                  items: [{}],
+                  processor: child.definition,
+                  // #2246 tracks Redis serialization of default map checkpoints.
+                  checkpoint: false,
+                }),
+              ]
+              : [subWorkflow("child", { workflow: child.definition })],
+          });
+          let client = createWorkflowClient({ backend, debug: false });
+          client.register(parent);
+
+          try {
+            const handle = await client.start(parent.id, {});
+            await handle.settled();
+            const [approval] = await backend.getPendingApprovals(handle.runId);
+            assertExists(approval);
+            assertEquals(stampExecutions, 1);
+
+            await client.destroy();
+            const resumedBackend = new RedisBackend({ client: mockRedis, prefix: "test:" });
+            client = createWorkflowClient({ backend: resumedBackend, debug: false });
+            client.register(parent);
+
+            await client.approve(handle.runId, approval.id, "reviewer", "Stamp approved", {
+              accepted: true,
+            });
+
+            const completed = await resumedBackend.getRun(handle.runId);
+            assertEquals(completed?.status, "completed");
+            assertExists(completed);
+            const decision = completed.context[approval.nodeId];
+            assertExists(decision);
+            assertEquals(decisions, [decision]);
+            assertEquals(decision, {
+              approved: true,
+              approver: "reviewer",
+              comment: "Stamp approved",
+              data: { accepted: true },
+              decidedAt: (decision as { decidedAt: string }).decidedAt,
+            });
+            assertEquals(typeof (decision as { decidedAt: unknown }).decidedAt, "string");
+            assertEquals(
+              completed?.context[generatedByMap ? "children" : "child"],
+              generatedByMap ? [{ when: "x" }] : { when: "x" },
+            );
+            assertEquals(observed, [{ when: "x" }]);
+            assertEquals(stampExecutions, 1);
+          } finally {
+            await client.destroy();
+          }
+        },
+      );
+    }
+  });
+
+  for (const shape of ["direct", "map"] as const) {
+    for (const waitKind of ["approval"] as const) {
+      it(`restores full ${waitKind} decisions in ${shape} children (#2255)`, async () => {
+        let stampCalls = 0;
+        const observed: unknown[] = [];
+        const publishedKeys: string[][] = [];
+        const prefix = shape === "map" ? "children_0/" : "";
+        const child = workflow({
+          id: `decision-child-${shape}-${waitKind}`,
+          steps: [
+            step("stamp", {
+              tool: {
+                id: `decision-stamp-${shape}-${waitKind}`,
+                type: "function",
+                description: "Count completed work",
+                inputSchema: defineSchema((v) => v.object({}).passthrough())(),
+                execute: () => {
+                  stampCalls++;
+                  return Promise.resolve({ stamp: true });
+                },
+              },
+            }),
+            dependsOn(
+              waitKind === "approval"
+                ? waitForApproval("review", { message: "Review stamp" })
+                : waitForEvent("review", { eventName: "review.ready" }),
+              "stamp",
+            ),
+            dependsOn(
+              step("observe", {
+                input: (context) => {
+                  observed.push(context[`${prefix}review`]);
+                  publishedKeys.push(Object.keys(context).sort());
+                  return {};
+                },
+                tool: {
+                  id: `decision-observe-${shape}-${waitKind}`,
+                  type: "function",
+                  description: "Observe full wait decision",
+                  inputSchema: defineSchema((v) => v.object({}))(),
+                  execute: () => Promise.resolve({ observed: true }),
+                },
+              }),
+              "review",
+            ),
+          ],
+          output: (context) => context.review,
+        });
+        const parent = workflow({
+          id: `decision-parent-${shape}-${waitKind}`,
+          steps: shape === "direct"
+            ? [subWorkflow("child", { workflow: child.definition })]
+            : [map("children", { items: [{}], processor: child.definition, checkpoint: false })],
+        });
+        let decisionBackend = backend;
+        let decisionClient = createWorkflowClient({ backend: decisionBackend, debug: false });
+        decisionClient.register(parent);
+        try {
+          const handle = await decisionClient.start(parent.id, {});
+          await handle.settled();
+          const waiting = await decisionBackend.getRun(handle.runId);
+          assertExists(waiting);
+          assertEquals(waiting.status, "waiting");
+          assertEquals(stampCalls, 1);
+          const waitId = `${prefix}review`;
+          assertExists(waiting.nodeStates[waitId]);
+          await decisionClient.destroy();
+          decisionBackend = new RedisBackend({ client: mockRedis, prefix: "test:" });
+          decisionClient = createWorkflowClient({ backend: decisionBackend, debug: false });
+          decisionClient.register(parent);
+          if (waitKind === "approval") {
+            const [approval] = await decisionBackend.getPendingApprovals(handle.runId);
+            assertExists(approval);
+            await decisionClient.approve(handle.runId, approval.id, "reviewer", "accepted", {
+              score: 7,
+            });
+          } else {
+            assertEquals(
+              await decisionClient.publishEvent(handle.runId, "review.ready", { score: 7 }),
+              "delivered",
+            );
+          }
+          const completed = await decisionBackend.getRun(handle.runId);
+          assertExists(completed);
+          assertEquals(completed.status, "completed");
+          const durable = completed.context[waitId] as Record<string, unknown>;
+          assertExists(durable);
+          assertEquals(
+            typeof durable[waitKind === "approval" ? "decidedAt" : "receivedAt"],
+            "string",
+          );
+          if (waitKind === "approval") {
+            assertEquals(durable.approved, true);
+            assertEquals(durable.approver, "reviewer");
+            assertEquals(durable.comment, "accepted");
+            assertEquals(durable.data, { score: 7 });
+          } else {
+            assertEquals(durable.payload, { score: 7 });
+          }
+          assertEquals(observed, [durable]);
+          assertEquals(
+            completed.context[shape === "direct" ? "child" : "children"],
+            shape === "direct" ? durable : [durable],
+          );
+          assertEquals(publishedKeys, [["input", `${prefix}review`, `${prefix}stamp`].sort()]);
+          assertEquals(stampCalls, 1);
+        } finally {
+          await decisionClient.destroy();
+        }
+      });
+    }
+  }
   describe("constructor defaults", () => {
     it("should set default config values", async () => {
       const b = new RedisBackend({ client: mockRedis as unknown as RedisAdapter });
@@ -3230,6 +3455,149 @@ describe("RedisBackend", () => {
         startedAt,
       );
       assertEquals(run?.nodeStates["child-stamp"]?.output, { when: "1970-01-01T00:00:00.000Z" });
+    });
+
+    it("applies the context JSON policy to sub-workflow context snapshots (#2244)", async () => {
+      const snapshot = (when: Date) => ({
+        when,
+        tags: new Map([["phase", "saved"]]),
+      });
+
+      await backend.createRun(createTestRun("run-sub-workflow-snapshot-json", {
+        nodeStates: {
+          created: {
+            nodeId: "created",
+            status: "running",
+            attempt: 1,
+            _subWorkflowContext: snapshot(new Date(0)),
+          },
+        },
+      }));
+      assertEquals(
+        (await backend.getRun("run-sub-workflow-snapshot-json"))?.nodeStates.created
+          ?._subWorkflowContext,
+        { when: "1970-01-01T00:00:00.000Z", tags: {} },
+      );
+
+      await backend.updateRun("run-sub-workflow-snapshot-json", {
+        nodeStates: {
+          patched: {
+            nodeId: "patched",
+            status: "running",
+            attempt: 1,
+            _subWorkflowContext: snapshot(new Date(1)),
+          },
+        },
+      });
+      assertEquals(
+        (await backend.getRun("run-sub-workflow-snapshot-json"))?.nodeStates.patched
+          ?._subWorkflowContext,
+        { when: "1970-01-01T00:00:00.001Z", tags: {} },
+      );
+
+      await backend.restoreRunStateIfStatus("run-sub-workflow-snapshot-json", ["pending"], {
+        status: "pending",
+        context: { input: {} },
+        nodeStates: {
+          restored: {
+            nodeId: "restored",
+            status: "running",
+            attempt: 1,
+            _subWorkflowContext: snapshot(new Date(2)),
+          },
+        },
+      });
+      assertEquals(
+        (await backend.getRun("run-sub-workflow-snapshot-json"))?.nodeStates.restored
+          ?._subWorkflowContext,
+        { when: "1970-01-01T00:00:00.002Z", tags: {} },
+      );
+    });
+
+    it("rejects lossy sub-workflow context snapshots at every write boundary (#2244)", async () => {
+      const strictBackend = new RedisBackend({
+        client: mockRedis as unknown as RedisAdapter,
+        prefix: "strict-sub-workflow:",
+        strictContext: true,
+      });
+      const nodeState = (nodeId: string) => ({
+        nodeId,
+        status: "running" as const,
+        attempt: 1,
+        _subWorkflowContext: { when: new Date(0) },
+      });
+      const message =
+        "strictContext enabled: nodeStates._subWorkflowContext.<redacted>.<redacted> (Date)";
+
+      await assertRejects(
+        () =>
+          strictBackend.createRun(createTestRun("run-strict-sub-workflow-create", {
+            nodeStates: { created: nodeState("created") },
+          })),
+        Error,
+        message,
+      );
+
+      await strictBackend.createRun(createTestRun("run-strict-sub-workflow-write"));
+      await assertRejects(
+        () =>
+          strictBackend.updateRun("run-strict-sub-workflow-write", {
+            nodeStates: { patched: nodeState("patched") },
+          }),
+        Error,
+        message,
+      );
+      await assertRejects(
+        () =>
+          strictBackend.restoreRunStateIfStatus("run-strict-sub-workflow-write", ["pending"], {
+            status: "pending",
+            context: { input: {} },
+            nodeStates: { restored: nodeState("restored") },
+          }),
+        Error,
+        message,
+      );
+      assertEquals((await strictBackend.getRun("run-strict-sub-workflow-write"))?.nodeStates, {});
+    });
+
+    it("rejects BigInt in sub-workflow context snapshots at every write boundary (#2244)", async () => {
+      const nodeState = (nodeId: string) => ({
+        nodeId,
+        status: "running" as const,
+        attempt: 1,
+        _subWorkflowContext: { total: 1n },
+      });
+      const message = "nodeStates._subWorkflowContext.<redacted>.<redacted> (BigInt)";
+
+      await assertRejects(
+        () =>
+          backend.createRun(createTestRun("run-bigint-sub-workflow-create", {
+            nodeStates: { created: nodeState("created") },
+          })),
+        Error,
+        message,
+      );
+
+      await backend.createRun(createTestRun("run-bigint-sub-workflow-write"));
+      await assertRejects(
+        () =>
+          backend.updateRun("run-bigint-sub-workflow-write", {
+            nodeStates: { patched: nodeState("patched") },
+          }),
+        Error,
+        message,
+      );
+      await assertRejects(
+        () =>
+          backend.restoreRunStateIfStatus("run-bigint-sub-workflow-write", ["pending"], {
+            status: "pending",
+            context: { input: {} },
+            nodeStates: { restored: nodeState("restored") },
+          }),
+        Error,
+        message,
+      );
+      assertEquals((await backend.getRun("run-bigint-sub-workflow-write"))?.nodeStates, {});
     });
 
     it("rejects node-state user data JSON cannot encode, naming the field (#2242)", async () => {
