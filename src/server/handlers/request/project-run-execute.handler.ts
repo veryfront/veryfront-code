@@ -1570,19 +1570,11 @@ async function runDiscoveredWorkflow(
         clearTimeout(timer);
         signal.removeEventListener("abort", forwardCancellation);
       });
-      let outcome = resumed;
-      if ("timedOut" in outcome && cancellation) {
-        // A cancellation that found the run already terminal keeps that result.
-        if (!cancellationResult) {
-          return {
-            success: false,
-            error: "Workflow run cancelled",
-            logs: null,
-            duration_ms: Math.max(0, deps.now() - startedAt),
-          };
-        }
-        outcome = { run: cancellationResult };
-      }
+      // A settled cancellation reports what it found, including a run that
+      // was already terminal. One still in flight leaves the run to the recheck.
+      const outcome = "timedOut" in resumed && cancellationResult
+        ? { run: cancellationResult }
+        : resumed;
       if ("timedOut" in outcome) {
         // The resumed execution keeps running durably, so the run did not
         // fail: keep the canonical run waiting and have the control plane

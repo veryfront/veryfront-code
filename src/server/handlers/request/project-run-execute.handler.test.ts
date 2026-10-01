@@ -5974,7 +5974,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
       { workflowResumeTimeoutMs: 5 },
       controller.signal,
     );
-    assertEquals(payload.error, "Workflow run cancelled");
+    assertEquals(payload.status, "waiting");
     assertEquals(destroyed, false);
     finishCancel();
     await new Promise((resolve) => setTimeout(resolve, 0));
@@ -6083,6 +6083,42 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     assertEquals(payload.success, true);
     assertEquals(payload.result, { done: true });
     assertEquals(cancellations, 0);
+  });
+
+  it("leaves a run to the recheck while a timed-out cancellation is unresolved", async () => {
+    const { client, settle } = resumableClient(waitingOnReview);
+    const controller = new AbortController();
+    let finish!: () => void;
+    let finishRead!: () => void;
+    const getRun = client.getRun;
+    client.getRun = () =>
+      controller.signal.aborted
+        ? new Promise((resolve) => {
+          finishRead = () => resolve(getRun());
+        })
+        : getRun();
+    client.cancel = () => Promise.resolve();
+    client.approve = () =>
+      new Promise<void>((resolve) => {
+        finish = resolve;
+        settle({ status: "completed", output: { done: true } });
+        controller.abort();
+      });
+    const { payload } = await executeResume(
+      client,
+      {
+        type: "approval",
+        node_id: "manager-review",
+        approved: true,
+        approver: "user:u1",
+      },
+      { workflowResumeTimeoutMs: 5 },
+      controller.signal,
+    );
+    finishRead();
+    finish();
+    assertEquals(payload.success, true);
+    assertEquals(payload.status, "waiting");
   });
 
   it("applies a decision whose wait_id names the boundary the run is parked on", async () => {
