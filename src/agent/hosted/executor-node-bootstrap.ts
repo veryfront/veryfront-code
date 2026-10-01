@@ -4,7 +4,7 @@ import type { AddressInfo } from "node:net";
 import process from "node:process";
 import { isNodeRuntime } from "#veryfront/platform/compat/runtime.ts";
 import { tryResolve } from "#veryfront/extensions/contracts.ts";
-import type { AbsoluteDeadlineTimer } from "#veryfront/agent/streaming/lifecycle/deadlines.ts";
+import type { HostedExecutorSessionClock } from "./executor-session.ts";
 import {
   createExecutorChannel,
   type ExecutorChannel,
@@ -28,13 +28,7 @@ export interface ExecutorBootstrapEnvironment {
   get(name: BootstrapVariable): string | undefined;
 }
 
-/** Epoch clock and timer that bound startup and channel readiness. */
-export interface ExecutorBootstrapClock extends AbsoluteDeadlineTimer {
-  /** UTC epoch milliseconds, nondecreasing for the bootstrap lifetime. */
-  now(): number;
-}
-
-const wallClock: ExecutorBootstrapClock = {
+const wallClock: HostedExecutorSessionClock = {
   now: () => Date.now(),
   schedule: (callback, delayMs) => setTimeout(callback, delayMs),
   cancel: (handle) => clearTimeout(handle as ReturnType<typeof setTimeout>),
@@ -50,8 +44,12 @@ export interface ExecutorNodeBootstrapOptions {
    * Transfer ownership of returned bytes: startup wipes them after use or failure.
    */
   readKey?: (signal: AbortSignal) => Promise<Uint8Array>;
-  /** Trusted test boundary for deadline time; defaults to the wall clock. */
-  clock?: ExecutorBootstrapClock;
+  /**
+   * Trusted test boundary for the bootstrap deadline; defaults to the wall clock.
+   * Scheduled callbacks must run asynchronously. Transport and channel timeouts
+   * stay on real timers, sized from the remaining deadline.
+   */
+  clock?: HostedExecutorSessionClock;
 }
 
 export interface ExecutorNodeBootstrap {

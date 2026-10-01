@@ -14,7 +14,7 @@ import {
   startExecutorNodeBootstrap,
 } from "#veryfront/agent/hosted/executor-node-bootstrap.ts";
 import { connectExecutorTransport } from "#veryfront/agent/hosted/executor-node-transport.ts";
-import { createClockDeadlineTimer } from "#veryfront/agent/streaming/lifecycle/deadlines.ts";
+import { createHostedExecutorSessionClock } from "#veryfront/agent/hosted/executor-session.ts";
 import { ManualMonotonicClock } from "#veryfront/agent/streaming/lifecycle/testing.ts";
 import { register, tryResolve, unregister } from "#veryfront/extensions/contracts.ts";
 import { assert, assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
@@ -497,7 +497,7 @@ if (typeof Deno !== "undefined") {
       const bootstrap = await startExecutorNodeBootstrap({
         operations,
         environment: environment({ VERYFRONT_EXECUTOR_HARD_DEADLINE_AT: "6000" }),
-        clock: { now: () => 1_000 + time.nowMs(), ...createClockDeadlineTimer(time) },
+        clock: createHostedExecutorSessionClock(1_000, time),
         readKey: () => Promise.resolve(new Uint8Array(key)),
       });
       const transport = await connectExecutorTransport({
@@ -534,7 +534,7 @@ if (typeof Deno !== "undefined") {
       const bootstrap = await startExecutorNodeBootstrap({
         operations,
         environment: environment({ VERYFRONT_EXECUTOR_HARD_DEADLINE_AT: "6000" }),
-        clock: { now: () => 1_000 + time.nowMs(), ...createClockDeadlineTimer(time) },
+        clock: createHostedExecutorSessionClock(1_000, time),
         readKey: () => Promise.resolve(new Uint8Array(key)),
       });
       const caller = await connectCaller(8081, key);
@@ -544,7 +544,7 @@ if (typeof Deno !== "undefined") {
         assert(typeof remaining === "number" && remaining <= 5_000);
         assertEquals(server.signal.aborted, false);
         time.advanceBy(5_000);
-        await settledThisTurn(server.closed);
+        assert(await settledThisTurn(server.closed) !== "pending");
         assertEquals(server.signal.aborted, true);
         await Promise.all([caller.closed, server.closed]);
         assertEquals(caller.signal.aborted, true);
