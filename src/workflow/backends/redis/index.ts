@@ -34,6 +34,7 @@ import {
   prepareNodeStatesUserData,
   prepareWorkflowJson,
   resolveDeferredWorkflowJsonValue,
+  prepareWorkflowNodeRecordJson,
   serializeWorkflowContext,
   serializeWorkflowJson,
 } from "../../context-serialization.ts";
@@ -1959,7 +1960,7 @@ export class RedisBackend implements WorkflowBackend {
     const patchContext = patch.context;
     const patchContextKeys = patchContext === undefined ? [] : Object.keys(patchContext);
     const preparedContext = patchContext !== undefined
-      ? prepareWorkflowJson(patchContext, "context", runId, {
+      ? prepareWorkflowNodeRecordJson(patchContext, "context", runId, {
         strictContext: this.config.strictContext,
       })
       : undefined;
@@ -2021,7 +2022,7 @@ export class RedisBackend implements WorkflowBackend {
     runId: string,
     nodeStates: Checkpoint["nodeStates"],
   ): string {
-    return prepareWorkflowJson(
+    return prepareWorkflowNodeRecordJson(
       this.normalizeCheckpointNodeStates(
         this.prepareNodeStatesForPersistence(runId, nodeStates),
       ),
@@ -2051,7 +2052,7 @@ export class RedisBackend implements WorkflowBackend {
   private serializeCheckpoint(runId: string, checkpoint: Checkpoint): string {
     // Checked before the rest of the checkpoint is encoded below, so a value
     // JSON refuses is named by its path rather than by the native error.
-    const { serialized: context } = prepareWorkflowJson(
+    const { serialized: context } = prepareWorkflowNodeRecordJson(
       checkpoint.context,
       "checkpoint.context",
       runId,

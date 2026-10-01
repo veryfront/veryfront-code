@@ -19,6 +19,7 @@ import { childRunWaitBoundary, sameChildRunWaitBoundary } from "../child-run-wai
 import {
   prepareNodeStatesUserData,
   resolveDeferredWorkflowJsonValue,
+  prepareWorkflowNodeRecordJson,
   serializeWorkflowContext,
   serializeWorkflowJson,
   type WorkflowJsonSerializationOptions,
@@ -270,7 +271,7 @@ function persistedWorkflowContextPatch(
   runId: string,
   options: WorkflowJsonSerializationOptions,
 ): Partial<WorkflowContext> {
-  return jsonParse(serializeWorkflowJson(context, "context", runId, options));
+  return jsonParse(prepareWorkflowNodeRecordJson(context, "context", runId, options).serialized);
 }
 
 function persistedCheckpointContext(
@@ -278,7 +279,9 @@ function persistedCheckpointContext(
   runId: string,
   options: WorkflowJsonSerializationOptions,
 ): WorkflowContext {
-  return jsonParse(serializeWorkflowJson(context, "checkpoint.context", runId, options));
+  return jsonParse(
+    prepareWorkflowNodeRecordJson(context, "checkpoint.context", runId, options).serialized,
+  );
 }
 
 function persistedApprovalDecisionData(

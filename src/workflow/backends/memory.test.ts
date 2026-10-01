@@ -446,6 +446,39 @@ describe("MemoryBackend", () => {
       });
     });
 
+    it("treats a node id named toJSON as data in created, patched and checkpointed context", async () => {
+      const calls: string[] = [];
+      const hijack = () => {
+        calls.push("toJSON");
+        return { hijacked: "" };
+      };
+      const runId = "run-context-to-json-node";
+      await backend.createRun(createTestRun(runId, {
+        context: { input: {}, toJSON: hijack, created: { keep: 1 } },
+      }));
+      await backend.updateRun(runId, {
+        context: { toJSON: hijack, patched: { keep: 2 } },
+      });
+      await backend.saveCheckpoint(runId, {
+        id: "cp-to-json-node",
+        nodeId: "toJSON",
+        timestamp: new Date(1),
+        context: { input: {}, toJSON: hijack, checkpointed: { keep: 3 } },
+        nodeStates: {},
+      });
+
+      assertEquals(calls, []);
+      assertEquals((await backend.getRun(runId))?.context, {
+        input: {},
+        created: { keep: 1 },
+        patched: { keep: 2 },
+      });
+      assertEquals((await backend.getLatestCheckpoint(runId))?.context, {
+        input: {},
+        checkpointed: { keep: 3 },
+      });
+    });
+
     it("derives omitted context keys from the pre-serialization key snapshot", async () => {
       const runId = "run-context-key-snapshot";
       await backend.createRun(createTestRun(runId, {

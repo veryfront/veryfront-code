@@ -19,6 +19,7 @@ import type { WorkflowContext } from "./types.ts";
 import {
   MAX_TRAVERSAL_DEPTH,
   prepareWorkflowJson,
+  prepareWorkflowNodeRecordJson,
   serializeWorkflowContext,
   serializeWorkflowJson,
 } from "./context-serialization.ts";
@@ -1618,6 +1619,93 @@ describe("serializeWorkflowContext", () => {
       }
 
       assertEquals(divergences.slice(0, 5), []);
+    });
+  });
+
+  describe("a node id named toJSON", () => {
+    // Context is keyed by node id, so `toJSON` is a node's value, not a hook of
+    // the container. Calling it would let one step replace every other node.
+    function hijackingContext(calls: string[]): WorkflowContext {
+      return {
+        input: {},
+        toJSON: () => {
+          calls.push("toJSON");
+          return { hijacked: "" };
+        },
+        other: { keep: 1 },
+      };
+    }
+
+    it("persists the other nodes and reports the callable under its own path", () => {
+      const calls: string[] = [];
+      let serialized = "";
+
+      const warnings = captureWorkflowWarnings(() => {
+        serialized = serializeWorkflowContext(hijackingContext(calls), "run-to-json");
+      });
+
+      assertEquals(calls, []);
+      assertEquals(JSON.parse(serialized), { input: {}, other: { keep: 1 } });
+      // Node ids are payload, so the node's own path is redacted like any other.
+      assertEquals(warnings.length, 1);
+      assertEquals(warnings[0]?.context?.paths, "context.<redacted> (function)");
+    });
+
+    it("rejects the callable under its own path with strictContext", () => {
+      const calls: string[] = [];
+
+      const error = assertThrows(
+        () =>
+          serializeWorkflowContext(hijackingContext(calls), "run-to-json", {
+            strictContext: true,
+          }),
+        VeryfrontError,
+      );
+
+      assertEquals(calls, []);
+      assertInstanceOf(error, VeryfrontError);
+      assertStringIncludes(
+        error.message,
+        "with strictContext enabled: context.<redacted> (function).",
+      );
+    });
+
+    it("keeps a non-callable toJSON node value as data", () => {
+      const context: WorkflowContext = { input: {}, toJSON: { value: 1 }, other: { keep: 1 } };
+
+      assertEquals(JSON.parse(serializeWorkflowContext(context)), {
+        input: {},
+        toJSON: { value: 1 },
+        other: { keep: 1 },
+      });
+    });
+
+    it("still applies a toJSON hook that a node value carries", () => {
+      const context = contextWith({ toJSON: () => ({ replaced: true }) });
+
+      assertEquals(JSON.parse(serializeWorkflowContext(context)).step, { replaced: true });
+    });
+
+    it("applies the same rule to a context patch and a checkpoint context", () => {
+      for (const label of ["context", "checkpoint.context"]) {
+        const calls: string[] = [];
+
+        const { serialized } = prepareWorkflowNodeRecordJson(
+          hijackingContext(calls),
+          label,
+          "run-to-json",
+          {},
+        );
+
+        assertEquals(calls, []);
+        assertEquals(JSON.parse(serialized), { input: {}, other: { keep: 1 } });
+      }
+    });
+
+    it("keeps value semantics for a value that is not a node-keyed record", () => {
+      const value = { toJSON: () => ({ replaced: true }), other: 1 };
+
+      assertEquals(serializeWorkflowJson(value, "root"), JSON.stringify(value));
     });
   });
 
