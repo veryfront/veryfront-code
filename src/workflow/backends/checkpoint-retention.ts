@@ -60,6 +60,7 @@ const dateGetTime = Date.prototype.getTime;
 const datePrototype = Date.prototype;
 const dateToJSON = Date.prototype.toJSON;
 const dateToISOString = Date.prototype.toISOString;
+const DOMExceptionConstructor = typeof DOMException === "function" ? DOMException : undefined;
 const urlConstructor = typeof URL === "function" ? URL : undefined;
 const urlHrefGet = urlConstructor
   ? objectGetOwnPropertyDescriptor(urlConstructor.prototype, "href")?.get
@@ -137,6 +138,11 @@ function isStructuredCloneRangeError(error: unknown): boolean {
   return error instanceof RangeError;
 }
 
+function isStructuredCloneDataError(error: unknown): boolean {
+  return DOMExceptionConstructor !== undefined && error instanceof DOMExceptionConstructor &&
+    error.name === "DataCloneError";
+}
+
 function isCheckpointCloneReference(value: unknown): value is object {
   return (typeof value === "object" && value !== null) || typeof value === "function";
 }
@@ -161,7 +167,13 @@ function cloneCheckpointJson<T>(value: T, label: string, shape?: WorkflowJsonRec
   try {
     return structuredCloneValue(value);
   } catch (error) {
-    if (!isStructuredCloneRangeError(error)) throw error;
+    // The memory backend rebuilds the envelope after preparing its node states,
+    // which drops the owned-clone marker. Its fixed record shape still gives us
+    // the exact JSON boundary needed to omit an uncloneable `toJSON` node value.
+    if (
+      !isStructuredCloneRangeError(error) &&
+      !(shape === WORKFLOW_RESUME_ENVELOPE_RECORD && isStructuredCloneDataError(error))
+    ) throw error;
   }
   return jsonParse(
     serializeWorkflowJson(value, label, undefined, { strictContext: false }, shape),

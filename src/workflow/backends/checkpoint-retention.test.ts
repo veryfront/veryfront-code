@@ -13,6 +13,7 @@ import {
   appendRetainedCheckpoint,
   cloneCheckpointForPersistence,
   cloneOwnedCheckpointForPersistence,
+  cloneRetainedCheckpoint,
   deleteOldestCheckpointOccurrences,
 } from "./checkpoint-retention.ts";
 import { MemoryBackend } from "./memory.ts";
@@ -1260,6 +1261,31 @@ describe("workflow checkpoint retention", () => {
         },
       };
     }
+
+    it("does not retry a throwing resume-envelope getter", () => {
+      let calls = 0;
+      const resumeEnvelope = deepResumeEnvelope("throwing-getter", 0);
+      Object.defineProperty(resumeEnvelope.context, "step", {
+        configurable: true,
+        enumerable: true,
+        get() {
+          calls++;
+          if (calls === 1) throw new Error("first getter failure");
+          return { keep: 1 };
+        },
+      });
+
+      assertThrows(
+        () =>
+          cloneRetainedCheckpoint({
+            ...checkpoint("throwing-getter"),
+            _resumeEnvelope: resumeEnvelope,
+          }),
+        Error,
+        "first getter failure",
+      );
+      assertEquals(calls, 1);
+    });
 
     it("is not called while snapshotting a checkpoint for persistence", async () => {
       const calls: string[] = [];
