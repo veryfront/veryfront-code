@@ -18,9 +18,10 @@
  *
  * A first attempt that cannot decide (GitHub API errors) runs the full pipeline
  * under its own run number, which is always above every earlier main run's.
- * A rerun is different: a main run that landed later may already have
- * published a smaller queue number, so a rerun refuses to publish a larger
- * number for older code, and fails when it cannot check.
+ * A rerun always runs the full pipeline under its own run number, which is also
+ * above any queue number an earlier attempt published for the same code. It
+ * refuses to publish once a later commit has landed on main, because that
+ * commit's release may carry a smaller number, and fails when it cannot check.
  */
 
 export const RELEASE_NUMBER_ARTIFACT_PREFIX = "release-number-";
@@ -222,22 +223,18 @@ async function chooseReleaseSource(
   };
 }
 
-async function assertNoLaterSmallerRelease(
+async function assertNothingLandedLater(
   client: ActionsClient,
   input: ReleaseSourceInput,
-  releaseNumber: number,
 ): Promise<void> {
   const ownRun = await client.getRun(input.runId);
   const landedLater = (await client.listMainRunsCreatedSince(ownRun.created_at))
     .filter(isMainRelease)
-    .filter((run) => run.run_number > input.runNumber);
-  for (const run of landedLater) {
-    const laterNumber = releaseNumberOf(await client.listArtifacts(run.id));
-    if (laterNumber !== undefined && laterNumber < releaseNumber) {
-      throw new Error(
-        `main run ${run.id} landed later and chose release number ${laterNumber}; publishing ${releaseNumber} from this rerun would pin older code`,
-      );
-    }
+    .find((run) => run.run_number > input.runNumber);
+  if (landedLater !== undefined) {
+    throw new Error(
+      `main run ${landedLater.id} landed later; a rerun of this run could pin older code, so publish from the newest main run instead`,
+    );
   }
 }
 
@@ -252,20 +249,18 @@ export async function decideReleaseSource(
     now: options.now ?? Date.now,
     pollMs: options.pollMs ?? POLL_MS,
   };
-  let source: ReleaseSource;
+  if (input.runAttempt > 1) {
+    await assertNothingLandedLater(client, input);
+    return fullPipeline(input, `rerun attempt ${input.runAttempt}`);
+  }
   try {
-    source = await chooseReleaseSource(client, input, clock, options);
+    return await chooseReleaseSource(client, input, clock, options);
   } catch (error) {
-    if (input.runAttempt > 1) throw error;
-    source = fullPipeline(
+    return fullPipeline(
       input,
       `could not inspect merge-queue runs: ${error instanceof Error ? error.message : error}`,
     );
   }
-  if (input.runAttempt > 1) {
-    await assertNoLaterSmallerRelease(client, input, source.releaseNumber);
-  }
-  return source;
 }
 
 type FetchLike = (input: URL, init?: RequestInit) => Promise<Response>;

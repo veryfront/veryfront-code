@@ -348,40 +348,52 @@ describe("tested merge-queue run release source", () => {
     });
   });
 
+  it("reruns the full pipeline under the run's own number", async () => {
+    // An earlier attempt may have published this commit as rc.21200 or
+    // rc.21212; rc.21212 is never below either.
+    const client = new FakeActions(
+      [run({ id: 5, run_number: 21200 })],
+      new Map([[5, artifacts(...REQUIRED)]]),
+      [run({ id: 49, run_number: 21211, event: "push" })],
+    );
+
+    const source = await decideReleaseSource(client, { ...INPUT, runAttempt: 2 }, fakeClock());
+
+    assertEquals(source, {
+      reuse: false,
+      releaseNumber: 21212,
+      message: `no tested run for ${SHA}, running full pipeline (rerun attempt 2)`,
+    });
+  });
+
+  it("refuses a rerun once a later commit landed, decided or not", async () => {
+    // b054050 landed after this commit and may publish rc.21200; a rerun
+    // publishing rc.21212 for older code would move the pin backwards.
+    for (
+      const later of [
+        run({ id: 50, run_number: 21215, event: "push" }),
+        run({ id: 50, run_number: 21215, event: "push", status: "queued", conclusion: null }),
+      ]
+    ) {
+      const client = new FakeActions([], new Map(), [later]);
+
+      await assertRejects(
+        () => decideReleaseSource(client, { ...INPUT, runAttempt: 2 }, fakeClock()),
+        Error,
+        "main run 50 landed later; a rerun of this run could pin older code, so publish from the newest main run instead",
+      );
+    }
+  });
+
   it("fails a rerun that cannot read GitHub instead of guessing", async () => {
     const client = new FakeActions([], new Map());
-    client.listMergeQueueRuns = () => Promise.reject(new Error("GitHub API answered 502"));
+    client.listMainRunsCreatedSince = () => Promise.reject(new Error("GitHub API answered 502"));
 
     await assertRejects(
       () => decideReleaseSource(client, { ...INPUT, runAttempt: 2 }, fakeClock()),
       Error,
       "GitHub API answered 502",
     );
-  });
-
-  it("refuses a rerun whose release would outrank a later-landed release", async () => {
-    // b054050 landed after this commit and already published rc.21200; a
-    // rerun publishing rc.21212 for older code would move the pin backwards.
-    const client = new FakeActions([], new Map([[50, artifacts("release-number-21200")]]), [
-      run({ id: 50, run_number: 21215, event: "push" }),
-    ]);
-
-    await assertRejects(
-      () => decideReleaseSource(client, { ...INPUT, runAttempt: 2 }, fakeClock()),
-      Error,
-      "main run 50 landed later and chose release number 21200; publishing 21212 from this rerun would pin older code",
-    );
-  });
-
-  it("allows a rerun when later-landed releases are newer", async () => {
-    const client = new FakeActions([], new Map([[50, artifacts("release-number-21215")]]), [
-      run({ id: 50, run_number: 21215, event: "push" }),
-      run({ id: 51, run_number: 21216, event: "push", status: "queued", conclusion: null }),
-    ]);
-
-    const source = await decideReleaseSource(client, { ...INPUT, runAttempt: 2 }, fakeClock());
-
-    assertEquals(source.releaseNumber, 21212);
   });
 
   it("reuses when earlier main runs published smaller numbers or never published", async () => {
