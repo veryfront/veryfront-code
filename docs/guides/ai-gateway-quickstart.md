@@ -56,14 +56,25 @@ curl https://api.veryfront.com/ai/v1/models \
 ```
 
 With an account key, add `-H "x-veryfront-project-slug: <PROJECT_SLUG>"` to
-this command and to the `curl` command in
-[Verify it worked](#verify-it-worked). Client configuration does not apply to
+every `curl` command on this page. Client configuration does not apply to
 `curl`.
 
 The response uses the OpenAI list shape. Copy the `id` of a model, for example
 `anthropic/claude-sonnet-4-6`, into your tool. Each base URL lists only the
-models it serves, so an id from this list works on `/ai/v1`. The examples below
-use example ids; replace them with ids from your list.
+models it serves, so an id from this list works on `/ai/v1`.
+
+For Google GenAI, list the Gemini models on `/ai/v1beta` instead:
+
+```bash
+curl https://api.veryfront.com/ai/v1beta/models \
+  -H "Authorization: Bearer $VERYFRONT_API_KEY"
+```
+
+This response uses the Gemini list shape. Each `name` is `models/<model>`, for
+example `models/gemini-2.5-flash`. Use the part after `models/` as the model in
+the Google GenAI snippet.
+
+The examples below use example ids. Replace them with ids from your list.
 
 ## Coding harnesses
 

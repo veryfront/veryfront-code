@@ -335,6 +335,7 @@ describe("Guide: ai-gateway-quickstart.md", () => {
     const models = section(guide, "## Choose a model");
 
     assertStringIncludes(models, `curl ${await neutralBaseUrl("openai")}/models`);
+    assertStringIncludes(models, `curl ${await neutralBaseUrl("google")}/models`);
     assertStringIncludes(models, "`<provider>/<model>`");
     assertStringIncludes(
       section(guide, "## Base URLs and key types"),
