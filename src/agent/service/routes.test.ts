@@ -104,7 +104,13 @@ function createRouteSet(input: {
     token: string;
     projectId: string;
     runId: string;
-  }) => Promise<boolean | { verified: boolean; integrationTools?: readonly string[] }>;
+  }) => Promise<
+    boolean | {
+      verified: boolean;
+      integrationTools?: readonly string[];
+      resumeToolCallSha256?: string;
+    }
+  >;
   startDetachedExecution?: (
     input: HostedAgentServiceDetachedExecutionInput<{ executionId: string }>,
   ) => Promise<void>;
@@ -952,6 +958,55 @@ it("agent service routes clone verified requests when host headers are immutable
     false,
   );
   assertEquals(JSON.stringify([...detachedRequests[0]!.headers]).includes(sentinel), false);
+});
+
+it("durable-chat replays the exact resume call bound to its signed run writer token", async () => {
+  const resumeToolCall = {
+    id: "call-inbox:resume-1",
+    name: "outlook__list_threads",
+    input: { folder: "inbox", limit: 2 },
+  };
+  const verifiedBindings: unknown[] = [];
+  const { routeSet, preparedRequests } = createRouteSet({
+    verifyRunEventAppendToken: (binding) => {
+      verifiedBindings.push(binding);
+      return Promise.resolve({
+        verified: true,
+        resumeToolCallSha256: "7b88b58e1a4a06769e6d3322772cd9c2d9c8f3ea47ac20bff700c7a37c7179d5",
+      });
+    },
+  });
+  const response = await routeSet.handleDurableChatRunExecuteRequest({
+    request: createAuthenticatedRequest(
+      "/api/runs",
+      {
+        messages: [],
+        context: {
+          conversationId: "00000000-0000-4000-8000-000000000001",
+          projectId: "00000000-0000-4000-8000-000000000005",
+          branchId: null,
+        },
+        durableRootRun: {
+          runId: "run-1",
+          messageId: "00000000-0000-4000-8000-000000000002",
+        },
+        resumeToolCall,
+        forwardedProps: { serverResolvedFutureCapability: { enabled: true } },
+      },
+      "POST",
+      { "X-Veryfront-Run-Event-Token": "verified-event-token" },
+    ),
+  });
+
+  assertEquals(response.status, 202);
+  assertEquals(verifiedBindings, [{
+    token: "verified-event-token",
+    projectId: "00000000-0000-4000-8000-000000000005",
+    runId: "run-1",
+  }]);
+  assertEquals(preparedRequests[0]?.serverResolvedResumeToolCall, resumeToolCall);
+  assertEquals(preparedRequests[0]?.serverEnvelopeVerified, undefined);
+  assertEquals(preparedRequests[0]?.forwardedProps, undefined);
 });
 
 it("ordinary durable-chat routes strip spoofed server-resolved tool state", async () => {

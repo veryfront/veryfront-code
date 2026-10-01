@@ -309,6 +309,84 @@ describe("agent/agent-service-auth", () => {
     assertEquals(wrongRun.integrationTools, undefined);
   });
 
+  it("reads the replay digest only from own signed data without invoking accessors", async () => {
+    for (const ownAccessor of [false, true]) {
+      let getterCalled = false;
+      const writerClaims = {
+        sub: apiRunEventWriterContract.payload.userId,
+        ...apiRunEventWriterContract.payload,
+      };
+      const payload: typeof writerClaims = ownAccessor ? { ...writerClaims } : Object.create(
+        { resumeToolCallSha256: "a".repeat(64) },
+        Object.getOwnPropertyDescriptors(writerClaims),
+      );
+      if (ownAccessor) {
+        Object.defineProperty(payload, "resumeToolCallSha256", {
+          enumerable: true,
+          get() {
+            getterCalled = true;
+            return "a".repeat(64);
+          },
+        });
+      }
+      const auth = createHostedServiceAuth({
+        authProvider: { verifyWithPublicKey: () => Promise.resolve(payload) },
+        getConfig: () => ({
+          OAUTH_PUBLIC_KEY: "public-key",
+          SERVICE_ACCOUNT_VERYFRONT_SERVER_ID: apiRunEventWriterContract.payload.serviceAccountId,
+          NODE_ENV: "production",
+          VERYFRONT_API_URL: "https://api.example.test",
+        }),
+      });
+      assertEquals(
+        await auth.verifyRunEventAppendToken({
+          token: "verified-writer",
+          projectId: "11111111-1111-4111-8111-111111111111",
+          runId: "run_1",
+        }),
+        { verified: !ownAccessor },
+      );
+      assertEquals(getterCalled, false);
+    }
+  });
+
+  it("returns only a valid signed resume digest for the exact writer run", async () => {
+    for (const digest of ["a".repeat(64), "A".repeat(64), "a".repeat(63), 1]) {
+      const fixture = await createRs256JwtFixture({
+        ...apiRunEventWriterContract.payload,
+        resumeToolCallSha256: digest,
+      });
+      const auth = createHostedServiceAuth({
+        authProvider: webCryptoAuthProvider,
+        getConfig: () => ({
+          OAUTH_PUBLIC_KEY: fixture.publicKeyPem,
+          SERVICE_ACCOUNT_VERYFRONT_SERVER_ID: apiRunEventWriterContract.payload.serviceAccountId,
+          NODE_ENV: "production",
+          VERYFRONT_API_URL: "https://api.example.test",
+        }),
+      });
+      const result = await auth.verifyRunEventAppendToken({
+        token: fixture.token,
+        projectId: "11111111-1111-4111-8111-111111111111",
+        runId: "run_1",
+      });
+      assertEquals(
+        result,
+        digest === "a".repeat(64)
+          ? { verified: true, resumeToolCallSha256: digest }
+          : { verified: false },
+      );
+      assertEquals(
+        await auth.verifyRunEventAppendToken({
+          token: fixture.token,
+          projectId: "11111111-1111-4111-8111-111111111111",
+          runId: "run_other",
+        }),
+        { verified: false },
+      );
+    }
+  });
+
   it("returns the integration tool grant carried by the signed payload", async () => {
     const grantFixture = await createRs256JwtFixture({
       ...apiRunEventWriterContract.payload,

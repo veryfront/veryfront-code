@@ -1,3 +1,6 @@
+import resumeDigestContract from "../../../tests/fixtures/contracts/api-auth-resume-call-digest.json" with {
+  type: "json",
+};
 import "#veryfront/schemas/_test-setup.ts";
 import { convertUiMessagesToProviderModelMessages } from "../../chat/provider-message-conversion.ts";
 import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
@@ -2371,6 +2374,146 @@ describe("agent/hosted-chat-request", () => {
     );
   });
 
+  it("binds ordinary-chat replay to the signed resume digest contract", async () => {
+    const parsed = await parseHostedChatRequestFromRequest(
+      new Request("https://agent.example.com/api/runs", {
+        method: "POST",
+        headers: { "X-Veryfront-Run-Event-Token": "verified-writer" },
+        body: JSON.stringify({
+          messages: [],
+          context: { conversationId, projectId, branchId },
+          durableRootRun: { runId: "run_root_1", messageId },
+          resumeToolCall: resumeDigestContract.resumeToolCall,
+          forwardedProps: { serverResolvedFutureCapability: { enabled: true }, harmless: true },
+        }),
+      }),
+      {
+        authenticate: () => Promise.resolve({ userId, authToken: "user-api-token" }),
+        verifyProjectAccess: () => Promise.resolve({ success: true }),
+        verifyRunEventAppendToken: () =>
+          Promise.resolve({
+            verified: true,
+            resumeToolCallSha256: resumeDigestContract.sha256,
+          }),
+      },
+    );
+    if (parsed instanceof Response) throw new Error(`Unexpected response ${parsed.status}`);
+    assertEquals(parsed.serverResolvedResumeToolCall, resumeDigestContract.resumeToolCall);
+    assertEquals(parsed.serverEnvelopeVerified, undefined);
+    assertEquals(parsed.forwardedProps, { harmless: true });
+  });
+
+  it("does not treat inherited or accessor verifier digests as signed replay authority", async () => {
+    for (const ownAccessor of [false, true]) {
+      let getterCalled = false;
+      const verification: { verified: boolean; resumeToolCallSha256?: string } = ownAccessor
+        ? { verified: true }
+        : Object.create(
+          { resumeToolCallSha256: resumeDigestContract.sha256 },
+          { verified: { value: true, enumerable: true } },
+        );
+      if (ownAccessor) {
+        Object.defineProperty(verification, "resumeToolCallSha256", {
+          enumerable: true,
+          get() {
+            getterCalled = true;
+            return resumeDigestContract.sha256;
+          },
+        });
+      }
+      const parsed = await parseHostedChatRequestFromRequest(
+        new Request("https://agent.example.com/api/runs", {
+          method: "POST",
+          headers: { "X-Veryfront-Run-Event-Token": "verified-writer" },
+          body: JSON.stringify({
+            messages: [],
+            context: { conversationId, projectId, branchId },
+            durableRootRun: { runId: "run_root_1", messageId },
+            resumeToolCall: resumeDigestContract.resumeToolCall,
+          }),
+        }),
+        {
+          authenticate: () => Promise.resolve({ userId, authToken: "user-api-token" }),
+          verifyProjectAccess: () => Promise.resolve({ success: true }),
+          verifyRunEventAppendToken: () => Promise.resolve(verification),
+        },
+      );
+      if (!(parsed instanceof Response)) throw new Error("Expected rejected non-data digest");
+      assertEquals(parsed.status, 403);
+      assertEquals(await parsed.json(), { errorCode: "INVALID_RESUME_TOOL_CALL" });
+      assertEquals(getterCalled, false);
+    }
+  });
+
+  it("rejects absent or substituted signed resume calls before preparation", async () => {
+    const call = resumeDigestContract.resumeToolCall;
+    for (
+      const [resumeToolCall, resumeToolCallSha256] of [
+        [call, undefined],
+        [{ ...call, id: "different-id" }, resumeDigestContract.sha256],
+        [{ ...call, name: "outlook__send_email" }, resumeDigestContract.sha256],
+        [{ ...call, input: { folder: "different-folder" } }, resumeDigestContract.sha256],
+        [undefined, resumeDigestContract.sha256],
+      ] as const
+    ) {
+      const parsed = await parseHostedChatRequestFromRequest(
+        new Request("https://agent.example.com/api/runs", {
+          method: "POST",
+          headers: { "X-Veryfront-Run-Event-Token": "verified-writer" },
+          body: JSON.stringify({
+            messages: [],
+            context: { conversationId, projectId, branchId },
+            durableRootRun: { runId: "run_root_1", messageId },
+            resumeToolCall,
+          }),
+        }),
+        {
+          authenticate: () => Promise.resolve({ userId, authToken: "user-api-token" }),
+          verifyProjectAccess: () => Promise.resolve({ success: true }),
+          verifyRunEventAppendToken: () =>
+            Promise.resolve({ verified: true, resumeToolCallSha256 }),
+        },
+      );
+      if (!(parsed instanceof Response)) throw new Error("Expected rejected resume call");
+      assertEquals(parsed.status, 403);
+      assertEquals(await parsed.json(), { errorCode: "INVALID_RESUME_TOOL_CALL" });
+    }
+  });
+
+  it("drops ordinary-chat resume calls without a verified writer credential", async () => {
+    for (const writerToken of [undefined, "invalid-writer-token"]) {
+      const parsed = await parseHostedChatRequestFromRequest(
+        new Request("https://agent.example.com/api/runs", {
+          method: "POST",
+          headers: writerToken ? { "X-Veryfront-Run-Event-Token": writerToken } : {},
+          body: JSON.stringify({
+            messages: [],
+            context: { conversationId, projectId, branchId },
+            durableRootRun: { runId: "run_root_1", messageId },
+            resumeToolCall: {
+              id: "call-1:resume-1",
+              name: "outlook__list_threads",
+              input: { folder: "inbox" },
+            },
+          }),
+        }),
+        {
+          authenticate: () => Promise.resolve({ userId, authToken: "user-api-token" }),
+          verifyProjectAccess: () => Promise.resolve({ success: true }),
+          verifyRunEventAppendToken: () => Promise.resolve(false),
+        },
+      );
+      if (writerToken) {
+        if (!(parsed instanceof Response)) throw new Error("Expected invalid writer rejection");
+        assertEquals(parsed.status, 403);
+        assertEquals(await parsed.json(), { errorCode: "INVALID_RUN_EVENT_APPEND_TOKEN" });
+      } else {
+        if (parsed instanceof Response) throw new Error("Expected parsed request");
+        assertEquals(parsed.serverResolvedResumeToolCall, undefined);
+      }
+    }
+  });
+
   it("does not trust server-resolved fields from an ordinary chat body even with a writer token", async () => {
     const parsed = await parseHostedChatRequestFromRequest(
       new Request("https://agent.example.com/api/runs", {
@@ -2383,11 +2526,6 @@ describe("agent/hosted-chat-request", () => {
           context: { conversationId, projectId, branchId },
           durableRootRun: { runId: "run_root_1", messageId },
           serverResolvedProviderReplayCheckpoints: [serverResolvedProviderReplayCheckpoint],
-          resumeToolCall: {
-            id: "call-1:resume-1",
-            name: "outlook__list_messages",
-            input: { folder: "inbox" },
-          },
           serverResolvedToolExposureCheckpoint: {
             version: 1,
             loadedToolNames: ["delete_project"],

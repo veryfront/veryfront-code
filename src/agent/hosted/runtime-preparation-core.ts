@@ -701,6 +701,9 @@ export function createRuntimePreparationCore(input: RuntimePreparationCoreOption
         availableSkillIds: skills.allowedSkillIds,
         skillSelectorPolicy: skills.policy,
         skillSourcePaths: skills.skillSourcePaths,
+        ...(request.serverResolvedResumeToolCall
+          ? { serverResolvedResumeToolCall: request.serverResolvedResumeToolCall }
+          : {}),
         ...(steering
           ? {
             liveProjectSteering: {
