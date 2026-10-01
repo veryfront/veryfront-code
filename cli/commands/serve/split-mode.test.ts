@@ -46,16 +46,14 @@ describe("serve-split command", () => {
       const port = (listener.addr as Deno.NetAddr).port;
       const accepted = (async () => {
         try {
-          const conn = await listener.accept();
-          conn.close();
+          while (true) {
+            const conn = await listener.accept();
+            conn.close();
+          }
         } catch (error) {
           if (!(error instanceof Deno.errors.BadResource)) {
             throw error;
           }
-        } finally {
-          try {
-            listener.close();
-          } catch { /* listener may already be closed */ }
         }
       })();
 

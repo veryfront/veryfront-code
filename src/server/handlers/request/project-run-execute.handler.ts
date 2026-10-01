@@ -236,6 +236,7 @@ interface EvalReportUploadInput {
   report: EvalReport;
   projectReference: string;
   reportPath: string;
+  signal?: AbortSignal;
 }
 
 interface WorkflowRunView {
@@ -1580,7 +1581,7 @@ async function destroyWorkflowClient(
 interface RuntimeApiClient {
   get<T>(path: string, params?: Record<string, string>): Promise<T>;
   post<T>(path: string, body?: unknown): Promise<T>;
-  put<T>(path: string, body?: unknown): Promise<T>;
+  put<T>(path: string, body?: unknown, options?: { signal?: AbortSignal }): Promise<T>;
   patch<T>(path: string, body?: unknown): Promise<T>;
   delete<T>(path: string): Promise<T>;
 }
@@ -2021,6 +2022,7 @@ function createRuntimeApiClient(req: Request, ctx: HandlerContext): RuntimeApiCl
     path: string,
     body?: unknown,
     params?: Record<string, string>,
+    signal?: AbortSignal,
   ): Promise<T> {
     const url = new URL(`${apiUrl}${path}`);
     for (const [key, value] of Object.entries(params ?? {})) {
@@ -2035,6 +2037,7 @@ function createRuntimeApiClient(req: Request, ctx: HandlerContext): RuntimeApiCl
         "Content-Type": "application/json",
       },
       body: body === undefined ? undefined : JSON.stringify(body),
+      signal,
     });
 
     if (!response.ok) {
@@ -2055,8 +2058,8 @@ function createRuntimeApiClient(req: Request, ctx: HandlerContext): RuntimeApiCl
     post<T>(path: string, body?: unknown): Promise<T> {
       return requestJson<T>("POST", path, body);
     },
-    put<T>(path: string, body?: unknown): Promise<T> {
-      return requestJson<T>("PUT", path, body);
+    put<T>(path: string, body?: unknown, options?: { signal?: AbortSignal }): Promise<T> {
+      return requestJson<T>("PUT", path, body, undefined, options?.signal);
     },
     patch<T>(path: string, body?: unknown): Promise<T> {
       return requestJson<T>("PATCH", path, body);
@@ -2067,7 +2070,7 @@ function createRuntimeApiClient(req: Request, ctx: HandlerContext): RuntimeApiCl
   };
 }
 
-async function uploadEvalReportToProjectFiles(
+export async function uploadEvalReportToProjectFiles(
   input: EvalReportUploadInput,
 ): Promise<string | null> {
   const client = createRuntimeApiClient(input.req, input.ctx);
@@ -2077,7 +2080,9 @@ async function uploadEvalReportToProjectFiles(
   const response = await client.put<{ path?: string }>(
     `/projects/${encodedProject}/files/${encodedPath}`,
     { content: `${JSON.stringify(reportWithPath, null, 2)}\n` },
+    { signal: input.signal },
   );
+  input.signal?.throwIfAborted();
   return response.path ?? input.reportPath;
 }
 
@@ -2549,10 +2554,12 @@ async function executeEvalRun(
     report,
     projectReference,
     reportPath: requestedReportPath,
+    signal: options.signal,
   }).catch((error) => {
     uploadError = `Eval report upload failed: ${errorMessage(error)}`;
     return null;
   });
+  options.signal?.throwIfAborted();
   const result = options.summaryOnly
     ? report.summary
     : reportPath
