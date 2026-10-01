@@ -1,4 +1,4 @@
-import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   type ActionsClient,
@@ -418,14 +418,13 @@ describe("tested merge-queue run release source", () => {
       repository: "veryfront/veryfront-code",
       workflow: "cicd.yml",
       token: "token",
-      apiUrl: "https://github.test",
       fetch: (url, init) => {
-        requests.push(url);
+        requests.push(url.href);
         assertEquals(new Headers(init?.headers).get("authorization"), "Bearer token");
-        if (url.includes("/artifacts")) {
+        if (url.pathname.includes("/artifacts")) {
           return Promise.resolve(Response.json({ artifacts: artifacts("a") }));
         }
-        if (url.endsWith("/actions/runs/3")) {
+        if (url.pathname.endsWith("/actions/runs/3")) {
           return Promise.resolve(Response.json(run({ id: 3, run_number: 3 })));
         }
         return Promise.resolve(Response.json({ workflow_runs: pages.shift() ?? [] }));
@@ -437,12 +436,25 @@ describe("tested merge-queue run release source", () => {
     assertEquals(await client.listArtifacts(3), artifacts("a"));
     assertEquals((await client.getRun(3)).id, 3);
     assertEquals(requests, [
-      `https://github.test/repos/veryfront/veryfront-code/actions/workflows/cicd.yml/runs?event=merge_group&head_sha=${SHA}&per_page=100&page=1`,
-      `https://github.test/repos/veryfront/veryfront-code/actions/workflows/cicd.yml/runs?event=merge_group&head_sha=${SHA}&per_page=100&page=2`,
-      "https://github.test/repos/veryfront/veryfront-code/actions/workflows/cicd.yml/runs?branch=main&created=%3E%3D2026-10-01T06%3A36%3A40Z&per_page=100&page=1",
-      "https://github.test/repos/veryfront/veryfront-code/actions/runs/3/artifacts?per_page=100",
-      "https://github.test/repos/veryfront/veryfront-code/actions/runs/3",
+      `https://api.github.com/repos/veryfront/veryfront-code/actions/workflows/cicd.yml/runs?event=merge_group&head_sha=${SHA}&per_page=100&page=1`,
+      `https://api.github.com/repos/veryfront/veryfront-code/actions/workflows/cicd.yml/runs?event=merge_group&head_sha=${SHA}&per_page=100&page=2`,
+      "https://api.github.com/repos/veryfront/veryfront-code/actions/workflows/cicd.yml/runs?branch=main&created=%3E%3D2026-10-01T06%3A36%3A40Z&per_page=100&page=1",
+      "https://api.github.com/repos/veryfront/veryfront-code/actions/runs/3/artifacts?per_page=100",
+      "https://api.github.com/repos/veryfront/veryfront-code/actions/runs/3",
     ]);
+  });
+
+  it("only talks to the GitHub API for a well-formed repository", () => {
+    assertThrows(
+      () =>
+        createActionsClient({
+          repository: "evil.example/../x?",
+          workflow: "cicd.yml",
+          token: "token",
+        }),
+      Error,
+      "invalid repository",
+    );
   });
 
   it("fails loudly on GitHub API errors", async () => {

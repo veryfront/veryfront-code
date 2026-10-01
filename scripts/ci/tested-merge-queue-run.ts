@@ -268,22 +268,27 @@ export async function decideReleaseSource(
   return source;
 }
 
-type FetchLike = (input: string, init?: RequestInit) => Promise<Response>;
+type FetchLike = (input: URL, init?: RequestInit) => Promise<Response>;
+
+const GITHUB_API_ORIGIN = "https://api.github.com";
+const REPOSITORY_PATTERN = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 
 export function createActionsClient(
   options: {
     readonly repository: string;
     readonly workflow: string;
     readonly token: string;
-    readonly apiUrl?: string;
     readonly fetch?: FetchLike;
   },
 ): ActionsClient {
+  if (!REPOSITORY_PATTERN.test(options.repository)) {
+    throw new Error(`invalid repository ${options.repository}`);
+  }
   const fetchImpl = options.fetch ?? fetch;
-  const base = `${options.apiUrl ?? "https://api.github.com"}/repos/${options.repository}`;
+  const base = `/repos/${options.repository}`;
 
   async function get<T>(path: string): Promise<T> {
-    const response = await fetchImpl(`${base}${path}`, {
+    const response = await fetchImpl(new URL(`${base}${path}`, GITHUB_API_ORIGIN), {
       headers: {
         accept: "application/vnd.github+json",
         authorization: `Bearer ${options.token}`,
@@ -311,7 +316,7 @@ export function createActionsClient(
     listMergeQueueRuns: (sha) => listRuns(`event=merge_group&head_sha=${encodeURIComponent(sha)}`),
     getRun: (runId) => get<WorkflowRun>(`/actions/runs/${runId}`),
     listMainRunsCreatedSince: (createdAt) =>
-      listRuns(`branch=main&created=${encodeURIComponent(`>=${createdAt}`)}`),
+      listRuns(`branch=main&created=${encodeURIComponent(">=" + createdAt)}`),
     listArtifacts: async (runId) =>
       (await get<{ artifacts: RunArtifact[] }>(
         `/actions/runs/${runId}/artifacts?per_page=100`,
@@ -339,7 +344,6 @@ if (import.meta.main) {
       repository: requireEnv("GITHUB_REPOSITORY"),
       workflow: "cicd.yml",
       token: requireEnv("GH_TOKEN"),
-      apiUrl: Deno.env.get("GITHUB_API_URL"),
     }),
     {
       eventName: requireEnv("GITHUB_EVENT_NAME"),

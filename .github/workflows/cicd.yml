@@ -64,7 +64,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           deno run --config=scripts/test.deno.json --frozen --no-check \
-            --allow-env=GH_TOKEN,GITHUB_API_URL,GITHUB_EVENT_NAME,GITHUB_OUTPUT,GITHUB_REPOSITORY,GITHUB_RUN_ATTEMPT,GITHUB_RUN_ID,GITHUB_RUN_NUMBER,GITHUB_SHA \
+            --allow-env=GH_TOKEN,GITHUB_EVENT_NAME,GITHUB_OUTPUT,GITHUB_REPOSITORY,GITHUB_RUN_ATTEMPT,GITHUB_RUN_ID,GITHUB_RUN_NUMBER,GITHUB_SHA \
             --allow-net=api.github.com --allow-write="${GITHUB_OUTPUT}" \
             scripts/ci/tested-merge-queue-run.ts \
             "npm-compatibility-${GITHUB_SHA}" \
