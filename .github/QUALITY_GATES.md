@@ -9,8 +9,10 @@ protects a distinct delivery boundary.
 `quality gate (merge)` requires source checks, unit tests, the existing
 four-shard coverage dependency with its 80 percent floor, integration tests,
 the full Node and Bun runtime suites, binary end-to-end tests, and RSC browser
-end-to-end tests to succeed for pull requests, merge queue runs, and main
-pushes. Sonar analysis is also mandatory for merge queue runs, main pushes,
+end-to-end tests to succeed for pull requests and merge queue runs. On main
+pushes, the same dependency checks run as the first step of each publisher,
+before any checkout or publication. The named merge check remains on all other
+events. Sonar analysis is also mandatory for merge queue runs, main pushes,
 manually dispatched runs, and trusted pull requests. The scanner waits for the
 server-side SonarQube Cloud Quality Gate, so the required
 `SonarQube Cloud quality gate` check fails when that gate fails rather than only
@@ -24,7 +26,9 @@ reporting remains advisory.
 
 The scanner emits the diagnostic `SonarQube Cloud scan` check.
 `SonarQube Cloud quality gate` is the only Sonar check required by the ruleset
-and depends on that scanner result.
+and depends on that scanner result on pull requests and merge queue runs.
+On main pushes, the scanner checks its own outcome as its last step, retaining
+the same server-side gate without acquiring another runner.
 
 The active merge queue ruleset gives required checks at least 70 minutes to
 report a conclusion. This covers the longest configured dependency path: 60
@@ -66,7 +70,11 @@ and [workflow contract](../tests/integration/ci/npm-compatibility-artifact-workf
 commit identity, npm provenance, configured registry, and clean-room package
 behavior. Retries are bounded to registry propagation. Release dispatches run
 only after this gate succeeds, so a failed registry check prevents every
-downstream deployment dispatch.
+downstream deployment dispatch. On main pushes, dispatch preparation and the
+three dispatches run as the last steps of this job, inside the existing
+production approval boundary. Every dispatch step requires successful prior
+steps and a successful selected publisher. Other events retain the separate
+`dispatch release` job.
 
 Evidence: [registry verification](../scripts/ci/registry-release-integrity.ts),
 [registry smoke](../scripts/ci/registry-release-smoke.sh), and

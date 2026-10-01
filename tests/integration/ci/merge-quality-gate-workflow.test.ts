@@ -37,7 +37,9 @@ const SONAR_COVERAGE_JOB_EXPRESSION =
   `\${{ needs.coverage-shards.result == 'success' && needs.coverage-node-executor.result == 'success' && needs.coverage-integration-client.result == 'success' && (${SONAR_REQUIRED_CONDITION}) }}`;
 const SONAR_JOB_EXPRESSION =
   `\${{ needs.sonar-coverage.result == 'success' && (${SONAR_REQUIRED_CONDITION}) }}`;
-const SONAR_GATE_JOB_EXPRESSION = `\${{ always() && ${SONAR_REQUIRED_CONDITION} }}`;
+const MAIN_PUSH_CONDITION = "(github.event_name == 'push' && github.ref == 'refs/heads/main')";
+const SONAR_GATE_JOB_EXPRESSION =
+  `\${{ always() && !${MAIN_PUSH_CONDITION} && ${SONAR_REQUIRED_CONDITION} }}`;
 const SONAR_JOB_TIMEOUT_MINUTES = 28;
 const SONAR_QUALITY_GATE_TIMEOUT_SECONDS = 1200;
 const SONAR_CHECK_NAME = "SonarQube Cloud quality gate";
@@ -168,9 +170,11 @@ function sonarGateStep(job: YamlRecord): YamlRecord {
 
 async function runGate(
   overrides: Partial<Record<keyof typeof RESULT_ENV, string>> = {},
-  options: { sonarRequired?: boolean } = {},
+  options: { sonarRequired?: boolean; publisher?: "prerelease" | "release" } = {},
 ): Promise<Deno.CommandOutput> {
-  const job = await readMergeGate();
+  const job = options.publisher
+    ? asRecord(asRecord((await readWorkflow()).jobs, "jobs")[options.publisher], "publisher")
+    : await readMergeGate();
   const step = gateStep(job);
   const env = Object.fromEntries(
     Object.keys(RESULT_ENV).map((name) => {
@@ -204,6 +208,65 @@ async function runSonarGate(
 }
 
 describe("merge quality gate workflow", () => {
+  it("folds main gates into scan and publishers without new runner acquisitions", async () => {
+    const jobs = asRecord((await readWorkflow()).jobs, "workflow jobs");
+    for (const name of ["sonar-quality-gate", "quality-gate-merge"]) {
+      assertStringIncludes(
+        String(asRecord(jobs[name], name).if),
+        "github.event_name == 'push' && github.ref == 'refs/heads/main'",
+      );
+    }
+    const sonar = asRecord(jobs.sonar, "sonar");
+    assertEquals(sonarGateStep(sonar).env, { SONAR_RESULT: "${{ steps.sonar-scan.outcome }}" });
+    for (const name of ["prerelease", "release"]) {
+      const publisher = asRecord(jobs[name], name);
+      const expected = REQUIRED_DEPENDENCIES.filter((name) => name !== "sonar-quality-gate");
+      for (const dependency of [...expected, "sonar"]) {
+        assert(
+          jobNeeds(publisher, name).includes(dependency),
+          `${name} must directly require ${dependency}`,
+        );
+      }
+      assertEquals(asRecord(gateStep(publisher).env, "publisher gate env"), {
+        SONAR_REQUIRED: SONAR_REQUIRED_EXPRESSION,
+        ...RESULT_ENV,
+        SONAR_RESULT: "${{ needs.sonar.result }}",
+      });
+      assertEquals(
+        asRecord((publisher.steps as unknown[])[0], "first publisher step").name,
+        "Require merge correctness dependencies",
+      );
+    }
+  });
+  it("fails closed in both publishers for every non-success correctness result", async () => {
+    for (const publisher of ["prerelease", "release"] as const) {
+      assertEquals((await runGate({}, { publisher })).code, 0);
+      for (const resultName of Object.keys(RESULT_ENV) as (keyof typeof RESULT_ENV)[]) {
+        for (const result of ["failure", "skipped", "cancelled"]) {
+          assertEquals((await runGate({ [resultName]: result }, { publisher })).code, 1);
+        }
+      }
+      const job = asRecord(asRecord((await readWorkflow()).jobs, "jobs")[publisher], publisher);
+      for (
+        const dependency of [
+          "quality-gate-artifact",
+          "tests-sentry-runtime-packages",
+          "tests-windows-localhost",
+          "build-binaries",
+          "npm-compatibility-artifact",
+          "version-check",
+        ]
+      ) {
+        assertStringIncludes(String(job.if), `needs.${dependency}.result == 'success'`);
+      }
+      assertStringIncludes(String(job.if), "always() && !cancelled()");
+      assertStringIncludes(
+        String(job.if),
+        "needs.quality-gate-merge.result == 'success' || ((github.event_name == 'push' && github.ref == 'refs/heads/main') && needs.quality-gate-merge.result == 'skipped')",
+      );
+    }
+  });
+
   it("exposes one stable check name for branch protection", async () => {
     const gate = await readMergeGate();
 
@@ -239,7 +302,7 @@ describe("merge quality gate workflow", () => {
     const step = gateStep(gate);
 
     assertEquals(gate.needs, REQUIRED_DEPENDENCIES);
-    assertEquals(gate.if, "${{ always() }}");
+    assertEquals(gate.if, `\${{ always() && !${MAIN_PUSH_CONDITION} }}`);
     assertEquals(
       asRecord(step.env, "merge quality gate result env"),
       {

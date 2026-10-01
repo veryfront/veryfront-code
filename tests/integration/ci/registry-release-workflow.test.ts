@@ -675,8 +675,8 @@ printf '%064d  %s\n' 0 "$1"
       for (const dependency of MERGE_CORRECTNESS_DEPENDENCIES) {
         assertEquals(
           job.needs.includes(dependency),
-          false,
-          `${jobName} must inherit ${dependency} through quality-gate-merge`,
+          true,
+          `${jobName} must directly gate ${dependency} before publishing`,
         );
       }
     });
@@ -834,6 +834,38 @@ printf '%064d  %s\n' 0 "$1"
     }
   });
 
+  it("dispatches from the main registry runner only after successful validation and publishing", async () => {
+    const jobs = await readJobs();
+    const registry = asRecord(jobs["quality-gate-registry"], "registry");
+    const dispatch = asRecord(jobs["dispatch-release"], "dispatch");
+    const registrySteps = steps(registry, "registry");
+    const smokeIndex = registrySteps.indexOf(
+      namedStep(registry, "Validate exact registry release"),
+    );
+    const expectedCondition =
+      "${{ success() && (github.event_name == 'push' && github.ref == 'refs/heads/main') && ((needs.version-check.outputs.is_stable == 'true' && needs.release.result == 'success') || (needs.version-check.outputs.is_stable == 'false' && needs.prerelease.result == 'success')) }}";
+    assertEquals(registry.environment, dispatch.environment);
+    for (const original of steps(dispatch, "dispatch")) {
+      const folded = namedStep(registry, String(original.name));
+      assert(registrySteps.indexOf(folded) > smokeIndex);
+      assertEquals(folded.if, expectedCondition);
+      assertEquals(folded["timeout-minutes"], 5);
+      const { if: _condition, "timeout-minutes": _timeout, ...body } = folded;
+      assertEquals(body, original);
+      assertEquals(folded["continue-on-error"], undefined);
+    }
+    assertEquals(
+      namedStep(registry, "Validate exact registry release")["continue-on-error"],
+      undefined,
+    );
+    assertEquals(
+      registrySteps.filter((step) =>
+        String(step.uses).startsWith("peter-evans/repository-dispatch@")
+      ).length,
+      3,
+    );
+  });
+
   it("dispatches exactly three downstream releases only after the registry gate", async () => {
     const jobs = await readJobs();
     const dispatch = asRecord(jobs["dispatch-release"], "dispatch release job");
@@ -853,7 +885,7 @@ printf '%064d  %s\n' 0 "$1"
     ]);
     assertEquals(
       dispatch.if,
-      "${{ always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && needs.quality-gate-registry.result == 'success' && ((needs.version-check.outputs.is_stable == 'true' && needs.release.result == 'success') || (needs.version-check.outputs.is_stable == 'false' && needs.prerelease.result == 'success')) }}",
+      "${{ always() && !(github.event_name == 'push' && github.ref == 'refs/heads/main') && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && needs.quality-gate-registry.result == 'success' && ((needs.version-check.outputs.is_stable == 'true' && needs.release.result == 'success') || (needs.version-check.outputs.is_stable == 'false' && needs.prerelease.result == 'success')) }}",
       "release dispatch must require both registry validation and the selected release job to succeed",
     );
     assertEquals(
