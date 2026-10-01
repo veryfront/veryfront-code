@@ -600,11 +600,23 @@ describe("merge quality gate workflow", () => {
       scanIndex > sonarDownloadIndex,
       "sonar must scan after downloading merged coverage",
     );
-    for (const step of steps) {
+    // The folded gate is fixed inline workflow code, not repository code.
+    // Every other step retains the action-only secret boundary.
+    assertEquals(steps.at(-1), {
+      name: "Require server-side quality gate",
+      if: "${{ always() }}",
+      env: { SONAR_RESULT: "${{ steps.sonar-scan.outcome }}" },
+      run: `if [ "$SONAR_RESULT" != "success" ]; then
+  echo "::error::Server-side SonarQube Cloud quality gate finished with $SONAR_RESULT"
+  exit 1
+fi
+`,
+    });
+    for (const step of steps.slice(0, -1)) {
       assertEquals(
         step.run,
         undefined,
-        "the job holding SONAR_TOKEN must run no shell steps",
+        "the job holding SONAR_TOKEN must run no other shell steps",
       );
       assert(
         typeof step.uses === "string" && !step.uses.startsWith("./"),
