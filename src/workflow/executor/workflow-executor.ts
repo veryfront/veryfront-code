@@ -983,12 +983,21 @@ export class WorkflowExecutor {
       await this.stepExecutor.waitForExecutionStopped(runId);
       if (operations.size === 0) break;
     }
-    return this.executionOperations.has(runId);
+    // Ownership was established by the captured entry, before cleanup could retire it.
+    return true;
   }
 
-  /** @internal Clear executor-local lifecycle evidence when its owning client is destroyed. */
+  /** @internal Retire lifecycle evidence after outstanding operations actually settle. */
   clearExecutionStopEvidence(): void {
-    this.executionOperations.clear();
+    for (const [runId, operations] of this.executionOperations) {
+      const retire = async () => {
+        while (operations.size > 0) await Promise.allSettled([...operations]);
+        if (this.executionOperations.get(runId) === operations) {
+          this.executionOperations.delete(runId);
+        }
+      };
+      void retire();
+    }
     this.stepExecutor.clearExecutionStopEvidence();
   }
 

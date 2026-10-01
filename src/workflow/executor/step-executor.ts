@@ -378,9 +378,17 @@ export class StepExecutor {
     }
   }
 
-  /** @internal Clear executor-local lifecycle evidence when its owning client is destroyed. */
+  /** @internal Retire lifecycle evidence after outstanding operations actually settle. */
   clearExecutionStopEvidence(): void {
-    this.executionOperations.clear();
+    for (const [runId, operations] of this.executionOperations) {
+      const retire = async () => {
+        while (operations.size > 0) await Promise.allSettled([...operations]);
+        if (this.executionOperations.get(runId) === operations) {
+          this.executionOperations.delete(runId);
+        }
+      };
+      void retire();
+    }
   }
 
   private async waitForCancellationGrace(operation: Promise<unknown>): Promise<boolean> {

@@ -178,6 +178,46 @@ describe("WorkflowClient", () => {
     assertEquals((await backend.getRun(runId))?._controlPlaneOwned, true);
   });
 
+  for (const waitBeforeCancel of [true, false]) {
+    it(`preserves actual raw-operation settlement through client cleanup (wait before cancel: ${waitBeforeCancel})`, async () => {
+      await client.destroy();
+      client = createWorkflowClient({ backend, executor: { cancellationGracePeriod: 0 } });
+      const started = Promise.withResolvers<void>();
+      const operation = Promise.withResolvers<unknown>();
+      client.register(workflow({
+        id: "cleanup-stop-evidence",
+        steps: [step("hold", {
+          tool: {
+            ...createMockTool("hold", {}),
+            execute: () => {
+              started.resolve();
+              return operation.promise;
+            },
+          },
+        })],
+      }));
+      const handle = await client.start("cleanup-stop-evidence", {});
+      await started.promise;
+      let stopped: boolean | undefined;
+      const waitForStop = () =>
+        client.waitForExecutionStopped(handle.runId).then((confirmed) => {
+          stopped = confirmed;
+        });
+      let pending = waitBeforeCancel ? waitForStop() : undefined;
+      await client.cancel(handle.runId);
+      await handle.settled();
+      pending ??= waitForStop();
+      await client.destroy();
+      await delay(0);
+      assertEquals(stopped, undefined, "destroy is not evidence that a raw tool stopped");
+      operation.resolve({ ok: true });
+      await delay(0);
+      await pending;
+      assertEquals(stopped, true, "local settlement remains evidence after cleanup");
+      assertEquals(await client.waitForExecutionStopped("not-observed"), false);
+    });
+  }
+
   it("stores the registered workflow's selected output on the run (#2107)", async () => {
     client.register(workflow({
       id: "selected-output-workflow",
