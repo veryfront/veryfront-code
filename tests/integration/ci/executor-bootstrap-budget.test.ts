@@ -38,6 +38,12 @@ it("keeps cold executor installations inside independent child budgets without o
     },
     { name: "caps channel calls and closes attached I/O at the allocation deadline", cost: 200 },
   ];
+  const coldStartup = 3_000;
+  const childBudget = 25_000;
+  assert(
+    coldStartup + cases.reduce((sum, test) => sum + test.cost, 0) > childBudget,
+    "The recorded aggregate workload must reproduce the old child cancellation",
+  );
   const suite = "fixed Node executor bootstrap";
   const patterns = executorBootstrapTestPatterns().map((pattern) => new RegExp(pattern));
   assertEquals(
@@ -59,9 +65,9 @@ it("keeps cold executor installations inside independent child budgets without o
   for (const pattern of patterns) {
     const selected = cases.filter((test) => pattern.test(`${suite} ${test.name}`));
     assert(selected.length > 0);
-    const elapsed = 3_000 + selected.reduce((sum, test) => sum + test.cost, 0);
+    const elapsed = coldStartup + selected.reduce((sum, test) => sum + test.cost, 0);
     assert(
-      elapsed < 25_000,
+      elapsed < childBudget,
       `Cold native test group needs ${elapsed}ms, exceeds its 25000ms budget`,
     );
   }

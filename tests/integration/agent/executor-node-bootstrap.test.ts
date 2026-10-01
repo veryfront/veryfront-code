@@ -87,7 +87,9 @@ if (typeof Deno !== "undefined") {
             child.once("close", resolve);
           });
           assertEquals(code, 0, output);
-          assertMatch(output, /# tests [1-9][0-9]*\n/);
+          const expectedTests = index === 3 ? 19 : 1;
+          assertEquals((output.match(/^ {4}# Subtest:/gm) ?? []).length, expectedTests, output);
+          assertMatch(output, new RegExp(`# tests ${expectedTests}\\n`));
           assertMatch(output, /# cancelled 0\n/);
           assertMatch(output, /# skipped 0\n/);
         } finally {
