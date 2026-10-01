@@ -22,6 +22,7 @@ import {
 import { handleHmrClientMessage } from "./hmr-client-message.ts";
 import { getPingIntervalMs, startPingInterval, stopPingInterval } from "./hmr-ping-keepalive.ts";
 import { broadcastUpdate, getMetrics } from "./hmr-message-router.ts";
+import { requestForWebSocketUpgrade } from "#veryfront/security/http/ingress-credentials.ts";
 
 const logger = serverLogger.component("hmr-handler");
 const HMR_WEBSOCKET_UPGRADE_OPTIONS = { idleTimeout: 0 } as const;
@@ -141,7 +142,7 @@ export class HMRHandler extends BaseHandler {
 
     try {
       const { socket, response } = ctx.adapter.server.upgradeWebSocket(
-        req,
+        requestForWebSocketUpgrade(req),
         HMR_WEBSOCKET_UPGRADE_OPTIONS,
       );
 

@@ -21,6 +21,12 @@ import {
   verifyControlPlaneRequest,
 } from "#veryfront/internal-agents/control-plane-auth.ts";
 import {
+  INGRESS_API_TOKEN_HEADER,
+  INGRESS_INFERENCE_TOKEN_HEADER,
+  inheritIngressCredentials,
+  readIngressCredential,
+} from "#veryfront/security/http/ingress-credentials.ts";
+import {
   INTERNAL_AGENT_CONTROL_PLANE_MAX_BODY_BYTES,
   InternalAgentRequestBodyTooLargeError,
   readInternalAgentRequestBody,
@@ -1689,7 +1695,6 @@ const RequestHeadersGetter = Object.getOwnPropertyDescriptor(Request.prototype, 
 const RequestUrlGetter = Object.getOwnPropertyDescriptor(Request.prototype, "url")!.get!;
 const RequestMethodGetter = Object.getOwnPropertyDescriptor(Request.prototype, "method")!.get!;
 const RequestSignalGetter = Object.getOwnPropertyDescriptor(Request.prototype, "signal")!.get!;
-const HeadersGet = Headers.prototype.get;
 const HeadersAppend = Headers.prototype.append;
 const HeadersEntries = Headers.prototype.entries;
 const HeadersIteratorNext = Object.getPrototypeOf(new Headers().entries()).next as (
@@ -1724,12 +1729,14 @@ function withoutProjectRunInferenceToken(req: Request): Request {
     if (IntrinsicReflectApply(StringToLowerCase, name, []) === skipped) continue;
     IntrinsicReflectApply(HeadersAppend, headers, [name, step.value[1]]);
   }
-  return new NativeRequest(IntrinsicReflectApply(RequestUrlGetter, req, []) as string, {
+  const copy = new NativeRequest(IntrinsicReflectApply(RequestUrlGetter, req, []) as string, {
     method: IntrinsicReflectApply(RequestMethodGetter, req, []) as string,
     headers,
     // The run is cancelled through this signal; the copy must keep it.
     signal: IntrinsicReflectApply(RequestSignalGetter, req, []) as AbortSignal,
   });
+  // The run still reads its `x-token` from the ingress credentials.
+  return inheritIngressCredentials(req, copy);
 }
 
 /**
@@ -1739,18 +1746,18 @@ function withoutProjectRunInferenceToken(req: Request): Request {
  * when the control plane sent none, which keeps the pre-header behaviour.
  */
 function readProjectRunInferenceToken(req: Request): string | undefined {
-  // Captured accessors: a project that patches `Headers.prototype.get` must not
-  // see the credential of this or any later execute request on the same host.
-  const headers = IntrinsicReflectApply(RequestHeadersGetter, req, []) as Headers;
-  const value = IntrinsicReflectApply(HeadersGet, headers, [
-    PROJECT_RUN_INFERENCE_TOKEN_HEADER,
-  ]) as string | null;
+  // Held outside the headers since ingress, or read through captured accessors
+  // for a request that did not pass it: a project that patches
+  // `Headers.prototype.get` must not see the credential of this or any later
+  // execute request on the same host.
+  const value = readIngressCredential(req, INGRESS_INFERENCE_TOKEN_HEADER);
   if (value === null) return undefined;
   return requireInferenceProviderCredential(value, "Inference token header");
 }
 
 function getRuntimeApiToken(req: Request, ctx: HandlerContext): string {
-  return req.headers.get("x-token") ?? ctx.proxyToken ?? ctx.requestContext?.token ?? "";
+  return readIngressCredential(req, INGRESS_API_TOKEN_HEADER) ?? ctx.proxyToken ??
+    ctx.requestContext?.token ?? "";
 }
 
 function getHeaderFirstValue(value: string | null): string | undefined {
@@ -2804,7 +2811,8 @@ async function executeReleaseAssetBuildRun(input: {
     );
 
     const apiBaseUrl = getEnvironmentConfig().apiBaseUrl;
-    const token = input.req.headers.get("x-token") ?? input.ctx.proxyToken ??
+    const token = readIngressCredential(input.req, INGRESS_API_TOKEN_HEADER) ??
+      input.ctx.proxyToken ??
       input.ctx.requestContext?.token ?? "";
     if (!token) throw INVALID_ARGUMENT.create({ detail: "Missing project runtime API token" });
 
@@ -3169,7 +3177,8 @@ async function executeStyleArtifactBuildRun(input: {
       "#veryfront/html/styles-builder/style-scope-profile.ts"
     );
 
-    const token = input.req.headers.get("x-token") ?? input.ctx.proxyToken ??
+    const token = readIngressCredential(input.req, INGRESS_API_TOKEN_HEADER) ??
+      input.ctx.proxyToken ??
       input.ctx.requestContext?.token ?? "";
     if (!token) throw INVALID_ARGUMENT.create({ detail: "Missing project runtime API token" });
 

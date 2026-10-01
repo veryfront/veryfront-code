@@ -17,8 +17,44 @@ export interface RequestPeerProvenance {
   readonly hostname: string;
 }
 
+// Every call below receives an inbound request, credential headers and all,
+// before the runtime handler takes those off it. Captured, so project code
+// that replaced the collection prototypes never sees the request.
+const IntrinsicReflectApply = Reflect.apply;
+const WeakMapDelete = WeakMap.prototype.delete;
+const WeakMapGet = WeakMap.prototype.get;
+const WeakMapHas = WeakMap.prototype.has;
+const WeakMapSet = WeakMap.prototype.set;
+const WeakSetAdd = WeakSet.prototype.add;
+const WeakSetHas = WeakSet.prototype.has;
 const requestPeerProvenance = new WeakMap<Request, RequestPeerProvenance>();
 const interceptorHandledRequests = new WeakSet<Request>();
+
+function getProvenance(request: Request): RequestPeerProvenance | undefined {
+  return IntrinsicReflectApply(WeakMapGet, requestPeerProvenance, [request]) as
+    | RequestPeerProvenance
+    | undefined;
+}
+
+function hasProvenance(request: Request): boolean {
+  return IntrinsicReflectApply(WeakMapHas, requestPeerProvenance, [request]) as boolean;
+}
+
+function setProvenance(request: Request, provenance: RequestPeerProvenance): void {
+  IntrinsicReflectApply(WeakMapSet, requestPeerProvenance, [request, provenance]);
+}
+
+function deleteProvenance(request: Request): void {
+  IntrinsicReflectApply(WeakMapDelete, requestPeerProvenance, [request]);
+}
+
+function markInterceptorHandled(request: Request): void {
+  IntrinsicReflectApply(WeakSetAdd, interceptorHandledRequests, [request]);
+}
+
+function isInterceptorHandled(request: Request): boolean {
+  return IntrinsicReflectApply(WeakSetHas, interceptorHandledRequests, [request]) as boolean;
+}
 const MAX_PEER_HOSTNAME_CHARACTERS = 255;
 const DECIMAL_OCTET_PATTERN = /^(?:0|[1-9][0-9]{0,2})$/;
 const IPV4_MAPPED_IPV6_PATTERN = /^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/;
@@ -67,7 +103,7 @@ export function recordRequestPeerFromTransport(
   request: Request,
   provenance: RequestPeerProvenance,
 ): boolean {
-  if (requestPeerProvenance.has(request)) return false;
+  if (hasProvenance(request)) return false;
   if (
     (provenance.runtime !== "node" &&
       provenance.runtime !== "deno" &&
@@ -78,7 +114,7 @@ export function recordRequestPeerFromTransport(
     return false;
   }
 
-  requestPeerProvenance.set(
+  setProvenance(
     request,
     Object.freeze({
       runtime: provenance.runtime,
@@ -186,7 +222,7 @@ export function recordHandlerRequestPeer(
 export function getRequestPeerProvenance(
   request: Request,
 ): RequestPeerProvenance | undefined {
-  return requestPeerProvenance.get(request);
+  return getProvenance(request);
 }
 
 /**
@@ -200,9 +236,9 @@ export function inheritRequestPeerProvenance<T extends Request>(
 ): T {
   if (source === target) return target;
 
-  const provenance = requestPeerProvenance.get(source);
-  if (provenance === undefined) requestPeerProvenance.delete(target);
-  else requestPeerProvenance.set(target, provenance);
+  const provenance = getProvenance(source);
+  if (provenance === undefined) deleteProvenance(target);
+  else setProvenance(target, provenance);
   return target;
 }
 
@@ -211,16 +247,16 @@ export async function runRequestInterceptor(
   request: Request,
   interceptor: (request: Request) => Request | Promise<Request>,
 ): Promise<Request> {
-  interceptorHandledRequests.add(request);
+  markInterceptorHandled(request);
   const intercepted = await interceptor(request);
   if (intercepted === request) return request;
 
-  if (interceptorHandledRequests.has(intercepted)) {
+  if (isInterceptorHandled(intercepted)) {
     throw new TypeError(
       "Request interceptors must return a fresh replacement Request",
     );
   }
-  interceptorHandledRequests.add(intercepted);
+  markInterceptorHandled(intercepted);
   return inheritRequestPeerProvenance(request, intercepted);
 }
 
@@ -240,6 +276,6 @@ export function isLoopbackAddress(hostname: string): boolean {
 
 /** True only when recorded native peer provenance contains a loopback address. */
 export function isRequestFromLoopbackPeer(request: Request): boolean {
-  const hostname = requestPeerProvenance.get(request)?.hostname;
+  const hostname = getProvenance(request)?.hostname;
   return hostname !== undefined && isLoopbackAddress(hostname);
 }

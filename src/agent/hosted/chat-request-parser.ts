@@ -38,6 +38,11 @@ import { registerHostedRunEventWriterToken } from "./child-run-event-writer-toke
 import { registerHostedInferenceCredential } from "./inference-credential.ts";
 import { requireInferenceProviderCredential } from "#veryfront/provider/runtime-loader/provider-request-init.ts";
 import {
+  INGRESS_INFERENCE_TOKEN_HEADER,
+  INGRESS_RUN_EVENT_TOKEN_HEADER,
+  readIngressCredential,
+} from "#veryfront/security/http/ingress-credentials.ts";
+import {
   MAX_GRANTED_INTEGRATION_TOOL_NAMES,
   MAX_REMOTE_INTEGRATION_TOOL_NAME_LENGTH,
 } from "../../integrations/limits.ts";
@@ -53,8 +58,16 @@ const NumberIsFinite = Number.isFinite;
 const RequestHeadersGetter = Object.getOwnPropertyDescriptor(Request.prototype, "headers")?.get;
 const HeadersGet = Headers.prototype.get;
 const StringTrim = String.prototype.trim;
+const StringToLowerCase = String.prototype.toLowerCase;
 
 function readRequestHeaderRaw(request: Request, name: string): string | undefined {
+  const lowerName = IntrinsicReflectApply(StringToLowerCase, name, []) as string;
+  if (
+    lowerName === INGRESS_INFERENCE_TOKEN_HEADER || lowerName === INGRESS_RUN_EVENT_TOKEN_HEADER
+  ) {
+    // The runtime takes these credentials off the request at ingress.
+    return readIngressCredential(request, lowerName) ?? undefined;
+  }
   if (!RequestHeadersGetter) return undefined;
   const headers = IntrinsicReflectApply(RequestHeadersGetter, request, []) as Headers;
   const value = IntrinsicReflectApply(HeadersGet, headers, [name]) as string | null;

@@ -1,4 +1,8 @@
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
+import {
+  INGRESS_API_TOKEN_HEADER,
+  readIngressCredential,
+} from "#veryfront/security/http/ingress-credentials.ts";
 import { parseProjectDomain } from "../utils/domain-parser.ts";
 import { getEffectiveRequestHost } from "../utils/request-host.ts";
 
@@ -51,7 +55,7 @@ export function createRequestContext(
   return {
     // Framework-owned token: bypass project env overlay so proxy mode works
     // when a remote project overlay is active.
-    token: req.headers.get("x-token") ??
+    token: readIngressCredential(req, INGRESS_API_TOKEN_HEADER) ??
       (options.allowHostTokenFallback === false ? "" : getHostEnv("VERYFRONT_API_TOKEN") ?? ""),
     slug: headerProjectSlug ?? parsed.slug ?? "",
     branch: parsed.branch,
