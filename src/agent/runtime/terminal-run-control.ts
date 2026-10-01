@@ -195,10 +195,15 @@ export async function executeTerminalRunTool(
 }
 
 /** The API already committed this output; returning it must not start another model turn. */
-export function terminalCompletionResponse(error: unknown): AgentResponse | undefined {
+export function terminalCompletionResponse(
+  error: unknown,
+  jsonOutput = false,
+): AgentResponse | undefined {
   if (!(error instanceof TerminalRunControlError) || error.status !== "completed") return undefined;
   return {
-    text: typeof error.output === "string" ? error.output : JSON.stringify(error.output) ?? "",
+    text: typeof error.output === "string" && !jsonOutput
+      ? error.output
+      : JSON.stringify(error.output) ?? "",
     object: error.output,
     messages: [],
     toolCalls: [],

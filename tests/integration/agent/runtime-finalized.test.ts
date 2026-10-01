@@ -1,3 +1,5 @@
+import { securityMiddleware } from "#veryfront/agent/middleware/security/validator.ts";
+import { defineSchema } from "#veryfront/schemas/index.ts";
 import { createChatUiMessageStreamFromDataStream } from "#veryfront/agent/streaming/chat-ui-message-stream.ts";
 import type { ChatUiMessage } from "#veryfront/chat/types.ts";
 import "#veryfront/schemas/_test-setup.ts";
@@ -88,6 +90,112 @@ async function fixture(
 }
 
 describe("runtime finalized terminal control", () => {
+  for (const streaming of [false, true]) {
+    it(`retains schema-valid finalized strings through security middleware; stream=${streaming}`, async () => {
+      await fixture(
+        [{ toolCalls: [{ ...failCall, input: { status: "completed", output: "done" } }] }],
+        async (runtime) => {
+          if (streaming) {
+            const body = await new Response(
+              await runtime.stream([{
+                id: "input-1",
+                role: "user",
+                parts: [{ type: "text", text: "run" }],
+              }], { runId: "run-current" }),
+            ).text();
+            assert(body.includes('"type":"message-finish"'), body);
+            assert(body.includes('"object":"done"'), body);
+          } else {
+            assertEquals((await runtime.generate("run", { runId: "run-current" })).object, "done");
+          }
+        },
+        () => ({
+          content: [],
+          structuredContent: {
+            completed: true,
+            run: { run_id: "run-current", status: "completed", output: "done" },
+          },
+        }),
+        defineSchema((v) => v.string())(),
+        [securityMiddleware({ output: { filterPII: true } })],
+      );
+    });
+  }
+
+  for (const streaming of [false, true]) {
+    it(`preserves schema-valid finalized strings through security middleware; stream=${streaming}`, async () => {
+      const output = "done";
+      await fixture(
+        [{ toolCalls: [{ ...failCall, input: { status: "completed", output } }] }],
+        async (runtime, model, dispatched) => {
+          if (streaming) {
+            const body = await new Response(
+              await runtime.stream([{
+                id: "input-1",
+                role: "user",
+                parts: [{ type: "text", text: "run" }],
+              }], { runId: "run-current" }),
+            ).text();
+            assert(body.includes('"type":"message-finish"'), body);
+            assert(!body.includes('"type":"error"'), body);
+            assert(body.includes("done"), body);
+          } else {
+            const response = await runtime.generate("run", { runId: "run-current" });
+            assertEquals(response.object, output);
+          }
+          assertEquals(model.callCount, 1);
+          assertEquals(dispatched, [failCall.name]);
+        },
+        () => ({
+          content: [],
+          structuredContent: {
+            completed: true,
+            run: { run_id: "run-current", status: "completed", output },
+          },
+        }),
+        defineSchema((v) => v.string())(),
+        [securityMiddleware({ output: { filterPII: true } })],
+      );
+    });
+  }
+
+  for (const streaming of [false, true]) {
+    it(`revalidates filtered finalized output against its schema; stream=${streaming}`, async () => {
+      const output = { email: "john@example.com" };
+      await fixture(
+        [{ toolCalls: [{ ...failCall, input: { status: "completed", output } }] }],
+        async (runtime) => {
+          if (streaming) {
+            const body = await new Response(
+              await runtime.stream([{
+                id: "input-1",
+                role: "user",
+                parts: [{ type: "text", text: "run" }],
+              }], { runId: "run-current" }),
+            ).text();
+            assert(!body.includes('"type":"message-finish"'), body);
+            assert(body.includes('"type":"error"'), body);
+          } else {
+            await assertRejects(
+              () => runtime.generate("run", { runId: "run-current" }),
+              Error,
+              "failed outputSchema validation",
+            );
+          }
+        },
+        () => ({
+          content: [],
+          structuredContent: {
+            completed: true,
+            run: { run_id: "run-current", status: "completed", output },
+          },
+        }),
+        defineSchema((v) => v.object({ email: v.string().email() }))(),
+        [securityMiddleware({ output: { filterPII: true } })],
+      );
+    });
+  }
+
   for (const streaming of [false, true]) {
     it(`passes finalized success through output middleware; stream=${streaming}`, async () => {
       let processed = 0;

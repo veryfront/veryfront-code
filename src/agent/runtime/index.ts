@@ -2616,10 +2616,13 @@ export class AgentRuntime {
                   )
                 );
               } catch (error) {
-                const terminalResponse = terminalCompletionResponse(error);
+                const terminalResponse = terminalCompletionResponse(
+                  error,
+                  outputSchema !== undefined,
+                );
                 if (!terminalResponse) throw error;
                 this.status = "completed";
-                return terminalResponse;
+                return attachOutputSchemaParser(terminalResponse, outputSchema);
               } finally {
                 abortGuard.revoke();
               }
@@ -2862,11 +2865,14 @@ export class AgentRuntime {
                     )
                   );
                 } catch (error) {
-                  const terminalResponse = terminalCompletionResponse(error);
+                  const terminalResponse = terminalCompletionResponse(
+                    error,
+                    outputSchema !== undefined,
+                  );
                   if (!terminalResponse) throw error;
                   terminalCompleted = true;
                   this.status = "completed";
-                  return terminalResponse;
+                  return attachOutputSchemaParser(terminalResponse, outputSchema);
                 } finally {
                   abortScope.revoke();
                 }
@@ -2920,7 +2926,10 @@ export class AgentRuntime {
             // the same cause the stream reports, instead of a manufactured one.
             // A cancellation is not a provider failure: it keeps the relay's
             // neutral default rather than surfacing the raw abort reason.
-            const aborted = isAbortError(error, streamAbortSignal);
+            const aborted = isAbortError(
+              error,
+              terminalCompleted ? callerAbortSignal : streamAbortSignal,
+            );
             const errorEvent = aborted ? undefined : resolveRuntimeExecutionErrorEvent(error);
             // The relay writes a PUBLIC RunError, so it takes only curated
             // diagnostics -- a persistence failure's raw message can carry
