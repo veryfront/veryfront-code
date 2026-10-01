@@ -1,3 +1,4 @@
+import { registerTurnProviderRequestValidator } from "#veryfront/agent/middleware/turn-validation.ts";
 import { securityMiddleware } from "#veryfront/agent/middleware/security/validator.ts";
 import { defineSchema } from "#veryfront/schemas/index.ts";
 import { createChatUiMessageStreamFromDataStream } from "#veryfront/agent/streaming/chat-ui-message-stream.ts";
@@ -8,7 +9,7 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { createRemoteMCPToolSource } from "#veryfront/tool/remote-mcp.ts";
 import { markTrustedPlatformSource } from "#veryfront/tool/platform-source-provenance.ts";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
-import { AgentRuntime } from "#veryfront/agent/runtime/index.ts";
+import { AgentRuntime, type AgentRuntimeInternalOptions } from "#veryfront/agent/runtime/index.ts";
 import type { AgentConfig } from "#veryfront/agent/types.ts";
 import {
   scriptedModel,
@@ -40,6 +41,7 @@ async function fixture(
   }),
   outputSchema?: AgentConfig["outputSchema"],
   middleware?: AgentConfig["middleware"],
+  resumeToolCall?: AgentRuntimeInternalOptions["resumeToolCall"],
 ) {
   const dispatched: string[] = [];
   const model = Object.assign(scriptedModel(turns, { modelId: "hosted/fail-run" }), {
@@ -84,7 +86,7 @@ async function fixture(
           ),
         ],
       },
-    });
+    }, { resumeToolCall });
     await run(runtime, model, dispatched);
   });
 }
@@ -489,6 +491,117 @@ describe("runtime finalized terminal control", () => {
         assertEquals(model.callCount, 1);
       },
       () => ({ content: [], structuredContent: { completed: true } }),
+    );
+  });
+
+  for (const streaming of [false, true]) {
+    for (const lostReply of [false, true]) {
+      it(`closes unknown finalized calls and undispatched siblings; stream=${streaming}, lost=${lostReply}`, async () => {
+        await fixture(
+          [{ toolCalls: [failCall, markerCall] }],
+          async (runtime, model, dispatched) => {
+            if (streaming) {
+              const text = await new Response(
+                await runtime.stream([
+                  { id: "input-1", role: "user", parts: [{ type: "text", text: "run" }] },
+                ], { runId: "run-current" }),
+              ).text();
+              assert(text.includes('"type":"tool-output-error","toolCallId":"fail-1"'), text);
+              assert(text.includes('"type":"tool-output-error","toolCallId":"marker-1"'), text);
+              assert(!text.includes('"type":"message-finish"'), text);
+            } else {
+              await assertRejects(
+                () => runtime.generate("run", { runId: "run-current" }),
+                Error,
+                "could not be confirmed",
+              );
+            }
+            const history = await runtime.getMemory().getMessages();
+            for (const id of [failCall.id, markerCall.id]) {
+              const results = history.flatMap((message) => message.parts).filter((part) =>
+                part.type === "tool-result" && part.toolCallId === id
+              );
+              assertEquals(results.length, 1, JSON.stringify(history));
+            }
+            assertEquals(dispatched, lostReply ? [failCall.name, failCall.name] : [failCall.name]);
+            assertEquals(model.callCount, 1);
+          },
+          () => {
+            if (lostReply) throw new TypeError("connection lost");
+            return { content: [], structuredContent: { completed: true } };
+          },
+        );
+      });
+    }
+  }
+
+  for (const status of ["failed", "cancelled"] as const) {
+    it(`preserves a resumed ${status} terminal result through transactional validation`, async () => {
+      let validated = false;
+      await fixture(
+        [{ text: "must not run" }],
+        async (runtime, model, dispatched) => {
+          const text = await new Response(
+            await runtime.stream([
+              { id: "resume-input", role: "user", parts: [{ type: "text", text: "resume" }] },
+            ], { runId: "run-current" }),
+          ).text();
+          assert(!text.includes('"type":"message-finish"'), text);
+          const history = await runtime.getMemory().getMessages();
+          assert(
+            history.some((message) =>
+              message.parts.some((part) =>
+                part.type === "tool-result" && part.toolCallId === "fail-1:resume-1"
+              )
+            ),
+            JSON.stringify(history),
+          );
+          assert(validated);
+          assertEquals(model.callCount, 0);
+          assertEquals(dispatched, [failCall.name]);
+        },
+        () => ({
+          content: [],
+          structuredContent: {
+            completed: true,
+            run: { run_id: "run-current", status, error: failure },
+          },
+        }),
+        undefined,
+        [async (context, next) => {
+          registerTurnProviderRequestValidator(context, async () => {
+            validated = true;
+          });
+          return await next();
+        }],
+        { ...failCall, id: "fail-1:resume-1" },
+      );
+    });
+  }
+
+  it("rolls back a rejected resumed turn before dispatching its terminal action", async () => {
+    await fixture(
+      [{ text: "must not run" }],
+      async (runtime, model, dispatched) => {
+        const text = await new Response(
+          await runtime.stream([
+            { id: "resume-input", role: "user", parts: [{ type: "text", text: "rejected" }] },
+          ], { runId: "run-current" }),
+        ).text();
+        assert(!text.includes('"type":"message-finish"'), text);
+        assertEquals(dispatched, []);
+        assertEquals(model.callCount, 0);
+        assertEquals(await runtime.getMemory().getMessages(), []);
+      },
+      undefined,
+      undefined,
+      [async (context, next) => {
+        registerTurnProviderRequestValidator(context, async () => {
+          throw new Error("Turn rejected");
+        });
+        return await next();
+      }],
+      { ...failCall, id: "fail-1:resume-1" },
     );
   });
 

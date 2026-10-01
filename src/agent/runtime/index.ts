@@ -3921,6 +3921,13 @@ export class AgentRuntime {
       const runtimeToolNames = Object.keys(runtimeTools ?? {}).sort(compareStrings);
 
       if (!resumeToolCallExecuted && this.#resumeToolCall) {
+        // A resumed tool can terminate before any provider call. Validate the
+        // staged turn first so accepted terminal results commit and rejected
+        // turns roll back without dispatching the parked action.
+        await validateProviderRequest(
+          withAgentRunRuntimeContext(currentSystemPrompt, runRuntimeContext),
+          currentMessages,
+        );
         const resumeToolCall = this.#resumeToolCall;
         resumeToolCallExecuted = true;
         const inputText = privateJsonStringify(resumeToolCall.input);
@@ -5111,15 +5118,18 @@ export class AgentRuntime {
     encoder?: TextEncoder,
   ): Promise<void> {
     if (
-      !(isTerminalRunControlError(error)) || error.acknowledgedResult === undefined ||
-      error.acknowledgedToolCallId !== toolCall.id
+      !(isTerminalRunControlError(error)) || error.terminalToolCallId !== toolCall.id
     ) {
       return;
     }
-    toolCall.status = "completed";
-    toolCall.result = error.acknowledgedResult;
+    const acknowledged = error.acknowledgedResult !== undefined;
+    toolCall.status = acknowledged ? "completed" : "error";
+    if (acknowledged) toolCall.result = error.acknowledgedResult;
+    else toolCall.error = error.message;
     pushPrivateArray(toolCalls, toolCall);
-    const message = createToolResultMessage(toolCall.id, toolCall.name, error.acknowledgedResult);
+    const message = acknowledged
+      ? createToolResultMessage(toolCall.id, toolCall.name, error.acknowledgedResult)
+      : createToolErrorMessage(toolCall.id, toolCall.name, error.message);
     pushPrivateArray(currentMessages, message);
     await persistMessage(message);
     const resolvedIds = createPrivateSet<string>();
@@ -5140,7 +5150,9 @@ export class AgentRuntime {
       const sibling = getAgentRuntimeToolCallPart(part);
       if (!sibling || resolvedIds.has(sibling.toolCallId)) continue;
       resolvedIds.add(sibling.toolCallId);
-      const reason = "Run finalized before this tool was dispatched";
+      const reason = acknowledged
+        ? "Run finalized before this tool was dispatched"
+        : "Run outcome could not be confirmed; further tool dispatch stopped";
       const skipped = createToolErrorMessage(sibling.toolCallId, sibling.toolName, reason);
       pushPrivateArray(currentMessages, skipped);
       await persistMessage(skipped);
@@ -5167,9 +5179,9 @@ export class AgentRuntime {
     };
     if (controller && encoder) {
       sendSSE(controller, encoder, {
-        type: "tool-output-available",
+        type: acknowledged ? "tool-output-available" : "tool-output-error",
         toolCallId: toolCall.id,
-        output: error.acknowledgedResult,
+        ...(acknowledged ? { output: error.acknowledgedResult } : { errorText: error.message }),
         ...(isDynamicTool(toolCall.name) ? { dynamic: true } : {}),
       });
     }

@@ -25,7 +25,7 @@ export class TerminalRunControlError extends Error {
     readonly status: string,
     readonly output?: unknown,
     readonly acknowledgedResult?: unknown,
-    readonly acknowledgedToolCallId?: string,
+    readonly terminalToolCallId?: string,
   ) {
     super(message);
     this.name = "TerminalRunControlError";
@@ -107,6 +107,9 @@ class TerminalRunControl {
             "RUN_OUTCOME_UNKNOWN",
             "Run outcome could not be confirmed",
             "unknown",
+            undefined,
+            undefined,
+            context.toolCallId,
           );
           this.controller.abort(error);
           throw error;
@@ -144,6 +147,9 @@ class TerminalRunControl {
         "RUN_OUTCOME_UNKNOWN",
         "Run outcome could not be confirmed",
         "unknown",
+        undefined,
+        undefined,
+        context.toolCallId,
       );
       this.controller.abort(error);
       throw error;
