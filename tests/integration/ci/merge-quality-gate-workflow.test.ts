@@ -184,6 +184,9 @@ async function runStandaloneGateCondition(
   overrides: Record<string, string>,
 ): Promise<boolean> {
   const context: Record<string, string> = {
+    ...Object.fromEntries(
+      jobNeeds(job, "condition job").map((name) => [`needs.${name}.result`, "success"]),
+    ),
     "github.event_name": "push",
     "github.ref": "refs/heads/main",
     "github.repository": "veryfront/veryfront-code",
@@ -194,7 +197,10 @@ async function runStandaloneGateCondition(
     "needs.version-check.outputs.stable_release_requested": "false",
     ...overrides,
   };
-  const expression = String(job.if).slice(3, -2).replaceAll("always()", "1 == 1")
+  const expression = String(job.if).slice(3, -2).replaceAll("always()", "1 == 1").replaceAll(
+    "cancelled()",
+    "1 == 0",
+  )
     .replace(/(?:github|needs)\.[a-zA-Z0-9_.-]+/g, (name) => {
       assert(name in context, `missing workflow condition fixture: ${name}`);
       assert(!context[name].includes("'"));
@@ -305,6 +311,39 @@ describe("merge quality gate workflow", () => {
         String(job.if),
         "needs.quality-gate-merge.result == 'success' || ((github.event_name == 'push' && github.ref == 'refs/heads/main') && needs.quality-gate-merge.result == 'skipped')",
       );
+    }
+  });
+
+  it("blocks main publishers before environment approval for every failed correctness dependency", async () => {
+    const jobs = asRecord((await readWorkflow()).jobs, "jobs");
+    const dependencies = [
+      ...REQUIRED_DEPENDENCIES.filter((name) => name !== "sonar-quality-gate"),
+      "sonar",
+    ];
+    for (const name of ["prerelease", "release"]) {
+      const job = asRecord(jobs[name], name);
+      const condition = String(job.if);
+      const selection = {
+        "needs.version-check.outputs.is_stable": name === "release" ? "true" : "false",
+        "needs.version-check.outputs.stable_release_requested": name === "release"
+          ? "true"
+          : "false",
+        "needs.quality-gate-merge.result": "skipped",
+      };
+      assertEquals(await runStandaloneGateCondition(job, selection), true);
+      for (const dependency of dependencies) {
+        assertStringIncludes(condition, `needs.${dependency}.result == 'success'`);
+        for (const result of ["failure", "skipped", "cancelled"]) {
+          assertEquals(
+            await runStandaloneGateCondition(job, {
+              ...selection,
+              [`needs.${dependency}.result`]: result,
+            }),
+            false,
+            `${name} must not request approval when ${dependency} is ${result}`,
+          );
+        }
+      }
     }
   });
 

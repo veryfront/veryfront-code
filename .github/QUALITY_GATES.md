@@ -70,8 +70,16 @@ and [workflow contract](../tests/integration/ci/npm-compatibility-artifact-workf
 commit identity, npm provenance, configured registry, and clean-room package
 behavior. Retries are bounded to registry propagation. Release dispatches run
 only after this gate succeeds, so a failed registry check prevents every
-downstream deployment dispatch. On main pushes, dispatch preparation and the
-three dispatches run as the last steps of this job, inside the existing
+downstream deployment dispatch. Validation runs as Linux AMD64 in a fresh,
+read-only container built from a digest-pinned Node image and a
+checksum-verified Deno archive. The image build uses an empty temporary context.
+Runtime access is limited to a read-only source checkout, excluding `.git` and
+`node_modules`, an anonymous `/registry` volume, a bounded `/tmp` tmpfs, npm
+access through isolated bridge egress, and the exact release metadata
+environment. Docker's default private PID namespace remains in effect. The
+host does not execute repository scripts, and the container is removed before
+the scoped release token is created. On main pushes, dispatch preparation and
+the three dispatches run as the last steps of this job, inside the existing
 production approval boundary. Every dispatch step requires successful prior
 steps and a successful selected publisher. Other events retain the separate
 `dispatch release` job.
