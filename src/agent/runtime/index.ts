@@ -3911,11 +3911,13 @@ export class AgentRuntime {
           agentId: this.id,
         };
         try {
+          // The trusted parked call was already exposed in the prior segment.
+          // Recheck current authorization without requiring its lost step visibility.
           if (
-            resolveToolExecutionAuthority({
-              toolName: resumeToolCall.name,
-              plan: effectiveToolExposurePlan,
-            }) === undefined
+            !intrinsicArraySome(
+              effectiveToolExposurePlan.authorized,
+              (tool) => tool.name === resumeToolCall.name,
+            )
           ) {
             throw new Error(toolNotVisibleError(resumeToolCall.name));
           }
