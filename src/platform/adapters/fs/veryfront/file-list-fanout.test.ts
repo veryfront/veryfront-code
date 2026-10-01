@@ -415,6 +415,10 @@ describe("file list fan-out (issue inbox#32)", () => {
     // Hold the listing fetch open so a WebSocket snapshot can land while it is
     // in flight. The fetch resolves with the listing as it was *before* the
     // snapshot -- writing that through would roll the cache back to v1.
+    let signalFetchStarted: (() => void) | undefined;
+    const fetchStarted = new Promise<void>((resolve) => {
+      signalFetchStarted = resolve;
+    });
     let releaseFetch: (() => void) | undefined;
     const fetchReleased = new Promise<void>((resolve) => {
       releaseFetch = resolve;
@@ -425,12 +429,13 @@ describe("file list fan-out (issue inbox#32)", () => {
     const staleListing = files.map((file) => ({ ...file }));
     client.listAllFiles = async () => {
       counts.listAllFiles++;
+      signalFetchStarted?.();
       await fetchReleased;
       return staleListing;
     };
 
     const readPromise = adapter.readTextFile("pages/index.tsx");
-    await waitFor(() => Promise.resolve(counts.listAllFiles === 1));
+    await fetchStarted;
 
     const context = adapter.getContentContext();
     if (!context) throw new Error("content context required");

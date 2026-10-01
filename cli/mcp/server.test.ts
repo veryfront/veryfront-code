@@ -8,10 +8,44 @@ import {
 import { MCPDevServer } from "./server.ts";
 import type { MCPServerConfig } from "./server.ts";
 
-const SERVER_BIND_DELAY_MS = 200;
+const SERVER_READY_TIMEOUT_MS = 5_000;
 
-function waitForServerBind(): Promise<void> {
-  return new Promise((r) => setTimeout(r, SERVER_BIND_DELAY_MS));
+async function withTestWatchdog<T>(promise: Promise<T>): Promise<T> {
+  let timeoutId: number | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timeoutId = setTimeout(
+      () => reject(new Error("MCP HTTP listener did not report readiness")),
+      SERVER_READY_TIMEOUT_MS,
+    );
+  });
+
+  try {
+    return await Promise.race([promise, timeout]);
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
+async function startHttpTestServer(
+  config: Omit<MCPServerConfig, "httpPort" | "onHttpListen"> = {},
+): Promise<{ instance: MCPDevServer; port: number }> {
+  let resolvePort!: (port: number) => void;
+  const listening = new Promise<number>((resolve) => {
+    resolvePort = resolve;
+  });
+  const instance = new MCPDevServer({
+    ...config,
+    httpPort: 0,
+    onHttpListen: ({ port }) => resolvePort(port),
+  });
+  instance.start();
+
+  try {
+    return { instance, port: await withTestWatchdog(listening) };
+  } catch (error) {
+    await instance.stop();
+    throw error;
+  }
 }
 
 async function postMcp(
@@ -28,6 +62,14 @@ async function postMcp(
 
 describe("cli/mcp/server", { sanitizeOps: false, sanitizeResources: false }, () => {
   let server: MCPDevServer | null = null;
+
+  async function startServer(
+    config: Omit<MCPServerConfig, "httpPort" | "onHttpListen"> = {},
+  ): Promise<number> {
+    const started = await startHttpTestServer(config);
+    server = started.instance;
+    return started.port;
+  }
 
   afterEach(async () => {
     if (!server) return;
@@ -90,16 +132,17 @@ describe("cli/mcp/server", { sanitizeOps: false, sanitizeResources: false }, () 
       server.start();
     });
 
+    it("reports the OS-assigned port when an ephemeral HTTP listener is ready", async () => {
+      const port = await startServer();
+      assertEquals(port > 0, true);
+    });
+
     it("contains HTTP bind failures and remains stoppable", async () => {
-      const portNum = 19902;
-      const primary = new MCPDevServer({ httpPort: portNum });
+      const { instance: primary, port: portNum } = await startHttpTestServer();
       const conflicting = new MCPDevServer({ httpPort: portNum });
 
       try {
-        primary.start();
-        await waitForServerBind();
         conflicting.start();
-        await waitForServerBind();
         await conflicting.stop();
       } finally {
         await conflicting.stop();
@@ -131,11 +174,7 @@ describe("cli/mcp/server", { sanitizeOps: false, sanitizeResources: false }, () 
 
   describe("handleInitialize via HTTP", { sanitizeOps: false, sanitizeResources: false }, () => {
     it("should return protocol version and capabilities via HTTP request handling", async () => {
-      const portNum = 19876;
-      server = new MCPDevServer({ httpPort: portNum });
-      server.start();
-
-      await waitForServerBind();
+      const portNum = await startServer();
 
       const response = await postMcp(portNum, {
         jsonrpc: "2.0",
@@ -160,15 +199,10 @@ describe("cli/mcp/server", { sanitizeOps: false, sanitizeResources: false }, () 
     });
 
     it("should return custom server info", async () => {
-      const portNum = 19877;
-      server = new MCPDevServer({
-        httpPort: portNum,
+      const portNum = await startServer({
         serverName: "custom-name",
         serverVersion: "3.0.0",
       });
-      server.start();
-
-      await waitForServerBind();
 
       const response = await postMcp(portNum, {
         jsonrpc: "2.0",
@@ -183,11 +217,7 @@ describe("cli/mcp/server", { sanitizeOps: false, sanitizeResources: false }, () 
     });
 
     it("should return tools list", async () => {
-      const portNum = 19878;
-      server = new MCPDevServer({ httpPort: portNum });
-      server.start();
-
-      await waitForServerBind();
+      const portNum = await startServer();
 
       const response = await postMcp(portNum, {
         jsonrpc: "2.0",
@@ -253,11 +283,7 @@ describe("cli/mcp/server", { sanitizeOps: false, sanitizeResources: false }, () 
     });
 
     it("should return resources list", async () => {
-      const portNum = 19879;
-      server = new MCPDevServer({ httpPort: portNum });
-      server.start();
-
-      await waitForServerBind();
+      const portNum = await startServer();
 
       const response = await postMcp(portNum, {
         jsonrpc: "2.0",
@@ -278,7 +304,6 @@ describe("cli/mcp/server", { sanitizeOps: false, sanitizeResources: false }, () 
     });
 
     it("should omit secrets and local paths from the config resource", async () => {
-      const portNum = 19901;
       _setEnvironmentConfigForTesting({
         nodeEnv: "test",
         veryfrontEnv: "development",
@@ -296,9 +321,7 @@ describe("cli/mcp/server", { sanitizeOps: false, sanitizeResources: false }, () 
       });
 
       try {
-        server = new MCPDevServer({ httpPort: portNum });
-        server.start();
-        await waitForServerBind();
+        const portNum = await startServer();
 
         const response = await postMcp(portNum, {
           jsonrpc: "2.0",
@@ -334,10 +357,7 @@ describe("cli/mcp/server", { sanitizeOps: false, sanitizeResources: false }, () 
     });
 
     it("should omit local skill directories from the skills resource", async () => {
-      const portNum = 19903;
-      server = new MCPDevServer({ httpPort: portNum });
-      server.start();
-      await waitForServerBind();
+      const portNum = await startServer();
 
       const response = await postMcp(portNum, {
         jsonrpc: "2.0",
@@ -355,11 +375,7 @@ describe("cli/mcp/server", { sanitizeOps: false, sanitizeResources: false }, () 
     });
 
     it("should return prompts list", async () => {
-      const portNum = 19880;
-      server = new MCPDevServer({ httpPort: portNum });
-      server.start();
-
-      await waitForServerBind();
+      const portNum = await startServer();
 
       const response = await postMcp(portNum, {
         jsonrpc: "2.0",
@@ -380,10 +396,7 @@ describe("cli/mcp/server", { sanitizeOps: false, sanitizeResources: false }, () 
     });
 
     it("should serve bundled skill prompts and the skill resource", async () => {
-      const portNum = 19920;
-      server = new MCPDevServer({ httpPort: portNum });
-      server.start();
-      await waitForServerBind();
+      const portNum = await startServer();
 
       const skill = await (await postMcp(portNum, {
         jsonrpc: "2.0",
@@ -413,11 +426,7 @@ describe("cli/mcp/server", { sanitizeOps: false, sanitizeResources: false }, () 
     });
 
     it("should include title and annotations in tools/list response", async () => {
-      const portNum = 19888;
-      server = new MCPDevServer({ httpPort: portNum });
-      server.start();
-
-      await waitForServerBind();
+      const portNum = await startServer();
 
       const response = await postMcp(portNum, {
         jsonrpc: "2.0",
@@ -448,10 +457,7 @@ describe("cli/mcp/server", { sanitizeOps: false, sanitizeResources: false }, () 
     });
 
     it("tools/list accepts cursor param without erroring", async () => {
-      const portNum = 19889;
-      server = new MCPDevServer({ httpPort: portNum });
-      server.start();
-      await waitForServerBind();
+      const portNum = await startServer();
 
       const response = await postMcp(portNum, {
         jsonrpc: "2.0",
@@ -466,10 +472,7 @@ describe("cli/mcp/server", { sanitizeOps: false, sanitizeResources: false }, () 
     });
 
     it("resources/list accepts cursor param without erroring", async () => {
-      const portNum = 19890;
-      server = new MCPDevServer({ httpPort: portNum });
-      server.start();
-      await waitForServerBind();
+      const portNum = await startServer();
 
       const response = await postMcp(portNum, {
         jsonrpc: "2.0",
@@ -484,10 +487,7 @@ describe("cli/mcp/server", { sanitizeOps: false, sanitizeResources: false }, () 
     });
 
     it("prompts/list accepts cursor param without erroring", async () => {
-      const portNum = 19891;
-      server = new MCPDevServer({ httpPort: portNum });
-      server.start();
-      await waitForServerBind();
+      const portNum = await startServer();
 
       const response = await postMcp(portNum, {
         jsonrpc: "2.0",
@@ -502,11 +502,7 @@ describe("cli/mcp/server", { sanitizeOps: false, sanitizeResources: false }, () 
     });
 
     it("should return error for unknown method", async () => {
-      const portNum = 19881;
-      server = new MCPDevServer({ httpPort: portNum });
-      server.start();
-
-      await waitForServerBind();
+      const portNum = await startServer();
 
       const response = await postMcp(portNum, {
         jsonrpc: "2.0",
@@ -521,11 +517,7 @@ describe("cli/mcp/server", { sanitizeOps: false, sanitizeResources: false }, () 
     });
 
     it("should return 404 for non-mcp path", async () => {
-      const portNum = 19882;
-      server = new MCPDevServer({ httpPort: portNum });
-      server.start();
-
-      await waitForServerBind();
+      const portNum = await startServer();
 
       const response = await fetch(`http://localhost:${portNum}/other`, {
         method: "POST",
@@ -537,11 +529,7 @@ describe("cli/mcp/server", { sanitizeOps: false, sanitizeResources: false }, () 
     });
 
     it("should return 405 for non-POST request", async () => {
-      const portNum = 19883;
-      server = new MCPDevServer({ httpPort: portNum });
-      server.start();
-
-      await waitForServerBind();
+      const portNum = await startServer();
 
       const response = await fetch(`http://localhost:${portNum}/mcp`, {
         method: "GET",
@@ -551,11 +539,7 @@ describe("cli/mcp/server", { sanitizeOps: false, sanitizeResources: false }, () 
     });
 
     it("should handle CORS preflight", async () => {
-      const portNum = 19884;
-      server = new MCPDevServer({ httpPort: portNum });
-      server.start();
-
-      await waitForServerBind();
+      const portNum = await startServer();
 
       const response = await fetch(`http://localhost:${portNum}/mcp`, {
         method: "OPTIONS",
@@ -570,11 +554,7 @@ describe("cli/mcp/server", { sanitizeOps: false, sanitizeResources: false }, () 
     });
 
     it("should set CORS origin for localhost", async () => {
-      const portNum = 19885;
-      server = new MCPDevServer({ httpPort: portNum });
-      server.start();
-
-      await waitForServerBind();
+      const portNum = await startServer();
 
       const response = await postMcp(
         portNum,
@@ -596,11 +576,7 @@ describe("cli/mcp/server", { sanitizeOps: false, sanitizeResources: false }, () 
     });
 
     it("should handle malformed JSON", async () => {
-      const portNum = 19886;
-      server = new MCPDevServer({ httpPort: portNum });
-      server.start();
-
-      await waitForServerBind();
+      const portNum = await startServer();
 
       const response = await postMcp(portNum, "not-json");
 
@@ -617,11 +593,7 @@ describe("cli/mcp/server", { sanitizeOps: false, sanitizeResources: false }, () 
     });
 
     it("should distinguish invalid JSON-RPC requests", async () => {
-      const portNum = 19903;
-      server = new MCPDevServer({ httpPort: portNum });
-      server.start();
-
-      await waitForServerBind();
+      const portNum = await startServer();
 
       const response = await postMcp(portNum, {
         jsonrpc: "2.0",
@@ -640,11 +612,7 @@ describe("cli/mcp/server", { sanitizeOps: false, sanitizeResources: false }, () 
     });
 
     it("should treat an empty HTTP body as malformed JSON", async () => {
-      const portNum = 19904;
-      server = new MCPDevServer({ httpPort: portNum });
-      server.start();
-
-      await waitForServerBind();
+      const portNum = await startServer();
 
       const response = await fetch(`http://localhost:${portNum}/mcp`, {
         method: "POST",
@@ -663,11 +631,7 @@ describe("cli/mcp/server", { sanitizeOps: false, sanitizeResources: false }, () 
     });
 
     it("should negotiate protocol version 2025-11-25", async () => {
-      const portNum = 19890;
-      server = new MCPDevServer({ httpPort: portNum });
-      server.start();
-
-      await waitForServerBind();
+      const portNum = await startServer();
 
       const response = await postMcp(portNum, {
         jsonrpc: "2.0",
@@ -681,11 +645,7 @@ describe("cli/mcp/server", { sanitizeOps: false, sanitizeResources: false }, () 
     });
 
     it("should negotiate protocol version 2024-11-05", async () => {
-      const portNum = 19891;
-      server = new MCPDevServer({ httpPort: portNum });
-      server.start();
-
-      await waitForServerBind();
+      const portNum = await startServer();
 
       const response = await postMcp(portNum, {
         jsonrpc: "2.0",
@@ -699,11 +659,7 @@ describe("cli/mcp/server", { sanitizeOps: false, sanitizeResources: false }, () 
     });
 
     it("should fall back to newest version for unknown protocol version", async () => {
-      const portNum = 19892;
-      server = new MCPDevServer({ httpPort: portNum });
-      server.start();
-
-      await waitForServerBind();
+      const portNum = await startServer();
 
       const response = await postMcp(portNum, {
         jsonrpc: "2.0",
@@ -717,11 +673,7 @@ describe("cli/mcp/server", { sanitizeOps: false, sanitizeResources: false }, () 
     });
 
     it("should include serverInfo title and description", async () => {
-      const portNum = 19893;
-      server = new MCPDevServer({ httpPort: portNum });
-      server.start();
-
-      await waitForServerBind();
+      const portNum = await startServer();
 
       const response = await postMcp(portNum, {
         jsonrpc: "2.0",
@@ -736,11 +688,7 @@ describe("cli/mcp/server", { sanitizeOps: false, sanitizeResources: false }, () 
     });
 
     it("should include instructions field", async () => {
-      const portNum = 19894;
-      server = new MCPDevServer({ httpPort: portNum });
-      server.start();
-
-      await waitForServerBind();
+      const portNum = await startServer();
 
       const response = await postMcp(portNum, {
         jsonrpc: "2.0",
@@ -754,11 +702,7 @@ describe("cli/mcp/server", { sanitizeOps: false, sanitizeResources: false }, () 
     });
 
     it("should include listChanged in capabilities", async () => {
-      const portNum = 19895;
-      server = new MCPDevServer({ httpPort: portNum });
-      server.start();
-
-      await waitForServerBind();
+      const portNum = await startServer();
 
       const response = await postMcp(portNum, {
         jsonrpc: "2.0",
@@ -774,11 +718,7 @@ describe("cli/mcp/server", { sanitizeOps: false, sanitizeResources: false }, () 
     });
 
     it("should handle notifications/initialized", async () => {
-      const portNum = 19896;
-      server = new MCPDevServer({ httpPort: portNum });
-      server.start();
-
-      await waitForServerBind();
+      const portNum = await startServer();
 
       const response = await postMcp(portNum, {
         jsonrpc: "2.0",
@@ -792,11 +732,7 @@ describe("cli/mcp/server", { sanitizeOps: false, sanitizeResources: false }, () 
     });
 
     it("should reject disallowed Origin with 403", async () => {
-      const portNum = 19897;
-      server = new MCPDevServer({ httpPort: portNum });
-      server.start();
-
-      await waitForServerBind();
+      const portNum = await startServer();
 
       const response = await postMcp(
         portNum,
@@ -813,11 +749,7 @@ describe("cli/mcp/server", { sanitizeOps: false, sanitizeResources: false }, () 
     });
 
     it("should reject origins whose hostname only starts with localhost", async () => {
-      const portNum = 19900;
-      server = new MCPDevServer({ httpPort: portNum });
-      server.start();
-
-      await waitForServerBind();
+      const portNum = await startServer();
 
       const response = await postMcp(
         portNum,
@@ -833,11 +765,7 @@ describe("cli/mcp/server", { sanitizeOps: false, sanitizeResources: false }, () 
     });
 
     it("should allow request with no Origin header", async () => {
-      const portNum = 19898;
-      server = new MCPDevServer({ httpPort: portNum });
-      server.start();
-
-      await waitForServerBind();
+      const portNum = await startServer();
 
       const response = await postMcp(portNum, {
         jsonrpc: "2.0",
@@ -849,11 +777,7 @@ describe("cli/mcp/server", { sanitizeOps: false, sanitizeResources: false }, () 
     });
 
     it("should allow localhost Origin", async () => {
-      const portNum = 19899;
-      server = new MCPDevServer({ httpPort: portNum });
-      server.start();
-
-      await waitForServerBind();
+      const portNum = await startServer();
 
       const response = await postMcp(
         portNum,
@@ -868,11 +792,7 @@ describe("cli/mcp/server", { sanitizeOps: false, sanitizeResources: false }, () 
     });
 
     it("should return error for unknown tool call", async () => {
-      const portNum = 19887;
-      server = new MCPDevServer({ httpPort: portNum });
-      server.start();
-
-      await waitForServerBind();
+      const portNum = await startServer();
 
       const response = await postMcp(portNum, {
         jsonrpc: "2.0",

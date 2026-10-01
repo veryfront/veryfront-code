@@ -451,14 +451,14 @@ describe("Builtin Toast viewport and timer lifecycle", () => {
       await new Promise((resolve) => setTimeout(resolve, 80));
       assert(document.body.textContent?.includes("Paused"), "hover pauses timer");
       visibility = "hidden";
-      document.dispatchEvent(new dom.window.Event("visibilitychange"));
+      flushSync(() => document.dispatchEvent(new dom.window.Event("visibilitychange")));
       flushSync(() =>
         toast.dispatchEvent(new dom.window.MouseEvent("mouseout", { bubbles: true }))
       );
       await new Promise((resolve) => setTimeout(resolve, 80));
       assert(document.body.textContent?.includes("Paused"), "hidden document keeps timer paused");
       visibility = "visible";
-      document.dispatchEvent(new dom.window.Event("visibilitychange"));
+      flushSync(() => document.dispatchEvent(new dom.window.Event("visibilitychange")));
       await waitFor(() => !document.body.textContent?.includes("Paused"));
     } finally {
       await unmountReactRoot(root);

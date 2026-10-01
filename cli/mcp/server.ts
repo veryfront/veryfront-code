@@ -59,6 +59,8 @@ export interface MCPServerConfig {
   stdio?: boolean;
   /** Loopback HTTP port used by local development integrations. */
   httpPort?: number;
+  /** Called after the HTTP listener is bound, including its OS-assigned port when `httpPort` is 0. */
+  onHttpListen?: (address: { hostname: string; port: number }) => void;
   /** Server name for MCP protocol */
   serverName?: string;
   /** Server version */
@@ -97,7 +99,7 @@ export class MCPDevServer {
         toErrorResponse: (_error, request) => internalError(request.id),
       });
     }
-    if (this.config.httpPort) this.startHTTP(this.config.httpPort);
+    if (this.config.httpPort !== undefined) this.startHTTP(this.config.httpPort);
   }
 
   async stop(): Promise<void> {
@@ -223,7 +225,10 @@ export class MCPDevServer {
       }
     };
 
-    const servePromise = httpServer.serve(handler, { port, onListen: () => {} });
+    const servePromise = httpServer.serve(handler, {
+      port,
+      onListen: this.config.onHttpListen,
+    });
     this.httpServePromise = servePromise;
     void servePromise.catch(() => {
       if (!this.running) return;
