@@ -1477,9 +1477,12 @@ function selectFinalOutput(
   context: WorkflowContext,
 ): unknown {
   const publicContext = toPersistedWorkflowContext(context);
-  const selected = input.selectOutput
-    ? input.selectOutput(publicContext)
-    : determineOutput(publicContext);
+  if (!input.selectOutput) {
+    const output = determineOutput(publicContext);
+    input.parseOutput?.(output);
+    return output;
+  }
+  const selected = input.selectOutput(publicContext);
   return toJsonOutput(input.parseOutput ? input.parseOutput(selected) : selected);
 }
 
