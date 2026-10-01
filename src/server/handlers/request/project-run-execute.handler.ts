@@ -3233,6 +3233,10 @@ export class ProjectRunExecuteHandler extends BaseHandler {
           return this.respond(builder.json({ error: error.message }, error.status));
         }
 
+        if (error instanceof VeryfrontError && error.slug === "input-validation-failed") {
+          return this.respond(builder.json({ error: error.detail ?? error.message }, 400));
+        }
+
         return this.respond(builder.json({ error: "Invalid project run execute request" }, 400));
       }
     });
