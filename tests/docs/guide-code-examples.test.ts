@@ -347,6 +347,50 @@ describe("Guide: ai-gateway-quickstart.md", () => {
       "`x-veryfront-project-slug: <PROJECT_SLUG>`",
     );
   });
+
+  it("gives every request snippet an account-key form", async () => {
+    const guide = await readGuide("ai-gateway-quickstart.md");
+    const header = "x-veryfront-project-slug";
+
+    // Every curl command has a twin that sends the project header.
+    const curls = [...guide.matchAll(/```bash\n(curl [\s\S]*?)```/g)].map((match) => match[1]!);
+    const urls = new Set(curls.map((curl) => curl.split(/\s/)[1]!));
+    assert(urls.size >= 3, "the guide lists models and verifies a request with curl");
+    for (const url of urls) {
+      const forms = curls.filter((curl) => curl.split(/\s/)[1] === url);
+      assert(
+        forms.some((curl) => !curl.includes(header)),
+        `${url} has a project-key form`,
+      );
+      assert(
+        forms.some((curl) => curl.includes(`-H "${header}: <PROJECT_SLUG>"`)),
+        `${url} has an account-key form`,
+      );
+    }
+
+    // Every SDK snippet carries the header line to uncomment.
+    const sdks = section(guide, "## SDKs");
+    const snippets = [...sdks.matchAll(/```(?:ts|python)\n([\s\S]*?)```/g)].map((match) =>
+      match[1]!
+    );
+    assertEquals(snippets.length, 7);
+    for (const snippet of snippets) {
+      assertStringIncludes(snippet, `"${header}": "<PROJECT_SLUG>"`);
+    }
+
+    // Every harness with a snippet documents the header.
+    for (
+      const harness of [
+        "### Claude Code",
+        "### Codex CLI",
+        "### Aider",
+        "### Continue",
+        "### OpenCode",
+      ]
+    ) {
+      assertStringIncludes(section(guide, harness), header);
+    }
+  });
 });
 
 describe("Guide: middleware.md", () => {

@@ -56,9 +56,15 @@ curl https://api.veryfront.com/ai/v1/models \
   -H "Authorization: Bearer $VERYFRONT_API_KEY"
 ```
 
-With an account key, add `-H "x-veryfront-project-slug: <PROJECT_SLUG>"` to
-every `curl` command on this page. Client configuration does not apply to
-`curl`.
+With an account key, also send the project header. Client configuration does
+not apply to `curl`, so every `curl` command on this page has an account-key
+form:
+
+```bash
+curl https://api.veryfront.com/ai/v1/models \
+  -H "Authorization: Bearer $VERYFRONT_API_KEY" \
+  -H "x-veryfront-project-slug: <PROJECT_SLUG>"
+```
 
 The response uses the OpenAI list shape. Copy the `id` of a model, for example
 `anthropic/claude-sonnet-4-6`, into your tool. Each base URL lists only the
@@ -69,6 +75,14 @@ For Google GenAI, list the Gemini models on `/ai/v1beta` instead:
 ```bash
 curl https://api.veryfront.com/ai/v1beta/models \
   -H "Authorization: Bearer $VERYFRONT_API_KEY"
+```
+
+With an account key:
+
+```bash
+curl https://api.veryfront.com/ai/v1beta/models \
+  -H "Authorization: Bearer $VERYFRONT_API_KEY" \
+  -H "x-veryfront-project-slug: <PROJECT_SLUG>"
 ```
 
 This response uses the Gemini list shape. Each `name` is `models/<model>`, for
@@ -216,10 +230,10 @@ guide does not cover Cursor. See [Cursor API keys](https://cursor.com/docs/setti
 
 ## SDKs
 
-With an account key, add the `x-veryfront-project-slug` header through the
-client's default headers option: `defaultHeaders` in the OpenAI and Anthropic
-TypeScript SDKs, `default_headers` in Python, `headers` in the Vercel AI SDK,
-and `httpOptions.headers` in Google GenAI.
+With an account key, uncomment the `x-veryfront-project-slug` line in the
+snippet. It sets the client's default headers option: `defaultHeaders` in the
+OpenAI and Anthropic TypeScript SDKs, `default_headers` in Python, `headers` in
+the Vercel AI SDK, and `httpOptions.headers` in Google GenAI.
 
 ### OpenAI SDK (TypeScript)
 
@@ -229,6 +243,8 @@ import OpenAI from "openai";
 const client = new OpenAI({
   baseURL: "https://api.veryfront.com/ai/v1",
   apiKey: process.env.VERYFRONT_API_KEY,
+  // Account keys only:
+  // defaultHeaders: { "x-veryfront-project-slug": "<PROJECT_SLUG>" },
 });
 
 const completion = await client.chat.completions.create({
@@ -248,6 +264,8 @@ from openai import OpenAI
 client = OpenAI(
     base_url="https://api.veryfront.com/ai/v1",
     api_key=os.environ["VERYFRONT_API_KEY"],
+    # Account keys only:
+    # default_headers={"x-veryfront-project-slug": "<PROJECT_SLUG>"},
 )
 
 completion = client.chat.completions.create(
@@ -266,6 +284,8 @@ const client = new Anthropic({
   baseURL: "https://api.veryfront.com/ai",
   apiKey: null,
   authToken: process.env.VERYFRONT_API_KEY,
+  // Account keys only:
+  // defaultHeaders: { "x-veryfront-project-slug": "<PROJECT_SLUG>" },
 });
 
 const message = await client.messages.create({
@@ -288,6 +308,8 @@ import { generateText } from "ai";
 const veryfront = createOpenAI({
   baseURL: "https://api.veryfront.com/ai/v1",
   apiKey: process.env.VERYFRONT_API_KEY,
+  // Account keys only:
+  // headers: { "x-veryfront-project-slug": "<PROJECT_SLUG>" },
 });
 
 const { text } = await generateText({
@@ -306,6 +328,8 @@ import { generateText } from "ai";
 const veryfront = createAnthropic({
   baseURL: "https://api.veryfront.com/ai/v1",
   authToken: process.env.VERYFRONT_API_KEY,
+  // Account keys only:
+  // headers: { "x-veryfront-project-slug": "<PROJECT_SLUG>" },
 });
 
 const { text } = await generateText({
@@ -326,6 +350,8 @@ llm = ChatOpenAI(
     model="mistral/mistral-small-2503",
     base_url="https://api.veryfront.com/ai/v1",
     api_key=os.environ["VERYFRONT_API_KEY"],
+    # Account keys only:
+    # default_headers={"x-veryfront-project-slug": "<PROJECT_SLUG>"},
 )
 
 print(llm.invoke("Say hello.").content)
@@ -343,7 +369,11 @@ import { GoogleGenAI } from "@google/genai";
 
 const ai = new GoogleGenAI({
   apiKey: process.env.VERYFRONT_API_KEY,
-  httpOptions: { baseUrl: "https://api.veryfront.com/ai" },
+  httpOptions: {
+    baseUrl: "https://api.veryfront.com/ai",
+    // Account keys only:
+    // headers: { "x-veryfront-project-slug": "<PROJECT_SLUG>" },
+  },
 });
 
 const response = await ai.models.generateContent({
@@ -371,11 +401,23 @@ console.log(response.text);
 ## Verify it worked
 
 Send one request with the key. A `200` response with a model reply means the
-key, base URL, and model id are correct:
+key, base URL, and model id are correct.
+
+With a project key:
 
 ```bash
 curl https://api.veryfront.com/ai/v1/chat/completions \
   -H "Authorization: Bearer $VERYFRONT_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"mistral/mistral-small-2503","messages":[{"role":"user","content":"Say hello."}]}'
+```
+
+With an account key:
+
+```bash
+curl https://api.veryfront.com/ai/v1/chat/completions \
+  -H "Authorization: Bearer $VERYFRONT_API_KEY" \
+  -H "x-veryfront-project-slug: <PROJECT_SLUG>" \
   -H "Content-Type: application/json" \
   -d '{"model":"mistral/mistral-small-2503","messages":[{"role":"user","content":"Say hello."}]}'
 ```

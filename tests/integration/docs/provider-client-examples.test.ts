@@ -1,4 +1,4 @@
-import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { makeTempDir } from "#veryfront/testing/deno-compat.ts";
 
@@ -283,5 +283,23 @@ describe("AI Gateway quickstart SDK snippets", () => {
         "anthropic/claude-sonnet-4-6",
       ],
     );
+  });
+
+  it("sends the project header when the account-key line is uncommented", async () => {
+    const snippets = (await getSnippets()).map((snippet) => {
+      const accountKey = snippet.replace(
+        /^(\s*)\/\/ ((?:defaultHeaders|headers): \{ "x-veryfront-project-slug": )"<PROJECT_SLUG>"/m,
+        '$1$2"example-project"',
+      );
+      assert(accountKey !== snippet, `snippet has an account-key line:\n${snippet}`);
+      return accountKey;
+    });
+
+    const requests = await runSnippetsWithOfficialClients(snippets);
+
+    assertEquals(requests.length, 5);
+    for (const request of requests) {
+      assertEquals(request.headers["x-veryfront-project-slug"], "example-project");
+    }
   });
 });
