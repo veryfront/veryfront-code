@@ -106,6 +106,8 @@ export const getNodeStateSchema = defineSchema((v) =>
     _waitInstanceId: v.string().optional(),
     /** Internal owner path for a node produced inside a sub-workflow. */
     _subWorkflowOwnerPath: v.string().optional(),
+    /** A step recorded its input, including undefined values JSON omits. */
+    _stepInputRecorded: v.boolean().optional(),
     /** The sub-workflow input has been parsed and is reusable on resume. */
     _subWorkflowInputParsed: v.boolean().optional(),
     /** Internal child context retained while a sub-workflow is incomplete. */
@@ -115,6 +117,10 @@ export const getNodeStateSchema = defineSchema((v) =>
       nodeId: v.string(),
       waitInstanceId: v.string().nullable(),
     })).optional(),
+    /** Completed child DAG boundary retained until output selection succeeds. */
+    _subWorkflowCompletedChildIds: v.array(v.string()).optional(),
+    /** In-flight loop iteration retained for completed nested output retry. */
+    _loopOutputRetry: v.record(v.string(), v.unknown()).optional(),
     /** Child states this composite had actively parked when it last suspended. */
     _activeCompositeChildIds: v.array(v.string()).optional(),
     /** Child states a runtime-defined composite produced before it completed. */

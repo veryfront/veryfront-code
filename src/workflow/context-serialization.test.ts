@@ -17,10 +17,16 @@ import {
 } from "#veryfront/utils/logger/logger.ts";
 import type { WorkflowContext } from "./types.ts";
 import {
+  collectWorkflowJsonRecords,
+  deferWorkflowJsonValue,
   MAX_TRAVERSAL_DEPTH,
+  prepareNodeStatesUserData,
   prepareWorkflowJson,
   serializeWorkflowContext,
   serializeWorkflowJson,
+  WORKFLOW_CHECKPOINT_RECORD,
+  WORKFLOW_NODE_RECORD,
+  WORKFLOW_RESUME_ENVELOPE_RECORD,
 } from "./context-serialization.ts";
 
 // Deep enough that the walk stops and hands the value to `JSON.stringify`, and
@@ -1618,6 +1624,189 @@ describe("serializeWorkflowContext", () => {
       }
 
       assertEquals(divergences.slice(0, 5), []);
+    });
+  });
+
+  describe("a node id named toJSON", () => {
+    // Context is keyed by node id, so `toJSON` is a node's value, not a hook of
+    // the container. Calling it would let one step replace every other node.
+    function hijackingContext(calls: string[]): WorkflowContext {
+      return {
+        input: {},
+        toJSON: () => {
+          calls.push("toJSON");
+          return { hijacked: "" };
+        },
+        other: { keep: 1 },
+      };
+    }
+
+    it("persists the other nodes and reports the callable under its own path", () => {
+      const calls: string[] = [];
+      let serialized = "";
+
+      const warnings = captureWorkflowWarnings(() => {
+        serialized = serializeWorkflowContext(hijackingContext(calls), "run-to-json");
+      });
+
+      assertEquals(calls, []);
+      assertEquals(JSON.parse(serialized), { input: {}, other: { keep: 1 } });
+      // Node ids are payload, so the node's own path is redacted like any other.
+      assertEquals(warnings.length, 1);
+      assertEquals(warnings[0]?.context?.paths, "context.<redacted> (function)");
+    });
+
+    it("rejects the callable under its own path with strictContext", () => {
+      const calls: string[] = [];
+
+      const error = assertThrows(
+        () =>
+          serializeWorkflowContext(hijackingContext(calls), "run-to-json", {
+            strictContext: true,
+          }),
+        VeryfrontError,
+      );
+
+      assertEquals(calls, []);
+      assertInstanceOf(error, VeryfrontError);
+      assertStringIncludes(
+        error.message,
+        "with strictContext enabled: context.<redacted> (function).",
+      );
+    });
+
+    it("treats a reference back to the context as the context, not a hooked value", () => {
+      const calls: string[] = [];
+      const context = hijackingContext(calls);
+      context.self = { ref: context };
+
+      assertThrows(
+        () => serializeWorkflowContext(context, "run-to-json"),
+        VeryfrontError,
+        "circular reference",
+      );
+      assertEquals(calls, []);
+    });
+
+    it("keeps a non-callable toJSON node value as data", () => {
+      const context: WorkflowContext = { input: {}, toJSON: { value: 1 }, other: { keep: 1 } };
+
+      assertEquals(JSON.parse(serializeWorkflowContext(context)), {
+        input: {},
+        toJSON: { value: 1 },
+        other: { keep: 1 },
+      });
+    });
+
+    it("still applies a toJSON hook that a node value carries", () => {
+      const context = contextWith({ toJSON: () => ({ replaced: true }) });
+
+      assertEquals(JSON.parse(serializeWorkflowContext(context)).step, { replaced: true });
+    });
+
+    it("keeps the rule for a node record deferred until its checkpoint fence", () => {
+      const calls: string[] = [];
+
+      const { serialized } = prepareWorkflowJson(
+        deferWorkflowJsonValue(hijackingContext(calls)),
+        "checkpoint.context",
+        "run-to-json",
+        {},
+        WORKFLOW_NODE_RECORD,
+      );
+
+      assertEquals(calls, []);
+      assertEquals(JSON.parse(serialized), { input: {}, other: { keep: 1 } });
+    });
+
+    it("ignores a toJSON a node record inherits", () => {
+      const calls: string[] = [];
+      const record = Object.create({
+        toJSON() {
+          calls.push("inherited");
+          return { hijacked: "" };
+        },
+      }) as WorkflowContext;
+      record.input = {};
+      record.other = { keep: 1 };
+
+      const serialized = serializeWorkflowContext(record);
+
+      assertEquals(calls, []);
+      assertEquals(JSON.parse(serialized), { input: {}, other: { keep: 1 } });
+    });
+
+    it("applies the rule to the node records nested in a resume envelope", () => {
+      const calls: string[] = [];
+      const envelope = {
+        schemaVersion: 2,
+        ownerNodeId: "owner",
+        context: hijackingContext(calls),
+        nodeStates: {},
+        workflowProjection: { context: {} },
+        graphAdmission: {
+          stepsEvaluationContext: hijackingContext(calls),
+          stepsEvaluationProjection: { context: {} },
+          graphIdentity: [],
+          workflowVersion: null,
+        },
+      };
+
+      const persisted = JSON.parse(
+        prepareWorkflowJson(
+          envelope,
+          "checkpoint._resumeEnvelope",
+          "run-to-json",
+          {},
+          WORKFLOW_RESUME_ENVELOPE_RECORD,
+        ).serialized,
+      );
+
+      assertEquals(calls, []);
+      assertEquals(persisted.context, { input: {}, other: { keep: 1 } });
+      assertEquals(persisted.graphAdmission.stepsEvaluationContext, {
+        input: {},
+        other: { keep: 1 },
+      });
+    });
+
+    it("keeps a shared context record through a deep node-state output", () => {
+      const calls: string[] = [];
+      const context = hijackingContext(calls);
+      let output: unknown = context;
+      for (let index = 0; index < MAX_TRAVERSAL_DEPTH + 5; index++) {
+        output = { nested: output };
+      }
+      const checkpoint = {
+        id: "deep-shared-record",
+        nodeId: "a",
+        timestamp: new Date(0),
+        context,
+        nodeStates: {
+          a: { nodeId: "a", status: "completed" as const, attempt: 1, output },
+        },
+      };
+      const records = collectWorkflowJsonRecords(checkpoint, WORKFLOW_CHECKPOINT_RECORD);
+
+      const prepared = prepareNodeStatesUserData(
+        checkpoint.nodeStates,
+        "run-deep-shared-record",
+        {},
+        records,
+      );
+      let leaf = prepared.a!.output as Record<string, unknown>;
+      for (let index = 0; index < MAX_TRAVERSAL_DEPTH + 5; index++) {
+        leaf = leaf.nested as Record<string, unknown>;
+      }
+
+      assertEquals(calls, []);
+      assertEquals(leaf, { input: {}, other: { keep: 1 } });
+    });
+
+    it("keeps value semantics for a value that is not a node-keyed record", () => {
+      const value = { toJSON: () => ({ replaced: true }), other: 1 };
+
+      assertEquals(serializeWorkflowJson(value, "root"), JSON.stringify(value));
     });
   });
 

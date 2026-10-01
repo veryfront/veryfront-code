@@ -103,6 +103,7 @@ export class WorkflowClient {
   private executor: WorkflowExecutor;
   private approvalManager: ApprovalManager;
   private eventWaitManager: EventWaitManager;
+  private destroyPromise?: Promise<void>;
   private debug: boolean;
   /** Wait-node configs from registered definitions, keyed "<workflowId>::<nodeId>". */
   private waitNodeConfigs = new Map<string, WaitNodeConfig>();
@@ -576,14 +577,23 @@ export class WorkflowClient {
     return this.eventWaitManager;
   }
 
-  async destroy(): Promise<void> {
+  destroy(): Promise<void> {
+    this.destroyPromise ??= this.performDestroy();
+    return this.destroyPromise;
+  }
+
+  private async performDestroy(): Promise<void> {
     this.approvalManager.beginShutdown();
     this.eventWaitManager.stop();
     try {
-      await this.approvalManager.waitForDecisionClaimRecovery();
-    } catch (error) {
-      // Recovery is best effort and must not replace the workflow result.
-      logger.debug("Approval decision recovery failed during shutdown", error);
+      await Promise.all([
+        this.approvalManager.waitForDecisionClaimRecovery().catch((error) => {
+          // Recovery is best effort and must not replace the workflow result.
+          logger.debug("Approval decision recovery failed during shutdown", error);
+        }),
+        this.approvalManager.waitForExpirationMaintenance(),
+        this.eventWaitManager.waitForExpirationMaintenance(),
+      ]);
     } finally {
       this.approvalManager.stop();
       this.executor.clearExecutionStopEvidence();

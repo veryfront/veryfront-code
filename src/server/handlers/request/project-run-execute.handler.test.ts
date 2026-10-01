@@ -3,6 +3,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import "#veryfront/html/styles-builder/__tests__/css-processor-setup.ts";
 import { CONTROL_PLANE_OWNED_START } from "#veryfront/workflow/dsl/validation.ts";
 import {
+  assert,
   assertEquals,
   assertExists,
   assertMatch,
@@ -1532,6 +1533,199 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     });
     assertEquals(receivedConfig, { dry_run: true });
     assertEquals(receivedEnvironmentId, "11111111-1111-4111-8111-111111111111");
+  });
+
+  // veryfront/veryfront-issue-inbox#2113: an output over 1 MiB never crosses the wire.
+  it("fails a result larger than 1 MiB with OUTPUT_TOO_LARGE instead of sending it", async () => {
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      runTask: () =>
+        Promise.resolve({ success: true, result: "x".repeat(1_048_575), durationMs: 7 }),
+    }));
+    const body = {
+      runId: "run_task_big",
+      kind: "task",
+      target: "task:sync-calendar-events",
+      projectId: "proj-1",
+    };
+    const { request, publicKeyPem } = await signedRequest(
+      "/api/control-plane/runs/run_task_big/execute",
+      body,
+    );
+
+    const result = await handler.handle(request, createCtx(publicKeyPem));
+
+    assertExists(result.response);
+    assertEquals(result.response.status, 200);
+    assertEquals(await result.response.json(), {
+      success: false,
+      error: "Run output is 1048577 bytes, over the limit of 1048576 bytes",
+      error_code: "OUTPUT_TOO_LARGE",
+      error_detail: { size_bytes: 1_048_577, limit_bytes: 1_048_576 },
+      duration_ms: 7,
+      logs: null,
+    });
+  });
+
+  it("drops an oversized result from a failed run and keeps its own error", async () => {
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      runTask: () =>
+        Promise.resolve({
+          success: false,
+          result: "x".repeat(1_048_575),
+          error: "sync failed",
+          durationMs: 7,
+        }),
+    }));
+    const body = {
+      runId: "run_task_failed_big",
+      kind: "task",
+      target: "task:sync-calendar-events",
+      projectId: "proj-1",
+    };
+    const { request, publicKeyPem } = await signedRequest(
+      "/api/control-plane/runs/run_task_failed_big/execute",
+      body,
+    );
+
+    const result = await handler.handle(request, createCtx(publicKeyPem));
+
+    assertExists(result.response);
+    assertEquals(await result.response.json(), {
+      success: false,
+      error: "sync failed",
+      duration_ms: 7,
+      logs: null,
+    });
+  });
+
+  it("sends a result of exactly 1 MiB unchanged", async () => {
+    const output = "x".repeat(1_048_574);
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      runTask: () => Promise.resolve({ success: true, result: output, durationMs: 7 }),
+    }));
+    const body = {
+      runId: "run_task_at_limit",
+      kind: "task",
+      target: "task:sync-calendar-events",
+      projectId: "proj-1",
+    };
+    const { request, publicKeyPem } = await signedRequest(
+      "/api/control-plane/runs/run_task_at_limit/execute",
+      body,
+    );
+
+    const result = await handler.handle(request, createCtx(publicKeyPem));
+
+    assertExists(result.response);
+    assertEquals(await result.response.json(), {
+      success: true,
+      result: output,
+      duration_ms: 7,
+      logs: null,
+    });
+  });
+
+  it("sends the measured bytes of a result that would grow if serialized again", async () => {
+    const rawJSON = (JSON as unknown as { rawJSON: (text: string) => unknown }).rawJSON;
+    const output = Array.from({ length: 50_000 }, () => rawJSON("1e20"));
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      runTask: () => Promise.resolve({ success: true, result: output, durationMs: 7 }),
+    }));
+    const body = {
+      runId: "run_task_raw_json",
+      kind: "task",
+      target: "task:sync-calendar-events",
+      projectId: "proj-1",
+    };
+    const { request, publicKeyPem } = await signedRequest(
+      "/api/control-plane/runs/run_task_raw_json/execute",
+      body,
+    );
+
+    const result = await handler.handle(request, createCtx(publicKeyPem));
+
+    assertExists(result.response);
+    const text = await result.response.text();
+    // 250,001 bytes as checked; parsing and serializing again would make it 1,100,001 bytes.
+    assert(text.length < 260_000, `expected the checked serialization, got ${text.length} bytes`);
+    assertStringIncludes(text, `"result":[1e20,1e20,`);
+    const parsed = JSON.parse(text) as { success: boolean; result: number[] };
+    assertEquals(parsed.success, true);
+    assertEquals(parsed.result.length, 50_000);
+  });
+
+  it("measures and sends the same serialization of a result whose toJSON changes", async () => {
+    let serializations = 0;
+    const stateful = {
+      toJSON: () => (++serializations === 1 ? "small" : "x".repeat(1_048_575)),
+    };
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      runTask: () => Promise.resolve({ success: true, result: stateful, durationMs: 7 }),
+    }));
+    const body = {
+      runId: "run_task_stateful",
+      kind: "task",
+      target: "task:sync-calendar-events",
+      projectId: "proj-1",
+    };
+    const { request, publicKeyPem } = await signedRequest(
+      "/api/control-plane/runs/run_task_stateful/execute",
+      body,
+    );
+
+    const result = await handler.handle(request, createCtx(publicKeyPem));
+
+    assertExists(result.response);
+    assertEquals(serializations, 1);
+    assertEquals(await result.response.json(), {
+      success: true,
+      result: "small",
+      duration_ms: 7,
+      logs: null,
+    });
+  });
+
+  it("enforces and writes the output cap with intrinsics captured before project code runs", async () => {
+    const originalJsonStringify = JSON.stringify;
+    const originalTextEncoder = globalThis.TextEncoder;
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      runTask: () => {
+        JSON.stringify = (() => '"poisoned"') as typeof JSON.stringify;
+        globalThis.TextEncoder = class {
+          encode() {
+            return new Uint8Array();
+          }
+        } as unknown as typeof TextEncoder;
+        return Promise.resolve({ success: true, result: "x".repeat(1_048_575), durationMs: 7 });
+      },
+    }));
+    const body = {
+      runId: "run_task_poisoned_intrinsics",
+      kind: "task",
+      target: "task:sync-calendar-events",
+      projectId: "proj-1",
+    };
+    const { request, publicKeyPem } = await signedRequest(
+      "/api/control-plane/runs/run_task_poisoned_intrinsics/execute",
+      body,
+    );
+
+    try {
+      const result = await handler.handle(request, createCtx(publicKeyPem));
+
+      assertExists(result.response);
+      assertEquals(await result.response.json(), {
+        success: false,
+        error: "Run output is 1048577 bytes, over the limit of 1048576 bytes",
+        error_code: "OUTPUT_TOO_LARGE",
+        error_detail: { size_bytes: 1_048_577, limit_bytes: 1_048_576 },
+        duration_ms: 7,
+        logs: null,
+      });
+    } finally {
+      JSON.stringify = originalJsonStringify;
+      globalThis.TextEncoder = originalTextEncoder;
+    }
   });
 
   it("preserves explicit null runtime environment targets", async () => {

@@ -2,6 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
+import { FakeTime } from "#std/testing/time";
 import {
   clearReleaseAssetProxyCache,
   handleReleaseAssetRequest,
@@ -301,6 +302,7 @@ describe("proxy release asset handler", () => {
   });
 
   it("times out one follower without cancelling a longer-lived consumer", async () => {
+    using time = new FakeTime();
     const source = "export const patientSurvivor = true;";
     const gate = Promise.withResolvers<void>();
     const upstreamSignals: AbortSignal[] = [];
@@ -322,15 +324,20 @@ describe("proxy release asset handler", () => {
       fetchImpl,
       timeoutMs: 5,
     });
-    const releaseId = setTimeout(() => gate.resolve(), 25);
+    // Advance only the short caller deadline, then settle the producer explicitly.
+    time.tick(5);
 
     assertEquals((await follower)?.status, 504);
+    assertEquals(upstreamSignals.length, 1);
     assertEquals(upstreamSignals[0]?.aborted, false);
-    assertEquals((await survivor)?.status, 200);
-    clearTimeout(releaseId);
+    gate.resolve();
+    const response = await survivor;
+    assertEquals(response?.status, 200);
+    assertEquals(await response?.text(), source);
   });
 
   it("lets a longer-lived follower outlast the initiating caller", async () => {
+    using time = new FakeTime();
     const source = "export const lateSurvivor = true;";
     const gate = Promise.withResolvers<void>();
     const upstreamSignals: AbortSignal[] = [];
@@ -352,16 +359,15 @@ describe("proxy release asset handler", () => {
       fetchImpl,
       timeoutMs: 100,
     });
-    const releaseId = setTimeout(() => gate.resolve(), 25);
-
-    const [initiatingResponse, followerResponse] = await Promise.all([
-      initiatingCaller,
-      follower,
-    ]);
-    assertEquals(initiatingResponse?.status, 504);
-    assertEquals(followerResponse?.status, 200);
+    time.tick(5);
+    assertEquals((await initiatingCaller)?.status, 504);
+    assertEquals(upstreamSignals.length, 1);
     assertEquals(upstreamSignals[0]?.aborted, false);
-    clearTimeout(releaseId);
+
+    gate.resolve();
+    const response = await follower;
+    assertEquals(response?.status, 200);
+    assertEquals(await response?.text(), source);
   });
 
   it("abandons and replaces an active load after its sole caller aborts", async () => {

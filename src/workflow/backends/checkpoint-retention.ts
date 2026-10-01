@@ -1,11 +1,19 @@
 import type { Checkpoint, CheckpointResumeEnvelope, WorkflowContext } from "../types.ts";
 import { nativeBrandChecks } from "#veryfront/platform/compat/native-brand-checks.ts";
 import {
+  collectWorkflowJsonRecords,
   deferWorkflowJsonValue,
   isDeferredWorkflowJsonValue,
   MAX_TRAVERSAL_DEPTH,
+  prepareNodeStatesUserData,
   serializeWorkflowJson,
   stabilizeWorkflowJsonPrototypeSnapshot,
+  WORKFLOW_CHECKPOINT_RECORD,
+  WORKFLOW_NODE_RECORD,
+  WORKFLOW_RESUME_ENVELOPE_RECORD,
+  workflowJsonFieldShape,
+  type WorkflowJsonRecords,
+  type WorkflowJsonRecordShape,
 } from "../context-serialization.ts";
 import { MAX_WORKFLOW_CHECKPOINT_HISTORY_ENTRIES } from "../limits.ts";
 import { ORCHESTRATION_ERROR } from "#veryfront/errors";
@@ -47,6 +55,7 @@ const reflectOwnKeys = Reflect.ownKeys;
 const SetConstructor = Set;
 const setAdd = Set.prototype.add;
 const setHas = Set.prototype.has;
+const weakMapGet = WeakMap.prototype.get;
 const StringConstructor = String;
 const symbolToPrimitive = Symbol.toPrimitive;
 const structuredCloneValue = structuredClone;
@@ -55,11 +64,16 @@ const dateGetTime = Date.prototype.getTime;
 const datePrototype = Date.prototype;
 const dateToJSON = Date.prototype.toJSON;
 const dateToISOString = Date.prototype.toISOString;
+const DOMExceptionConstructor = typeof DOMException === "function" ? DOMException : undefined;
 const urlConstructor = typeof URL === "function" ? URL : undefined;
 const urlHrefGet = urlConstructor
   ? objectGetOwnPropertyDescriptor(urlConstructor.prototype, "href")?.get
   : undefined;
+const WeakSetConstructor = WeakSet;
+const weakSetAdd = WeakSet.prototype.add;
+const weakSetHas = WeakSet.prototype.has;
 const MAX_PROXY_ARRAY_SNAPSHOT_LENGTH = 100_000;
+const checkpointJsonCloneRoots = new WeakSetConstructor<object>();
 
 type CheckpointCloneSource = object;
 
@@ -77,6 +91,8 @@ interface CheckpointCloneTraversalFrame {
   keys?: Array<string | symbol>;
   ownPropertyDescriptors?: Array<PropertyDescriptor | undefined>;
   readonly objectProxy?: boolean;
+  /** Set when the source is a framework record, such as a context keyed by node id. */
+  readonly shape?: WorkflowJsonRecordShape;
   readonly source: object;
   readonly target: object;
 }
@@ -117,12 +133,18 @@ type OwnedCheckpointCloneSource = object;
 interface OwnedCheckpointCloneFrame {
   keyIndex?: number;
   keys: Array<string | symbol>;
+  readonly shape?: WorkflowJsonRecordShape;
   readonly source: object;
   readonly target: object;
 }
 
 function isStructuredCloneRangeError(error: unknown): boolean {
   return error instanceof RangeError;
+}
+
+function isStructuredCloneDataError(error: unknown): boolean {
+  return DOMExceptionConstructor !== undefined && error instanceof DOMExceptionConstructor &&
+    error.name === "DataCloneError";
 }
 
 function isCheckpointCloneReference(value: unknown): value is object {
@@ -136,19 +158,37 @@ function isArrayIndexWithinLength(key: string | symbol, length: number): boolean
     index < length && StringConstructor(index) === key;
 }
 
-function cloneCheckpointJson<T>(value: T, label: string): T {
-  if (isDeferredWorkflowJsonValue(value)) {
+function cloneCheckpointJson<T>(
+  value: T,
+  label: string,
+  shape?: WorkflowJsonRecordShape,
+  records?: WorkflowJsonRecords,
+  allowRecordDataCloneFallback = false,
+): T {
+  if (
+    isDeferredWorkflowJsonValue(value) ||
+    (typeof value === "object" && value !== null &&
+      reflectApply(weakSetHas, checkpointJsonCloneRoots, [value]) === true)
+  ) {
     return jsonParse(
-      serializeWorkflowJson(value, label, undefined, { strictContext: false }),
+      serializeWorkflowJson(value, label, undefined, { strictContext: false }, shape, records),
     ) as T;
   }
   try {
     return structuredCloneValue(value);
   } catch (error) {
-    if (!isStructuredCloneRangeError(error)) throw error;
+    // Only a successfully persisted checkpoint may normalize shaped records
+    // for its return value. Ordinary retention still rejects uncloneable data.
+    // Rebuilt resume envelopes retain their existing JSON-boundary fallback.
+    if (
+      !isStructuredCloneRangeError(error) &&
+      !((shape === WORKFLOW_RESUME_ENVELOPE_RECORD ||
+        (allowRecordDataCloneFallback && shape !== undefined)) &&
+        isStructuredCloneDataError(error))
+    ) throw error;
   }
   return jsonParse(
-    serializeWorkflowJson(value, label, undefined, { strictContext: false }),
+    serializeWorkflowJson(value, label, undefined, { strictContext: false }, shape, records),
   ) as T;
 }
 
@@ -369,7 +409,11 @@ function hasDynamicPrototypeToJson(value: OwnedCheckpointCloneSource): boolean {
   return false;
 }
 
-function cloneOwnedCheckpointValue<T>(value: T): T {
+function cloneOwnedCheckpointValue<T>(
+  value: T,
+  shape?: WorkflowJsonRecordShape,
+  sharedClones?: Map<object, object>,
+): T {
   if (typeof value === "function") {
     return deferWorkflowJsonValue(value) as T;
   }
@@ -380,7 +424,7 @@ function cloneOwnedCheckpointValue<T>(value: T): T {
   if (nativeBrandChecks.isProxy(value) === true) {
     return checkpointPersistenceSentinel("a Proxy value") as T;
   }
-  if (hasDynamicOwnToJson(value)) {
+  if (shape === undefined && hasDynamicOwnToJson(value)) {
     return deferWorkflowJsonValue(value) as T;
   }
   if (isDate(value)) {
@@ -395,14 +439,19 @@ function cloneOwnedCheckpointValue<T>(value: T): T {
   if (rawJson !== undefined) return rawJson as T;
 
   const brandChecks = nativeBrandChecks;
-  const clones = new MapConstructor<object, object>();
+  const clones = sharedClones ?? new MapConstructor<object, object>();
+  const addedSources: object[] = [];
   const frames: OwnedCheckpointCloneFrame[] = [];
   let deferRoot = false;
+  let requiresJsonClone = false;
   const deferReference = (source: OwnedCheckpointCloneSource): object => {
     deferRoot = true;
     return deferWorkflowJsonValue(source);
   };
-  const cloneReference = (source: OwnedCheckpointCloneSource): object => {
+  const cloneReference = (
+    source: OwnedCheckpointCloneSource,
+    sourceShape?: WorkflowJsonRecordShape,
+  ): object => {
     const existing = reflectApply(mapGet, clones, [source]) as object | undefined;
     if (existing) return existing;
     if (brandChecks.isProxy(source) === true) {
@@ -410,7 +459,7 @@ function cloneOwnedCheckpointValue<T>(value: T): T {
     }
     const ownToJsonDescriptor = objectGetOwnPropertyDescriptor(source, "toJSON");
     if (
-      ownToJsonDescriptor !== undefined &&
+      sourceShape === undefined && ownToJsonDescriptor !== undefined &&
       (!("value" in ownToJsonDescriptor) || typeof ownToJsonDescriptor.value === "function")
     ) {
       return deferReference(source);
@@ -435,7 +484,7 @@ function cloneOwnedCheckpointValue<T>(value: T): T {
       return deferReference(source);
     }
     if (
-      ownToJsonDescriptor === undefined && prototype !== null &&
+      sourceShape === undefined && ownToJsonDescriptor === undefined && prototype !== null &&
       hasDynamicPrototypeToJson(source)
     ) {
       return deferReference(source);
@@ -453,14 +502,16 @@ function cloneOwnedCheckpointValue<T>(value: T): T {
       ? stabilizeWorkflowJsonPrototypeSnapshot(objectCreate(objectPrototype))
       : objectCreate(objectPrototype);
     reflectApply(mapSet, clones, [source, target]);
+    reflectApply(arrayPush, addedSources, [source]);
     reflectApply(arrayPush, frames, [{
       keys: reflectOwnKeys(source),
+      shape: sourceShape,
       source,
       target,
     }]);
     return target;
   };
-  const rootTarget = cloneReference(value);
+  const rootTarget = cloneReference(value, shape);
 
   while (frames.length > 0) {
     const frame = frames[frames.length - 1]!;
@@ -482,7 +533,7 @@ function cloneOwnedCheckpointValue<T>(value: T): T {
       objectDefineProperty(frame.target, key, descriptor);
       continue;
     }
-    if (key === "toJSON") {
+    if (key === "toJSON" && frame.shape === undefined) {
       if ("value" in descriptor && typeof descriptor.value !== "function") {
         const toJsonValue = descriptor.value;
         descriptor.value = typeof toJsonValue === "object" && toJsonValue !== null
@@ -501,14 +552,25 @@ function cloneOwnedCheckpointValue<T>(value: T): T {
       continue;
     }
     const descriptorValue = descriptor.value;
-    descriptor.value = typeof descriptorValue === "object" && descriptorValue !== null
-      ? cloneReference(descriptorValue)
-      : typeof descriptorValue === "function"
-      ? deferReference(descriptorValue)
-      : descriptorValue;
+    const childShape = workflowJsonFieldShape(frame.shape, key);
+    if (typeof descriptorValue === "object" && descriptorValue !== null) {
+      descriptor.value = cloneReference(descriptorValue, childShape);
+    } else if (typeof descriptorValue === "function") {
+      if (frame.shape !== undefined && key === "toJSON") {
+        requiresJsonClone = true;
+      } else {
+        descriptor.value = deferReference(descriptorValue);
+      }
+    }
     objectDefineProperty(frame.target, key, descriptor);
   }
 
+  if (!deferRoot && requiresJsonClone) {
+    reflectApply(weakSetAdd, checkpointJsonCloneRoots, [rootTarget]);
+  }
+  if (deferRoot && sharedClones !== undefined) {
+    for (const source of addedSources) reflectApply(mapDelete, clones, [source]);
+  }
   return (deferRoot ? deferWorkflowJsonValue(value) : rootTarget) as T;
 }
 
@@ -666,31 +728,49 @@ function createCheckpointCloneTarget(
   };
 }
 
-function cloneCheckpointValueForPersistence<T>(value: T): T {
+function cloneCheckpointValueForPersistence<T>(value: T, rootShape?: WorkflowJsonRecordShape): T {
   if (nativeBrandChecks === undefined) return structuredCloneValue(value);
   if (!isCheckpointCloneReference(value)) return value;
 
   const clones = new MapConstructor<object, object>();
   const clonesWithoutRootJson = new MapConstructor<object, object>();
+  const recordClones = new MapConstructor<object, object>();
   const activeJsonHookClones = new MapConstructor<object, object>();
   const keySensitiveJsonSources = new SetConstructor<object>();
   const frames: CheckpointCloneFrame[] = [];
+  const records = rootShape === undefined
+    ? undefined
+    : collectWorkflowJsonRecords(value, rootShape);
   const cloneReference = (
     source: CheckpointCloneSource,
     key: string,
     applyToJson = true,
     jsonHookDepth = 0,
+    fieldShape?: WorkflowJsonRecordShape,
   ): object => {
     const activeJsonHookClone = reflectApply(mapGet, activeJsonHookClones, [source]) as
       | object
       | undefined;
-    const cloneMap = applyToJson ? clones : clonesWithoutRootJson;
-    const existing = reflectApply(mapGet, cloneMap, [source]) as object | undefined;
+    // A framework record's own keys are data, so it never has a `toJSON` hook.
+    // A reference to a record from any other field, such as a node state that
+    // holds the context, is that record and shares the record's snapshot.
+    const shape = fieldShape ??
+      (records === undefined
+        ? undefined
+        : reflectApply(weakMapGet, records, [source]) as WorkflowJsonRecordShape | undefined);
+    const appliesToJson = applyToJson && shape === undefined;
+    const cloneMap = shape !== undefined
+      ? recordClones
+      : appliesToJson
+      ? clones
+      : clonesWithoutRootJson;
+    const existing = (reflectApply(mapGet, cloneMap, [source]) ??
+      reflectApply(mapGet, recordClones, [source])) as object | undefined;
     if (
       existing &&
       reflectApply(setHas, keySensitiveJsonSources, [source]) !== true
     ) return existing;
-    const childTarget = createCheckpointCloneTarget(source, key, applyToJson);
+    const childTarget = createCheckpointCloneTarget(source, key, appliesToJson);
     reflectApply(mapSet, cloneMap, [source, childTarget.target]);
     let traversesSelfReturningHook = false;
     if (childTarget.jsonHook) {
@@ -732,13 +812,14 @@ function cloneCheckpointValueForPersistence<T>(value: T): T {
         jsonLookup: childTarget.jsonLookup,
         jsonHookDepth: childTarget.jsonHook ? jsonHookDepth + 1 : jsonHookDepth,
         objectProxy: childTarget.objectProxy,
+        ...(shape === undefined ? {} : { shape }),
         source,
         target: childTarget.target,
       }]);
     }
     return childTarget.target;
   };
-  const rootTarget = cloneReference(value, "");
+  const rootTarget = cloneReference(value, "", true, 0, rootShape);
 
   while (frames.length > 0) {
     const frame = frames[frames.length - 1]!;
@@ -889,7 +970,13 @@ function cloneCheckpointValueForPersistence<T>(value: T): T {
       ) {
         const sourceValue = reflectGet(frame.source, key);
         const snapshot = isCheckpointCloneReference(sourceValue)
-          ? cloneReference(sourceValue, key, true, frame.jsonHookDepth)
+          ? cloneReference(
+            sourceValue,
+            key,
+            true,
+            frame.jsonHookDepth,
+            workflowJsonFieldShape(frame.shape, key),
+          )
           : sourceValue;
         objectDefineProperty(frame.target, key, {
           configurable: descriptor.configurable,
@@ -905,6 +992,7 @@ function cloneCheckpointValueForPersistence<T>(value: T): T {
             typeof key === "string" ? key : "",
             true,
             frame.jsonHookDepth,
+            workflowJsonFieldShape(frame.shape, key),
           );
         }
       } else if (
@@ -913,12 +1001,24 @@ function cloneCheckpointValueForPersistence<T>(value: T): T {
       ) {
         const accessorValue = reflectGet(frame.source, key);
         const snapshot = isCheckpointCloneReference(accessorValue)
-          ? cloneReference(accessorValue, key, true, frame.jsonHookDepth)
+          ? cloneReference(
+            accessorValue,
+            key,
+            true,
+            frame.jsonHookDepth,
+            workflowJsonFieldShape(frame.shape, key),
+          )
           : accessorValue;
         descriptor.get = () => snapshot;
         descriptor.set = undefined;
       }
       objectDefineProperty(frame.target, key, descriptor);
+      if (
+        key === "toJSON" && frame.shape !== undefined && "value" in descriptor &&
+        typeof descriptor.value === "function"
+      ) {
+        reflectApply(weakSetAdd, checkpointJsonCloneRoots, [frame.target]);
+      }
       continue;
     }
     if (frame.jsonLookup && frame.jsonLookupInstalled !== true) {
@@ -941,30 +1041,51 @@ function cloneCheckpointValueForPersistence<T>(value: T): T {
 
 /** Snapshot original checkpoint values before an asynchronous backend boundary. */
 export function cloneCheckpointForPersistence(checkpoint: Checkpoint): Checkpoint {
-  return cloneCheckpointValueForPersistence(checkpoint);
+  return cloneCheckpointValueForPersistence(checkpoint, WORKFLOW_CHECKPOINT_RECORD);
 }
 
 export function cloneOwnedCheckpointForPersistence(checkpoint: Checkpoint): Checkpoint {
   if (nativeBrandChecks === undefined) {
     return cloneOwnedCheckpointWithoutNativeBrandChecks(checkpoint);
   }
+  const clones = new MapConstructor<object, object>();
   const clone: Checkpoint = {
     id: checkpoint.id,
     nodeId: checkpoint.nodeId,
-    timestamp: cloneOwnedCheckpointValue(checkpoint.timestamp),
-    context: cloneOwnedCheckpointValue(checkpoint.context),
-    nodeStates: cloneOwnedCheckpointValue(checkpoint.nodeStates),
+    timestamp: cloneOwnedCheckpointValue(checkpoint.timestamp, undefined, clones),
+    context: cloneOwnedCheckpointValue(checkpoint.context, WORKFLOW_NODE_RECORD, clones),
+    nodeStates: cloneOwnedCheckpointValue(checkpoint.nodeStates, WORKFLOW_NODE_RECORD, clones),
   };
   if (checkpoint._workflowProjection !== undefined) {
-    clone._workflowProjection = cloneOwnedCheckpointValue(checkpoint._workflowProjection);
+    clone._workflowProjection = cloneOwnedCheckpointValue(
+      checkpoint._workflowProjection,
+      undefined,
+      clones,
+    );
   }
   if (checkpoint._resumeEnvelope !== undefined) {
-    clone._resumeEnvelope = cloneOwnedCheckpointValue(checkpoint._resumeEnvelope);
+    clone._resumeEnvelope = cloneOwnedCheckpointValue(
+      checkpoint._resumeEnvelope,
+      WORKFLOW_RESUME_ENVELOPE_RECORD,
+      clones,
+    );
   }
   return clone;
 }
 
-export function cloneRetainedCheckpoint(checkpoint: Checkpoint): Checkpoint {
+/**
+ * `records` defaults to the records of `checkpoint`. A caller that has already
+ * replaced a field passes the records of the original checkpoint, so a
+ * reference to the original record from another field is still a record.
+ */
+export function cloneRetainedCheckpoint(
+  checkpoint: Checkpoint,
+  records: WorkflowJsonRecords = collectWorkflowJsonRecords(
+    checkpoint,
+    WORKFLOW_CHECKPOINT_RECORD,
+  ),
+  options: { allowRecordDataCloneFallback?: boolean } = {},
+): Checkpoint {
   const {
     context,
     nodeStates,
@@ -974,16 +1095,30 @@ export function cloneRetainedCheckpoint(checkpoint: Checkpoint): Checkpoint {
   } = checkpoint;
   const clone: Checkpoint = {
     ...structuredCloneValue(checkpointMetadata),
-    context: cloneCheckpointJson<WorkflowContext>(context, "checkpoint.context"),
+    context: cloneCheckpointJson<WorkflowContext>(
+      context,
+      "checkpoint.context",
+      WORKFLOW_NODE_RECORD,
+      records,
+      options.allowRecordDataCloneFallback,
+    ),
     nodeStates: cloneCheckpointJson<Checkpoint["nodeStates"]>(
-      nodeStates,
+      options.allowRecordDataCloneFallback
+        ? prepareNodeStatesUserData(nodeStates, undefined, { strictContext: false }, records)
+        : nodeStates,
       "checkpoint.nodeStates",
+      WORKFLOW_NODE_RECORD,
+      records,
+      options.allowRecordDataCloneFallback,
     ),
   };
   if (_resumeEnvelope !== undefined) {
     clone._resumeEnvelope = cloneCheckpointJson<CheckpointResumeEnvelope>(
       _resumeEnvelope,
       "checkpoint._resumeEnvelope",
+      WORKFLOW_RESUME_ENVELOPE_RECORD,
+      records,
+      options.allowRecordDataCloneFallback,
     );
   }
   if (_workflowProjection !== undefined) {
@@ -1002,8 +1137,9 @@ export function cloneRetainedCheckpoint(checkpoint: Checkpoint): Checkpoint {
 export function appendRetainedCheckpoint(
   checkpoints: Checkpoint[],
   checkpoint: Checkpoint,
+  records?: WorkflowJsonRecords,
 ): void {
-  const snapshot = cloneRetainedCheckpoint(checkpoint);
+  const snapshot = cloneRetainedCheckpoint(checkpoint, records);
   checkpoints.push(snapshot);
   const excess = checkpoints.length - MAX_WORKFLOW_CHECKPOINT_HISTORY_ENTRIES;
   if (excess > 0) checkpoints.splice(0, excess);

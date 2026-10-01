@@ -83,3 +83,12 @@ export function getRuntimeAgentMarkdownDefinition(
 export function isRuntimeAgentMarkdownAgent(runtimeAgent: Agent): boolean {
   return markdownDefinitionByAgent.get(runtimeAgent) !== undefined;
 }
+
+/**
+ * Carry the markdown definition of `source` over to a wrapped copy of the
+ * agent, so per-request clones keep the definition's fail-closed policy.
+ */
+export function inheritRuntimeAgentMarkdownDefinition(source: Agent, target: Agent): void {
+  const definition = markdownDefinitionByAgent.get(source);
+  if (definition && target !== source) markdownDefinitionByAgent.set(target, definition);
+}

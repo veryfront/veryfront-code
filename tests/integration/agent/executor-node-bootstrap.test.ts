@@ -77,8 +77,9 @@ if (typeof Deno !== "undefined") {
       async () => {
         const root = new URL("../../../", import.meta.url);
         const child = spawn("node", [
+          "--enable-source-maps",
           "--import",
-          fileURLToPath(new URL("tests/node/resolver.mjs", root)),
+          fileURLToPath(new URL("tests/node/resolver-sync.mjs", root)),
           "--test",
           "--test-reporter=tap",
           `--test-name-pattern=${pattern}`,

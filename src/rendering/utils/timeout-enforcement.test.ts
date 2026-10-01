@@ -6,7 +6,7 @@ import "#veryfront/schemas/_test-setup.ts";
  * Verifies: withTimeout (soft) and withTimeoutThrow (hard) behavior
  * at the three pipeline timeout stages.
  */
-import { assertEquals, assertRejects } from "#veryfront/testing/assert";
+import { assertEquals, assertRejects, assertStrictEquals } from "#veryfront/testing/assert";
 import { describe, it } from "#veryfront/testing/bdd";
 import { FakeTime } from "#std/testing/time";
 import {
@@ -283,10 +283,13 @@ describe("Timeout Enforcement", () => {
 
     it("does not start work after its parent was already cancelled", async () => {
       const parent = new AbortController();
-      parent.abort(new Error("request already cancelled"));
+      // Bun 1.3.6 can collect an inline abort reason. Keep it alive through
+      // the identity assertion: https://github.com/oven-sh/bun/pull/32747
+      const reason = new Error("request already cancelled");
+      parent.abort(reason);
       let started = false;
 
-      await assertRejects(
+      const error = await assertRejects(
         () =>
           withProgressTimeoutThrow(
             () => {
@@ -303,6 +306,11 @@ describe("Timeout Enforcement", () => {
         "request already cancelled",
       );
 
+      assertStrictEquals(
+        error,
+        reason,
+        "the parent cancellation reason must be forwarded unchanged",
+      );
       assertEquals(started, false);
     });
 

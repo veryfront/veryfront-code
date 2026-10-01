@@ -1,4 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
+import { cpuUsage } from "node:process";
 import {
   assertEquals,
   assertObjectMatch,
@@ -17,6 +18,19 @@ import {
 } from "./result-summary.ts";
 
 describe("child-run-result-summary", () => {
+  // veryfront/veryfront-issue-inbox#2113: the run output cap does not change what the parent
+  // model sees; an oversized child output still reaches it only as a compact summary.
+  it("summarizes a child result larger than the run output limit", () => {
+    const summary = buildChildRunResultSummary("word ".repeat(300_000));
+
+    const marker = ` … [truncated ${summary.omittedChars} chars]`;
+    assertEquals(summary.truncated, true);
+    assertEquals(summary.originalChars, 1_499_999);
+    assertEquals(summary.limitChars, 64_000);
+    assertEquals(summary.text.endsWith(marker), true);
+    assertEquals(summary.text.length - marker.length <= 64_000, true);
+  });
+
   describe("summarizeChildRunResultText", () => {
     it("returns short text unchanged", () => {
       assertEquals(summarizeChildRunResultText("hello"), "hello");
@@ -190,9 +204,10 @@ describe("child-run-result-summary", () => {
     it("normalizes unterminated horizontal whitespace in bounded linear time", () => {
       buildChildRunResultSummary(" ".repeat(1_000), { mode: "structured" });
       const measure = (length: number): number => {
-        const start = performance.now();
+        const start = cpuUsage();
         buildChildRunResultSummary(" ".repeat(length), { mode: "structured" });
-        return performance.now() - start;
+        const elapsed = cpuUsage(start);
+        return (elapsed.user + elapsed.system) / 1_000;
       };
 
       const shortElapsedMs = measure(16_000);
