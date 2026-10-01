@@ -1402,8 +1402,22 @@ describe("WorkflowClient", () => {
         );
 
         assertEquals(waiting?.status, "failed");
-        assertStringIncludes(waiting?.error?.message ?? "", "strictContext");
+        const message = waiting?.error?.message ?? "";
+        assertStringIncludes(message, "strictContext enabled: nodeStates.output.<redacted>");
+        assertStringIncludes(message, "(Date)");
+        assert(!message.includes("(object)"), message);
         assertEquals(final?.status, "failed");
+      });
+
+      it("pauses and resumes a strict child whose step output is plain JSON", async () => {
+        const { waiting, final } = await pauseAndResume(
+          new MemoryBackend({ strictContext: true }),
+          "1970-01-01T00:00:00.000Z",
+        );
+
+        assertEquals(waiting?.status, "waiting");
+        assertEquals(waiting?.nodeStates.stamp?.output, { when: "1970-01-01T00:00:00.000Z" });
+        assertEquals(final?.status, "completed");
       });
 
       it("fails the run with a named path when nested step output cannot be encoded", async () => {

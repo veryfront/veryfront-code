@@ -1953,6 +1953,11 @@ export class RedisBackend implements WorkflowBackend {
         strictContext: this.config.strictContext,
       })
       : undefined;
+    // Node states carry the same step values as `output`, so they are prepared
+    // before it for a named diagnostic instead of the native JSON error.
+    const preparedNodeStates = patch.nodeStates === undefined
+      ? undefined
+      : this.serializeNodeStates(patch.nodeStates, runId);
     const fields: Record<string, string> = {};
     const completion = Object.hasOwn(patch, "completedAt")
       ? serializeCompletionInstant(patch.completedAt)
@@ -1972,9 +1977,7 @@ export class RedisBackend implements WorkflowBackend {
       "output",
       patch.output !== undefined ? JSON.stringify(patch.output) : "",
     );
-    if (patch.nodeStates !== undefined) {
-      fields.nodeStates = this.serializeNodeStates(patch.nodeStates, runId);
-    }
+    if (preparedNodeStates !== undefined) fields.nodeStates = preparedNodeStates;
     setNonEmptyArrayField("nodeStateDeletes", patch.nodeStateDeletes);
     setDefinedField("currentNodes", patch.currentNodes, JSON.stringify(patch.currentNodes));
     setDefinedField("context", preparedContext, preparedContext?.serialized ?? "");

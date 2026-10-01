@@ -1571,7 +1571,9 @@ type NodeStateUserDataField = typeof NODE_STATE_USER_DATA_FIELDS[number];
  *
  * Each field is checked across all nodes in one pass, so a diagnostic names the
  * field (`nodeStates.output.<redacted>...`) and a write logs at most one warning
- * per field. The returned states hold the JSON form a durable backend reads
+ * per field. `input` is checked before `output`, so a write with bad values in
+ * both reports `input`. A top-level step's lossy output is also in `context`,
+ * so it is reported for both. The returned states hold the JSON form a durable backend reads
  * back; fields JSON omits are removed. `startedAt` and `completedAt` are left
  * as they are.
  */
@@ -1615,8 +1617,15 @@ function collectNodeStateField(
   for (const nodeId of objectKeys(nodeStates)) {
     const value = nodeStates[nodeId]![field];
     if (value === undefined) continue;
-    values ??= objectCreate(null) as Record<string, unknown>;
-    values[nodeId] = value;
+    // A plain object, because strict mode reports any other prototype as lossy,
+    // with defined keys so a node id such as `__proto__` stays an own key.
+    values ??= {};
+    objectDefineProperty(values, nodeId, {
+      value,
+      enumerable: true,
+      configurable: true,
+      writable: true,
+    });
   }
   return values;
 }

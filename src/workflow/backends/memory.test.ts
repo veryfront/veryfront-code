@@ -1121,7 +1121,7 @@ describe("MemoryBackend", () => {
             },
           })),
         Error,
-        "strictContext",
+        "strictContext enabled: nodeStates.input.<redacted>.<redacted> (Date)",
       );
       assertEquals(await strictBackend.getRun("run-strict-node-state-input"), null);
 
@@ -1144,7 +1144,7 @@ describe("MemoryBackend", () => {
               },
             },
           }),
-        "strictContext",
+        "strictContext enabled: nodeStates.output.<redacted>.<redacted> (Date)",
       );
       const run = await strictBackend.getRun("run-strict-node-state");
       assertEquals(run?.nodeStates["child-stamp"], undefined);
