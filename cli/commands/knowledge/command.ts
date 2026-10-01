@@ -283,9 +283,11 @@ export async function collectKnowledgeSources(
     client: ApiClient;
     projectSlug: string;
     downloadUploads: (uploadPaths: string[]) => Promise<DownloadResult[]>;
+    signal?: AbortSignal;
   },
 ): Promise<KnowledgeSourceCollection> {
   const fs = createFileSystem();
+  deps.signal?.throwIfAborted();
 
   if (options.sources.length > 0) {
     const explicitSources: Array<
@@ -323,6 +325,7 @@ export async function collectKnowledgeSources(
     }
 
     const downloads = uploadTargets.length > 0 ? await deps.downloadUploads(uploadTargets) : [];
+    deps.signal?.throwIfAborted();
     const downloadsByPath = new Map<string, DownloadResult[]>();
 
     for (const download of downloads) {
@@ -384,10 +387,12 @@ export async function collectKnowledgeSources(
     });
 
   let uploads = await listUploadsForPrefix(uploadPrefix || undefined);
+  deps.signal?.throwIfAborted();
   let { skipped, uploadTargets } = classifyListedUploadsForKnowledge(uploads);
 
   if (!uploadTargets.length && uploadPrefix && !uploadPrefix.endsWith("/")) {
     uploads = await listUploadsForPrefix(`${uploadPrefix}/`);
+    deps.signal?.throwIfAborted();
     ({ skipped, uploadTargets } = classifyListedUploadsForKnowledge(uploads));
   }
 
@@ -396,6 +401,7 @@ export async function collectKnowledgeSources(
   }
 
   const downloads = await deps.downloadUploads(uploadTargets);
+  deps.signal?.throwIfAborted();
   return {
     sources: downloads.map((download) => ({
       kind: "upload",
@@ -417,6 +423,7 @@ export async function ingestResolvedSources(
     runParser: typeof runKnowledgeParser;
     uploadKnowledgeFile: (remotePath: string, localPath: string) => Promise<{ path: string }>;
     eventLogger?: Logger | null;
+    signal?: AbortSignal;
   },
 ): Promise<{
   ingested: KnowledgeIngestFileResult[];
@@ -453,6 +460,7 @@ export async function ingestResolvedSources(
   };
 
   for (const [index, source] of sources.entries()) {
+    deps.signal?.throwIfAborted();
     const sourceReference = buildSourceReference(source);
 
     deps.eventLogger?.info("Processing knowledge source", {
@@ -469,6 +477,7 @@ export async function ingestResolvedSources(
       const parserDeps = eventLogger
         ? {
           onProgress: (event: DocumentExtractionProgressEvent) => {
+            deps.signal?.throwIfAborted();
             eventLogger.info(
               "Knowledge source extraction progress",
               buildExtractionProgressMetadata(sourceName, event),
@@ -483,7 +492,9 @@ export async function ingestResolvedSources(
         slug: slugs[index],
         sourceReference,
       }, parserDeps);
+      deps.signal?.throwIfAborted();
     } catch (error) {
+      deps.signal?.throwIfAborted();
       const message = error instanceof Error ? error.message : String(error);
       recordSourceFailure(source, sourceReference, index, message, "parser_error");
       continue;
@@ -496,6 +507,7 @@ export async function ingestResolvedSources(
         options.knowledgePath,
       );
       const uploaded = await deps.uploadKnowledgeFile(remotePath, parser.sandbox_output_path);
+      deps.signal?.throwIfAborted();
 
       deps.eventLogger?.info("Knowledge source ingested", {
         phase: "file_completed",
@@ -526,6 +538,7 @@ export async function ingestResolvedSources(
         }),
       );
     } catch (error) {
+      deps.signal?.throwIfAborted();
       const message = error instanceof Error ? error.message : String(error);
       recordSourceFailure(source, sourceReference, index, message, "upload_error");
     }
