@@ -835,6 +835,66 @@ describe("DAGExecutor", () => {
       assertEquals(retried.context.repeat_loop_state, undefined);
       assertEquals(retried.nodeStates.repeat?._loopOutputRetry, undefined);
     });
+
+    it(`retries a later loop iteration's selector through ${configuredRetry ? "configured" : "fresh executor"} output retry`, async () => {
+      const selected: unknown[] = [];
+      let selections = 0;
+      const child = subWorkflow("child", {
+        workflow: {
+          id: "later-iteration-child",
+          steps: [step("read", { tool: "read" })],
+          output: (context) => {
+            if (++selections === 2) throw new Error("second iteration selector failed");
+            selected.push(context.read);
+            return context.read;
+          },
+        },
+        input: (context: WorkflowContext) => ({
+          iteration: (context._loop as { iteration: number }).iteration,
+        }),
+      });
+      const nodes = [loop("repeat", {
+        maxIterations: 2,
+        while: () => true,
+        steps: [child],
+        ...(configuredRetry
+          ? { retry: { maxAttempts: 2, initialDelay: 1, maxDelay: 1, retryIf: () => true } }
+          : {}),
+      })];
+      let executions = 0;
+      const steps = new MockStepExecutor(new Map(), (_node, context) => {
+        executions++;
+        return {
+          success: true,
+          output: `iteration-${(context.input as { iteration: number }).iteration}`,
+          executionTime: 0,
+        };
+      });
+      const first = await new DAGExecutor({ stepExecutor: steps }).execute(nodes, createTestRun());
+      const retried = configuredRetry
+        ? first
+        : await new DAGExecutor({ stepExecutor: steps }).execute(
+          nodes,
+          createTestRun({
+            context: first.context,
+            nodeStates: Object.fromEntries(
+              Object.entries(first.nodeStates).map(([id, state]) => [
+                id,
+                NodeStateSchema.parse({
+                  ...state,
+                  ...(state._loopOutputRetry
+                    ? { _loopOutputRetry: JSON.parse(JSON.stringify(state._loopOutputRetry)) }
+                    : {}),
+                }),
+              ]),
+            ),
+          }),
+        );
+      assertEquals(retried.completed, true);
+      assertEquals(selections, 3);
+      assertEquals(executions, 2);
+      assertEquals(selected, ["iteration-0", "iteration-1"]);
+    });
   }
 
   for (const admission of ["condition", "dynamic steps"]) {

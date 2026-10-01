@@ -297,8 +297,12 @@ export async function executeLoopNodeStrategy(
     // already-completed steps are skipped instead of re-executed (H9),
     // reconciled against the run's own map so the node that was just resolved
     // is not replayed as still pending.
+    // An output-retry snapshot was never published, so the run's map can only
+    // hold an earlier iteration's states under the same namespaced ids.
     const iterationNodeStates = resumingIterationNodeStates
-      ? reconcileIterationNodeStates(resumingIterationNodeStates, nodeStates)
+      ? resumingOutputRetry
+        ? { ...resumingIterationNodeStates }
+        : reconcileIterationNodeStates(resumingIterationNodeStates, nodeStates)
       : {};
     // Only rehydrate once; subsequent iterations start fresh.
     resumeIterationNodeStates = undefined;
