@@ -84,6 +84,19 @@ describe("agent/runtime-agent-invocation-contract", () => {
     });
   });
 
+  it("rejects unsupported resume JSON in signed runtime envelopes", () => {
+    let deepInput: Record<string, unknown> = { value: null };
+    for (let depth = 0; depth < 127; depth++) deepInput = { value: deepInput };
+    for (const input of [deepInput, { values: Array.from({ length: 99_995 }, () => null) }]) {
+      const parsed = RuntimeAgentRunInvocationSchema.safeParse(createInvocation({
+        resumeToolCall: { id: "call-1:resume-1", name: "outlook__list_messages", input },
+      }));
+      assertEquals(parsed.success, false);
+      if (parsed.success) throw new Error("Expected structural validation failure");
+      assertEquals(parsed.error.issues[0]?.path, ["resumeToolCall"]);
+    }
+  });
+
   it("preserves separate execution and immutable source projects", () => {
     const sourceProject = {
       projectId: "20000000-1000-4000-8000-100000000005",
