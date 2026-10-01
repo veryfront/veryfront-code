@@ -618,6 +618,10 @@ completed output. Without `output`, the output keeps the default shape above.
 A workflow nested with `subWorkflow` or `map` hands its parent the same selected
 output. The node's own `output` mapper, when declared, receives that value.
 
+When a nested workflow resumes after a wait, downstream steps and its output
+selector receive completed child outputs without rerunning those steps.
+Completed wait values retain approval decision and event delivery metadata.
+
 A started run's steps receive the parsed input: `inputSchema` transforms and
 defaults apply before the first step runs. The run keeps the input as it was
 submitted. A workflow nested with `subWorkflow` or `map` also parses the input its

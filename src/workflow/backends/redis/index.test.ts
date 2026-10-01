@@ -1687,6 +1687,7 @@ describe("RedisBackend", () => {
         async () => {
           let stampExecutions = 0;
           const observed: unknown[] = [];
+          const decisions: unknown[] = [];
           const stampTool: Tool = {
             id: `redis-${generatedByMap ? "map" : "direct"}-stamp`,
             type: "function",
@@ -1718,7 +1719,12 @@ describe("RedisBackend", () => {
               dependsOn(
                 step("observe", {
                   tool: observeTool,
-                  input: (context) => context[generatedByMap ? "children_0/stamp" : "stamp"],
+                  input: (context) => {
+                    decisions.push(
+                      context[generatedByMap ? "children_0/child-review" : "child-review"],
+                    );
+                    return context[generatedByMap ? "children_0/stamp" : "stamp"];
+                  },
                 }),
                 "child-review",
               ),
@@ -1753,10 +1759,24 @@ describe("RedisBackend", () => {
             client = createWorkflowClient({ backend: resumedBackend, debug: false });
             client.register(parent);
 
-            await client.approve(handle.runId, approval.id, "reviewer");
+            await client.approve(handle.runId, approval.id, "reviewer", "Stamp approved", {
+              accepted: true,
+            });
 
             const completed = await resumedBackend.getRun(handle.runId);
             assertEquals(completed?.status, "completed");
+            assertExists(completed);
+            const decision = completed.context[approval.nodeId];
+            assertExists(decision);
+            assertEquals(decisions, [decision]);
+            assertEquals(decision, {
+              approved: true,
+              approver: "reviewer",
+              comment: "Stamp approved",
+              data: { accepted: true },
+              decidedAt: (decision as { decidedAt: string }).decidedAt,
+            });
+            assertEquals(typeof (decision as { decidedAt: unknown }).decidedAt, "string");
             assertEquals(
               completed?.context[generatedByMap ? "children" : "child"],
               generatedByMap ? [{ when: "x" }] : { when: "x" },

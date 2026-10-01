@@ -1313,10 +1313,11 @@ describe("WorkflowClient", () => {
       ],
     });
 
-    for (const shape of ["direct", "map"] as const) {
+    for (const shape of ["direct", "map", "deep"] as const) {
       it(`restores completed child outputs after a ${shape} nested approval (#2244)`, async () => {
         let stampCalls = 0;
         const observed: unknown[] = [];
+        const decisions: unknown[] = [];
         const child = workflow({
           id: `resume-child-${shape}`,
           steps: [
@@ -1332,7 +1333,10 @@ describe("WorkflowClient", () => {
             waitForApproval("child-review", { message: "Review stamp" }),
             step("observe", {
               input: (context) => {
-                const value = context[shape === "direct" ? "stamp" : "children_0/stamp"];
+                const value = context[shape === "map" ? "children_0/stamp" : "stamp"];
+                decisions.push(
+                  context[shape === "map" ? "children_0/child-review" : "child-review"],
+                );
                 observed.push(value);
                 return value;
               },
@@ -1343,9 +1347,17 @@ describe("WorkflowClient", () => {
         });
         const parent = workflow({
           id: `resume-parent-${shape}`,
-          steps: shape === "direct"
-            ? [subWorkflow("child", { workflow: child.definition })]
-            : [map("children", { items: [{}], processor: child.definition })],
+          steps: shape === "map"
+            ? [map("children", { items: [{}], processor: child.definition })]
+            : shape === "deep"
+            ? [subWorkflow("outer", {
+              workflow: workflow({
+                id: "resume-outer",
+                steps: [subWorkflow("child", { workflow: child.definition })],
+                output: (context) => context.child,
+              }).definition,
+            })]
+            : [subWorkflow("child", { workflow: child.definition })],
         });
         client.register(parent);
         const handle = await client.start(parent.definition.id, {});
@@ -1362,14 +1374,28 @@ describe("WorkflowClient", () => {
         assertExists(stampState);
         const [approval] = await backend.getPendingApprovals(handle.runId);
         assertExists(approval);
-        await client.approve(handle.runId, approval.id, "reviewer");
+        await client.approve(handle.runId, approval.id, "reviewer", "Stamp approved", {
+          accepted: true,
+        });
         const completed = await backend.getRun(handle.runId);
         assertEquals(completed?.status, "completed");
+        assertExists(completed);
+        const decision = completed.context[approval.nodeId];
+        assertExists(decision);
+        assertEquals(decisions, [decision]);
+        assertEquals(decision, {
+          approved: true,
+          approver: "reviewer",
+          comment: "Stamp approved",
+          data: { accepted: true },
+          decidedAt: (decision as { decidedAt: string }).decidedAt,
+        });
+        assertEquals(typeof (decision as { decidedAt: unknown }).decidedAt, "string");
         assertEquals(observed, [{ when: "x" }]);
         assertEquals(stampCalls, 1);
         assertEquals(
-          completed?.context[shape === "direct" ? "child" : "children"],
-          shape === "direct" ? { when: "x" } : [{ when: "x" }],
+          completed?.context[shape === "map" ? "children" : shape === "deep" ? "outer" : "child"],
+          shape === "map" ? [{ when: "x" }] : { when: "x" },
         );
       });
     }

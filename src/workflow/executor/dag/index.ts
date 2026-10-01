@@ -1227,12 +1227,21 @@ function restorePublishedChildOutputs(
   nodeStates: Readonly<Record<string, NodeState>>,
   context: WorkflowContext,
   ownerPath: string,
+  resumeContext: Readonly<WorkflowContext>,
+  restoreOutputs = true,
 ): void {
   for (const node of nodes) {
     const state = nodeStates[node.id];
     if (state?._subWorkflowOwnerPath && state._subWorkflowOwnerPath !== ownerPath) continue;
     if (node.config.type === "parallel") {
-      restorePublishedChildOutputs(node.config.nodes, nodeStates, context, ownerPath);
+      restorePublishedChildOutputs(
+        node.config.nodes,
+        nodeStates,
+        context,
+        ownerPath,
+        resumeContext,
+        restoreOutputs,
+      );
     } else if (node.config.type === "branch") {
       const output = state?.output;
       const branch = typeof output === "object" && output !== null && "branch" in output
@@ -1243,9 +1252,22 @@ function restorePublishedChildOutputs(
         : branch === "else"
         ? node.config.else ?? []
         : [];
-      restorePublishedChildOutputs(selected, nodeStates, context, ownerPath);
-    } else if (state?.status === "completed" && node.config.type !== "wait") {
-      applyContextPatch(context, createSetContextPatch({ [node.id]: state.output }));
+      restorePublishedChildOutputs(
+        selected,
+        nodeStates,
+        context,
+        ownerPath,
+        resumeContext,
+        restoreOutputs,
+      );
+    } else if (state?.status === "completed" && (restoreOutputs || node.config.type === "wait")) {
+      // Wait resolvers publish richer context than the node-state output,
+      // including decision and delivery timestamps. Preserve that exact value.
+      const hasWaitContext = node.config.type === "wait" && Object.hasOwn(resumeContext, node.id);
+      if (node.config.type !== "wait" || hasWaitContext || Object.hasOwn(state, "output")) {
+        const output = hasWaitContext ? resumeContext[node.id] : state.output;
+        applyContextPatch(context, createSetContextPatch({ [node.id]: output }));
+      }
     }
   }
 }
@@ -1311,6 +1333,7 @@ export class DAGExecutor {
       // that carries it. Every child graph below runs against a synthetic run
       // whose status is always "running" and would otherwise read a crash.
       resumingWait: run.status === "waiting",
+      resumeContext: run.context,
       declaredNodeIds: new Set(),
       subWorkflowNodeIds,
       completedCompositeChildIds: new Set(),
@@ -2145,7 +2168,7 @@ export class DAGExecutor {
                   this.executeChildGraph(
                     nodes,
                     run,
-                    { ...scope, rootKeyspace: false },
+                    { ...scope, rootKeyspace: false, resumeContext: run.context },
                     undefined,
                     attemptSignal,
                   ),
@@ -2548,15 +2571,20 @@ export class DAGExecutor {
       scope,
     );
 
-    // Replay the exact child context, including loop writes and their order.
-    // Older states without a snapshot can still restore declared child outputs.
+    // Preserve the exact publication order in the saved child context, then
+    // overlay wait decisions committed after that snapshot was captured.
     const savedContext = nodeStates[node.id]?._subWorkflowContext;
     const childContext: WorkflowContext = savedContext
       ? { input, ...cloneExecutionState(savedContext, "Sub-workflow context") }
       : { input };
-    if (!savedContext) {
-      restorePublishedChildOutputs(steps, seededNodeStates, childContext, ownerPath);
-    }
+    restorePublishedChildOutputs(
+      steps,
+      seededNodeStates,
+      childContext,
+      ownerPath,
+      scope.resumeContext,
+      savedContext === undefined,
+    );
 
     const subRunId = `${node.id}_sub_${generateId()}`;
     // The sub-run record is synthetic and never persisted, so its id is a debugging
