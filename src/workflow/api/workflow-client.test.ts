@@ -6047,6 +6047,53 @@ describe("WorkflowClient durable event waits", () => {
     await waitFor(async () => (await client.getRun(runId))?.status === "completed");
   });
 
+  it("delivers undrained mail published at the deadline when the sweep finds the wait due", async () => {
+    client.register(workflow({
+      id: "deadline-buffered-event",
+      steps: [waitForEvent("gate", { eventName: "gate.ready", timeout: "1h" })],
+    }));
+    const runId = "run_deadline_buffered_event";
+    const deadline = new Date(Date.now() - 10);
+    await backend.createRun({
+      id: runId,
+      workflowId: "deadline-buffered-event",
+      status: "waiting",
+      input: {},
+      nodeStates: {
+        gate: { nodeId: "gate", status: "running", attempt: 1, startedAt: new Date(0) },
+      },
+      currentNodes: ["gate"],
+      context: { input: {} },
+      checkpoints: [],
+      pendingApprovals: [],
+      createdAt: new Date(0),
+      sourceIntegrationPolicy: UNRESTRICTED_SOURCE_INTEGRATION_POLICY,
+    });
+    await backend.savePendingEventWait(runId, {
+      id: "wait-deadline-buffered-event",
+      runId,
+      nodeId: "gate",
+      eventName: "gate.ready",
+      waitKind: "event",
+      requestedAt: new Date(0),
+      expiresAt: deadline,
+      status: "pending",
+    });
+    // The publisher appended at the deadline and exited before draining.
+    await backend.appendRunEvent(runId, {
+      id: "evt-deadline-buffered-event",
+      eventName: "gate.ready",
+      payload: { arrived: "at-deadline" },
+      publishedAt: deadline,
+    });
+
+    await client.getEventWaitManager().checkExpiredEventWaits(runId);
+
+    await waitFor(async () => (await client.getRun(runId))?.status === "completed", {
+      message: "the sweep expired a wait whose event arrived at the deadline",
+    });
+  });
+
   it("claims on-time buffered mail before its deadline timer expires the wait", async () => {
     client.register(workflow({
       id: "timer-honors-on-time-buffered-event",
