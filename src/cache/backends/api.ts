@@ -3,7 +3,7 @@ import { SpanNames } from "#veryfront/observability";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { isValidCachePattern, sanitizeCacheKey } from "../keys/index.ts";
 import {
-  type CircuitBreaker,
+  CircuitBreaker,
   CircuitBreakerOpen,
   getCircuitBreaker,
 } from "#veryfront/utils/circuit-breaker.ts";
@@ -48,6 +48,8 @@ const CIRCUIT_BREAKER_OPTIONS = {
   resetTimeoutMs: CIRCUIT_BREAKER_RESET_TIMEOUT_MS,
   successThreshold: CIRCUIT_BREAKER_SUCCESS_THRESHOLD,
 };
+/** Project invalidation breakers one backend keeps, least recently used first out. */
+const MAX_INVALIDATION_CIRCUIT_BREAKERS = 256;
 const ERROR_BODY_MAX_LENGTH = 500;
 const DEFAULT_API_BASE_URL = "https://api.veryfront.com";
 const DEFAULT_MAX_RESPONSE_BYTES = 64 * 1024 * 1024;
@@ -138,6 +140,7 @@ export class ApiCacheBackend implements CacheBackend {
   private circuitBreaker: CircuitBreaker;
   private readonly circuitBreakerName: string;
   private readonly patternDeleteRounds = new Map<string, PatternDeleteRound>();
+  private readonly invalidationCircuitBreakers = new Map<string, CircuitBreaker>();
 
   constructor(
     options: {
@@ -501,10 +504,7 @@ export class ApiCacheBackend implements CacheBackend {
     // own breaker, scoped to the project, so a slow or failing invalidation
     // backend cannot open the breaker every cache read (agent streams,
     // execute, agents/list) depends on, nor stop other projects' invalidations.
-    const invalidationCircuitBreaker = getCircuitBreaker(
-      `${this.circuitBreakerName}:invalidation:${projectRef ?? ""}`,
-      CIRCUIT_BREAKER_OPTIONS,
-    );
+    const invalidationCircuitBreaker = this.invalidationCircuitBreaker(projectRef ?? "");
     const deletePattern = async () => {
       const result = await this.request<{ deleted: number }>("POST", "/del-pattern", {
         pattern: prefixed,
@@ -522,6 +522,31 @@ export class ApiCacheBackend implements CacheBackend {
       cacheCredentialIdentity(token),
       deletePattern,
     );
+  }
+
+  /**
+   * Kept per backend and bounded, not in the process-wide registry: a runtime
+   * serving many short-lived projects must not grow one breaker per project.
+   * Dropping a breaker only forgets its failures, so the next delete is tried.
+   */
+  private invalidationCircuitBreaker(projectRef: string): CircuitBreaker {
+    let breaker = this.invalidationCircuitBreakers.get(projectRef);
+    if (breaker) {
+      this.invalidationCircuitBreakers.delete(projectRef);
+    } else {
+      breaker = new CircuitBreaker({
+        ...CIRCUIT_BREAKER_OPTIONS,
+        name: `${this.circuitBreakerName}:invalidation:${projectRef}`,
+      });
+    }
+    this.invalidationCircuitBreakers.set(projectRef, breaker);
+    if (this.invalidationCircuitBreakers.size > MAX_INVALIDATION_CIRCUIT_BREAKERS) {
+      const leastRecentlyUsed = this.invalidationCircuitBreakers.keys().next().value;
+      if (leastRecentlyUsed !== undefined) {
+        this.invalidationCircuitBreakers.delete(leastRecentlyUsed);
+      }
+    }
+    return breaker;
   }
 
   /**

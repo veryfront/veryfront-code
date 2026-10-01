@@ -944,6 +944,7 @@ it("ApiCacheBackend del-pattern timeouts do not open the read breaker", async ()
   const { ApiCacheBackend } = await importBackend();
   const reads: string[] = [];
   const otherProjectDeletes: string[] = [];
+  let attemptedDeletes = 0;
   installMockFetch(
     ((input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input instanceof Request ? input.url : input);
@@ -952,6 +953,10 @@ it("ApiCacheBackend del-pattern timeouts do not open the read breaker", async ()
         return Promise.resolve(Response.json({ deleted: 1 }));
       }
       if (url.endsWith("/del-pattern")) {
+        attemptedDeletes++;
+        if (url.includes("/projects/bounded-")) {
+          return Promise.resolve(Response.json({ deleted: 0 }));
+        }
         // A slow invalidation backend: never answers before the client timeout.
         return new Promise<Response>((_resolve, reject) => {
           init?.signal?.addEventListener("abort", () => {
@@ -990,6 +995,16 @@ it("ApiCacheBackend del-pattern timeouts do not open the read breaker", async ()
       1,
     );
     assertEquals(otherProjectDeletes.length, 1);
+
+    // Project breakers are bounded per backend: once enough other projects
+    // have invalidated, the churning project's open breaker is dropped and
+    // its next delete is tried again instead of failing fast.
+    for (let project = 0; project < 256; project++) {
+      await inProject(`bounded-${project}`, () => cache.delByPattern("file:branch:*:x.md"));
+    }
+    const attemptsBefore = attemptedDeletes;
+    await inProject("project-123", () => assertRejects(() => cache.delByPattern("dir:*")));
+    assertEquals(attemptedDeletes, attemptsBefore + 1);
   } finally {
     restoreMockFetch();
   }
