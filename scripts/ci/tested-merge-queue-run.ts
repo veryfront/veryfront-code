@@ -15,12 +15,22 @@
  * back to the full pipeline and its own, larger run number. Every main run
  * records its number as a `release-number-<n>` artifact before any release job
  * can start, so a finished run without one never published.
+ *
+ * A first attempt that cannot decide (GitHub API errors) runs the full pipeline
+ * under its own run number, which is always above every earlier main run's.
+ * A rerun is different: a main run that landed later may already have
+ * published a smaller queue number, so a rerun refuses to publish a larger
+ * number for older code, and fails when it cannot check.
  */
 
 export const RELEASE_NUMBER_ARTIFACT_PREFIX = "release-number-";
 
-const QUEUE_RUN_WAIT_MS = 30 * 60 * 1000;
-const QUEUE_RUN_POLL_MS = 30 * 1000;
+const WAIT_MS = 30 * 60 * 1000;
+const EARLIER_DECISION_WAIT_MS = 10 * 60 * 1000;
+const POLL_MS = 30 * 1000;
+// Release-number artifacts are kept for 7 days. An older queue run could hide
+// an earlier main run whose artifact already expired.
+const MAX_QUEUE_RUN_AGE_MS = 6 * 24 * 60 * 60 * 1000;
 
 export interface WorkflowRun {
   readonly id: number;
@@ -46,7 +56,9 @@ export interface ActionsClient {
 export interface ReleaseSourceInput {
   readonly eventName: string;
   readonly sha: string;
+  readonly runId: number;
   readonly runNumber: number;
+  readonly runAttempt: number;
   readonly requiredArtifacts: readonly string[];
 }
 
@@ -65,8 +77,16 @@ export type ReleaseSource =
 
 export interface DecideOptions {
   readonly sleep?: (ms: number) => Promise<void>;
+  readonly now?: () => number;
   readonly waitMs?: number;
+  readonly earlierDecisionWaitMs?: number;
   readonly pollMs?: number;
+}
+
+interface Clock {
+  readonly sleep: (ms: number) => Promise<void>;
+  readonly now: () => number;
+  readonly pollMs: number;
 }
 
 function fullPipeline(input: ReleaseSourceInput, reason: string): ReleaseSource {
@@ -77,47 +97,61 @@ function fullPipeline(input: ReleaseSourceInput, reason: string): ReleaseSource 
   };
 }
 
-async function settle(
-  client: ActionsClient,
-  run: WorkflowRun,
-  options: DecideOptions,
-): Promise<WorkflowRun> {
-  const sleep = options.sleep ??
-    ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
-  const pollMs = options.pollMs ?? QUEUE_RUN_POLL_MS;
-  let remainingMs = options.waitMs ?? QUEUE_RUN_WAIT_MS;
-  let current = run;
-  while (current.status !== "completed" && remainingMs > 0) {
-    await sleep(pollMs);
-    remainingMs -= pollMs;
-    current = await client.getRun(current.id);
-  }
-  return current;
-}
-
+/** The largest number a run recorded; reruns can record more than one. */
 export function releaseNumberOf(artifacts: readonly RunArtifact[]): number | undefined {
+  let largest: number | undefined;
   for (const artifact of artifacts) {
     if (!artifact.name.startsWith(RELEASE_NUMBER_ARTIFACT_PREFIX)) continue;
     const value = artifact.name.slice(RELEASE_NUMBER_ARTIFACT_PREFIX.length);
-    if (/^[1-9]\d*$/.test(value)) return Number(value);
+    if (!/^[1-9]\d*$/.test(value)) continue;
+    largest = Math.max(largest ?? 0, Number(value));
   }
-  return undefined;
+  return largest;
+}
+
+function isMainRelease(run: WorkflowRun): boolean {
+  return run.event === "push" || run.event === "workflow_dispatch";
+}
+
+async function settle(
+  client: ActionsClient,
+  run: WorkflowRun,
+  clock: Clock,
+  deadline: number,
+): Promise<WorkflowRun> {
+  let current = run;
+  while (current.status !== "completed" && clock.now() < deadline) {
+    await clock.sleep(clock.pollMs);
+    current = await client.getRun(current.id);
+  }
+  return current;
 }
 
 async function earlierReleaseBlocks(
   client: ActionsClient,
   input: ReleaseSourceInput,
   queueRun: WorkflowRun,
+  clock: Clock,
+  deadline: number,
 ): Promise<string | undefined> {
-  const runs = await client.listMainRunsCreatedSince(queueRun.created_at);
-  const landedEarlier = runs
-    .filter((run) => run.event === "push" || run.event === "workflow_dispatch")
+  const landedEarlier = (await client.listMainRunsCreatedSince(queueRun.created_at))
+    .filter(isMainRelease)
     .filter((run) => run.run_number > queueRun.run_number && run.run_number < input.runNumber)
     .sort((left, right) => left.run_number - right.run_number);
   for (const run of landedEarlier) {
-    const releaseNumber = releaseNumberOf(await client.listArtifacts(run.id));
+    let current = run;
+    let releaseNumber = releaseNumberOf(await client.listArtifacts(run.id));
+    // An earlier run usually decides within a minute of starting; wait for it
+    // rather than give up the reuse.
+    while (
+      releaseNumber === undefined && current.status !== "completed" && clock.now() < deadline
+    ) {
+      await clock.sleep(clock.pollMs);
+      current = await client.getRun(run.id);
+      releaseNumber = releaseNumberOf(await client.listArtifacts(run.id));
+    }
     if (releaseNumber === undefined) {
-      if (run.status === "completed") continue;
+      if (current.status === "completed") continue;
       return `main run ${run.id} landed earlier and has not chosen its release number`;
     }
     if (releaseNumber >= queueRun.run_number) {
@@ -127,10 +161,11 @@ async function earlierReleaseBlocks(
   return undefined;
 }
 
-export async function decideReleaseSource(
+async function chooseReleaseSource(
   client: ActionsClient,
   input: ReleaseSourceInput,
-  options: DecideOptions = {},
+  clock: Clock,
+  options: DecideOptions,
 ): Promise<ReleaseSource> {
   if (input.eventName !== "push") {
     return fullPipeline(input, `${input.eventName} run`);
@@ -141,9 +176,10 @@ export async function decideReleaseSource(
     .sort((left, right) => right.run_number - left.run_number);
   if (candidates.length === 0) return fullPipeline(input, "no merge-queue run");
 
+  const queueDeadline = clock.now() + (options.waitMs ?? WAIT_MS);
   let queueRun: WorkflowRun | undefined;
   for (const candidate of candidates) {
-    const settled = await settle(client, candidate, options);
+    const settled = await settle(client, candidate, clock, queueDeadline);
     if (settled.status === "completed" && settled.conclusion === "success") {
       queueRun = settled;
       break;
@@ -151,6 +187,9 @@ export async function decideReleaseSource(
   }
   if (queueRun === undefined) {
     return fullPipeline(input, "no successful merge-queue run");
+  }
+  if (clock.now() - Date.parse(queueRun.created_at) > MAX_QUEUE_RUN_AGE_MS) {
+    return fullPipeline(input, `merge-queue run ${queueRun.id} is older than 6 days`);
   }
 
   const available = new Set(
@@ -166,7 +205,13 @@ export async function decideReleaseSource(
     );
   }
 
-  const blocked = await earlierReleaseBlocks(client, input, queueRun);
+  const blocked = await earlierReleaseBlocks(
+    client,
+    input,
+    queueRun,
+    clock,
+    clock.now() + (options.earlierDecisionWaitMs ?? EARLIER_DECISION_WAIT_MS),
+  );
   if (blocked !== undefined) return fullPipeline(input, blocked);
 
   return {
@@ -175,6 +220,52 @@ export async function decideReleaseSource(
     releaseNumber: queueRun.run_number,
     message: `reusing merge-queue run ${queueRun.id} for ${input.sha}`,
   };
+}
+
+async function assertNoLaterSmallerRelease(
+  client: ActionsClient,
+  input: ReleaseSourceInput,
+  releaseNumber: number,
+): Promise<void> {
+  const ownRun = await client.getRun(input.runId);
+  const landedLater = (await client.listMainRunsCreatedSince(ownRun.created_at))
+    .filter(isMainRelease)
+    .filter((run) => run.run_number > input.runNumber);
+  for (const run of landedLater) {
+    const laterNumber = releaseNumberOf(await client.listArtifacts(run.id));
+    if (laterNumber !== undefined && laterNumber < releaseNumber) {
+      throw new Error(
+        `main run ${run.id} landed later and chose release number ${laterNumber}; publishing ${releaseNumber} from this rerun would pin older code`,
+      );
+    }
+  }
+}
+
+export async function decideReleaseSource(
+  client: ActionsClient,
+  input: ReleaseSourceInput,
+  options: DecideOptions = {},
+): Promise<ReleaseSource> {
+  const clock: Clock = {
+    sleep: options.sleep ??
+      ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms))),
+    now: options.now ?? Date.now,
+    pollMs: options.pollMs ?? POLL_MS,
+  };
+  let source: ReleaseSource;
+  try {
+    source = await chooseReleaseSource(client, input, clock, options);
+  } catch (error) {
+    if (input.runAttempt > 1) throw error;
+    source = fullPipeline(
+      input,
+      `could not inspect merge-queue runs: ${error instanceof Error ? error.message : error}`,
+    );
+  }
+  if (input.runAttempt > 1) {
+    await assertNoLaterSmallerRelease(client, input, source.releaseNumber);
+  }
+  return source;
 }
 
 type FetchLike = (input: string, init?: RequestInit) => Promise<Response>;
@@ -243,7 +334,6 @@ function requireEnv(name: string): string {
 }
 
 if (import.meta.main) {
-  const runNumber = Number(requireEnv("GITHUB_RUN_NUMBER"));
   const source = await decideReleaseSource(
     createActionsClient({
       repository: requireEnv("GITHUB_REPOSITORY"),
@@ -254,7 +344,9 @@ if (import.meta.main) {
     {
       eventName: requireEnv("GITHUB_EVENT_NAME"),
       sha: requireEnv("GITHUB_SHA"),
-      runNumber,
+      runId: Number(requireEnv("GITHUB_RUN_ID")),
+      runNumber: Number(requireEnv("GITHUB_RUN_NUMBER")),
+      runAttempt: Number(requireEnv("GITHUB_RUN_ATTEMPT")),
       requiredArtifacts: Deno.args,
     },
   );

@@ -46,6 +46,9 @@ const SONAR_CHECK_NAME = "SonarQube Cloud quality gate";
 const SONAR_SCAN_CHECK_NAME = "SonarQube Cloud scan";
 const MERGE_QUEUE_RESPONSE_TIMEOUT_MINUTES = 70;
 const MERGE_QUEUE_SCHEDULING_HEADROOM_MINUTES = 8;
+// tested-run waits for a queue run only on main. In a merge-queue run every
+// step skips and the job finishes within seconds of starting.
+const MERGE_QUEUE_JOB_MINUTES: Record<string, number> = { "tested-run": 0 };
 
 function asRecord(value: unknown, context: string): YamlRecord {
   assert(
@@ -106,20 +109,15 @@ function longestJobPathMinutes(
   assert(!active.has(jobName), `workflow jobs must not contain a needs cycle at ${jobName}`);
 
   const job = asRecord(jobs[jobName], `${jobName} job`);
-  const timeout = Number(job["timeout-minutes"]);
+  const configuredTimeout = Number(job["timeout-minutes"]);
   assert(
-    Number.isFinite(timeout) && timeout > 0,
+    Number.isFinite(configuredTimeout) && configuredTimeout > 0,
     `${jobName} must have a positive timeout-minutes value`,
   );
+  const timeout = MERGE_QUEUE_JOB_MINUTES[jobName] ?? configuredTimeout;
 
   active.add(jobName);
-  // Jobs that run only on main are skipped in merge-queue runs, so they never
-  // delay a queue entry's merge gate.
-  const dependencies = jobNeeds(job, `${jobName} job`).filter((dependency) =>
-    !String(asRecord(jobs[dependency], `${dependency} job`).if ?? "").includes(
-      "github.ref == 'refs/heads/main'",
-    )
-  );
+  const dependencies = jobNeeds(job, `${jobName} job`);
   const dependencyMinutes = dependencies.length === 0 ? 0 : Math.max(
     ...dependencies.map((dependency) => longestJobPathMinutes(jobs, dependency, memo, active)),
   );

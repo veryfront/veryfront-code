@@ -31,52 +31,60 @@ jobs:
   # queue's npm artifact under the queue run's RC number. Otherwise main runs
   # the full pipeline. The release-number artifact keeps RC numbers in landing
   # order across main runs (see scripts/ci/tested-merge-queue-run.ts).
+  # The job runs, and finishes at once, on every other ref too: a job whose
+  # `if` has no status function is skipped when any upstream job skipped.
   # ============================================
 
   tested-run:
-    if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && github.ref == 'refs/heads/main' }}
+    if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
     runs-on: ubuntu-latest
-    # Waits up to 30 minutes for a queue run that is still finishing.
+    # On main it waits up to 30 minutes for a queue run that is still finishing.
     timeout-minutes: 40
     name: tested merge-queue run
     permissions:
       actions: read
       contents: read
     outputs:
-      reuse: ${{ steps.decide.outputs.reuse }}
+      reuse: ${{ steps.decide.outputs.reuse || 'false' }}
       run_id: ${{ steps.decide.outputs.run_id }}
-      release_number: ${{ steps.decide.outputs.release_number }}
+      release_number: ${{ steps.decide.outputs.release_number || github.run_number }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: github.ref == 'refs/heads/main'
         with:
           persist-credentials: false
       - uses: ./.github/actions/setup-deno
+        if: github.ref == 'refs/heads/main'
         timeout-minutes: 5
       - name: Find the tested merge-queue run
+        if: github.ref == 'refs/heads/main'
         id: decide
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           deno run --config=scripts/test.deno.json --frozen --no-check \
-            --allow-env=GH_TOKEN,GITHUB_API_URL,GITHUB_EVENT_NAME,GITHUB_OUTPUT,GITHUB_REPOSITORY,GITHUB_RUN_NUMBER,GITHUB_SHA \
+            --allow-env=GH_TOKEN,GITHUB_API_URL,GITHUB_EVENT_NAME,GITHUB_OUTPUT,GITHUB_REPOSITORY,GITHUB_RUN_ATTEMPT,GITHUB_RUN_ID,GITHUB_RUN_NUMBER,GITHUB_SHA \
             --allow-net=api.github.com --allow-write="${GITHUB_OUTPUT}" \
             scripts/ci/tested-merge-queue-run.ts \
             "npm-compatibility-${GITHUB_SHA}" \
             coverage-shard-1 coverage-shard-2 coverage-shard-3 coverage-shard-4 \
             coverage-native-executor coverage-integration-client
       - name: Record release number
+        if: github.ref == 'refs/heads/main'
         env:
           RELEASE_NUMBER: ${{ steps.decide.outputs.release_number }}
         run: |
           mkdir -p dist/release-number
           echo "${RELEASE_NUMBER}" > dist/release-number/release-number.txt
       - name: Upload release number
+        if: github.ref == 'refs/heads/main'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: release-number-${{ steps.decide.outputs.release_number }}
           path: dist/release-number
           retention-days: 7
           if-no-files-found: error
+          overwrite: true
 
   # ============================================
   # CI: Quality Checks
@@ -1210,8 +1218,11 @@ jobs:
   # Appends .{run_number} and publishes with --tag rc
   # ============================================
 
+  # Release jobs check every dependency explicitly: a main run that reuses its
+  # merge-queue run skips the test jobs upstream of the gates, and a job
+  # without a status function would skip with them.
   prerelease:
-    if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && needs.version-check.outputs.is_stable == 'false' }}
+    if: ${{ !cancelled() && needs.tested-run.result == 'success' && needs.version-check.result == 'success' && needs.quality-gate-merge.result == 'success' && needs.quality-gate-artifact.result == 'success' && needs.quality-gate-release.result == 'success' && needs.build-binaries.result == 'success' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && needs.version-check.outputs.is_stable == 'false' }}
     needs: [
       quality-gate-merge,
       quality-gate-artifact,
@@ -1340,7 +1351,7 @@ jobs:
   # ============================================
 
   release:
-    if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && needs.version-check.outputs.is_stable == 'true' && needs.version-check.outputs.stable_release_requested == 'true' }}
+    if: ${{ !cancelled() && needs.tested-run.result == 'success' && needs.version-check.result == 'success' && needs.quality-gate-merge.result == 'success' && needs.quality-gate-artifact.result == 'success' && needs.quality-gate-release.result == 'success' && needs.build-binaries.result == 'success' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && needs.version-check.outputs.is_stable == 'true' && needs.version-check.outputs.stable_release_requested == 'true' }}
     needs: [
       quality-gate-merge,
       quality-gate-artifact,
@@ -1650,7 +1661,7 @@ jobs:
   # ============================================
 
   update-homebrew:
-    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
+    if: ${{ !cancelled() && needs.release.result == 'success' && needs.version-check.result == 'success' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
     needs: [release, version-check]
     runs-on: ubuntu-latest
     environment: production

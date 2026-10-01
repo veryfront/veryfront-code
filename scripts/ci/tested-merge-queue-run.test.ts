@@ -15,9 +15,12 @@ const REQUIRED = [`npm-compatibility-${SHA}`, "coverage-shard-1"];
 const INPUT: ReleaseSourceInput = {
   eventName: "push",
   sha: SHA,
+  runId: 36828511508,
   runNumber: 21212,
+  runAttempt: 1,
   requiredArtifacts: REQUIRED,
 };
+const OWN_RUN_CREATED_AT = "2026-10-01T07:07:19Z";
 
 function run(
   overrides: Partial<WorkflowRun> & Pick<WorkflowRun, "id" | "run_number">,
@@ -37,6 +40,7 @@ function artifacts(...names: string[]): RunArtifact[] {
 
 class FakeActions implements ActionsClient {
   readonly polled: number[] = [];
+  onPoll: (runId: number) => void = () => {};
 
   constructor(
     readonly queueRuns: WorkflowRun[],
@@ -51,6 +55,17 @@ class FakeActions implements ActionsClient {
 
   getRun(runId: number): Promise<WorkflowRun> {
     this.polled.push(runId);
+    this.onPoll(runId);
+    if (runId === INPUT.runId) {
+      return Promise.resolve(
+        run({
+          id: runId,
+          run_number: INPUT.runNumber,
+          event: "push",
+          created_at: OWN_RUN_CREATED_AT,
+        }),
+      );
+    }
     const next = this.runUpdates.get(runId)?.shift();
     if (next === undefined) throw new Error(`unexpected poll of ${runId}`);
     return Promise.resolve(next);
@@ -65,7 +80,16 @@ class FakeActions implements ActionsClient {
   }
 }
 
-const noSleep = { sleep: () => Promise.resolve() };
+function fakeClock(start = Date.parse("2026-10-01T07:10:00Z")) {
+  let now = start;
+  return {
+    now: () => now,
+    sleep: (ms: number) => {
+      now += ms;
+      return Promise.resolve();
+    },
+  };
+}
 
 describe("tested merge-queue run release source", () => {
   it("reuses a green queue run on the same SHA and numbers the release by it", async () => {
@@ -74,7 +98,7 @@ describe("tested merge-queue run release source", () => {
       new Map([[36825693208, artifacts(...REQUIRED)]]),
     );
 
-    const source = await decideReleaseSource(client, INPUT, noSleep);
+    const source = await decideReleaseSource(client, INPUT, fakeClock());
 
     assertEquals(source, {
       reuse: true,
@@ -89,7 +113,7 @@ describe("tested merge-queue run release source", () => {
   });
 
   it("runs the full pipeline when no queue run tested the SHA", async () => {
-    const source = await decideReleaseSource(new FakeActions([], new Map()), INPUT, noSleep);
+    const source = await decideReleaseSource(new FakeActions([], new Map()), INPUT, fakeClock());
 
     assertEquals(source, {
       reuse: false,
@@ -103,7 +127,7 @@ describe("tested merge-queue run release source", () => {
     const source = await decideReleaseSource(
       new FakeActions([run({ id: 1, run_number: 21200 })], new Map()),
       { ...INPUT, eventName: "workflow_dispatch" },
-      noSleep,
+      fakeClock(),
     );
 
     assertEquals(source.reuse, false);
@@ -117,7 +141,7 @@ describe("tested merge-queue run release source", () => {
         new Map([[7, artifacts(...REQUIRED)]]),
       ),
       INPUT,
-      noSleep,
+      fakeClock(),
     );
 
     assertEquals(source.reuse, false);
@@ -137,7 +161,7 @@ describe("tested merge-queue run release source", () => {
         new Map([[6, artifacts(...REQUIRED)]]),
       ),
       INPUT,
-      noSleep,
+      fakeClock(),
     );
 
     assertEquals(source.reuse && source.testedRunId, 6);
@@ -155,7 +179,7 @@ describe("tested merge-queue run release source", () => {
       ]]]),
     );
 
-    const source = await decideReleaseSource(client, INPUT, noSleep);
+    const source = await decideReleaseSource(client, INPUT, fakeClock());
 
     assertEquals(client.polled, [9, 9]);
     assertEquals(source.reuse, true);
@@ -172,7 +196,7 @@ describe("tested merge-queue run release source", () => {
     );
 
     const source = await decideReleaseSource(client, INPUT, {
-      ...noSleep,
+      ...fakeClock(),
       waitMs: 1000,
       pollMs: 1000,
     });
@@ -190,7 +214,7 @@ describe("tested merge-queue run release source", () => {
         ]]]),
       ),
       INPUT,
-      noSleep,
+      fakeClock(),
     );
 
     assertEquals(
@@ -214,7 +238,7 @@ describe("tested merge-queue run release source", () => {
         [run({ id: 40, run_number: 21209, event: "push" })],
       ),
       INPUT,
-      noSleep,
+      fakeClock(),
     );
 
     assertEquals(source, {
@@ -226,21 +250,138 @@ describe("tested merge-queue run release source", () => {
   });
 
   it("falls back when an earlier main run has not chosen its release number", async () => {
-    const source = await decideReleaseSource(
-      new FakeActions(
-        [run({ id: 5, run_number: 21200 })],
-        new Map([[5, artifacts(...REQUIRED)]]),
-        [run({ id: 40, run_number: 21209, event: "push", status: "queued", conclusion: null })],
-      ),
-      INPUT,
-      noSleep,
+    const queued = run({
+      id: 40,
+      run_number: 21209,
+      event: "push",
+      status: "queued",
+      conclusion: null,
+    });
+    const client = new FakeActions(
+      [run({ id: 5, run_number: 21200 })],
+      new Map([[5, artifacts(...REQUIRED)]]),
+      [queued],
+      new Map([[40, [queued, queued]]]),
     );
 
+    const source = await decideReleaseSource(client, INPUT, {
+      ...fakeClock(),
+      pollMs: 1000,
+      earlierDecisionWaitMs: 2000,
+    });
+
+    assertEquals(client.polled, [40, 40]);
     assertEquals(source.reuse, false);
     assertEquals(
       source.message,
       `no tested run for ${SHA}, running full pipeline (main run 40 landed earlier and has not chosen its release number)`,
     );
+  });
+
+  it("waits for an earlier main run to choose its release number", async () => {
+    const queued = run({
+      id: 40,
+      run_number: 21209,
+      event: "push",
+      status: "in_progress",
+      conclusion: null,
+    });
+    const client = new FakeActions(
+      [run({ id: 5, run_number: 21200 })],
+      new Map([[5, artifacts(...REQUIRED)]]),
+      [queued],
+      new Map([[40, [queued]]]),
+    );
+    client.onPoll = () => client.artifactsByRun.set(40, artifacts("release-number-21190"));
+
+    const source = await decideReleaseSource(client, INPUT, fakeClock());
+
+    assertEquals(client.polled, [40]);
+    assertEquals(source.reuse && source.releaseNumber, 21200);
+  });
+
+  it("reads the largest number an earlier rerun recorded", async () => {
+    const source = await decideReleaseSource(
+      new FakeActions(
+        [run({ id: 5, run_number: 21200 })],
+        new Map([
+          [5, artifacts(...REQUIRED)],
+          [40, artifacts("release-number-21190", "release-number-21209")],
+        ]),
+        [run({ id: 40, run_number: 21209, event: "push" })],
+      ),
+      INPUT,
+      fakeClock(),
+    );
+
+    assertEquals(source.reuse, false);
+    assertEquals(source.releaseNumber, 21212);
+  });
+
+  it("does not reuse a queue run older than the release-number retention", async () => {
+    const source = await decideReleaseSource(
+      new FakeActions(
+        [run({ id: 5, run_number: 21200, created_at: "2026-09-24T06:36:40Z" })],
+        new Map([[5, artifacts(...REQUIRED)]]),
+      ),
+      INPUT,
+      fakeClock(),
+    );
+
+    assertEquals(
+      source.message,
+      `no tested run for ${SHA}, running full pipeline (merge-queue run 5 is older than 6 days)`,
+    );
+  });
+
+  it("runs the full pipeline under its own number when GitHub cannot be read", async () => {
+    const client = new FakeActions([], new Map());
+    client.listMergeQueueRuns = () => Promise.reject(new Error("GitHub API answered 502"));
+
+    const source = await decideReleaseSource(client, INPUT, fakeClock());
+
+    assertEquals(source, {
+      reuse: false,
+      releaseNumber: 21212,
+      message:
+        `no tested run for ${SHA}, running full pipeline (could not inspect merge-queue runs: GitHub API answered 502)`,
+    });
+  });
+
+  it("fails a rerun that cannot read GitHub instead of guessing", async () => {
+    const client = new FakeActions([], new Map());
+    client.listMergeQueueRuns = () => Promise.reject(new Error("GitHub API answered 502"));
+
+    await assertRejects(
+      () => decideReleaseSource(client, { ...INPUT, runAttempt: 2 }, fakeClock()),
+      Error,
+      "GitHub API answered 502",
+    );
+  });
+
+  it("refuses a rerun whose release would outrank a later-landed release", async () => {
+    // b054050 landed after this commit and already published rc.21200; a
+    // rerun publishing rc.21212 for older code would move the pin backwards.
+    const client = new FakeActions([], new Map([[50, artifacts("release-number-21200")]]), [
+      run({ id: 50, run_number: 21215, event: "push" }),
+    ]);
+
+    await assertRejects(
+      () => decideReleaseSource(client, { ...INPUT, runAttempt: 2 }, fakeClock()),
+      Error,
+      "main run 50 landed later and chose release number 21200; publishing 21212 from this rerun would pin older code",
+    );
+  });
+
+  it("allows a rerun when later-landed releases are newer", async () => {
+    const client = new FakeActions([], new Map([[50, artifacts("release-number-21215")]]), [
+      run({ id: 50, run_number: 21215, event: "push" }),
+      run({ id: 51, run_number: 21216, event: "push", status: "queued", conclusion: null }),
+    ]);
+
+    const source = await decideReleaseSource(client, { ...INPUT, runAttempt: 2 }, fakeClock());
+
+    assertEquals(source.releaseNumber, 21212);
   });
 
   it("reuses when earlier main runs published smaller numbers or never published", async () => {
@@ -260,7 +401,7 @@ describe("tested merge-queue run release source", () => {
         ],
       ),
       INPUT,
-      noSleep,
+      fakeClock(),
     );
 
     assertEquals(source.reuse, true);

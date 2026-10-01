@@ -38,10 +38,12 @@ const SKIPPED_WITH_DEPENDENCY: Record<string, string> = {
   "tests-npm-install-smoke": "npm-compatibility-artifact",
   "codecov-upload": "coverage-shards",
 };
+// The coverage gate skips itself on a reused run; it already has a status
+// function and more than one dependency.
+const COVERAGE_GATE = "coverage";
 // Jobs that still run on a reused main run, or never run on main.
 const KEPT = [
   "tested-run",
-  "coverage",
   "sonar",
   "sonar-quality-gate",
   "quality-gate-merge",
@@ -84,6 +86,35 @@ function needs(value: YamlRecord): string[] {
   return typeof value.needs === "string" ? [value.needs] : value.needs as string[];
 }
 
+const STATUS_FUNCTION = /always\(\)|!cancelled\(\)|failure\(\)|cancelled\(\)/;
+
+function ancestors(jobs: YamlRecord, name: string, found = new Set<string>()): Set<string> {
+  for (const dependency of needs(job(jobs, name))) {
+    if (found.has(dependency)) continue;
+    found.add(dependency);
+    ancestors(jobs, dependency, found);
+  }
+  return found;
+}
+
+// GitHub skips a job whose `if` has no status function when any job upstream
+// of it skipped, not only a direct dependency.
+function assertRunsDespiteSkippedAncestors(
+  jobs: YamlRecord,
+  skipped: ReadonlySet<string>,
+  scenario: string,
+): void {
+  for (const name of Object.keys(jobs)) {
+    if (skipped.has(name)) continue;
+    const skippedAncestors = [...ancestors(jobs, name)].filter((ancestor) => skipped.has(ancestor));
+    if (skippedAncestors.length === 0) continue;
+    assert(
+      STATUS_FUNCTION.test(String(job(jobs, name).if)),
+      `${name} must use a status function: ${skippedAncestors.join(", ")} skip on ${scenario}`,
+    );
+  }
+}
+
 function steps(value: YamlRecord, context: string): YamlRecord[] {
   assert(Array.isArray(value.steps), `${context} steps must be an array`);
   return value.steps.map((step) => asRecord(step, `${context} step`));
@@ -116,12 +147,15 @@ describe("tested merge-queue run workflow", () => {
   it("decides on main only, with read access to other runs", async () => {
     const tested = job(await readJobs(), "tested-run");
 
-    assertEquals(tested.if, `\${{ ${TRUSTED} && github.ref == 'refs/heads/main' }}`);
+    assertEquals(tested.if, `\${{ ${TRUSTED} }}`);
+    for (const step of steps(tested, "tested-run")) {
+      assertEquals(step.if, "github.ref == 'refs/heads/main'", "tested-run works on main only");
+    }
     assertEquals(tested.permissions, { actions: "read", contents: "read" });
     assertEquals(tested.outputs, {
-      reuse: "${{ steps.decide.outputs.reuse }}",
+      reuse: "${{ steps.decide.outputs.reuse || 'false' }}",
       run_id: "${{ steps.decide.outputs.run_id }}",
-      release_number: "${{ steps.decide.outputs.release_number }}",
+      release_number: "${{ steps.decide.outputs.release_number || github.run_number }}",
     });
     assertStringIncludes(
       String(namedStep(tested, "Find the tested merge-queue run").run),
@@ -196,10 +230,52 @@ describe("tested merge-queue run workflow", () => {
     }
   });
 
+  it("runs every pull request and merge-queue job despite main-only jobs skipping", async () => {
+    const jobs = await readJobs();
+    const offMain = new Set(
+      Object.keys(jobs).filter((name) =>
+        /github\.ref == 'refs\/heads\/main'|vars\.|&& github\.event_name == 'pull_request'/.test(
+          String(job(jobs, name).if),
+        )
+      ),
+    );
+
+    assert(offMain.has("version-check") && offMain.has("quality-gate-release"));
+    assert(!offMain.has("tested-run"), "tested-run must run on every ref");
+    assertRunsDespiteSkippedAncestors(jobs, offMain, "pull request and merge-queue runs");
+  });
+
+  it("runs the gates and release jobs despite reused test jobs skipping", async () => {
+    const jobs = await readJobs();
+    const skipped = new Set<string>([
+      ...SKIPPED_ON_REUSE,
+      ...Object.keys(SKIPPED_WITH_DEPENDENCY),
+      COVERAGE_GATE,
+      "tests-proxy-binary",
+    ]);
+
+    assertStringIncludes(
+      String(job(jobs, COVERAGE_GATE).if),
+      "needs.tested-run.outputs.reuse != 'true'",
+    );
+    assertRunsDespiteSkippedAncestors(jobs, skipped, "a reused main run");
+    for (const name of ["prerelease", "release"]) {
+      const condition = String(job(jobs, name).if);
+      for (const dependency of needs(job(jobs, name))) {
+        assertStringIncludes(
+          condition,
+          `needs.${dependency}.result == 'success'`,
+          `${name} must require ${dependency} explicitly`,
+        );
+      }
+    }
+  });
+
   it("classifies every job's behaviour on a reused main run", async () => {
     const classified = [
       ...SKIPPED_ON_REUSE,
       ...Object.keys(SKIPPED_WITH_DEPENDENCY),
+      COVERAGE_GATE,
       ...KEPT,
     ].sort();
 
