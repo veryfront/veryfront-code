@@ -18,6 +18,7 @@ const REQUIRED_DEPENDENCIES = [
   "tests-binary-e2e",
   "tests-e2e-rsc-browser",
   "sonar-quality-gate",
+  "tested-run",
 ] as const;
 const RESULT_ENV = {
   SOURCE_CHECKS_RESULT: "${{ needs.ci.result }}",
@@ -34,9 +35,16 @@ const SONAR_REQUIRED_CONDITION =
   "(github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && (github.event_name != 'pull_request' || github.event.pull_request.user.login != 'dependabot[bot]')";
 const SONAR_REQUIRED_EXPRESSION = `\${{ ${SONAR_REQUIRED_CONDITION} }}`;
 const SONAR_COVERAGE_JOB_EXPRESSION =
-  `\${{ needs.coverage-shards.result == 'success' && needs.coverage-node-executor.result == 'success' && needs.coverage-integration-client.result == 'success' && (${SONAR_REQUIRED_CONDITION}) }}`;
+  `\${{ !cancelled() && (needs.tested-run.outputs.reuse == 'true' || (needs.coverage-shards.result == 'success' && needs.coverage-node-executor.result == 'success' && needs.coverage-integration-client.result == 'success')) && (${SONAR_REQUIRED_CONDITION}) }}`;
 const SONAR_JOB_EXPRESSION =
-  `\${{ needs.sonar-coverage.result == 'success' && (${SONAR_REQUIRED_CONDITION}) }}`;
+  `\${{ !cancelled() && needs.sonar-coverage.result == 'success' && (${SONAR_REQUIRED_CONDITION}) }}`;
+const REUSED_RUN_ID_EXPRESSION =
+  "${{ needs.tested-run.outputs.reuse == 'true' && needs.tested-run.outputs.run_id || '' }}";
+const TESTED_RUN_ID_EXPRESSION = "${{ needs.tested-run.outputs.run_id || github.run_id }}";
+const TESTED_RUN_DOWNLOAD = {
+  "run-id": TESTED_RUN_ID_EXPRESSION,
+  "github-token": "${{ github.token }}",
+};
 const SONAR_GATE_JOB_EXPRESSION = `\${{ always() && ${SONAR_REQUIRED_CONDITION} }}`;
 const SONAR_JOB_TIMEOUT_MINUTES = 28;
 const SONAR_QUALITY_GATE_TIMEOUT_SECONDS = 1200;
@@ -44,6 +52,9 @@ const SONAR_CHECK_NAME = "SonarQube Cloud quality gate";
 const SONAR_SCAN_CHECK_NAME = "SonarQube Cloud scan";
 const MERGE_QUEUE_RESPONSE_TIMEOUT_MINUTES = 70;
 const MERGE_QUEUE_SCHEDULING_HEADROOM_MINUTES = 8;
+// tested-run waits for a queue run only on main. In a merge-queue run every
+// step skips and the job finishes within seconds of starting.
+const MERGE_QUEUE_JOB_MINUTES: Record<string, number> = { "tested-run": 0 };
 
 function asRecord(value: unknown, context: string): YamlRecord {
   assert(
@@ -110,11 +121,12 @@ function longestJobPathMinutes(
   );
 
   const job = asRecord(jobs[jobName], `${jobName} job`);
-  const timeout = Number(job["timeout-minutes"]);
+  const configuredTimeout = Number(job["timeout-minutes"]);
   assert(
-    Number.isFinite(timeout) && timeout > 0,
+    Number.isFinite(configuredTimeout) && configuredTimeout > 0,
     `${jobName} must have a positive timeout-minutes value`,
   );
+  const timeout = MERGE_QUEUE_JOB_MINUTES[jobName] ?? configuredTimeout;
 
   active.add(jobName);
   const dependencies = jobNeeds(job, `${jobName} job`);
@@ -168,7 +180,7 @@ function sonarGateStep(job: YamlRecord): YamlRecord {
 
 async function runGate(
   overrides: Partial<Record<keyof typeof RESULT_ENV, string>> = {},
-  options: { sonarRequired?: boolean } = {},
+  options: { sonarRequired?: boolean; reusedRunId?: string } = {},
 ): Promise<Deno.CommandOutput> {
   const job = await readMergeGate();
   const step = gateStep(job);
@@ -183,6 +195,7 @@ async function runGate(
     env: {
       ...env,
       SONAR_REQUIRED: String(options.sonarRequired ?? true),
+      REUSED_RUN_ID: options.reusedRunId ?? "",
     },
     stdout: "piped",
     stderr: "piped",
@@ -243,6 +256,7 @@ describe("merge quality gate workflow", () => {
     assertEquals(
       asRecord(step.env, "merge quality gate result env"),
       {
+        REUSED_RUN_ID: REUSED_RUN_ID_EXPRESSION,
         SONAR_REQUIRED: SONAR_REQUIRED_EXPRESSION,
         ...RESULT_ENV,
       },
@@ -342,7 +356,17 @@ describe("merge quality gate workflow", () => {
       step.name === "Upload merged Sonar coverage"
     );
 
+    assertEquals(asRecord(producer.permissions, "sonar coverage permissions"), {
+      actions: "read",
+      contents: "read",
+    });
+    assertEquals(asRecord(producerSteps[downloadIndex].with, "unit coverage options"), {
+      path: "coverage-profiles",
+      pattern: "coverage-shard-*",
+      ...TESTED_RUN_DOWNLOAD,
+    });
     assertEquals(producer.needs, [
+      "tested-run",
       "coverage-shards",
       "coverage-node-executor",
       "coverage-integration-client",
@@ -364,6 +388,7 @@ describe("merge quality gate workflow", () => {
       {
         name: "coverage-native-executor",
         path: "coverage-profiles/coverage-native-executor",
+        ...TESTED_RUN_DOWNLOAD,
       },
     );
     assertEquals(
@@ -374,6 +399,7 @@ describe("merge quality gate workflow", () => {
       {
         name: "coverage-integration-client",
         path: "coverage-profiles/coverage-integration-client",
+        ...TESTED_RUN_DOWNLOAD,
       },
     );
     assert(
@@ -512,7 +538,7 @@ describe("merge quality gate workflow", () => {
       jobs["coverage-node-executor"],
       "native executor coverage job",
     );
-    assertEquals(native.needs, undefined);
+    assertEquals(native.needs, ["tested-run"]);
     assert(Number(native["timeout-minutes"]) <= 10);
     assert(Array.isArray(native.steps));
     const steps = native.steps.map((step) => asRecord(step, "native coverage step"));
@@ -622,7 +648,7 @@ describe("merge quality gate workflow", () => {
     assertEquals(matrix.shard, [1, 2, 3, 4]);
     assertEquals("unit-tests" in jobs, false);
     assertEquals(coverage.name, "coverage gate");
-    assertEquals(coverage.needs, ["coverage-shards"]);
+    assertEquals(coverage.needs, ["coverage-shards", "tested-run"]);
     assertStringIncludes(
       await readRepoFile("scripts/test/coverage-ci.ts"),
       'readOption(args, "--threshold") ?? "80"',
@@ -695,6 +721,39 @@ describe("merge quality gate workflow", () => {
           `${resultName} finished with ${dependencyResult}`,
         );
       }
+    }
+  });
+
+  it("accepts tests skipped because main reuses the green merge-queue run", async () => {
+    const skipped = Object.fromEntries(
+      Object.keys(RESULT_ENV)
+        .filter((name) => name !== "SONAR_RESULT")
+        .map((name) => [name, "skipped"]),
+    );
+    const result = await runGate(skipped, { reusedRunId: "36825693208" });
+
+    assertEquals(result.code, 0);
+    assertStringIncludes(
+      new TextDecoder().decode(result.stdout),
+      "COVERAGE_RESULT passed in merge-queue run 36825693208",
+    );
+  });
+
+  it("still requires Sonar and real failures when main reuses the merge-queue run", async () => {
+    for (
+      const [resultName, dependencyResult] of [
+        ["SONAR_RESULT", "skipped"],
+        ["SONAR_RESULT", "failure"],
+        ["COVERAGE_RESULT", "failure"],
+        ["INTEGRATION_TESTS_RESULT", "cancelled"],
+      ] as const
+    ) {
+      const result = await runGate(
+        { [resultName]: dependencyResult },
+        { reusedRunId: "36825693208" },
+      );
+
+      assertEquals(result.code, 1, `${resultName}=${dependencyResult} must fail the merge gate`);
     }
   });
 
