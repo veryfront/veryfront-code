@@ -32,6 +32,71 @@ function resolvedInput() {
 }
 
 describe("hosted HTTP ingress", () => {
+  it("requires callable authority and broker callbacks", () => {
+    assertThrows(
+      () =>
+        createHostedHttpIngress({
+          broker: { fetch: undefined as never },
+          resolve: undefined as never,
+        }),
+      TypeError,
+      "authorized resolver",
+    );
+    assertThrows(
+      () =>
+        createHostedHttpIngress({
+          broker: { fetch: () => Promise.resolve(new Response()) },
+          resolve: undefined as never,
+        }),
+      TypeError,
+      "authorized resolver",
+    );
+  });
+
+  it("refuses foreign installed ownership before dispatch and forwards a request body", async () => {
+    let dispatches = 0;
+    const input = resolvedInput();
+    const foreign = {
+      ...input,
+      installation: {
+        ...input.installation,
+        owner: { scopeKind: "project" as const, projectId: "project-foreign" },
+      },
+    };
+    const ingress = createHostedHttpIngress({
+      broker: {
+        fetch() {
+          dispatches++;
+          return Promise.resolve(new Response("must not dispatch"));
+        },
+      },
+      resolve: () => Promise.resolve(foreign),
+    });
+    assertEquals((await ingress(request(), selection)).status, 503);
+    assertEquals(dispatches, 0);
+
+    const body = new Uint8Array([1, 2, 3, 4]);
+    let received = "";
+    const bodyIngress = createHostedHttpIngress({
+      broker: {
+        async fetch(request) {
+          received = new TextDecoder().decode(await request.arrayBuffer());
+          return new Response("forwarded");
+        },
+      },
+      resolve: () => Promise.resolve(input),
+    });
+    const response = await bodyIngress(
+      new Request("https://app.example/api/body", {
+        method: "POST",
+        body,
+        headers: { "content-type": "application/octet-stream" },
+      }),
+      selection,
+    );
+    assertEquals(await response.text(), "forwarded");
+    assertEquals(received, "\u0001\u0002\u0003\u0004");
+  });
   for (
     const key of [
       "projectId",
