@@ -1237,6 +1237,7 @@ function normalizeAndFindUnrepresentableValues(
     recordArrayPrototype(value, path);
   };
 
+  const recordShapes = new WeakMapConstructor<object, WorkflowJsonRecordShape>();
   const normalize = (
     value: unknown,
     path: string,
@@ -1259,6 +1260,17 @@ function normalizeAndFindUnrepresentableValues(
         return null;
       }
       return normalize(deferredSource, path, key, true, depth, shape);
+    }
+    // A reference back to a record, such as a context that holds itself, is
+    // that record, so it has no `toJSON` hook either; the cycle is reported.
+    if (type === "object") {
+      if (shape === undefined) {
+        shape = reflectApply(weakMapGet, recordShapes, [value]) as
+          | WorkflowJsonRecordShape
+          | undefined;
+      } else {
+        reflectApply(weakMapSet, recordShapes, [value, shape]);
+      }
     }
     if (
       options.strictContext === true &&

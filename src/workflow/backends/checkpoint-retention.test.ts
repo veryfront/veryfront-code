@@ -1287,6 +1287,22 @@ describe("workflow checkpoint retention", () => {
       });
     });
 
+    it("treats a reference back to a snapshotted context as the context", async () => {
+      const calls: string[] = [];
+      const backend = new MemoryBackend();
+      await backend.createRun(run("to-json-self"));
+      const context = hijackingContext(calls);
+      context.self = { ref: context };
+
+      const snapshot = cloneCheckpointForPersistence({ ...checkpoint("self"), context });
+      await assertRejects(
+        () => backend.saveCheckpoint("to-json-self", snapshot),
+        VeryfrontError,
+        "circular reference",
+      );
+      assertEquals(calls, []);
+    });
+
     it("is not called while persisting an owned checkpoint", async () => {
       const calls: string[] = [];
       const backend = new MemoryBackend();

@@ -1672,6 +1672,19 @@ describe("serializeWorkflowContext", () => {
       );
     });
 
+    it("treats a reference back to the context as the context, not a hooked value", () => {
+      const calls: string[] = [];
+      const context = hijackingContext(calls);
+      context.self = { ref: context };
+
+      assertThrows(
+        () => serializeWorkflowContext(context, "run-to-json"),
+        VeryfrontError,
+        "circular reference",
+      );
+      assertEquals(calls, []);
+    });
+
     it("keeps a non-callable toJSON node value as data", () => {
       const context: WorkflowContext = { input: {}, toJSON: { value: 1 }, other: { keep: 1 } };
 
