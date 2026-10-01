@@ -4,6 +4,7 @@ import type { AddressInfo } from "node:net";
 import process from "node:process";
 import { isNodeRuntime } from "#veryfront/platform/compat/runtime.ts";
 import { tryResolve } from "#veryfront/extensions/contracts.ts";
+import type { AbsoluteDeadlineTimer } from "#veryfront/agent/streaming/lifecycle/deadlines.ts";
 import {
   createExecutorChannel,
   type ExecutorChannel,
@@ -27,6 +28,18 @@ export interface ExecutorBootstrapEnvironment {
   get(name: BootstrapVariable): string | undefined;
 }
 
+/** Epoch clock and timer that bound startup and channel readiness. */
+export interface ExecutorBootstrapClock extends AbsoluteDeadlineTimer {
+  /** UTC epoch milliseconds, nondecreasing for the bootstrap lifetime. */
+  now(): number;
+}
+
+const wallClock: ExecutorBootstrapClock = {
+  now: () => Date.now(),
+  schedule: (callback, delayMs) => setTimeout(callback, delayMs),
+  cancel: (handle) => clearTimeout(handle as ReturnType<typeof setTimeout>),
+};
+
 export interface ExecutorNodeBootstrapOptions {
   /** Register trusted handlers before any project imports. The map is snapshotted at startup. */
   operations: ReadonlyMap<string, ExecutorOperation>;
@@ -37,6 +50,8 @@ export interface ExecutorNodeBootstrapOptions {
    * Transfer ownership of returned bytes: startup wipes them after use or failure.
    */
   readKey?: (signal: AbortSignal) => Promise<Uint8Array>;
+  /** Trusted test boundary for deadline time; defaults to the wall clock. */
+  clock?: ExecutorBootstrapClock;
 }
 
 export interface ExecutorNodeBootstrap {
@@ -145,13 +160,14 @@ export async function startExecutorNodeBootstrap(
     !isNodeRuntime() || process.release.name !== "node" ||
     Number(process.versions.node.split(".")[0]) < 22
   ) throw new Error("Executor bootstrap requires Node.js 22 or newer");
-  const startedAt = Date.now();
+  const clock = options.clock ?? wallClock;
+  const startedAt = clock.now();
   const { binding, lifetimeMs, hardDeadlineAt } = readExecutorBootstrapConfiguration(
     options.environment ?? { get: (name) => process.env[name] },
   );
   const deadline = Math.min(startedAt + lifetimeMs, hardDeadlineAt);
   const remaining = () => {
-    const value = deadline - Date.now();
+    const value = deadline - clock.now();
     if (value <= 0) throw new Error("Executor bootstrap deadline exceeded");
     return value;
   };
@@ -174,8 +190,8 @@ export async function startExecutorNodeBootstrap(
   const stop = (error: Error) => {
     if (failure) return;
     failure = error;
-    clearTimeout(lifetimeTimer);
-    clearTimeout(keyTimer);
+    clock.cancel(lifetimeTimer);
+    clock.cancel(keyTimer);
     options.signal?.removeEventListener("abort", abort);
     authority.abort(error);
     key?.fill(0);
@@ -186,11 +202,11 @@ export async function startExecutorNodeBootstrap(
     closed.reject(error);
   };
   const abort = () => stop(new Error("Executor bootstrap aborted"));
-  const lifetimeTimer = setTimeout(
+  const lifetimeTimer = clock.schedule(
     () => stop(new Error("Executor bootstrap deadline exceeded")),
     lifetimeRemaining,
   );
-  const keyTimer = setTimeout(
+  const keyTimer = clock.schedule(
     () => stop(new Error("Executor bootstrap key read deadline exceeded")),
     Math.min(lifetimeRemaining, 5_000),
   );
@@ -221,7 +237,7 @@ export async function startExecutorNodeBootstrap(
       throw new Error("Executor bootstrap key read failed");
     });
     await Promise.race([reading, closed.promise]);
-    clearTimeout(keyTimer);
+    clock.cancel(keyTimer);
     if (failure) throw failure;
     // The TLS listener synchronously snapshots its key before returning its promise.
     const listening = listenExecutorTransport({
@@ -262,7 +278,7 @@ export async function startExecutorNodeBootstrap(
       void channel.closed.then(() =>
         stop(
           new Error(
-            Date.now() >= deadline
+            clock.now() >= deadline
               ? "Executor bootstrap deadline exceeded"
               : "Executor bootstrap channel closed",
           ),
@@ -274,7 +290,7 @@ export async function startExecutorNodeBootstrap(
     }).catch(() =>
       stop(
         new Error(
-          Date.now() >= deadline
+          clock.now() >= deadline
             ? "Executor bootstrap deadline exceeded"
             : "Executor bootstrap channel setup failed",
         ),
