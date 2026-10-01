@@ -24,6 +24,7 @@ const logger = serverLogger.component("api-wrapper");
 interface DiscoveryRecord {
   promise: Promise<DiscoveryResult>;
   sourceSnapshotVersion?: number;
+  sourceFingerprint?: string;
   /** Set when the result has errors: rediscover once the clock reaches it. */
   retryAt?: number;
 }
@@ -117,6 +118,18 @@ function summarizeDiscoveryFailures(
   });
 }
 
+function throwProjectDiscoveryFailure(ctx: HandlerContext, error: unknown): never {
+  logger.warn("Primitive discovery failed (will retry)", {
+    projectSlug: ctx.projectSlug,
+    error: error instanceof Error ? error.message : String(error),
+    stack: error instanceof Error ? error.stack : undefined,
+  });
+  throw INITIALIZATION_ERROR.create({
+    detail: `Runtime discovery failed: ${error instanceof Error ? error.message : String(error)}`,
+    cause: error,
+  });
+}
+
 /** Build a discovery cache key that incorporates the release/version. */
 function discoveryKey(ctx: HandlerContext): string {
   const registryScope = tryGetRegistryScopeContext();
@@ -179,17 +192,60 @@ export async function ensureProjectDiscovery(ctx: HandlerContext): Promise<Disco
     sourceSnapshotVersion !== undefined;
 
   const existing = discoveredProjects.get<DiscoveryRecord>(key);
+  const existingWithinRetryWindow = existing &&
+    (existing.retryAt === undefined || now() < existing.retryAt);
+  if (
+    existingWithinRetryWindow &&
+    (sourceSnapshotVersion === undefined ||
+      existing.sourceSnapshotVersion === sourceSnapshotVersion)
+  ) {
+    return existing.promise;
+  }
+
+  let sourceFingerprint: string | undefined;
+  try {
+    sourceFingerprint = await ctx.adapter.fs.getSourceSnapshotFingerprint?.();
+  } catch (error) {
+    throwProjectDiscoveryFailure(ctx, error);
+  }
+  const currentSourceSnapshotVersion = await ctx.adapter.fs.getSourceSnapshotVersion?.();
+  if (currentSourceSnapshotVersion !== sourceSnapshotVersion) {
+    // The adapter invalidates a fingerprint when its snapshot changes during
+    // hashing. Restart from the current generation so the fallback namespace
+    // and completed record cannot be labeled with the stale generation.
+    return await ensureProjectDiscovery(ctx);
+  }
+
+  // Fingerprinting is asynchronous. A scope eviction or newer invocation can
+  // replace this key while the hash is pending. Join a replacement only when
+  // its concrete fingerprint proves it owns the same source bytes.
+  const currentExisting = discoveredProjects.get<DiscoveryRecord>(key);
+  if (currentExisting !== existing) {
+    if (
+      currentExisting &&
+      sourceFingerprint !== undefined &&
+      currentExisting.sourceFingerprint === sourceFingerprint &&
+      (currentExisting.retryAt === undefined || now() < currentExisting.retryAt)
+    ) {
+      return currentExisting.promise;
+    }
+    throwProjectDiscoveryFailure(
+      ctx,
+      new Error("Primitive discovery cache changed while the source fingerprint was computed"),
+    );
+  }
   if (
     existing &&
-    (sourceSnapshotVersion === undefined ||
-      existing.sourceSnapshotVersion === sourceSnapshotVersion) &&
-    (existing.retryAt === undefined || now() < existing.retryAt)
+    (existing.retryAt === undefined || now() < existing.retryAt) &&
+    sourceFingerprint !== undefined &&
+    existing.sourceFingerprint === sourceFingerprint
   ) {
     return existing.promise;
   }
 
   const discovery: DiscoveryRecord = {
     sourceSnapshotVersion,
+    sourceFingerprint,
     promise: (async () => {
       return await runWithRegistryTransaction(async () => {
         const { discoverAll } = await import("#veryfront/discovery");
@@ -213,7 +269,6 @@ export async function ensureProjectDiscovery(ctx: HandlerContext): Promise<Disco
         // for the same complete source fingerprint, while preserving generation
         // isolation when the adapter cannot prove content identity. The complete
         // fingerprint also catches newly added extensionless import candidates.
-        const sourceFingerprint = await ctx.adapter.fs.getSourceSnapshotFingerprint?.();
         const cacheNamespace = sourceFingerprint !== undefined
           ? `${key}:content:${sourceFingerprint}`
           : sourceSnapshotVersion === undefined
@@ -288,15 +343,7 @@ export async function ensureProjectDiscovery(ctx: HandlerContext): Promise<Disco
     if (current === discovery) {
       discoveredProjects.delete(key);
     }
-    logger.warn("Primitive discovery failed (will retry)", {
-      projectSlug: ctx.projectSlug,
-      error: error instanceof Error ? error.message : String(error),
-      stack: error instanceof Error ? error.stack : undefined,
-    });
-    throw INITIALIZATION_ERROR.create({
-      detail: `Runtime discovery failed: ${error instanceof Error ? error.message : String(error)}`,
-      cause: error,
-    });
+    return throwProjectDiscoveryFailure(ctx, error);
   } finally {
     if (!cacheCompletedDiscovery) {
       const current = discoveredProjects.get(key);
