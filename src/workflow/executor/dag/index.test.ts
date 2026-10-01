@@ -167,7 +167,7 @@ describe("DAGExecutor", () => {
       });
       const nodes = [
         subWorkflow("child", {
-          input: (context) => context.retryInput ?? { n: 1 },
+          input: (context: WorkflowContext) => context.retryInput ?? { n: 1 },
           workflow: {
             id: "dynamic-child",
             steps: ({ input }) => {
