@@ -1110,6 +1110,12 @@ it("ApiCacheBackend retries a coalesced del-pattern under a caller's own credent
         "Bearer revoked-token",
         "Bearer stream-token-2",
       ]);
+
+      // A refused credential does not open the project's invalidation breaker.
+      for (let attempt = 0; attempt < 12; attempt++) {
+        await assertRejects(() => deleteFromStream("revoked-token", `dir:branch:*:${attempt}`));
+      }
+      assertEquals(await deleteFromStream("stream-token-2", written), 1);
     },
   );
 });

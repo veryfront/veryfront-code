@@ -99,6 +99,11 @@ type CacheRequestOptions = {
   onAuthority?: (authority: ResolvedCacheAuthority) => void;
   /** Breaker the request runs through; defaults to the read breaker. */
   circuitBreaker?: CircuitBreaker;
+  /**
+   * A refused credential says nothing about the backend's health, so it must
+   * not open a breaker that callers with valid credentials share.
+   */
+  credentialRejectionIsNeutral?: boolean;
 };
 
 /**
@@ -349,7 +354,11 @@ export class ApiCacheBackend implements CacheBackend {
         } finally {
           clearTimeout(timeoutId);
         }
-      }, { isNeutralError: (error) => error instanceof CacheValueTooLargeError });
+      }, {
+        isNeutralError: (error) =>
+          error instanceof CacheValueTooLargeError ||
+          options.credentialRejectionIsNeutral === true && isCredentialRejection(error),
+      });
     } catch (error) {
       if (error instanceof CacheValueTooLargeError) throw error;
       if (error instanceof CircuitBreakerOpen) {
@@ -499,7 +508,11 @@ export class ApiCacheBackend implements CacheBackend {
     const deletePattern = async () => {
       const result = await this.request<{ deleted: number }>("POST", "/del-pattern", {
         pattern: prefixed,
-      }, { failOnError: true, circuitBreaker: invalidationCircuitBreaker });
+      }, {
+        failOnError: true,
+        circuitBreaker: invalidationCircuitBreaker,
+        credentialRejectionIsNeutral: true,
+      });
       return result?.deleted ?? 0;
     };
 
