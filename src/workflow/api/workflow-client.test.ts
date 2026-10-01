@@ -197,6 +197,19 @@ describe("WorkflowClient", () => {
     assertEquals(run?.output, { category: "billing", confidence: 0.94 });
   });
 
+  it("reports execution-stop evidence only for DAG operations observed by this client", async () => {
+    client.register(workflow({
+      id: "local-execution-stop-evidence",
+      steps: [step("finish", { tool: createMockTool("finish", { ok: true }) })],
+    }));
+
+    const handle = await client.start("local-execution-stop-evidence", {});
+    await handle.settled();
+
+    assertEquals(await client.waitForExecutionStopped(handle.runId), true);
+    assertEquals(await client.waitForExecutionStopped("run-not-observed-here"), false);
+  });
+
   it("hands a parent the selected output of a nested workflow that declares one (#2107)", async () => {
     const child = workflow({
       id: "selecting-child",

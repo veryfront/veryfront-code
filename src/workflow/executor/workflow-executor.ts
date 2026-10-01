@@ -184,6 +184,7 @@ export class WorkflowExecutor {
   private cancellationUpdates = new Map<string, Promise<void>>();
   private cancelledWaitCleanupTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private cancelledWaitCleanupAttempts = new Map<string, number>();
+  private executionOperations = new Map<string, Set<Promise<unknown>>>();
 
   /** Default lock duration: 30 seconds */
   private static readonly DEFAULT_LOCK_DURATION = 30_000;
@@ -757,6 +758,7 @@ export class WorkflowExecutor {
 
           return runWithWorkflowTenant(run._tenant, () =>
             this.executeWithTimeout(
+              run.id,
               () =>
                 this.dagExecutor.execute(
                   nodes,
@@ -909,6 +911,7 @@ export class WorkflowExecutor {
    * The timeout is always cleared in the finally block to prevent memory leaks.
    */
   private async executeWithTimeout<T>(
+    runId: string,
     fn: () => Promise<T>,
     timeout: string | number | undefined,
     executionController: AbortController,
@@ -916,6 +919,7 @@ export class WorkflowExecutor {
     executionController.signal.throwIfAborted();
     const timeoutMs = timeout === undefined ? undefined : parseDuration(timeout);
     const operation = Promise.resolve().then(fn);
+    this.trackExecutionOperation(runId, operation);
     const fencedOperation = operation.then((value) => {
       executionController.signal.throwIfAborted();
       return value;
@@ -948,6 +952,44 @@ export class WorkflowExecutor {
       if (timeoutId !== undefined) clearTimeout(timeoutId);
       if (rejectAbort) executionController.signal.removeEventListener("abort", rejectAbort);
     }
+  }
+
+  private trackExecutionOperation(runId: string, operation: Promise<unknown>): void {
+    let operations = this.executionOperations.get(runId);
+    if (!operations) {
+      operations = new Set();
+      this.executionOperations.set(runId, operations);
+    }
+    operations.add(operation);
+    void operation.then(
+      () => operations.delete(operation),
+      () => operations.delete(operation),
+    );
+  }
+
+  /**
+   * Wait until every raw DAG operation observed locally for this run has settled.
+   *
+   * @internal
+   */
+  async waitForExecutionStopped(runId: string): Promise<boolean> {
+    const operations = this.executionOperations.get(runId);
+    if (!operations) return false;
+
+    while (true) {
+      while (operations.size > 0) {
+        await Promise.allSettled([...operations]);
+      }
+      await this.stepExecutor.waitForExecutionStopped(runId);
+      if (operations.size === 0) break;
+    }
+    return this.executionOperations.has(runId);
+  }
+
+  /** @internal Clear executor-local lifecycle evidence when its owning client is destroyed. */
+  clearExecutionStopEvidence(): void {
+    this.executionOperations.clear();
+    this.stepExecutor.clearExecutionStopEvidence();
   }
 
   private async waitForCancellationGrace(operation: Promise<unknown>): Promise<void> {

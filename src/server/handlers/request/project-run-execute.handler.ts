@@ -17,6 +17,11 @@ import {
 import { CONTROL_PLANE_RUNS_PATH_PREFIX } from "#veryfront/channels/control-plane.ts";
 import { getEnvironmentConfig } from "#veryfront/config";
 import {
+  requireHostPrivateApiHttps,
+  resolveHostOwnedSourceApiBaseUrl,
+} from "#veryfront/config/host-api-base.ts";
+import { createVeryfrontApiOriginBoundOutboundFetch } from "#veryfront/security/http/outbound-fetch.ts";
+import {
   ControlPlaneRequestError,
   verifyControlPlaneRequest,
 } from "#veryfront/internal-agents/control-plane-auth.ts";
@@ -94,6 +99,8 @@ const TaskClearTimeout = globalThis.clearTimeout;
 const TaskAbortController = AbortController;
 const TaskAbort = AbortController.prototype.abort;
 const TaskAbortSignalAny = AbortSignal.any;
+const RunStopTimeout = AbortSignal.timeout;
+const RUN_STOP_TOKEN_HEADER = "x-veryfront-run-stop-token";
 
 const EXECUTE_PATH_REGEX = /^\/api\/control-plane\/runs\/([^/]+)\/execute$/;
 const DEFAULT_WORKFLOW_STATUS_POLL_INTERVAL_MS = 100;
@@ -304,6 +311,8 @@ interface WorkflowClientView {
   getApprovalManager?(): { checkExpiredApprovals(runId?: string): Promise<void> };
   getEventWaitManager?(): { checkExpiredEventWaits(runId?: string): Promise<void> };
   cancel(runId: string): Promise<void>;
+  /** Positive only for locally owned execution whose underlying operation has stopped. */
+  waitForExecutionStopped?(runId: string): Promise<boolean>;
   destroy(): Promise<void>;
 }
 
@@ -1325,6 +1334,7 @@ async function executeWorkflowRun(
   ctx: HandlerContext,
   signal: AbortSignal,
   deps: ProjectRunExecuteHandlerDeps,
+  acknowledgeStop?: () => Promise<void>,
 ): Promise<ProjectRunExecuteResponse> {
   const startedAt = deps.now();
   const workflowId = stripTargetPrefix(request.target, "workflow:");
@@ -1353,7 +1363,15 @@ async function executeWorkflowRun(
   const outputSchemaSha256 = await schemaIdentitySha256(outputSchema);
   let response: ProjectRunExecuteResponse;
   try {
-    response = await runDiscoveredWorkflow(request, ctx, workflow, signal, deps, startedAt);
+    response = await runDiscoveredWorkflow(
+      request,
+      ctx,
+      workflow,
+      signal,
+      deps,
+      startedAt,
+      acknowledgeStop,
+    );
   } catch (error) {
     // A failure after discovery still ran against the declared schemas; keep their identity.
     response = createExecutionFailure(error, Math.max(0, deps.now() - startedAt));
@@ -1373,6 +1391,7 @@ async function runDiscoveredWorkflow(
   signal: AbortSignal,
   deps: ProjectRunExecuteHandlerDeps,
   startedAt: number,
+  acknowledgeStop?: () => Promise<void>,
 ): Promise<ProjectRunExecuteResponse> {
   const client = await deps.createWorkflowClient(
     withRuntimeStepRegistries({ debug: ctx.debug }),
@@ -1466,9 +1485,15 @@ async function runDiscoveredWorkflow(
     }
     const durationMs = Math.max(0, deps.now() - startedAt);
 
+    if (
+      signal.aborted && isTerminalWorkflowStatus(run.status) &&
+      await client.waitForExecutionStopped?.(request.runId)
+    ) await acknowledgeStop?.();
+
     // The cancel can arrive after the last poll, while the pause is persisted.
     if (run.status === "waiting" && signal.aborted) {
       await client.cancel(request.runId);
+      if (await client.waitForExecutionStopped?.(request.runId)) await acknowledgeStop?.();
       return {
         success: false,
         result: run.output,
@@ -1637,7 +1662,7 @@ const NativeHeaders = Headers;
 
 /**
  * The execute request as the run sees it: the same URL, method and headers,
- * and cancellation signal, minus the inference credential. Project code (a task, workflow or eval
+ * and cancellation signal, minus the inference and stop acknowledgement credentials. Project code (a task, workflow or eval
  * module) loads during execution and can patch `Headers.prototype.get`, so the
  * request it can reach must no longer carry the credential. The body was read
  * and verified before this point and is not needed again.
@@ -1658,7 +1683,8 @@ function withoutProjectRunInferenceToken(req: Request): Request {
     >;
     if (step.done) break;
     const name = step.value[0];
-    if (IntrinsicReflectApply(StringToLowerCase, name, []) === skipped) continue;
+    const lowerName = IntrinsicReflectApply(StringToLowerCase, name, []);
+    if (lowerName === skipped || lowerName === RUN_STOP_TOKEN_HEADER) continue;
     IntrinsicReflectApply(HeadersAppend, headers, [name, step.value[1]]);
   }
   return new NativeRequest(IntrinsicReflectApply(RequestUrlGetter, req, []) as string, {
@@ -1684,6 +1710,49 @@ function readProjectRunInferenceToken(req: Request): string | undefined {
   ]) as string | null;
   if (value === null) return undefined;
   return requireInferenceProviderCredential(value, "Inference token header");
+}
+
+/** Independent evidence of a settled execution, never evidence from abort alone. */
+function createRunStopAcknowledger(req: Request, runId: string): (() => Promise<void>) | undefined {
+  const headers = IntrinsicReflectApply(RequestHeadersGetter, req, []) as Headers;
+  const rawToken = IntrinsicReflectApply(HeadersGet, headers, [RUN_STOP_TOKEN_HEADER]) as
+    | string
+    | null;
+  if (rawToken === null) return undefined;
+  const token = requireInferenceProviderCredential(rawToken, "Run stop token header");
+  let url: string;
+  let transport: typeof fetch;
+  try {
+    const apiUrl = requireHostPrivateApiHttps(resolveHostOwnedSourceApiBaseUrl());
+    url = `${apiUrl}/runs/${encodeURIComponent(runId)}/cancellation-ack`;
+    transport = createVeryfrontApiOriginBoundOutboundFetch(apiUrl);
+  } catch {
+    serverLogger.warn("[project-run-execute] Stop acknowledgement transport is unavailable", {
+      runId,
+    });
+    return undefined;
+  }
+  const signal = IntrinsicReflectApply(RequestSignalGetter, req, []) as AbortSignal;
+  let acknowledged = false;
+  return async () => {
+    if (!signal.aborted || acknowledged) return;
+    acknowledged = true;
+    try {
+      const response = await transport(url, {
+        method: "POST",
+        redirect: "error",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: "{}",
+        // Execution's signal is already aborted; this request owns its deadline.
+        signal: ReflectApply(RunStopTimeout, AbortSignal, [10_000]),
+      });
+      await response.body?.cancel();
+      if (!response.ok) throw new TaskError("Run stop acknowledgement rejected");
+    } catch {
+      // Best effort. Missing acknowledgement remains unconfirmed in the API.
+      serverLogger.warn("[project-run-execute] Could not acknowledge stopped execution", { runId });
+    }
+  };
 }
 
 function getRuntimeApiToken(req: Request, ctx: HandlerContext): string {
@@ -3244,29 +3313,34 @@ function executeProjectRun(
   ctx: HandlerContext,
   req: Request,
   deps: ProjectRunExecuteHandlerDeps,
+  acknowledgeStop?: () => Promise<void>,
 ): Promise<ProjectRunExecuteResponse> {
   if (request.kind === "task") {
-    return executeTaskRun(request, (control) => {
-      const signal = control
-        ? ReflectApply(TaskAbortSignalAny, AbortSignal, [[req.signal, control.signal]])
-        : req.signal;
-      switch (request.target) {
-        case "task:eval":
-          return executeEvalTaskRun(request, ctx, req, req.signal, deps, control);
-        case "task:knowledge-ingest":
-          return deps.executeKnowledgeIngest({ request, ctx, req, signal });
-        case "task:release-asset-build":
-          return deps.executeReleaseAssetBuild({ request, ctx, req, signal });
-        case "task:dependency-artifact-build":
-          return deps.executeDependencyArtifactBuild({ request, ctx, req, signal });
-        case "task:style-artifact-build":
-          return deps.executeStyleArtifactBuild({ request, ctx, req, signal });
-        default:
-          return executeDiscoveredTaskRun(request, ctx, req.signal, deps, control);
+    return executeTaskRun(request, async (control) => {
+      try {
+        const signal = control
+          ? ReflectApply(TaskAbortSignalAny, AbortSignal, [[req.signal, control.signal]])
+          : req.signal;
+        switch (request.target) {
+          case "task:eval":
+            return await executeEvalTaskRun(request, ctx, req, req.signal, deps, control);
+          case "task:knowledge-ingest":
+            return await deps.executeKnowledgeIngest({ request, ctx, req, signal });
+          case "task:release-asset-build":
+            return await deps.executeReleaseAssetBuild({ request, ctx, req, signal });
+          case "task:dependency-artifact-build":
+            return await deps.executeDependencyArtifactBuild({ request, ctx, req, signal });
+          case "task:style-artifact-build":
+            return await deps.executeStyleArtifactBuild({ request, ctx, req, signal });
+          default:
+            return await executeDiscoveredTaskRun(request, ctx, req.signal, deps, control);
+        }
+      } finally {
+        await acknowledgeStop?.();
       }
     });
   }
-  return executeWorkflowRun(request, ctx, req.signal, deps);
+  return executeWorkflowRun(request, ctx, req.signal, deps, acknowledgeStop);
 }
 
 export class ProjectRunExecuteHandler extends BaseHandler {
@@ -3315,6 +3389,14 @@ export class ProjectRunExecuteHandler extends BaseHandler {
           return this.respond(builder.json({ error: "Invalid control-plane signature" }, 401));
         }
         const inferenceToken = readProjectRunInferenceToken(req);
+        const acknowledgeStop = createRunStopAcknowledger(req, request.runId);
+        const stopCredentialPresent =
+          IntrinsicReflectApply(HeadersGet, IntrinsicReflectApply(RequestHeadersGetter, req, []), [
+            RUN_STOP_TOKEN_HEADER,
+          ]) !== null;
+        const executionRequest = inferenceToken === undefined && !stopCredentialPresent
+          ? req
+          : withoutProjectRunInferenceToken(req);
 
         return await withSpan(
           "project_run.execute",
@@ -3322,15 +3404,22 @@ export class ProjectRunExecuteHandler extends BaseHandler {
             const startedAt = this.deps.now();
             try {
               const response = inferenceToken === undefined
-                ? await executeProjectRun(request, ctx, req, this.deps)
+                ? await executeProjectRun(
+                  request,
+                  ctx,
+                  executionRequest,
+                  this.deps,
+                  acknowledgeStop,
+                )
                 : await runWithProjectRunInferenceCredential(
                   inferenceToken,
                   () =>
                     executeProjectRun(
                       request,
                       ctx,
-                      withoutProjectRunInferenceToken(req),
+                      executionRequest,
                       this.deps,
+                      acknowledgeStop,
                     ),
                 );
               if (!response.success) setActiveSpanErrorStatus(new Error("Project run failed"));

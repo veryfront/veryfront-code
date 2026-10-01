@@ -26,6 +26,8 @@ import type { ModelRuntime, ModelRuntimeCallOptions } from "#veryfront/provider/
 import type { Message } from "#veryfront/agent/types.ts";
 import { agentRegistry } from "#veryfront/agent/composition/index.ts";
 import { createEmptyDiscoveryResult } from "#veryfront/discovery";
+import { runWithProjectEnv } from "#veryfront/server/project-env/storage.ts";
+import { resolveHostOwnedSourceApiBaseUrl } from "#veryfront/config/host-api-base.ts";
 import type { HandlerContext } from "#veryfront/types";
 import { createAgentServiceEvalAdapter } from "#veryfront/eval/agent-service.ts";
 import { runEval as runEvalDefinition } from "#veryfront/eval/runner.ts";
@@ -51,7 +53,7 @@ import { dependsOn } from "#veryfront/workflow/dsl/workflow.ts";
 import { waitForApproval, waitForEvent, waitForRuns } from "#veryfront/workflow/dsl/wait.ts";
 import type { WorkflowNode } from "#veryfront/workflow/types.ts";
 import type { DiscoveredWorkflow } from "#veryfront/workflow/discovery";
-import { delay } from "#veryfront/testing/deno-compat.ts";
+import { delay, withEnv } from "#veryfront/testing/deno-compat.ts";
 import { createProjectRunInferenceModelResolver } from "#veryfront/agent/runtime/project-run-inference-credential.ts";
 import { stop as stopEsbuild } from "veryfront/extensions/bundler";
 import * as otelApi from "npm:@opentelemetry/api@1.9.1";
@@ -7038,6 +7040,286 @@ describe("server/handlers/request/project-run-execute.handler cancellation", () 
     const controller = new AbortController();
     return { request: new Request(request, { signal: controller.signal }), controller };
   }
+
+  it("acknowledges a stopped task independently only after its execution settles", async () => {
+    const started = Promise.withResolvers<void>();
+    const settled = Promise.withResolvers<void>();
+    const controller = new AbortController();
+    const callbacks: Array<{ url: string; init: ReturnType<typeof observeFetchRequestInit> }> = [];
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      runTask: async () => {
+        started.resolve();
+        await settled.promise;
+        return { success: false, error: "Run cancelled", durationMs: 1 };
+      },
+    }));
+    const signed = await signedRequest("/api/control-plane/runs/run_stop_ack/execute", {
+      runId: "run_stop_ack",
+      kind: "task",
+      target: "task:sync-calendar-events",
+      projectId: "proj-1",
+    }, { "x-veryfront-run-stop-token": "opaque-stop-capability" });
+    await withMockFetch(async (url, init) => {
+      callbacks.push({ url: String(url), init: observeFetchRequestInit(init) });
+      return Response.json({ acknowledged: true });
+    }, async () => {
+      const pending = handler.handle(
+        new Request(signed.request, { signal: controller.signal }),
+        createCtx(signed.publicKeyPem),
+      );
+      await started.promise;
+      controller.abort(new Error("Run cancelled"));
+      assertEquals(callbacks.length, 0, "abort is not evidence of a stopped task");
+      settled.resolve();
+      await pending;
+    });
+    assertEquals(callbacks.length, 1);
+    const callback = callbacks[0];
+    assertExists(callback);
+    assertEquals(new URL(callback.url).pathname, "/runs/run_stop_ack/cancellation-ack");
+    assertEquals(callback.init.method, "POST");
+    assertEquals(
+      new Headers(callback.init.headers).get("authorization"),
+      "Bearer opaque-stop-capability",
+    );
+    assertEquals(callback.init.signal?.aborted, false);
+    assertEquals(callback.init.body, "{}");
+  });
+
+  it("keeps the stop credential out of reserved task requests and preserves cancellation", async () => {
+    let leaked: string | null | undefined;
+    const controller = new AbortController();
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      executeKnowledgeIngest: async ({ req, signal }) => {
+        leaked = req.headers.get("x-veryfront-run-stop-token");
+        controller.abort(new Error("Run cancelled"));
+        assertEquals(signal.aborted, true);
+        return { success: false, error: "Run cancelled" };
+      },
+    }));
+    const signed = await signedRequest("/api/control-plane/runs/run_stop_private/execute", {
+      runId: "run_stop_private",
+      kind: "task",
+      target: "task:knowledge-ingest",
+      projectId: "proj-1",
+    }, { "x-veryfront-run-stop-token": "opaque-stop-capability" });
+    await withMockFetch(async () => Response.json({ acknowledged: true }), async () => {
+      await handler.handle(
+        new Request(signed.request, { signal: controller.signal }),
+        createCtx(signed.publicKeyPem),
+      );
+    });
+    assertEquals(leaked, null);
+  });
+
+  it("acknowledges a cancelled workflow only after its execution handle settles", async () => {
+    const cancelled = Promise.withResolvers<void>();
+    const settled = Promise.withResolvers<void>();
+    const controller = new AbortController();
+    let callbacks = 0;
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      createWorkflowClient: () => ({
+        register: () => {},
+        start: async () => ({ runId: "run_workflow_ack", settled: () => settled.promise }),
+        waitForExecutionStopped: async () => {
+          await settled.promise;
+          return true;
+        },
+        getRun: async () => {
+          controller.abort(new Error("Run cancelled"));
+          return { status: "running" };
+        },
+        cancel: async () => {
+          cancelled.resolve();
+        },
+        destroy: async () => {},
+      }),
+    }));
+    const signed = await signedRequest("/api/control-plane/runs/run_workflow_ack/execute", {
+      runId: "run_workflow_ack",
+      kind: "workflow",
+      target: "workflow:publish",
+      projectId: "proj-1",
+    }, { "x-veryfront-run-stop-token": "opaque-stop-capability" });
+    await withMockFetch(async () => {
+      callbacks += 1;
+      return Response.json({ acknowledged: true });
+    }, async () => {
+      const pending = handler.handle(
+        new Request(signed.request, { signal: controller.signal }),
+        createCtx(signed.publicKeyPem),
+      );
+      await cancelled.promise;
+      assertEquals(callbacks, 0);
+      settled.resolve();
+      await pending;
+    });
+    assertEquals(callbacks, 1);
+  });
+
+  for (const outcome of ["normal", "no-credential", "callback-failure"] as const) {
+    it(`stop acknowledgement handles ${outcome} without changing the execution result`, async () => {
+      const controller = new AbortController();
+      let callbacks = 0;
+      const handler = new ProjectRunExecuteHandler(createDeps({
+        runTask: async () => {
+          if (outcome !== "normal") controller.abort(new Error("Run cancelled"));
+          return { success: true, result: 42, durationMs: 1 };
+        },
+      }));
+      const signed = await signedRequest(
+        "/api/control-plane/runs/run_stop_outcome/execute",
+        {
+          runId: "run_stop_outcome",
+          kind: "task",
+          target: "task:sync-calendar-events",
+          projectId: "proj-1",
+        },
+        outcome === "no-credential"
+          ? {}
+          : { "x-veryfront-run-stop-token": "opaque-stop-capability" },
+      );
+      await withMockFetch(async () => {
+        callbacks += 1;
+        throw new Error("Callback unavailable");
+      }, async () => {
+        const result = await handler.handle(
+          new Request(signed.request, { signal: controller.signal }),
+          createCtx(signed.publicKeyPem),
+        );
+        assertExists(result.response);
+        assertEquals((await result.response.json()).result, 42);
+      });
+      assertEquals(callbacks, outcome === "callback-failure" ? 1 : 0);
+    });
+  }
+
+  it("keeps the stop capability on the host API when project environment selects another origin", async () => {
+    const controller = new AbortController();
+    const trustedOrigin = new URL(resolveHostOwnedSourceApiBaseUrl()).origin;
+    let callbackUrl: string | undefined;
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      runTask: async () => {
+        controller.abort(new Error("Run cancelled"));
+        return { success: false, error: "Run cancelled", durationMs: 1 };
+      },
+    }));
+    const signed = await signedRequest("/api/control-plane/runs/run_stop_host/execute", {
+      runId: "run_stop_host",
+      kind: "task",
+      target: "task:sync-calendar-events",
+      projectId: "proj-1",
+    }, { "x-veryfront-run-stop-token": "opaque-stop-capability" });
+    await withMockFetch(
+      async (url) => {
+        callbackUrl = String(url);
+        return Response.json({ acknowledged: true });
+      },
+      () =>
+        runWithProjectEnv({
+          VERYFRONT_API_BASE_URL: "https://tenant.example.test",
+          VERYFRONT_API_URL: "https://tenant.example.test",
+        }, async () => {
+          await handler.handle(
+            new Request(signed.request, { signal: controller.signal }),
+            createCtx(signed.publicKeyPem),
+          );
+        }),
+    );
+    assertExists(callbackUrl);
+    assertEquals(new URL(callbackUrl).origin, trustedOrigin);
+  });
+
+  for (const ownsExecution of [true, false]) {
+    it(`resumed workflow cancellation requires actual local settlement (owned: ${ownsExecution})`, async () => {
+      const cancelled = Promise.withResolvers<void>();
+      const settled = Promise.withResolvers<void>();
+      const controller = new AbortController();
+      let callbacks = 0;
+      const handler = new ProjectRunExecuteHandler(createDeps({
+        createWorkflowClient: () => ({
+          statePersistence: "durable",
+          register: () => {},
+          start: async () => {
+            throw new Error("Resume must not start a new workflow");
+          },
+          getRun: async () => {
+            controller.abort(new Error("Run cancelled"));
+            return { status: "running" };
+          },
+          cancel: async () => {
+            cancelled.resolve();
+          },
+          waitForExecutionStopped: async () => {
+            await settled.promise;
+            return ownsExecution;
+          },
+          destroy: async () => {},
+        }),
+      }));
+      const signed = await signedRequest("/api/control-plane/runs/run_resume_stop/execute", {
+        runId: "run_resume_stop",
+        kind: "workflow",
+        target: "workflow:publish",
+        projectId: "proj-1",
+        resume: { type: "deadline", wait_id: "w" },
+      }, { "x-veryfront-run-stop-token": "opaque-stop-capability" });
+      await withMockFetch(async () => {
+        callbacks += 1;
+        return Response.json({ acknowledged: true });
+      }, async () => {
+        const pending = handler.handle(
+          new Request(signed.request, { signal: controller.signal }),
+          createCtx(signed.publicKeyPem),
+        );
+        await cancelled.promise;
+        assertEquals(callbacks, 0, "durable cancel alone is not stop evidence");
+        settled.resolve();
+        await pending;
+      });
+      assertEquals(callbacks, ownsExecution ? 1 : 0);
+    });
+  }
+
+  it("runs without acknowledgement when the host callback endpoint cannot be configured safely", async () => {
+    const controller = new AbortController();
+    let ran = false;
+    let exposed: string | null | undefined;
+    let callbacks = 0;
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      executeKnowledgeIngest: async ({ req }) => {
+        ran = true;
+        exposed = req.headers.get("x-veryfront-run-stop-token");
+        controller.abort(new Error("Run cancelled"));
+        return { success: true, result: 42 };
+      },
+    }));
+    const signed = await signedRequest("/api/control-plane/runs/run_stop_setup/execute", {
+      runId: "run_stop_setup",
+      kind: "task",
+      target: "task:knowledge-ingest",
+      projectId: "proj-1",
+    }, { "x-veryfront-run-stop-token": "opaque-stop-capability" });
+    await withEnv({
+      VERYFRONT_API_BASE_URL: "http://localhost:4000",
+      VERYFRONT_API_URL: "http://localhost:4000",
+    }, () =>
+      withMockFetch(async () => {
+        callbacks += 1;
+        return Response.json({ acknowledged: true });
+      }, async () => {
+        const result = await handler.handle(
+          new Request(signed.request, { signal: controller.signal }),
+          createCtx(signed.publicKeyPem),
+        );
+        assertExists(result.response);
+        assertEquals(result.response.status, 200);
+        assertEquals((await result.response.json()).result, 42);
+      }));
+    assertEquals(ran, true);
+    assertEquals(exposed, null, "unavailable callback must still keep its credential private");
+    assertEquals(callbacks, 0);
+  });
 
   it("hands the task its supported cooperative cancellation signal", async () => {
     let taskSignal: AbortSignal | undefined;
