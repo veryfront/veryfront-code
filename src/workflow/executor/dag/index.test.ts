@@ -156,6 +156,49 @@ describe("DAGExecutor", () => {
   });
 
   describe("nested output exception replay", () => {
+    for (const composite of ["parallel", "branch", "map"] as const) {
+      it(`preserves published context keys when replaying a completed ${composite}`, async () => {
+        let childExecutions = 0;
+        let firstContext: WorkflowContext | undefined;
+        const childExecutor = new MockStepExecutor(new Map(), () => {
+          childExecutions++;
+          return { success: true, output: { n: 1 }, executionTime: 0 };
+        });
+        const child = step("read", { tool: "read" });
+        const compositeNode: WorkflowNode = composite === "parallel"
+          ? parallel("internal", [child])
+          : composite === "branch"
+          ? { id: "internal", config: { type: "branch", condition: () => true, then: [child] } }
+          : map("internal", { items: [{ n: 1 }], processor: { id: "processor", steps: [child] } });
+        const nodes = [subWorkflow("child", {
+          input: { n: 1 },
+          workflow: {
+            id: "composite-child",
+            steps: [compositeNode],
+            output: (context) => {
+              if (firstContext === undefined) {
+                firstContext = structuredClone(context);
+                throw new Error("output selection failed");
+              }
+              return context;
+            },
+          },
+        })];
+        const first = await new DAGExecutor({ stepExecutor: childExecutor }).execute(
+          nodes,
+          createTestRun(),
+        );
+        assertEquals(first.completed, false);
+        const retried = await new DAGExecutor({ stepExecutor: childExecutor }).execute(
+          nodes,
+          createTestRun({ nodeStates: first.nodeStates, context: first.context }),
+        );
+        assertEquals(retried.completed, true);
+        assertEquals(retried.context.child, firstContext);
+        assertEquals(childExecutions, 1);
+      });
+    }
+
     for (const generatedByMap of [false, true]) {
       it(`restores completed child outputs after ${generatedByMap ? "map" : "direct"} nested output throws`, async () => {
         let childExecutions = 0;

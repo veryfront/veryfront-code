@@ -1222,6 +1222,34 @@ function createSeededSubWorkflowNodeStates(
   return { seededNodeStates, ownedNodeIds };
 }
 
+function restorePublishedChildOutputs(
+  nodes: readonly WorkflowNode[],
+  nodeStates: Readonly<Record<string, NodeState>>,
+  context: WorkflowContext,
+  ownerPath: string,
+): void {
+  for (const node of nodes) {
+    const state = nodeStates[node.id];
+    if (state?._subWorkflowOwnerPath && state._subWorkflowOwnerPath !== ownerPath) continue;
+    if (node.config.type === "parallel") {
+      restorePublishedChildOutputs(node.config.nodes, nodeStates, context, ownerPath);
+    } else if (node.config.type === "branch") {
+      const output = state?.output;
+      const branch = typeof output === "object" && output !== null && "branch" in output
+        ? output.branch
+        : undefined;
+      const selected = branch === "then"
+        ? node.config.then
+        : branch === "else"
+        ? node.config.else ?? []
+        : [];
+      restorePublishedChildOutputs(selected, nodeStates, context, ownerPath);
+    } else if (state?.status === "completed" && node.config.type !== "wait") {
+      applyContextPatch(context, createSetContextPatch({ [node.id]: state.output }));
+    }
+  }
+}
+
 function ownSubWorkflowResultNodeStates(
   resultNodeStates: Record<string, NodeState>,
   ownerPath: string,
@@ -2502,20 +2530,10 @@ export class DAGExecutor {
       scope,
     );
 
-    // Completed children are skipped on replay. Rebuild their local output
-    // keys from the owned states before output selection or dependent steps run.
-    // Descendant sub-workflows keep their outputs in their own context.
+    // Completed children are skipped on replay. Restore only the keys their
+    // graph publishes, not internal composite or map-processor state ids.
     const childContext: WorkflowContext = { input };
-    for (const [childId, childState] of Object.entries(seededNodeStates)) {
-      if (
-        childState.status === "completed" &&
-        (childState._subWorkflowOwnerPath === undefined ||
-          childState._subWorkflowOwnerPath === ownerPath) &&
-        Object.hasOwn(childState, "output")
-      ) {
-        applyContextPatch(childContext, createSetContextPatch({ [childId]: childState.output }));
-      }
-    }
+    restorePublishedChildOutputs(steps, seededNodeStates, childContext, ownerPath);
 
     const subRunId = `${node.id}_sub_${generateId()}`;
     // The sub-run record is synthetic and never persisted, so its id is a debugging
