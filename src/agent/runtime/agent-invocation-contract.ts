@@ -47,12 +47,20 @@ export const getRuntimeAgentToolCallIdSchema = defineSchema((v) => v.string().mi
 
 const getRuntimeAgentResumeToolCallIdSchema = defineSchema((v) => v.string().min(1).max(256));
 
+/** Signed calls support depth 128 and 100,000 visited values, including array lengths. */
 export const getRuntimeAgentResumeToolCallSchema = defineSchema((v) =>
   v.object({
     id: getRuntimeAgentResumeToolCallIdSchema(),
     name: v.string().min(1).max(128),
     input: v.record(v.string(), v.unknown()),
-  }).strict()
+  }).strict().refine((value) => {
+    try {
+      privateJsonStringify(value);
+      return true;
+    } catch {
+      return false;
+    }
+  }, { message: "resumeToolCall exceeds supported JSON structure (depth 128, 100000 values)" })
 );
 
 /** Schema for durable runtime task identity. */

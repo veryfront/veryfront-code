@@ -34,13 +34,19 @@ const RESULT_ENV = {
 const SONAR_REQUIRED_CONDITION =
   "(github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && (github.event_name != 'pull_request' || github.event.pull_request.user.login != 'dependabot[bot]')";
 const SONAR_REQUIRED_EXPRESSION = `\${{ ${SONAR_REQUIRED_CONDITION} }}`;
-const SONAR_JOB_EXPRESSION =
+const SONAR_COVERAGE_JOB_EXPRESSION =
   `\${{ !cancelled() && (needs.tested-run.outputs.reuse == 'true' || (needs.coverage-shards.result == 'success' && needs.coverage-node-executor.result == 'success' && needs.coverage-integration-client.result == 'success')) && (${SONAR_REQUIRED_CONDITION}) }}`;
+const SONAR_JOB_EXPRESSION =
+  `\${{ !cancelled() && needs.sonar-coverage.result == 'success' && (${SONAR_REQUIRED_CONDITION}) }}`;
 const REUSED_RUN_ID_EXPRESSION =
   "${{ needs.tested-run.outputs.reuse == 'true' && needs.tested-run.outputs.run_id || '' }}";
 const TESTED_RUN_ID_EXPRESSION = "${{ needs.tested-run.outputs.run_id || github.run_id }}";
+const TESTED_RUN_DOWNLOAD = {
+  "run-id": TESTED_RUN_ID_EXPRESSION,
+  "github-token": "${{ github.token }}",
+};
 const SONAR_GATE_JOB_EXPRESSION = `\${{ always() && ${SONAR_REQUIRED_CONDITION} }}`;
-const SONAR_JOB_TIMEOUT_MINUTES = 35;
+const SONAR_JOB_TIMEOUT_MINUTES = 28;
 const SONAR_QUALITY_GATE_TIMEOUT_SECONDS = 1200;
 const SONAR_CHECK_NAME = "SonarQube Cloud quality gate";
 const SONAR_SCAN_CHECK_NAME = "SonarQube Cloud scan";
@@ -90,7 +96,10 @@ function parseProperties(content: string): Map<string, string> {
 function jobNeeds(job: YamlRecord, context: string): string[] {
   if (job.needs === undefined) return [];
   if (typeof job.needs === "string") return [job.needs];
-  assert(Array.isArray(job.needs), `${context} needs must be a string or array`);
+  assert(
+    Array.isArray(job.needs),
+    `${context} needs must be a string or array`,
+  );
   assert(
     job.needs.every((dependency) => typeof dependency === "string"),
     `${context} needs entries must be job names`,
@@ -106,7 +115,10 @@ function longestJobPathMinutes(
 ): number {
   const cached = memo.get(jobName);
   if (cached !== undefined) return cached;
-  assert(!active.has(jobName), `workflow jobs must not contain a needs cycle at ${jobName}`);
+  assert(
+    !active.has(jobName),
+    `workflow jobs must not contain a needs cycle at ${jobName}`,
+  );
 
   const job = asRecord(jobs[jobName], `${jobName} job`);
   const configuredTimeout = Number(job["timeout-minutes"]);
@@ -137,7 +149,10 @@ async function readMergeGate(): Promise<YamlRecord> {
 async function readSonarGate(): Promise<YamlRecord> {
   const workflow = await readWorkflow();
   const jobs = asRecord(workflow.jobs, "cicd workflow jobs");
-  return asRecord(jobs["sonar-quality-gate"], "SonarQube Cloud quality gate job");
+  return asRecord(
+    jobs["sonar-quality-gate"],
+    "SonarQube Cloud quality gate job",
+  );
 }
 
 function gateStep(job: YamlRecord): YamlRecord {
@@ -151,7 +166,10 @@ function gateStep(job: YamlRecord): YamlRecord {
 }
 
 function sonarGateStep(job: YamlRecord): YamlRecord {
-  assert(Array.isArray(job.steps), "SonarQube Cloud quality gate steps must be an array");
+  assert(
+    Array.isArray(job.steps),
+    "SonarQube Cloud quality gate steps must be an array",
+  );
   const step = job.steps.find((value) =>
     asRecord(value, "SonarQube Cloud quality gate step").name ===
       "Require server-side quality gate"
@@ -253,12 +271,19 @@ describe("merge quality gate workflow", () => {
       jobs["sonar-quality-gate"],
       "SonarQube Cloud quality gate job",
     );
-    const sonarGateEnv = asRecord(sonarGateStep(sonarGate).env, "SonarQube Cloud quality gate env");
+    const sonarGateEnv = asRecord(
+      sonarGateStep(sonarGate).env,
+      "SonarQube Cloud quality gate env",
+    );
     const gate = asRecord(jobs["quality-gate-merge"], "merge quality gate job");
     const step = gateStep(gate);
     const gateEnv = asRecord(step.env, "merge quality gate result env");
 
     assertEquals(sonar.if, SONAR_JOB_EXPRESSION);
+    assertEquals(
+      asRecord(jobs["sonar-coverage"], "sonar coverage job").if,
+      SONAR_COVERAGE_JOB_EXPRESSION,
+    );
     assertEquals(sonarGate.if, SONAR_GATE_JOB_EXPRESSION);
     assertEquals(sonarGateEnv.SONAR_RESULT, "${{ needs.sonar.result }}");
     assertEquals(gateEnv.SONAR_REQUIRED, SONAR_REQUIRED_EXPRESSION);
@@ -302,81 +327,179 @@ describe("merge quality gate workflow", () => {
     }
   });
 
-  it("imports normalized shard coverage with pinned actions and no private-measures API", async () => {
+  it("imports one normalized merged coverage report with pinned actions and no private-measures API", async () => {
     const workflow = await readWorkflow();
     const jobs = asRecord(workflow.jobs, "cicd workflow jobs");
-    const sonar = asRecord(jobs.sonar, "sonar job");
-    assert(Array.isArray(sonar.steps), "sonar steps must be an array");
-    const steps = sonar.steps.map((step) => asRecord(step, "sonar step"));
-    const downloadIndex = steps.findIndex((step) =>
+    const producer = asRecord(jobs["sonar-coverage"], "sonar coverage job");
+    assert(
+      Array.isArray(producer.steps),
+      "sonar coverage steps must be an array",
+    );
+    const producerSteps = producer.steps.map((step) => asRecord(step, "sonar coverage step"));
+    const downloadIndex = producerSteps.findIndex((step) =>
       step.name === "Download unit coverage lcov files"
     );
-    const nativeDownloadIndex = steps.findIndex((step) =>
+    const nativeDownloadIndex = producerSteps.findIndex((step) =>
       step.name === "Download native executor coverage lcov"
     );
-    const clientDownloadIndex = steps.findIndex((step) =>
+    const clientDownloadIndex = producerSteps.findIndex((step) =>
       step.name === "Download integration client coverage lcov"
     );
-    assert(clientDownloadIndex > nativeDownloadIndex);
-    assertEquals(asRecord(steps[clientDownloadIndex].with, "integration client coverage options"), {
-      name: "coverage-integration-client",
-      path: "coverage-profiles/coverage-integration-client",
-      "run-id": TESTED_RUN_ID_EXPRESSION,
-      "github-token": "${{ github.token }}",
-    });
-    assertEquals(asRecord(steps[downloadIndex].with, "unit coverage options"), {
-      path: "coverage-profiles",
-      pattern: "coverage-shard-*",
-      "run-id": TESTED_RUN_ID_EXPRESSION,
-      "github-token": "${{ github.token }}",
-    });
-    assertEquals(asRecord(sonar.permissions, "sonar permissions"), {
+    const setupIndex = producerSteps.findIndex((step) =>
+      step.uses === "./.github/actions/setup-deno"
+    );
+    const mergeIndex = producerSteps.findIndex((step) =>
+      step.name === "Merge coverage reports for SonarQube"
+    );
+    const normalizeIndex = producerSteps.findIndex((step) => step.name === "Normalize lcov paths");
+    const uploadIndex = producerSteps.findIndex((step) =>
+      step.name === "Upload merged Sonar coverage"
+    );
+
+    assertEquals(asRecord(producer.permissions, "sonar coverage permissions"), {
       actions: "read",
       contents: "read",
     });
-    const normalizeIndex = steps.findIndex((step) => step.name === "Normalize lcov paths");
-    const scanIndex = steps.findIndex((step) => step.name === "SonarQube Cloud scan");
-
-    assert(downloadIndex >= 0, "sonar must download the coverage artifacts");
-    assert(nativeDownloadIndex > downloadIndex, "sonar must download native executor coverage");
-    assertEquals(sonar.needs, [
+    assertEquals(asRecord(producerSteps[downloadIndex].with, "unit coverage options"), {
+      path: "coverage-profiles",
+      pattern: "coverage-shard-*",
+      ...TESTED_RUN_DOWNLOAD,
+    });
+    assertEquals(producer.needs, [
       "tested-run",
       "coverage-shards",
       "coverage-node-executor",
       "coverage-integration-client",
     ]);
-    assertEquals(asRecord(steps[nativeDownloadIndex].with, "native coverage download options"), {
-      name: "coverage-native-executor",
-      path: "coverage-profiles/coverage-native-executor",
-      "run-id": TESTED_RUN_ID_EXPRESSION,
-      "github-token": "${{ github.token }}",
-    });
     assert(
-      normalizeIndex > clientDownloadIndex,
-      "sonar must normalize downloaded coverage",
+      downloadIndex >= 0,
+      "sonar coverage must download the coverage artifacts",
     );
     assert(
-      scanIndex > normalizeIndex,
-      "sonar must scan after coverage normalization",
+      nativeDownloadIndex > downloadIndex,
+      "sonar coverage must download native coverage",
+    );
+    assert(clientDownloadIndex > nativeDownloadIndex);
+    assertEquals(
+      asRecord(
+        producerSteps[nativeDownloadIndex].with,
+        "native coverage download options",
+      ),
+      {
+        name: "coverage-native-executor",
+        path: "coverage-profiles/coverage-native-executor",
+        ...TESTED_RUN_DOWNLOAD,
+      },
+    );
+    assertEquals(
+      asRecord(
+        producerSteps[clientDownloadIndex].with,
+        "integration client coverage options",
+      ),
+      {
+        name: "coverage-integration-client",
+        path: "coverage-profiles/coverage-integration-client",
+        ...TESTED_RUN_DOWNLOAD,
+      },
+    );
+    assert(
+      setupIndex > clientDownloadIndex,
+      "sonar coverage must install pinned Deno after downloading coverage",
+    );
+    assert(
+      mergeIndex > setupIndex,
+      "sonar coverage must merge every report before normalizing",
+    );
+    const mergeRun = String(producerSteps[mergeIndex].run);
+    assertStringIncludes(
+      mergeRun,
+      "deno task coverage:ci:merge -- --threshold=0",
+    );
+    assertStringIncludes(mergeRun, "coverage-profiles/coverage-shard-*");
+    assertStringIncludes(
+      mergeRun,
+      "coverage-profiles/coverage-native-executor",
     );
     assertStringIncludes(
-      String(steps[normalizeIndex].run),
+      mergeRun,
+      "coverage-profiles/coverage-integration-client",
+    );
+    assert(
+      normalizeIndex > mergeIndex,
+      "sonar coverage must normalize merged coverage",
+    );
+    assertStringIncludes(
+      String(producerSteps[normalizeIndex].run),
       'sed -i "s|^SF:${GITHUB_WORKSPACE}/|SF:|"',
     );
     assertStringIncludes(
-      String(steps[normalizeIndex].run),
-      "coverage-profiles/coverage-native-executor/lcov.info",
+      String(producerSteps[normalizeIndex].run),
+      "coverage/lcov.info",
     );
+    assert(
+      uploadIndex > normalizeIndex,
+      "sonar coverage must upload the normalized report",
+    );
+    assertEquals(
+      asRecord(
+        producerSteps[uploadIndex].with,
+        "merged coverage upload options",
+      ),
+      {
+        name: "coverage-sonar",
+        path: "coverage/lcov.info",
+        "retention-days": 1,
+      },
+    );
+    assertEquals(
+      JSON.stringify(producer).includes("secrets."),
+      false,
+      "the job that runs repository code must not receive secrets",
+    );
+
+    const sonar = asRecord(jobs.sonar, "sonar job");
+    assert(Array.isArray(sonar.steps), "sonar steps must be an array");
+    const steps = sonar.steps.map((step) => asRecord(step, "sonar step"));
+    assertEquals(sonar.needs, ["sonar-coverage"]);
+    const sonarDownloadIndex = steps.findIndex((step) =>
+      step.name === "Download merged Sonar coverage"
+    );
+    const scanIndex = steps.findIndex((step) => step.name === "SonarQube Cloud scan");
+    assertEquals(
+      asRecord(
+        steps[sonarDownloadIndex].with,
+        "merged coverage download options",
+      ),
+      {
+        name: "coverage-sonar",
+        path: "coverage",
+      },
+    );
+    assert(
+      scanIndex > sonarDownloadIndex,
+      "sonar must scan after downloading merged coverage",
+    );
+    for (const step of steps) {
+      assertEquals(
+        step.run,
+        undefined,
+        "the job holding SONAR_TOKEN must run no shell steps",
+      );
+      assert(
+        typeof step.uses === "string" && !step.uses.startsWith("./"),
+        "the job holding SONAR_TOKEN must not run repository actions",
+      );
+    }
 
     const sonarProperties = parseProperties(
       await readRepoFile("sonar-project.properties"),
     );
     assertEquals(
       sonarProperties.get("sonar.javascript.lcov.reportPaths"),
-      "coverage-profiles/coverage-shard-*/lcov.info,coverage-profiles/coverage-native-executor/lcov.info,coverage-profiles/coverage-integration-client/lcov.info",
+      "coverage/lcov.info",
     );
 
-    for (const step of steps) {
+    for (const step of [...producerSteps, ...steps]) {
       if (typeof step.uses !== "string" || step.uses.startsWith("./")) continue;
       assert(
         /^[^@]+@[0-9a-f]{40}$/.test(step.uses),
@@ -384,15 +507,37 @@ describe("merge quality gate workflow", () => {
       );
     }
 
-    const runCommands = steps.map((step) => String(step.run ?? "")).join("\n");
+    const runCommands = [...producerSteps, ...steps].map((step) => String(step.run ?? "")).join(
+      "\n",
+    );
     assertEquals(runCommands.includes("api/measures"), false);
     assertEquals(runCommands.includes("api/qualitygates"), false);
     assertEquals(runCommands.includes("curl"), false);
   });
 
+  it("uploads raw shard reports so block ids are normalized only in the final merge", async () => {
+    const jobs = asRecord((await readWorkflow()).jobs, "cicd workflow jobs");
+    const shards = asRecord(jobs["coverage-shards"], "coverage shards job");
+    assert(Array.isArray(shards.steps), "coverage shard steps must be an array");
+    const steps = shards.steps.map((step) => asRecord(step, "coverage shard step"));
+    const runCommands = steps.map((step) => String(step.run ?? "")).join("\n");
+    assertEquals(runCommands.includes("mergeLcovReports"), false);
+    assertStringIncludes(runCommands, "> coverage-shard-1/history/lcov.info");
+    assertStringIncludes(runCommands, "> coverage-shard-1/cli/lcov.info");
+    const upload = steps.find((step) => step.name === "Upload unit coverage lcov");
+    assert(upload, "coverage shards must upload their reports");
+    assertEquals(
+      asRecord(upload.with, "coverage shard upload options").path,
+      "coverage-shard-${{ matrix.shard }}/**/lcov.info",
+    );
+  });
+
   it("runs native executor coverage independently without extending the unit coverage path", async () => {
     const jobs = asRecord((await readWorkflow()).jobs, "cicd workflow jobs");
-    const native = asRecord(jobs["coverage-node-executor"], "native executor coverage job");
+    const native = asRecord(
+      jobs["coverage-node-executor"],
+      "native executor coverage job",
+    );
     assertEquals(native.needs, ["tested-run"]);
     assert(Number(native["timeout-minutes"]) <= 10);
     assert(Array.isArray(native.steps));
@@ -400,7 +545,10 @@ describe("merge quality gate workflow", () => {
     assert(steps.some((step) => step.uses === "./.github/actions/setup-deno"));
     const node = steps.find((step) => String(step.uses).startsWith("actions/setup-node@"));
     assert(node);
-    assertEquals(asRecord(node.with, "native coverage Node version")["node-version"], "22");
+    assertEquals(
+      asRecord(node.with, "native coverage Node version")["node-version"],
+      "22",
+    );
     const commands = steps.map((step) => String(step.run ?? "")).join("\n");
     assertStringIncludes(
       commands,
@@ -424,19 +572,28 @@ describe("merge quality gate workflow", () => {
       config.tasks["fmt:check"],
       "deno fmt --check --config=scripts/test.deno.json scripts/test/",
     );
-    const ciFormat = config.tasks["lint:ci-typescript"].split(" && ").find((command: string) =>
-      command.startsWith("deno fmt ")
-    );
+    const ciFormat = config.tasks["lint:ci-typescript"].split(" && ").find((
+      command: string,
+    ) => command.startsWith("deno fmt "));
     assert(ciFormat);
-    assertEquals(ciFormat.includes("scripts/test/coverage-node-executor.mjs"), false);
+    assertEquals(
+      ciFormat.includes("scripts/test/coverage-node-executor.mjs"),
+      false,
+    );
   });
 
   it("keeps the longest merge-gate path within the merge queue response budget", async () => {
     const workflow = await readWorkflow();
     const jobs = asRecord(workflow.jobs, "cicd workflow jobs");
-    const mergeGatePathMinutes = longestJobPathMinutes(jobs, "quality-gate-merge");
+    const mergeGatePathMinutes = longestJobPathMinutes(
+      jobs,
+      "quality-gate-merge",
+    );
     const mergeGateTimeoutMinutes = Number(
-      asRecord(jobs["quality-gate-merge"], "merge quality gate job")["timeout-minutes"],
+      asRecord(
+        jobs["quality-gate-merge"],
+        "merge quality gate job",
+      )["timeout-minutes"],
     );
     const sonarPathMinutes = longestJobPathMinutes(jobs, "sonar-quality-gate") +
       mergeGateTimeoutMinutes;

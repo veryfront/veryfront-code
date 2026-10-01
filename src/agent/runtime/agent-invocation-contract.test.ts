@@ -1,5 +1,10 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertInstanceOf, assertThrows } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertInstanceOf,
+  assertStringIncludes,
+  assertThrows,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   buildRuntimeAgentControlPlaneStreamRequestFromInvocation,
@@ -82,6 +87,20 @@ describe("agent/runtime-agent-invocation-contract", () => {
       name: "outlook__list_messages",
       input: { folder: "inbox", limit: 20 },
     });
+  });
+
+  it("rejects unsupported resume JSON in signed runtime envelopes", () => {
+    let deepInput: Record<string, unknown> = { value: null };
+    for (let depth = 0; depth < 127; depth++) deepInput = { value: deepInput };
+    for (const input of [deepInput, { values: Array.from({ length: 99_995 }, () => null) }]) {
+      const parsed = RuntimeAgentRunInvocationSchema.safeParse(createInvocation({
+        resumeToolCall: { id: "call-1:resume-1", name: "outlook__list_messages", input },
+      }));
+      assertEquals(parsed.success, false);
+      if (parsed.success) throw new Error("Expected structural validation failure");
+      assertInstanceOf(parsed.error, Error);
+      assertStringIncludes(parsed.error.message, "resumeToolCall");
+    }
   });
 
   it("preserves separate execution and immutable source projects", () => {

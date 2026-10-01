@@ -641,6 +641,43 @@ describe("collectKnowledgeSources", () => {
 });
 
 describe("ingestResolvedSources", () => {
+  it("stops parsing and uploads when the run is cancelled", async () => {
+    const controller = new AbortController();
+    let parserCalls = 0;
+    let uploadCalls = 0;
+
+    await assertRejects(
+      () =>
+        ingestResolvedSources(
+          [
+            createUploadSource("uploads/contracts/q1.pdf"),
+            createUploadSource("uploads/contracts/q2.pdf"),
+          ],
+          createKnowledgeCommandArgs(),
+          {
+            client: createMockClient(),
+            projectSlug: "my-project",
+            outputDir: "/workspace/knowledge",
+            signal: controller.signal,
+            runParser: async () => {
+              parserCalls++;
+              controller.abort(new Error("run cancelled"));
+              return createParserSuccess();
+            },
+            uploadKnowledgeFile: async (remotePath) => {
+              uploadCalls++;
+              return { path: remotePath };
+            },
+          },
+        ),
+      Error,
+      "run cancelled",
+    );
+
+    assertEquals(parserCalls, 1);
+    assertEquals(uploadCalls, 0);
+  });
+
   it("runs the parser and uploads knowledge markdown", async () => {
     const results = await ingestResolvedSources(
       [createUploadSource("uploads/contracts/q1.pdf")],

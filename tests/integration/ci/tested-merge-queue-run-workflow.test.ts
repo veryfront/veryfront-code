@@ -44,6 +44,7 @@ const COVERAGE_GATE = "coverage";
 // Jobs that still run on a reused main run, or never run on main.
 const KEPT = [
   "tested-run",
+  "sonar-coverage",
   "sonar",
   "sonar-quality-gate",
   "quality-gate-merge",

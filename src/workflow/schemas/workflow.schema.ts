@@ -110,6 +110,11 @@ export const getNodeStateSchema = defineSchema((v) =>
     _subWorkflowInputParsed: v.boolean().optional(),
     /** Internal child context retained while a sub-workflow is incomplete. */
     _subWorkflowContext: v.record(v.string(), v.unknown()).optional(),
+    /** Completed wait instances already reflected in the child context snapshot. */
+    _subWorkflowContextWaits: v.array(v.object({
+      nodeId: v.string(),
+      waitInstanceId: v.string().nullable(),
+    })).optional(),
     /** Child states this composite had actively parked when it last suspended. */
     _activeCompositeChildIds: v.array(v.string()).optional(),
     /** Child states a runtime-defined composite produced before it completed. */

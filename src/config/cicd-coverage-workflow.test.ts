@@ -127,7 +127,7 @@ describe("cicd coverage workflow", () => {
     assertStringIncludes(workflow, "name: coverage-shard-${{ matrix.shard }}");
     assertStringIncludes(
       workflow,
-      "path: coverage-shard-${{ matrix.shard }}/lcov.info",
+      "path: coverage-shard-${{ matrix.shard }}/**/lcov.info",
     );
   });
 
