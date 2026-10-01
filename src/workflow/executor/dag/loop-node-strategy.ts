@@ -67,6 +67,7 @@ interface PersistedLoopState {
   iterationNodeStates?: Record<string, PersistedNodeState>;
   completedNodeIds?: string[];
   context?: WorkflowContext;
+  evaluationContext?: WorkflowContext;
 }
 
 function isOwnedLoopState(value: unknown, nodeId: string): value is PersistedLoopState {
@@ -245,7 +246,11 @@ export async function executeLoopNodeStrategy(
       isLastAllowedIteration: iteration === config.maxIterations - 1,
     };
 
-    const shouldContinue = await config.while(context, loopContext);
+    const resumingOutputRetry = resumeIteration === iteration && outputRetryLoopState !== undefined;
+    const evaluationContext = resumingOutputRetry && outputRetryLoopState.evaluationContext
+      ? cloneExecutionState(outputRetryLoopState.evaluationContext, "Loop admission context")
+      : cloneExecutionState(context, "Loop admission context");
+    const shouldContinue = resumingOutputRetry || await config.while(context, loopContext);
     runtime.abortSignal?.throwIfAborted();
     if (!shouldContinue) {
       exitReason = "condition";
@@ -258,7 +263,10 @@ export async function executeLoopNodeStrategy(
       : undefined;
     let steps: WorkflowNode[];
     if (typeof config.steps === "function") {
-      const generatedSteps = config.steps(context, loopContext);
+      const generatedSteps = config.steps(
+        resumingOutputRetry ? evaluationContext : context,
+        loopContext,
+      );
       const namespacedSteps = namespaceWorkflowNodes(`${node.id}/`, generatedSteps);
       const namespacedIds = collectWorkflowNodeIds(namespacedSteps);
       const resumeLegacyDynamicChildIds = resumingIterationNodeStates !== undefined &&
@@ -384,6 +392,7 @@ export async function executeLoopNodeStrategy(
           previousResults,
           iterationNodeStates: toPersistedNodeStates(result.nodeStates),
           context: cloneExecutionState(result.context, "Loop output retry context"),
+          evaluationContext,
         };
         nodeStates[node.id]!._loopOutputRetry = outputRetryState;
       }

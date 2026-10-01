@@ -837,6 +837,76 @@ describe("DAGExecutor", () => {
     });
   }
 
+  for (const admission of ["condition", "dynamic steps"]) {
+    it(`retains admitted loop iteration across settled sibling ${admission} on output retry`, async () => {
+      let selections = 0;
+      let childBuilds = 0;
+      const executions: string[] = [];
+      const buildChild = (context: WorkflowContext) =>
+        subWorkflow(
+          context.sibling === "arrived" ? "new-child" : "old-child",
+          {
+            workflow: {
+              id: "admitted-loop-child",
+              steps: () => {
+                childBuilds++;
+                return [step("read", { tool: "read" })];
+              },
+              output: (childContext) => {
+                if (++selections === 1) throw new Error("selector failed");
+                return childContext;
+              },
+            },
+          },
+        );
+      const nodes = [
+        loop("repeat", {
+          maxIterations: 1,
+          while: (context) => admission !== "condition" || context.sibling !== "arrived",
+          steps: admission === "dynamic steps"
+            ? (context) => [buildChild(context)]
+            : [buildChild({ input: undefined })],
+        }),
+        step("sibling", { tool: "read" }),
+      ].map((node) => ({ ...node, dependsOn: [] }));
+      const steps = new MockStepExecutor(new Map(), (node) => {
+        executions.push(node.id);
+        return {
+          success: true,
+          output: node.id === "sibling" ? "arrived" : "old",
+          executionTime: 0,
+        };
+      });
+      const first = await new DAGExecutor({ stepExecutor: steps, maxConcurrency: 2 }).execute(
+        nodes,
+        createTestRun(),
+      );
+      assertEquals(first.context.sibling, "arrived");
+      assertExists(first.nodeStates.repeat?._loopOutputRetry);
+      const persistedStates = Object.fromEntries(
+        Object.entries(first.nodeStates).map(([id, state]) => [
+          id,
+          NodeStateSchema.parse({
+            ...state,
+            ...(state._loopOutputRetry
+              ? { _loopOutputRetry: JSON.parse(JSON.stringify(state._loopOutputRetry)) }
+              : {}),
+          }),
+        ]),
+      );
+      const retried = await new DAGExecutor({ stepExecutor: steps, maxConcurrency: 2 }).execute(
+        nodes,
+        createTestRun({ context: first.context, nodeStates: persistedStates }),
+      );
+      assertEquals(retried.completed, true);
+      assertEquals(selections, 2);
+      assertEquals(childBuilds, 1);
+      assertEquals(executions.length, 2);
+      assertEquals(executions.some((id) => id.includes("new-child")), false);
+      assertEquals(retried.nodeStates.repeat?._loopOutputRetry, undefined);
+    });
+  }
+
   describe("simple sequential execution", () => {
     it("should execute a single step node", async () => {
       const nodes: WorkflowNode[] = [{ id: "step1", config: { type: "step" } as any }];
