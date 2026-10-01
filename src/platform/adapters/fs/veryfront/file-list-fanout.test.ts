@@ -1044,4 +1044,31 @@ describe("file list fan-out (issue inbox#32)", () => {
       },
     );
   }
+
+  it("applies a branch poke delivered inside a credential-scoped request context", async () => {
+    const { adapter, counts } = createDraftAdapter([
+      { path: "pages/index.tsx", content: "export default 'before';" },
+    ]);
+    const internals = adapter as unknown as {
+      replaceSourceSnapshot: (
+        cacheKey: string,
+        files: Array<{ path: string; content?: string }>,
+      ) => Promise<number | undefined>;
+    };
+    const context = adapter.getContentContext()!;
+
+    // Hosted adapters connect their WebSocket inside the initializing request,
+    // so poke handlers run with that request's credential context.
+    await runWithRequestContext(
+      { projectSlug: "test-project", token: "credential-a", branch: "main" },
+      async () => {
+        const applied = await internals.replaceSourceSnapshot(buildFileListCacheKey(context), [
+          { path: "pages/index.tsx", content: "export default 'after';" },
+        ]);
+        assertEquals(typeof applied, "number", "the poked snapshot must be applied");
+        assertEquals(await adapter.readTextFile("pages/index.tsx"), "export default 'after';");
+      },
+    );
+    assertEquals(counts.listingRequests, 0, "the poked listing must answer the read");
+  });
 });

@@ -1351,10 +1351,13 @@ export class VeryfrontFSAdapter implements FSAdapter {
   }
 
   private replaceSourceSnapshot(
-    cacheKey: string,
+    sourceCacheKey: string,
     files: SourceSnapshotFile[],
     expectedSnapshotVersion = this.sourceSnapshotVersion,
   ): Promise<number | undefined> {
+    // Pokes for a hosted adapter run in the credential context it connected
+    // from, so publish the listing under the key that context reads.
+    const cacheKey = scopeFileListCacheKeyToRequestAuthority(sourceCacheKey);
     const expectedContext = this.contentContext;
     return this.#runSourceSnapshotMutation(async () => {
       if (
@@ -1469,7 +1472,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
           this.cache.deleteByPrefixAsync(buildFileCacheKeyPrefix(effectiveRefreshContext)),
           this.cache.deleteByPrefixAsync(buildStatCacheKeyPrefix(effectiveRefreshContext)),
           this.cache.deleteByPrefixAsync(buildDirCacheKeyPrefix(effectiveRefreshContext)),
-          this.cache.deleteByPrefixAsync(cacheKey),
+          this.cache.deleteByPrefixAsync(buildFileListCacheKey(effectiveRefreshContext)),
         ]]);
         if (isSnapshotSuperseded()) {
           return { applied: false, sourceChanged: false };

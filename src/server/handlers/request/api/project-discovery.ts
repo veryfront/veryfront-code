@@ -195,12 +195,20 @@ export async function ensureProjectDiscovery(ctx: HandlerContext): Promise<Disco
     // adapter reports a new one for unchanged sources. Identical complete
     // content discovers identical primitives, so reuse the existing result.
     const existingFingerprint = await existing.sourceFingerprint?.catch(() => undefined);
+    const currentFingerprint = existingFingerprint === undefined
+      ? undefined
+      : await ctx.adapter.fs.getSourceSnapshotFingerprint?.();
+    const current = discoveredProjects.get<DiscoveryRecord>(key);
     if (
+      current === existing &&
       existingFingerprint !== undefined &&
-      discoveredProjects.get<DiscoveryRecord>(key) === existing &&
-      await ctx.adapter.fs.getSourceSnapshotFingerprint?.() === existingFingerprint
+      currentFingerprint === existingFingerprint
     ) {
       return existing.promise;
+    }
+    // A concurrent caller may already be discovering this snapshot version.
+    if (current !== undefined && current.sourceSnapshotVersion === sourceSnapshotVersion) {
+      return current.promise;
     }
   }
 
