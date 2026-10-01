@@ -940,6 +940,109 @@ it("ApiCacheBackend propagates attempted delete failures", async () => {
   }
 });
 
+it("ApiCacheBackend del-pattern timeouts do not open the read breaker", async () => {
+  const { ApiCacheBackend } = await importBackend();
+  const reads: string[] = [];
+  installMockFetch(
+    ((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input instanceof Request ? input.url : input);
+      if (url.endsWith("/del-pattern")) {
+        // A slow invalidation backend: never answers before the client timeout.
+        return new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener("abort", () => {
+            reject(new DOMException("The operation was aborted.", "AbortError"));
+          });
+        });
+      }
+      reads.push(url);
+      return Promise.resolve(Response.json({ value: "cached" }));
+    }) as typeof fetch,
+  );
+
+  try {
+    const cache = new ApiCacheBackend({
+      apiBaseUrl: "https://93.184.216.34",
+      apiToken: "test-explicit-token",
+      timeoutMs: 5,
+      circuitBreakerName: "api-cache-invalidation-isolation-test",
+    });
+
+    await runWithRequestContext(
+      { projectSlug: "project-slug", projectId: "project-123", token: "", productionMode: false },
+      async () => {
+        for (let attempt = 0; attempt < 12; attempt++) {
+          await assertRejects(() => cache.delByPattern(`file:branch:*:note-${attempt}.md`));
+        }
+        assertEquals(await cache.get("file:branch:main:note.md"), "cached");
+      },
+    );
+    assertEquals(reads.length, 1);
+  } finally {
+    restoreMockFetch();
+  }
+});
+
+it("ApiCacheBackend coalesces concurrent identical del-pattern calls per project", async () => {
+  const { ApiCacheBackend } = await importBackend();
+  const requests: string[] = [];
+  let releaseFirst!: () => void;
+  const firstGate = new Promise<void>((resolve) => releaseFirst = resolve);
+  const gated = "file:branch:*:knowledge/churn/note.md";
+  installMockFetch(async (_input: RequestInfo | URL, init?: RequestInit) => {
+    const body = JSON.parse(String(init?.body)) as { pattern: string };
+    requests.push(body.pattern);
+    if (body.pattern === gated && requests.filter((p) => p === gated).length === 1) {
+      await firstGate;
+    }
+    return Response.json({ deleted: 1 });
+  });
+
+  try {
+    const cache = new ApiCacheBackend({
+      apiBaseUrl: "https://93.184.216.34",
+      apiToken: "test-explicit-token",
+      circuitBreakerName: "api-cache-invalidation-coalescing-test",
+    });
+    const streams = 8;
+    const invalidateFromStream = (stream: number, pattern: string) =>
+      runWithRequestContext(
+        {
+          projectSlug: "project-slug",
+          projectId: "project-123",
+          token: `stream-token-${stream}`,
+          productionMode: false,
+        },
+        () => cache.delByPattern(pattern),
+      );
+
+    // One write seen by every active run stream on the project.
+    const pending = Array.from(
+      { length: streams },
+      (_, stream) => invalidateFromStream(stream, "file:branch:*:knowledge/churn/note.md"),
+    );
+    const otherPattern = invalidateFromStream(0, "dir:branch:*:knowledge/churn");
+    for (let tick = 0; tick < 50 && requests.length < 2; tick++) {
+      await new Promise((resolve) => setTimeout(resolve, 1));
+    }
+    assertEquals([...requests].sort(), [
+      "dir:branch:*:knowledge/churn",
+      "file:branch:*:knowledge/churn/note.md",
+    ]);
+
+    releaseFirst();
+    assertEquals(await Promise.all(pending), Array(streams).fill(1));
+    assertEquals(await otherPattern, 1);
+    // Callers that arrived while a delete was in flight share one trailing
+    // delete, so none of them relies on a scan that started before its call.
+    assertEquals(requests.filter((p) => p === "file:branch:*:knowledge/churn/note.md").length, 2);
+
+    assertEquals(await invalidateFromStream(1, "file:branch:*:knowledge/churn/note.md"), 1);
+    assertEquals(requests.filter((p) => p === "file:branch:*:knowledge/churn/note.md").length, 3);
+  } finally {
+    restoreMockFetch();
+  }
+});
+
 it("ApiCacheBackend prefers the request runtime token over the host fallback", async () => {
   const { ApiCacheBackend } = await importBackend();
   const globals = globalThis as Record<string, unknown>;

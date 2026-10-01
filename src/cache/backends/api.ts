@@ -2,7 +2,11 @@ import { logger as baseLogger, sanitizeUrlForSpan } from "#veryfront/utils";
 import { SpanNames } from "#veryfront/observability";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { isValidCachePattern, sanitizeCacheKey } from "../keys/index.ts";
-import { CircuitBreakerOpen, getCircuitBreaker } from "#veryfront/utils/circuit-breaker.ts";
+import {
+  type CircuitBreaker,
+  CircuitBreakerOpen,
+  getCircuitBreaker,
+} from "#veryfront/utils/circuit-breaker.ts";
 import type { CacheBackend, CacheReadOptions } from "../types.ts";
 import { buildBatchResults } from "../batch-results.ts";
 import {
@@ -86,7 +90,14 @@ type CacheRequestOptions = {
    * what it holds to the credential and project that actually fetched them.
    */
   onAuthority?: (authority: ResolvedCacheAuthority) => void;
+  /** Breaker the request runs through; defaults to the read breaker. */
+  circuitBreaker?: CircuitBreaker;
 };
+
+/** The pattern delete running now, and the one queued behind it. */
+type PatternDeleteRound = { current: Promise<number>; next?: Promise<number> };
+
+const ignoreSettlement = (): void => {};
 
 export class ApiCacheBackend implements CacheBackend {
   readonly type = "api" as const;
@@ -98,7 +109,14 @@ export class ApiCacheBackend implements CacheBackend {
   private keyPrefix: string;
   private timeoutMs: number;
   private readonly maxResponseBytes: number;
-  private circuitBreaker;
+  private circuitBreaker: CircuitBreaker;
+  /**
+   * Pattern deletes are best-effort invalidations. They run through their own
+   * breaker so a slow or failing invalidation backend cannot open the breaker
+   * that every cache read (agent streams, execute, agents/list) depends on.
+   */
+  private invalidationCircuitBreaker: CircuitBreaker;
+  private readonly patternDeleteRounds = new Map<string, PatternDeleteRound>();
 
   constructor(
     options: {
@@ -130,11 +148,16 @@ export class ApiCacheBackend implements CacheBackend {
     this.maxResponseBytes = maxResponseBytes;
 
     const breakerName = options.circuitBreakerName ?? "api-cache";
-    this.circuitBreaker = getCircuitBreaker(breakerName, {
+    const breakerOptions = {
       failureThreshold: CIRCUIT_BREAKER_FAILURE_THRESHOLD,
       resetTimeoutMs: CIRCUIT_BREAKER_RESET_TIMEOUT_MS,
       successThreshold: CIRCUIT_BREAKER_SUCCESS_THRESHOLD,
-    });
+    };
+    this.circuitBreaker = getCircuitBreaker(breakerName, breakerOptions);
+    this.invalidationCircuitBreaker = getCircuitBreaker(
+      `${breakerName}:invalidation`,
+      breakerOptions,
+    );
   }
 
   /**
@@ -213,7 +236,8 @@ export class ApiCacheBackend implements CacheBackend {
     }
 
     try {
-      return await this.circuitBreaker.execute(async () => {
+      const circuitBreaker = options.circuitBreaker ?? this.circuitBreaker;
+      return await circuitBreaker.execute(async () => {
         const encodedProjectRef = encodeURIComponent(projectRef);
         const apiBaseUrl = tokenSource === "verified-control-plane" ||
             !this.hasExplicitApiBaseUrl && tokenSource === "host-private"
@@ -454,9 +478,47 @@ export class ApiCacheBackend implements CacheBackend {
       return 0;
     }
 
-    const result = await this.request<{ deleted: number }>("POST", "/del-pattern", {
-      pattern: prefixed,
-    }, { failOnError: true });
-    return result?.deleted ?? 0;
+    const deletePattern = async () => {
+      const result = await this.request<{ deleted: number }>("POST", "/del-pattern", {
+        pattern: prefixed,
+      }, { failOnError: true, circuitBreaker: this.invalidationCircuitBreaker });
+      return result?.deleted ?? 0;
+    };
+
+    const { projectRef, tokenSource } = this.cacheAuthority();
+    if (!projectRef) return await deletePattern();
+    return await this.coalescePatternDelete(
+      JSON.stringify([tokenSource, projectRef, prefixed]),
+      deletePattern,
+    );
+  }
+
+  /**
+   * Every active run stream on a project invalidates the same patterns for one
+   * file write. Callers that arrive while a delete for the same project and
+   * pattern is in flight share one delete queued behind it, so N streams cost
+   * at most two requests. The queued delete starts after every joined call, so
+   * no caller relies on a scan that began before it asked.
+   */
+  private coalescePatternDelete(key: string, run: () => Promise<number>): Promise<number> {
+    const round = this.patternDeleteRounds.get(key);
+    if (round) {
+      round.next ??= round.current.then(ignoreSettlement, ignoreSettlement).then(run);
+      return round.next;
+    }
+
+    const started: PatternDeleteRound = { current: run() };
+    this.patternDeleteRounds.set(key, started);
+    const advance = () => {
+      if (started.next === undefined) {
+        this.patternDeleteRounds.delete(key);
+        return;
+      }
+      started.current = started.next;
+      started.next = undefined;
+      started.current.then(advance, advance);
+    };
+    started.current.then(advance, advance);
+    return started.current;
   }
 }
