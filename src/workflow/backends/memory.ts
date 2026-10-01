@@ -18,6 +18,7 @@ import type { WorkflowChildRunWaitBoundary } from "../types.ts";
 import { childRunWaitBoundary, sameChildRunWaitBoundary } from "../child-run-wait-boundary.ts";
 import {
   prepareNodeStatesUserData,
+  resolveDeferredWorkflowJsonValue,
   serializeWorkflowContext,
   serializeWorkflowJson,
   type WorkflowJsonSerializationOptions,
@@ -477,6 +478,13 @@ export class MemoryBackend implements WorkflowBackend {
     };
   }
 
+  prepareNodeStatesForPersistence(
+    runId: string | undefined,
+    nodeStates: WorkflowRun["nodeStates"],
+  ): WorkflowRun["nodeStates"] {
+    return prepareNodeStatesUserData(nodeStates, runId, this.config);
+  }
+
   // =========================================================================
   // Run Management
   // =========================================================================
@@ -491,7 +499,7 @@ export class MemoryBackend implements WorkflowBackend {
       context = persistedWorkflowContext(sourceContext, run.id, this.config);
       runForClone = {
         ...runWithoutContext,
-        nodeStates: prepareNodeStatesUserData(run.nodeStates, run.id, this.config),
+        nodeStates: this.prepareNodeStatesForPersistence(run.id, run.nodeStates),
         context,
         sourceIntegrationPolicy,
       };
@@ -1019,13 +1027,13 @@ export class MemoryBackend implements WorkflowBackend {
   saveCheckpoint(runId: string, checkpoint: Checkpoint): Promise<void> {
     logger.debug("Saving checkpoint", { checkpointId: checkpoint.id, runId });
     const checkpoints = this.checkpoints.get(runId) ?? [];
-    let context: WorkflowContext;
+    let persistedCheckpoint: Checkpoint;
     try {
-      context = persistedCheckpointContext(checkpoint.context, runId, this.config);
+      persistedCheckpoint = this.prepareCheckpointForPersistence(runId, checkpoint);
     } catch (error) {
       return Promise.reject(error);
     }
-    appendRetainedCheckpoint(checkpoints, { ...checkpoint, context });
+    appendRetainedCheckpoint(checkpoints, persistedCheckpoint);
     this.checkpoints.set(runId, checkpoints);
     this.advanceRunRetentionRevision(runId);
     return Promise.resolve();
@@ -1053,8 +1061,9 @@ export class MemoryBackend implements WorkflowBackend {
 
     let persistedCheckpoint: Checkpoint;
     try {
-      const context = persistedCheckpointContext(checkpoint.context, storageRunId, this.config);
-      persistedCheckpoint = cloneRetainedCheckpoint({ ...checkpoint, context });
+      persistedCheckpoint = cloneRetainedCheckpoint(
+        this.prepareCheckpointForPersistence(storageRunId, checkpoint),
+      );
     } catch (error) {
       return Promise.reject(error);
     }
@@ -1072,6 +1081,21 @@ export class MemoryBackend implements WorkflowBackend {
     this.checkpoints.set(storageRunId, checkpoints);
     this.advanceRunRetentionRevision(storageRunId);
     return Promise.resolve(true);
+  }
+
+  private prepareCheckpointForPersistence(runId: string, checkpoint: Checkpoint): Checkpoint {
+    const resumeEnvelope = resolveDeferredWorkflowJsonValue(checkpoint._resumeEnvelope);
+    return {
+      ...checkpoint,
+      context: persistedCheckpointContext(checkpoint.context, runId, this.config),
+      nodeStates: this.prepareNodeStatesForPersistence(runId, checkpoint.nodeStates),
+      ...(resumeEnvelope === undefined ? {} : {
+        _resumeEnvelope: {
+          ...resumeEnvelope,
+          nodeStates: this.prepareNodeStatesForPersistence(runId, resumeEnvelope.nodeStates),
+        },
+      }),
+    };
   }
 
   getLatestCheckpoint(runId: string): Promise<Checkpoint | null> {

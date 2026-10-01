@@ -15,6 +15,7 @@ import {
   MAX_WORKFLOW_RUN_EVENT_MAILBOXES,
 } from "../limits.ts";
 import { normalizeSourceIntegrationPolicy } from "#veryfront/integrations/source-policy.ts";
+import { cloneOwnedCheckpointForPersistence } from "./checkpoint-retention.ts";
 
 const UNRESTRICTED_SOURCE_INTEGRATION_POLICY = normalizeSourceIntegrationPolicy(undefined);
 const jsonRawSupport = JSON as typeof JSON & {
@@ -1002,6 +1003,161 @@ describe("MemoryBackend", () => {
         "strictContext",
       );
       assertEquals(await strictBackend.getCheckpoints("run-strict-child"), []);
+    });
+
+    it("applies node-state user-data policy to checkpoints and resume envelopes (#2242)", async () => {
+      const timestamp = new Date(0);
+      await backend.saveCheckpoint("run-checkpoint-node-state", {
+        ...createCheckpoint("cp-node-state", "step", timestamp),
+        nodeStates: {
+          step: { nodeId: "step", status: "completed", attempt: 1, output: { when: timestamp } },
+        },
+        _resumeEnvelope: {
+          schemaVersion: 2,
+          ownerNodeId: "step",
+          context: { input: {} },
+          nodeStates: {
+            step: { nodeId: "step", status: "completed", attempt: 1, input: { when: timestamp } },
+          },
+          workflowProjection: { context: {} },
+          graphAdmission: {
+            stepsEvaluationContext: { input: {} },
+            stepsEvaluationProjection: { context: {} },
+            graphIdentity: [],
+            workflowVersion: null,
+          },
+        },
+      });
+      const checkpoint = await backend.getLatestCheckpoint("run-checkpoint-node-state");
+      assertEquals(checkpoint?.nodeStates.step?.output, { when: timestamp.toISOString() });
+      assertEquals(checkpoint?._resumeEnvelope?.nodeStates.step?.input, {
+        when: timestamp.toISOString(),
+      });
+
+      const strictBackend = new MemoryBackend({ strictContext: true });
+      await assertRejectsAsynchronously(
+        () =>
+          strictBackend.saveCheckpoint("run-strict-checkpoint-node-state", {
+            ...createCheckpoint("cp-strict-node-state", "step", timestamp),
+            nodeStates: {
+              step: {
+                nodeId: "step",
+                status: "completed",
+                attempt: 1,
+                output: { when: timestamp },
+              },
+            },
+          }),
+        "strictContext enabled: nodeStates.output",
+      );
+      await assertRejectsAsynchronously(
+        () =>
+          strictBackend.saveCheckpoint("run-strict-checkpoint-envelope", {
+            ...createCheckpoint("cp-strict-envelope", "step", timestamp),
+            _resumeEnvelope: {
+              schemaVersion: 2,
+              ownerNodeId: "step",
+              context: { input: {} },
+              nodeStates: {
+                step: {
+                  nodeId: "step",
+                  status: "completed",
+                  attempt: 1,
+                  input: { when: timestamp },
+                },
+              },
+              workflowProjection: { context: {} },
+              graphAdmission: {
+                stepsEvaluationContext: { input: {} },
+                stepsEvaluationProjection: { context: {} },
+                graphIdentity: [],
+                workflowVersion: null,
+              },
+            },
+          }),
+        "strictContext enabled: nodeStates.input",
+      );
+      assertEquals(await strictBackend.getCheckpoints("run-strict-checkpoint-node-state"), []);
+      assertEquals(await strictBackend.getCheckpoints("run-strict-checkpoint-envelope"), []);
+
+      await strictBackend.createRun(createTestRun("run-strict-owned-checkpoint", {
+        status: "running",
+        workerId: "worker-1",
+      }));
+      const calls: string[] = [];
+      const hijack = () => {
+        calls.push("toJSON");
+        return {};
+      };
+      const lossyStates = {
+        toJSON: hijack,
+        step: {
+          nodeId: "step",
+          status: "completed" as const,
+          attempt: 1,
+          output: { when: timestamp },
+        },
+      } as unknown as Checkpoint["nodeStates"];
+      const ownedCheckpoint = cloneOwnedCheckpointForPersistence({
+        ...createCheckpoint("cp-strict-owned", "step", timestamp),
+        nodeStates: lossyStates,
+        _resumeEnvelope: {
+          schemaVersion: 2,
+          ownerNodeId: "step",
+          context: { input: {} },
+          nodeStates: lossyStates,
+          workflowProjection: { context: {} },
+          graphAdmission: {
+            stepsEvaluationContext: { input: {} },
+            stepsEvaluationProjection: { context: {} },
+            graphIdentity: [],
+            workflowVersion: null,
+          },
+        },
+      });
+      await assertRejectsAsynchronously(
+        () =>
+          strictBackend.saveCheckpointIfStatusAndWorker(
+            "run-strict-owned-checkpoint",
+            "run-strict-owned-checkpoint",
+            ["running"],
+            "worker-1",
+            ownedCheckpoint,
+          ),
+        "strictContext enabled: nodeStates.output",
+      );
+      assertEquals(calls, []);
+      assertEquals(await strictBackend.getCheckpoints("run-strict-owned-checkpoint"), []);
+
+      const ownedEnvelopeCheckpoint = cloneOwnedCheckpointForPersistence({
+        ...createCheckpoint("cp-strict-owned-envelope", "step", timestamp),
+        _resumeEnvelope: {
+          schemaVersion: 2,
+          ownerNodeId: "step",
+          context: { input: {} },
+          nodeStates: lossyStates,
+          workflowProjection: { context: {} },
+          graphAdmission: {
+            stepsEvaluationContext: { input: {} },
+            stepsEvaluationProjection: { context: {} },
+            graphIdentity: [],
+            workflowVersion: null,
+          },
+        },
+      });
+      await assertRejectsAsynchronously(
+        () =>
+          strictBackend.saveCheckpointIfStatusAndWorker(
+            "run-strict-owned-checkpoint",
+            "run-strict-owned-checkpoint",
+            ["running"],
+            "worker-1",
+            ownedEnvelopeCheckpoint,
+          ),
+        "strictContext enabled: nodeStates.output",
+      );
+      assertEquals(calls, []);
+      assertEquals(await strictBackend.getCheckpoints("run-strict-owned-checkpoint"), []);
     });
 
     it("persists node-state input and output through the context JSON policy (#2242)", async () => {

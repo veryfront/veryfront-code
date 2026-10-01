@@ -212,6 +212,8 @@ export class WorkflowExecutor {
     this.dagExecutor = new DAGExecutor({
       stepExecutor: this.stepExecutor,
       checkpointManager: this.checkpointManager,
+      prepareNodeStatesForPersistence: (runId, nodeStates) =>
+        this.config.backend.prepareNodeStatesForPersistence?.(runId, nodeStates) ?? nodeStates,
       maxConcurrency: this.config.maxConcurrency,
       debug: this.config.debug,
       // waiting state is handled by executeAsync() after DAG execution returns with waiting: true

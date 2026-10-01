@@ -111,6 +111,12 @@ export function isDeferredWorkflowJsonValue(value: unknown): value is object {
     reflectApply(weakMapGet, deferredWorkflowJsonSources, [value]) !== undefined;
 }
 
+/** @internal Read a deferred owned-checkpoint value after its persistence fence passes. */
+export function resolveDeferredWorkflowJsonValue<T>(value: T): T {
+  if (typeof value !== "object" || value === null) return value;
+  return (reflectApply(weakMapGet, deferredWorkflowJsonSources, [value]) as T | undefined) ?? value;
+}
+
 /** @internal Stabilizes inherited `toJSON` lookup on an owned persistence clone. */
 export function stabilizeWorkflowJsonPrototypeSnapshot<T extends object>(value: T): T {
   objectDefineProperty(value, "toJSON", {
@@ -1584,6 +1590,7 @@ export function prepareNodeStatesUserData<
   runId: string | undefined,
   options: WorkflowJsonSerializationOptions,
 ): Record<string, T> {
+  nodeStates = resolveDeferredWorkflowJsonValue(nodeStates);
   const prepared: Record<string, T> = {};
   for (const nodeId of objectKeys(nodeStates)) {
     // Defined rather than assigned, so a node id such as `__proto__` stays an own key.

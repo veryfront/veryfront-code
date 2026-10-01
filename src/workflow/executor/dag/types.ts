@@ -70,6 +70,11 @@ export interface ExecutionScope {
 export interface DAGExecutorConfig {
   stepExecutor: StepExecutor;
   checkpointManager?: CheckpointManager;
+  /** Normalize parsed nested-workflow inputs exactly as the durable backend will. */
+  prepareNodeStatesForPersistence?: (
+    runId: string,
+    nodeStates: Record<string, NodeState>,
+  ) => Record<string, NodeState>;
   maxConcurrency?: number;
   onNodeStart?: (nodeId: string) => void;
   onNodeComplete?: (nodeId: string, state: NodeState) => void;
