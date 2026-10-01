@@ -1100,6 +1100,171 @@ describe("VeryfrontFSAdapter", () => {
       }
     });
 
+    it("retains only agent markdown definitions under a configured agent root", async () => {
+      const adapter = createAdapter();
+      const internals = adapter as unknown as {
+        sourceSnapshotFiles: Array<{ path: string; content?: string }>;
+        sourceSnapshotVersion: number;
+      };
+      internals.sourceSnapshotFiles = [
+        { path: "knowledge/support.md", content: "first agent" },
+        { path: "knowledge/reviewer/AGENT.md", content: "first directory agent" },
+        { path: "knowledge/reviewer/SKILL.md", content: "first colocated skill" },
+        { path: "knowledge/reviewer/skills/research/SKILL.md", content: "first owned skill" },
+        { path: "knowledge/churn/note.md", content: "first note" },
+      ];
+      const options = {
+        purpose: "agent-config",
+        agentMarkdownPaths: ["./knowledge/"],
+      } as unknown as Parameters<typeof adapter.getSourceSnapshotFingerprint>[0];
+      const baseline = await adapter.getSourceSnapshotFingerprint(options);
+
+      internals.sourceSnapshotVersion += 1;
+      internals.sourceSnapshotFiles = internals.sourceSnapshotFiles.map((file) =>
+        file.path === "knowledge/churn/note.md" ? { ...file, content: "changed note" } : file
+      );
+      assertEquals(await adapter.getSourceSnapshotFingerprint(options), baseline);
+
+      internals.sourceSnapshotVersion += 1;
+      internals.sourceSnapshotFiles = internals.sourceSnapshotFiles.map((file) =>
+        file.path === "knowledge/support.md" ? { ...file, content: "changed agent" } : file
+      );
+      assertNotEquals(await adapter.getSourceSnapshotFingerprint(options), baseline);
+
+      for (
+        const path of [
+          "knowledge/reviewer/AGENT.md",
+          "knowledge/reviewer/SKILL.md",
+          "knowledge/reviewer/skills/research/SKILL.md",
+        ]
+      ) {
+        internals.sourceSnapshotVersion += 1;
+        internals.sourceSnapshotFiles = internals.sourceSnapshotFiles.map((file) =>
+          file.path === "knowledge/support.md"
+            ? { ...file, content: "first agent" }
+            : file.path === path
+            ? { ...file, content: `${file.content} changed` }
+            : file
+        );
+        assertNotEquals(await adapter.getSourceSnapshotFingerprint(options), baseline);
+        internals.sourceSnapshotFiles = internals.sourceSnapshotFiles.map((file) =>
+          file.path === path ? { ...file, content: file.content?.replace(" changed", "") } : file
+        );
+      }
+    });
+
+    it("retains only skill definitions under a configured skill root", async () => {
+      const adapter = createAdapter();
+      const internals = adapter as unknown as {
+        sourceSnapshotFiles: Array<{ path: string; content?: string }>;
+        sourceSnapshotVersion: number;
+      };
+
+      internals.sourceSnapshotFiles = [
+        { path: "knowledge/research/SKILL.md", content: "first skill" },
+        { path: "knowledge/note.md", content: "first note" },
+      ];
+      const options = {
+        purpose: "agent-config",
+        skillMarkdownPaths: ["/knowledge/"],
+      } as unknown as Parameters<typeof adapter.getSourceSnapshotFingerprint>[0];
+      const baseline = await adapter.getSourceSnapshotFingerprint(options);
+
+      internals.sourceSnapshotVersion += 1;
+      internals.sourceSnapshotFiles = internals.sourceSnapshotFiles.map((file) =>
+        file.path === "knowledge/note.md" ? { ...file, content: "changed note" } : file
+      );
+      assertEquals(await adapter.getSourceSnapshotFingerprint(options), baseline);
+
+      internals.sourceSnapshotVersion += 1;
+      internals.sourceSnapshotFiles = internals.sourceSnapshotFiles.map((file) =>
+        file.path === "knowledge/research/SKILL.md" ? { ...file, content: "changed skill" } : file
+      );
+      assertNotEquals(await adapter.getSourceSnapshotFingerprint(options), baseline);
+    });
+
+    it("normalizes project-root agent discovery aliases", async () => {
+      const adapter = createAdapter();
+      const internals = adapter as unknown as {
+        sourceSnapshotFiles: Array<{ path: string; content?: string }>;
+        sourceSnapshotVersion: number;
+      };
+
+      for (const root of [".", "/"]) {
+        internals.sourceSnapshotVersion += 1;
+        internals.sourceSnapshotFiles = [
+          { path: "knowledge/AGENT.md", content: "first agent" },
+          { path: "knowledge/churn/note.md", content: "first note" },
+        ];
+        const options = {
+          purpose: "agent-config",
+          agentMarkdownPaths: [root],
+        } as unknown as Parameters<typeof adapter.getSourceSnapshotFingerprint>[0];
+        const baseline = await adapter.getSourceSnapshotFingerprint(options);
+
+        internals.sourceSnapshotVersion += 1;
+        internals.sourceSnapshotFiles = internals.sourceSnapshotFiles.map((file) =>
+          file.path === "knowledge/churn/note.md" ? { ...file, content: "changed note" } : file
+        );
+        assertEquals(await adapter.getSourceSnapshotFingerprint(options), baseline);
+
+        internals.sourceSnapshotVersion += 1;
+        internals.sourceSnapshotFiles = internals.sourceSnapshotFiles.map((file) =>
+          file.path === "knowledge/AGENT.md" ? { ...file, content: "changed agent" } : file
+        );
+        assertNotEquals(await adapter.getSourceSnapshotFingerprint(options), baseline);
+      }
+    });
+
+    it("separates agent and skill Markdown fingerprint scopes", async () => {
+      const adapter = createAdapter();
+      const internals = adapter as unknown as {
+        sourceSnapshotFiles: Array<{ path: string; content?: string }>;
+        sourceSnapshotVersion: number;
+      };
+      internals.sourceSnapshotFiles = [
+        { path: "knowledge/support.md", content: "agent" },
+        { path: "knowledge/research/SKILL.md", content: "skill" },
+      ];
+
+      const agentFingerprint = await adapter.getSourceSnapshotFingerprint({
+        purpose: "agent-config",
+        agentMarkdownPaths: ["knowledge"],
+      });
+      const skillFingerprint = await adapter.getSourceSnapshotFingerprint({
+        purpose: "agent-config",
+        skillMarkdownPaths: ["knowledge"],
+      });
+
+      assertNotEquals(agentFingerprint, skillFingerprint);
+    });
+
+    it("captures Markdown discovery scopes before asynchronous hashing", async () => {
+      const adapter = createAdapter();
+      const internals = adapter as unknown as {
+        sourceSnapshotFiles: Array<{ path: string; content?: string }>;
+        sourceSnapshotVersion: number;
+      };
+      internals.sourceSnapshotFiles = [
+        { path: "pages/large.ts", content: "x".repeat(3 * 1_024 * 1_024) },
+        { path: "knowledge/support.md", content: "agent" },
+      ];
+      const agentMarkdownPaths = ["knowledge"];
+      const pending = adapter.getSourceSnapshotFingerprint({
+        purpose: "agent-config",
+        agentMarkdownPaths,
+      });
+      agentMarkdownPaths[0] = "other";
+
+      const captured = await pending;
+      internals.sourceSnapshotVersion += 1;
+      const expected = await adapter.getSourceSnapshotFingerprint({
+        purpose: "agent-config",
+        agentMarkdownPaths: ["knowledge"],
+      });
+      assertEquals(captured, expected);
+    });
+
     it("captures the agent configuration fingerprint purpose before hashing", async () => {
       const adapter = createAdapter();
       const internals = adapter as unknown as {

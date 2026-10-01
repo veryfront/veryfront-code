@@ -131,6 +131,7 @@ import type {
   SourceSnapshotFreshnessOptions,
 } from "#veryfront/platform/adapters/base.ts";
 import { createRunScopedProviderReplayCheckpointPersister } from "#veryfront/internal-agents/provider-replay-checkpoint-persister.ts";
+import { getAgentRuntimeMarkdownDiscoveryPaths } from "#veryfront/discovery/project-discovery-config.ts";
 
 export interface AgentStreamHandlerDeps
   extends RuntimeAgentDiscoveryDeps, RuntimeAgentStreamExecutionDeps {
@@ -893,6 +894,7 @@ function runWithCapturedSourceContext<T>(
 async function requireAgentSourceSnapshotFingerprint(
   ctx: HandlerContext,
   reason: string,
+  options?: SourceSnapshotFingerprintOptions,
 ): Promise<string> {
   const fs = ctx.adapter.fs as SourceContextFsWrapper;
   const getSourceSnapshotFingerprint = fs.getSourceSnapshotFingerprint;
@@ -906,14 +908,56 @@ async function requireAgentSourceSnapshotFingerprint(
   }
 
   for (let attempt = 0; attempt < 2; attempt++) {
-    const fingerprint = await IntrinsicReflectApply(getSourceSnapshotFingerprint, fs, [{
-      purpose: "agent-config",
-    }]);
+    const fingerprint = await IntrinsicReflectApply(getSourceSnapshotFingerprint, fs, [options]);
     if (fingerprint) return fingerprint;
   }
   throw SOURCE_SNAPSHOT_FRESHNESS_UNAVAILABLE.create({
     detail: "The project filesystem did not provide a branch source snapshot identity",
   });
+}
+
+function getAgentSourceFingerprintOptions(
+  config: VeryfrontConfig,
+): SourceSnapshotFingerprintOptions {
+  return {
+    purpose: "agent-config",
+    ...getAgentRuntimeMarkdownDiscoveryPaths(config),
+  };
+}
+
+type GuardedAgentSourceConfig = {
+  config: VeryfrontConfig;
+  fingerprint: string;
+  fingerprintOptions: SourceSnapshotFingerprintOptions;
+};
+
+async function resolveGuardedAgentSourceConfig(
+  ctx: HandlerContext,
+  sourceContext: RuntimeAgentSourceContext,
+  environment: Record<string, string>,
+): Promise<GuardedAgentSourceConfig> {
+  // Hosted config evaluation reads only the three veryfront.config candidates;
+  // project Markdown cannot affect it. Use the same conservative pre-config
+  // scope on both sides, then establish the discovery-aware baseline after the
+  // validated config reveals every custom root.
+  const options: SourceSnapshotFingerprintOptions = { purpose: "agent-config" };
+  const before = await requireAgentSourceSnapshotFingerprint(
+    ctx,
+    "agent-source-config-start",
+    options,
+  );
+  const config = await resolveAgentSourceConfig(ctx, sourceContext, environment);
+  const after = await requireAgentSourceSnapshotFingerprint(
+    ctx,
+    "agent-source-config-identity",
+    options,
+  );
+  if (after !== before) {
+    throw createSourceSnapshotChangedError(
+      "The branch source changed while its agent configuration was evaluated",
+    );
+  }
+  return { config, fingerprint: after, fingerprintOptions: options };
 }
 
 function assertAgentSourceMatchesHostedTarget(
@@ -1173,25 +1217,35 @@ export class AgentStreamHandler extends BaseHandler {
                 sourceAuthToken,
                 req.signal,
               );
-              const requestSourceFingerprint = payload.agentSource.type === "branch"
-                ? await requireAgentSourceSnapshotFingerprint(
+              const guardedSourceConfig = payload.agentSource.type === "branch"
+                ? await resolveGuardedAgentSourceConfig(
                   requestScopedContext,
-                  "agent-source-config-start",
+                  payload.agentSource,
+                  envVarsForAgent,
                 )
                 : undefined;
-              const sourceConfig = await resolveAgentSourceConfig(
+              const sourceConfig = guardedSourceConfig?.config ?? await resolveAgentSourceConfig(
                 requestScopedContext,
                 payload.agentSource,
                 envVarsForAgent,
               );
-              if (requestSourceFingerprint !== undefined) {
-                const configSourceFingerprint = await requireAgentSourceSnapshotFingerprint(
+              const sourceFingerprintOptions = getAgentSourceFingerprintOptions(sourceConfig);
+              const requestSourceFingerprint = payload.agentSource.type === "branch"
+                ? await requireAgentSourceSnapshotFingerprint(
                   requestScopedContext,
-                  "agent-source-config-identity",
+                  "agent-source-runtime-start",
+                  sourceFingerprintOptions,
+                )
+                : undefined;
+              if (guardedSourceConfig !== undefined) {
+                const currentConfigFingerprint = await requireAgentSourceSnapshotFingerprint(
+                  requestScopedContext,
+                  "agent-source-runtime-config-identity",
+                  guardedSourceConfig.fingerprintOptions,
                 );
-                if (configSourceFingerprint !== requestSourceFingerprint) {
+                if (currentConfigFingerprint !== guardedSourceConfig.fingerprint) {
                   throw createSourceSnapshotChangedError(
-                    "The branch source changed while its agent configuration was evaluated",
+                    "The branch source changed after its agent configuration was evaluated",
                   );
                 }
               }
@@ -1227,6 +1281,7 @@ export class AgentStreamHandler extends BaseHandler {
                       const runtimeSourceFingerprint = await requireAgentSourceSnapshotFingerprint(
                         projectScopedContext,
                         "agent-source-credential-handoff",
+                        sourceFingerprintOptions,
                       );
                       if (runtimeSourceFingerprint !== requestSourceFingerprint) {
                         throw createSourceSnapshotChangedError(
@@ -1244,6 +1299,7 @@ export class AgentStreamHandler extends BaseHandler {
                             await requireAgentSourceSnapshotFingerprint(
                               projectScopedContext,
                               "agent-source-discovery-identity",
+                              sourceFingerprintOptions,
                             );
                           if (discoverySourceFingerprint !== requestSourceFingerprint) {
                             throw createSourceSnapshotChangedError(

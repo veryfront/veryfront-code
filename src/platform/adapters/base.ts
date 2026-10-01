@@ -421,6 +421,10 @@ export interface SourceSnapshotFingerprintOptions {
    * retaining every executable and configuration source file.
    */
   purpose?: "agent-config";
+  /** Project-relative roots where Markdown agent definitions are discovered. */
+  agentMarkdownPaths?: readonly string[];
+  /** Project-relative roots where global `SKILL.md` definitions are discovered. */
+  skillMarkdownPaths?: readonly string[];
 }
 
 export interface DirEntry {

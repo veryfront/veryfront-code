@@ -78,6 +78,7 @@ import { resolveAgentSystem } from "#veryfront/agent/runtime/effective-agent-sys
 import { FSAdapterWrapper } from "#veryfront/platform/adapters/fs/wrapper.ts";
 import { MultiProjectFSAdapter } from "#veryfront/platform/adapters/fs/veryfront/multi-project-adapter.ts";
 import type { FSAdapter } from "#veryfront/platform/adapters/fs/veryfront/types.ts";
+import type { SourceSnapshotFingerprintOptions } from "#veryfront/platform/adapters/base.ts";
 import { __setHostedConfigEvaluatorForTests } from "#veryfront/config/loader.ts";
 import { RouteRegistry } from "#veryfront/routing/registry/index.ts";
 import { resolveVerifiedControlPlaneBranchBinding } from "#veryfront/proxy/control-plane-signature.ts";
@@ -4319,6 +4320,8 @@ describe("server/handlers/request/agent-stream.handler", () => {
       "agent-source-config-start",
       "agent-source-config",
       "agent-source-config-identity",
+      "agent-source-runtime-start",
+      "agent-source-runtime-config-identity",
       "agent-source-credential-handoff",
       "agent-source-discovery-identity",
     ]);
@@ -4548,7 +4551,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
     let configReads = 0;
     let dataRevision = 0;
     let reservedDataWrites = 0;
-    const fingerprintPurposes: Array<string | undefined> = [];
+    const fingerprintOptions: Array<SourceSnapshotFingerprintOptions | undefined> = [];
     const handler = createTestAgentStreamHandler({
       ensureProjectDiscovery: () => Promise.resolve(createEmptyDiscoveryResult()),
       getAgent: () => undefined,
@@ -4570,14 +4573,14 @@ describe("server/handlers/request/agent-stream.handler", () => {
       return readFile(path);
     };
     fs.writeFile = (path) => {
-      if (path === "knowledge/config-run.md") {
+      if (path === "knowledge/config-run.md" && reservedDataWrites === 0) {
         reservedDataWrites += 1;
         dataRevision += 1;
       }
       return Promise.resolve();
     };
     fs.getSourceSnapshotFingerprint = (options) => {
-      fingerprintPurposes.push(options?.purpose);
+      fingerprintOptions.push(options);
       return options?.purpose === "agent-config"
         ? "stable-agent-config-snapshot"
         : `complete-snapshot-${dataRevision}`;
@@ -4585,7 +4588,12 @@ describe("server/handlers/request/agent-stream.handler", () => {
     ctx.adapter = { ...ctx.adapter, fs };
     __setHostedConfigEvaluatorForTests(async () => {
       await fs.writeFile("knowledge/config-run.md", "config evaluation output");
-      return {};
+      return {
+        ai: {
+          agents: { discovery: { paths: ["knowledge/agents"] } },
+          skills: { discovery: { paths: ["knowledge/skills"] } },
+        },
+      };
     });
 
     const signingKeyEnv = "CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY";
@@ -4614,8 +4622,21 @@ describe("server/handlers/request/agent-stream.handler", () => {
     assertEquals(result.response.status, 404);
     assertEquals(configReads > 0, true);
     assertEquals(reservedDataWrites, 1);
-    assertEquals(fingerprintPurposes.length >= 4, true);
-    assertEquals(fingerprintPurposes.every((purpose) => purpose === "agent-config"), true);
+    assertEquals(
+      fingerprintOptions.slice(0, 2),
+      [{ purpose: "agent-config" }, { purpose: "agent-config" }],
+    );
+    assertEquals(fingerprintOptions[2]?.purpose, "agent-config");
+    assertEquals(fingerprintOptions[3], { purpose: "agent-config" });
+    assertEquals(fingerprintOptions.slice(4).length >= 2, true);
+    assertEquals(
+      [fingerprintOptions[2], ...fingerprintOptions.slice(4)].every((options) =>
+        options?.purpose === "agent-config" &&
+        options.agentMarkdownPaths?.includes("knowledge/agents") === true &&
+        options.skillMarkdownPaths?.includes("knowledge/skills") === true
+      ),
+      true,
+    );
   });
 
   it("rejects a branch run when the credential handoff changes the source snapshot", async () => {
@@ -4681,7 +4702,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
     assertExists(result.response);
     assertEquals(result.response.status, 503);
     assertEquals(runWithContextCalls.length, 2);
-    assertEquals(requestFingerprintCalls, 3);
+    assertEquals(requestFingerprintCalls, 5);
     assertEquals(discoveryCalls, 0);
   });
 
@@ -4723,7 +4744,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
     const readFile = fs.readFile.bind(fs);
     fs.readFile = (path) => {
       configReads += 1;
-      sourceFingerprint = "config-read-snapshot";
+      sourceFingerprint = `config-read-snapshot-${configReads}`;
       return readFile(path);
     };
     fs.getSourceSnapshotFingerprint = () => sourceFingerprint;
@@ -4755,6 +4776,67 @@ describe("server/handlers/request/agent-stream.handler", () => {
     assertEquals(configReads > 0, true);
     assertEquals(discoveryCalls, 0);
     assertEquals(agentLookups, 0);
+  });
+
+  it("rejects a config change while establishing the discovery-aware baseline", async () => {
+    let configFingerprint = "config-snapshot-1";
+    let runtimeBaselineCalls = 0;
+    let discoveryCalls = 0;
+    const handler = createTestAgentStreamHandler({
+      ensureProjectDiscovery: async () => {
+        discoveryCalls += 1;
+        return createEmptyDiscoveryResult();
+      },
+      getAgent: () => undefined,
+      getAllAgentIds: () => [],
+      sessionManager: new AgentRunSessionManager(),
+      createRuntime: () => {
+        throw new Error("runtime should not be created across config snapshots");
+      },
+    });
+
+    const body = createAgentStreamRequestBody({
+      credentials: { authToken: "request-scoped-user-token" },
+    });
+    const { jws, publicKeyPem } = await createControlPlaneSignature(body, { requestId: "run_1" });
+    const ctx = createCtx(publicKeyPem);
+    ctx.proxyToken = "run-scoped-token";
+    const fs = createNoopFsAdapter([]);
+    fs.getSourceSnapshotFingerprint = (options) => {
+      if (options?.agentMarkdownPaths?.length || options?.skillMarkdownPaths?.length) {
+        runtimeBaselineCalls += 1;
+        configFingerprint = "config-snapshot-2";
+        return "runtime-snapshot";
+      }
+      return configFingerprint;
+    };
+    ctx.adapter = { ...ctx.adapter, fs };
+
+    const signingKeyEnv = "CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY";
+    const originalSigningKey = Deno.env.get(signingKeyEnv);
+    Deno.env.set(signingKeyEnv, publicKeyPem);
+    let result;
+    try {
+      result = await handler.handle(
+        new Request("https://example.com/api/control-plane/runs/run_1/stream", {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            "x-veryfront-control-plane-jws": jws,
+          },
+          body,
+        }),
+        ctx,
+      );
+    } finally {
+      if (originalSigningKey === undefined) Deno.env.delete(signingKeyEnv);
+      else Deno.env.set(signingKeyEnv, originalSigningKey);
+    }
+
+    assertExists(result.response);
+    assertEquals(result.response.status, 503);
+    assertEquals(runtimeBaselineCalls, 1);
+    assertEquals(discoveryCalls, 0);
   });
 
   it("rejects a branch run when discovery advances the source snapshot", async () => {
