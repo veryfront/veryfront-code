@@ -1231,6 +1231,10 @@ function restorePublishedChildOutputs(
   for (const node of nodes) {
     const state = nodeStates[node.id];
     if (state?._subWorkflowOwnerPath && state._subWorkflowOwnerPath !== ownerPath) continue;
+    if (state?.status === "completed" && state._compositeContextPatch) {
+      applyContextPatch(context, state._compositeContextPatch);
+      continue;
+    }
     if (node.config.type === "parallel") {
       restorePublishedChildOutputs(node.config.nodes, nodeStates, context, ownerPath);
     } else if (node.config.type === "branch") {

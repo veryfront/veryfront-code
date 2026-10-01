@@ -108,6 +108,11 @@ export const getNodeStateSchema = defineSchema((v) =>
     _subWorkflowOwnerPath: v.string().optional(),
     /** The sub-workflow input has been parsed and is reusable on resume. */
     _subWorkflowInputParsed: v.boolean().optional(),
+    /** Internal published context delta retained for completed composite replay. */
+    _compositeContextPatch: v.object({
+      set: v.record(v.string(), v.unknown()),
+      delete: v.array(v.string()),
+    }).optional(),
     /** Child states this composite had actively parked when it last suspended. */
     _activeCompositeChildIds: v.array(v.string()).optional(),
     /** Child states a runtime-defined composite produced before it completed. */

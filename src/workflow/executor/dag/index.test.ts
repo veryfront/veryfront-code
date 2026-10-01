@@ -22,6 +22,7 @@ import {
 import { beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { DAGExecutor } from "./index.ts";
 import { defineSchema } from "#veryfront/schemas/index.ts";
+import { NodeStateSchema } from "../../schemas/workflow.schema.ts";
 import type {
   Checkpoint,
   LoopExecutionContext,
@@ -156,6 +157,51 @@ describe("DAGExecutor", () => {
   });
 
   describe("nested output exception replay", () => {
+    for (const completion of ["onComplete", "onMaxIterations"] as const) {
+      it(`restores loop ${completion} context keys after an output exception`, async () => {
+        let completionCalls = 0;
+        let firstContext: WorkflowContext | undefined;
+        const nodes = [subWorkflow("child", {
+          input: { n: 1 },
+          workflow: {
+            id: "loop-child",
+            steps: [loop("repeat", {
+              steps: [],
+              maxIterations: 1,
+              while: () => completion === "onMaxIterations",
+              [completion]: () => {
+                completionCalls++;
+                return { selected: { n: 1 }, iterations: "user value" };
+              },
+            })],
+            output: (context) => {
+              if (firstContext === undefined) {
+                firstContext = structuredClone(context);
+                throw new Error("output selection failed");
+              }
+              return context;
+            },
+          },
+        })];
+        const first = await executor.execute(nodes, createTestRun());
+        assertEquals(first.completed, false);
+        const retried = await new DAGExecutor({ stepExecutor }).execute(
+          nodes,
+          createTestRun({
+            nodeStates: Object.fromEntries(
+              Object.entries(first.nodeStates).map((
+                [id, state],
+              ) => [id, NodeStateSchema.parse(state)]),
+            ),
+            context: first.context,
+          }),
+        );
+        assertEquals(retried.completed, true);
+        assertEquals(retried.context.child, firstContext);
+        assertEquals(completionCalls, 1);
+      });
+    }
+
     for (const composite of ["parallel", "branch", "map"] as const) {
       it(`preserves published context keys when replaying a completed ${composite}`, async () => {
         let childExecutions = 0;
