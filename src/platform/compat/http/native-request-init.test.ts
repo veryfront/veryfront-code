@@ -253,6 +253,22 @@ describe("platform/compat/http/native-request-init", () => {
     );
   });
 
+  it("treats a plain record with its own iterator as header pairs", () => {
+    const pairs = {
+      *[Symbol.iterator]() {
+        yield ["authorization", BEARER];
+        yield ["x-a", "1"];
+      },
+    };
+
+    const init = createNativeRequestInit({ headers: pairs as unknown as HeadersInit });
+    assertEquals({ ...init.headers as Record<string, string> }, {
+      authorization: BEARER,
+      "x-a": "1",
+    });
+    assertEquals(copyNativeHeaders(pairs as unknown as HeadersInit).get("authorization"), BEARER);
+  });
+
   it("reads only own init fields", () => {
     const inherited = Object.create({ method: "DELETE" }) as RequestInit;
     inherited.headers = { accept: "*/*" };

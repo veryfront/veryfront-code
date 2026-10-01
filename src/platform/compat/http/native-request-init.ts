@@ -32,6 +32,7 @@ const ArrayIsArray = Array.isArray;
 const NativeArray = Array;
 const ArrayFrom = Array.from;
 const ObjectGetPrototypeOf = Object.getPrototypeOf;
+const ObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 const ObjectPrototype = Object.prototype;
 const SymbolIterator: symbol = Symbol.iterator;
 const ObjectCreate = Object.create;
@@ -189,7 +190,14 @@ export function readOwnInitField<K extends NativeRequestInitField>(
 function toPairsIfIterable(source: HeadersInit): HeadersInit {
   if (ArrayIsArray(source) || typeof source !== "object" || source === null) return source;
   const prototype = ObjectGetPrototypeOf(source);
-  if (prototype === null || prototype === ObjectPrototype) return source;
+  if (prototype === null || prototype === ObjectPrototype) {
+    // A plain record's own iterator makes it a pair sequence, as the native
+    // conversion treats it; an inherited one is never looked up.
+    const own = ObjectGetOwnPropertyDescriptor(source, SymbolIterator);
+    if (own === undefined) return source;
+    if (typeof own.value !== "function" && typeof own.get !== "function") return source;
+    return IntrinsicReflectApply(ArrayFrom, NativeArray, [source]) as [string, string][];
+  }
   const iterator: unknown = (source as Record<symbol, unknown>)[SymbolIterator];
   if (typeof iterator !== "function") return source;
   return IntrinsicReflectApply(ArrayFrom, NativeArray, [source]) as [string, string][];
