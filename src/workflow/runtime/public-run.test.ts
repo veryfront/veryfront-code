@@ -62,6 +62,7 @@ describe("workflow/runtime/public-run", () => {
       step: {
         ...completedState("step", nestedUserOutput),
         _subWorkflowOwnerPath: "internal-owner",
+        _stepInputRecorded: true,
         _subWorkflowContext: { private: frameworkTenant },
         _subWorkflowContextWaits: [{ nodeId: "private-wait", waitInstanceId: "private-instance" }],
         _activeCompositeChildIds: ["waiting-child"],
@@ -197,6 +198,9 @@ describe("workflow/runtime/public-run", () => {
     assertEquals(output.step, nestedUserOutput);
     assertEquals(output.parent, contextShapedUserOutput);
     assertEquals(output.mapLike, [contextShapedUserOutput]);
+    assertEquals(projected.nodeStates.step?._stepInputRecorded, undefined);
+    assertEquals(projected.checkpoints[0]?.nodeStates.step?._stepInputRecorded, undefined);
+    assertEquals(run.nodeStates.step?._stepInputRecorded, true);
     assertEquals(projected.nodeStates.step?.output, nestedUserOutput);
     assertEquals(projected.nodeStates.parent?.output, contextShapedUserOutput);
     assertEquals(projected.nodeStates.mapLike?.output, [contextShapedUserOutput]);
