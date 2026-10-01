@@ -3638,6 +3638,41 @@ describe("WorkflowClient durable event waits", () => {
     assertEquals((await backend.getPendingEventWaits("unrelated-expiry")).length, 1);
   });
 
+  it("expires an unmatched event wait while draining at its exact deadline", async () => {
+    using _time = new FakeTime(new Date("2026-09-30T12:00:00.000Z"));
+    for (const id of ["drained-due", "drained-future"]) {
+      await backend.createRun({
+        id,
+        workflowId: "event-expiry",
+        status: "waiting",
+        input: {},
+        nodeStates: { event: { nodeId: "event", status: "running", attempt: 1 } },
+        currentNodes: [],
+        context: { input: {} },
+        checkpoints: [],
+        pendingApprovals: [],
+        createdAt: new Date(0),
+        sourceIntegrationPolicy: UNRESTRICTED_SOURCE_INTEGRATION_POLICY,
+      });
+      await backend.savePendingEventWait(id, {
+        id: `wait_${id}`,
+        runId: id,
+        nodeId: "event",
+        eventName: "ready",
+        waitKind: "event",
+        requestedAt: new Date(0),
+        expiresAt: new Date(Date.now() + (id === "drained-due" ? 0 : 1)),
+        status: "pending",
+      });
+    }
+    for (const id of ["drained-due", "drained-future"]) {
+      await client.getEventWaitManager().drainPendingEvents(id);
+    }
+    assertEquals((await backend.getRun("drained-due"))?.status, "failed");
+    assertEquals((await backend.getRun("drained-future"))?.status, "waiting");
+    assertEquals((await backend.getPendingEventWaits("drained-future")).length, 1);
+  });
+
   it("continues recovered-run drains after one run fails", async () => {
     const flakyBackend = new RejectOneRunPendingWaitReadBackend();
     const sweepingClient = createWorkflowClient({

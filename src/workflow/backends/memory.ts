@@ -1428,7 +1428,7 @@ export class MemoryBackend implements WorkflowBackend {
         if (filter?.status === "pending" && approval.status !== "pending") continue;
 
         if (filter?.status === "expired") {
-          const isExpired = approval.expiresAt != null && new Date() > approval.expiresAt;
+          const isExpired = approval.expiresAt != null && new Date() >= approval.expiresAt;
           if (!isExpired) continue;
         }
 

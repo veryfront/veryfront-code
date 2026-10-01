@@ -1,6 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assert, assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
 import { beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
+import { FakeTime } from "#std/testing/time";
 import { MemoryBackend } from "./memory.ts";
 import type { Checkpoint, PendingApproval, WorkflowQueueItem, WorkflowRun } from "../types.ts";
 import { MAX_TRAVERSAL_DEPTH } from "../context-serialization.ts";
@@ -1924,6 +1925,25 @@ describe("MemoryBackend", () => {
   });
 
   describe("Approvals", () => {
+    it("lists an approval as expired at its exact deadline", async () => {
+      using _time = new FakeTime(new Date("2026-09-30T12:00:00.000Z"));
+      await backend.createRun(createTestRun("run-expired-boundary"));
+      for (const [id, offset] of [["due", 0], ["future", 1]] as const) {
+        await backend.savePendingApproval("run-expired-boundary", {
+          id: `approval-${id}`,
+          nodeId: id,
+          message: "Review",
+          requestedAt: new Date(Date.now() - 1_000),
+          expiresAt: new Date(Date.now() + offset),
+          status: "pending",
+        });
+      }
+
+      const expired = await backend.listPendingApprovals({ status: "expired" });
+
+      assertEquals(expired.map(({ approval }) => approval.id), ["approval-due"]);
+    });
+
     it("preserves the historical append semantics of savePendingApproval", async () => {
       const approval = (id: string): PendingApproval => ({
         id,

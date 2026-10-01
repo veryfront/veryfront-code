@@ -3407,7 +3407,7 @@ export class RedisBackend implements WorkflowBackend {
 
         if (filter?.status === "pending" && approval.status !== "pending") continue;
         if (filter?.status === "expired") {
-          const isExpired = approval.expiresAt && new Date() > approval.expiresAt;
+          const isExpired = approval.expiresAt && new Date() >= approval.expiresAt;
           if (!isExpired) continue;
         }
 

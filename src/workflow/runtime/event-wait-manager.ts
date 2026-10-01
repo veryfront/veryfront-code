@@ -837,7 +837,7 @@ export class EventWaitManager {
   ): Promise<void> {
     if (
       !expireOverdueWaits || wait.expiresAt === undefined ||
-      Date.now() <= wait.expiresAt.getTime()
+      Date.now() < wait.expiresAt.getTime()
     ) return;
     try {
       await this.expire(wait, true);
