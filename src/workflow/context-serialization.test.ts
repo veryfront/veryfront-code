@@ -17,11 +17,14 @@ import {
 } from "#veryfront/utils/logger/logger.ts";
 import type { WorkflowContext } from "./types.ts";
 import {
+  collectWorkflowJsonRecords,
   deferWorkflowJsonValue,
   MAX_TRAVERSAL_DEPTH,
+  prepareNodeStatesUserData,
   prepareWorkflowJson,
   serializeWorkflowContext,
   serializeWorkflowJson,
+  WORKFLOW_CHECKPOINT_RECORD,
   WORKFLOW_NODE_RECORD,
   WORKFLOW_RESUME_ENVELOPE_RECORD,
 } from "./context-serialization.ts";
@@ -1765,6 +1768,39 @@ describe("serializeWorkflowContext", () => {
         input: {},
         other: { keep: 1 },
       });
+    });
+
+    it("keeps a shared context record through a deep node-state output", () => {
+      const calls: string[] = [];
+      const context = hijackingContext(calls);
+      let output: unknown = context;
+      for (let index = 0; index < MAX_TRAVERSAL_DEPTH + 5; index++) {
+        output = { nested: output };
+      }
+      const checkpoint = {
+        id: "deep-shared-record",
+        nodeId: "a",
+        timestamp: new Date(0),
+        context,
+        nodeStates: {
+          a: { nodeId: "a", status: "completed" as const, attempt: 1, output },
+        },
+      };
+      const records = collectWorkflowJsonRecords(checkpoint, WORKFLOW_CHECKPOINT_RECORD);
+
+      const prepared = prepareNodeStatesUserData(
+        checkpoint.nodeStates,
+        "run-deep-shared-record",
+        {},
+        records,
+      );
+      let leaf = prepared.a!.output as Record<string, unknown>;
+      for (let index = 0; index < MAX_TRAVERSAL_DEPTH + 5; index++) {
+        leaf = leaf.nested as Record<string, unknown>;
+      }
+
+      assertEquals(calls, []);
+      assertEquals(leaf, { input: {}, other: { keep: 1 } });
     });
 
     it("keeps value semantics for a value that is not a node-keyed record", () => {

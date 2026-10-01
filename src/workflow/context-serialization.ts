@@ -365,6 +365,7 @@ function canSnapshotJsonTailWithoutReplacer(
   active: Set<JsonTraversalReference>,
   applyRootToJson: boolean,
   nonPlainBuiltinCache: WeakMap<JsonTraversalReference, boolean>,
+  records?: WorkflowJsonRecords,
 ): boolean {
   if (!canIdentifyProxyWithoutHooks) return false;
 
@@ -401,7 +402,9 @@ function canSnapshotJsonTailWithoutReplacer(
     if (isUnsafeJsonTailReference(reference, active, nonPlainBuiltinCache)) return false;
 
     const isArray = arrayIsArray(reference);
-    const inspectToJson = applyRootToJson || reference !== root;
+    const isRecord = records !== undefined &&
+      reflectApply(weakMapGet, records, [reference]) !== undefined;
+    const inspectToJson = (applyRootToJson || reference !== root) && !isRecord;
     if (!hasSafeJsonTailPrototype(reference, isArray, inspectToJson)) return false;
     reflectApply(setAdd, localActive, [reference]);
     appendJsonTailScanFrame(pending, { kind: "exit", value: reference });
@@ -585,11 +588,18 @@ function appendJsonTailEncodingFrame(
   defineArrayElement(frames, frames.length, frame);
 }
 
-function prepareJsonTailValue(value: unknown, key: string, applyToJson: boolean): unknown {
+function prepareJsonTailValue(
+  value: unknown,
+  key: string,
+  applyToJson: boolean,
+  records?: WorkflowJsonRecords,
+): unknown {
   let prepared = value;
   const type = typeof prepared;
+  const isRecord = records !== undefined && type === "object" && prepared !== null &&
+    reflectApply(weakMapGet, records, [prepared]) !== undefined;
   if (
-    applyToJson &&
+    applyToJson && !isRecord &&
     (type === "object" && prepared !== null || type === "function" || type === "bigint")
   ) {
     const receiver = type === "bigint"
@@ -612,8 +622,9 @@ function encodeJsonTailIteratively(
   key: string,
   outerActive: Set<JsonTraversalReference>,
   applyRootToJson: boolean,
+  records?: WorkflowJsonRecords,
 ): { containsRawJson: boolean; serialized: string | undefined } {
-  const preparedRoot = prepareJsonTailValue(root, key, applyRootToJson);
+  const preparedRoot = prepareJsonTailValue(root, key, applyRootToJson, records);
   if (isOmittedJsonObjectValue(preparedRoot)) {
     return { containsRawJson: false, serialized: undefined };
   }
@@ -648,6 +659,7 @@ function encodeJsonTailIteratively(
         reflectGet(frame.value, indexKey),
         indexKey,
         true,
+        records,
       );
       appendJsonTailEncodingFrame(frames, frame);
       if (isOmittedJsonObjectValue(nested)) append("null");
@@ -664,6 +676,7 @@ function encodeJsonTailIteratively(
           reflectGet(frame.value, nestedKey),
           nestedKey,
           true,
+          records,
         );
         if (!isOmittedJsonObjectValue(nested)) break;
         nestedKey = undefined;
@@ -753,6 +766,7 @@ function normalizeJsonTail(
   active: Set<JsonTraversalReference>,
   state: JsonSerializationState,
   applyRootToJson: boolean,
+  records?: WorkflowJsonRecords,
 ): NormalizedJsonValue | typeof OMIT_JSON_VALUE {
   // This branch has proved the tail contains only inert JSON data: no hooks,
   // accessors, proxies, exotic objects, raw tokens, cycles, or aliases. Encode
@@ -765,6 +779,7 @@ function normalizeJsonTail(
       active,
       applyRootToJson,
       state.nonPlainBuiltinCache,
+      records,
     )
   ) {
     state.requiresIterativeEncoding = true;
@@ -776,6 +791,7 @@ function normalizeJsonTail(
     key,
     active,
     applyRootToJson,
+    records,
   );
   if (serialized === undefined) return OMIT_JSON_VALUE;
   state.requiresIterativeEncoding = true;
@@ -1405,7 +1421,14 @@ function normalizeAndFindUnrepresentableValues(
         return nested as NormalizedJsonValue;
       }
       try {
-        return normalizeJsonTail(nested, key, active, serializationState, applyToJson);
+        return normalizeJsonTail(
+          nested,
+          key,
+          active,
+          serializationState,
+          applyToJson,
+          recordShapes,
+        );
       } catch (error) {
         if (error === ACTIVE_JSON_TAIL_REFERENCE) {
           recordFatal(path, "circular reference");
