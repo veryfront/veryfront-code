@@ -1225,15 +1225,40 @@ function createSeededSubWorkflowNodeStates(
 }
 
 /**
- * Loop output always carries all of these keys, whatever node now uses the id.
- * A sub-workflow wrapper state records its parsed input, which a loop never does.
+ * Whether a persisted state may hold loop output, whatever node now uses its id.
+ * Loop output always carries all three result keys. Step and sub-workflow states
+ * record their input (or the parsed-input marker); loop states never do.
  */
-function hasLoopPublicationShape(state: NodeState): boolean {
+function mayHoldLoopPublication(state: NodeState): boolean {
   const { output } = state;
-  return state._subWorkflowInputParsed !== true &&
+  return !Object.hasOwn(state, "input") && state._subWorkflowInputParsed !== true &&
     typeof output === "object" && output !== null && !Array.isArray(output) &&
     Object.hasOwn(output, "exitReason") && Object.hasOwn(output, "iterations") &&
     Object.hasOwn(output, "previousResults");
+}
+
+function legacyLoopContextError(nodeId: string): Error {
+  return INVALID_ARGUMENT.create({
+    detail: `Legacy nested-loop context cannot be restored for "${nodeId}": ` +
+      "the retained state does not identify the original publication. " +
+      "Resume from a checkpoint containing the original child context.",
+  });
+}
+
+/**
+ * Refuse a child without a context snapshot when any completed state it owns may
+ * be loop output, including states whose ids the current definition dropped.
+ */
+function assertNoLegacyLoopPublication(
+  ownerPath: string,
+  nodeStates: Readonly<Record<string, NodeState>>,
+): void {
+  for (const [nodeId, state] of Object.entries(nodeStates)) {
+    if (
+      state._subWorkflowOwnerPath === ownerPath && state.status === "completed" &&
+      mayHoldLoopPublication(state)
+    ) throw legacyLoopContextError(nodeId);
+  }
 }
 
 function restorePublishedChildOutputs(
@@ -1251,16 +1276,12 @@ function restorePublishedChildOutputs(
     if (state?._subWorkflowOwnerPath && state._subWorkflowOwnerPath !== ownerPath) continue;
     if (
       requireExactPublication && state?.status === "completed" &&
-      (node.config.type === "loop" || hasLoopPublicationShape(state))
+      (node.config.type === "loop" || mayHoldLoopPublication(state))
     ) {
       // Legacy loop output flattens callback updates over framework metadata.
       // The current definition cannot prove which callbacks produced that row,
       // nor that the node with this id is still the loop that produced it.
-      throw INVALID_ARGUMENT.create({
-        detail: `Legacy nested-loop context cannot be restored for "${node.id}": ` +
-          "the retained state does not identify the original publication. " +
-          "Resume from a checkpoint containing the original child context.",
-      });
+      throw legacyLoopContextError(node.id);
     }
     if (node.config.type === "parallel") {
       restorePublishedChildOutputs(
@@ -2637,6 +2658,7 @@ export class DAGExecutor {
     const childContext: WorkflowContext = savedContext
       ? { input, ...cloneExecutionState(savedContext, "Sub-workflow context") }
       : { input };
+    if (savedContext === undefined) assertNoLegacyLoopPublication(ownerPath, nodeStates);
     restorePublishedChildOutputs(
       steps,
       seededNodeStates,
@@ -2647,9 +2669,9 @@ export class DAGExecutor {
       capturedWaits === undefined
         ? undefined
         : new Map(capturedWaits.map(({ nodeId, waitInstanceId }) => [nodeId, waitInstanceId])),
-      // A retried legacy child cannot replay completed loop publications. A
-      // parked child re-entered on a wait resume keeps its partial restoration.
-      savedContext === undefined && !scope.resumedSubWorkflowOwnerPaths.has(ownerPath),
+      // A legacy child cannot replay completed loop publications, whether it
+      // is retried or re-entered on a wait resume.
+      savedContext === undefined,
     );
 
     const subRunId = `${node.id}_sub_${generateId()}`;

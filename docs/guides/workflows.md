@@ -635,13 +635,13 @@ Invalid input fails the parent run with `INPUT_VALIDATION_FAILED` and validation
 errors containing JSON Pointer paths. A paused nested workflow reuses its parsed
 input when it resumes.
 
-Nested output-selection retries use the retained child-context snapshot without
-repeating completed steps or loop callbacks. Older failed nested runs with completed
-loops and no retained child context fail with an explicit legacy compatibility
-error. Loop output mixes completion callback updates with framework metadata, and
-iteration history does not prove the original final publication. The current
-workflow definition cannot recover that provenance. Resume such a run from a
-checkpoint that retains the original child context.
+Nested workflow retries and resumes use the retained child-context snapshot without
+repeating completed steps or loop callbacks. Older nested runs with completed loops
+and no retained child context fail with an explicit legacy compatibility error when
+they are retried or resumed after a wait. Loop output mixes completion callback
+updates with framework metadata, and iteration history does not prove the original
+final publication. The current workflow definition cannot recover that provenance.
+Resume such a run from a checkpoint that retains the original child context.
 
 A run that pauses on an approval or an event has no output until it completes.
 
