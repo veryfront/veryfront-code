@@ -26,6 +26,7 @@ import { waitForApproval } from "../../dsl/wait.ts";
 import { defineSchema } from "#veryfront/schemas/index.ts";
 import type { Tool } from "#veryfront/tool";
 import { RedisBackend } from "./index.ts";
+import { cloneOwnedCheckpointForPersistence } from "../checkpoint-retention.ts";
 import { deriveWorkflowRunEventObservation } from "../../events.ts";
 import {
   MAX_TRAVERSAL_DEPTH,
@@ -5362,6 +5363,64 @@ describe("RedisBackend", () => {
   });
 
   describe("checkpoints", () => {
+    for (const withResumeEnvelope of [false, true]) {
+      it(`preserves hooked and plain node states in owned checkpoints (resume envelope: ${withResumeEnvelope})`, async () => {
+        const runId = "run-cp-owned-hooked-nodes";
+        await backend.createRun(createTestRun(runId, {
+          status: "running",
+          workerId: "worker-current",
+        }));
+        const nodeStates = {
+          a: {
+            nodeId: "a",
+            status: "completed" as const,
+            attempt: 1,
+            output: { toJSON: () => ({ v: 1 }) },
+          },
+          b: { nodeId: "b", status: "completed" as const, attempt: 1, output: { keep: 1 } },
+        };
+        const checkpoint = cloneOwnedCheckpointForPersistence({
+          id: "cp-owned-hooked-nodes",
+          nodeId: "a",
+          timestamp: new Date("2025-01-01T01:00:00Z"),
+          context: { input: {} },
+          nodeStates,
+          _resumeEnvelope: withResumeEnvelope
+            ? {
+              schemaVersion: 2,
+              ownerNodeId: "a",
+              context: { input: {} },
+              nodeStates,
+              workflowProjection: { context: {} },
+              graphAdmission: {
+                stepsEvaluationContext: { input: {} },
+                stepsEvaluationProjection: { context: {} },
+                graphIdentity: [],
+                workflowVersion: null,
+              },
+            }
+            : undefined,
+        });
+        assertEquals(
+          await backend.saveCheckpointIfStatusAndWorker(
+            runId,
+            runId,
+            ["running"],
+            "worker-current",
+            checkpoint,
+          ),
+          true,
+        );
+        const restored = await backend.getLatestCheckpoint(runId);
+        assertEquals(restored?.nodeStates.a?.output, { v: 1 });
+        assertEquals(restored?.nodeStates.b?.output, { keep: 1 });
+        if (withResumeEnvelope) {
+          assertEquals(restored?._resumeEnvelope?.nodeStates.a?.output, { v: 1 });
+          assertEquals(restored?._resumeEnvelope?.nodeStates.b?.output, { keep: 1 });
+        }
+      });
+    }
+
     it("should save and retrieve checkpoints", async () => {
       await backend.createRun(createTestRun("run-cp"));
       await backend.saveCheckpoint("run-cp", {
