@@ -578,6 +578,127 @@ describe(
       assertEquals(secondEnumerationCount, 0);
     });
 
+    it("serializes concurrent fresh adapters when fingerprints are unavailable", async () => {
+      agentRegistry.clearAll();
+      toolRegistryInternal.clearAll();
+      const projectSlug = "concurrent-fallback-discovery";
+      const first = createHandlerContext("/concurrent-fallback", projectSlug, "preview");
+      const second = createHandlerContext("/concurrent-fallback", projectSlug, "preview");
+      first.adapter.fs.getSourceSnapshotVersion = () => 1;
+      second.adapter.fs.getSourceSnapshotVersion = () => 2;
+      const firstFingerprintStarted = Promise.withResolvers<void>();
+      const secondFingerprintStarted = Promise.withResolvers<void>();
+      const firstFingerprint = Promise.withResolvers<string | undefined>();
+      const secondFingerprint = Promise.withResolvers<string | undefined>();
+      first.adapter.fs.getSourceSnapshotFingerprint = () => {
+        firstFingerprintStarted.resolve();
+        return firstFingerprint.promise;
+      };
+      second.adapter.fs.getSourceSnapshotFingerprint = () => {
+        secondFingerprintStarted.resolve();
+        return secondFingerprint.promise;
+      };
+      await writeAgentFile(first, "fallback-agent", "FIRST");
+      await writeAgentFile(second, "fallback-agent", "SECOND");
+
+      const firstEnumerationStarted = Promise.withResolvers<void>();
+      const resumeFirstEnumeration = Promise.withResolvers<void>();
+      const firstReadDir = first.adapter.fs.readDir.bind(first.adapter.fs);
+      let pauseFirstEnumeration = true;
+      let firstEnumerationCount = 0;
+      first.adapter.fs.readDir = async function* (path) {
+        firstEnumerationCount++;
+        if (pauseFirstEnumeration) {
+          pauseFirstEnumeration = false;
+          firstEnumerationStarted.resolve();
+          await resumeFirstEnumeration.promise;
+        }
+        yield* firstReadDir(path);
+      };
+      const secondReadDir = second.adapter.fs.readDir.bind(second.adapter.fs);
+      let secondEnumerationCount = 0;
+      second.adapter.fs.readDir = async function* (path) {
+        secondEnumerationCount++;
+        yield* secondReadDir(path);
+      };
+
+      const firstDiscovery = ensureProjectDiscovery(first);
+      const secondDiscovery = ensureProjectDiscovery(second);
+      const secondOutcome = secondDiscovery.then(
+        (value) => ({ value, error: undefined }),
+        (error: unknown) => ({ value: undefined, error }),
+      );
+      await Promise.all([firstFingerprintStarted.promise, secondFingerprintStarted.promise]);
+      firstFingerprint.resolve(undefined);
+      await firstEnumerationStarted.promise;
+      secondFingerprint.resolve(undefined);
+      await Promise.resolve();
+      assertEquals(secondEnumerationCount, 0);
+      resumeFirstEnumeration.resolve();
+
+      const firstResult = await firstDiscovery;
+      const outcome = await secondOutcome;
+      if (outcome.error) throw outcome.error;
+      assertNotStrictEquals(outcome.value, firstResult);
+      assertEquals(firstEnumerationCount > 0, true);
+      assertEquals(secondEnumerationCount > 0, true);
+      assertStrictEquals(await ensureProjectDiscovery(second), outcome.value);
+    });
+
+    it("does not resurrect fallback discovery evicted while another generation waits", async () => {
+      const projectSlug = "evicted-fallback-discovery";
+      const first = createHandlerContext("/evicted-fallback", projectSlug, "preview");
+      const second = createHandlerContext("/evicted-fallback", projectSlug, "preview");
+      first.adapter.fs.getSourceSnapshotVersion = () => 1;
+      second.adapter.fs.getSourceSnapshotVersion = () => 2;
+      const firstFingerprintStarted = Promise.withResolvers<void>();
+      const secondFingerprintStarted = Promise.withResolvers<void>();
+      const firstFingerprint = Promise.withResolvers<string | undefined>();
+      const secondFingerprint = Promise.withResolvers<string | undefined>();
+      first.adapter.fs.getSourceSnapshotFingerprint = () => {
+        firstFingerprintStarted.resolve();
+        return firstFingerprint.promise;
+      };
+      second.adapter.fs.getSourceSnapshotFingerprint = () => {
+        secondFingerprintStarted.resolve();
+        return secondFingerprint.promise;
+      };
+      await writeAgentFile(first, "evicted-fallback-agent", "FIRST");
+      await writeAgentFile(second, "evicted-fallback-agent", "SECOND");
+
+      const firstEnumerationStarted = Promise.withResolvers<void>();
+      const resumeFirstEnumeration = Promise.withResolvers<void>();
+      const firstReadDir = first.adapter.fs.readDir.bind(first.adapter.fs);
+      let pauseFirstEnumeration = true;
+      first.adapter.fs.readDir = async function* (path) {
+        if (pauseFirstEnumeration) {
+          pauseFirstEnumeration = false;
+          firstEnumerationStarted.resolve();
+          await resumeFirstEnumeration.promise;
+        }
+        yield* firstReadDir(path);
+      };
+
+      const firstDiscovery = ensureProjectDiscovery(first);
+      const secondDiscovery = ensureProjectDiscovery(second);
+      const secondFailure = assertRejects(
+        () => secondDiscovery,
+        Error,
+        "Primitive discovery cache changed while awaiting the current generation",
+      );
+      await Promise.all([firstFingerprintStarted.promise, secondFingerprintStarted.promise]);
+      firstFingerprint.resolve(undefined);
+      await firstEnumerationStarted.promise;
+      secondFingerprint.resolve(undefined);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      clearProjectDiscoveryCacheForScope(`${projectSlug}:preview:main`);
+      resumeFirstEnumeration.resolve();
+
+      await firstDiscovery;
+      await secondFailure;
+      await ensureProjectDiscovery(second);
+    });
+
     it("restarts fingerprint matching when the adapter generation changes", async () => {
       agentRegistry.clearAll();
       toolRegistryInternal.clearAll();

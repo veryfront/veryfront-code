@@ -229,6 +229,23 @@ export async function ensureProjectDiscovery(ctx: HandlerContext): Promise<Disco
     ) {
       return currentExisting.promise;
     }
+    if (
+      currentExisting &&
+      (sourceFingerprint === undefined || currentExisting.sourceFingerprint === undefined)
+    ) {
+      // Without a concrete fingerprint, preserve generation isolation. Wait
+      // for the invocation that won this cache slot, then re-evaluate this
+      // adapter's own generation instead of overwriting an in-flight record.
+      await currentExisting.promise;
+      const settledExisting = discoveredProjects.get<DiscoveryRecord>(key);
+      if (settledExisting !== currentExisting) {
+        throwProjectDiscoveryFailure(
+          ctx,
+          new Error("Primitive discovery cache changed while awaiting the current generation"),
+        );
+      }
+      return await ensureProjectDiscovery(ctx);
+    }
     throwProjectDiscoveryFailure(
       ctx,
       new Error("Primitive discovery cache changed while the source fingerprint was computed"),
