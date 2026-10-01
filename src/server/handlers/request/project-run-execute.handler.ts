@@ -247,7 +247,7 @@ interface WorkflowRunView {
   nodeStates?: Readonly<
     Record<string, { input?: unknown; status?: string; _waitInstanceId?: string } | undefined>
   >;
-  error?: { message?: string } | null;
+  error?: { message?: string; code?: string; detail?: unknown } | null;
   pendingApprovals?: ReadonlyArray<
     { id: string; nodeId: string; status?: string; expiresAt?: Date | string }
   >;
@@ -1515,8 +1515,17 @@ async function runDiscoveredWorkflow(
       };
     }
 
+    const validationErrors = run.error?.code === INPUT_VALIDATION_FAILED_CODE
+      ? readSchemaValidationErrors((run.error.detail as { errors?: unknown } | undefined)?.errors)
+      : undefined;
     return {
       success: false,
+      ...(validationErrors
+        ? {
+          error_code: INPUT_VALIDATION_FAILED_CODE,
+          error_detail: { errors: validationErrors },
+        }
+        : {}),
       result: run.output,
       error: run.error?.message ?? `Workflow ended with status: ${run.status}`,
       logs: null,

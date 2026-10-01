@@ -13,7 +13,13 @@ import {
 import { afterAll, describe, it } from "#veryfront/testing/bdd.ts";
 import type { Agent } from "#veryfront/agent";
 import { tool } from "#veryfront/tool";
-import { createWorkflowClient, step, workflow, type WorkflowDefinition } from "#veryfront/workflow";
+import {
+  createWorkflowClient,
+  step,
+  subWorkflow,
+  workflow,
+  type WorkflowDefinition,
+} from "#veryfront/workflow";
 import { defineSchema } from "#veryfront/schemas/index.ts";
 import { schemaIdentitySha256 } from "#veryfront/schemas/schema-identity.ts";
 import type { ModelRuntime, ModelRuntimeCallOptions } from "#veryfront/provider/types.ts";
@@ -3580,6 +3586,57 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     assertEquals(response.error_detail.errors.length, 1);
     assertEquals(response.error_detail.errors[0].path, "/release");
     assertStringIncludes(response.error, "/release");
+    assertEquals(executions, 0);
+  });
+
+  it("#2176 reports nested input validation code and paths without executing child steps", async () => {
+    let executions = 0;
+    const child = workflow({
+      id: "number-child",
+      inputSchema: defineSchema((v) => v.object({ n: v.number() }))(),
+      steps: [step("child-side-effect", {
+        tool: tool({
+          id: "child-side-effect",
+          description: "Record child execution",
+          inputSchema: defineSchema((v) => v.object({}).passthrough())(),
+          execute: () => {
+            executions++;
+            return Promise.resolve({});
+          },
+        }),
+      })],
+    });
+    const definition = workflow({
+      id: "nested-number-parent",
+      steps: [subWorkflow("nested", {
+        workflow: child.definition as unknown as WorkflowDefinition,
+        input: { n: "x" },
+      })],
+    }).definition as unknown as WorkflowDefinition;
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      findWorkflowById: async () => ({
+        id: definition.id,
+        filePath: "workflows/nested-number-parent.ts",
+        exportName: "default",
+        definition,
+      }),
+      createWorkflowClient: () => createWorkflowClient(),
+    }));
+    const { request, publicKeyPem } = await signedRequest(
+      "/api/control-plane/runs/run_workflow_nested_invalid/execute",
+      {
+        runId: "run_workflow_nested_invalid",
+        kind: "workflow",
+        target: "workflow:nested-number-parent",
+        projectId: "proj-1",
+      },
+    );
+    const result = await handler.handle(request, createCtx(publicKeyPem));
+    assertExists(result.response);
+    const response = await result.response.json();
+    assertEquals(response.success, false);
+    assertEquals(response.error_code, "INPUT_VALIDATION_FAILED");
+    assertEquals(response.error_detail.errors.map((error: { path: string }) => error.path), ["/n"]);
     assertEquals(executions, 0);
   });
 

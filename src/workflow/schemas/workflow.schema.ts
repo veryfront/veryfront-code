@@ -106,6 +106,8 @@ export const getNodeStateSchema = defineSchema((v) =>
     _waitInstanceId: v.string().optional(),
     /** Internal owner path for a node produced inside a sub-workflow. */
     _subWorkflowOwnerPath: v.string().optional(),
+    /** The sub-workflow input has been parsed and is reusable on resume. */
+    _subWorkflowInputParsed: v.boolean().optional(),
     /** Child states this composite had actively parked when it last suspended. */
     _activeCompositeChildIds: v.array(v.string()).optional(),
     /** Child states a runtime-defined composite produced before it completed. */
@@ -182,6 +184,8 @@ export const getWorkflowErrorSchema = defineSchema((v) =>
     message: v.string(),
     stack: v.string().optional(),
     nodeId: v.string().optional(),
+    code: v.string().optional(),
+    detail: v.unknown().optional(),
   })
 );
 

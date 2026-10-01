@@ -4,7 +4,7 @@ import {
   NOT_SUPPORTED,
   ORCHESTRATION_ERROR,
   RESOURCE_NOT_FOUND,
-  type VeryfrontError,
+  VeryfrontError,
 } from "#veryfront/errors";
 import { getActiveTraceparent } from "#veryfront/observability/tracing/otlp-setup.ts";
 import {
@@ -37,6 +37,11 @@ import {
   MAX_WORKFLOW_CHILD_RUN_ID_CODE_UNITS,
 } from "../limits.ts";
 import { isCanonicalNonEmptyString } from "../dsl/validation.ts";
+
+import {
+  INPUT_VALIDATION_FAILED_CODE,
+  readSchemaValidationErrors,
+} from "#veryfront/schemas/validation-errors.ts";
 
 const logger = baseLogger.component("workflow-run-control");
 
@@ -1334,6 +1339,10 @@ async function failRun(
   if (!input.isCurrentExecution(run.id, executionController)) return false;
 
   const publicContext = toPersistedWorkflowContext(result.context);
+  const validationErrors =
+    error instanceof VeryfrontError && error.slug === "input-validation-failed"
+      ? readSchemaValidationErrors((error.context as { errors?: unknown } | undefined)?.errors)
+      : undefined;
   return await updateRunIfStatus(
     backend,
     run.id,
@@ -1345,6 +1354,12 @@ async function failRun(
       error: {
         message: error.message,
         stack: error.stack,
+        ...(validationErrors
+          ? {
+            code: INPUT_VALIDATION_FAILED_CODE,
+            detail: { errors: validationErrors },
+          }
+          : {}),
       },
       completedAt: new Date(),
     },
