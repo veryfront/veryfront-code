@@ -1081,6 +1081,43 @@ describe("DAGExecutor", () => {
       assertEquals(result.nodeStates.batch?.output, [{ value: 42 }]);
     });
 
+    it("composes mapped validation views through nested parallel sub-workflows", async () => {
+      const processor: WorkflowDefinition = {
+        id: "nested-mapped-output",
+        steps: [parallel("outer", [
+          parallel("inner", [
+            subWorkflow("child", {
+              workflow: {
+                id: "deep-output",
+                outputSchema: defineSchema((v) => v.object({ value: v.number() }))(),
+                steps: [step("value", { tool: "noop" })],
+              },
+            }),
+          ]),
+        ])],
+      };
+      const exec = new DAGExecutor({
+        stepExecutor: new MockStepExecutor(
+          new Map(),
+          () => ({ success: true, output: 42, executionTime: 1 }),
+        ),
+      });
+
+      const result = await exec.execute(
+        [map("batch", { items: [{}], processor })],
+        createTestRun(),
+      );
+
+      assertEquals(result.completed, true);
+      assertEquals(
+        result.nodeStates["batch_0/outer/inner/child"]?.output,
+        {
+          input: {},
+          "batch_0/outer/inner/value": 42,
+        },
+      );
+    });
+
     it("namespaces composite descendants for every mapped item", async () => {
       const nodes = [
         map("batch", {

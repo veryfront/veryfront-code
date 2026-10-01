@@ -191,6 +191,9 @@ function rebaseWorkflowDefinition(
   definition: WorkflowDefinition,
 ): WorkflowDefinition {
   const { steps, output } = definition;
+  const inheritedOutputValidationContextView = (definition as NamespacedWorkflowDefinition)[
+    outputValidationContextView
+  ];
   // Declared ids the rebase left unchanged (already carrying the new prefix).
   const kept = new Set<string>();
   const rebased: NamespacedWorkflowDefinition = {
@@ -203,8 +206,10 @@ function rebaseWorkflowDefinition(
     ...(output === undefined
       ? {}
       : { output: (context) => output(rebaseContextKeys(newPrefix, oldPrefix, context, kept)) }),
-    [outputValidationContextView]: (context: Record<string, unknown>) =>
-      rebaseContextKeys(newPrefix, oldPrefix, context, kept),
+    [outputValidationContextView]: (context: Record<string, unknown>) => {
+      const rebasedContext = rebaseContextKeys(newPrefix, oldPrefix, context, kept);
+      return inheritedOutputValidationContextView?.(rebasedContext) ?? rebasedContext;
+    },
   };
   return rebased;
 }
