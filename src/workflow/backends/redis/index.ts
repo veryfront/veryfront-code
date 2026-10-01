@@ -31,6 +31,7 @@ import {
 } from "../types.ts";
 import { agentLogger, safeJsonParse } from "#veryfront/utils";
 import {
+  prepareNodeStatesUserData,
   prepareWorkflowJson,
   serializeWorkflowContext,
   serializeWorkflowJson,
@@ -1910,6 +1911,7 @@ export class RedisBackend implements WorkflowBackend {
     const context = serializeWorkflowContext(run.context, run.id, {
       strictContext: this.config.strictContext,
     });
+    const nodeStates = this.serializeNodeStates(run.nodeStates, run.id);
     return {
       id: run.id,
       workflowId: run.workflowId,
@@ -1922,7 +1924,7 @@ export class RedisBackend implements WorkflowBackend {
       sourceIntegrationPolicy: JSON.stringify(sourceIntegrationPolicy),
       input: JSON.stringify(run.input),
       output: run.output !== undefined ? JSON.stringify(run.output) : "",
-      nodeStates: JSON.stringify(run.nodeStates),
+      nodeStates,
       currentNodes: JSON.stringify(run.currentNodes),
       context,
       error: run.error ? JSON.stringify(run.error) : "",
@@ -1970,7 +1972,9 @@ export class RedisBackend implements WorkflowBackend {
       "output",
       patch.output !== undefined ? JSON.stringify(patch.output) : "",
     );
-    setDefinedField("nodeStates", patch.nodeStates, JSON.stringify(patch.nodeStates));
+    if (patch.nodeStates !== undefined) {
+      fields.nodeStates = this.serializeNodeStates(patch.nodeStates, runId);
+    }
     setNonEmptyArrayField("nodeStateDeletes", patch.nodeStateDeletes);
     setDefinedField("currentNodes", patch.currentNodes, JSON.stringify(patch.currentNodes));
     setDefinedField("context", preparedContext, preparedContext?.serialized ?? "");
@@ -1993,6 +1997,13 @@ export class RedisBackend implements WorkflowBackend {
     }
     setOwnedField("_traceContext", "traceContext", patch._traceContext ?? "");
     return fields;
+  }
+
+  /** Encode node states with their step data under the run's context policy. */
+  private serializeNodeStates(nodeStates: WorkflowRun["nodeStates"], runId?: string): string {
+    return JSON.stringify(
+      prepareNodeStatesUserData(nodeStates, runId, { strictContext: this.config.strictContext }),
+    );
   }
 
   private serializeCheckpointNodeStates(

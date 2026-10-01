@@ -3180,6 +3180,128 @@ describe("RedisBackend", () => {
       );
     });
 
+    it("applies the context JSON policy to node-state input and output (#2242)", async () => {
+      const startedAt = new Date("2026-01-01T00:00:00Z");
+      await backend.createRun(createTestRun("run-node-state-json", {
+        nodeStates: {
+          parent: {
+            nodeId: "parent",
+            status: "running",
+            attempt: 1,
+            startedAt,
+            input: { due: new Date(0) },
+          },
+        },
+      }));
+
+      const warnings: LogEntry[] = [];
+      const unsubscribe = __subscribeLogRecordEmitter((entry) => {
+        if (entry.level === "warn" && entry.component === "workflow-context") {
+          warnings.push(entry);
+        }
+      });
+      try {
+        await backend.updateRun("run-node-state-json", {
+          nodeStates: {
+            "child-stamp": {
+              nodeId: "child-stamp",
+              status: "completed",
+              attempt: 1,
+              startedAt,
+              completedAt: startedAt,
+              output: { when: new Date(0) },
+              _subWorkflowOwnerPath: "parent",
+            },
+          },
+        });
+      } finally {
+        unsubscribe();
+      }
+
+      assertEquals(warnings.length, 1);
+      assertEquals(warnings[0]?.run_id, "run-node-state-json");
+      const run = await backend.getRun("run-node-state-json");
+      // Framework timestamps keep the encoding Redis has always given them.
+      assertEquals(run?.nodeStates.parent?.startedAt as unknown, startedAt.toISOString());
+      assertEquals(run?.nodeStates.parent?.input, { due: "1970-01-01T00:00:00.000Z" });
+      assertEquals(
+        run?.nodeStates["child-stamp"]?.completedAt as unknown,
+        startedAt.toISOString(),
+      );
+      assertEquals(run?.nodeStates["child-stamp"]?.output, { when: "1970-01-01T00:00:00.000Z" });
+    });
+
+    it("rejects node-state user data JSON cannot encode, naming the field (#2242)", async () => {
+      await backend.createRun(createTestRun("run-node-state-bigint"));
+      await assertRejects(
+        () =>
+          backend.updateRun("run-node-state-bigint", {
+            nodeStates: {
+              "child-stamp": {
+                nodeId: "child-stamp",
+                status: "completed",
+                attempt: 1,
+                output: { total: 1n },
+              },
+            },
+          }),
+        Error,
+        "nodeStates.output.<redacted>",
+      );
+      assertEquals((await backend.getRun("run-node-state-bigint"))?.nodeStates, {});
+    });
+
+    it("rejects lossy node-state user data when strictContext is enabled (#2242)", async () => {
+      const strictBackend = new RedisBackend({
+        client: mockRedis as unknown as RedisAdapter,
+        prefix: "strict-node-state:",
+        strictContext: true,
+      });
+      const startedAt = new Date("2026-01-01T00:00:00Z");
+      await assertRejects(
+        () =>
+          strictBackend.createRun(createTestRun("run-strict-node-state-input", {
+            nodeStates: {
+              parent: {
+                nodeId: "parent",
+                status: "running",
+                attempt: 1,
+                input: { due: new Date(0) },
+              },
+            },
+          })),
+        Error,
+        "strictContext",
+      );
+      assertEquals(await strictBackend.getRun("run-strict-node-state-input"), null);
+
+      await strictBackend.createRun(createTestRun("run-strict-node-state", {
+        nodeStates: {
+          parent: { nodeId: "parent", status: "running", attempt: 1, startedAt },
+        },
+      }));
+      await assertRejects(
+        () =>
+          strictBackend.updateRun("run-strict-node-state", {
+            nodeStates: {
+              "child-stamp": {
+                nodeId: "child-stamp",
+                status: "completed",
+                attempt: 1,
+                startedAt,
+                completedAt: startedAt,
+                output: { when: new Date(0) },
+              },
+            },
+          }),
+        Error,
+        "strictContext",
+      );
+      const run = await strictBackend.getRun("run-strict-node-state");
+      assertEquals(run?.nodeStates["child-stamp"], undefined);
+      assertEquals(run?.nodeStates.parent?.startedAt as unknown, startedAt.toISOString());
+    });
+
     it("applies explicit node-state deletions without replacing concurrent keys", async () => {
       await backend.createRun(createTestRun("run-node-state-delete"));
       await backend.updateRun("run-node-state-delete", {

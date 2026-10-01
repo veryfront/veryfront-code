@@ -1004,6 +1004,154 @@ describe("MemoryBackend", () => {
       assertEquals(await strictBackend.getCheckpoints("run-strict-child"), []);
     });
 
+    it("persists node-state input and output through the context JSON policy (#2242)", async () => {
+      const startedAt = new Date("2026-01-01T00:00:00Z");
+      await backend.createRun(createTestRun("run-node-state-json", {
+        nodeStates: {
+          parent: {
+            nodeId: "parent",
+            status: "running",
+            attempt: 1,
+            startedAt,
+            input: { due: new Date(0) },
+          },
+        },
+      }));
+      await backend.updateRun("run-node-state-json", {
+        nodeStates: {
+          "child-stamp": {
+            nodeId: "child-stamp",
+            status: "completed",
+            attempt: 1,
+            startedAt,
+            completedAt: startedAt,
+            output: { when: new Date(0), tags: new Map([["a", 1]]) },
+            _subWorkflowOwnerPath: "parent",
+          },
+        },
+      });
+      await backend.restoreRunStateIfStatus("run-node-state-json", ["pending"], {
+        status: "pending",
+        context: { input: {} },
+        nodeStates: {
+          restored: {
+            nodeId: "restored",
+            status: "completed",
+            attempt: 1,
+            completedAt: startedAt,
+            output: { when: new Date(0) },
+          },
+        },
+      });
+
+      const run = await backend.getRun("run-node-state-json");
+      assertEquals(run?.nodeStates.restored, {
+        nodeId: "restored",
+        status: "completed",
+        attempt: 1,
+        completedAt: startedAt,
+        output: { when: "1970-01-01T00:00:00.000Z" },
+      });
+
+      await backend.createRun(createTestRun("run-node-state-json-merge", {
+        nodeStates: {
+          parent: {
+            nodeId: "parent",
+            status: "running",
+            attempt: 1,
+            startedAt,
+            input: { due: new Date(0) },
+          },
+        },
+      }));
+      await backend.updateRun("run-node-state-json-merge", {
+        nodeStates: {
+          "child-stamp": {
+            nodeId: "child-stamp",
+            status: "completed",
+            attempt: 1,
+            completedAt: startedAt,
+            output: { when: new Date(0), tags: new Map([["a", 1]]) },
+          },
+        },
+      });
+      const merged = await backend.getRun("run-node-state-json-merge");
+      // Framework timestamps stay Dates; user data takes its JSON form, as Redis stores it.
+      assertEquals(merged?.nodeStates.parent?.startedAt, startedAt);
+      assertEquals(merged?.nodeStates.parent?.input, { due: "1970-01-01T00:00:00.000Z" });
+      assertEquals(merged?.nodeStates["child-stamp"]?.completedAt, startedAt);
+      assertEquals(merged?.nodeStates["child-stamp"]?.output, {
+        when: "1970-01-01T00:00:00.000Z",
+        tags: {},
+      });
+    });
+
+    it("rejects node-state user data JSON cannot encode, naming the field (#2242)", async () => {
+      await backend.createRun(createTestRun("run-node-state-bigint"));
+      await assertRejectsAsynchronously(
+        () =>
+          backend.updateRun("run-node-state-bigint", {
+            nodeStates: {
+              "child-stamp": {
+                nodeId: "child-stamp",
+                status: "completed",
+                attempt: 1,
+                output: { total: 1n },
+              },
+            },
+          }),
+        "nodeStates.output.<redacted>",
+      );
+      assertEquals((await backend.getRun("run-node-state-bigint"))?.nodeStates, {});
+    });
+
+    it("rejects lossy node-state user data when strictContext is enabled (#2242)", async () => {
+      const strictBackend = new MemoryBackend({ strictContext: true });
+      const startedAt = new Date("2026-01-01T00:00:00Z");
+      await assertRejects(
+        () =>
+          strictBackend.createRun(createTestRun("run-strict-node-state-input", {
+            nodeStates: {
+              parent: {
+                nodeId: "parent",
+                status: "running",
+                attempt: 1,
+                input: { due: new Date(0) },
+              },
+            },
+          })),
+        Error,
+        "strictContext",
+      );
+      assertEquals(await strictBackend.getRun("run-strict-node-state-input"), null);
+
+      await strictBackend.createRun(createTestRun("run-strict-node-state", {
+        nodeStates: {
+          parent: { nodeId: "parent", status: "running", attempt: 1, startedAt },
+        },
+      }));
+      await assertRejectsAsynchronously(
+        () =>
+          strictBackend.updateRun("run-strict-node-state", {
+            nodeStates: {
+              "child-stamp": {
+                nodeId: "child-stamp",
+                status: "completed",
+                attempt: 1,
+                startedAt,
+                completedAt: startedAt,
+                output: { when: new Date(0) },
+              },
+            },
+          }),
+        "strictContext",
+      );
+      const run = await strictBackend.getRun("run-strict-node-state");
+      assertEquals(run?.nodeStates["child-stamp"], undefined);
+      // Framework-owned timestamps are not user data and never trip the policy.
+      assertEquals(run?.nodeStates.parent?.startedAt, startedAt);
+    });
+
     it("merges node-state sets while applying explicit deletions", async () => {
       await backend.createRun(createTestRun("run-node-state-delete", {
         nodeStates: {

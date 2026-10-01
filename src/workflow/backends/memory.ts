@@ -17,6 +17,7 @@ import type {
 import type { WorkflowChildRunWaitBoundary } from "../types.ts";
 import { childRunWaitBoundary, sameChildRunWaitBoundary } from "../child-run-wait-boundary.ts";
 import {
+  prepareNodeStatesUserData,
   serializeWorkflowContext,
   serializeWorkflowJson,
   type WorkflowJsonSerializationOptions,
@@ -209,7 +210,9 @@ function materializeMemoryRunUpdate(
     contextPatch,
     contextPatchKeys,
     contextDeleteKeys: [...contextDeletes],
-    nodeStatePatch: patchNodeStates === undefined ? undefined : { ...patchNodeStates },
+    nodeStatePatch: patchNodeStates === undefined
+      ? undefined
+      : prepareNodeStatesUserData(patchNodeStates, runId, options),
     nodeStateDeleteKeys: [...nodeStateDeletes],
     storedPatch,
   };
@@ -249,7 +252,7 @@ function materializeRunStateSnapshot(
   return {
     ...snapshotFields,
     context: persistedWorkflowContext(snapshotContext, runId, options),
-    nodeStates: { ...snapshotNodeStates },
+    nodeStates: prepareNodeStatesUserData(snapshotNodeStates, runId, options),
   };
 }
 
@@ -488,6 +491,7 @@ export class MemoryBackend implements WorkflowBackend {
       context = persistedWorkflowContext(sourceContext, run.id, this.config);
       runForClone = {
         ...runWithoutContext,
+        nodeStates: prepareNodeStatesUserData(run.nodeStates, run.id, this.config),
         context,
         sourceIntegrationPolicy,
       };

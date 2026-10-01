@@ -1470,13 +1470,13 @@ function formatPaths(samples: readonly UnrepresentableValue[], total: number): s
  * field would raise on the same value.
  *
  * Scope, stated plainly because the ordering above is easy to read as more:
- * only `context` is checked. A run's `input`, `output`, `nodeStates`,
- * `currentNodes`, and `error` are encoded directly, so nothing here inspects
- * them. That is deliberate for now: `nodeStates` carries a `Date` on every
- * node, so checking it would report the framework's own timestamps on every
- * run. Anything the framework writes into `context` has to obey the same rule
- * it asks of a step, which is why the loop encodes its child node states
- * rather than being exempted from the check.
+ * `context` is checked here, and the user data in `nodeStates` is checked by
+ * `prepareNodeStatesUserData`. A run's `input`, `output`, `currentNodes`, and
+ * `error` are encoded directly. A node state's own timestamps stay outside the
+ * check, because they are the framework's `Date`s rather than step data.
+ * Anything the framework writes into `context` has to obey the same rule it
+ * asks of a step, which is why the loop encodes its child node states rather
+ * than being exempted from the check.
  */
 /** @internal Prepare the exact JSON value and encoded string for durable storage. */
 export function prepareWorkflowJson(
@@ -1553,4 +1553,70 @@ export function serializeWorkflowContext(
   options?: WorkflowJsonSerializationOptions,
 ): string {
   return serializeWorkflowJson(context, "context", runId, options);
+}
+
+/** The node-state fields that carry step data rather than framework metadata. */
+const NODE_STATE_USER_DATA_FIELDS = ["input", "output"] as const;
+
+type NodeStateUserDataField = typeof NODE_STATE_USER_DATA_FIELDS[number];
+
+/**
+ * @internal Apply the context persistence policy to the step data in node states.
+ *
+ * A node state's `input` and `output` hold what a step received and returned,
+ * so they are the same user data `context` holds. A nested workflow keeps its
+ * children's results only here until it completes, which left them outside the
+ * policy: Redis rewrote a `Date` to a string and failed on a BigInt with the
+ * native error, the memory backend kept both, and `strictContext` saw neither.
+ *
+ * Each field is checked across all nodes in one pass, so a diagnostic names the
+ * field (`nodeStates.output.<redacted>...`) and a write logs at most one warning
+ * per field. The returned states hold the JSON form a durable backend reads
+ * back; fields JSON omits are removed. `startedAt` and `completedAt` are left
+ * as they are.
+ */
+export function prepareNodeStatesUserData<
+  T extends { input?: unknown; output?: unknown },
+>(
+  nodeStates: Readonly<Record<string, T>>,
+  runId: string | undefined,
+  options: WorkflowJsonSerializationOptions,
+): Record<string, T> {
+  const prepared: Record<string, T> = {};
+  for (const nodeId of objectKeys(nodeStates)) {
+    // Defined rather than assigned, so a node id such as `__proto__` stays an own key.
+    objectDefineProperty(prepared, nodeId, {
+      value: { ...nodeStates[nodeId]! },
+      enumerable: true,
+      configurable: true,
+      writable: true,
+    });
+  }
+
+  for (const field of NODE_STATE_USER_DATA_FIELDS) {
+    const values = collectNodeStateField(prepared, field);
+    if (values === undefined) continue;
+    const persisted = jsonParse(
+      serializeWorkflowJson(values, `nodeStates.${field}`, runId, options),
+    ) as Record<string, unknown>;
+    for (const nodeId of objectKeys(values)) {
+      if (objectHasOwn(persisted, nodeId)) prepared[nodeId]![field] = persisted[nodeId];
+      else delete prepared[nodeId]![field];
+    }
+  }
+  return prepared;
+}
+
+function collectNodeStateField(
+  nodeStates: Record<string, { input?: unknown; output?: unknown }>,
+  field: NodeStateUserDataField,
+): Record<string, unknown> | undefined {
+  let values: Record<string, unknown> | undefined;
+  for (const nodeId of objectKeys(nodeStates)) {
+    const value = nodeStates[nodeId]![field];
+    if (value === undefined) continue;
+    values ??= objectCreate(null) as Record<string, unknown>;
+    values[nodeId] = value;
+  }
+  return values;
 }

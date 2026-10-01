@@ -5,6 +5,7 @@ import {
   assertEquals,
   assertExists,
   assertRejects,
+  assertStringIncludes,
   assertThrows,
 } from "#veryfront/testing/assert.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
@@ -1338,6 +1339,79 @@ describe("WorkflowClient", () => {
       assertEquals(run.nodeStates["publish-child"]!.status, "completed");
       const output = run.output as Record<string, unknown>;
       assertEquals(output["publish-child"], { published: "child" });
+    });
+
+    describe("nested node-state persistence policy (#2242)", () => {
+      function createStampingWorkflow(stamp: unknown) {
+        return workflow({
+          id: "sub-workflow-stamp-workflow",
+          steps: [
+            subWorkflow("child-workflow", {
+              workflow: workflow({
+                id: "child-stamp-workflow",
+                steps: [
+                  step("stamp", { tool: createMockTool("child-stamp", { when: stamp }) }),
+                  dependsOn(
+                    waitForApproval("child-review", { message: "Review child stamp" }),
+                    "stamp",
+                  ),
+                ],
+              }).definition,
+            }),
+          ],
+        });
+      }
+
+      async function pauseAndResume(
+        policyBackend: MemoryBackend,
+        stamp: unknown,
+      ): Promise<{ waiting: WorkflowRun | null; final: WorkflowRun | null }> {
+        const policyClient = createWorkflowClient({ backend: policyBackend });
+        try {
+          policyClient.register(createStampingWorkflow(stamp));
+          const handle = await policyClient.start("sub-workflow-stamp-workflow", {});
+          await handle.settled();
+          const waiting = await policyBackend.getRun(handle.runId);
+          const [approval] = await policyBackend.getPendingApprovals(handle.runId);
+          if (approval) await policyClient.approve(handle.runId, approval.id, "reviewer");
+          return { waiting, final: await policyBackend.getRun(handle.runId) };
+        } finally {
+          await policyClient.destroy();
+        }
+      }
+
+      it("pauses a child with the JSON form of its step output, as Redis stores it", async () => {
+        const { waiting, final } = await pauseAndResume(new MemoryBackend(), new Date(0));
+
+        assertEquals(waiting?.status, "waiting");
+        const when = "1970-01-01T00:00:00.000Z";
+        assertEquals(waiting?.nodeStates.stamp?.output, { when });
+        assertEquals(
+          (waiting?.nodeStates["child-workflow"]?.output as Record<string, unknown>).stamp,
+          { when },
+        );
+        // Framework timestamps are not user data and keep their Date type.
+        assert(waiting?.nodeStates.stamp?.completedAt instanceof Date);
+        assertEquals(final?.status, "completed");
+      });
+
+      it("fails the run explicitly in strict mode instead of pausing with a changed value", async () => {
+        const { waiting, final } = await pauseAndResume(
+          new MemoryBackend({ strictContext: true }),
+          new Date(0),
+        );
+
+        assertEquals(waiting?.status, "failed");
+        assertStringIncludes(waiting?.error?.message ?? "", "strictContext");
+        assertEquals(final?.status, "failed");
+      });
+
+      it("fails the run with a named path when nested step output cannot be encoded", async () => {
+        const { waiting } = await pauseAndResume(new MemoryBackend(), 1n);
+
+        assertEquals(waiting?.status, "failed");
+        assertStringIncludes(waiting?.error?.message ?? "", "nodeStates.output.<redacted>");
+      });
     });
   });
 
