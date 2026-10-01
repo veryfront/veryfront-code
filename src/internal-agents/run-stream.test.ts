@@ -557,15 +557,15 @@ describe("internal-agents/run-stream", () => {
     assertEquals(Object.keys(mergedTools ?? {}), ["unrelated_tool"]);
   });
 
-  it("rejects every request-injected tool when an unrestricted selector fails closed", () => {
+  it("merges request client tools for a markdown all-tools agent with denied tools", () => {
     const sessionManager = new AgentRunSessionManager();
     const runtimeAgent = createRuntimeAgentFromMarkdownDefinition({
-      id: "fail-closed-injected",
-      name: "Fail Closed Injected",
-      description: "Does not accept injected project tools",
-      instructions: "Do not use project tools.",
+      id: "denied-lookup-agent",
+      name: "Denied Lookup Agent",
+      description: "All tools except web_fetch",
+      instructions: "Use lookup_reference to answer.",
       tools: true,
-      deniedTools: ["update_file"],
+      deniedTools: ["web_fetch"],
     });
 
     const mergedTools = buildMergedTools(
@@ -575,15 +575,18 @@ describe("internal-agents/run-stream", () => {
         threadId: crypto.randomUUID(),
         messages: [],
         tools: [
-          { name: "update_file", description: "Denied tool" },
-          { name: "unrelated_tool", description: "Another project tool" },
+          { name: "lookup_reference", description: "Client lookup" },
+          { name: "web_fetch", description: "Denied tool" },
         ],
         context: [],
       } as Parameters<typeof buildMergedTools>[1],
       sessionManager,
     );
 
-    assertEquals(mergedTools, undefined);
+    assertEquals(Object.keys(mergedTools ?? {}), ["lookup_reference"]);
+    const lookupReference = mergedTools?.lookup_reference as Tool;
+    assertEquals(lookupReference.id, "lookup_reference");
+    assertEquals(lookupReference.description, "Client lookup");
   });
 
   it("applies owned short-name denials to registered-name injected tools", () => {
