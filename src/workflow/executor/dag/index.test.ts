@@ -157,6 +157,48 @@ describe("DAGExecutor", () => {
   });
 
   describe("nested output exception replay", () => {
+    it("builds replayed dynamic steps from the retained input when the retry context changes", async () => {
+      const builderInputs: unknown[] = [];
+      let childExecutions = 0;
+      let outputCalls = 0;
+      const childExecutor = new MockStepExecutor(new Map(), (_node, context) => {
+        childExecutions++;
+        return { success: true, output: context.input, executionTime: 0 };
+      });
+      const nodes = [
+        subWorkflow("child", {
+          input: (context) => context.retryInput ?? { n: 1 },
+          workflow: {
+            id: "dynamic-child",
+            steps: ({ input }) => {
+              builderInputs.push(input);
+              return [step(`read-${(input as { n: number }).n}`, { tool: "read" })];
+            },
+            output: (context) => {
+              if (++outputCalls === 1) throw new Error("output selection failed");
+              return { input: context.input, read: context["read-1"] };
+            },
+          },
+        }),
+      ];
+      const first = await new DAGExecutor({ stepExecutor: childExecutor }).execute(
+        nodes,
+        createTestRun(),
+      );
+      assertEquals(first.completed, false);
+      const retried = await new DAGExecutor({ stepExecutor: childExecutor }).execute(
+        nodes,
+        createTestRun({
+          nodeStates: first.nodeStates,
+          context: { ...first.context, retryInput: { n: 2 } },
+        }),
+      );
+      assertEquals(retried.completed, true);
+      assertEquals(builderInputs, [{ n: 1 }, { n: 1 }]);
+      assertEquals(retried.context.child, { input: { n: 1 }, read: { n: 1 } });
+      assertEquals(childExecutions, 1);
+    });
+
     for (const scenario of ["loop child", "dependent callback"] as const) {
       it(`preserves ${scenario} writes when retrying nested output selection`, async () => {
         let childExecutions = 0;
