@@ -1417,6 +1417,8 @@ async function runDiscoveredWorkflow(
     client.register(workflow.definition);
     // The run was cancelled while the workflow was being loaded: do not start or resume it.
     if (signal.aborted) {
+      // This initial dispatch never started work. A resume may have work on another executor.
+      if (!request.resume) await acknowledgeStop?.();
       return {
         success: false,
         error: "Workflow run cancelled",

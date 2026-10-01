@@ -7157,6 +7157,64 @@ describe("server/handlers/request/project-run-execute.handler cancellation", () 
     assertEquals(callbacks, 1);
   });
 
+  for (const phase of ["discovery", "client-creation"] as const) {
+    for (const resume of [false, true]) {
+      it(`acknowledges a received cancellation before ${phase} only for an initial dispatch (resume: ${resume})`, async () => {
+        const controller = new AbortController();
+        const entered = Promise.withResolvers<void>();
+        const release = Promise.withResolvers<void>();
+        let callbacks = 0;
+        let starts = 0;
+        const beforeStart = async () => {
+          entered.resolve();
+          await release.promise;
+        };
+        const handler = new ProjectRunExecuteHandler(createDeps({
+          ensureProjectDiscovery: async () => {
+            if (phase === "discovery") await beforeStart();
+            return createEmptyDiscoveryResult();
+          },
+          createWorkflowClient: async () => {
+            if (phase === "client-creation") await beforeStart();
+            return {
+              register: () => {},
+              start: async () => {
+                starts++;
+                return { runId: "run_prestart_ack" };
+              },
+              getRun: async () => ({ status: "running" }),
+              cancel: async () => {},
+              waitForExecutionStopped: async () => false,
+              destroy: async () => {},
+            };
+          },
+        }));
+        const signed = await signedRequest("/api/control-plane/runs/run_prestart_ack/execute", {
+          runId: "run_prestart_ack",
+          kind: "workflow",
+          target: "workflow:publish",
+          projectId: "proj-1",
+          ...(resume ? { resume: { type: "deadline", wait_id: "w" } } : {}),
+        }, { "x-veryfront-run-stop-token": "opaque-stop-capability" });
+        await withMockFetch(async () => {
+          callbacks++;
+          return Response.json({ acknowledged: true });
+        }, async () => {
+          const pending = handler.handle(
+            new Request(signed.request, { signal: controller.signal }),
+            createCtx(signed.publicKeyPem),
+          );
+          await entered.promise;
+          controller.abort(new Error("Run cancelled before startup"));
+          release.resolve();
+          await pending;
+        });
+        assertEquals(starts, 0);
+        assertEquals(callbacks, resume ? 0 : 1);
+      });
+    }
+  }
+
   for (const status of ["completed", "failed"] as const) {
     for (const owned of [true, false]) {
       it(`acknowledges cancellation during ${status} workflow cleanup only with local settlement (owned: ${owned})`, async () => {
