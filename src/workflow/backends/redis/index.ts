@@ -31,13 +31,17 @@ import {
 } from "../types.ts";
 import { agentLogger, safeJsonParse } from "#veryfront/utils";
 import {
+  collectWorkflowJsonRecords,
+  isDeferredWorkflowJsonValue,
   prepareNodeStatesUserData,
   prepareWorkflowJson,
   resolveDeferredWorkflowJsonValue,
   serializeWorkflowContext,
   serializeWorkflowJson,
+  WORKFLOW_CHECKPOINT_RECORD,
   WORKFLOW_NODE_RECORD,
   WORKFLOW_RESUME_ENVELOPE_RECORD,
+  type WorkflowJsonRecords,
 } from "../../context-serialization.ts";
 import { requeueRun } from "../shared/requeue-run.ts";
 import {
@@ -1811,10 +1815,11 @@ export class RedisBackend implements WorkflowBackend {
   prepareNodeStatesForPersistence(
     runId: string | undefined,
     nodeStates: WorkflowRun["nodeStates"],
+    records?: WorkflowJsonRecords,
   ): WorkflowRun["nodeStates"] {
     return prepareNodeStatesUserData(nodeStates, runId, {
       strictContext: this.config.strictContext,
-    });
+    }, records);
   }
 
   private storagePrefix(): string {
@@ -2022,21 +2027,26 @@ export class RedisBackend implements WorkflowBackend {
   private serializeCheckpointNodeStates(
     runId: string,
     nodeStates: Checkpoint["nodeStates"],
+    records?: WorkflowJsonRecords,
   ): string {
     return prepareWorkflowJson(
       this.normalizeCheckpointNodeStates(
-        this.prepareNodeStatesForPersistence(runId, nodeStates),
+        this.prepareNodeStatesForPersistence(runId, nodeStates, records),
       ),
       "checkpoint.nodeStates",
       runId,
       { strictContext: false },
       WORKFLOW_NODE_RECORD,
+      records,
     ).serialized;
   }
 
   private normalizeCheckpointNodeStates(
     nodeStates: Checkpoint["nodeStates"],
   ): Record<string, unknown> {
+    // An owned checkpoint defers the whole map when it holds a `toJSON` hook.
+    // The deferred value has no own entries, so it is encoded as it is.
+    if (isDeferredWorkflowJsonValue(nodeStates as unknown)) return nodeStates;
     const normalizedNodeStates: Record<string, unknown> = {};
     for (const [nodeId, nodeState] of Object.entries(nodeStates)) {
       const normalizedNodeState: Record<string, unknown> = { ...nodeState };
@@ -2054,14 +2064,17 @@ export class RedisBackend implements WorkflowBackend {
   private serializeCheckpoint(runId: string, checkpoint: Checkpoint): string {
     // Checked before the rest of the checkpoint is encoded below, so a value
     // JSON refuses is named by its path rather than by the native error.
+    // The fields are encoded separately, so they share the checkpoint's records.
+    const records = collectWorkflowJsonRecords(checkpoint, WORKFLOW_CHECKPOINT_RECORD);
     const { serialized: context } = prepareWorkflowJson(
       checkpoint.context,
       "checkpoint.context",
       runId,
       { strictContext: this.config.strictContext },
       WORKFLOW_NODE_RECORD,
+      records,
     );
-    const nodeStates = this.serializeCheckpointNodeStates(runId, checkpoint.nodeStates);
+    const nodeStates = this.serializeCheckpointNodeStates(runId, checkpoint.nodeStates, records);
     const {
       context: _context,
       nodeStates: _nodeStates,
@@ -2076,7 +2089,7 @@ export class RedisBackend implements WorkflowBackend {
     const normalizedResumeEnvelope = resolvedResumeEnvelope === undefined ? undefined : {
       ...resolvedResumeEnvelope,
       nodeStates: this.normalizeCheckpointNodeStates(
-        this.prepareNodeStatesForPersistence(runId, resolvedResumeEnvelope.nodeStates),
+        this.prepareNodeStatesForPersistence(runId, resolvedResumeEnvelope.nodeStates, records),
       ),
     };
     const resumeEnvelope = normalizedResumeEnvelope === undefined
@@ -2088,6 +2101,7 @@ export class RedisBackend implements WorkflowBackend {
           runId,
           { strictContext: false },
           WORKFLOW_RESUME_ENVELOPE_RECORD,
+          records,
         ).serialized
       }`;
     return `${

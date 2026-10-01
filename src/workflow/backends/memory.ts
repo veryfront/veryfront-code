@@ -17,11 +17,14 @@ import type {
 import type { WorkflowChildRunWaitBoundary } from "../types.ts";
 import { childRunWaitBoundary, sameChildRunWaitBoundary } from "../child-run-wait-boundary.ts";
 import {
+  collectWorkflowJsonRecords,
   prepareNodeStatesUserData,
   resolveDeferredWorkflowJsonValue,
   serializeWorkflowContext,
   serializeWorkflowJson,
+  WORKFLOW_CHECKPOINT_RECORD,
   WORKFLOW_NODE_RECORD,
+  type WorkflowJsonRecords,
   type WorkflowJsonSerializationOptions,
 } from "../context-serialization.ts";
 import {
@@ -280,9 +283,17 @@ function persistedCheckpointContext(
   context: WorkflowContext,
   runId: string,
   options: WorkflowJsonSerializationOptions,
+  records: WorkflowJsonRecords,
 ): WorkflowContext {
   return jsonParse(
-    serializeWorkflowJson(context, "checkpoint.context", runId, options, WORKFLOW_NODE_RECORD),
+    serializeWorkflowJson(
+      context,
+      "checkpoint.context",
+      runId,
+      options,
+      WORKFLOW_NODE_RECORD,
+      records,
+    ),
   );
 }
 
@@ -486,8 +497,9 @@ export class MemoryBackend implements WorkflowBackend {
   prepareNodeStatesForPersistence(
     runId: string | undefined,
     nodeStates: WorkflowRun["nodeStates"],
+    records?: WorkflowJsonRecords,
   ): WorkflowRun["nodeStates"] {
-    return prepareNodeStatesUserData(nodeStates, runId, this.config);
+    return prepareNodeStatesUserData(nodeStates, runId, this.config, records);
   }
 
   // =========================================================================
@@ -1032,13 +1044,14 @@ export class MemoryBackend implements WorkflowBackend {
   saveCheckpoint(runId: string, checkpoint: Checkpoint): Promise<void> {
     logger.debug("Saving checkpoint", { checkpointId: checkpoint.id, runId });
     const checkpoints = this.checkpoints.get(runId) ?? [];
+    const records = collectWorkflowJsonRecords(checkpoint, WORKFLOW_CHECKPOINT_RECORD);
     let persistedCheckpoint: Checkpoint;
     try {
-      persistedCheckpoint = this.prepareCheckpointForPersistence(runId, checkpoint);
+      persistedCheckpoint = this.prepareCheckpointForPersistence(runId, checkpoint, records);
     } catch (error) {
       return Promise.reject(error);
     }
-    appendRetainedCheckpoint(checkpoints, persistedCheckpoint);
+    appendRetainedCheckpoint(checkpoints, persistedCheckpoint, records);
     this.checkpoints.set(runId, checkpoints);
     this.advanceRunRetentionRevision(runId);
     return Promise.resolve();
@@ -1066,8 +1079,10 @@ export class MemoryBackend implements WorkflowBackend {
 
     let persistedCheckpoint: Checkpoint;
     try {
+      const records = collectWorkflowJsonRecords(checkpoint, WORKFLOW_CHECKPOINT_RECORD);
       persistedCheckpoint = cloneRetainedCheckpoint(
-        this.prepareCheckpointForPersistence(storageRunId, checkpoint),
+        this.prepareCheckpointForPersistence(storageRunId, checkpoint, records),
+        records,
       );
     } catch (error) {
       return Promise.reject(error);
@@ -1088,16 +1103,24 @@ export class MemoryBackend implements WorkflowBackend {
     return Promise.resolve(true);
   }
 
-  private prepareCheckpointForPersistence(runId: string, checkpoint: Checkpoint): Checkpoint {
+  private prepareCheckpointForPersistence(
+    runId: string,
+    checkpoint: Checkpoint,
+    records: WorkflowJsonRecords,
+  ): Checkpoint {
     const resumeEnvelope = resolveDeferredWorkflowJsonValue(checkpoint._resumeEnvelope);
     return {
       ...checkpoint,
-      context: persistedCheckpointContext(checkpoint.context, runId, this.config),
-      nodeStates: this.prepareNodeStatesForPersistence(runId, checkpoint.nodeStates),
+      context: persistedCheckpointContext(checkpoint.context, runId, this.config, records),
+      nodeStates: this.prepareNodeStatesForPersistence(runId, checkpoint.nodeStates, records),
       ...(resumeEnvelope === undefined ? {} : {
         _resumeEnvelope: {
           ...resumeEnvelope,
-          nodeStates: this.prepareNodeStatesForPersistence(runId, resumeEnvelope.nodeStates),
+          nodeStates: this.prepareNodeStatesForPersistence(
+            runId,
+            resumeEnvelope.nodeStates,
+            records,
+          ),
         },
       }),
     };

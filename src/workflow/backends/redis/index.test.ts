@@ -35,12 +35,16 @@ import {
 } from "#veryfront/workflow/context-serialization.ts";
 import type { RedisAdapter } from "#veryfront/platform/adapters/redis/index.ts";
 import type {
+  Checkpoint,
   CheckpointResumeEnvelope,
   PendingApproval,
   WorkflowContext,
   WorkflowRun,
 } from "../../types.ts";
-import { cloneCheckpointForPersistence } from "../checkpoint-retention.ts";
+import {
+  cloneCheckpointForPersistence,
+  cloneOwnedCheckpointForPersistence,
+} from "../checkpoint-retention.ts";
 import {
   MAX_WORKFLOW_CHECKPOINT_HISTORY_ENTRIES,
   MAX_WORKFLOW_PENDING_APPROVAL_ENTRIES,
@@ -3154,6 +3158,97 @@ describe("RedisBackend", () => {
         input: {},
         other: { keep: 1 },
       });
+    });
+
+    it("persists a context shared into node states the same way on every checkpoint path", async () => {
+      const calls: string[] = [];
+      const sharedContextCheckpoint = (id: string): Checkpoint => {
+        const context: WorkflowContext = {
+          input: {},
+          toJSON: () => {
+            calls.push("toJSON");
+            return { hijacked: "" };
+          },
+          other: { keep: 1 },
+        };
+        return {
+          id,
+          nodeId: "a",
+          timestamp: new Date(1),
+          context,
+          nodeStates: { a: { nodeId: "a", status: "completed", attempt: 1, output: context } },
+        };
+      };
+      const runId = "run-shared-context-to-json-node";
+      await backend.createRun(createTestRun(runId, { status: "running", workerId: "worker" }));
+
+      await backend.saveCheckpoint(runId, sharedContextCheckpoint("direct"));
+      const direct = await backend.getLatestCheckpoint(runId);
+      await backend.saveCheckpoint(
+        runId,
+        cloneCheckpointForPersistence(sharedContextCheckpoint("snapshot")),
+      );
+      const snapshot = await backend.getLatestCheckpoint(runId);
+      assertEquals(
+        await backend.saveCheckpointIfStatusAndWorker(
+          runId,
+          runId,
+          ["running"],
+          "worker",
+          cloneOwnedCheckpointForPersistence(sharedContextCheckpoint("owned")),
+        ),
+        true,
+      );
+      const owned = await backend.getLatestCheckpoint(runId);
+
+      assertEquals(calls, []);
+      for (const latest of [direct, snapshot, owned]) {
+        assertEquals(latest?.context, { input: {}, other: { keep: 1 } });
+        assertEquals(latest?.nodeStates.a?.output, { input: {}, other: { keep: 1 } });
+      }
+    });
+
+    it("keeps every node state of an owned checkpoint with a toJSON-hooked value", async () => {
+      const runId = "run-owned-hooked-node-state";
+      await backend.createRun(createTestRun(runId, { status: "running", workerId: "worker" }));
+      const nodeStates = (): Checkpoint["nodeStates"] => ({
+        a: { nodeId: "a", status: "completed", attempt: 1, output: { toJSON: () => ({ v: 1 }) } },
+        b: { nodeId: "b", status: "completed", attempt: 1, output: { keep: 1 } },
+      });
+
+      const saved = await backend.saveCheckpointIfStatusAndWorker(
+        runId,
+        runId,
+        ["running"],
+        "worker",
+        cloneOwnedCheckpointForPersistence({
+          id: "cp-owned-hooked-node-state",
+          nodeId: "owner",
+          timestamp: new Date(1),
+          context: { input: {} },
+          nodeStates: nodeStates(),
+          _resumeEnvelope: {
+            schemaVersion: 2,
+            ownerNodeId: "owner",
+            context: { input: {} },
+            nodeStates: nodeStates(),
+            workflowProjection: { context: {} },
+            graphAdmission: {
+              stepsEvaluationContext: { input: {} },
+              stepsEvaluationProjection: { context: {} },
+              graphIdentity: [],
+              workflowVersion: null,
+            },
+          },
+        }),
+      );
+
+      assertEquals(saved, true);
+      const latest = await backend.getLatestCheckpoint(runId);
+      for (const persisted of [latest?.nodeStates, latest?._resumeEnvelope?.nodeStates]) {
+        assertEquals(persisted?.a?.output, { v: 1 });
+        assertEquals(persisted?.b?.output, { keep: 1 });
+      }
     });
 
     it("does not add an existence round trip to successful updates", async () => {

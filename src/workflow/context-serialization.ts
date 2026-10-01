@@ -1079,12 +1079,53 @@ export function workflowJsonFieldShape(
   return fields[key];
 }
 
+/**
+ * @internal The framework records of one persisted value, by identity.
+ *
+ * The same record can sit in more than one field of a checkpoint, such as a
+ * node state whose output is the live `context`, and a backend can encode those
+ * fields in separate calls. Every call that gets the same records treats such a
+ * reference as the record, whichever field reaches it.
+ */
+export type WorkflowJsonRecords = WeakMap<object, WorkflowJsonRecordShape>;
+
+/** @internal Collect the records that `shape` marks in `value`. */
+export function collectWorkflowJsonRecords(
+  value: unknown,
+  shape: WorkflowJsonRecordShape,
+): WorkflowJsonRecords {
+  const records: WorkflowJsonRecords = new WeakMapConstructor();
+  const pending: Array<readonly [unknown, WorkflowJsonRecordShape]> = [[value, shape]];
+  while (pending.length > 0) {
+    const [candidate, candidateShape] = pending[pending.length - 1]!;
+    pending.length -= 1;
+    if (typeof candidate !== "object" || candidate === null) continue;
+    const source = (reflectApply(weakMapGet, deferredWorkflowJsonSources, [candidate]) ??
+      candidate) as JsonTraversalReference;
+    if (
+      (canIdentifyProxyWithoutHooks && isProxyWithoutHooks(source)) ||
+      reflectApply(weakMapGet, records, [source]) !== undefined
+    ) continue;
+    reflectApply(weakMapSet, records, [source, candidateShape]);
+    const fields = candidateShape.fields;
+    if (fields === undefined) continue;
+    for (const key of objectKeys(fields)) {
+      const descriptor = objectGetOwnPropertyDescriptor(source, key);
+      if (descriptor !== undefined && "value" in descriptor) {
+        pending[pending.length] = [descriptor.value, fields[key]!];
+      }
+    }
+  }
+  return records;
+}
+
 /** Build the exact value JSON will encode, collecting what it cannot carry. */
 function normalizeAndFindUnrepresentableValues(
   root: unknown,
   label: string,
   options: WorkflowJsonSerializationOptions = {},
   rootShape?: WorkflowJsonRecordShape,
+  records?: WorkflowJsonRecords,
 ): {
   normalized: unknown;
   requiresIterativeEncoding: boolean;
@@ -1237,7 +1278,7 @@ function normalizeAndFindUnrepresentableValues(
     recordArrayPrototype(value, path);
   };
 
-  const recordShapes = new WeakMapConstructor<object, WorkflowJsonRecordShape>();
+  const recordShapes: WorkflowJsonRecords = records ?? new WeakMapConstructor();
   const normalize = (
     value: unknown,
     path: string,
@@ -1559,7 +1600,8 @@ function formatPaths(samples: readonly UnrepresentableValue[], total: number): s
  * `shape` marks the framework records in `value`, such as `context`, which is
  * keyed by node id. A record never has a `toJSON` hook, so a node id cannot
  * act as one; see `WorkflowJsonRecordShape`. Without it, `value` is encoded
- * exactly as `JSON.stringify` would encode it.
+ * exactly as `JSON.stringify` would encode it. `records` carries the records
+ * of the whole value across separate calls; see `WorkflowJsonRecords`.
  *
  * @internal Prepare the exact JSON value and encoded string for durable storage.
  */
@@ -1569,9 +1611,10 @@ export function prepareWorkflowJson(
   runId?: string,
   options: WorkflowJsonSerializationOptions = {},
   shape?: WorkflowJsonRecordShape,
+  records?: WorkflowJsonRecords,
 ): { normalized: unknown; serialized: string } {
   const { normalized, requiresIterativeEncoding, unrepresentable } =
-    normalizeAndFindUnrepresentableValues(value, label, options, shape);
+    normalizeAndFindUnrepresentableValues(value, label, options, shape, records);
   const { fatal, fatalCount, lossy, lossyCount } = unrepresentable;
 
   if (fatalCount > 0) {
@@ -1628,8 +1671,9 @@ export function serializeWorkflowJson(
   runId?: string,
   options?: WorkflowJsonSerializationOptions,
   shape?: WorkflowJsonRecordShape,
+  records?: WorkflowJsonRecords,
 ): string {
-  return prepareWorkflowJson(value, label, runId, options, shape).serialized;
+  return prepareWorkflowJson(value, label, runId, options, shape, records).serialized;
 }
 
 /** Serialize a workflow context for durable storage. */
@@ -1669,6 +1713,7 @@ export function prepareNodeStatesUserData<
   nodeStates: Readonly<Record<string, T>>,
   runId: string | undefined,
   options: WorkflowJsonSerializationOptions,
+  records?: WorkflowJsonRecords,
 ): Record<string, T> {
   nodeStates = resolveDeferredWorkflowJsonValue(nodeStates);
   const prepared: Record<string, T> = {};
@@ -1692,6 +1737,7 @@ export function prepareNodeStatesUserData<
         runId,
         options,
         WORKFLOW_NODE_RECORD,
+        records,
       ),
     ) as Record<string, unknown>;
     for (const nodeId of objectKeys(values)) {

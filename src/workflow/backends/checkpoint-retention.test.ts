@@ -1329,6 +1329,34 @@ describe("workflow checkpoint retention", () => {
       assertEquals(calls, []);
     });
 
+    it("is not called through a context shared into owned node states", async () => {
+      const calls: string[] = [];
+      const context = hijackingContext(calls);
+      const workerId = "run-execution:to-json-shared";
+      const backend = new MemoryBackend();
+      await backend.createRun(run("to-json-shared", workerId));
+
+      // Only the owned clone defers a callable in node states. Any other
+      // callable in node states cannot be retained in memory at all.
+      const saved = await backend.saveCheckpointIfStatusAndWorker(
+        "to-json-shared",
+        "to-json-shared",
+        ["running"],
+        workerId,
+        cloneOwnedCheckpointForPersistence({
+          ...checkpoint("shared", "a"),
+          context,
+          nodeStates: { a: { nodeId: "a", status: "completed", attempt: 1, output: context } },
+        }),
+      );
+
+      assertEquals(saved, true);
+      assertEquals(calls, []);
+      const latest = await backend.getLatestCheckpoint("to-json-shared");
+      assertEquals(latest?.context, { input: {}, other: { keep: 1 } });
+      assertEquals(latest?.nodeStates.a?.output, { input: {}, other: { keep: 1 } });
+    });
+
     it("is not called while persisting an owned checkpoint", async () => {
       const calls: string[] = [];
       const backend = new MemoryBackend();
