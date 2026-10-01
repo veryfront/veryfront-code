@@ -10,6 +10,8 @@ import {
 import { ExecutorRuntimePreparationError } from "../hosted/executor-runtime-prepare-schema.ts";
 import { ExecutorDiscoveryError } from "../hosted/executor-discovery-schema.ts";
 import { HostedServiceAuthError } from "./auth.ts";
+import { snapshotBoundedJsonValue } from "#veryfront/schemas/json-value.ts";
+import { getRuntimeAgentResumeToolCallSchema } from "#veryfront/agent/runtime/agent-invocation-contract.ts";
 import { createAgUiChatUiTrackedResponse } from "../ag-ui/chat-ui-chunk-encoder.ts";
 import type { AgUiRuntimeRequest } from "../runtime/ag-ui-contract.ts";
 import { buildChatStreamChunkMessageMetadata } from "../../chat/chat-ui-message-helpers.ts";
@@ -104,6 +106,19 @@ type ManagedBrokerPreparation = {
   cleanup?: () => Promise<void>;
 };
 
+function snapshotManagedResumeToolCall(
+  value: ManagedDurableAgentIngressResult["executor"]["serverResolvedResumeToolCall"],
+) {
+  if (value === undefined) return undefined;
+  const parsed = getRuntimeAgentResumeToolCallSchema().safeParse(value);
+  if (!parsed.success) throw new TypeError("Invalid managed resume tool call");
+  const snapshot = snapshotBoundedJsonValue(parsed.data);
+  if (!snapshot.success) throw new TypeError("Invalid managed resume tool call");
+  return snapshot.value as NonNullable<
+    ManagedDurableAgentIngressResult["executor"]["serverResolvedResumeToolCall"]
+  >;
+}
+
 /** Authenticate request-owned AG-UI in the broker before executor admission. */
 export function createManagedAgUiBrokerHandler(options: {
   broker: ManagedExecutorStarter;
@@ -178,8 +193,10 @@ export function createManagedDurableBrokerHandler(options: {
     ...options,
     responseMode: "detached",
     async prepare(input) {
+      const resumeToolCall = snapshotManagedResumeToolCall(
+        input.ingress.executor.serverResolvedResumeToolCall,
+      );
       const prepared = await options.prepare(input);
-      const resumeToolCall = input.ingress.executor.serverResolvedResumeToolCall;
       if (!prepared.start.prepare) return prepared;
       const {
         serverResolvedResumeToolCall: _untrustedAdapterResumeToolCall,

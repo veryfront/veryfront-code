@@ -61,9 +61,10 @@ describe("managed agent ingress", () => {
       parsedResumeToolCall &&
       parsedResumeToolCall.input.options !== null &&
       typeof parsedResumeToolCall.input.options === "object" &&
-      !Array.isArray(parsedResumeToolCall.input.options)
+      !Array.isArray(parsedResumeToolCall.input.options) &&
+      Object.hasOwn(parsedResumeToolCall.input.options, "limit")
     ) {
-      parsedResumeToolCall.input.options.limit = 99;
+      Reflect.set(parsedResumeToolCall.input.options, "limit", 99);
     }
     assertEquals(result.executor.serverResolvedResumeToolCall, resumeToolCall);
     for (const key of ["authToken", "authorization", "headers", "resumeToolCallSha256"]) {
