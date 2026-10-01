@@ -3478,7 +3478,10 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     });
     const definition = workflow({
       id: "nested-number-parent",
-      steps: [subWorkflow("nested", { workflow: child.definition, input: { n: "x" } })],
+      steps: [subWorkflow("nested", {
+        workflow: child.definition as unknown as WorkflowDefinition,
+        input: { n: "x" },
+      })],
     }).definition as unknown as WorkflowDefinition;
     const handler = new ProjectRunExecuteHandler(createDeps({
       findWorkflowById: async () => ({
