@@ -2,6 +2,7 @@ import resumeDigestContract from "../../../tests/fixtures/contracts/api-auth-res
   type: "json",
 };
 import "#veryfront/schemas/_test-setup.ts";
+import { computeHash } from "#veryfront/utils/hash-utils.ts";
 import { convertUiMessagesToProviderModelMessages } from "../../chat/provider-message-conversion.ts";
 import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
@@ -2401,6 +2402,55 @@ describe("agent/hosted-chat-request", () => {
     assertEquals(parsed.serverResolvedResumeToolCall, resumeDigestContract.resumeToolCall);
     assertEquals(parsed.serverEnvelopeVerified, undefined);
     assertEquals(parsed.forwardedProps, { harmless: true });
+  });
+
+  it("validates signed resume JSON structure limits before execution", async () => {
+    let supportedDeepInput: Record<string, unknown> = { value: null };
+    for (let depth = 0; depth < 126; depth++) {
+      supportedDeepInput = { value: supportedDeepInput };
+    }
+    // The signed call starts at depth 0. Its input starts at depth 1.
+    // Array length is also visited by the data-only serializer.
+    for (
+      const [input, supported] of [
+        [supportedDeepInput, true],
+        [{ value: supportedDeepInput }, false],
+        [{ values: Array.from({ length: 99_994 }, () => null) }, true],
+        [{ values: Array.from({ length: 99_995 }, () => null) }, false],
+      ] as const
+    ) {
+      const resumeToolCall = { id: "call-1:resume-1", name: "outlook__list_messages", input };
+      const parsed = await parseHostedChatRequestFromRequest(
+        new Request("https://agent.example.com/api/runs", {
+          method: "POST",
+          headers: { "X-Veryfront-Run-Event-Token": "verified-writer" },
+          body: JSON.stringify({
+            messages: [],
+            context: { conversationId, projectId, branchId },
+            durableRootRun: { runId: "run_root_1", messageId },
+            resumeToolCall,
+          }),
+        }),
+        {
+          authenticate: () => Promise.resolve({ userId, authToken: "user-api-token" }),
+          verifyProjectAccess: () => Promise.resolve({ success: true }),
+          verifyRunEventAppendToken: async () => ({
+            verified: true,
+            resumeToolCallSha256: await computeHash(JSON.stringify(resumeToolCall)),
+          }),
+        },
+      );
+      if (supported) {
+        if (parsed instanceof Response) throw new Error(`Unexpected response ${parsed.status}`);
+        assertEquals(parsed.serverResolvedResumeToolCall, resumeToolCall);
+      } else {
+        if (!(parsed instanceof Response)) {
+          throw new Error("Expected structural validation failure");
+        }
+        assertEquals(parsed.status, 400);
+        assertStringIncludes(await parsed.text(), "resumeToolCall");
+      }
+    }
   });
 
   it("does not treat inherited or accessor verifier digests as signed replay authority", async () => {
