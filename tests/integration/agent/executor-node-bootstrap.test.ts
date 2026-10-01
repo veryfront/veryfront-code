@@ -15,8 +15,9 @@ import {
 } from "#veryfront/agent/hosted/executor-node-bootstrap.ts";
 import { connectExecutorTransport } from "#veryfront/agent/hosted/executor-node-transport.ts";
 import { register, tryResolve, unregister } from "#veryfront/extensions/contracts.ts";
-import { assert, assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals, assertMatch, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { executorBootstrapTestPatterns } from "./executor-node-bootstrap-groups.fixture.ts";
 import { registerExecutorRuntimeEntrypointTests } from "./executor-runtime-entrypoint.fixture.ts";
 
 const binding = {
@@ -56,33 +57,48 @@ async function connectCaller(port: number, key: Uint8Array) {
 // Same-process component integration with synthetic keys. The production port
 // is fixed; these tests run sequentially and never stop an unrelated listener.
 if (typeof Deno !== "undefined") {
-  it(
-    "runs fixed executor bootstrap and TLS channel coverage on Node",
-    { timeout: 30_000 },
-    async () => {
-      const root = new URL("../../../", import.meta.url);
-      const child = spawn("node", [
-        "--import",
-        fileURLToPath(new URL("tests/node/resolver.mjs", root)),
-        "--test",
-        fileURLToPath(import.meta.url),
-      ], { cwd: fileURLToPath(root), stdio: ["ignore", "pipe", "pipe"] });
-      let output = "";
-      child.stdout.on("data", (chunk) => output += chunk);
-      child.stderr.on("data", (chunk) => output += chunk);
-      const timer = setTimeout(() => child.kill(), 25_000);
-      try {
-        const code = await new Promise<number | null>((resolve, reject) => {
-          child.once("error", reject);
-          child.once("close", resolve);
-        });
-        assertEquals(code, 0, output);
-      } finally {
-        clearTimeout(timer);
-        child.kill();
-      }
-    },
-  );
+  for (const [index, pattern] of executorBootstrapTestPatterns().entries()) {
+    const group = [
+      "runtime installation",
+      "project-tools installation",
+      "HTTP installation",
+      "bootstrap and TLS channel",
+    ][index];
+    it(
+      `runs fixed executor ${group} coverage on Node`,
+      { timeout: 30_000 },
+      async () => {
+        const root = new URL("../../../", import.meta.url);
+        const child = spawn("node", [
+          "--import",
+          fileURLToPath(new URL("tests/node/resolver.mjs", root)),
+          "--test",
+          "--test-reporter=tap",
+          `--test-name-pattern=${pattern}`,
+          fileURLToPath(import.meta.url),
+        ], { cwd: fileURLToPath(root), stdio: ["ignore", "pipe", "pipe"] });
+        let output = "";
+        child.stdout.on("data", (chunk) => output += chunk);
+        child.stderr.on("data", (chunk) => output += chunk);
+        const timer = setTimeout(() => child.kill(), 25_000);
+        try {
+          const code = await new Promise<number | null>((resolve, reject) => {
+            child.once("error", reject);
+            child.once("close", resolve);
+          });
+          assertEquals(code, 0, output);
+          const expectedTests = index === 3 ? 19 : 1;
+          assertEquals((output.match(/^ {4}# Subtest:/gm) ?? []).length, expectedTests, output);
+          assertMatch(output, new RegExp(`# tests ${expectedTests}\\n`));
+          assertMatch(output, /# cancelled 0\n/);
+          assertMatch(output, /# skipped 0\n/);
+        } finally {
+          clearTimeout(timer);
+          child.kill();
+        }
+      },
+    );
+  }
 } else {
   describe("fixed Node executor bootstrap", () => {
     registerExecutorRuntimeEntrypointTests();
