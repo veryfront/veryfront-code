@@ -15,6 +15,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import {
   assertEquals,
   assertExists,
+  assertInstanceOf,
   assertNotEquals,
   assertRejects,
   assertStringIncludes,
@@ -4007,7 +4008,8 @@ describe("DAGExecutor", () => {
       assertEquals(result.completed, false);
       assertEquals(result.nodeStates.nested?.status, "failed");
       assertEquals(result.errorCause?.slug, "input-validation-failed");
-      const errors = (result.errorCause?.context as { errors?: unknown })?.errors as {
+      assertInstanceOf(result.errorCause, VeryfrontError);
+      const errors = (result.errorCause.context as { errors?: unknown })?.errors as {
         path: string;
         message: string;
       }[];
