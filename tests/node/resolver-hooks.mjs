@@ -490,24 +490,23 @@ export async function load(url, context, nextLoad) {
 const requireFromResolver = createRequire(import.meta.url);
 let syncEsbuild;
 
-/** Native-transform fixture loader: avoid asynchronous hook messages per import. */
 export function loadSync(url, context, nextLoad) {
   if (!url.startsWith("file://")) return nextLoad(url, context);
   const filePath = fileURLToPath(url);
   if (filePath.endsWith(".json")) {
     return { shortCircuit: true, format: "json", source: readFileSync(filePath, "utf-8") };
   }
-  if (filePath.endsWith(".ts") && !filePath.endsWith(".d.ts")) {
-    return {
-      shortCircuit: true,
-      format: "module-typescript",
-      source: readFileSync(filePath, "utf-8"),
-    };
-  }
-  if (filePath.endsWith(".tsx") || filePath.endsWith(".jsx")) {
+  const loader = filePath.endsWith(".tsx")
+    ? "tsx"
+    : filePath.endsWith(".jsx")
+    ? "jsx"
+    : filePath.endsWith(".ts") && !filePath.endsWith(".d.ts")
+    ? "ts"
+    : null;
+  if (loader) {
     syncEsbuild ??= requireFromResolver("esbuild");
     const result = syncEsbuild.transformSync(readFileSync(filePath, "utf-8"), {
-      loader: filePath.endsWith(".tsx") ? "tsx" : "jsx",
+      loader,
       format: "esm",
       sourcefile: filePath,
       sourcemap: process.sourceMapsEnabled ? "inline" : false,

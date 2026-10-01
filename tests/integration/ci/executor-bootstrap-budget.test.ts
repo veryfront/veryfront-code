@@ -107,7 +107,7 @@ it("does not eagerly load unrelated profile tooling before cold executor tests",
   }
 });
 
-it("uses native Node transforms when opted in while retaining the JSX fallback", async () => {
+it("uses synchronous Node transforms when opted in while retaining the JSX fallback", async () => {
   const dir = await mkdtemp(join(tmpdir(), "vf-executor-loader-"));
   const ts = join(dir, "enum.ts");
   const tsx = join(dir, "view.tsx");
@@ -115,10 +115,10 @@ it("uses native Node transforms when opted in while retaining the JSX fallback",
   try {
     await writeFile(ts, source);
     await writeFile(tsx, "export default <div />;");
-    const resolver = fileURLToPath(new URL("../../node/resolver.mjs", import.meta.url));
+    const resolver = fileURLToPath(new URL("../../node/resolver-sync.mjs", import.meta.url));
     const hooks = new URL("../../node/resolver-hooks.mjs", import.meta.url).href;
     const child = spawn("node", [
-      "--experimental-transform-types",
+      "--enable-source-maps",
       "--import",
       resolver,
       "--input-type=module",
@@ -141,12 +141,12 @@ it("uses native Node transforms when opted in while retaining the JSX fallback",
       child.once("close", resolve);
     });
     assertEquals(exit, 0, stderr);
-    assertEquals(JSON.parse(stdout), {
-      format: "module-typescript",
-      source,
-      value: 42,
-      jsxFormat: "module",
-    });
+    const result = JSON.parse(stdout);
+    assertEquals(result.format, "module");
+    assertEquals(result.value, 42);
+    assertEquals(result.jsxFormat, "module");
+    assert(!result.source.includes("enum Answer"));
+    assert(result.source.includes("sourceMappingURL="));
   } finally {
     await rm(dir, { recursive: true, force: true });
   }

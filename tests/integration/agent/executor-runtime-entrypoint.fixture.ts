@@ -16,7 +16,7 @@ import { generateCsrfToken } from "#veryfront/security/csrf/helpers.ts";
 import type { JsonValue } from "#veryfront/schemas/index.ts";
 
 const root = new URL("../../../", import.meta.url);
-const resolver = fileURLToPath(new URL("tests/node/resolver.mjs", root));
+const resolver = fileURLToPath(new URL("tests/node/resolver-sync.mjs", root));
 
 /** Register beside the fixed-port bootstrap tests so Deno file parallelism cannot race port 8081. */
 export function registerExecutorRuntimeEntrypointTests(): void {
@@ -135,7 +135,7 @@ export function registerExecutorRuntimeEntrypointTests(): void {
           .createExecutorHttpClient({ binding, channel: () => channel! })
         : undefined;
       const child = spawn(process.execPath, [
-        "--experimental-transform-types",
+        "--enable-source-maps",
         "--import",
         resolver,
         fileURLToPath(new URL("tests/fixtures/executor-runtime-process.ts", root)),

@@ -10,10 +10,4 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
 // Register the custom loader hooks
-const { registerHooks } = await import("node:module");
-if (process.features.typescript === "transform" && typeof registerHooks === "function") {
-  const { resolve, loadSync } = await import("./resolver-hooks.mjs");
-  registerHooks({ resolve, load: loadSync });
-} else {
-  register("./resolver-hooks.mjs", pathToFileURL(pathResolve(__dirname, ".")).href + "/");
-}
+register("./resolver-hooks.mjs", pathToFileURL(pathResolve(__dirname, ".")).href + "/");

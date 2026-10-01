@@ -165,14 +165,13 @@ describe("tests/node-resolver-workspace-imports", () => {
       for (const name of ["direct", "first", "second"]) {
         writeFileSync(join(scopeDir, `${name}.ts`), "export {};\n");
       }
+      const cases: [string, string][] = [
+        ["#fixture/direct", "direct.ts"],
+        ["#fixture/nested/value", "first.ts"],
+        ["#directory/second.ts", "second.ts"],
+      ];
       for (let pass = 0; pass < 2; pass++) {
-        for (
-          const [specifier, target] of [
-            ["#fixture/direct", "direct.ts"],
-            ["#fixture/nested/value", "first.ts"],
-            ["#directory/second.ts", "second.ts"],
-          ]
-        ) {
+        for (const [specifier, target] of cases) {
           assertEquals(
             await resolve(
               specifier,
