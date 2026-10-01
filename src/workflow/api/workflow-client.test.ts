@@ -1400,6 +1400,115 @@ describe("WorkflowClient", () => {
       });
     }
 
+    for (const shape of ["direct", "map"] as const) {
+      for (const waitKind of ["approval", "event"] as const) {
+        it(`restores full ${waitKind} decisions in ${shape} children (#2255)`, async () => {
+          let stampCalls = 0;
+          const observed: unknown[] = [];
+          const publishedKeys: string[][] = [];
+          const prefix = shape === "map" ? "children_0/" : "";
+          const child = workflow({
+            id: `decision-child-${shape}-${waitKind}`,
+            steps: [
+              step("stamp", {
+                tool: {
+                  id: `decision-stamp-${shape}-${waitKind}`,
+                  type: "function",
+                  description: "Count completed work",
+                  inputSchema: defineSchema((v) => v.object({}).passthrough())(),
+                  execute: () => {
+                    stampCalls++;
+                    return Promise.resolve({ stamp: true });
+                  },
+                },
+              }),
+              dependsOn(
+                waitKind === "approval"
+                  ? waitForApproval("review", { message: "Review stamp" })
+                  : waitForEvent("review", { eventName: "review.ready" }),
+                "stamp",
+              ),
+              dependsOn(
+                step("observe", {
+                  input: (context) => {
+                    observed.push(context[`${prefix}review`]);
+                    publishedKeys.push(Object.keys(context).sort());
+                    return {};
+                  },
+                  tool: {
+                    id: `decision-observe-${shape}-${waitKind}`,
+                    type: "function",
+                    description: "Observe full wait decision",
+                    inputSchema: defineSchema((v) => v.object({}))(),
+                    execute: () => Promise.resolve({ observed: true }),
+                  },
+                }),
+                "review",
+              ),
+            ],
+            output: (context) => context.review,
+          });
+          const parent = workflow({
+            id: `decision-parent-${shape}-${waitKind}`,
+            steps: shape === "direct"
+              ? [subWorkflow("child", { workflow: child.definition })]
+              : [map("children", { items: [{}], processor: child.definition, checkpoint: false })],
+          });
+          const decisionBackend = backend;
+          const decisionClient = createWorkflowClient({ backend: decisionBackend, debug: false });
+          decisionClient.register(parent);
+          try {
+            const handle = await decisionClient.start(parent.id, {});
+            await handle.settled();
+            const waiting = await decisionBackend.getRun(handle.runId);
+            assertExists(waiting);
+            assertEquals(waiting.status, "waiting");
+            assertEquals(stampCalls, 1);
+            const waitId = `${prefix}review`;
+            assertExists(waiting.nodeStates[waitId]);
+
+            if (waitKind === "approval") {
+              const [approval] = await decisionBackend.getPendingApprovals(handle.runId);
+              assertExists(approval);
+              await decisionClient.approve(handle.runId, approval.id, "reviewer", "accepted", {
+                score: 7,
+              });
+            } else {
+              assertEquals(
+                await decisionClient.publishEvent(handle.runId, "review.ready", { score: 7 }),
+                "delivered",
+              );
+            }
+            const completed = await decisionBackend.getRun(handle.runId);
+            assertExists(completed);
+            assertEquals(completed.status, "completed");
+            const durable = completed.context[waitId] as Record<string, unknown>;
+            assertExists(durable);
+            assertEquals(
+              typeof durable[waitKind === "approval" ? "decidedAt" : "receivedAt"],
+              "string",
+            );
+            if (waitKind === "approval") {
+              assertEquals(durable.approved, true);
+              assertEquals(durable.approver, "reviewer");
+              assertEquals(durable.comment, "accepted");
+              assertEquals(durable.data, { score: 7 });
+            } else {
+              assertEquals(durable.payload, { score: 7 });
+            }
+            assertEquals(observed, [durable]);
+            assertEquals(
+              completed.context[shape === "direct" ? "child" : "children"],
+              shape === "direct" ? durable : [durable],
+            );
+            assertEquals(publishedKeys, [["input", `${prefix}review`, `${prefix}stamp`].sort()]);
+            assertEquals(stampCalls, 1);
+          } finally {
+            await decisionClient.destroy();
+          }
+        });
+      }
+    }
     it("creates a pending approval for a wait nested in a branch", async () => {
       client.register(nestedApprovalWorkflow);
 
