@@ -571,7 +571,8 @@ describe("executor byte protocol", () => {
     let input!: ReadableStreamDefaultController<Uint8Array>;
     const stalledWrite = Promise.withResolvers<void>();
     const releaseWriteStarted = Promise.withResolvers<void>();
-    let watchdog: ReturnType<typeof setTimeout> | undefined;
+    let releaseStartWatchdog: ReturnType<typeof setTimeout> | undefined;
+    let releaseDeadlineWatchdog: ReturnType<typeof setTimeout> | undefined;
     const channel = createExecutorChannel({
       binding,
       cancellationTimeoutMs: 10,
@@ -598,12 +599,21 @@ describe("executor byte protocol", () => {
     await tick();
     input.enqueue(rawFrame(envelope({ type: "data", id: 1, index: 0, value: null }, 1)));
     input.enqueue(rawFrame(envelope({ type: "end", id: 1 }, 2)));
-    await releaseWriteStarted.promise;
     try {
+      await Promise.race([
+        releaseWriteStarted.promise,
+        new Promise<never>((_, reject) => {
+          releaseStartWatchdog = setTimeout(
+            () => reject(new Error("release write did not start within the test runtime bound")),
+            5_000,
+          );
+        }),
+      ]);
+      clearTimeout(releaseStartWatchdog);
       const closeError = await Promise.race([
         channel.closed,
         new Promise<never>((_, reject) => {
-          watchdog = setTimeout(
+          releaseDeadlineWatchdog = setTimeout(
             () => reject(new Error("release write exceeded the test runtime bound")),
             250,
           );
@@ -614,7 +624,8 @@ describe("executor byte protocol", () => {
       stalledWrite.resolve();
       assertEquals(await outcome, "rejected");
     } finally {
-      clearTimeout(watchdog);
+      clearTimeout(releaseStartWatchdog);
+      clearTimeout(releaseDeadlineWatchdog);
       channel.close();
       stalledWrite.resolve();
     }
