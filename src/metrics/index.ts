@@ -31,6 +31,7 @@ import { serverLogger } from "#veryfront/utils/logger/logger.ts";
 import {
   assertNativeRequestProcessing,
   createNativeRequestInit,
+  nativeFetchArguments,
 } from "#veryfront/platform/compat/http/native-request-init.ts";
 
 export type MetricAttributeValue = string | number | boolean | null | undefined;
@@ -1041,9 +1042,12 @@ async function exportDirectGroup(group: DirectExportGroup): Promise<void> {
       signal: deadline.signal,
     });
     assertNativeRequestProcessing();
+    // Indexed, not spread: spreading runs Array.prototype's iterator over a
+    // tuple that holds the credential-bearing init.
+    const fetchArguments = nativeFetchArguments(group.target.url, init);
     const response = await (useAmbientFetchForTests ? globalThis.fetch : hostFetch)(
-      group.target.url,
-      init,
+      fetchArguments[0],
+      fetchArguments[1],
     );
     if (!response.ok) logDirectExportFailure(`HTTP ${response.status}`);
   } catch (error) {

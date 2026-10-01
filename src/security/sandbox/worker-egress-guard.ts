@@ -33,6 +33,7 @@ import {
   assertNativeRequestProcessing,
   copyNativeHeaders,
   createNativeRequestInit,
+  nativeFetchArguments,
   readOwnInitField,
 } from "#veryfront/platform/compat/http/native-request-init.ts";
 
@@ -1202,7 +1203,9 @@ async function fetchThroughHttpBroker(
     client: undefined,
   });
   assertNativeRequestProcessing();
-  const brokerResponse = await fetchImpl(broker.url, brokerInit);
+  // Indexed, not destructured: see the per-hop send in guardedEgressFetch.
+  const brokerArguments = nativeFetchArguments(broker.url, brokerInit);
+  const brokerResponse = await fetchImpl(brokerArguments[0], brokerArguments[1]);
   if (IntrinsicReflectApply(HeadersGet, brokerResponse.headers, [BROKER_ERROR_HEADER]) === "1") {
     let message = "Worker network egress failed";
     try {
@@ -1440,10 +1443,13 @@ export async function guardedEgressFetch(
         ? pinnedResponse
         : chainPrivatePromise(resolvePrivatePromise(), () => {
           assertNativeRequestProcessing();
-          return doFetch(
+          // Indexed, not destructured: destructuring runs Array.prototype's
+          // iterator over a tuple that holds the credential-bearing init.
+          const fetchArguments = nativeFetchArguments(
             url,
             client ? createNativeRequestInit(requestInit, { client }) : requestInit,
           );
+          return doFetch(fetchArguments[0], fetchArguments[1]);
         });
       try {
         response = await waitForOperation(pendingResponse, requestInit.signal ?? undefined);

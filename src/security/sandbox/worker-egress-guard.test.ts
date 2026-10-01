@@ -1258,6 +1258,26 @@ describe("worker-egress-guard guardedEgressFetch credential headers", () => {
     ]);
   });
 
+  it("keeps each set-cookie field separate on the wire request", async () => {
+    const expiring = "a=1; Expires=Wed, 01 Oct 2026 07:28:00 GMT";
+    const headers = new Headers({ authorization: BEARER });
+    headers.append("set-cookie", expiring);
+    headers.append("set-cookie", "b=2; Path=/");
+    let sent: { cookies: string[]; authorization: string | null } | undefined;
+    const fetchImpl: WorkerEgressFetch = (input, init) => {
+      const request = new Request(input, init);
+      sent = {
+        cookies: request.headers.getSetCookie(),
+        authorization: request.headers.get("authorization"),
+      };
+      return Promise.resolve(new Response("ok"));
+    };
+
+    await guardedEgressFetch("http://93.184.216.34/v1", { headers }, { fetchImpl });
+
+    assertEquals(sent, { cookies: [expiring, "b=2; Path=/"], authorization: BEARER });
+  });
+
   it("keeps the caller's cancel signal on the wire request", async () => {
     const caller = new AbortController();
     let wireSignal: AbortSignal | undefined;

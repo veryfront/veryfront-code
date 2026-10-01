@@ -10,9 +10,12 @@ import {
 import {
   assertNativeRequestProcessing,
   copyNativeHeaders,
+  createNativeRequest,
   createNativeRequestInit,
   NATIVE_REQUEST_INIT_FIELDS,
+  nativeFetchArguments,
   readOwnInitField,
+  readSeparateSetCookies,
   toNativeHeaderRecord,
 } from "./native-request-init.ts";
 
@@ -203,12 +206,26 @@ describe("platform/compat/http/native-request-init", () => {
     assertEquals(init.method, "POST");
   });
 
-  it("keeps every set-cookie value", () => {
-    const headers = new Headers();
-    headers.append("set-cookie", "a=1");
-    headers.append("set-cookie", "b=2");
+  it("keeps each set-cookie field separate through records, requests and fetch arguments", () => {
+    const expiring = "a=1; Expires=Wed, 01 Oct 2026 07:28:00 GMT";
+    const headers = new Headers({ authorization: BEARER });
+    headers.append("set-cookie", expiring);
+    headers.append("set-cookie", "b=2; Path=/");
 
-    assertEquals(toNativeHeaderRecord(headers)["set-cookie"], "a=1, b=2");
+    const record = toNativeHeaderRecord(headers);
+    assertEquals(record["set-cookie"], undefined);
+    assertEquals(readSeparateSetCookies(record), [expiring, "b=2; Path=/"]);
+    assertEquals(copyNativeHeaders(record).getSetCookie(), [expiring, "b=2; Path=/"]);
+
+    const init = createNativeRequestInit(undefined, { headers });
+    const request = createNativeRequest("https://api.example.test/", init);
+    assertEquals(request.headers.getSetCookie(), [expiring, "b=2; Path=/"]);
+    assertEquals(request.headers.get("authorization"), BEARER);
+
+    const fetchArguments = nativeFetchArguments("https://api.example.test/", init);
+    const sent = new Request(fetchArguments[0], fetchArguments[1]);
+    assertEquals(sent.headers.getSetCookie(), [expiring, "b=2; Path=/"]);
+    assertEquals(sent.headers.get("authorization"), BEARER);
   });
 
   it("accepts an iterable of header pairs, as the native conversion does", () => {

@@ -24,6 +24,10 @@ import { lockNativeRequestInternals } from "./native-request-internals.ts";
 
 const IntrinsicReflectApply = Reflect.apply;
 const NativeHeaders = Headers;
+const NativeWeakMap = WeakMap;
+const NativeRequest = Request;
+const RequestHeadersGetter = Object.getOwnPropertyDescriptor(NativeRequest.prototype, "headers")!
+  .get!;
 const ArrayIsArray = Array.isArray;
 const NativeArray = Array;
 const ArrayFrom = Array.from;
@@ -193,6 +197,71 @@ function isNativeHeaders(value: unknown): value is Headers {
   return IntrinsicReflectApply(FunctionHasInstance, NativeHeaders, [value]) as boolean;
 }
 
+const SET_COOKIE = "set-cookie";
+// Record -> its set-cookie fields, which a one-value-per-name record cannot hold.
+const separateSetCookies = new NativeWeakMap<object, string[]>();
+const WeakMapGet = NativeWeakMap.prototype.get;
+const WeakMapSet = NativeWeakMap.prototype.set;
+
+function keepSetCookieApart(record: Record<string, string>, value: string): void {
+  let values = IntrinsicReflectApply(WeakMapGet, separateSetCookies, [record]) as
+    | string[]
+    | undefined;
+  if (values === undefined) {
+    // Not a credential, so this list may use ordinary array writes.
+    values = [];
+    IntrinsicReflectApply(WeakMapSet, separateSetCookies, [record, values]);
+  }
+  values[values.length] = value;
+}
+
+/** The set-cookie fields kept beside `record`, if any. */
+export function readSeparateSetCookies(record: unknown): readonly string[] | undefined {
+  if (typeof record !== "object" || record === null) return undefined;
+  return IntrinsicReflectApply(WeakMapGet, separateSetCookies, [record]) as
+    | string[]
+    | undefined;
+}
+
+function appendSetCookies(headers: Headers, record: unknown): void {
+  const values = readSeparateSetCookies(record);
+  if (values === undefined) return;
+  for (let index = 0; index < values.length; index++) {
+    IntrinsicReflectApply(HeadersAppend, headers, [SET_COOKIE, values[index]]);
+  }
+}
+
+/**
+ * The arguments for a native `fetch` of `input` with `init`. Usually the two
+ * unchanged; when the init's header record has set-cookie fields beside it,
+ * a Request built from the init with each of those appended on its own, and
+ * an init carrying only the runtime-specific `client`.
+ */
+export function nativeFetchArguments(
+  input: RequestInfo | URL,
+  init: RequestInit,
+): [RequestInfo | URL, RequestInit | undefined] {
+  const headers = readOwnInitField(init, "headers");
+  if (readSeparateSetCookies(headers) === undefined) return [input, init];
+  const client = readOwnInitField(init, "client" as never);
+  const request = new NativeRequest(input, createNativeRequestInit(init, { client: undefined }));
+  appendSetCookies(IntrinsicReflectApply(RequestHeadersGetter, request, []) as Headers, headers);
+  return [
+    request,
+    client === undefined ? undefined : createNativeRequestInit(undefined, { client }),
+  ];
+}
+
+/** `new Request(input, init)`, with the init record's set-cookie fields kept apart. */
+export function createNativeRequest(input: RequestInfo | URL, init: RequestInit): Request {
+  const request = new NativeRequest(input, init);
+  appendSetCookies(
+    IntrinsicReflectApply(RequestHeadersGetter, request, []) as Headers,
+    readOwnInitField(init, "headers"),
+  );
+  return request;
+}
+
 /**
  * A native `Headers` holding `source`, copied without running anything
  * project code can replace. A `Headers` source is read with captured
@@ -233,16 +302,16 @@ export function copyNativeHeaders(source: HeadersInit | undefined | null): Heade
     const name = names[index]!;
     IntrinsicReflectApply(HeadersAppend, headers, [name, NativeString(record[name])]);
   }
+  appendSetCookies(headers, record);
   return headers;
 }
 
 /**
  * `headers` as a null-prototype record for a native constructor or `fetch`,
  * which then reads it by own key rather than through iteration. `Headers`
- * already joins the values of a repeated name, except `set-cookie`, whose
- * entries it keeps apart; a record holds one value per name, so those are
- * joined here the way `Headers.get("set-cookie")` reports them rather than
- * dropped. A request has no other use for several `Set-Cookie` lines.
+ * already joins the values of a repeated name. `set-cookie` fields cannot be
+ * joined without corrupting them (`Expires=` dates hold commas), so they stay
+ * out of the record and travel beside it (see {@link nativeFetchArguments}).
  */
 export function toNativeHeaderRecord(headers: Headers): Record<string, string> {
   const record = ObjectCreate(null) as Record<string, string>;
@@ -257,6 +326,10 @@ export function toNativeHeaderRecord(headers: Headers): Record<string, string> {
     // Indexed, not destructured: destructuring runs Array.prototype's iterator.
     const name = step.value[0];
     const value = step.value[1];
+    if (name === SET_COOKIE) {
+      keepSetCookieApart(record, value);
+      continue;
+    }
     record[name] = IntrinsicReflectApply(ObjectHasOwn, undefined, [record, name])
       ? `${record[name]}, ${value}`
       : value;
@@ -266,6 +339,10 @@ export function toNativeHeaderRecord(headers: Headers): Record<string, string> {
 function appendToRecord(record: Record<string, string>, name: unknown, value: unknown): void {
   const key = IntrinsicReflectApply(StringToLowerCase, NativeString(name), []) as string;
   const text = NativeString(value);
+  if (key === SET_COOKIE) {
+    keepSetCookieApart(record, text);
+    return;
+  }
   record[key] = IntrinsicReflectApply(ObjectHasOwn, undefined, [record, key])
     ? `${record[key]}, ${text}`
     : text;
@@ -336,9 +413,17 @@ export function createNativeRequestInit(
   if (headers !== undefined && headers !== null) {
     // Even an ordinary record is rebuilt: the native conversion first looks up
     // its `Symbol.iterator`, which an ordinary object inherits.
-    init.headers = isNativeHeaders(headers)
+    const record = isNativeHeaders(headers)
       ? toNativeHeaderRecord(headers)
       : toNativeHeaderRecordFromInit(headers as HeadersInit);
+    // A record rebuilt from one that had set-cookie fields beside it keeps them.
+    const carried = readSeparateSetCookies(headers);
+    if (carried !== undefined) {
+      for (let index = 0; index < carried.length; index++) {
+        keepSetCookieApart(record, carried[index]!);
+      }
+    }
+    init.headers = record;
   }
   return init as RequestInit;
 }

@@ -37,6 +37,7 @@ import {
 import {
   assertNativeRequestProcessing,
   createNativeRequestInit,
+  nativeFetchArguments,
 } from "#veryfront/platform/compat/http/native-request-init.ts";
 
 export * from "./agent-service/live-evals/index.ts";
@@ -903,7 +904,10 @@ export function createAgentServiceEvalAdapter(
       };
       const init = createRequestInit(config, body, context.signal);
       assertNativeRequestProcessing();
-      const response = await requestFetch(endpoint, init);
+      // Indexed, not spread: spreading runs Array.prototype's iterator over a
+      // tuple that holds the credential-bearing init.
+      const fetchArguments = nativeFetchArguments(endpoint, init);
+      const response = await requestFetch(fetchArguments[0], fetchArguments[1]);
       const run = await parseAgUiSseResponse(response, parseOptions);
       const completed = response.ok && run.runError === null &&
         run.eventTypes.includes(agUiSseEventTypes.runFinished);

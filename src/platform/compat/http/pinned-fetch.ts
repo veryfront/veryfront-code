@@ -12,6 +12,7 @@ import {
   copyNativeHeaders,
   createNativeRequestInit,
   readOwnInitField,
+  readSeparateSetCookies,
   toNativeHeaderRecord,
 } from "./native-request-init.ts";
 
@@ -303,6 +304,7 @@ export async function fetchWithPinnedAddresses(
   const body = await normalizeRequestBody(url, init, headers);
   const method = (readOwnInitField(init, "method") ?? "GET").toUpperCase();
   const requestHeaders = toNativeHeaderRecord(headers);
+  const setCookies = readSeparateSetCookies(requestHeaders);
   const signal = readOwnInitField(init, "signal") ?? undefined;
 
   const transport = url.protocol === "https:"
@@ -328,7 +330,12 @@ export async function fetchWithPinnedAddresses(
       port: url.port || (url.protocol === "https:" ? 443 : 80),
       path: `${url.pathname}${url.search}`,
       method,
-      headers: { ...requestHeaders, host: url.host },
+      headers: {
+        ...requestHeaders,
+        // node:http sends each element of an array value as its own field.
+        ...(setCookies === undefined ? {} : { "set-cookie": [...setCookies] }),
+        host: url.host,
+      },
 
       ...(url.protocol === "https:"
         ? {

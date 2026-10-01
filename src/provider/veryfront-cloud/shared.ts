@@ -15,6 +15,7 @@ import {
 import { isInternalEgressOverrideEnabled } from "#veryfront/security/sandbox/worker-egress-guard.ts";
 import {
   assertNativeRequestProcessing,
+  createNativeRequest,
   createNativeRequestInit,
 } from "#veryfront/platform/compat/http/native-request-init.ts";
 import {
@@ -130,7 +131,7 @@ function readNativeRequestHeaders(request: Request): Headers {
 function withCredentialHeaders(request: Request, headers: Headers, body?: string): Request {
   // The constructor calls live prototype methods with the headers in reach.
   assertNativeRequestProcessing();
-  return new NativeRequest(
+  return createNativeRequest(
     request,
     createNativeRequestInit(undefined, body === undefined ? { headers } : { headers, body }),
   );
