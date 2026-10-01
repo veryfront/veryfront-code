@@ -15,6 +15,7 @@ import {
   assertInstanceOf,
   assertRejects,
   assertStringIncludes,
+  assertThrows,
 } from "#veryfront/testing/assert.ts";
 import { beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { __subscribeLogRecordEmitter, type LogEntry } from "#veryfront/utils/logger/logger.ts";
@@ -6130,6 +6131,8 @@ describe("RedisBackend", () => {
 
     it("rejects invalid node timestamps on ordinary and owned checkpoint paths (#2290)", async () => {
       const invalidDate = new Date(Number.NaN);
+      const nativeError = assertThrows(() => invalidDate.toISOString(), RangeError);
+      assertInstanceOf(nativeError, RangeError);
       const nodeStates: WorkflowRun["nodeStates"] = {
         a: {
           nodeId: "a",
@@ -6155,7 +6158,7 @@ describe("RedisBackend", () => {
             nodeStates,
           }),
         RangeError,
-        "Invalid time value",
+        nativeError.message,
       );
       await assertRejects(
         () =>
@@ -6173,7 +6176,7 @@ describe("RedisBackend", () => {
             }),
           ),
         RangeError,
-        "Invalid time value",
+        nativeError.message,
       );
       assertEquals(await backend.getCheckpoints("run-invalid-ordinary-node-date"), []);
       assertEquals(await backend.getCheckpoints("run-invalid-owned-node-date"), []);
