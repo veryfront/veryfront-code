@@ -140,6 +140,39 @@ describe("timeout-manager", () => {
       assertEquals(handlerSignal?.reason, "client disconnected");
     });
 
+    it("keeps the drain promise pending until an opted-in response body settles", async () => {
+      let release: (() => void) | undefined;
+      const responsePromise = withRequestTimeout(
+        () =>
+          Promise.resolve(
+            new Response(
+              new ReadableStream({
+                pull(controller) {
+                  controller.enqueue(new TextEncoder().encode("prefix"));
+                  release = () => controller.close();
+                },
+              }, { highWaterMark: 0 }),
+            ),
+          ),
+        "/hosted",
+        "GET",
+        { settleResponseBody: true },
+      );
+      const { response, settled } = await responsePromise;
+      const reader = response.body!.getReader();
+      await reader.read();
+      let didSettle = false;
+      void settled.then(() => {
+        didSettle = true;
+      });
+      await Promise.resolve();
+      assertEquals(didSettle, false);
+      release!();
+      await reader.read();
+      await settled;
+      assertEquals(didSettle, true);
+    });
+
     it("wraps non-Error throws as Error", async () => {
       const handler = async (): Promise<Response> => {
         throw "string error";

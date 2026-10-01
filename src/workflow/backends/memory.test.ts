@@ -15,6 +15,7 @@ import {
   MAX_WORKFLOW_RUN_EVENT_MAILBOXES,
 } from "../limits.ts";
 import { normalizeSourceIntegrationPolicy } from "#veryfront/integrations/source-policy.ts";
+import { __subscribeLogRecordEmitter, type LogEntry } from "#veryfront/utils/logger/logger.ts";
 import { cloneOwnedCheckpointForPersistence } from "./checkpoint-retention.ts";
 
 const UNRESTRICTED_SOURCE_INTEGRATION_POLICY = normalizeSourceIntegrationPolicy(undefined);
@@ -443,6 +444,39 @@ describe("MemoryBackend", () => {
         input: {},
         preserved: "kept",
         added: "stored",
+      });
+    });
+
+    it("treats a node id named toJSON as data in created, patched and checkpointed context", async () => {
+      const calls: string[] = [];
+      const hijack = () => {
+        calls.push("toJSON");
+        return { hijacked: "" };
+      };
+      const runId = "run-context-to-json-node";
+      await backend.createRun(createTestRun(runId, {
+        context: { input: {}, toJSON: hijack, created: { keep: 1 } },
+      }));
+      await backend.updateRun(runId, {
+        context: { toJSON: hijack, patched: { keep: 2 } },
+      });
+      await backend.saveCheckpoint(runId, {
+        id: "cp-to-json-node",
+        nodeId: "toJSON",
+        timestamp: new Date(1),
+        context: { input: {}, toJSON: hijack, checkpointed: { keep: 3 } },
+        nodeStates: {},
+      });
+
+      assertEquals(calls, []);
+      assertEquals((await backend.getRun(runId))?.context, {
+        input: {},
+        created: { keep: 1 },
+        patched: { keep: 2 },
+      });
+      assertEquals((await backend.getLatestCheckpoint(runId))?.context, {
+        input: {},
+        checkpointed: { keep: 3 },
       });
     });
 
@@ -1160,6 +1194,130 @@ describe("MemoryBackend", () => {
       assertEquals(await strictBackend.getCheckpoints("run-strict-owned-checkpoint"), []);
     });
 
+    it("preserves owned node timestamps without reporting them as lossy (#2290)", async () => {
+      for (const withResumeEnvelope of [false, true]) {
+        const runId = `run-owned-node-dates-${withResumeEnvelope}`;
+        const startedAt = new Date(1);
+        const completedAt = new Date(2);
+        const nodeStates: Checkpoint["nodeStates"] = {
+          a: {
+            nodeId: "a",
+            status: "completed",
+            attempt: 1,
+            startedAt,
+            completedAt,
+            output: { toJSON: () => ({ v: 1 }) },
+          },
+        };
+        await backend.createRun(createTestRun(runId, {
+          status: "running",
+          workerId: "worker-1",
+        }));
+        const checkpoint = cloneOwnedCheckpointForPersistence({
+          ...createCheckpoint(`cp-owned-node-dates-${withResumeEnvelope}`, "a", completedAt),
+          nodeStates,
+          ...(withResumeEnvelope
+            ? {
+              _resumeEnvelope: {
+                schemaVersion: 2 as const,
+                ownerNodeId: "a",
+                context: { input: {} },
+                nodeStates,
+                workflowProjection: { context: {} },
+                graphAdmission: {
+                  stepsEvaluationContext: { input: {} },
+                  stepsEvaluationProjection: { context: {} },
+                  graphIdentity: [],
+                  workflowVersion: null,
+                },
+              },
+            }
+            : {}),
+        });
+        const warnings: LogEntry[] = [];
+        const unsubscribe = __subscribeLogRecordEmitter((entry) => {
+          if (entry.level === "warn" && entry.component === "workflow-context") {
+            warnings.push(entry);
+          }
+        });
+
+        try {
+          assertEquals(
+            await backend.saveCheckpointIfStatusAndWorker(
+              runId,
+              runId,
+              ["running"],
+              "worker-1",
+              checkpoint,
+            ),
+            true,
+          );
+        } finally {
+          unsubscribe();
+        }
+
+        const stored = await backend.getLatestCheckpoint(runId);
+        assertEquals(stored?.nodeStates.a?.startedAt, startedAt);
+        assertEquals(stored?.nodeStates.a?.completedAt, completedAt);
+        assertEquals(stored?.nodeStates.a?.output, { v: 1 });
+        if (withResumeEnvelope) {
+          assertEquals(stored?._resumeEnvelope?.nodeStates.a?.startedAt, startedAt);
+          assertEquals(stored?._resumeEnvelope?.nodeStates.a?.completedAt, completedAt);
+        }
+        assertEquals(
+          warnings.some((warning) => String(warning.context?.paths).includes("(Date)")),
+          false,
+        );
+      }
+    });
+
+    it("preserves invalid node timestamps on ordinary and owned checkpoint paths (#2290)", async () => {
+      const invalidDate = new Date(Number.NaN);
+      const nodeStates: Checkpoint["nodeStates"] = {
+        a: {
+          nodeId: "a",
+          status: "completed",
+          attempt: 1,
+          startedAt: invalidDate,
+          completedAt: invalidDate,
+          output: { toJSON: () => ({ v: 1 }) },
+        },
+      };
+      await backend.createRun(createTestRun("run-invalid-owned-node-date", {
+        status: "running",
+        workerId: "worker-1",
+      }));
+
+      await backend.saveCheckpoint("run-invalid-ordinary-node-date", {
+        ...createCheckpoint("cp-invalid-ordinary-node-date", "a", new Date(0)),
+        nodeStates,
+      });
+      assertEquals(
+        await backend.saveCheckpointIfStatusAndWorker(
+          "run-invalid-owned-node-date",
+          "run-invalid-owned-node-date",
+          ["running"],
+          "worker-1",
+          cloneOwnedCheckpointForPersistence({
+            ...createCheckpoint("cp-invalid-owned-node-date", "a", new Date(0)),
+            nodeStates,
+          }),
+        ),
+        true,
+      );
+
+      for (
+        const runId of [
+          "run-invalid-ordinary-node-date",
+          "run-invalid-owned-node-date",
+        ]
+      ) {
+        const stored = await backend.getLatestCheckpoint(runId);
+        assertEquals(Number.isNaN(stored?.nodeStates.a?.startedAt?.getTime()), true);
+        assertEquals(Number.isNaN(stored?.nodeStates.a?.completedAt?.getTime()), true);
+      }
+    });
+
     it("persists node-state input and output through the context JSON policy (#2242)", async () => {
       const startedAt = new Date("2026-01-01T00:00:00Z");
       await backend.createRun(createTestRun("run-node-state-json", {
@@ -1375,6 +1533,39 @@ describe("MemoryBackend", () => {
         message,
       );
       assertEquals((await backend.getRun("run-bigint-sub-workflow-write"))?.nodeStates, {});
+    });
+
+    it("treats a node id named toJSON as data in node-state input and output", async () => {
+      const calls: string[] = [];
+      const hijack = () => {
+        calls.push("toJSON");
+        return { hijacked: "" };
+      };
+      await backend.createRun(createTestRun("run-node-state-to-json", {
+        nodeStates: {
+          toJSON: {
+            nodeId: "toJSON",
+            status: "completed",
+            attempt: 1,
+            input: hijack,
+            output: hijack,
+          },
+          other: {
+            nodeId: "other",
+            status: "completed",
+            attempt: 1,
+            input: { keep: "input" },
+            output: { keep: "output" },
+          },
+        },
+      }));
+
+      assertEquals(calls, []);
+      const nodeStates = (await backend.getRun("run-node-state-to-json"))?.nodeStates;
+      assertEquals(Object.hasOwn(nodeStates?.toJSON ?? {}, "input"), false);
+      assertEquals(Object.hasOwn(nodeStates?.toJSON ?? {}, "output"), false);
+      assertEquals(nodeStates?.other?.input, { keep: "input" });
+      assertEquals(nodeStates?.other?.output, { keep: "output" });
     });
 
     it("rejects node-state user data JSON cannot encode, naming the field (#2242)", async () => {

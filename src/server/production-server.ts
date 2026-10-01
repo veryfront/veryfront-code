@@ -1,3 +1,4 @@
+import type { HostedHttpIngressOptions } from "./isolated-http/hosted-http-ingress.ts";
 import { serverLogger as logger } from "#veryfront/utils";
 import { installUnhandledRejectionGuard } from "#veryfront/server/unhandled-rejection-guard.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
@@ -170,6 +171,8 @@ export interface ServerHandle {
 
 /** Options accepted by start production server. */
 export interface StartProductionServerOptions extends ServerOptions {
+  /** Host-owned immutable-release ingress. Requires proxy mode without a shared host-execution grant; the caller owns broker shutdown. */
+  hostedHttp?: HostedHttpIngressOptions;
   debug?: boolean;
   adapter?: RuntimeAdapter;
   /** Pre-computed bootstrap result to skip internal bootstrap (avoids double initialization) */
@@ -301,13 +304,27 @@ export function startProductionServerWithDependencies(
           logger.debug("FSAdapter initialized", { type: bootstrap.fsAdapterType });
         }
 
-        await prewarmLocalProductionCSSArtifacts(bootstrap.adapter, {
-          projectDir,
-          defaultProjectSlug,
-          defaultProjectId,
-          defaultEnvironment,
-          localProjects,
-        });
+        if (
+          options.hostedHttp && (
+            bootstrap.config.fs?.veryfront?.proxyMode !== true ||
+            isHostProjectExecutionOverrideEnabled() || options.localProjects !== undefined ||
+            options.discoveryConfig !== undefined
+          )
+        ) {
+          throw new TypeError(
+            "Hosted HTTP ingress requires a proxy without host project execution",
+          );
+        }
+
+        if (!options.hostedHttp) {
+          await prewarmLocalProductionCSSArtifacts(bootstrap.adapter, {
+            projectDir,
+            defaultProjectSlug,
+            defaultProjectId,
+            defaultEnvironment,
+            localProjects,
+          });
+        }
 
         // Enable SSR fetch interception to handle relative URLs during SSR
         setSSRServerPort(port);
@@ -381,6 +398,7 @@ export function startProductionServerWithDependencies(
           defaultEnvironment,
           localProjects,
           allowHostProjectCodeExecution,
+          hostedHttp: options.hostedHttp,
         });
 
         const coreHandler = baseHandler;

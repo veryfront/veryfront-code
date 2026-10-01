@@ -108,7 +108,9 @@ Research the question and cite every claim.
   tool denials. `deniedTools` is also accepted for serialized definitions. Do
   not combine either form with `tools: true`: the serialized runtime cannot
   represent "all except", so it fails closed and disables every project tool.
-  List the allowed tools explicitly when you also need denials.
+  Client tools that a run request supplies still reach the model unless the
+  agent denies them by name. List the allowed tools explicitly when you also
+  need denials.
 - Duplicate agent ids (flat file + directory) and agent ids whose sanitized
   namespaces collide are reported as discovery errors.
   The same catalog metadata is used by local and hosted runtime paths. Hosted

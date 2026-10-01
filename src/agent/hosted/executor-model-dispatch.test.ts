@@ -603,19 +603,36 @@ describe("hosted executor model dispatch", () => {
 
   it("fences a cancelled handler while its sink remains pending past the cleanup deadline", async () => {
     const entered = Promise.withResolvers<void>();
+    const cancellationReceived = Promise.withResolvers<void>();
     const persisted = Promise.withResolvers<void>();
+    let cancellationReceiptWatchdog: ReturnType<typeof setTimeout> | undefined;
+    let cancellationDeadlineWatchdog: ReturnType<typeof setTimeout> | undefined;
+    let callerCloseWatchdog: ReturnType<typeof setTimeout> | undefined;
     let dispatches = 0;
+    const operations = createHostedExecutorModelBroker({
+      grant: grant(),
+      allowedModelIds,
+      scope: scope(),
+      resolveModelRuntime: () => model(() => dispatches++),
+      runEventSink: async () => {
+        entered.resolve();
+        await persisted.promise;
+      },
+    });
+    const streamOperation = operations.get("model.stream");
+    assert(streamOperation?.mode === "stream");
+    const observedOperations = new Map(operations);
+    observedOperations.set("model.stream", {
+      mode: "stream",
+      handle(value, context) {
+        context.signal.addEventListener("abort", () => cancellationReceived.resolve(), {
+          once: true,
+        });
+        return streamOperation.handle(value, context);
+      },
+    });
     const channels = pair(
-      createHostedExecutorModelBroker({
-        grant: grant(),
-        allowedModelIds,
-        scope: scope(),
-        resolveModelRuntime: () => model(() => dispatches++),
-        runEventSink: async () => {
-          entered.resolve();
-          await persisted.promise;
-        },
-      }),
+      observedOperations,
       binding,
       { maxConcurrentCalls: 1, brokerCancellationTimeoutMs: 20 },
     );
@@ -634,12 +651,40 @@ describe("hosted executor model dispatch", () => {
       await cancelled;
       returning = iterator.return!();
       void returning.catch(() => {});
-      await new Promise<void>((resolve) => setTimeout(resolve, 50));
+      await Promise.race([
+        cancellationReceived.promise,
+        new Promise<never>((_, reject) => {
+          cancellationReceiptWatchdog = setTimeout(
+            () => reject(new Error("broker cancellation was not received within the test bound")),
+            5_000,
+          );
+        }),
+      ]);
+      clearTimeout(cancellationReceiptWatchdog);
+      const closeError = await Promise.race([
+        channels.broker.closed,
+        new Promise<never>((_, reject) => {
+          cancellationDeadlineWatchdog = setTimeout(
+            () => reject(new Error("broker cancellation deadline exceeded the test bound")),
+            250,
+          );
+        }),
+      ]);
       assertEquals(channels.broker.signal.aborted, true);
       assertEquals(
-        (await channels.broker.closed).message,
+        closeError.message,
         "Executor handler cancellation deadline exceeded",
       );
+      await Promise.race([
+        channels.caller.closed,
+        new Promise<never>((_, reject) => {
+          callerCloseWatchdog = setTimeout(
+            () => reject(new Error("caller did not observe broker closure within the test bound")),
+            5_000,
+          );
+        }),
+      ]);
+      clearTimeout(callerCloseWatchdog);
       await assertRejects(
         () => channels.caller.request("model.metadata", {}),
         Error,
@@ -648,6 +693,9 @@ describe("hosted executor model dispatch", () => {
       await assertRejects(async () => await returning);
       assertEquals(dispatches, 0);
     } finally {
+      clearTimeout(cancellationReceiptWatchdog);
+      clearTimeout(cancellationDeadlineWatchdog);
+      clearTimeout(callerCloseWatchdog);
       persisted.resolve();
       await returning?.catch(() => {});
       await channels.close();

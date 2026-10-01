@@ -22,6 +22,14 @@ cannot receive `SONAR_TOKEN`. Fork pull requests still skip other protected
 dependency jobs and therefore fail this aggregate gate closed. Codecov
 reporting remains advisory.
 
+A main push whose exact commit already passed a green merge queue run of this
+workflow, with that run's artifacts still available, inherits the test results
+from that run instead of re-running them. Both gates accept a skipped test
+dependency only in that case. The Sonar scan still runs and still blocks, using
+the merge queue run's coverage, and the release publishes that run's npm
+artifact. Without such a run, main runs the full pipeline. Evidence:
+[tested merge-queue run contract](../tests/integration/ci/tested-merge-queue-run-workflow.test.ts).
+
 The scanner emits the diagnostic `SonarQube Cloud scan` check.
 `SonarQube Cloud quality gate` is the only Sonar check required by the ruleset
 and depends on that scanner result.

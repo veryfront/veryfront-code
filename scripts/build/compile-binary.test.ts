@@ -395,9 +395,9 @@ it("release binaries carry the numbered RC version", async () => {
   const buildBinariesJob = workflow.slice(jobStart, jobEnd);
 
   assertEquals(
-    buildBinariesJob.includes("needs: [version-check]"),
+    buildBinariesJob.includes("needs: [version-check, tested-run]"),
     true,
-    "binary builds need the release version detected by version-check",
+    "binary builds need the release version and number from version-check and tested-run",
   );
   assertEquals(
     buildBinariesJob.includes("Prepare RC build version"),
@@ -406,7 +406,7 @@ it("release binaries carry the numbered RC version", async () => {
   );
   assertEquals(
     buildBinariesJob.includes(
-      "VERSION: ${{ needs.version-check.outputs.version }}.${{ github.run_number }}",
+      "VERSION: ${{ needs.version-check.outputs.version }}.${{ needs.tested-run.outputs.release_number }}",
     ),
     true,
     "binary and npm artifacts must use the same numbered RC version",

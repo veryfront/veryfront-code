@@ -15,6 +15,7 @@ import {
   assertInstanceOf,
   assertRejects,
   assertStringIncludes,
+  assertThrows,
 } from "#veryfront/testing/assert.ts";
 import { beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { __subscribeLogRecordEmitter, type LogEntry } from "#veryfront/utils/logger/logger.ts";
@@ -27,14 +28,25 @@ import { waitForApproval, waitForEvent } from "../../dsl/wait.ts";
 import { defineSchema } from "#veryfront/schemas/index.ts";
 import type { Tool } from "#veryfront/tool";
 import { RedisBackend } from "./index.ts";
-import { cloneOwnedCheckpointForPersistence } from "../checkpoint-retention.ts";
+import { MemoryBackend } from "../memory.ts";
+import { CheckpointManager } from "../../executor/checkpoint-manager.ts";
 import { deriveWorkflowRunEventObservation } from "../../events.ts";
 import {
   MAX_TRAVERSAL_DEPTH,
   serializeWorkflowJson,
 } from "#veryfront/workflow/context-serialization.ts";
 import type { RedisAdapter } from "#veryfront/platform/adapters/redis/index.ts";
-import type { CheckpointResumeEnvelope, PendingApproval, WorkflowRun } from "../../types.ts";
+import type {
+  Checkpoint,
+  CheckpointResumeEnvelope,
+  PendingApproval,
+  WorkflowContext,
+  WorkflowRun,
+} from "../../types.ts";
+import {
+  cloneCheckpointForPersistence,
+  cloneOwnedCheckpointForPersistence,
+} from "../checkpoint-retention.ts";
 import {
   MAX_WORKFLOW_CHECKPOINT_HISTORY_ENTRIES,
   MAX_WORKFLOW_PENDING_APPROVAL_ENTRIES,
@@ -3070,6 +3082,209 @@ describe("RedisBackend", () => {
       assertEquals(updated?.status, "running");
     });
 
+    it("treats a node id named toJSON as data in created, patched and checkpointed context", async () => {
+      const calls: string[] = [];
+      const hijack = () => {
+        calls.push("toJSON");
+        return { hijacked: "" };
+      };
+      const runId = "run-context-to-json-node";
+      await backend.createRun(createTestRun(runId, {
+        context: { input: {}, toJSON: hijack, created: { keep: 1 } },
+      }));
+      await backend.updateRun(runId, {
+        context: { toJSON: hijack, patched: { keep: 2 } },
+      });
+      await backend.saveCheckpoint(runId, {
+        id: "cp-to-json-node",
+        nodeId: "toJSON",
+        timestamp: new Date(1),
+        context: { input: {}, toJSON: hijack, checkpointed: { keep: 3 } },
+        nodeStates: {},
+      });
+
+      assertEquals(calls, []);
+      assertEquals((await backend.getRun(runId))?.context, {
+        input: {},
+        created: { keep: 1 },
+        patched: { keep: 2 },
+      });
+      assertEquals((await backend.getLatestCheckpoint(runId))?.context, {
+        input: {},
+        checkpointed: { keep: 3 },
+      });
+    });
+
+    it("treats a node id named toJSON as data in a resume envelope", async () => {
+      const calls: string[] = [];
+      const hijackingContext = (): WorkflowContext => ({
+        input: {},
+        toJSON: () => {
+          calls.push("toJSON");
+          return { hijacked: "" };
+        },
+        other: { keep: 1 },
+      });
+      const runId = "run-envelope-to-json-node";
+      await backend.createRun(createTestRun(runId));
+
+      await backend.saveCheckpoint(
+        runId,
+        cloneCheckpointForPersistence({
+          id: "cp-envelope-to-json-node",
+          nodeId: "owner",
+          timestamp: new Date(1),
+          context: hijackingContext(),
+          nodeStates: {},
+          _resumeEnvelope: {
+            schemaVersion: 2,
+            ownerNodeId: "owner",
+            context: hijackingContext(),
+            nodeStates: {},
+            workflowProjection: { context: {} },
+            graphAdmission: {
+              stepsEvaluationContext: hijackingContext(),
+              stepsEvaluationProjection: { context: {} },
+              graphIdentity: [],
+              workflowVersion: null,
+            },
+          },
+        }),
+      );
+
+      assertEquals(calls, []);
+      const latest = await backend.getLatestCheckpoint(runId);
+      assertEquals(latest?.context, { input: {}, other: { keep: 1 } });
+      assertEquals(latest?._resumeEnvelope?.context, { input: {}, other: { keep: 1 } });
+      assertEquals(latest?._resumeEnvelope?.graphAdmission.stepsEvaluationContext, {
+        input: {},
+        other: { keep: 1 },
+      });
+    });
+
+    it("persists a context shared into node states the same way on every checkpoint path", async () => {
+      const calls: string[] = [];
+      const sharedContextCheckpoint = (id: string): Checkpoint => {
+        const context: WorkflowContext = {
+          input: {},
+          toJSON: () => {
+            calls.push("toJSON");
+            return { hijacked: "" };
+          },
+          other: { keep: 1 },
+        };
+        return {
+          id,
+          nodeId: "a",
+          timestamp: new Date(1),
+          context,
+          nodeStates: { a: { nodeId: "a", status: "completed", attempt: 1, output: context } },
+        };
+      };
+      const runId = "run-shared-context-to-json-node";
+      await backend.createRun(createTestRun(runId, { status: "running", workerId: "worker" }));
+
+      await backend.saveCheckpoint(runId, sharedContextCheckpoint("direct"));
+      const direct = await backend.getLatestCheckpoint(runId);
+      await backend.saveCheckpoint(
+        runId,
+        cloneCheckpointForPersistence(sharedContextCheckpoint("snapshot")),
+      );
+      const snapshot = await backend.getLatestCheckpoint(runId);
+      assertEquals(
+        await backend.saveCheckpointIfStatusAndWorker(
+          runId,
+          runId,
+          ["running"],
+          "worker",
+          cloneOwnedCheckpointForPersistence(sharedContextCheckpoint("owned")),
+        ),
+        true,
+      );
+      const owned = await backend.getLatestCheckpoint(runId);
+      // The snapshot clone reaches the context from node states first here.
+      const { nodeStates, ...reordered } = sharedContextCheckpoint("reordered");
+      await backend.saveCheckpoint(
+        runId,
+        cloneCheckpointForPersistence({ nodeStates, ...reordered }),
+      );
+      const reorderedSnapshot = await backend.getLatestCheckpoint(runId);
+
+      const memory = new MemoryBackend();
+      await memory.createRun(createTestRun(runId));
+      const memoryInput = sharedContextCheckpoint("memory");
+      const memorySnapshot = await new CheckpointManager({ backend: memory }).createCheckpoint(
+        runId,
+        memoryInput.nodeId,
+        memoryInput.context,
+        memoryInput.nodeStates,
+      );
+      const memoryRetained = await memory.getLatestCheckpoint(runId);
+
+      assertEquals(calls, []);
+      for (
+        const latest of [
+          direct,
+          snapshot,
+          owned,
+          reorderedSnapshot,
+          memorySnapshot,
+          memoryRetained,
+        ]
+      ) {
+        assertEquals(latest?.context, { input: {}, other: { keep: 1 } });
+        assertEquals(latest?.nodeStates.a?.output, { input: {}, other: { keep: 1 } });
+        assertEquals(JSON.stringify(latest?.context), '{"input":{},"other":{"keep":1}}');
+        assertEquals(
+          JSON.stringify(latest?.nodeStates),
+          '{"a":{"nodeId":"a","status":"completed","attempt":1,"output":{"input":{},"other":{"keep":1}}}}',
+        );
+      }
+    });
+
+    it("keeps every node state of an owned checkpoint with a toJSON-hooked value", async () => {
+      const runId = "run-owned-hooked-node-state";
+      await backend.createRun(createTestRun(runId, { status: "running", workerId: "worker" }));
+      const nodeStates = (): Checkpoint["nodeStates"] => ({
+        a: { nodeId: "a", status: "completed", attempt: 1, output: { toJSON: () => ({ v: 1 }) } },
+        b: { nodeId: "b", status: "completed", attempt: 1, output: { keep: 1 } },
+      });
+
+      const saved = await backend.saveCheckpointIfStatusAndWorker(
+        runId,
+        runId,
+        ["running"],
+        "worker",
+        cloneOwnedCheckpointForPersistence({
+          id: "cp-owned-hooked-node-state",
+          nodeId: "owner",
+          timestamp: new Date(1),
+          context: { input: {} },
+          nodeStates: nodeStates(),
+          _resumeEnvelope: {
+            schemaVersion: 2,
+            ownerNodeId: "owner",
+            context: { input: {} },
+            nodeStates: nodeStates(),
+            workflowProjection: { context: {} },
+            graphAdmission: {
+              stepsEvaluationContext: { input: {} },
+              stepsEvaluationProjection: { context: {} },
+              graphIdentity: [],
+              workflowVersion: null,
+            },
+          },
+        }),
+      );
+
+      assertEquals(saved, true);
+      const latest = await backend.getLatestCheckpoint(runId);
+      for (const persisted of [latest?.nodeStates, latest?._resumeEnvelope?.nodeStates]) {
+        assertEquals(persisted?.a?.output, { v: 1 });
+        assertEquals(persisted?.b?.output, { keep: 1 });
+      }
+    });
+
     it("does not add an existence round trip to successful updates", async () => {
       const runId = "run-update-without-exists";
       await backend.createRun(createTestRun(runId));
@@ -3598,6 +3813,39 @@ describe("RedisBackend", () => {
         message,
       );
       assertEquals((await backend.getRun("run-bigint-sub-workflow-write"))?.nodeStates, {});
+    });
+
+    it("treats a node id named toJSON as data in node-state input and output", async () => {
+      const calls: string[] = [];
+      const hijack = () => {
+        calls.push("toJSON");
+        return { hijacked: "" };
+      };
+      await backend.createRun(createTestRun("run-node-state-to-json", {
+        nodeStates: {
+          toJSON: {
+            nodeId: "toJSON",
+            status: "completed",
+            attempt: 1,
+            input: hijack,
+            output: hijack,
+          },
+          other: {
+            nodeId: "other",
+            status: "completed",
+            attempt: 1,
+            input: { keep: "input" },
+            output: { keep: "output" },
+          },
+        },
+      }));
+
+      assertEquals(calls, []);
+      const nodeStates = (await backend.getRun("run-node-state-to-json"))?.nodeStates;
+      assertEquals(Object.hasOwn(nodeStates?.toJSON ?? {}, "input"), false);
+      assertEquals(Object.hasOwn(nodeStates?.toJSON ?? {}, "output"), false);
+      assertEquals(nodeStates?.other?.input, { keep: "input" });
+      assertEquals(nodeStates?.other?.output, { keep: "output" });
     });
 
     it("rejects node-state user data JSON cannot encode, naming the field (#2242)", async () => {
@@ -6046,6 +6294,139 @@ describe("RedisBackend", () => {
       );
       assertEquals(await strictBackend.getCheckpoints("run-cp-strict-node-state-date"), []);
       assertEquals(await strictBackend.getCheckpoints("run-cp-strict-node-output-date"), []);
+    });
+
+    it("preserves owned node timestamps without reporting them as lossy (#2290)", async () => {
+      for (const withResumeEnvelope of [false, true]) {
+        const runId = `run-owned-node-dates-${withResumeEnvelope}`;
+        const startedAt = new Date(1);
+        const completedAt = new Date(2);
+        const nodeStates: WorkflowRun["nodeStates"] = {
+          a: {
+            nodeId: "a",
+            status: "completed",
+            attempt: 1,
+            startedAt,
+            completedAt,
+            output: { toJSON: () => ({ v: 1 }) },
+          },
+        };
+        await backend.createRun(createTestRun(runId, {
+          status: "running",
+          workerId: "worker-1",
+        }));
+        const checkpoint = cloneOwnedCheckpointForPersistence({
+          id: `cp-owned-node-dates-${withResumeEnvelope}`,
+          nodeId: "a",
+          timestamp: completedAt,
+          context: { input: {} },
+          nodeStates,
+          ...(withResumeEnvelope
+            ? {
+              _resumeEnvelope: {
+                schemaVersion: 2 as const,
+                ownerNodeId: "a",
+                context: { input: {} },
+                nodeStates,
+                workflowProjection: { context: {} },
+                graphAdmission: {
+                  stepsEvaluationContext: { input: {} },
+                  stepsEvaluationProjection: { context: {} },
+                  graphIdentity: [],
+                  workflowVersion: null,
+                },
+              },
+            }
+            : {}),
+        });
+        const warnings: LogEntry[] = [];
+        const unsubscribe = __subscribeLogRecordEmitter((entry) => {
+          if (entry.level === "warn" && entry.component === "workflow-context") {
+            warnings.push(entry);
+          }
+        });
+
+        try {
+          assertEquals(
+            await backend.saveCheckpointIfStatusAndWorker(
+              runId,
+              runId,
+              ["running"],
+              "worker-1",
+              checkpoint,
+            ),
+            true,
+          );
+        } finally {
+          unsubscribe();
+        }
+
+        const stored = await backend.getLatestCheckpoint(runId);
+        assertEquals(stored?.nodeStates.a?.startedAt, startedAt);
+        assertEquals(stored?.nodeStates.a?.completedAt, completedAt);
+        assertEquals(stored?.nodeStates.a?.output, { v: 1 });
+        if (withResumeEnvelope) {
+          assertEquals(stored?._resumeEnvelope?.nodeStates.a?.startedAt, startedAt);
+          assertEquals(stored?._resumeEnvelope?.nodeStates.a?.completedAt, completedAt);
+        }
+        assertEquals(
+          warnings.some((warning) => String(warning.context?.paths).includes("(Date)")),
+          false,
+        );
+      }
+    });
+
+    it("rejects invalid node timestamps on ordinary and owned checkpoint paths (#2290)", async () => {
+      const invalidDate = new Date(Number.NaN);
+      const nativeError = assertThrows(() => invalidDate.toISOString(), RangeError);
+      assertInstanceOf(nativeError, RangeError);
+      const nodeStates: WorkflowRun["nodeStates"] = {
+        a: {
+          nodeId: "a",
+          status: "completed",
+          attempt: 1,
+          startedAt: invalidDate,
+          completedAt: invalidDate,
+          output: { toJSON: () => ({ v: 1 }) },
+        },
+      };
+      await backend.createRun(createTestRun("run-invalid-owned-node-date", {
+        status: "running",
+        workerId: "worker-1",
+      }));
+
+      await assertRejects(
+        () =>
+          backend.saveCheckpoint("run-invalid-ordinary-node-date", {
+            id: "cp-invalid-ordinary-node-date",
+            nodeId: "a",
+            timestamp: new Date(0),
+            context: { input: {} },
+            nodeStates,
+          }),
+        RangeError,
+        nativeError.message,
+      );
+      await assertRejects(
+        () =>
+          backend.saveCheckpointIfStatusAndWorker(
+            "run-invalid-owned-node-date",
+            "run-invalid-owned-node-date",
+            ["running"],
+            "worker-1",
+            cloneOwnedCheckpointForPersistence({
+              id: "cp-invalid-owned-node-date",
+              nodeId: "a",
+              timestamp: new Date(0),
+              context: { input: {} },
+              nodeStates,
+            }),
+          ),
+        RangeError,
+        nativeError.message,
+      );
+      assertEquals(await backend.getCheckpoints("run-invalid-ordinary-node-date"), []);
+      assertEquals(await backend.getCheckpoints("run-invalid-owned-node-date"), []);
     });
 
     it("should return null when no checkpoints", async () => {

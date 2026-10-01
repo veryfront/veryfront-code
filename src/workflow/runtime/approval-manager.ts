@@ -245,6 +245,7 @@ function projectApprovalRequest(
 export class ApprovalManager {
   private config: ApprovalManagerConfig;
   private expirationTimer?: ReturnType<typeof setInterval>;
+  private readonly expirationMaintenance = new Set<Promise<void>>();
   private destroyed = false;
   private shuttingDown = false;
   private responseSchemas = new Map<string, Schema<unknown>>();
@@ -1081,11 +1082,22 @@ export class ApprovalManager {
   }
 
   private async runMaintenance(): Promise<void> {
-    try {
-      await this.checkExpiredApprovals();
-    } catch (error) {
+    if (this.destroyed || this.shuttingDown) return;
+
+    const maintenance = this.checkExpiredApprovals().catch((error) => {
       logger.error("Expiration check failed", error);
+    });
+    this.expirationMaintenance.add(maintenance);
+    try {
+      await maintenance;
+    } finally {
+      this.expirationMaintenance.delete(maintenance);
     }
+  }
+
+  /** Wait for an expiration pass that started before shutdown. */
+  async waitForExpirationMaintenance(): Promise<void> {
+    await Promise.all(this.expirationMaintenance);
   }
 
   /** Stop the approval manager */

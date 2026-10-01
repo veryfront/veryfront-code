@@ -940,6 +940,201 @@ it("ApiCacheBackend propagates attempted delete failures", async () => {
   }
 });
 
+it("ApiCacheBackend del-pattern timeouts do not open the read breaker", async () => {
+  const { ApiCacheBackend } = await importBackend();
+  const reads: string[] = [];
+  const otherProjectDeletes: string[] = [];
+  let attemptedDeletes = 0;
+  installMockFetch(
+    ((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input instanceof Request ? input.url : input);
+      if (url.includes("/projects/project-456/")) {
+        otherProjectDeletes.push(url);
+        return Promise.resolve(Response.json({ deleted: 1 }));
+      }
+      if (url.endsWith("/del-pattern")) {
+        attemptedDeletes++;
+        if (url.includes("/projects/bounded-")) {
+          return Promise.resolve(Response.json({ deleted: 0 }));
+        }
+        // A slow invalidation backend: never answers before the client timeout.
+        return new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener("abort", () => {
+            reject(new DOMException("The operation was aborted.", "AbortError"));
+          });
+        });
+      }
+      reads.push(url);
+      return Promise.resolve(Response.json({ value: "cached" }));
+    }) as typeof fetch,
+  );
+  const inProject = <T>(projectId: string, fn: () => Promise<T>) =>
+    runWithRequestContext(
+      { projectSlug: projectId, projectId, token: "", productionMode: false },
+      fn,
+    );
+
+  try {
+    const cache = new ApiCacheBackend({
+      apiBaseUrl: "https://93.184.216.34",
+      apiToken: "test-explicit-token",
+      timeoutMs: 5,
+      circuitBreakerName: "api-cache-invalidation-isolation-test",
+    });
+
+    await inProject("project-123", async () => {
+      for (let attempt = 0; attempt < 12; attempt++) {
+        await assertRejects(() => cache.delByPattern(`file:branch:*:note-${attempt}.md`));
+      }
+      assertEquals(await cache.get("file:branch:main:note.md"), "cached");
+    });
+    assertEquals(reads.length, 1);
+    // The open invalidation breaker belongs to the churning project only.
+    assertEquals(
+      await inProject("project-456", () => cache.delByPattern("file:branch:*:note.md")),
+      1,
+    );
+    assertEquals(otherProjectDeletes.length, 1);
+
+    // Project breakers are bounded per backend: once enough other projects
+    // have invalidated, the churning project's open breaker is dropped and
+    // its next delete is tried again instead of failing fast.
+    for (let project = 0; project < 256; project++) {
+      await inProject(`bounded-${project}`, () => cache.delByPattern("file:branch:*:x.md"));
+    }
+    const attemptsBefore = attemptedDeletes;
+    await inProject("project-123", () => assertRejects(() => cache.delByPattern("dir:*")));
+    assertEquals(attemptedDeletes, attemptsBefore + 1);
+  } finally {
+    restoreMockFetch();
+  }
+});
+
+async function withStreamDeletes(
+  respond: (pattern: string, authorization: string, sent: number) => Promise<Response>,
+  test: (context: {
+    deleteFromStream: (token: string, pattern: string) => Promise<number>;
+    requests: Array<{ pattern: string; authorization: string }>;
+    sent: (count: number) => Promise<void>;
+  }) => Promise<void>,
+): Promise<void> {
+  // Unwrapped: each call must keep the calling stream's own request context.
+  const { ApiCacheBackend } = await import("./backend.ts");
+  const originalBaseUrl = getEnv("VERYFRONT_API_BASE_URL");
+  const requests: Array<{ pattern: string; authorization: string }> = [];
+  const waiters: Array<{ count: number; resolve: () => void }> = [];
+  setEnv("VERYFRONT_API_BASE_URL", "https://93.184.216.34");
+  installMockFetch((_input: RequestInfo | URL, init?: RequestInit) => {
+    const { pattern } = JSON.parse(String(init?.body)) as { pattern: string };
+    const authorization = new Headers(init?.headers).get("authorization") ?? "";
+    requests.push({ pattern, authorization });
+    for (const waiter of waiters) if (requests.length >= waiter.count) waiter.resolve();
+    return respond(pattern, authorization, requests.length);
+  });
+
+  try {
+    const cache = new ApiCacheBackend({
+      circuitBreakerName: `api-cache-stream-deletes-${crypto.randomUUID()}`,
+    });
+    await test({
+      deleteFromStream: (token, pattern) =>
+        runWithRequestContext(
+          { projectSlug: "project-slug", projectId: "project-123", token, productionMode: false },
+          () => cache.delByPattern(pattern),
+        ),
+      requests,
+      sent: (count) =>
+        requests.length >= count
+          ? Promise.resolve()
+          : new Promise((resolve) => waiters.push({ count, resolve })),
+    });
+  } finally {
+    restoreMockFetch();
+    if (originalBaseUrl === undefined) deleteEnv("VERYFRONT_API_BASE_URL");
+    else setEnv("VERYFRONT_API_BASE_URL", originalBaseUrl);
+  }
+}
+
+it("ApiCacheBackend coalesces concurrent identical del-pattern calls per project", async () => {
+  const written = "file:branch:*:knowledge/churn/note.md";
+  let releaseFirst!: () => void;
+  const firstGate = new Promise<void>((resolve) => releaseFirst = resolve);
+
+  await withStreamDeletes(
+    async (_pattern, _authorization, sent) => {
+      if (sent === 1) await firstGate;
+      return Response.json({ deleted: 1 });
+    },
+    async ({ deleteFromStream, requests, sent }) => {
+      const streams = 8;
+      // One write seen by every active run stream on the project, each
+      // stream holding its own scoped credential.
+      const first = deleteFromStream("stream-token-0", written);
+      await sent(1);
+      const joined = Array.from(
+        { length: streams - 1 },
+        (_, stream) => deleteFromStream(`stream-token-${stream + 1}`, written),
+      );
+      const otherPattern = deleteFromStream("stream-token-0", "dir:branch:*:knowledge/churn");
+      await sent(2);
+      assertEquals(requests.map((request) => request.pattern), [
+        written,
+        "dir:branch:*:knowledge/churn",
+      ]);
+
+      releaseFirst();
+      assertEquals(await Promise.all([first, ...joined]), Array(streams).fill(1));
+      assertEquals(await otherPattern, 1);
+      // Callers that arrived while a delete was in flight share one queued
+      // delete, so none of them relies on a scan that started before its call.
+      assertEquals(requests.filter((request) => request.pattern === written).length, 2);
+
+      assertEquals(await deleteFromStream("stream-token-1", written), 1);
+      assertEquals(requests.filter((request) => request.pattern === written).length, 3);
+    },
+  );
+});
+
+it("ApiCacheBackend retries a coalesced del-pattern under a caller's own credential when the shared one is refused", async () => {
+  const written = "file:branch:*:knowledge/churn/note.md";
+  let releaseFirst!: () => void;
+  const firstGate = new Promise<void>((resolve) => releaseFirst = resolve);
+
+  await withStreamDeletes(
+    async (_pattern, authorization, sent) => {
+      if (sent === 1) await firstGate;
+      if (authorization === "Bearer revoked-token") {
+        return new Response("credential revoked", { status: 401 });
+      }
+      return Response.json({ deleted: 1 });
+    },
+    async ({ deleteFromStream, requests, sent }) => {
+      const first = deleteFromStream("stream-token-0", written);
+      await sent(1);
+      const revoked = deleteFromStream("revoked-token", written);
+      const valid = deleteFromStream("stream-token-2", written);
+      const sameAsRevoked = deleteFromStream("revoked-token", written);
+      releaseFirst();
+
+      assertEquals(await first, 1);
+      await assertRejects(() => revoked);
+      await assertRejects(() => sameAsRevoked);
+      assertEquals(await valid, 1);
+      assertEquals(requests.map((request) => request.authorization), [
+        "Bearer stream-token-0",
+        "Bearer revoked-token",
+        "Bearer stream-token-2",
+      ]);
+
+      // A refused credential does not open the project's invalidation breaker.
+      for (let attempt = 0; attempt < 12; attempt++) {
+        await assertRejects(() => deleteFromStream("revoked-token", `dir:branch:*:${attempt}`));
+      }
+      assertEquals(await deleteFromStream("stream-token-2", written), 1);
+    },
+  );
+});
+
 it("ApiCacheBackend prefers the request runtime token over the host fallback", async () => {
   const { ApiCacheBackend } = await importBackend();
   const globals = globalThis as Record<string, unknown>;

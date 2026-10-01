@@ -368,7 +368,7 @@ function mergeLimits(
 
 interface UpstreamDeadline {
   readonly signal: AbortSignal;
-  race<T>(operation: () => Promise<T>, cleanup?: () => void): Promise<T>;
+  race<T>(operation: () => Promise<T>, cleanup?: (reason: unknown) => void): Promise<T>;
   dispose(): void;
 }
 
@@ -379,6 +379,11 @@ function upstreamTimeoutError(): DependencyArtifactBuildError {
   );
 }
 
+/**
+ * Bounds upstream operations by the internal timeout and the caller's signal.
+ * Either one settles the active race at once, even when the operation ignores
+ * its AbortSignal, and runs the operation's cleanup once with the stop reason.
+ */
 function createUpstreamDeadline(timeoutMs: number, callerSignal?: AbortSignal): UpstreamDeadline {
   if (
     !Number.isSafeInteger(timeoutMs) ||
@@ -394,42 +399,51 @@ function createUpstreamDeadline(timeoutMs: number, callerSignal?: AbortSignal): 
   const controller = new AbortController();
   const expiresAt = performance.now() + timeoutMs;
   const timeoutError = upstreamTimeoutError();
-  let expired = false;
+  let stopped = false;
   let disposed = false;
-  let activeOperation: { token: object; cleanup?: () => void } | undefined;
-  let rejectDeadline!: (error: DependencyArtifactBuildError) => void;
-  const deadline = new Promise<never>((_resolve, reject) => {
-    rejectDeadline = reject;
+  let activeOperation: { token: object; cleanup?: (reason: unknown) => void } | undefined;
+  let rejectStop!: (reason: unknown) => void;
+  const stop = new Promise<never>((_resolve, reject) => {
+    rejectStop = reject;
   });
+  // The stop promise may settle between races; only races observe it.
+  stop.catch(() => undefined);
 
-  const expire = (): void => {
-    if (expired || disposed) return;
-    expired = true;
-    rejectDeadline(timeoutError);
-    controller.abort(timeoutError);
+  const settle = (reason: unknown): void => {
+    if (stopped || disposed) return;
+    stopped = true;
+    rejectStop(reason);
+    const cleanup = activeOperation?.cleanup;
+    activeOperation = undefined;
     try {
-      activeOperation?.cleanup?.();
+      cleanup?.(reason);
     } catch {
-      // Cancellation is best-effort cleanup; the deadline rejection is authoritative.
+      // Cancellation is best-effort cleanup; the stop rejection is authoritative.
     }
   };
+  const expire = (): void => {
+    if (stopped || disposed) return;
+    controller.abort(timeoutError);
+    settle(timeoutError);
+  };
+  const onCallerAbort = (): void => settle(callerSignal?.reason);
   const timeout = setTimeout(expire, timeoutMs);
+  callerSignal?.addEventListener("abort", onCallerAbort, { once: true });
+  if (callerSignal?.aborted) onCallerAbort();
   const signal = callerSignal
     ? AbortSignal.any([callerSignal, controller.signal])
     : controller.signal;
 
   return {
     signal,
-    async race<T>(operation: () => Promise<T>, cleanup?: () => void): Promise<T> {
-      if (expired || performance.now() >= expiresAt) {
-        expire();
-        return await deadline;
-      }
+    async race<T>(operation: () => Promise<T>, cleanup?: (reason: unknown) => void): Promise<T> {
+      if (!stopped && performance.now() >= expiresAt) expire();
+      if (stopped) return await stop;
 
       const token = {};
       activeOperation = { token, cleanup };
       try {
-        return await Promise.race([operation(), deadline]);
+        return await Promise.race([operation(), stop]);
       } finally {
         if (activeOperation?.token === token) activeOperation = undefined;
       }
@@ -439,6 +453,7 @@ function createUpstreamDeadline(timeoutMs: number, callerSignal?: AbortSignal): 
       disposed = true;
       activeOperation = undefined;
       clearTimeout(timeout);
+      callerSignal?.removeEventListener("abort", onCallerAbort);
     },
   };
 }
@@ -662,7 +677,7 @@ async function readBoundedResponseBytes(
     while (true) {
       const { done, value } = await deadline.race(
         () => reader.read(),
-        () => void reader.cancel(upstreamTimeoutError()).catch(() => undefined),
+        (reason) => void reader.cancel(reason).catch(() => undefined),
       );
       if (done) break;
       size += value.byteLength;
