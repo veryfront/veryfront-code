@@ -1224,6 +1224,18 @@ function createSeededSubWorkflowNodeStates(
   return { seededNodeStates, ownedNodeIds };
 }
 
+/**
+ * Loop output always carries all of these keys, whatever node now uses the id.
+ * A sub-workflow wrapper state records its parsed input, which a loop never does.
+ */
+function hasLoopPublicationShape(state: NodeState): boolean {
+  const { output } = state;
+  return state._subWorkflowInputParsed !== true &&
+    typeof output === "object" && output !== null && !Array.isArray(output) &&
+    Object.hasOwn(output, "exitReason") && Object.hasOwn(output, "iterations") &&
+    Object.hasOwn(output, "previousResults");
+}
+
 function restorePublishedChildOutputs(
   nodes: readonly WorkflowNode[],
   nodeStates: Readonly<Record<string, NodeState>>,
@@ -1232,10 +1244,24 @@ function restorePublishedChildOutputs(
   resumeContext: Readonly<WorkflowContext>,
   restoreOutputs = true,
   capturedWaits?: ReadonlyMap<string, string | null>,
+  requireExactPublication = false,
 ): void {
   for (const node of nodes) {
     const state = nodeStates[node.id];
     if (state?._subWorkflowOwnerPath && state._subWorkflowOwnerPath !== ownerPath) continue;
+    if (
+      requireExactPublication && state?.status === "completed" &&
+      (node.config.type === "loop" || hasLoopPublicationShape(state))
+    ) {
+      // Legacy loop output flattens callback updates over framework metadata.
+      // The current definition cannot prove which callbacks produced that row,
+      // nor that the node with this id is still the loop that produced it.
+      throw INVALID_ARGUMENT.create({
+        detail: `Legacy nested-loop context cannot be restored for "${node.id}": ` +
+          "the retained state does not identify the original publication. " +
+          "Resume from a checkpoint containing the original child context.",
+      });
+    }
     if (node.config.type === "parallel") {
       restorePublishedChildOutputs(
         node.config.nodes,
@@ -1245,6 +1271,7 @@ function restorePublishedChildOutputs(
         resumeContext,
         restoreOutputs,
         capturedWaits,
+        requireExactPublication,
       );
     } else if (node.config.type === "branch") {
       const output = state?.output;
@@ -1264,6 +1291,7 @@ function restorePublishedChildOutputs(
         resumeContext,
         restoreOutputs,
         capturedWaits,
+        requireExactPublication,
       );
     } else if (state?.status === "completed" && (restoreOutputs || node.config.type === "wait")) {
       if (
@@ -2619,6 +2647,9 @@ export class DAGExecutor {
       capturedWaits === undefined
         ? undefined
         : new Map(capturedWaits.map(({ nodeId, waitInstanceId }) => [nodeId, waitInstanceId])),
+      // A retried legacy child cannot replay completed loop publications. A
+      // parked child re-entered on a wait resume keeps its partial restoration.
+      savedContext === undefined && !scope.resumedSubWorkflowOwnerPaths.has(ownerPath),
     );
 
     const subRunId = `${node.id}_sub_${generateId()}`;
