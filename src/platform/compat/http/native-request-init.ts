@@ -25,6 +25,11 @@ import { lockNativeRequestInternals } from "./native-request-internals.ts";
 const IntrinsicReflectApply = Reflect.apply;
 const NativeHeaders = Headers;
 const ArrayIsArray = Array.isArray;
+const NativeArray = Array;
+const ArrayFrom = Array.from;
+const ObjectGetPrototypeOf = Object.getPrototypeOf;
+const ObjectPrototype = Object.prototype;
+const SymbolIterator: symbol = Symbol.iterator;
 const ObjectCreate = Object.create;
 const ObjectHasOwn = Object.hasOwn;
 const ObjectKeys = Object.keys;
@@ -169,6 +174,21 @@ export function readOwnInitField<K extends NativeRequestInitField>(
     : undefined;
 }
 
+/**
+ * An iterable of pairs other than an array (a Map, a generator) as an array,
+ * which the native conversion accepts too. Plain records are left alone: their
+ * `Symbol.iterator` would be looked up on `Object.prototype`, where a getter
+ * would run with the record, and its headers, as `this`.
+ */
+function toPairsIfIterable(source: HeadersInit): HeadersInit {
+  if (ArrayIsArray(source) || typeof source !== "object" || source === null) return source;
+  const prototype = ObjectGetPrototypeOf(source);
+  if (prototype === null || prototype === ObjectPrototype) return source;
+  const iterator: unknown = (source as Record<symbol, unknown>)[SymbolIterator];
+  if (typeof iterator !== "function") return source;
+  return IntrinsicReflectApply(ArrayFrom, NativeArray, [source]) as [string, string][];
+}
+
 function isNativeHeaders(value: unknown): value is Headers {
   return IntrinsicReflectApply(FunctionHasInstance, NativeHeaders, [value]) as boolean;
 }
@@ -193,6 +213,7 @@ export function copyNativeHeaders(source: HeadersInit | undefined | null): Heade
       IntrinsicReflectApply(HeadersAppend, headers, [step.value[0], step.value[1]]);
     }
   }
+  source = toPairsIfIterable(source);
   if (ArrayIsArray(source)) {
     for (let index = 0; index < source.length; index++) {
       const pair = source[index] as readonly unknown[];
@@ -258,6 +279,7 @@ function appendToRecord(record: Record<string, string>, name: unknown, value: un
  */
 function toNativeHeaderRecordFromInit(source: HeadersInit): Record<string, string> {
   const record = ObjectCreate(null) as Record<string, string>;
+  source = toPairsIfIterable(source);
   if (ArrayIsArray(source)) {
     for (let index = 0; index < source.length; index++) {
       const pair = source[index] as readonly unknown[];

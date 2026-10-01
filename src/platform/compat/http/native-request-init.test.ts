@@ -211,6 +211,17 @@ describe("platform/compat/http/native-request-init", () => {
     assertEquals(toNativeHeaderRecord(headers)["set-cookie"], "a=1, b=2");
   });
 
+  it("accepts an iterable of header pairs, as the native conversion does", () => {
+    const pairs = new Map([["x-a", "1"], ["x-b", "2"]]);
+
+    assertEquals(toNativeHeaderRecord(copyNativeHeaders(pairs as unknown as HeadersInit)), {
+      "x-a": "1",
+      "x-b": "2",
+    });
+    const init = createNativeRequestInit({ headers: pairs as unknown as HeadersInit });
+    assertEquals({ ...init.headers as Record<string, string> }, { "x-a": "1", "x-b": "2" });
+  });
+
   it("reads only own init fields", () => {
     const inherited = Object.create({ method: "DELETE" }) as RequestInit;
     inherited.headers = { accept: "*/*" };
