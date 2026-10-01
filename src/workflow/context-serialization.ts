@@ -37,6 +37,7 @@ const numberIsNaN = Number.isNaN;
 const NumberValueOf = Number.prototype.valueOf;
 const ObjectConstructor = Object;
 const objectCreate = Object.create;
+const objectFreeze = Object.freeze;
 const objectDefineProperty = Object.defineProperty;
 const objectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 const objectGetOwnPropertySymbols = Object.getOwnPropertySymbols;
@@ -1024,22 +1025,66 @@ function unboxAsJsonWould(
 }
 
 /**
- * What the root of a persisted field is.
+ * @internal Marks where a persisted value holds a framework record.
  *
- * - `value`: an arbitrary value, encoded exactly as `JSON.stringify` would,
- *   including a `toJSON` hook on the root itself.
- * - `node-record`: a record the framework keys by node id, such as `context`.
- *   Its own keys are node ids, so a node named `toJSON` is that node's value and
- *   never a hook of the record. Values below the record keep JSON semantics.
+ * A record is an object the framework builds and keys by name, such as
+ * `context`, which is keyed by node id. Its own keys are data, so the record
+ * itself never has a `toJSON` hook: a node named `toJSON` is that node's value,
+ * checked and reported under its own path like any other, and it cannot replace
+ * the values of every other node. `fields` gives the shape of named children
+ * that are records too. Every other child, and everything below it, is an
+ * ordinary value with full `JSON.stringify` semantics.
  */
-type WorkflowJsonRoot = "value" | "node-record";
+export interface WorkflowJsonRecordShape {
+  readonly fields?: Readonly<Record<string, WorkflowJsonRecordShape>>;
+}
+
+function recordShape(
+  fields?: Record<string, WorkflowJsonRecordShape>,
+): WorkflowJsonRecordShape {
+  if (fields === undefined) return objectFreeze(objectCreate(null));
+  const ownedFields = objectCreate(null) as Record<string, WorkflowJsonRecordShape>;
+  for (const key of objectKeys(fields)) ownedFields[key] = fields[key]!;
+  const shape = objectCreate(null) as { fields?: Record<string, WorkflowJsonRecordShape> };
+  shape.fields = objectFreeze(ownedFields);
+  return objectFreeze(shape);
+}
+
+/** @internal A record keyed by node id: `context`, or node states. */
+export const WORKFLOW_NODE_RECORD: WorkflowJsonRecordShape = recordShape();
+
+/** @internal A resume envelope, which carries copies of the run's node-keyed records. */
+export const WORKFLOW_RESUME_ENVELOPE_RECORD: WorkflowJsonRecordShape = recordShape({
+  context: WORKFLOW_NODE_RECORD,
+  nodeStates: WORKFLOW_NODE_RECORD,
+  graphAdmission: recordShape({ stepsEvaluationContext: WORKFLOW_NODE_RECORD }),
+});
+
+/** @internal A checkpoint, whose node-keyed records sit at fixed fields. */
+export const WORKFLOW_CHECKPOINT_RECORD: WorkflowJsonRecordShape = recordShape({
+  context: WORKFLOW_NODE_RECORD,
+  nodeStates: WORKFLOW_NODE_RECORD,
+  _resumeEnvelope: WORKFLOW_RESUME_ENVELOPE_RECORD,
+});
+
+/** @internal The record shape of a record's child, or undefined for an ordinary value. */
+export function workflowJsonFieldShape(
+  shape: WorkflowJsonRecordShape | undefined,
+  key: string | symbol,
+): WorkflowJsonRecordShape | undefined {
+  const fields = shape?.fields;
+  if (fields === undefined || typeof key !== "string" || !objectHasOwn(fields, key)) {
+    return undefined;
+  }
+  return fields[key];
+}
 
 /** Build the exact value JSON will encode, collecting what it cannot carry. */
 function normalizeAndFindUnrepresentableValues(
   root: unknown,
   label: string,
-  options: WorkflowJsonSerializationOptions,
-  rootKind: WorkflowJsonRoot,
+  options: WorkflowJsonSerializationOptions = {},
+  rootShape?: WorkflowJsonRecordShape,
 ): {
   normalized: unknown;
   requiresIterativeEncoding: boolean;
@@ -1198,6 +1243,7 @@ function normalizeAndFindUnrepresentableValues(
     key: string,
     applyToJson: boolean,
     depth: number,
+    shape?: WorkflowJsonRecordShape,
   ): NormalizedJsonValue | typeof OMIT_JSON_VALUE => {
     if (value === null) return null;
 
@@ -1212,7 +1258,7 @@ function normalizeAndFindUnrepresentableValues(
         recordLossy(path, "deferred checkpoint value");
         return null;
       }
-      return normalize(deferredSource, path, key, true, depth);
+      return normalize(deferredSource, path, key, true, depth, shape);
     }
     if (
       options.strictContext === true &&
@@ -1236,7 +1282,7 @@ function normalizeAndFindUnrepresentableValues(
       return value as RawJsonValue;
     }
     if (
-      applyToJson &&
+      applyToJson && shape === undefined &&
       (type === "object" || type === "function" || type === "bigint")
     ) {
       const receiver = type === "bigint"
@@ -1407,6 +1453,7 @@ function normalizeAndFindUnrepresentableValues(
           childKey,
           true,
           depth + 1,
+          workflowJsonFieldShape(shape, childKey),
         );
         if (normalized !== OMIT_JSON_VALUE) result[childKey] = normalized;
       }
@@ -1435,7 +1482,7 @@ function normalizeAndFindUnrepresentableValues(
     }
   };
 
-  const normalized = normalize(root, label, "", rootKind === "value", 0);
+  const normalized = normalize(root, label, "", true, 0, rootShape);
 
   return {
     normalized: normalized === OMIT_JSON_VALUE ? undefined : normalized,
@@ -1496,43 +1543,23 @@ function formatPaths(samples: readonly UnrepresentableValue[], total: number): s
  * Anything the framework writes into `context` has to obey the same rule it
  * asks of a step, which is why the loop encodes its child node states rather
  * than being exempted from the check.
+ *
+ * `shape` marks the framework records in `value`, such as `context`, which is
+ * keyed by node id. A record never has a `toJSON` hook, so a node id cannot
+ * act as one; see `WorkflowJsonRecordShape`. Without it, `value` is encoded
+ * exactly as `JSON.stringify` would encode it.
+ *
+ * @internal Prepare the exact JSON value and encoded string for durable storage.
  */
-/** @internal Prepare the exact JSON value and encoded string for durable storage. */
 export function prepareWorkflowJson(
   value: unknown,
   label: string,
   runId?: string,
   options: WorkflowJsonSerializationOptions = {},
-): { normalized: unknown; serialized: string } {
-  return prepareWorkflowJsonRoot(value, label, runId, options, "value");
-}
-
-/**
- * @internal Prepare a node-id-keyed record, such as `context`, for durable storage.
- *
- * Unlike `prepareWorkflowJson`, the record itself never has a `toJSON` hook: a
- * node id is data. A step value stored under the node id `toJSON` is checked
- * and reported under its own path like any other node's value, so it cannot
- * replace the values of every other node.
- */
-export function prepareWorkflowNodeRecordJson(
-  record: object,
-  label: string,
-  runId?: string,
-  options: WorkflowJsonSerializationOptions = {},
-): { normalized: unknown; serialized: string } {
-  return prepareWorkflowJsonRoot(record, label, runId, options, "node-record");
-}
-
-function prepareWorkflowJsonRoot(
-  value: unknown,
-  label: string,
-  runId: string | undefined,
-  options: WorkflowJsonSerializationOptions,
-  rootKind: WorkflowJsonRoot,
+  shape?: WorkflowJsonRecordShape,
 ): { normalized: unknown; serialized: string } {
   const { normalized, requiresIterativeEncoding, unrepresentable } =
-    normalizeAndFindUnrepresentableValues(value, label, options, rootKind);
+    normalizeAndFindUnrepresentableValues(value, label, options, shape);
   const { fatal, fatalCount, lossy, lossyCount } = unrepresentable;
 
   if (fatalCount > 0) {
@@ -1588,8 +1615,9 @@ export function serializeWorkflowJson(
   label: string,
   runId?: string,
   options?: WorkflowJsonSerializationOptions,
+  shape?: WorkflowJsonRecordShape,
 ): string {
-  return prepareWorkflowJson(value, label, runId, options).serialized;
+  return prepareWorkflowJson(value, label, runId, options, shape).serialized;
 }
 
 /** Serialize a workflow context for durable storage. */
@@ -1598,7 +1626,7 @@ export function serializeWorkflowContext(
   runId?: string,
   options?: WorkflowJsonSerializationOptions,
 ): string {
-  return prepareWorkflowNodeRecordJson(context, "context", runId, options).serialized;
+  return serializeWorkflowJson(context, "context", runId, options, WORKFLOW_NODE_RECORD);
 }
 
 /** The node-state fields that carry step data or a resumable child-context snapshot. */

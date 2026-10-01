@@ -17,11 +17,13 @@ import {
 } from "#veryfront/utils/logger/logger.ts";
 import type { WorkflowContext } from "./types.ts";
 import {
+  deferWorkflowJsonValue,
   MAX_TRAVERSAL_DEPTH,
   prepareWorkflowJson,
-  prepareWorkflowNodeRecordJson,
   serializeWorkflowContext,
   serializeWorkflowJson,
+  WORKFLOW_NODE_RECORD,
+  WORKFLOW_RESUME_ENVELOPE_RECORD,
 } from "./context-serialization.ts";
 
 // Deep enough that the walk stops and hands the value to `JSON.stringify`, and
@@ -1686,20 +1688,70 @@ describe("serializeWorkflowContext", () => {
       assertEquals(JSON.parse(serializeWorkflowContext(context)).step, { replaced: true });
     });
 
-    it("applies the same rule to a context patch and a checkpoint context", () => {
-      for (const label of ["context", "checkpoint.context"]) {
-        const calls: string[] = [];
+    it("keeps the rule for a node record deferred until its checkpoint fence", () => {
+      const calls: string[] = [];
 
-        const { serialized } = prepareWorkflowNodeRecordJson(
-          hijackingContext(calls),
-          label,
+      const { serialized } = prepareWorkflowJson(
+        deferWorkflowJsonValue(hijackingContext(calls)),
+        "checkpoint.context",
+        "run-to-json",
+        {},
+        WORKFLOW_NODE_RECORD,
+      );
+
+      assertEquals(calls, []);
+      assertEquals(JSON.parse(serialized), { input: {}, other: { keep: 1 } });
+    });
+
+    it("ignores a toJSON a node record inherits", () => {
+      const calls: string[] = [];
+      const record = Object.create({
+        toJSON() {
+          calls.push("inherited");
+          return { hijacked: "" };
+        },
+      }) as WorkflowContext;
+      record.input = {};
+      record.other = { keep: 1 };
+
+      const serialized = serializeWorkflowContext(record);
+
+      assertEquals(calls, []);
+      assertEquals(JSON.parse(serialized), { input: {}, other: { keep: 1 } });
+    });
+
+    it("applies the rule to the node records nested in a resume envelope", () => {
+      const calls: string[] = [];
+      const envelope = {
+        schemaVersion: 2,
+        ownerNodeId: "owner",
+        context: hijackingContext(calls),
+        nodeStates: {},
+        workflowProjection: { context: {} },
+        graphAdmission: {
+          stepsEvaluationContext: hijackingContext(calls),
+          stepsEvaluationProjection: { context: {} },
+          graphIdentity: [],
+          workflowVersion: null,
+        },
+      };
+
+      const persisted = JSON.parse(
+        prepareWorkflowJson(
+          envelope,
+          "checkpoint._resumeEnvelope",
           "run-to-json",
           {},
-        );
+          WORKFLOW_RESUME_ENVELOPE_RECORD,
+        ).serialized,
+      );
 
-        assertEquals(calls, []);
-        assertEquals(JSON.parse(serialized), { input: {}, other: { keep: 1 } });
-      }
+      assertEquals(calls, []);
+      assertEquals(persisted.context, { input: {}, other: { keep: 1 } });
+      assertEquals(persisted.graphAdmission.stepsEvaluationContext, {
+        input: {},
+        other: { keep: 1 },
+      });
     });
 
     it("keeps value semantics for a value that is not a node-keyed record", () => {

@@ -34,9 +34,10 @@ import {
   prepareNodeStatesUserData,
   prepareWorkflowJson,
   resolveDeferredWorkflowJsonValue,
-  prepareWorkflowNodeRecordJson,
   serializeWorkflowContext,
   serializeWorkflowJson,
+  WORKFLOW_NODE_RECORD,
+  WORKFLOW_RESUME_ENVELOPE_RECORD,
 } from "../../context-serialization.ts";
 import { requeueRun } from "../shared/requeue-run.ts";
 import {
@@ -1960,9 +1961,9 @@ export class RedisBackend implements WorkflowBackend {
     const patchContext = patch.context;
     const patchContextKeys = patchContext === undefined ? [] : Object.keys(patchContext);
     const preparedContext = patchContext !== undefined
-      ? prepareWorkflowNodeRecordJson(patchContext, "context", runId, {
+      ? prepareWorkflowJson(patchContext, "context", runId, {
         strictContext: this.config.strictContext,
-      })
+      }, WORKFLOW_NODE_RECORD)
       : undefined;
     // Node states carry the same step values as `output`, so they are prepared
     // before it for a named diagnostic instead of the native JSON error.
@@ -2022,13 +2023,14 @@ export class RedisBackend implements WorkflowBackend {
     runId: string,
     nodeStates: Checkpoint["nodeStates"],
   ): string {
-    return prepareWorkflowNodeRecordJson(
+    return prepareWorkflowJson(
       this.normalizeCheckpointNodeStates(
         this.prepareNodeStatesForPersistence(runId, nodeStates),
       ),
       "checkpoint.nodeStates",
       runId,
       { strictContext: false },
+      WORKFLOW_NODE_RECORD,
     ).serialized;
   }
 
@@ -2052,11 +2054,12 @@ export class RedisBackend implements WorkflowBackend {
   private serializeCheckpoint(runId: string, checkpoint: Checkpoint): string {
     // Checked before the rest of the checkpoint is encoded below, so a value
     // JSON refuses is named by its path rather than by the native error.
-    const { serialized: context } = prepareWorkflowNodeRecordJson(
+    const { serialized: context } = prepareWorkflowJson(
       checkpoint.context,
       "checkpoint.context",
       runId,
       { strictContext: this.config.strictContext },
+      WORKFLOW_NODE_RECORD,
     );
     const nodeStates = this.serializeCheckpointNodeStates(runId, checkpoint.nodeStates);
     const {
@@ -2084,6 +2087,7 @@ export class RedisBackend implements WorkflowBackend {
           "checkpoint._resumeEnvelope",
           runId,
           { strictContext: false },
+          WORKFLOW_RESUME_ENVELOPE_RECORD,
         ).serialized
       }`;
     return `${

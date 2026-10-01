@@ -19,9 +19,9 @@ import { childRunWaitBoundary, sameChildRunWaitBoundary } from "../child-run-wai
 import {
   prepareNodeStatesUserData,
   resolveDeferredWorkflowJsonValue,
-  prepareWorkflowNodeRecordJson,
   serializeWorkflowContext,
   serializeWorkflowJson,
+  WORKFLOW_NODE_RECORD,
   type WorkflowJsonSerializationOptions,
 } from "../context-serialization.ts";
 import {
@@ -271,7 +271,9 @@ function persistedWorkflowContextPatch(
   runId: string,
   options: WorkflowJsonSerializationOptions,
 ): Partial<WorkflowContext> {
-  return jsonParse(prepareWorkflowNodeRecordJson(context, "context", runId, options).serialized);
+  return jsonParse(
+    serializeWorkflowJson(context, "context", runId, options, WORKFLOW_NODE_RECORD),
+  );
 }
 
 function persistedCheckpointContext(
@@ -280,7 +282,7 @@ function persistedCheckpointContext(
   options: WorkflowJsonSerializationOptions,
 ): WorkflowContext {
   return jsonParse(
-    prepareWorkflowNodeRecordJson(context, "checkpoint.context", runId, options).serialized,
+    serializeWorkflowJson(context, "checkpoint.context", runId, options, WORKFLOW_NODE_RECORD),
   );
 }
 

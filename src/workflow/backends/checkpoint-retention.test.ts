@@ -1234,6 +1234,85 @@ describe("workflow checkpoint retention", () => {
     );
   });
 
+  describe("a node id named toJSON", () => {
+    function hijackingContext(calls: string[]): WorkflowContext {
+      return {
+        input: {},
+        toJSON: () => {
+          calls.push("toJSON");
+          return { hijacked: "" };
+        },
+        other: { keep: 1 },
+      };
+    }
+
+    function hijackingCheckpoint(id: string, calls: string[]): Checkpoint {
+      return {
+        ...checkpoint(id),
+        context: hijackingContext(calls),
+        _resumeEnvelope: {
+          ...deepResumeEnvelope(id, 0),
+          context: hijackingContext(calls),
+          graphAdmission: {
+            ...deepResumeEnvelope(id, 0).graphAdmission,
+            stepsEvaluationContext: hijackingContext(calls),
+          },
+        },
+      };
+    }
+
+    it("is not called while snapshotting a checkpoint for persistence", async () => {
+      const calls: string[] = [];
+      const backend = new MemoryBackend();
+      await backend.createRun(run("to-json-snapshot"));
+
+      const snapshot = cloneCheckpointForPersistence(hijackingCheckpoint("snapshot", calls));
+      // The resume envelope is checked separately below, because a callable in
+      // it cannot be retained in memory at all.
+      await backend.saveCheckpoint("to-json-snapshot", {
+        ...snapshot,
+        _resumeEnvelope: undefined,
+      });
+
+      assertEquals(calls, []);
+      assertEquals(Object.keys(snapshot.context), ["input", "toJSON", "other"]);
+      assertEquals(Object.keys(snapshot._resumeEnvelope!.context), ["input", "toJSON", "other"]);
+      assertEquals(
+        Object.keys(snapshot._resumeEnvelope!.graphAdmission.stepsEvaluationContext),
+        ["input", "toJSON", "other"],
+      );
+      assertEquals((await backend.getLatestCheckpoint("to-json-snapshot"))?.context, {
+        input: {},
+        other: { keep: 1 },
+      });
+    });
+
+    it("is not called while persisting an owned checkpoint", async () => {
+      const calls: string[] = [];
+      const backend = new MemoryBackend();
+      const workerId = "run-execution:to-json-owner";
+      await backend.createRun(run("to-json-owned", workerId));
+
+      const saved = await backend.saveCheckpointIfStatusAndWorker(
+        "to-json-owned",
+        "to-json-owned",
+        ["running"],
+        workerId,
+        cloneOwnedCheckpointForPersistence(hijackingCheckpoint("owned", calls)),
+      );
+
+      assertEquals(saved, true);
+      assertEquals(calls, []);
+      const latest = await backend.getLatestCheckpoint("to-json-owned");
+      assertEquals(latest?.context, { input: {}, other: { keep: 1 } });
+      assertEquals(latest?._resumeEnvelope?.context, { input: {}, other: { keep: 1 } });
+      assertEquals(latest?._resumeEnvelope?.graphAdmission.stepsEvaluationContext, {
+        input: {},
+        other: { keep: 1 },
+      });
+    });
+  });
+
   it("removes only the older twin when a duplicate ID is deleted once", async () => {
     const backend = new MemoryBackend();
     await backend.createRun(run("duplicate-id"));

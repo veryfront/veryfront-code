@@ -34,7 +34,13 @@ import {
   serializeWorkflowJson,
 } from "#veryfront/workflow/context-serialization.ts";
 import type { RedisAdapter } from "#veryfront/platform/adapters/redis/index.ts";
-import type { CheckpointResumeEnvelope, PendingApproval, WorkflowRun } from "../../types.ts";
+import type {
+  CheckpointResumeEnvelope,
+  PendingApproval,
+  WorkflowContext,
+  WorkflowRun,
+} from "../../types.ts";
+import { cloneCheckpointForPersistence } from "../checkpoint-retention.ts";
 import {
   MAX_WORKFLOW_CHECKPOINT_HISTORY_ENTRIES,
   MAX_WORKFLOW_PENDING_APPROVAL_ENTRIES,
@@ -3100,6 +3106,53 @@ describe("RedisBackend", () => {
       assertEquals((await backend.getLatestCheckpoint(runId))?.context, {
         input: {},
         checkpointed: { keep: 3 },
+      });
+    });
+
+    it("treats a node id named toJSON as data in a resume envelope", async () => {
+      const calls: string[] = [];
+      const hijackingContext = (): WorkflowContext => ({
+        input: {},
+        toJSON: () => {
+          calls.push("toJSON");
+          return { hijacked: "" };
+        },
+        other: { keep: 1 },
+      });
+      const runId = "run-envelope-to-json-node";
+      await backend.createRun(createTestRun(runId));
+
+      await backend.saveCheckpoint(
+        runId,
+        cloneCheckpointForPersistence({
+          id: "cp-envelope-to-json-node",
+          nodeId: "owner",
+          timestamp: new Date(1),
+          context: hijackingContext(),
+          nodeStates: {},
+          _resumeEnvelope: {
+            schemaVersion: 2,
+            ownerNodeId: "owner",
+            context: hijackingContext(),
+            nodeStates: {},
+            workflowProjection: { context: {} },
+            graphAdmission: {
+              stepsEvaluationContext: hijackingContext(),
+              stepsEvaluationProjection: { context: {} },
+              graphIdentity: [],
+              workflowVersion: null,
+            },
+          },
+        }),
+      );
+
+      assertEquals(calls, []);
+      const latest = await backend.getLatestCheckpoint(runId);
+      assertEquals(latest?.context, { input: {}, other: { keep: 1 } });
+      assertEquals(latest?._resumeEnvelope?.context, { input: {}, other: { keep: 1 } });
+      assertEquals(latest?._resumeEnvelope?.graphAdmission.stepsEvaluationContext, {
+        input: {},
+        other: { keep: 1 },
       });
     });
 

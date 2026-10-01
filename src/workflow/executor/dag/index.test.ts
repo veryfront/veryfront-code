@@ -7246,6 +7246,50 @@ describe("DAGExecutor", () => {
       assertEquals(cpManager.saved[0]!.nodeId, "cp-node");
     });
 
+    it("keeps other nodes when a checkpointed context has a node named toJSON", async () => {
+      // A full run rejects a callable step output before it reaches context,
+      // so exercise the checkpoint persistence boundary directly, owned and not.
+      const calls: string[] = [];
+      const backend = new MemoryBackend();
+      const workerId = "run-execution:to-json-owner";
+      await backend.createRun(createTestRun({ id: "to-json-owned", workerId }));
+      const exec = new DAGExecutor({
+        stepExecutor,
+        checkpointManager: new CheckpointManager({ backend }),
+      });
+      const checkpointExecutor = exec as unknown as {
+        checkpoint(
+          runId: string,
+          nodeId: string,
+          context: WorkflowContext,
+          nodeStates: Record<string, NodeState>,
+          ownership?: { runId: string; workerId: string },
+        ): Promise<void>;
+      };
+      const hijackingContext = (): WorkflowContext => ({
+        input: {},
+        toJSON: () => {
+          calls.push("toJSON");
+          return { hijacked: "" };
+        },
+        other: { keep: 1 },
+      });
+
+      await checkpointExecutor.checkpoint("to-json", "toJSON", hijackingContext(), {});
+      await checkpointExecutor.checkpoint("to-json-owned", "toJSON", hijackingContext(), {}, {
+        runId: "to-json-owned",
+        workerId,
+      });
+
+      assertEquals(calls, []);
+      for (const runId of ["to-json", "to-json-owned"]) {
+        assertEquals((await backend.getLatestCheckpoint(runId))?.context, {
+          input: {},
+          other: { keep: 1 },
+        });
+      }
+    });
+
     it("passes deep lossy context to the backend before normalization", async () => {
       const depth = 8000;
       let savedLeaf: unknown;
