@@ -72,7 +72,7 @@ const WeakSetConstructor = WeakSet;
 const weakSetAdd = WeakSet.prototype.add;
 const weakSetHas = WeakSet.prototype.has;
 const MAX_PROXY_ARRAY_SNAPSHOT_LENGTH = 100_000;
-const ownedCheckpointJsonCloneRoots = new WeakSetConstructor<object>();
+const checkpointJsonCloneRoots = new WeakSetConstructor<object>();
 
 type CheckpointCloneSource = object;
 
@@ -166,7 +166,7 @@ function cloneCheckpointJson<T>(
   if (
     isDeferredWorkflowJsonValue(value) ||
     (typeof value === "object" && value !== null &&
-      reflectApply(weakSetHas, ownedCheckpointJsonCloneRoots, [value]) === true)
+      reflectApply(weakSetHas, checkpointJsonCloneRoots, [value]) === true)
   ) {
     return jsonParse(
       serializeWorkflowJson(value, label, undefined, { strictContext: false }, shape, records),
@@ -562,7 +562,7 @@ function cloneOwnedCheckpointValue<T>(
   }
 
   if (!deferRoot && requiresJsonClone) {
-    reflectApply(weakSetAdd, ownedCheckpointJsonCloneRoots, [rootTarget]);
+    reflectApply(weakSetAdd, checkpointJsonCloneRoots, [rootTarget]);
   }
   if (deferRoot && sharedClones !== undefined) {
     for (const source of addedSources) reflectApply(mapDelete, clones, [source]);
@@ -1009,6 +1009,12 @@ function cloneCheckpointValueForPersistence<T>(value: T, rootShape?: WorkflowJso
         descriptor.set = undefined;
       }
       objectDefineProperty(frame.target, key, descriptor);
+      if (
+        key === "toJSON" && frame.shape !== undefined && "value" in descriptor &&
+        typeof descriptor.value === "function"
+      ) {
+        reflectApply(weakSetAdd, checkpointJsonCloneRoots, [frame.target]);
+      }
       continue;
     }
     if (frame.jsonLookup && frame.jsonLookupInstalled !== true) {

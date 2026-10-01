@@ -285,6 +285,30 @@ describe("CheckpointManager", () => {
     assertEquals(persisted.nodeStates.first?.status, "completed");
   });
 
+  it("returns a persisted context whose toJSON node is callable", async () => {
+    const runId = "create-to-json-node";
+    const backend = await seed(runId, 0);
+    const manager = new CheckpointManager({ backend });
+    const calls: string[] = [];
+    const context: WorkflowContext = {
+      input: {},
+      toJSON: () => {
+        calls.push("toJSON");
+        return { hijacked: "" };
+      },
+      other: { keep: 1 },
+    };
+
+    const created = await manager.createCheckpoint(runId, "toJSON", context, {});
+
+    assertEquals(calls, []);
+    assertEquals(created.context, { input: {}, other: { keep: 1 } });
+    assertEquals((await manager.getLatest(runId))?.context, {
+      input: {},
+      other: { keep: 1 },
+    });
+  });
+
   it("snapshots checkpoint input before an asynchronous backend yields", async () => {
     let resumeSave!: () => void;
     const saveGate = new Promise<void>((resolve) => {
