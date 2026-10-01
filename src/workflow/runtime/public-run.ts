@@ -290,6 +290,8 @@ function projectNodeStatesInPlace(
     Reflect.deleteProperty(state, "_subWorkflowOwnerPath");
     Reflect.deleteProperty(state, "_subWorkflowContext");
     Reflect.deleteProperty(state, "_subWorkflowContextWaits");
+    Reflect.deleteProperty(state, "_subWorkflowCompletedChildIds");
+    Reflect.deleteProperty(state, "_loopOutputRetry");
     Reflect.deleteProperty(state, "_activeCompositeChildIds");
     Reflect.deleteProperty(state, "_completedCompositeChildIds");
     Reflect.deleteProperty(state, INTERNAL_WORKFLOW_INPUT_KIND_FIELD);
