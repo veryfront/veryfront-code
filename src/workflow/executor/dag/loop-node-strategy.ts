@@ -247,11 +247,12 @@ export async function executeLoopNodeStrategy(
     };
 
     const resumingOutputRetry = resumeIteration === iteration && outputRetryLoopState !== undefined;
+    const shouldContinue = resumingOutputRetry || await config.while(context, loopContext);
+    runtime.abortSignal?.throwIfAborted();
+    // Capture after the condition, which may write the context steps are built from.
     const evaluationContext = resumingOutputRetry && outputRetryLoopState.evaluationContext
       ? cloneExecutionState(outputRetryLoopState.evaluationContext, "Loop admission context")
       : cloneExecutionState(context, "Loop admission context");
-    const shouldContinue = resumingOutputRetry || await config.while(context, loopContext);
-    runtime.abortSignal?.throwIfAborted();
     if (!shouldContinue) {
       exitReason = "condition";
       exitedViaCondition = true;
