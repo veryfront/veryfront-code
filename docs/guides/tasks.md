@@ -314,6 +314,14 @@ curl -X POST "$VERYFRONT_API_URL/runs" \
   -d '{"kind":"task","owner":{"kind":"project","id":"<PROJECT_ID>"},"request":{"target":"task:sync-data","input":{"since":"2026-01-01"},"config":{"batchSize":100}}}'
 ```
 
+The value a task returns becomes the run's `output`. Its JSON serialization can
+be at most 1,048,576 bytes (1 MiB) of UTF-8. A larger successful result is not
+sent or truncated: the run fails with `error.code` `OUTPUT_TOO_LARGE`,
+`output: null`, and `error.detail` `{ size_bytes, limit_bytes }`. If execution
+has already failed, its original error is preserved and the oversized result
+is discarded. See
+[Runs](./runs.md#output-size-limit).
+
 See [Runs](./runs.md) for run creation and event monitoring.
 
 Task code can await a request or promise during its current process execution. Tasks do not expose

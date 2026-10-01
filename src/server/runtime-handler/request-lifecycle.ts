@@ -23,6 +23,7 @@ import {
 import { requestTracker } from "./request-tracker.ts";
 import { generateRequestId } from "#veryfront/utils/request-id.ts";
 import {
+  completeOnResponseBodyConsumption,
   completeOnResponseBodySettlement,
   isEventStreamResponse,
 } from "#veryfront/platform/compat/http/response-lifecycle.ts";
@@ -129,6 +130,7 @@ export function completeRequestTrackingOnResponseEnd(
   isTimeout: boolean,
   profile?: RequestProfileRecord | null,
   handlerSettled?: Promise<void>,
+  settleResponseBody = false,
 ): Response {
   if (isTimeout && handlerSettled) {
     void handlerSettled.then(
@@ -138,15 +140,18 @@ export function completeRequestTrackingOnResponseEnd(
     return response;
   }
 
-  if (!isEventStreamResponse(response)) {
+  if (!isEventStreamResponse(response) && !settleResponseBody) {
     completeRequestTracking(requestId, response.status, isTimeout, profile);
     return response;
   }
 
   requestTracker.markLongLived(requestId);
-  return completeOnResponseBodySettlement(response, () => {
+  const settle = () => {
     completeRequestTracking(requestId, response.status, isTimeout, profile);
-  });
+  };
+  return settleResponseBody
+    ? completeOnResponseBodyConsumption(response, settle)
+    : completeOnResponseBodySettlement(response, settle);
 }
 
 /**

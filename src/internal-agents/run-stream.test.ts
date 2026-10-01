@@ -557,16 +557,22 @@ describe("internal-agents/run-stream", () => {
     assertEquals(Object.keys(mergedTools ?? {}), ["unrelated_tool"]);
   });
 
-  it("rejects every request-injected tool when an unrestricted selector fails closed", () => {
+  it("merges request client tools for a markdown all-tools agent with denied tools", async () => {
     const sessionManager = new AgentRunSessionManager();
     const runtimeAgent = createRuntimeAgentFromMarkdownDefinition({
-      id: "fail-closed-injected",
-      name: "Fail Closed Injected",
-      description: "Does not accept injected project tools",
-      instructions: "Do not use project tools.",
+      id: "denied-lookup-agent",
+      name: "Denied Lookup Agent",
+      description: "All tools except update_file",
+      instructions: "Use lookup_reference to answer.",
       tools: true,
       deniedTools: ["update_file"],
     });
+    const lookupReferenceSchema = {
+      type: "object" as const,
+      required: ["code"],
+      properties: { code: { type: "string" as const } },
+    };
+    sessionManager.startRun({ runId: "run_1", threadId: "thread" });
 
     const mergedTools = buildMergedTools(
       runtimeAgent,
@@ -575,15 +581,39 @@ describe("internal-agents/run-stream", () => {
         threadId: crypto.randomUUID(),
         messages: [],
         tools: [
+          {
+            name: "lookup_reference",
+            description: "Client lookup",
+            parameters: lookupReferenceSchema,
+          },
           { name: "update_file", description: "Denied tool" },
-          { name: "unrelated_tool", description: "Another project tool" },
+          { name: "veryfront__update_file", description: "Denied tool alias" },
+          // Server-executed tools the control plane injects stay failed closed.
+          { name: "invoke_agent", description: "Delegate" },
+          { name: "veryfront__invoke_agent", description: "Delegate" },
+          { name: "web_search", description: "Search" },
+          { name: "web_fetch", description: "Fetch" },
+          { name: "form_input", description: "Form" },
+          { name: "studio_todo_write", description: "Todos" },
         ],
         context: [],
       } as Parameters<typeof buildMergedTools>[1],
       sessionManager,
     );
 
-    assertEquals(mergedTools, undefined);
+    assertEquals(Object.keys(mergedTools ?? {}), ["lookup_reference"]);
+    const lookupReference = mergedTools?.lookup_reference as Tool;
+    assertEquals(lookupReference.description, "Client lookup");
+    assertEquals(lookupReference.inputSchemaJson, lookupReferenceSchema);
+    // The wrapper parks on the caller's result instead of executing server-side.
+    const result = executeConfiguredTool(
+      "lookup_reference",
+      { code: "A1" },
+      mergedTools,
+      { toolCallId: "lookup" },
+    );
+    sessionManager.submitToolResult("run_1", { toolCallId: "lookup", result: { title: "A1" } });
+    assertEquals(await result, { title: "A1" });
   });
 
   it("applies owned short-name denials to registered-name injected tools", () => {

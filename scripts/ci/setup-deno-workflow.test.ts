@@ -893,8 +893,8 @@ jobs:
     ]);
     assertEquals(
       ciJob.needs,
-      undefined,
-      "source checks must start in parallel",
+      ["tested-run"],
+      "source checks must start in parallel after the tested-run decision",
     );
     assertMatch(
       String(ciRunStep.run),
@@ -1107,7 +1107,7 @@ describe("parallel integration workflow contract", () => {
     assertEquals(strategy["fail-fast"], false);
     assertEquals(asRecord(strategy.matrix, "integration matrix").shard, [1, 2]);
     assertEquals(job.name, "tests (integration shard ${{ matrix.shard }}/2)");
-    assertEquals(job.needs, undefined);
+    assertEquals(job.needs, ["tested-run"]);
     const steps = asSteps(job.steps, "integration steps");
     assert(!steps.some((step) => String(step.uses).includes("retry")));
     const runner = steps.find((step) => step.name === "Run integration shard");
@@ -1165,7 +1165,7 @@ describe("parallel integration workflow contract", () => {
     const jobs = asRecord(workflow.jobs, "jobs");
     const gate = asRecord(jobs.tests, "required integration gate");
     assertEquals(gate.name, "tests (integration)");
-    assertEquals(gate.needs, ["tests-integration"]);
+    assertEquals(gate.needs, ["tested-run", "tests-integration"]);
     assertEquals(gate.if, "${{ always() }}");
     const step = asSteps(gate.steps, "gate steps")[0];
     assertEquals(
@@ -1180,6 +1180,23 @@ describe("parallel integration workflow contract", () => {
         stderr: "piped",
       }).output();
       assertEquals(output.success, result === "success", result);
+    }
+    assertEquals(
+      asRecord(step.env, "gate env").REUSED_RUN_ID,
+      "${{ needs.tested-run.outputs.reuse == 'true' && needs.tested-run.outputs.run_id || '' }}",
+    );
+    for (const result of ["success", "skipped", "failure", "cancelled"]) {
+      const output = await new Deno.Command("bash", {
+        args: ["-c", String(step.run)],
+        env: { INTEGRATION_RESULT: result, REUSED_RUN_ID: "36825693208" },
+        stdout: "piped",
+        stderr: "piped",
+      }).output();
+      assertEquals(
+        output.success,
+        result === "success" || result === "skipped",
+        `reused ${result}`,
+      );
     }
     const mergeGate = asRecord(jobs["quality-gate-merge"], "merge gate");
     assert(Array.isArray(mergeGate.needs));

@@ -242,3 +242,8 @@ function captureProjectTracing(): ExecutorHttpTracing | undefined {
     return undefined;
   }
 }
+
+export type {
+  HostedHttpIngressOptions,
+  HostedHttpRequestAuthority,
+} from "./hosted-http-ingress.ts";
