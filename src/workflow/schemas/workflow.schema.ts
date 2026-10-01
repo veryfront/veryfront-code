@@ -117,6 +117,8 @@ export const getNodeStateSchema = defineSchema((v) =>
     })).optional(),
     /** Completed child DAG boundary retained until output selection succeeds. */
     _subWorkflowCompletedChildIds: v.array(v.string()).optional(),
+    /** In-flight loop iteration retained for completed nested output retry. */
+    _loopOutputRetry: v.record(v.string(), v.unknown()).optional(),
     /** Child states this composite had actively parked when it last suspended. */
     _activeCompositeChildIds: v.array(v.string()).optional(),
     /** Child states a runtime-defined composite produced before it completed. */
