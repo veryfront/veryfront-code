@@ -2193,12 +2193,12 @@ export class DAGExecutor {
               nodeStates,
               parentNodeIds: scope.declaredNodeIds,
               runtime: {
-                executeChildGraph: (nodes, run) =>
+                executeChildGraph: (nodes, run, options) =>
                   this.executeChildGraph(
                     nodes,
                     run,
-                    { ...scope, rootKeyspace: false, resumeContext: run.context },
-                    undefined,
+                    { ...scope, rootKeyspace: false },
+                    options,
                     attemptSignal,
                   ),
                 onNodeComplete: this.config.onNodeComplete,
@@ -2783,6 +2783,22 @@ export class DAGExecutor {
     options?: ChildGraphExecutionOptions,
     abortSignal?: AbortSignal,
   ): Promise<DAGInternalExecutionResult> {
+    if (options?.resumeWaitBoundaryNodeStates) {
+      const capturedWaits = captureCompletedChildWaits(
+        nodes,
+        options.resumeWaitBoundaryNodeStates,
+        scope.subWorkflowPath,
+      );
+      restorePublishedChildOutputs(
+        nodes,
+        run.nodeStates,
+        run.context,
+        scope.subWorkflowPath,
+        scope.resumeContext,
+        false,
+        new Map(capturedWaits.map(({ nodeId, waitInstanceId }) => [nodeId, waitInstanceId])),
+      );
+    }
     if (!options?.maxConcurrency) {
       return await this.executeUnwrapped(nodes, run, scope, undefined, abortSignal);
     }
