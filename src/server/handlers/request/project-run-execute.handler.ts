@@ -45,6 +45,12 @@ import {
   schemaIdentitySha256,
   type SchemaViolation,
 } from "#veryfront/task/io-contract.ts";
+import {
+  checkRunOutputBytes,
+  measureSerializedRunOutputBytes,
+  parseSerializedRunOutput,
+  serializeRunOutput,
+} from "#veryfront/task/run-output-limit.ts";
 import { type DiscoveredEval, findEvalById } from "#veryfront/eval/discovery.ts";
 import { runEval } from "#veryfront/eval/runner.ts";
 import {
@@ -215,8 +221,15 @@ export interface ProjectRunExecuteResponse {
   result?: unknown;
   logs?: string | null;
   error?: string | null;
-  error_code?: "RUN_TIMEOUT" | "INPUT_VALIDATION_FAILED" | "OUTPUT_VALIDATION_FAILED";
-  /** Structured failure detail, such as schema validation errors. */
+  error_code?:
+    | "RUN_TIMEOUT"
+    | "INPUT_VALIDATION_FAILED"
+    | "OUTPUT_VALIDATION_FAILED"
+    | "OUTPUT_TOO_LARGE";
+  /**
+   * Structured failure detail, such as schema validation errors, or
+   * `{ size_bytes, limit_bytes }` for `OUTPUT_TOO_LARGE`.
+   */
   error_detail?: unknown;
   /** The task threw a RetryableError; the API may start another attempt. */
   retryable?: true;
@@ -669,6 +682,56 @@ function createInputValidationFailure(
     logs: null,
     duration_ms: durationMs,
   };
+}
+
+/**
+ * Applies the run output limit before a response is sent (veryfront/veryfront-issue-inbox#2113).
+ * A successful result over the limit becomes an OUTPUT_TOO_LARGE failure without the result; a
+ * failed response drops an oversized result and keeps its own error. Nothing is truncated.
+ */
+function enforceRunOutputLimit(response: ProjectRunExecuteResponse): {
+  response: ProjectRunExecuteResponse;
+  wireJson: string;
+} {
+  if (!("result" in response)) {
+    return { response, wireJson: serializeRunOutput(response) ?? "null" };
+  }
+  // Serialize once: the checked serialization is the one sent, so a result whose `toJSON`
+  // or getters change between serializations cannot slip past the limit.
+  const serialized = serializeRunOutput(response.result);
+  const tooLarge = checkRunOutputBytes(measureSerializedRunOutputBytes(serialized));
+  if (!tooLarge) {
+    const safeResponse = {
+      ...response,
+      result: serialized === undefined ? undefined : parseSerializedRunOutput(serialized),
+    };
+    // Emit the exact bytes that were measured. Re-serializing the parsed copy can grow it,
+    // for example `JSON.rawJSON("1e20")` is 4 bytes checked but 21 bytes once parsed.
+    const { result: _checked, ...envelope } = response;
+    return {
+      response: safeResponse,
+      wireJson: withSerializedResult(serializeRunOutput(envelope) ?? "{}", serialized),
+    };
+  }
+
+  const { result: _oversized, ...withoutResult } = response;
+  const safeResponse = response.success
+    ? {
+      ...withoutResult,
+      success: false,
+      error: tooLarge.message,
+      error_code: tooLarge.code,
+      error_detail: tooLarge.detail,
+    }
+    : withoutResult;
+  return { response: safeResponse, wireJson: serializeRunOutput(safeResponse) ?? "null" };
+}
+
+/** Appends an already serialized `result` member to a serialized response envelope. */
+function withSerializedResult(envelopeJson: string, serializedResult: string | undefined): string {
+  if (serializedResult === undefined) return envelopeJson;
+  const member = `"result":${serializedResult}`;
+  return envelopeJson === "{}" ? `{${member}}` : `${envelopeJson.slice(0, -1)},${member}}`;
 }
 
 function createExecutionFailure(error: unknown, durationMs: number): ProjectRunExecuteResponse {
@@ -3321,20 +3384,25 @@ export class ProjectRunExecuteHandler extends BaseHandler {
           async () => {
             const startedAt = this.deps.now();
             try {
-              const response = inferenceToken === undefined
-                ? await executeProjectRun(request, ctx, req, this.deps)
-                : await runWithProjectRunInferenceCredential(
-                  inferenceToken,
-                  () =>
-                    executeProjectRun(
-                      request,
-                      ctx,
-                      withoutProjectRunInferenceToken(req),
-                      this.deps,
-                    ),
-                );
+              const limited = enforceRunOutputLimit(
+                inferenceToken === undefined
+                  ? await executeProjectRun(request, ctx, req, this.deps)
+                  : await runWithProjectRunInferenceCredential(
+                    inferenceToken,
+                    () =>
+                      executeProjectRun(
+                        request,
+                        ctx,
+                        withoutProjectRunInferenceToken(req),
+                        this.deps,
+                      ),
+                  ),
+              );
+              const response = limited.response;
               if (!response.success) setActiveSpanErrorStatus(new Error("Project run failed"));
-              return this.respond(builder.json(response, 200));
+              return this.respond(
+                builder.withContentType("application/json; charset=utf-8", limited.wireJson, 200),
+              );
             } catch (error) {
               setActiveSpanErrorStatus(new Error(telemetryErrorType(error)));
               return this.respond(
