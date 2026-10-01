@@ -80,6 +80,8 @@ export function isInfrastructureOnlyRequestHeader(name: string): boolean {
     case "x-content-source-id":
     case "x-environment":
     case "x-environment-id":
+    case "x-environment-name":
+    case "x-default-branch-name":
     case "x-real-ip":
     case "x-release-id":
     case "x-token":

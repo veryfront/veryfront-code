@@ -1,149 +1,58 @@
-import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
-import { describe, it } from "#veryfront/testing/bdd.ts";
-import { createExecutorChannel, type ExecutorChannel } from "#veryfront/agent/executor/channel.ts";
-import { createExecutorRuntimeInstallation } from "#veryfront/agent/hosted/executor-runtime-install.ts";
-import type { HostedExecutorAllocation } from "#veryfront/agent/hosted/executor-session-schema.ts";
+import { createHostedHttpFixture as fixture } from "../../../tests/fixtures/hosted-http-broker.ts";
+import { register, unregister } from "#veryfront/extensions/contracts.ts";
+import type { ProjectTraceProviderOptions } from "#veryfront/extensions/observability/tracing-exporter.ts";
+import { createWorkerTraceRecorder } from "#veryfront/observability/tracing/worker-trace-recorder.ts";
+import { getProjectTraceProvider } from "#veryfront/observability/tracing/project-trace-scope.ts";
+import { trace } from "veryfront/observability";
 import {
-  createHostedExecutorSession,
-  type HostedExecutorSessionOptions,
-} from "#veryfront/agent/hosted/executor-session.ts";
-import { createExecutorHttpOperation } from "./executor-http.ts";
-import { readExecutorHttpApplicationConfiguration } from "./application-configuration.ts";
-import type { ExecutorHttpInstall } from "#veryfront/agent/hosted/executor-runtime-install-schema.ts";
-import { createHostedHttpBroker, type HostedHttpInput } from "veryfront/server/http-broker";
+  flushProjectHttpTracing,
+  runProjectHttpTracing,
+  shutdownProjectHttpTracing,
+} from "#veryfront/observability/tracing/project-http-tracing.ts";
+import type { ProjectTraceConfigResult } from "#veryfront/server/project-env/telemetry-config.ts";
 
-function fixture(
-  handle: (request: Request) => Promise<Response> | Response,
-  onInstall?: (peer: ExecutorChannel, installation: ExecutorHttpInstall) => Promise<void>,
-) {
-  const now = Date.now();
-  const owner = { scopeKind: "project" as const, projectId: "project-a" };
-  const source = { type: "release" as const, releaseId: "release-a" };
-  const image = `registry.example/executor@sha256:${"a".repeat(64)}`;
-  const request = {
-    allocationId: crypto.randomUUID(),
-    invocationId: crypto.randomUUID(),
-    owner,
-    source,
-    requestedAt: now,
-    prepareDeadlineAt: now + 5000,
-    hardDeadlineAt: now + 30_000,
-  };
-  const binding = { ...request, generation: 1, brokerInstanceId: "broker-a" };
-  const calls: string[] = [];
-  const releaseEntered = Promise.withResolvers<void>();
-  const releaseAllowed = Promise.withResolvers<void>();
-  let holdRelease = false;
-  let peer: ExecutorChannel | undefined;
-  function view(
-    phase: "ready" | "released",
-    reason?: "completed" | "canceled",
-  ): HostedExecutorAllocation {
-    return {
-      binding: {
-        allocationId: binding.allocationId,
-        invocationId: binding.invocationId,
-        generation: 1,
-        brokerInstanceId: binding.brokerInstanceId,
-        owner,
-        source,
-      },
-      phase,
-      expiresAt: now + 30_000,
-      ...(phase === "ready"
-        ? {
-          endpoint: {
-            address: "127.0.0.1",
-            port: 8081 as const,
-            podUid: "pod-a",
-            nodeName: "node-a",
-            image,
-            channelAuthenticated: false as const,
-          },
-        }
-        : { reason }),
-    };
-  }
-  const session: Omit<HostedExecutorSessionOptions, "createOperations" | "preparationSignal"> = {
-    request,
-    expectedImage: image,
-    expectedBrokerInstanceId: "broker-a",
-    allocator: {
-      allocate: () => {
-        calls.push("allocate");
-        return Promise.resolve(view("ready"));
-      },
-      observe: () => Promise.resolve(view("ready")),
-      renew: () => Promise.resolve(view("ready")),
-      async release(_binding, reason) {
-        calls.push(`release:${reason}`);
-        releaseEntered.resolve();
-        if (holdRelease) await releaseAllowed.promise;
-        return view("released", reason);
-      },
-    },
-    connectTransport(input) {
-      const forward = new TransformStream<Uint8Array>();
-      const backward = new TransformStream<Uint8Array>();
-      const retired = Promise.withResolvers<void>();
-      const installation = createExecutorRuntimeInstallation({
-        mode: "http",
-        binding: input.binding,
-        artifact: { version: 1, owner, source, root: "project" },
-        async install(installed) {
-          calls.push("install");
-          await onInstall?.(peer!, installed);
-          return {
-            operations: new Map([[
-              "http.request",
-              createExecutorHttpOperation({ binding: input.binding, channel: () => peer!, handle }),
-            ]]),
-            close: () => {
-              retired.resolve();
-              return Promise.resolve();
-            },
-            settled: retired.promise,
-          };
-        },
-      });
-      peer = createExecutorChannel({
-        binding: input.binding,
-        transport: { readable: forward.readable, writable: backward.writable },
-        operations: installation.operations,
-      });
-      void peer.closed.then(() => installation.close());
-      return Promise.resolve({
-        readable: backward.readable,
-        writable: forward.writable,
-        close: () => peer?.close(),
-      });
-    },
-  };
-  const input: HostedHttpInput = {
-    session,
-    installation: {
-      version: 1,
-      mode: "http",
-      owner,
-      source,
-      root: "project",
-      environmentId: "environment-a",
-      configurationId: "config-a",
-    },
-  };
-  return {
-    input,
-    calls,
-    releaseEntered,
-    releaseAllowed,
-    holdRelease() {
-      holdRelease = true;
-    },
-  };
-}
+import "#veryfront/schemas/_test-setup.ts";
+import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
+import { describe, it } from "#veryfront/testing/bdd.ts";
+import { createHostedExecutorSession } from "#veryfront/agent/hosted/executor-session.ts";
+import { readExecutorHttpApplicationConfiguration } from "./application-configuration.ts";
+import { createHostedHttpBroker } from "veryfront/server/http-broker";
 
 describe("hosted HTTP executor broker", () => {
+  it("refuses an explicitly incompatible profile before allocation", async () => {
+    const f = fixture(() => new Response("must not run"));
+    f.input.session.request.executionProfile = "project-tools";
+    const broker = createHostedHttpBroker({ maxActive: 1 });
+    try {
+      await assertRejects(
+        () => broker.fetch(new Request("https://app.example/api"), f.input),
+        TypeError,
+        "HTTP allocation profile",
+      );
+      assertEquals(f.calls.includes("allocate"), false);
+    } finally {
+      await broker.shutdown();
+      await broker.settled;
+    }
+  });
+
+  it("requests the HTTP allocation profile before installing application code", async () => {
+    const f = fixture(() => new Response("app"));
+    const allocate = f.input.session.allocator.allocate;
+    f.input.session.allocator.allocate = (request, key, signal) => {
+      assertEquals(Reflect.get(request, "executionProfile"), "http");
+      return allocate(request, key, signal);
+    };
+    const broker = createHostedHttpBroker({ maxActive: 1 });
+    try {
+      const response = await broker.fetch(new Request("https://app.example/api"), f.input);
+      assertEquals(await response.text(), "app");
+    } finally {
+      await broker.shutdown();
+      await broker.settled;
+    }
+  });
+
   it("delivers only the matched application snapshot through the allocation channel", async () => {
     let appValue: string | undefined;
     const setup = fixture(() => new Response(appValue), async (peer, installed) => {
@@ -449,4 +358,257 @@ describe("hosted HTTP executor broker", () => {
       await broker.settled;
     }
   });
+});
+
+// Managed settings must be bound before any allocator or exporter work.
+describe("hosted HTTP project tracing", () => {
+  for (const foreign of ["project", "environment"] as const) {
+    it(`refuses another ${foreign} collector settings before allocating`, async () => {
+      const f = fixture(() => new Response("must not run"));
+      const broker = createHostedHttpBroker({ maxActive: 1 });
+      try {
+        await assertRejects(
+          () =>
+            broker.fetch(new Request("https://app.example/api"), {
+              ...f.input,
+              projectTracing: {
+                status: "enabled",
+                config: {
+                  projectId: foreign === "project" ? "project-b" : "project-a",
+                  environmentId: foreign === "environment" ? "environment-b" : "environment-a",
+                  revision: "one",
+                  endpoint: "https://collector.example/v1/traces",
+                  headers: {},
+                  serviceName: "app",
+                  serviceVersion: "",
+                  deploymentEnvironment: "production",
+                },
+              },
+            }),
+          TypeError,
+          "tracing identity",
+        );
+        assertEquals(f.calls, []);
+      } finally {
+        await broker.shutdown();
+        await broker.settled;
+      }
+    });
+  }
+});
+
+for (const rejectsImport of [false, true]) {
+  it(`retains streamed responses and project span ownership (import rejects: ${rejectsImport})`, async () => {
+    const received: Array<{ project: string; records: string; parent: string }> = [];
+    register("TracingExporter", {
+      createProjectProvider(options: ProjectTraceProviderOptions) {
+        const recorder = createWorkerTraceRecorder(`00-${"a".repeat(32)}-${"b".repeat(16)}-01`)!;
+        const provider = recorder.run(() => getProjectTraceProvider())!;
+        provider.importSpans = (records, parent) => {
+          received.push({
+            project: options.resource["project.id"]!,
+            records,
+            parent: parent.spanId,
+          });
+          if (rejectsImport) throw new Error("Synthetic exporter failure");
+        };
+        return Promise.resolve(provider);
+      },
+    });
+    const settings: ProjectTraceConfigResult = {
+      status: "enabled",
+      config: {
+        projectId: "project-a",
+        environmentId: "environment-a",
+        revision: "one",
+        endpoint: "https://collector.example/v1/traces",
+        headers: { Authorization: "Bearer test-only" },
+        serviceName: "app",
+        serviceVersion: "",
+        deploymentEnvironment: "production",
+      },
+    };
+    const f = fixture((request) => {
+      assertEquals(request.headers.get("authorization"), "Bearer application");
+      assertEquals(request.headers.get("x-token"), null);
+      return new Response(
+        new ReadableStream({
+          pull(controller) {
+            trace.getTracer("application").startSpan("deferred.executor.span").end();
+            controller.enqueue(new TextEncoder().encode("streamed"));
+            controller.close();
+          },
+        }, { highWaterMark: 0 }),
+      );
+    });
+    const broker = createHostedHttpBroker({ maxActive: 2 });
+    try {
+      await runProjectHttpTracing(
+        settings,
+        settings.config,
+        new Request("https://app.example"),
+        () => Promise.resolve(new Response(null, { status: 204 })),
+      );
+      await flushProjectHttpTracing();
+      const response = await broker.fetch(
+        new Request("https://app.example/api", {
+          headers: { authorization: "Bearer application", "x-token": "host-only" },
+        }),
+        { ...f.input, projectTracing: settings },
+      );
+      assertEquals(received.length, 0);
+      const secondSettings = {
+        ...settings,
+        config: { ...settings.config, projectId: "project-b" },
+      };
+      await runProjectHttpTracing(
+        secondSettings,
+        secondSettings.config,
+        new Request("https://b.example"),
+        () => Promise.resolve(new Response(null, { status: 204 })),
+      );
+      await flushProjectHttpTracing();
+      const second = fixture(
+        () => {
+          trace.getTracer("application").startSpan("second.project.span").end();
+          return new Response("second");
+        },
+        undefined,
+        "project-b",
+      );
+      const otherResponse = await broker.fetch(new Request("https://b.example"), {
+        ...second.input,
+        projectTracing: secondSettings,
+      });
+      assertEquals(await otherResponse.text(), "second");
+      assertEquals(received.length, 1);
+      assertEquals(received[0]!.project, "project-b");
+      assertEquals(received[0]!.records.includes("second.project.span"), true);
+      received.length = 0;
+      assertEquals(await response.text(), "streamed");
+      assertEquals(received.length, 1);
+      assertEquals(received[0]!.project, "project-a");
+      const records = JSON.parse(received[0]!.records);
+      assertExists(
+        records.find((record: { name: string; parentSpanId: string }) =>
+          record.name === "deferred.executor.span" && record.parentSpanId === received[0]!.parent
+        ),
+      );
+    } finally {
+      await broker.shutdown();
+      await broker.settled;
+      await shutdownProjectHttpTracing();
+      unregister("TracingExporter");
+    }
+  });
+}
+
+for (const status of ["disabled", "deferred", "invalid"] as const) {
+  it(`does not inherit outer project tracing when managed tracing is ${status}`, async () => {
+    const outer = createWorkerTraceRecorder(`00-${"c".repeat(32)}-${"d".repeat(16)}-01`)!;
+    const f = fixture(() => {
+      assertEquals(getProjectTraceProvider(), undefined);
+      return new Response("untraced");
+    });
+    const broker = createHostedHttpBroker({ maxActive: 1 });
+    try {
+      const response = await outer.run(() =>
+        broker.fetch(
+          new Request("https://app.example", {
+            headers: { traceparent: `00-${"c".repeat(32)}-${"d".repeat(16)}-01` },
+          }),
+          {
+            ...f.input,
+            projectTracing: status === "invalid" ? { status, reason: "endpoint" } : { status },
+          },
+        )
+      );
+      assertEquals(await response.text(), "untraced");
+    } finally {
+      await broker.shutdown();
+      await broker.settled;
+    }
+  });
+}
+
+it("refuses competing managed and explicit tracing before allocation", async () => {
+  const f = fixture(() => new Response("must not run"));
+  const broker = createHostedHttpBroker({ maxActive: 1 });
+  try {
+    await assertRejects(
+      () =>
+        broker.fetch(new Request("https://app.example"), {
+          ...f.input,
+          projectTracing: { status: "disabled" },
+          tracing: { traceparent: `00-${"a".repeat(32)}-${"b".repeat(16)}-01`, onRecords() {} },
+        }),
+      TypeError,
+      "cannot be combined",
+    );
+    assertEquals(f.calls, []);
+  } finally {
+    await broker.shutdown();
+    await broker.settled;
+  }
+});
+
+it("errors an unfinished managed-tracing response when its request aborts", async () => {
+  register("TracingExporter", {
+    createProjectProvider() {
+      const recorder = createWorkerTraceRecorder(`00-${"a".repeat(32)}-${"b".repeat(16)}-01`)!;
+      return Promise.resolve(recorder.run(() => getProjectTraceProvider())!);
+    },
+  });
+  const settings: ProjectTraceConfigResult = {
+    status: "enabled",
+    config: {
+      projectId: "project-a",
+      environmentId: "environment-a",
+      revision: "abort",
+      endpoint: "https://collector.example/v1/traces",
+      headers: {},
+      serviceName: "app",
+      serviceVersion: "",
+      deploymentEnvironment: "production",
+    },
+  };
+  const f = fixture(() =>
+    new Response(
+      new ReadableStream({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode("prefix"));
+        },
+      }, { highWaterMark: 0 }),
+    )
+  );
+  const broker = createHostedHttpBroker({ maxActive: 1 });
+  const abort = new AbortController();
+  try {
+    await runProjectHttpTracing(
+      settings,
+      settings.config,
+      new Request("https://app.example"),
+      () => Promise.resolve(new Response(null, { status: 204 })),
+    );
+    await flushProjectHttpTracing();
+    const response = await broker.fetch(
+      new Request("https://app.example", { signal: abort.signal }),
+      {
+        ...f.input,
+        projectTracing: settings,
+      },
+    );
+    const reader = response.body!.getReader();
+    assertEquals(new TextDecoder().decode((await reader.read()).value), "prefix");
+    const pending = reader.read();
+    abort.abort(new Error("Client disconnected"));
+    await assertRejects(() => pending, Error, "Client disconnected");
+    assertEquals(f.calls.includes("release:completed"), false);
+  } finally {
+    abort.abort();
+    await broker.shutdown();
+    await broker.settled;
+    await shutdownProjectHttpTracing();
+    unregister("TracingExporter");
+  }
 });

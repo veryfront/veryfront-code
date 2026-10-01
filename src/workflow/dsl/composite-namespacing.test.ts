@@ -13,7 +13,11 @@ import { branch } from "./branch.ts";
 import { loop } from "./loop.ts";
 import { parallel } from "./parallel.ts";
 import { step } from "./step.ts";
-import { namespaceWorkflowDefinition } from "./validation.ts";
+import {
+  namespaceWorkflowDefinition,
+  removeWorkflowNodeNamespace,
+  workflowOutputValidationContext,
+} from "./validation.ts";
 import type {
   BranchNodeConfig,
   LoopNodeConfig,
@@ -21,7 +25,6 @@ import type {
   WorkflowNode,
 } from "../types.ts";
 import { buildGraph } from "../executor/dag/graph.ts";
-import { removeWorkflowNodeNamespace } from "./validation.ts";
 
 function dependentStep(id: string, dependsOn: string[]): WorkflowNode {
   return { ...step(id, { tool: "noop" }), dependsOn };
@@ -170,6 +173,20 @@ describe("composite node namespacing", () => {
 });
 
 describe("namespaceWorkflowDefinition output selector", () => {
+  it("presents declared step ids for validation without changing namespaced context", () => {
+    const namespaced = namespaceWorkflowDefinition("tickets_0/", {
+      id: "processor",
+      steps: [step("value", { tool: "noop" })],
+    });
+    const context = { input: { ticket: 1 }, "tickets_0/value": 42 };
+
+    assertEquals(workflowOutputValidationContext(namespaced, context), {
+      input: { ticket: 1 },
+      value: 42,
+    });
+    assertEquals(context, { input: { ticket: 1 }, "tickets_0/value": 42 });
+  });
+
   it("keeps an already-prefixed descendant id in the selector context", () => {
     const namespaced = namespaceWorkflowDefinition("tickets_0/", {
       id: "processor",

@@ -5,6 +5,7 @@
  */
 
 import type { ToolSet } from "#veryfront/tool";
+import type { Schema } from "#veryfront/extensions/schema/index.ts";
 
 /** Primitive kind an eval can execute. */
 export type EvalTargetKind = "agent" | "tool" | "dataset";
@@ -436,6 +437,8 @@ export interface EvalDefinition {
   repetitions: number;
   tags: string[];
   metadata: Record<string, unknown>;
+  /** Optional run input contract, enforced before this eval executes. */
+  inputSchema?: Schema<unknown> | Record<string, unknown>;
   source?: EvalSource;
   input?: (
     example: EvalExample,
@@ -456,6 +459,8 @@ export interface EvalAgentInput {
   repetitions?: number;
   tags?: string[];
   metadata?: Record<string, unknown>;
+  /** Optional run input contract, enforced before this eval executes. */
+  inputSchema?: Schema<unknown> | Record<string, unknown>;
   mockTools?: EvalMockTools;
   check?: (context: EvalCheckContext) => EvalMaybePromise<void>;
 }
@@ -612,6 +617,8 @@ export interface RunEvalOptions {
    * on without waiting for it. Omit or pass 0 for no limit.
    */
   recordTimeoutMs?: number;
+  /** Stops remaining cases and propagates cancellation to the active case. */
+  signal?: AbortSignal;
   /**
    * Receives progress while records run. Records run one after another, so
    * events arrive in dataset order. A listener that throws, or whose promise

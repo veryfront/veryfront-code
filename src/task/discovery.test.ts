@@ -408,9 +408,19 @@ describe("task/discovery", () => {
         properties: { ok: { type: "boolean" } },
       });
       assertEquals(Object.isFrozen(registered.inputSchema), true);
-      assertEquals(Object.isFrozen(registered.inputSchema?.properties), true);
+      assertEquals(
+        Object.isFrozen(
+          (registered.inputSchema as Record<string, unknown> | undefined)?.properties,
+        ),
+        true,
+      );
       assertEquals(Object.isFrozen(registered.outputSchema), true);
-      assertEquals(Object.isFrozen(registered.outputSchema?.properties), true);
+      assertEquals(
+        Object.isFrozen(
+          (registered.outputSchema as Record<string, unknown> | undefined)?.properties,
+        ),
+        true,
+      );
     });
 
     it("preserves record-compatible schemas with callbacks and non-enumerable fields", () => {
@@ -475,7 +485,7 @@ describe("task/discovery", () => {
         "tasks",
       );
 
-      const registeredInputSchema = registered.inputSchema;
+      const registeredInputSchema = registered.inputSchema as Record<string, unknown> | undefined;
       if (!registeredInputSchema) throw new Error("Expected captured input schema");
       const parse = registeredInputSchema.parse as (
         this: Record<string, unknown>,

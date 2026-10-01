@@ -23,8 +23,10 @@ examples, not checked with one unit test.
 ## Boundary
 
 An eval is the definition. An eval run is one execution of that definition. A
-report is the result of the run. Durable eval runs use run kind `eval` and target
-IDs such as `eval:deep-research`.
+report is the result of the run. New durable eval runs use run kind `task`, target
+`task:eval`, and preserve definition IDs such as `eval:deep-research` in
+`config.eval_id`. Run readers continue to accept legacy kind `eval` records, but
+new `kind: "eval"` requests are rejected with guidance to use `task:eval`.
 
 Keep evals separate from tests. Tests check code behavior against explicit
 assertions. Evals measure agent behavior, retrieval behavior, tool behavior, and

@@ -5,6 +5,7 @@ import {
   assertEquals,
   assertExists,
   assertRejects,
+  assertStringIncludes,
   assertThrows,
 } from "#veryfront/testing/assert.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
@@ -35,7 +36,7 @@ import { map } from "../dsl/map.ts";
 import { parallel } from "../dsl/parallel.ts";
 import { step } from "../dsl/step.ts";
 import { subWorkflow } from "../dsl/sub-workflow.ts";
-import { delay as delayNode, waitForApproval, waitForEvent } from "../dsl/wait.ts";
+import { delay as delayNode, waitForApproval, waitForEvent, waitForRuns } from "../dsl/wait.ts";
 import { waitFor } from "#veryfront/testing/index.ts";
 import { delay } from "#veryfront/testing/deno-compat.ts";
 import {
@@ -237,6 +238,51 @@ describe("WorkflowClient", () => {
     assertEquals(run?.status, "completed");
     assertEquals(run?.output, { triage: { category: "billing" } });
     assertEquals(Object.keys((run?.nodeStates.triage?.output ?? {}) as object), ["category"]);
+  });
+
+  it("restores completed nested child output when retrying an output exception (#2223)", async () => {
+    let childExecutions = 0;
+    let outputCalls = 0;
+    const childReadTool: Tool = {
+      id: "retry-nested-child-read",
+      type: "function",
+      description: "Return the nested workflow input",
+      inputSchema: defineSchema((v) => v.object({ n: v.number() }))(),
+      execute: (input) => {
+        childExecutions++;
+        return Promise.resolve(input);
+      },
+    };
+    const child = workflow({
+      id: "retry-nested-output-child",
+      steps: [step("child-read", { tool: childReadTool })],
+      output: (context): unknown => {
+        if (++outputCalls === 1) throw new Error("output selection failed");
+        return { input: context.input, read: context["child-read"] };
+      },
+    });
+    client.register(workflow({
+      id: "retry-nested-output-parent",
+      steps: [subWorkflow("child", { workflow: child.definition, input: { n: 1 } })],
+    }));
+
+    const handle = await client.start("retry-nested-output-parent", {});
+    await handle.settled();
+
+    const failed = await client.getRun(handle.runId);
+    assertEquals(failed?.status, "failed");
+    assertEquals(failed?.nodeStates["child-read"]?.status, "completed");
+    assertEquals(failed?.nodeStates["child-read"]?.output, { n: 1 });
+    assertEquals(failed?.checkpoints, []);
+
+    await client.retry(handle.runId);
+    await waitFor(async () => (await client.getRun(handle.runId))?.status === "completed");
+
+    const completed = await client.getRun(handle.runId);
+    assertEquals(completed?.output, {
+      child: { input: { n: 1 }, read: { n: 1 } },
+    });
+    assertEquals(childExecutions, 1);
   });
 
   it("selects a map workflow processor's output by its declared step ids (#2107)", async () => {
@@ -1267,6 +1313,356 @@ describe("WorkflowClient", () => {
       ],
     });
 
+    for (const shape of ["direct", "map", "deep"] as const) {
+      it(`restores completed child outputs after a ${shape} nested approval (#2244)`, async () => {
+        let stampCalls = 0;
+        const observed: unknown[] = [];
+        const decisions: unknown[] = [];
+        const child = workflow({
+          id: `resume-child-${shape}`,
+          steps: [
+            step("stamp", {
+              tool: {
+                ...createMockTool(`stamp-${shape}`, { when: "x" }),
+                execute: () => {
+                  stampCalls++;
+                  return Promise.resolve({ when: "x" });
+                },
+              },
+            }),
+            waitForApproval("child-review", { message: "Review stamp" }),
+            step("observe", {
+              input: (context) => {
+                const value = context[shape === "map" ? "children_0/stamp" : "stamp"];
+                decisions.push(
+                  context[shape === "map" ? "children_0/child-review" : "child-review"],
+                );
+                observed.push(value);
+                return value;
+              },
+              tool: createMockTool(`observe-${shape}`, { observed: true }),
+            }),
+          ],
+          output: (context) => context.stamp,
+        });
+        const parent = workflow({
+          id: `resume-parent-${shape}`,
+          steps: shape === "map"
+            ? [map("children", { items: [{}], processor: child.definition })]
+            : shape === "deep"
+            ? [subWorkflow("outer", {
+              workflow: workflow({
+                id: "resume-outer",
+                steps: [subWorkflow("child", { workflow: child.definition })],
+                output: (context) => context.child,
+              }).definition,
+            })]
+            : [subWorkflow("child", { workflow: child.definition })],
+        });
+        client.register(parent);
+        const handle = await client.start(parent.definition.id, {});
+        await handle.settled();
+        const waiting = await backend.getRun(handle.runId);
+        assertEquals(waiting?.status, "waiting");
+        assertEquals(stampCalls, 1);
+        assertEquals(observed, []);
+        assertExists(waiting);
+        const stampState = Object.values(waiting.nodeStates).find((state) =>
+          state.status === "completed" &&
+          (state.output as { when?: string } | undefined)?.when === "x"
+        );
+        assertExists(stampState);
+        const [approval] = await backend.getPendingApprovals(handle.runId);
+        assertExists(approval);
+        await client.approve(handle.runId, approval.id, "reviewer", "Stamp approved", {
+          accepted: true,
+        });
+        const completed = await backend.getRun(handle.runId);
+        assertEquals(completed?.status, "completed");
+        assertExists(completed);
+        const decision = completed.context[approval.nodeId];
+        assertExists(decision);
+        assertEquals(decisions, [decision]);
+        assertEquals(decision, {
+          approved: true,
+          approver: "reviewer",
+          comment: "Stamp approved",
+          data: { accepted: true },
+          decidedAt: (decision as { decidedAt: string }).decidedAt,
+        });
+        assertEquals(typeof (decision as { decidedAt: unknown }).decidedAt, "string");
+        assertEquals(observed, [{ when: "x" }]);
+        assertEquals(stampCalls, 1);
+        assertEquals(
+          completed?.context[shape === "map" ? "children" : shape === "deep" ? "outer" : "child"],
+          shape === "map" ? [{ when: "x" }] : { when: "x" },
+        );
+      });
+    }
+
+    for (const shape of ["direct", "map"] as const) {
+      for (const waitKind of ["approval", "event"] as const) {
+        it(`restores full ${waitKind} decisions in ${shape} children (#2255)`, async () => {
+          let stampCalls = 0;
+          const observed: unknown[] = [];
+          const publishedKeys: string[][] = [];
+          const prefix = shape === "map" ? "children_0/" : "";
+          const child = workflow({
+            id: `decision-child-${shape}-${waitKind}`,
+            steps: [
+              step("stamp", {
+                tool: {
+                  id: `decision-stamp-${shape}-${waitKind}`,
+                  type: "function",
+                  description: "Count completed work",
+                  inputSchema: defineSchema((v) => v.object({}).passthrough())(),
+                  execute: () => {
+                    stampCalls++;
+                    return Promise.resolve({ stamp: true });
+                  },
+                },
+              }),
+              dependsOn(
+                waitKind === "approval"
+                  ? waitForApproval("review", { message: "Review stamp" })
+                  : waitForEvent("review", { eventName: "review.ready" }),
+                "stamp",
+              ),
+              dependsOn(
+                step("observe", {
+                  input: (context) => {
+                    observed.push(context[`${prefix}review`]);
+                    publishedKeys.push(Object.keys(context).sort());
+                    return {};
+                  },
+                  tool: {
+                    id: `decision-observe-${shape}-${waitKind}`,
+                    type: "function",
+                    description: "Observe full wait decision",
+                    inputSchema: defineSchema((v) => v.object({}))(),
+                    execute: () => Promise.resolve({ observed: true }),
+                  },
+                }),
+                "review",
+              ),
+            ],
+            output: (context) => context.review,
+          });
+          const parent = workflow({
+            id: `decision-parent-${shape}-${waitKind}`,
+            steps: shape === "direct"
+              ? [subWorkflow("child", { workflow: child.definition })]
+              : [map("children", { items: [{}], processor: child.definition, checkpoint: false })],
+          });
+          const decisionBackend = backend;
+          const decisionClient = createWorkflowClient({ backend: decisionBackend, debug: false });
+          decisionClient.register(parent);
+          try {
+            const handle = await decisionClient.start(parent.id, {});
+            await handle.settled();
+            const waiting = await decisionBackend.getRun(handle.runId);
+            assertExists(waiting);
+            assertEquals(waiting.status, "waiting");
+            assertEquals(stampCalls, 1);
+            const waitId = `${prefix}review`;
+            assertExists(waiting.nodeStates[waitId]);
+
+            if (waitKind === "approval") {
+              const [approval] = await decisionBackend.getPendingApprovals(handle.runId);
+              assertExists(approval);
+              await decisionClient.approve(handle.runId, approval.id, "reviewer", "accepted", {
+                score: 7,
+              });
+            } else {
+              assertEquals(
+                await decisionClient.publishEvent(handle.runId, "review.ready", { score: 7 }),
+                "delivered",
+              );
+            }
+            const completed = await decisionBackend.getRun(handle.runId);
+            assertExists(completed);
+            assertEquals(completed.status, "completed");
+            const durable = completed.context[waitId] as Record<string, unknown>;
+            assertExists(durable);
+            assertEquals(
+              typeof durable[waitKind === "approval" ? "decidedAt" : "receivedAt"],
+              "string",
+            );
+            if (waitKind === "approval") {
+              assertEquals(durable.approved, true);
+              assertEquals(durable.approver, "reviewer");
+              assertEquals(durable.comment, "accepted");
+              assertEquals(durable.data, { score: 7 });
+            } else {
+              assertEquals(durable.payload, { score: 7 });
+            }
+            assertEquals(observed, [durable]);
+            assertEquals(
+              completed.context[shape === "direct" ? "child" : "children"],
+              shape === "direct" ? durable : [durable],
+            );
+            assertEquals(publishedKeys, [["input", `${prefix}review`, `${prefix}stamp`].sort()]);
+            assertEquals(stampCalls, 1);
+          } finally {
+            await decisionClient.destroy();
+          }
+        });
+      }
+    }
+    it("keeps later child edits to a consumed wait when retrying (#2244)", async () => {
+      let loopCalls = 0;
+      let outputCalls = 0;
+      const selected: unknown[] = [];
+      const child = workflow({
+        id: "edited-wait-child",
+        steps: [
+          waitForApproval("edited-review", { message: "Approve before replacing the value" }),
+          loop("edit-review", {
+            steps: [],
+            while: () => false,
+            onComplete: () => {
+              loopCalls++;
+              return { "edited-review": { source: "loop" } };
+            },
+          }),
+        ],
+        output: (context) => {
+          selected.push(context["edited-review"]);
+          if (++outputCalls === 1) throw new Error("output selection failed once");
+          return context["edited-review"];
+        },
+      });
+      client.register(workflow({
+        id: "edited-wait-parent",
+        steps: [subWorkflow("edited-child", { workflow: child.definition })],
+      }));
+      const handle = await client.start("edited-wait-parent", {});
+      await handle.settled();
+      const [approval] = await backend.getPendingApprovals(handle.runId);
+      assertExists(approval);
+      await client.approve(handle.runId, approval.id, "reviewer");
+      assertEquals((await backend.getRun(handle.runId))?.status, "failed");
+      await client.retry(handle.runId);
+      await waitFor(async () => (await backend.getRun(handle.runId))?.status === "completed");
+      const completed = await backend.getRun(handle.runId);
+      assertEquals(completed?.status, "completed");
+      assertEquals(selected, [{ source: "loop" }, { source: "loop" }]);
+      assertEquals(completed?.context["edited-child"], { source: "loop" });
+      assertEquals(loopCalls, 1);
+    });
+
+    it("keeps earlier consumed wait edits when a later approval resumes (#2244)", async () => {
+      let loopCalls = 0;
+      const observed: unknown[] = [];
+      const child = workflow({
+        id: "two-wait-child",
+        steps: [
+          waitForApproval("first-review", { message: "Approve the first phase" }),
+          loop("edit-first-review", {
+            steps: [],
+            while: () => false,
+            onComplete: () => {
+              loopCalls++;
+              return { "first-review": { source: "loop" } };
+            },
+          }),
+          waitForApproval("second-review", { message: "Approve the second phase" }),
+          step("observe-reviews", {
+            input: (context) => {
+              observed.push(context["first-review"]);
+              observed.push(context["second-review"]);
+              return {};
+            },
+            tool: createMockTool("observe-two-waits", "observed"),
+          }),
+        ],
+      });
+      client.register(workflow({
+        id: "two-wait-parent",
+        steps: [subWorkflow("two-wait-child", { workflow: child.definition })],
+      }));
+      const handle = await client.start("two-wait-parent", {});
+      await handle.settled();
+      const [first] = await backend.getPendingApprovals(handle.runId);
+      assertExists(first);
+      await client.approve(handle.runId, first.id, "reviewer");
+      const [second] = await backend.getPendingApprovals(handle.runId);
+      assertExists(second);
+      assertEquals(second.nodeId, "second-review");
+      await client.approve(handle.runId, second.id, "reviewer");
+      const completed = await backend.getRun(handle.runId);
+      assertExists(completed);
+      assertEquals(completed.status, "completed");
+      assertEquals(observed, [{ source: "loop" }, completed.context[second.nodeId]]);
+      assertEquals(loopCalls, 1);
+    });
+
+    it("preserves dependency-ordered context writes across nested approval (#2244)", async () => {
+      let producerCalls = 0;
+      let loopCalls = 0;
+      const observed: unknown[] = [];
+      const child = workflow({
+        id: "ordered-resume-child",
+        steps: [
+          dependsOn(
+            loop("rewrite", {
+              steps: [],
+              while: () => false,
+              onComplete: () => {
+                loopCalls++;
+                return { producer: "loop" };
+              },
+            }),
+            "producer",
+          ),
+          dependsOn(step("producer", {
+            tool: {
+              ...createMockTool("ordered-resume-producer", "step"),
+              execute: () => {
+                producerCalls++;
+                return Promise.resolve("step");
+              },
+            },
+          })),
+          dependsOn(
+            waitForApproval("ordered-review", { message: "Review ordered writes" }),
+            "rewrite",
+          ),
+          dependsOn(
+            step("observe-order", {
+              tool: createMockTool("ordered-resume-observer", "observed"),
+              input: (context) => {
+                observed.push(context.producer);
+                return {};
+              },
+            }),
+            "ordered-review",
+          ),
+        ],
+        output: (context) => context.producer,
+      });
+      client.register(workflow({
+        id: "ordered-resume-parent",
+        steps: [subWorkflow("ordered-child", { workflow: child.definition })],
+      }));
+      const handle = await client.start("ordered-resume-parent", {});
+      await handle.settled();
+      const waiting = await backend.getRun(handle.runId);
+      assertEquals(waiting?.status, "waiting");
+      assertEquals(observed, []);
+      assertEquals(producerCalls, 1);
+      assertEquals(loopCalls, 1);
+      const [approval] = await backend.getPendingApprovals(handle.runId);
+      assertExists(approval);
+      await client.approve(handle.runId, approval.id, "reviewer");
+      const completed = await backend.getRun(handle.runId);
+      assertEquals(completed?.status, "completed");
+      assertEquals(observed, ["loop"]);
+      assertEquals(completed?.context["ordered-child"], "loop");
+      assertEquals(producerCalls, 1);
+      assertEquals(loopCalls, 1);
+    });
+
     it("creates a pending approval for a wait nested in a branch", async () => {
       client.register(nestedApprovalWorkflow);
 
@@ -1338,6 +1734,180 @@ describe("WorkflowClient", () => {
       assertEquals(run.nodeStates["publish-child"]!.status, "completed");
       const output = run.output as Record<string, unknown>;
       assertEquals(output["publish-child"], { published: "child" });
+    });
+
+    describe("nested node-state persistence policy (#2242)", () => {
+      const when = "1970-01-01T00:00:00.000Z";
+
+      function createStampingWorkflow(stamp: unknown) {
+        return workflow({
+          id: "sub-workflow-stamp-workflow",
+          steps: [
+            subWorkflow("child-workflow", {
+              workflow: workflow({
+                id: "child-stamp-workflow",
+                steps: [
+                  step("stamp", { tool: createMockTool("child-stamp", { when: stamp }) }),
+                  dependsOn(
+                    waitForApproval("child-review", { message: "Review child stamp" }),
+                    "stamp",
+                  ),
+                ],
+              }).definition,
+            }),
+          ],
+        });
+      }
+
+      async function pauseAndResume(
+        policyBackend: MemoryBackend,
+        stamp: unknown,
+      ): Promise<{ waiting: WorkflowRun | null; final: WorkflowRun | null }> {
+        const policyClient = createWorkflowClient({ backend: policyBackend });
+        try {
+          policyClient.register(createStampingWorkflow(stamp));
+          const handle = await policyClient.start("sub-workflow-stamp-workflow", {});
+          await handle.settled();
+          const waiting = await policyBackend.getRun(handle.runId);
+          const [approval] = await policyBackend.getPendingApprovals(handle.runId);
+          if (approval) await policyClient.approve(handle.runId, approval.id, "reviewer");
+          return { waiting, final: await policyBackend.getRun(handle.runId) };
+        } finally {
+          await policyClient.destroy();
+        }
+      }
+
+      function createInputObservingWorkflow(seen: unknown[]) {
+        const observe = (id: string): Tool => ({
+          id,
+          type: "function",
+          description: `Observe nested input: ${id}`,
+          inputSchema: defineSchema((v) => v.object({}).passthrough())(),
+          execute: (input) => {
+            seen.push(input);
+            return Promise.resolve(input);
+          },
+        });
+        const childWorkflow = workflow({
+          id: "child-input-policy-workflow",
+          inputSchema: defineSchema((v) =>
+            v.object({ when: v.string().transform((value) => new Date(value)) })
+          )(),
+          steps: [
+            step("before", { tool: observe("observe-before") }),
+            dependsOn(
+              waitForApproval("child-review", { message: "Review normalized input" }),
+              "before",
+            ),
+            dependsOn(step("after", { tool: observe("observe-after") }), "child-review"),
+          ],
+        }).definition as WorkflowDefinition;
+        return workflow({
+          id: "sub-workflow-input-policy-workflow",
+          steps: [
+            subWorkflow("child-workflow", {
+              input: { when },
+              workflow: childWorkflow,
+            }),
+          ],
+        });
+      }
+
+      async function runInputPolicyWorkflow(policyBackend: MemoryBackend) {
+        const seen: unknown[] = [];
+        const policyClient = createWorkflowClient({ backend: policyBackend });
+        try {
+          policyClient.register(createInputObservingWorkflow(seen));
+          const handle = await policyClient.start("sub-workflow-input-policy-workflow", {});
+          await handle.settled();
+          return { handle, policyClient, seen };
+        } catch (error) {
+          await policyClient.destroy();
+          throw error;
+        }
+      }
+
+      it("normalizes parsed nested input before the first child and keeps it stable after resume", async () => {
+        const backend = new MemoryBackend();
+        const { handle, policyClient, seen } = await runInputPolicyWorkflow(backend);
+        try {
+          const waiting = await backend.getRun(handle.runId);
+          assertEquals(waiting?.status, "waiting");
+          assertEquals(seen, [{ when }]);
+          assertEquals(waiting?.nodeStates["child-workflow"]?.input, { when });
+
+          const [approval] = await backend.getPendingApprovals(handle.runId);
+          assertExists(approval);
+          await policyClient.approve(handle.runId, approval.id, "reviewer");
+
+          assertEquals((await backend.getRun(handle.runId))?.status, "completed");
+          assertEquals(seen, [{ when }, { when }]);
+        } finally {
+          await policyClient.destroy();
+        }
+      });
+
+      it("rejects lossy parsed nested input before any child executes in strict mode", async () => {
+        const backend = new MemoryBackend({ strictContext: true });
+        const { handle, policyClient, seen } = await runInputPolicyWorkflow(backend);
+        try {
+          const failed = await backend.getRun(handle.runId);
+          assertEquals(failed?.status, "failed");
+          assertEquals(seen, []);
+          assertStringIncludes(
+            failed?.error?.message ?? "",
+            "strictContext enabled: nodeStates.input.<redacted>.<redacted> (Date)",
+          );
+        } finally {
+          await policyClient.destroy();
+        }
+      });
+
+      it("pauses a child with the JSON form of its step output, as Redis stores it", async () => {
+        const { waiting, final } = await pauseAndResume(new MemoryBackend(), new Date(0));
+
+        assertEquals(waiting?.status, "waiting");
+        assertEquals(waiting?.nodeStates.stamp?.output, { when });
+        assertEquals(
+          (waiting?.nodeStates["child-workflow"]?.output as Record<string, unknown>).stamp,
+          { when },
+        );
+        // Framework timestamps are not user data and keep their Date type.
+        assert(waiting?.nodeStates.stamp?.completedAt instanceof Date);
+        assertEquals(final?.status, "completed");
+      });
+
+      it("fails the run explicitly in strict mode instead of pausing with a changed value", async () => {
+        const { waiting, final } = await pauseAndResume(
+          new MemoryBackend({ strictContext: true }),
+          new Date(0),
+        );
+
+        assertEquals(waiting?.status, "failed");
+        const message = waiting?.error?.message ?? "";
+        assertStringIncludes(message, "strictContext enabled: nodeStates.output.<redacted>");
+        assertStringIncludes(message, "(Date)");
+        assert(!message.includes("(object)"), message);
+        assertEquals(final?.status, "failed");
+      });
+
+      it("pauses and resumes a strict child whose step output is plain JSON", async () => {
+        const { waiting, final } = await pauseAndResume(
+          new MemoryBackend({ strictContext: true }),
+          "1970-01-01T00:00:00.000Z",
+        );
+
+        assertEquals(waiting?.status, "waiting");
+        assertEquals(waiting?.nodeStates.stamp?.output, { when: "1970-01-01T00:00:00.000Z" });
+        assertEquals(final?.status, "completed");
+      });
+
+      it("fails the run with a named path when nested step output cannot be encoded", async () => {
+        const { waiting } = await pauseAndResume(new MemoryBackend(), 1n);
+
+        assertEquals(waiting?.status, "failed");
+        assertStringIncludes(waiting?.error?.message ?? "", "nodeStates.output.<redacted>");
+      });
     });
   });
 
@@ -5868,6 +6438,38 @@ describe("WorkflowClient durable event waits", () => {
       async () => (await client.getRun(handle.runId))?.status === "completed",
       { message: "the reconstructed wait could not be woken by its event" },
     );
+  });
+
+  it("treats a persisted child-run input as the durable wait record during recovery", async () => {
+    client.register(workflow({
+      id: "child-run-recovery",
+      steps: [
+        waitForRuns("children", { runIds: ["run_child_1", "run_child_2"] }),
+        step("after", { tool: createMockTool("after-child-runs", { done: true }) }),
+      ],
+    }));
+    const handle = await client.start("child-run-recovery", {});
+    await handle.settled();
+
+    await client.resume(handle.runId);
+    assertEquals(
+      (await client.getRun(handle.runId))?.status,
+      "waiting",
+      "a recovery nudge must leave a durable child-run wait parked",
+    );
+
+    const parked = await client.getRun(handle.runId);
+    const waitInstanceId = parked?.nodeStates.children?._waitInstanceId;
+    assertExists(waitInstanceId);
+    assertEquals(
+      await client.resumeChildRuns(handle.runId, [{
+        nodeId: "children",
+        runIds: ["run_child_1", "run_child_2"],
+        waitInstanceId,
+      }]),
+      true,
+    );
+    assertEquals((await client.getRun(handle.runId))?.status, "completed");
   });
 
   it("drains mail buffered before a live stalled wait is resumed", async () => {

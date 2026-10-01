@@ -43,11 +43,15 @@ veryfront task sync-data
 A task file exports a `TaskDefinition` object as its default export:
 
 ```ts
+import type { Schema } from "veryfront/extensions/schema";
+import type { ScheduleIntegrationRequirementConfig } from "veryfront/schedule";
+import type { TaskContext } from "veryfront/task";
+
 interface TaskDefinition {
   name?: string;
   description?: string;
-  inputSchema?: Record<string, unknown>;
-  outputSchema?: Record<string, unknown>;
+  inputSchema?: Schema<unknown> | Record<string, unknown>;
+  outputSchema?: Schema<unknown> | Record<string, unknown>;
   integrationRequirements?: ScheduleIntegrationRequirementConfig[];
   schedulable?: boolean;
   run: (ctx: TaskContext) => Promise<unknown> | unknown;
@@ -58,8 +62,8 @@ interface TaskDefinition {
 | ------------------------- | -------- | ------------------------------------------------ |
 | `name`                    | No       | Human-readable name                              |
 | `description`             | No       | What the task does                               |
-| `inputSchema`             | No       | JSON-schema-like input contract for APIs and UIs |
-| `outputSchema`            | No       | JSON-schema-like output contract                 |
+| `inputSchema`             | No       | Input contract, validated at run time            |
+| `outputSchema`            | No       | Output contract, validated at run time           |
 | `integrationRequirements` | No       | Integration access required by scheduled runs    |
 | `schedulable`             | No       | Scheduling eligibility metadata for APIs and UIs |
 | `run`                     | Yes      | The function to execute                          |
@@ -199,6 +203,61 @@ export default {
 A retried task runs again from the start, so make its side effects safe to
 repeat.
 
+## Declared schemas
+
+`inputSchema` and `outputSchema` accept a JSON Schema object or a schema from
+`defineSchema`. The runtime validates against them once, when the task runs.
+This release is the warning phase: only submitted `input` that violates
+`inputSchema` fails. Every other mismatch is recorded on the run and logged
+once as a warning, and the run behaves as before. The enforcement phase, which
+fails those mismatches too, follows in a later release.
+
+| Case                                                                                           | Result                                                                                                                                                           |
+| ---------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Submitted `input` violates `inputSchema`                                                       | Fails. `run()` is never called. The run ends `failed` with `error.code: "INPUT_VALIDATION_FAILED"`, the validation errors in `error.detail`, and `output: null`. |
+| Config-only run (no `input`) whose `config` violates `inputSchema`                             | Warns. `run()` receives `config` as before. `metadata.schema_violation.phase` is `"input"`.                                                                      |
+| `run()` returns a value that violates `outputSchema`                                           | Warns. The run completes with the returned value unchanged as `output`. `metadata.schema_violation.phase` is `"output"`.                                         |
+| A raw JSON Schema that no registered validator can compile, or an output validator that throws | Warns. The schema is not enforced and is never reported as enforced: `metadata.schema_violation.reason` is `"schema_uncompilable"`.                              |
+| The execution result lacks the admitted output schema identity                                 | Warns. The platform, not the runtime, records it. The run completes. `metadata.schema_violation.phase` is `"identity"`.                                          |
+
+When submitted `input` is valid, `run.input` keeps the submitted value and
+`ctx.input` receives the parsed value, with schema defaults and transforms
+applied. When the returned value is valid, `output` is the parsed value: a
+`defineSchema` object schema drops keys it does not declare, with no warning,
+so declare every key the output should keep. An invalid value is stored as
+returned.
+Validation applies to the value `run()` returns, before any output filtering
+on reads. Access control and read filtering are unchanged.
+
+A recorded mismatch has this shape. A run keeps the first mismatch detected,
+with at most 20 errors:
+
+```json
+{
+  "phase": "output",
+  "reason": "invalid",
+  "schema_sha256": "<64 hex characters>",
+  "errors": [{ "path": "/confidence", "message": "must be number" }],
+  "detected_at": "2026-09-30T00:00:00.000Z"
+}
+```
+
+The runtime records `reason` `invalid` or `schema_uncompilable` for the
+`input` and `output` phases. The platform records the `identity` phase, with
+`reason` `identity_missing` or `identity_mismatch`, when it finalizes the run. Each run records `input_schema_sha256` and
+`output_schema_sha256`: the lowercase sha256 hex of the canonical JSON Schema
+(a `defineSchema` schema converted to JSON Schema, object keys sorted at every
+depth, serialized without whitespace). A task without that schema records
+`null`. Runs created before identities existed are never revalidated.
+
+## Waiting on child runs
+
+Tasks do not support durable child-dependency waiting. Using `await` inside
+`run(ctx)` does not checkpoint the task or put its run into
+`status: "waiting"` with `waiting_reason: "child_run"` and `waiting_on`.
+Local awaiting is unchanged: the task runner awaits the function's returned
+promise, but cannot resume that promise after a process restart.
+
 ## Discovery
 
 Tasks are discovered automatically from the `tasks/` directory:
@@ -255,7 +314,20 @@ curl -X POST "$VERYFRONT_API_URL/runs" \
   -d '{"kind":"task","owner":{"kind":"project","id":"<PROJECT_ID>"},"request":{"target":"task:sync-data","input":{"since":"2026-01-01"},"config":{"batchSize":100}}}'
 ```
 
+The value a task returns becomes the run's `output`. Its JSON serialization can
+be at most 1,048,576 bytes (1 MiB) of UTF-8. A larger successful result is not
+sent or truncated: the run fails with `error.code` `OUTPUT_TOO_LARGE`,
+`output: null`, and `error.detail` `{ size_bytes, limit_bytes }`. If execution
+has already failed, its original error is preserved and the oversized result
+is discarded. See
+[Runs](./runs.md#output-size-limit).
+
 See [Runs](./runs.md) for run creation and event monitoring.
+
+Task code can await a request or promise during its current process execution. Tasks do not expose
+a durable child-run waiting contract: if a run must pause, survive process replacement, and resume
+after independently durable child runs finish, define that orchestration as a workflow and use
+`waitForRuns`.
 
 ## Verify it worked
 

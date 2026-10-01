@@ -285,6 +285,107 @@ describe("CheckpointManager", () => {
     assertEquals(persisted.nodeStates.first?.status, "completed");
   });
 
+  it("returns a persisted context whose toJSON node is callable", async () => {
+    const runId = "create-to-json-node";
+    const backend = await seed(runId, 0);
+    const manager = new CheckpointManager({ backend });
+    const calls: string[] = [];
+    const context: WorkflowContext = {
+      input: {},
+      toJSON: () => {
+        calls.push("toJSON");
+        return { hijacked: "" };
+      },
+      other: { keep: 1 },
+    };
+
+    const created = await manager.createCheckpoint(runId, "toJSON", context, {});
+
+    assertEquals(calls, []);
+    assertEquals(created.context, { input: {}, other: { keep: 1 } });
+    assertEquals((await manager.getLatest(runId))?.context, {
+      input: {},
+      other: { keep: 1 },
+    });
+  });
+
+  it("returns the persisted snapshot when a node output shares a callable-toJSON context", async () => {
+    const runId = "shared-context-return";
+    const backend = await seed(runId, 0);
+    const manager = new CheckpointManager({ backend });
+    let hookCalls = 0;
+    const context: WorkflowContext = {
+      input: {},
+      toJSON: () => {
+        hookCalls++;
+        return { hijacked: "" };
+      },
+      other: { keep: 1 },
+    };
+    const created = await manager.createCheckpoint(runId, "a", context, {
+      a: {
+        nodeId: "a",
+        status: "completed",
+        attempt: 1,
+        startedAt: new Date(1000),
+        completedAt: new Date(2000),
+        output: context,
+      },
+    });
+    const persisted = await manager.getLatest(runId);
+    assertExists(persisted);
+    const expected = { input: {}, other: { keep: 1 } };
+    assertEquals(hookCalls, 0);
+    for (const snapshot of [created, persisted]) {
+      assertEquals(snapshot.context, expected);
+      assertEquals(snapshot.nodeStates.a?.output, expected);
+      assertEquals(snapshot.nodeStates.a?.startedAt, new Date(1000));
+      assertEquals(snapshot.nodeStates.a?.completedAt, new Date(2000));
+    }
+    assertEquals(JSON.stringify(created.context), JSON.stringify(persisted.context));
+    assertEquals(JSON.stringify(created.nodeStates), JSON.stringify(persisted.nodeStates));
+    (context.other as { keep: number }).keep = 2;
+    assertEquals(created.context, expected);
+  });
+
+  it("returns shared accessor-backed toJSON context without invoking its node value", async () => {
+    const runId = "shared-accessor-context-return";
+    const backend = await seed(runId, 0);
+    const manager = new CheckpointManager({ backend });
+    let getterCalls = 0;
+    let hookCalls = 0;
+    const context: WorkflowContext = { input: {}, other: { keep: 1 } };
+    Object.defineProperty(context, "toJSON", {
+      enumerable: true,
+      get() {
+        getterCalls++;
+        return () => {
+          hookCalls++;
+          return { hijacked: "" };
+        };
+      },
+    });
+    const created = await manager.createCheckpoint(runId, "a", context, {
+      a: {
+        nodeId: "a",
+        status: "completed",
+        attempt: 1,
+        startedAt: new Date(1000),
+        completedAt: new Date(2000),
+        output: context,
+      },
+    });
+    const persisted = await manager.getLatest(runId);
+    assertExists(persisted);
+    assertEquals(getterCalls, 1);
+    assertEquals(hookCalls, 0);
+    assertEquals(created, persisted);
+    assertEquals(created.context, { input: {}, other: { keep: 1 } });
+    assertEquals(created.nodeStates.a?.output, created.context);
+    assertEquals(created.nodeStates.a?.startedAt, new Date(1000));
+    assertEquals(created.nodeStates.a?.completedAt, new Date(2000));
+  });
+
   it("snapshots checkpoint input before an asynchronous backend yields", async () => {
     let resumeSave!: () => void;
     const saveGate = new Promise<void>((resolve) => {

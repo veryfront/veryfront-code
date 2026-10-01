@@ -227,6 +227,8 @@ export interface WaitNodeConfig extends BaseNodeConfig {
    */
   approvers?: string[];
   eventName?: string;
+  /** Canonical child run ids this node waits for, resolved once when the node first parks. */
+  runIds?: string[] | ((context: WorkflowContext) => string[]);
   /**
    * Shape a human's structured answer must satisfy. Validated when the decision
    * is submitted, so a non-conformant answer is refused rather than persisted.
@@ -234,6 +236,13 @@ export interface WaitNodeConfig extends BaseNodeConfig {
    * not serializable.
    */
   responseSchema?: Schema<unknown>;
+}
+
+/** Exact durable child-run pause identity validated by the runtime bridge. */
+export interface WorkflowChildRunWaitBoundary {
+  nodeId: string;
+  waitInstanceId: string;
+  runIds: readonly string[];
 }
 
 /**

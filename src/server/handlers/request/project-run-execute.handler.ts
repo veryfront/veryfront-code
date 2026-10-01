@@ -8,7 +8,9 @@ import {
   VeryfrontError,
 } from "#veryfront/errors";
 import {
+  formatSchemaValidationErrors,
   INPUT_VALIDATION_FAILED_CODE,
+  OUTPUT_VALIDATION_FAILED_CODE,
   readSchemaValidationErrors,
   type SchemaValidationError,
 } from "#veryfront/schemas/validation-errors.ts";
@@ -38,6 +40,17 @@ import type { VeryfrontConfig } from "#veryfront/config";
 import type { DiscoveryResult } from "#veryfront/discovery";
 import { findProjectRuntimeTask } from "#veryfront/task/project-runtime.ts";
 import { runTask, type RunTaskOptions, type TaskRunResult } from "#veryfront/task/runner.ts";
+import {
+  checkDeclaredSchema,
+  schemaIdentitySha256,
+  type SchemaViolation,
+} from "#veryfront/task/io-contract.ts";
+import {
+  checkRunOutputBytes,
+  measureSerializedRunOutputBytes,
+  parseSerializedRunOutput,
+  serializeRunOutput,
+} from "#veryfront/task/run-output-limit.ts";
 import { type DiscoveredEval, findEvalById } from "#veryfront/eval/discovery.ts";
 import { runEval } from "#veryfront/eval/runner.ts";
 import {
@@ -61,9 +74,10 @@ import { type Logger, serverLogger } from "#veryfront/utils";
 import { computeHash } from "#veryfront/utils/hash-utils.ts";
 import { agentRegistry } from "#veryfront/agent/composition/index.ts";
 import { type DiscoveredWorkflow, findWorkflowById } from "#veryfront/workflow/discovery";
-import { createWorkflowClient, RedisBackend } from "#veryfront/workflow";
+import { createWorkflowClient, hasEventWaitSupport, RedisBackend } from "#veryfront/workflow";
 import { CONTROL_PLANE_OWNED_START } from "#veryfront/workflow/dsl/validation.ts";
 import type { WorkflowClientConfig } from "#veryfront/workflow";
+import { MAX_WORKFLOW_CHILD_RUN_DEPENDENCIES } from "#veryfront/workflow/limits.ts";
 import { toolRegistry } from "#veryfront/tool/registry.ts";
 import {
   PROJECT_RUN_INFERENCE_TOKEN_HEADER,
@@ -77,6 +91,8 @@ import { PRIORITY_MEDIUM_API } from "#veryfront/utils/constants/index.ts";
 import { parseProjectDomain } from "#veryfront/server/utils/domain-parser.ts";
 
 const TaskDate = Date;
+/** Captured before project code runs, which may replace the global. */
+const TaskError = Error;
 const TaskDateNow = Date.now;
 const TaskDateParse = Date.parse;
 const TaskSetTimeout = globalThis.setTimeout;
@@ -88,15 +104,27 @@ const TaskAbortSignalAny = AbortSignal.any;
 const EXECUTE_PATH_REGEX = /^\/api\/control-plane\/runs\/([^/]+)\/execute$/;
 const DEFAULT_WORKFLOW_STATUS_POLL_INTERVAL_MS = 100;
 const DEFAULT_WORKFLOW_STATUS_TIMEOUT_MS = 15 * 60 * 1_000;
+/** How long a durable run may read `waiting` on no record before a backend without event waits is blamed. */
+const WORKFLOW_UNPERSISTED_WAIT_GRACE_MS = 5_000;
+/**
+ * How long the response waits for the workflow client to release its backend.
+ * Cleanup must never hold back a run's result (veryfront-issue-inbox#2109).
+ */
+const DEFAULT_WORKFLOW_CLIENT_DESTROY_TIMEOUT_MS = 5_000;
+/** When the control plane re-dispatches a resume whose request timed out, to report where the run got to. */
+const WORKFLOW_RESUME_RECHECK_MS = 30_000;
+/** Prefix of a `wait_id` that lists one short hash per wait record of the pause. */
+const WAIT_ID_PREFIX = "w";
+const WAIT_ID_HASH_LENGTH = 16;
+const WAIT_ID_MAX_LENGTH = 256;
+const UNPERSISTED_EVENT_WAIT_ERROR =
+  "The workflow backend cannot persist event waits, so this run cannot be resumed";
 const DEFAULT_LOCAL_AG_UI_PORT = 3001;
 const WORKFLOW_PERSISTENCE_REQUIRED_ERROR =
   "Workflow paused but runtime workflow persistence is not configured";
 const KNOWLEDGE_LOG_MAX_EVENTS = 1_000;
 const KNOWLEDGE_LOG_MAX_BYTES = 256 * 1_024;
-const KNOWLEDGE_LOG_TRUNCATED_LINE = JSON.stringify({
-  level: "warn",
-  message: "Knowledge ingest logs were truncated",
-});
+const KNOWLEDGE_LOG_TRUNCATED_MESSAGE = "Knowledge ingest logs were truncated";
 const ReflectApply = Reflect.apply;
 const ArrayIsArray = Array.isArray;
 const NumberIsFinite = Number.isFinite;
@@ -120,7 +148,7 @@ function getOwnDataProperty(value: Record<string, unknown>, key: string): unknow
 
 export interface ProjectRunExecuteRequest {
   runId: string;
-  kind: "task" | "workflow" | "eval";
+  kind: "task" | "workflow";
   target: string;
   projectId: string;
   runtimeAgUiEndpoint?: string;
@@ -157,7 +185,14 @@ export type WorkflowResumeSignal =
     wait_id?: string;
   }
   | { type: "event"; name: string; payload?: unknown; wait_id?: string }
-  | { type: "deadline"; wait_id?: string };
+  | { type: "deadline"; wait_id?: string }
+  | { type: "child_run"; wait_id: string };
+
+export interface WorkflowWaitingDependency {
+  kind: "run";
+  run_id: string;
+  correlation: { kind: "workflow_node"; id: string };
+}
 
 /** What a paused workflow run waits on, reported with `status: "waiting"` (#2085, #2102, #2110). */
 export interface WorkflowWaitingDetails {
@@ -179,18 +214,33 @@ export interface ProjectRunExecuteResponse {
   success: boolean;
   /** Lifecycle outcome. Sent for a pause, which `success` alone cannot express (#2085). */
   status?: "waiting";
-  waiting_reason?: "approval" | "event";
+  waiting_reason?: "approval" | "event" | "child_run";
+  /** Every independently durable run that must terminate before this workflow continues. */
+  waiting_on?: WorkflowWaitingDependency[];
   waiting?: WorkflowWaitingDetails;
   result?: unknown;
   logs?: string | null;
   error?: string | null;
-  error_code?: "RUN_TIMEOUT" | "INPUT_VALIDATION_FAILED";
-  /** Structured failure detail, such as the validation errors for `INPUT_VALIDATION_FAILED`. */
+  error_code?:
+    | "RUN_TIMEOUT"
+    | "INPUT_VALIDATION_FAILED"
+    | "OUTPUT_VALIDATION_FAILED"
+    | "OUTPUT_TOO_LARGE";
+  /**
+   * Structured failure detail, such as schema validation errors, or
+   * `{ size_bytes, limit_bytes }` for `OUTPUT_TOO_LARGE`.
+   */
   error_detail?: unknown;
   /** The task threw a RetryableError; the API may start another attempt. */
   retryable?: true;
   duration_ms?: number;
   artifacts?: unknown[];
+  /** sha256 of the canonical declared input schema (task and workflow runs), or `null` when none. */
+  input_schema_sha256?: string | null;
+  /** sha256 of the canonical declared output schema (task and workflow runs), or `null` when none. */
+  output_schema_sha256?: string | null;
+  /** A recorded, non-fatal schema mismatch (warning phase), or `null`. */
+  schema_violation?: SchemaViolation | null;
 }
 
 interface EvalReportUploadInput {
@@ -200,12 +250,18 @@ interface EvalReportUploadInput {
   report: EvalReport;
   projectReference: string;
   reportPath: string;
+  signal?: AbortSignal;
 }
 
 interface WorkflowRunView {
   status: string;
   output?: unknown;
-  error?: { message?: string } | null;
+  /** The nodes a `waiting` run is parked on. */
+  currentNodes?: ReadonlyArray<string>;
+  nodeStates?: Readonly<
+    Record<string, { input?: unknown; status?: string; _waitInstanceId?: string } | undefined>
+  >;
+  error?: { message?: string; code?: string; detail?: unknown } | null;
   pendingApprovals?: ReadonlyArray<
     { id: string; nodeId: string; status?: string; expiresAt?: Date | string }
   >;
@@ -227,6 +283,8 @@ interface WorkflowStartHandle {
 
 interface WorkflowClientView {
   readonly statePersistence?: "durable" | "ephemeral";
+  /** False when the durable backend cannot save event and delay waits. */
+  readonly persistsEventWaits?: boolean;
   register(workflow: unknown): void;
   start(
     workflowId: string,
@@ -235,6 +293,10 @@ interface WorkflowClientView {
   ): Promise<WorkflowStartHandle>;
   getRun(runId: string): Promise<WorkflowRunView | null>;
   getPendingEventWaits?(runId: string): Promise<WorkflowEventWaitView[]>;
+  resumeChildRuns?(
+    runId: string,
+    expectedBoundary: ReadonlyArray<{ nodeId: string; runIds: string[]; waitInstanceId: string }>,
+  ): Promise<boolean>;
   approve?(
     runId: string,
     approvalId: string,
@@ -292,23 +354,29 @@ export interface ProjectRunExecuteHandlerDeps {
     request: ProjectRunExecuteRequest;
     ctx: HandlerContext;
     req: Request;
+    signal: AbortSignal;
   }): Promise<ProjectRunExecuteResponse>;
   executeReleaseAssetBuild(input: {
     request: ProjectRunExecuteRequest;
     ctx: HandlerContext;
     req: Request;
+    signal: AbortSignal;
   }): Promise<ProjectRunExecuteResponse>;
   executeDependencyArtifactBuild(input: {
     request: ProjectRunExecuteRequest;
     ctx: HandlerContext;
     req: Request;
+    signal: AbortSignal;
   }): Promise<ProjectRunExecuteResponse>;
   executeStyleArtifactBuild(input: {
     request: ProjectRunExecuteRequest;
     ctx: HandlerContext;
     req: Request;
+    signal: AbortSignal;
   }): Promise<ProjectRunExecuteResponse>;
   workflowResumeTimeoutMs?: number;
+  /** How long a response waits for workflow client cleanup; defaults to 5 seconds. */
+  workflowClientDestroyTimeoutMs?: number;
   sleep(ms: number): Promise<void>;
   now(): number;
 }
@@ -421,7 +489,13 @@ function parseExecuteRequest(value: unknown, pathRunId: string): ProjectRunExecu
   if (runId !== pathRunId) {
     throw INPUT_VALIDATION_FAILED.create({ detail: "Run id does not match request path" });
   }
-  if (kind !== "task" && kind !== "workflow" && kind !== "eval") {
+  if (kind === "eval") {
+    throw new ControlPlaneRequestError(
+      400,
+      "Run kind 'eval' is retired; use kind 'task' with target 'task:eval'",
+    );
+  }
+  if (kind !== "task" && kind !== "workflow") {
     throw INPUT_VALIDATION_FAILED.create({ detail: "Invalid run kind" });
   }
   if (typeof target !== "string" || !target) {
@@ -435,9 +509,6 @@ function parseExecuteRequest(value: unknown, pathRunId: string): ProjectRunExecu
   }
   if (kind === "workflow" && !target.startsWith("workflow:")) {
     throw INPUT_VALIDATION_FAILED.create({ detail: "Invalid workflow target" });
-  }
-  if (kind === "eval" && !target.startsWith("eval:")) {
-    throw INPUT_VALIDATION_FAILED.create({ detail: "Invalid eval target" });
   }
 
   const deadlineAt = value.deadlineAt;
@@ -548,6 +619,8 @@ function parseResumeSignal(
       };
     case "deadline":
       return { type: "deadline", ...parseResumeWaitId(value.wait_id) };
+    case "child_run":
+      return { type: "child_run", wait_id: parseResumeId(value.wait_id, "resume.wait_id") };
     default:
       throw INPUT_VALIDATION_FAILED.create({ detail: "Invalid resume.type" });
   }
@@ -609,6 +682,56 @@ function createInputValidationFailure(
     logs: null,
     duration_ms: durationMs,
   };
+}
+
+/**
+ * Applies the run output limit before a response is sent (veryfront/veryfront-issue-inbox#2113).
+ * A successful result over the limit becomes an OUTPUT_TOO_LARGE failure without the result; a
+ * failed response drops an oversized result and keeps its own error. Nothing is truncated.
+ */
+function enforceRunOutputLimit(response: ProjectRunExecuteResponse): {
+  response: ProjectRunExecuteResponse;
+  wireJson: string;
+} {
+  if (!("result" in response)) {
+    return { response, wireJson: serializeRunOutput(response) ?? "null" };
+  }
+  // Serialize once: the checked serialization is the one sent, so a result whose `toJSON`
+  // or getters change between serializations cannot slip past the limit.
+  const serialized = serializeRunOutput(response.result);
+  const tooLarge = checkRunOutputBytes(measureSerializedRunOutputBytes(serialized));
+  if (!tooLarge) {
+    const safeResponse = {
+      ...response,
+      result: serialized === undefined ? undefined : parseSerializedRunOutput(serialized),
+    };
+    // Emit the exact bytes that were measured. Re-serializing the parsed copy can grow it,
+    // for example `JSON.rawJSON("1e20")` is 4 bytes checked but 21 bytes once parsed.
+    const { result: _checked, ...envelope } = response;
+    return {
+      response: safeResponse,
+      wireJson: withSerializedResult(serializeRunOutput(envelope) ?? "{}", serialized),
+    };
+  }
+
+  const { result: _oversized, ...withoutResult } = response;
+  const safeResponse = response.success
+    ? {
+      ...withoutResult,
+      success: false,
+      error: tooLarge.message,
+      error_code: tooLarge.code,
+      error_detail: tooLarge.detail,
+    }
+    : withoutResult;
+  return { response: safeResponse, wireJson: serializeRunOutput(safeResponse) ?? "null" };
+}
+
+/** Appends an already serialized `result` member to a serialized response envelope. */
+function withSerializedResult(envelopeJson: string, serializedResult: string | undefined): string {
+  if (serializedResult === undefined) return envelopeJson;
+  const member = `"result":${serializedResult}`;
+  return envelopeJson === "{}" ? `{${member}}` : `${envelopeJson.slice(0, -1)},${member}}`;
 }
 
 function createExecutionFailure(error: unknown, durationMs: number): ProjectRunExecuteResponse {
@@ -731,6 +854,7 @@ async function createRuntimeWorkflowClient(
 
   return Object.assign(createWorkflowClient({ ...clientConfig, backend, debug: config?.debug }), {
     statePersistence: "durable" as const,
+    persistsEventWaits: hasEventWaitSupport(backend),
   });
 }
 
@@ -751,6 +875,13 @@ function withRuntimeStepRegistries(config?: WorkflowClientConfig): WorkflowClien
 interface TaskDeadlineControl {
   signal: AbortSignal;
   throwIfExpired(): void;
+}
+
+async function runWhileActive<T>(signal: AbortSignal, operation: () => Promise<T>): Promise<T> {
+  signal.throwIfAborted();
+  const result = await operation();
+  signal.throwIfAborted();
+  return result;
 }
 
 async function executeTaskRun(
@@ -857,9 +988,15 @@ async function executeDiscoveredTaskRun(
     success: result.success,
     result: result.result,
     error: result.error,
+    ...(result.errorCode === undefined ? {} : { error_code: result.errorCode }),
+    ...(result.errorDetail === undefined ? {} : { error_detail: result.errorDetail }),
     duration_ms: result.durationMs,
     logs: null,
     ...(result.retryable ? { retryable: true as const } : {}),
+    // Omitted rather than null, so a schema-less task response is byte-identical to before.
+    ...(result.inputSchemaSha256 ? { input_schema_sha256: result.inputSchemaSha256 } : {}),
+    ...(result.outputSchemaSha256 ? { output_schema_sha256: result.outputSchemaSha256 } : {}),
+    ...(result.schemaViolation ? { schema_violation: result.schemaViolation } : {}),
   };
 }
 
@@ -884,6 +1021,7 @@ async function waitForWorkflowResult(
 ): Promise<WorkflowRunView> {
   const deadline = deps.now() + DEFAULT_WORKFLOW_STATUS_TIMEOUT_MS;
   let previousKeys: string[] | undefined;
+  let parkedOnNothingSince: number | undefined;
 
   while (true) {
     const run = await client.getRun(runId);
@@ -904,6 +1042,25 @@ async function waitForWorkflowResult(
     if (run.status === "waiting") {
       if (client.statePersistence !== "durable") return run;
       const keys = waitKeys(await readPendingWaits(client, runId, run));
+      // A backend without event waits saves no record for a `waitForEvent()`
+      // or `delay()`, so nothing can ever resume the run: fail it instead of
+      // polling until the status timeout. An approval pause still saves its
+      // record on such a backend, so a slow write there is only awaited.
+      if (
+        keys.length === 0 && client.persistsEventWaits === false && !isParkedOnApproval(run)
+      ) {
+        parkedOnNothingSince ??= deps.now();
+        if (deps.now() - parkedOnNothingSince >= WORKFLOW_UNPERSISTED_WAIT_GRACE_MS) {
+          await client.cancel(runId);
+          return {
+            status: "failed",
+            output: run.output,
+            error: { message: UNPERSISTED_EVENT_WAIT_ERROR },
+          };
+        }
+      } else {
+        parkedOnNothingSince = undefined;
+      }
       const settled = keys.length > 0 &&
         !(releasedKeys && sameKeys(keys, releasedKeys)) &&
         previousKeys !== undefined && sameKeys(keys, previousKeys);
@@ -911,6 +1068,7 @@ async function waitForWorkflowResult(
       previousKeys = keys;
     } else {
       previousKeys = undefined;
+      parkedOnNothingSince = undefined;
     }
 
     if (deps.now() >= deadline) {
@@ -921,9 +1079,19 @@ async function waitForWorkflowResult(
   }
 }
 
+/** True when a `waiting` run is parked on an approval node, whose record every durable backend saves. */
+function isParkedOnApproval(run: WorkflowRunView): boolean {
+  return (run.currentNodes ?? []).some((nodeId) => {
+    const input = run.nodeStates?.[nodeId]?.input;
+    return typeof input === "object" && input !== null &&
+      (input as { type?: unknown }).type === "approval";
+  });
+}
+
 interface PendingWorkflowWaits {
   approvals: NonNullable<WorkflowRunView["pendingApprovals"]>;
   eventWaits: WorkflowEventWaitView[];
+  childRunWaits: Array<{ nodeId: string; runIds: string[]; waitInstanceId: string }>;
 }
 
 function isPendingWait(entry: { status?: string }): boolean {
@@ -936,9 +1104,25 @@ async function readPendingWaits(
   runId: string,
   run: WorkflowRunView,
 ): Promise<PendingWorkflowWaits> {
+  const childRunWaits = (run.currentNodes ?? []).flatMap((nodeId) => {
+    const state = run.nodeStates?.[nodeId];
+    const input = state?.input as { type?: unknown; runIds?: unknown } | undefined;
+    if (
+      input?.type !== "child_run" ||
+      !Array.isArray(input.runIds) || input.runIds.length === 0 ||
+      input.runIds.some((runId) => typeof runId !== "string" || runId.length === 0) ||
+      typeof state?._waitInstanceId !== "string" || state._waitInstanceId.length === 0
+    ) return [];
+    return [{
+      nodeId,
+      runIds: input.runIds as string[],
+      waitInstanceId: state._waitInstanceId,
+    }];
+  });
   return {
     approvals: (run.pendingApprovals ?? []).filter(isPendingWait),
     eventWaits: (await client.getPendingEventWaits?.(runId) ?? []).filter(isPendingWait),
+    childRunWaits,
   };
 }
 
@@ -973,14 +1157,27 @@ async function describeWorkflowWait(parked: PendingWorkflowWaits): Promise<Workf
   };
 }
 
+function childRunDependencies(parked: PendingWorkflowWaits): WorkflowWaitingDependency[] {
+  return parked.childRunWaits.flatMap(({ nodeId, runIds }) =>
+    runIds.map((runId) => ({
+      kind: "run" as const,
+      run_id: runId,
+      correlation: { kind: "workflow_node" as const, id: nodeId },
+    }))
+  );
+}
+
 /**
  * The approval and wait records a run is parked on. A later pause, even on
  * the same node (a loop), creates new records, so the keys change with it.
  */
-function waitKeys({ approvals, eventWaits }: PendingWorkflowWaits): string[] {
+function waitKeys({ approvals, eventWaits, childRunWaits }: PendingWorkflowWaits): string[] {
   return [
     ...approvals.map((approval) => `approval:${approval.id}`),
     ...eventWaits.map(eventWaitKey),
+    ...childRunWaits.flatMap(({ runIds, waitInstanceId }) =>
+      runIds.map((runId) => `child:${waitInstanceId}:${runId}`)
+    ),
   ].sort((left, right) => left.localeCompare(right));
 }
 
@@ -993,18 +1190,43 @@ function sameKeys(left: string[], right: string[]): boolean {
   return left.length === right.length && left.every((key, index) => key === right[index]);
 }
 
-function isParkedOnNothing({ approvals, eventWaits }: PendingWorkflowWaits): boolean {
-  return approvals.length === 0 && eventWaits.length === 0;
+function isParkedOnNothing(
+  { approvals, eventWaits, childRunWaits }: PendingWorkflowWaits,
+): boolean {
+  return approvals.length === 0 && eventWaits.length === 0 && childRunWaits.length === 0;
 }
 
-function waitBoundaryId(parked: PendingWorkflowWaits): Promise<string> {
-  return computeHash(waitKeys(parked).join("\n"));
+async function waitKeyHash(key: string): Promise<string> {
+  return (await computeHash(key)).slice(0, WAIT_ID_HASH_LENGTH);
 }
 
+/**
+ * Identifies a pause by its wait records: one short hash per record, so a
+ * decision for one of several parallel waits still matches after another of
+ * them was released. A pause on too many records to list falls back to one
+ * hash of the whole set.
+ */
+async function waitBoundaryId(parked: PendingWorkflowWaits): Promise<string> {
+  const keys = waitKeys(parked);
+  const hashes = await Promise.all(keys.map(waitKeyHash));
+  const id = [WAIT_ID_PREFIX, ...hashes].join(".");
+  return id.length <= WAIT_ID_MAX_LENGTH ? id : computeHash(keys.join("\n"));
+}
+
+/** The wait-record hashes a listed `wait_id` names, or undefined for a whole-set hash. */
+function listedWaitHashes(waitId: string): Set<string> | undefined {
+  const [prefix, ...hashes] = waitId.split(".");
+  return prefix === WAIT_ID_PREFIX ? new Set(hashes) : undefined;
+}
+
+/**
+ * Matches the runtime's expiry sweeps, which release a wait only once the
+ * clock is past its deadline, not at the deadline itself.
+ */
 function hasDueWait({ approvals, eventWaits }: PendingWorkflowWaits, nowMs: number): boolean {
   return [...approvals, ...eventWaits].some((wait) => {
     const deadline = deadlineMs(wait.expiresAt);
-    return deadline !== undefined && deadline <= nowMs;
+    return deadline !== undefined && deadline < nowMs;
   });
 }
 
@@ -1041,6 +1263,12 @@ async function applyResumeSignal(
   parked: PendingWorkflowWaits,
   nowMs: number,
 ): Promise<{ released: boolean } | { failure: string }> {
+  if (resume.type === "child_run") {
+    if (!client.resumeChildRuns) {
+      return { failure: "Workflow client cannot release child-run waits" };
+    }
+    return { released: await client.resumeChildRuns(runId, parked.childRunWaits) };
+  }
   if (resume.type === "event") return deliverResumeEvent(client, runId, resume);
   if (resume.type === "deadline") {
     if (!client.getApprovalManager || !client.getEventWaitManager) {
@@ -1064,6 +1292,11 @@ async function applyResumeSignal(
  * is parked on now: an earlier dispatch applied it and the run moved on before
  * its response reached the control plane. Such a retry reports where the run
  * is and applies nothing, so it cannot decide a later boundary (#2102).
+ *
+ * An approval or event decision is checked against the waits it targets, so
+ * the second of two parallel waits still accepts its decision after the first
+ * was released. A deadline releases every due wait, so it applies only while
+ * every pending wait belongs to the pause it was scheduled for.
  */
 async function isStaleDecision(
   resume: WorkflowResumeSignal,
@@ -1071,7 +1304,36 @@ async function isStaleDecision(
 ): Promise<boolean> {
   if (resume.wait_id === undefined) return false;
   if (isParkedOnNothing(parked)) return false;
-  return resume.wait_id !== await waitBoundaryId(parked);
+  const named = listedWaitHashes(resume.wait_id);
+  if (!named) return resume.wait_id !== await waitBoundaryId(parked);
+
+  const pending = waitKeys(parked);
+  const targeted = targetedWaitKeys(resume, parked);
+  const hashes = await Promise.all(pending.map(waitKeyHash));
+  const isNamed = (key: string) => named.has(hashes[pending.indexOf(key)]!);
+  if (resume.type === "child_run") {
+    return targeted.length === 0 || !targeted.every(isNamed);
+  }
+  if (resume.type === "deadline" || targeted.length === 0) return !pending.every(isNamed);
+  return !targeted.some(isNamed);
+}
+
+/** The pending wait records an approval or event decision would release. */
+function targetedWaitKeys(resume: WorkflowResumeSignal, parked: PendingWorkflowWaits): string[] {
+  if (resume.type === "child_run") {
+    return waitKeys({ approvals: [], eventWaits: [], childRunWaits: parked.childRunWaits });
+  }
+  if (resume.type === "approval") {
+    return parked.approvals
+      .filter((approval) => approval.nodeId === resume.node_id)
+      .map((approval) => `approval:${approval.id}`);
+  }
+  if (resume.type === "event") {
+    return parked.eventWaits
+      .filter((wait) => wait.waitKind === "event" && wait.eventName === resume.name)
+      .map(eventWaitKey);
+  }
+  return [];
 }
 
 /**
@@ -1147,6 +1409,34 @@ async function executeWorkflowRun(
     };
   }
 
+  // The same identity a task run reports, from the same helper, so the API stores one
+  // canonical sha256 per declared schema whatever the run kind (#2108).
+  const { inputSchema, outputSchema } = workflow.definition;
+  const inputSchemaSha256 = await schemaIdentitySha256(inputSchema);
+  const outputSchemaSha256 = await schemaIdentitySha256(outputSchema);
+  let response: ProjectRunExecuteResponse;
+  try {
+    response = await runDiscoveredWorkflow(request, ctx, workflow, signal, deps, startedAt);
+  } catch (error) {
+    // A failure after discovery still ran against the declared schemas; keep their identity.
+    response = createExecutionFailure(error, Math.max(0, deps.now() - startedAt));
+  }
+  return {
+    ...response,
+    // Omitted rather than null, so a schema-less workflow response is byte-identical to before.
+    ...(inputSchemaSha256 ? { input_schema_sha256: inputSchemaSha256 } : {}),
+    ...(outputSchemaSha256 ? { output_schema_sha256: outputSchemaSha256 } : {}),
+  };
+}
+
+async function runDiscoveredWorkflow(
+  request: ProjectRunExecuteRequest,
+  ctx: HandlerContext,
+  workflow: DiscoveredWorkflow,
+  signal: AbortSignal,
+  deps: ProjectRunExecuteHandlerDeps,
+  startedAt: number,
+): Promise<ProjectRunExecuteResponse> {
   const client = await deps.createWorkflowClient(
     withRuntimeStepRegistries({ debug: ctx.debug }),
     {
@@ -1188,15 +1478,30 @@ async function executeWorkflowRun(
       let timer: ReturnType<typeof setTimeout> | undefined;
       const resumed = await Promise.race([
         operation,
-        new Promise<never>((_resolve, reject) => {
+        new Promise<{ timedOut: true }>((resolve) => {
           timer = setTimeout(() => {
             resumeTimedOut = true;
-            reject(TIMEOUT_ERROR.create({
-              detail: `Workflow run timed out: ${request.runId}`,
-            }));
+            resolve({ timedOut: true });
           }, deps.workflowResumeTimeoutMs ?? DEFAULT_WORKFLOW_STATUS_TIMEOUT_MS);
         }),
       ]).finally(() => clearTimeout(timer));
+      if ("timedOut" in resumed) {
+        // The resumed execution keeps running durably, so the run did not
+        // fail: keep the canonical run waiting and have the control plane
+        // dispatch it again soon. That dispatch names no pending wait, so it
+        // releases nothing and reports where the run got to.
+        return {
+          success: true,
+          status: "waiting",
+          waiting_reason: "event",
+          waiting: {
+            wait_id: WAIT_ID_PREFIX,
+            resume_at: new Date(deps.now() + WORKFLOW_RESUME_RECHECK_MS).toISOString(),
+          },
+          logs: null,
+          duration_ms: Math.max(0, deps.now() - startedAt),
+        };
+      }
       if ("failure" in resumed) {
         return {
           success: false,
@@ -1249,13 +1554,27 @@ async function executeWorkflowRun(
       // A pause is not a result: report what the run waits on so the control
       // plane keeps the canonical run `waiting` (#2085) and knows when to
       // dispatch it again (#2110). The pause payload is never sent as output.
-      const waiting = await describeWorkflowWait(
-        await readPendingWaits(client, request.runId, run),
-      );
+      const parked = await readPendingWaits(client, request.runId, run);
+      const waiting = await describeWorkflowWait(parked);
+      const waitingOn = childRunDependencies(parked);
+      if (waitingOn.length > MAX_WORKFLOW_CHILD_RUN_DEPENDENCIES) {
+        return {
+          success: false,
+          error: `A workflow pause can wait on at most ` +
+            `${MAX_WORKFLOW_CHILD_RUN_DEPENDENCIES} child-run dependencies`,
+          logs: null,
+          duration_ms: durationMs,
+        };
+      }
       return {
         success: true,
         status: "waiting",
-        waiting_reason: waiting.pending_approvals?.length ? "approval" : "event",
+        waiting_reason: waitingOn.length > 0
+          ? "child_run"
+          : waiting.pending_approvals?.length
+          ? "approval"
+          : "event",
+        ...(waitingOn.length > 0 ? { waiting_on: waitingOn } : {}),
         waiting,
         logs: null,
         duration_ms: durationMs,
@@ -1271,10 +1590,25 @@ async function executeWorkflowRun(
       };
     }
 
+    const validationErrors = run.error?.code === INPUT_VALIDATION_FAILED_CODE
+      ? readSchemaValidationErrors((run.error.detail as { errors?: unknown } | undefined)?.errors)
+      : undefined;
     return {
       success: false,
+      ...(validationErrors
+        ? {
+          error_code: INPUT_VALIDATION_FAILED_CODE,
+          error_detail: { errors: validationErrors },
+        }
+        : {}),
       result: run.output,
       error: run.error?.message ?? `Workflow ended with status: ${run.status}`,
+      ...(run.error?.code === OUTPUT_VALIDATION_FAILED_CODE
+        ? {
+          error_code: OUTPUT_VALIDATION_FAILED_CODE,
+          ...(run.error.detail === undefined ? {} : { error_detail: run.error.detail }),
+        }
+        : {}),
       logs: null,
       duration_ms: durationMs,
     };
@@ -1288,15 +1622,64 @@ async function executeWorkflowRun(
         });
       });
     } else {
-      await client.destroy();
+      await destroyWorkflowClient(
+        client,
+        request.runId,
+        deps.workflowClientDestroyTimeoutMs ?? DEFAULT_WORKFLOW_CLIENT_DESTROY_TIMEOUT_MS,
+      );
     }
   }
 }
 
+/**
+ * Release the workflow client without letting cleanup decide the response: a
+ * cleanup that fails or does not finish in time is logged, and the run's
+ * result is still returned (veryfront-issue-inbox#2109). Uses the host timers
+ * captured at load, because project code may have replaced the globals.
+ */
+async function destroyWorkflowClient(
+  client: WorkflowClientView,
+  runId: string,
+  timeoutMs: number,
+): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  // Started inside a promise so a synchronous throw is logged like a rejection.
+  const destroyed = Promise.resolve().then(() => client.destroy()).then(
+    () => true,
+    (error: unknown) => {
+      serverLogger.warn("[project-run-execute] Failed to destroy workflow client", {
+        runId,
+        errorName: error instanceof TaskError ? error.name : "unknown",
+      });
+      return true;
+    },
+  );
+  const finished = await Promise.race([
+    destroyed,
+    new Promise<false>((resolve) => {
+      timer = TaskSetTimeout(() => resolve(false), timeoutMs);
+    }),
+  ]).finally(() => TaskClearTimeout(timer));
+  if (!finished) {
+    serverLogger.warn("[project-run-execute] Workflow client cleanup did not finish", {
+      runId,
+      timeoutMs,
+    });
+  }
+}
+
 interface RuntimeApiClient {
-  get<T>(path: string, params?: Record<string, string>): Promise<T>;
+  get<T>(
+    path: string,
+    params?: Record<string, string>,
+    options?: { signal?: AbortSignal },
+  ): Promise<T>;
   post<T>(path: string, body?: unknown): Promise<T>;
-  put<T>(path: string, body?: unknown): Promise<T>;
+  put<T>(
+    path: string,
+    body?: unknown,
+    options?: { signal?: AbortSignal; retryPolicy?: "default" | "none" },
+  ): Promise<T>;
   patch<T>(path: string, body?: unknown): Promise<T>;
   delete<T>(path: string): Promise<T>;
 }
@@ -1725,7 +2108,11 @@ function getEndpointProtocol(endpoint?: string): string | undefined {
   }
 }
 
-function createRuntimeApiClient(req: Request, ctx: HandlerContext): RuntimeApiClient {
+function createRuntimeApiClient(
+  req: Request,
+  ctx: HandlerContext,
+  defaultSignal?: AbortSignal,
+): RuntimeApiClient {
   const apiUrl = getEnvironmentConfig().apiBaseUrl;
   const token = getRuntimeApiToken(req, ctx);
   if (!token) {
@@ -1737,6 +2124,7 @@ function createRuntimeApiClient(req: Request, ctx: HandlerContext): RuntimeApiCl
     path: string,
     body?: unknown,
     params?: Record<string, string>,
+    signal: AbortSignal | undefined = defaultSignal,
   ): Promise<T> {
     const url = new URL(`${apiUrl}${path}`);
     for (const [key, value] of Object.entries(params ?? {})) {
@@ -1751,6 +2139,7 @@ function createRuntimeApiClient(req: Request, ctx: HandlerContext): RuntimeApiCl
         "Content-Type": "application/json",
       },
       body: body === undefined ? undefined : JSON.stringify(body),
+      signal,
     });
 
     if (!response.ok) {
@@ -1765,14 +2154,22 @@ function createRuntimeApiClient(req: Request, ctx: HandlerContext): RuntimeApiCl
   }
 
   return {
-    get<T>(path: string, params?: Record<string, string>): Promise<T> {
-      return requestJson<T>("GET", path, undefined, params);
+    get<T>(
+      path: string,
+      params?: Record<string, string>,
+      options?: { signal?: AbortSignal },
+    ): Promise<T> {
+      return requestJson<T>("GET", path, undefined, params, options?.signal);
     },
     post<T>(path: string, body?: unknown): Promise<T> {
       return requestJson<T>("POST", path, body);
     },
-    put<T>(path: string, body?: unknown): Promise<T> {
-      return requestJson<T>("PUT", path, body);
+    put<T>(
+      path: string,
+      body?: unknown,
+      options?: { signal?: AbortSignal },
+    ): Promise<T> {
+      return requestJson<T>("PUT", path, body, undefined, options?.signal);
     },
     patch<T>(path: string, body?: unknown): Promise<T> {
       return requestJson<T>("PATCH", path, body);
@@ -1783,7 +2180,7 @@ function createRuntimeApiClient(req: Request, ctx: HandlerContext): RuntimeApiCl
   };
 }
 
-async function uploadEvalReportToProjectFiles(
+export async function uploadEvalReportToProjectFiles(
   input: EvalReportUploadInput,
 ): Promise<string | null> {
   const client = createRuntimeApiClient(input.req, input.ctx);
@@ -1793,7 +2190,9 @@ async function uploadEvalReportToProjectFiles(
   const response = await client.put<{ path?: string }>(
     `/projects/${encodedProject}/files/${encodedPath}`,
     { content: `${JSON.stringify(reportWithPath, null, 2)}\n` },
+    { signal: input.signal },
   );
+  input.signal?.throwIfAborted();
   return response.path ?? input.reportPath;
 }
 
@@ -1850,9 +2249,13 @@ async function resolveUploadIdsToPaths(
   return paths;
 }
 
-export function createKnowledgeEventLogger(lines: string[]): Logger {
+export function createKnowledgeEventLogger(
+  lines: string[],
+  truncatedMessage = KNOWLEDGE_LOG_TRUNCATED_MESSAGE,
+): Logger {
   const encoder = new TextEncoder();
-  const truncatedLineBytes = encoder.encode(KNOWLEDGE_LOG_TRUNCATED_LINE).byteLength;
+  const truncatedLine = JSON.stringify({ level: "warn", message: truncatedMessage });
+  const truncatedLineBytes = encoder.encode(truncatedLine).byteLength;
   let eventCount = 0;
   let byteCount = 0;
   let truncated = false;
@@ -1862,7 +2265,7 @@ export function createKnowledgeEventLogger(lines: string[]): Logger {
     truncated = true;
     const separatorBytes = lines.length > 0 ? 1 : 0;
     if (byteCount + separatorBytes + truncatedLineBytes <= KNOWLEDGE_LOG_MAX_BYTES) {
-      lines.push(KNOWLEDGE_LOG_TRUNCATED_LINE);
+      lines.push(truncatedLine);
     }
   };
   const append = (level: string, message: string, metadata?: Record<string, unknown>) => {
@@ -1908,15 +2311,17 @@ async function executeKnowledgeIngestRun(input: {
   request: ProjectRunExecuteRequest;
   ctx: HandlerContext;
   req: Request;
+  signal: AbortSignal;
 }): Promise<ProjectRunExecuteResponse> {
   const startedAt = Date.now();
   const config = input.request.config ?? {};
-  const client = createRuntimeApiClient(input.req, input.ctx);
+  const client = createRuntimeApiClient(input.req, input.ctx, input.signal);
   const projectReference = input.ctx.projectSlug ?? input.request.projectId;
   const outputDir = await Deno.makeTempDir({ prefix: "veryfront-knowledge-run-" });
   const logLines: string[] = [];
 
   try {
+    input.signal.throwIfAborted();
     const {
       buildKnowledgeIngestRunResult,
     } = await import("#cli/commands/knowledge/result");
@@ -1935,6 +2340,7 @@ async function executeKnowledgeIngestRun(input: {
       ...paths,
       ...await resolveUploadIdsToPaths(client, projectReference, uploadIds),
     ];
+    input.signal.throwIfAborted();
     const pathPrefix = getStringConfig(config, [
       "path_prefix",
       "upload_prefix",
@@ -1972,10 +2378,18 @@ async function executeKnowledgeIngestRun(input: {
       downloadUploads: (uploadTargets) =>
         Promise.all(
           uploadTargets.map((uploadPath) =>
-            downloadUploadToFile(client, projectReference, uploadPath, downloadOutputDir)
+            downloadUploadToFile(
+              client,
+              projectReference,
+              uploadPath,
+              downloadOutputDir,
+              input.signal,
+            )
           ),
         ),
+      signal: input.signal,
     });
+    input.signal.throwIfAborted();
     const requestedCount = collection.sources.length + collection.skipped.length;
     if (requestedCount === 0) {
       throw INVALID_ARGUMENT.create({ detail: "No supported knowledge sources were found." });
@@ -1988,8 +2402,16 @@ async function executeKnowledgeIngestRun(input: {
       runParser: runKnowledgeParser,
       eventLogger: createKnowledgeEventLogger(logLines),
       uploadKnowledgeFile: (remotePath, localPath) =>
-        putRemoteFileFromLocal(client, projectReference, remotePath, localPath),
+        putRemoteFileFromLocal(
+          client,
+          projectReference,
+          remotePath,
+          localPath,
+          input.signal,
+        ),
+      signal: input.signal,
     });
+    input.signal.throwIfAborted();
     const result = buildKnowledgeIngestRunResult({
       requestedCount,
       sourceMode,
@@ -2013,6 +2435,7 @@ async function executeKnowledgeIngestRun(input: {
       duration_ms: Date.now() - startedAt,
     };
   } catch (error) {
+    input.signal.throwIfAborted();
     return {
       success: false,
       error: errorMessage(error),
@@ -2172,10 +2595,21 @@ async function executeEvalRun(
   ctx: HandlerContext,
   req: Request,
   deps: ProjectRunExecuteHandlerDeps,
+  options: {
+    evalId?: string;
+    signal?: AbortSignal;
+    summaryOnly?: boolean;
+    progressLogs?: string[];
+  } = {},
 ): Promise<ProjectRunExecuteResponse> {
   const startedAt = deps.now();
+  const evalId = options.evalId ?? request.target;
+  const progressLogs = options.progressLogs ?? [];
+  const progressLogger = options.summaryOnly
+    ? createKnowledgeEventLogger(progressLogs, "Eval progress logs were truncated")
+    : undefined;
   await deps.ensureProjectDiscovery(ctx);
-  const evalItem = await deps.findEvalById(request.target, {
+  const evalItem = await deps.findEvalById(evalId, {
     projectDir: ctx.projectDir,
     adapter: ctx.adapter,
     config: ctx.config,
@@ -2186,10 +2620,31 @@ async function executeEvalRun(
   if (!evalItem) {
     return {
       success: false,
-      error: `Eval not found: ${request.target}`,
+      error: `Eval not found: ${evalId}`,
       logs: null,
       duration_ms: 0,
     };
+  }
+
+  if (evalItem.definition.inputSchema !== undefined) {
+    const check = await checkDeclaredSchema(evalItem.definition.inputSchema, request.input);
+    if (check.outcome === "invalid") {
+      return {
+        success: false,
+        error: `Eval "${evalItem.id}" input failed inputSchema validation: ${
+          formatSchemaValidationErrors(check.errors)
+        }`,
+        error_code: INPUT_VALIDATION_FAILED_CODE,
+        error_detail: { errors: check.errors },
+        logs: null,
+        duration_ms: Math.max(0, deps.now() - startedAt),
+      };
+    }
+    if (check.outcome === "schema_uncompilable") {
+      throw INVALID_ARGUMENT.create({
+        detail: `Eval "${evalItem.id}" inputSchema could not be compiled`,
+      });
+    }
   }
 
   const config = request.config ?? {};
@@ -2203,7 +2658,21 @@ async function executeEvalRun(
       : {},
     baseDir: ctx.projectDir,
     runId: request.runId,
+    ...(options.signal ? { signal: options.signal } : {}),
+    ...(options.summaryOnly
+      ? {
+        onProgress: (event) => {
+          if (event.type !== "record-finished") return;
+          progressLogger?.info("Eval case completed", {
+            case_index: event.index + 1,
+            total_cases: event.total,
+            repetition: event.repetition,
+          });
+        },
+      }
+      : {}),
   });
+  options.signal?.throwIfAborted();
   const failed = Math.max(report.summary.failed, countFailedEvalRecords(report));
   const projectReference = ctx.projectSlug ?? request.projectId;
   const requestedReportPath = buildEvalReportPath(report, request);
@@ -2215,26 +2684,100 @@ async function executeEvalRun(
     report,
     projectReference,
     reportPath: requestedReportPath,
+    signal: options.signal,
   }).catch((error) => {
     uploadError = `Eval report upload failed: ${errorMessage(error)}`;
     return null;
   });
-  const result = reportPath ? { ...report, reportPath } : report;
+  options.signal?.throwIfAborted();
+  const result = options.summaryOnly
+    ? report.summary
+    : reportPath
+    ? { ...report, reportPath }
+    : report;
+  const requiredUploadError = options.summaryOnly && !reportPath
+    ? uploadError ?? "Eval report upload failed: report was not stored"
+    : null;
+  const failureMessages = [
+    ...(failed > 0 ? [`${failed} eval record${failed === 1 ? "" : "s"} failed`] : []),
+    ...(requiredUploadError ? [requiredUploadError] : []),
+  ];
+  const logs = [...progressLogs, ...(uploadError ? [uploadError] : [])].join("\n") || null;
 
   return {
-    success: failed === 0,
+    success: failureMessages.length === 0,
     result,
     ...(reportPath ? { artifacts: [createEvalReportArtifact(reportPath)] } : {}),
-    ...(failed > 0 ? { error: `${failed} eval record${failed === 1 ? "" : "s"} failed` } : {}),
-    logs: uploadError,
+    ...(failureMessages.length > 0 ? { error: failureMessages.join("; ") } : {}),
+    logs,
     duration_ms: Math.max(0, deps.now() - startedAt),
   };
+}
+
+async function executeEvalTaskRun(
+  request: ProjectRunExecuteRequest,
+  ctx: HandlerContext,
+  req: Request,
+  signal: AbortSignal,
+  deps: ProjectRunExecuteHandlerDeps,
+  control?: TaskDeadlineControl,
+): Promise<ProjectRunExecuteResponse> {
+  const evalId = getStringConfig(request.config ?? {}, ["eval_id"]);
+  if (!evalId) {
+    return {
+      success: false,
+      error: "task:eval requires config.eval_id",
+      logs: null,
+      duration_ms: 0,
+    };
+  }
+  const taskSignal = control
+    ? ReflectApply(TaskAbortSignalAny, AbortSignal, [[signal, control.signal]])
+    : signal;
+  const progressLogs: string[] = [];
+  const taskResult = await deps.runTask({
+    task: {
+      id: "eval",
+      name: "Run eval",
+      definition: {
+        name: "Run eval",
+        run: (taskContext) =>
+          executeEvalRun(request, ctx, req, deps, {
+            evalId,
+            signal: taskContext.signal ?? taskSignal,
+            summaryOnly: true,
+            progressLogs,
+          }),
+      },
+    },
+    ...(request.attempt === undefined ? {} : { attempt: request.attempt }),
+    config: request.config ?? {},
+    input: request.input,
+    runId: request.runId,
+    projectId: request.projectId,
+    environmentId: request.runtimeTargetEnvironmentId === undefined
+      ? ctx.environmentId
+      : request.runtimeTargetEnvironmentId ?? undefined,
+    signal: taskSignal,
+    debug: ctx.debug,
+  });
+  if (!taskResult.success) {
+    return {
+      success: false,
+      error: taskResult.error,
+      logs: progressLogs.join("\n") || null,
+      duration_ms: taskResult.durationMs,
+      ...(taskResult.retryable ? { retryable: true as const } : {}),
+    };
+  }
+  return taskResult.result as ProjectRunExecuteResponse;
 }
 
 async function executeReleaseAssetBuildRun(input: {
   request: ProjectRunExecuteRequest;
   ctx: HandlerContext;
   req: Request;
+  signal: AbortSignal;
 }): Promise<ProjectRunExecuteResponse> {
   const startedAt = Date.now();
   const config = input.request.config ?? {};
@@ -2244,6 +2787,7 @@ async function executeReleaseAssetBuildRun(input: {
   const tempDir = await Deno.makeTempDir({ prefix: "veryfront-release-assets-" });
 
   try {
+    input.signal.throwIfAborted();
     if (!releaseId || releaseVersion === undefined) {
       throw INVALID_ARGUMENT.create({
         detail: "Missing release_id or release_version for release asset build",
@@ -2295,23 +2839,33 @@ async function executeReleaseAssetBuildRun(input: {
       adapter: input.ctx.adapter,
       dependencyMode: "source",
       transform: (source, sourceFile, projectDir, adapter, options) =>
-        transformToESM(source, sourceFile, projectDir, adapter, {
-          projectId: options.projectId,
-          dev: options.dev,
-          ssr: options.ssr,
-          studioEmbed: false,
-          reactVersion: options.reactVersion,
-          serverExternalPackages: releaseConfig.build?.serverExternalPackages,
-          dependencyPinningCacheKey: options.dependencyPinningSnapshot?.cacheKey,
-          dependencyPinningDependencies: options.dependencyPinningSnapshot?.dependencies,
-          dependencyPinningSource: options.dependencyPinningSource,
-        }),
-      loadConfig: () => Promise.resolve(releaseConfig),
+        runWhileActive(input.signal, () =>
+          transformToESM(source, sourceFile, projectDir, adapter, {
+            projectId: options.projectId,
+            dev: options.dev,
+            ssr: options.ssr,
+            studioEmbed: false,
+            reactVersion: options.reactVersion,
+            serverExternalPackages: releaseConfig.build?.serverExternalPackages,
+            dependencyPinningCacheKey: options.dependencyPinningSnapshot?.cacheKey,
+            dependencyPinningDependencies: options.dependencyPinningSnapshot?.dependencies,
+            dependencyPinningSource: options.dependencyPinningSource,
+          })),
+      loadConfig: () => {
+        input.signal.throwIfAborted();
+        return Promise.resolve(releaseConfig);
+      },
       client: {
         beginReleaseAssetManifestBuild: (version) =>
-          apiClient.beginReleaseAssetManifestBuild(version),
+          runWhileActive(
+            input.signal,
+            () => apiClient.beginReleaseAssetManifestBuild(version, undefined, input.signal),
+          ),
         listAllReleaseFiles: async (version) => {
-          const files = await apiClient.listAllReleaseFiles(version);
+          const files = await runWhileActive(
+            input.signal,
+            () => apiClient.listAllReleaseFiles(version, {}, input.signal),
+          );
           return files.map((file) => {
             if (typeof file.content !== "string") {
               throw API_CLIENT_ERROR.create({
@@ -2323,14 +2877,40 @@ async function executeReleaseAssetBuildRun(input: {
           });
         },
         uploadReleaseAsset: (version, hash, contentType, bytes) =>
-          apiClient.uploadReleaseAsset(version, hash, contentType, bytes),
+          runWhileActive(
+            input.signal,
+            () =>
+              apiClient.uploadReleaseAsset(
+                version,
+                hash,
+                contentType,
+                bytes,
+                undefined,
+                input.signal,
+              ),
+          ),
         putReleaseAssetManifest: (version, manifest) =>
-          apiClient.putReleaseAssetManifest(version, manifest),
+          runWhileActive(
+            input.signal,
+            () => apiClient.putReleaseAssetManifest(version, manifest, undefined, input.signal),
+          ),
         reportReleaseAssetManifestState: (version, state, error) =>
-          apiClient.reportReleaseAssetManifestState(version, state, error),
-        compileProjectCss,
+          runWhileActive(
+            input.signal,
+            () =>
+              apiClient.reportReleaseAssetManifestState(
+                version,
+                state,
+                error,
+                undefined,
+                input.signal,
+              ),
+          ),
+        compileProjectCss: (...args) =>
+          runWhileActive(input.signal, () => compileProjectCss(...args)),
       },
     }, tempDir);
+    input.signal.throwIfAborted();
 
     return {
       success: result.success,
@@ -2340,6 +2920,7 @@ async function executeReleaseAssetBuildRun(input: {
       duration_ms: Date.now() - startedAt,
     };
   } catch (error) {
+    input.signal.throwIfAborted();
     return {
       success: false,
       error: errorMessage(error),
@@ -2355,9 +2936,11 @@ async function executeDependencyArtifactBuildRun(input: {
   request: ProjectRunExecuteRequest;
   ctx: HandlerContext;
   req: Request;
+  signal: AbortSignal;
 }): Promise<ProjectRunExecuteResponse> {
   const startedAt = Date.now();
   try {
+    input.signal.throwIfAborted();
     const {
       parseDependencyArtifactBuildTaskInput,
       runDependencyArtifactBuild,
@@ -2379,20 +2962,25 @@ async function executeDependencyArtifactBuildRun(input: {
     });
     const result = await runDependencyArtifactBuild(taskInput, {
       uploadAsset: ({ artifactId, attemptCount, contentHash, contentType, bytes }) =>
-        apiClient.uploadDependencyArtifactAsset(
-          artifactId,
-          attemptCount,
-          contentHash,
-          contentType,
-          bytes,
-        ),
+        runWhileActive(input.signal, () =>
+          apiClient.uploadDependencyArtifactAsset(
+            artifactId,
+            attemptCount,
+            contentHash,
+            contentType,
+            bytes,
+            input.signal,
+          )),
       reportResult: ({ artifactId, attemptCount, result }) =>
-        apiClient.reportDependencyArtifactBuildResult(
-          artifactId,
-          attemptCount,
-          result,
-        ),
-    });
+        runWhileActive(input.signal, () =>
+          apiClient.reportDependencyArtifactBuildResult(
+            artifactId,
+            attemptCount,
+            result,
+            input.signal,
+          )),
+    }, { signal: input.signal });
+    input.signal.throwIfAborted();
 
     return {
       success: result.success,
@@ -2402,6 +2990,7 @@ async function executeDependencyArtifactBuildRun(input: {
       duration_ms: Date.now() - startedAt,
     };
   } catch (error) {
+    input.signal.throwIfAborted();
     return {
       success: false,
       error: errorMessage(error),
@@ -2553,6 +3142,7 @@ async function executeStyleArtifactBuildRun(input: {
   request: ProjectRunExecuteRequest;
   ctx: HandlerContext;
   req: Request;
+  signal: AbortSignal;
 }): Promise<ProjectRunExecuteResponse> {
   const startedAt = Date.now();
   const config = input.request.config ?? {};
@@ -2562,6 +3152,7 @@ async function executeStyleArtifactBuildRun(input: {
   let styleProfileHash: string | null = null;
 
   try {
+    input.signal.throwIfAborted();
     const { VeryfrontApiClient } = await import(
       "#veryfront/platform/adapters/veryfront-api-client/client.ts"
     );
@@ -2610,6 +3201,7 @@ async function executeStyleArtifactBuildRun(input: {
       styleProfile,
       collectLocalProjectSourceFiles,
     );
+    input.signal.throwIfAborted();
     if (files.length === 0) {
       throw INVALID_ARGUMENT.create({
         detail: "No project source files were available to build the style artifact",
@@ -2621,6 +3213,7 @@ async function executeStyleArtifactBuildRun(input: {
       (getStyleArtifactSourceProvider(input.ctx)
         ? await readStylesheetFromAdapter(input.ctx, stylesheetPath)
         : await readLocalProjectStylesheet(input.ctx.projectDir, stylesheetPath));
+    input.signal.throwIfAborted();
     const result = await buildPreparedCSSArtifactFromFiles({
       projectSlug: projectReference,
       projectVersion: resolveStyleContentVersion(contentContext, {
@@ -2637,16 +3230,22 @@ async function executeStyleArtifactBuildRun(input: {
       environment: "preview",
       buildMode: "production",
     });
+    input.signal.throwIfAborted();
 
-    await apiClient.upsertStyleArtifact({
-      ...selector,
-      styleProfileHash,
-      status: "ready",
-      artifactHash: result.hash,
-      assetPath: `/_vf/css/${result.hash}.css`,
-      contentType: "text/css; charset=utf-8",
-      buildRunId: input.request.runId,
-    });
+    await apiClient.upsertStyleArtifact(
+      {
+        ...selector,
+        styleProfileHash,
+        status: "ready",
+        artifactHash: result.hash,
+        assetPath: `/_vf/css/${result.hash}.css`,
+        contentType: "text/css; charset=utf-8",
+        buildRunId: input.request.runId,
+      },
+      undefined,
+      input.signal,
+    );
+    input.signal.throwIfAborted();
 
     return {
       success: true,
@@ -2661,14 +3260,19 @@ async function executeStyleArtifactBuildRun(input: {
       duration_ms: Date.now() - startedAt,
     };
   } catch (error) {
+    if (input.signal.aborted) throw input.signal.reason;
     if (apiClient && selector && styleProfileHash) {
-      await apiClient.upsertStyleArtifact({
-        ...selector,
-        styleProfileHash,
-        status: "failed",
-        buildRunId: input.request.runId,
-        failureReason: errorMessage(error),
-      }).catch(() => undefined);
+      await apiClient.upsertStyleArtifact(
+        {
+          ...selector,
+          styleProfileHash,
+          status: "failed",
+          buildRunId: input.request.runId,
+          failureReason: errorMessage(error),
+        },
+        undefined,
+        input.signal,
+      ).catch(() => undefined);
     }
 
     return {
@@ -2697,7 +3301,7 @@ const defaultDeps: ProjectRunExecuteHandlerDeps = {
   now: () => Date.now(),
 };
 
-/** Runs the task, eval or workflow a control-plane execute request names. */
+/** Runs the task or workflow a control-plane execute request names. */
 function executeProjectRun(
   request: ProjectRunExecuteRequest,
   ctx: HandlerContext,
@@ -2706,21 +3310,25 @@ function executeProjectRun(
 ): Promise<ProjectRunExecuteResponse> {
   if (request.kind === "task") {
     return executeTaskRun(request, (control) => {
+      const signal = control
+        ? ReflectApply(TaskAbortSignalAny, AbortSignal, [[req.signal, control.signal]])
+        : req.signal;
       switch (request.target) {
+        case "task:eval":
+          return executeEvalTaskRun(request, ctx, req, req.signal, deps, control);
         case "task:knowledge-ingest":
-          return deps.executeKnowledgeIngest({ request, ctx, req });
+          return deps.executeKnowledgeIngest({ request, ctx, req, signal });
         case "task:release-asset-build":
-          return deps.executeReleaseAssetBuild({ request, ctx, req });
+          return deps.executeReleaseAssetBuild({ request, ctx, req, signal });
         case "task:dependency-artifact-build":
-          return deps.executeDependencyArtifactBuild({ request, ctx, req });
+          return deps.executeDependencyArtifactBuild({ request, ctx, req, signal });
         case "task:style-artifact-build":
-          return deps.executeStyleArtifactBuild({ request, ctx, req });
+          return deps.executeStyleArtifactBuild({ request, ctx, req, signal });
         default:
           return executeDiscoveredTaskRun(request, ctx, req.signal, deps, control);
       }
     });
   }
-  if (request.kind === "eval") return executeEvalRun(request, ctx, req, deps);
   return executeWorkflowRun(request, ctx, req.signal, deps);
 }
 
@@ -2776,20 +3384,25 @@ export class ProjectRunExecuteHandler extends BaseHandler {
           async () => {
             const startedAt = this.deps.now();
             try {
-              const response = inferenceToken === undefined
-                ? await executeProjectRun(request, ctx, req, this.deps)
-                : await runWithProjectRunInferenceCredential(
-                  inferenceToken,
-                  () =>
-                    executeProjectRun(
-                      request,
-                      ctx,
-                      withoutProjectRunInferenceToken(req),
-                      this.deps,
-                    ),
-                );
+              const limited = enforceRunOutputLimit(
+                inferenceToken === undefined
+                  ? await executeProjectRun(request, ctx, req, this.deps)
+                  : await runWithProjectRunInferenceCredential(
+                    inferenceToken,
+                    () =>
+                      executeProjectRun(
+                        request,
+                        ctx,
+                        withoutProjectRunInferenceToken(req),
+                        this.deps,
+                      ),
+                  ),
+              );
+              const response = limited.response;
               if (!response.success) setActiveSpanErrorStatus(new Error("Project run failed"));
-              return this.respond(builder.json(response, 200));
+              return this.respond(
+                builder.withContentType("application/json; charset=utf-8", limited.wireJson, 200),
+              );
             } catch (error) {
               setActiveSpanErrorStatus(new Error(telemetryErrorType(error)));
               return this.respond(
@@ -2818,6 +3431,10 @@ export class ProjectRunExecuteHandler extends BaseHandler {
 
         if (error instanceof ControlPlaneRequestError) {
           return this.respond(builder.json({ error: error.message }, error.status));
+        }
+
+        if (error instanceof VeryfrontError && error.slug === "input-validation-failed") {
+          return this.respond(builder.json({ error: error.detail ?? error.message }, 400));
         }
 
         return this.respond(builder.json({ error: "Invalid project run execute request" }, 400));

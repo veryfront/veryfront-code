@@ -1,3 +1,8 @@
+import {
+  createHostedHttpIngress,
+  type HostedHttpIngressOptions,
+  isHostedHttpApplicationRequest,
+} from "../isolated-http/hosted-http-ingress.ts";
 /**
  * Veryfront Core HTTP Handler - Composition Root
  *
@@ -160,6 +165,7 @@ import {
   resolveProjectRuntimeContext,
 } from "./project-runtime-context.ts";
 import { runWithRetainedPreviewDocumentSourceSnapshot } from "#veryfront/server/handlers/request/source-snapshot-freshness.ts";
+import { parseProxyEnvironment } from "./proxy-environment.ts";
 import {
   isSharedProjectRuntime,
   requiresIsolatedProjectRuntime,
@@ -419,6 +425,8 @@ export function createHandlerRegistry(
 }
 
 export interface RuntimeHandlerOptions {
+  /** Host-owned immutable-release ingress, admitted before project adapter/configuration loading. */
+  hostedHttp?: HostedHttpIngressOptions;
   projectDir: string;
   /** Image-owned immutable release identity; never derived from request metadata. */
   installedProject?: InstalledProjectHttpBinding;
@@ -460,6 +468,13 @@ export function createVeryfrontHandler(
   ) {
     throw new TypeError("Installed projects require one fixed local source");
   }
+  if (
+    opts.hostedHttp && (
+      installedProject || opts.config?.fs?.veryfront?.proxyMode !== true ||
+      opts.localProjects !== undefined || opts.allowHostProjectCodeExecution === true
+    )
+  ) throw new TypeError("Hosted HTTP ingress requires a proxy without host project execution");
+  const hostedHttp = opts.hostedHttp ? createHostedHttpIngress(opts.hostedHttp) : undefined;
   const handleApplicationAuthRequest = createApplicationAuthRequestHandler();
   const isDebugEnabled = (): boolean => {
     if (opts.debug) return true;
@@ -744,6 +759,26 @@ export function createVeryfrontHandler(
           // hosted requests use the edge-derived header or routed host.
           const wsSlugOverride = undefined;
 
+          // Hosted application requests must be admitted before legacy domain
+          // release lookup. Missing release/environment identity is an ingress
+          // refusal, not permission to resolve a mutable release on the host.
+          if (hostedHttp && isHostedHttpApplicationRequest(request)) {
+            if (!requestMetricsIncremented) {
+              await incrementRequestMetrics();
+              requestMetricsIncremented = true;
+            }
+            return hostedHttp(request, {
+              projectId: headers.projectId,
+              projectSlug: headers.projectSlug,
+              releaseId: headers.releaseId,
+              environmentId: headers.environmentId,
+              environmentName: headers.environmentName,
+              mode: parseProxyEnvironment(headers.environment ?? null),
+              proxyTrusted,
+              sourceToken: reqCtx.token,
+            });
+          }
+
           // Resolve project from various sources
           const projectRes = await profilePhase(
             "runtime.resolve_project",
@@ -1017,7 +1052,14 @@ export function createVeryfrontHandler(
             // closes with an unexpected EOF.
             const timeoutRequest = isHMRWebSocketUpgrade(req, url.pathname)
               ? req
-              : inheritRequestPeerProvenance(req, new Request(req, { signal }));
+              : inheritRequestPeerProvenance(
+                req,
+                new Request(req, {
+                  // The timeout manager detaches its parent listener when headers
+                  // arrive. Hosted executor streams still own the inbound abort.
+                  signal: hostedHttp ? AbortSignal.any([req.signal, signal]) : signal,
+                }),
+              );
             return runWithRequestProfiling(
               {
                 category: profileCategory,
@@ -1042,7 +1084,7 @@ export function createVeryfrontHandler(
           },
           url.pathname,
           req.method,
-          { signal: req.signal },
+          { signal: req.signal, settleResponseBody: hostedHttp !== undefined },
         );
 
         if (error) {
@@ -1077,6 +1119,7 @@ export function createVeryfrontHandler(
           isTimeout,
           requestProfileRecord,
           settled,
+          hostedHttp !== undefined,
         );
       } finally {
         endRequestLifecycle(lifecycle);

@@ -3,6 +3,7 @@ import type {
   EnvironmentAdapter,
   FileInfo,
   FileSystemAdapter,
+  SourceSnapshotFingerprintOptions,
 } from "#veryfront/platform/adapters/base.ts";
 import { runWithRequestContext } from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
 import type { HandlerContext } from "../types.ts";
@@ -88,7 +89,9 @@ export type SourceContextTestFsAdapter = FileSystemAdapter & {
   getUnderlyingAdapter(): FileSystemAdapter;
   isVeryfrontAdapter(): boolean;
   isMultiProjectMode(): boolean;
-  getSourceSnapshotFingerprint(): string | undefined | Promise<string | undefined>;
+  getSourceSnapshotFingerprint(
+    options?: SourceSnapshotFingerprintOptions,
+  ): string | undefined | Promise<string | undefined>;
   runWithContext<R>(
     slug: string,
     token: string,

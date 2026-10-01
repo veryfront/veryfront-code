@@ -15,12 +15,15 @@ import type {
 import { resolveSchemaValidator } from "./define.ts";
 import { snapshotBoundedJsonValue } from "./json-value.ts";
 
+// Captured at load: project code that runs later may replace the global.
+const arrayIsArray = Array.isArray;
+
 function snapshotBoundedJsonSchemaObject(value: unknown): JsonSchema | undefined {
   const snapshot = snapshotBoundedJsonValue(value);
   return snapshot.success &&
       !!snapshot.value &&
       typeof snapshot.value === "object" &&
-      !Array.isArray(snapshot.value)
+      !arrayIsArray(snapshot.value)
     ? snapshot.value
     : undefined;
 }

@@ -1,4 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
+import { cpuUsage } from "node:process";
 import { assert, assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
@@ -27,13 +28,14 @@ const SCALING_INPUT_FACTOR = 4;
 const MAX_SCALING_EXPONENT = 1.75;
 const SCALING_RUNS = 5;
 
-/** The fastest of several runs: load noise only ever adds time. */
-function fastestScanMillis(scan: (source: string) => unknown, source: string): number {
+/** The fastest process CPU time of several runs, excluding scheduler wait. */
+function fastestScanCpuMillis(scan: (source: string) => unknown, source: string): number {
   let fastest = Number.POSITIVE_INFINITY;
   for (let run = 0; run < SCALING_RUNS; run++) {
-    const start = performance.now();
+    const start = cpuUsage();
     scan(source);
-    fastest = Math.min(fastest, performance.now() - start);
+    const elapsed = cpuUsage(start);
+    fastest = Math.min(fastest, (elapsed.user + elapsed.system) / 1_000);
   }
   return fastest;
 }
@@ -48,8 +50,8 @@ function assertLinearScan(
   const small = makeSource(smallSize);
   const large = makeSource(smallSize * SCALING_INPUT_FACTOR);
   scan(small); // warm up the JIT so the first timed run is not an outlier
-  const smallMillis = fastestScanMillis(scan, small);
-  const largeMillis = fastestScanMillis(scan, large);
+  const smallMillis = fastestScanCpuMillis(scan, small);
+  const largeMillis = fastestScanCpuMillis(scan, large);
   const growth = largeMillis / Math.max(smallMillis, 0.01);
   const exponent = Math.log(growth) / Math.log(SCALING_INPUT_FACTOR);
   assert(

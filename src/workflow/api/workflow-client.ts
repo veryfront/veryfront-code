@@ -11,14 +11,17 @@ import type {
   PendingEventWait,
   RunFilter,
   WaitNodeConfig,
+  WorkflowChildRunWaitBoundary,
   WorkflowDefinition,
   WorkflowNode,
   WorkflowRun,
   WorkflowStatus,
 } from "../types.ts";
 import {
+  hasChildRunWaitBoundaryUpdateSupport,
   hasEventWaitSupport,
   hasRunObservationSupport,
+  hasRunPatchKeyMergeSupport,
   type WorkflowBackend,
 } from "../backends/types.ts";
 import { deriveWorkflowRunEventObservation, type WorkflowRunEventObservation } from "../events.ts";
@@ -43,7 +46,7 @@ import {
   getPendingApprovalResponseSchemaId,
   projectRunPendingApprovals,
 } from "../runtime/pending-approval-metadata.ts";
-import { INVALID_ARGUMENT } from "#veryfront/errors";
+import { INVALID_ARGUMENT, NOT_SUPPORTED } from "#veryfront/errors";
 
 const logger = baseLogger.component("workflow-client");
 const waitResponseSchemaId = Symbol("veryfront.workflow.waitResponseSchemaId");
@@ -100,6 +103,7 @@ export class WorkflowClient {
   private executor: WorkflowExecutor;
   private approvalManager: ApprovalManager;
   private eventWaitManager: EventWaitManager;
+  private destroyPromise?: Promise<void>;
   private debug: boolean;
   /** Wait-node configs from registered definitions, keyed "<workflowId>::<nodeId>". */
   private waitNodeConfigs = new Map<string, WaitNodeConfig>();
@@ -141,6 +145,15 @@ export class WorkflowClient {
           await this.createEventWaitFromPersistedInput(run, nodeId, input, activeWaitConfig);
         } else if (input.type === "approval") {
           await this.createApprovalFromPersistedInput(run, nodeId, input, activeWaitConfig);
+        } else if (
+          input.type === "child_run" &&
+          (!hasRunPatchKeyMergeSupport(this.backend) ||
+            !hasChildRunWaitBoundaryUpdateSupport(this.backend))
+        ) {
+          throw NOT_SUPPORTED.create({
+            detail:
+              "Durable child-run waits require atomic boundary updates on a key-merge workflow backend",
+          });
         }
 
         await userOnWaitingPersist?.(run, nodeId, activeWaitConfig);
@@ -416,6 +429,14 @@ export class WorkflowClient {
     return this.executor.resume(runId, undefined, expectedWorkerId);
   }
 
+  /** Continue a durable pause after every child run reported by it became terminal. */
+  resumeChildRuns(
+    runId: string,
+    expectedBoundary: readonly WorkflowChildRunWaitBoundary[],
+  ): Promise<boolean> {
+    return this.executor.resumeChildRuns(runId, expectedBoundary);
+  }
+
   retry(runId: string): Promise<void> {
     return this.executor.retry(runId);
   }
@@ -551,10 +572,27 @@ export class WorkflowClient {
     return this.eventWaitManager;
   }
 
-  async destroy(): Promise<void> {
-    this.approvalManager.stop();
+  destroy(): Promise<void> {
+    this.destroyPromise ??= this.performDestroy();
+    return this.destroyPromise;
+  }
+
+  private async performDestroy(): Promise<void> {
+    this.approvalManager.beginShutdown();
     this.eventWaitManager.stop();
-    await this.backend.destroy();
+    try {
+      await Promise.all([
+        this.approvalManager.waitForDecisionClaimRecovery().catch((error) => {
+          // Recovery is best effort and must not replace the workflow result.
+          logger.debug("Approval decision recovery failed during shutdown", error);
+        }),
+        this.approvalManager.waitForExpirationMaintenance(),
+        this.eventWaitManager.waitForExpirationMaintenance(),
+      ]);
+    } finally {
+      this.approvalManager.stop();
+      await this.backend.destroy();
+    }
     logger.debug("Destroyed");
   }
 }

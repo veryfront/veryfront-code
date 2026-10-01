@@ -1,4 +1,5 @@
 import type { Context, Span } from "#veryfront/observability";
+import { createClientClosedRequestResponse } from "./upstream-error-response.ts";
 import { ensureError } from "#veryfront/errors";
 
 export interface ProxyRequestLifecycle {
@@ -46,6 +47,10 @@ export async function runProxyRequestLifecycle(
       lifecycle.end(response.status);
       return response;
     } catch (error) {
+      if (options.req.signal.aborted) {
+        lifecycle.end(499);
+        return createClientClosedRequestResponse();
+      }
       const spanError = ensureError(error);
       lifecycle.end(500, spanError);
       throw error;

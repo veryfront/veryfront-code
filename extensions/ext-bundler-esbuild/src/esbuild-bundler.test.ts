@@ -29,21 +29,52 @@ import { rebuildContextWithSignal } from "./context-build-lifecycle.ts";
 const childProcess = createRequire(import.meta.url)("node:child_process") as {
   spawn: typeof import("node:child_process").spawn;
 };
+const OBSERVED_SERVICE_CLOSE_TIMEOUT_MS = 5_000;
+
+type EsbuildServiceChild = ReturnType<typeof childProcess.spawn>;
+
+interface ObservedEsbuildService {
+  child: EsbuildServiceChild;
+  closed: boolean;
+  readonly close: Promise<void>;
+}
+
+function observeEsbuildService(
+  child: EsbuildServiceChild,
+  closeTimeoutMs = OBSERVED_SERVICE_CLOSE_TIMEOUT_MS,
+): ObservedEsbuildService {
+  const close = Promise.withResolvers<void>();
+  let closeTimeout: ReturnType<typeof setTimeout> | undefined;
+  const service: ObservedEsbuildService = {
+    child,
+    closed: false,
+    get close() {
+      if (!service.closed && closeTimeout === undefined) {
+        closeTimeout = setTimeout(() => {
+          close.reject(
+            new Error(
+              `Timed out after ${closeTimeoutMs}ms waiting for the observed esbuild service to close`,
+            ),
+          );
+        }, closeTimeoutMs);
+      }
+      return close.promise;
+    },
+  };
+  child.once("close", () => {
+    if (closeTimeout !== undefined) clearTimeout(closeTimeout);
+    service.closed = true;
+    close.resolve();
+  });
+  return service;
+}
 
 function observeEsbuildServices(): {
-  services: Array<{
-    child: ReturnType<typeof childProcess.spawn>;
-    closed: boolean;
-    close: Promise<void>;
-  }>;
+  services: ObservedEsbuildService[];
   restore: () => void;
 } {
   const previousSpawn = childProcess.spawn;
-  const services: Array<{
-    child: ReturnType<typeof childProcess.spawn>;
-    closed: boolean;
-    close: Promise<void>;
-  }> = [];
+  const services: ObservedEsbuildService[] = [];
   const observingSpawn = ((...spawnArgs: unknown[]) => {
     const child = Reflect.apply(previousSpawn, childProcess, spawnArgs);
     const args = spawnArgs[1];
@@ -52,13 +83,7 @@ function observeEsbuildServices(): {
       args.some((arg) => typeof arg === "string" && arg.startsWith("--service=")) &&
       args.includes("--ping")
     ) {
-      const close = Promise.withResolvers<void>();
-      const service = { child, closed: false, close: close.promise };
-      services.push(service);
-      child.once("close", () => {
-        service.closed = true;
-        close.resolve();
-      });
+      services.push(observeEsbuildService(child));
     }
     return child;
   }) as typeof childProcess.spawn;
@@ -71,6 +96,67 @@ function observeEsbuildServices(): {
     },
   };
 }
+
+function createFakeEsbuildServiceChild(): {
+  child: EsbuildServiceChild;
+  close: () => void;
+} {
+  let closeListener: (() => void) | undefined;
+  const child = {
+    once(event: string | symbol, listener: () => void) {
+      if (event === "close") closeListener = listener;
+      return child;
+    },
+  };
+  return {
+    child: child as unknown as EsbuildServiceChild,
+    close() {
+      assertExists(closeListener);
+      closeListener();
+    },
+  };
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+describe("observed esbuild service close wait", () => {
+  const closeTimeoutMs = 20;
+
+  it("allows a healthy observed service to outlive the close timeout", async () => {
+    const fake = createFakeEsbuildServiceChild();
+    const service = observeEsbuildService(fake.child, closeTimeoutMs);
+
+    await delay(closeTimeoutMs * 2);
+    fake.close();
+
+    await service.close;
+    assertEquals(service.closed, true);
+  });
+
+  it("times out when an awaited service never closes", async () => {
+    const fake = createFakeEsbuildServiceChild();
+    const service = observeEsbuildService(fake.child, closeTimeoutMs);
+
+    await assertRejects(
+      () => service.close,
+      Error,
+      `Timed out after ${closeTimeoutMs}ms waiting for the observed esbuild service to close`,
+    );
+  });
+
+  it("clears the close deadline when the service closes", async () => {
+    const fake = createFakeEsbuildServiceChild();
+    const service = observeEsbuildService(fake.child, 60_000);
+    const close = service.close;
+
+    fake.close();
+    await close;
+
+    assertEquals(service.closed, true);
+  });
+});
 
 describe("EsbuildBundler.transform", () => {
   it("normalizes only trusted esbuild diagnostic accessors to an own marker", () => {

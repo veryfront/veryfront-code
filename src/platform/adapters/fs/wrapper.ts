@@ -4,6 +4,7 @@ import type {
   FileSystemAdapter,
   FileWatcher,
   ResolveFileOptions,
+  SourceSnapshotFingerprintOptions,
   SourceSnapshotFreshnessOptions,
   WatchOptions,
 } from "#veryfront/platform/adapters/base.ts";
@@ -199,7 +200,7 @@ export class FSAdapterWrapper implements ExtendedFileSystemAdapter {
   ) => Promise<void>;
   readonly sourceSnapshotFreshnessOptionsVersion?: 1;
   readonly getSourceSnapshotVersion?: () => number | undefined | Promise<number | undefined>;
-  readonly getSourceSnapshotFingerprint?: () =>
+  readonly getSourceSnapshotFingerprint?: (options?: SourceSnapshotFingerprintOptions) =>
     | string
     | undefined
     | Promise<string | undefined>;
@@ -299,8 +300,8 @@ export class FSAdapterWrapper implements ExtendedFileSystemAdapter {
     }
     const fingerprint = captureOptionalMethod(fsAdapter, "getSourceSnapshotFingerprint");
     if (fingerprint !== undefined) {
-      this.getSourceSnapshotFingerprint = () =>
-        IntrinsicReflectApply(fingerprint, fsAdapter, []) as
+      this.getSourceSnapshotFingerprint = (options) =>
+        IntrinsicReflectApply(fingerprint, fsAdapter, [options]) as
           | string
           | undefined
           | Promise<string | undefined>;

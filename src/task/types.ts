@@ -6,6 +6,7 @@
  * locally via `veryfront task <name>` or in the cloud as runs and schedules.
  */
 
+import type { Schema } from "#veryfront/extensions/schema/index.ts";
 import type { ScheduleIntegrationRequirementConfig } from "#veryfront/schedule/types.ts";
 import { captureTaskDefinition } from "./definition-snapshot.ts";
 
@@ -49,10 +50,10 @@ export interface TaskDefinition {
   name?: string;
   /** Task description */
   description?: string;
-  /** Optional JSON-schema-like input contract surfaced in APIs/UIs */
-  inputSchema?: Record<string, unknown>;
-  /** Optional JSON-schema-like output contract surfaced in APIs/UIs */
-  outputSchema?: Record<string, unknown>;
+  /** Optional input contract: a `defineSchema` schema or a raw JSON Schema object. */
+  inputSchema?: Schema<unknown> | Record<string, unknown>;
+  /** Optional output contract: a `defineSchema` schema or a raw JSON Schema object. */
+  outputSchema?: Schema<unknown> | Record<string, unknown>;
   /** Explicit integration scopes and resources required by scheduled runs. */
   integrationRequirements?: ScheduleIntegrationRequirementConfig[];
   /** Whether this task can be scheduled */

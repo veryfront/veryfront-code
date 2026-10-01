@@ -50,7 +50,7 @@ function makeRun(overrides: Partial<Run> = {}): Run {
 }
 
 describe("runs/schemas", () => {
-  it("accepts eval as a first-class durable run kind", () => {
+  it("continues reading legacy eval-kind run responses", () => {
     assertEquals(getRunKindSchema().parse("eval"), "eval");
 
     const run = makeRun({

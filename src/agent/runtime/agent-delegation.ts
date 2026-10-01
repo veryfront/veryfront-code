@@ -12,18 +12,31 @@ export { AGENT_DELEGATE_TOOL_PREFIX, isProviderSafeDelegateId };
 export const INVOKE_AGENT_TOOL_ID = "invoke_agent";
 const applyIntrinsic = Reflect.apply;
 const stringTrim = String.prototype.trim;
-const frameworkInvokeAgentTools = new WeakSet<object>();
-const frameworkDelegateTools = new WeakSet<object>();
+const NativeWeakSet = WeakSet;
+const weakSetAdd = WeakSet.prototype.add;
+const weakSetHas = WeakSet.prototype.has;
+const frameworkInvokeAgentTools = new NativeWeakSet<object>();
+const frameworkDelegateTools = new NativeWeakSet<object>();
+
+function hasFrameworkTool<T extends object>(set: WeakSet<T>, value: T): boolean {
+  return applyIntrinsic(weakSetHas, set, [value]) as boolean;
+}
+
+function markFrameworkTool<T extends object>(set: WeakSet<T>, value: T): void {
+  applyIntrinsic(weakSetAdd, set, [value]);
+}
 
 /** Whether a tool is the framework-created invoke_agent from {@link createInvokeAgentTool}. */
 export function isFrameworkInvokeAgentTool(value: unknown): boolean {
-  return value !== null && typeof value === "object" && frameworkInvokeAgentTools.has(value);
+  return value !== null && typeof value === "object" &&
+    hasFrameworkTool(frameworkInvokeAgentTools, value);
 }
 
 /** Whether a tool is a framework tool whose calls run a child agent (invoke_agent or `agent_{id}`). */
 export function isFrameworkChildRunTool(value: unknown): boolean {
   return value !== null && typeof value === "object" &&
-    (frameworkInvokeAgentTools.has(value) || frameworkDelegateTools.has(value));
+    (hasFrameworkTool(frameworkInvokeAgentTools, value) ||
+      hasFrameworkTool(frameworkDelegateTools, value));
 }
 
 const getInvokeAgentInputSchema = defineSchema((v) =>
@@ -108,7 +121,7 @@ export function createInvokeAgentTool(input: CreateInvokeAgentToolInput = {}): T
       }, context);
     },
   }));
-  frameworkInvokeAgentTools.add(tool);
+  markFrameworkTool(frameworkInvokeAgentTools, tool);
   return tool;
 }
 
@@ -157,7 +170,7 @@ function createLazyDelegateTool(
       return agentAsTool(target, `Delegate to ${delegateId}`).execute(input, context);
     },
   });
-  frameworkDelegateTools.add(tool);
+  markFrameworkTool(frameworkDelegateTools, tool);
   return tool;
 }
 

@@ -1,3 +1,10 @@
+import { privateJsonStringify } from "#veryfront/security/private-json.ts";
+import {
+  appendPrivateArray,
+  slicePrivateArray,
+  somePrivateArray,
+} from "#veryfront/security/private-array.ts";
+import { createPrivateSet } from "#veryfront/security/private-set.ts";
 import { getAgentExecutionConfig } from "#veryfront/agent/runtime/execution-config.ts";
 import {
   isVeryfrontCloudRuntimeModel,
@@ -8,6 +15,7 @@ import {
   markTrustedHostToolProvenance,
   markTrustedHostToolSet,
 } from "#veryfront/tool/host-tool-provenance.ts";
+import { isReservedPlatformToolName } from "#veryfront/tool/platform-tool-policy.ts";
 import {
   type Agent,
   type AgentMessage as Message,
@@ -97,7 +105,12 @@ import type { RuntimeRunAgentInput } from "./schema.ts";
 import { serverLogger } from "#veryfront/utils";
 import { compareStrings } from "#veryfront/utils/compare.ts";
 import { type ProviderReplayCheckpoint } from "#veryfront/agent/runtime/provider-replay.ts";
-import { type ProviderReplayTurnFailure } from "#veryfront/agent/runtime/runtime-tool-config.ts";
+import {
+  getProviderReplayInvokeAgentToolCallsSchema,
+  type ProviderReplayInvokeAgentToolCall,
+  type ProviderReplayInvokeAgentToolName,
+  type ProviderReplayTurnFailure,
+} from "#veryfront/agent/runtime/runtime-tool-config.ts";
 import { DURABLE_RUN_EVENT_PERSISTENCE_FAILED } from "#veryfront/errors";
 import type { ProviderReplayCheckpointPersister } from "./provider-replay-checkpoint-persister.ts";
 import { createVeryfrontCloudInferenceModelResolver } from "#veryfront/agent/hosted/inference-credential.ts";
@@ -108,6 +121,13 @@ import { createPrivateWeakStore } from "#veryfront/security/private-weak-store.t
 const getAnyObjectSchema = defineSchema((v) => v.record(v.string(), v.unknown()));
 const anyObjectSchema = lazySchema(getAnyObjectSchema) as Schema<Record<string, unknown>>;
 const runtimeInferenceCredentials = createPrivateWeakStore<object, string>();
+const IntrinsicReflectApply = Reflect.apply;
+const IntrinsicSetHas = Set.prototype.has;
+const _Set = Set;
+const IntrinsicArrayIsArray = Array.isArray;
+const providerReplayEncoder = new TextEncoder();
+const IntrinsicTextEncoderEncode = TextEncoder.prototype.encode;
+const IntrinsicDateNow = Date.now;
 const logger = serverLogger.component("internal-agent-run-stream");
 const PROJECT_AGENT_SANDBOX_BASH_TOOL_NAME = "bash";
 const INTERNAL_AGENT_RUNTIME_HEARTBEAT_INTERVAL_MS = 25_000;
@@ -129,9 +149,13 @@ export const PROVIDER_REPLAY_TURN_COMPLETE_SSE_EVENT_NAME = "AgentRunProviderRep
 export const PROVIDER_REPLAY_PROTOCOL_HEADER = "X-Veryfront-Provider-Replay-Protocol";
 
 type RuntimeFilteredAgent = Agent & {
-  config: Agent["config"] & {
-    __vfForwardedIntegrationToolDefs?: ForwardedToolDef[];
-  } & RuntimeRemoteToolConfig;
+  config:
+    & Agent["config"]
+    & {
+      __vfForwardedIntegrationToolDefs?: ForwardedToolDef[];
+      __vfProviderReplayInvokeAgentToolNames?: ProviderReplayInvokeAgentToolName[];
+    }
+    & RuntimeRemoteToolConfig;
 };
 
 type SandboxShellToolsExtensionModule = {
@@ -153,10 +177,10 @@ function getAgentAllowedRemoteToolNames(agent: Agent): string[] {
 export function getExplicitlyDeniedToolNames(agent: Agent): ReadonlySet<string> {
   const configuredTools = agent.config.tools;
   if (!configuredTools || configuredTools === true) {
-    return new Set<string>();
+    return new _Set<string>();
   }
 
-  return new Set(
+  return new _Set(
     Object.entries(configuredTools)
       .filter(([, entry]) => entry === false)
       .map(([toolName]) => toolName),
@@ -239,7 +263,7 @@ function getRuntimeInferenceCredential(input: RuntimeRunAgentInput): string | un
   return runtimeInferenceCredentials.get(input);
 }
 
-const controlPlaneInjectedTools = new WeakSet<Tool>();
+const controlPlaneInjectedTools = createPrivateWeakStore<Tool, true>();
 
 function createInjectedStudioTool(
   runId: string,
@@ -273,7 +297,7 @@ function createInjectedStudioTool(
       return waitResult.result;
     },
   };
-  controlPlaneInjectedTools.add(tool);
+  controlPlaneInjectedTools.set(tool, true);
   return controlPlaneNames.some((name) => toolName === `veryfront__${name}`)
     ? markTrustedHostToolProvenance(tool)
     : tool;
@@ -286,6 +310,15 @@ const controlPlaneNames = [
   "web_fetch",
   "studio_todo_write",
 ];
+
+const controlPlaneNameSet = new _Set(controlPlaneNames);
+
+// Control-plane tools and the reserved `veryfront__` platform namespace are
+// executed or aliased server-side, so they never count as client tools.
+function isPlatformToolName(toolName: string): boolean {
+  return isReservedPlatformToolName(toolName) ||
+    IntrinsicReflectApply(IntrinsicSetHas, controlPlaneNameSet, [toolName]);
+}
 
 const CHILD_RUN_CONTROL_PLANE_TOOL_NAMES = new Set([
   INVOKE_AGENT_TOOL_ID,
@@ -306,9 +339,24 @@ function resolveChildRunToolNames(mergedTools: Agent["config"]["tools"]): Set<st
     if (
       isFrameworkChildRunTool(tool) ||
       (CHILD_RUN_CONTROL_PLANE_TOOL_NAMES.has(toolName) && isRecord(tool) &&
-        controlPlaneInjectedTools.has(tool as Tool))
+        controlPlaneInjectedTools.get(tool as Tool) === true)
     ) {
       names.add(toolName);
+    }
+  }
+  return names;
+}
+
+function resolveControlPlaneInvokeAgentToolNames(
+  mergedTools: Agent["config"]["tools"],
+): ProviderReplayInvokeAgentToolName[] {
+  const names: ProviderReplayInvokeAgentToolName[] = [];
+  if (!mergedTools || mergedTools === true) return names;
+  for (const toolName of CHILD_RUN_CONTROL_PLANE_TOOL_NAMES) {
+    const entry = mergedTools[toolName];
+    const tool = entry === true ? toolRegistry.get(toolName) : entry;
+    if (isRecord(tool) && controlPlaneInjectedTools.get(tool as Tool) === true) {
+      appendPrivateArray(names, [toolName as ProviderReplayInvokeAgentToolName]);
     }
   }
   return names;
@@ -381,6 +429,9 @@ export function buildMergedTools(
 ) {
   const serverResolvedProjectToolNames = getServerResolvedProjectToolNames(input.forwardedProps);
   const explicitlyDeniedToolNames = getExplicitlyDeniedToolNames(agent);
+  // A markdown `tools: true` + `deniedTools` agent fails closed on the
+  // server-executed tools the control plane injects. Client tools run on the
+  // caller, so they still merge unless the agent denies them by name.
   const markdownDefinition = getRuntimeAgentMarkdownDefinition(agent);
   const failClosedUnrestrictedSelector = markdownDefinition?.tools === true &&
     Boolean(markdownDefinition.deniedTools?.length);
@@ -388,12 +439,12 @@ export function buildMergedTools(
   // denials: a request-injected tool must not resurrect a tool the agent
   // author switched off by name (mirroring the AG-UI merge path).
   const authoritativeSourceToolNames = agent.config.tools && agent.config.tools !== true
-    ? new Set(
+    ? new _Set(
       Object.entries(agent.config.tools)
         .filter(([, entry]) => (entry && typeof entry === "object") || entry === false)
         .map(([toolName]) => toolName),
     )
-    : new Set<string>();
+    : new _Set<string>();
   // When the trusted agent configuration declares delegation and the control
   // plane also declares invoke_agent, the control plane owns the execution: it
   // parks the run on the tool call and runs the child itself. The injected
@@ -410,7 +461,7 @@ export function buildMergedTools(
   const injectedTools = Object.fromEntries(
     input.tools
       .filter((tool) =>
-        !failClosedUnrestrictedSelector &&
+        (!failClosedUnrestrictedSelector || !isPlatformToolName(tool.name)) &&
         (!authoritativeSourceToolNames.has(tool.name) ||
           (tool.name === INVOKE_AGENT_TOOL_ID && controlPlaneOwnsDelegation)) &&
         !isExplicitlyDeniedToolName(
@@ -1017,12 +1068,15 @@ function readProviderReplayTurnErrorCode(error: unknown): string | undefined {
 }
 
 function createProviderReplayCheckpointRelay(): {
-  complete: (messageId: string) => Promise<void>;
+  complete: (
+    messageId: string,
+    invokeAgentToolCalls?: ProviderReplayInvokeAgentToolCall[],
+  ) => Promise<void>;
   fail: (failure?: ProviderReplayTurnFailure) => Promise<void>;
   takeCompletedTurn: () => Promise<ProviderReplayPrivateFrame[]>;
   hasCompletedTurn: () => boolean;
 } {
-  const buffered: ProviderReplayPrivateFrame[] = [];
+  let buffered: ProviderReplayPrivateFrame[] = [];
   let resolvePending:
     | ((frames: ProviderReplayPrivateFrame[]) => void)
     | undefined;
@@ -1030,10 +1084,13 @@ function createProviderReplayCheckpointRelay(): {
   let terminalError: ProviderReplayTurnError | undefined;
 
   const takeReadyTurn = (): ProviderReplayPrivateFrame[] | undefined => {
-    const boundaryIndex = buffered.findIndex((frame) =>
-      frame.event === PROVIDER_REPLAY_TURN_COMPLETE_SSE_EVENT_NAME
-    );
-    return boundaryIndex >= 0 ? buffered.splice(0, boundaryIndex + 1) : undefined;
+    for (let index = 0; index < buffered.length; index++) {
+      if (buffered[index]?.event !== PROVIDER_REPLAY_TURN_COMPLETE_SSE_EVENT_NAME) continue;
+      const frames = slicePrivateArray(buffered, 0, index + 1);
+      buffered = slicePrivateArray(buffered, index + 1);
+      return frames;
+    }
+    return undefined;
   };
   const resolveIfReady = () => {
     if (!resolvePending) return;
@@ -1046,14 +1103,20 @@ function createProviderReplayCheckpointRelay(): {
   };
 
   return {
-    complete: async (messageId) => {
-      buffered.push({
+    complete: async (messageId, invokeAgentToolCalls) => {
+      const validatedInvokeAgentToolCalls = invokeAgentToolCalls === undefined
+        ? undefined
+        : getProviderReplayInvokeAgentToolCallsSchema().parse(invokeAgentToolCalls);
+      appendPrivateArray(buffered, [{
         event: PROVIDER_REPLAY_TURN_COMPLETE_SSE_EVENT_NAME,
         payload: {
           type: "AGENT_RUN_PROVIDER_REPLAY_TURN_FINISHED",
           messageId,
+          ...(validatedInvokeAgentToolCalls
+            ? { invokeAgentToolCalls: validatedInvokeAgentToolCalls }
+            : {}),
         },
-      });
+      }]);
       resolveIfReady();
     },
     fail: async (failure) => {
@@ -1067,7 +1130,7 @@ function createProviderReplayCheckpointRelay(): {
         failure?.message ?? "Provider replay turn failed before its boundary",
       );
       if (failure?.code) terminalError.vfRunErrorCode = failure.code;
-      buffered.splice(0);
+      buffered.length = 0;
       const reject = rejectPending;
       resolvePending = undefined;
       rejectPending = undefined;
@@ -1086,7 +1149,10 @@ function createProviderReplayCheckpointRelay(): {
       });
     },
     hasCompletedTurn: () =>
-      buffered.some((frame) => frame.event === PROVIDER_REPLAY_TURN_COMPLETE_SSE_EVENT_NAME),
+      somePrivateArray(
+        buffered,
+        (frame) => frame.event === PROVIDER_REPLAY_TURN_COMPLETE_SSE_EVENT_NAME,
+      ),
   };
 }
 
@@ -1139,6 +1205,7 @@ export async function createRuntimeAgentStreamResponse(
   const providerReplayCheckpointRelay = createProviderReplayCheckpointRelay();
   let shouldEmitProviderReplayCheckpoints = false;
   let childRunToolNames = new Set<string>();
+  let controlPlaneInvokeAgentToolNames = new Set<ProviderReplayInvokeAgentToolName>();
   try {
     const executionModel = getAgentExecutionConfig(agent.config).model ??
       resolveConfiguredAgentModel();
@@ -1243,8 +1310,11 @@ export async function createRuntimeAgentStreamResponse(
       !isExplicitlyDeniedToolName(agent, explicitlyDeniedToolNames, toolName, deps.localTools)
     );
     childRunToolNames = resolveChildRunToolNames(mergedTools);
+    controlPlaneInvokeAgentToolNames = createPrivateSet(
+      resolveControlPlaneInvokeAgentToolNames(mergedTools),
+    );
     const mergedToolNames = mergedTools && mergedTools !== true ? Object.keys(mergedTools) : [];
-    const allowedRemoteToolNameSet = new Set(allowedRemoteToolNames ?? []);
+    const allowedRemoteToolNameSet = new _Set(allowedRemoteToolNames ?? []);
     const forwardedToolNames = (forwardedIntegrationToolDefs?.map((def) => def.name) ?? [])
       .filter((toolName) => allowedRemoteToolNameSet.has(toolName));
     const localToolNames = getRequiredLocalToolNames({
@@ -1254,7 +1324,7 @@ export async function createRuntimeAgentStreamResponse(
     });
     const runtimeToolNames = selectProviderCompatibleToolNames(
       [
-        ...new Set([
+        ...new _Set([
           ...mergedToolNames,
           ...providerToolNames,
           ...(allowedRemoteToolNames ?? []),
@@ -1344,8 +1414,10 @@ export async function createRuntimeAgentStreamResponse(
           : {}),
         ...(shouldEmitProviderReplayCheckpoints
           ? {
-            __vfProviderReplayCheckpointTurnComplete: () =>
-              providerReplayCheckpointRelay.complete(input.messageId!),
+            __vfProviderReplayInvokeAgentToolNames: [...controlPlaneInvokeAgentToolNames],
+            __vfProviderReplayCheckpointTurnComplete: (
+              invokeAgentToolCalls?: ProviderReplayInvokeAgentToolCall[],
+            ) => providerReplayCheckpointRelay.complete(input.messageId!, invokeAgentToolCalls),
             __vfProviderReplayCheckpointTurnFailed: providerReplayCheckpointRelay.fail,
           }
           : {}),
@@ -1565,7 +1637,14 @@ export async function createRuntimeAgentStreamResponse(
               }
               try {
                 controller.enqueue(
-                  formatAgUiEvent(frame.event, frame.payload),
+                  IntrinsicReflectApply(IntrinsicTextEncoderEncode, providerReplayEncoder, [
+                    `event: ${frame.event}\ndata: ${
+                      privateJsonStringify({
+                        ...frame.payload,
+                        emittedAt: IntrinsicDateNow(),
+                      })
+                    }\n\n`,
+                  ]) as Uint8Array<ArrayBuffer>,
                 );
               } catch {
                 clientAttached = false;
@@ -1577,7 +1656,21 @@ export async function createRuntimeAgentStreamResponse(
             let providerReplayStepOpen = false;
             const flushProviderReplayTurn = async () => {
               if (!providerReplayStepOpen) return;
-              for (const frame of await providerReplayCheckpointRelay.takeCompletedTurn()) {
+              const frames = await providerReplayCheckpointRelay.takeCompletedTurn();
+              for (let index = 0; index < frames.length; index++) {
+                const frame = frames[index]!;
+                const invokeAgentToolCalls = frame.payload.invokeAgentToolCalls;
+                if (IntrinsicArrayIsArray(invokeAgentToolCalls)) {
+                  for (let index = 0; index < invokeAgentToolCalls.length; index++) {
+                    const toolCall = invokeAgentToolCalls[index];
+                    if (
+                      typeof toolCall === "object" && toolCall !== null &&
+                      "toolCallId" in toolCall && typeof toolCall.toolCallId === "string"
+                    ) {
+                      deps.sessionManager.prepareForToolResult(input.runId, toolCall.toolCallId);
+                    }
+                  }
+                }
                 enqueueProviderReplayFrame(frame);
               }
               providerReplayStepOpen = false;
@@ -1589,6 +1682,15 @@ export async function createRuntimeAgentStreamResponse(
               if (mappedEvent.event === "StepStarted") {
                 await flushProviderReplayTurn();
                 providerReplayStepOpen = shouldEmitProviderReplayCheckpoints;
+              }
+              if (
+                mappedEvent.event === "ToolCallStart" &&
+                typeof mappedEvent.payload.toolCallName === "string" &&
+                IntrinsicReflectApply(IntrinsicSetHas, controlPlaneInvokeAgentToolNames, [
+                  mappedEvent.payload.toolCallName as ProviderReplayInvokeAgentToolName,
+                ]) as boolean
+              ) {
+                await flushProviderReplayTurn();
               }
               if (mappedEvent.event === "ToolCallEnd") {
                 await flushProviderReplayTurn();
@@ -1651,7 +1753,9 @@ export async function createRuntimeAgentStreamResponse(
             throwIfAborted();
             await flushProviderReplayTurn();
             while (providerReplayCheckpointRelay.hasCompletedTurn()) {
-              for (const frame of await providerReplayCheckpointRelay.takeCompletedTurn()) {
+              const frames = await providerReplayCheckpointRelay.takeCompletedTurn();
+              for (let index = 0; index < frames.length; index++) {
+                const frame = frames[index]!;
                 enqueueProviderReplayFrame(frame);
               }
             }

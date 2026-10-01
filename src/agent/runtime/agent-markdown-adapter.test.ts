@@ -4,7 +4,11 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { it } from "#veryfront/testing/bdd.ts";
 import { registerSkill } from "#veryfront/skill/registry.ts";
-import { createRuntimeAgentFromMarkdownDefinition } from "./agent-markdown-adapter.ts";
+import {
+  createRuntimeAgentFromMarkdownDefinition,
+  getRuntimeAgentMarkdownDefinition,
+  inheritRuntimeAgentMarkdownDefinition,
+} from "./agent-markdown-adapter.ts";
 import { getEffectiveAgentSystem } from "./effective-agent-system.ts";
 
 it("createRuntimeAgentFromMarkdownDefinition preserves provider-native tools", () => {
@@ -231,4 +235,22 @@ it("createRuntimeAgentFromMarkdownDefinition preserves explicit empty skills and
   } finally {
     skillRegistryInternal.clearAll();
   }
+});
+
+it("keeps the markdown definition on a wrapped copy of the agent", () => {
+  const definition = {
+    id: "denied-lookup-agent",
+    name: "Denied Lookup Agent",
+    description: "All tools except web_fetch",
+    instructions: "Use lookup_reference.",
+    tools: true as const,
+    deniedTools: ["web_fetch"],
+  };
+  const runtimeAgent = createRuntimeAgentFromMarkdownDefinition(definition);
+  const wrapped = { ...runtimeAgent, config: { ...runtimeAgent.config } };
+  assertEquals(getRuntimeAgentMarkdownDefinition(wrapped), null);
+
+  inheritRuntimeAgentMarkdownDefinition(runtimeAgent, wrapped);
+
+  assertEquals(getRuntimeAgentMarkdownDefinition(wrapped), definition);
 });

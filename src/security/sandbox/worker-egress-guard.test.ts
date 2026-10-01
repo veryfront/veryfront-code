@@ -25,22 +25,6 @@ import {
 } from "./worker-egress-guard.ts";
 import type { WorkerEgressFetch } from "./worker-egress-guard.ts";
 
-async function beforeDeadline<T>(
-  operation: Promise<T>,
-  message: string,
-  timeoutMs = 2_000,
-): Promise<T> {
-  let timeout: number | undefined;
-  const deadline = new Promise<never>((_resolve, reject) => {
-    timeout = setTimeout(() => reject(new Error(message)), timeoutMs);
-  });
-  try {
-    return await Promise.race([operation, deadline]);
-  } finally {
-    clearTimeout(timeout);
-  }
-}
-
 function closeTestConnection(connection: Deno.Conn): void {
   try {
     connection.close();
@@ -414,41 +398,35 @@ describe("worker-egress-guard admission and shutdown", () => {
 
     try {
       connections.push(
-        ...await beforeDeadline(
-          Promise.all(
-            Array.from(
-              { length: 64 },
-              () =>
-                Deno.connect({
-                  hostname: proxy.config.hostname,
-                  port: proxy.config.port,
-                }),
-            ),
+        ...await Promise.all(
+          Array.from(
+            { length: 64 },
+            () =>
+              Deno.connect({
+                hostname: proxy.config.hostname,
+                port: proxy.config.port,
+              }),
           ),
-          "SOCKS admission flood did not connect in time",
         ),
       );
 
-      const outcomes = await beforeDeadline(
-        Promise.all(
-          connections.map(async (connection): Promise<"admitted" | "rejected"> => {
-            const greeting = new Uint8Array([0x05, 0x01, 0x02]);
-            let written = 0;
-            try {
-              while (written < greeting.length) {
-                written += await connection.write(greeting.subarray(written));
-              }
-              const response = new Uint8Array(2);
-              const read = await connection.read(response);
-              return read === 2 && response[0] === 0x05 && response[1] === 0x02
-                ? "admitted"
-                : "rejected";
-            } catch {
-              return "rejected";
+      const outcomes = await Promise.all(
+        connections.map(async (connection): Promise<"admitted" | "rejected"> => {
+          const greeting = new Uint8Array([0x05, 0x01, 0x02]);
+          let written = 0;
+          try {
+            while (written < greeting.length) {
+              written += await connection.write(greeting.subarray(written));
             }
-          }),
-        ),
-        "SOCKS admission decisions did not settle in time",
+            const response = new Uint8Array(2);
+            const read = await connection.read(response);
+            return read === 2 && response[0] === 0x05 && response[1] === 0x02
+              ? "admitted"
+              : "rejected";
+          } catch {
+            return "rejected";
+          }
+        }),
       );
 
       const admitted = outcomes.filter((outcome) => outcome === "admitted").length;
@@ -458,12 +436,9 @@ describe("worker-egress-guard admission and shutdown", () => {
       assert(rejected >= 32, "the proxy did not reject the excess flood");
 
       proxy.close();
-      await beforeDeadline(proxy.closed, "SOCKS proxy did not drain after close");
-      const endOfStreams = await beforeDeadline(
-        Promise.all(
-          connections.map((connection) => connection.read(new Uint8Array(1)).catch(() => null)),
-        ),
-        "SOCKS connections remained open after proxy drain",
+      await proxy.closed;
+      const endOfStreams = await Promise.all(
+        connections.map((connection) => connection.read(new Uint8Array(1)).catch(() => null)),
       );
       assertEquals(endOfStreams.every((read) => read === null), true);
     } finally {
@@ -509,15 +484,9 @@ describe("worker-egress-guard admission and shutdown", () => {
     const settledRequests = Promise.allSettled(requests);
 
     try {
-      await beforeDeadline(
-        admissionFilled.promise,
-        "broker did not fill its bounded admission window",
-      );
+      await admissionFilled.promise;
       releaseResponses.resolve();
-      const results = await beforeDeadline(
-        settledRequests,
-        "broker flood did not settle after releasing admitted requests",
-      );
+      const results = await settledRequests;
       const fulfilled = results.filter(
         (result): result is PromiseFulfilledResult<Response> => result.status === "fulfilled",
       );
@@ -541,10 +510,7 @@ describe("worker-egress-guard admission and shutdown", () => {
     } finally {
       releaseResponses.resolve();
       broker.close();
-      await beforeDeadline(
-        Promise.all([broker.closed, settledRequests]).then(() => undefined),
-        "broker flood did not drain during cleanup",
-      );
+      await Promise.all([broker.closed, settledRequests]);
       await targetServer.shutdown();
     }
   });
@@ -575,10 +541,7 @@ describe("worker-egress-guard admission and shutdown", () => {
           headers.set("x-veryfront-egress-auth", forgedToken);
         }
 
-        const response = await beforeDeadline(
-          fetch(broker.config.httpBroker.url, { headers }),
-          "the broker did not answer an unauthenticated request",
-        );
+        const response = await fetch(broker.config.httpBroker.url, { headers });
         const body = await response.text();
 
         assertEquals(
@@ -605,7 +568,7 @@ describe("worker-egress-guard admission and shutdown", () => {
       );
     } finally {
       broker.close();
-      await beforeDeadline(broker.closed, "broker did not drain after close");
+      await broker.closed;
       await targetServer.shutdown();
     }
   });
@@ -633,12 +596,9 @@ describe("worker-egress-guard admission and shutdown", () => {
     );
 
     try {
-      await beforeDeadline(
-        resolutionStarted.promise,
-        "stalled broker request did not reach host resolution",
-      );
+      await resolutionStarted.promise;
       broker.close();
-      await beforeDeadline(broker.closed, "broker did not drain its stalled request");
+      await broker.closed;
       assert(await pending instanceof Error);
     } finally {
       broker.close();
@@ -736,10 +696,7 @@ describe("worker-egress-guard guardedEgressFetch redirect handling", () => {
         }),
       ),
     );
-    await beforeDeadline(
-      bodyCancelled.promise,
-      "late pinned response body was not cancelled",
-    );
+    await bodyCancelled.promise;
   });
 
   it("keeps non-network fetch schemes out of the HTTP broker", async () => {

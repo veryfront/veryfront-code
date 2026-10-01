@@ -1,3 +1,6 @@
+import { readOwnDataProperty } from "#veryfront/agent/runtime/data-property-descriptor.ts";
+import { computeHash } from "#veryfront/utils/hash-utils.ts";
+import { privateJsonStringify } from "#veryfront/security/private-json.ts";
 import { isResponseLike } from "#veryfront/agent/service/response-like.ts";
 import type {
   ChatRequestContext,
@@ -46,6 +49,7 @@ import {
 
 const IntrinsicReflectApply = Reflect.apply;
 const JsonParse = JSON.parse;
+const NumberIsFinite = Number.isFinite;
 const RequestHeadersGetter = Object.getOwnPropertyDescriptor(Request.prototype, "headers")?.get;
 const HeadersGet = Headers.prototype.get;
 const StringTrim = String.prototype.trim;
@@ -132,7 +136,7 @@ export type ParsedHostedChatRequest = {
    * Ignored unless `serverEnvelopeVerified` is true.
    */
   serverResolvedProviderReplayCheckpoints?: unknown;
-  /** Exact pending invocation supplied only by a verified control-plane envelope. */
+  /** Exact pending invocation bound to a verified envelope or signed replay digest. */
   serverResolvedResumeToolCall?: RuntimeAgentRunInvocation["resumeToolCall"];
   /**
    * Integration tools the control plane resolved for this run, taken from the
@@ -211,7 +215,13 @@ async function parseRequestJson(
     return null;
   }
   try {
-    return IntrinsicReflectApply(JsonParse, JSON, [body]);
+    return IntrinsicReflectApply(JsonParse, JSON, [body, (_key: string, value: unknown) => {
+      // JSON overflow must not authenticate as null when the replay digest is serialized.
+      if (typeof value === "number" && !NumberIsFinite(value)) {
+        throw new TypeError("JSON numbers must be finite");
+      }
+      return value;
+    }]);
   } catch {
     return null;
   }
@@ -293,6 +303,38 @@ async function withVerifiedRunEventAppendToken(
     verification.integrationTools,
   );
 
+  const resumeToolCall = parsedRequest.serverResolvedResumeToolCall;
+  let verifiedResumeToolCall = trustServerEnvelope ? resumeToolCall : undefined;
+  if (!trustServerEnvelope) {
+    let signedResumeToolCallSha256: unknown;
+    try {
+      signedResumeToolCallSha256 = readOwnDataProperty(
+        verification,
+        "resumeToolCallSha256",
+        "Writer verification",
+        false,
+      );
+    } catch {
+      return Response.json({ errorCode: "INVALID_RESUME_TOOL_CALL" }, { status: 403 });
+    }
+    if (resumeToolCall || signedResumeToolCallSha256 !== undefined) {
+      const digest = resumeToolCall
+        ? await computeHash(privateJsonStringify({
+          id: resumeToolCall.id,
+          name: resumeToolCall.name,
+          input: resumeToolCall.input,
+        }))
+        : undefined;
+      if (
+        !digest || typeof signedResumeToolCallSha256 !== "string" ||
+        digest !== signedResumeToolCallSha256
+      ) {
+        return Response.json({ errorCode: "INVALID_RESUME_TOOL_CALL" }, { status: 403 });
+      }
+      verifiedResumeToolCall = resumeToolCall;
+    }
+  }
+
   const verifiedRequest: ParsedHostedChatRequest = {
     ...(trustServerEnvelope
       ? parsedRequest
@@ -304,9 +346,7 @@ async function withVerifiedRunEventAppendToken(
     ...(grantedIntegrationToolNames.length > 0
       ? { serverResolvedIntegrationToolNames: grantedIntegrationToolNames }
       : {}),
-    ...(trustServerEnvelope && parsedRequest.serverResolvedResumeToolCall
-      ? { serverResolvedResumeToolCall: parsedRequest.serverResolvedResumeToolCall }
-      : {}),
+    ...(verifiedResumeToolCall ? { serverResolvedResumeToolCall: verifiedResumeToolCall } : {}),
     forwardedProps: trustServerEnvelope
       ? parsedRequest.forwardedProps
       : stripUnverifiedServerResolvedForwardedProps(parsedRequest.forwardedProps),

@@ -333,20 +333,44 @@ describe("runCommand", () => {
   it("reports truncated output when timeout wins the termination race", async () => {
     if (getOsType() === "windows") return;
 
+    const directory = await makeTempDir({ prefix: "veryfront-command-ready-" });
+    const readyMarker = `${directory}/ready`;
     const payload = "x".repeat(1_024);
-    const result = await runCommand("sh", {
-      args: [
-        "-c",
-        `trap 'printf ${payload}; exit 0' TERM; while :; do :; done`,
-      ],
-      capture: true,
-      maxOutputBytes: 128,
-      timeoutMs: 25,
-    });
+    try {
+      const pending = runCommand("sh", {
+        args: [
+          "-c",
+          `trap 'printf ${payload}; exit 0' TERM; : > "$READY_MARKER"; while :; do :; done`,
+        ],
+        capture: true,
+        env: { READY_MARKER: readyMarker },
+        maxOutputBytes: 128,
+        timeoutMs: 25,
+      });
 
-    assertEquals(result.code, 124);
-    assertEquals(result.stdout?.length, 128);
-    assertEquals(result.outputTruncated, true);
+      const readinessDeadline = performance.now() + 5_000;
+      // Keep the timer callback blocked until the shell has installed its
+      // output-producing TERM trap, even when startup is delayed under load.
+      while (true) {
+        try {
+          Deno.statSync(readyMarker);
+          break;
+        } catch (error) {
+          if (!(error instanceof Deno.errors.NotFound)) throw error;
+          if (performance.now() >= readinessDeadline) {
+            throw new Error("Timed out waiting for the command fixture to become ready");
+          }
+        }
+      }
+
+      const result = await pending;
+
+      assertEquals(result.code, 124);
+      assertEquals(result.stdout?.length, 128);
+      assertEquals(result.outputTruncated, true);
+    } finally {
+      await remove(directory, { recursive: true });
+    }
   });
 
   it("bounds return latency when a detached POSIX descendant retains capture pipes", async () => {

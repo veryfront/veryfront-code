@@ -5,7 +5,8 @@ import type { HandlerContext } from "#veryfront/types/server.ts";
 import { skillRegistry } from "#veryfront/skill/registry.ts";
 import { base64urlEncodeBytes } from "#veryfront/utils/base64url.ts";
 import { defineSchema, lazySchema } from "#veryfront/schemas/index.ts";
-import type { InferSchema, Schema } from "#veryfront/extensions/schema/index.ts";
+import type { InferSchema, JsonSchema, Schema } from "#veryfront/extensions/schema/index.ts";
+import { resolveJsonSchemaDocument } from "#veryfront/schemas/schema-identity.ts";
 import {
   CONTROL_PLANE_RUN_OPERATION_PATH,
   CONTROL_PLANE_RUN_PATH,
@@ -296,6 +297,12 @@ export const getRuntimeAgentSchema = defineSchema((v) =>
     version: v.string().nullable().optional(),
     skills: v.array(getRuntimeAgentSkillSchema()).optional(),
     suggestions: getRuntimeSuggestionsSchema().optional(),
+    /**
+     * The JSON Schema document of the agent's declared `outputSchema`, absent when it declares
+     * none. The API hashes it into the run's `output_schema_sha256` when it admits the run
+     * (veryfront-issue-inbox#2108).
+     */
+    output_schema: v.record(v.string(), v.unknown()).optional(),
   })
 );
 /** Zod schema for runtime agent. */
@@ -811,15 +818,30 @@ export function getRuntimeAgentPublicMetadata(
   };
 }
 
+/**
+ * The JSON Schema document of a declared agent `outputSchema`, resolved like the schema identity
+ * helper does. `undefined` when none is declared or it cannot be converted; running such an agent
+ * fails on its own, so the list stays usable.
+ */
+function resolveDeclaredOutputSchemaDocument(outputSchema: unknown): JsonSchema | undefined {
+  try {
+    return resolveJsonSchemaDocument(outputSchema);
+  } catch {
+    return undefined;
+  }
+}
+
 function getRuntimeAgentMetadata(id: string, agent: Agent): RuntimeAgent {
   const rawConfig = agent.config as { version?: unknown };
   const publicMetadata = getRuntimeAgentPublicMetadata(id, agent);
+  const outputSchema = resolveDeclaredOutputSchemaDocument(agent.config.outputSchema);
 
   return RuntimeAgentSchema.parse({
     ...publicMetadata,
     model: agent.config.model ?? null,
     version: typeof rawConfig.version === "string" ? rawConfig.version : null,
     skills: resolveAgentSkills(agent),
+    ...(outputSchema === undefined ? {} : { output_schema: outputSchema }),
   });
 }
 

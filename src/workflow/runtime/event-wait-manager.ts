@@ -142,6 +142,7 @@ function timedWaitClaimKey(runId: string, waitId: string): string {
 export class EventWaitManager {
   private readonly config: EventWaitManagerConfig;
   private expirationTimer?: ReturnType<typeof setInterval>;
+  private readonly expirationMaintenance = new Set<Promise<void>>();
   /** Independent discovery for claims abandoned after this manager starts. */
   private claimRecoveryCheckTimer?: ReturnType<typeof setInterval>;
   private claimRecoveryCheck?: Promise<void>;
@@ -196,11 +197,28 @@ export class EventWaitManager {
     if (interval <= 0) return;
 
     this.expirationTimer = setInterval(() => {
-      this.checkExpiredEventWaits().catch((error) => {
-        logger.error("Event wait expiration check failed", error);
-      });
+      void this.runExpirationMaintenance();
     }, interval);
     unrefTimer(this.expirationTimer);
+  }
+
+  private async runExpirationMaintenance(): Promise<void> {
+    if (this.destroyed) return;
+
+    const maintenance = this.checkExpiredEventWaits().catch((error) => {
+      logger.error("Event wait expiration check failed", error);
+    });
+    this.expirationMaintenance.add(maintenance);
+    try {
+      await maintenance;
+    } finally {
+      this.expirationMaintenance.delete(maintenance);
+    }
+  }
+
+  /** Wait for an expiration pass that started before shutdown. */
+  async waitForExpirationMaintenance(): Promise<void> {
+    await Promise.all(this.expirationMaintenance);
   }
 
   /** Discover abandoned claims independently of deadline expiration sweeping. */

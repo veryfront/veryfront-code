@@ -146,7 +146,16 @@ describe("canonical npm artifact workflow", () => {
     );
     assertStringIncludes(
       buildScript,
-      'VERSION="${BASE_VERSION}.${GITHUB_RUN_NUMBER}"',
+      'VERSION="${BASE_VERSION}.${RELEASE_NUMBER}"',
+    );
+    assertStringIncludes(
+      buildScript,
+      '[ "${GITHUB_EVENT_NAME}" = "merge_group" ]',
+      "Merge-queue builds must carry the RC number main publishes them under",
+    );
+    assertEquals(
+      asRecord(buildStep.env, "npm build environment").RELEASE_NUMBER,
+      "${{ needs.tested-run.outputs.release_number || github.run_number }}",
     );
     assert(
       buildScript.indexOf("scripts/ci/prepare-rc-build.ts") <
@@ -336,8 +345,18 @@ describe("canonical npm artifact workflow", () => {
       const job = asRecord(jobs[jobName], `${jobName} job`);
       assert(
         Array.isArray(job.needs) &&
-          job.needs.includes("npm-compatibility-artifact"),
-        `${jobName} must depend on the canonical npm artifact`,
+          job.needs.includes("quality-gate-release") &&
+          job.needs.includes("tested-run"),
+        `${jobName} must wait for the canonical npm artifact through the release gate`,
+      );
+      assertEquals(
+        asRecord(jobs["quality-gate-release"], "release gate").needs,
+        [
+          "tested-run",
+          "npm-compatibility-artifact",
+          "tests-sentry-runtime-packages",
+          "tests-windows-localhost",
+        ],
       );
       const download = jobSteps(job, `${jobName} job`).find((step) =>
         String(step.uses).startsWith("actions/download-artifact@") &&
@@ -345,6 +364,11 @@ describe("canonical npm artifact workflow", () => {
           "npm-compatibility-${{ github.sha }}"
       );
       assert(download, `${jobName} must download the tested npm artifact`);
+      assertEquals(
+        asRecord(download.with, `${jobName} artifact download`)["run-id"],
+        "${{ needs.tested-run.outputs.run_id || github.run_id }}",
+        `${jobName} must publish the merge-queue run's artifact when main reuses it`,
+      );
       const publish = namedStep(
         job,
         jobName === "prerelease"
@@ -396,6 +420,7 @@ describe("canonical npm artifact workflow", () => {
       "npm-compatibility-artifact",
       "tests-npm-install-smoke",
       "tests-runtime-critical-flow",
+      "tested-run",
     ]);
     assertEquals(gate.if, "${{ always() }}");
 
@@ -416,5 +441,24 @@ describe("canonical npm artifact workflow", () => {
         );
       }
     }
+  });
+
+  it("inherits skipped artifact checks only from a reused merge-queue run", async () => {
+    const skipped = {
+      ARTIFACT_BUILD_RESULT: "skipped",
+      NPM_SMOKE_RESULT: "skipped",
+      RUNTIME_CRITICAL_FLOW_RESULT: "skipped",
+    };
+    const reused = await runArtifactGate({ ...skipped, REUSED_RUN_ID: "36825693208" });
+    assertEquals(reused.code, 0);
+    assertStringIncludes(
+      new TextDecoder().decode(reused.stdout),
+      "NPM_SMOKE_RESULT passed in merge-queue run 36825693208",
+    );
+    assertEquals(
+      (await runArtifactGate({ NPM_SMOKE_RESULT: "failure", REUSED_RUN_ID: "36825693208" })).code,
+      1,
+    );
+    assertEquals((await runArtifactGate(skipped)).code, 1);
   });
 });

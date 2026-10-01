@@ -1,6 +1,7 @@
 import { assertEquals } from "#veryfront/testing/assert";
 import { describe, it } from "#veryfront/testing/bdd";
 import {
+  createClientClosedRequestResponse,
   createUpstreamFailureResponse,
   createUpstreamTimeoutResponse,
 } from "./upstream-error-response.ts";
@@ -40,5 +41,14 @@ describe("proxy upstream error responses", () => {
       error: "Bad Gateway",
       message: "Bad Gateway",
     });
+  });
+});
+
+describe("proxy client-closed response", () => {
+  it("returns a non-cacheable 499 response", async () => {
+    const response = createClientClosedRequestResponse();
+    assertEquals(response.status, 499);
+    assertEquals(response.headers.get("Cache-Control"), "no-store");
+    assertEquals(await response.json(), { error: "Client Closed Request" });
   });
 });

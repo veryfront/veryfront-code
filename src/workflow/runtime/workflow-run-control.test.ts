@@ -131,6 +131,19 @@ class DelayedActivationBackend extends MemoryBackend {
   }
 }
 
+class CompletionPatchBackend extends MemoryBackend {
+  completionPatch: Partial<WorkflowRun> | undefined;
+
+  override async updateRunIfStatus(
+    runId: string,
+    expectedStatuses: WorkflowRun["status"][],
+    patch: Partial<WorkflowRun>,
+  ): Promise<boolean> {
+    if (patch.status === "completed") this.completionPatch = patch;
+    return await super.updateRunIfStatus(runId, expectedStatuses, patch);
+  }
+}
+
 class LosingLockBackend extends MemoryBackend {
   readonly extensionAttempted = Promise.withResolvers<void>();
   releaseCalls = 0;
@@ -809,6 +822,32 @@ describe("workflow/runtime/workflow-run-control execute", () => {
     });
   });
 
+  it("preserves the legacy default output shape after validation", async () => {
+    const backend = new CompletionPatchBackend();
+    const run = { ...createRun("default-output-shape"), status: "running" as const };
+    await backend.createRun(run);
+    const completedAt = new Date("2026-01-02T03:04:05.000Z");
+    const defaultOutput = {
+      finish: { ok: true, optional: undefined, completedAt },
+    };
+    let validatedOutput: unknown;
+
+    await execute(
+      backend,
+      run,
+      () => completedResult({ input: {}, ...defaultOutput }),
+      {
+        parseOutput: (output) => {
+          validatedOutput = output;
+          return output;
+        },
+      },
+    );
+
+    assertEquals(validatedOutput, defaultOutput);
+    assertEquals(backend.completionPatch?.output, defaultOutput);
+  });
+
   it("stores the selected value as the workflow's final output", async () => {
     const backend = new MemoryBackend();
     const run = { ...createRun("selected-output"), status: "running" as const };
@@ -961,6 +1000,50 @@ describe("workflow/runtime/workflow-run-control execute", () => {
       "the wait was announced when the run first parked; announcing it again would " +
         "raise a duplicate event wait for the same node",
     );
+  });
+
+  it("re-parks a stalled child-run wait from its persisted node input", async () => {
+    const backend = new MemoryBackend();
+    const run = {
+      ...createRun("stalled-live-child-runs"),
+      status: "running" as const,
+      nodeStates: {
+        children: {
+          nodeId: "children",
+          status: "running" as const,
+          attempt: 1,
+          input: { type: "child_run", runIds: ["run_child_1", "run_child_2"] },
+        },
+      },
+      currentNodes: ["children"],
+    };
+    await backend.createRun(run);
+    const result = stalledWaitResult("children");
+    result.nodeStates = run.nodeStates;
+    result.stalledWaitNodes = [{
+      nodeId: "children",
+      waitConfig: {
+        type: "wait",
+        waitType: "child_run",
+        runIds: ["run_child_1", "run_child_2"],
+      },
+    }];
+    let persistedAgain = 0;
+    let announcedAgain = 0;
+
+    const outcome = await execute(backend, run, () => result, {
+      onWaitingPersist: () => {
+        persistedAgain++;
+      },
+      onWaiting: () => {
+        announcedAgain++;
+      },
+    });
+
+    assertEquals(outcome.status, "waiting");
+    assertEquals((await backend.getRun(run.id))?.status, "waiting");
+    assertEquals(persistedAgain, 0, "the persisted child ids are the durable wait record");
+    assertEquals(announcedAgain, 0, "recovery must not announce the child-run wait again");
   });
 
   it("reconstructs every missing wait after a live sibling in the stalled batch", async () => {

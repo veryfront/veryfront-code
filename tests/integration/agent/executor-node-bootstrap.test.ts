@@ -14,9 +14,12 @@ import {
   startExecutorNodeBootstrap,
 } from "#veryfront/agent/hosted/executor-node-bootstrap.ts";
 import { connectExecutorTransport } from "#veryfront/agent/hosted/executor-node-transport.ts";
+import { createHostedExecutorSessionClock } from "#veryfront/agent/hosted/executor-session.ts";
+import { ManualMonotonicClock } from "#veryfront/agent/streaming/lifecycle/testing.ts";
 import { register, tryResolve, unregister } from "#veryfront/extensions/contracts.ts";
-import { assert, assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals, assertMatch, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { executorBootstrapTestPatterns } from "./executor-node-bootstrap-groups.fixture.ts";
 import { registerExecutorRuntimeEntrypointTests } from "./executor-runtime-entrypoint.fixture.ts";
 
 const binding = {
@@ -42,6 +45,11 @@ const operations = new Map<string, ExecutorOperation>([
   ["remaining", { mode: "unary", handle: (_input, context) => context.deadline - Date.now() }],
 ]);
 
+/** Settle within the current event-loop turn, before any real timer can fire. */
+function settledThisTurn(promise: Promise<unknown>): Promise<unknown> {
+  return Promise.race([promise.then(() => "fulfilled", (error) => error), setImmediate("pending")]);
+}
+
 async function connectCaller(port: number, key: Uint8Array) {
   const transport = await connectExecutorTransport({
     podIp: "127.0.0.1",
@@ -56,33 +64,49 @@ async function connectCaller(port: number, key: Uint8Array) {
 // Same-process component integration with synthetic keys. The production port
 // is fixed; these tests run sequentially and never stop an unrelated listener.
 if (typeof Deno !== "undefined") {
-  it(
-    "runs fixed executor bootstrap and TLS channel coverage on Node",
-    { timeout: 30_000 },
-    async () => {
-      const root = new URL("../../../", import.meta.url);
-      const child = spawn("node", [
-        "--import",
-        fileURLToPath(new URL("tests/node/resolver.mjs", root)),
-        "--test",
-        fileURLToPath(import.meta.url),
-      ], { cwd: fileURLToPath(root), stdio: ["ignore", "pipe", "pipe"] });
-      let output = "";
-      child.stdout.on("data", (chunk) => output += chunk);
-      child.stderr.on("data", (chunk) => output += chunk);
-      const timer = setTimeout(() => child.kill(), 25_000);
-      try {
-        const code = await new Promise<number | null>((resolve, reject) => {
-          child.once("error", reject);
-          child.once("close", resolve);
-        });
-        assertEquals(code, 0, output);
-      } finally {
-        clearTimeout(timer);
-        child.kill();
-      }
-    },
-  );
+  for (const [index, pattern] of executorBootstrapTestPatterns().entries()) {
+    const group = [
+      "runtime installation",
+      "project-tools installation",
+      "HTTP installation",
+      "bootstrap and TLS channel",
+    ][index];
+    it(
+      `runs fixed executor ${group} coverage on Node`,
+      { timeout: 30_000 },
+      async () => {
+        const root = new URL("../../../", import.meta.url);
+        const child = spawn("node", [
+          "--enable-source-maps",
+          "--import",
+          fileURLToPath(new URL("tests/node/resolver-sync.mjs", root)),
+          "--test",
+          "--test-reporter=tap",
+          `--test-name-pattern=${pattern}`,
+          fileURLToPath(import.meta.url),
+        ], { cwd: fileURLToPath(root), stdio: ["ignore", "pipe", "pipe"] });
+        let output = "";
+        child.stdout.on("data", (chunk) => output += chunk);
+        child.stderr.on("data", (chunk) => output += chunk);
+        const timer = setTimeout(() => child.kill(), 25_000);
+        try {
+          const code = await new Promise<number | null>((resolve, reject) => {
+            child.once("error", reject);
+            child.once("close", resolve);
+          });
+          assertEquals(code, 0, output);
+          const expectedTests = index === 3 ? 19 : 1;
+          assertEquals((output.match(/^ {4}# Subtest:/gm) ?? []).length, expectedTests, output);
+          assertMatch(output, new RegExp(`# tests ${expectedTests}\\n`));
+          assertMatch(output, /# cancelled 0\n/);
+          assertMatch(output, /# skipped 0\n/);
+        } finally {
+          clearTimeout(timer);
+          child.kill();
+        }
+      },
+    );
+  }
 } else {
   describe("fixed Node executor bootstrap", () => {
     registerExecutorRuntimeEntrypointTests();
@@ -486,9 +510,11 @@ if (typeof Deno !== "undefined") {
 
     it("limits authenticated channel readiness to the absolute allocation deadline", async () => {
       const key = randomBytes(32);
+      const time = new ManualMonotonicClock();
       const bootstrap = await startExecutorNodeBootstrap({
         operations,
-        environment: environment({ VERYFRONT_EXECUTOR_HARD_DEADLINE_AT: String(Date.now() + 100) }),
+        environment: environment({ VERYFRONT_EXECUTOR_HARD_DEADLINE_AT: "6000" }),
+        clock: createHostedExecutorSessionClock(1_000, time),
         readKey: () => Promise.resolve(new Uint8Array(key)),
       });
       const transport = await connectExecutorTransport({
@@ -498,19 +524,20 @@ if (typeof Deno !== "undefined") {
         binding,
         timeoutMs: 1_000,
       });
-      const watchdog = setTimeout(() => bootstrap.close(), 500);
+      const reader = transport.readable.getReader();
       try {
-        await assertRejects(() => bootstrap.ready, Error, "Executor bootstrap deadline exceeded");
+        // The server hello proves the channel attached before the deadline elapses.
+        assertEquals((await reader.read()).done, false);
+        assertEquals(await settledThisTurn(bootstrap.ready), "pending");
+        time.advanceBy(5_000);
+        const outcome = await settledThisTurn(bootstrap.ready);
+        assert(outcome instanceof Error);
+        assertEquals(outcome.message, "Executor bootstrap deadline exceeded");
         await assertRejects(async () => {
-          const reader = transport.readable.getReader();
-          try {
-            while (!(await reader.read()).done) { /* Drain the server hello before closure. */ }
-          } finally {
-            reader.releaseLock();
-          }
+          while (!(await reader.read()).done) { /* Drain until the attached transport closes. */ }
         }, Error);
       } finally {
-        clearTimeout(watchdog);
+        reader.releaseLock();
         bootstrap.close();
         transport.close();
         key.fill(0);
@@ -520,28 +547,26 @@ if (typeof Deno !== "undefined") {
 
     it("caps channel calls and closes attached I/O at the allocation deadline", async () => {
       const key = randomBytes(32);
-      const hardDeadlineAt = Date.now() + 200;
+      const time = new ManualMonotonicClock();
       const bootstrap = await startExecutorNodeBootstrap({
         operations,
-        environment: environment({ VERYFRONT_EXECUTOR_HARD_DEADLINE_AT: String(hardDeadlineAt) }),
+        environment: environment({ VERYFRONT_EXECUTOR_HARD_DEADLINE_AT: "6000" }),
+        clock: createHostedExecutorSessionClock(1_000, time),
         readKey: () => Promise.resolve(new Uint8Array(key)),
       });
       const caller = await connectCaller(8081, key);
-      let watchdogUsed = false;
-      const watchdog = setTimeout(() => {
-        watchdogUsed = true;
-        bootstrap.close();
-      }, 500);
       try {
         const server = await bootstrap.ready;
         const remaining = await caller.request("remaining", {}, { timeoutMs: 45_000 });
-        assert(typeof remaining === "number" && remaining <= 200);
+        assert(typeof remaining === "number" && remaining <= 5_000);
+        assertEquals(server.signal.aborted, false);
+        time.advanceBy(5_000);
+        assert(await settledThisTurn(server.closed) !== "pending");
+        assertEquals(server.signal.aborted, true);
         await Promise.all([caller.closed, server.closed]);
         assertEquals(caller.signal.aborted, true);
         assertEquals(server.signal.aborted, true);
-        assertEquals(watchdogUsed, false);
       } finally {
-        clearTimeout(watchdog);
         bootstrap.close();
         caller.close();
         key.fill(0);

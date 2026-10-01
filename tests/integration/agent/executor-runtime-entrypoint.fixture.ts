@@ -11,21 +11,19 @@ import { assert, assertEquals, assertRejects } from "#veryfront/testing/assert.t
 import { it } from "#veryfront/testing/bdd.ts";
 import { createExecutorChannel } from "#veryfront/agent/executor/channel.ts";
 import { connectExecutorTransport } from "#veryfront/agent/hosted/executor-node-transport.ts";
-import { createExecutorModelBroker } from "#veryfront/agent/hosted/executor-model-bridge.ts";
-import { getExecutorDiscoveryResultSchema } from "#veryfront/agent/hosted/executor-discovery-schema.ts";
-import { createExecutorProjectToolSource } from "#veryfront/agent/hosted/executor-project-tools.ts";
-import { startExecutorRuntimeEntrypoint } from "#veryfront/agent/hosted/executor-runtime-entrypoint.ts";
-import { createExecutorHttpClient } from "#veryfront/server/isolated-http/executor-http.ts";
+import type { startExecutorRuntimeEntrypoint } from "#veryfront/agent/hosted/executor-runtime-entrypoint.ts";
 import { generateCsrfToken } from "#veryfront/security/csrf/helpers.ts";
-import { createExecutorHttpConfigurationOperation } from "#veryfront/server/isolated-http/application-configuration.ts";
 import type { JsonValue } from "#veryfront/schemas/index.ts";
 
 const root = new URL("../../../", import.meta.url);
-const resolver = fileURLToPath(new URL("tests/node/resolver.mjs", root));
+const resolver = fileURLToPath(new URL("tests/node/resolver-sync.mjs", root));
 
 /** Register beside the fixed-port bootstrap tests so Deno file parallelism cannot race port 8081. */
 export function registerExecutorRuntimeEntrypointTests(): void {
   it("rejects missing first-party runtime contracts before reading an allocation key", async () => {
+    const { startExecutorRuntimeEntrypoint } = await import(
+      "#veryfront/agent/hosted/executor-runtime-entrypoint.ts"
+    );
     let keyReads = 0;
     let executor: Awaited<ReturnType<typeof startExecutorRuntimeEntrypoint>> | undefined;
     const values: Record<string, string> = {
@@ -131,6 +129,11 @@ export function registerExecutorRuntimeEntrypointTests(): void {
       }
       const binding = { allocationId: randomUUID(), generation: 1, invocationId: randomUUID() };
       const key = randomBytes(32);
+      let channel: ReturnType<typeof createExecutorChannel> | undefined;
+      const httpClient = profile === "http"
+        ? (await import("#veryfront/server/isolated-http/executor-http.ts"))
+          .createExecutorHttpClient({ binding, channel: () => channel! })
+        : undefined;
       const child = spawn(process.execPath, [
         "--enable-source-maps",
         "--import",
@@ -181,10 +184,6 @@ export function registerExecutorRuntimeEntrypointTests(): void {
         );
       });
       child.stdin.end(key);
-      let channel: ReturnType<typeof createExecutorChannel> | undefined;
-      const httpClient = profile === "http"
-        ? createExecutorHttpClient({ binding, channel: () => channel! })
-        : undefined;
       const timer = setTimeout(() => child.kill(), 40_000);
       try {
         const endpoint = await ready;
@@ -206,31 +205,35 @@ export function registerExecutorRuntimeEntrypointTests(): void {
               ...httpClient.operations,
               [
                 "http.configuration",
-                createExecutorHttpConfigurationOperation(binding, {
-                  projectId: "synthetic-project",
-                  projectSlug: "synthetic-project",
-                  releaseId: "synthetic-release",
-                  environmentId: "synthetic-environment",
-                  environmentName: "staging",
-                  configurationId: "synthetic-configuration",
-                  variables: { APP_VALUE: "installed-value" },
-                }),
+                (await import("#veryfront/server/isolated-http/application-configuration.ts"))
+                  .createExecutorHttpConfigurationOperation(binding, {
+                    projectId: "synthetic-project",
+                    projectSlug: "synthetic-project",
+                    releaseId: "synthetic-release",
+                    environmentId: "synthetic-environment",
+                    environmentName: "staging",
+                    configurationId: "synthetic-configuration",
+                    variables: { APP_VALUE: "installed-value" },
+                  }),
               ],
             ])
-            : (profile === "project-tools" ? new Map() : createExecutorModelBroker({
-              allowedModelIds: new Set([modelId]),
-              resolveModelRuntime: () => ({
-                provider: "openai",
-                modelId: "synthetic-model",
-                specificationVersion: "v3",
-                doGenerate: () => {
-                  throw new Error("Unexpected model call");
-                },
-                doStream: () => {
-                  throw new Error("Unexpected model call");
-                },
-              }),
-            })),
+            : (profile === "project-tools"
+              ? new Map()
+              : (await import("#veryfront/agent/hosted/executor-model-bridge.ts"))
+                .createExecutorModelBroker({
+                  allowedModelIds: new Set([modelId]),
+                  resolveModelRuntime: () => ({
+                    provider: "openai",
+                    modelId: "synthetic-model",
+                    specificationVersion: "v3",
+                    doGenerate: () => {
+                      throw new Error("Unexpected model call");
+                    },
+                    doStream: () => {
+                      throw new Error("Unexpected model call");
+                    },
+                  }),
+                })),
         });
         await channel.ready;
         await assertRejects(() => channel!.request("discovery.describe", {}));
@@ -378,6 +381,9 @@ export function registerExecutorRuntimeEntrypointTests(): void {
           await assertRejects(() => channel!.request("runtime.prepare", { agentId: "writer" }));
           await assertRejects(() => Array.fromAsync(channel!.stream("agent.stream", {})));
         } else {
+          const { getExecutorDiscoveryResultSchema } = await import(
+            "#veryfront/agent/hosted/executor-discovery-schema.ts"
+          );
           const description = getExecutorDiscoveryResultSchema().parse(
             await channel.request("discovery.describe", {}, { timeoutMs: 30_000 }),
           );
@@ -388,6 +394,9 @@ export function registerExecutorRuntimeEntrypointTests(): void {
         if (profile === "project-tools") {
           await assertRejects(() => channel!.request("runtime.prepare", { agentId: "writer" }));
           await assertRejects(() => Array.fromAsync(channel!.stream("agent.stream", {})));
+          const { createExecutorProjectToolSource } = await import(
+            "#veryfront/agent/hosted/executor-project-tools.ts"
+          );
           const projectSource = await createExecutorProjectToolSource({
             channel,
             signal: channel.signal,

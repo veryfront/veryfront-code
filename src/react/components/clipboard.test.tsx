@@ -22,12 +22,6 @@ const DOM_OPTIONS: ComponentDomOptions = {
   windowGlobals: ["self"],
 };
 
-async function settle(): Promise<void> {
-  await Promise.resolve();
-  await new Promise((resolve) => setTimeout(resolve, 0));
-  flushSync(() => {});
-}
-
 describe("copyTextToClipboard", () => {
   it("uses the Clipboard API without creating a fallback element", async () => {
     const dom = new JSDOM("<!doctype html><html><body></body></html>");
@@ -207,6 +201,7 @@ describe("useClipboardFeedback", () => {
       },
     });
     let feedback: ClipboardFeedback | undefined;
+    let root: ReturnType<typeof createRoot> | undefined;
 
     function Harness(): React.ReactElement {
       feedback = useClipboardFeedback();
@@ -220,8 +215,8 @@ describe("useClipboardFeedback", () => {
     try {
       const rootElement = document.getElementById("root");
       assert(rootElement, "root fixture exists");
-      const root = createRoot(rootElement);
-      flushSync(() => root.render(<Harness />));
+      root = createRoot(rootElement);
+      flushSync(() => root!.render(<Harness />));
       assert(feedback, "hook result is available");
 
       const first = feedback.copy("first", document);
@@ -230,17 +225,16 @@ describe("useClipboardFeedback", () => {
 
       pending[1]?.resolve();
       assertStrictEquals(await second, true);
-      await settle();
+      flushSync(() => root!.render(<Harness />));
       assertEquals(rootElement.textContent, "copied:second");
 
       pending[0]?.reject(new Error("late rejection"));
       assertStrictEquals(await first, false);
-      await settle();
+      flushSync(() => root!.render(<Harness />));
       assertEquals(rootElement.textContent, "copied:second");
       assertEquals(fallbackCalls, 0);
-
-      await unmountReactRoot(root);
     } finally {
+      await unmountReactRoot(root);
       restore();
     }
   });
@@ -252,6 +246,7 @@ describe("useClipboardFeedback", () => {
     const restore = installComponentDom(dom, DOM_OPTIONS);
     defineClipboard(dom.window, () => Promise.resolve());
     let feedback: ClipboardFeedback | undefined;
+    let root: ReturnType<typeof createRoot> | undefined;
 
     function Harness(): React.ReactElement {
       feedback = useClipboardFeedback(10);
@@ -265,12 +260,12 @@ describe("useClipboardFeedback", () => {
     try {
       const rootElement = document.getElementById("root");
       assert(rootElement, "root fixture exists");
-      const root = createRoot(rootElement);
-      flushSync(() => root.render(<Harness />));
+      root = createRoot(rootElement);
+      flushSync(() => root!.render(<Harness />));
       assert(feedback, "hook result is available");
 
       assertStrictEquals(await feedback.copy("text", document), true);
-      await settle();
+      flushSync(() => root!.render(<Harness />));
       assertEquals(
         rootElement.textContent,
         "copied:text",
@@ -281,9 +276,8 @@ describe("useClipboardFeedback", () => {
         interval: 5,
         message: "the feedback window clears the outcome after the timeout",
       });
-
-      await unmountReactRoot(root);
     } finally {
+      await unmountReactRoot(root);
       restore();
     }
   });
@@ -299,6 +293,7 @@ describe("useClipboardFeedback", () => {
         release = resolve;
       }));
     let feedback: ClipboardFeedback | undefined;
+    let root: ReturnType<typeof createRoot> | undefined;
 
     function Harness(): null {
       feedback = useClipboardFeedback();
@@ -308,17 +303,18 @@ describe("useClipboardFeedback", () => {
     try {
       const rootElement = document.getElementById("root");
       assert(rootElement, "root fixture exists");
-      const root = createRoot(rootElement);
-      flushSync(() => root.render(<Harness />));
+      root = createRoot(rootElement);
+      flushSync(() => root!.render(<Harness />));
       assert(feedback, "hook result is available");
 
       const pendingCopy = feedback.copy("late", document);
       await unmountReactRoot(root);
+      root = undefined;
       release();
       assertStrictEquals(await pendingCopy, false);
-      await settle();
       assertEquals(rootElement.textContent, "");
     } finally {
+      await unmountReactRoot(root);
       restore();
     }
   });

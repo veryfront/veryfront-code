@@ -106,6 +106,21 @@ export const getNodeStateSchema = defineSchema((v) =>
     _waitInstanceId: v.string().optional(),
     /** Internal owner path for a node produced inside a sub-workflow. */
     _subWorkflowOwnerPath: v.string().optional(),
+    /** A step recorded its input, including undefined values JSON omits. */
+    _stepInputRecorded: v.boolean().optional(),
+    /** The sub-workflow input has been parsed and is reusable on resume. */
+    _subWorkflowInputParsed: v.boolean().optional(),
+    /** Internal child context retained while a sub-workflow is incomplete. */
+    _subWorkflowContext: v.record(v.string(), v.unknown()).optional(),
+    /** Completed wait instances already reflected in the child context snapshot. */
+    _subWorkflowContextWaits: v.array(v.object({
+      nodeId: v.string(),
+      waitInstanceId: v.string().nullable(),
+    })).optional(),
+    /** Completed child DAG boundary retained until output selection succeeds. */
+    _subWorkflowCompletedChildIds: v.array(v.string()).optional(),
+    /** In-flight loop iteration retained for completed nested output retry. */
+    _loopOutputRetry: v.record(v.string(), v.unknown()).optional(),
     /** Child states this composite had actively parked when it last suspended. */
     _activeCompositeChildIds: v.array(v.string()).optional(),
     /** Child states a runtime-defined composite produced before it completed. */
@@ -182,6 +197,8 @@ export const getWorkflowErrorSchema = defineSchema((v) =>
     message: v.string(),
     stack: v.string().optional(),
     nodeId: v.string().optional(),
+    code: v.string().optional(),
+    detail: v.unknown().optional(),
   })
 );
 
@@ -235,7 +252,9 @@ export const getParallelStrategySchema = defineSchema((v) =>
 /**
  * Wait type schema
  */
-export const getWaitTypeSchema = defineSchema((v) => v.enum(["approval", "event"] as const));
+export const getWaitTypeSchema = defineSchema((v) =>
+  v.enum(["approval", "event", "child_run"] as const)
+);
 
 // Backward-compat aliases (consumed by schemas/index.ts and other unmigrated callers)
 export const WorkflowStatusSchema = lazySchema(getWorkflowStatusSchema);

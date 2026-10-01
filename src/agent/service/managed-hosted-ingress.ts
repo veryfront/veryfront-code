@@ -24,6 +24,7 @@ import {
 import { createHostedInferenceModelResolver } from "../hosted/inference-credential.ts";
 import type { AgentModelRuntimeResolver } from "../runtime/model-transport.ts";
 import { parseAgUiRuntimeRequestOrError } from "../runtime/ag-ui-contract.ts";
+import type { ExecutorRuntimePrepareRequest } from "../hosted/executor-runtime-prepare-schema.ts";
 import { isResponseLike } from "./response-like.ts";
 
 export type ManagedAgentIngressKind = "durable" | "ag-ui";
@@ -80,6 +81,7 @@ export type ManagedAgentExecutorRequest = Readonly<{
   serverEnvelopeVerified: boolean;
   serverResolvedIntegrationToolNames: JsonValue;
   serverResolvedProviderReplayCheckpoints?: JsonValue;
+  serverResolvedResumeToolCall?: ExecutorRuntimePrepareRequest["serverResolvedResumeToolCall"];
   agUi?: ManagedAgentExecutorAgUiState;
 }>;
 
@@ -227,6 +229,10 @@ function createExecutorRequest(
         serverResolvedProviderReplayCheckpoints:
           parsedRequest.serverResolvedProviderReplayCheckpoints,
       }
+      : {}),
+    ...(Object.hasOwn(parsedRequest, "serverResolvedResumeToolCall") &&
+        parsedRequest.serverResolvedResumeToolCall !== undefined
+      ? { serverResolvedResumeToolCall: parsedRequest.serverResolvedResumeToolCall }
       : {}),
     ...(agUiInput
       ? {

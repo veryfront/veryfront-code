@@ -346,6 +346,7 @@ describe("FSAdapterWrapper", () => {
     it("forwards freshness options and snapshot capabilities", async () => {
       let reason: string | undefined;
       let maxAgeMs: number | undefined;
+      let fingerprintPurpose: string | undefined;
       const fsAdapter = {
         ...createMockFSAdapter(),
         sourceSnapshotFreshnessOptionsVersion: 1 as const,
@@ -357,7 +358,8 @@ describe("FSAdapterWrapper", () => {
         getSourceSnapshotVersion() {
           return 11;
         },
-        getSourceSnapshotFingerprint() {
+        getSourceSnapshotFingerprint(options?: { purpose?: "agent-config" }) {
+          fingerprintPurpose = options?.purpose;
           return "snapshot-11";
         },
       };
@@ -376,7 +378,11 @@ describe("FSAdapterWrapper", () => {
       );
       assertEquals(wrapper.sourceSnapshotFreshnessOptionsVersion, 1);
       assertEquals(await wrapper.getSourceSnapshotVersion?.(), 11);
-      assertEquals(await wrapper.getSourceSnapshotFingerprint?.(), "snapshot-11");
+      assertEquals(
+        await wrapper.getSourceSnapshotFingerprint?.({ purpose: "agent-config" }),
+        "snapshot-11",
+      );
+      assertEquals(fingerprintPurpose, "agent-config");
     });
 
     it("delegates getSourceSnapshotIdentity to the wrapped adapter", async () => {

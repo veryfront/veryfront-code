@@ -9,10 +9,10 @@ evals are definitions. A run is what executes one of those definitions.
 
 - A **task run** executes a `task:<task-id>` target.
 - A **workflow run** executes a `workflow:<workflow-id>` target.
-- An **eval run** executes an `eval:<eval-id>` target.
+- An **eval run** executes the built-in `task:eval` target with its
+  `eval:<eval-id>` definition ID in `config.eval_id`.
 - A **target** names the capability being executed, for example
-  `task:knowledge-ingest`, `workflow:content-pipeline`, or
-  `eval:deep-research`.
+  `task:knowledge-ingest`, `workflow:content-pipeline`, or `task:eval`.
 - **events** are the canonical user-visible output stream.
 - The run record stores the terminal execution shape directly: `target`,
   `input`, `config`, `output`, `error`, `logs`, `artifacts`, `duration_ms`,
@@ -104,9 +104,16 @@ await runs.createEvalRun({
   target: "eval:deep-research",
   input: { dataset: "smoke" },
   config: { repetitions: 2 },
-  startMode: "manual",
 });
 ```
+
+The deprecated `startMode` option remains accepted for source compatibility,
+but task-based eval runs ignore it.
+
+`createEvalRun()` sends a task run with target `task:eval` and places the
+provided eval target in `config.eval_id`. Direct `POST /runs` callers should use
+the same shape. New `kind: "eval"` requests are rejected. Runs created before
+this change with kind `eval` remain available through read and list APIs.
 
 ## Observe a run
 
@@ -133,6 +140,32 @@ Cancel a non-terminal run:
 ```ts
 await runs.cancel(accepted.run.run_id);
 ```
+
+### Output size limit
+
+A run's final `output` is capped at 1,048,576 bytes (1 MiB), measured as the
+UTF-8 byte length of its JSON serialization. Exactly 1 MiB is stored unchanged.
+A successful task, workflow, or agent result over the limit is never truncated.
+The run ends `failed` with `output: null` and this error:
+
+```json
+{
+  "code": "OUTPUT_TOO_LARGE",
+  "message": "Run output is 1048577 bytes, over the limit of 1048576 bytes",
+  "detail": { "size_bytes": 1048577, "limit_bytes": 1048576 }
+}
+```
+
+If execution has already failed, its original error is preserved and any
+oversized result attached to that failure is discarded.
+
+The runtime checks task and workflow results before it sends them, so an
+oversized result never leaves the runtime. The Veryfront API applies the same
+limit when it stores any run's final output, including agent runs.
+
+A delegating agent still receives a compact summary of a child run's result,
+not the child's full output. To return more data, write it somewhere durable
+and return a reference to it.
 
 ## List project runs
 

@@ -6,7 +6,10 @@ import {
 } from "#veryfront/chat/types.ts";
 import { defineSchema, lazySchema } from "#veryfront/schemas/index.ts";
 import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
-import type { RuntimeAgentRunInvocation } from "../runtime/agent-invocation-contract.ts";
+import {
+  getRuntimeAgentResumeToolCallSchema,
+  type RuntimeAgentRunInvocation,
+} from "../runtime/agent-invocation-contract.ts";
 import { getHostedChatUiToolIdentity } from "./chat-request-tool-part.ts";
 
 const getDurableRootRunIdSchema = defineSchema((v) =>
@@ -504,11 +507,7 @@ export const getHostedChatRequestSchema = defineSchema((v) =>
     allowDelegation: v.boolean().optional(),
     forwardedProps: v.record(v.string(), v.unknown()).optional(),
     serverResolvedProviderReplayCheckpoints: v.unknown().optional(),
-    resumeToolCall: v.object({
-      id: v.string().min(1).max(256),
-      name: v.string().min(1).max(128),
-      input: v.record(v.string(), v.unknown()),
-    }).strict().optional(),
+    resumeToolCall: getRuntimeAgentResumeToolCallSchema().optional(),
     runtimeOverrides: getHostedChatRuntimeOverridesSchema().optional(),
     durableRootRun: getHostedDurableRootRunDescriptorSchema().optional(),
   })
@@ -516,7 +515,9 @@ export const getHostedChatRequestSchema = defineSchema((v) =>
 
 /**
  * Schema for hosted chat request. A request accepts at most 1,000 replayed
- * messages and at most 1,000 parts in each message.
+ * messages and at most 1,000 parts in each message. Signed resume calls support
+ * at most 128 nested levels and 100,000 visited values, including array lengths.
+ * Unsupported structures receive a validation error before execution.
  *
  * @deprecated Use getHostedChatRequestSchema()
  */
