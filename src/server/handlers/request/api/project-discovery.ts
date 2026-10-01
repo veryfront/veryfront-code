@@ -231,6 +231,19 @@ export async function ensureProjectDiscovery(ctx: HandlerContext): Promise<Disco
     }
     if (
       currentExisting &&
+      sourceSnapshotVersion === undefined &&
+      currentExisting.sourceSnapshotVersion === undefined &&
+      sourceFingerprint === undefined &&
+      currentExisting.sourceFingerprint === undefined &&
+      (currentExisting.retryAt === undefined || now() < currentExisting.retryAt)
+    ) {
+      // Legacy adapters expose neither source identity hook. Preserve their
+      // original in-flight deduplication; the owner still discards this record
+      // after completion because it cannot safely cache a mutable snapshot.
+      return currentExisting.promise;
+    }
+    if (
+      currentExisting &&
       (sourceFingerprint === undefined || currentExisting.sourceFingerprint === undefined)
     ) {
       // Without a concrete fingerprint, preserve generation isolation. Wait

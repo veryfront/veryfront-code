@@ -578,6 +578,50 @@ describe(
       assertEquals(secondEnumerationCount, 0);
     });
 
+    it("deduplicates in-flight discovery when snapshot identity hooks are absent", async () => {
+      agentRegistry.clearAll();
+      toolRegistryInternal.clearAll();
+      const projectSlug = "legacy-in-flight-discovery";
+      const first = createHandlerContext("/legacy-in-flight", projectSlug, "preview");
+      const second = createHandlerContext("/legacy-in-flight", projectSlug, "preview");
+      await writeAgentFile(first, "legacy-agent", "UNCHANGED");
+      await writeAgentFile(second, "legacy-agent", "UNCHANGED");
+
+      const firstEnumerationStarted = Promise.withResolvers<void>();
+      const resumeFirstEnumeration = Promise.withResolvers<void>();
+      const firstReadDir = first.adapter.fs.readDir.bind(first.adapter.fs);
+      let pauseFirstEnumeration = true;
+      first.adapter.fs.readDir = async function* (path) {
+        if (pauseFirstEnumeration) {
+          pauseFirstEnumeration = false;
+          firstEnumerationStarted.resolve();
+          await resumeFirstEnumeration.promise;
+        }
+        yield* firstReadDir(path);
+      };
+      const secondReadDir = second.adapter.fs.readDir.bind(second.adapter.fs);
+      let secondEnumerationCount = 0;
+      second.adapter.fs.readDir = async function* (path) {
+        secondEnumerationCount++;
+        yield* secondReadDir(path);
+      };
+
+      const firstDiscovery = ensureProjectDiscovery(first);
+      const secondDiscovery = ensureProjectDiscovery(second);
+      const secondOutcome = secondDiscovery.then(
+        (value) => ({ value, error: undefined }),
+        (error: unknown) => ({ value: undefined, error }),
+      );
+      await firstEnumerationStarted.promise;
+      resumeFirstEnumeration.resolve();
+
+      const firstResult = await firstDiscovery;
+      const outcome = await secondOutcome;
+      if (outcome.error) throw outcome.error;
+      assertStrictEquals(outcome.value, firstResult);
+      assertEquals(secondEnumerationCount, 0);
+    });
+
     it("serializes concurrent fresh adapters when fingerprints are unavailable", async () => {
       agentRegistry.clearAll();
       toolRegistryInternal.clearAll();
