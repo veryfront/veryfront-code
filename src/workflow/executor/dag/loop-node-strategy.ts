@@ -108,6 +108,12 @@ export function toPersistedNodeStates(
       ...(state._subWorkflowOwnerPath !== undefined
         ? { _subWorkflowOwnerPath: state._subWorkflowOwnerPath }
         : {}),
+      ...(state._subWorkflowInputParsed !== undefined
+        ? { _subWorkflowInputParsed: state._subWorkflowInputParsed }
+        : {}),
+      ...(state._subWorkflowCompletedChildIds !== undefined
+        ? { _subWorkflowCompletedChildIds: [...state._subWorkflowCompletedChildIds] }
+        : {}),
       ...(state._subWorkflowContext !== undefined
         ? { _subWorkflowContext: state._subWorkflowContext }
         : {}),

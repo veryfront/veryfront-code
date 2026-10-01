@@ -22,6 +22,7 @@ import {
 } from "#veryfront/testing/assert.ts";
 import { beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { DAGExecutor } from "./index.ts";
+import { toPersistedNodeStates } from "./loop-node-strategy.ts";
 import { defineSchema } from "#veryfront/schemas/index.ts";
 import { NodeStateSchema } from "../../schemas/workflow.schema.ts";
 import type {
@@ -425,7 +426,7 @@ describe("DAGExecutor", () => {
   });
 
   describe("nested output exception replay", () => {
-    it("builds replayed dynamic steps from the retained input when the retry context changes", async () => {
+    it("reuses completed dynamic steps with retained input when the retry context changes", async () => {
       const builderInputs: unknown[] = [];
       let childExecutions = 0;
       let outputCalls = 0;
@@ -462,7 +463,7 @@ describe("DAGExecutor", () => {
         }),
       );
       assertEquals(retried.completed, true);
-      assertEquals(builderInputs, [{ n: 1 }, { n: 1 }]);
+      assertEquals(builderInputs, [{ n: 1 }]);
       assertEquals(retried.context.child, { input: { n: 1 }, read: { n: 1 } });
       assertEquals(childExecutions, 1);
     });
@@ -655,6 +656,129 @@ describe("DAGExecutor", () => {
         assertEquals(childExecutions, 1);
       });
     }
+  });
+
+  it("completed nested DAG output retry does not rebuild from settled sibling context", async () => {
+    const observations: unknown[] = [];
+    const executions: string[] = [];
+    let outputCalls = 0;
+    const child = subWorkflow("child", {
+      workflow: {
+        id: "dynamic-child",
+        steps: ({ context }) => {
+          observations.push(context.sibling);
+          return [step(context.sibling === "arrived" ? "read-new" : "read-old", {
+            tool: "read",
+          })];
+        },
+        output: (context) => {
+          if (++outputCalls === 1) throw new Error("selector failed");
+          return context;
+        },
+      },
+    });
+    const nodes: WorkflowNode[] = [
+      { ...child, dependsOn: [] },
+      { ...step("sibling", { tool: "sibling" }), dependsOn: [] },
+    ];
+    const steps = new MockStepExecutor(new Map(), (node) => {
+      executions.push(node.id);
+      return { success: true, output: node.id === "sibling" ? "arrived" : "old", executionTime: 0 };
+    });
+    const first = await new DAGExecutor({ stepExecutor: steps, maxConcurrency: 2 }).execute(
+      nodes,
+      createTestRun(),
+    );
+    assertEquals(first.completed, false);
+    assertEquals(first.context.sibling, "arrived");
+    assertExists(first.nodeStates.child?._subWorkflowCompletedChildIds);
+    const persisted = Object.fromEntries(
+      Object.entries(first.nodeStates).map(([id, state]) => [id, NodeStateSchema.parse(state)]),
+    );
+    const resumed = await new DAGExecutor({ stepExecutor: steps, maxConcurrency: 2 }).execute(
+      nodes,
+      createTestRun({ nodeStates: persisted, context: first.context }),
+    );
+    assertEquals(resumed.completed, true);
+    assertEquals(resumed.nodeStates.child?._subWorkflowCompletedChildIds, undefined);
+    assertEquals(observations, [undefined]);
+    assertEquals(executions.filter((id) => id === "read-old"), ["read-old"]);
+    assertEquals(executions.includes("read-new"), false);
+    assertEquals(resumed.context.child, { input: { topic: "test" }, "read-old": "old" });
+  });
+
+  it("retains completed child DAG state across loop persistence and output mapping retry", async () => {
+    let builds = 0;
+    let selections = 0;
+    const nodes = [subWorkflow("child", {
+      workflow: {
+        id: "empty-child",
+        steps: () => {
+          builds++;
+          return [];
+        },
+      },
+      output: (context) => {
+        if (++selections <= 2) throw new Error("retry mapping");
+        return context;
+      },
+    })];
+    const first = await executor.execute(nodes, createTestRun());
+    const persisted = JSON.parse(JSON.stringify(toPersistedNodeStates(first.nodeStates)));
+    assertEquals(persisted.child._subWorkflowInputParsed, true);
+    assertEquals(
+      persisted.child._subWorkflowCompletedChildIds,
+      first.nodeStates.child?._subWorkflowCompletedChildIds,
+    );
+    const restored = Object.fromEntries(
+      Object.entries(first.nodeStates).map(([id, state]) => [
+        id,
+        NodeStateSchema.parse({
+          ...state,
+          _subWorkflowCompletedChildIds: persisted[id]._subWorkflowCompletedChildIds,
+        }),
+      ]),
+    );
+    const second = await executor.execute(nodes, createTestRun({ nodeStates: restored }));
+    assertEquals(second.completed, false);
+    assertExists(second.nodeStates.child?._subWorkflowCompletedChildIds);
+    const third = await executor.execute(nodes, createTestRun({ nodeStates: second.nodeStates }));
+    assertEquals(third.completed, true);
+    assertEquals(builds, 1);
+    assertEquals(third.context.child, { input: { topic: "test" } });
+    assertEquals(third.nodeStates.child?._subWorkflowCompletedChildIds, undefined);
+  });
+
+  it("reevaluates dynamic child builders after partial execution", async () => {
+    const observations: unknown[] = [];
+    let attempts = 0;
+    const steps = new MockStepExecutor(new Map(), () => ({
+      success: ++attempts > 1,
+      output: "done",
+      error: attempts === 1 ? "partial failure" : undefined,
+      executionTime: 0,
+    }));
+    const nodes = [subWorkflow("child", {
+      workflow: {
+        id: "partial-child",
+        steps: ({ context }) => {
+          observations.push(context.sibling);
+          return [step("read", { tool: "read" })];
+        },
+      },
+    })];
+    const first = await new DAGExecutor({ stepExecutor: steps }).execute(nodes, createTestRun());
+    assertEquals(first.completed, false);
+    assertEquals(first.nodeStates.child?._subWorkflowCompletedChildIds, undefined);
+    const resumed = await new DAGExecutor({ stepExecutor: steps }).execute(
+      nodes,
+      createTestRun({
+        nodeStates: first.nodeStates,
+        context: { ...first.context, sibling: "arrived" },
+      }),
+    );
+    assertEquals(resumed.completed, true);
+    assertEquals(observations, [undefined, "arrived"]);
   });
 
   describe("simple sequential execution", () => {
@@ -4408,7 +4532,7 @@ describe("DAGExecutor", () => {
         assertEquals(retried.completed, true);
         assertEquals(defaults, 1);
         assertEquals(executions, 1);
-        assertEquals(built, [{ n: 1 }, { n: 1 }]);
+        assertEquals(built, [{ n: 1 }]);
         const childNodeId = Object.keys(first.nodeStates).find((id) => id.includes("child-read"));
         assertExists(childNodeId);
         assertEquals(retried.nodeStates[childNodeId]?.output, { n: 1 });

@@ -115,6 +115,8 @@ export const getNodeStateSchema = defineSchema((v) =>
       nodeId: v.string(),
       waitInstanceId: v.string().nullable(),
     })).optional(),
+    /** Completed child DAG boundary retained until output selection succeeds. */
+    _subWorkflowCompletedChildIds: v.array(v.string()).optional(),
     /** Child states this composite had actively parked when it last suspended. */
     _activeCompositeChildIds: v.array(v.string()).optional(),
     /** Child states a runtime-defined composite produced before it completed. */
