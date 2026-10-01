@@ -9,6 +9,7 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { waitFor } from "#veryfront/testing/deno-compat.ts";
 import { defineSchema } from "#veryfront/schemas";
 import { tool } from "#veryfront/tool";
+import { markTrustedHostToolProvenance } from "#veryfront/tool/host-tool-provenance.ts";
 import { agent, type AgentConfig, AgentRuntime } from "#veryfront/agent";
 import { VeryfrontError } from "#veryfront/errors";
 import { MAX_CONVERSATION_RUN_EVENT_PAYLOAD_BYTES } from "#veryfront/agent/conversation/run-event-limits.ts";
@@ -40,9 +41,12 @@ function lookupTool(onExecute: () => void = () => {}) {
   });
 }
 
-function invokeAgentTool(onExecute: (task: string) => void = () => {}) {
+function invokeAgentTool(
+  onExecute: (task: string) => void = () => {},
+  id = "invoke_agent",
+) {
   return tool({
-    id: "invoke_agent",
+    id,
     description: "Invoke a child agent",
     inputSchema: defineSchema((v) => v.object({ task: v.string() }))(),
     execute: ({ task }) => {
@@ -330,6 +334,41 @@ describe("provider replay checkpoint emission", () => {
         rawToolUse,
         { type: "text", text: "done" },
       ]);
+    });
+  }
+
+  for (const mode of ["generate", "stream"] as const) {
+    it(`does not publish hidden invoke_agent calls in the ${mode} delegation batch`, async () => {
+      const batches: unknown[] = [];
+      let executions = 0;
+      const model = scriptedModel([{
+        toolCalls: [
+          { id: "hidden-1", name: "invoke_agent", input: { task: "first" } },
+          { id: "hidden-2", name: "invoke_agent", input: { task: "second" } },
+        ],
+      }], { modelId: `anthropic/hidden-delegation-${mode}`, provider: "anthropic", only: mode });
+      const config = {
+        id: `hidden-delegation-${mode}`,
+        model: `anthropic/hidden-delegation-${mode}`,
+        system: "Delegate tasks.",
+        skills: false,
+        tools: { invoke_agent: invokeAgentTool(() => executions++) },
+        maxSteps: 1,
+        resolveModelTransport: () => ({ model }),
+        __vfToolLoadingMode: "deferred",
+        __vfProviderReplayCheckpointMessageId: MESSAGE_ID,
+        __vfProviderReplayInvokeAgentToolNames: ["invoke_agent"],
+        __vfProviderReplayCheckpointTurnComplete: (calls) => {
+          batches.push(calls);
+        },
+      } as AgentConfig & RuntimeToolFilterConfig;
+      const runtime = agent(config);
+      if (mode === "generate") await runtime.generate({ input: "Delegate both tasks" });
+      else {await (await runtime.stream({ input: "Delegate both tasks" })).toDataStreamResponse()
+          .text();}
+      assertEquals(model.toolNames(0).includes("invoke_agent"), false);
+      assertEquals(batches, [undefined]);
+      assertEquals(executions, 0);
     });
   }
 
@@ -849,7 +888,11 @@ describe("provider replay checkpoint emission", () => {
       model: "anthropic/aliased-parallel-invoke-agent-replay-boundary",
       system: "Delegate twice.",
       skills: false,
-      tools: { veryfront__invoke_agent: invokeAgentTool() },
+      tools: {
+        veryfront__invoke_agent: markTrustedHostToolProvenance(
+          invokeAgentTool(undefined, "veryfront__invoke_agent"),
+        ),
+      },
       maxSteps: 1,
       resolveModelTransport: () => ({ model }),
       __vfProviderReplayCheckpointMessageId: MESSAGE_ID,
@@ -863,6 +906,7 @@ describe("provider replay checkpoint emission", () => {
 
     await new AgentRuntime(config.id!, config).generate("Delegate both tasks");
 
+    assertEquals(model.toolNames(0).includes("veryfront__invoke_agent"), true);
     assertEquals(completedBatch, [
       {
         toolCallId: "child-1",

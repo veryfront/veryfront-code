@@ -1342,6 +1342,7 @@ function collectGeneratedParallelInvokeAgentToolCalls(
   toolCalls: RuntimeGenerateTextResult["toolCalls"],
   toolResults: ReadonlyMap<string, RuntimeGenerateToolResult>,
   allowedToolNames: ReadonlySet<ProviderReplayInvokeAgentToolName>,
+  plan: ToolExposurePlan,
   delegationArgsContext: ProviderReplayDelegationArgsContext,
 ): ProviderReplayInvokeAgentToolCall[] | undefined {
   const calls: ProviderReplayInvokeAgentToolCall[] = [];
@@ -1354,6 +1355,7 @@ function collectGeneratedParallelInvokeAgentToolCalls(
       !IntrinsicReflectApply(IntrinsicSetHas, allowedToolNames, [
         toolCall.toolName as ProviderReplayInvokeAgentToolName,
       ]) ||
+      !isToolVisibleForStep(toolCall.toolName, plan) ||
       (!delegationArgsContext.hasToolReplacements && toolResults.has(toolCall.toolCallId)) ||
       !toolCall.input || typeof toolCall.input !== "object" || ArrayIsArray(toolCall.input)
     ) {
@@ -1378,6 +1380,7 @@ function collectStreamedParallelInvokeAgentToolCalls(
   toolResults: ReadonlyMap<string, StreamingToolResult>,
   allowedToolNames: ReadonlySet<ProviderReplayInvokeAgentToolName>,
   shouldContinue: boolean,
+  plan: ToolExposurePlan,
   delegationArgsContext: ProviderReplayDelegationArgsContext,
 ): ProviderReplayInvokeAgentToolCall[] | undefined {
   if (!shouldContinue) return undefined;
@@ -1387,6 +1390,7 @@ function collectStreamedParallelInvokeAgentToolCalls(
     const toolCall = toolCalls[index];
     if (
       !toolCall || toolCall.inputAvailable !== true || toolCall.providerExecuted === true ||
+      !isToolVisibleForStep(toolCall.name, plan) ||
       toolResults.has(toolCall.id) ||
       !IntrinsicReflectApply(IntrinsicSetHas, allowedToolNames, [
         toolCall.name as ProviderReplayInvokeAgentToolName,
@@ -3201,6 +3205,7 @@ export class AgentRuntime {
             response.toolCalls,
             generatedToolResults,
             providerReplayCheckpointEmission.invokeAgentToolNames,
+            effectiveToolExposurePlan,
             {
               activeSkillDelegationOverrides: skillState.activeSkillDelegationOverrides,
               toolsConfig: runtimeToolsConfig,
@@ -3352,6 +3357,7 @@ export class AgentRuntime {
                 response.toolCalls,
                 generatedToolResults,
                 providerReplayCheckpointEmission.invokeAgentToolNames,
+                effectiveToolExposurePlan,
                 {
                   activeSkillDelegationOverrides: skillState.activeSkillDelegationOverrides,
                   toolsConfig: runtimeToolsConfig,
@@ -4421,6 +4427,7 @@ export class AgentRuntime {
           finalToolResults,
           providerReplayCheckpointEmission.invokeAgentToolNames,
           shouldContinue,
+          effectiveToolExposurePlan,
           {
             activeSkillDelegationOverrides: skillState.activeSkillDelegationOverrides,
             toolsConfig: this.config.tools,
@@ -4647,6 +4654,7 @@ export class AgentRuntime {
               finalToolResults,
               providerReplayCheckpointEmission.invokeAgentToolNames,
               shouldContinue,
+              effectiveToolExposurePlan,
               {
                 activeSkillDelegationOverrides: skillState.activeSkillDelegationOverrides,
                 toolsConfig: this.config.tools,
