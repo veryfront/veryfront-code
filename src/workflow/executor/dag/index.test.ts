@@ -39,7 +39,6 @@ import { normalizeSourceIntegrationPolicy } from "#veryfront/integrations/source
 import { INVALID_ARGUMENT, VeryfrontError } from "#veryfront/errors";
 import { __subscribeLogRecordEmitter, type LogEntry } from "#veryfront/utils/logger/logger.ts";
 import { serializeWorkflowContext } from "../../context-serialization.ts";
-import { defineSchema } from "#veryfront/schemas/index.ts";
 import {
   loop,
   map,
