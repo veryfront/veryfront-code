@@ -3463,6 +3463,149 @@ describe("RedisBackend", () => {
       assertEquals(run?.nodeStates["child-stamp"]?.output, { when: "1970-01-01T00:00:00.000Z" });
     });
 
+    it("applies the context JSON policy to sub-workflow context snapshots (#2244)", async () => {
+      const snapshot = (when: Date) => ({
+        when,
+        tags: new Map([["phase", "saved"]]),
+      });
+
+      await backend.createRun(createTestRun("run-sub-workflow-snapshot-json", {
+        nodeStates: {
+          created: {
+            nodeId: "created",
+            status: "running",
+            attempt: 1,
+            _subWorkflowContext: snapshot(new Date(0)),
+          },
+        },
+      }));
+      assertEquals(
+        (await backend.getRun("run-sub-workflow-snapshot-json"))?.nodeStates.created
+          ?._subWorkflowContext,
+        { when: "1970-01-01T00:00:00.000Z", tags: {} },
+      );
+
+      await backend.updateRun("run-sub-workflow-snapshot-json", {
+        nodeStates: {
+          patched: {
+            nodeId: "patched",
+            status: "running",
+            attempt: 1,
+            _subWorkflowContext: snapshot(new Date(1)),
+          },
+        },
+      });
+      assertEquals(
+        (await backend.getRun("run-sub-workflow-snapshot-json"))?.nodeStates.patched
+          ?._subWorkflowContext,
+        { when: "1970-01-01T00:00:00.001Z", tags: {} },
+      );
+
+      await backend.restoreRunStateIfStatus("run-sub-workflow-snapshot-json", ["pending"], {
+        status: "pending",
+        context: { input: {} },
+        nodeStates: {
+          restored: {
+            nodeId: "restored",
+            status: "running",
+            attempt: 1,
+            _subWorkflowContext: snapshot(new Date(2)),
+          },
+        },
+      });
+      assertEquals(
+        (await backend.getRun("run-sub-workflow-snapshot-json"))?.nodeStates.restored
+          ?._subWorkflowContext,
+        { when: "1970-01-01T00:00:00.002Z", tags: {} },
+      );
+    });
+
+    it("rejects lossy sub-workflow context snapshots at every write boundary (#2244)", async () => {
+      const strictBackend = new RedisBackend({
+        client: mockRedis as unknown as RedisAdapter,
+        prefix: "strict-sub-workflow:",
+        strictContext: true,
+      });
+      const nodeState = (nodeId: string) => ({
+        nodeId,
+        status: "running" as const,
+        attempt: 1,
+        _subWorkflowContext: { when: new Date(0) },
+      });
+      const message =
+        "strictContext enabled: nodeStates._subWorkflowContext.<redacted>.<redacted> (Date)";
+
+      await assertRejects(
+        () =>
+          strictBackend.createRun(createTestRun("run-strict-sub-workflow-create", {
+            nodeStates: { created: nodeState("created") },
+          })),
+        Error,
+        message,
+      );
+
+      await strictBackend.createRun(createTestRun("run-strict-sub-workflow-write"));
+      await assertRejects(
+        () =>
+          strictBackend.updateRun("run-strict-sub-workflow-write", {
+            nodeStates: { patched: nodeState("patched") },
+          }),
+        Error,
+        message,
+      );
+      await assertRejects(
+        () =>
+          strictBackend.restoreRunStateIfStatus("run-strict-sub-workflow-write", ["pending"], {
+            status: "pending",
+            context: { input: {} },
+            nodeStates: { restored: nodeState("restored") },
+          }),
+        Error,
+        message,
+      );
+      assertEquals((await strictBackend.getRun("run-strict-sub-workflow-write"))?.nodeStates, {});
+    });
+
+    it("rejects BigInt in sub-workflow context snapshots at every write boundary (#2244)", async () => {
+      const nodeState = (nodeId: string) => ({
+        nodeId,
+        status: "running" as const,
+        attempt: 1,
+        _subWorkflowContext: { total: 1n },
+      });
+      const message = "nodeStates._subWorkflowContext.<redacted>.<redacted> (BigInt)";
+
+      await assertRejects(
+        () =>
+          backend.createRun(createTestRun("run-bigint-sub-workflow-create", {
+            nodeStates: { created: nodeState("created") },
+          })),
+        Error,
+        message,
+      );
+
+      await backend.createRun(createTestRun("run-bigint-sub-workflow-write"));
+      await assertRejects(
+        () =>
+          backend.updateRun("run-bigint-sub-workflow-write", {
+            nodeStates: { patched: nodeState("patched") },
+          }),
+        Error,
+        message,
+      );
+      await assertRejects(
+        () =>
+          backend.restoreRunStateIfStatus("run-bigint-sub-workflow-write", ["pending"], {
+            status: "pending",
+            context: { input: {} },
+            nodeStates: { restored: nodeState("restored") },
+          }),
+        Error,
+        message,
+      );
+      assertEquals((await backend.getRun("run-bigint-sub-workflow-write"))?.nodeStates, {});
+    });
+
     it("rejects node-state user data JSON cannot encode, naming the field (#2242)", async () => {
       await backend.createRun(createTestRun("run-node-state-bigint"));
       await assertRejects(

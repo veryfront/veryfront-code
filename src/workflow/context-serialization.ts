@@ -1476,10 +1476,11 @@ function formatPaths(samples: readonly UnrepresentableValue[], total: number): s
  * field would raise on the same value.
  *
  * Scope, stated plainly because the ordering above is easy to read as more:
- * `context` is checked here, and the user data in `nodeStates` is checked by
- * `prepareNodeStatesUserData`. A run's `input`, `output`, `currentNodes`, and
- * `error` are encoded directly. A node state's own timestamps stay outside the
- * check, because they are the framework's `Date`s rather than step data.
+ * `context` is checked here, and the user data plus resumable child-context
+ * snapshots in `nodeStates` are checked by `prepareNodeStatesUserData`. A run's
+ * `input`, `output`, `currentNodes`, and `error` are encoded directly. A node
+ * state's own timestamps stay outside the check, because they are the
+ * framework's `Date`s rather than step data.
  * Anything the framework writes into `context` has to obey the same rule it
  * asks of a step, which is why the loop encodes its child node states rather
  * than being exempted from the check.
@@ -1561,19 +1562,19 @@ export function serializeWorkflowContext(
   return serializeWorkflowJson(context, "context", runId, options);
 }
 
-/** The node-state fields that carry step data rather than framework metadata. */
-const NODE_STATE_USER_DATA_FIELDS = ["input", "output"] as const;
+/** The node-state fields that carry step data or a resumable child-context snapshot. */
+const NODE_STATE_USER_DATA_FIELDS = ["input", "output", "_subWorkflowContext"] as const;
 
 type NodeStateUserDataField = typeof NODE_STATE_USER_DATA_FIELDS[number];
 
 /**
- * @internal Apply the context persistence policy to the step data in node states.
+ * @internal Apply the context persistence policy to user context in node states.
  *
  * A node state's `input` and `output` hold what a step received and returned,
- * so they are the same user data `context` holds. A nested workflow keeps its
- * children's results only here until it completes, which left them outside the
- * policy: Redis rewrote a `Date` to a string and failed on a BigInt with the
- * native error, the memory backend kept both, and `strictContext` saw neither.
+ * so they are the same user data `context` holds. `_subWorkflowContext` is the
+ * resumable snapshot of that same context while a nested workflow is incomplete.
+ * Leaving any of these outside the policy made Redis rewrite a `Date` and fail
+ * on a BigInt while the memory backend kept both, and `strictContext` saw neither.
  *
  * Each field is checked across all nodes in one pass, so a diagnostic names the
  * field (`nodeStates.output.<redacted>...`) and a write logs at most one warning
@@ -1584,7 +1585,7 @@ type NodeStateUserDataField = typeof NODE_STATE_USER_DATA_FIELDS[number];
  * as they are.
  */
 export function prepareNodeStatesUserData<
-  T extends { input?: unknown; output?: unknown },
+  T extends { input?: unknown; output?: unknown; _subWorkflowContext?: unknown },
 >(
   nodeStates: Readonly<Record<string, T>>,
   runId: string | undefined,
@@ -1617,7 +1618,10 @@ export function prepareNodeStatesUserData<
 }
 
 function collectNodeStateField(
-  nodeStates: Record<string, { input?: unknown; output?: unknown }>,
+  nodeStates: Record<
+    string,
+    { input?: unknown; output?: unknown; _subWorkflowContext?: unknown }
+  >,
   field: NodeStateUserDataField,
 ): Record<string, unknown> | undefined {
   let values: Record<string, unknown> | undefined;

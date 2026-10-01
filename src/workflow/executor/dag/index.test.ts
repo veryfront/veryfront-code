@@ -156,6 +156,60 @@ describe("DAGExecutor", () => {
     executor = new DAGExecutor({ stepExecutor });
   });
 
+  describe("nested wait snapshot boundaries", () => {
+    for (const scenario of ["same instance", "new instance", "legacy instance"] as const) {
+      it(`restores wait decisions for the ${scenario} boundary (#2244)`, async () => {
+        const latest = { approved: true, decidedAt: "2026-10-01T00:00:00.000Z" };
+        const edited = { source: "child" };
+        const currentInstance = scenario === "legacy instance" ? undefined : "wait-current";
+        const capturedInstance = scenario === "new instance" ? "wait-prior" : currentInstance;
+        const observed: unknown[] = [];
+        const childExecutor = new MockStepExecutor(new Map(), (_node, context) => {
+          observed.push(context.review);
+          return { success: true, output: context.review, executionTime: 0 };
+        });
+        const child: WorkflowDefinition = {
+          id: "wait-instance-child",
+          steps: [
+            waitForApproval("review", { message: "Review" }),
+            step("observe", { tool: "observe" }),
+          ],
+          output: (context) => context.observe,
+        };
+        const result = await new DAGExecutor({ stepExecutor: childExecutor }).execute(
+          [subWorkflow("child", { workflow: child })],
+          createTestRun({
+            context: { input: {}, review: latest },
+            nodeStates: {
+              child: {
+                nodeId: "child",
+                status: "running",
+                attempt: 1,
+                _activeCompositeChildIds: ["review"],
+                _subWorkflowContext: { input: {}, review: edited },
+                _subWorkflowContextWaits: [{
+                  nodeId: "review",
+                  waitInstanceId: capturedInstance ?? null,
+                }],
+              },
+              review: {
+                nodeId: "review",
+                status: "completed",
+                attempt: 1,
+                output: latest,
+                ...(currentInstance === undefined ? {} : { _waitInstanceId: currentInstance }),
+              },
+            },
+          }),
+        );
+        const expected = scenario === "new instance" ? latest : edited;
+        assertEquals(result.completed, true);
+        assertEquals(observed, [expected]);
+        assertEquals(result.context.child, expected);
+      });
+    }
+  });
+
   describe("nested output exception replay", () => {
     it("builds replayed dynamic steps from the retained input when the retry context changes", async () => {
       const builderInputs: unknown[] = [];
