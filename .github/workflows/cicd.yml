@@ -1422,7 +1422,7 @@ jobs:
       version: ${{ steps.version.outputs.version }}
     permissions:
       actions: read
-      contents: write
+      contents: read
       id-token: write
     steps:
       - name: Require merge correctness dependencies
@@ -1524,25 +1524,42 @@ jobs:
           fi
           exit "$publish_status"
 
+  github-prerelease:
+    name: GitHub prerelease
+    if: ${{ !cancelled() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && needs.prerelease.result == 'success' }}
+    needs: [prerelease]
+    runs-on: ubuntu-latest
+    environment: production
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: ./.github/actions/setup-deno
+        timeout-minutes: 5
+
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           path: binaries
 
       - name: Prepare RC checkout for SBOM
         env:
-          VERSION: ${{ steps.version.outputs.version }}
+          VERSION: ${{ needs.prerelease.outputs.version }}
         run: deno run -A scripts/ci/prepare-rc-build.ts
 
       - name: Generate SBOM
         env:
-          VERSION: ${{ steps.version.outputs.version }}
+          VERSION: ${{ needs.prerelease.outputs.version }}
         run: |
           deno task sbom:all --output-dir "dist/sbom-${VERSION}"
           deno task sbom --lock scripts/build/proxy-deno.lock --output "dist/sbom-${VERSION}/proxy.json"
 
       - name: Prepare public release assets
         env:
-          VERSION: ${{ steps.version.outputs.version }}
+          VERSION: ${{ needs.prerelease.outputs.version }}
         run: |
           mkdir -p dist/public-release
           for file in binaries/veryfront-*/veryfront-* dist/sbom-${VERSION}/*.json; do
@@ -1758,8 +1775,8 @@ jobs:
   # App keys belong only on fresh runners that execute fixed workflow code.
   # Downloaded publication assets are data and must never be executed.
   publish-public-release:
-    if: ${{ always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && ((needs.version-check.outputs.is_stable == 'false' && needs.prerelease.result == 'success') || (needs.version-check.outputs.is_stable == 'true' && needs.release.result == 'success')) }}
-    needs: [prerelease, release, version-check]
+    if: ${{ always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && ((needs.version-check.outputs.is_stable == 'false' && needs.prerelease.result == 'success' && needs.github-prerelease.result == 'success') || (needs.version-check.outputs.is_stable == 'true' && needs.release.result == 'success')) }}
+    needs: [prerelease, github-prerelease, release, version-check]
     runs-on: ubuntu-latest
     environment: production
     permissions:
@@ -2039,24 +2056,20 @@ jobs:
             --generate-notes \
             --notes "Binaries available at: https://github.com/veryfront/veryfront/releases/tag/v${VERSION}"
 
-  quality-gate-registry:
-    # Serialize with RC publication so a newer release cannot overtake dispatch.
-    concurrency:
-      group: veryfront-rc-publication
-      queue: max
-    name: quality gate (registry)
-    if: ${{ always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && needs.version-check.result == 'success' && (needs.version-check.outputs.is_stable == 'false' || needs.version-check.outputs.stable_release_requested == 'true') }}
-    needs: [prerelease, release, publish-public-release, version-check]
+  registry-validation-rc:
+    name: registry validation (RC)
+    if: ${{ always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && needs.version-check.result == 'success' && needs.version-check.outputs.is_stable == 'false' }}
+    needs: [prerelease, version-check]
     runs-on: ubuntu-latest
-    environment: production
+    permissions:
+      contents: read
     timeout-minutes: 65
     steps:
       - name: Report selected release result
         env:
           IS_STABLE: ${{ needs.version-check.outputs.is_stable }}
           PRERELEASE_RESULT: ${{ needs.prerelease.result }}
-          STABLE_RELEASE_RESULT: ${{ needs.release.result }}
-          PUBLIC_RELEASE_RESULT: ${{ needs.publish-public-release.result }}
+          STABLE_RELEASE_RESULT: skipped
         run: |
           if [ "$IS_STABLE" = "true" ]; then
             selected_result_name="STABLE_RELEASE_RESULT"
@@ -2103,6 +2116,133 @@ jobs:
         env:
           REGISTRY_IMAGE: veryfront-registry-validation:${{ github.run_id }}-${{ github.run_attempt }}
           RC_VERSION: ${{ needs.prerelease.outputs.version }}
+          STABLE_VERSION: ""
+          GITHUB_SHA: ${{ github.sha }}
+          IS_STABLE: ${{ needs.version-check.outputs.is_stable }}
+        run: |
+          set -euo pipefail
+          container_name="veryfront-registry-validation-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          cleanup() {
+            docker rm -f "$container_name" >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT INT TERM
+          docker run --rm --init \
+            --platform linux/amd64 \
+            --name "$container_name" \
+            --user 1000:1000 \
+            --read-only \
+            --cap-drop ALL \
+            --security-opt no-new-privileges=true \
+            --network=bridge \
+            --volume /registry \
+            --tmpfs /tmp:rw,nosuid,nodev,size=64m \
+            --mount "type=bind,source=${GITHUB_WORKSPACE},target=/source,readonly" \
+            --env RC_VERSION \
+            --env STABLE_VERSION \
+            --env GITHUB_SHA \
+            --env IS_STABLE \
+            --env HOME=/registry/home \
+            --env DENO_DIR=/registry/deno-cache \
+            --env TMPDIR=/registry/tmp \
+            --env npm_config_cache=/registry/npm-cache \
+            --env CI=true \
+            "$REGISTRY_IMAGE" \
+            bash -euo pipefail -c 'mkdir -p /registry/home /registry/deno-cache /registry/tmp /registry/npm-cache /registry/workspace
+          tar -C /source --exclude=.git --exclude=node_modules --no-same-owner -cf - . | tar -C /registry/workspace --no-same-owner -xf -
+          cd /registry/workspace
+          bash scripts/ci/registry-release-smoke.sh'
+
+  quality-gate-registry:
+    # Serialize with RC publication so a newer release cannot overtake dispatch.
+    concurrency:
+      group: veryfront-rc-publication
+      queue: max
+    name: quality gate (registry)
+    if: ${{ always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && needs.version-check.result == 'success' && (needs.version-check.outputs.is_stable == 'false' || needs.version-check.outputs.stable_release_requested == 'true') }}
+    needs: [
+      prerelease,
+      github-prerelease,
+      registry-validation-rc,
+      release,
+      publish-public-release,
+      version-check,
+    ]
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 65
+    steps:
+      - name: Report selected release result
+        env:
+          IS_STABLE: ${{ needs.version-check.outputs.is_stable }}
+          PRERELEASE_RESULT: ${{ needs.prerelease.result }}
+          STABLE_RELEASE_RESULT: ${{ needs.release.result }}
+          PUBLIC_RELEASE_RESULT: ${{ needs.publish-public-release.result }}
+        run: |
+          if [ "$IS_STABLE" = "true" ]; then
+            selected_result_name="STABLE_RELEASE_RESULT"
+          else
+            selected_result_name="PRERELEASE_RESULT"
+          fi
+          selected_result="${!selected_result_name}"
+          if [ "$selected_result" != "success" ]; then
+            echo "::warning::REGISTRY RELEASE NON-SUCCESS [configuration]: $selected_result_name finished with $selected_result. Registry validation will continue, but downstream release dispatch remains blocked." >&2
+          fi
+      - name: Require RC release dependencies
+        if: ${{ needs.version-check.outputs.is_stable == 'false' }}
+        env:
+          PRERELEASE_RESULT: ${{ needs.prerelease.result }}
+          ASSETS_RESULT: ${{ needs.github-prerelease.result }}
+          PUBLIC_RELEASE_RESULT: ${{ needs.publish-public-release.result }}
+          REGISTRY_RESULT: ${{ needs.registry-validation-rc.result }}
+        run: |
+          failed=0
+          for result_name in PRERELEASE_RESULT ASSETS_RESULT PUBLIC_RELEASE_RESULT REGISTRY_RESULT; do
+            result="${!result_name}"
+            if [ "$result" != "success" ]; then
+              echo "::error::$result_name finished with $result"
+              failed=1
+            fi
+          done
+          exit "$failed"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: ${{ needs.version-check.outputs.is_stable == 'true' }}
+        with:
+          persist-credentials: false
+      - name: Build registry validation image
+        if: ${{ needs.version-check.outputs.is_stable == 'true' }}
+        timeout-minutes: 5
+        env:
+          REGISTRY_IMAGE: veryfront-registry-validation:${{ github.run_id }}-${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          build_context="$(mktemp -d)"
+          cleanup() {
+            rm -rf "$build_context"
+          }
+          trap cleanup EXIT INT TERM
+          cat > "$build_context/Dockerfile" <<'DOCKERFILE'
+          FROM node:24-bookworm-slim@sha256:5cbc7caba8c2c0f0bca675d1b61b9f2857e1cf1853c6164ee9dd409501a936e7
+          RUN apt-get update \
+            && apt-get install -y --no-install-recommends ca-certificates curl jq unzip \
+            && rm -rf /var/lib/apt/lists/*
+          RUN curl --fail --location --silent --show-error \
+                https://github.com/denoland/deno/releases/download/v2.7.7/deno-x86_64-unknown-linux-gnu.zip \
+                --output /tmp/deno.zip \
+            && echo '0cd918870657ccc3d96ac682290e894dda374e2a742424aae9118b258a6cf7a3  /tmp/deno.zip' \
+                | sha256sum --check --strict \
+            && unzip -q /tmp/deno.zip -d /usr/local/bin \
+            && chmod 0755 /usr/local/bin/deno \
+            && /usr/local/bin/deno --version \
+            && rm /tmp/deno.zip
+          RUN mkdir /registry && chown 1000:1000 /registry
+          WORKDIR /registry
+          DOCKERFILE
+          docker build --platform linux/amd64 --tag "$REGISTRY_IMAGE" "$build_context"
+      - name: Validate exact registry release
+        if: ${{ needs.version-check.outputs.is_stable == 'true' }}
+        env:
+          REGISTRY_IMAGE: veryfront-registry-validation:${{ github.run_id }}-${{ github.run_attempt }}
+          RC_VERSION: ${{ needs.prerelease.outputs.version }}
           STABLE_VERSION: ${{ needs.release.outputs.version }}
           GITHUB_SHA: ${{ github.sha }}
           IS_STABLE: ${{ needs.version-check.outputs.is_stable }}
@@ -2140,7 +2280,7 @@ jobs:
           bash scripts/ci/registry-release-smoke.sh'
 
       - name: Resolve published version
-        if: ${{ success() && needs.publish-public-release.result == 'success' && ((needs.version-check.outputs.is_stable == 'true' && needs.release.result == 'success') || (needs.version-check.outputs.is_stable == 'false' && needs.prerelease.result == 'success')) }}
+        if: ${{ success() && needs.publish-public-release.result == 'success' && ((needs.version-check.outputs.is_stable == 'true' && needs.release.result == 'success') || (needs.version-check.outputs.is_stable == 'false' && needs.prerelease.result == 'success' && needs.github-prerelease.result == 'success' && needs.registry-validation-rc.result == 'success')) }}
         timeout-minutes: 5
         id: version
         env:
@@ -2163,7 +2303,7 @@ jobs:
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
       - name: Check current RC tag
-        if: ${{ success() && needs.publish-public-release.result == 'success' && ((needs.version-check.outputs.is_stable == 'true' && needs.release.result == 'success') || (needs.version-check.outputs.is_stable == 'false' && needs.prerelease.result == 'success')) }}
+        if: ${{ success() && needs.publish-public-release.result == 'success' && ((needs.version-check.outputs.is_stable == 'true' && needs.release.result == 'success') || (needs.version-check.outputs.is_stable == 'false' && needs.prerelease.result == 'success' && needs.github-prerelease.result == 'success' && needs.registry-validation-rc.result == 'success')) }}
         timeout-minutes: 5
         id: current
         env:
@@ -2213,7 +2353,7 @@ jobs:
           fi
 
       - name: Build dispatch payload
-        if: ${{ success() && needs.publish-public-release.result == 'success' && ((needs.version-check.outputs.is_stable == 'true' && needs.release.result == 'success') || (needs.version-check.outputs.is_stable == 'false' && needs.prerelease.result == 'success')) }}
+        if: ${{ success() && needs.publish-public-release.result == 'success' && ((needs.version-check.outputs.is_stable == 'true' && needs.release.result == 'success') || (needs.version-check.outputs.is_stable == 'false' && needs.prerelease.result == 'success' && needs.github-prerelease.result == 'success' && needs.registry-validation-rc.result == 'success')) }}
         timeout-minutes: 5
         id: payload
         env:
@@ -2223,7 +2363,7 @@ jobs:
           echo "payload=$payload" >> "$GITHUB_OUTPUT"
 
       - name: Create release GitHub App token
-        if: ${{ success() && needs.publish-public-release.result == 'success' && ((needs.version-check.outputs.is_stable == 'true' && needs.release.result == 'success') || (needs.version-check.outputs.is_stable == 'false' && needs.prerelease.result == 'success')) && steps.current.outputs.dispatch == 'true' }}
+        if: ${{ success() && needs.publish-public-release.result == 'success' && ((needs.version-check.outputs.is_stable == 'true' && needs.release.result == 'success') || (needs.version-check.outputs.is_stable == 'false' && needs.prerelease.result == 'success' && needs.github-prerelease.result == 'success' && needs.registry-validation-rc.result == 'success')) && steps.current.outputs.dispatch == 'true' }}
         timeout-minutes: 5
         id: release-app-token
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
@@ -2238,7 +2378,7 @@ jobs:
           permission-contents: write
 
       - name: Trigger server deploy
-        if: ${{ success() && needs.publish-public-release.result == 'success' && ((needs.version-check.outputs.is_stable == 'true' && needs.release.result == 'success') || (needs.version-check.outputs.is_stable == 'false' && needs.prerelease.result == 'success')) && steps.current.outputs.dispatch == 'true' }}
+        if: ${{ success() && needs.publish-public-release.result == 'success' && ((needs.version-check.outputs.is_stable == 'true' && needs.release.result == 'success') || (needs.version-check.outputs.is_stable == 'false' && needs.prerelease.result == 'success' && needs.github-prerelease.result == 'success' && needs.registry-validation-rc.result == 'success')) && steps.current.outputs.dispatch == 'true' }}
         timeout-minutes: 5
         uses: peter-evans/repository-dispatch@28959ce8df70de7be546dd1250a005dd32156697 # v4.0.1
         with:
@@ -2248,7 +2388,7 @@ jobs:
           client-payload: ${{ steps.payload.outputs.payload }}
 
       - name: Trigger job-runner deploy
-        if: ${{ success() && needs.publish-public-release.result == 'success' && ((needs.version-check.outputs.is_stable == 'true' && needs.release.result == 'success') || (needs.version-check.outputs.is_stable == 'false' && needs.prerelease.result == 'success')) && steps.current.outputs.dispatch == 'true' }}
+        if: ${{ success() && needs.publish-public-release.result == 'success' && ((needs.version-check.outputs.is_stable == 'true' && needs.release.result == 'success') || (needs.version-check.outputs.is_stable == 'false' && needs.prerelease.result == 'success' && needs.github-prerelease.result == 'success' && needs.registry-validation-rc.result == 'success')) && steps.current.outputs.dispatch == 'true' }}
         timeout-minutes: 5
         uses: peter-evans/repository-dispatch@28959ce8df70de7be546dd1250a005dd32156697 # v4.0.1
         with:
@@ -2258,7 +2398,7 @@ jobs:
           client-payload: ${{ steps.payload.outputs.payload }}
 
       - name: Trigger sandbox deploy
-        if: ${{ success() && needs.publish-public-release.result == 'success' && ((needs.version-check.outputs.is_stable == 'true' && needs.release.result == 'success') || (needs.version-check.outputs.is_stable == 'false' && needs.prerelease.result == 'success')) && steps.current.outputs.dispatch == 'true' }}
+        if: ${{ success() && needs.publish-public-release.result == 'success' && ((needs.version-check.outputs.is_stable == 'true' && needs.release.result == 'success') || (needs.version-check.outputs.is_stable == 'false' && needs.prerelease.result == 'success' && needs.github-prerelease.result == 'success' && needs.registry-validation-rc.result == 'success')) && steps.current.outputs.dispatch == 'true' }}
         timeout-minutes: 5
         uses: peter-evans/repository-dispatch@28959ce8df70de7be546dd1250a005dd32156697 # v4.0.1
         with:

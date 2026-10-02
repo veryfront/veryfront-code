@@ -132,10 +132,14 @@ accept skipped correctness jobs only with the authoritative tested merge-queue
 run id, and always require the fresh main Sonar gate to succeed. Fallback runs
 require every correctness dependency to succeed.
 
-Registry validation and downstream dispatch share one runner. Every dispatch
-step requires successful validation, the selected publication job, and public
-release upload, retains
-a five-minute timeout, and stays inside the existing `production` approval
-environment. The container terminates before token creation; no repository
-script or local action runs on the host after validation. This removes three
-runner acquisitions from the main publish path without removing any gate.
+Stable registry validation and downstream dispatch share one runner. RC registry
+validation starts after npm publication on a read-only runner, in parallel with
+GitHub asset preparation and upload. The canonical `quality gate (registry)`
+joins both RC paths and fails unless npm publication, asset preparation, public
+upload, and registry validation all succeed. Stable validation remains inline.
+Every dispatch step requires successful validation, the selected publication
+job, and public release upload, retains a five-minute timeout, and stays inside
+the existing `production` approval environment. The validation container
+terminates before token creation; no repository script or local action runs on
+the host after validation. The standalone main Sonar and merge gate runners
+remain folded without removing any gate.

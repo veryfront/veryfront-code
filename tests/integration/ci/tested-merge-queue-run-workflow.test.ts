@@ -56,8 +56,10 @@ const KEPT = [
   "tests-proxy-binary",
   "build-binaries",
   "prerelease",
+  "github-prerelease",
   "release",
   "publish-public-release",
+  "registry-validation-rc",
   "quality-gate-registry",
   "update-homebrew",
 ] as const;
