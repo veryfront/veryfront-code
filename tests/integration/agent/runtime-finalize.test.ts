@@ -219,7 +219,7 @@ describe("runtime finalize terminal control", () => {
                 return apply(iterator, this, []);
               };
               Reflect.get = (target, key, receiver) => {
-                if (key === "runId" && target.runId === "run-current") {
+                if (key === "runId" && (target as { runId?: unknown }).runId === "run-current") {
                   observations.push("execution context read");
                 }
                 return get(target, key, receiver);
@@ -229,7 +229,11 @@ describe("runtime finalize terminal control", () => {
                 if (status === "completed") output = await runtime.generate("run", context);
                 else await assertRejects(() => runtime.generate("run", context));
               } else {
-                output = await new Response(await runtime.stream("run", context)).text();
+                output = await new Response(
+                  await runtime.stream([
+                    { id: "run-input", role: "user", parts: [{ type: "text", text: "run" }] },
+                  ], context),
+                ).text();
               }
             } finally {
               Array.prototype[Symbol.iterator] = iterator;
@@ -240,7 +244,7 @@ describe("runtime finalize terminal control", () => {
               assertEquals((output as { object: unknown }).object, "done");
             }
             const receipts = (await runtime.getMemory().getMessages()).flatMap((message) =>
-              message.parts.filter((part) => part.type === "tool-result")
+              message.parts.flatMap((part) => part.type === "tool-result" ? [part] : [])
             );
             assertEquals(receipts.map((part) => part.toolCallId), ["fail-1", "marker-1"]);
             assertEquals(dispatched, status === "unknown" ? [call.name, call.name] : [call.name]);

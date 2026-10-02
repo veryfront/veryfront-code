@@ -175,7 +175,7 @@ describe("private array concatenation", () => {
         },
       }),
     );
-    const visited: [number, number][] = [];
+    const visited: [number | undefined, number][] = [];
     forEachPrivateArray(values, (value, index, source) => {
       assertStrictEquals(source, values);
       visited.push([value, index]);
