@@ -1,3 +1,4 @@
+import { isTerminalRunControlError } from "#veryfront/agent/runtime/terminal-run-control.ts";
 import { registerTurnProviderRequestValidator } from "#veryfront/agent/middleware/turn-validation.ts";
 import { securityMiddleware } from "#veryfront/agent/middleware/security/validator.ts";
 import { defineSchema } from "#veryfront/schemas/index.ts";
@@ -10,7 +11,7 @@ import { createRemoteMCPToolSource } from "#veryfront/tool/remote-mcp.ts";
 import { markTrustedPlatformSource } from "#veryfront/tool/platform-source-provenance.ts";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { AgentRuntime, type AgentRuntimeInternalOptions } from "#veryfront/agent/runtime/index.ts";
-import type { AgentConfig } from "#veryfront/agent/types.ts";
+import type { AgentConfig, Message } from "#veryfront/agent/types.ts";
 import {
   scriptedModel,
   type ScriptedTurn,
@@ -42,6 +43,7 @@ async function fixture(
   outputSchema?: AgentConfig["outputSchema"],
   middleware?: AgentConfig["middleware"],
   resumeToolCall?: AgentRuntimeInternalOptions["resumeToolCall"],
+  resolverToolCallId?: string,
 ) {
   const dispatched: string[] = [];
   const model = Object.assign(scriptedModel(turns, { modelId: "hosted/fail-run" }), {
@@ -75,6 +77,7 @@ async function fixture(
           runId: context?.runId,
           runIdBindsToolAuthorization: context?.runIdBindsToolAuthorization,
           refreshed: true,
+          ...(resolverToolCallId ? { toolCallId: resolverToolCallId } : {}),
         },
       }),
       memory: { type: "buffer", enabled: true },
@@ -92,6 +95,171 @@ async function fixture(
 }
 
 describe("runtime finalize terminal control", () => {
+  for (const mode of ["generate", "stream", "resume"] as const) {
+    for (const collision of ["none", "caller", "resolver"] as const) {
+      for (const status of ["completed", "failed", "cancelled", "unknown"] as const) {
+        it(`pairs admitted terminal receipts: ${mode}/${collision}/${status}`, async () => {
+          const call = { ...failCall, input: { status: "completed", output: "done" } };
+          await fixture(
+            [{ toolCalls: [call, markerCall] }],
+            async (runtime, model, dispatched) => {
+              const context = {
+                runId: "run-current",
+                ...(collision === "caller" ? { toolCallId: "outer" } : {}),
+              };
+              const input = [{
+                id: "matrix-input",
+                role: "user" as const,
+                parts: [{ type: "text" as const, text: "run" }],
+              }];
+              if (mode === "resume") {
+                await runtime.getMemory().add({
+                  id: "parked-turn",
+                  role: "assistant",
+                  parts: [call, markerCall].map((item) => ({
+                    type: "tool-call" as const,
+                    toolCallId: item.id,
+                    toolName: item.name,
+                    args: item.input,
+                  })),
+                });
+              }
+              if (mode === "generate") {
+                if (status === "completed") {
+                  assertEquals((await runtime.generate(input, context)).object, "done");
+                } else await assertRejects(() => runtime.generate(input, context));
+              } else {
+                const body = await new Response(await runtime.stream(input, context)).text();
+                for (const id of ["fail-1", "marker-1"]) {
+                  const outputs = body.split("\n").filter((line) =>
+                    line.includes(`"toolCallId":"${id}"`) &&
+                    /"type":"tool-output-(available|error)"/.test(line)
+                  );
+                  assertEquals(outputs.length, 1, body);
+                }
+                assertEquals(
+                  body.includes('"type":"message-finish"'),
+                  status === "completed",
+                  body,
+                );
+              }
+              const receipts = (await runtime.getMemory().getMessages()).flatMap((message) =>
+                message.parts.flatMap((part) => part.type === "tool-result" ? [part] : [])
+              );
+              assertEquals(receipts.map((part) => part.toolCallId), ["fail-1", "marker-1"]);
+              assertEquals(
+                dispatched,
+                status === "unknown" ? [failCall.name, failCall.name] : [failCall.name],
+              );
+              assertEquals(model.callCount, mode === "resume" ? 0 : 1);
+            },
+            () => {
+              if (status === "unknown") throw new Error("transport unavailable");
+              return {
+                content: [],
+                structuredContent: {
+                  completed: true,
+                  run: {
+                    run_id: "run-current",
+                    status,
+                    ...(status === "completed" ? { output: "done" } : { error: failure }),
+                  },
+                },
+              };
+            },
+            undefined,
+            undefined,
+            mode === "resume" ? call : undefined,
+            collision === "resolver" ? "resolver-call" : undefined,
+          );
+        });
+      }
+    }
+  }
+
+  it("retains admitted turn recovery data after an acknowledged receipt cannot persist", async () => {
+    await fixture(
+      [{
+        toolCalls: [{ ...failCall, input: { status: "completed", output: "done" } }, markerCall],
+      }],
+      async (runtime, model, dispatched) => {
+        const memory = runtime.getMemory();
+        const begin = memory.beginTransaction!.bind(memory);
+        memory.beginTransaction = async () => {
+          const transaction = await begin();
+          return {
+            ...transaction,
+            add: async (message) => {
+              if (message.parts.some((part) => part.type === "tool-result")) {
+                throw new Error("Receipt persistence unavailable");
+              }
+              await transaction.add(message);
+            },
+          };
+        };
+        await assertRejects(
+          () => runtime.generate("run", { runId: "run-current" }),
+          Error,
+          "Receipt persistence unavailable",
+        );
+        assertEquals(dispatched, [failCall.name]);
+        assertEquals(model.callCount, 1);
+        const durable = await memory.getMessages();
+        assert(
+          durable.some((message) =>
+            message.role === "assistant" &&
+            message.parts.some((part) => "toolCallId" in part && part.toolCallId === "fail-1")
+          ),
+          "Acknowledged terminal operation has no admitted call in the committed memory view",
+        );
+      },
+      () => ({
+        content: [],
+        structuredContent: {
+          completed: true,
+          run: { run_id: "run-current", status: "completed", output: "done" },
+        },
+      }),
+      undefined,
+      [async (context, next) => {
+        registerTurnProviderRequestValidator(context, async () => {});
+        return await next();
+      }],
+    );
+  });
+
+  it("retains admitted receipts when runtime-state context replaces the active call ID", async () => {
+    await fixture(
+      [{
+        toolCalls: [{ ...failCall, input: { status: "completed", output: "done" } }, markerCall],
+      }],
+      async (runtime, model, dispatched) => {
+        const result = await runtime.generate("run", {
+          runId: "run-current",
+          toolCallId: "caller-call",
+        });
+        assertEquals(result.object, "done");
+        const receiptIds = result.messages.flatMap((message) =>
+          message.parts.flatMap((part) => part.type === "tool-result" ? [part.toolCallId] : [])
+        );
+        assertEquals(receiptIds, ["fail-1", "marker-1"]);
+        assertEquals(dispatched, [failCall.name]);
+        assertEquals(model.callCount, 1);
+      },
+      () => ({
+        content: [],
+        structuredContent: {
+          completed: true,
+          run: { run_id: "run-current", status: "completed", output: "done" },
+        },
+      }),
+      undefined,
+      undefined,
+      undefined,
+      "resolver-call",
+    );
+  });
+
   for (const streaming of [false, true]) {
     it(`preserves terminal receipts when application code replaces runtime prototype methods; stream=${streaming}`, async () => {
       const prototype = AgentRuntime.prototype;
@@ -705,5 +873,402 @@ describe("runtime finalize terminal control", () => {
         content: [{ type: "text", text: "Current execution authority required" }],
       }),
     );
+  });
+
+  for (const existingActiveReceipt of [false, true]) {
+    it(`retries a trusted resume after receipt persistence fails without duplicating admission; activeReceipt=${existingActiveReceipt}`, async () => {
+      const call = { ...failCall, input: { status: "completed", output: "done" } };
+      await fixture(
+        [{ text: "must not dispatch" }],
+        async (runtime, model, dispatched) => {
+          const memory = runtime.getMemory();
+          const original: Message = {
+            id: "original-parked-turn",
+            role: "assistant",
+            parts: [call, markerCall].map((item) => ({
+              type: "tool-call",
+              toolCallId: item.id,
+              toolName: item.name,
+              args: item.input,
+            })),
+          };
+          await memory.add(original);
+          if (existingActiveReceipt) {
+            await memory.add({
+              id: "existing-active-receipt",
+              role: "tool",
+              parts: [{
+                type: "tool-result",
+                toolCallId: call.id,
+                toolName: call.name,
+                result: { retained: "original receipt" },
+              }],
+            });
+          }
+          const begin = memory.beginTransaction!.bind(memory);
+          let rejectReceipts = true;
+          memory.beginTransaction = async () => {
+            const transaction = await begin();
+            return {
+              ...transaction,
+              add: async (message) => {
+                if (rejectReceipts && message.parts.some((part) => part.type === "tool-result")) {
+                  throw new Error("First resume receipt unavailable");
+                }
+                await transaction.add(message);
+              },
+            };
+          };
+          const first = await new Response(
+            await runtime.stream([{
+              id: "first-resume-input",
+              role: "user",
+              parts: [{ type: "text", text: "resume" }],
+            }], { runId: "run-current" }),
+          ).text();
+          assert(first.includes("First resume receipt unavailable"), first);
+          assert(!first.includes('"type":"message-finish"'), first);
+          assertEquals(
+            (await memory.getMessages()).filter((message) => message.role === "assistant").map((
+              message,
+            ) => message.id),
+            [original.id],
+          );
+          rejectReceipts = false;
+          const body = await new Response(
+            await runtime.stream([{
+              id: "second-resume-input",
+              role: "user",
+              parts: [{ type: "text", text: "resume" }],
+            }], { runId: "run-current" }),
+          ).text();
+          assert(body.includes('"type":"message-finish"'), body);
+          const history = await memory.getMessages();
+          assertEquals(
+            history.filter((message) => message.role === "assistant").map((message) => message.id),
+            [original.id],
+          );
+          const receipts = history.flatMap((message) =>
+            message.parts.flatMap((part) => part.type === "tool-result" ? [part] : [])
+          );
+          assertEquals(receipts.map((part) => part.toolCallId), [call.id, markerCall.id]);
+          if (existingActiveReceipt) {
+            assertEquals((receipts[0] as { result?: unknown })?.result, {
+              retained: "original receipt",
+            });
+          }
+          assertEquals(dispatched, [call.name, call.name]);
+          assertEquals(model.callCount, 0);
+          const siblingOutputs = body.split("\n").filter((line) =>
+            line.includes('"toolCallId":"marker-1"') && line.includes('"type":"tool-output-error"')
+          );
+          assertEquals(siblingOutputs.length, 1, body);
+        },
+        () => ({
+          content: [],
+          structuredContent: {
+            completed: true,
+            run: { run_id: "run-current", status: "completed", output: "done" },
+          },
+        }),
+        undefined,
+        [async (context, next) => {
+          registerTurnProviderRequestValidator(context, async () => {});
+          return await next();
+        }],
+        call,
+      );
+    });
+  }
+
+  for (const sameArguments of [false, true]) {
+    it(`trusted resume never joins an older turn with reused call identity; sameArguments=${sameArguments}`, async () => {
+      const call = { ...failCall, input: { status: "completed", output: "current" } };
+      const oldCall = {
+        ...call,
+        input: { status: "completed", output: sameArguments ? "current" : "old" },
+      };
+      await fixture(
+        [{ text: "must not dispatch" }],
+        async (runtime, model, dispatched) => {
+          const memory = runtime.getMemory();
+          await memory.add({
+            id: "old-multi-call",
+            role: "assistant",
+            parts: [oldCall, markerCall].map((item) => ({
+              type: "tool-call",
+              toolCallId: item.id,
+              toolName: item.name,
+              args: item.input,
+            })),
+          });
+          await memory.add({
+            id: "old-active-receipt",
+            role: "tool",
+            parts: [{
+              type: "tool-result",
+              toolCallId: call.id,
+              toolName: call.name,
+              result: { old: "receipt" },
+            }],
+          });
+          await memory.add({
+            id: "later-user-turn",
+            role: "user",
+            parts: [{ type: "text", text: "new operation" }],
+          });
+          await memory.add({
+            id: "genuine-later-singleton",
+            role: "assistant",
+            parts: [{
+              type: "tool-call",
+              toolCallId: call.id,
+              toolName: call.name,
+              args: call.input,
+            }],
+          });
+          const body = await new Response(
+            await runtime.stream([{
+              id: "resume-input",
+              role: "user",
+              parts: [{ type: "text", text: "resume" }],
+            }], { runId: "run-current" }),
+          ).text();
+          assert(body.includes('"type":"message-finish"'), body);
+          assert(!body.includes('"toolCallId":"marker-1"'), body);
+          const history = await memory.getMessages();
+          assertEquals(
+            history.filter((message) => message.role === "assistant").map((message) => message.id),
+            ["old-multi-call", "genuine-later-singleton"],
+          );
+          const receipts = history.flatMap((message) =>
+            message.parts.flatMap((part) => part.type === "tool-result" ? [part] : [])
+          );
+          assertEquals(receipts.map((part) => part.toolCallId), [call.id, call.id]);
+          assertEquals((receipts[0] as { result?: unknown })?.result, { old: "receipt" });
+          assertEquals(
+            (receipts[1] as { result?: { run?: { output?: unknown } } })?.result?.run?.output,
+            "current",
+          );
+          assertEquals(dispatched, [call.name]);
+          assertEquals(model.callCount, 0);
+        },
+        () => ({
+          content: [],
+          structuredContent: {
+            completed: true,
+            run: { run_id: "run-current", status: "completed", output: "current" },
+          },
+        }),
+        undefined,
+        undefined,
+        call,
+      );
+    });
+  }
+
+  for (const streaming of [false, true]) {
+    it(`keeps receipt membership scoped to the current admitted turn; stream=${streaming}`, async () => {
+      const earlier = { ...markerCall, id: "earlier-completed" };
+      const secondPending = { ...markerCall, id: "marker-2" };
+      const terminal = { ...failCall, input: { status: "completed", output: "done" } };
+      await fixture(
+        [{ toolCalls: [earlier, terminal, markerCall, secondPending] }],
+        async (runtime, model, dispatched) => {
+          const memory = runtime.getMemory();
+          await memory.add({
+            id: "unrelated-earlier-turn",
+            role: "assistant",
+            parts: [{
+              type: "tool-call",
+              toolCallId: markerCall.id,
+              toolName: markerCall.name,
+              args: {},
+            }],
+          });
+          await memory.add({
+            id: "unrelated-earlier-result",
+            role: "tool",
+            parts: [{
+              type: "tool-result",
+              toolCallId: markerCall.id,
+              toolName: markerCall.name,
+              result: { old: "must remain" },
+            }],
+          });
+          if (streaming) {
+            const body = await new Response(
+              await runtime.stream([{
+                id: "input",
+                role: "user",
+                parts: [{ type: "text", text: "run" }],
+              }], { runId: "run-current" }),
+            ).text();
+            assert(body.includes('"type":"message-finish"'), body);
+          } else {assertEquals(
+              (await runtime.generate("run", { runId: "run-current" })).object,
+              "done",
+            );}
+          const receipts = (await memory.getMessages()).flatMap((message) =>
+            message.parts.flatMap((part) => part.type === "tool-result" ? [part] : [])
+          );
+          assertEquals(receipts.map((part) => part.toolCallId), [
+            markerCall.id,
+            earlier.id,
+            terminal.id,
+            markerCall.id,
+            secondPending.id,
+          ]);
+          assertEquals((receipts[0] as { result?: unknown })?.result, { old: "must remain" });
+          assertEquals((receipts[1] as { result?: unknown })?.result, { already: "completed" });
+          assertEquals(dispatched, [markerCall.name, failCall.name]);
+          assertEquals(model.callCount, 1);
+        },
+        (name) => ({
+          content: [],
+          structuredContent: name === markerCall.name ? { already: "completed" } : {
+            completed: true,
+            run: { run_id: "run-current", status: "completed", output: "done" },
+          },
+        }),
+      );
+    });
+  }
+
+  for (const phase of ["add", "commit"] as const) {
+    for (const streaming of [false, true]) {
+      for (const status of ["completed", "failed"] as const) {
+        it(`preserves the acknowledged winner when receipt ${phase} fails; stream=${streaming}, status=${status}`, async () => {
+          const output = { canonical: "retained" };
+          const call = { ...failCall, input: { status: "completed", output } };
+          let observedError: unknown;
+          await fixture(
+            [{ toolCalls: [call, markerCall] }],
+            async (runtime, model, dispatched) => {
+              const memory = runtime.getMemory();
+              const begin = memory.beginTransaction!.bind(memory);
+              const persistenceError = new Error(`Receipt ${phase} unavailable`);
+              memory.beginTransaction = async () => {
+                const transaction = await begin();
+                let hasReceipt = false;
+                return {
+                  ...transaction,
+                  add: async (message) => {
+                    if (message.parts.some((part) => part.type === "tool-result")) {
+                      hasReceipt = true;
+                      if (phase === "add") throw persistenceError;
+                    }
+                    await transaction.add(message);
+                  },
+                  commit: async () => {
+                    if (phase === "commit" && hasReceipt) throw persistenceError;
+                    await transaction.commit();
+                  },
+                };
+              };
+              if (streaming) {
+                const body = await new Response(
+                  await runtime.stream([{
+                    id: "input",
+                    role: "user",
+                    parts: [{ type: "text", text: "run" }],
+                  }], { runId: "run-current" }),
+                ).text();
+                assert(!body.includes('"type":"message-finish"'), body);
+                assert(body.includes('"type":"error"'), body);
+                assert(!body.includes("RUN_OUTCOME_UNKNOWN"), body);
+                assert(body.includes(`Receipt ${phase} unavailable`), body);
+              } else {
+                observedError = await assertRejects(
+                  () => runtime.generate("run", { runId: "run-current" }),
+                  Error,
+                  `Receipt ${phase} unavailable`,
+                );
+              }
+              if (!streaming) {
+                assert(
+                  observedError instanceof Error,
+                  "Persistence error must retain its acknowledged terminal cause",
+                );
+                const cause = observedError.cause as {
+                  terminalOutcome: unknown;
+                  persistenceError: unknown;
+                };
+                assert(cause && isTerminalRunControlError(cause.terminalOutcome));
+                assertEquals(cause.persistenceError, persistenceError);
+                assertEquals(cause.terminalOutcome.status, status);
+                assertEquals(
+                  cause.terminalOutcome.output,
+                  status === "completed" ? output : undefined,
+                );
+              }
+              const admitted = await memory.getMessages();
+              assert(admitted.some((message) =>
+                message.role === "assistant" &&
+                message.parts.some((part) => "toolCallId" in part && part.toolCallId === call.id)
+              ));
+              assertEquals(dispatched, [failCall.name]);
+              assertEquals(model.callCount, 1);
+            },
+            () => ({
+              content: [],
+              structuredContent: {
+                completed: true,
+                run: {
+                  run_id: "run-current",
+                  status,
+                  ...(status === "completed" ? { output } : { error: failure }),
+                },
+              },
+            }),
+            undefined,
+            [async (context, next) => {
+              registerTurnProviderRequestValidator(context, async () => {});
+              try {
+                return await next();
+              } catch (error) {
+                observedError = error;
+                throw error;
+              }
+            }],
+          );
+        });
+      }
+    }
+  }
+
+  it("stream callback mutation cannot replace admitted call identity", async () => {
+    const call = { ...failCall, input: { status: "completed", output: "done" } };
+    await fixture([{ toolCalls: [call, markerCall] }], async (runtime, model, dispatched) => {
+      const body = await new Response(
+        await runtime.stream(
+          [{
+            id: "input",
+            role: "user",
+            parts: [{ type: "text", text: "run" }],
+          }],
+          { runId: "run-current" },
+          {
+            onToolCall: (toolCall) => {
+              toolCall.id = "application-replacement";
+              toolCall.name = "application-name";
+            },
+          },
+        ),
+      ).text();
+      assert(body.includes('"type":"message-finish"'), body);
+      const receiptIds = (await runtime.getMemory().getMessages()).flatMap((message) =>
+        message.parts.flatMap((part) => part.type === "tool-result" ? [part.toolCallId] : [])
+      );
+      assertEquals(receiptIds, [call.id, markerCall.id]);
+      assertEquals(dispatched, [failCall.name]);
+      assertEquals(model.callCount, 1);
+    }, () => ({
+      content: [],
+      structuredContent: {
+        completed: true,
+        run: { run_id: "run-current", status: "completed", output: "done" },
+      },
+    }));
   });
 });

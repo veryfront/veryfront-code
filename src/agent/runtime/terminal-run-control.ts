@@ -4,6 +4,76 @@ import type { ToolExecutionContext } from "#veryfront/tool/types.ts";
 
 const controlKey = Symbol("terminal-run-control");
 const terminalErrors = new WeakSet<object>();
+const dispatches = new WeakMap<object, AdmittedDispatch>();
+const outcomes = new WeakMap<object, AdmittedDispatch>();
+const weakMapGet = WeakMap.prototype.get;
+const weakMapSet = WeakMap.prototype.set;
+const freeze = Object.freeze;
+const defineProperties = Object.defineProperties;
+
+interface AdmittedDispatch {
+  readonly invocation: object;
+  readonly turn: object;
+  readonly owner: AgentResponse["messages"];
+  readonly callId: string;
+  readonly callName: string;
+  readonly prepare: () => Promise<void>;
+}
+
+/** Internal dispatch boundary; this association is never copied with application context. */
+export function admitTerminalDispatch(
+  context: ToolExecutionContext,
+  identity: {
+    callId: string;
+    callName: string;
+    agentId: string;
+    turn: object;
+    owner: AgentResponse["messages"];
+  },
+  prepare: () => Promise<void>,
+): void {
+  const invocation = (context as ControlContext)[controlKey];
+  if (!invocation) return;
+  const record = freeze({
+    invocation,
+    turn: identity.turn,
+    owner: identity.owner,
+    callId: identity.callId,
+    callName: identity.callName,
+    prepare,
+  });
+  defineProperties(context, {
+    toolCallId: { value: record.callId, enumerable: true, writable: false, configurable: false },
+    agentId: { value: identity.agentId, enumerable: true, writable: false, configurable: false },
+  });
+  apply(weakMapSet, dispatches, [context, record]);
+}
+
+/** Reconciliation accepts only the private outcome of this admitted invocation and turn. */
+export function terminalDispatchRecord(
+  error: unknown,
+  owner: AgentResponse["messages"],
+): AdmittedDispatch | undefined {
+  if (!isTerminalRunControlError(error)) return undefined;
+  const record = apply(weakMapGet, outcomes, [error]) as AdmittedDispatch | undefined;
+  return record?.owner === owner ? record : undefined;
+}
+
+function terminalOutcome(
+  record: AdmittedDispatch,
+  ...args: ConstructorParameters<typeof TerminalRunControlError>
+): TerminalRunControlError {
+  const error = new TerminalRunControlError(...args);
+  defineProperties(error, {
+    terminalToolCallId: { value: record.callId, writable: false, configurable: false },
+    status: { value: error.status, writable: false, configurable: false },
+    output: { value: error.output, writable: false, configurable: false },
+    acknowledgedResult: { value: error.acknowledgedResult, writable: false, configurable: false },
+  });
+  apply(weakSetAdd, terminalErrors, [error]);
+  apply(weakMapSet, outcomes, [error, record]);
+  return error;
+}
 const weakSetAdd = WeakSet.prototype.add;
 const weakSetHas = WeakSet.prototype.has;
 const apply = Reflect.apply;
@@ -29,7 +99,6 @@ export class TerminalRunControlError extends Error {
   ) {
     super(message);
     this.name = "TerminalRunControlError";
-    apply(weakSetAdd, terminalErrors, [this]);
   }
 }
 
@@ -64,12 +133,16 @@ class TerminalRunControl {
     context: ToolExecutionContext,
     execute: () => Promise<unknown>,
   ): Promise<unknown> {
+    const dispatch = apply(weakMapGet, dispatches, [context]) as AdmittedDispatch | undefined;
+    if (!dispatch || dispatch.invocation !== this) {
+      throw new Error("finalize requires an admitted runtime tool dispatch");
+    }
     const validation = this.validateInput(input);
     if (validation) await validation;
     if (!context.runId || context.runIdBindsToolAuthorization === false) {
       throw new Error("finalize requires authenticated current-run authority");
     }
-    return this.commit(context, execute);
+    return this.commit(context, execute, dispatch);
   }
 
   private validateInput(input: Record<string, unknown>): Promise<void> | undefined {
@@ -121,10 +194,11 @@ class TerminalRunControl {
   private async commit(
     context: ToolExecutionContext,
     execute: () => Promise<unknown>,
+    dispatch: AdmittedDispatch,
   ): Promise<unknown> {
     if (this.pending) {
       await this.pending;
-      return this.commit(context, execute);
+      return this.commit(context, execute, dispatch);
     }
     this.controller.signal.throwIfAborted();
     let release!: () => void;
@@ -132,6 +206,7 @@ class TerminalRunControl {
       release = resolve;
     });
     try {
+      await dispatch.prepare();
       let result: unknown;
       try {
         result = await execute();
@@ -141,13 +216,14 @@ class TerminalRunControl {
         try {
           result = await execute();
         } catch {
-          const error = new TerminalRunControlError(
+          const error = terminalOutcome(
+            dispatch,
             "RUN_OUTCOME_UNKNOWN",
             "Run outcome could not be confirmed",
             "unknown",
             undefined,
             undefined,
-            context.toolCallId,
+            dispatch.callId,
           );
           this.controller.abort(error);
           throw error;
@@ -167,13 +243,14 @@ class TerminalRunControl {
         (run.status === "failed" || run.status === "cancelled" ||
           (run.status === "completed" && Object.hasOwn(run, "output")))
       ) {
-        const error = new TerminalRunControlError(
+        const error = terminalOutcome(
+          dispatch,
           run.error?.code ?? "RUN_TERMINAL",
           run.error?.message ?? `Run is ${run.status}`,
           run.status,
           run.output,
           result,
-          context.toolCallId,
+          dispatch.callId,
         );
         this.controller.abort(error);
         throw error;
@@ -181,13 +258,14 @@ class TerminalRunControl {
       if (hasToolExecutionErrorMarker(result)) return result;
       // A successful but unrecognized reply may follow a committed write.
       // Do not let another model turn turn an uncertain outcome into success.
-      const error = new TerminalRunControlError(
+      const error = terminalOutcome(
+        dispatch,
         "RUN_OUTCOME_UNKNOWN",
         "Run outcome could not be confirmed",
         "unknown",
         undefined,
         undefined,
-        context.toolCallId,
+        dispatch.callId,
       );
       this.controller.abort(error);
       throw error;
@@ -196,6 +274,15 @@ class TerminalRunControl {
       this.pending = undefined;
     }
   }
+}
+
+/** Preserve the canonical winner when its separate transcript write fails. */
+export function terminalReceiptPersistenceFailure(error: unknown, signal?: AbortSignal): unknown {
+  const terminalOutcome = signal?.reason;
+  if (!isTerminalRunControlError(terminalOutcome) || error === terminalOutcome) return error;
+  return new Error(error instanceof Error ? error.message : "Terminal receipt persistence failed", {
+    cause: freeze({ persistenceError: error, terminalOutcome }),
+  });
 }
 
 /** Create a gate for one runtime invocation; child invocations receive their own gate. */

@@ -2,18 +2,37 @@ import { assert, assertEquals, assertRejects } from "#veryfront/testing/assert.t
 import { it } from "#veryfront/testing/bdd.ts";
 import type { ToolExecutionContext } from "#veryfront/tool/types.ts";
 import {
+  admitTerminalDispatch,
   awaitTerminalRunControl,
   createTerminalRunControl,
   dispatchWithTerminalRunControl,
   executeTerminalRunTool,
   isTerminalRunControlError,
   terminalCompletionResponse,
+  terminalDispatchRecord,
   TerminalRunControlError,
 } from "./terminal-run-control.ts";
 
-Deno.test("a sibling that passed its initial check cannot dispatch during finalization", async () => {
-  const control = createTerminalRunControl({ runId: "run-current" });
+function createAdmittedControl(
+  ...args: Parameters<typeof createTerminalRunControl>
+) {
+  const control = createTerminalRunControl(...args);
   const context = { ...control.context, abortSignal: control.signal } as ToolExecutionContext;
+  const owner: import("#veryfront/agent/types.ts").AgentResponse["messages"] = [];
+  const turn = {};
+  admitTerminalDispatch(context, {
+    callId: "finalize-1",
+    callName: "veryfront__finalize",
+    agentId: "agent-1",
+    turn,
+    owner,
+  }, async () => {});
+  return { ...control, context, owner, turn };
+}
+
+Deno.test("a sibling that passed its initial check cannot dispatch during finalization", async () => {
+  const control = createAdmittedControl({ runId: "run-current" });
+  const context = control.context;
   await awaitTerminalRunControl(context);
   let reply!: (value: unknown) => void;
   const pendingReply = new Promise((resolve) => reply = resolve);
@@ -36,8 +55,8 @@ Deno.test("a sibling that passed its initial check cannot dispatch during finali
 
 for (const status of ["completed", "failed"] as const) {
   Deno.test(`finalization requests cancellation of an in-flight sibling without undoing its effect: ${status}`, async () => {
-    const control = createTerminalRunControl({ runId: "run-current" });
-    const context = { ...control.context, abortSignal: control.signal } as ToolExecutionContext;
+    const control = createAdmittedControl({ runId: "run-current" });
+    const context = control.context;
     let started!: () => void;
     const running = new Promise<void>((resolve) => started = resolve);
     let committedEffects = 0;
@@ -76,8 +95,8 @@ for (const status of ["completed", "failed"] as const) {
 }
 
 it("invalid terminal requests leave the dispatch gate usable", async () => {
-  const control = createTerminalRunControl({ runId: "run-current" });
-  const context = { ...control.context, abortSignal: control.signal } as ToolExecutionContext;
+  const control = createAdmittedControl({ runId: "run-current" });
+  const context = control.context;
   let calls = 0;
   const execute = async () => ++calls;
   for (
@@ -107,7 +126,7 @@ it("terminal execution requires a bound invocation while ordinary tools remain u
   for (
     const value of [undefined, {}, { runId: "run-current", runIdBindsToolAuthorization: false }]
   ) {
-    const control = createTerminalRunControl(value);
+    const control = createAdmittedControl(value);
     await assertRejects(() =>
       executeTerminalRunTool("finalize", action, control.context, async () => {
         throw new Error("must not dispatch");
@@ -123,7 +142,7 @@ it("terminal execution requires a bound invocation while ordinary tools remain u
 });
 
 it("schema rejection permits correction and sends only the validated output", async () => {
-  const control = createTerminalRunControl({ runId: "run-current" }, undefined, async (output) => {
+  const control = createAdmittedControl({ runId: "run-current" }, undefined, async (output) => {
     if (typeof output !== "string") throw new Error("invalid output");
     return output.trim();
   });
@@ -151,7 +170,7 @@ it("schema rejection permits correction and sends only the validated output", as
 
 it("a rejected MCP action is recoverable, but an uncertain committed result stops dispatch", async () => {
   for (const outcome of ["recoverable", "lost-reply", "unavailable", "malformed"] as const) {
-    const control = createTerminalRunControl({ runId: "run-current" });
+    const control = createAdmittedControl({ runId: "run-current" });
     const input = { status: "failed", error: { code: "ERR", message: "failed" } };
     let calls = 0;
     const operation = () =>
@@ -185,14 +204,18 @@ it("a rejected MCP action is recoverable, but an uncertain committed result stop
   }
 });
 
-it("terminal response preserves canonical output and recorded execution state", () => {
+it("terminal response preserves canonical output and recorded execution state", async () => {
   for (const output of ["done", { count: 3 }, null]) {
-    const error = new TerminalRunControlError(
-      "RUN_TERMINAL",
-      "Run is completed",
-      "completed",
-      output,
+    const control = createAdmittedControl({ runId: "run-current" });
+    const error = await assertRejects(() =>
+      executeTerminalRunTool(
+        "finalize",
+        { status: "completed", output },
+        control.context,
+        async () => ({ run: { run_id: "run-current", status: "completed", output } }),
+      )
     );
+    assert(isTerminalRunControlError(error));
     error.executionState = {
       messages: [{
         id: "message-1",
@@ -216,6 +239,7 @@ it("terminal response preserves canonical output and recorded execution state", 
     assertEquals(response.messages, error.executionState.messages);
     assertEquals(response.toolCalls, error.executionState.toolCalls);
     assertEquals(response.status, "completed");
+    if (typeof output === "string") assertEquals(terminalCompletionResponse(error)?.text, output);
   }
   assertEquals(
     terminalCompletionResponse(new TerminalRunControlError("ERR", "failed", "failed")),
@@ -224,8 +248,116 @@ it("terminal response preserves canonical output and recorded execution state", 
   assertEquals(terminalCompletionResponse(new Error("application")), undefined);
   assertEquals(isTerminalRunControlError({ name: "TerminalRunControlError" }), false);
   assertEquals(
-    terminalCompletionResponse(new TerminalRunControlError("OK", "done", "completed", "done"))
-      ?.text,
-    "done",
+    terminalCompletionResponse(new TerminalRunControlError("OK", "done", "completed", "done")),
+    undefined,
   );
+});
+
+it("copied and unbound contexts cannot authorize a terminal write", async () => {
+  const control = createAdmittedControl({ runId: "run-current" });
+  const unbound = createTerminalRunControl({ runId: "run-current" });
+  let writes = 0;
+  for (const context of [{ ...control.context }, unbound.context]) {
+    await assertRejects(
+      () =>
+        executeTerminalRunTool(
+          "finalize",
+          { status: "completed", output: "done" },
+          context,
+          async () => ++writes,
+        ),
+      Error,
+      "admitted runtime tool dispatch",
+    );
+  }
+  assertEquals(writes, 0);
+  assertEquals(control.signal.aborted, false);
+  assertEquals(unbound.signal.aborted, false);
+});
+
+it("admitted identity stays immutable while terminal transport is pending", async () => {
+  const control = createAdmittedControl({ runId: "run-current" });
+  let started!: () => void;
+  const transportStarted = new Promise<void>((resolve) => started = resolve);
+  let reply!: (value: unknown) => void;
+  const pendingReply = new Promise((resolve) => reply = resolve);
+  const rejection = assertRejects(() =>
+    executeTerminalRunTool(
+      "finalize",
+      { status: "completed", output: "done" },
+      control.context,
+      () => {
+        started();
+        return pendingReply;
+      },
+    )
+  );
+  await transportStarted;
+  assertEquals(Reflect.set(control.context, "toolCallId", "replacement"), false);
+  assertEquals(Reflect.set(control.context, "agentId", "replacement-agent"), false);
+  assertEquals(Reflect.deleteProperty(control.context, "toolCallId"), false);
+  reply({ run: { run_id: "run-current", status: "completed", output: "done" } });
+  const error = await rejection;
+  assert(isTerminalRunControlError(error));
+  assertEquals(error.terminalToolCallId, "finalize-1");
+  assertEquals(Reflect.set(error, "terminalToolCallId", "replacement"), false);
+  assertEquals(terminalDispatchRecord(error, control.owner)?.turn, control.turn);
+  assertEquals(terminalDispatchRecord(error, control.owner)?.callId, "finalize-1");
+});
+
+it("constructor and prototype forgeries never become canonical terminal outcomes", () => {
+  const forged = new TerminalRunControlError("OK", "done", "completed", "forged");
+  for (
+    const candidate of [forged, Object.create(TerminalRunControlError.prototype), {
+      name: "TerminalRunControlError",
+      status: "completed",
+      output: "forged",
+    }]
+  ) {
+    assertEquals(isTerminalRunControlError(candidate), false);
+    assertEquals(terminalCompletionResponse(candidate), undefined);
+    assertEquals(terminalDispatchRecord(candidate, []), undefined);
+  }
+});
+
+it("overlapping invocations retain separate terminal ownership and scheduling gates", async () => {
+  const first = createAdmittedControl({ runId: "run-first" });
+  const second = createAdmittedControl({ runId: "run-second" });
+  let started!: () => void;
+  const transportStarted = new Promise<void>((resolve) => started = resolve);
+  let reply!: (value: unknown) => void;
+  const pendingReply = new Promise((resolve) => reply = resolve);
+  const firstRejection = assertRejects(() =>
+    executeTerminalRunTool(
+      "finalize",
+      { status: "completed", output: "first" },
+      first.context,
+      () => {
+        started();
+        return pendingReply;
+      },
+    )
+  );
+  await transportStarted;
+  assertEquals(
+    await dispatchWithTerminalRunControl(second.context, async () => "allowed"),
+    "allowed",
+  );
+  const secondError = await assertRejects(() =>
+    executeTerminalRunTool(
+      "finalize",
+      { status: "completed", output: "second" },
+      second.context,
+      async () => ({ run: { run_id: "run-second", status: "completed", output: "second" } }),
+    )
+  );
+  assertEquals(first.signal.aborted, false);
+  assertEquals(terminalDispatchRecord(secondError, first.owner), undefined);
+  assertEquals(terminalDispatchRecord(secondError, second.owner)?.turn, second.turn);
+  reply({ run: { run_id: "run-first", status: "completed", output: "first" } });
+  const firstError = await firstRejection;
+  assertEquals(terminalDispatchRecord(firstError, second.owner), undefined);
+  assertEquals(terminalDispatchRecord(firstError, first.owner)?.turn, first.turn);
+  assertEquals(terminalCompletionResponse(firstError)?.object, "first");
+  assertEquals(terminalCompletionResponse(secondError)?.object, "second");
 });
