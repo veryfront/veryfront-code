@@ -60,6 +60,7 @@ const branchFileFields = (v: SchemaValidator) => ({
   id: v.string().optional(),
   version_id: v.string().optional(),
   content: v.string(),
+  checksum: v.string().nullable().optional(),
   ...baseFileFields(v),
 });
 
@@ -98,6 +99,7 @@ export const getProjectFileSchema = defineSchema((v) =>
     size: v.number(),
     type: fileTypeEnum(v),
     updated_at: v.string(),
+    checksum: v.string().nullable().optional(),
   })
 );
 
@@ -127,6 +129,22 @@ export const getBranchFileListItemSchema = defineSchema((v) => v.object(branchFi
 export const getListBranchFilesResponseSchema = defineSchema((v) =>
   v.object({
     data: v.array(getBranchFileListItemSchema()),
+    page_info: getPageInfoSchema(),
+    _links: linksSchema(v).optional(),
+  })
+);
+
+/** A branch listing that selected response fields without `content`. */
+export const getListBranchFileMetadataResponseSchema = defineSchema((v) =>
+  v.object({
+    data: v.array(
+      v.object({
+        id: v.string().optional(),
+        version_id: v.string().optional(),
+        checksum: v.string().nullable().optional(),
+        ...baseFileFields(v),
+      }),
+    ),
     page_info: getPageInfoSchema(),
     _links: linksSchema(v).optional(),
   })

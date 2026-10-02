@@ -235,6 +235,107 @@ describe("VeryfrontAPIOperations", () => {
       assertEquals(parsed.searchParams.get("path"), "knowledge/");
     });
 
+    it("selects metadata fields and keeps checksums on branch file lists", async () => {
+      let requestedUrl = "";
+      stubJsonFetch((url) => {
+        requestedUrl = url;
+        return {
+          data: [{
+            id: "file-id",
+            version_id: "version-id",
+            path: "agents/assistant.ts",
+            size: 18,
+            type: "file",
+            updated_at: "2026-10-02T00:00:00.000Z",
+            checksum: "abc123",
+          }],
+          page_info: { self: null, first: null, next: null, prev: null },
+        };
+      });
+
+      const result = await createOps().listBranchFiles("project-slug", "main", {
+        withoutContent: true,
+      });
+
+      const parsed = new URL(requestedUrl);
+      assertEquals(
+        parsed.searchParams.get("fields"),
+        "(id,version_id,path,size,type,updated_at,checksum)",
+      );
+      assertEquals(parsed.searchParams.get("include_server_functions"), "true");
+      assertEquals(result.files[0]?.checksum, "abc123");
+      assertEquals(result.files[0]?.content, undefined);
+    });
+
+    it("selects metadata only on branch listings", async () => {
+      const requestedUrls: string[] = [];
+      stubJsonFetch((url) => {
+        requestedUrls.push(url);
+        return {
+          data: [],
+          page_info: { self: null, first: null, next: null, prev: null },
+          environment_id: "00000000-0000-4000-8000-000000000001",
+          environment_name: "production",
+          release_id: "00000000-0000-4000-8000-000000000002",
+          release_version: null,
+        };
+      });
+
+      await createOps().listEnvironmentFiles("project-slug", "production", {
+        withoutContent: true,
+      });
+
+      assertEquals(new URL(requestedUrls[0]!).searchParams.has("fields"), false);
+    });
+
+    it("accepts null checksums on branch file lists and file reads", async () => {
+      const file = {
+        path: "agents/legacy.ts",
+        size: 18,
+        type: "file",
+        updated_at: "2026-10-02T00:00:00.000Z",
+        checksum: null,
+      };
+      stubJsonFetch((url) =>
+        url.includes("/files?")
+          ? {
+            data: [url.includes("fields=") ? file : { ...file, content: "export default {};" }],
+            page_info: { self: null, first: null, next: null, prev: null },
+          }
+          : { ...file, content: "export default {};" }
+      );
+
+      const full = await createOps().listBranchFiles("project-slug", "main");
+      const metadata = await createOps().listBranchFiles("project-slug", "main", {
+        withoutContent: true,
+      });
+      const detail = await createOps().getBranchFile("project-slug", "main", "agents/legacy.ts");
+
+      assertEquals(full.files[0]?.content, "export default {};");
+      assertEquals("checksum" in full.files[0]!, false);
+      assertEquals("checksum" in metadata.files[0]!, false);
+      assertEquals(detail.content, "export default {};");
+    });
+
+    it("keeps checksums on complete branch file lists", async () => {
+      stubJsonFetch(() => ({
+        data: [{
+          path: "agents/assistant.ts",
+          content: "export default {};",
+          size: 18,
+          type: "file",
+          updated_at: "2026-10-02T00:00:00.000Z",
+          checksum: "abc123",
+        }],
+        page_info: { self: null, first: null, next: null, prev: null },
+      }));
+
+      const result = await createOps().listBranchFiles("project-slug", "main");
+
+      assertEquals(result.files[0]?.content, "export default {};");
+      assertEquals(result.files[0]?.checksum, "abc123");
+    });
+
     it("requests branch file content with server functions for preview handlers", async () => {
       let requestedUrl = "";
       stubJsonFetch((url) => {

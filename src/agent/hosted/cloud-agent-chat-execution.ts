@@ -1,3 +1,4 @@
+import { hostedTerminalToolSourceFactory } from "./terminal-credential.ts";
 /** Chat execution preparation and runtime wiring for the cloud agent service. */
 import { type HostToolSet, sleepTool } from "#veryfront/tool";
 import {
@@ -148,6 +149,7 @@ export function createAgentRuntime(
   context: NodeVeryfrontCloudAgentServiceContext,
   options: DefaultHostedChatRuntimeCreationOptions,
   runtimeOptions?: AgentRuntimeInternalOptions,
+  terminalRequest?: ParsedHostedChatRequest,
 ): Promise<HostedChatRuntimeCreationResult> {
   const config = context.infrastructure.getConfig();
   const projectRuntime = getProjectAgentRuntime(context);
@@ -194,7 +196,11 @@ export function createAgentRuntime(
     projectScopedRemoteToolOptions: {
       projectNavigationToolNames: DEFAULT_PROJECT_NAVIGATION_TOOL_NAMES,
     },
-    createRemoteToolSource: getRemoteToolSourceFactory(context),
+    createRemoteToolSource: hostedTerminalToolSourceFactory(
+      terminalRequest,
+      config.VERYFRONT_MCP_URL,
+      getRemoteToolSourceFactory(context),
+    ),
     traceLocalTools: {
       trace: (spanName, operation) => context.infrastructure.tracer.trace(spanName, operation),
       buildAttributes: ({ toolName, toolCallId }) =>
@@ -389,6 +395,7 @@ export async function prepareChatExecutionWithinProjectRuntime(
             userId: req.userId,
           },
           resolveModelRuntime ? { resolveModelRuntime } : undefined,
+          req,
         );
       }),
   });

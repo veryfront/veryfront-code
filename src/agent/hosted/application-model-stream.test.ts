@@ -1,4 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
+import { FakeTime } from "#std/testing/time";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { createExecutorChannel } from "../executor/channel.ts";
@@ -61,6 +62,8 @@ describe("application model stream ownership", () => {
 
   for (const stuck of [false, true]) {
     it(`${stuck ? "fences" : "retains"} channel admission while original upstream cancellation is pending`, async () => {
+      // Broker timers run on a fake clock so host contention cannot reach the cancellation deadline early.
+      using time = new FakeTime();
       const cleanup = Promise.withResolvers<void>();
       const cancelStarted = Promise.withResolvers<void>();
       let disposals = 0;
@@ -119,7 +122,7 @@ describe("application model stream ownership", () => {
           returned = true;
         });
         void returning.catch(() => {});
-        await tick();
+        await time.runMicrotasks();
         assertEquals(returned, false);
         assertEquals(disposals, 0);
         await assertRejects(
@@ -128,7 +131,9 @@ describe("application model stream ownership", () => {
           "concurrent call limit",
         );
         if (stuck) {
-          await new Promise<void>((resolve) => setTimeout(resolve, 50));
+          await time.tickAsync(19);
+          assertEquals(broker.signal.aborted, false);
+          await time.tickAsync(1);
           assertEquals(broker.signal.aborted, true);
           assertEquals(
             (await broker.closed).message,
@@ -147,7 +152,7 @@ describe("application model stream ownership", () => {
         await returning?.catch(() => {});
         caller.close();
         await broker.closed;
-        await tick();
+        await time.runMicrotasks();
       }
     });
   }
