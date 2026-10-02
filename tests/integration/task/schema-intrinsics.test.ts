@@ -264,6 +264,24 @@ describe("task schema checks after project code replaced built-ins", () => {
     assertEquals(calls.length, 0);
   });
 
+  it("rejects invalid input against a raw JSON inputSchema after discovery replaced TextEncoder encode", async () => {
+    const originalEncode = Reflect.getOwnPropertyDescriptor(TextEncoder.prototype, "encode")!;
+    const { task, calls } = schemaTask({ inputSchema: ticketInputSchema });
+
+    let result: Awaited<ReturnType<typeof runTask>>;
+    try {
+      Reflect.set(TextEncoder.prototype, "encode", () => {
+        throw new Error("replaced TextEncoder.prototype.encode");
+      });
+      result = await runTask({ task, input: { ticketText: 42 } }, createInMemoryHostRuntime());
+    } finally {
+      Reflect.defineProperty(TextEncoder.prototype, "encode", originalEncode);
+    }
+
+    assertEquals(result.errorCode, "INPUT_VALIDATION_FAILED");
+    assertEquals(calls.length, 0);
+  });
+
   it("keeps the replaced built-in in place for the task after validation", async () => {
     const originalMap = Reflect.getOwnPropertyDescriptor(Array.prototype, "map")!;
     const replacement = () => "replaced";

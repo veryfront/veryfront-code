@@ -196,6 +196,7 @@ function iteratorPrototypeOf(iterable: Iterable<unknown>): PropertyTarget {
 
 const arrayIteratorPrototype = iteratorPrototypeOf([]);
 const iteratorPrototype = reflectGetPrototypeOf(arrayIteratorPrototype) ?? Object.prototype;
+const typedArrayPrototype = reflectGetPrototypeOf(Uint8Array.prototype) ?? Object.prototype;
 
 /** Built-in objects whose own properties validator adapters and their libraries call. */
 const INTRINSIC_TARGETS: readonly PropertyTarget[] = [
@@ -229,6 +230,12 @@ const INTRINSIC_TARGETS: readonly PropertyTarget[] = [
   Promise.prototype,
   Error,
   Error.prototype,
+  ArrayBuffer.prototype,
+  typedArrayPrototype,
+  Uint8Array,
+  Uint8Array.prototype,
+  TextEncoder.prototype,
+  URL.prototype,
   JSON,
   Math,
   Reflect,
@@ -255,6 +262,11 @@ const INTRINSIC_GLOBALS: readonly PropertyKey[] = [
   "TypeError",
   "RangeError",
   "SyntaxError",
+  "ArrayBuffer",
+  "Uint8Array",
+  "TextEncoder",
+  "structuredClone",
+  "URL",
   "JSON",
   "Math",
   "Reflect",
