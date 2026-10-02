@@ -1444,15 +1444,22 @@ jobs:
           github-token: ${{ github.token }}
 
       - name: Publish tested RC npm artifact
+        timeout-minutes: 10
         env:
           VERSION: ${{ steps.version.outputs.version }}
           NPM_PACK_DIR: ${{ github.workspace }}/dist/npm-compatibility
+          NPM_GIT_HEAD_WAIT_TOTAL_SECONDS: "180"
         run: |
           deno run --config=scripts/test.deno.json --frozen --allow-read --allow-write --allow-run=tar \
             scripts/ci/npm-compatibility-artifact.ts materialize dist/npm-compatibility npm
           deno run --allow-read --allow-run=npm scripts/build/report-artifact-sizes.ts --npm-package npm \
             | tee -a "$GITHUB_STEP_SUMMARY"
-          scripts/ci/publish-npm-packages.sh rc-publish
+          publish_status=0
+          timeout --signal=TERM --kill-after=10s 8m scripts/ci/publish-npm-packages.sh rc-publish || publish_status=$?
+          if [[ "$publish_status" == 124 || "$publish_status" == 137 ]]; then
+            echo "::error::RC npm publication exceeded its eight-minute deadline; inspect npm publish and registry metadata progress before starting another release." >&2
+          fi
+          exit "$publish_status"
 
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
