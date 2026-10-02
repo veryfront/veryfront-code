@@ -1236,6 +1236,10 @@ function mayHoldLoopPublication(state: NodeState): boolean {
     typeof output !== "object" || output === null || Array.isArray(output)
   ) return false;
   const result = output as Record<string, unknown>;
+  // Preserve refusal when callbacks replace all metadata values with user data.
+  if (["exitReason", "iterations", "previousResults"].every((key) => Object.hasOwn(result, key))) {
+    return true;
+  }
   return [
     Object.hasOwn(result, "exitReason") && LOOP_EXIT_REASONS.has(result.exitReason),
     Object.hasOwn(result, "iterations") && Number.isInteger(result.iterations),

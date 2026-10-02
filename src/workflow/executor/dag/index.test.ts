@@ -873,14 +873,20 @@ describe("DAGExecutor", () => {
       const scenario of [
         "two keys",
         "three keys",
+        "three string keys",
         "missing child",
         "mismatched value",
         "wrong owner",
       ]
     ) {
       it(`checks persisted legacy parallel typed loop-named children: ${scenario}`, async () => {
-        const includeExitReason = scenario === "three keys";
+        const stringValues = scenario === "three string keys";
+        const includeExitReason = scenario === "three keys" || stringValues;
         const recoverable = scenario === "two keys" || includeExitReason;
+        const expected = {
+          iterations: stringValues ? "user" : 1,
+          previousResults: stringValues ? "user" : [],
+        };
         let childCalls = 0;
         const observed: unknown[] = [];
         const exec = new DAGExecutor({
@@ -894,7 +900,9 @@ describe("DAGExecutor", () => {
               return { success: true, output, executionTime: 0 };
             }
             childCalls++;
-            const output = node.id.endsWith("/iterations")
+            const output = stringValues
+              ? "user"
+              : node.id.endsWith("/iterations")
               ? 1
               : node.id.endsWith("/previousResults")
               ? []
@@ -927,9 +935,8 @@ describe("DAGExecutor", () => {
         delete states.observe;
         // Old parallel publications used bare child ids rather than namespaced ids.
         states.collect!.output = {
-          iterations: 1,
-          previousResults: [],
-          ...(includeExitReason ? { exitReason: "condition" } : {}),
+          ...expected,
+          ...(includeExitReason ? { exitReason: stringValues ? "user" : "condition" } : {}),
         };
         if (scenario === "missing child") delete states["collect/previousResults"];
         if (scenario === "mismatched value") states["collect/previousResults"]!.output = ["other"];
@@ -947,23 +954,27 @@ describe("DAGExecutor", () => {
         assertEquals(retried.completed, recoverable);
         if (recoverable) {
           assertEquals(retried.error, undefined);
-          assertEquals(observed, [
-            { iterations: 1, previousResults: [] },
-            { iterations: 1, previousResults: [] },
-          ]);
-          assertEquals(retried.context.child, { iterations: 1, previousResults: [] });
+          assertEquals(observed, [expected, expected]);
+          assertEquals(retried.context.child, expected);
         } else {
           assertStringIncludes(
             retried.error ?? "",
             "Legacy nested-loop context cannot be restored",
           );
-          assertEquals(observed, [{ iterations: 1, previousResults: [] }]);
+          assertEquals(observed, [expected]);
         }
         assertEquals(childCalls, includeExitReason ? 3 : 2);
       });
     }
 
-    for (const omittedKey of ["exitReason", "iterations", "previousResults"] as const) {
+    for (
+      const omittedKey of [
+        "exitReason",
+        "iterations",
+        "previousResults",
+        "overwritten values",
+      ] as const
+    ) {
       for (const replacement of ["removed", "step", "parallel"] as const) {
         it(`refuses durable omitted ${omittedKey} loop publication after ${replacement} drift`, async () => {
           let completionCalls = 0;
@@ -990,7 +1001,14 @@ describe("DAGExecutor", () => {
                   while: (_context, loopContext) => loopContext.iteration === 0,
                   onComplete: () => {
                     completionCalls++;
-                    return { selected: "callback", [omittedKey]: undefined };
+                    return omittedKey === "overwritten values"
+                      ? {
+                        selected: "callback",
+                        exitReason: "user",
+                        iterations: "user",
+                        previousResults: "user",
+                      }
+                      : { selected: "callback", [omittedKey]: undefined };
                   },
                 })],
               output: (context) => {
@@ -1007,7 +1025,16 @@ describe("DAGExecutor", () => {
           const persisted = JSON.parse(JSON.stringify(
             prepareNodeStatesUserData(states, "durable-omitted-loop", {}),
           )) as Record<string, NodeState>;
-          assertEquals(Object.hasOwn(persisted.repeat!.output as object, omittedKey), false);
+          if (omittedKey === "overwritten values") {
+            assertEquals(persisted.repeat!.output, {
+              selected: "callback",
+              exitReason: "user",
+              iterations: "user",
+              previousResults: "user",
+            });
+          } else {
+            assertEquals(Object.hasOwn(persisted.repeat!.output as object, omittedKey), false);
+          }
           const retried = await exec.execute(
             makeNodes(true),
             createTestRun({
