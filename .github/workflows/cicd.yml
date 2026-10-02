@@ -1832,15 +1832,6 @@ jobs:
           fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
-        with:
-          node-version: "24"
-          package-manager-cache: false
-
       - name: Check current RC tag
         id: current
         env:
@@ -1848,11 +1839,39 @@ jobs:
           VERSION: ${{ steps.version.outputs.version }}
         run: |
           set -euo pipefail
-          source scripts/ci/publish-npm-packages.sh
           if [ "$IS_STABLE" = true ]; then
             dispatch=true
           else
-            dispatch="$(rc_tag_for_package veryfront dispatch)"
+            # This App-key runner executes only fixed workflow logic. Keep the
+            # comparator in parity with the publisher through the workflow test.
+            tags="$(curl --fail --silent --show-error --max-time 60 --retry 0 \
+              --header 'Cache-Control: no-cache' \
+              https://registry.npmjs.org/-/package/veryfront/dist-tags)"
+            current_rc="$(printf '%s\n' "$tags" | jq -er '
+              if type == "object" and (.rc | type == "string" and length > 0)
+              then .rc else error("Published RC tag is missing or invalid") end
+            ')"
+            dispatch="$(jq -ner --arg candidate "$VERSION" --arg current "${current_rc}" --arg mode dispatch '
+              # Compare integer components by digit count then digits, without losing
+              # precision or sorting 10 before 9. Reject unexpected tag formats.
+              def rc_key:
+                capture("^(?<major>0|[1-9][0-9]*)\\.(?<minor>0|[1-9][0-9]*)\\.(?<patch>0|[1-9][0-9]*)-(?<pre>[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)$") as $version
+                | ([$version.major, $version.minor, $version.patch] | map([length, .]))
+                  + [($version.pre | split(".") | map(
+                      if test("^[0-9]+$") then
+                        if test("^(0|[1-9][0-9]*)$") then [0, length, .]
+                        else error("Numeric prerelease identifiers cannot have leading zeroes") end
+                      else [1, .] end
+                    ))];
+              ($candidate | rc_key) as $next
+              | if $mode == "dispatch" then
+                  if $current == $candidate then "true"
+                  elif $current != "" and ($current | rc_key) > $next then "false"
+                  else error("Published RC tag does not match the dispatch candidate") end
+                elif $current == "" then "rc"
+                elif ($current | rc_key) > $next then "rc-history"
+                else "rc" end
+            ')"
           fi
           if [ "$dispatch" = true ]; then
             echo "dispatch=true" >> "$GITHUB_OUTPUT"
