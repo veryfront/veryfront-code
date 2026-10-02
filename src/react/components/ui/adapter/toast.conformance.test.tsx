@@ -70,6 +70,44 @@ async function waitFor(condition: () => boolean, timeoutMs = 3000): Promise<void
   }
 }
 
+/**
+ * Wait for React work that `flushSync` leaves queued. React maps `mouseover`
+ * to `onMouseEnter` on its continuous lane, which its Scheduler renders later:
+ * on host macrotasks under Bun and Node, and through the global `setTimeout`
+ * (so the fake clock) under Deno's esm.sh build. A probe update on the default
+ * lane renders no earlier than that work, and React runs the probe's passive
+ * effect only after every earlier passive cleanup, including the paused toast
+ * timer's. That effect is a barrier that never advances time.
+ */
+function createReactSettler(
+  hostSetTimeout: typeof setTimeout,
+  runDueTimers: () => void,
+): {
+  SettleProbe: () => null;
+  settle: () => Promise<void>;
+} {
+  let requested = 0;
+  let settled = 0;
+  let request: ((value: number) => void) | null = null;
+  function SettleProbe(): null {
+    const [generation, setGeneration] = React.useState(0);
+    request = setGeneration;
+    React.useEffect(() => {
+      settled = generation;
+    }, [generation]);
+    return null;
+  }
+  async function settle(): Promise<void> {
+    request!(++requested);
+    for (let yields = 0; settled !== requested; yields++) {
+      if (yields >= 1000) throw new Error("React did not settle queued toast work");
+      runDueTimers();
+      await new Promise<void>((resolve) => hostSetTimeout(resolve, 0));
+    }
+  }
+  return { SettleProbe, settle };
+}
+
 export function runToastConformance(
   label: string,
   Wrap: React.FC<{ children: React.ReactNode }>,
@@ -436,26 +474,26 @@ describe("Builtin Toast viewport and timer lifecycle", () => {
       configurable: true,
       get: () => visibility,
     });
-    // Yield passive React effects without advancing the toast clock.
     const hostSetTimeout = globalThis.setTimeout;
-    const yieldToReact = () => new Promise<void>((resolve) => hostSetTimeout(resolve, 0));
     const time = new FakeTime();
+    const { SettleProbe, settle } = createReactSettler(hostSetTimeout, () => time.tick(0));
     try {
       flushSync(() =>
         root.render(
           <ToastProvider viewport="inline">
             <Probe />
+            <SettleProbe />
           </ToastProvider>,
         )
       );
       flushSync(() => api!.toast({ title: "Paused", duration: 60 }));
-      await yieldToReact();
+      await settle();
       flushSync(() => time.tick(20));
       const toast = document.querySelector<HTMLElement>('[role="status"]')!;
       flushSync(() =>
         toast.dispatchEvent(new dom.window.MouseEvent("mouseover", { bubbles: true }))
       );
-      await yieldToReact();
+      await settle();
       flushSync(() => time.tick(80));
       assert(document.body.textContent?.includes("Paused"), "hover pauses timer");
       visibility = "hidden";
@@ -463,18 +501,18 @@ describe("Builtin Toast viewport and timer lifecycle", () => {
       flushSync(() =>
         toast.dispatchEvent(new dom.window.MouseEvent("mouseout", { bubbles: true }))
       );
-      await yieldToReact();
+      await settle();
       flushSync(() => time.tick(80));
       assert(document.body.textContent?.includes("Paused"), "hidden document keeps timer paused");
       visibility = "visible";
       flushSync(() => document.dispatchEvent(new dom.window.Event("visibilitychange")));
-      await yieldToReact();
+      await settle();
       flushSync(() => time.tick(39));
       assert(
         document.body.textContent?.includes("Paused"),
         "visible document retains remaining time",
       );
-      await yieldToReact();
+      await settle();
       flushSync(() => time.tick(1));
       assert(!document.body.textContent?.includes("Paused"), "visible document resumes dismissal");
     } finally {
