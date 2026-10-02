@@ -352,7 +352,7 @@ describe("executor byte protocol", () => {
   });
 
   it("closes when a peer never releases a completed incoming call", async () => {
-    const { channel, send } = endpoint(
+    const { channel, send, written } = endpoint(
       new Map([
         ["echo", { mode: "unary", handle: (value) => value }],
       ]),
@@ -361,8 +361,14 @@ describe("executor byte protocol", () => {
     send({ type: "hello" });
     await channel.ready;
     send({ type: "request", id: 1, operation: "echo", mode: "unary", timeoutMs: 10, value: null });
-    await new Promise<void>((resolve) => setTimeout(resolve, 25));
     try {
+      assertEquals((await channel.closed).message, "Executor completion release deadline exceeded");
+      assertEquals(
+        written.filter(({ message }) => message.type === "end").map(({ message }) => message),
+        [
+          { type: "end", id: 1 },
+        ],
+      );
       assertEquals(channel.signal.aborted, true);
     } finally {
       channel.close();
