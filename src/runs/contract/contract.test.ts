@@ -12,14 +12,17 @@ type Schemas = components["schemas"];
 type Lacks<T, K extends PropertyKey> = K extends keyof T ? false : true;
 type Expect<T extends true> = T;
 type PayloadOf<T extends string> = Extract<Schemas["RunEvent"], { event_type: T }>["payload"];
+type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2 ? true
+  : false;
+type NotNever<T> = [T] extends [never] ? false : true;
 
 // Compile-time checks: `deno test` type-checks this file.
 export type RunsContractTypeChecks = [
   Expect<Lacks<Schemas["Run"], "run_id">>,
   Expect<Lacks<Schemas["Run"], "source">>,
-  Expect<
-    PayloadOf<"MODEL_CALL_COMPLETED"> extends Schemas["ModelCallCompletedPayload"] ? true : false
-  >,
+  // A missing event would make the payload `never`, which every type extends.
+  Expect<NotNever<PayloadOf<"MODEL_CALL_COMPLETED">>>,
+  Expect<Equal<PayloadOf<"MODEL_CALL_COMPLETED">, Schemas["ModelCallCompletedPayload"]>>,
 ];
 
 describe("Runs target contract types", () => {
