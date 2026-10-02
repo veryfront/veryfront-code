@@ -12,6 +12,7 @@ import {
   assertThrows,
 } from "#veryfront/testing/assert.ts";
 import { afterAll, describe, it } from "#veryfront/testing/bdd.ts";
+import { FakeTime } from "#std/testing/time";
 import type { Agent } from "#veryfront/agent";
 import { tool } from "#veryfront/tool";
 import {
@@ -6861,13 +6862,15 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     });
 
     it("fails an approval that timed out on a deadline dispatch", async () => {
+      using time = new FakeTime(Date.UTC(2026, 9, 2));
       const parked = await parkRun([
         waitForApproval("manager-review", { message: "Ship it?", timeout: 50 }),
         dependsOn(finalize, "manager-review"),
       ]);
       const [approval] = await parked.backend.getPendingApprovals(runId);
       assertExists(approval);
-      await delay(80);
+      assertEquals(approval.expiresAt?.getTime(), Date.UTC(2026, 9, 2) + 50);
+      await time.tickAsync(80);
 
       const payload = await dispatchResume(parked, { type: "deadline" });
 
@@ -6876,11 +6879,15 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     });
 
     it("fails an event wait that timed out on a deadline dispatch", async () => {
+      using time = new FakeTime(Date.UTC(2026, 9, 2));
       const parked = await parkRun([
         waitForEvent("invoice", { eventName: "invoice.received", timeout: 50 }),
         dependsOn(finalize, "invoice"),
       ]);
-      await delay(80);
+      const [eventWait] = await parked.backend.getPendingEventWaits(runId);
+      assertExists(eventWait);
+      assertEquals(eventWait.expiresAt?.getTime(), Date.UTC(2026, 9, 2) + 50);
+      await time.tickAsync(80);
 
       const payload = await dispatchResume(parked, { type: "deadline" });
 
