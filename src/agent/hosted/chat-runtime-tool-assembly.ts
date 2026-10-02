@@ -224,7 +224,10 @@ export type PrepareHostedChatRuntimeToolAssemblyInput<
   includeRuntimeEssentialToolsWhenEmpty?: boolean;
   sourceProviderToolNames?: readonly string[];
   projectScopedRemoteToolOptions?: ProjectScopedRemoteToolOptions;
-  createRemoteToolSource?: (config: RemoteMCPToolSourceConfig) => RemoteToolSource;
+  createRemoteToolSource?: (
+    config: RemoteMCPToolSourceConfig,
+    server?: AgentServiceMcpServerConfig,
+  ) => RemoteToolSource;
   traceLocalTools?: TraceHostToolsOptions<TTraceAttributes>;
   getProjectId?: () => string | null | undefined;
   getActiveBranchId?: () => string | null | undefined;
@@ -636,7 +639,7 @@ async function prepareHostedChatRuntimeToolAssemblyInternal<
         // so a retry cannot invoke a denied companion tool.
         createRemoteToolSource: (config, server) =>
           withoutDeniedRemoteTool(
-            createRemoteToolSource!(config),
+            createRemoteToolSource!(config, server),
             input.deniedToolNames,
             projectToolNames,
             server?.kind === "veryfront-api",
