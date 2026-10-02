@@ -6,7 +6,7 @@
  */
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import type { components } from "./runs-api.types.ts";
+import type { components } from "./runs-api.generated.ts";
 
 type Schemas = components["schemas"];
 type Lacks<T, K extends PropertyKey> = K extends keyof T ? false : true;

@@ -20,7 +20,7 @@ describe("Runs target contract types", () => {
       files: Record<string, string>;
     };
     assertEquals(pin.contract, "0.8.0");
-    assertEquals(Object.keys(pin.files), ["runs-api.types.ts"]);
+    assertEquals(Object.keys(pin.files), ["runs-api.generated.ts"]);
     for (const [file, hash] of Object.entries(pin.files)) {
       assertEquals(await sha256(file), hash, file);
     }
