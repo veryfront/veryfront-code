@@ -2,11 +2,13 @@ import { assertEquals, assertStrictEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   getRequestPeerProvenance,
+  getRequestTransportLifetime,
   inheritRequestPeerProvenance,
   isRequestFromLoopbackPeer,
   recordDenoServeRequestPeer,
   recordHandlerRequestPeer,
   recordRequestPeerFromTransport,
+  recordRequestTransportLifetime,
   type RequestPeerRuntime,
 } from "./request-peer.ts";
 
@@ -38,6 +40,27 @@ describe("runtime request peer provenance", () => {
       hostname: "::1",
     });
     assertEquals(isRequestFromLoopbackPeer(request), true);
+  });
+
+  it("records Deno transport completion with the request's native cancellation signal", () => {
+    const request = new Request("http://localhost/_projects");
+    const completed = Promise.resolve();
+
+    assertEquals(
+      recordDenoServeRequestPeer(request, {
+        remoteAddr: {
+          transport: "tcp",
+          hostname: "::1",
+          port: 52_000,
+        },
+        completed,
+      }),
+      true,
+    );
+    assertEquals(getRequestTransportLifetime(request), {
+      signal: request.signal,
+      completed,
+    });
   });
 
   it("records a framework-hosted Node request from its native transport", () => {
@@ -147,13 +170,17 @@ describe("runtime request peer provenance", () => {
   it("copies existing authority and clears authority when the source has none", () => {
     const source = requestFromPeer("::ffff:127.0.0.1", "bun");
     const target = requestFromPeer("203.0.113.9");
+    const completed = new Promise<void>(() => {});
+    recordRequestTransportLifetime(source, completed);
     assertStrictEquals(inheritRequestPeerProvenance(source, target), target);
     assertStrictEquals(getRequestPeerProvenance(target), getRequestPeerProvenance(source));
+    assertStrictEquals(getRequestTransportLifetime(target), getRequestTransportLifetime(source));
     assertEquals(isRequestFromLoopbackPeer(target), true);
 
     const untrustedSource = requestFromPeer();
     inheritRequestPeerProvenance(untrustedSource, target);
     assertEquals(getRequestPeerProvenance(target), undefined);
+    assertEquals(getRequestTransportLifetime(target), undefined);
     assertEquals(isRequestFromLoopbackPeer(target), false);
   });
 });
