@@ -6,6 +6,7 @@ import {
   hasToolExecutionErrorMarker,
   isErroredToolExecutionResult,
   isIntegrationAuthenticationActionResult,
+  isToolResultErrorOutput,
   readToolResultOwnDataProperty,
   UNREADABLE_TOOL_RESULT_PROPERTY,
 } from "./result.ts";
@@ -43,6 +44,34 @@ function replacePropertyForTest(
 }
 
 describe("tool/result", () => {
+  it("classifies tool outputs the API heuristic would flag as errors", () => {
+    assertEquals(isToolResultErrorOutput({ error: "tool_error", message: "not found" }), true);
+    assertEquals(
+      isToolResultErrorOutput({
+        type: "web_search_tool_result_error",
+        error_code: "max_uses_exceeded",
+      }),
+      true,
+    );
+    assertEquals(isToolResultErrorOutput('{"error":"tool_error","message":"not found"}'), true);
+    assertEquals(
+      isToolResultErrorOutput(' {"type":"web_fetch_tool_result_error"}'),
+      true,
+    );
+    assertEquals(isToolResultErrorOutput({ type: "web_search_result", answer: "ok" }), false);
+    assertEquals(isToolResultErrorOutput('{"ok":true}'), false);
+    assertEquals(isToolResultErrorOutput("{not json"), false);
+    assertEquals(isToolResultErrorOutput("error"), false);
+    assertEquals(
+      isToolResultErrorOutput({
+        error: "authentication_required",
+        integration: "gmail",
+        connectUrl: "https://example.com/connect",
+      }),
+      false,
+    );
+  });
+
   it("detects standard error markers on tool result objects", () => {
     assertEquals(hasToolExecutionErrorMarker({ error: "failed" }), true);
     assertEquals(hasToolExecutionErrorMarker({ isError: true }), true);

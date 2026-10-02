@@ -112,7 +112,7 @@ describe("agent/ag-ui-encoder", () => {
       }),
       [{
         event: "ToolCallResult",
-        payload: { toolCallId: "tool-1", content: { ok: true } },
+        payload: { toolCallId: "tool-1", content: { ok: true }, isError: false },
       }],
     );
     assertEquals(
@@ -500,7 +500,57 @@ describe("agent/ag-ui-encoder", () => {
         payload: {
           toolCallId: "tool-provider",
           content: { type: "web_search_result", answer: "resident" },
+          isError: false,
         },
+      }],
+    );
+  });
+
+  it("flags an error-shaped tool output as an error result", () => {
+    const state = createAgUiEncoderState({ nowMs: null, epochMs: null });
+
+    assertEquals(
+      mapRuntimeStreamEventToAgUiEvents(state, {
+        type: "tool-output-available",
+        toolCallId: "tool-1",
+        output: { error: "tool_error", message: "Requested entity was not found" },
+      }),
+      [{
+        event: "ToolCallResult",
+        payload: {
+          toolCallId: "tool-1",
+          content: { error: "tool_error", message: "Requested entity was not found" },
+          isError: true,
+        },
+      }],
+    );
+  });
+
+  it("flags provider error and serialized error outputs as error results", () => {
+    const state = createAgUiEncoderState({ nowMs: null, epochMs: null });
+    const providerError = { type: "web_search_tool_result_error", error_code: "max_uses_exceeded" };
+    const serializedError = '{"error":"tool_error","message":"Requested entity was not found"}';
+
+    assertEquals(
+      mapRuntimeStreamEventToAgUiEvents(state, {
+        type: "tool-output-available",
+        toolCallId: "tool-1",
+        output: providerError,
+      }),
+      [{
+        event: "ToolCallResult",
+        payload: { toolCallId: "tool-1", content: providerError, isError: true },
+      }],
+    );
+    assertEquals(
+      mapRuntimeStreamEventToAgUiEvents(state, {
+        type: "tool-output-available",
+        toolCallId: "tool-2",
+        output: serializedError,
+      }),
+      [{
+        event: "ToolCallResult",
+        payload: { toolCallId: "tool-2", content: serializedError, isError: true },
       }],
     );
   });

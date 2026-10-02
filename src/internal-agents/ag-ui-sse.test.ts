@@ -156,7 +156,7 @@ describe("internal-agents/ag-ui-sse", () => {
       }),
       [{
         event: "ToolCallResult",
-        payload: { toolCallId: "tool-2", content: { ok: true } },
+        payload: { toolCallId: "tool-2", content: { ok: true }, isError: false },
       }],
     );
     assertEquals(
@@ -727,6 +727,7 @@ describe("internal-agents/ag-ui-sse", () => {
         payload: {
           toolCallId: CANONICAL_TOOL_CALL_ID,
           content: CANONICAL_TOOL_RESULT,
+          isError: false,
         },
       },
       {
