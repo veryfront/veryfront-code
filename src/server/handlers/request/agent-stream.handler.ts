@@ -104,6 +104,8 @@ import {
 } from "#veryfront/utils/constants/index.ts";
 import { reportHandlerFailure } from "./report-handler-failure.ts";
 import { buildRuntimeShuttingDownResponse } from "./runtime-shutdown-response.ts";
+import { createRunPlatformToolSource } from "./run-terminal-tool-source.ts";
+import { requireInferenceProviderCredential } from "#veryfront/provider/runtime-loader/provider-request-init.ts";
 import { isServerShuttingDown } from "../../shutdown-state.ts";
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 import { resolveVeryfrontApiBaseUrlFromHostEnv } from "#veryfront/platform/cloud/resolver.ts";
@@ -126,6 +128,7 @@ import { isProviderReplayCheckpointEmissionEnabled } from "#veryfront/agent/host
 import { getServerResolvedProviderReplayCheckpoints } from "#veryfront/agent/hosted/runtime-request-config.ts";
 import {
   INGRESS_RUN_EVENT_TOKEN_HEADER,
+  INGRESS_RUN_TERMINAL_TOKEN_HEADER,
   readIngressCredential,
 } from "#veryfront/security/http/ingress-credentials.ts";
 import { FSAdapterWrapper } from "#veryfront/platform/adapters/fs/wrapper.ts";
@@ -548,11 +551,23 @@ function isPlatformToolDeniedByAgent(
   return !projectTool && configuredTools[legacyName] === false;
 }
 
+/** The control plane's finalize credential, validated like the other signed run credentials. */
+function readRunTerminalToken(req: Request): string | null {
+  const value = readIngressCredential(req, INGRESS_RUN_TERMINAL_TOKEN_HEADER);
+  if (value === null) return null;
+  try {
+    return requireInferenceProviderCredential(value, "Run terminal token header");
+  } catch {
+    throw new ControlPlaneRequestError(400, "INVALID_RUN_TERMINAL_TOKEN");
+  }
+}
+
 async function withVeryfrontPlatformRemoteTools(input: {
   agent: Agent;
   token?: string | null;
   projectId?: string | null;
   availableToolNames?: string[];
+  terminalAuthority?: { token: string; runId: string } | null;
 }): Promise<Agent> {
   const veryfrontApiMcpPolicy = getVeryfrontApiMcpPolicy(input.agent);
   const implicitlyRequestedToolNames = input.agent.config.mcpServers === undefined
@@ -574,12 +589,12 @@ async function withVeryfrontPlatformRemoteTools(input: {
   }
 
   const apiUrl = resolveVeryfrontApiBaseUrlFromHostEnv();
-  const platformRemoteToolSource = createRemoteMCPToolSource({
+  const platformRemoteToolSource = createRunPlatformToolSource({
     id: VERYFRONT_API_MCP_SOURCE_ID,
     listMeta: { "veryfront/tool-names": "legacy" },
     endpoint: `${apiUrl}/mcp`,
     headers: { Authorization: `Bearer ${input.token}` },
-  });
+  }, input.terminalAuthority ?? null);
   let platformToolDefinitions: ToolDefinition[] | null = null;
   try {
     platformToolDefinitions = await platformRemoteToolSource.listTools({
@@ -1141,6 +1156,7 @@ export class AgentStreamHandler extends BaseHandler {
         expectedSurface: "studio",
       });
       const runEventAppendToken = readIngressCredential(req, INGRESS_RUN_EVENT_TOKEN_HEADER);
+      const terminalToken = readRunTerminalToken(req);
       if (
         payload.sourceProject && (
           payload.sourceProject.projectId !== ctx.projectId ||
@@ -1359,6 +1375,11 @@ export class AgentStreamHandler extends BaseHandler {
                           projectId: executionProject?.projectId ??
                             projectScopedContext.projectId ?? null,
                           availableToolNames: runtimeInput.tools.map((tool) => tool.name),
+                          // The API binds the terminal token to the signed run-bound credential,
+                          // never to the host proxy token this source would otherwise fall back to.
+                          terminalAuthority: terminalToken && payload.credentials?.authToken
+                            ? { token: terminalToken, runId: payload.runId }
+                            : null,
                         });
                         const runtimeAgent = await withExplicitVeryfrontStudioRemoteTools({
                           agent: platformRuntimeAgent,

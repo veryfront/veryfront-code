@@ -12,10 +12,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 2
     steps:
-      # Ordinary cancellation allows always() jobs to continue. Force cancellation
-      # stops even always() jobs and leaves unfinished checks unsuccessful.
+      # Preserve always() aggregators so required gates can report failed dependencies.
+      # Heavy jobs stop on cancellation through their merge-group-only guards.
       # No checkout: repository code must never execute with this write token.
-      - name: Force-cancel the failed merge-group run
+      - name: Cancel the failed merge-group run
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh api --method POST "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/force-cancel"
+        run: gh api --method POST "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/cancel"

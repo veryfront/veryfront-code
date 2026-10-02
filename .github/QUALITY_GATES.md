@@ -7,7 +7,7 @@ protects a distinct delivery boundary.
 ## 1. Merge correctness
 
 `quality gate (merge)` requires source checks, unit tests, the existing
-four-shard coverage dependency with its 80 percent floor, integration tests,
+eight-shard coverage dependency with its 80 percent floor, integration tests,
 the full Node and Bun runtime suites, binary end-to-end tests, and RSC browser
 end-to-end tests to succeed for pull requests, merge queue runs, and main
 pushes. Sonar analysis is also mandatory for merge queue runs, main pushes,
@@ -32,7 +32,15 @@ artifact. Without such a run, main runs the full pipeline. Evidence:
 
 The scanner emits the diagnostic `SonarQube Cloud scan` check.
 `SonarQube Cloud quality gate` is the only Sonar check required by the ruleset
-and depends on that scanner result.
+and depends on that scanner result. Merge queue scans explicitly analyze their
+`gh-readonly-queue` ref plus generated commit SHA with `main` as the target
+branch. Including the SHA isolates rebuilt groups even when GitHub reuses a
+queue ref. Sonar does
+not auto-detect `merge_group` events; leaving the branch unset publishes queue
+analyses into `main`, where concurrent groups compete with each other and main
+pushes. Pull requests and main pushes retain Sonar's automatic detection.
+The 28-minute scan budget, 20-minute server wait, required quality gate, and
+single infrastructure-error retry remain unchanged.
 
 The active merge queue ruleset gives required checks at least 70 minutes to
 report a conclusion. This covers the longest configured dependency path: 60
@@ -82,7 +90,7 @@ Runtime access is limited to a read-only source checkout, excluding `.git` and
 access through isolated bridge egress, and the exact release metadata
 environment. Docker's default private PID namespace remains in effect. The
 host does not execute repository scripts or local actions, and the container
-is removed before the separate `dispatch release` job creates the scoped
+is removed before the final registry-job steps create the scoped
 release token. Validation is independent of whether the release published a
 reused merge-queue artifact or a full-pipeline artifact: it reads only the
 public registry and the checked-out source.
@@ -113,3 +121,21 @@ builds the npm output once per commit, and every consumer job downloads the
 built artifact instead of rebuilding it. The
 [workflow contract test](../tests/integration/ci/npm-compatibility-artifact-workflow.test.ts)
 pins the single-build invariant and the download ordering in each consumer.
+
+## Main release runner budget
+
+Main pushes enforce the server-side Sonar result in the scan job and evaluate
+all merge correctness results as the first publisher step. Standalone
+`SonarQube Cloud quality gate` and `quality gate (merge)` jobs still report on
+pull requests and merge-group events with unchanged required names. Publishers
+accept skipped correctness jobs only with the authoritative tested merge-queue
+run id, and always require the fresh main Sonar gate to succeed. Fallback runs
+require every correctness dependency to succeed.
+
+Registry validation and downstream dispatch share one runner. Every dispatch
+step requires successful validation, the selected publication job, and public
+release upload, retains
+a five-minute timeout, and stays inside the existing `production` approval
+environment. The container terminates before token creation; no repository
+script or local action runs on the host after validation. This removes three
+runner acquisitions from the main publish path without removing any gate.

@@ -48,12 +48,15 @@ export const INGRESS_INFERENCE_TOKEN_HEADER = "x-veryfront-inference-token";
 export const INGRESS_RUN_EVENT_TOKEN_HEADER = "x-veryfront-run-event-token";
 /** The control plane's exact-run cancellation acknowledgement credential. */
 export const INGRESS_RUN_STOP_TOKEN_HEADER = "x-veryfront-run-stop-token";
+/** The control plane's exact-run, generation-fenced finalize credential. */
+export const INGRESS_RUN_TERMINAL_TOKEN_HEADER = "x-veryfront-run-terminal-token";
 
 export type IngressCredentialHeader =
   | typeof INGRESS_API_TOKEN_HEADER
   | typeof INGRESS_INFERENCE_TOKEN_HEADER
   | typeof INGRESS_RUN_EVENT_TOKEN_HEADER
-  | typeof INGRESS_RUN_STOP_TOKEN_HEADER;
+  | typeof INGRESS_RUN_STOP_TOKEN_HEADER
+  | typeof INGRESS_RUN_TERMINAL_TOKEN_HEADER;
 
 type IngressCredentials = { readonly [name in IngressCredentialHeader]: string | null };
 
@@ -104,7 +107,8 @@ function toHeaderRecordWithoutCredentials(request: Request): HeadersWithoutCrede
     const name = step.value[0];
     if (
       name === INGRESS_API_TOKEN_HEADER || name === INGRESS_INFERENCE_TOKEN_HEADER ||
-      name === INGRESS_RUN_EVENT_TOKEN_HEADER || name === INGRESS_RUN_STOP_TOKEN_HEADER
+      name === INGRESS_RUN_EVENT_TOKEN_HEADER || name === INGRESS_RUN_STOP_TOKEN_HEADER ||
+      name === INGRESS_RUN_TERMINAL_TOKEN_HEADER
     ) continue;
     if (name === "set-cookie") {
       // Not a credential, so this list may use ordinary array writes.
@@ -145,6 +149,10 @@ function readCredentialHeaders(request: Request): IngressCredentials {
     [INGRESS_INFERENCE_TOKEN_HEADER]: readNativeHeader(request, INGRESS_INFERENCE_TOKEN_HEADER),
     [INGRESS_RUN_EVENT_TOKEN_HEADER]: readNativeHeader(request, INGRESS_RUN_EVENT_TOKEN_HEADER),
     [INGRESS_RUN_STOP_TOKEN_HEADER]: readNativeHeader(request, INGRESS_RUN_STOP_TOKEN_HEADER),
+    [INGRESS_RUN_TERMINAL_TOKEN_HEADER]: readNativeHeader(
+      request,
+      INGRESS_RUN_TERMINAL_TOKEN_HEADER,
+    ),
   } as IngressCredentials);
 }
 
@@ -152,7 +160,8 @@ function hasAnyCredential(credentials: IngressCredentials): boolean {
   return credentials[INGRESS_API_TOKEN_HEADER] !== null ||
     credentials[INGRESS_INFERENCE_TOKEN_HEADER] !== null ||
     credentials[INGRESS_RUN_EVENT_TOKEN_HEADER] !== null ||
-    credentials[INGRESS_RUN_STOP_TOKEN_HEADER] !== null;
+    credentials[INGRESS_RUN_STOP_TOKEN_HEADER] !== null ||
+    credentials[INGRESS_RUN_TERMINAL_TOKEN_HEADER] !== null;
 }
 
 /** A copy of `request` without the credential headers, holding `credentials`. */
@@ -172,6 +181,7 @@ function sealWith(request: Request, credentials: IngressCredentials): Request {
   IntrinsicReflectApply(HeadersDelete, sealedHeaders, [INGRESS_INFERENCE_TOKEN_HEADER]);
   IntrinsicReflectApply(HeadersDelete, sealedHeaders, [INGRESS_RUN_EVENT_TOKEN_HEADER]);
   IntrinsicReflectApply(HeadersDelete, sealedHeaders, [INGRESS_RUN_STOP_TOKEN_HEADER]);
+  IntrinsicReflectApply(HeadersDelete, sealedHeaders, [INGRESS_RUN_TERMINAL_TOKEN_HEADER]);
   // Clear any cookies retained by the constructor before replaying each field.
   IntrinsicReflectApply(HeadersDelete, sealedHeaders, ["set-cookie"]);
   if (remaining.setCookies.length > 0) {
@@ -263,6 +273,8 @@ export function sealInterceptedRequest(source: Request, intercepted: Request): R
         before[INGRESS_RUN_EVENT_TOKEN_HEADER],
       [INGRESS_RUN_STOP_TOKEN_HEADER]: after[INGRESS_RUN_STOP_TOKEN_HEADER] ??
         before[INGRESS_RUN_STOP_TOKEN_HEADER],
+      [INGRESS_RUN_TERMINAL_TOKEN_HEADER]: after[INGRESS_RUN_TERMINAL_TOKEN_HEADER] ??
+        before[INGRESS_RUN_TERMINAL_TOKEN_HEADER],
     } as IngressCredentials),
   ]);
   return sealed;

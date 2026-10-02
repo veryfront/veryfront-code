@@ -1,4 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
+import { startUpstreamServer } from "#veryfront/testing/upstream-websocket-server.ts";
 import { assert, assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
@@ -10,72 +11,6 @@ import {
 } from "./websocket-client.ts";
 import { buildRendererBridgeRequest } from "./websocket-bridge.ts";
 import { parseProjectDomain } from "#veryfront/server/utils/domain-parser.ts";
-
-interface UpstreamServer {
-  readonly url: URL;
-  readonly seenHeaders: Promise<Record<string, string | null>>;
-  close(): Promise<void>;
-}
-
-/** A renderer stand-in that reports the handshake headers it received. */
-function startUpstreamServer(options: { rejectWith?: number } = {}): UpstreamServer {
-  const controller = new AbortController();
-  let resolveHeaders: (value: Record<string, string | null>) => void = () => {};
-  const seenHeaders = new Promise<Record<string, string | null>>((resolve) => {
-    resolveHeaders = resolve;
-  });
-  const sockets = new Map<WebSocket, Promise<void>>();
-
-  // Bind ephemerally (port 0) so parallel test modules never collide on a fixed
-  // port, and to 127.0.0.1 to avoid IPv6 flakiness — same shape as the other
-  // proxy tests (see server-resolver.test.ts, token-manager.test.ts).
-  const server = Deno.serve(
-    { hostname: "127.0.0.1", port: 0, signal: controller.signal, onListen: () => {} },
-    (req) => {
-      resolveHeaders({
-        "x-token": req.headers.get("x-token"),
-        "x-project-slug": req.headers.get("x-project-slug"),
-        "x-environment": req.headers.get("x-environment"),
-        "sec-websocket-key": req.headers.get("sec-websocket-key"),
-      });
-      if (options.rejectWith) {
-        return new Response(JSON.stringify({ error: "Missing project context" }), {
-          status: options.rejectWith,
-        });
-      }
-      const { socket, response } = Deno.upgradeWebSocket(req);
-      socket.binaryType = "arraybuffer";
-      const closed = Promise.withResolvers<void>();
-      sockets.set(socket, closed.promise);
-      socket.onmessage = (event) => {
-        if (socket.readyState !== WebSocket.OPEN) return;
-        // Binary frames are echoed verbatim so the caller can check byte fidelity.
-        if (typeof event.data === "string") socket.send(`echo:${event.data}`);
-        else socket.send(event.data as ArrayBuffer);
-      };
-      socket.onclose = () => {
-        sockets.delete(socket);
-        closed.resolve();
-      };
-      return response;
-    },
-  );
-
-  const addr = server.addr as Deno.NetAddr;
-
-  return {
-    url: new URL(`ws://${addr.hostname}:${addr.port}/_ws`),
-    seenHeaders,
-    async close() {
-      const closedSockets = [...sockets.values()];
-      for (const socket of sockets.keys()) {
-        if (socket.readyState === WebSocket.OPEN) socket.close();
-      }
-      controller.abort();
-      await Promise.all([server.finished, ...closedSockets]);
-    },
-  };
-}
 
 function identityHeaders(): Headers {
   return new Headers({
@@ -298,7 +233,7 @@ describe("upstream WebSocket client", () => {
   });
 
   it("releases native loopback stream locks before each close event", async () => {
-    const server = startUpstreamServer();
+    const server = await startUpstreamServer();
     const nativeFactory = resolveUpstreamWebSocketStreamFactory();
     try {
       for (let attempt = 0; attempt < 32; attempt++) {
@@ -357,7 +292,7 @@ describe("upstream WebSocket client", () => {
   });
 
   it("presents the proxy identity headers on the handshake", async () => {
-    const server = startUpstreamServer();
+    const server = await startUpstreamServer();
     try {
       const socket = connectUpstreamWebSocket(server.url, identityHeaders());
       const opened = new Promise<void>((resolve) => {
@@ -384,7 +319,7 @@ describe("upstream WebSocket client", () => {
   it("carries a full browser-derived bridge header set through the handshake", async () => {
     // The forwarded set is whatever the browser sent minus hop-by-hop fields,
     // so the handshake must survive cookies, origin and friends riding along.
-    const server = startUpstreamServer();
+    const server = await startUpstreamServer();
     try {
       const browserRequest = new Request(
         "https://support-agent-agodnc.preview.veryfront.com/_ws",
@@ -440,7 +375,7 @@ describe("upstream WebSocket client", () => {
   });
 
   it("bridges frames in both directions", async () => {
-    const server = startUpstreamServer();
+    const server = await startUpstreamServer();
     try {
       const socket = connectUpstreamWebSocket(server.url, identityHeaders());
       const message = new Promise<string>((resolve) => {
@@ -464,7 +399,7 @@ describe("upstream WebSocket client", () => {
   });
 
   it("bridges binary frames byte-for-byte without reordering later frames", async () => {
-    const server = startUpstreamServer();
+    const server = await startUpstreamServer();
     try {
       const socket = connectUpstreamWebSocket(server.url, identityHeaders());
       const frames: Array<string | number[]> = [];
@@ -563,7 +498,7 @@ describe("upstream WebSocket client", () => {
 
   it("surfaces a rejected handshake as an error and a close", async () => {
     // Exactly what production sees today when the renderer answers 502.
-    const server = startUpstreamServer({ rejectWith: 502 });
+    const server = await startUpstreamServer({ rejectWith: 502 });
     try {
       const socket = connectUpstreamWebSocket(server.url, new Headers());
       const events: string[] = [];

@@ -224,11 +224,19 @@ describe("repository hardening", () => {
     // Only the RC path may recover a conflicted publish through registry
     // metadata; the stable release call site must stay fail-closed so an
     // existing name@version can never be accepted via a matching gitHead.
-    const rcCallSites = retryCallSites.filter((callSite) => callSite.includes("--tag rc"));
+    const rcCallSites = retryCallSites.filter((callSite) =>
+      callSite.includes('--tag "${publish_tag}"')
+    );
     assertEquals(rcCallSites.length, 1);
+    assert(publishScript.includes('local publish_tag="${3:-rc}"'));
+    assert(
+      publishScript.includes(
+        'rc_publish_package_dir "${PACKAGE_DIR}" "${PUBLISH_SPEC}" "${RC_PUBLISH_TAG}"',
+      ),
+    );
     assert(rcCallSites[0]?.includes("publish_npm_package_with_retry recover "));
     const stableCallSites = retryCallSites.filter(
-      (callSite) => !callSite.includes("--tag rc"),
+      (callSite) => !callSite.includes("--tag "),
     );
     assertEquals(stableCallSites.length, 1);
     assert(
@@ -383,7 +391,9 @@ describe("repository hardening", () => {
         ) {
           assertEquals(
             jobIf.trim(),
-            "if: ${{ always() }}",
+            jobName === "quality-gate-merge"
+              ? "if: ${{ always() && github.event_name != 'push' }}"
+              : "if: ${{ always() }}",
             `expected trusted aggregate ${jobName} to run and inspect skipped dependencies`,
           );
           assertEquals(
@@ -424,7 +434,7 @@ describe("repository hardening", () => {
           assert(cancellation.includes("if: ${{ github.event_name == 'merge_group' }}"));
           assert(
             cancellation.includes(
-              'run: gh api --method POST "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/force-cancel"',
+              'run: gh api --method POST "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/cancel"',
             ),
           );
           continue;

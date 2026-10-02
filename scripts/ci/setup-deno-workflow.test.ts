@@ -1,10 +1,4 @@
-import {
-  assert,
-  assertEquals,
-  assertMatch,
-  assertStringIncludes,
-  assertThrows,
-} from "#std/assert";
+import { assert, assertEquals, assertMatch, assertStringIncludes, assertThrows } from "#std/assert";
 import { describe, it } from "#std/testing/bdd";
 import { parse } from "#std/yaml/parse";
 import { planSuiteFiles } from "../test/run-suite.ts";
@@ -12,10 +6,8 @@ import { planSuiteFiles } from "../test/run-suite.ts";
 const ACTION_PATH = ".github/actions/setup-deno/action.yml";
 const WORKFLOWS_DIR = ".github/workflows";
 const LOCAL_ACTION = "./.github/actions/setup-deno";
-const CACHE_RESTORE_ACTION =
-  "actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9";
-const CACHE_SAVE_ACTION =
-  "actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9";
+const CACHE_RESTORE_ACTION = "actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9";
+const CACHE_SAVE_ACTION = "actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9";
 const MAX_SETUP_MINUTES = 5;
 const MAX_CACHE_SETUP_MINUTES = 10;
 const CACHE_PRODUCER_JOB = "tests-integration";
@@ -533,9 +525,7 @@ describe("setup-deno CI contract", () => {
       "${{ steps.deno-cache.outputs.cache-primary-key }}",
     );
 
-    const installStep = steps.find((step) =>
-      step.name === "Install pinned Deno"
-    );
+    const installStep = steps.find((step) => step.name === "Install pinned Deno");
     assert(installStep, "setup-deno must install Deno explicitly");
     const install = String(installStep.run);
     assertStringIncludes(install, 'version="2.7.7"');
@@ -628,12 +618,8 @@ describe("setup-deno CI contract", () => {
       "the installer must not fall back to npm",
     );
 
-    const redisWarm = steps.find((step) =>
-      step.name === "Warm Redis module cache"
-    );
-    const dependencyWarm = steps.find((step) =>
-      step.name === "Warm esm.sh cache"
-    );
+    const redisWarm = steps.find((step) => step.name === "Warm Redis module cache");
+    const dependencyWarm = steps.find((step) => step.name === "Warm esm.sh cache");
     assert(redisWarm && dependencyWarm, "both warm-cache steps must exist");
 
     const templateManifestGenerator = steps.find((step) => {
@@ -806,9 +792,7 @@ jobs:
 
           assertEquals(
             step["timeout-minutes"],
-            isCompleteCacheProducer
-              ? MAX_CACHE_SETUP_MINUTES
-              : MAX_SETUP_MINUTES,
+            isCompleteCacheProducer ? MAX_CACHE_SETUP_MINUTES : MAX_SETUP_MINUTES,
             `${path} ${jobName} setup-deno must leave time for job work`,
           );
           if (isCompleteCacheProducer) {
@@ -971,9 +955,7 @@ jobs:
     const chromiumAptSetup = asSteps(
       chromiumRuns.steps,
       "install-chromium steps",
-    ).find((step) =>
-      step.name === "Configure apt sources, retries, and mirrors"
-    );
+    ).find((step) => step.name === "Configure apt sources, retries, and mirrors");
     assert(chromiumAptSetup, "the shared action must configure apt sources");
     const aptSetup = String(chromiumAptSetup.run);
     assertStringIncludes(
@@ -989,6 +971,14 @@ jobs:
       false,
       "APT mirror rewrites must not contain clear-text HTTP URLs",
     );
+    // Runner images route the archive through `mirror+file:` lists whose
+    // first entry is the azure mirror; rewriting only the sources files left
+    // that mirror in charge when it throttled .deb downloads (inbox #2483).
+    assertStringIncludes(aptSetup, "mirror\\+file:");
+    assertStringIncludes(
+      aptSetup,
+      'for apt_file in ${apt_source_files} ${mirror_lists}; do',
+    );
     for (
       const expected of [
         'for attempt in $(seq 1 "${install_attempts}")',
@@ -1000,6 +990,16 @@ jobs:
     ) {
       assertStringIncludes(install, expected);
     }
+    assertStringIncludes(
+      install,
+      '[ "$status" -eq 124 ] || [ "$status" -eq 137 ]',
+      "a timed-out attempt must be named as a stalled download, not a bare exit 124",
+    );
+    assertStringIncludes(install, "::error title=Chromium install::");
+    assert(
+      shellInteger(install, "install_attempts") >= 3,
+      "a single throttled mirror must not consume the whole step budget",
+    );
     assertEquals(install.includes("apt-get clean"), false);
     assertEquals(install.includes("rm -rf /var/lib/apt/lists"), false);
 
@@ -1045,27 +1045,35 @@ jobs:
   });
 });
 
-it("stable release creates a fresh upload token after npm publication", async () => {
+it("public release upload uses an isolated token after publisher artifacts are ready", async () => {
   const workflow = await parseYamlFile(`${WORKFLOWS_DIR}/cicd.yml`);
-  const release = asRecord(asRecord(workflow.jobs, "jobs").release, "release");
-  const steps = asSteps(release.steps, "release steps");
-  const publish = steps.findIndex((step) =>
-    step.name === "Publish tested stable npm artifact"
+  const jobs = asRecord(workflow.jobs, "jobs");
+  const release = asRecord(jobs.release, "release");
+  assertEquals(
+    JSON.stringify(release).includes("actions/create-github-app-token@"),
+    false,
+    "the stable package publisher must not receive the public release token",
   );
-  const upload = steps.findIndex((step) =>
-    step.name === "Create GitHub releases"
+  const uploader = asRecord(
+    jobs["publish-public-release"],
+    "publish-public-release",
   );
-  assert(publish >= 0 && upload > publish);
+  const steps = asSteps(uploader.steps, "public release steps");
+  const download = steps.findIndex((step) =>
+    String(step.uses).startsWith("actions/download-artifact@")
+  );
+  const upload = steps.findIndex((step) => step.name === "Create GitHub releases");
+  assert(download >= 0 && upload > download);
   const uploadEnv = asRecord(steps[upload].env, "release upload env");
   const tokenReference = String(uploadEnv.GH_TOKEN);
   const freshToken = steps.findIndex((step, index) =>
-    index > publish && index < upload &&
+    index > download && index < upload &&
     String(step.uses).startsWith("actions/create-github-app-token@") &&
     tokenReference === `\${{ steps.${step.id}.outputs.token }}`
   );
   assert(
-    freshToken > publish,
-    "npm publication can exceed the one-hour App token lifetime",
+    freshToken > download,
+    "the App token must be minted only on the isolated public uploader",
   );
   const tokenInputs = asRecord(
     steps[freshToken].with,

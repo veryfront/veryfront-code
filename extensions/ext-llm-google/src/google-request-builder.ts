@@ -107,8 +107,9 @@ function invalidGoogleProviderHistory(): TypeError {
 function readGoogleRawToolHistory(
   rawAssistantParts: readonly Record<string, unknown>[],
   rawAssistantPartIndexes: readonly number[],
+  toolCallScope?: string,
 ): GoogleRawToolHistory {
-  const registry = createGoogleToolCallCorrelationRegistry();
+  const registry = createGoogleToolCallCorrelationRegistry(toolCallScope);
   const ordinaryCalls: CanonicalProviderCall[] = [];
   const legacyOrdinaryCalls: CanonicalProviderCall[] = [];
   const providerCalls: CanonicalProviderCall[] = [];
@@ -143,7 +144,9 @@ function readGoogleRawToolHistory(
       // Histories persisted before raw-position ids used the anonymous-call
       // occurrence instead. Build both complete projections so validation
       // cannot accept a mixture that no implementation ever emitted.
-      const legacyId = providerId === undefined ? `tool-${anonymousFunctionCallIndex++}` : id;
+      const legacyId = providerId === undefined && toolCallScope === undefined
+        ? `tool-${anonymousFunctionCallIndex++}`
+        : id;
       const call = {
         name: functionCall.name,
         input: functionCallArgs,
@@ -262,6 +265,7 @@ function validateGoogleToolReplay(
   message: Extract<ModelRuntimePromptMessage, { readonly role: "assistant" }>,
   rawAssistantParts: readonly Record<string, unknown>[],
   rawAssistantPartIndexes: readonly number[],
+  toolCallScope?: string,
 ): void {
   const providerToolCalls = (message.providerToolCalls ?? []).map((call) => ({
     id: call.toolCallId,
@@ -334,7 +338,11 @@ function validateGoogleToolReplay(
 
   let rawHistory: GoogleRawToolHistory;
   try {
-    rawHistory = readGoogleRawToolHistory(rawAssistantParts, rawAssistantPartIndexes);
+    rawHistory = readGoogleRawToolHistory(
+      rawAssistantParts,
+      rawAssistantPartIndexes,
+      toolCallScope,
+    );
   } catch {
     throw invalidGoogleProviderHistory();
   }
@@ -441,6 +449,7 @@ function toGoogleContents(
             message,
             rawAssistantReplay.parts,
             rawAssistantReplay.partIndexes,
+            rawAssistantReplay.toolCallScope,
           );
           contents.push({ role: "model", parts: rawAssistantReplay.parts });
           break;

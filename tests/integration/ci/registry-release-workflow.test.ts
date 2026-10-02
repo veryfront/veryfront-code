@@ -86,6 +86,7 @@ async function runReleaseDependencyGate(
       IS_STABLE: "false",
       PRERELEASE_RESULT: "success",
       STABLE_RELEASE_RESULT: "skipped",
+      PUBLIC_RELEASE_RESULT: "success",
       ...overrides,
     },
     stdout: "piped",
@@ -97,7 +98,7 @@ async function runDispatchVersionResolution(
   overrides: Record<string, string>,
 ): Promise<Deno.CommandOutput> {
   const jobs = await readJobs();
-  const dispatch = asRecord(jobs["dispatch-release"], "dispatch release job");
+  const dispatch = asRecord(jobs["quality-gate-registry"], "dispatch release job");
   const step = namedStep(dispatch, "Resolve published version");
   return await new Deno.Command("bash", {
     args: ["-c", String(step.run)],
@@ -121,7 +122,28 @@ async function readJobs(): Promise<YamlRecord> {
   return asRecord(workflow.jobs, "CI workflow jobs");
 }
 
-async function runVersionValidation(version: string): Promise<Deno.CommandOutput> {
+async function canonicalPublisherBody(): Promise<string> {
+  const script = await Deno.readTextFile(RELEASE_SCRIPT_PATH);
+  return script.replace(/^#!\/usr\/bin\/env bash\n\n/, "").trimEnd();
+}
+
+function splitEmbeddedPublisher(run: string): {
+  body: string;
+  suffix: string;
+} {
+  const embedded = run.match(
+    /publish_github_release\(\) \{\n([\s\S]*?)\n\}\n([\s\S]*)$/,
+  );
+  assert(embedded, "public uploader must embed the canonical publisher");
+  return {
+    body: embedded[1].replace(/^ {2}/gm, "").trimEnd(),
+    suffix: embedded[2],
+  };
+}
+
+async function runVersionValidation(
+  version: string,
+): Promise<Deno.CommandOutput> {
   const jobs = await readJobs();
   const versionCheck = asRecord(jobs["version-check"], "version check job");
   const detect = namedStep(versionCheck, "Detect release type");
@@ -135,6 +157,62 @@ async function runVersionValidation(version: string): Promise<Deno.CommandOutput
     stdout: "piped",
     stderr: "piped",
   }).output();
+}
+
+async function runStablePublicReleasePreflight(
+  publicReleaseStatus: string,
+): Promise<Deno.CommandOutput> {
+  const jobs = await readJobs();
+  const release = asRecord(jobs.release, "stable release job");
+  const preflight = namedStep(release, "Ensure stable version is unpublished");
+
+  return await withTempDir(async (stateDir) => {
+    await Deno.mkdir(`${stateDir}/bin`, { recursive: true });
+    await Deno.mkdir(`${stateDir}/scripts/ci`, { recursive: true });
+    await Deno.writeTextFile(
+      `${stateDir}/scripts/ci/publish-npm-packages.sh`,
+      "#!/usr/bin/env bash\nexit 0\n",
+    );
+    await Deno.writeTextFile(
+      `${stateDir}/bin/git`,
+      "#!/usr/bin/env bash\nexit 1\n",
+    );
+    await Deno.writeTextFile(
+      `${stateDir}/bin/gh`,
+      "#!/usr/bin/env bash\nexit 1\n",
+    );
+    await Deno.writeTextFile(
+      `${stateDir}/bin/curl`,
+      `#!/usr/bin/env bash
+set -euo pipefail
+printf '%s' "$PUBLIC_RELEASE_STATUS"
+`,
+    );
+    for (
+      const path of [
+        `${stateDir}/scripts/ci/publish-npm-packages.sh`,
+        `${stateDir}/bin/git`,
+        `${stateDir}/bin/gh`,
+        `${stateDir}/bin/curl`,
+      ]
+    ) {
+      await Deno.chmod(path, 0o755);
+    }
+
+    return await new Deno.Command("bash", {
+      args: ["-c", String(preflight.run)],
+      cwd: stateDir,
+      env: {
+        PATH: `${stateDir}/bin:${Deno.env.get("PATH")}`,
+        GH_TOKEN: "synthetic-job-token",
+        SOURCE_REPO_TOKEN: "synthetic-source-token",
+        VERSION: "1.2.3",
+        PUBLIC_RELEASE_STATUS: publicReleaseStatus,
+      },
+      stdout: "piped",
+      stderr: "piped",
+    }).output();
+  });
 }
 
 type ReleaseState = "missing" | "draft" | "published";
@@ -247,20 +325,27 @@ async function runReleaseScript({
 describe("registry release workflow", () => {
   it("publishes stable assets while preserving a previously published RC and its tag", async () => {
     const jobs = await readJobs();
-    const step = namedStep(asRecord(jobs.release, "release job"), "Create GitHub releases");
+    const step = namedStep(
+      asRecord(jobs["publish-public-release"], "public release job"),
+      "Create GitHub releases",
+    );
     await withTempDir(async (stateDir) => {
-      for (const path of ["bin", "releases", "scripts/ci", "binaries/veryfront-linux-x64"]) {
+      for (const path of ["bin", "releases", "public-release-assets"]) {
         await Deno.mkdir(`${stateDir}/${path}`, { recursive: true });
       }
-      await Deno.copyFile(RELEASE_SCRIPT_PATH, `${stateDir}/scripts/ci/publish-github-release.sh`);
       for (
         const asset of [
-          "scripts/install.sh",
-          "scripts/install.ps1",
-          "binaries/veryfront-linux-x64/veryfront-linux-x64",
+          "install.sh",
+          "install.ps1",
+          "veryfront-linux-x64",
+          "sbom.json",
+          "SHA256SUMS",
         ]
       ) {
-        await Deno.writeTextFile(`${stateDir}/${asset}`, "synthetic release asset");
+        await Deno.writeTextFile(
+          `${stateDir}/public-release-assets/${asset}`,
+          "synthetic release asset",
+        );
       }
       const retainedRelease = `${stateDir}/releases/v1.2.3-rc.4`;
       await Deno.writeTextFile(retainedRelease, "published RC assets and tag");
@@ -297,14 +382,21 @@ printf '%064d  %s\n' 0 "$1"
           PATH: `${stateDir}/bin:${Deno.env.get("PATH")}`,
           STATE_DIR: stateDir,
           VERSION: "1.2.3",
+          IS_STABLE: "true",
           GH_TOKEN: "synthetic",
         },
         stdout: "piped",
         stderr: "piped",
       }).output();
       assertEquals(output.code, 0, decoder.decode(output.stderr));
-      assertEquals(await Deno.readTextFile(`${stateDir}/releases/v1.2.3`), "published");
-      assertEquals(await Deno.readTextFile(retainedRelease), "published RC assets and tag");
+      assertEquals(
+        await Deno.readTextFile(`${stateDir}/releases/v1.2.3`),
+        "published",
+      );
+      assertEquals(
+        await Deno.readTextFile(retainedRelease),
+        "published RC assets and tag",
+      );
       assertStringIncludes(
         await Deno.readTextFile(`${stateDir}/gh.log`),
         "--prerelease=false --latest",
@@ -501,29 +593,29 @@ printf '%064d  %s\n' 0 "$1"
     });
   });
 
-  it("routes public GitHub releases through the retrying asset publisher", async () => {
+  it("embeds the canonical retrying publisher in the isolated public release job", async () => {
     const jobs = await readJobs();
-    for (
-      const [jobName, stepName] of [
-        ["prerelease", "Create GitHub pre-release"],
-        ["release", "Create GitHub releases"],
-      ] as const
-    ) {
-      const job = asRecord(jobs[jobName], `${jobName} job`);
-      const releaseStep = namedStep(job, stepName);
-      const run = String(releaseStep.run);
-
-      assertStringIncludes(
-        run,
-        "bash scripts/ci/publish-github-release.sh",
-        `${jobName} must use the retrying release asset publisher`,
-      );
-      assertEquals(
-        run.includes("gh release create"),
-        false,
-        `${jobName} must not bypass per-asset retries`,
-      );
-    }
+    const uploader = asRecord(
+      jobs["publish-public-release"],
+      "public release job",
+    );
+    const run = String(namedStep(uploader, "Create GitHub releases").run);
+    const embedded = splitEmbeddedPublisher(run);
+    assertEquals(
+      embedded.body,
+      await canonicalPublisherBody(),
+      "the checkout-free publisher must retain the complete tested helper",
+    );
+    assertStringIncludes(embedded.suffix, "assets=(public-release-assets/*)");
+    assertStringIncludes(embedded.suffix, "mode=--latest");
+    assertStringIncludes(embedded.suffix, "mode=--prerelease");
+    assert(
+      /publish_github_release --repo veryfront\/veryfront \\\n[ ]{2}--tag "v\$\{VERSION\}" --title "v\$\{VERSION\}" --notes "\$notes" \\\n[ ]{2}"\$mode" -- "\$\{assets\[@\]\}"\s*$/
+        .test(
+          embedded.suffix,
+        ),
+      "the fixed uploader must pass only the selected mode and inert artifact files",
+    );
   });
 
   it("validates the deno.json version before exposing release outputs", async () => {
@@ -659,9 +751,20 @@ printf '%064d  %s\n' 0 "$1"
         );
       }
       assertEquals(
-        tokenRepositories(job),
-        ["veryfront"],
-        `${jobName} release token must only access the release repository`,
+        jobSteps.filter((step) => String(step.uses).startsWith("actions/create-github-app-token@"))
+          .length,
+        0,
+        `${jobName} must not receive a release App token`,
+      );
+      const artifact = jobSteps.find((step) =>
+        String(step.uses).startsWith("actions/upload-artifact@") &&
+        asRecord(step.with, `${jobName} artifact inputs`).name ===
+          "public-release-${{ github.sha }}"
+      );
+      assert(artifact, `${jobName} must prepare the public release artifact`);
+      assertEquals(
+        asRecord(artifact.with, `${jobName} artifact inputs`).path,
+        "dist/public-release/",
       );
       assert(
         Array.isArray(job.needs) &&
@@ -669,18 +772,189 @@ printf '%064d  %s\n' 0 "$1"
         `${jobName} must require the canonical artifact quality gate`,
       );
       assert(
-        job.needs.includes("quality-gate-merge"),
-        `${jobName} must require the complete merge correctness gate`,
+        job.needs.includes("sonar") &&
+          namedStep(job, "Require merge correctness dependencies") !== undefined,
+        `${jobName} must evaluate the complete merge correctness gate after Sonar`,
       );
       for (const dependency of MERGE_CORRECTNESS_DEPENDENCIES) {
         assertEquals(
           job.needs.includes(dependency),
-          false,
-          `${jobName} must inherit ${dependency} through quality-gate-merge`,
+          true,
+          `${jobName} must read ${dependency} in its folded correctness gate`,
         );
       }
     });
   }
+
+  it("keeps publisher repository execution off release-App runners", async () => {
+    const jobs = await readJobs();
+    for (const jobName of ["prerelease", "release"]) {
+      const job = asRecord(jobs[jobName], `${jobName} job`);
+      assertEquals(
+        JSON.stringify(job).includes("VERYFRONT_RELEASE_APP_"),
+        false,
+        `${jobName} must never receive the downstream-capable App identity or key`,
+      );
+      assertEquals(
+        steps(job, jobName).filter((step) =>
+          String(step.uses).startsWith("actions/create-github-app-token@")
+        ).length,
+        0,
+      );
+    }
+    const allowedActions = {
+      "publish-public-release": [
+        "actions/download-artifact@",
+        "actions/create-github-app-token@",
+      ],
+      "quality-gate-registry": [
+        "actions/create-github-app-token@",
+        "peter-evans/repository-dispatch@",
+      ],
+    } as const;
+    for (
+      const jobName of ["publish-public-release", "quality-gate-registry"] as const
+    ) {
+      const job = asRecord(jobs[jobName], jobName);
+      const allSteps = steps(job, jobName);
+      const validationIndex = allSteps.findIndex((step) =>
+        step.name === "Validate exact registry release"
+      );
+      if (jobName === "quality-gate-registry") {
+        assert(validationIndex >= 0);
+        const workflow = asRecord(parse(await Deno.readTextFile(WORKFLOW_PATH)), "workflow");
+        assertEquals(
+          asRecord(job.permissions ?? workflow.permissions, "registry permissions").contents,
+          "read",
+          "registry code must run with a read-only default repository token",
+        );
+        for (const step of allSteps.slice(0, validationIndex + 1)) {
+          assertEquals(
+            String(step.uses ?? "").startsWith("actions/create-github-app-token@"),
+            false,
+            "registry validation must finish before any release App token is created",
+          );
+        }
+        assertEquals(
+          JSON.stringify(allSteps.slice(0, validationIndex + 1)).includes("VERYFRONT_RELEASE_APP_"),
+          false,
+          "registry code must not receive the downstream identity before container termination",
+        );
+      }
+      const privilegedSteps = jobName === "quality-gate-registry"
+        ? allSteps.slice(validationIndex + 1)
+        : allSteps;
+      for (const step of privilegedSteps) {
+        const action = String(step.uses ?? "");
+        assert(
+          action === "" ||
+            allowedActions[jobName].some((prefix) => action.startsWith(prefix)),
+          `${jobName} must not run unapproved action ${action}`,
+        );
+        let executableRun = String(step.run ?? "").replace(
+          /notes='[\s\S]*?'\n/g,
+          "",
+        );
+        if (
+          jobName === "publish-public-release" &&
+          step.name === "Create GitHub releases"
+        ) {
+          executableRun = splitEmbeddedPublisher(executableRun).suffix;
+        }
+        assertEquals(
+          /^(?:\s*)(?:bash|sh|source|eval|exec|python3?|deno|node|npm|npx|bun)(?:\s|$)/m
+            .test(
+              executableRun,
+            ),
+          false,
+          `${jobName} must never invoke a general interpreter or package command`,
+        );
+        assertEquals(
+          /(?:^|\s)(?:\.\/public-release-assets\/|(?:bash|sh|source|eval|exec|python3?)\s+[^\n]*public-release-assets)/m
+            .test(
+              executableRun,
+            ),
+          false,
+          `${jobName} must never execute a downloaded release artifact`,
+        );
+      }
+    }
+    assertEquals(
+      tokenRepositories(
+        asRecord(jobs["publish-public-release"], "public uploader"),
+      ),
+      [
+        "veryfront",
+      ],
+    );
+    assertEquals(
+      tokenRepositories(asRecord(jobs["quality-gate-registry"], "dispatch")),
+      [
+        "veryfront-server",
+        "veryfront-job-runner",
+        "veryfront-sandbox",
+      ],
+    );
+  });
+
+  it("replaces the inert release artifact when the same workflow run is rerun", async () => {
+    const jobs = await readJobs();
+    for (const jobName of ["prerelease", "release"]) {
+      const upload = namedStep(
+        asRecord(jobs[jobName], jobName),
+        "Upload public release assets",
+      );
+      assertEquals(asRecord(upload.with, `${jobName} artifact inputs`), {
+        name: "public-release-${{ github.sha }}",
+        path: "dist/public-release/",
+        "if-no-files-found": "error",
+        overwrite: true,
+      });
+    }
+  });
+
+  it("publishes the selected release from an inert artifact in one isolated job", async () => {
+    const jobs = await readJobs();
+    const uploader = asRecord(
+      jobs["publish-public-release"],
+      "public release job",
+    );
+    const uploaderSteps = steps(uploader, "public release job");
+    const download = uploaderSteps.find((step) =>
+      String(step.uses).startsWith("actions/download-artifact@")
+    );
+    const token = namedStep(uploader, "Create release GitHub App token");
+    const publish = namedStep(uploader, "Create GitHub releases");
+
+    assertEquals(uploader.needs, ["prerelease", "release", "version-check"]);
+    assertEquals(
+      uploader.if,
+      "${{ always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && ((needs.version-check.outputs.is_stable == 'false' && needs.prerelease.result == 'success') || (needs.version-check.outputs.is_stable == 'true' && needs.release.result == 'success')) }}",
+    );
+    assert(download, "public release job must download the inert artifact");
+    assertEquals(
+      asRecord(download.with, "public release artifact inputs"),
+      {
+        name: "public-release-${{ github.sha }}",
+        path: "public-release-assets",
+      },
+    );
+    assertEquals(token.id, "release-app-token");
+    assertEquals(tokenRepositories(uploader), ["veryfront"]);
+    assertEquals(
+      asRecord(publish.env, "public release environment"),
+      {
+        GH_TOKEN: "${{ steps.release-app-token.outputs.token }}",
+        VERSION: "${{ steps.version.outputs.version }}",
+        IS_STABLE: "${{ needs.version-check.outputs.is_stable }}",
+      },
+    );
+    assert(
+      uploaderSteps.indexOf(download) < uploaderSteps.indexOf(token) &&
+        uploaderSteps.indexOf(token) < uploaderSteps.indexOf(publish),
+      "the inert artifact must be downloaded before the scoped token is minted",
+    );
+  });
 
   it("prepares the computed RC version before prerelease SBOM generation", async () => {
     const jobs = await readJobs();
@@ -709,6 +983,38 @@ printf '%064d  %s\n' 0 "$1"
     );
   });
 
+  it("fails closed when checking whether a stable public release already exists", async () => {
+    for (
+      const [status, expectedCode] of [
+        ["200", 1],
+        ["404", 0],
+        ["403", 1],
+        ["500", 1],
+      ] as const
+    ) {
+      const output = await runStablePublicReleasePreflight(status);
+      assertEquals(
+        output.code,
+        expectedCode,
+        `public release lookup status ${status} must produce exit ${expectedCode}: ${
+          decoder.decode(output.stderr)
+        }`,
+      );
+    }
+
+    const jobs = await readJobs();
+    const release = asRecord(jobs.release, "stable release job");
+    const run = String(
+      namedStep(release, "Ensure stable version is unpublished").run,
+    );
+    assertStringIncludes(
+      run,
+      "https://api.github.com/repos/veryfront/veryfront/releases/tags/${TAG}",
+    );
+    assertStringIncludes(run, "--output /dev/null");
+    assertStringIncludes(run, "--write-out '%{http_code}'");
+  });
+
   it("runs the exact-version registry smoke after the selected release", async () => {
     const jobs = await readJobs();
     const gate = asRecord(
@@ -719,7 +1025,12 @@ printf '%064d  %s\n' 0 "$1"
     const buildStep = namedStep(gate, "Build registry validation image");
     const registryStep = namedStep(gate, "Validate exact registry release");
 
-    assertEquals(gate.needs, ["prerelease", "release", "version-check"]);
+    assertEquals(gate.needs, [
+      "prerelease",
+      "release",
+      "publish-public-release",
+      "version-check",
+    ]);
     assertEquals(
       gateSteps[0]?.name,
       "Report selected release result",
@@ -743,6 +1054,7 @@ printf '%064d  %s\n' 0 "$1"
         IS_STABLE: "${{ needs.version-check.outputs.is_stable }}",
         PRERELEASE_RESULT: "${{ needs.prerelease.result }}",
         STABLE_RELEASE_RESULT: "${{ needs.release.result }}",
+        PUBLIC_RELEASE_RESULT: "${{ needs.publish-public-release.result }}",
       },
     );
     assertEquals(buildStep["timeout-minutes"], 5);
@@ -910,6 +1222,13 @@ printf '%064d  %s\n' 0 "$1"
         "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
         "Build registry validation image",
         "Validate exact registry release",
+        "Resolve published version",
+        "Check current RC tag",
+        "Build dispatch payload",
+        "Create release GitHub App token",
+        "Trigger server deploy",
+        "Trigger job-runner deploy",
+        "Trigger sandbox deploy",
       ],
       "registry gate must not add host execution around the container",
     );
@@ -929,13 +1248,13 @@ printf '%064d  %s\n' 0 "$1"
       registrySteps.some((step) =>
         String(step.uses).startsWith("actions/create-github-app-token@")
       ),
-      false,
-      "registry gate must not hold the downstream release token",
+      true,
+      "registry gate creates the downstream token only after isolated validation",
     );
-    assertEquals(registry.environment, undefined);
+    assertEquals(registry.environment, "production");
 
-    // The downstream App token exists only in jobs that start after the
-    // registry container has terminated, and those jobs run no repository code.
+    // The downstream App token is created only after the container terminates.
+    // Every subsequent step is fixed workflow code or a pinned remote action.
     for (const [name, value] of Object.entries(jobs)) {
       const job = asRecord(value, name);
       if (job.uses !== undefined) {
@@ -955,23 +1274,29 @@ printf '%064d  %s\n' 0 "$1"
       ) {
         continue;
       }
-      assertEquals(name, "dispatch-release");
+      assertEquals(name, "quality-gate-registry");
       assert(
-        (job.needs as string[]).includes("quality-gate-registry"),
-        `${name} must start only after the registry container job has finished`,
+        jobSteps.indexOf(registryStep) <
+          jobSteps.findIndex((step) => step.name === "Create release GitHub App token"),
+        `${name} must create credentials only after the registry container has finished`,
       );
       const tokenIndex = jobSteps.findIndex((step) =>
         step.name === "Create release GitHub App token"
       );
       assert(tokenIndex >= 0, `${name} must create its release token after validation`);
       assertEquals(
-        jobSteps.slice(0, tokenIndex + 1).map((step) =>
+        jobSteps.slice(jobSteps.indexOf(registryStep) + 1, tokenIndex + 1).map((step) =>
           String(step.name ?? step.uses).split(" #")[0]
         ),
-        ["Resolve published version", "Build dispatch payload", "Create release GitHub App token"],
+        [
+          "Resolve published version",
+          "Check current RC tag",
+          "Build dispatch payload",
+          "Create release GitHub App token",
+        ],
         `${name} must not add arbitrary host execution before token creation`,
       );
-      for (const step of jobSteps) {
+      for (const step of jobSteps.slice(jobSteps.indexOf(registryStep) + 1)) {
         assertEquals(
           String(step.uses).startsWith("./"),
           false,
@@ -1094,10 +1419,191 @@ fi
       }
     });
   });
+  it("executes only fixed workflow logic on the downstream App-key runner", async () => {
+    const jobs = await readJobs();
+    const dispatch = asRecord(jobs["quality-gate-registry"], "dispatch release job");
+    const allowedActions = [
+      "actions/create-github-app-token@",
+      "peter-evans/repository-dispatch@",
+    ];
+    const jobSteps = steps(dispatch, "dispatch release job");
+    const validation = namedStep(dispatch, "Validate exact registry release");
+    for (const step of jobSteps.slice(jobSteps.indexOf(validation) + 1)) {
+      const action = String(step.uses ?? "");
+      assert(
+        action === "" || allowedActions.some((prefix) => action.startsWith(prefix)),
+        `dispatch must not run unapproved action ${action}`,
+      );
+      const run = String(step.run ?? "");
+      assertEquals(
+        /^(?:\s*)(?:bash|sh|source|eval|exec|python3?|deno|node|npm|npx|bun)(?:\s|$)/m.test(run),
+        false,
+        "dispatch must not invoke repository code or a package command",
+      );
+      assertEquals(/(?:scripts\/|\.\/|GITHUB_WORKSPACE)/.test(run), false);
+    }
+  });
+
+  it("serializes RC tag writes and dispatch without replacing pending publishers", async () => {
+    const jobs = await readJobs();
+    for (const name of ["prerelease", "quality-gate-registry"]) {
+      const job = asRecord(jobs[name], name);
+      assertEquals(job.concurrency, { group: "veryfront-rc-publication", queue: "max" });
+    }
+    const dispatch = asRecord(jobs["quality-gate-registry"], "dispatch release job");
+    const guard = namedStep(dispatch, "Check current RC tag");
+    assertStringIncludes(
+      String(guard.run),
+      "https://registry.npmjs.org/-/package/veryfront/dist-tags",
+    );
+    const dispatchSteps = steps(dispatch, "dispatch release job");
+    const token = namedStep(dispatch, "Create release GitHub App token");
+    assertEquals(
+      token.if,
+      "${{ success() && needs.publish-public-release.result == 'success' && ((needs.version-check.outputs.is_stable == 'true' && needs.release.result == 'success') || (needs.version-check.outputs.is_stable == 'false' && needs.prerelease.result == 'success')) && steps.current.outputs.dispatch == 'true' }}",
+    );
+    assert(dispatchSteps.indexOf(guard) < dispatchSteps.indexOf(token));
+    for (
+      const step of dispatchSteps.filter((step) =>
+        String(step.uses).startsWith("peter-evans/repository-dispatch@")
+      )
+    ) {
+      assertEquals(
+        step.if,
+        "${{ success() && needs.publish-public-release.result == 'success' && ((needs.version-check.outputs.is_stable == 'true' && needs.release.result == 'success') || (needs.version-check.outputs.is_stable == 'false' && needs.prerelease.result == 'success')) && steps.current.outputs.dispatch == 'true' }}",
+      );
+      assert(dispatchSteps.indexOf(guard) < dispatchSteps.indexOf(step));
+    }
+  });
+
+  for (
+    const [current, candidate, stable, expectedCode, expectedOutput] of [
+      ["0.1.2-rc.201", "0.1.2-rc.200", "false", 0, "dispatch=false"],
+      ["0.1.2-rc.201", "0.1.2-rc.201", "false", 0, "dispatch=true"],
+      ["0.1.2-rc.200", "0.1.2-rc.201", "false", 5, ""],
+      ["", "0.1.2", "true", 0, "dispatch=true"],
+    ] as const
+  ) {
+    it(`guards ${candidate} dispatch against ${current || "no tag"}`, async () => {
+      const jobs = await readJobs();
+      const dispatch = asRecord(jobs["quality-gate-registry"], "dispatch release job");
+      const guard = namedStep(dispatch, "Check current RC tag");
+      const output = await new Deno.Command("bash", {
+        args: ["-c", 'curl() { printf "%s\\n" "$CURRENT_TAGS"; }\n' + String(guard.run)],
+        env: {
+          IS_STABLE: stable,
+          VERSION: candidate,
+          CURRENT_TAGS: JSON.stringify(current ? { rc: current } : {}),
+          GITHUB_OUTPUT: "/dev/stdout",
+        },
+        stdout: "piped",
+        stderr: "piped",
+      }).output();
+      assertEquals(output.code, expectedCode, decoder.decode(output.stderr));
+      if (expectedOutput) assertStringIncludes(decoder.decode(output.stdout), expectedOutput);
+    });
+  }
+
+  it("keeps the inline dispatch comparator identical to the publisher", async () => {
+    const jobs = await readJobs();
+    const dispatch = asRecord(jobs["quality-gate-registry"], "dispatch release job");
+    const guard = String(namedStep(dispatch, "Check current RC tag").run);
+    const publisher = await Deno.readTextFile(
+      new URL("../../../scripts/ci/publish-npm-packages.sh", import.meta.url),
+    );
+    const expression = /jq -ner --arg candidate[^\n]*'\n([\s\S]*?)\n\s*'/;
+    const normalize = (value: string | undefined) =>
+      value?.split("\n").map((line) => line.trim()).join("\n");
+    const inline = guard.match(expression)?.[1];
+    const shared = publisher.match(expression)?.[1];
+    assert(inline && shared, "both guards must include the reviewed jq comparator");
+    assertEquals(normalize(inline), normalize(shared));
+    assertStringIncludes(guard, "--arg mode dispatch");
+  });
+
+  for (
+    const [current, candidate, expectedCode, expectedOutput] of [
+      ["0.1.2-beta.201", "0.1.2-beta.200", 0, "dispatch=false"],
+      ["0.1.2-rc.preview.201", "0.1.2-rc.preview.200", 0, "dispatch=false"],
+      ["0.1.2-alpha.10.200", "0.1.2-alpha.9.999", 0, "dispatch=false"],
+      ["0.1.2-rc.1", "0.1.2-beta.200", 0, "dispatch=false"],
+      ["0.1.2-rc.preview.200", "0.1.2-rc.999", 0, "dispatch=false"],
+      ["0.1.2-rc.1.preview.1", "0.1.2-rc.1.200", 0, "dispatch=false"],
+      ["0.1.10-rc.1", "0.1.9-rc.999", 0, "dispatch=false"],
+      ["0.1.2-rc.9007199254740993", "0.1.2-rc.9007199254740992", 0, "dispatch=false"],
+      ["0.1.2-rc.1.preview.1", "0.1.2-rc.1.preview.1", 0, "dispatch=true"],
+      ["0.1.2", "0.1.2-rc.200", 4, ""],
+      ["0.1.2-rc..200", "0.1.2-rc.200", 4, ""],
+      ["0.1.2-rc.0201", "0.1.2-rc.200", 5, ""],
+      ["0.1.2-rc.200", "0.1.2-rc.0200", 5, ""],
+    ] as const
+  ) {
+    it(`preserves dispatch precedence for ${candidate} against ${current}`, async () => {
+      const jobs = await readJobs();
+      const dispatch = asRecord(jobs["quality-gate-registry"], "dispatch release job");
+      const guard = namedStep(dispatch, "Check current RC tag");
+      const output = await new Deno.Command("bash", {
+        args: ["-c", 'curl() { printf "%s\\n" "$CURRENT_TAGS"; }\n' + String(guard.run)],
+        env: {
+          IS_STABLE: "false",
+          VERSION: candidate,
+          CURRENT_TAGS: JSON.stringify({ rc: current }),
+          GITHUB_OUTPUT: "/dev/stdout",
+        },
+        stdout: "piped",
+        stderr: "piped",
+      }).output();
+      assertEquals(output.code, expectedCode, decoder.decode(output.stderr));
+      if (expectedOutput) assertStringIncludes(decoder.decode(output.stdout), expectedOutput);
+      else assertEquals(decoder.decode(output.stdout), "");
+    });
+  }
+
+  for (const tags of ["{}", "not-json", '{"rc":123}', '{"rc":null}', '{"rc":""}']) {
+    it(`fails closed on invalid registry dist-tags ${tags}`, async () => {
+      const jobs = await readJobs();
+      const dispatch = asRecord(jobs["quality-gate-registry"], "dispatch release job");
+      const guard = namedStep(dispatch, "Check current RC tag");
+      const output = await new Deno.Command("bash", {
+        args: ["-c", 'curl() { printf "%s\\n" "$CURRENT_TAGS"; }\n' + String(guard.run)],
+        env: {
+          IS_STABLE: "false",
+          VERSION: "0.1.2-rc.200",
+          CURRENT_TAGS: tags,
+          GITHUB_OUTPUT: "/dev/stdout",
+        },
+        stdout: "piped",
+        stderr: "piped",
+      }).output();
+      assert(output.code !== 0);
+      assertEquals(decoder.decode(output.stdout), "");
+    });
+  }
+
+  it("fails closed on registry transport errors and skips lookup for stable dispatch", async () => {
+    const jobs = await readJobs();
+    const dispatch = asRecord(jobs["quality-gate-registry"], "dispatch release job");
+    const guard = namedStep(dispatch, "Check current RC tag");
+    for (const stable of ["false", "true"]) {
+      const output = await new Deno.Command("bash", {
+        args: ["-c", "curl() { echo lookup >&2; return 22; }\n" + String(guard.run)],
+        env: {
+          IS_STABLE: stable,
+          VERSION: stable === "true" ? "0.1.2" : "0.1.2-rc.200",
+          GITHUB_OUTPUT: "/dev/stdout",
+        },
+        stdout: "piped",
+        stderr: "piped",
+      }).output();
+      assertEquals(output.code, stable === "true" ? 0 : 22);
+      assertEquals(decoder.decode(output.stdout), stable === "true" ? "dispatch=true\n" : "");
+      assertEquals(decoder.decode(output.stderr), stable === "true" ? "" : "lookup\n");
+    }
+  });
 
   it("dispatches exactly three downstream releases only after the registry gate", async () => {
     const jobs = await readJobs();
-    const dispatch = asRecord(jobs["dispatch-release"], "dispatch release job");
+    const dispatch = asRecord(jobs["quality-gate-registry"], "dispatch release job");
     const dispatchSteps = steps(dispatch, "dispatch release job");
     const dispatchActions = dispatchSteps.filter((step) =>
       String(step.uses).startsWith("peter-evans/repository-dispatch@")
@@ -1107,20 +1613,20 @@ fi
     const tokenStep = namedStep(dispatch, "Create release GitHub App token");
 
     assertEquals(dispatch.needs, [
-      "quality-gate-registry",
       "prerelease",
       "release",
+      "publish-public-release",
       "version-check",
     ]);
     assertEquals(
       dispatch.if,
-      "${{ always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && needs.quality-gate-registry.result == 'success' && ((needs.version-check.outputs.is_stable == 'true' && needs.release.result == 'success') || (needs.version-check.outputs.is_stable == 'false' && needs.prerelease.result == 'success')) }}",
-      "release dispatch must require both registry validation and the selected release job to succeed",
+      "${{ always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && needs.version-check.result == 'success' && (needs.version-check.outputs.is_stable == 'false' || needs.version-check.outputs.stable_release_requested == 'true') }}",
+      "registry diagnostics must retain admission after selected publication failure",
     );
     assertEquals(
-      dispatch["timeout-minutes"],
+      tokenStep["timeout-minutes"],
       5,
-      "release dispatch must time out if token creation or dispatch hangs",
+      "release token creation must time out if it hangs",
     );
     assertEquals(
       dispatch.environment,
@@ -1247,5 +1753,46 @@ fi
       ),
       "stable release job must still publish npm packages",
     );
+  });
+
+  it("updates Homebrew only after the stable public release upload succeeds", async () => {
+    const jobs = await readJobs();
+    const homebrew = asRecord(jobs["update-homebrew"], "Homebrew job");
+
+    assertEquals(homebrew.needs, [
+      "release",
+      "publish-public-release",
+      "version-check",
+    ]);
+    assertEquals(
+      String(homebrew.if).includes("always()"),
+      false,
+      "Homebrew must retain the default success requirement for every dependency",
+    );
+  });
+});
+
+describe("folded registry dispatch", () => {
+  it("dispatches after isolated validation without another runner", async () => {
+    const jobs = await readJobs();
+    assertEquals(jobs["dispatch-release"], undefined);
+    const gate = asRecord(jobs["quality-gate-registry"], "registry");
+    const jobSteps = steps(gate, "registry");
+    const validate = namedStep(gate, "Validate exact registry release");
+    const token = namedStep(gate, "Create release GitHub App token");
+    assert(jobSteps.indexOf(validate) < jobSteps.indexOf(token));
+    assertEquals(gate.environment, "production");
+    const dispatchSteps = jobSteps.slice(jobSteps.indexOf(validate) + 1);
+    for (const step of dispatchSteps) {
+      assertEquals(
+        step.if,
+        "${{ success() && needs.publish-public-release.result == 'success' && ((needs.version-check.outputs.is_stable == 'true' && needs.release.result == 'success') || (needs.version-check.outputs.is_stable == 'false' && needs.prerelease.result == 'success'))" +
+          (step.uses ? " && steps.current.outputs.dispatch == 'true'" : "") + " }}",
+      );
+      assertEquals(step["timeout-minutes"], 5);
+      assertEquals(String(step.run).includes("scripts/"), false);
+      assertEquals(String(step.uses).startsWith("./"), false);
+    }
+    assertEquals(dispatchSteps.length, 7);
   });
 });

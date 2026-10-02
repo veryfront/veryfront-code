@@ -57,8 +57,8 @@ const KEPT = [
   "build-binaries",
   "prerelease",
   "release",
+  "publish-public-release",
   "quality-gate-registry",
-  "dispatch-release",
   "update-homebrew",
 ] as const;
 
@@ -264,12 +264,35 @@ describe("tested merge-queue run workflow", () => {
     assertRunsDespiteSkippedAncestors(jobs, skipped, "a reused main run");
     for (const name of ["prerelease", "release"]) {
       const condition = String(job(jobs, name).if);
-      for (const dependency of needs(job(jobs, name))) {
-        assertStringIncludes(
-          condition,
-          `needs.${dependency}.result == 'success'`,
-          `${name} must require ${dependency} explicitly`,
-        );
+      const publisher = job(jobs, name);
+      const aggregate = namedStep(publisher, "Require merge correctness dependencies");
+      const env = asRecord(aggregate.env, "publisher correctness environment");
+      for (const dependency of needs(publisher)) {
+        if (
+          [
+            "tested-run",
+            "version-check",
+            "quality-gate-artifact",
+            "quality-gate-release",
+            "build-binaries",
+          ].includes(dependency)
+        ) {
+          assertStringIncludes(
+            condition,
+            `needs.${dependency}.result == 'success'`,
+            `${name} must require ${dependency} explicitly`,
+          );
+        } else {
+          const entry = Object.entries(env).find(([, value]) =>
+            value === `\${{ needs.${dependency}.result }}`
+          );
+          assert(entry, `${name} must read ${dependency} in the folded gate`);
+          assertStringIncludes(
+            String(aggregate.run),
+            entry[0],
+            `${name} must evaluate ${dependency}`,
+          );
+        }
       }
     }
   });

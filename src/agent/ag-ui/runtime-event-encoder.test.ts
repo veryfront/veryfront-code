@@ -58,6 +58,7 @@ describe("agent/ag-ui-runtime-event-encoder", () => {
           toolCallId: "tool-1",
           input: { query: "ag-ui" },
           content: { ok: true },
+          isError: false,
         },
       }],
     );

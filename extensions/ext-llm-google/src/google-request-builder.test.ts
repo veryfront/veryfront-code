@@ -7,6 +7,7 @@ import {
 } from "./google-request-builder.ts";
 import {
   createGoogleProviderMetadata,
+  readGoogleRawAssistantReplay,
   reconcileGoogleProviderMetadata,
 } from "./google-thought-signatures.ts";
 
@@ -629,34 +630,114 @@ describe("ext-llm-google/google-request-builder", () => {
   });
 
   it("keeps anonymous raw-position ids stable after suppressing an earlier call", () => {
-    const suppressedPart = {
-      functionCall: { name: "missing_tool", args: {} },
-      thoughtSignature: "stale-signature",
-    };
-    const survivingPart = {
-      functionCall: { name: "lookup", args: { query: "Veryfront" } },
-      thoughtSignature: "surviving-signature",
-    };
-    const metadata = createGoogleProviderMetadata([suppressedPart, survivingPart]);
-    if (metadata === undefined) {
-      throw new Error("Expected signed Google provider metadata");
-    }
-    const reconciled = reconcileGoogleProviderMetadata(metadata, [{
-      id: "tool-0",
-      name: "missing_tool",
-    }]);
-    if (reconciled === undefined) {
-      throw new Error("Expected surviving Google provider metadata");
-    }
+    for (const scope of [undefined, "11111111-1111-4111-8111-111111111111"]) {
+      const prefix = scope ? `tool-${scope}-` : "tool-";
+      const suppressedPart = {
+        functionCall: { name: "missing_tool", args: {} },
+        thoughtSignature: "stale-signature",
+      };
+      const survivingPart = {
+        functionCall: { name: "lookup", args: { query: "Veryfront" } },
+        thoughtSignature: "surviving-signature",
+      };
+      const metadata = createGoogleProviderMetadata(
+        [suppressedPart, survivingPart],
+        undefined,
+        undefined,
+        scope,
+      );
+      if (metadata === undefined) {
+        throw new Error("Expected signed Google provider metadata");
+      }
+      const reconciled = reconcileGoogleProviderMetadata(metadata, [{
+        id: `${prefix}0`,
+        name: "missing_tool",
+      }]);
+      if (reconciled === undefined) {
+        throw new Error("Expected surviving Google provider metadata");
+      }
 
-    const body = buildGoogleAssistantReplayFromMetadata(reconciled, [{
-      type: "tool-call",
-      toolCallId: "tool-1",
-      toolName: "lookup",
-      input: { query: "Veryfront" },
-    }]);
+      const body = buildGoogleAssistantReplayFromMetadata(reconciled, [{
+        type: "tool-call",
+        toolCallId: `${prefix}1`,
+        toolName: "lookup",
+        input: { query: "Veryfront" },
+      }]);
 
-    assertJsonEquals(body.contents, [{ role: "model", parts: [survivingPart] }]);
+      assertJsonEquals(body.contents, [{ role: "model", parts: [survivingPart] }]);
+    }
+  });
+
+  it("rejects malformed or unreadable response scopes before replay", () => {
+    const rawAssistantParts = [{ text: "signed", thoughtSignature: "signature" }];
+    for (const toolCallScope of [null, 1, {}, "", "not-a-uuid"]) {
+      assertThrows(
+        () => readGoogleRawAssistantReplay({ google: { rawAssistantParts, toolCallScope } }),
+        TypeError,
+        "scope must be a UUID",
+      );
+    }
+    let read = false;
+    const google = Object.defineProperty({ rawAssistantParts }, "toolCallScope", {
+      enumerable: true,
+      get() {
+        read = true;
+        return "11111111-1111-4111-8111-111111111111";
+      },
+    });
+    assertThrows(
+      () => readGoogleRawAssistantReplay({ google }),
+      TypeError,
+      "enumerable data property",
+    );
+    assertEquals(read, false);
+    assertThrows(
+      () =>
+        readGoogleRawAssistantReplay({
+          google: new Proxy({}, {
+            getOwnPropertyDescriptor() {
+              throw new Error("untrusted descriptor failure");
+            },
+          }),
+        }),
+      TypeError,
+      "could not be inspected",
+    );
+    assertThrows(
+      () =>
+        readGoogleRawAssistantReplay({
+          google: {
+            toolCallScope: "11111111-1111-4111-8111-111111111111",
+          },
+        }),
+      TypeError,
+      "require raw parts",
+    );
+  });
+
+  it("refuses scoped replay correlated with a legacy or different response id", () => {
+    const metadata = createGoogleProviderMetadata(
+      [{
+        functionCall: { name: "lookup", args: {} },
+        thoughtSignature: "signature",
+      }],
+      undefined,
+      undefined,
+      "11111111-1111-4111-8111-111111111111",
+    )!;
+    for (const toolCallId of ["tool-0", "tool-22222222-2222-4222-8222-222222222222-0"]) {
+      assertThrows(
+        () =>
+          buildGoogleAssistantReplayFromMetadata(metadata, [{
+            type: "tool-call",
+            toolCallId,
+            toolName: "lookup",
+            input: {},
+          }]),
+        TypeError,
+        "did not match canonical provider tool history",
+      );
+    }
   });
 
   it("accepts raw-position and legacy occurrence ids while preserving exact correlation", () => {
