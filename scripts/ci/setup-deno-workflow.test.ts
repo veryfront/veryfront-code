@@ -893,8 +893,8 @@ jobs:
     );
     assertStringIncludes(
       String(tasks["lint:ci"]),
-      "--allow-read --allow-write --allow-run=bash scripts/ci/setup-deno-workflow.test.ts",
-      "required lint shard must allow temporary workflow fixtures and running the installer under stubbed curl",
+      "--allow-read --allow-write --allow-run=bash,sed scripts/ci/setup-deno-workflow.test.ts",
+      "required lint shard must allow temporary workflow fixtures, stubbed installer shell, and real sed normalization",
     );
     assertStringIncludes(
       String(tasks["lint:ci"]),
