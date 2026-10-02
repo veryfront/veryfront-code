@@ -1114,7 +1114,26 @@ describe("issue 2442 throwaway merge-queue failure probe", () => {
       step.if,
       "${{ github.event_name == 'merge_group' && matrix.check == 'typecheck' }}",
     );
-    assertEquals(String(step.run).trim(), "exit 1");
+    const suffix = "a".repeat(40);
+    const cases: Array<[string, number]> = [
+      [`refs/heads/gh-readonly-queue/main/pr-4828-${suffix}`, 1],
+      [`refs/heads/gh-readonly-queue/main/pr-9999-${suffix}`, 0],
+      ["refs/pull/4828/merge", 1],
+      [`refs/heads/gh-readonly-queue/main/pr-invalid-${suffix}`, 1],
+      [`refs/heads/gh-readonly-queue/main/pr-0-${suffix}`, 1],
+      ["refs/heads/gh-readonly-queue/main/pr-9999-invalid", 1],
+      [`refs/heads/gh-readonly-queue/other/pr-9999-${suffix}`, 1],
+      ["", 1],
+    ];
+    for (const [ref, expectedCode] of cases) {
+      const output = await new Deno.Command("bash", {
+        args: ["-e", "-o", "pipefail", "-c", String(step.run)],
+        env: { GITHUB_REF: ref },
+        stdout: "piped",
+        stderr: "piped",
+      }).output();
+      assertEquals(output.code, expectedCode, `probe result for ${ref}`);
+    }
     assertEquals(step["continue-on-error"], undefined);
   });
 });
