@@ -98,6 +98,33 @@ describe("agent/conversation-run-events", () => {
     );
   });
 
+  it("flags an error-shaped tool output as an error and a deferred OAuth action as a success", () => {
+    // Child-fork and hosted mirror streams forward tool results as tool-output-available
+    // without classifying them. The API never overrules an explicit flag, so the encoder
+    // must judge the output itself rather than call every result a success.
+    const encoder = new ConversationRunEventEncoder();
+    assertEquals(
+      encoder.encode({
+        type: "tool-output-available",
+        toolCallId: "tc-1",
+        output: { error: "tool_error", message: "Requested entity was not found" },
+      })[0]?.isError,
+      true,
+    );
+    assertEquals(
+      encoder.encode({
+        type: "tool-output-available",
+        toolCallId: "tc-2",
+        output: {
+          error: "authentication_required",
+          integration: "gmail",
+          connectUrl: "https://example.com/connect",
+        },
+      })[0]?.isError,
+      false,
+    );
+  });
+
   it("encodes text and reasoning events", () => {
     const encoder = new ConversationRunEventEncoder();
     assertEquals(

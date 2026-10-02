@@ -506,6 +506,26 @@ describe("agent/ag-ui-encoder", () => {
     );
   });
 
+  it("flags an error-shaped tool output as an error result", () => {
+    const state = createAgUiEncoderState({ nowMs: null, epochMs: null });
+
+    assertEquals(
+      mapRuntimeStreamEventToAgUiEvents(state, {
+        type: "tool-output-available",
+        toolCallId: "tool-1",
+        output: { error: "tool_error", message: "Requested entity was not found" },
+      }),
+      [{
+        event: "ToolCallResult",
+        payload: {
+          toolCallId: "tool-1",
+          content: { error: "tool_error", message: "Requested entity was not found" },
+          isError: true,
+        },
+      }],
+    );
+  });
+
   it("closes open text before orphan tool-input-delta is forwarded", () => {
     const state = createAgUiEncoderState({ nowMs: null, epochMs: null });
 
