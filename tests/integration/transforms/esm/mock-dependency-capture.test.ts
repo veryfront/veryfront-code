@@ -5,7 +5,10 @@ import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { createMockAdapter } from "#veryfront/platform/adapters/mock.ts";
 import { deleteEnv, getHostEnv, setEnv } from "#veryfront/platform/compat/process.ts";
 import { DEPENDENCY_PINNING_ENV_FLAG } from "#veryfront/release-assets/constants.ts";
-import { clearReactVersionCache, readProjectDependencyVersions } from "#veryfront/transforms/esm/package-registry.ts";
+import {
+  clearReactVersionCache,
+  readProjectDependencyVersions,
+} from "#veryfront/transforms/esm/package-registry.ts";
 
 describe("mock dependency capture consistency", () => {
   let previousFlag: string | undefined;
