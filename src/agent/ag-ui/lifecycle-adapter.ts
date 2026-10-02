@@ -280,7 +280,7 @@ export function createLifecycleAgUiAdapter(input: {
           payload: {
             toolCallId: event.toolCallId,
             content: safeJson(event.output),
-            ...(event.isError ? { isError: true } : {}),
+            isError: event.isError,
           },
         }];
       case "provider_tool_denied":
