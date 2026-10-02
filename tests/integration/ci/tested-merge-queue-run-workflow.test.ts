@@ -57,6 +57,7 @@ const KEPT = [
   "build-binaries",
   "prerelease",
   "release",
+  "publish-public-release",
   "quality-gate-registry",
   "update-homebrew",
 ] as const;

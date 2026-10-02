@@ -550,7 +550,8 @@ done
     );
     assertEquals(asRecord(scanStep.env, "Sonar scan environment"), {
       SONAR_TOKEN: "\${{ secrets.SONAR_TOKEN }}",
-      INPUT_ARGS: "",
+      INPUT_ARGS:
+        "${{ github.event_name == 'merge_group' && format('-Dsonar.branch.name={0}/{1} -Dsonar.branch.target=main', github.ref_name, github.sha) || '' }}",
       INPUT_PROJECTBASEDIR: ".",
       INPUT_SCANNERVERSION: "8.1.0.6389",
       INPUT_SCANNERBINARIESURL: "https://binaries.sonarsource.com/Distribution/sonar-scanner-cli",
@@ -741,7 +742,31 @@ done
     const matrix = asRecord(strategy.matrix, "coverage shard matrix");
     const coverage = asRecord(jobs.coverage, "coverage gate job");
 
-    assertEquals(matrix.shard, [1, 2, 3, 4]);
+    assertEquals(matrix.shard, [1, 2, 3, 4, 5, 6, 7, 8]);
+    assertEquals(coverageShards.name, "coverage shard ${{ matrix.shard }}/8");
+    assertEquals(strategy["fail-fast"], false);
+    const steps = (coverageShards.steps as unknown[]).map((step) =>
+      asRecord(step, "coverage shard step")
+    );
+    const run = steps.find((step) => step.name === "Run unit coverage shard");
+    assert(run, "every shard must execute the coverage suite");
+    assertStringIncludes(
+      String(run.run),
+      "--shard=${{ matrix.shard }}/8 --coverage-dir=coverage-shard-${{ matrix.shard }}",
+    );
+    const codecov = asRecord(jobs["codecov-upload"], "codecov job");
+    const codecovUpload = (codecov.steps as unknown[]).map((step) => asRecord(step, "codecov step"))
+      .find((step) => step.name === "Upload coverage to Codecov");
+    assert(codecovUpload, "Codecov must consume all coverage shards");
+    const paths = String(asRecord(codecovUpload.with, "codecov inputs").files).split(",");
+    assertEquals(paths, [
+      "coverage-profiles/coverage-shard-1/lcov.info",
+      "coverage-profiles/coverage-shard-1/history/lcov.info",
+      "coverage-profiles/coverage-shard-1/cli/lcov.info",
+      ...[2, 3, 4, 5, 6, 7, 8].map((shard) =>
+        `coverage-profiles/coverage-shard-${shard}/lcov.info`
+      ),
+    ]);
     assertEquals("unit-tests" in jobs, false);
     assertEquals(coverage.name, "coverage gate");
     assertEquals(coverage.needs, ["coverage-shards", "tested-run"]);
