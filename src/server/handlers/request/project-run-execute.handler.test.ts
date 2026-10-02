@@ -61,7 +61,7 @@ import { createControlPlaneSignature, createCtx } from "./internal-agent-run.tes
 import { MemoryBackend } from "#veryfront/workflow/backends/memory.ts";
 import { dependsOn } from "#veryfront/workflow/dsl/workflow.ts";
 import { waitForApproval, waitForEvent, waitForRuns } from "#veryfront/workflow/dsl/wait.ts";
-import type { WorkflowNode } from "#veryfront/workflow/types.ts";
+import type { WorkflowNode, WorkflowRun } from "#veryfront/workflow/types.ts";
 import type { DiscoveredWorkflow } from "#veryfront/workflow/discovery";
 import { delay, withEnv } from "#veryfront/testing/deno-compat.ts";
 import { createProjectRunInferenceModelResolver } from "#veryfront/agent/runtime/project-run-inference-credential.ts";
@@ -7696,6 +7696,137 @@ describe("server/handlers/request/project-run-execute.handler cancellation", () 
     } finally {
       clearTimeout(watchdog);
     }
+  }
+
+  it("acknowledges cancellation when workflow input validation rejects before admission", async () => {
+    const controller = new AbortController();
+    let callbacks = 0;
+    const client = createWorkflowClient();
+    const definition = workflow({
+      id: "publish",
+      inputSchema: defineSchema((v) =>
+        v.object({
+          release: v.string().refine(() => {
+            controller.abort(new Error("Run cancelled during input validation"));
+            return false;
+          }, "Release is unavailable"),
+        })
+      )(),
+      steps: [
+        step("noop", {
+          tool: tool({
+            id: "noop",
+            description: "Must not run",
+            inputSchema: defineSchema((v) => v.object({}).passthrough())(),
+            execute: () => Promise.resolve({}),
+          }),
+        }),
+      ],
+    }).definition as unknown as WorkflowDefinition;
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      findWorkflowById: async () => ({
+        id: "publish",
+        filePath: "workflows/publish.ts",
+        exportName: "default",
+        definition,
+      }),
+      createWorkflowClient: () => client,
+    }));
+    const signed = await signedRequest(
+      "/api/control-plane/runs/run_invalid_before_admission/execute",
+      {
+        runId: "run_invalid_before_admission",
+        kind: "workflow",
+        target: "workflow:publish",
+        projectId: "proj-1",
+        input: { release: "candidate" },
+      },
+      { "x-veryfront-run-stop-token": "opaque-stop-capability" },
+    );
+
+    await withMockFetch(async () => {
+      callbacks++;
+      return Response.json({ acknowledged: true });
+    }, async () => {
+      const result = await handler.handle(
+        new Request(signed.request, { signal: controller.signal }),
+        createCtx(signed.publicKeyPem),
+      );
+      assertExists(result.response);
+      const response = await result.response.json();
+      assertEquals(response.error_code, "INPUT_VALIDATION_FAILED", JSON.stringify(response));
+    });
+
+    assertEquals(callbacks, 1);
+    assertEquals(await client.getRun("run_invalid_before_admission"), null);
+  });
+
+  for (const storeBeforeReject of [false, true]) {
+    it(`keeps a persistence rejection unconfirmed after storage: ${storeBeforeReject}`, async () => {
+      const controller = new AbortController();
+      let callbacks = 0;
+      class RejectingBackend extends MemoryBackend {
+        override async createRun(run: WorkflowRun): Promise<void> {
+          if (storeBeforeReject) await super.createRun(run);
+          controller.abort(new Error("Run cancelled during initial persistence"));
+          throw new Error("initial persistence failed");
+        }
+
+        override destroy(): Promise<void> {
+          return Promise.resolve();
+        }
+      }
+      const backend = new RejectingBackend();
+      const client = createWorkflowClient({ backend });
+      const definition = workflow({
+        id: "publish",
+        steps: [
+          step("noop", {
+            tool: tool({
+              id: "noop",
+              description: "Must not run",
+              inputSchema: defineSchema((v) => v.object({}).passthrough())(),
+              execute: () => Promise.resolve({}),
+            }),
+          }),
+        ],
+      }).definition as unknown as WorkflowDefinition;
+      const handler = new ProjectRunExecuteHandler(createDeps({
+        findWorkflowById: async () => ({
+          id: "publish",
+          filePath: "workflows/publish.ts",
+          exportName: "default",
+          definition,
+        }),
+        createWorkflowClient: () => client,
+      }));
+      const runId = `run_persistence_${storeBeforeReject}`;
+      const signed = await signedRequest(
+        `/api/control-plane/runs/${runId}/execute`,
+        {
+          runId,
+          kind: "workflow",
+          target: "workflow:publish",
+          projectId: "proj-1",
+        },
+        { "x-veryfront-run-stop-token": "opaque-stop-capability" },
+      );
+
+      await withMockFetch(async () => {
+        callbacks++;
+        return Response.json({ acknowledged: true });
+      }, async () => {
+        const result = await handler.handle(
+          new Request(signed.request, { signal: controller.signal }),
+          createCtx(signed.publicKeyPem),
+        );
+        assertExists(result.response);
+        assertStringIncludes((await result.response.json()).error, "initial persistence failed");
+      });
+
+      assertEquals(callbacks, 0);
+      assertEquals(await backend.getRun(runId) !== null, storeBeforeReject);
+    });
   }
 
   it("observes cancellation until native response transport completion", async () => {

@@ -1677,7 +1677,12 @@ async function runDiscoveredWorkflow(
         });
       } catch (error) {
         const failure = createInputValidationFailure(error, Math.max(0, deps.now() - startedAt));
-        if (failure) return failure;
+        if (failure) {
+          // Input parsing happens before the workflow backend creates a run,
+          // so this typed failure proves that no lifecycle was admitted.
+          await acknowledgeStop?.();
+          return failure;
+        }
         throw error;
       }
       run = await waitForWorkflowResult(client, handle.runId, signal, deps);
