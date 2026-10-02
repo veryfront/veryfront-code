@@ -3,7 +3,28 @@ import {
   type HostedExecutorSessionClock,
 } from "./executor-session.ts";
 
-export const executorNodeClock = createHostedExecutorSessionClock(Date.now());
+import { performanceMonotonicClock } from "#veryfront/agent/streaming/lifecycle/clock.ts";
+import type { MonotonicClock } from "#veryfront/agent/streaming/lifecycle/types.ts";
+
+/** Honor forward UTC corrections without letting rollback extend elapsed budgets. */
+export function createExecutorNodeClock(
+  wallNow: () => number = () => Date.now(),
+  elapsed: MonotonicClock = performanceMonotonicClock,
+): HostedExecutorSessionClock {
+  const clock = createHostedExecutorSessionClock(wallNow(), elapsed);
+  let correction = 0;
+  return {
+    ...clock,
+    now() {
+      const elapsedNow = clock.now();
+      const value = Math.max(elapsedNow + correction, wallNow());
+      correction = value - elapsedNow;
+      return value;
+    },
+  };
+}
+
+export const executorNodeClock = createExecutorNodeClock();
 
 /** Timer delivery can precede the clock deadline. Expire only once it is due. */
 export function scheduleExecutorNodeDeadline(

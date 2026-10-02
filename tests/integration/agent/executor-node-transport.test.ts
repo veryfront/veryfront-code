@@ -1,5 +1,8 @@
 import { mock } from "node:test";
-import { executorNodeClock } from "#veryfront/agent/hosted/executor-node-deadline.ts";
+import {
+  createExecutorNodeClock,
+  executorNodeClock,
+} from "#veryfront/agent/hosted/executor-node-deadline.ts";
 import { randomBytes } from "node:crypto";
 import { getEventListeners } from "node:events";
 import { connect as connectTcp, createServer as createTcpServer } from "node:net";
@@ -102,6 +105,17 @@ if (typeof Deno !== "undefined") {
       const wallNow = mock.method(Date, "now", () => wallTime - 10_000);
       try {
         assert(executorNodeClock.now() >= before);
+      } finally {
+        wallNow.mock.restore();
+      }
+    });
+
+    it("honors a forward UTC correction for the absolute allocation deadline", () => {
+      const clock = createExecutorNodeClock();
+      const corrected = Date.now() + 10_000;
+      const wallNow = mock.method(Date, "now", () => corrected);
+      try {
+        assert(clock.now() >= corrected);
       } finally {
         wallNow.mock.restore();
       }

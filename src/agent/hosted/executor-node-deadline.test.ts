@@ -1,6 +1,8 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { it } from "#veryfront/testing/bdd.ts";
-import { scheduleExecutorNodeDeadline } from "./executor-node-deadline.ts";
+import { createExecutorNodeClock, scheduleExecutorNodeDeadline } from "./executor-node-deadline.ts";
+
+import { ManualMonotonicClock } from "#veryfront/agent/streaming/lifecycle/testing.ts";
 
 function fixture() {
   let now = 0;
@@ -55,4 +57,18 @@ it("cancels the replacement deadline timer and ignores a queued callback", () =>
   queued();
   assertEquals(timer.expired, 0);
   assertEquals(timer.callbacks.size, 0);
+});
+
+it("keeps the one-second elapsed budget after forward UTC correction and rollback", () => {
+  const elapsed = new ManualMonotonicClock();
+  let wall = 1_000;
+  const clock = createExecutorNodeClock(() => wall, elapsed);
+  wall = 11_000;
+  assertEquals(clock.now(), 11_000);
+  const deadline = clock.now() + 1_000;
+  wall = 1_000;
+  elapsed.advanceBy(999);
+  assertEquals(deadline - clock.now(), 1);
+  elapsed.advanceBy(1);
+  assertEquals(deadline - clock.now(), 0);
 });
