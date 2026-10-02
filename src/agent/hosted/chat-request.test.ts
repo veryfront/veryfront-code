@@ -24,6 +24,8 @@ import {
 } from "./chat-request.ts";
 import { createHostedRunEventWriterCapabilityForRequest } from "./child-run-event-writer-token.ts";
 import { createHostedInferenceModelResolver } from "./inference-credential.ts";
+import { hostedTerminalToolSourceFactory } from "./terminal-credential.ts";
+import type { RemoteMCPToolSourceConfig, RemoteToolSource } from "#veryfront/tool";
 import { sealIngressCredentials } from "#veryfront/security/http/ingress-credentials.ts";
 
 const conversationId = "10000000-1000-4000-8000-100000000001";
@@ -1910,6 +1912,7 @@ describe("agent/hosted-chat-request", () => {
           "content-type": "application/json",
           "X-Veryfront-Run-Event-Token": "run-event-service-token",
           "X-Veryfront-Inference-Token": "run-scoped-inference-token",
+          "X-Veryfront-Run-Terminal-Token": "run-terminal-token",
         },
         body: JSON.stringify({
           messages: [{ id: "m1", role: "user", parts: [{ type: "text", text: "Hello" }] }],
@@ -1933,6 +1936,26 @@ describe("agent/hosted-chat-request", () => {
 
     assertEquals(verifiedRunEventTokens, ["run-event-service-token"]);
     assertEquals(typeof createHostedInferenceModelResolver(parsed), "function");
+    assertEquals(request.headers.get("X-Veryfront-Run-Terminal-Token"), null);
+    const sent: Array<[string, string | null]> = [];
+    const recording = (config: RemoteMCPToolSourceConfig): RemoteToolSource => ({
+      id: config.id ?? "veryfront-api",
+      listTools: () => Promise.resolve([]),
+      executeTool: async (name, _args, context) => {
+        const headers = typeof config.headers === "function"
+          ? await config.headers(context)
+          : config.headers;
+        sent.push([name, new Headers(headers).get("X-Veryfront-Run-Terminal-Token")]);
+        return { content: [] };
+      },
+    });
+    const source = hostedTerminalToolSourceFactory(parsed, "https://api.example/mcp", recording)(
+      { id: "veryfront-api", endpoint: "https://api.example/mcp" },
+      { kind: "veryfront-api" },
+    );
+    await source.executeTool("finalize", { status: "failed" }, { runId: "run_root_1" });
+    await source.executeTool("get_project", {}, { runId: "run_root_1" });
+    assertEquals(sent, [["finalize", "run-terminal-token"], ["get_project", null]]);
   });
 
   it("reads the default-chat inference header through captured intrinsics", async () => {

@@ -44,6 +44,7 @@ import { requireInferenceProviderCredential } from "#veryfront/provider/runtime-
 import {
   INGRESS_INFERENCE_TOKEN_HEADER,
   INGRESS_RUN_EVENT_TOKEN_HEADER,
+  INGRESS_RUN_TERMINAL_TOKEN_HEADER,
   readIngressCredential,
 } from "#veryfront/security/http/ingress-credentials.ts";
 import {
@@ -67,7 +68,8 @@ const StringToLowerCase = String.prototype.toLowerCase;
 function readRequestHeaderRaw(request: Request, name: string): string | undefined {
   const lowerName = IntrinsicReflectApply(StringToLowerCase, name, []) as string;
   if (
-    lowerName === INGRESS_INFERENCE_TOKEN_HEADER || lowerName === INGRESS_RUN_EVENT_TOKEN_HEADER
+    lowerName === INGRESS_INFERENCE_TOKEN_HEADER || lowerName === INGRESS_RUN_EVENT_TOKEN_HEADER ||
+    lowerName === INGRESS_RUN_TERMINAL_TOKEN_HEADER
   ) {
     // The runtime takes these credentials off the request at ingress.
     return readIngressCredential(request, lowerName) ?? undefined;
