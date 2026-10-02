@@ -145,7 +145,7 @@ class TerminalRunControl {
     execute: () => Promise<unknown>,
   ): Promise<unknown> {
     const dispatch = apply(weakMapGet, dispatches, [context]) as AdmittedDispatch | undefined;
-    if (!dispatch || dispatch.invocation !== this) {
+    if (dispatch?.invocation !== this) {
       throw new Error("finalize requires an admitted runtime tool dispatch");
     }
     const validation = this.validateInput(input);
@@ -232,8 +232,6 @@ class TerminalRunControl {
             "RUN_OUTCOME_UNKNOWN",
             "Run outcome could not be confirmed",
             "unknown",
-            undefined,
-            undefined,
           );
           this.controller.abort(error);
           throw error;
@@ -272,8 +270,6 @@ class TerminalRunControl {
         "RUN_OUTCOME_UNKNOWN",
         "Run outcome could not be confirmed",
         "unknown",
-        undefined,
-        undefined,
       );
       this.controller.abort(error);
       throw error;

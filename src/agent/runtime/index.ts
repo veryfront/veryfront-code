@@ -13,6 +13,8 @@ import {
   appendPrivateArray,
   concatPrivateArrays,
   filterPrivateArray,
+  flatMapPrivateArray,
+  forEachPrivateArray,
   mapPrivateArray,
   pushPrivateArray,
   somePrivateArray,
@@ -1724,18 +1726,16 @@ function applicationExecutionContext(
 ): ToolExecutionContext {
   const projected: ToolExecutionContext = {};
   if (!context) return projected;
-  const keys = ownContextKeys(context);
-  for (let index = 0; index < keys.length; index++) {
-    const key = keys[index]!;
-    if (key === "toolCallId" || key === "agentId") continue;
-    if (!contextDescriptor(context, key)?.enumerable) continue;
+  forEachPrivateArray(ownContextKeys(context), (key) => {
+    if (key === "toolCallId" || key === "agentId") return;
+    if (!contextDescriptor(context, key)?.enumerable) return;
     defineContextProperty(projected, key, {
       value: readContextProperty(context, key),
       enumerable: true,
       writable: true,
       configurable: true,
     });
-  }
+  });
   return projected;
 }
 
@@ -1749,21 +1749,16 @@ interface AdmittedToolTurn {
 }
 
 function snapshotAdmittedToolTurn(message: Message, start: number): AdmittedToolTurn {
-  const calls: { toolCallId: string; toolName: string; input: Record<string, unknown> }[] = [];
-  for (let index = 0; index < message.parts.length; index++) {
-    const part = message.parts[index]!;
+  const calls = flatMapPrivateArray(message.parts, (part) => {
     const call = getAgentRuntimeToolCallPart(part);
-    if (call) {
-      pushPrivateArray(
-        calls,
-        freezeAdmitted({
-          toolCallId: call.toolCallId,
-          toolName: call.toolName,
-          input: cloneStructuredValuePreservingOpaque(call.input),
-        }),
-      );
-    }
-  }
+    return call
+      ? [freezeAdmitted({
+        toolCallId: call.toolCallId,
+        toolName: call.toolName,
+        input: cloneStructuredValuePreservingOpaque(call.input),
+      })]
+      : [];
+  });
   return freezeAdmitted({ start, calls: freezeAdmitted(calls) });
 }
 
@@ -1773,11 +1768,13 @@ function findAdmittedToolResult(
   callId: string,
 ): ToolResultPart | undefined {
   for (let index = turn.start; index < messages.length; index++) {
-    const parts = messages[index]!.parts;
-    for (let partIndex = 0; partIndex < parts.length; partIndex++) {
-      const part = parts[partIndex]!;
-      if (part.type === "tool-result" && part.toolCallId === callId) return part as ToolResultPart;
-    }
+    let result: ToolResultPart | undefined;
+    const found = somePrivateArray(messages[index]!.parts, (part) => {
+      if (part.type !== "tool-result" || part.toolCallId !== callId) return false;
+      result = part as ToolResultPart;
+      return true;
+    });
+    if (found) return result;
   }
   return undefined;
 }
@@ -5297,11 +5294,9 @@ export class AgentRuntime {
   private unresolvedTerminalSiblings(currentMessages: Message[], turn: AdmittedToolTurn) {
     const resolvedIds = createPrivateSet<string>();
     for (let index = turn.start; index < currentMessages.length; index++) {
-      const parts = currentMessages[index]!.parts;
-      for (let partIndex = 0; partIndex < parts.length; partIndex++) {
-        const part = parts[partIndex]!;
+      forEachPrivateArray(currentMessages[index]!.parts, (part) => {
         if (part.type === "tool-result") resolvedIds.add(part.toolCallId);
-      }
+      });
     }
     return filterPrivateArray(turn.calls, (call) => !resolvedIds.has(call.toolCallId));
   }
