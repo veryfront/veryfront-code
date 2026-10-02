@@ -218,7 +218,7 @@ export interface ListFilesOptions {
   pattern?: string;
   sortBy?: "path" | "updated_at";
   sortOrder?: "asc" | "desc";
-  /** List file metadata and checksums without `content`. */
+  /** Branch listings only: list file metadata and checksums without `content`. */
   withoutContent?: boolean;
 }
 
@@ -293,7 +293,6 @@ function buildListParams(options: ListFilesOptions): URLSearchParams {
     pattern,
     sortBy = "updated_at",
     sortOrder = "desc",
-    withoutContent,
   } = options;
 
   const params = new URLSearchParams({
@@ -305,7 +304,6 @@ function buildListParams(options: ListFilesOptions): URLSearchParams {
   if (cursor) params.set("cursor", cursor);
   if (path) params.set("path", path);
   if (pattern) params.set("pattern", pattern);
-  if (withoutContent) params.set("fields", BRANCH_FILE_METADATA_FIELDS);
 
   return params;
 }
@@ -509,6 +507,7 @@ export class VeryfrontAPIOperations {
     options: ListFilesOptions = {},
   ): Promise<FileListResult> {
     const params = addRuntimeServerFunctionAccess(buildListParams(options));
+    if (options.withoutContent) params.set("fields", BRANCH_FILE_METADATA_FIELDS);
     params.set("branch", branchRef);
     const url = `/projects/${encodeURIComponent(projectRef)}/files?${params}`;
     logger.debug("listBranchFiles", { projectRef, branchRef, pattern: options.pattern });

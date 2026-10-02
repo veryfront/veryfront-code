@@ -267,6 +267,27 @@ describe("VeryfrontAPIOperations", () => {
       assertEquals(result.files[0]?.content, undefined);
     });
 
+    it("selects metadata only on branch listings", async () => {
+      const requestedUrls: string[] = [];
+      stubJsonFetch((url) => {
+        requestedUrls.push(url);
+        return {
+          data: [],
+          page_info: { self: null, first: null, next: null, prev: null },
+          environment_id: "00000000-0000-4000-8000-000000000001",
+          environment_name: "production",
+          release_id: "00000000-0000-4000-8000-000000000002",
+          release_version: null,
+        };
+      });
+
+      await createOps().listEnvironmentFiles("project-slug", "production", {
+        withoutContent: true,
+      });
+
+      assertEquals(new URL(requestedUrls[0]!).searchParams.has("fields"), false);
+    });
+
     it("accepts null checksums on branch file lists and file reads", async () => {
       const file = {
         path: "agents/legacy.ts",
