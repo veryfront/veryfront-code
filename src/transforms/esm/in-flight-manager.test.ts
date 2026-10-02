@@ -6,14 +6,18 @@ import {
   assertRejects,
   assertStrictEquals,
 } from "#veryfront/testing/assert.ts";
-import { describe, it } from "#veryfront/testing/bdd.ts";
+import { beforeAll, describe, it } from "#veryfront/testing/bdd.ts";
 import { FakeTime } from "#std/testing/time";
 import { waitFor } from "#veryfront/testing/deno-compat.ts";
 import { __subscribeLogRecordEmitter, type LogEntry } from "#veryfront/utils/logger/logger.ts";
 import { VERSION } from "#veryfront/utils/version.ts";
 import type { CacheBackend } from "#veryfront/cache/types.ts";
-import { __setDistributedCacheAccessorForTests } from "./http-cache-wrapper.ts";
-import type { HttpCacheIdentityMetadata } from "./http-cache-helpers.ts";
+import {
+  __setDistributedCacheAccessorForTests,
+  __setDistributedCacheFallbackForTests,
+} from "./http-cache-wrapper.ts";
+import { fingerprintImportMap, type HttpCacheIdentityMetadata } from "./http-cache-helpers.ts";
+import { CACHE_INVARIANT_VIOLATION } from "./http-cache-invariants.ts";
 import {
   __clearInFlightHttpFetches,
   createInFlightHttpFetch,
@@ -727,6 +731,12 @@ describe("transforms/esm/in-flight-manager", () => {
       importMap: { imports: {} },
     };
 
+    beforeAll(async () => {
+      identityMetadata.importMapFingerprint = await fingerprintImportMap(
+        identityMetadata.importMap,
+      );
+    });
+
     function recordingBackend(codeWrite?: { visible: () => void; release: Promise<void> }): {
       backend: CacheBackend;
       entries: Map<string, string>;
@@ -762,19 +772,31 @@ describe("transforms/esm/in-flight-manager", () => {
       );
     }
 
-    it("writes and records the refresh when no timestamp exists", async () => {
-      const codeVisible = Promise.withResolvers<void>();
+    async function checkGatedRefresh(mode?: "unavailable" | "write-failure"): Promise<void> {
+      let codeVisible = false;
       const releaseCodeWrite = Promise.withResolvers<void>();
       const { backend, entries } = recordingBackend({
-        visible: () => codeVisible.resolve(),
-        release: releaseCodeWrite.promise,
+        visible: () => {
+          codeVisible = true;
+        },
+        release: releaseCodeWrite.promise.then(() => {
+          if (mode === "write-failure") {
+            throw CACHE_INVARIANT_VIOLATION.create({ detail: "controlled code write failure" });
+          }
+        }),
       });
-      __setDistributedCacheAccessorForTests(() => Promise.resolve(backend));
+      __setDistributedCacheAccessorForTests(() =>
+        Promise.resolve(mode === "unavailable" ? null : backend)
+      );
       const map = new Map<string, number>();
 
       try {
         refresh("hash-cold", map);
-        await codeVisible.promise;
+        await waitFor(() => codeVisible, {
+          timeout: 3_000,
+          interval: 10,
+          message: "code write did not become visible",
+        });
         assertEquals(entries.get(`${VERSION}:code:hash-cold`), "const a = 1;");
         assertEquals(map.has("hash-cold"), false, "a visible code key is not refresh completion");
         releaseCodeWrite.resolve();
@@ -790,8 +812,62 @@ describe("transforms/esm/in-flight-manager", () => {
         );
       } finally {
         releaseCodeWrite.resolve();
-        await waitFor(() => map.has("hash-cold"), { timeout: 3_000, interval: 10 });
+        try {
+          await waitFor(() => map.has("hash-cold"), { timeout: 3_000, interval: 10 });
+        } finally {
+          __setDistributedCacheAccessorForTests(null);
+        }
+      }
+    }
+
+    it("writes and records the refresh when no timestamp exists", async () => {
+      await checkGatedRefresh();
+    });
+
+    it("bounds the code-visible wait when refresh exits with no cache", async () => {
+      const time = new FakeTime();
+      let outcome: unknown;
+      const check = checkGatedRefresh("unavailable").then(
+        () => outcome = "unexpected success",
+        (error) => outcome = error,
+      );
+      try {
+        await time.tickAsync(0);
+        for (let second = 0; second < 10; second++) await time.tickAsync(1_000);
+        assertInstanceOf(outcome, Error, "early refresh exit must settle within the bound");
+        assertEquals(outcome.message.includes("code write did not become visible"), true);
+        await check;
+      } finally {
         __setDistributedCacheAccessorForTests(null);
+        time.restore();
+      }
+    });
+
+    it("restores the accessor after a failing refresh-completion cleanup", async () => {
+      const next = recordingBackend();
+      const restoreFallback = __setDistributedCacheFallbackForTests(() =>
+        Promise.resolve(next.backend)
+      );
+      const time = new FakeTime();
+      const check = assertRejects(() => checkGatedRefresh("write-failure"));
+      try {
+        await time.tickAsync(0);
+        for (let second = 0; second < 10; second++) await time.tickAsync(1_000);
+        await check;
+        const map = new Map<string, number>();
+        refresh("hash-after-failure", map);
+        const completed = waitFor(() => map.has("hash-after-failure"), {
+          timeout: 3_000,
+          interval: 10,
+        });
+        const settled = completed.catch((error) => error);
+        for (let second = 0; second < 4; second++) await time.tickAsync(1_000);
+        assertEquals(await settled, undefined, "the next refresh uses the restored accessor");
+        assertEquals(next.entries.get(`${VERSION}:code:hash-after-failure`), "const a = 1;");
+      } finally {
+        __setDistributedCacheAccessorForTests(null);
+        restoreFallback();
+        time.restore();
       }
     });
 
