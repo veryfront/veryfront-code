@@ -1,5 +1,10 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert";
+import {
+  assertEquals,
+  assertRejects,
+  assertStrictEquals,
+  assertThrows,
+} from "#veryfront/testing/assert";
 import { describe, it } from "#veryfront/testing/bdd";
 import { DEFAULT_MAX_BODY_SIZE_BYTES } from "#veryfront/utils/constants/index.ts";
 import {
@@ -427,12 +432,16 @@ describe("upstream retry delay cancellation", () => {
 
   it("rejects without waiting when the request is already aborted", async () => {
     const client = new AbortController();
-    client.abort(new Error("client disconnected"));
-    await assertRejects(
+    // Bun 1.3.6 can collect an inline abort reason. Keep it alive through
+    // the identity assertion: https://github.com/oven-sh/bun/pull/32747
+    const reason = new Error("client disconnected");
+    client.abort(reason);
+    const error = await assertRejects(
       () => waitForUpstreamRetryDelay(60_000, client.signal),
       Error,
       "client disconnected",
     );
+    assertStrictEquals(error, reason, "the cancellation reason must be forwarded unchanged");
   });
 
   it("stops pending backoff immediately and cleans up its timer", async () => {

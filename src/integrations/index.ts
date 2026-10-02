@@ -117,3 +117,12 @@ export type {
 } from "./integration-condition.ts";
 
 export type { IntegrationSelectedReadiness } from "./readiness.ts";
+
+export {
+  createIntegrationErrorContext,
+  isIntegrationErrorContext,
+  readIntegrationErrorContext,
+  readIntegrationThrowableContext,
+} from "./error-context.ts";
+export { MAX_REMOTE_INTEGRATION_TOOL_NAME_LENGTH } from "./limits.ts";
+export { parseIntegrationToolIdentity } from "./source-policy.ts";

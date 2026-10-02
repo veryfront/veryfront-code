@@ -146,6 +146,7 @@
     "./provider/types": "./src/provider/types.ts",
     "./fs": "./src/fs/index.ts",
     "./integrations": "./src/integrations/index.ts",
+    "./integrations/diagnostics": "./src/integrations/error-context.ts",
     "./sandbox": "./src/sandbox/index.ts",
     "./embedding": "./src/embedding/index.ts",
     "./knowledge": "./src/knowledge/index.ts",
@@ -190,6 +191,7 @@
     "./server/http-runtime": "./src/server/isolated-http/application-runtime.ts"
   },
   "imports": {
+    "veryfront/integrations/diagnostics": "./src/integrations/error-context.ts",
     "veryfront/index.client": "./src/index.client.ts",
     "veryfront/head": "./src/react/runtime/core.ts",
     "veryfront/router": "./src/react/runtime/core.ts",
