@@ -145,6 +145,26 @@ describe("agent/conversation-run-events", () => {
     );
   });
 
+  it("keeps the provider verdict on a provider-executed result and classifies forwarded ones", () => {
+    // The live adapter sends a failed provider result as tool-output-error, so a
+    // provider-executed tool-output-available is a success whatever its data holds.
+    const encoder = new ConversationRunEventEncoder();
+    const output = { error: "result metadata", answer: 42 };
+    assertEquals(
+      encoder.encode({
+        type: "tool-output-available",
+        toolCallId: "tc-1",
+        output,
+        providerExecuted: true,
+      })[0]?.isError,
+      false,
+    );
+    assertEquals(
+      encoder.encode({ type: "tool-output-available", toolCallId: "tc-2", output })[0]?.isError,
+      true,
+    );
+  });
+
   it("encodes text and reasoning events", () => {
     const encoder = new ConversationRunEventEncoder();
     assertEquals(

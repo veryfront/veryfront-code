@@ -373,9 +373,10 @@ export class ConversationRunEventEncoder {
           ...(this.toolInputs.has(chunk.toolCallId)
             ? { input: this.toolInputs.get(chunk.toolCallId) }
             : {}),
-          // Child-fork and hosted mirror streams forward unclassified tool results here,
-          // and the API never overrules an explicit flag, so judge the output itself.
-          isError: isToolResultErrorOutput(chunk.output),
+          // A provider-executed result is a success: producers send provider failures as
+          // tool-output-error. Child-fork and hosted mirror streams forward unclassified
+          // tool results here, and the API never overrules an explicit flag, so judge those.
+          isError: chunk.providerExecuted !== true && isToolResultErrorOutput(chunk.output),
         }];
         this.releaseToolCallState(chunk.toolCallId);
         return events;

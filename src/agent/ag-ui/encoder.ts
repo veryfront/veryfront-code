@@ -994,7 +994,9 @@ function mapRuntimeStreamEventToAgUiEventsUnstamped(
         createToolResultEvent(
           event.toolCallId,
           event.output,
-          isToolResultErrorOutput(event.output),
+          // Producers send provider failures as tool-output-error, so only
+          // unclassified forwarded results are judged by their content.
+          event.providerExecuted !== true && isToolResultErrorOutput(event.output),
         ),
       ];
 
