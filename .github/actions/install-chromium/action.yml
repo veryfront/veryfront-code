@@ -2,8 +2,9 @@ name: Install Chromium
 description: >
   Configure apt for reliable browser provisioning, then run a bounded, retried
   Playwright Chromium install. Shared by every browser job; callers keep a
-  step-level `timeout-minutes: 20` on the invoking step, matching the retry
-  loop's ~17 minute worst case (two full attempts plus lock waits and backoff).
+  step-level `timeout-minutes: 20` on the invoking step, covering the retry
+  loop's ~16.5 minute worst case (three 4-minute attempts plus lock waits and
+  backoff).
 
 inputs:
   install-command:
@@ -17,10 +18,27 @@ runs:
     - name: Configure apt sources, retries, and mirrors
       shell: bash
       run: |
-        sudo sed -E -i \
-          -e 's|[[:alpha:]]*://azure.archive.ubuntu.com/ubuntu|https://archive.ubuntu.com/ubuntu|g' \
-          -e 's|[[:alpha:]]*://security.ubuntu.com/ubuntu|https://archive.ubuntu.com/ubuntu|g' \
-          /etc/apt/sources.list /etc/apt/sources.list.d/ubuntu.sources 2>/dev/null || true
+        # Current runner images no longer name the archive host in
+        # ubuntu.sources; they point at `mirror+file:/etc/apt/apt-mirrors.txt`,
+        # whose first entry is the in-region azure.archive.ubuntu.com mirror.
+        # Rewriting only the sources files therefore left that mirror in charge,
+        # and when it throttles .deb downloads to a trickle apt never times out
+        # (it only aborts on zero progress), so the install sat until the outer
+        # `timeout` killed it. Rewrite every referenced mirror list as well.
+        apt_source_files="/etc/apt/sources.list /etc/apt/sources.list.d/ubuntu.sources"
+        mirror_lists="$(grep -rhoE 'mirror\+file:[^[:space:]]+' /etc/apt/sources.list /etc/apt/sources.list.d 2>/dev/null | sed 's|^mirror+file:||' | sort -u || true)"
+        for apt_file in ${apt_source_files} ${mirror_lists}; do
+          [ -f "${apt_file}" ] || continue
+          sudo sed -E -i \
+            -e 's|[[:alpha:]]*://azure.archive.ubuntu.com/ubuntu|https://archive.ubuntu.com/ubuntu|g' \
+            -e 's|[[:alpha:]]*://security.ubuntu.com/ubuntu|https://archive.ubuntu.com/ubuntu|g' \
+            "${apt_file}"
+        done
+        for mirror_list in ${mirror_lists}; do
+          [ -f "${mirror_list}" ] || continue
+          echo "Ubuntu archive mirrors in ${mirror_list}:"
+          cat "${mirror_list}"
+        done
         {
           echo 'Acquire::ForceIPv4 "true";'
           echo 'Acquire::Retries "5";'
@@ -54,8 +72,8 @@ runs:
     - name: Install Chromium
       shell: bash
       run: |
-        readonly install_attempts=2
-        readonly install_timeout_minutes=7
+        readonly install_attempts=3
+        readonly install_timeout_minutes=4
         readonly install_kill_grace_seconds=15
         readonly apt_lock_attempts=12
         readonly apt_lock_sleep_seconds=5
@@ -95,13 +113,27 @@ runs:
             echo "::warning::apt/dpkg locks still held; reaping the holders"
             reap_apt_lock_holders
           fi
+          status=0
           timeout --signal=TERM --kill-after="${install_kill_grace_seconds}s" "${install_timeout_minutes}m" \
-            ${{ inputs.install-command }} && exit 0
-          status=$?
+            ${{ inputs.install-command }} || status=$?
+          if [ "$status" -eq 0 ]; then
+            exit 0
+          fi
 
+          # A healthy install (browser download plus system dependencies)
+          # finishes in well under a minute, so hitting the per-attempt bound
+          # means a stalled download, almost always an apt mirror trickling .deb
+          # files. Say so instead of leaving a bare exit code 124.
+          if [ "$status" -eq 124 ] || [ "$status" -eq 137 ]; then
+            reason="exceeded ${install_timeout_minutes}m (stalled download, usually a throttled apt mirror)"
+          else
+            reason="failed with exit code ${status}"
+          fi
           if [ "$attempt" -eq "${install_attempts}" ]; then
+            echo "::error title=Chromium install::Attempt ${attempt}/${install_attempts} ${reason}; giving up"
             exit "$status"
           fi
+          echo "::warning title=Chromium install::Attempt ${attempt}/${install_attempts} ${reason}; retrying"
 
           reap_apt_lock_holders
           sleep "${retry_backoff_seconds}"
