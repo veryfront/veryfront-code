@@ -270,7 +270,7 @@ describe("WebSocketManager", () => {
   };
 
   const flushMicrotasks = async (): Promise<void> => {
-    for (let i = 0; i < 6; i++) await Promise.resolve();
+    for (let i = 0; i < 12; i++) await Promise.resolve();
   };
 
   beforeEach(() => {
@@ -1416,6 +1416,36 @@ describe("WebSocketManager", () => {
       "pregenerate-failed",
     ]);
 
+    manager.dispose();
+  });
+
+  it("clears the CSS caches when a full invalidation's source fetch fails", async () => {
+    const styleEvents: string[] = [];
+
+    const manager = createWebSocketManager({
+      client: {
+        listAllFiles: () => Promise.reject(new Error("fetch failed")),
+      },
+      invalidationCallbacks: {
+        clearProjectCSSCache: () => {
+          styleEvents.push("invalidate");
+        },
+        triggerReload: () => {
+          styleEvents.push("reload");
+        },
+      },
+    });
+
+    manager.connect("project-1");
+    const socket = MockWebSocket.instances[0];
+    assertExists(socket);
+
+    deliverPoke(socket, { branchName: "main" });
+
+    assertEquals(runOnlyScheduledTimer(), 100);
+    await flushMicrotasks();
+
+    assertEquals(styleEvents, ["invalidate", "reload"]);
     manager.dispose();
   });
 
