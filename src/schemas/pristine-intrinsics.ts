@@ -8,9 +8,9 @@
  *
  * This module snapshots the built-ins at module load, before any project
  * module runs. `withPristineIntrinsics` puts back every snapshotted property
- * that has been replaced or deleted, runs a synchronous callback, then
- * re-applies the project's replacements, so the task still sees them when it
- * runs. JavaScript runs one callback at a time, so no other code observes the
+ * that has been replaced or deleted, hides properties added to the built-ins,
+ * runs a synchronous callback, then re-applies the project's changes, so the
+ * task still sees them when it runs. JavaScript runs one callback at a time, so no other code observes the
  * swap. Work a callback defers to a promise runs after the swap is undone.
  *
  * See docs/adr/schema-validation-intrinsics.md.
@@ -43,6 +43,7 @@ const reflectGetOwnPropertyDescriptor = Reflect.getOwnPropertyDescriptor;
 const reflectGetPrototypeOf = Reflect.getPrototypeOf;
 const reflectOwnKeys = Reflect.ownKeys;
 const objectHasOwn = Object.hasOwn;
+const objectIs = Object.is;
 const DESCRIPTOR_FIELDS = [
   "value",
   "writable",
@@ -77,8 +78,9 @@ function sameDescriptor(
   current: PropertyDescriptor | undefined,
   snapshot: PropertyDescriptor,
 ): boolean {
+  // Object.is, so a NaN value such as Number.NaN counts as unchanged.
   return current !== undefined &&
-    current.value === snapshot.value &&
+    objectIs(current.value, snapshot.value) &&
     current.get === snapshot.get &&
     current.set === snapshot.set &&
     current.writable === snapshot.writable &&
@@ -86,23 +88,39 @@ function sameDescriptor(
     current.configurable === snapshot.configurable;
 }
 
-function snapshotProperties(
+interface IntrinsicsSnapshot {
+  properties: IntrinsicProperty[];
+  /** Each target with a null-prototype record of the keys it had at snapshot time. */
+  targets: Array<{ target: PropertyTarget; keys: Record<PropertyKey, true> }>;
+}
+
+function snapshotIntrinsics(
   targets: readonly PropertyTarget[],
   globalTarget: PropertyTarget,
   globalKeys: readonly PropertyKey[],
-): IntrinsicProperty[] {
+): IntrinsicsSnapshot {
   const properties: IntrinsicProperty[] = [];
+  const snapshotTargets: IntrinsicsSnapshot["targets"] = [];
   const add = (target: PropertyTarget, key: PropertyKey): void => {
     const descriptor = ownDescriptor(target, key);
     if (descriptor) properties[properties.length] = { target, key, descriptor };
   };
   for (let index = 0; index < targets.length; index++) {
     const target = targets[index]!;
+    const known: Record<PropertyKey, true> = Object.create(null);
     const keys = reflectOwnKeys(target);
-    for (let keyIndex = 0; keyIndex < keys.length; keyIndex++) add(target, keys[keyIndex]!);
+    for (let keyIndex = 0; keyIndex < keys.length; keyIndex++) {
+      const key = keys[keyIndex]!;
+      known[key] = true;
+      // Array.prototype is itself an array: restoring its length would delete index properties
+      // project code added to it.
+      if (key === "length" && Array.isArray(target)) continue;
+      add(target, key);
+    }
+    snapshotTargets[snapshotTargets.length] = { target, keys: known };
   }
   for (let index = 0; index < globalKeys.length; index++) add(globalTarget, globalKeys[index]!);
-  return properties;
+  return { properties, targets: snapshotTargets };
 }
 
 function restoreProperty(property: ReplacedProperty): void {
@@ -114,26 +132,54 @@ function restoreProperty(property: ReplacedProperty): void {
 }
 
 /**
+ * Append without assignment: an index setter project code added to Array.prototype must not
+ * intercept the record that undoes the swap.
+ */
+function record(replaced: ReplacedProperty[], property: ReplacedProperty): void {
+  reflectDefineProperty(replaced, replaced.length, {
+    __proto__: null,
+    value: property,
+    writable: true,
+    enumerable: true,
+    configurable: true,
+  } as PropertyDescriptor);
+}
+
+/**
  * Snapshot every own property of `targets`, plus `globalKeys` on `globalTarget`, and return a
- * guard that runs callbacks against that snapshot.
+ * guard that runs callbacks against that snapshot. Inside the guard, properties project code
+ * added to `targets` are removed as well.
  */
 export function createIntrinsicsGuard(
   targets: readonly PropertyTarget[],
   globalTarget: PropertyTarget = globalThis,
   globalKeys: readonly PropertyKey[] = [],
 ): IntrinsicsGuard {
-  const properties = snapshotProperties(targets, globalTarget, globalKeys);
+  const snapshot = snapshotIntrinsics(targets, globalTarget, globalKeys);
 
   return <T>(callback: () => T): T => {
     const replaced: ReplacedProperty[] = [];
     try {
+      const { properties } = snapshot;
       for (let index = 0; index < properties.length; index++) {
         const { target, key, descriptor } = properties[index]!;
         const current = ownDescriptor(target, key);
         if (sameDescriptor(current, descriptor)) continue;
         // A property project code made non-configurable, or a frozen target, keeps its value.
         if (reflectDefineProperty(target, key, descriptor)) {
-          replaced[replaced.length] = { target, key, descriptor: current };
+          record(replaced, { target, key, descriptor: current });
+        }
+      }
+      for (let index = 0; index < snapshot.targets.length; index++) {
+        const { target, keys: known } = snapshot.targets[index]!;
+        const keys = reflectOwnKeys(target);
+        for (let keyIndex = 0; keyIndex < keys.length; keyIndex++) {
+          const key = keys[keyIndex]!;
+          if (objectHasOwn(known, key)) continue;
+          const current = ownDescriptor(target, key);
+          if (reflectDeleteProperty(target, key)) {
+            record(replaced, { target, key, descriptor: current });
+          }
         }
       }
       return reflectApply(callback, undefined, []);

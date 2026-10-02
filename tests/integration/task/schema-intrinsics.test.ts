@@ -288,6 +288,32 @@ describe("task schema checks after project code replaced built-ins", () => {
     assertEquals(seenByTask, replacement);
   });
 
+  it("rejects invalid input when project code added an Array index setter, and keeps it", async () => {
+    const originalMap = Reflect.getOwnPropertyDescriptor(Array.prototype, "map")!;
+    const replacement = () => "replaced";
+    const setter = () => {};
+    const { task, calls } = schemaTask({ inputSchema: ticketInputSchema });
+
+    let result: Awaited<ReturnType<typeof runTask>>;
+    let mapAfterRun: unknown;
+    let indexSetterAfterRun: unknown;
+    try {
+      Reflect.set(Array.prototype, "map", replacement);
+      Reflect.defineProperty(Array.prototype, "0", { set: setter, configurable: true });
+      result = await runTask({ task, input: { ticketText: 42 } }, createInMemoryHostRuntime());
+      mapAfterRun = Array.prototype.map;
+      indexSetterAfterRun = Reflect.getOwnPropertyDescriptor(Array.prototype, "0")?.set;
+    } finally {
+      Reflect.deleteProperty(Array.prototype, "0");
+      Reflect.defineProperty(Array.prototype, "map", originalMap);
+    }
+
+    assertEquals(result.errorCode, "INPUT_VALIDATION_FAILED");
+    assertEquals(calls.length, 0);
+    assertEquals(mapAfterRun, replacement);
+    assertEquals(indexSetterAfterRun, setter);
+  });
+
   it("formats rejected input errors when project code replaced Array map and join", () => {
     const originalMap = Reflect.getOwnPropertyDescriptor(Array.prototype, "map")!;
     const originalJoin = Reflect.getOwnPropertyDescriptor(Array.prototype, "join")!;

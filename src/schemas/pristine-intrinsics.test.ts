@@ -57,6 +57,25 @@ describe("schemas/pristine-intrinsics", () => {
     assertEquals(globalTarget.Helper, replacement);
   });
 
+  it("hides a property added after the snapshot and adds it back afterwards", () => {
+    const target: Record<string, unknown> = { method: original };
+    const guard = createIntrinsicsGuard([target]);
+    target.added = replacement;
+
+    const seen = guard(() => Object.hasOwn(target, "added"));
+
+    assertEquals(seen, false);
+    assertEquals(target.added, replacement);
+  });
+
+  it("keeps an added property that cannot be deleted", () => {
+    const target: Record<string, unknown> = {};
+    const guard = createIntrinsicsGuard([target]);
+    Object.defineProperty(target, "added", { value: replacement, configurable: false });
+
+    assertEquals(guard(() => target.added), replacement);
+  });
+
   it("re-applies replacements when the callback throws", () => {
     const target: { method: () => string } = { method: original };
     const guard = createIntrinsicsGuard([target]);

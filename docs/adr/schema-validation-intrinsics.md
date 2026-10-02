@@ -29,8 +29,11 @@ input validation threw. The run failed with a generic task error instead of
 Option 3. `src/schemas/pristine-intrinsics.ts` snapshots the own properties of the built-in
 constructors and prototypes, plus named global bindings, when the runtime loads, before any
 project module runs. `withPristineIntrinsics(callback)` puts back each snapshotted property that
-was replaced or deleted, runs the callback, then re-applies the project's replacements.
+was replaced or deleted, hides properties added to the snapshotted built-ins, runs the callback,
+then re-applies the project's changes.
 `checkDeclaredSchema` runs adapter work through it for task input and output checks.
+`src/discovery/module-import.ts` imports the module, so the snapshot is taken before discovery
+loads the first project module, whatever order the server loads the task runner in.
 
 JavaScript runs one callback at a time, so no other code sees the swap, and the task still sees its
 own replacements when `run()` executes.
@@ -40,8 +43,10 @@ own replacements when `run()` executes.
 - Validator adapters need no changes. A new adapter is covered when it calls built-ins listed in
   the snapshot.
 - Refinements and transforms in a contract schema see the pristine built-ins while they validate.
+  This includes test fakes: a faked `Date` or `Math.random` is not visible inside validation.
 - Only synchronous work is covered. An asynchronous JSON Schema (`$async`) validator starts under
   the guard; its deferred work runs after the swap is undone.
 - A property the project made non-configurable, or a frozen built-in, cannot be swapped back. Its
   validation fails closed as before.
-- Properties a project adds to built-ins are left in place.
+- Properties a project adds to a snapshotted built-in, such as an `Array.prototype[0]` setter, are
+  hidden too: they can make a validator accept invalid input.
