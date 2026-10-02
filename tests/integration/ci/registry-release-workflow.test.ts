@@ -1083,6 +1083,53 @@ fi
       }
     });
   });
+  it("serializes RC tag writes and dispatch without replacing pending publishers", async () => {
+    const jobs = await readJobs();
+    for (const name of ["prerelease", "dispatch-release"]) {
+      const job = asRecord(jobs[name], name);
+      assertEquals(job.concurrency, { group: "veryfront-rc-publication", queue: "max" });
+    }
+    const dispatch = asRecord(jobs["dispatch-release"], "dispatch release job");
+    const guard = namedStep(dispatch, "Check current RC tag");
+    assertStringIncludes(String(guard.run), "rc_tag_for_package veryfront");
+    const dispatchSteps = steps(dispatch, "dispatch release job");
+    for (
+      const step of dispatchSteps.filter((step) =>
+        String(step.uses).startsWith("peter-evans/repository-dispatch@")
+      )
+    ) {
+      assertEquals(step.if, "steps.current.outputs.dispatch == 'true'");
+      assert(dispatchSteps.indexOf(guard) < dispatchSteps.indexOf(step));
+    }
+  });
+
+  for (
+    const [current, candidate, stable, expectedCode, expectedOutput] of [
+      ["0.1.2-rc.201", "0.1.2-rc.200", "false", 0, "dispatch=false"],
+      ["0.1.2-rc.201", "0.1.2-rc.201", "false", 0, "dispatch=true"],
+      ["0.1.2-rc.200", "0.1.2-rc.201", "false", 5, ""],
+      ["", "0.1.2", "true", 0, "dispatch=true"],
+    ] as const
+  ) {
+    it(`guards ${candidate} dispatch against ${current || "no tag"}`, async () => {
+      const jobs = await readJobs();
+      const dispatch = asRecord(jobs["dispatch-release"], "dispatch release job");
+      const guard = namedStep(dispatch, "Check current RC tag");
+      const output = await new Deno.Command("bash", {
+        args: ["-c", 'npm() { echo "$CURRENT_TAGS"; }\n' + String(guard.run)],
+        env: {
+          IS_STABLE: stable,
+          VERSION: candidate,
+          CURRENT_TAGS: current ? `rc: ${current}` : "",
+          GITHUB_OUTPUT: "/dev/stdout",
+        },
+        stdout: "piped",
+        stderr: "piped",
+      }).output();
+      assertEquals(output.code, expectedCode, decoder.decode(output.stderr));
+      if (expectedOutput) assertStringIncludes(decoder.decode(output.stdout), expectedOutput);
+    });
+  }
 
   it("dispatches exactly three downstream releases only after the registry gate", async () => {
     const jobs = await readJobs();
