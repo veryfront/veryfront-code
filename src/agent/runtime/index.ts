@@ -5320,6 +5320,7 @@ const agentRuntimePrivateMethodNames = [
   "resolveOutputSchema",
   "recordToolError",
   "recordTerminalToolResult",
+  "unresolvedTerminalSiblings",
   "resolveSystemPrompt",
   "computeMaxSteps",
   "resolveTemperature",

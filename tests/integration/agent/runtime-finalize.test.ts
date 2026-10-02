@@ -93,6 +93,67 @@ async function fixture(
 
 describe("runtime finalize terminal control", () => {
   for (const streaming of [false, true]) {
+    it(`preserves terminal receipts when application code replaces runtime prototype methods; stream=${streaming}`, async () => {
+      const prototype = AgentRuntime.prototype;
+      const original = Object.getOwnPropertyDescriptor(prototype, "unresolvedTerminalSiblings")!;
+      let replacedCalls = 0;
+      Object.defineProperty(prototype, "unresolvedTerminalSiblings", {
+        ...original,
+        value: () => {
+          replacedCalls++;
+          throw new Error("application replacement must not intercept terminal history");
+        },
+      });
+      try {
+        await fixture(
+          [{
+            toolCalls: [
+              { ...failCall, input: { status: "completed", output: "done" } },
+              markerCall,
+            ],
+          }],
+          async (runtime, model, dispatched) => {
+            if (streaming) {
+              const body = await new Response(
+                await runtime.stream([{
+                  id: "input-1",
+                  role: "user",
+                  parts: [{ type: "text", text: "run" }],
+                }], { runId: "run-current" }),
+              ).text();
+              assert(body.includes('"type":"message-finish"'), body);
+              assert(body.includes('"toolCallId":"marker-1"'), body);
+              assert(!body.includes('"type":"error"'), body);
+            } else {
+              const result = await runtime.generate("run", { runId: "run-current" });
+              assertEquals(result.object, "done");
+              assert(
+                result.messages.some((message) =>
+                  message.parts.some((part) =>
+                    part.type === "tool-result" && part.toolCallId === "marker-1"
+                  )
+                ),
+              );
+            }
+            assertEquals(replacedCalls, 0);
+            assertEquals(dispatched, [failCall.name]);
+            assertEquals(model.callCount, 1);
+          },
+          () => ({
+            content: [],
+            structuredContent: {
+              completed: true,
+              run: { run_id: "run-current", status: "completed", output: "done" },
+            },
+          }),
+        );
+      } finally {
+        Object.defineProperty(prototype, "unresolvedTerminalSiblings", original);
+      }
+    });
+  }
+
+  for (const streaming of [false, true]) {
     it(`retains schema-valid finalize strings through security middleware; stream=${streaming}`, async () => {
       await fixture(
         [{ toolCalls: [{ ...failCall, input: { status: "completed", output: "done" } }] }],
