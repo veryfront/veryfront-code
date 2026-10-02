@@ -2818,6 +2818,56 @@ class FailOneNodeDeliveryBackend extends MemoryBackend {
   }
 }
 
+/** Appends one on-time event right after the first empty mailbox claim. */
+class AppendAfterEmptyClaimBackend extends MemoryBackend {
+  lateEvent: RunEventEnvelope | null = null;
+
+  override async claimRunEventForWait(
+    runId: string,
+    waitId: string,
+    eventName: string,
+    cutoff?: Date,
+  ): Promise<RunEventEnvelope | null> {
+    const event = await super.claimRunEventForWait(runId, waitId, eventName, cutoff);
+    const late = this.lateEvent;
+    if (event === null && late) {
+      this.lateEvent = null;
+      await this.appendRunEvent(runId, late);
+    }
+    return event;
+  }
+}
+
+/** Appends one on-time event just before the first expiry claim commits. */
+class AppendBeforeExpiryClaimBackend extends MemoryBackend {
+  lateEvent: RunEventEnvelope | null = null;
+
+  override async resolvePendingEventWait(
+    runId: string,
+    waitId: string,
+    status: "delivered" | "expired" | "cancelled",
+    unlessBuffered?: { eventName: string; publishedBefore: Date },
+  ): Promise<boolean> {
+    const late = this.lateEvent;
+    if (status === "expired" && late) {
+      this.lateEvent = null;
+      await this.appendRunEvent(runId, late);
+    }
+    return super.resolvePendingEventWait(runId, waitId, status, unlessBuffered);
+  }
+}
+
+/** A backend written against the three-argument resolve: it ignores the cutoff. */
+class CutoffIgnoringAppendBeforeExpiryClaimBackend extends AppendBeforeExpiryClaimBackend {
+  override resolvePendingEventWait(
+    runId: string,
+    waitId: string,
+    status: "delivered" | "expired" | "cancelled",
+  ): Promise<boolean> {
+    return super.resolvePendingEventWait(runId, waitId, status);
+  }
+}
+
 class FailFirstDeliveryRunReadBackend extends MemoryBackend {
   private rejectDeliveryRead = false;
   private failedOnce = false;
@@ -3603,6 +3653,123 @@ describe("WorkflowClient durable event waits", () => {
     assertEquals((await backend.getRun("scoped-expiry"))?.status, "failed");
     assertEquals((await backend.getRun("unrelated-expiry"))?.status, "waiting");
     assertEquals((await backend.getPendingEventWaits("unrelated-expiry")).length, 1);
+  });
+
+  it("expires an event wait at its exact deadline without expiring a future wait", async () => {
+    using _time = new FakeTime(new Date("2026-09-30T12:00:00.000Z"));
+    for (const id of ["scoped-expiry", "unrelated-expiry"]) {
+      await backend.createRun({
+        id,
+        workflowId: "event-expiry",
+        status: "waiting",
+        input: {},
+        nodeStates: { event: { nodeId: "event", status: "running", attempt: 1 } },
+        currentNodes: [],
+        context: { input: {} },
+        checkpoints: [],
+        pendingApprovals: [],
+        createdAt: new Date(0),
+        sourceIntegrationPolicy: UNRESTRICTED_SOURCE_INTEGRATION_POLICY,
+      });
+      await backend.savePendingEventWait(id, {
+        id: `wait_${id}`,
+        runId: id,
+        nodeId: "event",
+        eventName: "ready",
+        waitKind: "event",
+        requestedAt: new Date(0),
+        expiresAt: new Date(Date.now() + (id === "scoped-expiry" ? 0 : 1)),
+        status: "pending",
+      });
+    }
+    await client.getEventWaitManager().checkExpiredEventWaits();
+    assertEquals((await backend.getRun("scoped-expiry"))?.status, "failed");
+    assertEquals((await backend.getRun("unrelated-expiry"))?.status, "waiting");
+    assertEquals((await backend.getPendingEventWaits("unrelated-expiry")).length, 1);
+  });
+
+  it("expires an unmatched event wait while draining at its exact deadline", async () => {
+    using _time = new FakeTime(new Date("2026-09-30T12:00:00.000Z"));
+    for (const id of ["drained-due", "drained-future"]) {
+      await backend.createRun({
+        id,
+        workflowId: "event-expiry",
+        status: "waiting",
+        input: {},
+        nodeStates: { event: { nodeId: "event", status: "running", attempt: 1 } },
+        currentNodes: [],
+        context: { input: {} },
+        checkpoints: [],
+        pendingApprovals: [],
+        createdAt: new Date(0),
+        sourceIntegrationPolicy: UNRESTRICTED_SOURCE_INTEGRATION_POLICY,
+      });
+      await backend.savePendingEventWait(id, {
+        id: `wait_${id}`,
+        runId: id,
+        nodeId: "event",
+        eventName: "ready",
+        waitKind: "event",
+        requestedAt: new Date(0),
+        expiresAt: new Date(Date.now() + (id === "drained-due" ? 0 : 1)),
+        status: "pending",
+      });
+    }
+    for (const id of ["drained-due", "drained-future"]) {
+      await client.getEventWaitManager().drainPendingEvents(id);
+    }
+    assertEquals((await backend.getRun("drained-due"))?.status, "failed");
+    assertEquals((await backend.getRun("drained-future"))?.status, "waiting");
+    assertEquals((await backend.getPendingEventWaits("drained-future")).length, 1);
+  });
+
+  it("delivers an event appended at the deadline after the drain's empty claim", async () => {
+    using _time = new FakeTime(new Date("2026-09-30T12:00:00.000Z"));
+    const racingBackend = new AppendAfterEmptyClaimBackend();
+    const racingClient = createWorkflowClient({ backend: racingBackend });
+    try {
+      const runId = "drained-due-late-append";
+      const deadline = new Date(Date.now());
+      await racingBackend.createRun({
+        id: runId,
+        workflowId: "event-expiry",
+        status: "waiting",
+        input: {},
+        nodeStates: { event: { nodeId: "event", status: "running", attempt: 1 } },
+        currentNodes: [],
+        context: { input: {} },
+        checkpoints: [],
+        pendingApprovals: [],
+        createdAt: new Date(0),
+        sourceIntegrationPolicy: UNRESTRICTED_SOURCE_INTEGRATION_POLICY,
+      });
+      await racingBackend.savePendingEventWait(runId, {
+        id: `wait_${runId}`,
+        runId,
+        nodeId: "event",
+        eventName: "ready",
+        waitKind: "event",
+        requestedAt: new Date(0),
+        expiresAt: deadline,
+        status: "pending",
+      });
+      // Another process appends at the deadline millisecond, after the drain's
+      // atomic claim found the mailbox empty but before it expires the wait.
+      racingBackend.lateEvent = {
+        id: "evt-drained-due-late-append",
+        eventName: "ready",
+        payload: { arrived: "at-deadline" },
+        publishedAt: deadline,
+      };
+
+      await racingClient.getEventWaitManager().drainPendingEvents(runId);
+
+      assertEquals(racingBackend.lateEvent, null);
+      assertEquals(await racingBackend.peekRunEvent(runId, "ready"), null);
+      assert((await racingBackend.getRun(runId))?.status !== "failed");
+    } finally {
+      await racingClient.destroy();
+    }
   });
 
   it("continues recovered-run drains after one run fails", async () => {
@@ -5978,6 +6145,118 @@ describe("WorkflowClient durable event waits", () => {
     assertEquals(await client.retryEventDelivery(runId, "gate.ready"), true);
     await waitFor(async () => (await client.getRun(runId))?.status === "completed");
   });
+
+  it("delivers undrained mail published at the deadline when the sweep finds the wait due", async () => {
+    client.register(workflow({
+      id: "deadline-buffered-event",
+      steps: [waitForEvent("gate", { eventName: "gate.ready", timeout: "1h" })],
+    }));
+    const runId = "run_deadline_buffered_event";
+    const deadline = new Date(Date.now() - 10);
+    await backend.createRun({
+      id: runId,
+      workflowId: "deadline-buffered-event",
+      status: "waiting",
+      input: {},
+      nodeStates: {
+        gate: { nodeId: "gate", status: "running", attempt: 1, startedAt: new Date(0) },
+      },
+      currentNodes: ["gate"],
+      context: { input: {} },
+      checkpoints: [],
+      pendingApprovals: [],
+      createdAt: new Date(0),
+      sourceIntegrationPolicy: UNRESTRICTED_SOURCE_INTEGRATION_POLICY,
+    });
+    await backend.savePendingEventWait(runId, {
+      id: "wait-deadline-buffered-event",
+      runId,
+      nodeId: "gate",
+      eventName: "gate.ready",
+      waitKind: "event",
+      requestedAt: new Date(0),
+      expiresAt: deadline,
+      status: "pending",
+    });
+    // The publisher appended at the deadline and exited before draining.
+    await backend.appendRunEvent(runId, {
+      id: "evt-deadline-buffered-event",
+      eventName: "gate.ready",
+      payload: { arrived: "at-deadline" },
+      publishedAt: deadline,
+    });
+
+    await client.getEventWaitManager().checkExpiredEventWaits(runId);
+
+    await waitFor(async () => (await client.getRun(runId))?.status === "completed", {
+      message: "the sweep expired a wait whose event arrived at the deadline",
+    });
+  });
+
+  for (
+    const [label, createRacingBackend] of [
+      ["", () => new AppendBeforeExpiryClaimBackend()],
+      [
+        " on a backend that ignores the expiry cutoff",
+        () => new CutoffIgnoringAppendBeforeExpiryClaimBackend(),
+      ],
+    ] as const
+  ) {
+    it(`delivers mail stamped at the deadline that lands after the sweep's last mailbox check${label}`, async () => {
+      const racingBackend = createRacingBackend();
+      const racingClient = createWorkflowClient({ backend: racingBackend });
+      racingClient.register(workflow({
+        id: "deadline-late-landing-event",
+        steps: [waitForEvent("gate", { eventName: "gate.ready", timeout: "1h" })],
+      }));
+      try {
+        const runId = "run_deadline_late_landing_event";
+        const deadline = new Date(Date.now() - 10);
+        await racingBackend.createRun({
+          id: runId,
+          workflowId: "deadline-late-landing-event",
+          status: "waiting",
+          input: {},
+          nodeStates: {
+            gate: { nodeId: "gate", status: "running", attempt: 1, startedAt: new Date(0) },
+          },
+          currentNodes: ["gate"],
+          context: { input: {} },
+          checkpoints: [],
+          pendingApprovals: [],
+          createdAt: new Date(0),
+          sourceIntegrationPolicy: UNRESTRICTED_SOURCE_INTEGRATION_POLICY,
+        });
+        await racingBackend.savePendingEventWait(runId, {
+          id: "wait-deadline-late-landing-event",
+          runId,
+          nodeId: "gate",
+          eventName: "gate.ready",
+          waitKind: "event",
+          requestedAt: new Date(0),
+          expiresAt: deadline,
+          status: "pending",
+        });
+        // A publisher stamped the event at the deadline, and its append lands
+        // after the sweep's drain and peek but before the expiry claim commits.
+        racingBackend.lateEvent = {
+          id: "evt-deadline-late-landing-event",
+          eventName: "gate.ready",
+          payload: { arrived: "at-deadline" },
+          publishedAt: deadline,
+        };
+
+        await racingClient.getEventWaitManager().checkExpiredEventWaits(runId);
+
+        assertEquals(racingBackend.lateEvent, null);
+        await waitFor(async () => (await racingBackend.getRun(runId))?.status === "completed", {
+          message: "the expiry claim won over an event stamped at the deadline",
+        });
+      } finally {
+        await racingClient.destroy();
+      }
+    });
+  }
 
   it("claims on-time buffered mail before its deadline timer expires the wait", async () => {
     client.register(workflow({

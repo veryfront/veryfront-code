@@ -18,6 +18,7 @@ import {
   assertThrows,
 } from "#veryfront/testing/assert.ts";
 import { beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
+import { FakeTime } from "#std/testing/time";
 import { __subscribeLogRecordEmitter, type LogEntry } from "#veryfront/utils/logger/logger.ts";
 import { createWorkflowClient, type WorkflowClient } from "../../api/workflow-client.ts";
 import { dependsOn, workflow } from "../../dsl/workflow.ts";
@@ -8043,6 +8044,25 @@ describe("RedisBackend", () => {
       const results = await backend.listPendingApprovals({ status: "pending" });
       assertEquals(results.length, 1);
       assertEquals(results[0]!.approval.id, "ap-x");
+    });
+
+    it("lists an approval as expired at its exact deadline", async () => {
+      using _time = new FakeTime(new Date("2026-09-30T12:00:00.000Z"));
+      await backend.createRun(createTestRun("run-expired-boundary"));
+      for (const [id, offset] of [["due", 0], ["future", 1]] as const) {
+        await backend.savePendingApproval("run-expired-boundary", {
+          id: `approval-${id}`,
+          nodeId: id,
+          message: "Review",
+          requestedAt: new Date(Date.now() - 1_000),
+          expiresAt: new Date(Date.now() + offset),
+          status: "pending",
+        });
+      }
+
+      const expired = await backend.listPendingApprovals({ status: "expired" });
+
+      assertEquals(expired.map(({ approval }) => approval.id), ["approval-due"]);
     });
   });
 
