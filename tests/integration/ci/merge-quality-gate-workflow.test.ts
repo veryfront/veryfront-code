@@ -9,6 +9,9 @@ const WORKFLOW_PATH = new URL(
   "../../../.github/workflows/cicd.yml",
   import.meta.url,
 );
+// Cancellation runs from an immutable main commit, never the queued revision.
+const TRUSTED_CANCELLATION_WORKFLOW =
+  "veryfront/veryfront-code/.github/workflows/cancel-failed-merge-group.yml@29b0bef58e94113b7e8756358559fe07e0f24271";
 const REQUIRED_DEPENDENCIES = [
   "ci",
   "coverage",
@@ -862,6 +865,58 @@ done
 });
 
 describe("trusted merge-group cancellation workflow", () => {
+  it("observes every merge and artifact gate prerequisite independently without privileged test jobs", async () => {
+    const jobs = asRecord((await readWorkflow()).jobs, "workflow jobs");
+    const artifactGate = asRecord(jobs["quality-gate-artifact"], "artifact quality gate");
+    const ancestors = new Set<string>();
+    const visit = (name: string) => {
+      if (ancestors.has(name)) return;
+      ancestors.add(name);
+      for (const dependency of jobNeeds(asRecord(jobs[name], name), name)) visit(dependency);
+    };
+    for (const name of REQUIRED_DEPENDENCIES) visit(name);
+    for (const name of jobNeeds(artifactGate, "quality-gate-artifact")) visit(name);
+    for (const name of ["tests-npm-install-smoke", "tests-runtime-critical-flow"]) {
+      assert(ancestors.has(name), `${name} must be observed`);
+    }
+    for (const name of ancestors) {
+      const observer = asRecord(jobs[`cancel-after-${name}`], `${name} failure observer`);
+      assertEquals(observer.needs, [name]);
+      assertEquals(observer.if, "${{ failure() && github.event_name == 'merge_group' }}");
+      assertEquals(observer.uses, TRUSTED_CANCELLATION_WORKFLOW);
+      assertEquals(observer.permissions, { actions: "write" });
+      assertEquals(observer.steps, undefined);
+      const target = asRecord(jobs[name], name);
+      const permissions = target.permissions === undefined
+        ? {}
+        : asRecord(target.permissions, `${name} permissions`);
+      assertEquals(
+        permissions.actions === "write",
+        false,
+        `${name} must not gain cancellation privileges`,
+      );
+      if (target.strategy !== undefined) {
+        assertEquals(
+          asRecord(target.strategy, `${name} matrix`)["fail-fast"],
+          "${{ github.event_name == 'merge_group' }}",
+        );
+      }
+    }
+  });
+
+  it("never runs a cancellation workflow from the queued revision", async () => {
+    const jobs = asRecord((await readWorkflow()).jobs, "workflow jobs");
+    for (const [name, job] of Object.entries(jobs)) {
+      const uses = asRecord(job, name).uses;
+      if (typeof uses !== "string" || !uses.includes("cancel-failed-merge-group")) continue;
+      assertEquals(
+        uses,
+        TRUSTED_CANCELLATION_WORKFLOW,
+        `${name} must use the pinned trusted workflow`,
+      );
+    }
+  });
+
   it("force-cancels only merge-group runs without checkout or repository code", async () => {
     const workflow = asRecord(
       parse(await readRepoFile(".github/workflows/cancel-failed-merge-group.yml")),

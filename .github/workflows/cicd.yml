@@ -95,7 +95,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     strategy:
-      fail-fast: false
+      fail-fast: ${{ github.event_name == 'merge_group' }}
       matrix:
         check: [test-layout, format, lint, typecheck, test-typecheck]
     steps:
@@ -183,7 +183,7 @@ jobs:
     timeout-minutes: 35
     name: "tests (integration shard ${{ matrix.shard }}/2)"
     strategy:
-      fail-fast: false
+      fail-fast: ${{ github.event_name == 'merge_group' }}
       matrix:
         shard: [1, 2]
     steps:
@@ -290,7 +290,7 @@ jobs:
     timeout-minutes: 20
     name: "tests (node shard ${{ matrix.shard }}/2)"
     strategy:
-      fail-fast: false
+      fail-fast: ${{ github.event_name == 'merge_group' }}
       matrix:
         shard: [1, 2]
     steps:
@@ -426,7 +426,7 @@ jobs:
     timeout-minutes: 20
     name: "tests (runtime critical flow: ${{ matrix.runtime }})"
     strategy:
-      fail-fast: false
+      fail-fast: ${{ github.event_name == 'merge_group' }}
       matrix:
         runtime: [deno, node, bun]
     steps:
@@ -499,7 +499,7 @@ jobs:
     timeout-minutes: 20
     name: coverage shard ${{ matrix.shard }}/4
     strategy:
-      fail-fast: false
+      fail-fast: ${{ github.event_name == 'merge_group' }}
       matrix:
         shard: [1, 2, 3, 4]
     steps:
@@ -895,6 +895,150 @@ jobs:
           command: |
             VERYFRONT_BINARY_FRESH=1 deno task test:e2e:binary
 
+  # Failure observers have one prerequisite each, so they never wait for
+  # unrelated tests or Sonar. Only these no-checkout jobs can cancel runs, and
+  # they run the callee pinned to an immutable reviewed main commit, never the queued
+  # revision; jobs executing repository code keep their read permissions.
+  cancel-after-ci:
+    needs: [ci]
+    if: ${{ failure() && github.event_name == 'merge_group' }}
+    permissions:
+      actions: write
+    uses: veryfront/veryfront-code/.github/workflows/cancel-failed-merge-group.yml@29b0bef58e94113b7e8756358559fe07e0f24271
+
+  cancel-after-coverage:
+    needs: [coverage]
+    if: ${{ failure() && github.event_name == 'merge_group' }}
+    permissions:
+      actions: write
+    uses: veryfront/veryfront-code/.github/workflows/cancel-failed-merge-group.yml@29b0bef58e94113b7e8756358559fe07e0f24271
+
+  cancel-after-tests:
+    needs: [tests]
+    if: ${{ failure() && github.event_name == 'merge_group' }}
+    permissions:
+      actions: write
+    uses: veryfront/veryfront-code/.github/workflows/cancel-failed-merge-group.yml@29b0bef58e94113b7e8756358559fe07e0f24271
+
+  cancel-after-tests-node:
+    needs: [tests-node]
+    if: ${{ failure() && github.event_name == 'merge_group' }}
+    permissions:
+      actions: write
+    uses: veryfront/veryfront-code/.github/workflows/cancel-failed-merge-group.yml@29b0bef58e94113b7e8756358559fe07e0f24271
+
+  cancel-after-tests-node-sandbox:
+    needs: [tests-node-sandbox]
+    if: ${{ failure() && github.event_name == 'merge_group' }}
+    permissions:
+      actions: write
+    uses: veryfront/veryfront-code/.github/workflows/cancel-failed-merge-group.yml@29b0bef58e94113b7e8756358559fe07e0f24271
+
+  cancel-after-tests-bun:
+    needs: [tests-bun]
+    if: ${{ failure() && github.event_name == 'merge_group' }}
+    permissions:
+      actions: write
+    uses: veryfront/veryfront-code/.github/workflows/cancel-failed-merge-group.yml@29b0bef58e94113b7e8756358559fe07e0f24271
+
+  cancel-after-tests-binary-e2e:
+    needs: [tests-binary-e2e]
+    if: ${{ failure() && github.event_name == 'merge_group' }}
+    permissions:
+      actions: write
+    uses: veryfront/veryfront-code/.github/workflows/cancel-failed-merge-group.yml@29b0bef58e94113b7e8756358559fe07e0f24271
+
+  cancel-after-tests-e2e-rsc-browser:
+    needs: [tests-e2e-rsc-browser]
+    if: ${{ failure() && github.event_name == 'merge_group' }}
+    permissions:
+      actions: write
+    uses: veryfront/veryfront-code/.github/workflows/cancel-failed-merge-group.yml@29b0bef58e94113b7e8756358559fe07e0f24271
+
+  cancel-after-sonar-quality-gate:
+    needs: [sonar-quality-gate]
+    if: ${{ failure() && github.event_name == 'merge_group' }}
+    permissions:
+      actions: write
+    uses: veryfront/veryfront-code/.github/workflows/cancel-failed-merge-group.yml@29b0bef58e94113b7e8756358559fe07e0f24271
+
+  cancel-after-tested-run:
+    needs: [tested-run]
+    if: ${{ failure() && github.event_name == 'merge_group' }}
+    permissions:
+      actions: write
+    uses: veryfront/veryfront-code/.github/workflows/cancel-failed-merge-group.yml@29b0bef58e94113b7e8756358559fe07e0f24271
+
+  cancel-after-coverage-shards:
+    needs: [coverage-shards]
+    if: ${{ failure() && github.event_name == 'merge_group' }}
+    permissions:
+      actions: write
+    uses: veryfront/veryfront-code/.github/workflows/cancel-failed-merge-group.yml@29b0bef58e94113b7e8756358559fe07e0f24271
+
+  cancel-after-tests-integration:
+    needs: [tests-integration]
+    if: ${{ failure() && github.event_name == 'merge_group' }}
+    permissions:
+      actions: write
+    uses: veryfront/veryfront-code/.github/workflows/cancel-failed-merge-group.yml@29b0bef58e94113b7e8756358559fe07e0f24271
+
+  cancel-after-npm-compatibility-artifact:
+    needs: [npm-compatibility-artifact]
+    if: ${{ failure() && github.event_name == 'merge_group' }}
+    permissions:
+      actions: write
+    uses: veryfront/veryfront-code/.github/workflows/cancel-failed-merge-group.yml@29b0bef58e94113b7e8756358559fe07e0f24271
+
+  cancel-after-npm-smoke-node-versions:
+    needs: [npm-smoke-node-versions]
+    if: ${{ failure() && github.event_name == 'merge_group' }}
+    permissions:
+      actions: write
+    uses: veryfront/veryfront-code/.github/workflows/cancel-failed-merge-group.yml@29b0bef58e94113b7e8756358559fe07e0f24271
+
+  cancel-after-tests-npm-install-smoke:
+    needs: [tests-npm-install-smoke]
+    if: ${{ failure() && github.event_name == 'merge_group' }}
+    permissions:
+      actions: write
+    uses: veryfront/veryfront-code/.github/workflows/cancel-failed-merge-group.yml@29b0bef58e94113b7e8756358559fe07e0f24271
+
+  cancel-after-tests-runtime-critical-flow:
+    needs: [tests-runtime-critical-flow]
+    if: ${{ failure() && github.event_name == 'merge_group' }}
+    permissions:
+      actions: write
+    uses: veryfront/veryfront-code/.github/workflows/cancel-failed-merge-group.yml@29b0bef58e94113b7e8756358559fe07e0f24271
+
+  cancel-after-sonar:
+    needs: [sonar]
+    if: ${{ failure() && github.event_name == 'merge_group' }}
+    permissions:
+      actions: write
+    uses: veryfront/veryfront-code/.github/workflows/cancel-failed-merge-group.yml@29b0bef58e94113b7e8756358559fe07e0f24271
+
+  cancel-after-sonar-coverage:
+    needs: [sonar-coverage]
+    if: ${{ failure() && github.event_name == 'merge_group' }}
+    permissions:
+      actions: write
+    uses: veryfront/veryfront-code/.github/workflows/cancel-failed-merge-group.yml@29b0bef58e94113b7e8756358559fe07e0f24271
+
+  cancel-after-coverage-node-executor:
+    needs: [coverage-node-executor]
+    if: ${{ failure() && github.event_name == 'merge_group' }}
+    permissions:
+      actions: write
+    uses: veryfront/veryfront-code/.github/workflows/cancel-failed-merge-group.yml@29b0bef58e94113b7e8756358559fe07e0f24271
+
+  cancel-after-coverage-integration-client:
+    needs: [coverage-integration-client]
+    if: ${{ failure() && github.event_name == 'merge_group' }}
+    permissions:
+      actions: write
+    uses: veryfront/veryfront-code/.github/workflows/cancel-failed-merge-group.yml@29b0bef58e94113b7e8756358559fe07e0f24271
+
   quality-gate-merge:
     name: quality gate (merge)
     runs-on: ubuntu-latest
@@ -993,7 +1137,7 @@ jobs:
     timeout-minutes: 30
     name: "tests (npm install smoke: Node ${{ matrix.node-version }})"
     strategy:
-      fail-fast: false
+      fail-fast: ${{ github.event_name == 'merge_group' }}
       matrix:
         node-version: ${{ fromJSON(needs.npm-smoke-node-versions.outputs.node_versions) }}
     steps:
