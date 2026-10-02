@@ -75,9 +75,11 @@ async function waitFor(condition: () => boolean, timeoutMs = 3000): Promise<void
  * to `onMouseEnter` on its continuous lane, which its Scheduler renders later:
  * on host macrotasks under Bun and Node, and through the global `setTimeout`
  * (so the fake clock) under Deno's esm.sh build. A probe update on the default
- * lane renders no earlier than that work, and React runs the probe's passive
- * effect only after every earlier passive cleanup, including the paused toast
- * timer's. That effect is a barrier that never advances time.
+ * lane renders in the same batch as that work or after it, and React runs the
+ * probe's passive effect only after every passive cleanup in that batch,
+ * including the paused toast timer's. That effect is a barrier that never
+ * advances time. Call `settle()` outside `flushSync` and event handlers, or the
+ * probe update takes the sync lane and commits ahead of the queued work.
  */
 function createReactSettler(
   hostSetTimeout: typeof setTimeout,
@@ -98,7 +100,8 @@ function createReactSettler(
     return null;
   }
   async function settle(): Promise<void> {
-    request!(++requested);
+    if (!request) throw new Error("Render <SettleProbe /> before settling React");
+    request(++requested);
     for (let yields = 0; settled !== requested; yields++) {
       if (yields >= 1000) throw new Error("React did not settle queued toast work");
       runDueTimers();
