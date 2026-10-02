@@ -110,7 +110,155 @@ async function loggedNpmCalls(npmLog: string): Promise<string[]> {
   return (await Deno.readTextFile(npmLog)).trim().split("\n");
 }
 
+function shellFailureDiagnostics(
+  output: Deno.CommandOutput,
+  packageDir: string,
+  npmLog: string,
+): string {
+  const sanitize = (text: string): string =>
+    text
+      .replace(/Bearer\s+[^\s]+/g, "Bearer <REDACTED>")
+      .replace(/([?&]token=|_authToken=)[^\s&]+/g, "$1<REDACTED>")
+      .replaceAll(packageDir, "<package>")
+      .replaceAll(npmLog, "<npm-log>")
+      .replaceAll(scriptPath, "<publish-script>");
+  const bound = (text: string): string =>
+    text.length > 2_048 ? `${text.slice(0, 1_024)}\n<omitted>\n${text.slice(-1_024)}` : text;
+  return `shell exit=${output.code}\nstdout:\n${
+    bound(sanitize(decoder.decode(output.stdout)))
+  }\nstderr:\n${bound(sanitize(decoder.decode(output.stderr)))}`;
+}
+
 describe("npm package publishing", () => {
+  for (
+    const [current, candidate, expectedTag] of [
+      ["0.1.2-rc.201", "0.1.2-rc.200", "rc-history"],
+      ["0.1.2-rc.200", "0.1.2-rc.201", "rc"],
+      ["0.1.2-rc.201", "0.1.2-rc.201", "rc"],
+      ["0.1.10-rc.1", "0.1.9-rc.999", "rc-history"],
+      ["0.1.2-rc.1000", "0.1.2-rc.999", "rc-history"],
+      ["", "0.1.2-rc.200", "rc"],
+      ["0.1.2-beta.201", "0.1.2-beta.200", "rc-history"],
+      ["0.1.2-rc.preview.200", "0.1.2-rc.preview.201", "rc"],
+      ["0.1.2-alpha.10.200", "0.1.2-alpha.9.999", "rc-history"],
+      ["0.1.2-beta.200", "0.1.2-rc.1", "rc"],
+      ["0.1.2-rc.preview.200", "0.1.2-rc.999", "rc-history"],
+      ["0.1.2-rc.1.200", "0.1.2-rc.1.preview.1", "rc"],
+    ]
+  ) {
+    it(`keeps rc monotonic when ${candidate} follows ${current || "no tag"}`, async () => {
+      const output = await runBash(
+        [
+          "set -euo pipefail",
+          'source "$SCRIPT_PATH"',
+          'npm() { echo "$CURRENT_TAGS"; }',
+          "rc_tag_for_package veryfront",
+        ].join("\n"),
+        { CURRENT_TAGS: current ? `rc: ${current}` : "", VERSION: candidate! },
+      );
+      assertEquals(output.code, 0, decoder.decode(output.stderr));
+      assertEquals(decoder.decode(output.stdout).trim(), expectedTag);
+    });
+  }
+
+  it("fails closed on an unavailable rc tag lookup", async () => {
+    const output = await runBash(
+      [
+        "set -euo pipefail",
+        'source "$SCRIPT_PATH"',
+        'npm() { echo "npm error code E503" >&2; return 1; }',
+        "rc_tag_for_package veryfront",
+      ].join("\n"),
+      { VERSION: "0.1.2-rc.200" },
+    );
+    assertEquals(output.code, 1);
+    assertStringIncludes(decoder.decode(output.stderr), "rc tag lookup failed");
+  });
+
+  for (const current of ["0.1.2", "0.1.2-rc..200", "0.1.2-rc.0201"]) {
+    it(`rejects unexpected rc tag ${current}`, async () => {
+      const output = await runBash(
+        [
+          "set -euo pipefail",
+          'source "$SCRIPT_PATH"',
+          'npm() { echo "$CURRENT_TAGS"; }',
+          "rc_tag_for_package veryfront",
+        ].join("\n"),
+        { CURRENT_TAGS: `rc: ${current}`, VERSION: "0.1.2-rc.200" },
+      );
+      assertEquals(output.code === 0, false);
+    });
+  }
+
+  it("publishes an older immutable RC after a newer one without moving rc backwards", async () => {
+    await withPackageFixture("veryfront", async ({ packageDir, npmLog }) => {
+      const tagState = `${packageDir}/rc-tag`;
+      await Deno.writeTextFile(tagState, "");
+      const output = await runBash(
+        [
+          "set -euo pipefail",
+          'source "$SCRIPT_PATH"',
+          "verify_npm_compatibility_artifact() { :; }",
+          'package_dirs() { echo "$PACKAGE_DIR"; }',
+          'canonical_tarball_for_package_dir() { echo "candidate-$VERSION.tgz"; }',
+          "npm() {",
+          LOG_NPM_CALL,
+          '  if [ "$1" = dist-tag ]; then tag=$(cat "$TAG_STATE"); if [ -n "$tag" ]; then echo "rc: $tag"; fi; return 0; fi',
+          '  if [ "$1" = view ]; then if [ "$3" = gitHead ]; then echo "$GITHUB_SHA"; return 0; fi; return 1; fi',
+          '  if [ "${!#}" = rc ]; then echo "$VERSION" > "$TAG_STATE"; fi',
+          "}",
+          "VERSION=0.1.2-rc.201; run_rc_publish",
+          "VERSION=0.1.2-rc.200; run_rc_publish",
+        ].join("\n"),
+        {
+          PACKAGE_DIR: packageDir,
+          NPM_LOG: npmLog,
+          TAG_STATE: tagState,
+          NPM_PACK_DIR: packageDir,
+          GITHUB_SHA: "expected-commit",
+        },
+      );
+      assertEquals(output.code, 0, decoder.decode(output.stderr));
+      assertEquals((await Deno.readTextFile(tagState)).trim(), "0.1.2-rc.201");
+      assertEquals(
+        (await loggedNpmCalls(npmLog)).filter((call) => call.startsWith("publish ")),
+        [
+          "publish candidate-0.1.2-rc.201.tgz --provenance --access public --tag rc",
+          "publish candidate-0.1.2-rc.200.tgz --provenance --access public --tag rc-history",
+        ],
+      );
+    });
+  });
+
+  it("waits for the RC tag write before releasing the publisher lock", async () => {
+    await withTempDir(async (stateDir) => {
+      const count = `${stateDir}/reads`;
+      await Deno.writeTextFile(count, "0");
+      const output = await runBash(
+        [
+          "set -euo pipefail",
+          'source "$SCRIPT_PATH"',
+          "sleep() { :; }",
+          "npm() {",
+          '  if [ "$1" = view ]; then echo "$GITHUB_SHA"; return; fi',
+          '  n=$(cat "$READ_COUNT"); n=$((n + 1)); echo "$n" > "$READ_COUNT"',
+          `  if [ "$n" -eq 1 ]; then echo 'rc: 0.1.2-rc.200'; else echo 'rc: 0.1.2-rc.201'; fi`,
+          "}",
+          "wait_for_npm_git_head veryfront rc",
+        ].join("\n"),
+        {
+          VERSION: "0.1.2-rc.201",
+          GITHUB_SHA: "expected-commit",
+          READ_COUNT: count,
+          NPM_GIT_HEAD_WAIT_ATTEMPTS: "2",
+          NPM_GIT_HEAD_WAIT_DELAY_SECONDS: "0",
+        },
+      );
+      assertEquals(output.code, 0, decoder.decode(output.stderr));
+      assertEquals((await Deno.readTextFile(count)).trim(), "2");
+    });
+  });
+
   it("publishes the canonical tarball without repacking the materialized package", async () => {
     await withTempDir(async (stateDir) => {
       const packageDir = `${stateDir}/npm`;
@@ -144,6 +292,8 @@ describe("npm package publishing", () => {
           "verify_npm_compatibility_artifact() { :; }",
           "package_dirs() { printf '%s\\n' \"$PACKAGE_DIR\"; }",
           "update_package_version() { return 97; }",
+          "rc_tag_for_package() { echo rc; }",
+          "wait_for_npm_git_head() { return 0; }",
           "npm() {",
           '  printf "%s\\n" "$*" >> "$NPM_LOG"',
           '  if [ "$1" = "view" ]; then return 1; fi',
@@ -1387,40 +1537,113 @@ describe("npm package publishing", () => {
     });
   }
 
-  it("does not poll registry metadata after identity-token retries are exhausted", async () => {
-    await withPackageFixture("@veryfront/ext-llm-google", async ({ packageDir, npmLog }) => {
-      const output = await runBash(
-        [
-          "set -euo pipefail",
-          'source "$SCRIPT_PATH"',
-          "npm() {",
-          LOG_NPM_CALL,
-          '  if [ "$1" = "publish" ]; then',
-          '    printf "%s\\n" "$IDENTITY_TOKEN_OUTPUT"',
-          "    return 1",
-          "  fi",
-          "  return 1",
-          "}",
-          "sleep() { :; }",
-          'rc_publish_package_dir "$PACKAGE_DIR" || echo "EXIT=$?"',
-        ].join("\n"),
-        {
-          IDENTITY_TOKEN_OUTPUT,
-          GITHUB_SHA: "0".repeat(40),
-          NPM_LOG: npmLog,
-          NPM_PUBLISH_CONFLICT_ATTEMPTS: "2",
-          NPM_PUBLISH_CONFLICT_DELAY_SECONDS: "0",
-          PACKAGE_DIR: packageDir,
-          VERSION: "0.1.0",
+  it("classifies diagnostic-heavy identity-token failures without SIGPIPE", async () => {
+    const output = await runBash(
+      [
+        "set -euo pipefail",
+        'source "$SCRIPT_PATH"',
+        'is_transient_publish_failure "$IDENTITY_TOKEN_OUTPUT"',
+        'is_identity_token_read_failure "$IDENTITY_TOKEN_OUTPUT"',
+      ].join("\n"),
+      {
+        IDENTITY_TOKEN_OUTPUT: `${IDENTITY_TOKEN_OUTPUT}\n${"diagnostic ".repeat(10_000)}`,
+      },
+    );
+    assertEquals(output.code, 0, `classifier shell exit=${output.code}`);
+  });
+
+  it("redacts credentials and fixture paths from shell assertion diagnostics", () => {
+    const diagnostics = shellFailureDiagnostics(
+      {
+        code: 1,
+        success: false,
+        signal: null,
+        stdout: new TextEncoder().encode(
+          "Bearer fixture-secret\nhttps://registry.example/?token=fixture-secret\n_authToken=fixture-secret",
+        ),
+        stderr: new TextEncoder().encode(
+          `${scriptPath}: /fixture/package /fixture/npm.log`,
+        ),
+      },
+      "/fixture/package",
+      "/fixture/npm.log",
+    );
+    assertStringIncludes(diagnostics, "shell exit=1");
+    assertStringIncludes(diagnostics, "Bearer <REDACTED>");
+    assertStringIncludes(diagnostics, "token=<REDACTED>");
+    assertStringIncludes(diagnostics, "_authToken=<REDACTED>");
+    assertStringIncludes(diagnostics, "<publish-script>: <package> <npm-log>");
+    assertEquals(diagnostics.includes("fixture-secret"), false);
+    assertEquals(diagnostics.includes("/fixture"), false);
+  });
+
+  for (
+    const [suffix, identityOutput] of [
+      ["", IDENTITY_TOKEN_OUTPUT],
+      [
+        " with diagnostic-heavy output",
+        `${IDENTITY_TOKEN_OUTPUT}\n${
+          "diagnostic ".repeat(10_000)
+        }\nBearer fixture-secret\nhttps://registry.example/?token=fixture-secret\n_authToken=fixture-secret`,
+      ],
+    ]
+  ) {
+    it(`does not poll registry metadata after identity-token retries are exhausted${suffix}`, async () => {
+      await withPackageFixture(
+        "@veryfront/ext-llm-google",
+        async ({ packageDir, npmLog }) => {
+          const output = await runBash(
+            [
+              "set -euo pipefail",
+              'source "$SCRIPT_PATH"',
+              "npm() {",
+              LOG_NPM_CALL,
+              '  if [ "$1" = "publish" ]; then',
+              '    printf "%s\\n" "$IDENTITY_TOKEN_OUTPUT"',
+              "    return 1",
+              "  fi",
+              "  return 1",
+              "}",
+              "sleep() { :; }",
+              'rc_publish_package_dir "$PACKAGE_DIR" || echo "EXIT=$?"',
+            ].join("\n"),
+            {
+              IDENTITY_TOKEN_OUTPUT: identityOutput!,
+              GITHUB_SHA: "0".repeat(40),
+              NPM_LOG: npmLog,
+              NPM_PUBLISH_CONFLICT_ATTEMPTS: "2",
+              NPM_PUBLISH_CONFLICT_DELAY_SECONDS: "0",
+              PACKAGE_DIR: packageDir,
+              VERSION: "0.1.0",
+            },
+          );
+
+          const diagnostics = shellFailureDiagnostics(
+            output,
+            packageDir,
+            npmLog,
+          );
+          assertStringIncludes(
+            decoder.decode(output.stdout),
+            "EXIT=1",
+            diagnostics,
+          );
+          const calls = await loggedNpmCalls(npmLog);
+          assertEquals(
+            calls.filter((line) => line.startsWith("publish ")).length,
+            2,
+            diagnostics,
+          );
+          assertEquals(
+            calls.filter((line) => line.startsWith("view ")).length,
+            7,
+            diagnostics,
+          );
+          assertEquals(diagnostics.includes("fixture-secret"), false);
         },
       );
-
-      assertStringIncludes(decoder.decode(output.stdout), "EXIT=1");
-      const calls = await loggedNpmCalls(npmLog);
-      assertEquals(calls.filter((line) => line.startsWith("publish ")).length, 2);
-      assertEquals(calls.filter((line) => line.startsWith("view ")).length, 7);
     });
-  });
+  }
 
   it("accepts a 409 whose publish already landed in rc_publish_package_dir", async () => {
     await withPackageFixture("@veryfront/ext-llm-google", async ({ packageDir, npmLog }) => {
@@ -1959,6 +2182,27 @@ describe("npm package publishing", () => {
   const ALREADY_PUBLISHED_OUTPUT =
     "npm error code E403\nnpm error 403 403 Forbidden - PUT https://registry.npmjs.org/@veryfront%2fext-llm-google - You cannot publish over the previously published versions: 0.1.0.";
 
+  it("drains diagnostic-heavy already-published classifier input under pipefail", async () => {
+    for (
+      const [message, expectedCode] of [
+        [ALREADY_PUBLISHED_OUTPUT, 0],
+        ["npm error unrelated rejection", 1],
+      ] as const
+    ) {
+      const output = await runBash(
+        [
+          "set -euo pipefail",
+          'source "$SCRIPT_PATH"',
+          "output=\"$MESSAGE\"$'\\n'",
+          'for ((index=0; index<10000; index++)); do output+=" diagnostic"; done',
+          'is_npm_version_already_published "$output"',
+        ].join("\n"),
+        { MESSAGE: message, VERSION: "0.1.0" },
+      );
+      assertEquals(output.code, expectedCode, decoder.decode(output.stderr));
+    }
+  });
+
   it("accepts an already-published retry rejection in rc_publish_package_dir", async () => {
     await withPackageFixture("@veryfront/ext-llm-google", async ({ packageDir, npmLog }) => {
       const output = await runBash(
@@ -2039,7 +2283,7 @@ describe("npm package publishing", () => {
           "  return 1",
         ]),
         {
-          ALREADY_PUBLISHED_OUTPUT,
+          ALREADY_PUBLISHED_OUTPUT: `${ALREADY_PUBLISHED_OUTPUT}\n${" diagnostic".repeat(10000)}`,
           CONFLICT_OUTPUT,
           GITHUB_SHA: "0".repeat(40),
           NPM_LOG: npmLog,
@@ -2129,77 +2373,90 @@ describe("npm package publishing", () => {
   // npm's write side can reject a reused name/version while its read replica
   // still reports the package absent. The RC path has no stable-release
   // fallback, so it has to poll instead of trusting one absent lookup.
-  it("polls for metadata when a raced retry is rejected as already published", async () => {
-    await withTempDir(async (stateDir) => {
-      const packageDir = `${stateDir}/package`;
-      const npmLog = `${stateDir}/npm.log`;
-      await Deno.mkdir(packageDir);
-      await Deno.writeTextFile(
-        `${packageDir}/package.json`,
-        JSON.stringify({ name: "@veryfront/ext-llm-google" }),
-      );
-      await Deno.writeTextFile(npmLog, "");
+  for (const diagnostics of ["", " diagnostic".repeat(10000)]) {
+    for (const registryHead of ["0".repeat(40), "1".repeat(40)]) {
+      it(`checks RC gitHead after already-published rejection (${diagnostics ? "heavy" : "short"}, ${registryHead.startsWith("0") ? "matching" : "mismatched"})`, async () => {
+        await withTempDir(async (stateDir) => {
+          const packageDir = `${stateDir}/package`;
+          const npmLog = `${stateDir}/npm.log`;
+          await Deno.mkdir(packageDir);
+          await Deno.writeTextFile(
+            `${packageDir}/package.json`,
+            JSON.stringify({ name: "@veryfront/ext-llm-google" }),
+          );
+          await Deno.writeTextFile(npmLog, "");
 
-      const output = await runBash(
-        [
-          "set -euo pipefail",
-          'source "$SCRIPT_PATH"',
-          // wait_for_npm_git_head sleeps between polls; keep the test bounded
-          "sleep() { :; }",
-          "npm() {",
-          '  printf "%s\\n" "$*" >> "$NPM_LOG"',
-          '  if [ "$1" = "publish" ]; then',
-          '    if [ "$(grep -c "^publish" "$NPM_LOG")" -eq 1 ]; then',
-          '      printf "%s\\n" "$CONFLICT_OUTPUT"',
-          "      return 1",
-          "    fi",
-          // the conflicted write landed, so npm refuses the immutable version
-          '    printf "%s\\n" "npm error code E403"',
-          '    printf "%s\\n" "npm error 403 You cannot publish over the previously published versions: 0.1.0"',
-          "    return 1",
-          "  fi",
-          // the read replica never exposes the version itself
-          '  if [ "$1" = "view" ] && [ "$3" = "version" ]; then return 1; fi',
-          '  if [ "$1" = "view" ] && [ "$3" = "gitHead" ]; then',
-          '    if [ "$(grep -c gitHead "$NPM_LOG")" -le 3 ]; then return 1; fi',
-          '    printf "%s\\n" "$GITHUB_SHA"',
-          "    return 0",
-          "  fi",
-          "  return 1",
-          "}",
-          'rc_publish_package_dir "$PACKAGE_DIR"',
-        ].join("\n"),
-        {
-          CONFLICT_OUTPUT,
-          GITHUB_SHA: "0".repeat(40),
-          NPM_LOG: npmLog,
-          NPM_PUBLISH_CONFLICT_ATTEMPTS: "3",
-          NPM_PUBLISH_CONFLICT_DELAY_SECONDS: "0",
-          PACKAGE_DIR: packageDir,
-          VERSION: "0.1.0",
-        },
-      );
+          const output = await runBash(
+            [
+              "set -euo pipefail",
+              'source "$SCRIPT_PATH"',
+              // wait_for_npm_git_head sleeps between polls; keep the test bounded
+              "sleep() { :; }",
+              "npm() {",
+              '  printf "%s\\n" "$*" >> "$NPM_LOG"',
+              '  if [ "$1" = "publish" ]; then',
+              '    if [ "$(grep -c "^publish" "$NPM_LOG")" -eq 1 ]; then',
+              '      printf "%s\\n" "$CONFLICT_OUTPUT"',
+              "      return 1",
+              "    fi",
+              // the conflicted write landed, so npm refuses the immutable version
+              '    printf "%s\\n" "npm error code E403"',
+              '    printf "%s\\n" "npm error 403 You cannot publish over the previously published versions: 0.1.0"',
+              '    printf "%s\\n" "$DIAGNOSTICS"',
+              "    return 1",
+              "  fi",
+              // the read replica never exposes the version itself
+              '  if [ "$1" = "view" ] && [ "$3" = "version" ]; then return 1; fi',
+              '  if [ "$1" = "view" ] && [ "$3" = "gitHead" ]; then',
+              '    if [ "$(grep -c gitHead "$NPM_LOG")" -le 3 ]; then return 1; fi',
+              '    printf "%s\\n" "$REGISTRY_HEAD"',
+              "    return 0",
+              "  fi",
+              "  return 1",
+              "}",
+              'rc_publish_package_dir "$PACKAGE_DIR"',
+            ].join("\n"),
+            {
+              CONFLICT_OUTPUT,
+              DIAGNOSTICS: diagnostics,
+              REGISTRY_HEAD: registryHead,
+              GITHUB_SHA: "0".repeat(40),
+              NPM_LOG: npmLog,
+              NPM_PUBLISH_CONFLICT_ATTEMPTS: "3",
+              NPM_PUBLISH_CONFLICT_DELAY_SECONDS: "0",
+              PACKAGE_DIR: packageDir,
+              VERSION: "0.1.0",
+            },
+          );
 
-      assertEquals(
-        output.code,
-        0,
-        `an already-published rejection after a handled conflict must poll for gitHead instead of failing the RC publish: ${
-          decoder.decode(output.stderr)
-        }`,
-      );
-      assertStringIncludes(
-        decoder.decode(output.stdout),
-        "landed despite an npm registry conflict",
-      );
-      const publishes = (await Deno.readTextFile(npmLog)).trim().split("\n")
-        .filter((line) => line.startsWith("publish"));
-      assertEquals(
-        publishes.length,
-        2,
-        `the RC publish must stop republishing once npm reports the version already exists, but issued: ${
-          publishes.join(", ")
-        }`,
-      );
-    });
-  });
+          assertEquals(
+            output.code,
+            registryHead.startsWith("0") ? 0 : 1,
+            `an already-published rejection after a handled conflict must poll for gitHead instead of failing the RC publish: ${
+              decoder.decode(output.stderr)
+            }`,
+          );
+          if (registryHead.startsWith("0")) {
+            assertStringIncludes(
+              decoder.decode(output.stdout),
+              "landed despite an npm registry conflict",
+            );
+          } else {
+            assertStringIncludes(decoder.decode(output.stderr), `instead of ${"0".repeat(40)}`);
+          }
+          const calls = await loggedNpmCalls(npmLog);
+          assertEquals(calls.filter((line) => line.includes(" gitHead")).length, 4);
+          const publishes = (await Deno.readTextFile(npmLog)).trim().split("\n")
+            .filter((line) => line.startsWith("publish"));
+          assertEquals(
+            publishes.length,
+            2,
+            `the RC publish must stop republishing once npm reports the version already exists, but issued: ${
+              publishes.join(", ")
+            }`,
+          );
+        });
+      });
+    }
+  }
 });

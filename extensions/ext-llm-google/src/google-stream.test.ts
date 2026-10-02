@@ -1,5 +1,6 @@
+import { type Stub, stub } from "#std/testing/mock";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
-import { describe, it } from "#veryfront/testing/bdd.ts";
+import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { ProviderRequestError } from "veryfront/provider/shared";
 import {
   extractGoogleUsage,
@@ -81,6 +82,13 @@ function createWarningCollector() {
     },
   };
 }
+
+const TEST_SCOPE = "11111111-1111-4111-8111-111111111111";
+let uuidStub: Stub<Crypto>;
+beforeEach(() => {
+  uuidStub = stub(crypto, "randomUUID", (): typeof TEST_SCOPE => TEST_SCOPE);
+});
+afterEach(() => uuidStub.restore());
 
 describe("ext-llm-google/google-stream", () => {
   for (
@@ -389,6 +397,7 @@ describe("ext-llm-google/google-stream", () => {
         finishReason: { unified: "tool-calls", raw: "STOP" },
         providerMetadata: {
           google: {
+            toolCallScope: TEST_SCOPE,
             rawAssistantParts: [signedThought, signedToolCall, unsignedToolCall],
           },
         },
@@ -410,14 +419,14 @@ describe("ext-llm-google/google-stream", () => {
     };
     const executableCode = {
       executableCode: {
-        id: "tool-2",
+        id: `tool-${TEST_SCOPE}-2`,
         language: "PYTHON",
         code: "print('ok')",
       },
     };
     const executionResult = {
       codeExecutionResult: {
-        id: "tool-2",
+        id: `tool-${TEST_SCOPE}-2`,
         outcome: "OUTCOME_OK",
         output: "ok\n",
       },
@@ -447,12 +456,12 @@ describe("ext-llm-google/google-stream", () => {
       ),
       [{
         type: "tool-call",
-        toolCallId: "tool-1",
+        toolCallId: `tool-${TEST_SCOPE}-1`,
         toolName: "lookup",
         input: '{"city":"Paris"}',
       }, {
         type: "tool-call",
-        toolCallId: "tool-2",
+        toolCallId: `tool-${TEST_SCOPE}-2`,
         toolName: "code_execution",
         input: '{"language":"PYTHON","code":"print(\'ok\')"}',
         providerExecuted: true,
@@ -462,7 +471,7 @@ describe("ext-llm-google/google-stream", () => {
       type: "finish",
       finishReason: { unified: "tool-calls", raw: "STOP" },
       providerMetadata: {
-        google: { rawAssistantParts },
+        google: { toolCallScope: TEST_SCOPE, rawAssistantParts },
       },
     });
 
@@ -476,24 +485,24 @@ describe("ext-llm-google/google-stream", () => {
             text: "Think",
           }, {
             type: "tool-call",
-            toolCallId: "tool-1",
+            toolCallId: `tool-${TEST_SCOPE}-1`,
             toolName: "lookup",
             input: { city: "Paris" },
           }, {
             type: "tool-call",
-            toolCallId: "tool-2",
+            toolCallId: `tool-${TEST_SCOPE}-2`,
             toolName: "code_execution",
             input: { language: "PYTHON", code: "print('ok')" },
             providerExecuted: true,
           }, {
             type: "tool-result",
-            toolCallId: "tool-2",
+            toolCallId: `tool-${TEST_SCOPE}-2`,
             toolName: "code_execution",
             result: { outcome: "OUTCOME_OK", output: "ok\n" },
             providerExecuted: true,
           }],
           providerMetadata: {
-            google: { rawAssistantParts },
+            google: { toolCallScope: TEST_SCOPE, rawAssistantParts },
           },
         }],
       },
@@ -535,7 +544,7 @@ describe("ext-llm-google/google-stream", () => {
       ),
       [{
         type: "tool-call",
-        toolCallId: "tool-0",
+        toolCallId: `tool-${TEST_SCOPE}-0`,
         toolName: "lookup",
         input: '{"city":"Paris"}',
       }],
@@ -575,10 +584,10 @@ describe("ext-llm-google/google-stream", () => {
     ].join("")));
 
     assertEquals(collectToolEventIdentities(parts), [
-      { type: "tool-call", toolCallId: "google-code-execution-0" },
-      { type: "tool-result", toolCallId: "google-code-execution-0" },
-      { type: "tool-call", toolCallId: "google-code-execution-1" },
-      { type: "tool-result", toolCallId: "google-code-execution-1" },
+      { type: "tool-call", toolCallId: `google-code-execution-${TEST_SCOPE}-0` },
+      { type: "tool-result", toolCallId: `google-code-execution-${TEST_SCOPE}-0` },
+      { type: "tool-call", toolCallId: `google-code-execution-${TEST_SCOPE}-1` },
+      { type: "tool-result", toolCallId: `google-code-execution-${TEST_SCOPE}-1` },
     ]);
 
     await assertRejects(
@@ -640,8 +649,8 @@ describe("ext-llm-google/google-stream", () => {
     ].join("")));
 
     assertEquals(collectToolEventIdentities(parts), [
-      { type: "tool-call", toolCallId: "google-code-execution-0" },
-      { type: "tool-result", toolCallId: "google-code-execution-0" },
+      { type: "tool-call", toolCallId: `google-code-execution-${TEST_SCOPE}-0` },
+      { type: "tool-result", toolCallId: `google-code-execution-${TEST_SCOPE}-0` },
     ]);
   });
 
@@ -663,7 +672,7 @@ describe("ext-llm-google/google-stream", () => {
                 },
               }, {
                 executableCode: {
-                  id: "tool-1",
+                  id: `tool-${TEST_SCOPE}-1`,
                   language: "PYTHON",
                   code: "print('collision')",
                 },
@@ -702,6 +711,7 @@ describe("ext-llm-google/google-stream", () => {
         finishReason: { unified: "stop", raw: "STOP" },
         providerMetadata: {
           google: {
+            toolCallScope: TEST_SCOPE,
             rawAssistantParts: [visibleText, signatureCarrier],
           },
         },
@@ -797,25 +807,25 @@ describe("ext-llm-google/google-stream", () => {
       },
       {
         type: "tool-input-start",
-        id: "google-code-execution-0",
+        id: `google-code-execution-${TEST_SCOPE}-0`,
         toolName: "code_execution",
         providerExecuted: true,
       },
       {
         type: "tool-input-delta",
-        id: "google-code-execution-0",
+        id: `google-code-execution-${TEST_SCOPE}-0`,
         delta: '{"language":"PYTHON","code":"while True: pass"}',
       },
       {
         type: "tool-call",
-        toolCallId: "google-code-execution-0",
+        toolCallId: `google-code-execution-${TEST_SCOPE}-0`,
         toolName: "code_execution",
         input: '{"language":"PYTHON","code":"while True: pass"}',
         providerExecuted: true,
       },
       {
         type: "tool-error",
-        toolCallId: "google-code-execution-0",
+        toolCallId: `google-code-execution-${TEST_SCOPE}-0`,
         toolName: "code_execution",
         error: {
           outcome: "OUTCOME_DEADLINE_EXCEEDED",
@@ -829,6 +839,7 @@ describe("ext-llm-google/google-stream", () => {
         finishReason: { unified: "stop", raw: "STOP" },
         providerMetadata: {
           google: {
+            toolCallScope: TEST_SCOPE,
             rawAssistantParts: [
               signedExecutableCode,
               successfulResult,
@@ -1024,7 +1035,7 @@ describe("ext-llm-google/google-stream", () => {
       type: "finish",
       finishReason: { unified: "tool-calls", raw: "STOP" },
       providerMetadata: {
-        google: { rawAssistantParts },
+        google: { toolCallScope: TEST_SCOPE, rawAssistantParts },
       },
     });
 
@@ -1040,7 +1051,7 @@ describe("ext-llm-google/google-stream", () => {
             input: {},
           }],
           providerMetadata: {
-            google: { rawAssistantParts },
+            google: { toolCallScope: TEST_SCOPE, rawAssistantParts },
           },
         }],
       },
@@ -1304,7 +1315,9 @@ describe("ext-llm-google/google-stream", () => {
       }),
       data({
         candidates: [{
-          content: { parts: [{ functionCall: { id: "tool-1", name: "lookup", args: {} } }] },
+          content: {
+            parts: [{ functionCall: { id: `tool-${TEST_SCOPE}-1`, name: "lookup", args: {} } }],
+          },
         }],
       }),
       data({ candidates: [{ finishReason: "STOP" }] }),
@@ -1315,7 +1328,7 @@ describe("ext-llm-google/google-stream", () => {
       parts
         .filter((part) => (part as { type?: string }).type === "tool-call")
         .map((part) => (part as { toolCallId: string }).toolCallId),
-      ["tool-2", "tool-1"],
+      [`tool-${TEST_SCOPE}-2`, `tool-${TEST_SCOPE}-1`],
     );
   });
 
@@ -1341,7 +1354,7 @@ describe("ext-llm-google/google-stream", () => {
     const toolCall = parts.find((part) => (part as { type?: string }).type === "tool-call") as {
       toolCallId: string;
     };
-    assertEquals(toolCall.toolCallId, `tool-${LONG_STREAM_CHUNKS + 1}`);
+    assertEquals(toolCall.toolCallId, `tool-${TEST_SCOPE}-${LONG_STREAM_CHUNKS + 1}`);
     const finish = parts.at(-1) as { providerMetadata?: Record<string, unknown> };
     const replay = readGoogleRawAssistantReplay(finish.providerMetadata);
     assertEquals(replay?.partIndexes, [0, 1, LONG_STREAM_CHUNKS + 1]);

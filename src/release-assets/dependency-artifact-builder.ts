@@ -894,6 +894,7 @@ export async function runDependencyArtifactBuild(
       failure_message: sanitizedFailureMessage(error),
     };
     await reportFailedResult(client, input, result);
+    deps.signal?.throwIfAborted();
     const durationMs = Math.max(0, now() - startedAt);
     recordMetric({
       event: "failure",
