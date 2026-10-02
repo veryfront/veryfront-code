@@ -1466,46 +1466,24 @@ jobs:
           deno task sbom:all --output-dir "dist/sbom-${VERSION}"
           deno task sbom --lock scripts/build/proxy-deno.lock --output "dist/sbom-${VERSION}/proxy.json"
 
-      - name: Create release GitHub App token
-        id: release-app-token
-        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
-        with:
-          client-id: ${{ vars.VERYFRONT_RELEASE_APP_CLIENT_ID }}
-          private-key: ${{ secrets.VERYFRONT_RELEASE_APP_PRIVATE_KEY }}
-          owner: veryfront
-          repositories: |
-            veryfront
-          permission-contents: write
-
-      - name: Create GitHub pre-release
+      - name: Prepare public release assets
         env:
           VERSION: ${{ steps.version.outputs.version }}
-          GH_TOKEN: ${{ steps.release-app-token.outputs.token }}
         run: |
-          # Collect available binaries dynamically (Windows build is optional)
-          BINARIES=()
-          for f in binaries/veryfront-*/veryfront-*; do
-            [ -f "$f" ] && BINARIES+=("$f")
+          mkdir -p dist/public-release
+          for file in binaries/veryfront-*/veryfront-* dist/sbom-${VERSION}/*.json; do
+            [ -f "$file" ] || continue
+            cp -- "$file" dist/public-release/
           done
-          SBOMS=()
-          for f in dist/sbom-${VERSION}/*.json; do
-            [ -f "$f" ] && SBOMS+=("$f")
-          done
-          echo "Available binaries: ${BINARIES[*]}"
-          echo "Available SBOMs: ${SBOMS[*]}"
+          cp scripts/install.sh dist/public-release/
 
-          bash scripts/ci/publish-github-release.sh \
-            --repo veryfront/veryfront \
-            --tag "v${VERSION}" \
-            --title "v${VERSION}" \
-            --notes '```bash
-          npx veryfront@rc
-          ```' \
-            --prerelease \
-            -- \
-            "${BINARIES[@]}" \
-            scripts/install.sh \
-            "${SBOMS[@]}"
+      - name: Upload public release assets
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: public-release-${{ github.sha }}
+          path: dist/public-release/
+          if-no-files-found: error
+          overwrite: true
 
   # ============================================
   # CD: Stable Release (clean semver only)
@@ -1544,20 +1522,9 @@ jobs:
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
           echo "Publishing stable: ${VERSION}"
 
-      - name: Create release GitHub App token
-        id: release-app-token
-        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
-        with:
-          client-id: ${{ vars.VERYFRONT_RELEASE_APP_CLIENT_ID }}
-          private-key: ${{ secrets.VERYFRONT_RELEASE_APP_PRIVATE_KEY }}
-          owner: veryfront
-          repositories: |
-            veryfront
-          permission-contents: write
-
       - name: Ensure stable version is unpublished
         env:
-          GH_TOKEN: ${{ steps.release-app-token.outputs.token }}
+          GH_TOKEN: ${{ github.token }}
           SOURCE_REPO_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           VERSION: ${{ steps.version.outputs.version }}
         run: |
@@ -1567,10 +1534,19 @@ jobs:
             echo "::error::Tag ${TAG} already exists on source repo. Bump deno.json before releasing."
             exit 1
           fi
-          if gh release view "${TAG}" --repo veryfront/veryfront &>/dev/null; then
-            echo "::error::Release ${TAG} already exists on veryfront/veryfront. Bump deno.json before releasing."
-            exit 1
-          fi
+          public_release_status=$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' \
+            "https://api.github.com/repos/veryfront/veryfront/releases/tags/${TAG}")
+          case "$public_release_status" in
+            200)
+              echo "::error::Release ${TAG} already exists on veryfront/veryfront. Bump deno.json before releasing."
+              exit 1
+              ;;
+            404) ;;
+            *)
+              echo "::error::Cannot verify public release absence (HTTP ${public_release_status})."
+              exit 1
+              ;;
+          esac
           if GH_TOKEN="${SOURCE_REPO_TOKEN}" gh release view "${TAG}" &>/dev/null; then
             echo "::error::Release ${TAG} already exists on source repo. Bump deno.json before releasing."
             exit 1
@@ -1631,8 +1607,60 @@ jobs:
           git push "https://x-access-token:${SOURCE_REPO_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "${TAG}"
           echo "Created tag ${TAG}"
 
-      - name: Create fresh release upload token
-        id: release-upload-token
+      - name: Prepare public release assets
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          mkdir -p dist/public-release
+          for file in binaries/veryfront-*/veryfront-* dist/sbom-${VERSION}/*.json; do
+            [ -f "$file" ] || continue
+            cp -- "$file" dist/public-release/
+          done
+          cp scripts/install.sh dist/public-release/
+          cp scripts/install.ps1 dist/public-release/
+          (cd dist/public-release && sha256sum veryfront-* install.sh install.ps1 > SHA256SUMS)
+
+      - name: Upload public release assets
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: public-release-${{ github.sha }}
+          path: dist/public-release/
+          if-no-files-found: error
+          overwrite: true
+
+  # App keys belong only on fresh runners that execute fixed workflow code.
+  # Downloaded publication assets are data and must never be executed.
+  publish-public-release:
+    if: ${{ always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && ((needs.version-check.outputs.is_stable == 'false' && needs.prerelease.result == 'success') || (needs.version-check.outputs.is_stable == 'true' && needs.release.result == 'success')) }}
+    needs: [prerelease, release, version-check]
+    runs-on: ubuntu-latest
+    environment: production
+    permissions:
+      contents: write
+    steps:
+      - name: Resolve published version
+        id: version
+        env:
+          IS_STABLE: ${{ needs.version-check.outputs.is_stable }}
+          RC_VERSION: ${{ needs.prerelease.outputs.version }}
+          STABLE_VERSION: ${{ needs.release.outputs.version }}
+        run: |
+          case "$IS_STABLE" in
+            true) version="$STABLE_VERSION" ;;
+            false) version="$RC_VERSION" ;;
+            *) exit 1 ;;
+          esac
+          [ -n "$version" ]
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Download public release assets
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: public-release-${{ github.sha }}
+          path: public-release-assets
+
+      - name: Create release GitHub App token
+        id: release-app-token
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         with:
           client-id: ${{ vars.VERYFRONT_RELEASE_APP_CLIENT_ID }}
@@ -1645,41 +1673,214 @@ jobs:
       - name: Create GitHub releases
         env:
           VERSION: ${{ steps.version.outputs.version }}
-          GH_TOKEN: ${{ steps.release-upload-token.outputs.token }}
+          IS_STABLE: ${{ needs.version-check.outputs.is_stable }}
+          GH_TOKEN: ${{ steps.release-app-token.outputs.token }}
         run: |
-          # Collect available binaries dynamically (Windows build is optional)
-          BINARIES=()
-          for f in binaries/veryfront-*/veryfront-*; do
-            [ -f "$f" ] && BINARIES+=("$f")
-          done
-          SBOMS=()
-          for f in dist/sbom-${VERSION}/*.json; do
-            [ -f "$f" ] && SBOMS+=("$f")
-          done
-          echo "Available binaries: ${BINARIES[*]}"
-          echo "Available SBOMs: ${SBOMS[*]}"
+          # Fixed workflow implementation, kept in parity with the tested helper.
+          # Never source or execute a file from the publication artifact.
+          publish_github_release() {
+            set -euo pipefail
 
-          # Publish a checksum manifest alongside the assets. install.sh verifies a
-          # downloaded binary against this before moving it into place, so the
-          # manifest must name assets exactly as they are uploaded -- basenames,
-          # not the artifact paths they were downloaded to.
-          SUMS_FILE="SHA256SUMS"
-          : > "$SUMS_FILE"
-          for f in "${BINARIES[@]}" scripts/install.sh scripts/install.ps1; do
-            [ -f "$f" ] || continue
-            sha256sum "$f" | sed "s#  .*/#  #" >> "$SUMS_FILE"
-          done
-          echo "Checksum manifest:"
-          cat "$SUMS_FILE"
+            usage() {
+              echo "Usage: $0 --repo <owner/repo> --tag <tag> --title <title> --notes <notes> [--prerelease] [--latest] -- <asset>..." >&2
+            }
 
-          # Downstream runtime catalogues can still pin an RC after stable publication.
-          # Retain its immutable assets so those builds and rollback sources remain available.
+            require_value() {
+              local option="$1"
+              local value="${2:-}"
+              if [[ -z "$value" ]]; then
+                echo "::error::${option} requires a value." >&2
+                usage
+                exit 2
+              fi
+            }
 
-          bash scripts/ci/publish-github-release.sh \
-            --repo veryfront/veryfront \
-            --tag "v${VERSION}" \
-            --title "v${VERSION}" \
-            --notes '## Install
+            repo=""
+            tag=""
+            title=""
+            notes=""
+            prerelease=false
+            latest=false
+
+            while [[ "$#" -gt 0 ]]; do
+              case "$1" in
+                --repo)
+                  require_value "$1" "${2:-}"
+                  repo="$2"
+                  shift 2
+                  ;;
+                --tag)
+                  require_value "$1" "${2:-}"
+                  tag="$2"
+                  shift 2
+                  ;;
+                --title)
+                  require_value "$1" "${2:-}"
+                  title="$2"
+                  shift 2
+                  ;;
+                --notes)
+                  require_value "$1" "${2:-}"
+                  notes="$2"
+                  shift 2
+                  ;;
+                --prerelease)
+                  prerelease=true
+                  shift
+                  ;;
+                --latest)
+                  latest=true
+                  shift
+                  ;;
+                --)
+                  shift
+                  break
+                  ;;
+                *)
+                  echo "::error::Unknown option: $1" >&2
+                  usage
+                  exit 2
+                  ;;
+              esac
+            done
+
+            require_value "--repo" "$repo"
+            require_value "--tag" "$tag"
+            require_value "--title" "$title"
+            require_value "--notes" "$notes"
+
+            if [[ "$prerelease" == true && "$latest" == true ]]; then
+              echo "::error::A release cannot be both a prerelease and the latest release." >&2
+              exit 2
+            fi
+
+            assets=("$@")
+            if [[ "${#assets[@]}" -eq 0 ]]; then
+              echo "::error::At least one release asset is required." >&2
+              exit 2
+            fi
+            for asset in "${assets[@]}"; do
+              if [[ ! -f "$asset" ]]; then
+                echo "::error::Release asset does not exist: $asset" >&2
+                exit 2
+              fi
+            done
+
+            retry_attempts="${GH_RELEASE_RETRY_ATTEMPTS:-3}"
+            retry_delay_seconds="${GH_RELEASE_RETRY_DELAY_SECONDS:-10}"
+            retry_fatal_status=64
+            if ! [[ "$retry_attempts" =~ ^[1-9][0-9]*$ ]]; then
+              echo "::error::GH_RELEASE_RETRY_ATTEMPTS must be a positive integer." >&2
+              exit 2
+            fi
+            if ! [[ "$retry_delay_seconds" =~ ^[0-9]+$ ]]; then
+              echo "::error::GH_RELEASE_RETRY_DELAY_SECONDS must be a non-negative integer." >&2
+              exit 2
+            fi
+
+            run_with_retry() {
+              local description="$1"
+              shift
+              local fatal_status=""
+              if [[ "${1:-}" == "--fatal-status" ]]; then
+                fatal_status="$2"
+                shift 2
+              fi
+              local attempt=1
+              local status
+
+              while true; do
+                if "$@"; then
+                  return 0
+                else
+                  status="$?"
+                fi
+                if [[ -n "$fatal_status" && "$status" -eq "$fatal_status" ]]; then
+                  return 1
+                fi
+                if [[ "$attempt" -ge "$retry_attempts" ]]; then
+                  echo "::error::${description} failed after ${retry_attempts} attempts." >&2
+                  return 1
+                fi
+
+                echo "::warning::${description} failed on attempt ${attempt}/${retry_attempts}. Retrying." >&2
+                if [[ "$retry_delay_seconds" -gt 0 ]]; then
+                  sleep "$((retry_delay_seconds * attempt))"
+                fi
+                attempt=$((attempt + 1))
+              done
+            }
+
+            delete_release() {
+              gh release delete "$tag" --repo "$repo" --yes --cleanup-tag >/dev/null 2>&1 || true
+            }
+
+            create_draft_release() {
+              local existing_is_draft
+              if existing_is_draft="$(
+                gh release view "$tag" --repo "$repo" --json isDraft --jq '.isDraft' 2>/dev/null
+              )"; then
+                if [[ "$existing_is_draft" == true ]]; then
+                  echo "::warning::Reusing existing GitHub release draft ${tag}." >&2
+                  return 0
+                fi
+
+                echo "::error::GitHub release ${tag} already exists and is not a draft." >&2
+                return "$retry_fatal_status"
+              fi
+
+              local create_args=(
+                release create "$tag"
+                --repo "$repo"
+                --title "$title"
+                --draft
+                --notes "$notes"
+              )
+              if [[ "$prerelease" == true ]]; then
+                create_args+=(--prerelease)
+              fi
+
+              gh "${create_args[@]}"
+            }
+
+            incomplete_draft_created=false
+            cleanup_failed_release() {
+              local status="$?"
+              trap - EXIT
+              if [[ "$status" -ne 0 && "$incomplete_draft_created" == true ]]; then
+                echo "::warning::Removing incomplete GitHub release ${tag}." >&2
+                delete_release
+              fi
+              exit "$status"
+            }
+            trap cleanup_failed_release EXIT
+
+            run_with_retry \
+              "GitHub release draft creation" \
+              --fatal-status "$retry_fatal_status" \
+              create_draft_release
+            incomplete_draft_created=true
+
+            for asset in "${assets[@]}"; do
+              run_with_retry \
+                "GitHub release asset $(basename "$asset") upload" \
+                gh release upload "$tag" "$asset" --repo "$repo" --clobber
+            done
+            incomplete_draft_created=false
+
+            publish_args=(release edit "$tag" --repo "$repo" --draft=false)
+            if [[ "$prerelease" == true ]]; then
+              publish_args+=(--prerelease --latest=false)
+            elif [[ "$latest" == true ]]; then
+              publish_args+=(--prerelease=false --latest)
+            fi
+            run_with_retry "GitHub release publication" gh "${publish_args[@]}"
+
+            trap - EXIT
+          }
+          assets=(public-release-assets/*)
+          if [ "$IS_STABLE" = true ]; then
+            notes='## Install
 
           ```bash
           # macOS/Linux
@@ -1687,19 +1888,24 @@ jobs:
 
           # npm
           npm install -g veryfront
-          ```' \
-            --latest \
-            -- \
-            "${BINARIES[@]}" \
-            "$SUMS_FILE" \
-            scripts/install.sh \
-            scripts/install.ps1 \
-            "${SBOMS[@]}"
+          ```'
+            mode=--latest
+          else
+            notes='```bash
+          npx veryfront@rc
+          ```'
+            mode=--prerelease
+          fi
+          publish_github_release --repo veryfront/veryfront \
+            --tag "v${VERSION}" --title "v${VERSION}" --notes "$notes" \
+            "$mode" -- "${assets[@]}"
 
       - name: Create source repo release
+        if: ${{ needs.version-check.outputs.is_stable == 'true' }}
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
           VERSION: ${{ steps.version.outputs.version }}
+          GH_REPO: ${{ github.repository }}
         run: |
           gh release create "v${VERSION}" \
             --title "v${VERSION}" \
@@ -1709,7 +1915,7 @@ jobs:
   quality-gate-registry:
     name: quality gate (registry)
     if: ${{ always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && needs.version-check.result == 'success' && (needs.version-check.outputs.is_stable == 'false' || needs.version-check.outputs.stable_release_requested == 'true') }}
-    needs: [prerelease, release, version-check]
+    needs: [prerelease, release, publish-public-release, version-check]
     runs-on: ubuntu-latest
     timeout-minutes: 65
     steps:
@@ -1718,6 +1924,7 @@ jobs:
           IS_STABLE: ${{ needs.version-check.outputs.is_stable }}
           PRERELEASE_RESULT: ${{ needs.prerelease.result }}
           STABLE_RELEASE_RESULT: ${{ needs.release.result }}
+          PUBLIC_RELEASE_RESULT: ${{ needs.publish-public-release.result }}
         run: |
           if [ "$IS_STABLE" = "true" ]; then
             selected_result_name="STABLE_RELEASE_RESULT"
@@ -1802,8 +2009,8 @@ jobs:
 
   dispatch-release:
     name: dispatch release
-    if: ${{ always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && needs.quality-gate-registry.result == 'success' && ((needs.version-check.outputs.is_stable == 'true' && needs.release.result == 'success') || (needs.version-check.outputs.is_stable == 'false' && needs.prerelease.result == 'success')) }}
-    needs: [quality-gate-registry, prerelease, release, version-check]
+    if: ${{ always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && needs.quality-gate-registry.result == 'success' && needs.publish-public-release.result == 'success' && ((needs.version-check.outputs.is_stable == 'true' && needs.release.result == 'success') || (needs.version-check.outputs.is_stable == 'false' && needs.prerelease.result == 'success')) }}
+    needs: [quality-gate-registry, prerelease, release, publish-public-release, version-check]
     runs-on: ubuntu-latest
     environment: production
     timeout-minutes: 5
@@ -1879,8 +2086,8 @@ jobs:
   # ============================================
 
   update-homebrew:
-    if: ${{ !cancelled() && needs.release.result == 'success' && needs.version-check.result == 'success' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
-    needs: [release, version-check]
+    if: ${{ !cancelled() && needs.release.result == 'success' && needs.publish-public-release.result == 'success' && needs.version-check.result == 'success' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
+    needs: [release, publish-public-release, version-check]
     runs-on: ubuntu-latest
     environment: production
     steps:
