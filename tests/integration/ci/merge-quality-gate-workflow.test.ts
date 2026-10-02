@@ -9,9 +9,9 @@ const WORKFLOW_PATH = new URL(
   "../../../.github/workflows/cicd.yml",
   import.meta.url,
 );
-// Cancellation runs from an immutable reviewed commit, never the queued revision.
+// Cancellation runs from an immutable main commit, never the queued revision.
 const TRUSTED_CANCELLATION_WORKFLOW =
-  "veryfront/veryfront-code/.github/workflows/cancel-failed-merge-group.yml@3b3d0a12d0e309608de6fe62ce1061688952503c";
+  "veryfront/veryfront-code/.github/workflows/cancel-failed-merge-group.yml@29b0bef58e94113b7e8756358559fe07e0f24271";
 const REQUIRED_DEPENDENCIES = [
   "ci",
   "coverage",

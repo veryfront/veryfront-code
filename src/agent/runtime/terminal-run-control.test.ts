@@ -168,6 +168,48 @@ it("schema rejection permits correction and sends only the validated output", as
   assertEquals(terminalCompletionResponse(control.signal.reason)?.object, "done");
 });
 
+it("a non-JSON schema transform leaves finalization recoverable without dispatch", async () => {
+  const control = createAdmittedControl(
+    { runId: "run-current" },
+    undefined,
+    async () => undefined,
+  );
+  let writes = 0;
+  const rejected = await assertRejects(() =>
+    executeTerminalRunTool(
+      "finalize",
+      { status: "completed", output: { city: "Test City" } },
+      control.context,
+      async () => {
+        writes++;
+        throw new TypeError("not JSON");
+      },
+    )
+  );
+  assertEquals(writes, 0);
+  assertEquals(isTerminalRunControlError(rejected), false);
+  assertEquals(control.signal.aborted, false);
+  await awaitTerminalRunControl(control.context);
+  const failure = { code: "TRANSFORM_RECOVERED", message: "Local rejection remained recoverable" };
+  const accepted = await assertRejects(() =>
+    executeTerminalRunTool(
+      "finalize",
+      { status: "failed", error: failure },
+      control.context,
+      async () => {
+        writes++;
+        return { run: { run_id: "run-current", status: "failed", error: failure } };
+      },
+    )
+  );
+  assert(isTerminalRunControlError(accepted));
+  assertEquals(accepted.code, failure.code);
+  assertEquals(writes, 1);
+  assertEquals(control.signal.reason, accepted);
+  await assertRejects(() => dispatchWithTerminalRunControl(control.context, async () => ++writes));
+  assertEquals(writes, 1);
+});
+
 it("a rejected MCP action is recoverable, but an uncertain committed result stops dispatch", async () => {
   for (const outcome of ["recoverable", "lost-reply", "unavailable", "malformed"] as const) {
     const control = createAdmittedControl({ runId: "run-current" });
