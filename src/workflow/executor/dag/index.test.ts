@@ -1527,6 +1527,113 @@ describe("DAGExecutor", () => {
     assertEquals(observations, [undefined, "arrived"]);
   });
 
+  for (const strictContext of [false, true]) {
+    it(`recovers private loop retry data with ${strictContext ? "strict plain JSON" : "standard normalization"} policy`, async () => {
+      const date = new Date("2026-01-01T00:00:00.000Z");
+      let effects = 0;
+      let selections = 0;
+      const selected: unknown[] = [];
+      const nodes = [loop("repeat", {
+        maxIterations: 1,
+        while: () => true,
+        steps: [subWorkflow("child", {
+          workflow: {
+            id: "private-json-child",
+            steps: [step("effect", { tool: "effect" })],
+            output: (context) => {
+              if (++selections === 1) throw new Error("selector failed");
+              selected.push(context.effect);
+              return context.effect;
+            },
+          },
+        })],
+      })];
+      const steps = new MockStepExecutor(new Map(), () => {
+        effects++;
+        return {
+          success: true,
+          output: strictContext ? date.toISOString() : date,
+          executionTime: 0,
+        };
+      });
+      const first = await new DAGExecutor({ stepExecutor: steps }).execute(nodes, createTestRun());
+      assertExists(first.nodeStates.repeat?._loopOutputRetry);
+      const backend = new MemoryBackend({ strictContext });
+      try {
+        await backend.createRun(
+          createTestRun({ nodeStates: first.nodeStates, context: first.context }),
+        );
+        const persisted = await backend.getRun("test-run");
+        assertExists(persisted);
+        assertEquals(
+          persisted.nodeStates.repeat?._loopOutputRetry,
+          JSON.parse(JSON.stringify(persisted.nodeStates.repeat?._loopOutputRetry)),
+        );
+        const wireStates = Object.fromEntries(
+          Object.entries(persisted.nodeStates).map(([id, state]) => [
+            id,
+            NodeStateSchema.parse({
+              ...JSON.parse(JSON.stringify(state)),
+              startedAt: state.startedAt,
+              completedAt: state.completedAt,
+            }),
+          ]),
+        );
+        for (const nodeStates of [persisted.nodeStates, wireStates]) {
+          const resumed = await new DAGExecutor({ stepExecutor: steps }).execute(
+            nodes,
+            createTestRun({ nodeStates, context: persisted.context }),
+          );
+          assertEquals(resumed.completed, true);
+          assertEquals(resumed.nodeStates["repeat/effect"]?.status, "completed");
+          assertEquals(resumed.nodeStates["repeat/effect"]?.output, date.toISOString());
+        }
+        assertEquals(selected, [date.toISOString(), date.toISOString()]);
+        assertEquals(effects, 1);
+      } finally {
+        await backend.destroy();
+      }
+    });
+  }
+
+  for (const privateField of ["context", "evaluationContext", "iterationNodeStates"] as const) {
+    it(`rejects non-JSON private loop retry ${privateField} in strict context mode`, async () => {
+      const date = new Date("2026-01-01T00:00:00.000Z");
+      const retry = {
+        iteration: 0,
+        previousResults: [],
+        context: privateField === "context" ? { effect: date } : {},
+        evaluationContext: privateField === "evaluationContext" ? { effect: date } : {},
+        iterationNodeStates: {
+          effect: {
+            nodeId: "effect",
+            status: "completed",
+            attempt: 1,
+            output: privateField === "iterationNodeStates" ? date : "plain",
+            startedAt: date.toISOString(),
+            completedAt: date.toISOString(),
+          },
+        },
+      };
+      const backend = new MemoryBackend({ strictContext: true });
+      try {
+        await assertRejects(
+          () =>
+            backend.createRun(createTestRun({
+              nodeStates: {
+                repeat: { nodeId: "repeat", status: "failed", attempt: 1, _loopOutputRetry: retry },
+              },
+            })),
+          Error,
+          "strictContext",
+        );
+        assertEquals(await backend.getRun("test-run"), null);
+      } finally {
+        await backend.destroy();
+      }
+    });
+  }
+
   for (const configuredRetry of [false, true]) {
     it(`retains completed nested DAG through ${configuredRetry ? "configured" : "fresh executor"} loop output retry`, async () => {
       let builds = 0;
@@ -1580,6 +1687,12 @@ describe("DAGExecutor", () => {
       assertEquals(executions[0]?.endsWith("read-old"), true);
       assertEquals(retried.context.repeat_loop_state, undefined);
       assertEquals(retried.nodeStates.repeat?._loopOutputRetry, undefined);
+      assertEquals(retried.nodeStates["repeat/read-old"]?.status, "completed");
+      assertEquals(retried.nodeStates["repeat/read-old"]?.output, "old");
+      assertEquals(retried.nodeStates["repeat/child"]?._completedCompositeChildIds, [
+        "repeat/read-old",
+        "repeat/child",
+      ]);
     });
 
     it(`retries a later loop iteration's selector through ${configuredRetry ? "configured" : "fresh executor"} output retry`, async () => {

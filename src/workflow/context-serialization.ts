@@ -1711,7 +1711,12 @@ export function serializeWorkflowContext(
 }
 
 /** The node-state fields that carry step data or a resumable child-context snapshot. */
-const NODE_STATE_USER_DATA_FIELDS = ["input", "output", "_subWorkflowContext"] as const;
+const NODE_STATE_USER_DATA_FIELDS = [
+  "input",
+  "output",
+  "_subWorkflowContext",
+  "_loopOutputRetry",
+] as const;
 
 type NodeStateUserDataField = typeof NODE_STATE_USER_DATA_FIELDS[number];
 
@@ -1721,6 +1726,8 @@ type NodeStateUserDataField = typeof NODE_STATE_USER_DATA_FIELDS[number];
  * A node state's `input` and `output` hold what a step received and returned,
  * so they are the same user data `context` holds. `_subWorkflowContext` is the
  * resumable snapshot of that same context while a nested workflow is incomplete.
+ * `_loopOutputRetry` holds private contexts and encoded child states after a
+ * completed child selector fails. Its framework timestamps are already strings.
  * Leaving any of these outside the policy made Redis rewrite a `Date` and fail
  * on a BigInt while the memory backend kept both, and `strictContext` saw neither.
  *
@@ -1733,7 +1740,12 @@ type NodeStateUserDataField = typeof NODE_STATE_USER_DATA_FIELDS[number];
  * as they are.
  */
 export function prepareNodeStatesUserData<
-  T extends { input?: unknown; output?: unknown; _subWorkflowContext?: unknown },
+  T extends {
+    input?: unknown;
+    output?: unknown;
+    _subWorkflowContext?: unknown;
+    _loopOutputRetry?: unknown;
+  },
 >(
   nodeStates: Readonly<Record<string, T>>,
   runId: string | undefined,
@@ -1776,7 +1788,7 @@ export function prepareNodeStatesUserData<
 function collectNodeStateField(
   nodeStates: Record<
     string,
-    { input?: unknown; output?: unknown; _subWorkflowContext?: unknown }
+    { input?: unknown; output?: unknown; _subWorkflowContext?: unknown; _loopOutputRetry?: unknown }
   >,
   field: NodeStateUserDataField,
 ): Record<string, unknown> | undefined {

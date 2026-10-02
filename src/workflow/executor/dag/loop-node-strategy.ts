@@ -235,9 +235,10 @@ export async function executeLoopNodeStrategy(
       legacyStaticChildIds,
     );
 
-  let exposedIterationNodeStates: Record<string, NodeState> = resumeIterationNodeStates
-    ? { ...resumeIterationNodeStates }
-    : {};
+  // Output retry restores private children that were never published to the
+  // parent. Publish them on success; ordinary wait resume keeps its baseline.
+  let exposedIterationNodeStates: Record<string, NodeState> =
+    resumeIterationNodeStates && !outputRetryLoopState ? { ...resumeIterationNodeStates } : {};
 
   while (iteration < config.maxIterations) {
     runtime.abortSignal?.throwIfAborted();
