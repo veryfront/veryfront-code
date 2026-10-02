@@ -1382,6 +1382,67 @@ describe("workflow checkpoint retention", () => {
       });
     });
 
+    for (const privateField of ["context", "evaluationContext"] as const) {
+      it(`retains loop retry ${privateField} as a framework record through owned checkpoint storage`, async () => {
+        let calls = 0;
+        const backend = new MemoryBackend();
+        const workerId = `run-execution:retry-${privateField}-owner`;
+        const runId = `retry-${privateField}-retention`;
+        const callableRecord = {
+          input: {},
+          toJSON: () => {
+            calls++;
+            return { corrupted: true };
+          },
+          other: { keep: 1 },
+        };
+        const dataRecord = {
+          input: {},
+          toJSON: { keep: 2 },
+          other: { keep: 3 },
+        };
+        await backend.createRun(run(runId, workerId));
+
+        const saved = await backend.saveCheckpointIfStatusAndWorker(
+          runId,
+          runId,
+          ["running"],
+          workerId,
+          cloneOwnedCheckpointForPersistence({
+            ...checkpoint(`retry-${privateField}`),
+            nodeStates: {
+              repeat: {
+                nodeId: "repeat",
+                status: "failed",
+                attempt: 1,
+                _loopOutputRetry: {
+                  iteration: 0,
+                  previousResults: [],
+                  context: privateField === "context" ? callableRecord : dataRecord,
+                  evaluationContext: privateField === "evaluationContext"
+                    ? callableRecord
+                    : dataRecord,
+                  iterationNodeStates: {},
+                },
+              },
+            },
+          }),
+        );
+
+        assertEquals(saved, true);
+        assertEquals(calls, 0);
+        const retry = (await backend.getLatestCheckpoint(runId))?.nodeStates.repeat
+          ?._loopOutputRetry;
+        assertEquals(retry?.[privateField], { input: {}, other: { keep: 1 } });
+        const dataField = privateField === "context" ? "evaluationContext" : "context";
+        assertEquals(retry?.[dataField], {
+          input: {},
+          toJSON: { keep: 2 },
+          other: { keep: 3 },
+        });
+      });
+    }
+
     it("reports an owned callable node under its own strict context path", async () => {
       const calls: string[] = [];
       const backend = new MemoryBackend({ strictContext: true });

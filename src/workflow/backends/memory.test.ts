@@ -1568,6 +1568,96 @@ describe("MemoryBackend", () => {
       assertEquals(nodeStates?.other?.output, { keep: "output" });
     });
 
+    for (const privateField of ["context", "evaluationContext"] as const) {
+      it(`treats toJSON as a node id in loop retry ${privateField} during create and read`, async () => {
+        let calls = 0;
+        const callableRecord = {
+          input: {},
+          toJSON: () => {
+            calls++;
+            return { corrupted: true };
+          },
+          other: { keep: 1 },
+        };
+        const dataRecord = {
+          input: {},
+          toJSON: { keep: 2 },
+          other: { keep: 3 },
+        };
+        const runId = `run-loop-retry-${privateField}`;
+
+        await backend.createRun(createTestRun(runId, {
+          nodeStates: {
+            repeat: {
+              nodeId: "repeat",
+              status: "failed",
+              attempt: 1,
+              _loopOutputRetry: {
+                iteration: 0,
+                previousResults: [],
+                context: privateField === "context" ? callableRecord : dataRecord,
+                evaluationContext: privateField === "evaluationContext"
+                  ? callableRecord
+                  : dataRecord,
+                iterationNodeStates: {},
+              },
+            },
+          },
+        }));
+
+        assertEquals(calls, 0);
+        const retry = (await backend.getRun(runId))?.nodeStates.repeat?._loopOutputRetry;
+        assertEquals(retry?.[privateField], { input: {}, other: { keep: 1 } });
+        const dataField = privateField === "context" ? "evaluationContext" : "context";
+        assertEquals(retry?.[dataField], {
+          input: {},
+          toJSON: { keep: 2 },
+          other: { keep: 3 },
+        });
+      });
+
+      it(`rejects callable loop retry ${privateField} without invoking it or persisting the run`, async () => {
+        let calls = 0;
+        const strictBackend = new MemoryBackend({ strictContext: true });
+        const runId = `run-strict-loop-retry-${privateField}`;
+        const callableRecord = {
+          input: {},
+          toJSON: () => {
+            calls++;
+            return { corrupted: true };
+          },
+          other: { keep: 1 },
+        };
+
+        await assertRejects(
+          () =>
+            strictBackend.createRun(createTestRun(runId, {
+              nodeStates: {
+                repeat: {
+                  nodeId: "repeat",
+                  status: "failed",
+                  attempt: 1,
+                  _loopOutputRetry: {
+                    iteration: 0,
+                    previousResults: [],
+                    context: privateField === "context" ? callableRecord : { input: {} },
+                    evaluationContext: privateField === "evaluationContext"
+                      ? callableRecord
+                      : { input: {} },
+                    iterationNodeStates: {},
+                  },
+                },
+              },
+            })),
+          Error,
+          "strictContext enabled: nodeStates._loopOutputRetry",
+        );
+
+        assertEquals(calls, 0);
+        assertEquals(await strictBackend.getRun(runId), null);
+      });
+    }
+
     it("rejects node-state user data JSON cannot encode, naming the field (#2242)", async () => {
       await backend.createRun(createTestRun("run-node-state-bigint"));
       await assertRejectsAsynchronously(

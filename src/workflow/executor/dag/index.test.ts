@@ -1640,14 +1640,25 @@ describe("DAGExecutor", () => {
     it(`retains completed nested DAG through ${configuredRetry ? "configured" : "fresh executor"} loop output retry`, async () => {
       let builds = 0;
       let selections = 0;
+      let parentOutputCalls = 0;
       const executions: string[] = [];
       const child = subWorkflow("child", {
         workflow: {
           id: "loop-output-child",
-          steps: () => [step(++builds === 1 ? "read-old" : "read-new", { tool: "read" })],
+          steps: () => {
+            builds++;
+            const suffix = builds === 1 ? "" : "-new";
+            return [
+              step(`toJSON${suffix}`, { tool: "parent" }),
+              {
+                ...step(`effect${suffix}`, { tool: "effect" }),
+                dependsOn: [`toJSON${suffix}`],
+              },
+            ];
+          },
           output: (context) => {
             if (++selections === 1) throw new Error("loop child selector failed");
-            return context;
+            return context.effect;
           },
         },
       });
@@ -1661,9 +1672,14 @@ describe("DAGExecutor", () => {
       })];
       const steps = new MockStepExecutor(new Map(), (node) => {
         executions.push(node.id);
-        return { success: true, output: "old", executionTime: 0 };
+        return {
+          success: true,
+          output: node.id.endsWith("/toJSON") ? "parent-output" : "effect-output",
+          executionTime: 0,
+        };
       });
       const first = await new DAGExecutor({ stepExecutor: steps }).execute(nodes, createTestRun());
+      let persistedStates = first.nodeStates;
       if (!configuredRetry) {
         assertExists(first.nodeStates.repeat?._loopOutputRetry);
         const publicFailed = toPublicWorkflowRun(createTestRun({
@@ -1672,18 +1688,32 @@ describe("DAGExecutor", () => {
           context: first.context,
         }));
         assertEquals(Object.hasOwn(publicFailed.nodeStates.repeat!, "_loopOutputRetry"), false);
+        const retryStates = (first.nodeStates.repeat._loopOutputRetry as {
+          iterationNodeStates?: ReturnType<typeof toPersistedNodeStates>;
+        }).iterationNodeStates;
+        const parentState = retryStates?.["repeat/toJSON"];
+        const childState = retryStates?.["repeat/child"];
+        assertExists(parentState);
+        assertExists(childState?._subWorkflowContext);
+        const parentOutput = () => {
+          parentOutputCalls++;
+          return { corrupted: true };
+        };
+        parentState.output = parentOutput;
+        childState._subWorkflowContext.toJSON = parentOutput;
+
+        const backend = new MemoryBackend();
+        try {
+          await backend.createRun(
+            createTestRun({ nodeStates: first.nodeStates, context: first.context }),
+          );
+          const persisted = await backend.getRun("test-run");
+          assertExists(persisted);
+          persistedStates = persisted.nodeStates;
+        } finally {
+          await backend.destroy();
+        }
       }
-      const persistedStates = Object.fromEntries(
-        Object.entries(first.nodeStates).map(([id, state]) => [
-          id,
-          NodeStateSchema.parse({
-            ...state,
-            ...(state._loopOutputRetry
-              ? { _loopOutputRetry: JSON.parse(JSON.stringify(state._loopOutputRetry)) }
-              : {}),
-          }),
-        ]),
-      );
       const retried = configuredRetry
         ? first
         : await new DAGExecutor({ stepExecutor: steps }).execute(
@@ -1693,23 +1723,24 @@ describe("DAGExecutor", () => {
       assertEquals(retried.completed, true);
       assertEquals(builds, 1);
       assertEquals(selections, 2);
-      assertEquals(executions.length, 1);
-      assertEquals(executions[0]?.endsWith("read-old"), true);
+      assertEquals(parentOutputCalls, 0);
+      assertEquals(executions, ["repeat/toJSON", "repeat/effect"]);
       assertEquals(retried.context.repeat_loop_state, undefined);
       assertEquals(retried.nodeStates.repeat?._loopOutputRetry, undefined);
-      assertEquals(retried.nodeStates["repeat/read-old"]?.status, "completed");
-      assertEquals(retried.nodeStates["repeat/read-old"]?.output, "old");
+      assertEquals(retried.nodeStates["repeat/effect"]?.status, "completed");
+      assertEquals(retried.nodeStates["repeat/effect"]?.output, "effect-output");
       const publicRun = toPublicWorkflowRun(createTestRun({
         _runtimeStateVersion: WORKFLOW_RUNTIME_STATE_VERSION,
         status: "completed",
         nodeStates: retried.nodeStates,
         context: retried.context,
       }));
-      assertEquals(publicRun.nodeStates["repeat/read-old"]?.status, "completed");
-      assertEquals(publicRun.nodeStates["repeat/read-old"]?.output, "old");
+      assertEquals(publicRun.nodeStates["repeat/effect"]?.status, "completed");
+      assertEquals(publicRun.nodeStates["repeat/effect"]?.output, "effect-output");
       assertEquals(Object.hasOwn(publicRun.nodeStates.repeat!, "_loopOutputRetry"), false);
       assertEquals(retried.nodeStates["repeat/child"]?._completedCompositeChildIds, [
-        "repeat/read-old",
+        "repeat/toJSON",
+        "repeat/effect",
         "repeat/child",
       ]);
     });

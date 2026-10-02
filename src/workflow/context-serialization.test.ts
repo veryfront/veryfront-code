@@ -1820,3 +1820,230 @@ describe("serializeWorkflowContext", () => {
     assertEquals(JSON.parse(serialized).step, { a: { id: 1 }, b: { id: 1 } });
   });
 });
+
+describe("retry framework record traversal", () => {
+  for (
+    const mode of ["own", "nested", "inherited", "accessor", "inherited accessor", "data"] as const
+  ) {
+    for (const field of ["context", "evaluationContext"] as const) {
+      for (const strictContext of [false, true]) {
+        it(`preserves ${field} records with ${mode} toJSON, strict=${strictContext}`, () => {
+          let calls = 0;
+          let reads = 0;
+          const hook = () => {
+            calls++;
+            return { corrupted: true };
+          };
+          const context: Record<string, unknown> = { input: {}, other: { keep: 1 } };
+          if (mode === "own" || mode === "nested") context.toJSON = hook;
+          if (mode === "inherited") Object.setPrototypeOf(context, { toJSON: hook });
+          if (mode === "accessor") {
+            Object.defineProperty(context, "toJSON", {
+              enumerable: true,
+              get() {
+                reads++;
+                return hook;
+              },
+            });
+          }
+          if (mode === "inherited accessor") {
+            Object.setPrototypeOf(context, {
+              get toJSON() {
+                reads++;
+                return hook;
+              },
+            });
+          }
+          if (mode === "data") context.toJSON = { keep: 2 };
+          const retry = {
+            iteration: 0,
+            previousResults: [],
+            context: {},
+            evaluationContext: {},
+            iterationNodeStates: {},
+            [field]: context,
+          };
+          const states = {
+            repeat: {
+              _loopOutputRetry: mode === "nested"
+                ? {
+                  ...retry,
+                  context: {},
+                  evaluationContext: {},
+                  iterationNodeStates: { child: { _loopOutputRetry: retry } },
+                }
+                : retry,
+            },
+          };
+          if (strictContext && mode !== "data") {
+            assertThrows(
+              () => prepareNodeStatesUserData(states, "record-retry", { strictContext }),
+              VeryfrontError,
+            );
+          } else {
+            const persisted = JSON.parse(
+              JSON.stringify(prepareNodeStatesUserData(states, "record-retry", { strictContext })),
+            );
+            const envelope = mode === "nested"
+              ? persisted.repeat!._loopOutputRetry.iterationNodeStates.child._loopOutputRetry
+              : persisted.repeat!._loopOutputRetry;
+            assertEquals(envelope[field].other, { keep: 1 });
+            if (mode === "data") assertEquals(envelope[field].toJSON, { keep: 2 });
+          }
+          assertEquals(calls, 0);
+          assertEquals(reads, mode === "accessor" ? 1 : 0);
+        });
+      }
+    }
+  }
+
+  it("discovers records before earlier aliases and beyond the normalization cutoff", () => {
+    let calls = 0;
+    const context = {
+      input: {},
+      other: 1,
+      toJSON: () => {
+        calls++;
+        return {};
+      },
+    };
+    let nested: unknown = context;
+    for (let i = 0; i < MAX_TRAVERSAL_DEPTH + 5; i++) nested = { nested };
+    const states = {
+      earlier: { output: nested },
+      repeat: {
+        _loopOutputRetry: {
+          context,
+          iterationNodeStates: {
+            child: { _subWorkflowContext: { input: {}, toJSON: { keep: 2 } } },
+          },
+        },
+      },
+    };
+    const prepared = prepareNodeStatesUserData(states, "record-retry", {});
+    let leaf = (prepared.earlier as { output: unknown }).output as Record<string, unknown>;
+    for (let i = 0; i < MAX_TRAVERSAL_DEPTH + 5; i++) leaf = leaf.nested as Record<string, unknown>;
+    assertEquals(leaf, { input: {}, other: 1 });
+    assertEquals(calls, 0);
+  });
+
+  it("discovers retry records before checkpoint context and resume aliases are encoded", () => {
+    let calls = 0;
+    const context = {
+      input: {},
+      other: 1,
+      toJSON: () => {
+        calls++;
+        return {};
+      },
+    };
+    const checkpoint = {
+      context: { input: {}, alias: context },
+      nodeStates: {},
+      _resumeEnvelope: {
+        context: { input: {}, alias: context },
+        nodeStates: { repeat: { _loopOutputRetry: { context } } },
+      },
+    };
+    const records = collectWorkflowJsonRecords(checkpoint, WORKFLOW_CHECKPOINT_RECORD);
+    const persisted = JSON.parse(
+      prepareWorkflowJson(
+        checkpoint.context,
+        "checkpoint.context",
+        "record-retry",
+        {},
+        WORKFLOW_NODE_RECORD,
+        records,
+      ).serialized,
+    );
+    assertEquals(persisted.alias, { input: {}, other: 1 });
+    assertEquals(calls, 0);
+  });
+
+  it("discovers deeply nested retry records iteratively without invoking descriptors", () => {
+    let calls = 0;
+    const context = {
+      input: {},
+      other: 1,
+      toJSON: () => {
+        calls++;
+        return {};
+      },
+    };
+    let states: Record<string, unknown> = { child: { _subWorkflowContext: context } };
+    for (let i = 0; i < MAX_TRAVERSAL_DEPTH + 5; i++) {
+      states = { child: { _loopOutputRetry: { iterationNodeStates: states } } };
+    }
+    const records = collectWorkflowJsonRecords(
+      { nodeStates: states, context: { input: {}, alias: context } },
+      WORKFLOW_CHECKPOINT_RECORD,
+    );
+    assertEquals(
+      JSON.parse(
+        prepareWorkflowJson(context, "alias", "record-retry", {}, undefined, records).serialized,
+      ),
+      {
+        input: {},
+        other: 1,
+      },
+    );
+    assertEquals(calls, 0);
+  });
+
+  it("keeps arbitrary payload hooks and unknown retry envelope fields", () => {
+    let calls = 0;
+    const states = {
+      repeat: {
+        _loopOutputRetry: {
+          context: {
+            input: {},
+            toJSON: { keep: 2 },
+            payload: {
+              toJSON() {
+                calls++;
+                return 7;
+              },
+            },
+          },
+          extension: { keep: 3 },
+          iterationNodeStates: {},
+        },
+      },
+    };
+    const prepared = prepareNodeStatesUserData(states, "record-retry", {});
+    assertEquals<unknown>(prepared.repeat!._loopOutputRetry.context.payload, 7);
+    assertEquals(prepared.repeat!._loopOutputRetry.extension, { keep: 3 });
+    assertEquals(calls, 1);
+  });
+
+  it("preserves own special node ids and rejects cycles without executing hooks", () => {
+    let calls = 0;
+    const children = JSON.parse(
+      '{"__proto__":{"_subWorkflowContext":{"input":{},"toJSON":{"keep":2}}}}',
+    );
+    const context: Record<string, unknown> = {
+      input: {},
+      toJSON: () => {
+        calls++;
+        return {};
+      },
+    };
+    const retry = { context, iterationNodeStates: children };
+    const prepared = prepareNodeStatesUserData(
+      { repeat: { _loopOutputRetry: retry } },
+      "record-retry",
+      {},
+    );
+    assertEquals(
+      Object.hasOwn(prepared.repeat!._loopOutputRetry.iterationNodeStates, "__proto__"),
+      true,
+    );
+    context.self = retry;
+    assertThrows(
+      () => prepareNodeStatesUserData({ repeat: { _loopOutputRetry: retry } }, "record-retry", {}),
+      VeryfrontError,
+      "circular reference",
+    );
+    assertEquals(calls, 0);
+  });
+});

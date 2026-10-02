@@ -1125,6 +1125,12 @@ export function collectWorkflowJsonRecords(
       reflectApply(weakMapGet, records, [source]) !== undefined
     ) continue;
     reflectApply(weakMapSet, records, [source, candidateShape]);
+    if (
+      candidateShape === WORKFLOW_CHECKPOINT_RECORD ||
+      candidateShape === WORKFLOW_RESUME_ENVELOPE_RECORD
+    ) {
+      registerNodeStateRecords(ownDataValue(source, "nodeStates"), records);
+    }
     const fields = candidateShape.fields;
     if (fields === undefined) continue;
     for (const key of objectKeys(fields)) {
@@ -1135,6 +1141,59 @@ export function collectWorkflowJsonRecords(
     }
   }
   return records;
+}
+
+/** Read framework links without invoking getters or inherited hooks. */
+function ownDataValue(source: object, key: string): unknown {
+  const descriptor = objectGetOwnPropertyDescriptor(source, key);
+  return descriptor !== undefined && "value" in descriptor ? descriptor.value : undefined;
+}
+
+/**
+ * Register only the private framework records reachable from node states.
+ * Discover the whole graph before encoding any field, including earlier aliases.
+ * Input/output payload children retain their ordinary JSON semantics.
+ */
+function registerNodeStateRecords(
+  nodeStates: unknown,
+  records: WorkflowJsonRecords,
+): void {
+  if (!canIdentifyProxyWithoutHooks) return;
+  type RecordKind = "states" | "state" | "retry" | "context";
+  const pending: Array<readonly [unknown, RecordKind]> = [[nodeStates, "states"]];
+  const visited = new WeakMapConstructor<object, Set<RecordKind>>();
+  while (pending.length > 0) {
+    const [candidate, kind] = pending[pending.length - 1]!;
+    pending.length -= 1;
+    if (typeof candidate !== "object" || candidate === null) continue;
+    const source = (reflectApply(weakMapGet, deferredWorkflowJsonSources, [candidate]) ??
+      candidate) as object;
+    if (isProxyWithoutHooks(source)) continue;
+    let kinds = reflectApply(weakMapGet, visited, [source]) as Set<RecordKind> | undefined;
+    if (kinds !== undefined && reflectApply(setHas, kinds, [kind])) continue;
+    if (kinds === undefined) {
+      kinds = new SetConstructor<RecordKind>();
+      reflectApply(weakMapSet, visited, [source, kinds]);
+    }
+    reflectApply(setAdd, kinds, [kind]);
+    reflectApply(weakMapSet, records, [source, WORKFLOW_NODE_RECORD]);
+    switch (kind) {
+      case "states":
+        for (const key of objectKeys(source)) {
+          pending[pending.length] = [ownDataValue(source, key), "state"];
+        }
+        break;
+      case "state":
+        pending[pending.length] = [ownDataValue(source, "_subWorkflowContext"), "context"];
+        pending[pending.length] = [ownDataValue(source, "_loopOutputRetry"), "retry"];
+        break;
+      case "retry":
+        pending[pending.length] = [ownDataValue(source, "context"), "context"];
+        pending[pending.length] = [ownDataValue(source, "evaluationContext"), "context"];
+        pending[pending.length] = [ownDataValue(source, "iterationNodeStates"), "states"];
+        break;
+    }
+  }
 }
 
 /** Build the exact value JSON will encode, collecting what it cannot carry. */
@@ -1763,6 +1822,10 @@ export function prepareNodeStatesUserData<
       writable: true,
     });
   }
+
+  records ??= new WeakMapConstructor();
+  registerNodeStateRecords(nodeStates, records);
+  registerNodeStateRecords(prepared, records);
 
   for (const field of NODE_STATE_USER_DATA_FIELDS) {
     const values = collectNodeStateField(prepared, field);
