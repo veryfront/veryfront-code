@@ -1,6 +1,7 @@
 import { assert, assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { parse } from "#std/yaml/parse";
+import { makeTempDir } from "#veryfront/testing/deno-compat.ts";
 
 type YamlRecord = Record<string, unknown>;
 
@@ -548,7 +549,8 @@ done
     );
     assertEquals(asRecord(scanStep.env, "Sonar scan environment"), {
       SONAR_TOKEN: "\${{ secrets.SONAR_TOKEN }}",
-      INPUT_ARGS: "",
+      INPUT_ARGS:
+        "${{ github.event_name == 'merge_group' && format('-Dsonar.branch.name={0}/{1} -Dsonar.branch.target=main', github.ref_name, github.sha) || '' }}",
       INPUT_PROJECTBASEDIR: ".",
       INPUT_SCANNERVERSION: "8.1.0.6389",
       INPUT_SCANNERBINARIESURL: "https://binaries.sonarsource.com/Distribution/sonar-scanner-cli",
@@ -732,7 +734,31 @@ done
     const matrix = asRecord(strategy.matrix, "coverage shard matrix");
     const coverage = asRecord(jobs.coverage, "coverage gate job");
 
-    assertEquals(matrix.shard, [1, 2, 3, 4]);
+    assertEquals(matrix.shard, [1, 2, 3, 4, 5, 6, 7, 8]);
+    assertEquals(coverageShards.name, "coverage shard ${{ matrix.shard }}/8");
+    assertEquals(strategy["fail-fast"], false);
+    const steps = (coverageShards.steps as unknown[]).map((step) =>
+      asRecord(step, "coverage shard step")
+    );
+    const run = steps.find((step) => step.name === "Run unit coverage shard");
+    assert(run, "every shard must execute the coverage suite");
+    assertStringIncludes(
+      String(run.run),
+      "--shard=${{ matrix.shard }}/8 --coverage-dir=coverage-shard-${{ matrix.shard }}",
+    );
+    const codecov = asRecord(jobs["codecov-upload"], "codecov job");
+    const codecovUpload = (codecov.steps as unknown[]).map((step) => asRecord(step, "codecov step"))
+      .find((step) => step.name === "Upload coverage to Codecov");
+    assert(codecovUpload, "Codecov must consume all coverage shards");
+    const paths = String(asRecord(codecovUpload.with, "codecov inputs").files).split(",");
+    assertEquals(paths, [
+      "coverage-profiles/coverage-shard-1/lcov.info",
+      "coverage-profiles/coverage-shard-1/history/lcov.info",
+      "coverage-profiles/coverage-shard-1/cli/lcov.info",
+      ...[2, 3, 4, 5, 6, 7, 8].map((shard) =>
+        `coverage-profiles/coverage-shard-${shard}/lcov.info`
+      ),
+    ]);
     assertEquals("unit-tests" in jobs, false);
     assertEquals(coverage.name, "coverage gate");
     assertEquals(coverage.needs, ["coverage-shards", "tested-run"]);
@@ -856,6 +882,70 @@ done
         0,
         `SONAR_RESULT=${dependencyResult} must not fail the merge gate when Sonar is intentionally skipped`,
       );
+    }
+  });
+});
+
+describe("trusted merge-group cancellation workflow", () => {
+  it("force-cancels only merge-group runs without checkout or repository code", async () => {
+    const workflow = asRecord(
+      parse(await readRepoFile(".github/workflows/cancel-failed-merge-group.yml")),
+      "cancel workflow",
+    );
+    assertEquals(asRecord(workflow.on, "cancel triggers"), { workflow_call: null });
+    assertEquals(workflow.permissions, { actions: "write" });
+    const jobs = asRecord(workflow.jobs, "cancel jobs");
+    assertEquals(Object.keys(jobs), ["cancel"]);
+    const job = asRecord(jobs.cancel, "cancel job");
+    assertEquals(job.if, "${{ github.event_name == 'merge_group' }}");
+    assertEquals(job["timeout-minutes"], 2);
+    assert(Array.isArray(job.steps));
+    assertEquals(job.steps.length, 1);
+    const step = asRecord(job.steps[0], "cancel step");
+    assertEquals(step.uses, undefined);
+    assertEquals(step.env, { GH_TOKEN: "${{ github.token }}" });
+    assertEquals(
+      String(step.run).trim(),
+      'gh api --method POST "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/force-cancel"',
+    );
+  });
+
+  it("passes the current run to the cancellation API and preserves API failures", async () => {
+    const workflow = asRecord(
+      parse(await readRepoFile(".github/workflows/cancel-failed-merge-group.yml")),
+      "cancel workflow",
+    );
+    const job = asRecord(asRecord(workflow.jobs, "cancel jobs").cancel, "cancel job");
+    assert(Array.isArray(job.steps));
+    const step = asRecord(job.steps[0], "cancel step");
+    const directory = await makeTempDir();
+    try {
+      await Deno.writeTextFile(
+        `${directory}/gh`,
+        '#!/bin/sh\nprintf "%s\\n" "$@" > "$CANCEL_ARGS"\nexit "$CANCEL_EXIT"\n',
+      );
+      await Deno.chmod(`${directory}/gh`, 0o700);
+      for (const exitCode of [0, 7]) {
+        const output = await new Deno.Command("bash", {
+          args: ["-e", "-c", 'PATH="$CANCEL_BIN"\n' + String(step.run)],
+          env: {
+            CANCEL_BIN: directory,
+            GITHUB_REPOSITORY: "veryfront/veryfront-code",
+            GITHUB_RUN_ID: "123456",
+            CANCEL_ARGS: `${directory}/args`,
+            CANCEL_EXIT: String(exitCode),
+          },
+          stdout: "piped",
+          stderr: "piped",
+        }).output();
+        assertEquals(output.code, exitCode);
+        assertEquals(
+          await Deno.readTextFile(`${directory}/args`),
+          "api\n--method\nPOST\nrepos/veryfront/veryfront-code/actions/runs/123456/force-cancel\n",
+        );
+      }
+    } finally {
+      await Deno.remove(directory, { recursive: true });
     }
   });
 });

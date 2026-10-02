@@ -58,6 +58,7 @@ const KEPT = [
   "prerelease",
   "github-prerelease",
   "release",
+  "publish-public-release",
   "quality-gate-registry",
   "dispatch-release",
   "update-homebrew",

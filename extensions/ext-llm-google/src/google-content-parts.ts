@@ -52,10 +52,12 @@ export type GoogleToolCallCorrelationRegistry = {
  * Owns Gemini's tool-call id allocation and code-execution pairing rules.
  *
  * The response normalizer and exact-replay validator must derive identical
- * ids for anonymous code execution. Keeping the allocator here prevents those
+ * ids for anonymous calls within the saved response scope. Keeping the allocator here prevents those
  * two protocol boundaries from drifting independently.
  */
-export function createGoogleToolCallCorrelationRegistry(): GoogleToolCallCorrelationRegistry {
+export function createGoogleToolCallCorrelationRegistry(
+  scope?: string,
+): GoogleToolCallCorrelationRegistry {
   const usedToolCallIds = new Set<string>();
   const pendingCodeExecutionsByProviderId = new Map<string, string>();
   const pendingAnonymousCodeExecutions: string[] = [];
@@ -71,7 +73,7 @@ export function createGoogleToolCallCorrelationRegistry(): GoogleToolCallCorrela
 
   return {
     registerFunctionCall(partIndex, providerId) {
-      return reserve(providerId ?? `tool-${partIndex}`);
+      return reserve(providerId ?? `tool-${scope ? `${scope}-` : ""}${partIndex}`);
     },
     registerCodeExecution(providerId) {
       if (providerId !== undefined) {
@@ -82,7 +84,7 @@ export function createGoogleToolCallCorrelationRegistry(): GoogleToolCallCorrela
 
       let id: string;
       do {
-        id = `google-code-execution-${anonymousCodeExecutionIndex++}`;
+        id = `google-code-execution-${scope ? `${scope}-` : ""}${anonymousCodeExecutionIndex++}`;
       } while (usedToolCallIds.has(id));
       usedToolCallIds.add(id);
       pendingAnonymousCodeExecutions.push(id);

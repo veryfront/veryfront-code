@@ -7,7 +7,7 @@ protects a distinct delivery boundary.
 ## 1. Merge correctness
 
 `quality gate (merge)` requires source checks, unit tests, the existing
-four-shard coverage dependency with its 80 percent floor, integration tests,
+eight-shard coverage dependency with its 80 percent floor, integration tests,
 the full Node and Bun runtime suites, binary end-to-end tests, and RSC browser
 end-to-end tests to succeed for pull requests, merge queue runs, and main
 pushes. Sonar analysis is also mandatory for merge queue runs, main pushes,
@@ -32,7 +32,15 @@ artifact. Without such a run, main runs the full pipeline. Evidence:
 
 The scanner emits the diagnostic `SonarQube Cloud scan` check.
 `SonarQube Cloud quality gate` is the only Sonar check required by the ruleset
-and depends on that scanner result.
+and depends on that scanner result. Merge queue scans explicitly analyze their
+`gh-readonly-queue` ref plus generated commit SHA with `main` as the target
+branch. Including the SHA isolates rebuilt groups even when GitHub reuses a
+queue ref. Sonar does
+not auto-detect `merge_group` events; leaving the branch unset publishes queue
+analyses into `main`, where concurrent groups compete with each other and main
+pushes. Pull requests and main pushes retain Sonar's automatic detection.
+The 28-minute scan budget, 20-minute server wait, required quality gate, and
+single infrastructure-error retry remain unchanged.
 
 The active merge queue ruleset gives required checks at least 70 minutes to
 report a conclusion. This covers the longest configured dependency path: 60

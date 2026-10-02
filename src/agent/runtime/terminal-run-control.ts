@@ -1,3 +1,4 @@
+import { snapshotBoundedJsonValue } from "#veryfront/schemas/json-value.ts";
 import type { AgentResponse } from "#veryfront/agent/types.ts";
 import { hasToolExecutionErrorMarker } from "#veryfront/tool/result.ts";
 import type { ToolExecutionContext } from "#veryfront/tool/types.ts";
@@ -174,13 +175,22 @@ class TerminalRunControl {
     if (this.validateOutput) {
       return this.applyOutputSchema(input, this.validateOutput);
     }
+    this.snapshotCompletedOutput(input, input.output);
   }
 
   private async applyOutputSchema(
     input: Record<string, unknown>,
     validateOutput: (output: unknown) => Promise<unknown>,
   ): Promise<void> {
-    input.output = await validateOutput(input.output);
+    this.snapshotCompletedOutput(input, await validateOutput(input.output));
+  }
+
+  private snapshotCompletedOutput(input: Record<string, unknown>, output: unknown): void {
+    const snapshot = snapshotBoundedJsonValue(output);
+    if (!snapshot.success) {
+      throw new Error("finalize completed requires JSON-compatible output after schema validation");
+    }
+    input.output = snapshot.value;
   }
 
   private validateFailureInput(input: Record<string, unknown>): void {

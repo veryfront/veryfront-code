@@ -16,6 +16,7 @@ import {
 import {
   buildDenoSuiteCommandArgs,
   DENO_SUITE_PROFILES,
+  handleDenoSuiteStatus,
   LOOPBACK_ALLOW_NET,
   parseDenoSuiteArgs,
 } from "./run-deno-suite.ts";
@@ -934,3 +935,51 @@ function sorted(paths: readonly string[]): string[] {
     left < right ? -1 : left > right ? 1 : 0
   );
 }
+
+describe("Deno suite child termination diagnostics", () => {
+  for (
+    const status of [
+      { success: false, code: 1, signal: null },
+      { success: false, code: 137, signal: "SIGKILL" },
+    ] as const
+  ) {
+    it(`reports batch, code and ${status.signal} before exiting`, () => {
+      const events: (string | number)[] = [];
+      const stopped = new Error("parent exit");
+      assertThrows(
+        () =>
+          handleDenoSuiteStatus(status, "unit:parallel", 19, 25, {
+            report: (message) => events.push(message),
+            exit: (code) => {
+              events.push(code);
+              throw stopped;
+            },
+          }),
+        Error,
+        "parent exit",
+      );
+      assertEquals(events, [
+        `[test-suite] unit:parallel batch 19/25 failed: exit code=${status.code}, signal=${status.signal}`,
+        status.code,
+      ]);
+    });
+  }
+
+  it("continues successful batches without failure output or exit", () => {
+    const events: (string | number)[] = [];
+    handleDenoSuiteStatus(
+      { success: true, code: 0, signal: null },
+      "unit:serial",
+      1,
+      1,
+      {
+        report: (message) => events.push(message),
+        exit: (code) => {
+          events.push(code);
+          throw new Error("unexpected parent exit");
+        },
+      },
+    );
+    assertEquals(events, []);
+  });
+});

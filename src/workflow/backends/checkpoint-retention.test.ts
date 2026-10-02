@@ -1382,6 +1382,145 @@ describe("workflow checkpoint retention", () => {
       });
     });
 
+    for (const privateField of ["context", "evaluationContext"] as const) {
+      it(`retains loop retry ${privateField} as a framework record through owned checkpoint storage`, async () => {
+        let calls = 0;
+        const backend = new MemoryBackend();
+        const workerId = `run-execution:retry-${privateField}-owner`;
+        const runId = `retry-${privateField}-retention`;
+        const callableRecord = {
+          input: {},
+          toJSON: () => {
+            calls++;
+            return { corrupted: true };
+          },
+          other: { keep: 1 },
+        };
+        const dataRecord = {
+          input: {},
+          toJSON: { keep: 2 },
+          other: { keep: 3 },
+        };
+        await backend.createRun(run(runId, workerId));
+
+        const saved = await backend.saveCheckpointIfStatusAndWorker(
+          runId,
+          runId,
+          ["running"],
+          workerId,
+          cloneOwnedCheckpointForPersistence({
+            ...checkpoint(`retry-${privateField}`),
+            nodeStates: {
+              repeat: {
+                nodeId: "repeat",
+                status: "failed",
+                attempt: 1,
+                _loopOutputRetry: {
+                  iteration: 0,
+                  previousResults: [],
+                  context: privateField === "context" ? callableRecord : dataRecord,
+                  evaluationContext: privateField === "evaluationContext"
+                    ? callableRecord
+                    : dataRecord,
+                  iterationNodeStates: {},
+                },
+              },
+            },
+          }),
+        );
+
+        assertEquals(saved, true);
+        assertEquals(calls, 0);
+        const retry = (await backend.getLatestCheckpoint(runId))?.nodeStates.repeat
+          ?._loopOutputRetry;
+        assertEquals(retry?.[privateField], { input: {}, other: { keep: 1 } });
+        const dataField = privateField === "context" ? "evaluationContext" : "context";
+        assertEquals(retry?.[dataField], {
+          input: {},
+          toJSON: { keep: 2 },
+          other: { keep: 3 },
+        });
+      });
+    }
+
+    it("retains loop retry previous contexts when an earlier checkpoint context aliases one", async () => {
+      let calls = 0;
+      const firstPriorContext: WorkflowContext = {
+        input: { iteration: 0 },
+        history: ["first"],
+        toJSON: () => {
+          calls++;
+          return { corrupted: true };
+        },
+        sibling: { keep: 1 },
+      };
+      const secondPriorContext: WorkflowContext = {
+        input: { iteration: 1 },
+        history: ["first", "second"],
+        toJSON: () => {
+          calls++;
+          return { corrupted: true };
+        },
+        sibling: { keep: 2 },
+      };
+      const expectedPriorContexts = [
+        {
+          input: { iteration: 0 },
+          history: ["first"],
+          sibling: { keep: 1 },
+        },
+        {
+          input: { iteration: 1 },
+          history: ["first", "second"],
+          sibling: { keep: 2 },
+        },
+      ];
+      const runId = "retry-previous-results-retention";
+      const workerId = "run-execution:retry-previous-results-owner";
+      const backend = new MemoryBackend();
+      await backend.createRun(run(runId, workerId));
+
+      const snapshot = cloneOwnedCheckpointForPersistence({
+        ...checkpoint("retry-previous-results"),
+        context: { input: {}, earlierAlias: firstPriorContext },
+        nodeStates: {
+          repeat: {
+            nodeId: "repeat",
+            status: "failed",
+            attempt: 1,
+            _loopOutputRetry: {
+              iteration: 2,
+              previousResults: [firstPriorContext, secondPriorContext],
+              context: { input: {} },
+              evaluationContext: { input: {} },
+              iterationNodeStates: {},
+            },
+          },
+        },
+      });
+      assertEquals(calls, 0);
+
+      assertEquals(
+        await backend.saveCheckpointIfStatusAndWorker(
+          runId,
+          runId,
+          ["running"],
+          workerId,
+          snapshot,
+        ),
+        true,
+      );
+      assertEquals(calls, 0);
+
+      const latest = await backend.getLatestCheckpoint(runId);
+      assertEquals(calls, 0);
+      assertEquals(
+        latest?.nodeStates.repeat?._loopOutputRetry?.previousResults,
+        expectedPriorContexts,
+      );
+      assertEquals(latest?.context.earlierAlias, expectedPriorContexts[0]);
+    });
+
     it("reports an owned callable node under its own strict context path", async () => {
       const calls: string[] = [];
       const backend = new MemoryBackend({ strictContext: true });

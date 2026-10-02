@@ -445,6 +445,11 @@ export class WorkflowClient {
     return this.executor.cancel(runId);
   }
 
+  /** @internal Wait for positive executor-local evidence that a run's DAG execution stopped. */
+  waitForExecutionStopped(runId: string): Promise<boolean> {
+    return this.executor.waitForExecutionStopped(runId);
+  }
+
   /** Read a run, including the approvals it is currently waiting on. */
   async getRun(runId: string): Promise<WorkflowRun | null> {
     const run = await this.backend.getRun(runId);
@@ -591,6 +596,7 @@ export class WorkflowClient {
       ]);
     } finally {
       this.approvalManager.stop();
+      this.executor.clearExecutionStopEvidence();
       await this.backend.destroy();
     }
     logger.debug("Destroyed");
