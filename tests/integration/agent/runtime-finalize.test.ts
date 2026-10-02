@@ -925,6 +925,33 @@ describe("runtime finalize terminal control", () => {
     );
   });
 
+  it("validates a resumed non-terminal tool only before its provider request", async () => {
+    let validations = 0;
+    await fixture(
+      [{ text: "resumed" }],
+      async (runtime, model, dispatched) => {
+        const text = await new Response(
+          await runtime.stream([
+            { id: "resume-input", role: "user", parts: [{ type: "text", text: "resume" }] },
+          ], { runId: "run-current" }),
+        ).text();
+        assert(text.includes('"type":"message-finish"'), text);
+        assertEquals(dispatched, [markerCall.name]);
+        assertEquals(model.callCount, 1);
+        assertEquals(validations, 1);
+      },
+      () => ({ content: [{ type: "text", text: "marked" }] }),
+      undefined,
+      [async (context, next) => {
+        registerTurnProviderRequestValidator(context, async () => {
+          validations++;
+        });
+        return await next();
+      }],
+      { ...markerCall, id: "marker-1:resume-1" },
+    );
+  });
+
   it("keeps invalid failure arguments recoverable and dispatches no terminal write", async () => {
     await fixture([{ toolCalls: [{ ...failCall, input: { code: "", message: "" } }, markerCall] }, {
       text: "recovered",

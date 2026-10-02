@@ -4,6 +4,7 @@ import {
   admitTerminalDispatch,
   createTerminalRunControl,
   isTerminalRunControlError,
+  isTerminalRunToolName,
   terminalCompletionResponse,
   terminalDispatchRecord,
   terminalReceiptPersistenceFailure,
@@ -4039,13 +4040,15 @@ export class AgentRuntime {
       const runtimeToolNames = Object.keys(runtimeTools ?? {}).sort(compareStrings);
 
       if (!resumeToolCallExecuted && this.#resumeToolCall) {
-        // A resumed tool can terminate before any provider call. Validate the
-        // staged turn first so accepted terminal results commit and rejected
-        // turns roll back without dispatching the parked action.
-        await validateProviderRequest(
-          withAgentRunRuntimeContext(currentSystemPrompt, runRuntimeContext),
-          currentMessages,
-        );
+        // A resumed finalize can terminate before any provider call. Validate
+        // the staged turn first so accepted terminal results commit and
+        // rejected turns roll back without dispatching the parked action.
+        if (isTerminalRunToolName(this.#resumeToolCall.name)) {
+          await validateProviderRequest(
+            withAgentRunRuntimeContext(currentSystemPrompt, runRuntimeContext),
+            currentMessages,
+          );
+        }
         const resumeToolCall = this.#resumeToolCall;
         resumeToolCallExecuted = true;
         const inputText = privateJsonStringify(resumeToolCall.input);

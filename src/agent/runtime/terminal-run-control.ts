@@ -330,6 +330,10 @@ export async function dispatchWithTerminalRunControl(
   return execute();
 }
 
+export function isTerminalRunToolName(name: string): boolean {
+  return name === "veryfront__finalize" || name === "finalize";
+}
+
 /** Called only after selecting a trusted platform source and enforcing tool policy. */
 export async function executeTerminalRunTool(
   name: string,
@@ -337,7 +341,7 @@ export async function executeTerminalRunTool(
   context: ToolExecutionContext | undefined,
   execute: () => Promise<unknown>,
 ): Promise<unknown> {
-  if (name !== "veryfront__finalize" && name !== "finalize") {
+  if (!isTerminalRunToolName(name)) {
     return dispatchWithTerminalRunControl(context, execute);
   }
   const control = (context as ControlContext | undefined)?.[controlKey];
