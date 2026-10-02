@@ -887,7 +887,7 @@ done
 });
 
 describe("trusted merge-group cancellation workflow", () => {
-  it("force-cancels only merge-group runs without checkout or repository code", async () => {
+  it("cancels only merge-group runs while preserving always aggregators", async () => {
     const workflow = asRecord(
       parse(await readRepoFile(".github/workflows/cancel-failed-merge-group.yml")),
       "cancel workflow",
@@ -906,7 +906,7 @@ describe("trusted merge-group cancellation workflow", () => {
     assertEquals(step.env, { GH_TOKEN: "${{ github.token }}" });
     assertEquals(
       String(step.run).trim(),
-      'gh api --method POST "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/force-cancel"',
+      'gh api --method POST "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/cancel"',
     );
   });
 
@@ -941,7 +941,7 @@ describe("trusted merge-group cancellation workflow", () => {
         assertEquals(output.code, exitCode);
         assertEquals(
           await Deno.readTextFile(`${directory}/args`),
-          "api\n--method\nPOST\nrepos/veryfront/veryfront-code/actions/runs/123456/force-cancel\n",
+          "api\n--method\nPOST\nrepos/veryfront/veryfront-code/actions/runs/123456/cancel\n",
         );
       }
     } finally {
