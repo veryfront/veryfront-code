@@ -37,8 +37,9 @@ import {
 } from "./cache-keys.ts";
 import { isPrefixBeingInvalidated } from "./invalidation-state.ts";
 import { WebSocketManager } from "./websocket-manager.ts";
+import { admitVerifiedSourceContents } from "./source-content-store.ts";
 import {
-  fetchFileListForContext,
+  fetchSourceListingForContext,
   hasContentContextChanged,
   resolveContentContext,
   summarizeFileList,
@@ -857,6 +858,32 @@ export class VeryfrontFSAdapter implements FSAdapter {
     return this.#getSourceSnapshotIdentity(context);
   }
 
+  /** Names a source across credentials for content reuse; never authorizes. */
+  #getSourceContentKey(context: ResolvedContentContext): string {
+    return `${this.apiBaseUrl}|${this.#getSourceSnapshotIdentity(context)}`;
+  }
+
+  #fetchSourceListing(context: ResolvedContentContext): ReturnType<
+    typeof fetchSourceListingForContext
+  > {
+    return fetchSourceListingForContext(this.client, context, this.#getSourceContentKey(context));
+  }
+
+  /**
+   * Publish a fetched listing to the credential-scoped listing cache. A listing
+   * assembled from verified contents is not copied into a distributed cache:
+   * another adapter can assemble it just as cheaply, and uploading a complete
+   * project on every fresh credential costs more than it saves. The retained
+   * listing answers this adapter's reads instead.
+   */
+  async #storeFileList(
+    cacheKey: string,
+    listing: { files: Array<{ path: string; content?: string }>; contentReused: boolean },
+  ): Promise<void> {
+    if (listing.contentReused && this.cache.isDistributed()) return;
+    await this.cache.setAsync(cacheKey, listing.files);
+  }
+
   private syncClientContext(): void {
     this.client.clearRequestBranch();
 
@@ -901,7 +928,14 @@ export class VeryfrontFSAdapter implements FSAdapter {
       return undefined;
     }
 
-    let files = await this.cache.getAsync<T[]>(cacheKey);
+    // The retained listing is what this adapter last fetched or was poked
+    // with for this key, and every write this adapter makes to the key
+    // retains it too, so it answers before the cache round trip. Every
+    // invalidation drops it, and a listing for another key is left untouched.
+    let files = this.retainedFileList?.cacheKey === cacheKey
+      ? this.readRetainedFileList<T>(cacheKey)
+      : undefined;
+    files ??= await this.cache.getAsync<T[]>(cacheKey);
     logger.debug(`${lookupLabel} lookup`, {
       cacheKey,
       hasResult: !!files,
@@ -1247,7 +1281,8 @@ export class VeryfrontFSAdapter implements FSAdapter {
     logger.debug("Step 4: fetchFileList START", { projectSlug, cacheKey });
 
     try {
-      const files = await fetchFileListForContext(this.client, initializationContext);
+      const listing = await this.#fetchSourceListing(initializationContext);
+      const files = listing.files;
       const fileSummary = summarizeFileList(files);
 
       const initialSnapshotApplied = await this.#runSourceSnapshotMutation(async () => {
@@ -1257,7 +1292,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
           this.sourceSnapshotVersion !== initializationSnapshotVersion;
         if (isSnapshotSuperseded()) return false;
 
-        await this.cache.setAsync(cacheKey, files);
+        await this.#storeFileList(cacheKey, listing);
         if (isSnapshotSuperseded()) {
           await this.cache.deleteAsync(cacheKey);
           return false;
@@ -1557,7 +1592,8 @@ export class VeryfrontFSAdapter implements FSAdapter {
           releaseId: warmupContext.releaseId,
         });
 
-        const files = await fetchFileListForContext(this.client, warmupContext);
+        const listing = await this.#fetchSourceListing(warmupContext);
+        const files = listing.files;
 
         // A WebSocket snapshot can land while this fetch is open. Publishing
         // the pre-poke listing would roll both the cache and this caller's
@@ -1598,7 +1634,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
             }
           }
 
-          await this.cache.setAsync(effectiveCacheKey, files);
+          await this.#storeFileList(effectiveCacheKey, listing);
           // A poke can advance the generation while a distributed cache write
           // is pending. Remove the value that just landed before releasing the
           // mutation lock, so neither this waiter nor a later read sees it.
@@ -1732,6 +1768,8 @@ export class VeryfrontFSAdapter implements FSAdapter {
     // from, so publish the listing under the key that context reads.
     const cacheKey = scopeFileListCacheKeyToRequestAuthority(sourceCacheKey);
     const expectedContext = this.contentContext;
+    const effectiveContext = this.getEffectiveContentContext();
+    const sourceContentKey = effectiveContext && this.#getSourceContentKey(effectiveContext);
     return this.#runSourceSnapshotMutation(async () => {
       if (
         !expectedContext ||
@@ -1768,6 +1806,10 @@ export class VeryfrontFSAdapter implements FSAdapter {
       // Retain after the version bump so the poked listing -- not the one it
       // replaced -- is what later reads see when the cache keeps nothing.
       this.retainFileList(cacheKey, files);
+      // Poked listings carry contents, so fresh credentials can reuse them.
+      if (sourceContentKey) {
+        ignorePromiseRejection(admitVerifiedSourceContents(sourceContentKey, files));
+      }
       return this.sourceSnapshotVersion;
     });
   }
@@ -1822,7 +1864,8 @@ export class VeryfrontFSAdapter implements FSAdapter {
     const refreshIdentity = this.#getCurrentSourceSnapshotIdentity();
     const previousFiles = this.sourceSnapshotFiles;
     const previousVersion = this.sourceSnapshotVersion;
-    const files = await fetchFileListForContext(this.client, effectiveRefreshContext);
+    const listing = await this.#fetchSourceListing(effectiveRefreshContext);
+    const files = listing.files;
     const result = await this.#runSourceSnapshotMutation(async () => {
       const isSnapshotSuperseded = () =>
         this.contentContext !== refreshContext ||
@@ -1852,7 +1895,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
         }
       }
 
-      await this.cache.setAsync(cacheKey, files);
+      await this.#storeFileList(cacheKey, listing);
       if (isSnapshotSuperseded()) {
         await this.cache.deleteAsync(cacheKey);
         return { applied: false, sourceChanged: false };
