@@ -1,3 +1,4 @@
+import { forEachSequential } from "./sequential.ts";
 import { getAgentRuntimeToolCallPart } from "./message-adapter.ts";
 import {
   createTerminalRunControl,
@@ -4056,16 +4057,14 @@ export class AgentRuntime {
             currentMessages,
             toolCalls,
             totalUsage,
-            controller,
-            encoder,
+            { controller, encoder },
           );
           throwIfAborted(abortSignal);
           await this.recordToolError(
             persistMessage,
             toolCall,
             error instanceof Error ? error.message : String(error),
-            controller,
-            encoder,
+            { controller, encoder },
             currentMessages,
             toolCalls,
           );
@@ -4615,8 +4614,7 @@ export class AgentRuntime {
           incompleteToolCall,
           `Stream terminated before tool-call event fired for "${toolCall.name}". ` +
             `Received ${toolCall.arguments.length} chars of partial tool-input deltas.`,
-          controller,
-          encoder,
+          { controller, encoder },
           currentMessages,
           toolCalls,
           {
@@ -4680,8 +4678,7 @@ export class AgentRuntime {
             interruptedBatchToolCall,
             "Tool execution skipped because another tool call in the same model step " +
               "was interrupted before its input completed.",
-            controller,
-            encoder,
+            { controller, encoder },
             currentMessages,
             toolCalls,
           );
@@ -4829,8 +4826,7 @@ export class AgentRuntime {
             persistMessage,
             toolCall,
             `Invalid tool arguments: ${capturedInput.parseError}`,
-            controller,
-            encoder,
+            { controller, encoder },
             currentMessages,
             toolCalls,
           );
@@ -4872,8 +4868,7 @@ export class AgentRuntime {
               persistMessage,
               toolCall,
               error instanceof Error ? error.message : String(error),
-              controller,
-              encoder,
+              { controller, encoder },
               currentMessages,
               toolCalls,
             );
@@ -4896,8 +4891,7 @@ export class AgentRuntime {
             persistMessage,
             toolCall,
             toolNotVisibleError(tc.name),
-            controller,
-            encoder,
+            { controller, encoder },
             currentMessages,
             toolCalls,
           );
@@ -4917,8 +4911,7 @@ export class AgentRuntime {
             persistMessage,
             toolCall,
             policyCheck.error,
-            controller,
-            encoder,
+            { controller, encoder },
             currentMessages,
             toolCalls,
           );
@@ -5012,26 +5005,14 @@ export class AgentRuntime {
             currentStepToolResults.set(tc.id, toolResultMessage.parts[0] as ToolResultPart);
           }
         } catch (error) {
-          await this.recordTerminalToolResult(
-            error,
-            toolCall,
-            persistMessage,
-            currentMessages,
-            toolCalls,
-            totalUsage,
-            controller,
-            encoder,
-          );
-          throwIfAborted(abortSignal);
-          const errorStr = error instanceof Error ? error.message : String(error);
           await this.recordToolError(
             persistMessage,
             toolCall,
-            errorStr,
-            controller,
-            encoder,
+            undefined,
+            { controller, encoder },
             currentMessages,
             toolCalls,
+            { terminal: { error, usage: totalUsage, abortSignal } },
           );
         }
       }
@@ -5114,14 +5095,14 @@ export class AgentRuntime {
     currentMessages: Message[],
     toolCalls: ToolCall[],
     usage: NonNullable<AgentResponse["usage"]>,
-    controller?: ReadableStreamDefaultController,
-    encoder?: TextEncoder,
+    stream?: { controller: ReadableStreamDefaultController; encoder: TextEncoder },
   ): Promise<void> {
     if (
       !(isTerminalRunControlError(error)) || error.terminalToolCallId !== toolCall.id
     ) {
       return;
     }
+    const { controller, encoder } = stream ?? {};
     const acknowledged = error.acknowledgedResult !== undefined;
     toolCall.status = acknowledged ? "completed" : "error";
     if (acknowledged) toolCall.result = error.acknowledgedResult;
@@ -5132,24 +5113,8 @@ export class AgentRuntime {
       : createToolErrorMessage(toolCall.id, toolCall.name, error.message);
     pushPrivateArray(currentMessages, message);
     await persistMessage(message);
-    const resolvedIds = createPrivateSet<string>();
-    let terminalAssistantMessage: Message | undefined;
-    for (const entry of currentMessages) {
-      for (const part of entry.parts) {
-        if (part.type === "tool-result") resolvedIds.add(part.toolCallId);
-        else if (
-          entry.role === "assistant" &&
-          getAgentRuntimeToolCallPart(part)?.toolCallId === toolCall.id
-        ) {
-          terminalAssistantMessage = entry;
-        }
-      }
-    }
-    for (const part of terminalAssistantMessage?.parts ?? []) {
-      if (part.type === "tool-result") continue;
-      const sibling = getAgentRuntimeToolCallPart(part);
-      if (!sibling || resolvedIds.has(sibling.toolCallId)) continue;
-      resolvedIds.add(sibling.toolCallId);
+    const siblings = this.unresolvedTerminalSiblings(currentMessages, toolCall.id);
+    await forEachSequential(siblings, async (sibling) => {
       const reason = acknowledged
         ? "Run finalized before this tool was dispatched"
         : "Run outcome could not be confirmed; further tool dispatch stopped";
@@ -5171,7 +5136,7 @@ export class AgentRuntime {
           ...(isDynamicTool(sibling.toolName) ? { dynamic: true } : {}),
         });
       }
-    }
+    });
     error.executionState = {
       messages: [...currentMessages],
       toolCalls: [...toolCalls],
@@ -5187,16 +5152,64 @@ export class AgentRuntime {
     }
   }
 
+  private unresolvedTerminalSiblings(currentMessages: Message[], terminalToolCallId: string) {
+    const resolvedIds = createPrivateSet<string>();
+    let terminalAssistantMessage: Message | undefined;
+    for (const entry of currentMessages) {
+      for (const part of entry.parts) {
+        if (part.type === "tool-result") resolvedIds.add(part.toolCallId);
+        else if (
+          entry.role === "assistant" &&
+          getAgentRuntimeToolCallPart(part)?.toolCallId === terminalToolCallId
+        ) {
+          terminalAssistantMessage = entry;
+        }
+      }
+    }
+    const siblings: NonNullable<ReturnType<typeof getAgentRuntimeToolCallPart>>[] = [];
+    for (const part of terminalAssistantMessage?.parts ?? []) {
+      if (part.type === "tool-result") continue;
+      const sibling = getAgentRuntimeToolCallPart(part);
+      if (!sibling || resolvedIds.has(sibling.toolCallId)) continue;
+      resolvedIds.add(sibling.toolCallId);
+      pushPrivateArray(siblings, sibling);
+    }
+    return siblings;
+  }
+
   private async recordToolError(
     persistMessage: (message: Message) => Promise<void>,
     toolCall: ToolCall,
-    errorStr: string,
-    controller: ReadableStreamDefaultController,
-    encoder: TextEncoder,
+    errorStr: string | undefined,
+    stream: { controller: ReadableStreamDefaultController; encoder: TextEncoder },
     currentMessages: Message[],
     toolCalls: ToolCall[],
-    options: { emitSse?: boolean; includeInResponse?: boolean } = {},
+    options: {
+      emitSse?: boolean;
+      includeInResponse?: boolean;
+      terminal?: {
+        error: unknown;
+        usage: NonNullable<AgentResponse["usage"]>;
+        abortSignal?: AbortSignal;
+      };
+    } = {},
   ): Promise<void> {
+    const { controller, encoder } = stream;
+    if (options.terminal) {
+      await this.recordTerminalToolResult(
+        options.terminal.error,
+        toolCall,
+        persistMessage,
+        currentMessages,
+        toolCalls,
+        options.terminal.usage,
+        { controller, encoder },
+      );
+      throwIfAborted(options.terminal.abortSignal);
+      const error = options.terminal.error;
+      errorStr = error instanceof Error ? error.message : String(error);
+    }
+    errorStr ??= "Tool execution failed";
     toolCall.status = "error";
     toolCall.error = errorStr;
     if (options.includeInResponse !== false) {

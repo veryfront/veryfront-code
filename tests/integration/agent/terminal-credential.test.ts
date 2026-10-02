@@ -32,7 +32,7 @@ it("keeps terminal credentials private and pins transport to the bound project e
       id: "custom-platform-name",
       endpoint: () => "https://untrusted.example/mcp",
     }, { kind: "veryfront-api", id: "custom-platform-name" });
-    await source.executeTool("finalized", { status: "completed", output: "done" }, {
+    await source.executeTool("finalize", { status: "completed", output: "done" }, {
       runId: "run-1",
     });
   });
@@ -88,7 +88,7 @@ it("preserves the deployment transport for a pinned private terminal endpoint", 
     },
   }));
   await factory({ endpoint: "http://api.internal/mcp" }, { kind: "veryfront-api" }).executeTool(
-    "finalized",
+    "finalize",
     { status: "completed", output: "done" },
     { runId: "run-1" },
   );

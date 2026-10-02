@@ -59,7 +59,7 @@ export function hostedTerminalToolSourceFactory(
       id: ordinary.id,
       listTools: (context) => ordinary.listTools(context),
       executeTool: (name, args, context) =>
-        name === "finalized" || name === "veryfront__finalized"
+        name === "finalize" || name === "veryfront__finalize"
           ? terminal.executeTool(name, args, context)
           : ordinary.executeTool(name, args, context),
     };

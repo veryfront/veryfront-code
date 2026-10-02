@@ -13,10 +13,21 @@ export function createProjectScopedMcpUrl(
     // Let the remote MCP boundary produce its standard configuration error.
     return apiMcpUrl;
   }
-  const basePath = url.pathname
-    .replace(/\/projects\/[^/]+\/mcp\/?$/, "")
-    .replace(/\/mcp\/?$/, "")
-    .replace(/\/+$/, "");
+  let basePath = url.pathname;
+  if (basePath.endsWith("/")) basePath = basePath.slice(0, -1);
+  if (basePath.endsWith("/mcp")) {
+    basePath = basePath.slice(0, -4);
+    const projectSegment = basePath.lastIndexOf("/projects/");
+    if (
+      projectSegment >= 0 && basePath.length > projectSegment + 10 &&
+      !basePath.slice(projectSegment + 10).includes("/")
+    ) {
+      basePath = basePath.slice(0, projectSegment);
+    }
+  }
+  let end = basePath.length;
+  while (end > 0 && basePath[end - 1] === "/") end--;
+  basePath = basePath.slice(0, end);
   url.pathname = `${basePath}/projects/${encodeURIComponent(normalizedProjectId)}/mcp`;
   return url.toString();
 }

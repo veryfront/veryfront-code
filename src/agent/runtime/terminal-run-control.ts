@@ -39,7 +39,10 @@ class TerminalRunControl {
   pending?: Promise<void>;
 
   async ready(): Promise<void> {
-    while (this.pending) await this.pending;
+    if (this.pending) {
+      await this.pending;
+      return this.ready();
+    }
     this.controller.signal.throwIfAborted();
   }
 
@@ -47,7 +50,10 @@ class TerminalRunControl {
     execute: () => Promise<unknown>,
     context?: ToolExecutionContext,
   ): Promise<unknown> {
-    while (this.pending) await this.pending;
+    if (this.pending) {
+      await this.pending;
+      return this.dispatch(execute, context);
+    }
     this.controller.signal.throwIfAborted();
     context?.abortSignal?.throwIfAborted();
     return execute();
@@ -58,36 +64,68 @@ class TerminalRunControl {
     context: ToolExecutionContext,
     execute: () => Promise<unknown>,
   ): Promise<unknown> {
-    if (input.status === "completed") {
-      if (
-        !Object.hasOwn(input, "output") || input.output === undefined ||
-        Object.keys(input).some((key) => key !== "status" && key !== "output")
-      ) {
-        throw new Error("finalized completed requires output, without a run ID");
-      }
-      if (this.validateOutput) input.output = await this.validateOutput(input.output);
-    } else {
-      const error = input.error;
-      if (
-        input.status !== "failed" || !error || typeof error !== "object" || Array.isArray(error) ||
-        Object.keys(input).some((key) => key !== "status" && key !== "error")
-      ) {
-        throw new Error("finalized requires completed/output or failed/error, without a run ID");
-      }
-      const failure = error as Record<string, unknown>;
-      if (
-        typeof failure.code !== "string" || !/^[A-Z][A-Z0-9_]{0,63}$/.test(failure.code) ||
-        typeof failure.message !== "string" || !failure.message.trim() ||
-        failure.message.length > 2000 ||
-        Object.keys(failure).some((key) => key !== "code" && key !== "message")
-      ) {
-        throw new Error("finalized requires a valid failure code and message");
-      }
-    }
+    const validation = this.validateInput(input);
+    if (validation) await validation;
     if (!context.runId || context.runIdBindsToolAuthorization === false) {
-      throw new Error("finalized requires authenticated current-run authority");
+      throw new Error("finalize requires authenticated current-run authority");
     }
-    while (this.pending) await this.pending;
+    return this.commit(context, execute);
+  }
+
+  private validateInput(input: Record<string, unknown>): Promise<void> | undefined {
+    if (input.status === "completed") {
+      return this.validateCompletedInput(input);
+    } else {
+      this.validateFailureInput(input);
+    }
+  }
+
+  private validateCompletedInput(input: Record<string, unknown>): Promise<void> | undefined {
+    if (
+      !Object.hasOwn(input, "output") || input.output === undefined ||
+      Object.keys(input).some((key) => key !== "status" && key !== "output")
+    ) {
+      throw new Error("finalize completed requires output, without a run ID");
+    }
+    if (this.validateOutput) {
+      return this.applyOutputSchema(input, this.validateOutput);
+    }
+  }
+
+  private async applyOutputSchema(
+    input: Record<string, unknown>,
+    validateOutput: (output: unknown) => Promise<unknown>,
+  ): Promise<void> {
+    input.output = await validateOutput(input.output);
+  }
+
+  private validateFailureInput(input: Record<string, unknown>): void {
+    const error = input.error;
+    if (
+      input.status !== "failed" || !error || typeof error !== "object" || Array.isArray(error) ||
+      Object.keys(input).some((key) => key !== "status" && key !== "error")
+    ) {
+      throw new Error("finalize requires completed/output or failed/error, without a run ID");
+    }
+    const failure = error as Record<string, unknown>;
+    if (
+      typeof failure.code !== "string" || !/^[A-Z][A-Z0-9_]{0,63}$/.test(failure.code) ||
+      typeof failure.message !== "string" || !failure.message.trim() ||
+      failure.message.length > 2000 ||
+      Object.keys(failure).some((key) => key !== "code" && key !== "message")
+    ) {
+      throw new Error("finalize requires a valid failure code and message");
+    }
+  }
+
+  private async commit(
+    context: ToolExecutionContext,
+    execute: () => Promise<unknown>,
+  ): Promise<unknown> {
+    if (this.pending) {
+      await this.pending;
+      return this.commit(context, execute);
+    }
     this.controller.signal.throwIfAborted();
     let release!: () => void;
     this.pending = new Promise<void>((resolve) => {
@@ -125,7 +163,7 @@ class TerminalRunControl {
       } | null;
       const run = response?.run;
       if (
-        run?.run_id === context.runId &&
+        run && run.run_id === context.runId &&
         (run.status === "failed" || run.status === "cancelled" ||
           (run.status === "completed" && Object.hasOwn(run, "output")))
       ) {
@@ -204,11 +242,11 @@ export async function executeTerminalRunTool(
   context: ToolExecutionContext | undefined,
   execute: () => Promise<unknown>,
 ): Promise<unknown> {
-  if (name !== "veryfront__finalized" && name !== "finalized") {
+  if (name !== "veryfront__finalize" && name !== "finalize") {
     return dispatchWithTerminalRunControl(context, execute);
   }
   const control = (context as ControlContext | undefined)?.[controlKey];
-  if (!control || !context) throw new Error("finalized requires an active runtime execution");
+  if (!control || !context) throw new Error("finalize requires an active runtime execution");
   return control.fail(input, context, execute);
 }
 

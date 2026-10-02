@@ -19,7 +19,7 @@ import {
 const failure = { code: "INGEST_FAILED", message: "no email ingested" };
 const failCall = {
   id: "fail-1",
-  name: "veryfront__finalized",
+  name: "veryfront__finalize",
   input: { status: "failed", error: failure },
 };
 const markerCall = { id: "marker-1", name: "veryfront__marker", input: {} };
@@ -66,7 +66,7 @@ async function fixture(
     const runtime = new AgentRuntime("failure-fixture", {
       model: "hosted/fail-run",
       system: "Fail the run",
-      tools: { veryfront__finalized: true, veryfront__marker: true },
+      tools: { veryfront__finalize: true, veryfront__marker: true },
       maxSteps: 3,
       outputSchema,
       middleware,
@@ -91,9 +91,9 @@ async function fixture(
   });
 }
 
-describe("runtime finalized terminal control", () => {
+describe("runtime finalize terminal control", () => {
   for (const streaming of [false, true]) {
-    it(`retains schema-valid finalized strings through security middleware; stream=${streaming}`, async () => {
+    it(`retains schema-valid finalize strings through security middleware; stream=${streaming}`, async () => {
       await fixture(
         [{ toolCalls: [{ ...failCall, input: { status: "completed", output: "done" } }] }],
         async (runtime) => {
@@ -125,7 +125,7 @@ describe("runtime finalized terminal control", () => {
   }
 
   for (const streaming of [false, true]) {
-    it(`preserves schema-valid finalized strings through security middleware; stream=${streaming}`, async () => {
+    it(`preserves schema-valid finalize strings through security middleware; stream=${streaming}`, async () => {
       const output = "done";
       await fixture(
         [{ toolCalls: [{ ...failCall, input: { status: "completed", output } }] }],
@@ -162,7 +162,7 @@ describe("runtime finalized terminal control", () => {
   }
 
   for (const streaming of [false, true]) {
-    it(`revalidates filtered finalized output against its schema; stream=${streaming}`, async () => {
+    it(`revalidates filtered finalize output against its schema; stream=${streaming}`, async () => {
       const output = { email: "john@example.com" };
       await fixture(
         [{ toolCalls: [{ ...failCall, input: { status: "completed", output } }] }],
@@ -199,7 +199,7 @@ describe("runtime finalized terminal control", () => {
   }
 
   for (const streaming of [false, true]) {
-    it(`passes finalized success through output middleware; stream=${streaming}`, async () => {
+    it(`passes finalize success through output middleware; stream=${streaming}`, async () => {
       let processed = 0;
       await fixture(
         [{ toolCalls: [{ ...failCall, input: { status: "completed", output: "secret" } }] }],
@@ -239,7 +239,7 @@ describe("runtime finalized terminal control", () => {
     });
   }
 
-  it("returns committed output for finalized success without further model or tools", async () => {
+  it("returns committed output for finalize success without further model or tools", async () => {
     const output = { ingested: 3 };
     await fixture(
       [{ toolCalls: [{ ...failCall, input: { status: "completed", output } }, markerCall] }, {
@@ -315,7 +315,7 @@ describe("runtime finalized terminal control", () => {
     );
   });
 
-  it("streams finalized success and its committed output without an error", async () => {
+  it("streams finalize success and its committed output without an error", async () => {
     const output = { ingested: 3 };
     await fixture(
       [{ toolCalls: [{ ...failCall, input: { status: "completed", output } }, markerCall] }, {
@@ -496,7 +496,7 @@ describe("runtime finalized terminal control", () => {
 
   for (const streaming of [false, true]) {
     for (const lostReply of [false, true]) {
-      it(`closes unknown finalized calls and undispatched siblings; stream=${streaming}, lost=${lostReply}`, async () => {
+      it(`closes unknown finalize calls and undispatched siblings; stream=${streaming}, lost=${lostReply}`, async () => {
         await fixture(
           [{ toolCalls: [failCall, markerCall] }],
           async (runtime, model, dispatched) => {

@@ -1,3 +1,4 @@
+import { findSequential } from "./sequential.ts";
 import { dispatchWithTerminalRunControl, executeTerminalRunTool } from "./terminal-run-control.ts";
 import { hasTrustedPlatformSource } from "#veryfront/tool/platform-source-provenance.ts";
 import { isReservedPlatformToolName } from "#veryfront/tool/platform-tool-policy.ts";
@@ -310,14 +311,11 @@ async function executeRemoteToolFromSources(
   selectedSource?: RemoteToolSource,
 ): Promise<{ handled: boolean; result?: unknown }> {
   const sources = selectedSource ? [selectedSource] : remoteToolSources ?? [];
-  for (let index = 0; index < sources.length; index++) {
-    if (!intrinsicHasOwn(sources, index)) continue;
-    const source = sources[index]!;
-    if (isReservedPlatformToolName(toolName) && !hasTrustedPlatformSource(source)) continue;
-    if (source !== selectedSource && !(await sourceHasTool(source, toolName, context))) {
-      continue;
-    }
-
+  const source = await findSequential(sources, async (candidate) => {
+    if (isReservedPlatformToolName(toolName) && !hasTrustedPlatformSource(candidate)) return false;
+    return candidate === selectedSource || await sourceHasTool(candidate, toolName, context);
+  });
+  if (source) {
     if (allowedRemoteToolNames && !intrinsicIncludes(allowedRemoteToolNames, toolName)) {
       throw PERMISSION_DENIED.create({ detail: `Tool "${toolName}" is not allowed for this run` });
     }

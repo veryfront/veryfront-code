@@ -18,7 +18,7 @@ Deno.test("a sibling that passed its initial check cannot dispatch during finali
   let reply!: (value: unknown) => void;
   const pendingReply = new Promise((resolve) => reply = resolve);
   const terminal = executeTerminalRunTool(
-    "veryfront__finalized",
+    "veryfront__finalize",
     { status: "completed", output: { count: 3 } },
     context,
     () => pendingReply,
@@ -59,7 +59,7 @@ for (const status of ["completed", "failed"] as const) {
       : { status, error: { code: "INGEST_FAILED", message: "no email ingested" } };
     await assertRejects(() =>
       executeTerminalRunTool(
-        "veryfront__finalized",
+        "veryfront__finalize",
         outcome,
         context,
         async () => ({ run: { run_id: "run-current", ...outcome } }),
@@ -95,7 +95,7 @@ it("invalid terminal requests leave the dispatch gate usable", async () => {
       { status: "cancelled", output: null },
     ]
   ) {
-    await assertRejects(() => executeTerminalRunTool("finalized", input, context, execute));
+    await assertRejects(() => executeTerminalRunTool("finalize", input, context, execute));
     assertEquals(control.signal.aborted, false);
   }
   assertEquals(calls, 0);
@@ -109,14 +109,14 @@ it("terminal execution requires a bound invocation while ordinary tools remain u
   ) {
     const control = createTerminalRunControl(value);
     await assertRejects(() =>
-      executeTerminalRunTool("finalized", action, control.context, async () => {
+      executeTerminalRunTool("finalize", action, control.context, async () => {
         throw new Error("must not dispatch");
       })
     );
     assertEquals(control.signal.aborted, false);
   }
   await assertRejects(() =>
-    executeTerminalRunTool("finalized", action, undefined, async () => null)
+    executeTerminalRunTool("finalize", action, undefined, async () => null)
   );
   assertEquals(await dispatchWithTerminalRunControl(undefined, async () => "ordinary"), "ordinary");
   await awaitTerminalRunControl();
@@ -130,7 +130,7 @@ it("schema rejection permits correction and sends only the validated output", as
   let dispatched = 0;
   await assertRejects(() =>
     executeTerminalRunTool(
-      "finalized",
+      "finalize",
       { status: "completed", output: 42 },
       control.context,
       async () => ++dispatched,
@@ -139,7 +139,7 @@ it("schema rejection permits correction and sends only the validated output", as
   assertEquals(dispatched, 0);
   const input = { status: "completed", output: " done " };
   await assertRejects(() =>
-    executeTerminalRunTool("finalized", input, control.context, async () => {
+    executeTerminalRunTool("finalize", input, control.context, async () => {
       dispatched++;
       assertEquals(input.output, "done");
       return { run: { run_id: "run-current", status: "completed", output: input.output } };
@@ -155,7 +155,7 @@ it("a rejected MCP action is recoverable, but an uncertain committed result stop
     const input = { status: "failed", error: { code: "ERR", message: "failed" } };
     let calls = 0;
     const operation = () =>
-      executeTerminalRunTool("finalized", input, control.context, async () => {
+      executeTerminalRunTool("finalize", input, control.context, async () => {
         calls++;
         if (outcome === "recoverable") return { isError: true };
         if (outcome === "unavailable" || (outcome === "lost-reply" && calls === 1)) {

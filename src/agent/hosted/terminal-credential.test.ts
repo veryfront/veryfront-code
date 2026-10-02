@@ -67,7 +67,7 @@ describe("private terminal credential routing", () => {
   });
 
   for (const asyncHeaders of [false, true]) {
-    it(`pins finalized to its bound project while preserving ordinary routing; asyncHeaders=${asyncHeaders}`, async () => {
+    it(`pins finalize to its bound project while preserving ordinary routing; asyncHeaders=${asyncHeaders}`, async () => {
       const value = request();
       registerHostedTerminalCredential(value, "test-authority");
       assert(!JSON.stringify(value).includes("test-authority"));
@@ -81,7 +81,7 @@ describe("private terminal credential routing", () => {
       }, { kind: "veryfront-api" });
       assertEquals(source.id, "custom-platform");
       assertEquals((await source.listTools()).map((tool) => tool.name), ["ordinary"]);
-      for (const name of ["finalized", "veryfront__finalized"]) {
+      for (const name of ["finalize", "veryfront__finalize"]) {
         await source.executeTool(name, {}, { runId: "run-1" });
         const call = calls.at(-1)!;
         assertEquals(call.endpoint, "https://api.example/projects/project-1/mcp");
@@ -93,9 +93,9 @@ describe("private terminal credential routing", () => {
         assertEquals(calls.at(-1)!.endpoint, "https://active.example/mcp");
         assertEquals(calls.at(-1)!.headers.get(RUN_TERMINAL_TOKEN_HEADER), null);
       }
-      await source.executeTool("finalized", {}, { runId: "run-other" });
+      await source.executeTool("finalize", {}, { runId: "run-other" });
       assertEquals(calls.at(-1)!.headers.get(RUN_TERMINAL_TOKEN_HEADER), null);
-      await source.executeTool("finalized", {}, undefined);
+      await source.executeTool("finalize", {}, undefined);
       assertEquals(calls.at(-1)!.headers.get(RUN_TERMINAL_TOKEN_HEADER), "test-authority");
       assertEquals(Object.keys(original), ["Authorization"]);
     });
@@ -108,7 +108,7 @@ describe("private terminal credential routing", () => {
     const factory = hostedTerminalToolSourceFactory(value, "https://api.example/mcp", fallback);
     const source = factory({ endpoint: "https://third-party.example/mcp" });
     await source.executeTool(
-      "veryfront__finalized",
+      "veryfront__finalize",
       {},
       { runId: "run-1" } as ToolExecutionContext,
     );
