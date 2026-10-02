@@ -482,7 +482,6 @@ rc_tag_for_package() {
 run_rc_publish() {
   require_env VERSION GITHUB_SHA NPM_PACK_DIR
   verify_npm_compatibility_artifact
-  local rc_packages_to_verify=""
 
   for PACKAGE_DIR in $(package_dirs); do
     PUBLISH_SPEC="$(canonical_tarball_for_package_dir "${PACKAGE_DIR}")" || PUBLISH_SPEC=""
@@ -494,19 +493,9 @@ run_rc_publish() {
     PACKAGE_NAME="$(jq -r '.name' "${PACKAGE_DIR}/package.json")"
     RC_PUBLISH_TAG="$(rc_tag_for_package "${PACKAGE_NAME}")"
     rc_publish_package_dir "${PACKAGE_DIR}" "${PUBLISH_SPEC}" "${RC_PUBLISH_TAG}"
-    if [[ "${RC_PUBLISH_TAG}" == rc ]]; then
-      rc_packages_to_verify+=" ${PACKAGE_NAME}"
-    fi
   done
-
-  # Let registry propagation overlap across the batch. Keep the publisher lock
-  # until every current RC's gitHead and tag have converged to this release.
-  for PACKAGE_NAME in ${rc_packages_to_verify}; do
-    if ! wait_for_npm_git_head "${PACKAGE_NAME}" rc; then
-      echo "::error::RC registry metadata did not converge for ${PACKAGE_NAME}@${VERSION} within the shared ${NPM_GIT_HEAD_WAIT_TOTAL_SECONDS}s budget, or its gitHead differs; refusing to release an unverified RC." >&2
-      return 1
-    fi
-  done
+  # The required read-only registry validator checks immutable identities and
+  # RC tags after propagation, before the locked dispatch gate can deploy.
 }
 
 is_npm_package_not_found() {

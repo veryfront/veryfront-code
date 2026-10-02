@@ -19,7 +19,7 @@ registry_smoke_failure_classification() {
 
 registry_release_smoke_main() {
 	set -euo pipefail
-	local root_dir version registry_url registry_authority metadata_status smoke_status classification package_name registry_packages
+	local root_dir version registry_url registry_authority metadata_status smoke_status classification package_name registry_packages rc_tag_arg
 	local -a package_args=()
 	local -a package_names=()
 	root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -74,6 +74,11 @@ registry_release_smoke_main() {
 	fi
 	printf -v registry_packages '%s\n' "${package_names[@]}"
 
+	rc_tag_arg=""
+	if [[ "${IS_STABLE:-}" != "true" ]]; then
+		rc_tag_arg="--require-rc-tag"
+	fi
+
 	set +e
 	deno run --no-config --no-lock --allow-net="$registry_authority" \
 		--allow-env=VF_REGISTRY_PROPAGATION_ATTEMPTS,VF_REGISTRY_PROPAGATION_DELAY_MS \
@@ -81,6 +86,7 @@ registry_release_smoke_main() {
 		--version "$version" \
 		--git-head "$GITHUB_SHA" \
 		--registry-url "$registry_url" \
+		${rc_tag_arg:+$rc_tag_arg} \
 		"${package_args[@]}"
 	metadata_status=$?
 	set -e

@@ -1997,3 +1997,48 @@ describe("RC dispatch join failure handling", () => {
     );
   });
 });
+
+describe("bounded RC publication and deferred metadata verification", () => {
+  it("keeps tag verification after immutable validation in the read-only registry job", async () => {
+    const script = await Deno.readTextFile(
+      new URL("../../../scripts/ci/registry-release-smoke.sh", import.meta.url),
+    );
+    assertStringIncludes(script, 'rc_tag_arg="--require-rc-tag"');
+    assertStringIncludes(script, "${rc_tag_arg:+$rc_tag_arg}");
+    assertStringIncludes(script, 'if [[ "${IS_STABLE:-}" != "true" ]]');
+    assert(
+      script.indexOf('rc_tag_arg="--require-rc-tag"') <
+        script.indexOf('scripts/ci/registry-release-integrity.ts"'),
+    );
+    const jobs = await readJobs();
+    const registry = asRecord(
+      jobs["registry-validation-rc"],
+      "RC registry validator",
+    );
+    assertEquals(registry.permissions, { contents: "read" });
+    assertEquals(registry.environment, undefined);
+    const setupMs = Number(
+      namedStep(
+        registry,
+        "Build registry validation image",
+      )["timeout-minutes"],
+    ) * 60_000;
+    const { maxAttempts, retryDelayMs } = readPropagationBudget({});
+    const pollMs = (maxAttempts - 1) * retryDelayMs + REQUEST_TIMEOUT_MS;
+    assert(
+      setupMs + pollMs + SMOKE_ALLOWANCE_MS <=
+        Number(registry["timeout-minutes"]) * 60_000,
+    );
+    assertEquals(
+      asRecord(jobs["quality-gate-registry"], "required registry join").needs,
+      [
+        "prerelease",
+        "github-prerelease",
+        "registry-validation-rc",
+        "release",
+        "publish-public-release",
+        "version-check",
+      ],
+    );
+  });
+});
