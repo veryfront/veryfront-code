@@ -97,7 +97,7 @@ async function runDispatchVersionResolution(
   overrides: Record<string, string>,
 ): Promise<Deno.CommandOutput> {
   const jobs = await readJobs();
-  const dispatch = asRecord(jobs["dispatch-release"], "dispatch release job");
+  const dispatch = asRecord(jobs["quality-gate-registry"], "dispatch release job");
   const step = namedStep(dispatch, "Resolve published version");
   return await new Deno.Command("bash", {
     args: ["-c", String(step.run)],
@@ -669,14 +669,15 @@ printf '%064d  %s\n' 0 "$1"
         `${jobName} must require the canonical artifact quality gate`,
       );
       assert(
-        job.needs.includes("quality-gate-merge"),
-        `${jobName} must require the complete merge correctness gate`,
+        job.needs.includes("sonar") &&
+          namedStep(job, "Require merge correctness dependencies") !== undefined,
+        `${jobName} must evaluate the complete merge correctness gate after Sonar`,
       );
       for (const dependency of MERGE_CORRECTNESS_DEPENDENCIES) {
         assertEquals(
           job.needs.includes(dependency),
-          false,
-          `${jobName} must inherit ${dependency} through quality-gate-merge`,
+          true,
+          `${jobName} must read ${dependency} in its folded correctness gate`,
         );
       }
     });
@@ -910,6 +911,12 @@ printf '%064d  %s\n' 0 "$1"
         "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
         "Build registry validation image",
         "Validate exact registry release",
+        "Resolve published version",
+        "Build dispatch payload",
+        "Create release GitHub App token",
+        "Trigger server deploy",
+        "Trigger job-runner deploy",
+        "Trigger sandbox deploy",
       ],
       "registry gate must not add host execution around the container",
     );
@@ -929,13 +936,13 @@ printf '%064d  %s\n' 0 "$1"
       registrySteps.some((step) =>
         String(step.uses).startsWith("actions/create-github-app-token@")
       ),
-      false,
-      "registry gate must not hold the downstream release token",
+      true,
+      "registry gate creates the downstream token only after isolated validation",
     );
-    assertEquals(registry.environment, undefined);
+    assertEquals(registry.environment, "production");
 
-    // The downstream App token exists only in jobs that start after the
-    // registry container has terminated, and those jobs run no repository code.
+    // The downstream App token is created only after the container terminates.
+    // Every subsequent step is fixed workflow code or a pinned remote action.
     for (const [name, value] of Object.entries(jobs)) {
       const job = asRecord(value, name);
       const jobSteps = steps(job, name);
@@ -944,23 +951,24 @@ printf '%064d  %s\n' 0 "$1"
       ) {
         continue;
       }
-      assertEquals(name, "dispatch-release");
+      assertEquals(name, "quality-gate-registry");
       assert(
-        (job.needs as string[]).includes("quality-gate-registry"),
-        `${name} must start only after the registry container job has finished`,
+        jobSteps.indexOf(registryStep) <
+          jobSteps.findIndex((step) => step.name === "Create release GitHub App token"),
+        `${name} must create credentials only after the registry container has finished`,
       );
       const tokenIndex = jobSteps.findIndex((step) =>
         step.name === "Create release GitHub App token"
       );
       assert(tokenIndex >= 0, `${name} must create its release token after validation`);
       assertEquals(
-        jobSteps.slice(0, tokenIndex + 1).map((step) =>
+        jobSteps.slice(jobSteps.indexOf(registryStep) + 1, tokenIndex + 1).map((step) =>
           String(step.name ?? step.uses).split(" #")[0]
         ),
         ["Resolve published version", "Build dispatch payload", "Create release GitHub App token"],
         `${name} must not add arbitrary host execution before token creation`,
       );
-      for (const step of jobSteps) {
+      for (const step of jobSteps.slice(jobSteps.indexOf(registryStep) + 1)) {
         assertEquals(
           String(step.uses).startsWith("./"),
           false,
@@ -1086,7 +1094,7 @@ fi
 
   it("dispatches exactly three downstream releases only after the registry gate", async () => {
     const jobs = await readJobs();
-    const dispatch = asRecord(jobs["dispatch-release"], "dispatch release job");
+    const dispatch = asRecord(jobs["quality-gate-registry"], "dispatch release job");
     const dispatchSteps = steps(dispatch, "dispatch release job");
     const dispatchActions = dispatchSteps.filter((step) =>
       String(step.uses).startsWith("peter-evans/repository-dispatch@")
@@ -1096,20 +1104,19 @@ fi
     const tokenStep = namedStep(dispatch, "Create release GitHub App token");
 
     assertEquals(dispatch.needs, [
-      "quality-gate-registry",
       "prerelease",
       "release",
       "version-check",
     ]);
     assertEquals(
       dispatch.if,
-      "${{ always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && needs.quality-gate-registry.result == 'success' && ((needs.version-check.outputs.is_stable == 'true' && needs.release.result == 'success') || (needs.version-check.outputs.is_stable == 'false' && needs.prerelease.result == 'success')) }}",
+      "${{ always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && needs.version-check.result == 'success' && (needs.version-check.outputs.is_stable == 'false' || needs.version-check.outputs.stable_release_requested == 'true') }}",
       "release dispatch must require both registry validation and the selected release job to succeed",
     );
     assertEquals(
-      dispatch["timeout-minutes"],
+      tokenStep["timeout-minutes"],
       5,
-      "release dispatch must time out if token creation or dispatch hangs",
+      "release token creation must time out if it hangs",
     );
     assertEquals(
       dispatch.environment,
@@ -1236,5 +1243,29 @@ fi
       ),
       "stable release job must still publish npm packages",
     );
+  });
+});
+
+describe("folded registry dispatch", () => {
+  it("dispatches after isolated validation without another runner", async () => {
+    const jobs = await readJobs();
+    assertEquals(jobs["dispatch-release"], undefined);
+    const gate = asRecord(jobs["quality-gate-registry"], "registry");
+    const jobSteps = steps(gate, "registry");
+    const validate = namedStep(gate, "Validate exact registry release");
+    const token = namedStep(gate, "Create release GitHub App token");
+    assert(jobSteps.indexOf(validate) < jobSteps.indexOf(token));
+    assertEquals(gate.environment, "production");
+    const dispatchSteps = jobSteps.slice(jobSteps.indexOf(validate) + 1);
+    for (const step of dispatchSteps) {
+      assertEquals(
+        step.if,
+        "${{ success() && ((needs.version-check.outputs.is_stable == 'true' && needs.release.result == 'success') || (needs.version-check.outputs.is_stable == 'false' && needs.prerelease.result == 'success')) }}",
+      );
+      assertEquals(step["timeout-minutes"], 5);
+      assertEquals(String(step.run).includes("scripts/"), false);
+      assertEquals(String(step.uses).startsWith("./"), false);
+    }
+    assertEquals(dispatchSteps.length, 6);
   });
 });

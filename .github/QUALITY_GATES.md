@@ -82,7 +82,7 @@ Runtime access is limited to a read-only source checkout, excluding `.git` and
 access through isolated bridge egress, and the exact release metadata
 environment. Docker's default private PID namespace remains in effect. The
 host does not execute repository scripts or local actions, and the container
-is removed before the separate `dispatch release` job creates the scoped
+is removed before the final registry-job steps create the scoped
 release token. Validation is independent of whether the release published a
 reused merge-queue artifact or a full-pipeline artifact: it reads only the
 public registry and the checked-out source.
@@ -113,3 +113,20 @@ builds the npm output once per commit, and every consumer job downloads the
 built artifact instead of rebuilding it. The
 [workflow contract test](../tests/integration/ci/npm-compatibility-artifact-workflow.test.ts)
 pins the single-build invariant and the download ordering in each consumer.
+
+## Main release runner budget
+
+Main pushes enforce the server-side Sonar result in the scan job and evaluate
+all merge correctness results as the first publisher step. Standalone
+`SonarQube Cloud quality gate` and `quality gate (merge)` jobs still report on
+pull requests and merge-group events with unchanged required names. Publishers
+accept skipped correctness jobs only with the authoritative tested merge-queue
+run id, and always require the fresh main Sonar gate to succeed. Fallback runs
+require every correctness dependency to succeed.
+
+Registry validation and downstream dispatch share one runner. Every dispatch
+step requires successful validation and the selected publication job, retains
+a five-minute timeout, and stays inside the existing `production` approval
+environment. The container terminates before token creation; no repository
+script or local action runs on the host after validation. This removes three
+runner acquisitions from the main publish path without removing any gate.
