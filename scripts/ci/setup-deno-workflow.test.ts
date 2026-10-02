@@ -796,9 +796,9 @@ jobs:
             `${path} ${jobName} setup-deno must leave time for job work`,
           );
           if (isCompleteCacheProducer) {
-            assertEquals(
-              job["runs-on"],
-              "ubuntu-latest",
+            const runners = String(job["runs-on"]).match(/\b(ubuntu|windows|macos)-[\w.-]+/g) ?? [];
+            assert(
+              runners.length > 0 && runners.every((runner) => runner.startsWith("ubuntu-")),
               `${path} ${jobName} uses the Linux timeout command while warming`,
             );
           }
