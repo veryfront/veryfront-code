@@ -95,7 +95,7 @@ if (typeof Deno !== "undefined") {
             child.once("close", resolve);
           });
           assertEquals(code, 0, output);
-          const expectedTests = index === 3 ? 19 : 1;
+          const expectedTests = index === 3 ? 20 : 1;
           assertEquals((output.match(/^ {4}# Subtest:/gm) ?? []).length, expectedTests, output);
           assertMatch(output, new RegExp(`# tests ${expectedTests}\\n`));
           assertMatch(output, /# cancelled 0\n/);
@@ -492,6 +492,43 @@ if (typeof Deno !== "undefined") {
       bootstrap.close();
       await closed;
       await setImmediate();
+    });
+
+    it("keeps the one-second workload alive when its timer wakes early", async () => {
+      let now = 0;
+      const scheduled = new Map<object, { callback: () => void; delayMs: number }>();
+      const bootstrap = await startExecutorNodeBootstrap({
+        operations,
+        environment: environment({ VERYFRONT_EXECUTOR_ACTIVE_DEADLINE_SECONDS: "1" }),
+        readKey: () => Promise.resolve(randomBytes(32)),
+        clock: {
+          now: () => now,
+          schedule(callback, delayMs) {
+            const handle = {};
+            scheduled.set(handle, { callback, delayMs });
+            return handle;
+          },
+          cancel: (handle) => {
+            scheduled.delete(handle as object);
+          },
+        },
+      });
+      try {
+        const [handle, wake] = [...scheduled.entries()][0]!;
+        assertEquals(wake.delayMs, 1_000);
+        scheduled.delete(handle);
+        now = 999;
+        wake.callback();
+        assertEquals(await settledThisTurn(bootstrap.ready), "pending");
+        const next = [...scheduled.values()][0]!;
+        assertEquals(next.delayMs, 1);
+        now = 1_000;
+        next.callback();
+        await assertRejects(() => bootstrap.ready, Error, "Executor bootstrap deadline exceeded");
+      } finally {
+        bootstrap.close();
+        await setImmediate();
+      }
     });
 
     it("enforces the validated workload lifetime before attachment", async () => {

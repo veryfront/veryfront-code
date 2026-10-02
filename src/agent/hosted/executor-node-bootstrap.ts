@@ -5,6 +5,7 @@ import process from "node:process";
 import { isNodeRuntime } from "#veryfront/platform/compat/runtime.ts";
 import { tryResolve } from "#veryfront/extensions/contracts.ts";
 import type { HostedExecutorSessionClock } from "./executor-session.ts";
+import { executorNodeWallClock, scheduleExecutorNodeDeadline } from "./executor-node-deadline.ts";
 import {
   createExecutorChannel,
   type ExecutorChannel,
@@ -27,12 +28,6 @@ type BootstrapVariable =
 export interface ExecutorBootstrapEnvironment {
   get(name: BootstrapVariable): string | undefined;
 }
-
-const wallClock: HostedExecutorSessionClock = {
-  now: () => Date.now(),
-  schedule: (callback, delayMs) => setTimeout(callback, delayMs),
-  cancel: (handle) => clearTimeout(handle as ReturnType<typeof setTimeout>),
-};
 
 export interface ExecutorNodeBootstrapOptions {
   /** Register trusted handlers before any project imports. The map is snapshotted at startup. */
@@ -158,7 +153,7 @@ export async function startExecutorNodeBootstrap(
     !isNodeRuntime() || process.release.name !== "node" ||
     Number(process.versions.node.split(".")[0]) < 22
   ) throw new Error("Executor bootstrap requires Node.js 22 or newer");
-  const clock = options.clock ?? wallClock;
+  const clock = options.clock ?? executorNodeWallClock;
   const startedAt = clock.now();
   const { binding, lifetimeMs, hardDeadlineAt } = readExecutorBootstrapConfiguration(
     options.environment ?? { get: (name) => process.env[name] },
@@ -188,7 +183,7 @@ export async function startExecutorNodeBootstrap(
   const stop = (error: Error) => {
     if (failure) return;
     failure = error;
-    clock.cancel(lifetimeTimer);
+    lifetimeTimer();
     clock.cancel(keyTimer);
     options.signal?.removeEventListener("abort", abort);
     authority.abort(error);
@@ -200,9 +195,10 @@ export async function startExecutorNodeBootstrap(
     closed.reject(error);
   };
   const abort = () => stop(new Error("Executor bootstrap aborted"));
-  const lifetimeTimer = clock.schedule(
+  const lifetimeTimer = scheduleExecutorNodeDeadline(
+    clock,
+    deadline,
     () => stop(new Error("Executor bootstrap deadline exceeded")),
-    lifetimeRemaining,
   );
   const keyTimer = clock.schedule(
     () => stop(new Error("Executor bootstrap key read deadline exceeded")),

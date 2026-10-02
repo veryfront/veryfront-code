@@ -8,6 +8,8 @@ import { connect, createServer, type TLSSocket } from "node:tls";
 import type { ExecutorByteTransport } from "#veryfront/agent/executor/channel.ts";
 import type { ExecutorBinding } from "#veryfront/agent/executor/protocol.ts";
 
+import { executorNodeWallClock, scheduleExecutorNodeDeadline } from "./executor-node-deadline.ts";
+
 const MAX_CHUNK_BYTES = 1024 * 1024;
 const HIGH_WATER_MARK = 16 * 1024;
 const HANDSHAKE_TIMEOUT_MS = 5_000;
@@ -113,7 +115,7 @@ export async function connectExecutorTransport(
     const stop = (error: Error) => {
       if (stopped) return;
       stopped = true;
-      clearTimeout(lifetime);
+      lifetime();
       clearTimeout(handshake);
       options.signal?.removeEventListener("abort", abort);
       key.fill(0);
@@ -122,9 +124,10 @@ export async function connectExecutorTransport(
       reject(error);
     };
     const abort = () => stop(new Error("Executor transport aborted"));
-    const lifetime = setTimeout(
+    const lifetime = scheduleExecutorNodeDeadline(
+      executorNodeWallClock,
+      executorNodeWallClock.now() + timeoutMs,
       () => stop(new Error("Executor transport deadline exceeded")),
-      timeoutMs,
     );
     const handshake = setTimeout(
       () => stop(new Error("Executor transport handshake deadline exceeded")),
@@ -210,7 +213,7 @@ export async function listenExecutorTransport(
   const stop = (error: Error) => {
     if (stopped) return;
     stopped = true;
-    clearTimeout(lifetime);
+    lifetime();
     options.signal?.removeEventListener("abort", abort);
     key.fill(0);
     server.close();
@@ -224,9 +227,10 @@ export async function listenExecutorTransport(
     ready.reject(error);
   };
   const abort = () => stop(new Error("Executor transport aborted"));
-  const lifetime = setTimeout(
+  const lifetime = scheduleExecutorNodeDeadline(
+    executorNodeWallClock,
+    executorNodeWallClock.now() + timeoutMs,
     () => stop(new Error("Executor transport deadline exceeded")),
-    timeoutMs,
   );
   options.signal?.addEventListener("abort", abort, { once: true });
   server.on("error", () => stop(new Error("Executor transport listener failed")));
