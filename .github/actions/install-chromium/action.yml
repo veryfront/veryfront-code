@@ -114,8 +114,10 @@ runs:
             reap_apt_lock_holders
           fi
           status=0
+          attempt_started=$SECONDS
           timeout --signal=TERM --kill-after="${install_kill_grace_seconds}s" "${install_timeout_minutes}m" \
             ${{ inputs.install-command }} || status=$?
+          attempt_seconds=$((SECONDS - attempt_started))
           if [ "$status" -eq 0 ]; then
             exit 0
           fi
@@ -123,9 +125,15 @@ runs:
           # A healthy install (browser download plus system dependencies)
           # finishes in well under a minute, so hitting the per-attempt bound
           # means a stalled download, almost always an apt mirror trickling .deb
-          # files. Say so instead of leaving a bare exit code 124.
-          if [ "$status" -eq 124 ] || [ "$status" -eq 137 ]; then
+          # files. Say so instead of leaving a bare exit code 124. Exit 137
+          # only means SIGKILL: it is the deadline's --kill-after escalation
+          # when the attempt ran the full bound, otherwise something outside
+          # `timeout` (usually the OOM killer) ended it early.
+          if [ "$status" -eq 124 ] ||
+            { [ "$status" -eq 137 ] && [ "$attempt_seconds" -ge $((install_timeout_minutes * 60)) ]; }; then
             reason="exceeded ${install_timeout_minutes}m (stalled download, usually a throttled apt mirror)"
+          elif [ "$status" -eq 137 ]; then
+            reason="was killed (exit 137) after ${attempt_seconds}s, before the ${install_timeout_minutes}m deadline (external SIGKILL, possibly the OOM killer)"
           else
             reason="failed with exit code ${status}"
           fi
