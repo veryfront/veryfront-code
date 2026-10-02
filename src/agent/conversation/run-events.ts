@@ -4,7 +4,7 @@ import { type ChatStreamEvent } from "#veryfront/chat/protocol.ts";
 import { buildNativeRunEventFrame, nativeRunEventTypes } from "../ag-ui/native-run-events.ts";
 import type { AgentRunEventTimingOptions } from "../../runtime/model-call-context.ts";
 import { normalizeConversationRunEvents } from "./run-event-normalization.ts";
-import { getToolResultError } from "#veryfront/tool/result.ts";
+import { isToolResultErrorOutput } from "#veryfront/tool/result.ts";
 
 /** Shared conversation run event types value. */
 export const conversationRunEventTypes = {
@@ -375,7 +375,7 @@ export class ConversationRunEventEncoder {
             : {}),
           // Child-fork and hosted mirror streams forward unclassified tool results here,
           // and the API never overrules an explicit flag, so judge the output itself.
-          isError: getToolResultError(chunk.output) !== undefined,
+          isError: isToolResultErrorOutput(chunk.output),
         }];
         this.releaseToolCallState(chunk.toolCallId);
         return events;

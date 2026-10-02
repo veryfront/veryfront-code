@@ -526,6 +526,35 @@ describe("agent/ag-ui-encoder", () => {
     );
   });
 
+  it("flags provider error and serialized error outputs as error results", () => {
+    const state = createAgUiEncoderState({ nowMs: null, epochMs: null });
+    const providerError = { type: "web_search_tool_result_error", error_code: "max_uses_exceeded" };
+    const serializedError = '{"error":"tool_error","message":"Requested entity was not found"}';
+
+    assertEquals(
+      mapRuntimeStreamEventToAgUiEvents(state, {
+        type: "tool-output-available",
+        toolCallId: "tool-1",
+        output: providerError,
+      }),
+      [{
+        event: "ToolCallResult",
+        payload: { toolCallId: "tool-1", content: providerError, isError: true },
+      }],
+    );
+    assertEquals(
+      mapRuntimeStreamEventToAgUiEvents(state, {
+        type: "tool-output-available",
+        toolCallId: "tool-2",
+        output: serializedError,
+      }),
+      [{
+        event: "ToolCallResult",
+        payload: { toolCallId: "tool-2", content: serializedError, isError: true },
+      }],
+    );
+  });
+
   it("closes open text before orphan tool-input-delta is forwarded", () => {
     const state = createAgUiEncoderState({ nowMs: null, epochMs: null });
 

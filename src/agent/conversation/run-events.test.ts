@@ -125,6 +125,26 @@ describe("agent/conversation-run-events", () => {
     );
   });
 
+  it("flags provider error and serialized error outputs as errors", () => {
+    const encoder = new ConversationRunEventEncoder();
+    assertEquals(
+      encoder.encode({
+        type: "tool-output-available",
+        toolCallId: "tc-1",
+        output: { type: "web_search_tool_result_error", error_code: "max_uses_exceeded" },
+      })[0]?.isError,
+      true,
+    );
+    assertEquals(
+      encoder.encode({
+        type: "tool-output-available",
+        toolCallId: "tc-2",
+        output: '{"error":"tool_error","message":"Requested entity was not found"}',
+      })[0]?.isError,
+      true,
+    );
+  });
+
   it("encodes text and reasoning events", () => {
     const encoder = new ConversationRunEventEncoder();
     assertEquals(

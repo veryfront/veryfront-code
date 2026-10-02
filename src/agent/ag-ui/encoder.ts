@@ -1,6 +1,6 @@
 import type { AgentResponse } from "../types.ts";
 import { buildNativeRunEventFrame } from "./native-run-events.ts";
-import { getToolResultError } from "#veryfront/tool/result.ts";
+import { isToolResultErrorOutput } from "#veryfront/tool/result.ts";
 
 /** Event emitted for AG-UI runtime stream. */
 export type AgUiRuntimeStreamEvent = Record<string, unknown> & { type: string };
@@ -994,7 +994,7 @@ function mapRuntimeStreamEventToAgUiEventsUnstamped(
         createToolResultEvent(
           event.toolCallId,
           event.output,
-          getToolResultError(event.output) !== undefined,
+          isToolResultErrorOutput(event.output),
         ),
       ];
 
