@@ -113,7 +113,7 @@ To show the gateway's models in the `/model` picker, set
 
 ### Codex CLI
 
-Add a provider to `~/.codex/config.toml`:
+Add a provider to Codex's user configuration file, `config.toml` in the Codex configuration directory (see the Codex documentation for its location on your system):
 
 ```toml
 model = "openai/gpt-5.4-mini"
@@ -161,7 +161,7 @@ See [Aider OpenAI-compatible APIs](https://aider.chat/docs/llms/openai-compat.ht
 
 ### Continue
 
-Add a model with `provider: openai` and `apiBase` to `~/.continue/config.yaml`,
+Add a model with `provider: openai` and `apiBase` to Continue's `config.yaml` (in the Continue configuration directory),
 and store the key as a Continue secret named `VERYFRONT_API_KEY`:
 
 ```yaml
