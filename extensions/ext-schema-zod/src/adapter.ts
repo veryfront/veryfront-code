@@ -691,9 +691,14 @@ function copyValidationIssue(error: ErrorObject): JsonSchemaValidationIssue {
 function validationFailure(
   errors: ErrorObject[] | null | undefined,
 ): JsonSchemaValidationFailure {
+  // Async Ajv rejection handlers run after the task's synchronous intrinsic guard ends.
+  const issues: JsonSchemaValidationIssue[] = [];
+  for (let index = 0; index < (errors?.length ?? 0); index++) {
+    issues[index] = copyValidationIssue(errors![index]!);
+  }
   return {
     success: false,
-    errors: (errors ?? []).map(copyValidationIssue),
+    errors: issues,
   };
 }
 
