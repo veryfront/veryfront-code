@@ -218,9 +218,12 @@ export interface ListFilesOptions {
   pattern?: string;
   sortBy?: "path" | "updated_at";
   sortOrder?: "asc" | "desc";
-  /** Response fields to select, for example a metadata listing without `content`. */
-  fields?: readonly string[];
+  /** List file metadata and checksums without `content`. */
+  withoutContent?: boolean;
 }
+
+/** Every branch listing field except `content`. */
+const BRANCH_FILE_METADATA_FIELDS = "(id,version_id,path,size,type,updated_at,checksum)";
 
 export interface FileListResult {
   files: ProjectFile[];
@@ -290,7 +293,7 @@ function buildListParams(options: ListFilesOptions): URLSearchParams {
     pattern,
     sortBy = "updated_at",
     sortOrder = "desc",
-    fields,
+    withoutContent,
   } = options;
 
   const params = new URLSearchParams({
@@ -302,7 +305,7 @@ function buildListParams(options: ListFilesOptions): URLSearchParams {
   if (cursor) params.set("cursor", cursor);
   if (path) params.set("path", path);
   if (pattern) params.set("pattern", pattern);
-  if (fields) params.set("fields", `(${fields.join(",")})`);
+  if (withoutContent) params.set("fields", BRANCH_FILE_METADATA_FIELDS);
 
   return params;
 }
@@ -511,7 +514,7 @@ export class VeryfrontAPIOperations {
     logger.debug("listBranchFiles", { projectRef, branchRef, pattern: options.pattern });
 
     const raw = await this.request(url);
-    const response = options.fields && !options.fields.includes("content")
+    const response = options.withoutContent
       ? getListBranchFileMetadataResponseSchema().parse(raw)
       : getListBranchFilesResponseSchema().parse(raw);
 

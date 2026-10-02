@@ -254,11 +254,14 @@ describe("VeryfrontAPIOperations", () => {
       });
 
       const result = await createOps().listBranchFiles("project-slug", "main", {
-        fields: ["id", "path", "checksum"],
+        withoutContent: true,
       });
 
       const parsed = new URL(requestedUrl);
-      assertEquals(parsed.searchParams.get("fields"), "(id,path,checksum)");
+      assertEquals(
+        parsed.searchParams.get("fields"),
+        "(id,version_id,path,size,type,updated_at,checksum)",
+      );
       assertEquals(parsed.searchParams.get("include_server_functions"), "true");
       assertEquals(result.files[0]?.checksum, "abc123");
       assertEquals(result.files[0]?.content, undefined);
@@ -283,7 +286,7 @@ describe("VeryfrontAPIOperations", () => {
 
       const full = await createOps().listBranchFiles("project-slug", "main");
       const metadata = await createOps().listBranchFiles("project-slug", "main", {
-        fields: ["path", "checksum"],
+        withoutContent: true,
       });
       const detail = await createOps().getBranchFile("project-slug", "main", "agents/legacy.ts");
 

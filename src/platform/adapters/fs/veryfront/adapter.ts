@@ -871,15 +871,16 @@ export class VeryfrontFSAdapter implements FSAdapter {
 
   /**
    * Publish a fetched listing to the credential-scoped listing cache. A listing
-   * assembled from verified contents stays in memory only: another adapter can
-   * assemble it just as cheaply, and copying a complete project into the
-   * shared cache on every fresh credential costs more than it saves.
+   * assembled from verified contents is not copied into a distributed cache:
+   * another adapter can assemble it just as cheaply, and uploading a complete
+   * project on every fresh credential costs more than it saves. The retained
+   * listing answers this adapter's reads instead.
    */
   async #storeFileList(
     cacheKey: string,
     listing: { files: Array<{ path: string; content?: string }>; contentReused: boolean },
   ): Promise<void> {
-    if (listing.contentReused) return;
+    if (listing.contentReused && this.cache.isDistributed()) return;
     await this.cache.setAsync(cacheKey, listing.files);
   }
 

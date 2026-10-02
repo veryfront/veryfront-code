@@ -49,7 +49,7 @@ async function sourceFiles(entries: Record<string, string>): Promise<SourceFile[
  */
 function createCredentialAdapter(
   visibleFiles: () => SourceFile[],
-  options: { failMetadataStatus?: number } = {},
+  options: { failMetadataStatus?: number; distributedCache?: boolean } = {},
 ): {
   adapter: VeryfrontFSAdapter;
   counts: ListingCounts;
@@ -75,12 +75,13 @@ function createCredentialAdapter(
       getProjectSlug: () => string;
       getProjectId: () => string;
       getCachedProject: () => { provider: string; layout: string };
-      listAllFiles: (options?: { fields?: readonly string[] }) => Promise<unknown[]>;
+      listAllFiles: (options?: { withoutContent?: boolean }) => Promise<unknown[]>;
       getFileContent: (path: string) => Promise<string>;
       getFileContentBytesWithinLimit: (path: string) => Promise<Uint8Array>;
     };
     wsManager: { connect: (_projectId: string) => void };
     cache: {
+      isDistributed: () => boolean;
       setAsync: (key: string, value: unknown) => Promise<void>;
       getAsync: (key: string) => Promise<unknown>;
     };
@@ -91,7 +92,7 @@ function createCredentialAdapter(
   internals.client.getProjectId = () => "project-123";
   internals.client.getCachedProject = () => ({ provider: "veryfront", layout: "default" });
   internals.client.listAllFiles = (options) => {
-    if (options?.fields) {
+    if (options?.withoutContent) {
       counts.metadataListings++;
       if (failMetadataStatus !== undefined) {
         return Promise.reject(
@@ -103,6 +104,7 @@ function createCredentialAdapter(
       }
       return Promise.resolve(
         visibleFiles().map((file) => ({
+          id: `id:${file.path}`,
           path: file.path,
           checksum: file.checksum,
           // Without content, the API reports the stored byte length.
@@ -115,6 +117,7 @@ function createCredentialAdapter(
     counts.fullListings++;
     return Promise.resolve(
       visibleFiles().map((file) => ({
+        id: `id:${file.path}`,
         path: file.path,
         content: file.content,
         checksum: file.checksum,
@@ -135,6 +138,7 @@ function createCredentialAdapter(
     new TextEncoder().encode(await readVisible(path));
   internals.wsManager.connect = () => {};
 
+  if (options.distributedCache) internals.cache.isDistributed = () => true;
   const setAsync = internals.cache.setAsync.bind(internals.cache);
   internals.cache.setAsync = (key, value) => {
     if (key.startsWith("files:")) counts.listingCacheWrites++;
@@ -176,7 +180,7 @@ describe("source content reuse across fresh credentials (issue inbox#2277)", () 
     assertEquals(first.counts.fullListings, 1, "a cold process lists sources with content once");
     first.adapter.dispose();
 
-    const second = createCredentialAdapter(() => files);
+    const second = createCredentialAdapter(() => files, { distributedCache: true });
     await asCredential("credential-b", async () => {
       await second.adapter.initialize();
       await second.adapter.ensureSourceSnapshotFresh("config-load", undefined, true);
@@ -202,13 +206,31 @@ describe("source content reuse across fresh credentials (issue inbox#2277)", () 
     assertEquals(
       second.counts.listingCacheWrites,
       0,
-      "an assembled listing must not be copied into the credential-scoped listing cache",
+      "an assembled listing must not be uploaded to the distributed listing cache",
     );
     assertEquals(
       second.counts.listingCacheReads,
       0,
       "reads must use the retained listing instead of the listing cache",
     );
+    second.adapter.dispose();
+  });
+
+  it("keeps entity ids answerable when a memory cache holds the assembled listing", async () => {
+    const files = await sourceFiles({ "pages/index.tsx": "export default null;" });
+
+    const first = createCredentialAdapter(() => files);
+    await asCredential("credential-a", () => first.adapter.initialize());
+    first.adapter.dispose();
+
+    const second = createCredentialAdapter(() => files);
+    await asCredential("credential-b", async () => {
+      await second.adapter.initialize();
+      assertEquals(second.adapter.getEntityIdForPath("pages/index.tsx"), "id:pages/index.tsx");
+      assertEquals(second.adapter.getFilePathByEntityId("id:pages/index.tsx"), "pages/index.tsx");
+    });
+    assertEquals(second.counts.fullListings, 0);
+    assertEquals(second.counts.listingCacheWrites, 1, "a memory cache keeps the listing locally");
     second.adapter.dispose();
   });
 

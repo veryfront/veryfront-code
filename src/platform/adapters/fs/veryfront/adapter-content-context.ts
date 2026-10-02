@@ -146,17 +146,6 @@ export async function resolveContentContext(
   }
 }
 
-/** Every listing field except `content`, which verified contents supply. */
-const SOURCE_METADATA_FIELDS = [
-  "id",
-  "version_id",
-  "path",
-  "size",
-  "type",
-  "updated_at",
-  "checksum",
-] as const;
-
 /**
  * List a source for the current credential. A branch whose contents this
  * process already verified is listed as metadata only: the credential's own
@@ -178,7 +167,7 @@ export async function fetchSourceListingForContext(
   if (hasVerifiedSourceContents(sourceKey)) {
     let metadata: Awaited<ReturnType<FileListClient["listAllFiles"]>> | undefined;
     try {
-      metadata = await client.listAllFiles({ fields: SOURCE_METADATA_FIELDS }, branch);
+      metadata = await client.listAllFiles({ withoutContent: true }, branch);
     } catch (error) {
       // Only a rejected field selection is specific to this query. Transport,
       // authorization and server failures would fail the complete listing
