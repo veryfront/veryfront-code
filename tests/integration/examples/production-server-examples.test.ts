@@ -96,9 +96,10 @@ describe("ProductionServer", { sanitizeResources: false, sanitizeOps: false }, (
   });
 });
 
-// Example of a performance-aware test
+// Catches a stalled static response, not small slowdowns: a warm 20 KB read takes a few ms.
 const STATIC_ASSET_BUDGET_MS = 1000;
 
+// Example of a performance-aware test
 // Note: Sanitizers disabled due to React 19 SSR MessagePort cleanup issue
 describe("Performance", { sanitizeResources: false, sanitizeOps: false }, () => {
   it("should serve static assets within acceptable time limits", async () => {
@@ -110,7 +111,9 @@ describe("Performance", { sanitizeResources: false, sanitizeOps: false }, () => 
       const url = `http://127.0.0.1:${server.port}/large.css`;
 
       // The first request also pays for server warm-up, so time a warm request.
-      await (await fetch(url)).text();
+      const warm = await fetch(url);
+      await warm.text();
+      assertEquals(warm.status, 200, "Should serve the warm-up request");
 
       const startTime = performance.now();
       const response = await fetch(url);
@@ -119,7 +122,6 @@ describe("Performance", { sanitizeResources: false, sanitizeOps: false }, () => 
 
       assertEquals(response.status, 200, "Should serve large files successfully");
       assertEquals(body, largeCSS, "Should serve the large file intact");
-      // A budget that host load cannot reach but a regression to per-request work would.
       assertEquals(
         responseTime < STATIC_ASSET_BUDGET_MS,
         true,
