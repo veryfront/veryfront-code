@@ -8,7 +8,7 @@ import {
   isIntegrationErrorContext,
   readIntegrationErrorContext,
   readIntegrationThrowableContext,
-} from "#veryfront/integrations/error-context.ts";
+} from "veryfront/integrations";
 
 import { cliErrorBoundary, type VeryfrontError } from "veryfront/errors";
 import { cliLogger, isVerbose, VERSION } from "#cli/utils";
