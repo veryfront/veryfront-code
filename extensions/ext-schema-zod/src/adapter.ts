@@ -148,19 +148,23 @@ function toZodShape(
   return out;
 }
 
+const defineProperty = Object.defineProperty;
+
 function defineOwnDataProperty(
-  target: Record<string, unknown>,
-  key: string,
+  target: Record<string, unknown> | unknown[],
+  key: string | number,
   value: unknown,
 ): void {
   // A data descriptor preserves keys such as `__proto__` as ordinary data
   // without invoking inherited setters in runtimes that expose them.
-  Object.defineProperty(target, key, {
+  const descriptor = {
+    __proto__: null,
     value,
     enumerable: true,
     configurable: true,
     writable: true,
-  });
+  };
+  defineProperty(target, key, descriptor);
 }
 
 const coerce: SchemaValidatorCoerce = {
@@ -691,9 +695,14 @@ function copyValidationIssue(error: ErrorObject): JsonSchemaValidationIssue {
 function validationFailure(
   errors: ErrorObject[] | null | undefined,
 ): JsonSchemaValidationFailure {
+  // Async Ajv rejection handlers run after the task's synchronous intrinsic guard ends.
+  const issues: JsonSchemaValidationIssue[] = [];
+  for (let index = 0; index < (errors?.length ?? 0); index++) {
+    defineOwnDataProperty(issues, index, copyValidationIssue(errors![index]!));
+  }
   return {
     success: false,
-    errors: (errors ?? []).map(copyValidationIssue),
+    errors: issues,
   };
 }
 
