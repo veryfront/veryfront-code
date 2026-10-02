@@ -1,10 +1,9 @@
-import type { HostedExecutorSessionClock } from "./executor-session.ts";
+import {
+  createHostedExecutorSessionClock,
+  type HostedExecutorSessionClock,
+} from "./executor-session.ts";
 
-export const executorNodeWallClock: HostedExecutorSessionClock = {
-  now: () => Date.now(),
-  schedule: (callback, delayMs) => setTimeout(callback, delayMs),
-  cancel: (handle) => clearTimeout(handle as ReturnType<typeof setTimeout>),
-};
+export const executorNodeClock = createHostedExecutorSessionClock(Date.now());
 
 /** Timer delivery can precede the clock deadline. Expire only once it is due. */
 export function scheduleExecutorNodeDeadline(

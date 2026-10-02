@@ -8,7 +8,8 @@ import { connect, createServer, type TLSSocket } from "node:tls";
 import type { ExecutorByteTransport } from "#veryfront/agent/executor/channel.ts";
 import type { ExecutorBinding } from "#veryfront/agent/executor/protocol.ts";
 
-import { executorNodeWallClock, scheduleExecutorNodeDeadline } from "./executor-node-deadline.ts";
+import { executorNodeClock, scheduleExecutorNodeDeadline } from "./executor-node-deadline.ts";
+import type { HostedExecutorSessionClock } from "./executor-session.ts";
 
 const MAX_CHUNK_BYTES = 1024 * 1024;
 const HIGH_WATER_MARK = 16 * 1024;
@@ -37,6 +38,8 @@ export interface ConnectExecutorTransportOptions extends ExecutorTransportOption
 }
 
 export interface ListenExecutorTransportOptions extends ExecutorTransportOptions {
+  /** Trusted test clock for the listener lifetime. Socket handshake timers stay real. */
+  clock?: HostedExecutorSessionClock;
   host: string;
   /** Zero requests an ephemeral port. */
   port: number;
@@ -125,8 +128,8 @@ export async function connectExecutorTransport(
     };
     const abort = () => stop(new Error("Executor transport aborted"));
     const lifetime = scheduleExecutorNodeDeadline(
-      executorNodeWallClock,
-      executorNodeWallClock.now() + timeoutMs,
+      executorNodeClock,
+      executorNodeClock.now() + timeoutMs,
       () => stop(new Error("Executor transport deadline exceeded")),
     );
     const handshake = setTimeout(
@@ -227,9 +230,10 @@ export async function listenExecutorTransport(
     ready.reject(error);
   };
   const abort = () => stop(new Error("Executor transport aborted"));
+  const clock = options.clock ?? executorNodeClock;
   const lifetime = scheduleExecutorNodeDeadline(
-    executorNodeWallClock,
-    executorNodeWallClock.now() + timeoutMs,
+    clock,
+    clock.now() + timeoutMs,
     () => stop(new Error("Executor transport deadline exceeded")),
   );
   options.signal?.addEventListener("abort", abort, { once: true });

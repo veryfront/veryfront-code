@@ -5,7 +5,7 @@ import process from "node:process";
 import { isNodeRuntime } from "#veryfront/platform/compat/runtime.ts";
 import { tryResolve } from "#veryfront/extensions/contracts.ts";
 import type { HostedExecutorSessionClock } from "./executor-session.ts";
-import { executorNodeWallClock, scheduleExecutorNodeDeadline } from "./executor-node-deadline.ts";
+import { executorNodeClock, scheduleExecutorNodeDeadline } from "./executor-node-deadline.ts";
 import {
   createExecutorChannel,
   type ExecutorChannel,
@@ -40,7 +40,7 @@ export interface ExecutorNodeBootstrapOptions {
    */
   readKey?: (signal: AbortSignal) => Promise<Uint8Array>;
   /**
-   * Trusted test boundary for the bootstrap deadline; defaults to the wall clock.
+   * Trusted test boundary for the bootstrap deadline; defaults to UTC anchored to monotonic elapsed time.
    * Scheduled callbacks must run asynchronously. Transport and channel timeouts
    * stay on real timers, sized from the remaining deadline.
    */
@@ -153,7 +153,7 @@ export async function startExecutorNodeBootstrap(
     !isNodeRuntime() || process.release.name !== "node" ||
     Number(process.versions.node.split(".")[0]) < 22
   ) throw new Error("Executor bootstrap requires Node.js 22 or newer");
-  const clock = options.clock ?? executorNodeWallClock;
+  const clock = options.clock ?? executorNodeClock;
   const startedAt = clock.now();
   const { binding, lifetimeMs, hardDeadlineAt } = readExecutorBootstrapConfiguration(
     options.environment ?? { get: (name) => process.env[name] },
