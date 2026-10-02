@@ -322,7 +322,7 @@ describe("canonical npm artifact workflow", () => {
     assertEquals(node["continue-on-error"], undefined);
     assertEquals(node.needs, ["npm-compatibility-artifact"]);
     assertEquals(node.name, "tests (node shard ${{ matrix.shard }}/2)");
-    assertEquals(strategy["fail-fast"], false);
+    assertEquals(strategy["fail-fast"], "${{ github.event_name == 'merge_group' }}");
     assertEquals(matrix.shard, [1, 2]);
     assert(
       jobSteps(node, "Node sharding job").some((step) => step.uses === RESTORE_ACTION),

@@ -938,6 +938,13 @@ printf '%064d  %s\n' 0 "$1"
     // registry container has terminated, and those jobs run no repository code.
     for (const [name, value] of Object.entries(jobs)) {
       const job = asRecord(value, name);
+      if (job.uses !== undefined) {
+        assertEquals(job.uses, "./.github/workflows/cancel-failed-merge-group.yml");
+        assertEquals(job.if, "${{ failure() && github.event_name == 'merge_group' }}");
+        assertEquals(job.permissions, { actions: "write" });
+        assertEquals(job.steps, undefined);
+        continue;
+      }
       const jobSteps = steps(job, name);
       if (
         !jobSteps.some((step) => String(step.uses).startsWith("peter-evans/repository-dispatch@"))

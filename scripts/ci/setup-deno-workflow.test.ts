@@ -1104,7 +1104,10 @@ describe("parallel integration workflow contract", () => {
     const jobs = asRecord(workflow.jobs, "jobs");
     const job = asRecord(jobs["tests-integration"], "integration shards");
     const strategy = asRecord(job.strategy, "integration strategy");
-    assertEquals(strategy["fail-fast"], false);
+    assertEquals(
+      strategy["fail-fast"],
+      "${{ github.event_name == 'merge_group' }}",
+    );
     assertEquals(asRecord(strategy.matrix, "integration matrix").shard, [1, 2]);
     assertEquals(job.name, "tests (integration shard ${{ matrix.shard }}/2)");
     assertEquals(job.needs, ["tested-run"]);

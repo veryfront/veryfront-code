@@ -275,7 +275,31 @@ describe("tested merge-queue run workflow", () => {
   });
 
   it("classifies every job's behaviour on a reused main run", async () => {
+    const observers = [
+      "cancel-after-ci",
+      "cancel-after-coverage",
+      "cancel-after-tests",
+      "cancel-after-tests-node",
+      "cancel-after-tests-node-sandbox",
+      "cancel-after-tests-bun",
+      "cancel-after-tests-binary-e2e",
+      "cancel-after-tests-e2e-rsc-browser",
+      "cancel-after-sonar-quality-gate",
+      "cancel-after-tested-run",
+      "cancel-after-coverage-shards",
+      "cancel-after-tests-integration",
+      "cancel-after-npm-compatibility-artifact",
+      "cancel-after-sonar",
+      "cancel-after-sonar-coverage",
+      "cancel-after-coverage-node-executor",
+      "cancel-after-coverage-integration-client",
+    ];
+    const jobs = await readJobs();
+    for (const name of observers) {
+      assertEquals(job(jobs, name).if, "${{ failure() && github.event_name == 'merge_group' }}");
+    }
     const classified = [
+      ...observers,
       ...SKIPPED_ON_REUSE,
       ...Object.keys(SKIPPED_WITH_DEPENDENCY),
       COVERAGE_GATE,

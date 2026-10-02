@@ -1,6 +1,7 @@
 import { assert, assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { parse } from "#std/yaml/parse";
+import { makeTempDir } from "#veryfront/testing/deno-compat.ts";
 
 type YamlRecord = Record<string, unknown>;
 
@@ -856,6 +857,104 @@ done
         0,
         `SONAR_RESULT=${dependencyResult} must not fail the merge gate when Sonar is intentionally skipped`,
       );
+    }
+  });
+});
+
+describe("failed merge-group cancellation", () => {
+  it("observes every merge correctness prerequisite independently without privileged test jobs", async () => {
+    const jobs = asRecord((await readWorkflow()).jobs, "workflow jobs");
+    const ancestors = new Set<string>();
+    const visit = (name: string) => {
+      if (ancestors.has(name)) return;
+      ancestors.add(name);
+      for (const dependency of jobNeeds(asRecord(jobs[name], name), name)) visit(dependency);
+    };
+    for (const name of REQUIRED_DEPENDENCIES) visit(name);
+    for (const name of ancestors) {
+      const observer = asRecord(jobs[`cancel-after-${name}`], `${name} failure observer`);
+      assertEquals(observer.needs, [name]);
+      assertEquals(observer.if, "${{ failure() && github.event_name == 'merge_group' }}");
+      assertEquals(observer.uses, "./.github/workflows/cancel-failed-merge-group.yml");
+      assertEquals(observer.permissions, { actions: "write" });
+      assertEquals(observer.steps, undefined);
+      const target = asRecord(jobs[name], name);
+      const permissions = target.permissions === undefined
+        ? {}
+        : asRecord(target.permissions, `${name} permissions`);
+      assertEquals(
+        permissions.actions === "write",
+        false,
+        `${name} must not gain cancellation privileges`,
+      );
+      if (target.strategy !== undefined) {
+        assertEquals(
+          asRecord(target.strategy, `${name} matrix`)["fail-fast"],
+          "${{ github.event_name == 'merge_group' }}",
+        );
+      }
+    }
+  });
+
+  it("force-cancels only merge-group runs without checkout or repository code", async () => {
+    const workflow = asRecord(
+      parse(await readRepoFile(".github/workflows/cancel-failed-merge-group.yml")),
+      "cancel workflow",
+    );
+    assertEquals(Object.keys(asRecord(workflow.on, "cancel triggers")), ["workflow_call"]);
+    assertEquals(workflow.permissions, { actions: "write" });
+    const jobs = asRecord(workflow.jobs, "cancel jobs");
+    assertEquals(Object.keys(jobs), ["cancel"]);
+    const job = asRecord(jobs.cancel, "cancel job");
+    assertEquals(job.if, "${{ github.event_name == 'merge_group' }}");
+    assertEquals(job["timeout-minutes"], 2);
+    assert(Array.isArray(job.steps));
+    assertEquals(job.steps.length, 1);
+    const step = asRecord(job.steps[0], "cancel step");
+    assertEquals(step.uses, undefined);
+    assertEquals(step.env, { GH_TOKEN: "${{ github.token }}" });
+    assertEquals(
+      String(step.run).trim(),
+      'gh api --method POST "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/force-cancel"',
+    );
+  });
+
+  it("passes the current run to the cancellation API and preserves API failures", async () => {
+    const workflow = asRecord(
+      parse(await readRepoFile(".github/workflows/cancel-failed-merge-group.yml")),
+      "cancel workflow",
+    );
+    const job = asRecord(asRecord(workflow.jobs, "cancel jobs").cancel, "cancel job");
+    assert(Array.isArray(job.steps));
+    const step = asRecord(job.steps[0], "cancel step");
+    const directory = await makeTempDir();
+    try {
+      await Deno.writeTextFile(
+        `${directory}/gh`,
+        '#!/bin/sh\nprintf "%s\\n" "$@" > "$CANCEL_ARGS"\nexit "$CANCEL_EXIT"\n',
+      );
+      await Deno.chmod(`${directory}/gh`, 0o700);
+      for (const exitCode of [0, 7]) {
+        const output = await new Deno.Command("bash", {
+          args: ["-e", "-c", String(step.run)],
+          env: {
+            PATH: `${directory}:${Deno.env.get("PATH") ?? ""}`,
+            GITHUB_REPOSITORY: "veryfront/veryfront-code",
+            GITHUB_RUN_ID: "123456",
+            CANCEL_ARGS: `${directory}/args`,
+            CANCEL_EXIT: String(exitCode),
+          },
+          stdout: "piped",
+          stderr: "piped",
+        }).output();
+        assertEquals(output.code, exitCode);
+        assertEquals(
+          await Deno.readTextFile(`${directory}/args`),
+          "api\n--method\nPOST\nrepos/veryfront/veryfront-code/actions/runs/123456/force-cancel\n",
+        );
+      }
+    } finally {
+      await Deno.remove(directory, { recursive: true });
     }
   });
 });
