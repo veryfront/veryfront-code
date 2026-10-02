@@ -726,6 +726,9 @@ export class ProxyFSAdapterManager {
           duration: formatDuration(performanceNow() - initStartTime),
         });
 
+        // Initialization can outlast the usage window. The request that
+        // resolves the adapter is a use, so count from when it completes.
+        projectAdapter.lastAccessed = this.#now();
         mapSet(this.#adapters, cacheKey, projectAdapter);
         return projectAdapter;
       } catch (error) {

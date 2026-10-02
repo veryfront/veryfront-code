@@ -654,6 +654,58 @@ describe("ProxyFSAdapterManager", () => {
     });
   });
 
+  describe("adapter usage after slow initialization", () => {
+    it("counts an adapter as in use when its initialization outlasts the usage window", async () => {
+      let clock = 1_000_000;
+      const probes: Array<() => boolean> = [];
+      const releaseInitialization = Promise.withResolvers<void>();
+      const manager = createManager({
+        now: () => clock,
+        adapterFactory: (config) => {
+          const probe = config.invalidationCallbacks?.isAdapterInUse;
+          assertExists(probe);
+          probes.push(probe);
+          const adapter = new VeryfrontFSAdapter(config);
+          adapter.initialize = () => releaseInitialization.promise;
+          return adapter;
+        },
+      });
+
+      try {
+        const first = manager.getAdapter(
+          "slow-project",
+          "token",
+          undefined,
+          false,
+          null,
+          null,
+          "main",
+        );
+        const waiting = manager.getAdapter(
+          "slow-project",
+          "token",
+          undefined,
+          false,
+          null,
+          null,
+          "main",
+        );
+        await waitFor(() => probes.length === 1, { message: "the adapter must be created" });
+        clock += 120_000;
+        releaseInitialization.resolve();
+        await Promise.all([first, waiting]);
+
+        assertEquals(
+          probes[0]!(),
+          true,
+          "an adapter a request just resolved must count as in use",
+        );
+      } finally {
+        manager.dispose();
+      }
+    });
+  });
+
   describe("methods", () => {
     it("should have getAdapter method", () => {
       const manager = createManager();
