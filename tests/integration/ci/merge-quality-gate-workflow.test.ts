@@ -979,3 +979,23 @@ describe("trusted merge-group cancellation workflow", () => {
     }
   });
 });
+
+describe("issue 2442 throwaway merge-queue failure probe", () => {
+  it("fails only the merge-group typecheck lane and preserves ordinary CI", async () => {
+    const jobs = asRecord((await readWorkflow()).jobs, "workflow jobs");
+    const job = asRecord(jobs.ci, "ci job");
+    assert(Array.isArray(job.steps));
+    const step = asRecord(
+      job.steps.find((value) =>
+        asRecord(value, "ci step").name === "Issue 2442 intentional failure probe"
+      ),
+      "probe step",
+    );
+    assertEquals(
+      step.if,
+      "${{ github.event_name == 'merge_group' && matrix.check == 'typecheck' }}",
+    );
+    assertEquals(String(step.run).trim(), "exit 1");
+    assertEquals(step["continue-on-error"], undefined);
+  });
+});

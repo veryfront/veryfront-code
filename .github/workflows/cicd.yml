@@ -171,6 +171,10 @@ jobs:
             typecheck) deno task typecheck ;;
             test-typecheck) deno task lint:test-typecheck ;;
           esac
+      # Throwaway issue #2442 Demo probe. This branch must never merge.
+      - name: Issue 2442 intentional failure probe
+        if: ${{ github.event_name == 'merge_group' && matrix.check == 'typecheck' }}
+        run: exit 1
 
   # ============================================
   # CI: Tests
