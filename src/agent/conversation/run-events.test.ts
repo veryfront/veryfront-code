@@ -163,6 +163,22 @@ describe("agent/conversation-run-events", () => {
       encoder.encode({ type: "tool-output-available", toolCallId: "tc-2", output })[0]?.isError,
       true,
     );
+    for (
+      const [toolCallId, unflagged] of [
+        ["tc-3", '{"error":"not_found"}'],
+        ["tc-4", { type: "web_search_tool_result_error", error_code: "max_uses_exceeded" }],
+      ] as const
+    ) {
+      assertEquals(
+        encoder.encode({
+          type: "tool-output-available",
+          toolCallId,
+          output: unflagged,
+          providerExecuted: true,
+        })[0]?.isError,
+        false,
+      );
+    }
   });
 
   it("encodes text and reasoning events", () => {
