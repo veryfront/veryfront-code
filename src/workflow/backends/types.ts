@@ -473,8 +473,11 @@ export interface WorkflowBackend {
    * With `unlessBuffered`, also refuse (returning false and changing nothing)
    * while the run's mailbox holds an event with that name published at or
    * before the cutoff. Expiry passes its deadline here so an on-time event
-   * appended after the caller last looked still wins: a durable backend must
-   * test the mailbox in the same transaction or script as the resolve.
+   * appended after the caller last looked still wins. A durable backend
+   * should test the mailbox in the same transaction or script as the resolve.
+   * One that ignores the cutoff stays correct, less cheaply: expiry looks at
+   * the mailbox again under its claim and gives the claim back when it finds
+   * on-time mail.
    */
   resolvePendingEventWait?(
     runId: string,
