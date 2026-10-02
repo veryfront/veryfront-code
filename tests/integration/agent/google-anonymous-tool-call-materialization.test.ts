@@ -5,6 +5,8 @@ import {
   type ChatUiMessageStreamFinish,
   createChatUiMessageStreamFromDataStream,
 } from "#veryfront/agent/streaming/chat-ui-message-stream.ts";
+// The extension's public entrypoint exports providers only; like the other
+// executor/model integration tests, this reaches the stream adapter directly.
 import { streamGoogleCompatibleParts } from "../../../extensions/ext-llm-google/src/google-stream.ts";
 
 /**
@@ -44,30 +46,35 @@ function sse(events: unknown[]): ReadableStream<Uint8Array> {
   });
 }
 
-/** Runs one Gemini response through the adapter and returns its single tool call. */
-async function geminiStepToolCall(
-  toolName: string,
-): Promise<{ toolCallId: string; toolName: string; input: string }> {
-  const calls: Array<{ toolCallId: string; toolName: string; input: string }> = [];
+type AdapterToolCall = { toolCallId: string; toolName: string; input: string };
+
+/** Runs one Gemini response through the adapter and returns its tool calls in order. */
+async function geminiResponseToolCalls(toolNames: string[]): Promise<AdapterToolCall[]> {
+  const calls: AdapterToolCall[] = [];
   for await (
     const part of streamGoogleCompatibleParts(sse([{
       candidates: [{
-        content: { role: "model", parts: [{ functionCall: { name: toolName, args: {} } }] },
+        content: {
+          role: "model",
+          parts: toolNames.map((name) => ({ functionCall: { name, args: {} } })),
+        },
         finishReason: "STOP",
       }],
     }]))
   ) {
     const typed = part as { type?: string; toolCallId?: string; toolName?: string; input?: string };
     if (typed.type === "tool-call") {
-      calls.push({
-        toolCallId: typed.toolCallId!,
-        toolName: typed.toolName!,
-        input: typed.input!,
-      });
+      calls.push({ toolCallId: typed.toolCallId!, toolName: typed.toolName!, input: typed.input! });
     }
   }
-  assertEquals(calls.length, 1);
-  return calls[0]!;
+  assertEquals(calls.map((call) => call.toolName), toolNames);
+  return calls;
+}
+
+/** Runs one Gemini response through the adapter and returns its single tool call. */
+async function geminiStepToolCall(toolName: string): Promise<AdapterToolCall> {
+  const [call] = await geminiResponseToolCalls([toolName]);
+  return call!;
 }
 
 describe("Google anonymous tool call materialization across agent steps", () => {
@@ -129,9 +136,13 @@ describe("Google anonymous tool call materialization across agent steps", () => 
     // Both steps must produce a separate tool card in the final message.
     // Before #4816 the second card would overwrite the first because they
     // shared an id, leaving only one entry in the parts array.
+    // Select tool parts by type, not by field presence, and require every one
+    // to carry an id: a renamed part type must fail here, not filter to [].
     const toolCards = (finish?.responseMessage.parts ?? []).filter((part) =>
-      "toolCallId" in part
-    ) as Array<{ toolCallId: string; toolName?: string; state?: string }>;
+      part.type === "dynamic-tool" || part.type.startsWith("tool-")
+    ) as Array<{ type: string; toolCallId?: string; toolName?: string; state?: string }>;
+    assertEquals(toolCards.length, 2);
+    for (const card of toolCards) assertEquals(typeof card.toolCallId, "string");
     assertEquals(
       toolCards.map(({ toolCallId, toolName, state }) => ({ toolCallId, toolName, state })),
       [
@@ -143,5 +154,14 @@ describe("Google anonymous tool call materialization across agent steps", () => 
         },
       ],
     );
+  });
+
+  it("gives two id-less calls in one Gemini response distinct ids", async () => {
+    const calls = await geminiResponseToolCalls(["tool_search", "veryfront__list_files"]);
+    assertNotEquals(calls[0]!.toolCallId, calls[1]!.toolCallId);
+
+    // A later response must not reuse either id from the earlier one.
+    const next = await geminiStepToolCall("tool_search");
+    assertEquals(calls.some((call) => call.toolCallId === next.toolCallId), false);
   });
 });
