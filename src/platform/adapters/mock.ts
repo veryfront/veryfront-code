@@ -132,9 +132,13 @@ function encodeMockUtf8Prefix(content: string, byteLimit: number): Uint8Array {
 
 export function createMockAdapter(): MockRuntimeAdapter {
   let fileGeneration = 0;
+  let lastModification = 0;
+  const modificationTimes = new Map<string, number>();
   class GenerationMap<T> extends Map<string, T> {
     override set(key: string, value: T): this {
       fileGeneration++;
+      lastModification = Math.max(Date.now(), lastModification + 1);
+      modificationTimes.set(key, lastModification);
       return super.set(key, value);
     }
 
@@ -379,7 +383,7 @@ export function createMockAdapter(): MockRuntimeAdapter {
             isFile: true,
             isDirectory: false,
             isSymlink: false,
-            mtime: new Date(),
+            mtime: new Date(modificationTimes.get(normalizedPath)!),
           });
         }
         const bytes = byteFiles.get(normalizedPath);
@@ -389,7 +393,7 @@ export function createMockAdapter(): MockRuntimeAdapter {
             isFile: true,
             isDirectory: false,
             isSymlink: false,
-            mtime: new Date(),
+            mtime: new Date(modificationTimes.get(normalizedPath)!),
           });
         }
 
