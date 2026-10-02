@@ -4,7 +4,7 @@ import { createExecutorNodeClock, scheduleExecutorNodeDeadline } from "./executo
 
 import { ManualMonotonicClock } from "#veryfront/agent/streaming/lifecycle/testing.ts";
 
-function fixture() {
+function fixture(maxWakeDelayMs?: number) {
   let now = 0;
   let expired = 0;
   const callbacks = new Map<object, { callback: () => void; delayMs: number }>();
@@ -22,6 +22,7 @@ function fixture() {
     },
     1_000,
     () => expired++,
+    maxWakeDelayMs,
   );
   return {
     cancel,
@@ -71,4 +72,17 @@ it("keeps the one-second elapsed budget after forward UTC correction and rollbac
   assertEquals(deadline - clock.now(), 1);
   elapsed.advanceBy(1);
   assertEquals(deadline - clock.now(), 0);
+});
+
+it("bounds idle UTC rechecks without changing the absolute deadline", () => {
+  const timer = fixture(100);
+  assertEquals([...timer.callbacks.values()][0]!.delayMs, 100);
+  timer.wake(100);
+  assertEquals(timer.expired, 0);
+  assertEquals([...timer.callbacks.values()][0]!.delayMs, 100);
+  timer.wake(999);
+  assertEquals(timer.expired, 0);
+  assertEquals([...timer.callbacks.values()][0]!.delayMs, 1);
+  timer.wake(1_000);
+  assertEquals(timer.expired, 1);
 });

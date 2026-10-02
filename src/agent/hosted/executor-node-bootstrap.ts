@@ -199,6 +199,7 @@ export async function startExecutorNodeBootstrap(
     clock,
     deadline,
     () => stop(new Error("Executor bootstrap deadline exceeded")),
+    100, // Observe UTC corrections while idle; this authority closes listener and channel.
   );
   const keyTimer = scheduleExecutorNodeDeadline(
     clock,

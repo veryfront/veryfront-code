@@ -484,7 +484,7 @@ if (typeof Deno !== "undefined") {
         })
       );
       try {
-        await closed[4];
+        await Promise.race(closed);
         listener.close();
         await Promise.all(closed);
         await assertRejects(() => listener.connection, Error, "Executor transport closed");

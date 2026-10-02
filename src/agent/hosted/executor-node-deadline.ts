@@ -26,11 +26,15 @@ export function createExecutorNodeClock(
 
 export const executorNodeClock = createExecutorNodeClock();
 
-/** Timer delivery can precede the clock deadline. Expire only once it is due. */
+/**
+ * Timer delivery can precede the clock deadline. Expire only once it is due.
+ * Owners of UTC deadlines can bound idle observation with maxWakeDelayMs.
+ */
 export function scheduleExecutorNodeDeadline(
   clock: HostedExecutorSessionClock,
   deadline: number,
   expire: () => void,
+  maxWakeDelayMs = Number.POSITIVE_INFINITY,
 ): () => void {
   let canceled = false;
   let handle: unknown;
@@ -38,13 +42,13 @@ export function scheduleExecutorNodeDeadline(
     if (canceled) return;
     const remaining = deadline - clock.now();
     if (remaining > 0) {
-      handle = clock.schedule(wake, remaining);
+      handle = clock.schedule(wake, Math.min(remaining, maxWakeDelayMs));
       return;
     }
     canceled = true;
     expire();
   };
-  handle = clock.schedule(wake, Math.max(0, deadline - clock.now()));
+  handle = clock.schedule(wake, Math.min(maxWakeDelayMs, Math.max(0, deadline - clock.now())));
   return () => {
     if (canceled) return;
     canceled = true;
