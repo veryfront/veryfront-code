@@ -1395,7 +1395,7 @@ jobs:
       version: ${{ steps.version.outputs.version }}
     permissions:
       actions: read
-      contents: write
+      contents: read
       id-token: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -1447,13 +1447,13 @@ jobs:
 
   github-prerelease:
     name: GitHub prerelease
-    if: ${{ !cancelled() && needs.prerelease.result == 'success' }}
+    if: ${{ !cancelled() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && needs.prerelease.result == 'success' }}
     needs: [prerelease]
     runs-on: ubuntu-latest
     environment: production
     permissions:
       actions: read
-      contents: write
+      contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -1487,7 +1487,7 @@ jobs:
           owner: veryfront
           repositories: |
             veryfront
-          permission-contents: write
+          permission-contents: read
 
       - name: Create GitHub pre-release
         env:

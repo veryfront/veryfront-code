@@ -695,10 +695,14 @@ printf '%064d  %s\n' 0 "$1"
 
     const github = asRecord(jobs["github-prerelease"], "GitHub prerelease job");
     assertEquals(github.needs, ["prerelease"]);
-    assertEquals(github.if, "${{ !cancelled() && needs.prerelease.result == 'success' }}");
+    assertEquals(
+      github.if,
+      "${{ !cancelled() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && needs.prerelease.result == 'success' }}",
+    );
     assertEquals(github.environment, npm.environment);
     assertEquals(github["runs-on"], npm["runs-on"]);
-    assertEquals(github.permissions, { actions: "read", contents: "write" });
+    assertEquals(github.permissions, { actions: "read", contents: "read" });
+    assertEquals(npm.permissions, { actions: "read", contents: "read", "id-token": "write" });
     const githubSteps = steps(github, "GitHub prerelease job");
     const checkout = githubSteps.find((step) => String(step.uses).startsWith("actions/checkout@"));
     assert(checkout);
