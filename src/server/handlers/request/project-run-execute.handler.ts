@@ -3386,6 +3386,7 @@ async function executeStyleArtifactBuildRun(input: {
         undefined,
         input.signal,
       ).catch(() => undefined);
+      input.signal.throwIfAborted();
     }
 
     return {
