@@ -1,6 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assert, assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
 import { beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
+import { FakeTime } from "#std/testing/time";
 import { MemoryBackend } from "./memory.ts";
 import type { Checkpoint, PendingApproval, WorkflowQueueItem, WorkflowRun } from "../types.ts";
 import { MAX_TRAVERSAL_DEPTH } from "../context-serialization.ts";
@@ -1568,6 +1569,96 @@ describe("MemoryBackend", () => {
       assertEquals(nodeStates?.other?.output, { keep: "output" });
     });
 
+    for (const privateField of ["context", "evaluationContext"] as const) {
+      it(`treats toJSON as a node id in loop retry ${privateField} during create and read`, async () => {
+        let calls = 0;
+        const callableRecord = {
+          input: {},
+          toJSON: () => {
+            calls++;
+            return { corrupted: true };
+          },
+          other: { keep: 1 },
+        };
+        const dataRecord = {
+          input: {},
+          toJSON: { keep: 2 },
+          other: { keep: 3 },
+        };
+        const runId = `run-loop-retry-${privateField}`;
+
+        await backend.createRun(createTestRun(runId, {
+          nodeStates: {
+            repeat: {
+              nodeId: "repeat",
+              status: "failed",
+              attempt: 1,
+              _loopOutputRetry: {
+                iteration: 0,
+                previousResults: [],
+                context: privateField === "context" ? callableRecord : dataRecord,
+                evaluationContext: privateField === "evaluationContext"
+                  ? callableRecord
+                  : dataRecord,
+                iterationNodeStates: {},
+              },
+            },
+          },
+        }));
+
+        assertEquals(calls, 0);
+        const retry = (await backend.getRun(runId))?.nodeStates.repeat?._loopOutputRetry;
+        assertEquals(retry?.[privateField], { input: {}, other: { keep: 1 } });
+        const dataField = privateField === "context" ? "evaluationContext" : "context";
+        assertEquals(retry?.[dataField], {
+          input: {},
+          toJSON: { keep: 2 },
+          other: { keep: 3 },
+        });
+      });
+
+      it(`rejects callable loop retry ${privateField} without invoking it or persisting the run`, async () => {
+        let calls = 0;
+        const strictBackend = new MemoryBackend({ strictContext: true });
+        const runId = `run-strict-loop-retry-${privateField}`;
+        const callableRecord = {
+          input: {},
+          toJSON: () => {
+            calls++;
+            return { corrupted: true };
+          },
+          other: { keep: 1 },
+        };
+
+        await assertRejects(
+          () =>
+            strictBackend.createRun(createTestRun(runId, {
+              nodeStates: {
+                repeat: {
+                  nodeId: "repeat",
+                  status: "failed",
+                  attempt: 1,
+                  _loopOutputRetry: {
+                    iteration: 0,
+                    previousResults: [],
+                    context: privateField === "context" ? callableRecord : { input: {} },
+                    evaluationContext: privateField === "evaluationContext"
+                      ? callableRecord
+                      : { input: {} },
+                    iterationNodeStates: {},
+                  },
+                },
+              },
+            })),
+          Error,
+          "strictContext enabled: nodeStates._loopOutputRetry",
+        );
+
+        assertEquals(calls, 0);
+        assertEquals(await strictBackend.getRun(runId), null);
+      });
+    }
+
     it("rejects node-state user data JSON cannot encode, naming the field (#2242)", async () => {
       await backend.createRun(createTestRun("run-node-state-bigint"));
       await assertRejectsAsynchronously(
@@ -1924,6 +2015,25 @@ describe("MemoryBackend", () => {
   });
 
   describe("Approvals", () => {
+    it("lists an approval as expired at its exact deadline", async () => {
+      using _time = new FakeTime(new Date("2026-09-30T12:00:00.000Z"));
+      await backend.createRun(createTestRun("run-expired-boundary"));
+      for (const [id, offset] of [["due", 0], ["future", 1]] as const) {
+        await backend.savePendingApproval("run-expired-boundary", {
+          id: `approval-${id}`,
+          nodeId: id,
+          message: "Review",
+          requestedAt: new Date(Date.now() - 1_000),
+          expiresAt: new Date(Date.now() + offset),
+          status: "pending",
+        });
+      }
+
+      const expired = await backend.listPendingApprovals({ status: "expired" });
+
+      assertEquals(expired.map(({ approval }) => approval.id), ["approval-due"]);
+    });
+
     it("preserves the historical append semantics of savePendingApproval", async () => {
       const approval = (id: string): PendingApproval => ({
         id,
@@ -2737,6 +2847,44 @@ describe("MemoryBackend", () => {
       assertEquals(
         (await backend.getPendingEventWaits("run-events")).map(({ id }) => id),
         ["retry"],
+      );
+    });
+
+    it("refuses an expiry while an event published by the cutoff is buffered", async () => {
+      const deadline = new Date("2026-10-02T08:00:00.000Z");
+      await backend.savePendingEventWait("run-events", createEventWait("evw-1"));
+      const unlessBuffered = { eventName: "payment.confirmed", publishedBefore: deadline };
+      await backend.appendRunEvent("run-events", {
+        id: "late",
+        eventName: "payment.confirmed",
+        payload: {},
+        publishedAt: new Date(deadline.getTime() + 1),
+      });
+      await backend.appendRunEvent("run-events", {
+        id: "other-name",
+        eventName: "payment.refunded",
+        payload: {},
+        publishedAt: deadline,
+      });
+      await backend.appendRunEvent("run-events", {
+        id: "on-time",
+        eventName: "payment.confirmed",
+        payload: {},
+        publishedAt: deadline,
+      });
+
+      assertEquals(
+        await backend.resolvePendingEventWait("run-events", "evw-1", "expired", unlessBuffered),
+        false,
+        "an on-time event must win the deadline",
+      );
+      assertEquals((await backend.getPendingEventWaits("run-events")).length, 1);
+
+      assertEquals(await backend.removeRunEvent("run-events", "on-time"), true);
+      assertEquals(
+        await backend.resolvePendingEventWait("run-events", "evw-1", "expired", unlessBuffered),
+        true,
+        "late or differently named mail must not hold the wait open",
       );
     });
 

@@ -1,10 +1,12 @@
-import { parseIntegrationToolIdentity } from "#veryfront/integrations/source-policy.ts";
-import { MAX_REMOTE_INTEGRATION_TOOL_NAME_LENGTH } from "#veryfront/integrations/limits.ts";
 import { defineSchema, lazySchema } from "veryfront/schemas";
 import type { InferSchema } from "veryfront/extensions/schema";
 import { CommonArgs, createArgParser } from "#cli/shared/args";
 import { INVALID_ARGUMENT } from "veryfront/errors";
-import type { IntegrationClient } from "veryfront/integrations";
+import {
+  type IntegrationClient,
+  MAX_REMOTE_INTEGRATION_TOOL_NAME_LENGTH,
+  parseIntegrationToolIdentity,
+} from "veryfront/integrations";
 
 const schema = defineSchema((v) =>
   v.object({

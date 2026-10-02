@@ -9,11 +9,11 @@ order: 14
 ```ts
 import {
   createIntegrationClient,
+  createIntegrationErrorContext,
   createLocalIntegrationToolSource,
   createSalesforceServiceAccountToolSource,
   executeRemoteIntegrationTool,
   getConnector,
-  getConnectorNames,
 } from "veryfront/integrations";
 ```
 
@@ -48,6 +48,7 @@ const runtimeTools = await getRemoteIntegrationToolDefinitions();
 | `IntegrationNameSchema`                      | Zod schema for integration name.                                                       | [source](https://github.com/veryfront/veryfront-code/blob/main/src/integrations/schema.ts)                     |
 | `IntegrationPromptSchema`                    | Zod schema for integration prompt.                                                     | [source](https://github.com/veryfront/veryfront-code/blob/main/src/integrations/schema.ts)                     |
 | `IntegrationToolSchema`                      | Zod schema for integration tool.                                                       | [source](https://github.com/veryfront/veryfront-code/blob/main/src/integrations/schema.ts)                     |
+| `MAX_REMOTE_INTEGRATION_TOOL_NAME_LENGTH`    | Runtime tool names use the same ceiling as the agent invocation contract.              | [source](https://github.com/veryfront/veryfront-code/blob/main/src/integrations/limits.ts)                     |
 | `OAuthConfigSchema`                          | Zod schema for oauth config.                                                           | [source](https://github.com/veryfront/veryfront-code/blob/main/src/integrations/schema.ts)                     |
 | `OAuthFieldSchema`                           | Zod schema for oauth field.                                                            | [source](https://github.com/veryfront/veryfront-code/blob/main/src/integrations/schema.ts)                     |
 | `SALESFORCE_SERVICE_ACCOUNT_ENV_VARS`        | Project environment variables required by the local Salesforce service-account source. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/integrations/salesforce-service-account.ts) |
@@ -57,6 +58,7 @@ const runtimeTools = await getRemoteIntegrationToolDefinitions();
 | Name                                       | Description                                                                                                                                                                                                                                                                             | Source                                                                                                         |
 | ------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
 | `createIntegrationClient`                  | Bind explicit API credentials and an authorized project for catalog, status and tool calls. Requires the API expected-project precondition and effective-project response header contract. This client does not infer consent completion or executable readiness from connected status. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/integrations/client.ts)                     |
+| `createIntegrationErrorContext`            |                                                                                                                                                                                                                                                                                         | [source](https://github.com/veryfront/veryfront-code/blob/main/src/integrations/error-context.ts)              |
 | `createLocalIntegrationToolSource`         | Create an explicitly granted, catalog-backed local integration tool source.                                                                                                                                                                                                             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/integrations/local-tool-source.ts)          |
 | `createSalesforceServiceAccountToolSource` | Create a local Salesforce service-account tool source.                                                                                                                                                                                                                                  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/integrations/salesforce-service-account.ts) |
 | `executeRemoteIntegrationTool`             | Execute a remote integration tool via the API. Called by the agent runtime when a tool isn't found in the local registry. The request, response, and caller-supplied cancellation signal remain bounded for the complete network and response-body lifecycle.                           | [source](https://github.com/veryfront/veryfront-code/blob/main/src/integrations/remote-tools.ts)               |
@@ -65,8 +67,12 @@ const runtimeTools = await getRemoteIntegrationToolDefinitions();
 | `getIcon`                                  | Return icon.                                                                                                                                                                                                                                                                            | [source](https://github.com/veryfront/veryfront-code/blob/main/src/integrations/index.ts)                      |
 | `getRemoteIntegrationToolDefinitions`      | Fetch integration tool definitions for the current request context.                                                                                                                                                                                                                     | [source](https://github.com/veryfront/veryfront-code/blob/main/src/integrations/remote-tools.ts)               |
 | `getRemoteIntegrationToolDiscovery`        | Discover integration tools for the current request context.                                                                                                                                                                                                                             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/integrations/remote-tools.ts)               |
+| `isIntegrationErrorContext`                | Recognizes only an own data discriminator; validation still occurs before serialization.                                                                                                                                                                                                | [source](https://github.com/veryfront/veryfront-code/blob/main/src/integrations/error-context.ts)              |
 | `isRemoteIntegrationTool`                  | Check if a tool name looks like a remote integration tool. Integration tools use "integration__tool_id" format (double underscore separator).                                                                                                                                           | [source](https://github.com/veryfront/veryfront-code/blob/main/src/integrations/remote-tools.ts)               |
 | `listConnectors`                           | List connectors.                                                                                                                                                                                                                                                                        | [source](https://github.com/veryfront/veryfront-code/blob/main/src/integrations/index.ts)                      |
+| `parseIntegrationToolIdentity`             | Parse the canonical API tool name (`integration__tool_id`). Aliases and alternate separators are intentionally not accepted at this policy layer.                                                                                                                                       | [source](https://github.com/veryfront/veryfront-code/blob/main/src/integrations/source-policy.ts)              |
+| `readIntegrationErrorContext`              | Copy only validated safe facts. Accessors, prototypes, extensions and native payloads are excluded.                                                                                                                                                                                     | [source](https://github.com/veryfront/veryfront-code/blob/main/src/integrations/error-context.ts)              |
+| `readIntegrationThrowableContext`          | Read only an own data context from the original throwable; generic boundaries discard it.                                                                                                                                                                                               | [source](https://github.com/veryfront/veryfront-code/blob/main/src/integrations/error-context.ts)              |
 
 ### Classes
 
@@ -112,3 +118,28 @@ const runtimeTools = await getRemoteIntegrationToolDefinitions();
 | `OAuthField`                                | Public API contract for oauth field.                                                                                                                                                                                                                                                                                                                                                                                                                                                | [source](https://github.com/veryfront/veryfront-code/blob/main/src/integrations/schema.ts)                     |
 | `RemoteIntegrationToolDiscoveryResult`      | Result of listing the integration tools available to the current run.                                                                                                                                                                                                                                                                                                                                                                                                               | [source](https://github.com/veryfront/veryfront-code/blob/main/src/integrations/remote-tools.ts)               |
 | `SalesforceServiceAccountToolSourceOptions` | Options for the local Salesforce service-account source.                                                                                                                                                                                                                                                                                                                                                                                                                            | [source](https://github.com/veryfront/veryfront-code/blob/main/src/integrations/salesforce-service-account.ts) |
+
+## Deep imports
+
+These import paths group focused functionality under this module. Each is a separate barrel; import only what you need.
+
+### `veryfront/integrations/diagnostics`
+
+Synchronous safe-fact projection for integration operation failures. Readers exclude accessors, native payloads and unrecognized fields. Diagnostic metadata never authorizes automatic replay of an integration operation.
+
+```ts
+import {
+  createIntegrationErrorContext,
+  isIntegrationErrorContext,
+  readIntegrationErrorContext,
+} from "veryfront/integrations/diagnostics";
+```
+
+#### Functions
+
+| Name                              | Description                                                                                         | Source                                                                                            |
+| --------------------------------- | --------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| `createIntegrationErrorContext`   |                                                                                                     | [source](https://github.com/veryfront/veryfront-code/blob/main/src/integrations/error-context.ts) |
+| `isIntegrationErrorContext`       | Recognizes only an own data discriminator; validation still occurs before serialization.            | [source](https://github.com/veryfront/veryfront-code/blob/main/src/integrations/error-context.ts) |
+| `readIntegrationErrorContext`     | Copy only validated safe facts. Accessors, prototypes, extensions and native payloads are excluded. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/integrations/error-context.ts) |
+| `readIntegrationThrowableContext` | Read only an own data context from the original throwable; generic boundaries discard it.           | [source](https://github.com/veryfront/veryfront-code/blob/main/src/integrations/error-context.ts) |

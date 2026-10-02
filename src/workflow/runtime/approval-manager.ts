@@ -420,7 +420,7 @@ export class ApprovalManager {
       throw error;
     }
 
-    if (approval.expiresAt && new Date() > approval.expiresAt) {
+    if (approval.expiresAt && new Date() >= approval.expiresAt) {
       await this.expireApproval(runId, approval);
       return projectApprovalRequest(runId, approval);
     }
@@ -900,7 +900,7 @@ export class ApprovalManager {
     if (approval.status !== "pending") {
       throw INVALID_ARGUMENT.create({ detail: `Approval already processed: ${approval.status}` });
     }
-    if (approval.expiresAt && new Date() > approval.expiresAt) {
+    if (approval.expiresAt && new Date() >= approval.expiresAt) {
       throw INVALID_ARGUMENT.create({ detail: "Approval has expired" });
     }
     const approvers = approval.approvers;
@@ -1011,7 +1011,7 @@ export class ApprovalManager {
 
     for (const { runId, approval } of pending) {
       if (targetRunId !== undefined && runId !== targetRunId) continue;
-      if (!approval.expiresAt || now <= approval.expiresAt) {
+      if (!approval.expiresAt || now < approval.expiresAt) {
         continue;
       }
 

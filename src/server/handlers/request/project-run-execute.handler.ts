@@ -1021,9 +1021,11 @@ async function executeDiscoveredTaskRun(
 async function waitForWorkflowResult(
   client: WorkflowClientView,
   runId: string,
-  shouldCancel: () => boolean,
+  signal: AbortSignal,
   deps: ProjectRunExecuteHandlerDeps,
   releasedKeys?: string[],
+  pollingStopped?: AbortSignal,
+  cancelRun?: () => Promise<void>,
 ): Promise<WorkflowRunView> {
   const deadline = deps.now() + DEFAULT_WORKFLOW_STATUS_TIMEOUT_MS;
   let previousKeys: string[] | undefined;
@@ -1034,13 +1036,17 @@ async function waitForWorkflowResult(
     if (!run) throw RESOURCE_NOT_FOUND.create({ detail: `Workflow run not found: ${runId}` });
 
     // A waiting run is resumable, so an aborted request cancels it too.
-    if (shouldCancel() && !isTerminalWorkflowStatus(run.status)) {
-      await client.cancel(runId);
+    if (signal.aborted && !isTerminalWorkflowStatus(run.status)) {
+      await (cancelRun ? cancelRun() : client.cancel(runId));
       return {
         status: "cancelled",
         output: run.output,
         error: { message: "Workflow run cancelled" },
       };
+    }
+
+    if (pollingStopped?.aborted) {
+      throw TIMEOUT_ERROR.create({ detail: `Workflow run timed out: ${runId}` });
     }
 
     if (isTerminalWorkflowStatus(run.status)) return run;
@@ -1353,8 +1359,10 @@ async function resumeWaitingWorkflowRun(
   client: WorkflowClientView,
   runId: string,
   resume: WorkflowResumeSignal,
-  shouldCancel: () => boolean,
+  signal: AbortSignal,
   deps: ProjectRunExecuteHandlerDeps,
+  pollingStopped: AbortSignal,
+  cancelRun: () => Promise<void>,
 ): Promise<{ run: WorkflowRunView } | { failure: string }> {
   if (client.statePersistence !== "durable") {
     return { failure: "Cannot resume a workflow run without durable workflow persistence" };
@@ -1365,12 +1373,38 @@ async function resumeWaitingWorkflowRun(
   // A re-dispatch that repeats a decision already applied (the previous
   // attempt died after applying it) just reports where the run is now.
   if (current.status !== "waiting") {
-    return { run: await waitForWorkflowResult(client, runId, shouldCancel, deps) };
+    return {
+      run: await waitForWorkflowResult(
+        client,
+        runId,
+        signal,
+        deps,
+        undefined,
+        pollingStopped,
+        cancelRun,
+      ),
+    };
   }
 
   const parked = await readPendingWaits(client, runId, current);
   if (await isStaleDecision(resume, parked)) {
-    return { run: await waitForWorkflowResult(client, runId, shouldCancel, deps) };
+    return {
+      run: await waitForWorkflowResult(
+        client,
+        runId,
+        signal,
+        deps,
+        undefined,
+        pollingStopped,
+        cancelRun,
+      ),
+    };
+  }
+  // A timed-out request still applies its decision: the timeout reports the
+  // run waiting and the recheck dispatch names no decision to apply again.
+  if (signal.aborted) {
+    await cancelRun();
+    return { run: { status: "cancelled", error: { message: "Workflow run cancelled" } } };
   }
   const applied = isParkedOnNothing(parked)
     ? { released: true }
@@ -1379,10 +1413,19 @@ async function resumeWaitingWorkflowRun(
 
   // The decision can resume the run in the background, so the run may still
   // read `waiting` on the boundary it was just released from while the
-  // released node completes. Poll past it; a later pause on a different
-  // boundary is a new `waiting`.
+  // released node completes. Poll past it; a later pause is a new boundary.
   const releasedKeys = applied.released ? waitKeys(parked) : undefined;
-  return { run: await waitForWorkflowResult(client, runId, shouldCancel, deps, releasedKeys) };
+  return {
+    run: await waitForWorkflowResult(
+      client,
+      runId,
+      signal,
+      deps,
+      releasedKeys,
+      pollingStopped,
+      cancelRun,
+    ),
+  };
 }
 
 function isTerminalWorkflowStatus(status: string): boolean {
@@ -1455,8 +1498,8 @@ async function runDiscoveredWorkflow(
   let activeResume: Promise<unknown> | undefined;
   try {
     client.register(workflow.definition);
-    // The run was cancelled while the workflow was being loaded: do not start or resume it.
-    if (signal.aborted) {
+    // A first dispatch has no durable run yet. A resume must cancel its persisted run below.
+    if (signal.aborted && !request.resume) {
       return {
         success: false,
         error: "Workflow run cancelled",
@@ -1467,14 +1510,52 @@ async function runDiscoveredWorkflow(
 
     let run: WorkflowRunView;
     if (request.resume) {
-      let resumeTimedOut = false;
+      const resumeRequest = new AbortController();
+      const pollingStopped = new AbortController();
+      let cancellation: Promise<void> | undefined;
+      let cancellationResult: WorkflowRunView | undefined;
+      const cancelRun = () =>
+        cancellation ??= (async () => {
+          const current = await client.getRun(request.runId);
+          if (current && isTerminalWorkflowStatus(current.status)) {
+            cancellationResult = current;
+            return;
+          }
+          try {
+            await client.cancel(request.runId);
+          } catch (error) {
+            const latest = await client.getRun(request.runId);
+            if (!latest || !isTerminalWorkflowStatus(latest.status)) throw error;
+            cancellationResult = latest;
+            return;
+          }
+          cancellationResult = {
+            status: "cancelled",
+            error: { message: "Workflow run cancelled" },
+          };
+        })();
+      const forwardCancellation = () => {
+        resumeRequest.abort();
+        void cancelRun().catch(() => {});
+      };
+      signal.addEventListener("abort", forwardCancellation, { once: true });
+      if (signal.aborted) forwardCancellation();
       const operation = resumeWaitingWorkflowRun(
         client,
         request.runId,
         request.resume,
-        () => !resumeTimedOut && signal.aborted,
+        resumeRequest.signal,
         deps,
-      );
+        pollingStopped.signal,
+        cancelRun,
+      ).then(async (result) => {
+        await cancellation;
+        return cancellationResult ? { run: cancellationResult } : result;
+      }, async (error) => {
+        await cancellation;
+        if (cancellationResult) return { run: cancellationResult };
+        throw error;
+      });
       activeResume = operation;
       void operation.then(() => {
         activeResume = undefined;
@@ -1486,12 +1567,21 @@ async function runDiscoveredWorkflow(
         operation,
         new Promise<{ timedOut: true }>((resolve) => {
           timer = setTimeout(() => {
-            resumeTimedOut = true;
+            signal.removeEventListener("abort", forwardCancellation);
+            pollingStopped.abort();
             resolve({ timedOut: true });
           }, deps.workflowResumeTimeoutMs ?? DEFAULT_WORKFLOW_STATUS_TIMEOUT_MS);
         }),
-      ]).finally(() => clearTimeout(timer));
-      if ("timedOut" in resumed) {
+      ]).finally(() => {
+        clearTimeout(timer);
+        signal.removeEventListener("abort", forwardCancellation);
+      });
+      // A settled cancellation reports what it found, including a run that
+      // was already terminal. One still in flight leaves the run to the recheck.
+      const outcome = "timedOut" in resumed && cancellationResult
+        ? { run: cancellationResult }
+        : resumed;
+      if ("timedOut" in outcome) {
         // The resumed execution keeps running durably, so the run did not
         // fail: keep the canonical run waiting and have the control plane
         // dispatch it again soon. That dispatch names no pending wait, so it
@@ -1508,15 +1598,15 @@ async function runDiscoveredWorkflow(
           duration_ms: Math.max(0, deps.now() - startedAt),
         };
       }
-      if ("failure" in resumed) {
+      if ("failure" in outcome) {
         return {
           success: false,
-          error: resumed.failure,
+          error: outcome.failure,
           logs: null,
           duration_ms: Math.max(0, deps.now() - startedAt),
         };
       }
-      run = resumed.run;
+      run = outcome.run;
     } else {
       // A null input counts as no input, the same as on the API run record.
       let handle: Awaited<ReturnType<typeof client.start>>;
@@ -1530,8 +1620,22 @@ async function runDiscoveredWorkflow(
         if (failure) return failure;
         throw error;
       }
-      run = await waitForWorkflowResult(client, handle.runId, () => signal.aborted, deps);
+      run = await waitForWorkflowResult(client, handle.runId, signal, deps);
+      const pausedOn = run.status === "waiting"
+        ? waitKeys(await readPendingWaits(client, handle.runId, run))
+        : undefined;
       await handle.settled?.();
+      if (pausedOn) {
+        const refreshed = await client.getRun(handle.runId) ?? run;
+        // An expiring delay or a delivered event can advance the run past the
+        // polled pause while it settles: poll it again until a new pause
+        // stabilizes, which also cancels the run when the request was aborted.
+        run = isTerminalWorkflowStatus(refreshed.status) ||
+            (refreshed.status === "waiting" &&
+              sameKeys(waitKeys(await readPendingWaits(client, handle.runId, refreshed)), pausedOn))
+          ? refreshed
+          : await waitForWorkflowResult(client, handle.runId, signal, deps);
+      }
     }
     const durationMs = Math.max(0, deps.now() - startedAt);
 
@@ -3282,6 +3386,7 @@ async function executeStyleArtifactBuildRun(input: {
         undefined,
         input.signal,
       ).catch(() => undefined);
+      input.signal.throwIfAborted();
     }
 
     return {

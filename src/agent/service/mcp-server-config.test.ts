@@ -56,6 +56,24 @@ it("createAgentServiceRemoteMcpConfig builds Veryfront API MCP config", async ()
 });
 
 describe("createProjectScopedMcpUrl", () => {
+  it("normalizes long trailing slashes and preserves nested path segments", () => {
+    assertEquals(
+      createProjectScopedMcpUrl("https://api.example/prefix" + "/".repeat(10000), "new"),
+      "https://api.example/prefix/projects/new/mcp",
+    );
+    assertEquals(
+      createProjectScopedMcpUrl("https://api.example/prefix/projects/old/mcp/", "new"),
+      "https://api.example/prefix/projects/new/mcp",
+    );
+    assertEquals(
+      createProjectScopedMcpUrl("https://api.example/projects/nested/child/mcp", "new"),
+      "https://api.example/projects/nested/child/projects/new/mcp",
+    );
+    assertEquals(
+      createProjectScopedMcpUrl("https://api.example/projects//mcp", "new"),
+      "https://api.example/projects/projects/new/mcp",
+    );
+  });
   it("normalizes and replaces the project segment", () => {
     assertEquals(
       createProjectScopedMcpUrl("https://api.example", " project/1 "),

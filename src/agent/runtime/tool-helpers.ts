@@ -1,3 +1,5 @@
+import { findSequential } from "./sequential.ts";
+import { dispatchWithTerminalRunControl, executeTerminalRunTool } from "./terminal-run-control.ts";
 import { hasTrustedPlatformSource } from "#veryfront/tool/platform-source-provenance.ts";
 import { isReservedPlatformToolName } from "#veryfront/tool/platform-tool-policy.ts";
 import { createPrivateWeakStore } from "#veryfront/security/private-weak-store.ts";
@@ -309,14 +311,11 @@ async function executeRemoteToolFromSources(
   selectedSource?: RemoteToolSource,
 ): Promise<{ handled: boolean; result?: unknown }> {
   const sources = selectedSource ? [selectedSource] : remoteToolSources ?? [];
-  for (let index = 0; index < sources.length; index++) {
-    if (!intrinsicHasOwn(sources, index)) continue;
-    const source = sources[index]!;
-    if (isReservedPlatformToolName(toolName) && !hasTrustedPlatformSource(source)) continue;
-    if (source !== selectedSource && !(await sourceHasTool(source, toolName, context))) {
-      continue;
-    }
-
+  const source = await findSequential(sources, async (candidate) => {
+    if (isReservedPlatformToolName(toolName) && !hasTrustedPlatformSource(candidate)) return false;
+    return candidate === selectedSource || await sourceHasTool(candidate, toolName, context);
+  });
+  if (source) {
     if (allowedRemoteToolNames && !intrinsicIncludes(allowedRemoteToolNames, toolName)) {
       throw PERMISSION_DENIED.create({ detail: `Tool "${toolName}" is not allowed for this run` });
     }
@@ -330,7 +329,11 @@ async function executeRemoteToolFromSources(
     }
     return {
       handled: true,
-      result: await source.executeTool(toolName, input, context),
+      result: await (hasTrustedPlatformSource(source)
+        ? executeTerminalRunTool(toolName, input, context, () =>
+          source.executeTool(toolName, input, context))
+        : dispatchWithTerminalRunControl(context, () =>
+          source.executeTool(toolName, input, context))),
     };
   }
 
@@ -433,7 +436,10 @@ export async function executeConfiguredTool(
     allowIntegrationStyleConcreteTools: options?.strictConfiguredToolsOnly,
   });
   if (configuredTool) {
-    return await configuredTool.execute(input, context);
+    return await dispatchWithTerminalRunControl(
+      context,
+      () => configuredTool.execute(input, context),
+    );
   }
 
   if (options?.strictConfiguredToolsOnly) {
@@ -445,7 +451,10 @@ export async function executeConfiguredTool(
   // fall through and surface as "not found" via executeTool.
   const registryTool = toolRegistry.get(toolName);
   if (registryTool && isToolVisibleTo(registryTool, context)) {
-    return await registryTool.execute(input, context);
+    return await dispatchWithTerminalRunControl(
+      context,
+      () => registryTool.execute(input, context),
+    );
   }
 
   const remoteSourceResult = await executeRemoteToolFromSources(
@@ -466,10 +475,13 @@ export async function executeConfiguredTool(
     if (allowedRemoteToolNames && !intrinsicIncludes(allowedRemoteToolNames, toolName)) {
       throw PERMISSION_DENIED.create({ detail: `Tool "${toolName}" is not allowed for this run` });
     }
-    return await executeRemoteIntegrationTool(toolName, input, context);
+    return await dispatchWithTerminalRunControl(
+      context,
+      () => executeRemoteIntegrationTool(toolName, input, context),
+    );
   }
 
-  return await executeTool(toolName, input, context);
+  return await dispatchWithTerminalRunControl(context, () => executeTool(toolName, input, context));
 }
 
 function logToolDefinition(name: string, def: ToolDefinition): void {

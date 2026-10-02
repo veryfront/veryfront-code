@@ -298,6 +298,7 @@ function sanitizeMalformedToolTranscriptText(text: string): string {
 function summarizeNormalizedChildRunResultTextWithMetadata(
   normalized: string,
   maxLength: number,
+  includeMarkerInLimit = false,
 ): ChildRunResultSummary {
   if (normalized.length <= maxLength) {
     return {
@@ -311,8 +312,11 @@ function summarizeNormalizedChildRunResultTextWithMetadata(
     };
   }
 
-  const omittedChars = normalized.length - maxLength;
-  const summaryText = `${normalized.slice(0, maxLength)}… [truncated ${omittedChars} chars]`;
+  // Reserve the longest possible marker so its omission count cannot exceed the budget.
+  const markerLength = `… [truncated ${normalized.length} chars]`.length;
+  const contentLimit = includeMarkerInLimit ? Math.max(0, maxLength - markerLength) : maxLength;
+  const omittedChars = normalized.length - contentLimit;
+  const summaryText = `${normalized.slice(0, contentLimit)}… [truncated ${omittedChars} chars]`;
 
   return {
     text: summaryText,
@@ -1880,7 +1884,7 @@ export function buildChildRunResultSummary(
 ): ChildRunResultSummary {
   const normalized = options.mode === "full" ? text : sanitizeMalformedToolTranscriptText(text);
   const maxLength = options.mode === "full" ? normalized.length : CHILD_RUN_RESULT_TEXT_LIMIT;
-  const summary = summarizeNormalizedChildRunResultTextWithMetadata(normalized, maxLength);
+  const summary = summarizeNormalizedChildRunResultTextWithMetadata(normalized, maxLength, true);
 
   return options.mode === "structured" ? withContractFacts(summary, normalized) : summary;
 }

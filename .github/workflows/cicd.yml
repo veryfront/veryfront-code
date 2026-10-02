@@ -97,7 +97,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        check: [test-layout, format, lint, typecheck]
+        check: [test-layout, format, lint, typecheck, test-typecheck]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -150,22 +150,42 @@ jobs:
           case "${{ matrix.check }}" in
             test-layout) deno task test:layout ;;
             format) deno task fmt:check ;;
-            # The chain lives in the lint:ci task so a contributor can run this
-            # shard locally instead of learning what it covers from a red CI run.
-            lint) deno task lint:ci ;;
+            # Keep the local lint:ci task intact. CI runs its test typecheck
+            # concurrently, and fails closed if the task chain changes shape.
+            lint)
+              deno eval '
+                const chain = JSON.parse(Deno.readTextFileSync("deno.json"))
+                  .tasks["lint:ci"].split(" && ");
+                const check = "deno task lint:test-typecheck";
+                if (chain.filter((command) => command === check).length !== 1) {
+                  throw new Error("expected one test typecheck in lint:ci");
+                }
+                const status = await new Deno.Command("bash", {
+                  args: ["-e", "-o", "pipefail", "-c",
+                    chain.filter((command) => command !== check).join(" && ")],
+                  stdout: "inherit", stderr: "inherit",
+                }).spawn().status;
+                Deno.exit(status.code);
+              '
+              ;;
             typecheck) deno task typecheck ;;
+            test-typecheck) deno task lint:test-typecheck ;;
           esac
 
   # ============================================
   # CI: Tests
   # ============================================
 
-  tests:
+  tests-integration:
     needs: [tested-run]
     if: ${{ !cancelled() && needs.tested-run.outputs.reuse != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
     runs-on: ubuntu-latest
     timeout-minutes: 35
-    name: tests (integration)
+    name: "tests (integration shard ${{ matrix.shard }}/2)"
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -174,7 +194,7 @@ jobs:
         timeout-minutes: 10
         with:
           warm-cache: "true"
-          warm-redis-cache: "true"
+          warm-redis-cache: ${{ matrix.shard == 1 }}
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
         with:
           node-version: "24"
@@ -182,26 +202,86 @@ jobs:
       - name: Install Chromium for integration hydration regressions
         timeout-minutes: 20
         uses: ./.github/actions/install-chromium
+      # Nested Node executor fixtures in both shards need the resolver packages.
       - name: Install Node resolver test dependencies
         run: |
           npm ci --ignore-scripts --prefix tests/node/resolver-dependencies
           mkdir -p node_modules npm/node_modules
           cp -R tests/node/resolver-dependencies/node_modules/. npm/node_modules/
       - name: Run Node cache-link compatibility tests
+        if: ${{ matrix.shard == 2 }}
         run: node ./tests/node/run-tests.mjs 'src/utils/cache-dir.test.ts'
       # The pinned egress transport is Node/Bun-only, so the Deno lanes skip its
       # tests entirely. Without this step nothing in CI exercises it, which is
       # how it shipped omitting the request headers `fetch` normally supplies.
       - name: Run Node egress transport tests
+        if: ${{ matrix.shard == 2 }}
         run: node ./tests/node/run-tests.mjs 'src/platform/compat/http/pinned-fetch.test.ts'
-      - uses: nick-fields/retry@ad984534de44a9489a53aefd81eb77f87c70dc60 # v4.0.0
-        with:
-          timeout_minutes: 10
-          max_attempts: 3
-          retry_wait_seconds: 10
-          command: VF_DISABLE_LRU_INTERVAL=1 deno task test:integration --no-lock
+      - name: Generate integration inputs
+        run: deno task generate
+      - name: Run integration shard
+        env:
+          INTEGRATION_SHARD: ${{ matrix.shard }}
+        run: |
+          deno eval --config=scripts/test.deno.json '
+            import { planSuiteFiles } from "./scripts/test/run-suite.ts";
+            import {
+              buildDenoSuiteCommandArgs, DENO_SUITE_PROFILES,
+            } from "./scripts/test/run-deno-suite.ts";
+            import {
+              buildTestProcessEnv, partitionDenoSuiteFiles,
+              shouldRunDenoBatchInParallel,
+            } from "./scripts/test/suites.ts";
+            const index = Number(Deno.env.get("INTEGRATION_SHARD"));
+            const suite = "integration:legacy-tests-root";
+            const profile = DENO_SUITE_PROFILES[suite];
+            const plan = await planSuiteFiles({
+              suite, shard: { index, total: 2 },
+            });
+            if (!plan.files.length) throw new Error("empty integration shard");
+            console.log(`Integration shard ${index}/2: ${plan.files.length} files`);
+            const batches = partitionDenoSuiteFiles(plan.files, profile.maxFilesPerProcess);
+            for (const files of batches) {
+              const status = await new Deno.Command("deno", {
+                args: buildDenoSuiteCommandArgs(suite, files, {
+                  parallel: shouldRunDenoBatchInParallel(profile.parallel, files),
+                  passthroughArgs: ["--no-lock"],
+                }),
+                clearEnv: true,
+                env: buildTestProcessEnv(Deno.env.toObject(), profile.env),
+                stdin: "inherit", stdout: "inherit", stderr: "inherit",
+              }).spawn().status;
+              if (!status.success) Deno.exit(status.code);
+            }
+          '
       - name: Run CLI integration tests
+        if: ${{ matrix.shard == 2 }}
         run: deno task test:integration:cli --no-lock
+
+  # Preserve the required check name. Matrix results fail if either shard fails,
+  # is cancelled or is skipped; the merge gate also requires this aggregate.
+  # A main run that reuses its merge-queue run skips the shards; that run
+  # already passed them on this commit.
+  tests:
+    name: tests (integration)
+    needs: [tested-run, tests-integration]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Require both integration shards
+        env:
+          REUSED_RUN_ID: ${{ needs.tested-run.outputs.reuse == 'true' && needs.tested-run.outputs.run_id || '' }}
+          INTEGRATION_RESULT: ${{ needs.tests-integration.result }}
+        run: |
+          if [ -n "$REUSED_RUN_ID" ] && [ "$INTEGRATION_RESULT" = "skipped" ]; then
+            echo "Integration shards passed in merge-queue run $REUSED_RUN_ID"
+            exit 0
+          fi
+          if [ "$INTEGRATION_RESULT" != "success" ]; then
+            echo "::error::Integration shards finished with $INTEGRATION_RESULT"
+            exit 1
+          fi
 
   tests-node:
     if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
@@ -1646,19 +1726,74 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: ./.github/actions/setup-deno
+      - name: Build registry validation image
         timeout-minutes: 5
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
-        with:
-          node-version: "24"
-          package-manager-cache: false
+        env:
+          REGISTRY_IMAGE: veryfront-registry-validation:${{ github.run_id }}-${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          build_context="$(mktemp -d)"
+          cleanup() {
+            rm -rf "$build_context"
+          }
+          trap cleanup EXIT INT TERM
+          cat > "$build_context/Dockerfile" <<'DOCKERFILE'
+          FROM node:24-bookworm-slim@sha256:5cbc7caba8c2c0f0bca675d1b61b9f2857e1cf1853c6164ee9dd409501a936e7
+          RUN apt-get update \
+            && apt-get install -y --no-install-recommends ca-certificates curl jq unzip \
+            && rm -rf /var/lib/apt/lists/*
+          RUN curl --fail --location --silent --show-error \
+                https://github.com/denoland/deno/releases/download/v2.7.7/deno-x86_64-unknown-linux-gnu.zip \
+                --output /tmp/deno.zip \
+            && echo '0cd918870657ccc3d96ac682290e894dda374e2a742424aae9118b258a6cf7a3  /tmp/deno.zip' \
+                | sha256sum --check --strict \
+            && unzip -q /tmp/deno.zip -d /usr/local/bin \
+            && chmod 0755 /usr/local/bin/deno \
+            && /usr/local/bin/deno --version \
+            && rm /tmp/deno.zip
+          RUN mkdir /registry && chown 1000:1000 /registry
+          WORKDIR /registry
+          DOCKERFILE
+          docker build --platform linux/amd64 --tag "$REGISTRY_IMAGE" "$build_context"
       - name: Validate exact registry release
         env:
+          REGISTRY_IMAGE: veryfront-registry-validation:${{ github.run_id }}-${{ github.run_attempt }}
           RC_VERSION: ${{ needs.prerelease.outputs.version }}
           STABLE_VERSION: ${{ needs.release.outputs.version }}
           GITHUB_SHA: ${{ github.sha }}
           IS_STABLE: ${{ needs.version-check.outputs.is_stable }}
-        run: bash scripts/ci/registry-release-smoke.sh
+        run: |
+          set -euo pipefail
+          container_name="veryfront-registry-validation-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          cleanup() {
+            docker rm -f "$container_name" >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT INT TERM
+          docker run --rm --init \
+            --platform linux/amd64 \
+            --name "$container_name" \
+            --user 1000:1000 \
+            --read-only \
+            --cap-drop ALL \
+            --security-opt no-new-privileges=true \
+            --network=bridge \
+            --volume /registry \
+            --tmpfs /tmp:rw,nosuid,nodev,size=64m \
+            --mount "type=bind,source=${GITHUB_WORKSPACE},target=/source,readonly" \
+            --env RC_VERSION \
+            --env STABLE_VERSION \
+            --env GITHUB_SHA \
+            --env IS_STABLE \
+            --env HOME=/registry/home \
+            --env DENO_DIR=/registry/deno-cache \
+            --env TMPDIR=/registry/tmp \
+            --env npm_config_cache=/registry/npm-cache \
+            --env CI=true \
+            "$REGISTRY_IMAGE" \
+            bash -euo pipefail -c 'mkdir -p /registry/home /registry/deno-cache /registry/tmp /registry/npm-cache /registry/workspace
+          tar -C /source --exclude=.git --exclude=node_modules --no-same-owner -cf - . | tar -C /registry/workspace --no-same-owner -xf -
+          cd /registry/workspace
+          bash scripts/ci/registry-release-smoke.sh'
 
   dispatch-release:
     name: dispatch release

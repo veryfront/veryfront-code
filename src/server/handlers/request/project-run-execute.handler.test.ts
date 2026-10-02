@@ -2506,6 +2506,90 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     );
   });
 
+  it("preserves the style build failure when failed-status reporting is unavailable", async () => {
+    const body = {
+      runId: "run_style_artifact_failure_report_unavailable",
+      kind: "task",
+      target: "task:style-artifact-build",
+      projectId: "proj-1",
+      config: {
+        environment_name: "Preview",
+        style_profile_hash: "queued-profile-hash",
+      },
+    };
+    const { request, publicKeyPem } = await signedRequest(
+      "/api/control-plane/runs/run_style_artifact_failure_report_unavailable/execute",
+      body,
+      { "x-token": "test-token" },
+    );
+    const { ctx } = createStyleArtifactCtx(publicKeyPem, {
+      files: [],
+      stylesheet: "@tailwind utilities;",
+    });
+
+    const result = await withMockFetch(
+      (() =>
+        Promise.resolve(
+          new Response(JSON.stringify({ error: "style result API unavailable" }), {
+            status: 400,
+            headers: { "Content-Type": "application/json" },
+          }),
+        )) as typeof fetch,
+      async () => await new ProjectRunExecuteHandler().handle(request, ctx),
+    );
+
+    assertExists(result.response);
+    const json = await result.response.json();
+    assertEquals(json.success, false);
+    assertStringIncludes(json.error, "Style profile hash mismatch");
+  });
+
+  it("preserves cancellation while a style build failure is being reported", async () => {
+    const controller = new AbortController();
+    const reportingStarted = Promise.withResolvers<void>();
+    const body = {
+      runId: "run_style_artifact_cancel_failure_report",
+      kind: "task",
+      target: "task:style-artifact-build",
+      projectId: "proj-1",
+      config: {
+        environment_name: "Preview",
+        style_profile_hash: "queued-profile-hash",
+      },
+    };
+    const signed = await signedRequest(
+      "/api/control-plane/runs/run_style_artifact_cancel_failure_report/execute",
+      body,
+      { "x-token": "test-token" },
+    );
+    const request = new Request(signed.request, { signal: controller.signal });
+    const { ctx } = createStyleArtifactCtx(signed.publicKeyPem, {
+      files: [],
+      stylesheet: "@tailwind utilities;",
+    });
+
+    const pending = withMockFetch(
+      ((_input, init) => {
+        const signal = observeFetchRequestInit(init).signal;
+        reportingStarted.resolve();
+        if (!signal) return Promise.reject(new Error("missing abort signal"));
+        return new Promise<Response>((_resolve, reject) =>
+          signal.addEventListener("abort", () => reject(signal.reason), { once: true })
+        );
+      }) as typeof fetch,
+      async () => await new ProjectRunExecuteHandler().handle(request, ctx),
+    );
+
+    await reportingStarted.promise;
+    controller.abort(new Error("run cancelled during failed style reporting"));
+    const result = await pending;
+
+    assertExists(result.response);
+    const json = await result.response.json();
+    assertEquals(json.success, false);
+    assertEquals(json.error, "run cancelled during failed style reporting");
+  });
+
   it("does not publish a ready or failed style artifact after cancellation", async () => {
     const controller = new AbortController();
     const body = {
@@ -5277,6 +5361,149 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     });
   }
 
+  it("refreshes approval metadata after the initial pause finishes persisting", async () => {
+    let settled = false;
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      createWorkflowClient: () => ({
+        statePersistence: "durable",
+        register: () => {},
+        cancel: () => Promise.resolve(),
+        start: (_id, _input, options) =>
+          Promise.resolve({
+            runId: options!.runId!,
+            settled: () => {
+              settled = true;
+              return Promise.resolve();
+            },
+          }),
+        getRun: () => {
+          const pendingApprovals = settled ? [{ id: "approval", nodeId: "review" }] : [];
+          settled = true;
+          return Promise.resolve({ status: "waiting", pendingApprovals });
+        },
+        getPendingEventWaits: () => Promise.resolve([]),
+        destroy: () => Promise.resolve(),
+      }),
+    }));
+    const runId = "run_pending_approval_metadata";
+    const { request, publicKeyPem } = await signedRequest(
+      `/api/control-plane/runs/${runId}/execute`,
+      {
+        runId,
+        kind: "workflow",
+        target: "workflow:publish",
+        projectId: "proj-1",
+      },
+    );
+    const result = await handler.handle(request, createCtx(publicKeyPem));
+    assertExists(result.response);
+    const payload = await result.response.json();
+    assertEquals(payload.waiting_reason, "approval");
+    assertEquals(payload.waiting.pending_approvals, ["review"]);
+  });
+
+  it("cancels a run that advances past its pause after the request aborts", async () => {
+    const controller = new AbortController();
+    let status = "waiting";
+    let cancellations = 0;
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      createWorkflowClient: () => ({
+        statePersistence: "durable",
+        register: () => {},
+        cancel: () => {
+          cancellations++;
+          status = "cancelled";
+          return Promise.resolve();
+        },
+        start: (_id, _input, options) =>
+          Promise.resolve({
+            runId: options!.runId!,
+            // The abort lands after the last poll saw the pause, and a delay
+            // expires while the execution settles.
+            settled: () => {
+              controller.abort();
+              status = "running";
+              return Promise.resolve();
+            },
+          }),
+        getRun: () =>
+          Promise.resolve({
+            status,
+            pendingApprovals: status === "waiting" ? [{ id: "approval", nodeId: "review" }] : [],
+          }),
+        getPendingEventWaits: () => Promise.resolve([]),
+        destroy: () => Promise.resolve(),
+      }),
+    }));
+    const runId = "run_advanced_after_abort";
+    const { request, publicKeyPem } = await signedRequest(
+      `/api/control-plane/runs/${runId}/execute`,
+      {
+        runId,
+        kind: "workflow",
+        target: "workflow:publish",
+        projectId: "proj-1",
+      },
+    );
+    const result = await handler.handle(
+      new Request(request, { signal: controller.signal }),
+      createCtx(publicKeyPem),
+    );
+    assertExists(result.response);
+    const payload = await result.response.json();
+    assertEquals(payload.success, false);
+    assertEquals(payload.error, "Workflow run cancelled");
+    assertEquals(cancellations, 1);
+  });
+
+  it("waits for a new pause reached during settlement to persist its records", async () => {
+    let phase: "first" | "unsaved" | "saved" = "first";
+    let reads = 0;
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      createWorkflowClient: () => ({
+        statePersistence: "durable",
+        register: () => {},
+        cancel: () => Promise.resolve(),
+        start: (_id, _input, options) =>
+          Promise.resolve({
+            runId: options!.runId!,
+            // A delay expires while the execution settles and the run pauses
+            // again on a later approval whose record is not saved yet.
+            settled: () => {
+              phase = "unsaved";
+              return Promise.resolve();
+            },
+          }),
+        getRun: () => {
+          if (phase === "unsaved" && ++reads > 1) phase = "saved";
+          const pendingApprovals = phase === "first"
+            ? [{ id: "approval-1", nodeId: "review" }]
+            : phase === "saved"
+            ? [{ id: "approval-2", nodeId: "sign-off" }]
+            : [];
+          return Promise.resolve({ status: "waiting", pendingApprovals });
+        },
+        getPendingEventWaits: () => Promise.resolve([]),
+        destroy: () => Promise.resolve(),
+      }),
+    }));
+    const runId = "run_new_pause_during_settlement";
+    const { request, publicKeyPem } = await signedRequest(
+      `/api/control-plane/runs/${runId}/execute`,
+      {
+        runId,
+        kind: "workflow",
+        target: "workflow:publish",
+        projectId: "proj-1",
+      },
+    );
+    const result = await handler.handle(request, createCtx(publicKeyPem));
+    assertExists(result.response);
+    const payload = await result.response.json();
+    assertEquals(payload.waiting_reason, "approval");
+    assertEquals(payload.waiting.pending_approvals, ["sign-off"]);
+  });
+
   // veryfront-issue-inbox#2102 and #2110: a waiting run the control plane
   // dispatches again under the same run id is continued, never started anew.
   function resumableClient(initial: Record<string, unknown>) {
@@ -5353,6 +5580,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     client: ReturnType<typeof resumableClient>["client"],
     resume: Record<string, unknown>,
     deps: Partial<ProjectRunExecuteHandlerDeps> = {},
+    signal?: AbortSignal,
   ) {
     const handler = new ProjectRunExecuteHandler(
       createDeps({ createWorkflowClient: () => client, ...deps }),
@@ -5362,7 +5590,10 @@ describe("server/handlers/request/project-run-execute.handler", () => {
       `/api/control-plane/runs/${runId}/execute`,
       { runId, kind: "workflow", target: "workflow:publish", projectId: "proj-1", resume },
     );
-    const result = await handler.handle(request, createCtx(publicKeyPem));
+    const result = await handler.handle(
+      signal ? new Request(request, { signal }) : request,
+      createCtx(publicKeyPem),
+    );
     assertExists(result.response);
     return { status: result.response.status, payload: await result.response.json(), runId };
   }
@@ -5715,6 +5946,264 @@ describe("server/handlers/request/project-run-execute.handler", () => {
 
     assertEquals(cancelCalls, 0);
     assertEquals(destroyed, true);
+  });
+
+  it("does not cancel durable execution when a timed-out resume request disconnects", async () => {
+    const { client } = resumableClient(waitingOnReview);
+    let finish!: () => void;
+    let destroyed = false;
+    let cancelled = false;
+    const controller = new AbortController();
+    client.cancel = () => {
+      cancelled = true;
+      return Promise.resolve();
+    };
+    client.approve = () =>
+      new Promise<void>((resolve) => {
+        finish = resolve;
+      });
+    client.destroy = () => {
+      destroyed = true;
+      return Promise.resolve();
+    };
+    const { payload } = await executeResume(
+      client,
+      {
+        type: "approval",
+        node_id: "manager-review",
+        approved: true,
+        approver: "user:u1",
+      },
+      { workflowResumeTimeoutMs: 5 },
+      controller.signal,
+    );
+    assertEquals(payload.success, true);
+    assertEquals(payload.status, "waiting");
+    assertEquals(destroyed, false);
+    controller.abort();
+    finish();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assertEquals(destroyed, true);
+    assertEquals(cancelled, false);
+  });
+
+  it("cancels durable execution immediately while an approval decision is pending", async () => {
+    const { client } = resumableClient(waitingOnReview);
+    let finish!: () => void;
+    let destroyed = false;
+    let cancelled = false;
+    let cancellations = 0;
+    const controller = new AbortController();
+    client.cancel = () => {
+      cancelled = true;
+      cancellations++;
+      if (cancellations > 1) return Promise.reject(new Error("already cancelled"));
+      return Promise.resolve();
+    };
+    client.approve = () =>
+      new Promise<void>((resolve) => {
+        finish = resolve;
+        controller.abort();
+      });
+    client.destroy = () => {
+      destroyed = true;
+      return Promise.resolve();
+    };
+    const { payload } = await executeResume(
+      client,
+      {
+        type: "approval",
+        node_id: "manager-review",
+        approved: true,
+        approver: "user:u1",
+      },
+      { workflowResumeTimeoutMs: 5 },
+      controller.signal,
+    );
+    assertEquals(payload.success, false);
+    assertEquals(payload.error, "Workflow run cancelled");
+    assertEquals(destroyed, false);
+    assertEquals(cancelled, true);
+    finish();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assertEquals(destroyed, true);
+    assertEquals(cancellations, 1);
+    assertEquals(cancelled, true);
+  });
+
+  it("keeps the client alive until cancellation settles after resume rejects", async () => {
+    const { client } = resumableClient(waitingOnReview);
+    const controller = new AbortController();
+    let finishCancel!: () => void;
+    let destroyed = false;
+    client.cancel = () =>
+      new Promise<void>((resolve) => {
+        finishCancel = resolve;
+      });
+    client.destroy = () => {
+      destroyed = true;
+      return Promise.resolve();
+    };
+    client.approve = () => {
+      controller.abort();
+      return Promise.reject(new Error("resume failed"));
+    };
+    const { payload } = await executeResume(
+      client,
+      {
+        type: "approval",
+        node_id: "manager-review",
+        approved: true,
+        approver: "user:u1",
+      },
+      { workflowResumeTimeoutMs: 5 },
+      controller.signal,
+    );
+    assertEquals(payload.status, "waiting");
+    assertEquals(destroyed, false);
+    finishCancel();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assertEquals(destroyed, true);
+  });
+
+  it("cancels a persisted resume when its request aborts during discovery", async () => {
+    const { client, calls } = resumableClient(waitingOnReview);
+    const controller = new AbortController();
+    let cancellations = 0;
+    client.cancel = () => {
+      cancellations++;
+      return Promise.resolve();
+    };
+    const { payload } = await executeResume(client, {
+      type: "approval",
+      node_id: "manager-review",
+      approved: true,
+      approver: "user:u1",
+    }, {
+      ensureProjectDiscovery: () => {
+        controller.abort();
+        return Promise.resolve(createEmptyDiscoveryResult());
+      },
+    }, controller.signal);
+    assertEquals(payload.success, false);
+    assertEquals(cancellations, 1);
+    assertEquals(calls, []);
+  });
+
+  it("preserves completion when request cancellation races a resumed result", async () => {
+    const { client, settle } = resumableClient(waitingOnReview);
+    const controller = new AbortController();
+    let cancellations = 0;
+    client.cancel = () => {
+      cancellations++;
+      return Promise.reject(new Error("already completed"));
+    };
+    client.approve = () => {
+      settle({ status: "completed", output: { done: true } });
+      controller.abort();
+      return Promise.resolve();
+    };
+    const { payload } = await executeResume(
+      client,
+      {
+        type: "approval",
+        node_id: "manager-review",
+        approved: true,
+        approver: "user:u1",
+      },
+      {},
+      controller.signal,
+    );
+    assertEquals(payload.result, { done: true });
+    assertEquals(cancellations, 0);
+  });
+
+  it("applies a decision whose discovery outlasts the resume timeout", async () => {
+    const { client, calls } = resumableClient(waitingOnReview);
+    const getRun = client.getRun;
+    let reads = 0;
+    client.getRun = () => {
+      reads++;
+      if (reads > 1) return getRun();
+      return new Promise((resolve) => setTimeout(() => resolve(getRun()), 20));
+    };
+    const { payload } = await executeResume(client, {
+      type: "approval",
+      node_id: "manager-review",
+      approved: true,
+      approver: "user:u1",
+    }, { workflowResumeTimeoutMs: 5 });
+    assertEquals(payload.status, "waiting");
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    assertEquals(calls.map(([name]) => name), ["approve"]);
+  });
+
+  it("reports a completion that cancellation found when the resume times out", async () => {
+    const { client, settle } = resumableClient(waitingOnReview);
+    const controller = new AbortController();
+    let finish!: () => void;
+    let cancellations = 0;
+    client.cancel = () => {
+      cancellations++;
+      return Promise.resolve();
+    };
+    client.approve = () =>
+      new Promise<void>((resolve) => {
+        finish = resolve;
+        settle({ status: "completed", output: { done: true } });
+        controller.abort();
+      });
+    const { payload } = await executeResume(
+      client,
+      {
+        type: "approval",
+        node_id: "manager-review",
+        approved: true,
+        approver: "user:u1",
+      },
+      { workflowResumeTimeoutMs: 5 },
+      controller.signal,
+    );
+    finish();
+    assertEquals(payload.success, true);
+    assertEquals(payload.result, { done: true });
+    assertEquals(cancellations, 0);
+  });
+
+  it("leaves a run to the recheck while a timed-out cancellation is unresolved", async () => {
+    const { client, settle } = resumableClient(waitingOnReview);
+    const controller = new AbortController();
+    let finish!: () => void;
+    let finishRead!: () => void;
+    const getRun = client.getRun;
+    client.getRun = () =>
+      controller.signal.aborted
+        ? new Promise((resolve) => {
+          finishRead = () => resolve(getRun());
+        })
+        : getRun();
+    client.cancel = () => Promise.resolve();
+    client.approve = () =>
+      new Promise<void>((resolve) => {
+        finish = resolve;
+        settle({ status: "completed", output: { done: true } });
+        controller.abort();
+      });
+    const { payload } = await executeResume(
+      client,
+      {
+        type: "approval",
+        node_id: "manager-review",
+        approved: true,
+        approver: "user:u1",
+      },
+      { workflowResumeTimeoutMs: 5 },
+      controller.signal,
+    );
+    finishRead();
+    finish();
+    assertEquals(payload.success, true);
+    assertEquals(payload.status, "waiting");
   });
 
   it("applies a decision whose wait_id names the boundary the run is parked on", async () => {
