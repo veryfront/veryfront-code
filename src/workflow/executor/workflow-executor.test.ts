@@ -2173,6 +2173,64 @@ describe("workflow/executor/workflow-executor", () => {
     assertEquals(cancelledRun.status, "cancelled");
   });
 
+  it("retains local stop evidence when dynamic steps fail before DAG execution", async () => {
+    const executor = new WorkflowExecutor({ backend: new MemoryBackend() });
+    executor.register(
+      workflow({
+        id: "pre-dag-dynamic-steps",
+        steps: () => {
+          throw new Error("Cannot resolve steps");
+        },
+      }).definition,
+    );
+    const handle = await executor.start("pre-dag-dynamic-steps", {});
+    await handle.settled();
+    assertEquals((await handle.status()).status, "failed");
+    assertEquals(await executor.waitForExecutionStopped(handle.runId), true);
+    assertEquals(await executor.waitForExecutionStopped("run-not-observed-here"), false);
+  });
+
+  for (const terminal of ["completed", "failed"] as const) {
+    it(`waits for a ${terminal} workflow lifecycle hook to settle before confirming stop`, async () => {
+      using time = new FakeTime();
+      const executor = new WorkflowExecutor({ backend: new MemoryBackend() });
+      const entered = Promise.withResolvers<void>();
+      const release = Promise.withResolvers<void>();
+      const hook = async () => {
+        entered.resolve();
+        await release.promise;
+      };
+      executor.register(
+        workflow({
+          id: `stop-lifecycle-${terminal}`,
+          steps: [step("work", {
+            tool: createTool("work", () => {
+              if (terminal === "failed") throw new Error("Work failed");
+              return { ok: true };
+            }),
+          })],
+          ...(terminal === "completed" ? { onComplete: hook } : { onError: hook }),
+        }).definition,
+      );
+      const handle = await executor.start(`stop-lifecycle-${terminal}`, {});
+      await entered.promise;
+      assertEquals((await handle.status()).status, terminal);
+      let stopped: boolean | undefined;
+      const stopWait = executor.waitForExecutionStopped(handle.runId).then((result) => {
+        stopped = result;
+      });
+      try {
+        await time.tickAsync(0);
+        assertEquals(stopped, undefined);
+      } finally {
+        release.resolve();
+        await handle.settled();
+        await stopWait;
+      }
+      assertEquals(stopped, true);
+    });
+  }
+
   it("waits for a cancelled non-cooperative workflow tool to actually stop", async () => {
     using time = new FakeTime();
     const backend = new MemoryBackend();

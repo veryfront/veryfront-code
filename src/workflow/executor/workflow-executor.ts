@@ -729,6 +729,7 @@ export class WorkflowExecutor {
     ].filter((link) => link !== undefined);
 
     await withSpan("workflow.run", async () => {
+      const lifecycle = Promise.withResolvers<void>();
       await executeWorkflowRunControl({
         backend: this.config.backend,
         run,
@@ -748,6 +749,9 @@ export class WorkflowExecutor {
         },
         isCurrentExecution: (runId, controller) => this.isCurrentExecution(runId, controller),
         execute: ({ controller, signal, ownership }) => {
+          // Admission establishes local ownership before any dynamic steps run.
+          // Retain it through terminal hooks as well as the raw DAG operations.
+          this.trackExecutionOperation(run.id, lifecycle.promise);
           const nodes = this.resolveNodes(workflow, run.context);
           const runWithTenantContext: WorkflowRun = run._tenant
             ? {
@@ -809,7 +813,7 @@ export class WorkflowExecutor {
         onLiveWaiting: (waitingRun, nodeId, waitConfig) =>
           this.config.onLiveWaiting?.(waitingRun, nodeId, waitConfig),
         onWaitingBatchComplete: (waitingRun) => this.config.onWaitingBatchComplete?.(waitingRun),
-      });
+      }).finally(() => lifecycle.resolve());
     }, {
       "workflow.id": run.workflowId,
       "workflow.run_id": run.id,
@@ -968,7 +972,7 @@ export class WorkflowExecutor {
   }
 
   /**
-   * Wait until every raw DAG operation observed locally for this run has settled.
+   * Wait until every admitted lifecycle and raw operation for this run has settled.
    *
    * @internal
    */

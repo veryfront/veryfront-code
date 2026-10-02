@@ -896,11 +896,13 @@ async function runWhileActive<T>(signal: AbortSignal, operation: () => Promise<T
 async function executeTaskRun(
   request: ProjectRunExecuteRequest,
   execute: (control?: TaskDeadlineControl) => Promise<ProjectRunExecuteResponse>,
+  acknowledgeNotStarted?: () => Promise<void>,
 ): Promise<ProjectRunExecuteResponse> {
   if (!request.deadlineAt) return execute();
   const deadline = TaskDateParse(request.deadlineAt);
   const controller = new TaskAbortController();
   let expired = false;
+  let executionStarted = false;
   const signal = controller.signal;
   const error = TIMEOUT_ERROR.create({
     detail:
@@ -933,6 +935,7 @@ async function executeTaskRun(
       };
       arm();
     });
+    executionStarted = true;
     const result = await Promise.race([
       expiration,
       execute(control),
@@ -945,6 +948,7 @@ async function executeTaskRun(
     return { success: false, error: error.message, error_code: "RUN_TIMEOUT" };
   } finally {
     TaskClearTimeout(timer);
+    if (!executionStarted) await acknowledgeNotStarted?.();
   }
 }
 
@@ -1411,6 +1415,8 @@ async function executeWorkflowRun(
   });
 
   if (!workflow) {
+    // An initial dispatch has no execution to stop; a resume may still run elsewhere.
+    if (!request.resume) await acknowledgeStop?.();
     return {
       success: false,
       error: `Workflow not found: ${workflowId}`,
@@ -3425,7 +3431,7 @@ function executeProjectRun(
       } finally {
         await acknowledgeStop?.();
       }
-    });
+    }, acknowledgeStop);
   }
   return executeWorkflowRun(request, ctx, req.signal, deps, acknowledgeStop);
 }

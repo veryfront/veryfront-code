@@ -7280,6 +7280,57 @@ describe("server/handlers/request/project-run-execute.handler cancellation", () 
     assertEquals(callback.init.body, "{}");
   });
 
+  it("acknowledges an already-cancelled task whose deadline elapsed before execution", async () => {
+    const controller = new AbortController();
+    let starts = 0;
+    const callbacks: Array<{ url: string; init: ReturnType<typeof observeFetchRequestInit> }> = [];
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      runTask: async () => {
+        starts++;
+        return { success: true, durationMs: 0 };
+      },
+    }));
+    const signed = await signedRequest("/api/control-plane/runs/run_expired_stop/execute", {
+      runId: "run_expired_stop",
+      kind: "task",
+      target: "task:sync-calendar-events",
+      projectId: "proj-1",
+      deadlineAt: "2000-01-01T00:00:00.000Z",
+    }, { "x-veryfront-run-stop-token": "opaque-stop-capability" });
+    const ctx = createCtx(signed.publicKeyPem);
+    const readEnv = ctx.adapter.env.get;
+    ctx.adapter.env.get = (key) => {
+      // Cancellation arrives after the body is read, while authentication loads its key.
+      if (key === "CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY") {
+        controller.abort(new Error("Run cancelled before execution"));
+      }
+      return readEnv(key);
+    };
+    await withMockFetch(async (url, init) => {
+      callbacks.push({ url: String(url), init: observeFetchRequestInit(init) });
+      return Response.json({ acknowledged: true });
+    }, async () => {
+      const response = await handler.handle(
+        new Request(signed.request, { signal: controller.signal }),
+        ctx,
+      );
+      assertExists(response.response);
+      const body = await response.response.json();
+      assertEquals(body.error_code, "RUN_TIMEOUT", JSON.stringify(body));
+    });
+    assertEquals(starts, 0);
+    assertEquals(callbacks.length, 1);
+    const callback = callbacks[0];
+    assertExists(callback);
+    assertEquals(new URL(callback.url).pathname, "/runs/run_expired_stop/cancellation-ack");
+    assertEquals(callback.init.method, "POST");
+    assertEquals(
+      new Headers(callback.init.headers).get("authorization"),
+      "Bearer opaque-stop-capability",
+    );
+    assertEquals(callback.init.signal?.aborted, false);
+  });
+
   it("keeps the stop credential out of reserved task requests and preserves cancellation", async () => {
     let leaked: string | null | undefined;
     const controller = new AbortController();
@@ -7407,6 +7458,45 @@ describe("server/handlers/request/project-run-execute.handler cancellation", () 
         assertEquals(callbacks, resume ? 0 : 1);
       });
     }
+  }
+
+  for (const resume of [false, true]) {
+    it(`acknowledges cancellation during an unknown workflow lookup only for initial dispatch (resume: ${resume})`, async () => {
+      const controller = new AbortController();
+      const entered = Promise.withResolvers<void>();
+      const release = Promise.withResolvers<void>();
+      let callbacks = 0;
+      const handler = new ProjectRunExecuteHandler(createDeps({
+        findWorkflowById: async () => {
+          entered.resolve();
+          await release.promise;
+          return null;
+        },
+      }));
+      const signed = await signedRequest("/api/control-plane/runs/run_unknown_stop/execute", {
+        runId: "run_unknown_stop",
+        kind: "workflow",
+        target: "workflow:unknown",
+        projectId: "proj-1",
+        ...(resume ? { resume: { type: "deadline", wait_id: "w" } } : {}),
+      }, { "x-veryfront-run-stop-token": "opaque-stop-capability" });
+      await withMockFetch(async () => {
+        callbacks++;
+        return Response.json({ acknowledged: true });
+      }, async () => {
+        const pending = handler.handle(
+          new Request(signed.request, { signal: controller.signal }),
+          createCtx(signed.publicKeyPem),
+        );
+        await entered.promise;
+        controller.abort(new Error("Run cancelled during lookup"));
+        release.resolve();
+        const response = await pending;
+        assertExists(response.response);
+        assertEquals((await response.response.json()).error, "Workflow not found: unknown");
+      });
+      assertEquals(callbacks, resume ? 0 : 1);
+    });
   }
 
   for (const status of ["completed", "failed"] as const) {
