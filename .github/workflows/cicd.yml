@@ -68,6 +68,7 @@ jobs:
             scripts/ci/tested-merge-queue-run.ts \
             "npm-compatibility-${GITHUB_SHA}" \
             coverage-shard-1 coverage-shard-2 coverage-shard-3 coverage-shard-4 \
+            coverage-shard-5 coverage-shard-6 coverage-shard-7 coverage-shard-8 \
             coverage-native-executor coverage-integration-client
       - name: Record release number
         if: github.ref == 'refs/heads/main'
@@ -95,9 +96,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     strategy:
-      fail-fast: false
+      fail-fast: ${{ github.event_name == 'merge_group' }}
       matrix:
-        check: [test-layout, format, lint, typecheck]
+        check: [test-layout, format, lint, typecheck, test-typecheck]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -150,22 +151,42 @@ jobs:
           case "${{ matrix.check }}" in
             test-layout) deno task test:layout ;;
             format) deno task fmt:check ;;
-            # The chain lives in the lint:ci task so a contributor can run this
-            # shard locally instead of learning what it covers from a red CI run.
-            lint) deno task lint:ci ;;
+            # Keep the local lint:ci task intact. CI runs its test typecheck
+            # concurrently, and fails closed if the task chain changes shape.
+            lint)
+              deno eval '
+                const chain = JSON.parse(Deno.readTextFileSync("deno.json"))
+                  .tasks["lint:ci"].split(" && ");
+                const check = "deno task lint:test-typecheck";
+                if (chain.filter((command) => command === check).length !== 1) {
+                  throw new Error("expected one test typecheck in lint:ci");
+                }
+                const status = await new Deno.Command("bash", {
+                  args: ["-e", "-o", "pipefail", "-c",
+                    chain.filter((command) => command !== check).join(" && ")],
+                  stdout: "inherit", stderr: "inherit",
+                }).spawn().status;
+                Deno.exit(status.code);
+              '
+              ;;
             typecheck) deno task typecheck ;;
+            test-typecheck) deno task lint:test-typecheck ;;
           esac
 
   # ============================================
   # CI: Tests
   # ============================================
 
-  tests:
+  tests-integration:
     needs: [tested-run]
     if: ${{ !cancelled() && needs.tested-run.outputs.reuse != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
     runs-on: ubuntu-latest
     timeout-minutes: 35
-    name: tests (integration)
+    name: "tests (integration shard ${{ matrix.shard }}/2)"
+    strategy:
+      fail-fast: ${{ github.event_name == 'merge_group' }}
+      matrix:
+        shard: [1, 2]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -174,7 +195,7 @@ jobs:
         timeout-minutes: 10
         with:
           warm-cache: "true"
-          warm-redis-cache: "true"
+          warm-redis-cache: ${{ matrix.shard == 1 }}
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
         with:
           node-version: "24"
@@ -182,26 +203,86 @@ jobs:
       - name: Install Chromium for integration hydration regressions
         timeout-minutes: 20
         uses: ./.github/actions/install-chromium
+      # Nested Node executor fixtures in both shards need the resolver packages.
       - name: Install Node resolver test dependencies
         run: |
           npm ci --ignore-scripts --prefix tests/node/resolver-dependencies
           mkdir -p node_modules npm/node_modules
           cp -R tests/node/resolver-dependencies/node_modules/. npm/node_modules/
       - name: Run Node cache-link compatibility tests
+        if: ${{ matrix.shard == 2 }}
         run: node ./tests/node/run-tests.mjs 'src/utils/cache-dir.test.ts'
       # The pinned egress transport is Node/Bun-only, so the Deno lanes skip its
       # tests entirely. Without this step nothing in CI exercises it, which is
       # how it shipped omitting the request headers `fetch` normally supplies.
       - name: Run Node egress transport tests
+        if: ${{ matrix.shard == 2 }}
         run: node ./tests/node/run-tests.mjs 'src/platform/compat/http/pinned-fetch.test.ts'
-      - uses: nick-fields/retry@ad984534de44a9489a53aefd81eb77f87c70dc60 # v4.0.0
-        with:
-          timeout_minutes: 10
-          max_attempts: 3
-          retry_wait_seconds: 10
-          command: VF_DISABLE_LRU_INTERVAL=1 deno task test:integration --no-lock
+      - name: Generate integration inputs
+        run: deno task generate
+      - name: Run integration shard
+        env:
+          INTEGRATION_SHARD: ${{ matrix.shard }}
+        run: |
+          deno eval --config=scripts/test.deno.json '
+            import { planSuiteFiles } from "./scripts/test/run-suite.ts";
+            import {
+              buildDenoSuiteCommandArgs, DENO_SUITE_PROFILES,
+            } from "./scripts/test/run-deno-suite.ts";
+            import {
+              buildTestProcessEnv, partitionDenoSuiteFiles,
+              shouldRunDenoBatchInParallel,
+            } from "./scripts/test/suites.ts";
+            const index = Number(Deno.env.get("INTEGRATION_SHARD"));
+            const suite = "integration:legacy-tests-root";
+            const profile = DENO_SUITE_PROFILES[suite];
+            const plan = await planSuiteFiles({
+              suite, shard: { index, total: 2 },
+            });
+            if (!plan.files.length) throw new Error("empty integration shard");
+            console.log(`Integration shard ${index}/2: ${plan.files.length} files`);
+            const batches = partitionDenoSuiteFiles(plan.files, profile.maxFilesPerProcess);
+            for (const files of batches) {
+              const status = await new Deno.Command("deno", {
+                args: buildDenoSuiteCommandArgs(suite, files, {
+                  parallel: shouldRunDenoBatchInParallel(profile.parallel, files),
+                  passthroughArgs: ["--no-lock"],
+                }),
+                clearEnv: true,
+                env: buildTestProcessEnv(Deno.env.toObject(), profile.env),
+                stdin: "inherit", stdout: "inherit", stderr: "inherit",
+              }).spawn().status;
+              if (!status.success) Deno.exit(status.code);
+            }
+          '
       - name: Run CLI integration tests
+        if: ${{ matrix.shard == 2 }}
         run: deno task test:integration:cli --no-lock
+
+  # Preserve the required check name. Matrix results fail if either shard fails,
+  # is cancelled or is skipped; the merge gate also requires this aggregate.
+  # A main run that reuses its merge-queue run skips the shards; that run
+  # already passed them on this commit.
+  tests:
+    name: tests (integration)
+    needs: [tested-run, tests-integration]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Require both integration shards
+        env:
+          REUSED_RUN_ID: ${{ needs.tested-run.outputs.reuse == 'true' && needs.tested-run.outputs.run_id || '' }}
+          INTEGRATION_RESULT: ${{ needs.tests-integration.result }}
+        run: |
+          if [ -n "$REUSED_RUN_ID" ] && [ "$INTEGRATION_RESULT" = "skipped" ]; then
+            echo "Integration shards passed in merge-queue run $REUSED_RUN_ID"
+            exit 0
+          fi
+          if [ "$INTEGRATION_RESULT" != "success" ]; then
+            echo "::error::Integration shards finished with $INTEGRATION_RESULT"
+            exit 1
+          fi
 
   tests-node:
     if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
@@ -210,7 +291,7 @@ jobs:
     timeout-minutes: 20
     name: "tests (node shard ${{ matrix.shard }}/2)"
     strategy:
-      fail-fast: false
+      fail-fast: ${{ github.event_name == 'merge_group' }}
       matrix:
         shard: [1, 2]
     steps:
@@ -346,7 +427,7 @@ jobs:
     timeout-minutes: 20
     name: "tests (runtime critical flow: ${{ matrix.runtime }})"
     strategy:
-      fail-fast: false
+      fail-fast: ${{ github.event_name == 'merge_group' }}
       matrix:
         runtime: [deno, node, bun]
     steps:
@@ -417,11 +498,11 @@ jobs:
     if: ${{ !cancelled() && needs.tested-run.outputs.reuse != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    name: coverage shard ${{ matrix.shard }}/4
+    name: coverage shard ${{ matrix.shard }}/8
     strategy:
-      fail-fast: false
+      fail-fast: ${{ github.event_name == 'merge_group' }}
       matrix:
-        shard: [1, 2, 3, 4]
+        shard: [1, 2, 3, 4, 5, 6, 7, 8]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -432,7 +513,7 @@ jobs:
         id: coverage
         run: |
           START=$(date +%s)
-          deno task coverage:ci:shard -- --shard=${{ matrix.shard }}/4 --coverage-dir=coverage-shard-${{ matrix.shard }}
+          deno task coverage:ci:shard -- --shard=${{ matrix.shard }}/8 --coverage-dir=coverage-shard-${{ matrix.shard }}
           echo "duration=$(($(date +%s) - START))s" >> "$GITHUB_OUTPUT"
       - name: Include CLI, dependency history, and runtime security integration coverage
         if: matrix.shard == 1
@@ -466,7 +547,7 @@ jobs:
           path: coverage-shard-${{ matrix.shard }}/**/lcov.info
           retention-days: 1
       - name: Add coverage shard summary
-        run: echo "### Coverage shard ${{ matrix.shard }}/4 completed in ${{ steps.coverage.outputs.duration }}" >> "$GITHUB_STEP_SUMMARY"
+        run: echo "### Coverage shard ${{ matrix.shard }}/8 completed in ${{ steps.coverage.outputs.duration }}" >> "$GITHUB_STEP_SUMMARY"
 
   coverage-node-executor:
     needs: [tested-run]
@@ -532,7 +613,7 @@ jobs:
     timeout-minutes: 10
     name: coverage gate
     needs: [coverage-shards, tested-run]
-    if: ${{ always() && needs.tested-run.outputs.reuse != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
+    if: ${{ always() && (github.event_name != 'merge_group' || !cancelled()) && needs.tested-run.outputs.reuse != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
     steps:
       - name: Require coverage shards
         env:
@@ -606,7 +687,7 @@ jobs:
           use_oidc: true
           # Comma separated, the form the action documents. All files go up in
           # one call, so Codecov records one upload per commit.
-          files: coverage-profiles/coverage-shard-1/lcov.info,coverage-profiles/coverage-shard-1/history/lcov.info,coverage-profiles/coverage-shard-1/cli/lcov.info,coverage-profiles/coverage-shard-2/lcov.info,coverage-profiles/coverage-shard-3/lcov.info,coverage-profiles/coverage-shard-4/lcov.info
+          files: coverage-profiles/coverage-shard-1/lcov.info,coverage-profiles/coverage-shard-1/history/lcov.info,coverage-profiles/coverage-shard-1/cli/lcov.info,coverage-profiles/coverage-shard-2/lcov.info,coverage-profiles/coverage-shard-3/lcov.info,coverage-profiles/coverage-shard-4/lcov.info,coverage-profiles/coverage-shard-5/lcov.info,coverage-profiles/coverage-shard-6/lcov.info,coverage-profiles/coverage-shard-7/lcov.info,coverage-profiles/coverage-shard-8/lcov.info
           disable_search: true
           name: unit
           fail_ci_if_error: false
@@ -720,7 +801,11 @@ jobs:
         shell: bash
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-          INPUT_ARGS: ""
+          # merge_group is not auto-detected by Sonar. Without an explicit
+          # branch, concurrent queue groups overwrite main's analysis. Keep
+          # each generated SHA separate (queue refs can be reused) and compare
+          # its new code with main.
+          INPUT_ARGS: ${{ github.event_name == 'merge_group' && format('-Dsonar.branch.name={0}/{1} -Dsonar.branch.target=main', github.ref_name, github.sha) || '' }}
           INPUT_PROJECTBASEDIR: "."
           INPUT_SCANNERVERSION: "8.1.0.6389"
           INPUT_SCANNERBINARIESURL: https://binaries.sonarsource.com/Distribution/sonar-scanner-cli
@@ -750,12 +835,22 @@ jobs:
             echo "::warning::Retrying Sonar once after CE Task finished abnormally"
           done
 
+      - name: Require server-side quality gate
+        if: ${{ always() }}
+        env:
+          SONAR_RESULT: ${{ steps.sonar-scan.outcome }}
+        run: |
+          if [ "$SONAR_RESULT" != "success" ]; then
+            echo "::error::Server-side SonarQube Cloud quality gate finished with $SONAR_RESULT"
+            exit 1
+          fi
+
   sonar-quality-gate:
     name: SonarQube Cloud quality gate
     runs-on: ubuntu-latest
     timeout-minutes: 2
     needs: [sonar]
-    if: ${{ always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && (github.event_name != 'pull_request' || github.event.pull_request.user.login != 'dependabot[bot]') }}
+    if: ${{ always() && github.event_name != 'push' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && (github.event_name != 'pull_request' || github.event.pull_request.user.login != 'dependabot[bot]') }}
     steps:
       - name: Require server-side quality gate
         env:
@@ -815,6 +910,150 @@ jobs:
           command: |
             VERYFRONT_BINARY_FRESH=1 deno task test:e2e:binary
 
+  # Failure observers have one prerequisite each, so they never wait for
+  # unrelated tests or Sonar. Only these no-checkout jobs can cancel runs, and
+  # they run the callee pinned to an immutable reviewed main commit, never the queued
+  # revision; jobs executing repository code keep their read permissions.
+  cancel-after-ci:
+    needs: [ci]
+    if: ${{ failure() && github.event_name == 'merge_group' }}
+    permissions:
+      actions: write
+    uses: veryfront/veryfront-code/.github/workflows/cancel-failed-merge-group.yml@867aebc7ea8040f3215c4aacd737f1056a10a9aa
+
+  cancel-after-coverage:
+    needs: [coverage]
+    if: ${{ failure() && github.event_name == 'merge_group' }}
+    permissions:
+      actions: write
+    uses: veryfront/veryfront-code/.github/workflows/cancel-failed-merge-group.yml@867aebc7ea8040f3215c4aacd737f1056a10a9aa
+
+  cancel-after-tests:
+    needs: [tests]
+    if: ${{ failure() && github.event_name == 'merge_group' }}
+    permissions:
+      actions: write
+    uses: veryfront/veryfront-code/.github/workflows/cancel-failed-merge-group.yml@867aebc7ea8040f3215c4aacd737f1056a10a9aa
+
+  cancel-after-tests-node:
+    needs: [tests-node]
+    if: ${{ failure() && github.event_name == 'merge_group' }}
+    permissions:
+      actions: write
+    uses: veryfront/veryfront-code/.github/workflows/cancel-failed-merge-group.yml@867aebc7ea8040f3215c4aacd737f1056a10a9aa
+
+  cancel-after-tests-node-sandbox:
+    needs: [tests-node-sandbox]
+    if: ${{ failure() && github.event_name == 'merge_group' }}
+    permissions:
+      actions: write
+    uses: veryfront/veryfront-code/.github/workflows/cancel-failed-merge-group.yml@867aebc7ea8040f3215c4aacd737f1056a10a9aa
+
+  cancel-after-tests-bun:
+    needs: [tests-bun]
+    if: ${{ failure() && github.event_name == 'merge_group' }}
+    permissions:
+      actions: write
+    uses: veryfront/veryfront-code/.github/workflows/cancel-failed-merge-group.yml@867aebc7ea8040f3215c4aacd737f1056a10a9aa
+
+  cancel-after-tests-binary-e2e:
+    needs: [tests-binary-e2e]
+    if: ${{ failure() && github.event_name == 'merge_group' }}
+    permissions:
+      actions: write
+    uses: veryfront/veryfront-code/.github/workflows/cancel-failed-merge-group.yml@867aebc7ea8040f3215c4aacd737f1056a10a9aa
+
+  cancel-after-tests-e2e-rsc-browser:
+    needs: [tests-e2e-rsc-browser]
+    if: ${{ failure() && github.event_name == 'merge_group' }}
+    permissions:
+      actions: write
+    uses: veryfront/veryfront-code/.github/workflows/cancel-failed-merge-group.yml@867aebc7ea8040f3215c4aacd737f1056a10a9aa
+
+  cancel-after-sonar-quality-gate:
+    needs: [sonar-quality-gate]
+    if: ${{ failure() && github.event_name == 'merge_group' }}
+    permissions:
+      actions: write
+    uses: veryfront/veryfront-code/.github/workflows/cancel-failed-merge-group.yml@867aebc7ea8040f3215c4aacd737f1056a10a9aa
+
+  cancel-after-tested-run:
+    needs: [tested-run]
+    if: ${{ failure() && github.event_name == 'merge_group' }}
+    permissions:
+      actions: write
+    uses: veryfront/veryfront-code/.github/workflows/cancel-failed-merge-group.yml@867aebc7ea8040f3215c4aacd737f1056a10a9aa
+
+  cancel-after-coverage-shards:
+    needs: [coverage-shards]
+    if: ${{ failure() && github.event_name == 'merge_group' }}
+    permissions:
+      actions: write
+    uses: veryfront/veryfront-code/.github/workflows/cancel-failed-merge-group.yml@867aebc7ea8040f3215c4aacd737f1056a10a9aa
+
+  cancel-after-tests-integration:
+    needs: [tests-integration]
+    if: ${{ failure() && github.event_name == 'merge_group' }}
+    permissions:
+      actions: write
+    uses: veryfront/veryfront-code/.github/workflows/cancel-failed-merge-group.yml@867aebc7ea8040f3215c4aacd737f1056a10a9aa
+
+  cancel-after-npm-compatibility-artifact:
+    needs: [npm-compatibility-artifact]
+    if: ${{ failure() && github.event_name == 'merge_group' }}
+    permissions:
+      actions: write
+    uses: veryfront/veryfront-code/.github/workflows/cancel-failed-merge-group.yml@867aebc7ea8040f3215c4aacd737f1056a10a9aa
+
+  cancel-after-npm-smoke-node-versions:
+    needs: [npm-smoke-node-versions]
+    if: ${{ failure() && github.event_name == 'merge_group' }}
+    permissions:
+      actions: write
+    uses: veryfront/veryfront-code/.github/workflows/cancel-failed-merge-group.yml@867aebc7ea8040f3215c4aacd737f1056a10a9aa
+
+  cancel-after-tests-npm-install-smoke:
+    needs: [tests-npm-install-smoke]
+    if: ${{ failure() && github.event_name == 'merge_group' }}
+    permissions:
+      actions: write
+    uses: veryfront/veryfront-code/.github/workflows/cancel-failed-merge-group.yml@867aebc7ea8040f3215c4aacd737f1056a10a9aa
+
+  cancel-after-tests-runtime-critical-flow:
+    needs: [tests-runtime-critical-flow]
+    if: ${{ failure() && github.event_name == 'merge_group' }}
+    permissions:
+      actions: write
+    uses: veryfront/veryfront-code/.github/workflows/cancel-failed-merge-group.yml@867aebc7ea8040f3215c4aacd737f1056a10a9aa
+
+  cancel-after-sonar:
+    needs: [sonar]
+    if: ${{ failure() && github.event_name == 'merge_group' }}
+    permissions:
+      actions: write
+    uses: veryfront/veryfront-code/.github/workflows/cancel-failed-merge-group.yml@867aebc7ea8040f3215c4aacd737f1056a10a9aa
+
+  cancel-after-sonar-coverage:
+    needs: [sonar-coverage]
+    if: ${{ failure() && github.event_name == 'merge_group' }}
+    permissions:
+      actions: write
+    uses: veryfront/veryfront-code/.github/workflows/cancel-failed-merge-group.yml@867aebc7ea8040f3215c4aacd737f1056a10a9aa
+
+  cancel-after-coverage-node-executor:
+    needs: [coverage-node-executor]
+    if: ${{ failure() && github.event_name == 'merge_group' }}
+    permissions:
+      actions: write
+    uses: veryfront/veryfront-code/.github/workflows/cancel-failed-merge-group.yml@867aebc7ea8040f3215c4aacd737f1056a10a9aa
+
+  cancel-after-coverage-integration-client:
+    needs: [coverage-integration-client]
+    if: ${{ failure() && github.event_name == 'merge_group' }}
+    permissions:
+      actions: write
+    uses: veryfront/veryfront-code/.github/workflows/cancel-failed-merge-group.yml@867aebc7ea8040f3215c4aacd737f1056a10a9aa
+
   quality-gate-merge:
     name: quality gate (merge)
     runs-on: ubuntu-latest
@@ -830,7 +1069,7 @@ jobs:
       - tests-e2e-rsc-browser
       - sonar-quality-gate
       - tested-run
-    if: ${{ always() }}
+    if: ${{ always() && github.event_name != 'push' }}
     steps:
       - name: Require merge correctness dependencies
         env:
@@ -913,7 +1152,7 @@ jobs:
     timeout-minutes: 30
     name: "tests (npm install smoke: Node ${{ matrix.node-version }})"
     strategy:
-      fail-fast: false
+      fail-fast: ${{ github.event_name == 'merge_group' }}
       matrix:
         node-version: ${{ fromJSON(needs.npm-smoke-node-versions.outputs.node_versions) }}
     steps:
@@ -1300,9 +1539,21 @@ jobs:
   # merge-queue run skips the test jobs upstream of the gates, and a job
   # without a status function would skip with them.
   prerelease:
-    if: ${{ !cancelled() && needs.tested-run.result == 'success' && needs.version-check.result == 'success' && needs.quality-gate-merge.result == 'success' && needs.quality-gate-artifact.result == 'success' && needs.quality-gate-release.result == 'success' && needs.build-binaries.result == 'success' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && needs.version-check.outputs.is_stable == 'false' }}
+    # Serialize with RC publication so a newer release cannot overtake dispatch.
+    concurrency:
+      group: veryfront-rc-publication
+      queue: max
+    if: ${{ !cancelled() && needs.tested-run.result == 'success' && needs.version-check.result == 'success' && needs.quality-gate-artifact.result == 'success' && needs.quality-gate-release.result == 'success' && needs.build-binaries.result == 'success' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && needs.version-check.outputs.is_stable == 'false' }}
     needs: [
-      quality-gate-merge,
+      ci,
+      coverage,
+      tests,
+      tests-node,
+      tests-node-sandbox,
+      tests-bun,
+      tests-binary-e2e,
+      tests-e2e-rsc-browser,
+      sonar,
       quality-gate-artifact,
       quality-gate-release,
       build-binaries,
@@ -1315,9 +1566,54 @@ jobs:
       version: ${{ steps.version.outputs.version }}
     permissions:
       actions: read
-      contents: write
+      contents: read
       id-token: write
     steps:
+      - name: Require merge correctness dependencies
+        env:
+          # A main run that reuses its merge-queue run skips the tests that run
+          # already passed on this commit; Sonar still has to pass here.
+          REUSED_RUN_ID: ${{ needs.tested-run.outputs.reuse == 'true' && needs.tested-run.outputs.run_id || '' }}
+          # Sonar needs SONAR_TOKEN, so fork and Dependabot PRs intentionally
+          # skip it. Pushes, merge-group runs, and trusted PRs must block on it.
+          SONAR_REQUIRED: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && (github.event_name != 'pull_request' || github.event.pull_request.user.login != 'dependabot[bot]') }}
+          SOURCE_CHECKS_RESULT: ${{ needs.ci.result }}
+          COVERAGE_RESULT: ${{ needs.coverage.result }}
+          SONAR_RESULT: ${{ needs.sonar.result }}
+          INTEGRATION_TESTS_RESULT: ${{ needs.tests.result }}
+          NODE_RUNTIME_TESTS_RESULT: ${{ needs.tests-node.result }}
+          NODE_SANDBOX_TESTS_RESULT: ${{ needs.tests-node-sandbox.result }}
+          BUN_RUNTIME_TESTS_RESULT: ${{ needs.tests-bun.result }}
+          BINARY_E2E_RESULT: ${{ needs.tests-binary-e2e.result }}
+          RSC_BROWSER_E2E_RESULT: ${{ needs.tests-e2e-rsc-browser.result }}
+        run: |
+          failed=0
+          for result_name in \
+            SOURCE_CHECKS_RESULT \
+            COVERAGE_RESULT \
+            SONAR_RESULT \
+            INTEGRATION_TESTS_RESULT \
+            NODE_RUNTIME_TESTS_RESULT \
+            NODE_SANDBOX_TESTS_RESULT \
+            BUN_RUNTIME_TESTS_RESULT \
+            BINARY_E2E_RESULT \
+            RSC_BROWSER_E2E_RESULT
+          do
+            result="${!result_name}"
+            if [ "$result_name" = "SONAR_RESULT" ] && [ "$SONAR_REQUIRED" != "true" ]; then
+              continue
+            fi
+            if [ -n "$REUSED_RUN_ID" ] && [ "$result_name" != "SONAR_RESULT" ] && [ "$result" = "skipped" ]; then
+              echo "$result_name passed in merge-queue run $REUSED_RUN_ID"
+              continue
+            fi
+            if [ "$result" != "success" ]; then
+              echo "::error::$result_name finished with $result"
+              failed=1
+            fi
+          done
+          exit "$failed"
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -1355,15 +1651,39 @@ jobs:
           github-token: ${{ github.token }}
 
       - name: Publish tested RC npm artifact
+        timeout-minutes: 10
         env:
           VERSION: ${{ steps.version.outputs.version }}
           NPM_PACK_DIR: ${{ github.workspace }}/dist/npm-compatibility
+          NPM_GIT_HEAD_WAIT_TOTAL_SECONDS: "180"
         run: |
           deno run --config=scripts/test.deno.json --frozen --allow-read --allow-write --allow-run=tar \
             scripts/ci/npm-compatibility-artifact.ts materialize dist/npm-compatibility npm
           deno run --allow-read --allow-run=npm scripts/build/report-artifact-sizes.ts --npm-package npm \
             | tee -a "$GITHUB_STEP_SUMMARY"
-          scripts/ci/publish-npm-packages.sh rc-publish
+          publish_status=0
+          timeout --signal=TERM --kill-after=10s 8m scripts/ci/publish-npm-packages.sh rc-publish || publish_status=$?
+          if [[ "$publish_status" == 124 || "$publish_status" == 137 ]]; then
+            echo "::error::RC npm publication exceeded its eight-minute deadline; inspect npm publish and registry metadata progress before starting another release." >&2
+          fi
+          exit "$publish_status"
+
+  github-prerelease:
+    name: GitHub prerelease
+    if: ${{ !cancelled() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && needs.prerelease.result == 'success' }}
+    needs: [prerelease]
+    runs-on: ubuntu-latest
+    environment: production
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: ./.github/actions/setup-deno
+        timeout-minutes: 5
 
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
@@ -1371,56 +1691,34 @@ jobs:
 
       - name: Prepare RC checkout for SBOM
         env:
-          VERSION: ${{ steps.version.outputs.version }}
+          VERSION: ${{ needs.prerelease.outputs.version }}
         run: deno run -A scripts/ci/prepare-rc-build.ts
 
       - name: Generate SBOM
         env:
-          VERSION: ${{ steps.version.outputs.version }}
+          VERSION: ${{ needs.prerelease.outputs.version }}
         run: |
           deno task sbom:all --output-dir "dist/sbom-${VERSION}"
           deno task sbom --lock scripts/build/proxy-deno.lock --output "dist/sbom-${VERSION}/proxy.json"
 
-      - name: Create release GitHub App token
-        id: release-app-token
-        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
-        with:
-          client-id: ${{ vars.VERYFRONT_RELEASE_APP_CLIENT_ID }}
-          private-key: ${{ secrets.VERYFRONT_RELEASE_APP_PRIVATE_KEY }}
-          owner: veryfront
-          repositories: |
-            veryfront
-          permission-contents: write
-
-      - name: Create GitHub pre-release
+      - name: Prepare public release assets
         env:
-          VERSION: ${{ steps.version.outputs.version }}
-          GH_TOKEN: ${{ steps.release-app-token.outputs.token }}
+          VERSION: ${{ needs.prerelease.outputs.version }}
         run: |
-          # Collect available binaries dynamically (Windows build is optional)
-          BINARIES=()
-          for f in binaries/veryfront-*/veryfront-*; do
-            [ -f "$f" ] && BINARIES+=("$f")
+          mkdir -p dist/public-release
+          for file in binaries/veryfront-*/veryfront-* dist/sbom-${VERSION}/*.json; do
+            [ -f "$file" ] || continue
+            cp -- "$file" dist/public-release/
           done
-          SBOMS=()
-          for f in dist/sbom-${VERSION}/*.json; do
-            [ -f "$f" ] && SBOMS+=("$f")
-          done
-          echo "Available binaries: ${BINARIES[*]}"
-          echo "Available SBOMs: ${SBOMS[*]}"
+          cp scripts/install.sh dist/public-release/
 
-          bash scripts/ci/publish-github-release.sh \
-            --repo veryfront/veryfront \
-            --tag "v${VERSION}" \
-            --title "v${VERSION}" \
-            --notes '```bash
-          npx veryfront@rc
-          ```' \
-            --prerelease \
-            -- \
-            "${BINARIES[@]}" \
-            scripts/install.sh \
-            "${SBOMS[@]}"
+      - name: Upload public release assets
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: public-release-${{ github.sha }}
+          path: dist/public-release/
+          if-no-files-found: error
+          overwrite: true
 
   # ============================================
   # CD: Stable Release (clean semver only)
@@ -1429,9 +1727,17 @@ jobs:
   # ============================================
 
   release:
-    if: ${{ !cancelled() && needs.tested-run.result == 'success' && needs.version-check.result == 'success' && needs.quality-gate-merge.result == 'success' && needs.quality-gate-artifact.result == 'success' && needs.quality-gate-release.result == 'success' && needs.build-binaries.result == 'success' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && needs.version-check.outputs.is_stable == 'true' && needs.version-check.outputs.stable_release_requested == 'true' }}
+    if: ${{ !cancelled() && needs.tested-run.result == 'success' && needs.version-check.result == 'success' && needs.quality-gate-artifact.result == 'success' && needs.quality-gate-release.result == 'success' && needs.build-binaries.result == 'success' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && needs.version-check.outputs.is_stable == 'true' && needs.version-check.outputs.stable_release_requested == 'true' }}
     needs: [
-      quality-gate-merge,
+      ci,
+      coverage,
+      tests,
+      tests-node,
+      tests-node-sandbox,
+      tests-bun,
+      tests-binary-e2e,
+      tests-e2e-rsc-browser,
+      sonar,
       quality-gate-artifact,
       quality-gate-release,
       build-binaries,
@@ -1447,6 +1753,51 @@ jobs:
       contents: write
       id-token: write
     steps:
+      - name: Require merge correctness dependencies
+        env:
+          # A main run that reuses its merge-queue run skips the tests that run
+          # already passed on this commit; Sonar still has to pass here.
+          REUSED_RUN_ID: ${{ needs.tested-run.outputs.reuse == 'true' && needs.tested-run.outputs.run_id || '' }}
+          # Sonar needs SONAR_TOKEN, so fork and Dependabot PRs intentionally
+          # skip it. Pushes, merge-group runs, and trusted PRs must block on it.
+          SONAR_REQUIRED: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && (github.event_name != 'pull_request' || github.event.pull_request.user.login != 'dependabot[bot]') }}
+          SOURCE_CHECKS_RESULT: ${{ needs.ci.result }}
+          COVERAGE_RESULT: ${{ needs.coverage.result }}
+          SONAR_RESULT: ${{ needs.sonar.result }}
+          INTEGRATION_TESTS_RESULT: ${{ needs.tests.result }}
+          NODE_RUNTIME_TESTS_RESULT: ${{ needs.tests-node.result }}
+          NODE_SANDBOX_TESTS_RESULT: ${{ needs.tests-node-sandbox.result }}
+          BUN_RUNTIME_TESTS_RESULT: ${{ needs.tests-bun.result }}
+          BINARY_E2E_RESULT: ${{ needs.tests-binary-e2e.result }}
+          RSC_BROWSER_E2E_RESULT: ${{ needs.tests-e2e-rsc-browser.result }}
+        run: |
+          failed=0
+          for result_name in \
+            SOURCE_CHECKS_RESULT \
+            COVERAGE_RESULT \
+            SONAR_RESULT \
+            INTEGRATION_TESTS_RESULT \
+            NODE_RUNTIME_TESTS_RESULT \
+            NODE_SANDBOX_TESTS_RESULT \
+            BUN_RUNTIME_TESTS_RESULT \
+            BINARY_E2E_RESULT \
+            RSC_BROWSER_E2E_RESULT
+          do
+            result="${!result_name}"
+            if [ "$result_name" = "SONAR_RESULT" ] && [ "$SONAR_REQUIRED" != "true" ]; then
+              continue
+            fi
+            if [ -n "$REUSED_RUN_ID" ] && [ "$result_name" != "SONAR_RESULT" ] && [ "$result" = "skipped" ]; then
+              echo "$result_name passed in merge-queue run $REUSED_RUN_ID"
+              continue
+            fi
+            if [ "$result" != "success" ]; then
+              echo "::error::$result_name finished with $result"
+              failed=1
+            fi
+          done
+          exit "$failed"
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -1459,20 +1810,9 @@ jobs:
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
           echo "Publishing stable: ${VERSION}"
 
-      - name: Create release GitHub App token
-        id: release-app-token
-        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
-        with:
-          client-id: ${{ vars.VERYFRONT_RELEASE_APP_CLIENT_ID }}
-          private-key: ${{ secrets.VERYFRONT_RELEASE_APP_PRIVATE_KEY }}
-          owner: veryfront
-          repositories: |
-            veryfront
-          permission-contents: write
-
       - name: Ensure stable version is unpublished
         env:
-          GH_TOKEN: ${{ steps.release-app-token.outputs.token }}
+          GH_TOKEN: ${{ github.token }}
           SOURCE_REPO_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           VERSION: ${{ steps.version.outputs.version }}
         run: |
@@ -1482,10 +1822,19 @@ jobs:
             echo "::error::Tag ${TAG} already exists on source repo. Bump deno.json before releasing."
             exit 1
           fi
-          if gh release view "${TAG}" --repo veryfront/veryfront &>/dev/null; then
-            echo "::error::Release ${TAG} already exists on veryfront/veryfront. Bump deno.json before releasing."
-            exit 1
-          fi
+          public_release_status=$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' \
+            "https://api.github.com/repos/veryfront/veryfront/releases/tags/${TAG}")
+          case "$public_release_status" in
+            200)
+              echo "::error::Release ${TAG} already exists on veryfront/veryfront. Bump deno.json before releasing."
+              exit 1
+              ;;
+            404) ;;
+            *)
+              echo "::error::Cannot verify public release absence (HTTP ${public_release_status})."
+              exit 1
+              ;;
+          esac
           if GH_TOKEN="${SOURCE_REPO_TOKEN}" gh release view "${TAG}" &>/dev/null; then
             echo "::error::Release ${TAG} already exists on source repo. Bump deno.json before releasing."
             exit 1
@@ -1546,8 +1895,60 @@ jobs:
           git push "https://x-access-token:${SOURCE_REPO_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "${TAG}"
           echo "Created tag ${TAG}"
 
-      - name: Create fresh release upload token
-        id: release-upload-token
+      - name: Prepare public release assets
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          mkdir -p dist/public-release
+          for file in binaries/veryfront-*/veryfront-* dist/sbom-${VERSION}/*.json; do
+            [ -f "$file" ] || continue
+            cp -- "$file" dist/public-release/
+          done
+          cp scripts/install.sh dist/public-release/
+          cp scripts/install.ps1 dist/public-release/
+          (cd dist/public-release && sha256sum veryfront-* install.sh install.ps1 > SHA256SUMS)
+
+      - name: Upload public release assets
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: public-release-${{ github.sha }}
+          path: dist/public-release/
+          if-no-files-found: error
+          overwrite: true
+
+  # App keys belong only on fresh runners that execute fixed workflow code.
+  # Downloaded publication assets are data and must never be executed.
+  publish-public-release:
+    if: ${{ always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && ((needs.version-check.outputs.is_stable == 'false' && needs.prerelease.result == 'success' && needs.github-prerelease.result == 'success') || (needs.version-check.outputs.is_stable == 'true' && needs.release.result == 'success')) }}
+    needs: [prerelease, github-prerelease, release, version-check]
+    runs-on: ubuntu-latest
+    environment: production
+    permissions:
+      contents: write
+    steps:
+      - name: Resolve published version
+        id: version
+        env:
+          IS_STABLE: ${{ needs.version-check.outputs.is_stable }}
+          RC_VERSION: ${{ needs.prerelease.outputs.version }}
+          STABLE_VERSION: ${{ needs.release.outputs.version }}
+        run: |
+          case "$IS_STABLE" in
+            true) version="$STABLE_VERSION" ;;
+            false) version="$RC_VERSION" ;;
+            *) exit 1 ;;
+          esac
+          [ -n "$version" ]
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Download public release assets
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: public-release-${{ github.sha }}
+          path: public-release-assets
+
+      - name: Create release GitHub App token
+        id: release-app-token
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         with:
           client-id: ${{ vars.VERYFRONT_RELEASE_APP_CLIENT_ID }}
@@ -1560,41 +1961,214 @@ jobs:
       - name: Create GitHub releases
         env:
           VERSION: ${{ steps.version.outputs.version }}
-          GH_TOKEN: ${{ steps.release-upload-token.outputs.token }}
+          IS_STABLE: ${{ needs.version-check.outputs.is_stable }}
+          GH_TOKEN: ${{ steps.release-app-token.outputs.token }}
         run: |
-          # Collect available binaries dynamically (Windows build is optional)
-          BINARIES=()
-          for f in binaries/veryfront-*/veryfront-*; do
-            [ -f "$f" ] && BINARIES+=("$f")
-          done
-          SBOMS=()
-          for f in dist/sbom-${VERSION}/*.json; do
-            [ -f "$f" ] && SBOMS+=("$f")
-          done
-          echo "Available binaries: ${BINARIES[*]}"
-          echo "Available SBOMs: ${SBOMS[*]}"
+          # Fixed workflow implementation, kept in parity with the tested helper.
+          # Never source or execute a file from the publication artifact.
+          publish_github_release() {
+            set -euo pipefail
 
-          # Publish a checksum manifest alongside the assets. install.sh verifies a
-          # downloaded binary against this before moving it into place, so the
-          # manifest must name assets exactly as they are uploaded -- basenames,
-          # not the artifact paths they were downloaded to.
-          SUMS_FILE="SHA256SUMS"
-          : > "$SUMS_FILE"
-          for f in "${BINARIES[@]}" scripts/install.sh scripts/install.ps1; do
-            [ -f "$f" ] || continue
-            sha256sum "$f" | sed "s#  .*/#  #" >> "$SUMS_FILE"
-          done
-          echo "Checksum manifest:"
-          cat "$SUMS_FILE"
+            usage() {
+              echo "Usage: $0 --repo <owner/repo> --tag <tag> --title <title> --notes <notes> [--prerelease] [--latest] -- <asset>..." >&2
+            }
 
-          # Downstream runtime catalogues can still pin an RC after stable publication.
-          # Retain its immutable assets so those builds and rollback sources remain available.
+            require_value() {
+              local option="$1"
+              local value="${2:-}"
+              if [[ -z "$value" ]]; then
+                echo "::error::${option} requires a value." >&2
+                usage
+                exit 2
+              fi
+            }
 
-          bash scripts/ci/publish-github-release.sh \
-            --repo veryfront/veryfront \
-            --tag "v${VERSION}" \
-            --title "v${VERSION}" \
-            --notes '## Install
+            repo=""
+            tag=""
+            title=""
+            notes=""
+            prerelease=false
+            latest=false
+
+            while [[ "$#" -gt 0 ]]; do
+              case "$1" in
+                --repo)
+                  require_value "$1" "${2:-}"
+                  repo="$2"
+                  shift 2
+                  ;;
+                --tag)
+                  require_value "$1" "${2:-}"
+                  tag="$2"
+                  shift 2
+                  ;;
+                --title)
+                  require_value "$1" "${2:-}"
+                  title="$2"
+                  shift 2
+                  ;;
+                --notes)
+                  require_value "$1" "${2:-}"
+                  notes="$2"
+                  shift 2
+                  ;;
+                --prerelease)
+                  prerelease=true
+                  shift
+                  ;;
+                --latest)
+                  latest=true
+                  shift
+                  ;;
+                --)
+                  shift
+                  break
+                  ;;
+                *)
+                  echo "::error::Unknown option: $1" >&2
+                  usage
+                  exit 2
+                  ;;
+              esac
+            done
+
+            require_value "--repo" "$repo"
+            require_value "--tag" "$tag"
+            require_value "--title" "$title"
+            require_value "--notes" "$notes"
+
+            if [[ "$prerelease" == true && "$latest" == true ]]; then
+              echo "::error::A release cannot be both a prerelease and the latest release." >&2
+              exit 2
+            fi
+
+            assets=("$@")
+            if [[ "${#assets[@]}" -eq 0 ]]; then
+              echo "::error::At least one release asset is required." >&2
+              exit 2
+            fi
+            for asset in "${assets[@]}"; do
+              if [[ ! -f "$asset" ]]; then
+                echo "::error::Release asset does not exist: $asset" >&2
+                exit 2
+              fi
+            done
+
+            retry_attempts="${GH_RELEASE_RETRY_ATTEMPTS:-3}"
+            retry_delay_seconds="${GH_RELEASE_RETRY_DELAY_SECONDS:-10}"
+            retry_fatal_status=64
+            if ! [[ "$retry_attempts" =~ ^[1-9][0-9]*$ ]]; then
+              echo "::error::GH_RELEASE_RETRY_ATTEMPTS must be a positive integer." >&2
+              exit 2
+            fi
+            if ! [[ "$retry_delay_seconds" =~ ^[0-9]+$ ]]; then
+              echo "::error::GH_RELEASE_RETRY_DELAY_SECONDS must be a non-negative integer." >&2
+              exit 2
+            fi
+
+            run_with_retry() {
+              local description="$1"
+              shift
+              local fatal_status=""
+              if [[ "${1:-}" == "--fatal-status" ]]; then
+                fatal_status="$2"
+                shift 2
+              fi
+              local attempt=1
+              local status
+
+              while true; do
+                if "$@"; then
+                  return 0
+                else
+                  status="$?"
+                fi
+                if [[ -n "$fatal_status" && "$status" -eq "$fatal_status" ]]; then
+                  return 1
+                fi
+                if [[ "$attempt" -ge "$retry_attempts" ]]; then
+                  echo "::error::${description} failed after ${retry_attempts} attempts." >&2
+                  return 1
+                fi
+
+                echo "::warning::${description} failed on attempt ${attempt}/${retry_attempts}. Retrying." >&2
+                if [[ "$retry_delay_seconds" -gt 0 ]]; then
+                  sleep "$((retry_delay_seconds * attempt))"
+                fi
+                attempt=$((attempt + 1))
+              done
+            }
+
+            delete_release() {
+              gh release delete "$tag" --repo "$repo" --yes --cleanup-tag >/dev/null 2>&1 || true
+            }
+
+            create_draft_release() {
+              local existing_is_draft
+              if existing_is_draft="$(
+                gh release view "$tag" --repo "$repo" --json isDraft --jq '.isDraft' 2>/dev/null
+              )"; then
+                if [[ "$existing_is_draft" == true ]]; then
+                  echo "::warning::Reusing existing GitHub release draft ${tag}." >&2
+                  return 0
+                fi
+
+                echo "::error::GitHub release ${tag} already exists and is not a draft." >&2
+                return "$retry_fatal_status"
+              fi
+
+              local create_args=(
+                release create "$tag"
+                --repo "$repo"
+                --title "$title"
+                --draft
+                --notes "$notes"
+              )
+              if [[ "$prerelease" == true ]]; then
+                create_args+=(--prerelease)
+              fi
+
+              gh "${create_args[@]}"
+            }
+
+            incomplete_draft_created=false
+            cleanup_failed_release() {
+              local status="$?"
+              trap - EXIT
+              if [[ "$status" -ne 0 && "$incomplete_draft_created" == true ]]; then
+                echo "::warning::Removing incomplete GitHub release ${tag}." >&2
+                delete_release
+              fi
+              exit "$status"
+            }
+            trap cleanup_failed_release EXIT
+
+            run_with_retry \
+              "GitHub release draft creation" \
+              --fatal-status "$retry_fatal_status" \
+              create_draft_release
+            incomplete_draft_created=true
+
+            for asset in "${assets[@]}"; do
+              run_with_retry \
+                "GitHub release asset $(basename "$asset") upload" \
+                gh release upload "$tag" "$asset" --repo "$repo" --clobber
+            done
+            incomplete_draft_created=false
+
+            publish_args=(release edit "$tag" --repo "$repo" --draft=false)
+            if [[ "$prerelease" == true ]]; then
+              publish_args+=(--prerelease --latest=false)
+            elif [[ "$latest" == true ]]; then
+              publish_args+=(--prerelease=false --latest)
+            fi
+            run_with_retry "GitHub release publication" gh "${publish_args[@]}"
+
+            trap - EXIT
+          }
+          assets=(public-release-assets/*)
+          if [ "$IS_STABLE" = true ]; then
+            notes='## Install
 
           ```bash
           # macOS/Linux
@@ -1602,37 +2176,44 @@ jobs:
 
           # npm
           npm install -g veryfront
-          ```' \
-            --latest \
-            -- \
-            "${BINARIES[@]}" \
-            "$SUMS_FILE" \
-            scripts/install.sh \
-            scripts/install.ps1 \
-            "${SBOMS[@]}"
+          ```'
+            mode=--latest
+          else
+            notes='```bash
+          npx veryfront@rc
+          ```'
+            mode=--prerelease
+          fi
+          publish_github_release --repo veryfront/veryfront \
+            --tag "v${VERSION}" --title "v${VERSION}" --notes "$notes" \
+            "$mode" -- "${assets[@]}"
 
       - name: Create source repo release
+        if: ${{ needs.version-check.outputs.is_stable == 'true' }}
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
           VERSION: ${{ steps.version.outputs.version }}
+          GH_REPO: ${{ github.repository }}
         run: |
           gh release create "v${VERSION}" \
             --title "v${VERSION}" \
             --generate-notes \
             --notes "Binaries available at: https://github.com/veryfront/veryfront/releases/tag/v${VERSION}"
 
-  quality-gate-registry:
-    name: quality gate (registry)
-    if: ${{ always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && needs.version-check.result == 'success' && (needs.version-check.outputs.is_stable == 'false' || needs.version-check.outputs.stable_release_requested == 'true') }}
-    needs: [prerelease, release, version-check]
+  registry-validation-rc:
+    name: registry validation (RC)
+    if: ${{ always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && needs.version-check.result == 'success' && needs.version-check.outputs.is_stable == 'false' }}
+    needs: [prerelease, version-check]
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     timeout-minutes: 65
     steps:
       - name: Report selected release result
         env:
           IS_STABLE: ${{ needs.version-check.outputs.is_stable }}
           PRERELEASE_RESULT: ${{ needs.prerelease.result }}
-          STABLE_RELEASE_RESULT: ${{ needs.release.result }}
+          STABLE_RELEASE_RESULT: skipped
         run: |
           if [ "$IS_STABLE" = "true" ]; then
             selected_result_name="STABLE_RELEASE_RESULT"
@@ -1646,29 +2227,205 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: ./.github/actions/setup-deno
+      - name: Build registry validation image
         timeout-minutes: 5
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
-        with:
-          node-version: "24"
-          package-manager-cache: false
+        env:
+          REGISTRY_IMAGE: veryfront-registry-validation:${{ github.run_id }}-${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          build_context="$(mktemp -d)"
+          cleanup() {
+            rm -rf "$build_context"
+          }
+          trap cleanup EXIT INT TERM
+          cat > "$build_context/Dockerfile" <<'DOCKERFILE'
+          FROM node:24-bookworm-slim@sha256:5cbc7caba8c2c0f0bca675d1b61b9f2857e1cf1853c6164ee9dd409501a936e7
+          RUN apt-get update \
+            && apt-get install -y --no-install-recommends ca-certificates curl jq unzip \
+            && rm -rf /var/lib/apt/lists/*
+          RUN curl --fail --location --silent --show-error \
+                https://github.com/denoland/deno/releases/download/v2.7.7/deno-x86_64-unknown-linux-gnu.zip \
+                --output /tmp/deno.zip \
+            && echo '0cd918870657ccc3d96ac682290e894dda374e2a742424aae9118b258a6cf7a3  /tmp/deno.zip' \
+                | sha256sum --check --strict \
+            && unzip -q /tmp/deno.zip -d /usr/local/bin \
+            && chmod 0755 /usr/local/bin/deno \
+            && /usr/local/bin/deno --version \
+            && rm /tmp/deno.zip
+          RUN mkdir /registry && chown 1000:1000 /registry
+          WORKDIR /registry
+          DOCKERFILE
+          docker build --platform linux/amd64 --tag "$REGISTRY_IMAGE" "$build_context"
       - name: Validate exact registry release
         env:
+          REGISTRY_IMAGE: veryfront-registry-validation:${{ github.run_id }}-${{ github.run_attempt }}
+          RC_VERSION: ${{ needs.prerelease.outputs.version }}
+          STABLE_VERSION: ""
+          GITHUB_SHA: ${{ github.sha }}
+          IS_STABLE: ${{ needs.version-check.outputs.is_stable }}
+        run: |
+          set -euo pipefail
+          container_name="veryfront-registry-validation-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          cleanup() {
+            docker rm -f "$container_name" >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT INT TERM
+          docker run --rm --init \
+            --platform linux/amd64 \
+            --name "$container_name" \
+            --user 1000:1000 \
+            --read-only \
+            --cap-drop ALL \
+            --security-opt no-new-privileges=true \
+            --network=bridge \
+            --volume /registry \
+            --tmpfs /tmp:rw,nosuid,nodev,size=64m \
+            --mount "type=bind,source=${GITHUB_WORKSPACE},target=/source,readonly" \
+            --env RC_VERSION \
+            --env STABLE_VERSION \
+            --env GITHUB_SHA \
+            --env IS_STABLE \
+            --env HOME=/registry/home \
+            --env DENO_DIR=/registry/deno-cache \
+            --env TMPDIR=/registry/tmp \
+            --env npm_config_cache=/registry/npm-cache \
+            --env CI=true \
+            "$REGISTRY_IMAGE" \
+            bash -euo pipefail -c 'mkdir -p /registry/home /registry/deno-cache /registry/tmp /registry/npm-cache /registry/workspace
+          tar -C /source --exclude=.git --exclude=node_modules --no-same-owner -cf - . | tar -C /registry/workspace --no-same-owner -xf -
+          cd /registry/workspace
+          bash scripts/ci/registry-release-smoke.sh'
+
+  quality-gate-registry:
+    # Serialize with RC publication so a newer release cannot overtake dispatch.
+    concurrency:
+      group: veryfront-rc-publication
+      queue: max
+    name: quality gate (registry)
+    if: ${{ always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && needs.version-check.result == 'success' && (needs.version-check.outputs.is_stable == 'false' || needs.version-check.outputs.stable_release_requested == 'true') }}
+    needs: [
+      prerelease,
+      github-prerelease,
+      registry-validation-rc,
+      release,
+      publish-public-release,
+      version-check,
+    ]
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 65
+    steps:
+      - name: Report selected release result
+        env:
+          IS_STABLE: ${{ needs.version-check.outputs.is_stable }}
+          PRERELEASE_RESULT: ${{ needs.prerelease.result }}
+          STABLE_RELEASE_RESULT: ${{ needs.release.result }}
+          PUBLIC_RELEASE_RESULT: ${{ needs.publish-public-release.result }}
+        run: |
+          if [ "$IS_STABLE" = "true" ]; then
+            selected_result_name="STABLE_RELEASE_RESULT"
+          else
+            selected_result_name="PRERELEASE_RESULT"
+          fi
+          selected_result="${!selected_result_name}"
+          if [ "$selected_result" != "success" ]; then
+            echo "::warning::REGISTRY RELEASE NON-SUCCESS [configuration]: $selected_result_name finished with $selected_result. Registry validation will continue, but downstream release dispatch remains blocked." >&2
+          fi
+      - name: Require RC release dependencies
+        if: ${{ needs.version-check.outputs.is_stable == 'false' }}
+        env:
+          PRERELEASE_RESULT: ${{ needs.prerelease.result }}
+          ASSETS_RESULT: ${{ needs.github-prerelease.result }}
+          PUBLIC_RELEASE_RESULT: ${{ needs.publish-public-release.result }}
+          REGISTRY_RESULT: ${{ needs.registry-validation-rc.result }}
+        run: |
+          failed=0
+          for result_name in PRERELEASE_RESULT ASSETS_RESULT PUBLIC_RELEASE_RESULT REGISTRY_RESULT; do
+            result="${!result_name}"
+            if [ "$result" != "success" ]; then
+              echo "::error::$result_name finished with $result"
+              failed=1
+            fi
+          done
+          exit "$failed"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: ${{ needs.version-check.outputs.is_stable == 'true' }}
+        with:
+          persist-credentials: false
+      - name: Build registry validation image
+        if: ${{ needs.version-check.outputs.is_stable == 'true' }}
+        timeout-minutes: 5
+        env:
+          REGISTRY_IMAGE: veryfront-registry-validation:${{ github.run_id }}-${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          build_context="$(mktemp -d)"
+          cleanup() {
+            rm -rf "$build_context"
+          }
+          trap cleanup EXIT INT TERM
+          cat > "$build_context/Dockerfile" <<'DOCKERFILE'
+          FROM node:24-bookworm-slim@sha256:5cbc7caba8c2c0f0bca675d1b61b9f2857e1cf1853c6164ee9dd409501a936e7
+          RUN apt-get update \
+            && apt-get install -y --no-install-recommends ca-certificates curl jq unzip \
+            && rm -rf /var/lib/apt/lists/*
+          RUN curl --fail --location --silent --show-error \
+                https://github.com/denoland/deno/releases/download/v2.7.7/deno-x86_64-unknown-linux-gnu.zip \
+                --output /tmp/deno.zip \
+            && echo '0cd918870657ccc3d96ac682290e894dda374e2a742424aae9118b258a6cf7a3  /tmp/deno.zip' \
+                | sha256sum --check --strict \
+            && unzip -q /tmp/deno.zip -d /usr/local/bin \
+            && chmod 0755 /usr/local/bin/deno \
+            && /usr/local/bin/deno --version \
+            && rm /tmp/deno.zip
+          RUN mkdir /registry && chown 1000:1000 /registry
+          WORKDIR /registry
+          DOCKERFILE
+          docker build --platform linux/amd64 --tag "$REGISTRY_IMAGE" "$build_context"
+      - name: Validate exact registry release
+        if: ${{ needs.version-check.outputs.is_stable == 'true' }}
+        env:
+          REGISTRY_IMAGE: veryfront-registry-validation:${{ github.run_id }}-${{ github.run_attempt }}
           RC_VERSION: ${{ needs.prerelease.outputs.version }}
           STABLE_VERSION: ${{ needs.release.outputs.version }}
           GITHUB_SHA: ${{ github.sha }}
           IS_STABLE: ${{ needs.version-check.outputs.is_stable }}
-        run: bash scripts/ci/registry-release-smoke.sh
+        run: |
+          set -euo pipefail
+          container_name="veryfront-registry-validation-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          cleanup() {
+            docker rm -f "$container_name" >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT INT TERM
+          docker run --rm --init \
+            --platform linux/amd64 \
+            --name "$container_name" \
+            --user 1000:1000 \
+            --read-only \
+            --cap-drop ALL \
+            --security-opt no-new-privileges=true \
+            --network=bridge \
+            --volume /registry \
+            --tmpfs /tmp:rw,nosuid,nodev,size=64m \
+            --mount "type=bind,source=${GITHUB_WORKSPACE},target=/source,readonly" \
+            --env RC_VERSION \
+            --env STABLE_VERSION \
+            --env GITHUB_SHA \
+            --env IS_STABLE \
+            --env HOME=/registry/home \
+            --env DENO_DIR=/registry/deno-cache \
+            --env TMPDIR=/registry/tmp \
+            --env npm_config_cache=/registry/npm-cache \
+            --env CI=true \
+            "$REGISTRY_IMAGE" \
+            bash -euo pipefail -c 'mkdir -p /registry/home /registry/deno-cache /registry/tmp /registry/npm-cache /registry/workspace
+          tar -C /source --exclude=.git --exclude=node_modules --no-same-owner -cf - . | tar -C /registry/workspace --no-same-owner -xf -
+          cd /registry/workspace
+          bash scripts/ci/registry-release-smoke.sh'
 
-  dispatch-release:
-    name: dispatch release
-    if: ${{ always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && needs.quality-gate-registry.result == 'success' && ((needs.version-check.outputs.is_stable == 'true' && needs.release.result == 'success') || (needs.version-check.outputs.is_stable == 'false' && needs.prerelease.result == 'success')) }}
-    needs: [quality-gate-registry, prerelease, release, version-check]
-    runs-on: ubuntu-latest
-    environment: production
-    timeout-minutes: 5
-    steps:
       - name: Resolve published version
+        if: ${{ success() && needs.publish-public-release.result == 'success' && ((needs.version-check.outputs.is_stable == 'true' && needs.release.result == 'success') || (needs.version-check.outputs.is_stable == 'false' && needs.prerelease.result == 'success' && needs.github-prerelease.result == 'success' && needs.registry-validation-rc.result == 'success')) }}
+        timeout-minutes: 5
         id: version
         env:
           IS_STABLE: ${{ needs.version-check.outputs.is_stable }}
@@ -1689,7 +2446,59 @@ jobs:
           fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
+      - name: Check current RC tag
+        if: ${{ success() && needs.publish-public-release.result == 'success' && ((needs.version-check.outputs.is_stable == 'true' && needs.release.result == 'success') || (needs.version-check.outputs.is_stable == 'false' && needs.prerelease.result == 'success' && needs.github-prerelease.result == 'success' && needs.registry-validation-rc.result == 'success')) }}
+        timeout-minutes: 5
+        id: current
+        env:
+          IS_STABLE: ${{ needs.version-check.outputs.is_stable }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          if [ "$IS_STABLE" = true ]; then
+            dispatch=true
+          else
+            # This App-key runner executes only fixed workflow logic. Keep the
+            # comparator in parity with the publisher through the workflow test.
+            tags="$(curl --fail --silent --show-error --max-time 60 --retry 0 \
+              --header 'Cache-Control: no-cache' \
+              https://registry.npmjs.org/-/package/veryfront/dist-tags)"
+            current_rc="$(printf '%s\n' "$tags" | jq -er '
+              if type == "object" and (.rc | type == "string" and length > 0)
+              then .rc else error("Published RC tag is missing or invalid") end
+            ')"
+            dispatch="$(jq -ner --arg candidate "$VERSION" --arg current "${current_rc}" --arg mode dispatch '
+              # Compare integer components by digit count then digits, without losing
+              # precision or sorting 10 before 9. Reject unexpected tag formats.
+              def rc_key:
+                capture("^(?<major>0|[1-9][0-9]*)\\.(?<minor>0|[1-9][0-9]*)\\.(?<patch>0|[1-9][0-9]*)-(?<pre>[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)$") as $version
+                | ([$version.major, $version.minor, $version.patch] | map([length, .]))
+                  + [($version.pre | split(".") | map(
+                      if test("^[0-9]+$") then
+                        if test("^(0|[1-9][0-9]*)$") then [0, length, .]
+                        else error("Numeric prerelease identifiers cannot have leading zeroes") end
+                      else [1, .] end
+                    ))];
+              ($candidate | rc_key) as $next
+              | if $mode == "dispatch" then
+                  if $current == $candidate then "true"
+                  elif $current != "" and ($current | rc_key) > $next then "false"
+                  else error("Published RC tag does not match the dispatch candidate") end
+                elif $current == "" then "rc"
+                elif ($current | rc_key) > $next then "rc-history"
+                else "rc" end
+            ')"
+          fi
+          if [ "$dispatch" = true ]; then
+            echo "dispatch=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "dispatch=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Skipping superseded RC dispatch for ${VERSION}"
+          fi
+
       - name: Build dispatch payload
+        if: ${{ success() && needs.publish-public-release.result == 'success' && ((needs.version-check.outputs.is_stable == 'true' && needs.release.result == 'success') || (needs.version-check.outputs.is_stable == 'false' && needs.prerelease.result == 'success' && needs.github-prerelease.result == 'success' && needs.registry-validation-rc.result == 'success')) }}
+        timeout-minutes: 5
         id: payload
         env:
           VERSION: ${{ steps.version.outputs.version }}
@@ -1698,6 +2507,8 @@ jobs:
           echo "payload=$payload" >> "$GITHUB_OUTPUT"
 
       - name: Create release GitHub App token
+        if: ${{ success() && needs.publish-public-release.result == 'success' && ((needs.version-check.outputs.is_stable == 'true' && needs.release.result == 'success') || (needs.version-check.outputs.is_stable == 'false' && needs.prerelease.result == 'success' && needs.github-prerelease.result == 'success' && needs.registry-validation-rc.result == 'success')) && steps.current.outputs.dispatch == 'true' }}
+        timeout-minutes: 5
         id: release-app-token
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         with:
@@ -1711,6 +2522,8 @@ jobs:
           permission-contents: write
 
       - name: Trigger server deploy
+        if: ${{ success() && needs.publish-public-release.result == 'success' && ((needs.version-check.outputs.is_stable == 'true' && needs.release.result == 'success') || (needs.version-check.outputs.is_stable == 'false' && needs.prerelease.result == 'success' && needs.github-prerelease.result == 'success' && needs.registry-validation-rc.result == 'success')) && steps.current.outputs.dispatch == 'true' }}
+        timeout-minutes: 5
         uses: peter-evans/repository-dispatch@28959ce8df70de7be546dd1250a005dd32156697 # v4.0.1
         with:
           token: ${{ steps.release-app-token.outputs.token }}
@@ -1719,6 +2532,8 @@ jobs:
           client-payload: ${{ steps.payload.outputs.payload }}
 
       - name: Trigger job-runner deploy
+        if: ${{ success() && needs.publish-public-release.result == 'success' && ((needs.version-check.outputs.is_stable == 'true' && needs.release.result == 'success') || (needs.version-check.outputs.is_stable == 'false' && needs.prerelease.result == 'success' && needs.github-prerelease.result == 'success' && needs.registry-validation-rc.result == 'success')) && steps.current.outputs.dispatch == 'true' }}
+        timeout-minutes: 5
         uses: peter-evans/repository-dispatch@28959ce8df70de7be546dd1250a005dd32156697 # v4.0.1
         with:
           token: ${{ steps.release-app-token.outputs.token }}
@@ -1727,6 +2542,8 @@ jobs:
           client-payload: ${{ steps.payload.outputs.payload }}
 
       - name: Trigger sandbox deploy
+        if: ${{ success() && needs.publish-public-release.result == 'success' && ((needs.version-check.outputs.is_stable == 'true' && needs.release.result == 'success') || (needs.version-check.outputs.is_stable == 'false' && needs.prerelease.result == 'success' && needs.github-prerelease.result == 'success' && needs.registry-validation-rc.result == 'success')) && steps.current.outputs.dispatch == 'true' }}
+        timeout-minutes: 5
         uses: peter-evans/repository-dispatch@28959ce8df70de7be546dd1250a005dd32156697 # v4.0.1
         with:
           token: ${{ steps.release-app-token.outputs.token }}
@@ -1739,8 +2556,8 @@ jobs:
   # ============================================
 
   update-homebrew:
-    if: ${{ !cancelled() && needs.release.result == 'success' && needs.version-check.result == 'success' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
-    needs: [release, version-check]
+    if: ${{ !cancelled() && needs.release.result == 'success' && needs.publish-public-release.result == 'success' && needs.version-check.result == 'success' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
+    needs: [release, publish-public-release, version-check]
     runs-on: ubuntu-latest
     environment: production
     steps:

@@ -54,6 +54,7 @@ describe("agent/conversation-run-events", () => {
         toolCallId: "tc-1",
         content: "ok",
         role: "tool",
+        isError: false,
       }],
     );
   });
@@ -71,6 +72,7 @@ describe("agent/conversation-run-events", () => {
           content: output,
           contentEncoding: "text",
           role: "tool",
+          isError: false,
         }],
       );
     }
@@ -91,7 +93,84 @@ describe("agent/conversation-run-events", () => {
         toolCallId: "tc-1",
         content: '{"ok":true}',
         role: "tool",
+        isError: false,
       }],
+    );
+  });
+
+  it("flags an error-shaped tool output as an error and a deferred OAuth action as a success", () => {
+    // Child-fork and hosted mirror streams forward tool results as tool-output-available
+    // without classifying them. The API never overrules an explicit flag, so the encoder
+    // must judge the output itself rather than call every result a success.
+    const encoder = new ConversationRunEventEncoder();
+    assertEquals(
+      encoder.encode({
+        type: "tool-output-available",
+        toolCallId: "tc-1",
+        output: { error: "tool_error", message: "Requested entity was not found" },
+      })[0]?.isError,
+      true,
+    );
+    assertEquals(
+      encoder.encode({
+        type: "tool-output-available",
+        toolCallId: "tc-2",
+        output: {
+          error: "authentication_required",
+          integration: "gmail",
+          connectUrl: "https://example.com/connect",
+        },
+      })[0]?.isError,
+      false,
+    );
+  });
+
+  it("flags provider error and serialized error outputs as errors", () => {
+    const encoder = new ConversationRunEventEncoder();
+    assertEquals(
+      encoder.encode({
+        type: "tool-output-available",
+        toolCallId: "tc-1",
+        output: { type: "web_search_tool_result_error", error_code: "max_uses_exceeded" },
+      })[0]?.isError,
+      true,
+    );
+    assertEquals(
+      encoder.encode({
+        type: "tool-output-available",
+        toolCallId: "tc-2",
+        output: '{"error":"tool_error","message":"Requested entity was not found"}',
+      })[0]?.isError,
+      true,
+    );
+  });
+
+  it("keeps the provider verdict on a provider-executed result and classifies forwarded ones", () => {
+    // The live adapter sends a failed provider result as tool-output-error, so a
+    // provider-executed tool-output-available is a success whatever its data holds.
+    const encoder = new ConversationRunEventEncoder();
+    const output = { error: "result metadata", answer: 42 };
+    assertEquals(
+      encoder.encode({
+        type: "tool-output-available",
+        toolCallId: "tc-1",
+        output,
+        providerExecuted: true,
+      })[0]?.isError,
+      false,
+    );
+    assertEquals(
+      encoder.encode({ type: "tool-output-available", toolCallId: "tc-2", output })[0]?.isError,
+      true,
+    );
+    assertEquals(
+      encoder.encode({
+        type: "tool-output-available",
+        toolCallId: "tc-3",
+        output: '{"error":"not_found"}',
+        providerExecuted: true,
+      })[0]?.isError,
+      false,
     );
   });
 

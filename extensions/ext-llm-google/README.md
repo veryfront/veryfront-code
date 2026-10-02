@@ -106,7 +106,7 @@ sentinel is reserved for `effort: "max"` and is rejected when supplied through
 When thinking is enabled, Gemini returns `thought` parts that the runtime emits as `reasoning-start` / `reasoning-delta` / `reasoning-end` stream events.
 
 Gemini `thoughtSignature` fields are retained with the exact assistant parts that produced them and replayed automatically on later turns, including parallel function-call responses.
-Streaming and replay share one deterministic raw-position tool-ID registry.
+Generated tool-call IDs are unique to each model response, so discovery and execution on later steps cannot collide. Provider-supplied IDs remain unchanged. Streaming and exact replay share the saved response scope and original part positions; older histories without a scope remain readable.
 Exact replay retains at most 4,096 raw assistant parts and 8 MiB; surviving
 canonical calls and results must match the raw history in occurrence order.
 

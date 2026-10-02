@@ -222,6 +222,16 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
       "veryfront knowledge ingest",
     ],
   },
+  "guides/ai-gateway-quickstart.md": {
+    references: ["./providers.md", "./configuration.md"],
+    snippets: [
+      "curl https://api.veryfront.com/ai/v1/models",
+      "x-veryfront-project-slug",
+      'ANTHROPIC_BASE_URL="https://api.veryfront.com/ai"',
+      'wire_api = "responses"',
+      'web_search = "disabled"',
+    ],
+  },
   "guides/coding-agents.md": {
     references: [
       "../api-reference/veryfront/mcp.md",

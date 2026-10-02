@@ -152,12 +152,12 @@ NPM_GIT_HEAD_LOOKUP_TIMEOUT_MS="${NPM_GIT_HEAD_LOOKUP_TIMEOUT_MS:-60000}"
 is_transient_publish_failure() {
   CONFLICT_OUTPUT_CANDIDATE="$1"
   printf '%s\n' "${CONFLICT_OUTPUT_CANDIDATE}" \
-    | grep -Eq 'npm error code E409|409 Conflict|Failed to save packument|IDENTITY_TOKEN_READ_ERROR'
+    | grep -E 'npm error code E409|409 Conflict|Failed to save packument|IDENTITY_TOKEN_READ_ERROR' >/dev/null
 }
 
 is_identity_token_read_failure() {
   IDENTITY_OUTPUT_CANDIDATE="$1"
-  printf '%s\n' "${IDENTITY_OUTPUT_CANDIDATE}" | grep -Fq 'IDENTITY_TOKEN_READ_ERROR'
+  printf '%s\n' "${IDENTITY_OUTPUT_CANDIDATE}" | grep -F 'IDENTITY_TOKEN_READ_ERROR' >/dev/null
 }
 
 # npm rejects a reused name/version with "You cannot publish over the
@@ -167,7 +167,7 @@ is_identity_token_read_failure() {
 is_npm_version_already_published() {
   ALREADY_PUBLISHED_OUTPUT_CANDIDATE="$1"
   printf '%s\n' "${ALREADY_PUBLISHED_OUTPUT_CANDIDATE}" \
-    | grep -Fq "previously published versions: ${VERSION}"
+    | grep -F "previously published versions: ${VERSION}" >/dev/null
 }
 
 note_conflict_publish_landed() {
@@ -330,6 +330,15 @@ publish_npm_package_with_retry() {
 lookup_npm_git_head() {
   LOOKUP_STARTED_AT="$(date +%s)"
   PUBLISHED_GIT_HEAD="$(npm view "$1@${VERSION}" gitHead --fetch-timeout="${NPM_GIT_HEAD_LOOKUP_TIMEOUT_MS}" --fetch-retries=1 2>/dev/null || true)"
+  if [[ "${2:-}" == rc && "${PUBLISHED_GIT_HEAD}" == "${GITHUB_SHA}" ]]; then
+    local current_rc
+    current_rc="$(lookup_npm_rc_tag "$1")" || return 1
+    # Keep the existing metadata budget while the dedicated tag endpoint
+    # catches up. Do not release the publisher lock on version metadata alone.
+    if [[ "${current_rc}" != "${VERSION}" ]]; then
+      PUBLISHED_GIT_HEAD=""
+    fi
+  fi
   LOOKUP_SECONDS=$(( $(date +%s) - LOOKUP_STARTED_AT ))
   if [ "${LOOKUP_SECONDS}" -gt 0 ]; then
     NPM_GIT_HEAD_WAIT_SPENT_SECONDS=$(( NPM_GIT_HEAD_WAIT_SPENT_SECONDS + LOOKUP_SECONDS ))
@@ -345,7 +354,7 @@ wait_for_npm_git_head() {
   # Allow NPM_GIT_HEAD_WAIT_ATTEMPTS empty reads while preserving hash
   # mismatches as immediate failures.
   for attempt in $(seq 1 "${NPM_GIT_HEAD_WAIT_ATTEMPTS}"); do
-    lookup_npm_git_head "${PACKAGE_NAME}"
+    lookup_npm_git_head "${PACKAGE_NAME}" "${2:-}"
     if [ "${PUBLISHED_GIT_HEAD}" = "${GITHUB_SHA}" ]; then
       return 0
     fi
@@ -361,7 +370,7 @@ wait_for_npm_git_head() {
     NPM_GIT_HEAD_WAIT_SPENT_SECONDS=$(( NPM_GIT_HEAD_WAIT_SPENT_SECONDS + NPM_GIT_HEAD_WAIT_DELAY_SECONDS ))
   done
 
-  lookup_npm_git_head "${PACKAGE_NAME}"
+  lookup_npm_git_head "${PACKAGE_NAME}" "${2:-}"
   [ "${PUBLISHED_GIT_HEAD}" = "${GITHUB_SHA}" ]
 }
 
@@ -398,9 +407,10 @@ rc_publish_package_dir() {
     return 1
   fi
 
-  echo "Publishing ${PACKAGE_NAME}@${VERSION} with rc tag"
+  local publish_tag="${3:-rc}"
+  echo "Publishing ${PACKAGE_NAME}@${VERSION} with ${publish_tag} tag"
   publish_npm_package_with_retry recover "${PACKAGE_NAME}" "${PUBLISH_SPEC}" \
-    --provenance --access public --tag rc
+    --provenance --access public --tag "${publish_tag}"
 }
 
 release_publish_package_dir() {
@@ -425,9 +435,54 @@ release_publish_package_dir() {
   fi
 }
 
+# Call only while holding the workflow's shared RC publication concurrency
+# group. Prefer-online revalidates registry state instead of a cached tag.
+# Older immutable versions remain publishable without moving the public rc tag.
+lookup_npm_rc_tag() {
+  local package_name="$1" tags
+  if ! tags="$(npm dist-tag ls "${package_name}" --prefer-online --fetch-timeout="${NPM_GIT_HEAD_LOOKUP_TIMEOUT_MS}" --fetch-retries=0 2>&1)"; then
+    if is_npm_package_not_found "${tags}"; then
+      tags=''
+    else
+      echo "::error::npm rc tag lookup failed for ${package_name}." >&2
+      sanitize_npm_lookup_output "${tags}" >&2
+      return 1
+    fi
+  fi
+  # npm dist-tag ls prints "tag: version" even with --json.
+  printf '%s\n' "${tags}" | sed -n 's/^rc: //p'
+}
+
+rc_tag_for_package() {
+  local current_rc
+  current_rc="$(lookup_npm_rc_tag "$1")" || return 1
+  jq -ner --arg candidate "$VERSION" --arg current "${current_rc}" --arg mode "${2:-publish}" '
+    # Compare integer components by digit count then digits, without losing
+    # precision or sorting 10 before 9. Reject unexpected tag formats.
+    def rc_key:
+      capture("^(?<major>0|[1-9][0-9]*)\\.(?<minor>0|[1-9][0-9]*)\\.(?<patch>0|[1-9][0-9]*)-(?<pre>[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)$") as $version
+      | ([$version.major, $version.minor, $version.patch] | map([length, .]))
+        + [($version.pre | split(".") | map(
+            if test("^[0-9]+$") then
+              if test("^(0|[1-9][0-9]*)$") then [0, length, .]
+              else error("Numeric prerelease identifiers cannot have leading zeroes") end
+            else [1, .] end
+          ))];
+    ($candidate | rc_key) as $next
+    | if $mode == "dispatch" then
+        if $current == $candidate then "true"
+        elif $current != "" and ($current | rc_key) > $next then "false"
+        else error("Published RC tag does not match the dispatch candidate") end
+      elif $current == "" then "rc"
+      elif ($current | rc_key) > $next then "rc-history"
+      else "rc" end
+  '
+}
+
 run_rc_publish() {
   require_env VERSION GITHUB_SHA NPM_PACK_DIR
   verify_npm_compatibility_artifact
+  local rc_packages_to_verify=""
 
   for PACKAGE_DIR in $(package_dirs); do
     PUBLISH_SPEC="$(canonical_tarball_for_package_dir "${PACKAGE_DIR}")" || PUBLISH_SPEC=""
@@ -436,7 +491,21 @@ run_rc_publish() {
       echo "::error::Canonical npm publish spec for ${PACKAGE_NAME} is empty. Ensure manifest.json contains exactly one matching package entry." >&2
       return 1
     fi
-    rc_publish_package_dir "${PACKAGE_DIR}" "${PUBLISH_SPEC}"
+    PACKAGE_NAME="$(jq -r '.name' "${PACKAGE_DIR}/package.json")"
+    RC_PUBLISH_TAG="$(rc_tag_for_package "${PACKAGE_NAME}")"
+    rc_publish_package_dir "${PACKAGE_DIR}" "${PUBLISH_SPEC}" "${RC_PUBLISH_TAG}"
+    if [[ "${RC_PUBLISH_TAG}" == rc ]]; then
+      rc_packages_to_verify+=" ${PACKAGE_NAME}"
+    fi
+  done
+
+  # Let registry propagation overlap across the batch. Keep the publisher lock
+  # until every current RC's gitHead and tag have converged to this release.
+  for PACKAGE_NAME in ${rc_packages_to_verify}; do
+    if ! wait_for_npm_git_head "${PACKAGE_NAME}" rc; then
+      echo "::error::RC registry metadata did not converge for ${PACKAGE_NAME}@${VERSION} within the shared ${NPM_GIT_HEAD_WAIT_TOTAL_SECONDS}s budget, or its gitHead differs; refusing to release an unverified RC." >&2
+      return 1
+    fi
   done
 }
 

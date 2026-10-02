@@ -837,10 +837,15 @@ export class EventWaitManager {
   ): Promise<void> {
     if (
       !expireOverdueWaits || wait.expiresAt === undefined ||
-      Date.now() <= wait.expiresAt.getTime()
+      Date.now() < wait.expiresAt.getTime()
     ) return;
+    // At the deadline millisecond the inclusive mailbox cutoff is still open:
+    // another process can append an on-time event after the empty claim, so
+    // recheck the mailbox the way the sweep does. Once the clock has passed
+    // the deadline no on-time event can arrive and the empty claim suffices.
+    const mailboxClosed = Date.now() > wait.expiresAt.getTime();
     try {
-      await this.expire(wait, true);
+      await this.expire(wait, mailboxClosed);
     } catch (error) {
       logger.error(
         "Failed to expire an overdue event wait before matching",
@@ -1505,12 +1510,22 @@ export class EventWaitManager {
 
     // A delay's deadline is its delivery, so the record resolves as delivered
     // rather than expired: the node completed on time, it did not time out.
+    // An event wait's expiry is refused while an on-time event is buffered,
+    // in the same atomic step, so mail appended after the last mailbox check
+    // still wins the deadline.
+    const unlessBuffered = wait.waitKind === "event" && wait.expiresAt !== undefined
+      ? { eventName: wait.eventName, publishedBefore: wait.expiresAt }
+      : undefined;
     const claimed = await backend.resolvePendingEventWait(
       wait.runId,
       wait.id,
       wait.waitKind === "delay" ? "delivered" : "expired",
+      unlessBuffered,
     );
-    if (!claimed) return;
+    if (!claimed) {
+      if (unlessBuffered) this.scheduleDeliveryRetry(wait.runId);
+      return;
+    }
     const claimKey = timedWaitClaimKey(wait.runId, wait.id);
     this.activeTimedWaitClaims.add(claimKey);
     try {
@@ -1534,11 +1549,16 @@ export class EventWaitManager {
       (candidate) => candidate.id === wait.id,
     );
     if (!stillPending) return true;
-    const buffered = await backend.peekRunEvent(wait.runId, wait.eventName);
-    const wonDeadline = buffered !== null && wait.expiresAt !== undefined &&
-      buffered.publishedAt.getTime() <= wait.expiresAt.getTime();
+    const wonDeadline = await this.hasOnTimeBufferedEvent(wait);
     if (wonDeadline) this.scheduleDeliveryRetry(wait.runId);
     return wonDeadline;
+  }
+
+  private async hasOnTimeBufferedEvent(wait: PersistedPendingEventWait): Promise<boolean> {
+    const backend = this.config.backend;
+    if (!hasEventWaitSupport(backend) || wait.expiresAt === undefined) return false;
+    const buffered = await backend.peekRunEvent(wait.runId, wait.eventName);
+    return buffered !== null && buffered.publishedAt.getTime() <= wait.expiresAt.getTime();
   }
 
   private async completeClaimedDelay(wait: PersistedPendingEventWait): Promise<void> {
@@ -1585,6 +1605,14 @@ export class EventWaitManager {
   }
 
   private async applyClaimedEventExpiry(wait: PersistedPendingEventWait): Promise<void> {
+    // A backend written before `unlessBuffered` ignores it, so an on-time
+    // event can still land between the last mailbox check and the claim.
+    // Looking once more under the claim is enough: the wait is no longer
+    // pending, so anything appended after this look is ordered after expiry.
+    if (await this.hasOnTimeBufferedEvent(wait)) {
+      if (await this.restoreClaimedWait(wait)) this.scheduleDeliveryRetry(wait.runId);
+      return;
+    }
     try {
       if (await this.failRunForExpiredWait(wait)) {
         await this.finalizeTimedWaitClaim(wait);
@@ -1694,7 +1722,7 @@ export class EventWaitManager {
       return;
     }
     if (status !== null) activeRunIds.add(runId);
-    if (!wait.expiresAt || Date.now() <= wait.expiresAt.getTime()) return;
+    if (!wait.expiresAt || Date.now() < wait.expiresAt.getTime()) return;
     try {
       await this.expire(wait);
     } catch (error) {

@@ -375,18 +375,24 @@ describe("StepExecutor timeout isolation", () => {
       },
     });
 
-    let result;
-    try {
-      const execution = executor.execute(node, makeContext());
-      await started.promise;
-      await time.tickAsync(5);
-      await time.tickAsync(5);
-      result = await execution;
-    } finally {
-      // A late rejection must remain observed after the public execution settles.
-      operation.reject(new Error("late tool rejection"));
-      await Promise.resolve();
-    }
+    const execution = executor.execute(node, makeContext(), undefined, "run-never-settling");
+    await started.promise;
+    await time.tickAsync(5);
+    await time.tickAsync(5);
+    const result = await execution;
+
+    let stopped = false;
+    const stopWait = executor.waitForExecutionStopped("run-never-settling").then(() => {
+      stopped = true;
+    });
+    await time.tickAsync(0);
+    assertEquals(stopped, false);
+
+    // A late rejection must remain observed after the public execution settles.
+    operation.reject(new Error("late tool rejection"));
+    await time.tickAsync(0);
+    await stopWait;
+    assertEquals(stopped, true);
 
     assertEquals(result.success, false);
     assertEquals(result.error?.includes("timed out after 5ms"), true);

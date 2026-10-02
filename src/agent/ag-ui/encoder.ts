@@ -1,5 +1,6 @@
 import type { AgentResponse } from "../types.ts";
 import { buildNativeRunEventFrame } from "./native-run-events.ts";
+import { isToolResultErrorOutput } from "#veryfront/tool/result.ts";
 
 /** Event emitted for AG-UI runtime stream. */
 export type AgUiRuntimeStreamEvent = Record<string, unknown> & { type: string };
@@ -616,6 +617,9 @@ function completeToolInput(
 /**
  * Tool results carry the canonical `content` field. The value is passed through
  * unchanged, which is exactly what the API stores for a legacy `result` field.
+ * `isError` is always explicit: the API never defaults a missing flag to false,
+ * so an unflagged success would be served with `isError` unrecoverable. The API
+ * never overrules an explicit flag either, so callers judge error-shaped output.
  */
 function createToolResultEvent(
   toolCallId: unknown,
@@ -627,7 +631,7 @@ function createToolResultEvent(
     payload: {
       toolCallId,
       content,
-      ...(isError ? { isError: true } : {}),
+      isError,
     },
   };
 }
@@ -987,7 +991,13 @@ function mapRuntimeStreamEventToAgUiEventsUnstamped(
       return [
         ...closeOpenTextEvent(state),
         ...closeOpenReasoningEvent(state),
-        createToolResultEvent(event.toolCallId, event.output),
+        createToolResultEvent(
+          event.toolCallId,
+          event.output,
+          // Producers send a provider result they judge failed as tool-output-error,
+          // so only forwarded results without the marker are judged by content.
+          event.providerExecuted !== true && isToolResultErrorOutput(event.output),
+        ),
       ];
 
     case "tool-output-error":

@@ -1,4 +1,4 @@
-import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { makeTempDir } from "#veryfront/testing/deno-compat.ts";
 
@@ -44,6 +44,8 @@ async function runSnippetsWithOfficialClients(
         "--config",
         configPath,
         "--allow-env",
+        // The Vercel AI SDK (`ai`) reads the host name while it loads.
+        "--allow-sys=hostname",
         modulePath,
       ],
       clearEnv: true,
@@ -67,29 +69,47 @@ async function runSnippetsWithOfficialClients(
         `Provider snippet subprocess failed with ${output.code}:\n${stderr}\n${stdout}`,
       );
     }
-    return JSON.parse(stdout) as RecordedRequest[];
+    const recorded = stdout.split("\n").find((line) => line.startsWith(REQUESTS_MARKER));
+    if (recorded === undefined) {
+      throw new Error(`Provider snippet subprocess recorded no requests:\n${stdout}`);
+    }
+    return JSON.parse(recorded.slice(REQUESTS_MARKER.length)) as RecordedRequest[];
   } finally {
     await Deno.remove(tempDir, { recursive: true });
   }
 }
 
-function buildSnippetModule(snippets: string[]): string {
-  const transformedSnippets = snippets.map((snippet) =>
-    snippet
-      .replace(
-        'import OpenAI from "openai";',
-        'import OpenAI from "npm:openai@7.23.0";',
-      )
-      .replace(
-        'import Anthropic from "@anthropic-ai/sdk";',
-        'import Anthropic from "npm:@anthropic-ai/sdk@0.128.0";',
-      )
+/** The client versions the documented snippets are exercised against. */
+const PINNED_CLIENT_IMPORTS: ReadonlyArray<readonly [string, string]> = [
+  ['from "openai";', 'from "npm:openai@7.23.0";'],
+  ['from "@anthropic-ai/sdk";', 'from "npm:@anthropic-ai/sdk@0.128.0";'],
+  ['from "ai";', 'from "npm:ai@7.0.127";'],
+  ['from "@ai-sdk/openai";', 'from "npm:@ai-sdk/openai@4.0.83";'],
+  ['from "@ai-sdk/anthropic";', 'from "npm:@ai-sdk/anthropic@4.0.71";'],
+  ['from "@google/genai";', 'from "npm:@google/genai@2.25.0";'],
+];
+
+const REQUESTS_MARKER = "__recorded_requests__";
+
+function pinClientImports(snippet: string): string {
+  return PINNED_CLIENT_IMPORTS.reduce(
+    (pinned, [bare, versioned]) => pinned.replaceAll(bare, versioned),
+    snippet,
   );
-  const imports = transformedSnippets.map((snippet) => snippet.split("\n")[0]);
-  const bodies = transformedSnippets.map((snippet) => snippet.split("\n").slice(1).join("\n"));
+}
+
+function buildSnippetModule(snippets: string[]): string {
+  const imports = new Set<string>();
+  const bodies = snippets.map((snippet) => {
+    const lines = pinClientImports(snippet).split("\n");
+    for (const line of lines.filter((line) => line.startsWith("import "))) {
+      imports.add(line);
+    }
+    return lines.filter((line) => !line.startsWith("import ")).join("\n");
+  });
 
   return `
-${imports.join("\n")}
+${[...imports].join("\n")}
 
 const requests = [];
 const encoder = new TextEncoder();
@@ -101,18 +121,40 @@ globalThis.fetch = async (input, init = {}) => {
     headers: Object.fromEntries(request.headers.entries()),
     body: request.body ? JSON.parse(await request.text()) : null,
   });
-  const body = request.url.endsWith("/chat/completions")
-    ? { id: "chatcmpl_example", object: "chat.completion", choices: [] }
-    : {
+  let body;
+  if (request.url.endsWith("/chat/completions")) {
+    body = {
+      id: "chatcmpl_example",
+      object: "chat.completion",
+      created: 0,
+      model: "mistral/mistral-small-2503",
+      choices: [{
+        index: 0,
+        message: { role: "assistant", content: "Hello." },
+        finish_reason: "stop",
+      }],
+      usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+    };
+  } else if (request.url.endsWith(":generateContent")) {
+    body = {
+      candidates: [{
+        index: 0,
+        content: { role: "model", parts: [{ text: "Hello." }] },
+        finishReason: "STOP",
+      }],
+    };
+  } else {
+    body = {
       id: "msg_example",
       type: "message",
       role: "assistant",
       model: "anthropic/claude-sonnet-4-6",
-      content: [],
+      content: [{ type: "text", text: "Hello." }],
       stop_reason: "end_turn",
       stop_sequence: null,
       usage: { input_tokens: 1, output_tokens: 1 },
     };
+  }
   return new Response(encoder.encode(JSON.stringify(body)), {
     status: 200,
     headers: { "content-type": "application/json" },
@@ -121,7 +163,7 @@ globalThis.fetch = async (input, init = {}) => {
 
 ${bodies.map((body) => `{\n${body}\n}`).join("\n\n")}
 
-console.log(JSON.stringify(requests));
+console.log(${JSON.stringify(REQUESTS_MARKER)} + JSON.stringify(requests));
 `;
 }
 
@@ -199,5 +241,65 @@ describe("provider guide client snippets", () => {
       throw new Error("Expected the missing-project-key guard to reject with an Error");
     }
     assertEquals(error.message.includes("Set VERYFRONT_API_KEY"), true);
+  });
+});
+
+describe("AI Gateway quickstart SDK snippets", () => {
+  async function getSnippets(): Promise<string[]> {
+    const guide = await Deno.readTextFile(
+      new URL("../../../docs/guides/ai-gateway-quickstart.md", import.meta.url),
+    );
+    const section = guide.split("\n## SDKs\n")[1]!.split("\n## ")[0]!;
+    return [...section.matchAll(/```ts\n([\s\S]*?)```/g)].map((match) => match[1]!);
+  }
+
+  it("sends each documented SDK request to the gateway route with the project key", async () => {
+    const snippets = await getSnippets();
+    assertEquals(snippets.length, 5);
+
+    const requests = await runSnippetsWithOfficialClients(snippets);
+
+    assertEquals(
+      requests.map((request) => `${request.method} ${request.url}`),
+      [
+        "POST https://api.veryfront.com/ai/v1/chat/completions",
+        "POST https://api.veryfront.com/ai/v1/messages",
+        "POST https://api.veryfront.com/ai/v1/chat/completions",
+        "POST https://api.veryfront.com/ai/v1/messages",
+        "POST https://api.veryfront.com/ai/v1beta/models/gemini-2.5-flash:generateContent",
+      ],
+    );
+    for (const request of requests.slice(0, 4)) {
+      assertEquals(request.headers.authorization, "Bearer example-project-key");
+      assertEquals(request.headers["x-api-key"], undefined);
+    }
+    assertEquals(requests[4]!.headers["x-goog-api-key"], "example-project-key");
+    assertEquals(
+      requests.slice(0, 4).map((request) => (request.body as { model: string }).model),
+      [
+        "mistral/mistral-small-2503",
+        "anthropic/claude-sonnet-4-6",
+        "mistral/mistral-small-2503",
+        "anthropic/claude-sonnet-4-6",
+      ],
+    );
+  });
+
+  it("sends the project header when the account-key line is uncommented", async () => {
+    const snippets = (await getSnippets()).map((snippet) => {
+      const accountKey = snippet.replace(
+        /^(\s*)\/\/ ((?:defaultHeaders|headers): \{ "x-veryfront-project-slug": )"<PROJECT_SLUG>"/m,
+        '$1$2"example-project"',
+      );
+      assert(accountKey !== snippet, `snippet has an account-key line:\n${snippet}`);
+      return accountKey;
+    });
+
+    const requests = await runSnippetsWithOfficialClients(snippets);
+
+    assertEquals(requests.length, 5);
+    for (const request of requests) {
+      assertEquals(request.headers["x-veryfront-project-slug"], "example-project");
+    }
   });
 });

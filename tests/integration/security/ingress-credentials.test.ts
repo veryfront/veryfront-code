@@ -83,3 +83,27 @@ describe("security/http/ingress-credentials over Deno.serve", () => {
     assertEquals(headerToken, null);
   });
 });
+
+describe("security/http/ingress-credentials with replaced native methods", () => {
+  it("scrubs the private copy without calling a replaced public delete method", () => {
+    const original = new Request("https://project.example/run", {
+      headers: { "x-token": API_TOKEN, "set-cookie": "a=1" },
+    });
+    const nativeDelete = Headers.prototype.delete;
+    let calls = 0;
+    let sealed: Request;
+    try {
+      Headers.prototype.delete = function () {
+        calls++;
+        throw new Error("public delete must not observe the private copy");
+      };
+      sealed = sealIngressCredentials(original);
+    } finally {
+      Headers.prototype.delete = nativeDelete;
+    }
+    assertEquals(calls, 0);
+    assertEquals(sealed.headers.get("x-token"), null);
+    assertEquals(sealed.headers.getSetCookie(), ["a=1"]);
+    assertEquals(original.headers.get("x-token"), API_TOKEN);
+  });
+});

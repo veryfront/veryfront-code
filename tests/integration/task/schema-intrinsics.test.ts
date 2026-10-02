@@ -222,6 +222,116 @@ describe("task schema checks after project code replaced built-ins", () => {
     assertMatch(result.inputSchemaSha256 ?? "", /^[0-9a-f]{64}$/);
   });
 
+  it("rejects invalid input against a contract inputSchema after discovery replaced Array map", async () => {
+    const originalMap = Reflect.getOwnPropertyDescriptor(Array.prototype, "map")!;
+    const inputSchema = defineSchema((v) => v.object({ ticketText: v.string().min(1) }))();
+    const { task, calls } = schemaTask({ inputSchema });
+
+    let result: Awaited<ReturnType<typeof runTask>>;
+    try {
+      // As a task module would at load time, before the runner validates submitted input.
+      Reflect.set(Array.prototype, "map", () => {
+        throw new Error("replaced Array.prototype.map");
+      });
+      result = await runTask({ task, input: { ticketText: 42 } }, createInMemoryHostRuntime());
+    } finally {
+      Reflect.defineProperty(Array.prototype, "map", originalMap);
+    }
+
+    assertEquals(result.success, false);
+    assertEquals(result.errorCode, "INPUT_VALIDATION_FAILED");
+    assertEquals(result.errorDetail?.errors[0]?.path, "/ticketText");
+    assertEquals(calls.length, 0);
+  });
+
+  it("rejects invalid input against a raw JSON inputSchema after discovery replaced Array map", async () => {
+    const originalMap = Reflect.getOwnPropertyDescriptor(Array.prototype, "map")!;
+    const { task, calls } = schemaTask({ inputSchema: ticketInputSchema });
+
+    let result: Awaited<ReturnType<typeof runTask>>;
+    try {
+      Reflect.set(Array.prototype, "map", () => {
+        throw new Error("replaced Array.prototype.map");
+      });
+      result = await runTask({ task, input: { ticketText: 42 } }, createInMemoryHostRuntime());
+    } finally {
+      Reflect.defineProperty(Array.prototype, "map", originalMap);
+    }
+
+    assertEquals(result.success, false);
+    assertEquals(result.errorCode, "INPUT_VALIDATION_FAILED");
+    assertEquals(result.errorDetail?.errors[0]?.path, "/ticketText");
+    assertEquals(calls.length, 0);
+  });
+
+  it("rejects invalid input against a raw JSON inputSchema after discovery replaced TextEncoder encode", async () => {
+    const originalEncode = Reflect.getOwnPropertyDescriptor(TextEncoder.prototype, "encode")!;
+    const { task, calls } = schemaTask({ inputSchema: ticketInputSchema });
+
+    let result: Awaited<ReturnType<typeof runTask>>;
+    try {
+      Reflect.set(TextEncoder.prototype, "encode", () => {
+        throw new Error("replaced TextEncoder.prototype.encode");
+      });
+      result = await runTask({ task, input: { ticketText: 42 } }, createInMemoryHostRuntime());
+    } finally {
+      Reflect.defineProperty(TextEncoder.prototype, "encode", originalEncode);
+    }
+
+    assertEquals(result.errorCode, "INPUT_VALIDATION_FAILED");
+    assertEquals(calls.length, 0);
+  });
+
+  it("keeps the replaced built-in in place for the task after validation", async () => {
+    const originalMap = Reflect.getOwnPropertyDescriptor(Array.prototype, "map")!;
+    const replacement = () => "replaced";
+    let seenByTask: unknown;
+    const task = makeTask({
+      inputSchema: defineSchema((v) => v.object({ ticketText: v.string() }))(),
+      run: () => {
+        seenByTask = Array.prototype.map;
+        return {};
+      },
+    });
+
+    let result: Awaited<ReturnType<typeof runTask>>;
+    try {
+      Reflect.set(Array.prototype, "map", replacement);
+      result = await runTask({ task, input: { ticketText: "x" } }, createInMemoryHostRuntime());
+    } finally {
+      Reflect.defineProperty(Array.prototype, "map", originalMap);
+    }
+
+    assertEquals(result.success, true);
+    assertEquals(seenByTask, replacement);
+  });
+
+  it("rejects invalid input when project code added an Array index setter, and keeps it", async () => {
+    const originalMap = Reflect.getOwnPropertyDescriptor(Array.prototype, "map")!;
+    const replacement = () => "replaced";
+    const setter = () => {};
+    const { task, calls } = schemaTask({ inputSchema: ticketInputSchema });
+
+    let result: Awaited<ReturnType<typeof runTask>>;
+    let mapAfterRun: unknown;
+    let indexSetterAfterRun: unknown;
+    try {
+      Reflect.set(Array.prototype, "map", replacement);
+      Reflect.defineProperty(Array.prototype, "0", { set: setter, configurable: true });
+      result = await runTask({ task, input: { ticketText: 42 } }, createInMemoryHostRuntime());
+      mapAfterRun = Array.prototype.map;
+      indexSetterAfterRun = Reflect.getOwnPropertyDescriptor(Array.prototype, "0")?.set;
+    } finally {
+      Reflect.deleteProperty(Array.prototype, "0");
+      Reflect.defineProperty(Array.prototype, "map", originalMap);
+    }
+
+    assertEquals(result.errorCode, "INPUT_VALIDATION_FAILED");
+    assertEquals(calls.length, 0);
+    assertEquals(mapAfterRun, replacement);
+    assertEquals(indexSetterAfterRun, setter);
+  });
+
   it("formats rejected input errors when project code replaced Array map and join", () => {
     const originalMap = Reflect.getOwnPropertyDescriptor(Array.prototype, "map")!;
     const originalJoin = Reflect.getOwnPropertyDescriptor(Array.prototype, "join")!;

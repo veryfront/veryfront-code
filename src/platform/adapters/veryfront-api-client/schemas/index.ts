@@ -20,6 +20,7 @@ export {
   getEnvironmentFileDetailSchema,
   getEnvironmentFileListItemSchema,
   getEnvironmentSchema,
+  getListBranchFileMetadataResponseSchema,
   getListBranchFilesResponseSchema,
   getListEnvironmentFilesResponseSchema,
   getListProjectsResponseSchema,

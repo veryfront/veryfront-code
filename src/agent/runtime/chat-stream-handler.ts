@@ -1,3 +1,4 @@
+import { isTerminalRunControlError } from "./terminal-run-control.ts";
 import { createPrivateSet } from "#veryfront/security/private-set.ts";
 import { createPrivateMap } from "#veryfront/security/private-map.ts";
 import { chainPrivatePromise, createPrivateDeferred } from "#veryfront/security/private-promise.ts";
@@ -77,6 +78,7 @@ import { buildRuntimeUsageTraceAttributes } from "./trace-usage.ts";
 import {
   getToolResultError,
   isIntegrationAuthenticationActionResult,
+  isProviderToolResultError,
 } from "#veryfront/tool/result.ts";
 import { compareStrings } from "#veryfront/utils/compare.ts";
 import { isStatefulTurnCycleError } from "#veryfront/agent/runtime/stateful-turn-lineage.ts";
@@ -248,6 +250,9 @@ export function resolveRelayableExecutionFailure(
 
 /** Serialize an outer runtime failure without inferring provider provenance. */
 export function resolveRuntimeExecutionErrorEvent(error: unknown): RuntimeStreamErrorEvent {
+  if (isTerminalRunControlError(error)) {
+    return { type: "error", error: error.message, code: error.code };
+  }
   if (isRuntimeEmptyResponseError(error)) {
     return {
       type: "error",
@@ -1578,7 +1583,8 @@ export function processStreamInternal(
             });
             const toolResultOutput = resolveToolResultOutput(typedPart);
             const inferredToolError = getToolResultError(toolResultOutput);
-            const isExplicitError = typedPart.isError === true &&
+            const isExplicitError = (typedPart.isError === true ||
+              isProviderToolResultError(toolResultOutput)) &&
               !isIntegrationAuthenticationActionResult(toolResultOutput);
             const isError = isExplicitError || inferredToolError !== undefined;
             const toolResultError = isExplicitError

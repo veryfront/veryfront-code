@@ -400,6 +400,8 @@ const TESTING_RUNTIME_NETWORK_METHODS = new Set([
   "withMockFetch",
 ]);
 
+const TESTING_RUNTIME_SERVER_METHODS = new Set(["startUpstreamServer"]);
+
 const SERVER_METHODS = new Set([
   "serve",
   "listen",
@@ -455,6 +457,8 @@ const CANONICAL_COMPAT_PROCESS_SOURCE = "src/platform/compat/process.ts";
 const CANONICAL_TESTING_DENO_COMPAT_SOURCE = "src/testing/deno-compat.ts";
 const CANONICAL_TESTING_BARREL_SOURCE = "src/testing/index.ts";
 const CANONICAL_TESTING_MOCK_FETCH_SOURCE = "src/testing/mock-fetch.ts";
+const CANONICAL_TESTING_WEBSOCKET_SERVER_SOURCE =
+  "src/testing/upstream-websocket-server.ts";
 
 const GLOBAL_INTRINSIC_OBJECTS = new Set([
   "AbortController",
@@ -3541,6 +3545,9 @@ function canonicalCompatSource(source: string): string {
   }
   if (pathBase === "src/testing/mock-fetch") {
     return CANONICAL_TESTING_MOCK_FETCH_SOURCE;
+  }
+  if (pathBase === "src/testing/upstream-websocket-server") {
+    return CANONICAL_TESTING_WEBSOCKET_SERVER_SOURCE;
   }
   return normalized;
 }
@@ -10900,7 +10907,10 @@ function isTestingRuntimeSpecifier(source: string): boolean {
     source === "#veryfront/testing/mock-fetch.ts" ||
     source === CANONICAL_TESTING_DENO_COMPAT_SOURCE ||
     source === CANONICAL_TESTING_BARREL_SOURCE ||
-    source === CANONICAL_TESTING_MOCK_FETCH_SOURCE;
+    source === CANONICAL_TESTING_MOCK_FETCH_SOURCE ||
+    source === "#veryfront/testing/upstream-websocket-server" ||
+    source === "#veryfront/testing/upstream-websocket-server.ts" ||
+    source === CANONICAL_TESTING_WEBSOCKET_SERVER_SOURCE;
 }
 
 function isProcessEffectMethod(method: string): boolean {
@@ -10958,6 +10968,7 @@ function effectForModuleMethod(
       return "process";
     }
     if (TESTING_RUNTIME_NETWORK_METHODS.has(method)) return "network";
+    if (TESTING_RUNTIME_SERVER_METHODS.has(method)) return "server";
   }
   if (isFilesystemSpecifier(source)) {
     if (WATCH_METHODS.has(method)) return "filesystem-watch";

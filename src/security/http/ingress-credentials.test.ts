@@ -8,13 +8,18 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { isDeno } from "#veryfront/platform/compat/runtime.ts";
 import {
   getRequestPeerProvenance,
+  getRequestTransportLifetime,
+  inheritRequestPeerProvenance,
   recordDenoServeRequestPeer,
   recordRequestPeerFromTransport,
+  recordRequestTransportLifetime,
 } from "#veryfront/platform/adapters/runtime/shared/request-peer.ts";
 import {
   INGRESS_API_TOKEN_HEADER,
   INGRESS_INFERENCE_TOKEN_HEADER,
   INGRESS_RUN_EVENT_TOKEN_HEADER,
+  INGRESS_RUN_STOP_TOKEN_HEADER,
+  INGRESS_RUN_TERMINAL_TOKEN_HEADER,
   inheritIngressCredentials,
   readIngressCredential,
   requestForWebSocketUpgrade,
@@ -67,6 +72,111 @@ function readLikeFramework(request: Request): void {
 const DENO_INTERNALS = { ignore: !isDeno };
 
 describe("security/http/ingress-credentials", () => {
+  for (
+    const name of [
+      INGRESS_API_TOKEN_HEADER,
+      INGRESS_INFERENCE_TOKEN_HEADER,
+      INGRESS_RUN_EVENT_TOKEN_HEADER,
+      INGRESS_RUN_STOP_TOKEN_HEADER,
+      INGRESS_RUN_TERMINAL_TOKEN_HEADER,
+    ] as const
+  ) {
+    for (const cookies of [[], ["a=1; Expires=Wed, 01 Oct 2026 07:28:00 GMT", "b=2; Path=/"]]) {
+      it(`seals ${name} without ordinary headers and preserves ${cookies.length} cookies`, async () => {
+        const headers = new Headers({ [name]: "single-credential" });
+        for (const cookie of cookies) headers.append("set-cookie", cookie);
+        const controller = new AbortController();
+        const original = new Request("https://project.example/run", {
+          method: "POST",
+          body: new Uint8Array([65]),
+          headers,
+          signal: controller.signal,
+          redirect: "manual",
+        });
+        recordRequestPeerFromTransport(original, {
+          runtime: "deno",
+          transport: "tcp",
+          hostname: "10.0.0.7",
+        });
+        const originalHeaders = [...original.headers];
+        const sealed = sealIngressCredentials(original);
+        assertEquals(sealed.headers.get(name), null);
+        assertEquals(sealed.headers.getSetCookie(), cookies);
+        assertEquals(readIngressCredential(sealed, name), "single-credential");
+        assertEquals([...original.headers], originalHeaders);
+        assertEquals(sealed.method, "POST");
+        assertEquals(sealed.url, original.url);
+        assertEquals(sealed.redirect, "manual");
+        assertEquals(getRequestPeerProvenance(sealed), getRequestPeerProvenance(original));
+        assertEquals(sealed.signal.aborted, false);
+        controller.abort();
+        assertEquals(sealed.signal.aborted, true);
+        assertEquals(await sealed.text(), "A");
+        assertStrictEquals(sealIngressCredentials(sealed), sealed);
+      });
+    }
+
+    for (const replacement of [undefined, "replacement-credential"]) {
+      it(`carries ${name} to copies and interceptors with override: ${replacement !== undefined}`, () => {
+        const source = sealIngressCredentials(
+          new Request("https://project.example/run", {
+            headers: { [name]: "original-credential" },
+          }),
+        );
+        const copy = inheritIngressCredentials(source, new Request(source));
+        assertEquals(copy.headers.get(name), null);
+        assertEquals(readIngressCredential(copy, name), "original-credential");
+        const intercepted = sealInterceptedRequest(
+          source,
+          new Request(source, {
+            headers: replacement === undefined ? {} : { [name]: replacement },
+          }),
+        );
+        assertEquals(intercepted.headers.get(name), null);
+        assertEquals(
+          readIngressCredential(intercepted, name),
+          replacement ?? "original-credential",
+        );
+        assertEquals(readIngressCredential(source, name), "original-credential");
+      });
+    }
+  }
+
+  it("seals a stop-only credential and carries it to framework copies", () => {
+    const name = "x-veryfront-run-stop-token";
+    const original = new Request("https://project.example/run", {
+      headers: { [name]: "stop-only-capability" },
+    });
+    const sealed = sealIngressCredentials(original);
+    assertEquals(sealed.headers.get(name), null);
+    assertEquals(readIngressCredential(sealed, name), "stop-only-capability");
+    const copy = inheritIngressCredentials(sealed, new Request(sealed));
+    assertEquals(copy.headers.get(name), null);
+    assertEquals(readIngressCredential(copy, name), "stop-only-capability");
+  });
+
+  for (const replacement of [undefined, "replacement-stop-capability"]) {
+    it(`carries stop credentials through interception with override: ${replacement !== undefined}`, () => {
+      const name = "x-veryfront-run-stop-token";
+      const source = sealIngressCredentials(
+        new Request("https://project.example/run", {
+          headers: { [name]: "original-stop-capability" },
+        }),
+      );
+      const intercepted = sealInterceptedRequest(
+        source,
+        new Request(source, {
+          headers: replacement === undefined ? {} : { [name]: replacement },
+        }),
+      );
+      assertEquals(intercepted.headers.get(name), null);
+      assertEquals(
+        readIngressCredential(intercepted, name),
+        replacement ?? "original-stop-capability",
+      );
+    });
+  }
+
   it(
     "takes every run credential off the request before a patched intrinsic can see it",
     DENO_INTERNALS,
@@ -331,4 +441,50 @@ describe("security/http/ingress-credentials", () => {
     inheritIngressCredentials(unsealed, copy);
     assertEquals(readIngressCredential(copy, INGRESS_API_TOKEN_HEADER), null);
   });
+  it("keeps native transport lifetime through credential sealing and timeout copies", () => {
+    const request = new Request("http://localhost/api/control-plane/runs/run_1/execute", {
+      headers: { [INGRESS_RUN_STOP_TOKEN_HEADER]: "stop-capability" },
+    });
+    const completed = Promise.resolve();
+    recordRequestTransportLifetime(request, completed);
+
+    const sealed = sealIngressCredentials(request);
+    const timeoutCopy = inheritRequestPeerProvenance(
+      sealed,
+      new Request(sealed, { signal: AbortSignal.timeout(1_000) }),
+    );
+
+    assertEquals(sealed.headers.get(INGRESS_RUN_STOP_TOKEN_HEADER), null);
+    assertEquals(getRequestTransportLifetime(sealed), {
+      signal: request.signal,
+      completed,
+    });
+    assertEquals(getRequestTransportLifetime(timeoutCopy), {
+      signal: request.signal,
+      completed,
+    });
+  });
+
+  it(
+    "does not expose sealed credentials through patched weak collection methods",
+    DENO_INTERNALS,
+    () => {
+      const token = "stop-capability";
+      const request = new Request("http://localhost/api/control-plane/runs/run_1/execute", {
+        headers: { [INGRESS_RUN_STOP_TOKEN_HEADER]: token },
+      });
+      const probes = installCredentialProbes();
+      let sealed: Request;
+      try {
+        recordRequestTransportLifetime(request, Promise.resolve());
+        sealed = sealIngressCredentials(request);
+        getRequestTransportLifetime(sealed);
+      } finally {
+        probes.restore();
+      }
+
+      assertEquals(probes.saw(token), false);
+      assert(sealed.headers.get(INGRESS_RUN_STOP_TOKEN_HEADER) === null);
+    },
+  );
 });

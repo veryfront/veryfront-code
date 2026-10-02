@@ -1,23 +1,16 @@
-import {
-  assert,
-  assertEquals,
-  assertMatch,
-  assertStringIncludes,
-  assertThrows,
-} from "#std/assert";
+import { assert, assertEquals, assertMatch, assertStringIncludes, assertThrows } from "#std/assert";
 import { describe, it } from "#std/testing/bdd";
 import { parse } from "#std/yaml/parse";
+import { planSuiteFiles } from "../test/run-suite.ts";
 
 const ACTION_PATH = ".github/actions/setup-deno/action.yml";
 const WORKFLOWS_DIR = ".github/workflows";
 const LOCAL_ACTION = "./.github/actions/setup-deno";
-const CACHE_RESTORE_ACTION =
-  "actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9";
-const CACHE_SAVE_ACTION =
-  "actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9";
+const CACHE_RESTORE_ACTION = "actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9";
+const CACHE_SAVE_ACTION = "actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9";
 const MAX_SETUP_MINUTES = 5;
 const MAX_CACHE_SETUP_MINUTES = 10;
-const CACHE_PRODUCER_JOB = "tests";
+const CACHE_PRODUCER_JOB = "tests-integration";
 const CHROMIUM_STEP_MINUTES = 20;
 const CHROMIUM_OVERHEAD_MARGIN_SECONDS = 120;
 /**
@@ -438,6 +431,75 @@ describe("setup-deno installer resilience", () => {
   }
 });
 
+const CHROMIUM_ACTION_PATH = ".github/actions/install-chromium/action.yml";
+
+async function chromiumInstallScript(): Promise<string> {
+  const action = await parseYamlFile(CHROMIUM_ACTION_PATH);
+  const runs = asRecord(action.runs, `${CHROMIUM_ACTION_PATH}.runs`);
+  const step = asSteps(runs.steps, `${CHROMIUM_ACTION_PATH}.runs.steps`).find(
+    (entry) => entry.name === "Install Chromium",
+  );
+  assert(step, "the shared action must install Chromium");
+  return String(step.run).replace("${{ inputs.install-command }}", "true");
+}
+
+/**
+ * Runs the action's install shell with apt locks clear and `timeout` replaced
+ * by a function that exits with `status` after `elapsedSeconds` of simulated
+ * time, so a test can tell an early SIGKILL from a deadline kill without
+ * sleeping.
+ */
+async function runChromiumInstall(
+  { status, elapsedSeconds }: { status: number; elapsedSeconds: number },
+): Promise<InstallerResult> {
+  const root = await Deno.makeTempDir({ prefix: "install-chromium-" });
+  try {
+    await Deno.writeTextFile(
+      `${root}/install.sh`,
+      [
+        'sudo() { if [ "$1" = fuser ]; then return 1; fi; cat >/dev/null; }',
+        "sleep() { :; }",
+        `timeout() { SECONDS=$((SECONDS + ${elapsedSeconds})); return ${status}; }`,
+        await chromiumInstallScript(),
+      ].join("\n"),
+    );
+    const { code, stdout, stderr } = await new Deno.Command("bash", {
+      args: [`${root}/install.sh`],
+      stdout: "piped",
+      stderr: "piped",
+    }).output();
+    return {
+      code,
+      stdout: new TextDecoder().decode(stdout),
+      stderr: new TextDecoder().decode(stderr),
+    };
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+}
+
+describe("install-chromium failure diagnosis", () => {
+  it("names the install deadline when timeout reports exit 124", async () => {
+    const result = await runChromiumInstall({ status: 124, elapsedSeconds: 240 });
+    assertEquals(result.code, 124);
+    assertStringIncludes(result.stdout, "exceeded 4m (stalled download");
+  });
+
+  it("names the install deadline when the deadline kill escalates to exit 137", async () => {
+    const result = await runChromiumInstall({ status: 137, elapsedSeconds: 255 });
+    assertEquals(result.code, 137);
+    assertStringIncludes(result.stdout, "exceeded 4m (stalled download");
+  });
+
+  it("reports an early SIGKILL as forced termination, not a deadline expiry", async () => {
+    const result = await runChromiumInstall({ status: 137, elapsedSeconds: 0 });
+    assertEquals(result.code, 137);
+    assertEquals(result.stdout.includes("exceeded"), false, result.stdout);
+    assertStringIncludes(result.stdout, "was killed (exit 137) after 0s");
+    assertStringIncludes(result.stdout, "possibly the OOM killer");
+  });
+});
+
 describe("setup-deno CI contract", () => {
   it("skips only valid reusable-workflow jobs without steps", () => {
     assertEquals(
@@ -532,9 +594,7 @@ describe("setup-deno CI contract", () => {
       "${{ steps.deno-cache.outputs.cache-primary-key }}",
     );
 
-    const installStep = steps.find((step) =>
-      step.name === "Install pinned Deno"
-    );
+    const installStep = steps.find((step) => step.name === "Install pinned Deno");
     assert(installStep, "setup-deno must install Deno explicitly");
     const install = String(installStep.run);
     assertStringIncludes(install, 'version="2.7.7"');
@@ -627,12 +687,8 @@ describe("setup-deno CI contract", () => {
       "the installer must not fall back to npm",
     );
 
-    const redisWarm = steps.find((step) =>
-      step.name === "Warm Redis module cache"
-    );
-    const dependencyWarm = steps.find((step) =>
-      step.name === "Warm esm.sh cache"
-    );
+    const redisWarm = steps.find((step) => step.name === "Warm Redis module cache");
+    const dependencyWarm = steps.find((step) => step.name === "Warm esm.sh cache");
     assert(redisWarm && dependencyWarm, "both warm-cache steps must exist");
 
     const templateManifestGenerator = steps.find((step) => {
@@ -781,8 +837,21 @@ jobs:
           // Only the job that warms BOTH the dependency graph and the Redis
           // cache is the complete cache producer; other jobs may warm the
           // dependency cache alone as consumers.
+          const matrixCacheProducer = inputs["warm-redis-cache"] ===
+            "${{ matrix.shard == 1 }}";
+          if (matrixCacheProducer) {
+            assertEquals(jobName, CACHE_PRODUCER_JOB);
+            assertEquals(
+              asRecord(
+                asRecord(job.strategy, "producer strategy").matrix,
+                "producer matrix",
+              ).shard,
+              [1, 2],
+              "only shard 1 may warm the complete cache",
+            );
+          }
           const isCompleteCacheProducer = inputs["warm-cache"] === "true" &&
-            inputs["warm-redis-cache"] === "true";
+            (inputs["warm-redis-cache"] === "true" || matrixCacheProducer);
 
           if (isCompleteCacheProducer) {
             cacheProducerCalls++;
@@ -792,9 +861,7 @@ jobs:
 
           assertEquals(
             step["timeout-minutes"],
-            isCompleteCacheProducer
-              ? MAX_CACHE_SETUP_MINUTES
-              : MAX_SETUP_MINUTES,
+            isCompleteCacheProducer ? MAX_CACHE_SETUP_MINUTES : MAX_SETUP_MINUTES,
             `${path} ${jobName} setup-deno must leave time for job work`,
           );
           if (isCompleteCacheProducer) {
@@ -842,13 +909,45 @@ jobs:
       step.name === "Run ${{ matrix.check }}"
     );
     assert(ciRunStep, "ci matrix job must run the requested check");
-    // Contributors can only reproduce this shard before pushing while the case
-    // body is nothing but the task name; anything inlined here is a check that
-    // exists only in CI, and the first sighting of it is a red run.
+    assertStringIncludes(
+      String(ciRunStep.run),
+      '.tasks["lint:ci"].split(" && ")',
+      "the lint shard must derive its checks from the local lint:ci task",
+    );
+    assertStringIncludes(
+      String(ciRunStep.run),
+      'chain.filter((command) => command !== check).join(" && ")',
+      "only the parallel test typecheck may move out of lint",
+    );
+    assertStringIncludes(
+      String(ciRunStep.run),
+      "chain.filter((command) => command === check).length !== 1",
+      "the split must fail closed when the local task shape changes",
+    );
+    assertStringIncludes(
+      String(ciRunStep.run),
+      'const check = "deno task lint:test-typecheck";',
+    );
     assertMatch(
       String(ciRunStep.run),
-      /^\s*lint\) deno task lint:ci ;;$/m,
-      "the lint shard must delegate to the lint:ci task",
+      /^\s*test-typecheck\) deno task lint:test-typecheck ;;$/m,
+      "the parallel leg must run the unchanged test typecheck ratchet",
+    );
+    const matrix = asRecord(
+      asRecord(ciJob.strategy, "ci strategy").matrix,
+      "ci matrix",
+    );
+    assertEquals(matrix.check, [
+      "test-layout",
+      "format",
+      "lint",
+      "typecheck",
+      "test-typecheck",
+    ]);
+    assertEquals(
+      ciJob.needs,
+      ["tested-run"],
+      "source checks must start in parallel after the tested-run decision",
     );
     assertMatch(
       String(ciRunStep.run),
@@ -925,9 +1024,7 @@ jobs:
     const chromiumAptSetup = asSteps(
       chromiumRuns.steps,
       "install-chromium steps",
-    ).find((step) =>
-      step.name === "Configure apt sources, retries, and mirrors"
-    );
+    ).find((step) => step.name === "Configure apt sources, retries, and mirrors");
     assert(chromiumAptSetup, "the shared action must configure apt sources");
     const aptSetup = String(chromiumAptSetup.run);
     assertStringIncludes(
@@ -943,6 +1040,14 @@ jobs:
       false,
       "APT mirror rewrites must not contain clear-text HTTP URLs",
     );
+    // Runner images route the archive through `mirror+file:` lists whose
+    // first entry is the azure mirror; rewriting only the sources files left
+    // that mirror in charge when it throttled .deb downloads (inbox #2483).
+    assertStringIncludes(aptSetup, "mirror\\+file:");
+    assertStringIncludes(
+      aptSetup,
+      'for apt_file in ${apt_source_files} ${mirror_lists}; do',
+    );
     for (
       const expected of [
         'for attempt in $(seq 1 "${install_attempts}")',
@@ -954,6 +1059,11 @@ jobs:
     ) {
       assertStringIncludes(install, expected);
     }
+    assertStringIncludes(install, "::error title=Chromium install::");
+    assert(
+      shellInteger(install, "install_attempts") >= 3,
+      "a single throttled mirror must not consume the whole step budget",
+    );
     assertEquals(install.includes("apt-get clean"), false);
     assertEquals(install.includes("rm -rf /var/lib/apt/lists"), false);
 
@@ -999,27 +1109,35 @@ jobs:
   });
 });
 
-it("stable release creates a fresh upload token after npm publication", async () => {
+it("public release upload uses an isolated token after publisher artifacts are ready", async () => {
   const workflow = await parseYamlFile(`${WORKFLOWS_DIR}/cicd.yml`);
-  const release = asRecord(asRecord(workflow.jobs, "jobs").release, "release");
-  const steps = asSteps(release.steps, "release steps");
-  const publish = steps.findIndex((step) =>
-    step.name === "Publish tested stable npm artifact"
+  const jobs = asRecord(workflow.jobs, "jobs");
+  const release = asRecord(jobs.release, "release");
+  assertEquals(
+    JSON.stringify(release).includes("actions/create-github-app-token@"),
+    false,
+    "the stable package publisher must not receive the public release token",
   );
-  const upload = steps.findIndex((step) =>
-    step.name === "Create GitHub releases"
+  const uploader = asRecord(
+    jobs["publish-public-release"],
+    "publish-public-release",
   );
-  assert(publish >= 0 && upload > publish);
+  const steps = asSteps(uploader.steps, "public release steps");
+  const download = steps.findIndex((step) =>
+    String(step.uses).startsWith("actions/download-artifact@")
+  );
+  const upload = steps.findIndex((step) => step.name === "Create GitHub releases");
+  assert(download >= 0 && upload > download);
   const uploadEnv = asRecord(steps[upload].env, "release upload env");
   const tokenReference = String(uploadEnv.GH_TOKEN);
   const freshToken = steps.findIndex((step, index) =>
-    index > publish && index < upload &&
+    index > download && index < upload &&
     String(step.uses).startsWith("actions/create-github-app-token@") &&
     tokenReference === `\${{ steps.${step.id}.outputs.token }}`
   );
   assert(
-    freshToken > publish,
-    "npm publication can exceed the one-hour App token lifetime",
+    freshToken > download,
+    "the App token must be minted only on the isolated public uploader",
   );
   const tokenInputs = asRecord(
     steps[freshToken].with,
@@ -1028,4 +1146,135 @@ it("stable release creates a fresh upload token after npm publication", async ()
   assertEquals(tokenInputs["permission-contents"], "write");
   assertEquals(tokenInputs.owner, "veryfront");
   assertEquals(String(tokenInputs.repositories).trim(), "veryfront");
+});
+
+describe("parallel integration workflow contract", () => {
+  it("keeps the two-shard inventory complete and disjoint", async () => {
+    const suite = "integration:legacy-tests-root";
+    const full = await planSuiteFiles({ suite });
+    const shards = await Promise.all(
+      [1, 2].map((index) =>
+        planSuiteFiles({ suite, shard: { index, total: 2 } })
+      ),
+    );
+    const files = shards.flatMap((shard) => shard.files);
+    assertEquals(
+      files.length,
+      new Set(files).size,
+      "shards must never overlap",
+    );
+    assertEquals(
+      files.toSorted(),
+      full.files.toSorted(),
+      "shards must run every original test",
+    );
+    assert(shards.every((shard) => shard.files.length > 0));
+  });
+
+  it("runs two complete shards through the existing suite profiles without retries", async () => {
+    const workflow = await parseYamlFile(`${WORKFLOWS_DIR}/cicd.yml`);
+    const jobs = asRecord(workflow.jobs, "jobs");
+    const job = asRecord(jobs["tests-integration"], "integration shards");
+    const strategy = asRecord(job.strategy, "integration strategy");
+    assertEquals(
+      strategy["fail-fast"],
+      "${{ github.event_name == 'merge_group' }}",
+    );
+    assertEquals(asRecord(strategy.matrix, "integration matrix").shard, [1, 2]);
+    assertEquals(job.name, "tests (integration shard ${{ matrix.shard }}/2)");
+    assertEquals(job.needs, ["tested-run"]);
+    const steps = asSteps(job.steps, "integration steps");
+    assert(!steps.some((step) => String(step.uses).includes("retry")));
+    const runner = steps.find((step) => step.name === "Run integration shard");
+    assert(runner);
+    assertEquals(
+      asRecord(runner.env, "shard env").INTEGRATION_SHARD,
+      "${{ matrix.shard }}",
+    );
+    for (
+      const required of [
+        'const suite = "integration:legacy-tests-root";',
+        "suite, shard: { index, total: 2 }",
+        "partitionDenoSuiteFiles(plan.files, profile.maxFilesPerProcess)",
+        "buildDenoSuiteCommandArgs(suite, files",
+        "shouldRunDenoBatchInParallel(profile.parallel, files)",
+        "buildTestProcessEnv(Deno.env.toObject(), profile.env)",
+        "clearEnv: true",
+        "if (!status.success) Deno.exit(status.code)",
+      ]
+    ) assertStringIncludes(String(runner.run), required);
+    assert(steps.some((step) => step.run === "deno task generate"));
+    const nodeDependencies = steps.find((step) =>
+      step.name === "Install Node resolver test dependencies"
+    );
+    assert(
+      nodeDependencies,
+      "both shards need dependencies for nested Node executor tests",
+    );
+    assertEquals(nodeDependencies.if, undefined);
+    for (
+      const name of [
+        "Run Node cache-link compatibility tests",
+        "Run Node egress transport tests",
+        "Run CLI integration tests",
+      ]
+    ) {
+      const step = steps.find((step) => step.name === name);
+      assert(step, `must preserve ${name}`);
+      assertEquals(
+        step.if,
+        "${{ matrix.shard == 2 }}",
+        `${name} must execute once`,
+      );
+    }
+    const setup = steps.find((step) => step.uses === LOCAL_ACTION);
+    assert(setup);
+    assertEquals(
+      asRecord(setup.with, "setup inputs")["warm-redis-cache"],
+      "${{ matrix.shard == 1 }}",
+    );
+  });
+
+  it("keeps the required integration check fail closed for every non-success shard result", async () => {
+    const workflow = await parseYamlFile(`${WORKFLOWS_DIR}/cicd.yml`);
+    const jobs = asRecord(workflow.jobs, "jobs");
+    const gate = asRecord(jobs.tests, "required integration gate");
+    assertEquals(gate.name, "tests (integration)");
+    assertEquals(gate.needs, ["tested-run", "tests-integration"]);
+    assertEquals(gate.if, "${{ always() }}");
+    const step = asSteps(gate.steps, "gate steps")[0];
+    assertEquals(
+      asRecord(step.env, "gate env").INTEGRATION_RESULT,
+      "${{ needs.tests-integration.result }}",
+    );
+    for (const result of ["success", "failure", "cancelled", "skipped", ""]) {
+      const output = await new Deno.Command("bash", {
+        args: ["-c", String(step.run)],
+        env: { INTEGRATION_RESULT: result },
+        stdout: "piped",
+        stderr: "piped",
+      }).output();
+      assertEquals(output.success, result === "success", result);
+    }
+    assertEquals(
+      asRecord(step.env, "gate env").REUSED_RUN_ID,
+      "${{ needs.tested-run.outputs.reuse == 'true' && needs.tested-run.outputs.run_id || '' }}",
+    );
+    for (const result of ["success", "skipped", "failure", "cancelled"]) {
+      const output = await new Deno.Command("bash", {
+        args: ["-c", String(step.run)],
+        env: { INTEGRATION_RESULT: result, REUSED_RUN_ID: "36825693208" },
+        stdout: "piped",
+        stderr: "piped",
+      }).output();
+      assertEquals(
+        output.success,
+        result === "success" || result === "skipped",
+        `reused ${result}`,
+      );
+    }
+    const mergeGate = asRecord(jobs["quality-gate-merge"], "merge gate");
+    assert(Array.isArray(mergeGate.needs));
+    assert(mergeGate.needs.includes("ci") && mergeGate.needs.includes("tests"));
+  });
 });

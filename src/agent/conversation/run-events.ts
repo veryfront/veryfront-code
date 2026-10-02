@@ -4,6 +4,7 @@ import { type ChatStreamEvent } from "#veryfront/chat/protocol.ts";
 import { buildNativeRunEventFrame, nativeRunEventTypes } from "../ag-ui/native-run-events.ts";
 import type { AgentRunEventTimingOptions } from "../../runtime/model-call-context.ts";
 import { normalizeConversationRunEvents } from "./run-event-normalization.ts";
+import { isToolResultErrorOutput } from "#veryfront/tool/result.ts";
 
 /** Shared conversation run event types value. */
 export const conversationRunEventTypes = {
@@ -372,6 +373,11 @@ export class ConversationRunEventEncoder {
           ...(this.toolInputs.has(chunk.toolCallId)
             ? { input: this.toolInputs.get(chunk.toolCallId) }
             : {}),
+          // Producers send a provider result they judge failed as tool-output-error, so a
+          // provider-executed result keeps their success verdict even when its content looks
+          // like an error. Child-fork and hosted mirror streams forward unclassified results
+          // without the marker, and the API never overrules an explicit flag, so judge those.
+          isError: chunk.providerExecuted !== true && isToolResultErrorOutput(chunk.output),
         }];
         this.releaseToolCallState(chunk.toolCallId);
         return events;

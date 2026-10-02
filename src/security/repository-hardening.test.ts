@@ -7,6 +7,7 @@ const WORKFLOW_PR_GUARD =
 const CREATE_APP_TOKEN_ACTION =
   "actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1";
 const TRUSTED_AGGREGATE_JOBS = new Set([
+  "tests",
   "quality-gate-merge",
   "quality-gate-artifact",
 ]);
@@ -223,11 +224,19 @@ describe("repository hardening", () => {
     // Only the RC path may recover a conflicted publish through registry
     // metadata; the stable release call site must stay fail-closed so an
     // existing name@version can never be accepted via a matching gitHead.
-    const rcCallSites = retryCallSites.filter((callSite) => callSite.includes("--tag rc"));
+    const rcCallSites = retryCallSites.filter((callSite) =>
+      callSite.includes('--tag "${publish_tag}"')
+    );
     assertEquals(rcCallSites.length, 1);
+    assert(publishScript.includes('local publish_tag="${3:-rc}"'));
+    assert(
+      publishScript.includes(
+        'rc_publish_package_dir "${PACKAGE_DIR}" "${PUBLISH_SPEC}" "${RC_PUBLISH_TAG}"',
+      ),
+    );
     assert(rcCallSites[0]?.includes("publish_npm_package_with_retry recover "));
     const stableCallSites = retryCallSites.filter(
-      (callSite) => !callSite.includes("--tag rc"),
+      (callSite) => !callSite.includes("--tag "),
     );
     assertEquals(stableCallSites.length, 1);
     assert(
@@ -382,7 +391,9 @@ describe("repository hardening", () => {
         ) {
           assertEquals(
             jobIf.trim(),
-            "if: ${{ always() }}",
+            jobName === "quality-gate-merge"
+              ? "if: ${{ always() && github.event_name != 'push' }}"
+              : "if: ${{ always() }}",
             `expected trusted aggregate ${jobName} to run and inspect skipped dependencies`,
           );
           assertEquals(
@@ -400,6 +411,31 @@ describe("repository hardening", () => {
               .test(block),
             false,
             `expected trusted aggregate ${jobName} not to execute repository code`,
+          );
+          continue;
+        }
+
+        if (path === ".github/workflows/cicd.yml" && jobName.startsWith("cancel-after-")) {
+          assertEquals(jobIf.trim(), "if: ${{ failure() && github.event_name == 'merge_group' }}");
+          assertEquals(block.includes("actions/checkout@"), false);
+          assertEquals(block.includes("run:"), false);
+          assert(
+            /\n {4}uses: veryfront\/veryfront-code\/\.github\/workflows\/cancel-failed-merge-group\.yml@[0-9a-f]{40}\n/
+              .test(`${block}\n`),
+            `expected ${jobName} to run the cancellation workflow pinned to a trusted commit`,
+          );
+          const cancellation = stripComments(
+            await readText(".github/workflows/cancel-failed-merge-group.yml"),
+          );
+          assert(cancellation.includes("workflow_call:"));
+          assertEquals(cancellation.includes("pull_request:"), false);
+          assertEquals(cancellation.includes("actions/checkout@"), false);
+          assertEquals(cancellation.includes("uses:"), false);
+          assert(cancellation.includes("if: ${{ github.event_name == 'merge_group' }}"));
+          assert(
+            cancellation.includes(
+              'run: gh api --method POST "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/cancel"',
+            ),
           );
           continue;
         }

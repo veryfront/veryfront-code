@@ -184,6 +184,11 @@ export function useWorkflowList(options: UseWorkflowListOptions = {}): UseWorkfl
     setHasMore(false);
     setTotalCount(undefined);
     setError(null);
+    return () => {
+      // Pending fetches and body reads must not update state after unmount.
+      requestSequence.current++;
+      activeRequestSequence.current = null;
+    };
   }, [authorizationContext]);
 
   useEffect(() => {

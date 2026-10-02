@@ -111,17 +111,17 @@ describe("cicd coverage workflow", () => {
     const workflow = await readWorkflow();
 
     assertStringIncludes(workflow, "coverage-shards:");
-    assertStringIncludes(workflow, "name: coverage shard ${{ matrix.shard }}/4");
+    assertStringIncludes(workflow, "name: coverage shard ${{ matrix.shard }}/8");
     assertEquals(
       jobTimeoutMinutes(workflow, "coverage-shards"),
       20,
       "coverage shard job-level timeout must stay at 20 minutes",
     );
     assertSetupDenoStepTimeout(workflow, "coverage-shards");
-    assertStringIncludes(workflow, "shard: [1, 2, 3, 4]");
+    assertStringIncludes(workflow, "shard: [1, 2, 3, 4, 5, 6, 7, 8]");
     assertStringIncludes(
       workflow,
-      "deno task coverage:ci:shard -- --shard=${{ matrix.shard }}/4 --coverage-dir=coverage-shard-${{ matrix.shard }}",
+      "deno task coverage:ci:shard -- --shard=${{ matrix.shard }}/8 --coverage-dir=coverage-shard-${{ matrix.shard }}",
     );
     assertStringIncludes(workflow, "actions/upload-artifact");
     assertStringIncludes(workflow, "name: coverage-shard-${{ matrix.shard }}");
@@ -137,10 +137,10 @@ describe("cicd coverage workflow", () => {
     assertStringIncludes(workflow, "coverage:");
     assertStringIncludes(workflow, "name: coverage gate");
     assertStringIncludes(workflow, "needs: [coverage-shards, tested-run]");
-    // A main run that reuses its green merge-queue run skips the gate.
+    // Main reuse skips the gate; only cancelled merge-group runs stop the heavy collector.
     assertStringIncludes(
       workflow,
-      "if: ${{ always() && needs.tested-run.outputs.reuse != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}",
+      "if: ${{ always() && (github.event_name != 'merge_group' || !cancelled()) && needs.tested-run.outputs.reuse != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}",
     );
     assertEquals(
       jobTimeoutMinutes(workflow, "coverage"),

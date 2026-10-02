@@ -1,11 +1,16 @@
 import { isProxyWithoutHooks } from "#veryfront/platform/compat/error-introspection.ts";
 
 const ArrayIsArray = Array.isArray;
+const JSONParse = JSON.parse;
 const JSONStringify = JSON.stringify;
 const ObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 const ObjectPrototypeHasOwnProperty = Object.prototype.hasOwnProperty;
 const ReflectApply = Reflect.apply;
+const StringPrototypeEndsWith = String.prototype.endsWith;
+const StringPrototypeStartsWith = String.prototype.startsWith;
 const StringPrototypeTrim = String.prototype.trim;
+
+const PROVIDER_TOOL_RESULT_ERROR_TYPE_SUFFIX = "_tool_result_error";
 
 /**
  * Sentinel returned when an untrusted tool-result property cannot be
@@ -181,4 +186,46 @@ export function isErroredToolExecutionResult(result: unknown): boolean {
   const output = readToolResultOwnDataProperty(result, "output");
   return output === UNREADABLE_TOOL_RESULT_PROPERTY ||
     hasToolExecutionErrorMarker(output);
+}
+
+/** Parse a tool output serialized as a JSON object, or return it unchanged. */
+function parseSerializedToolOutput(output: unknown): unknown {
+  if (typeof output !== "string") {
+    return output;
+  }
+
+  const trimmed = ReflectApply(StringPrototypeTrim, output, []) as string;
+  if (!ReflectApply(StringPrototypeStartsWith, trimmed, ["{"])) {
+    return output;
+  }
+
+  try {
+    return JSONParse(trimmed);
+  } catch {
+    return output;
+  }
+}
+
+/**
+ * A provider error payload, e.g. `{ type: "web_search_tool_result_error", error_code }`,
+ * as an object or serialized as a JSON string.
+ */
+export function isProviderToolResultError(output: unknown): boolean {
+  const type = readToolResultOwnDataProperty(parseSerializedToolOutput(output), "type");
+  return typeof type === "string" &&
+    ReflectApply(StringPrototypeEndsWith, type, [
+      PROVIDER_TOOL_RESULT_ERROR_TYPE_SUFFIX,
+    ]) as boolean;
+}
+
+/**
+ * Whether a tool output is a failure, for the explicit `isError` on a tool result.
+ *
+ * The API never overrules an explicit flag, so this covers everything its own
+ * heuristic catches: provider error payloads and outputs serialized as JSON strings,
+ * as well as the error markers {@link getToolResultError} reads.
+ */
+export function isToolResultErrorOutput(output: unknown): boolean {
+  const value = parseSerializedToolOutput(output);
+  return getToolResultError(value) !== undefined || isProviderToolResultError(value);
 }

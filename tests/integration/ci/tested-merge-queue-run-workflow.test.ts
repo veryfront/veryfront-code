@@ -17,7 +17,7 @@ const REUSED_RUN_ID_EXPRESSION =
 // Jobs the merge-queue run already ran on this commit.
 const SKIPPED_ON_REUSE = [
   "ci",
-  "tests",
+  "tests-integration",
   "npm-compatibility-artifact",
   "tests-windows-localhost",
   "coverage-shards",
@@ -44,6 +44,8 @@ const COVERAGE_GATE = "coverage";
 // Jobs that still run on a reused main run, or never run on main.
 const KEPT = [
   "tested-run",
+  // Required integration check; it accepts skipped shards on a reused run.
+  "tests",
   "sonar-coverage",
   "sonar",
   "sonar-quality-gate",
@@ -54,9 +56,11 @@ const KEPT = [
   "tests-proxy-binary",
   "build-binaries",
   "prerelease",
+  "github-prerelease",
   "release",
+  "publish-public-release",
+  "registry-validation-rc",
   "quality-gate-registry",
-  "dispatch-release",
   "update-homebrew",
 ] as const;
 
@@ -262,18 +266,68 @@ describe("tested merge-queue run workflow", () => {
     assertRunsDespiteSkippedAncestors(jobs, skipped, "a reused main run");
     for (const name of ["prerelease", "release"]) {
       const condition = String(job(jobs, name).if);
-      for (const dependency of needs(job(jobs, name))) {
-        assertStringIncludes(
-          condition,
-          `needs.${dependency}.result == 'success'`,
-          `${name} must require ${dependency} explicitly`,
-        );
+      const publisher = job(jobs, name);
+      const aggregate = namedStep(publisher, "Require merge correctness dependencies");
+      const env = asRecord(aggregate.env, "publisher correctness environment");
+      for (const dependency of needs(publisher)) {
+        if (
+          [
+            "tested-run",
+            "version-check",
+            "quality-gate-artifact",
+            "quality-gate-release",
+            "build-binaries",
+          ].includes(dependency)
+        ) {
+          assertStringIncludes(
+            condition,
+            `needs.${dependency}.result == 'success'`,
+            `${name} must require ${dependency} explicitly`,
+          );
+        } else {
+          const entry = Object.entries(env).find(([, value]) =>
+            value === `\${{ needs.${dependency}.result }}`
+          );
+          assert(entry, `${name} must read ${dependency} in the folded gate`);
+          assertStringIncludes(
+            String(aggregate.run),
+            entry[0],
+            `${name} must evaluate ${dependency}`,
+          );
+        }
       }
     }
   });
 
   it("classifies every job's behaviour on a reused main run", async () => {
+    const observers = [
+      "cancel-after-ci",
+      "cancel-after-coverage",
+      "cancel-after-tests",
+      "cancel-after-tests-node",
+      "cancel-after-tests-node-sandbox",
+      "cancel-after-tests-bun",
+      "cancel-after-tests-binary-e2e",
+      "cancel-after-tests-e2e-rsc-browser",
+      "cancel-after-sonar-quality-gate",
+      "cancel-after-tested-run",
+      "cancel-after-coverage-shards",
+      "cancel-after-tests-integration",
+      "cancel-after-npm-compatibility-artifact",
+      "cancel-after-npm-smoke-node-versions",
+      "cancel-after-tests-npm-install-smoke",
+      "cancel-after-tests-runtime-critical-flow",
+      "cancel-after-sonar",
+      "cancel-after-sonar-coverage",
+      "cancel-after-coverage-node-executor",
+      "cancel-after-coverage-integration-client",
+    ];
+    const jobs = await readJobs();
+    for (const name of observers) {
+      assertEquals(job(jobs, name).if, "${{ failure() && github.event_name == 'merge_group' }}");
+    }
     const classified = [
+      ...observers,
       ...SKIPPED_ON_REUSE,
       ...Object.keys(SKIPPED_WITH_DEPENDENCY),
       COVERAGE_GATE,
