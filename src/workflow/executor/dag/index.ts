@@ -1270,18 +1270,32 @@ function hasLegacyParallelPublication(
         const children = node.config.nodes;
         const childKeys = new Set(children.map((child) => child.id.slice(node.id.length + 1)));
         const result = output as Record<string, unknown>;
-        return children.length > 0 && Object.keys(result).every((key) => childKeys.has(key)) &&
-          children.every((child) => {
-            const childState = nodeStates[child.id];
-            const key = child.id.slice(node.id.length + 1);
-            return childState?.status === "completed" &&
-              childState._subWorkflowOwnerPath === ownerPath && Object.hasOwn(result, key) &&
-              isDeepStrictEqual(result[key], childState.output);
-          });
+        return children.length > 0 && Object.entries(result).every(([key, value]) => {
+          if (childKeys.has(key) || key === "input") return true;
+          const inheritedState = nodeStates[key];
+          return inheritedState?.status === "completed" &&
+            inheritedState._subWorkflowOwnerPath === ownerPath &&
+            isDeepStrictEqual(value, inheritedState.output);
+        }) && children.every((child) => {
+          const childState = nodeStates[child.id];
+          const key = child.id.slice(node.id.length + 1);
+          return childState?.status === "completed" &&
+            childState._subWorkflowOwnerPath === ownerPath && Object.hasOwn(result, key) &&
+            isDeepStrictEqual(result[key], childState.output);
+        });
       }
       if (hasLegacyParallelPublication(node.config.nodes, nodeId, nodeStates, ownerPath)) {
         return true;
       }
+    } else if (node.config.type === "map") {
+      if (
+        hasLegacyParallelPublication(
+          collectStaticMapWrapperNodes(node) ?? [],
+          nodeId,
+          nodeStates,
+          ownerPath,
+        )
+      ) return true;
     } else if (node.config.type === "branch") {
       if (
         hasLegacyParallelPublication(node.config.then, nodeId, nodeStates, ownerPath) ||

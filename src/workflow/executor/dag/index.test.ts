@@ -874,27 +874,48 @@ describe("DAGExecutor", () => {
         "two keys",
         "three keys",
         "three string keys",
+        "input and inherited context",
+        "inherited loop key",
+        "uncorroborated inherited key",
+        "wrong inherited owner",
+        "mismatched inherited value",
         "missing child",
         "mismatched value",
         "wrong owner",
       ]
     ) {
       it(`checks persisted legacy parallel typed loop-named children: ${scenario}`, async () => {
+        const inheritContext = scenario === "input and inherited context";
+        const inheritedLoopKey = scenario === "inherited loop key";
+        const priorId = inheritedLoopKey ? "iterations" : "before";
+        const withPrior = inheritContext || inheritedLoopKey;
+        const runInput = inheritContext ? { topic: "test" } : undefined;
         const stringValues = scenario === "three string keys";
         const includeExitReason = scenario === "three keys" || stringValues;
-        const recoverable = scenario === "two keys" || includeExitReason;
+        const recoverable = scenario === "two keys" || includeExitReason || withPrior;
         const expected = {
           iterations: stringValues ? "user" : 1,
           previousResults: stringValues ? "user" : [],
+          ...(inheritContext ? { input: runInput, before: "prior value" } : {}),
         };
         let childCalls = 0;
+        let beforeCalls = 0;
         const observed: unknown[] = [];
         const exec = new DAGExecutor({
           stepExecutor: new MockStepExecutor(new Map(), (node, context) => {
+            if (withPrior && node.id === priorId) {
+              beforeCalls++;
+              return {
+                success: true,
+                output: inheritedLoopKey ? 1 : "prior value",
+                executionTime: 0,
+              };
+            }
             if (node.id === "observe") {
               const output = {
-                iterations: context["collect/iterations"],
+                iterations: inheritedLoopKey ? context.iterations : context["collect/iterations"],
                 previousResults: context["collect/previousResults"],
+                ...(inheritContext ? { input: context.input, before: context.before } : {}),
               };
               observed.push(output);
               return { success: true, output, executionTime: 0 };
@@ -914,11 +935,15 @@ describe("DAGExecutor", () => {
           workflow: {
             id: "legacy-parallel-typed-children",
             steps: [
-              parallel("collect", [
-                step("iterations", { tool: "read" }),
-                step("previousResults", { tool: "read" }),
-                ...(includeExitReason ? [step("exitReason", { tool: "read" })] : []),
-              ]),
+              ...(withPrior ? [step(priorId, { tool: "read" })] : []),
+              {
+                ...parallel("collect", [
+                  ...(inheritedLoopKey ? [] : [step("iterations", { tool: "read" })]),
+                  step("previousResults", { tool: "read" }),
+                  ...(includeExitReason ? [step("exitReason", { tool: "read" })] : []),
+                ]),
+                ...(withPrior ? { dependsOn: [priorId] } : {}),
+              },
               { ...step("observe", { tool: "read" }), dependsOn: ["collect"] },
             ],
             output: (context) => context.observe,
@@ -926,7 +951,7 @@ describe("DAGExecutor", () => {
         })];
         const first = await exec.execute(
           nodes,
-          createTestRun({ input: undefined, context: { input: undefined } }),
+          createTestRun({ input: runInput, context: { input: runInput } }),
         );
         assertEquals(first.completed, true);
         const states = structuredClone(first.nodeStates);
@@ -937,7 +962,23 @@ describe("DAGExecutor", () => {
         states.collect!.output = {
           ...expected,
           ...(includeExitReason ? { exitReason: stringValues ? "user" : "condition" } : {}),
+          ...(scenario === "uncorroborated inherited key" || scenario === "wrong inherited owner" ||
+              scenario === "mismatched inherited value"
+            ? { exitReason: "condition" }
+            : {}),
         };
+        if (scenario === "wrong inherited owner" || scenario === "mismatched inherited value") {
+          states.exitReason = {
+            nodeId: "exitReason",
+            status: "completed",
+            output: scenario === "mismatched inherited value" ? "maxIterations" : "condition",
+            attempt: 1,
+            _subWorkflowOwnerPath: scenario === "wrong inherited owner"
+              ? "other-owner"
+              : states.collect!._subWorkflowOwnerPath,
+            _stepInputRecorded: true,
+          };
+        }
         if (scenario === "missing child") delete states["collect/previousResults"];
         if (scenario === "mismatched value") states["collect/previousResults"]!.output = ["other"];
         if (scenario === "wrong owner") {
@@ -949,7 +990,7 @@ describe("DAGExecutor", () => {
         assertEquals(Object.hasOwn(persisted.collect!, "input"), false);
         const retried = await exec.execute(
           nodes,
-          createTestRun({ input: undefined, context: { input: undefined }, nodeStates: persisted }),
+          createTestRun({ input: runInput, context: { input: runInput }, nodeStates: persisted }),
         );
         assertEquals(retried.completed, recoverable);
         if (recoverable) {
@@ -963,9 +1004,57 @@ describe("DAGExecutor", () => {
           );
           assertEquals(observed, [expected]);
         }
-        assertEquals(childCalls, includeExitReason ? 3 : 2);
+        assertEquals(childCalls, includeExitReason ? 3 : inheritedLoopKey ? 1 : 2);
+        assertEquals(beforeCalls, withPrior ? 1 : 0);
       });
     }
+
+    it("restores a persisted legacy parallel wrapper in a static map", async () => {
+      let childCalls = 0;
+      let outputCalls = 0;
+      const exec = new DAGExecutor({
+        stepExecutor: new MockStepExecutor(new Map(), (node) => {
+          childCalls++;
+          return {
+            success: true,
+            output: node.id.endsWith("/iterations") ? 1 : [],
+            executionTime: 0,
+          };
+        }),
+      });
+      const nodes = [subWorkflow("child", {
+        workflow: {
+          id: "legacy-map-parallel",
+          steps: [map("mapped", {
+            items: [1],
+            processor: parallel("worker", [
+              step("iterations", { tool: "read" }),
+              step("previousResults", { tool: "read" }),
+            ]),
+          })],
+          output: (context) => {
+            if (++outputCalls === 1) throw new Error("selector failed");
+            return context.mapped;
+          },
+        },
+      })];
+      const first = await exec.execute(nodes, createTestRun());
+      assertEquals(first.completed, false);
+      const states = structuredClone(first.nodeStates);
+      delete states.child!._subWorkflowContext;
+      assertEquals(states.mapped_0!.status, "completed");
+      const parallelOutput = states.mapped_0!.output as WorkflowContext;
+      states.mapped_0!.output = { input: parallelOutput.input, iterations: 1, previousResults: [] };
+      const persisted = JSON.parse(JSON.stringify(
+        prepareNodeStatesUserData(states, "legacy-map-parallel", {}),
+      )) as Record<string, NodeState>;
+      const retried = await exec.execute(nodes, createTestRun({ nodeStates: persisted }));
+      assertEquals(retried.error, undefined);
+      assertEquals(retried.completed, true);
+      assertEquals(retried.context.child, persisted.mapped!.output);
+      assertEquals(childCalls, 2);
+      assertEquals(outputCalls, 2);
+    });
 
     for (
       const omittedKey of [
