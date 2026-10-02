@@ -916,7 +916,10 @@ describe("DAGExecutor", () => {
             output: (context) => context.observe,
           },
         })];
-        const first = await exec.execute(nodes, createTestRun({ input: undefined, context: {} }));
+        const first = await exec.execute(
+          nodes,
+          createTestRun({ input: undefined, context: { input: undefined } }),
+        );
         assertEquals(first.completed, true);
         const states = structuredClone(first.nodeStates);
         states.child!.status = "failed";
@@ -939,7 +942,7 @@ describe("DAGExecutor", () => {
         assertEquals(Object.hasOwn(persisted.collect!, "input"), false);
         const retried = await exec.execute(
           nodes,
-          createTestRun({ input: undefined, context: {}, nodeStates: persisted }),
+          createTestRun({ input: undefined, context: { input: undefined }, nodeStates: persisted }),
         );
         assertEquals(retried.completed, recoverable);
         if (recoverable) {
