@@ -1,6 +1,6 @@
 import { toolRegistryInternal } from "#veryfront/tool/registry.ts";
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { type ModelRuntime } from "#veryfront/provider";
 import { defineSchema } from "#veryfront/schemas/index.ts";
@@ -99,7 +99,12 @@ describe("request-scoped tool replacement for generate()", () => {
     });
 
     assertEquals(observedToolNames, [["lookup"]]);
-    assertEquals(observedAbortSignal, controller.signal);
+    assert(observedAbortSignal);
+    assertEquals(observedAbortSignal.aborted, false);
+    const abortReason = new Error("caller cancelled request");
+    controller.abort(abortReason);
+    assertEquals(observedAbortSignal.aborted, true);
+    assertEquals(observedAbortSignal.reason, abortReason);
     toolRegistryInternal.clearAll();
   });
 

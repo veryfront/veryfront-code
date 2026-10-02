@@ -1,7 +1,20 @@
+import { forEachSequential } from "./sequential.ts";
+import { getAgentRuntimeToolCallPart } from "./message-adapter.ts";
+import {
+  admitTerminalDispatch,
+  createTerminalRunControl,
+  isTerminalRunControlError,
+  isTerminalRunToolName,
+  terminalCompletionResponse,
+  terminalDispatchRecord,
+  terminalReceiptPersistenceFailure,
+} from "./terminal-run-control.ts";
 import {
   appendPrivateArray,
   concatPrivateArrays,
   filterPrivateArray,
+  flatMapPrivateArray,
+  forEachPrivateArray,
   mapPrivateArray,
   pushPrivateArray,
   somePrivateArray,
@@ -1702,12 +1715,79 @@ function buildRuntimeToolTraceAttributes(input: {
   });
 }
 
+const freezeAdmitted = Object.freeze;
+const ownContextKeys = Reflect.ownKeys;
+const contextDescriptor = Object.getOwnPropertyDescriptor;
+const defineContextProperty = Object.defineProperty;
+const readContextProperty = Reflect.get;
+
+function applicationExecutionContext(
+  context: ToolExecutionContext | undefined,
+): ToolExecutionContext {
+  const projected: ToolExecutionContext = {};
+  if (!context) return projected;
+  forEachPrivateArray(ownContextKeys(context), (key) => {
+    if (key === "toolCallId" || key === "agentId") return;
+    if (!contextDescriptor(context, key)?.enumerable) return;
+    defineContextProperty(projected, key, {
+      value: readContextProperty(context, key),
+      enumerable: true,
+      writable: true,
+      configurable: true,
+    });
+  });
+  return projected;
+}
+
+interface AdmittedToolTurn {
+  readonly start: number;
+  readonly calls: readonly {
+    toolCallId: string;
+    toolName: string;
+    input: Record<string, unknown>;
+  }[];
+}
+
+function snapshotAdmittedToolTurn(message: Message, start: number): AdmittedToolTurn {
+  const calls = flatMapPrivateArray(message.parts, (part) => {
+    const call = getAgentRuntimeToolCallPart(part);
+    return call
+      ? [freezeAdmitted({
+        toolCallId: call.toolCallId,
+        toolName: call.toolName,
+        input: cloneStructuredValuePreservingOpaque(call.input),
+      })]
+      : [];
+  });
+  return freezeAdmitted({ start, calls: freezeAdmitted(calls) });
+}
+
+function findAdmittedToolResult(
+  messages: Message[],
+  turn: AdmittedToolTurn,
+  callId: string,
+): ToolResultPart | undefined {
+  for (let index = turn.start; index < messages.length; index++) {
+    let result: ToolResultPart | undefined;
+    const found = somePrivateArray(messages[index]!.parts, (part) => {
+      if (part.type !== "tool-result" || part.toolCallId !== callId) return false;
+      result = part as ToolResultPart;
+      return true;
+    });
+    if (found) return result;
+  }
+  return undefined;
+}
+
 async function traceConfiguredToolExecution(input: {
   mode: "generate" | "stream";
   agentId: string;
   toolName: string;
   toolCallId: string;
   args: Record<string, unknown>;
+  admittedTurn: AdmittedToolTurn;
+  owner: Message[];
+  prepareTerminalDispatch: () => Promise<void>;
   toolsConfig: true | Record<string, ToolConfigEntry> | undefined;
   context: ToolExecutionContext;
   allowedRemoteToolNames: string[] | undefined;
@@ -1715,6 +1795,13 @@ async function traceConfiguredToolExecution(input: {
   sourceIntegrationPolicy: SourceIntegrationPolicyManifest | undefined;
   strictConfiguredToolsOnly?: boolean;
 }): Promise<unknown> {
+  admitTerminalDispatch(input.context, {
+    callId: input.toolCallId,
+    callName: input.toolName,
+    agentId: input.agentId,
+    turn: input.admittedTurn,
+    owner: input.owner,
+  }, input.prepareTerminalDispatch);
   const inputSizeBytes = estimateSerializedSizeBytes(input.args);
   return await withSpan(
     "agent.tool_execute",
@@ -1855,6 +1942,7 @@ function markSubmittedFormInputRuntimeContext(
 }
 
 function isAbortError(error: unknown, abortSignal?: AbortSignal): boolean {
+  if (isTerminalRunControlError(error)) return false;
   if (abortSignal?.aborted && error === abortSignal.reason) {
     return true;
   }
@@ -2063,6 +2151,7 @@ export class AgentRuntime {
   ): Promise<{
     messages: Message[];
     addMessage: (message: Message) => Promise<void>;
+    prepareTerminalDispatch: () => Promise<void>;
     commit: () => Promise<void>;
     rollback: () => Promise<void>;
     finalized: Promise<void>;
@@ -2143,6 +2232,7 @@ export class AgentRuntime {
     persisted: boolean;
     persist: () => Promise<Message[]>;
     addMessage: (message: Message) => Promise<void>;
+    prepareTerminalDispatch: () => Promise<void>;
     commit: () => Promise<void>;
     finalize: () => Promise<void>;
     validationState: () => "pending" | "accepted" | "rejected";
@@ -2165,9 +2255,9 @@ export class AgentRuntime {
         try {
           await prepared.commit();
         } catch (error) {
-          rejection = { error };
+          rejection = { error: terminalReceiptPersistenceFailure(error, abortSignal) };
           validationState = "rejected";
-          throw error;
+          throw rejection.error;
         }
       });
       await finalization;
@@ -2200,16 +2290,31 @@ export class AgentRuntime {
         return chainPrivatePromise(transaction, ({ messages }) => messages);
       },
       commit,
+      prepareTerminalDispatch: async () => {
+        if (rejection) throw rejection.error;
+        if (validationState !== "accepted") {
+          throw new Error("Terminal dispatch requires an accepted turn");
+        }
+        try {
+          await persistence.persist();
+          await (await transaction!).prepareTerminalDispatch();
+        } catch (error) {
+          rejection = { error: terminalReceiptPersistenceFailure(error, abortSignal) };
+          validationState = "rejected";
+          await rollback();
+          throw rejection.error;
+        }
+      },
       addMessage: async (message: Message) => {
         if (rejection) throw rejection.error;
         try {
           await persistence.persist();
           await (await transaction!).addMessage(message);
         } catch (error) {
-          rejection = { error };
+          rejection = { error: terminalReceiptPersistenceFailure(error, abortSignal) };
           validationState = "rejected";
           await rollback();
-          throw error;
+          throw rejection.error;
         }
       },
       finalize: () => validationState === "accepted" ? commit() : rollback(),
@@ -2219,10 +2324,10 @@ export class AgentRuntime {
         try {
           await getTurnProviderRequestValidator(context)?.(providerSystem, messages);
         } catch (error) {
-          rejection = { error };
+          rejection = { error: terminalReceiptPersistenceFailure(error, abortSignal) };
           validationState = "rejected";
           await rollback();
-          throw error;
+          throw rejection.error;
         }
         validationState = "accepted";
         // Keep validated stateful turns serialized until finalization. An
@@ -2238,6 +2343,7 @@ export class AgentRuntime {
   ): Promise<{
     messages: Message[];
     addMessage: (message: Message) => Promise<void>;
+    prepareTerminalDispatch: () => Promise<void>;
     commit: () => Promise<void>;
     rollback: () => Promise<void>;
     finalized: Promise<void>;
@@ -2262,11 +2368,11 @@ export class AgentRuntime {
     const validateTurnMessages = context && getTurnMessageValidator(context);
     const validateProjectedMessages = context && getTurnMessageProjectionValidator(context);
     const validateProviderRequest = context && getTurnProviderRequestValidator(context);
-    const memoryTransaction =
+    let memoryTransaction =
       validateTurnMessages || validateProjectedMessages || validateProviderRequest
         ? await beginMemoryTransaction(this.memory)
         : undefined;
-    const turnMemory = memoryTransaction ?? this.memory;
+    let turnMemory = memoryTransaction ?? this.memory;
     let validated = committedInputMessages;
     let history: Message[] = [];
     let persisted: Message[];
@@ -2325,6 +2431,21 @@ export class AgentRuntime {
     return {
       messages: persisted.length > 0 ? persisted : committedInputMessages,
       addMessage: (message) => turnMemory.add(message),
+      prepareTerminalDispatch: async () => {
+        // Preserve validated admission before a terminal transport can commit.
+        // Keep the turn queue held while receipts use a fresh transaction.
+        if (
+          this.memory instanceof NoMemory ||
+          typeof this.memory.beginTransaction !== "function"
+        ) return;
+        if (isFinalized) throw new Error("Cannot dispatch a finalized turn");
+        if (memoryTransaction) {
+          await memoryTransaction.commit();
+          memoryTransaction = undefined;
+        }
+        memoryTransaction = await beginMemoryTransaction(this.memory);
+        turnMemory = memoryTransaction;
+      },
       commit: async () => {
         if (isFinalized) return;
         isFinalized = true;
@@ -2512,6 +2633,13 @@ export class AgentRuntime {
       outputSchema?: unknown;
     },
   ): Promise<AgentResponse> {
+    const outputSchema = this.resolveOutputSchema(options?.outputSchema);
+    const terminalControl = createTerminalRunControl(
+      context,
+      abortSignal,
+      outputSchema ? (output) => outputSchema.parseOutput(privateJsonStringify(output)) : undefined,
+    );
+    abortSignal = terminalControl.signal;
     const runRuntimeContext = captureAgentRunRuntimeContext();
     if (this.#modelResolverState.status === "absent") throwIfAborted(abortSignal);
     const { transport, resolveModelRuntime } = await this.#resolveModelTransport(
@@ -2522,7 +2650,6 @@ export class AgentRuntime {
     const abortGuard = createModelRuntimeResolverAbortGuard(resolveModelRuntime, abortSignal);
     try {
       throwIfAborted(abortSignal);
-      const outputSchema = this.resolveOutputSchema(options?.outputSchema);
       const requestedModel = transport.requestedModel;
       const resolvedModelString = transport.resolvedModelString;
       const supportsToolCalling = supportsModelRuntimeToolCalling(transport.languageModel);
@@ -2578,7 +2705,9 @@ export class AgentRuntime {
                     messages,
                     turnPersistence.validateProviderRequest,
                     turnPersistence.addMessage,
+                    turnPersistence.prepareTerminalDispatch,
                     {
+                      ...terminalControl.binding,
                       agentId: this.id,
                       projectId: tryGetCacheKeyContext()?.projectId,
                     },
@@ -2601,6 +2730,14 @@ export class AgentRuntime {
                     outputSchema,
                   )
                 );
+              } catch (error) {
+                const terminalResponse = terminalCompletionResponse(
+                  error,
+                  outputSchema !== undefined,
+                );
+                if (!terminalResponse) throw error;
+                this.status = "completed";
+                return attachOutputSchemaParser(terminalResponse, outputSchema);
               } finally {
                 abortGuard.revoke();
               }
@@ -2674,6 +2811,14 @@ export class AgentRuntime {
     abortSignal?: AbortSignal,
     options?: { outputSchema?: unknown },
   ): Promise<ReadableStream<Uint8Array>> {
+    const callerAbortSignal = abortSignal;
+    const outputSchema = this.resolveOutputSchema(options?.outputSchema);
+    const terminalControl = createTerminalRunControl(
+      context,
+      abortSignal,
+      outputSchema ? (output) => outputSchema.parseOutput(privateJsonStringify(output)) : undefined,
+    );
+    abortSignal = terminalControl.signal;
     const runRuntimeContext = captureAgentRunRuntimeContext();
     setOtelActiveSpanAttributes({
       "run.started_at_utc": runRuntimeContext.runStartedAtUtc,
@@ -2687,7 +2832,6 @@ export class AgentRuntime {
     );
     const abortScope = createModelRuntimeResolverAbortScope(resolveModelRuntime, abortSignal);
     try {
-      const outputSchema = this.resolveOutputSchema(options?.outputSchema);
       const requestedModel = transport.requestedModel;
       const resolvedModelString = transport.resolvedModelString;
       debugRuntimeModelRemap(requestedModel, resolvedModelString);
@@ -2700,6 +2844,7 @@ export class AgentRuntime {
       const streamAbortSignal = abortScope.signal;
       const streamCacheCtx = tryGetCacheKeyContext();
       const toolContext = {
+        ...terminalControl.binding,
         agentId: this.id,
         abortSignal: streamAbortSignal,
         projectId: streamCacheCtx?.projectId,
@@ -2775,6 +2920,8 @@ export class AgentRuntime {
       this.#onStreamCompletion?.(completion.promise);
       const runtimeStream = createPrivateReadableStream<Uint8Array>({
         start: async (controller) => {
+          let streamedResponseText = "";
+          let terminalCompleted = false;
           try {
             throwIfAborted(streamAbortSignal);
             this.status = "streaming";
@@ -2794,7 +2941,6 @@ export class AgentRuntime {
               type: "data-veryfront.runtime_context",
               data: runRuntimeContext,
             });
-            let streamedResponseText = "";
             const streamingCallbacks: AgentRuntimeStreamCallbacks = {
               ...callbacks,
               onChunk: (chunk) => {
@@ -2813,6 +2959,7 @@ export class AgentRuntime {
                       memoryMessages,
                       turnPersistence.validateProviderRequest,
                       turnPersistence.addMessage,
+                      turnPersistence.prepareTerminalDispatch,
                       controller,
                       encoder,
                       streamingCallbacks,
@@ -2833,6 +2980,15 @@ export class AgentRuntime {
                       outputSchema,
                     )
                   );
+                } catch (error) {
+                  const terminalResponse = terminalCompletionResponse(
+                    error,
+                    outputSchema !== undefined,
+                  );
+                  if (!terminalResponse) throw error;
+                  terminalCompleted = true;
+                  this.status = "completed";
+                  return attachOutputSchemaParser(terminalResponse, outputSchema);
                 } finally {
                   abortScope.revoke();
                 }
@@ -2847,19 +3003,22 @@ export class AgentRuntime {
               );
             }
             await turnPersistence.commit();
-            throwIfAborted(streamAbortSignal);
-            if (response.text.length > 0 && streamedResponseText.length === 0) {
-              sendSSE(controller, encoder, { type: "text-start", id: textPartId });
+            throwIfAborted(terminalCompleted ? callerAbortSignal : streamAbortSignal);
+            if (
+              response.text.length > 0 && (terminalCompleted || streamedResponseText.length === 0)
+            ) {
+              const responseTextId = terminalCompleted ? generateId("text") : textPartId;
+              sendSSE(controller, encoder, { type: "text-start", id: responseTextId });
               sendSSE(controller, encoder, {
                 type: "text-delta",
-                id: textPartId,
+                id: responseTextId,
                 delta: response.text,
               });
               callbacks?.onChunk?.(response.text);
-              sendSSE(controller, encoder, { type: "text-end", id: textPartId });
+              sendSSE(controller, encoder, { type: "text-end", id: responseTextId });
             }
             callbacks?.onFinish?.(response);
-            throwIfAborted(streamAbortSignal);
+            throwIfAborted(terminalCompleted ? callerAbortSignal : streamAbortSignal);
 
             const finishUsage = buildStreamFinishUsage(response.usage);
             const finishReason = getResponseFinishReason(response);
@@ -2883,7 +3042,10 @@ export class AgentRuntime {
             // the same cause the stream reports, instead of a manufactured one.
             // A cancellation is not a provider failure: it keeps the relay's
             // neutral default rather than surfacing the raw abort reason.
-            const aborted = isAbortError(error, streamAbortSignal);
+            const aborted = isAbortError(
+              error,
+              terminalCompleted ? callerAbortSignal : streamAbortSignal,
+            );
             const errorEvent = aborted ? undefined : resolveRuntimeExecutionErrorEvent(error);
             // The relay writes a PUBLIC RunError, so it takes only curated
             // diagnostics -- a persistence failure's raw message can carry
@@ -2954,6 +3116,7 @@ export class AgentRuntime {
     messages: Message[],
     validateProviderRequest: TurnProviderRequestValidator,
     persistMessage: (message: Message) => Promise<void>,
+    prepareTerminalDispatch: () => Promise<void>,
     toolContextBase: ToolExecutionContext | undefined,
     runtimeContext: Record<string, unknown> | undefined,
     runRuntimeContext: AgentRunRuntimeContext,
@@ -3226,6 +3389,7 @@ export class AgentRuntime {
           id: `msg_${Date.now()}_${step}`,
           timestamp: Date.now(),
         });
+        const admittedTurn = snapshotAdmittedToolTurn(assistantMessage, currentMessages.length);
         pushPrivateArray(currentMessages, assistantMessage);
         await persistMessage(assistantMessage);
         await persistProviderReplayCheckpointAfterTurn({
@@ -3569,14 +3733,8 @@ export class AgentRuntime {
                   : resolveConfiguredTool(runtimeToolsConfig, tc.toolName, { agentId: this.id }) ??
                     undefined,
               );
-              const executionContext = {
-                toolCallId: tc.toolCallId,
-                ...toolContext,
-                projectId: cacheCtx?.projectId ?? toolContext?.projectId,
-                // Caller identity for capability scoping. Stamped after the
-                // spreads so caller-supplied context cannot spoof it.
-                agentId: this.id,
-              };
+              const executionContext = applicationExecutionContext(toolContext);
+              executionContext.projectId = cacheCtx?.projectId ?? toolContext?.projectId;
               throwIfAborted(abortSignal);
               const result = await traceConfiguredToolExecution({
                 mode: "generate",
@@ -3584,6 +3742,9 @@ export class AgentRuntime {
                 toolName: tc.toolName,
                 toolCallId: tc.toolCallId,
                 args: toolCall.args,
+                admittedTurn,
+                owner: currentMessages,
+                prepareTerminalDispatch,
                 toolsConfig: runtimeToolsConfig,
                 context: executionContext,
                 allowedRemoteToolNames,
@@ -3649,6 +3810,14 @@ export class AgentRuntime {
               pushPrivateArray(currentMessages, toolResultMessage);
               await persistMessage(toolResultMessage);
             } catch (error) {
+              await this.recordTerminalToolResult(
+                error,
+                toolCall,
+                persistMessage,
+                currentMessages,
+                toolCalls,
+                totalUsage,
+              );
               throwIfAborted(abortSignal);
               toolCall.status = "error";
               toolCall.error = error instanceof Error ? error.message : String(error);
@@ -3709,6 +3878,7 @@ export class AgentRuntime {
     messages: Message[],
     validateProviderRequest: TurnProviderRequestValidator,
     persistMessage: (message: Message) => Promise<void>,
+    prepareTerminalDispatch: () => Promise<void>,
     controller: ReadableStreamDefaultController,
     encoder: TextEncoder,
     callbacks: {
@@ -3867,6 +4037,15 @@ export class AgentRuntime {
       const runtimeToolNames = Object.keys(runtimeTools ?? {}).sort(compareStrings);
 
       if (!resumeToolCallExecuted && this.#resumeToolCall) {
+        // A resumed finalize can terminate before any provider call. Validate
+        // the staged turn first so accepted terminal results commit and
+        // rejected turns roll back without dispatching the parked action.
+        if (isTerminalRunToolName(this.#resumeToolCall.name)) {
+          await validateProviderRequest(
+            withAgentRunRuntimeContext(currentSystemPrompt, runRuntimeContext),
+            currentMessages,
+          );
+        }
         const resumeToolCall = this.#resumeToolCall;
         resumeToolCallExecuted = true;
         const inputText = privateJsonStringify(resumeToolCall.input);
@@ -3896,8 +4075,29 @@ export class AgentRuntime {
             args: resumeToolCall.input,
           }],
         };
-        pushPrivateArray(currentMessages, assistantToolCallMessage);
-        await persistMessage(assistantToolCallMessage);
+        let admittedTurn = snapshotAdmittedToolTurn(
+          assistantToolCallMessage,
+          currentMessages.length,
+        );
+        for (let index = currentMessages.length - 1; index >= 0; index--) {
+          const message = currentMessages[index]!;
+          if (message.role !== "assistant") continue;
+          const candidate = snapshotAdmittedToolTurn(message, index);
+          if (
+            somePrivateArray(
+              candidate.calls,
+              (call) =>
+                call.toolCallId === resumeToolCall.id && call.toolName === resumeToolCall.name &&
+                providerValuesEqual(call.input, resumeToolCall.input, new IntrinsicWeakMap()),
+            )
+          ) admittedTurn = candidate;
+          // A newer assistant envelope is a turn boundary, never inferred replay provenance.
+          break;
+        }
+        if (admittedTurn.start === currentMessages.length) {
+          pushPrivateArray(currentMessages, assistantToolCallMessage);
+          await persistMessage(assistantToolCallMessage);
+        }
 
         const toolCall: ToolCall = {
           id: resumeToolCall.id,
@@ -3905,11 +4105,7 @@ export class AgentRuntime {
           args: resumeToolCall.input,
           status: "executing",
         };
-        const executionContext = {
-          toolCallId: resumeToolCall.id,
-          ...toolContext,
-          agentId: this.id,
-        };
+        const executionContext = applicationExecutionContext(toolContext);
         try {
           // The trusted parked call was already exposed in the prior segment.
           // Recheck current authorization without requiring its lost step visibility.
@@ -3944,6 +4140,9 @@ export class AgentRuntime {
             toolName: resumeToolCall.name,
             toolCallId: resumeToolCall.id,
             args: toolCall.args,
+            admittedTurn,
+            owner: currentMessages,
+            prepareTerminalDispatch,
             toolsConfig: this.config.tools,
             context: executionContext,
             allowedRemoteToolNames,
@@ -3988,12 +4187,21 @@ export class AgentRuntime {
           pushPrivateArray(currentMessages, toolResultMessage);
           await persistMessage(toolResultMessage);
         } catch (error) {
+          await this.recordTerminalToolResult(
+            error,
+            toolCall,
+            persistMessage,
+            currentMessages,
+            toolCalls,
+            totalUsage,
+            { controller, encoder },
+          );
+          throwIfAborted(abortSignal);
           await this.recordToolError(
             persistMessage,
             toolCall,
             error instanceof Error ? error.message : String(error),
-            controller,
-            encoder,
+            { controller, encoder },
             currentMessages,
             toolCalls,
           );
@@ -4446,6 +4654,7 @@ export class AgentRuntime {
         )
         : undefined;
       let streamedBatchCompletionDeferred = streamedSkillDelegationOrder === "prefix";
+      const admittedTurn = snapshotAdmittedToolTurn(assistantMessage, currentMessages.length);
       pushPrivateArray(currentMessages, assistantMessage);
       await persistMessage(assistantMessage);
       await persistProviderReplayCheckpointAfterTurn({
@@ -4543,8 +4752,7 @@ export class AgentRuntime {
           incompleteToolCall,
           `Stream terminated before tool-call event fired for "${toolCall.name}". ` +
             `Received ${toolCall.arguments.length} chars of partial tool-input deltas.`,
-          controller,
-          encoder,
+          { controller, encoder },
           currentMessages,
           toolCalls,
           {
@@ -4608,8 +4816,7 @@ export class AgentRuntime {
             interruptedBatchToolCall,
             "Tool execution skipped because another tool call in the same model step " +
               "was interrupted before its input completed.",
-            controller,
-            encoder,
+            { controller, encoder },
             currentMessages,
             toolCalls,
           );
@@ -4757,8 +4964,7 @@ export class AgentRuntime {
             persistMessage,
             toolCall,
             `Invalid tool arguments: ${capturedInput.parseError}`,
-            controller,
-            encoder,
+            { controller, encoder },
             currentMessages,
             toolCalls,
           );
@@ -4800,8 +5006,7 @@ export class AgentRuntime {
               persistMessage,
               toolCall,
               error instanceof Error ? error.message : String(error),
-              controller,
-              encoder,
+              { controller, encoder },
               currentMessages,
               toolCalls,
             );
@@ -4824,8 +5029,7 @@ export class AgentRuntime {
             persistMessage,
             toolCall,
             toolNotVisibleError(tc.name),
-            controller,
-            encoder,
+            { controller, encoder },
             currentMessages,
             toolCalls,
           );
@@ -4845,8 +5049,7 @@ export class AgentRuntime {
             persistMessage,
             toolCall,
             policyCheck.error,
-            controller,
-            encoder,
+            { controller, encoder },
             currentMessages,
             toolCalls,
           );
@@ -4865,19 +5068,16 @@ export class AgentRuntime {
 
           callbacks?.onToolCall?.(toolCall);
 
-          const executionContext = {
-            toolCallId: tc.id,
-            ...toolContext,
-            // Caller identity for capability scoping. Stamped after the
-            // spread so caller-supplied context cannot spoof it.
-            agentId: this.id,
-          };
+          const executionContext = applicationExecutionContext(toolContext);
           const result = await traceConfiguredToolExecution({
             mode: "stream",
             agentId: this.id,
             toolName: tc.name,
             toolCallId: tc.id,
             args: toolCall.args,
+            admittedTurn,
+            owner: currentMessages,
+            prepareTerminalDispatch,
             toolsConfig: this.config.tools,
             context: executionContext,
             allowedRemoteToolNames,
@@ -4940,15 +5140,14 @@ export class AgentRuntime {
             currentStepToolResults.set(tc.id, toolResultMessage.parts[0] as ToolResultPart);
           }
         } catch (error) {
-          const errorStr = error instanceof Error ? error.message : String(error);
           await this.recordToolError(
             persistMessage,
             toolCall,
-            errorStr,
-            controller,
-            encoder,
+            undefined,
+            { controller, encoder },
             currentMessages,
             toolCalls,
+            { terminal: { error, usage: totalUsage, abortSignal } },
           );
         }
       }
@@ -5024,16 +5223,117 @@ export class AgentRuntime {
   /**
    * Record a tool error and send SSE event.
    */
+  private async recordTerminalToolResult(
+    error: unknown,
+    toolCall: ToolCall,
+    persistMessage: (message: Message) => Promise<void>,
+    currentMessages: Message[],
+    toolCalls: ToolCall[],
+    usage: NonNullable<AgentResponse["usage"]>,
+    stream?: { controller: ReadableStreamDefaultController; encoder: TextEncoder },
+  ): Promise<void> {
+    const dispatch = terminalDispatchRecord(error, currentMessages);
+    if (
+      !isTerminalRunControlError(error) || !dispatch || error.terminalToolCallId !== dispatch.callId
+    ) return;
+    toolCall = { ...toolCall, id: dispatch.callId, name: dispatch.callName };
+    const admittedTurn = dispatch.turn as AdmittedToolTurn;
+    const { controller, encoder } = stream ?? {};
+    const acknowledged = error.acknowledgedResult !== undefined;
+    const priorResult = findAdmittedToolResult(currentMessages, admittedTurn, dispatch.callId);
+    toolCall.status = acknowledged ? "completed" : "error";
+    if (acknowledged) toolCall.result = priorResult?.result ?? error.acknowledgedResult;
+    else toolCall.error = error.message;
+    pushPrivateArray(toolCalls, toolCall);
+    if (!priorResult) {
+      const message = acknowledged
+        ? createToolResultMessage(toolCall.id, toolCall.name, error.acknowledgedResult)
+        : createToolErrorMessage(toolCall.id, toolCall.name, error.message);
+      await persistMessage(message);
+      pushPrivateArray(currentMessages, message);
+    }
+    const siblings = this.unresolvedTerminalSiblings(currentMessages, admittedTurn);
+    await forEachSequential(siblings, async (sibling) => {
+      const reason = acknowledged
+        ? "Run finalized before this tool was dispatched"
+        : "Run outcome could not be confirmed; further tool dispatch stopped";
+      const skipped = createToolErrorMessage(sibling.toolCallId, sibling.toolName, reason);
+      await persistMessage(skipped);
+      pushPrivateArray(currentMessages, skipped);
+      pushPrivateArray(toolCalls, {
+        id: sibling.toolCallId,
+        name: sibling.toolName,
+        args: sibling.input,
+        status: "error",
+        error: reason,
+      });
+      if (controller && encoder) {
+        sendSSE(controller, encoder, {
+          type: "tool-output-error",
+          toolCallId: sibling.toolCallId,
+          errorText: reason,
+          ...(isDynamicTool(sibling.toolName) ? { dynamic: true } : {}),
+        });
+      }
+    });
+    error.executionState = {
+      messages: [...currentMessages],
+      toolCalls: [...toolCalls],
+      usage: { ...usage },
+    };
+    if (controller && encoder) {
+      sendSSE(controller, encoder, {
+        type: acknowledged ? "tool-output-available" : "tool-output-error",
+        toolCallId: toolCall.id,
+        ...(acknowledged ? { output: error.acknowledgedResult } : { errorText: error.message }),
+        ...(isDynamicTool(toolCall.name) ? { dynamic: true } : {}),
+      });
+    }
+  }
+
+  private unresolvedTerminalSiblings(currentMessages: Message[], turn: AdmittedToolTurn) {
+    const resolvedIds = createPrivateSet<string>();
+    for (let index = turn.start; index < currentMessages.length; index++) {
+      forEachPrivateArray(currentMessages[index]!.parts, (part) => {
+        if (part.type === "tool-result") resolvedIds.add(part.toolCallId);
+      });
+    }
+    return filterPrivateArray(turn.calls, (call) => !resolvedIds.has(call.toolCallId));
+  }
+
   private async recordToolError(
     persistMessage: (message: Message) => Promise<void>,
     toolCall: ToolCall,
-    errorStr: string,
-    controller: ReadableStreamDefaultController,
-    encoder: TextEncoder,
+    errorStr: string | undefined,
+    stream: { controller: ReadableStreamDefaultController; encoder: TextEncoder },
     currentMessages: Message[],
     toolCalls: ToolCall[],
-    options: { emitSse?: boolean; includeInResponse?: boolean } = {},
+    options: {
+      emitSse?: boolean;
+      includeInResponse?: boolean;
+      terminal?: {
+        error: unknown;
+        usage: NonNullable<AgentResponse["usage"]>;
+        abortSignal?: AbortSignal;
+      };
+    } = {},
   ): Promise<void> {
+    const { controller, encoder } = stream;
+    if (options.terminal) {
+      await this.recordTerminalToolResult(
+        options.terminal.error,
+        toolCall,
+        persistMessage,
+        currentMessages,
+        toolCalls,
+        options.terminal.usage,
+        { controller, encoder },
+      );
+      throwIfAborted(options.terminal.abortSignal);
+      const error = options.terminal.error;
+      errorStr = error instanceof Error ? error.message : String(error);
+    }
+    errorStr ??= "Tool execution failed";
     toolCall.status = "error";
     toolCall.error = errorStr;
     if (options.includeInResponse !== false) {
@@ -5143,6 +5443,8 @@ const agentRuntimePrivateMethodNames = [
   "createGenerateReplacementTools",
   "resolveOutputSchema",
   "recordToolError",
+  "recordTerminalToolResult",
+  "unresolvedTerminalSiblings",
   "resolveSystemPrompt",
   "computeMaxSteps",
   "resolveTemperature",

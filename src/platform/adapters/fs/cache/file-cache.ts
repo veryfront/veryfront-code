@@ -254,6 +254,11 @@ export class FileCache {
     return cacheBackend;
   }
 
+  /** Whether reads and writes go to the distributed backend. */
+  isDistributed(): boolean {
+    return this.getBackend() !== null;
+  }
+
   /**
    * Synchronous get - only checks fallback cache (for local dev without backend).
    * In production with backend, use getAsync instead.

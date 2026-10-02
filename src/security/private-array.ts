@@ -52,6 +52,17 @@ export function findLastPrivateArrayIndex<T>(
   return -1;
 }
 
+/** Visit own entries in order without consulting the iterator or inherited indexes. */
+export function forEachPrivateArray<T>(
+  values: readonly T[],
+  visitor: (value: T, index: number, values: readonly T[]) => void,
+): void {
+  const length = values.length;
+  for (let index = 0; index < length; index++) {
+    if (hasOwn(values, index)) visitor(values[index]!, index, values);
+  }
+}
+
 /** Test private array elements without exposing the receiver to writable methods. */
 export function somePrivateArray<T>(
   values: readonly T[],
