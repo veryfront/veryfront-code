@@ -151,8 +151,8 @@ function toZodShape(
 const defineProperty = Object.defineProperty;
 
 function defineOwnDataProperty(
-  target: object,
-  key: PropertyKey,
+  target: Record<string, unknown> | unknown[],
+  key: string | number,
   value: unknown,
 ): void {
   // A data descriptor preserves keys such as `__proto__` as ordinary data
