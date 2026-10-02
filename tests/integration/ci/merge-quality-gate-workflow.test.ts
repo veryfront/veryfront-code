@@ -923,6 +923,8 @@ describe("trusted merge-group cancellation workflow", () => {
       assertEquals(observer.uses, TRUSTED_CANCELLATION_WORKFLOW);
       assertEquals(observer.permissions, { actions: "write" });
       assertEquals(observer.steps, undefined);
+      assertEquals(observer.with, undefined);
+      assertEquals(observer.secrets, undefined);
       const target = asRecord(jobs[name], name);
       const permissions = target.permissions === undefined
         ? {}

@@ -432,7 +432,7 @@ describe("repository hardening", () => {
           assert(cancellation.includes("if: ${{ github.event_name == 'merge_group' }}"));
           assert(
             cancellation.includes(
-              'run: gh api --method POST "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/force-cancel"',
+              'run: gh api --method POST "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/cancel"',
             ),
           );
           continue;
