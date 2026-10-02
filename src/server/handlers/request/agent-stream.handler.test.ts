@@ -22,10 +22,12 @@ import { AgentRunSessionManager } from "#veryfront/internal-agents/session-manag
 import {
   getRuntimeRemoteToolSources,
   type RuntimeRemoteToolConfig,
+  VERYFRONT_API_MCP_SOURCE_ID,
 } from "#veryfront/agent/runtime/mcp-server-tool-sources.ts";
+import { INGRESS_RUN_TERMINAL_TOKEN_HEADER } from "#veryfront/security/http/ingress-credentials.ts";
 import { getRuntimeSourceIntegrationPolicy } from "#veryfront/agent/runtime/runtime-tool-config.ts";
 import type { ProviderReplayCheckpoint } from "#veryfront/agent/runtime/provider-replay.ts";
-import { dynamicTool } from "#veryfront/tool";
+import { dynamicTool, type RemoteToolSource } from "#veryfront/tool";
 import { markRemoteToolProvenance } from "#veryfront/tool/remote-tool-provenance.ts";
 import {
   assertEquals,
@@ -1390,6 +1392,125 @@ describe("server/handlers/request/agent-stream.handler", () => {
       else Deno.env.set("VERYFRONT_API_BASE_URL", originalApiBaseUrl);
     }
   });
+
+  for (const withTerminalToken of [true, false]) {
+    it(`sends finalize terminal authority only for this run: token=${withTerminalToken}`, async () => {
+      const finalizeCalls: Array<
+        { runId: unknown; authorization: string | null; terminal: string | null }
+      > = [];
+      let platformSources: RemoteToolSource[] = [];
+      const originalApiUrl = Deno.env.get("VERYFRONT_API_URL");
+      const originalApiBaseUrl = Deno.env.get("VERYFRONT_API_BASE_URL");
+      Deno.env.set("VERYFRONT_API_URL", TEST_PUBLIC_API_ORIGIN);
+      Deno.env.delete("VERYFRONT_API_BASE_URL");
+      installMockFetch(
+        ((url, init) => {
+          if (String(url) !== `${TEST_PUBLIC_API_ORIGIN}/mcp`) {
+            return Promise.resolve(Response.json({ data: [] }));
+          }
+          const requestInit = observeFetchRequestInit(init);
+          const headers = new Headers(requestInit.headers);
+          const request = JSON.parse(String(requestInit.body));
+          if (request.method === "tools/call") {
+            finalizeCalls.push({
+              runId: request.params?.arguments?.runId,
+              authorization: headers.get("authorization"),
+              terminal: headers.get(INGRESS_RUN_TERMINAL_TOKEN_HEADER),
+            });
+            return Promise.resolve(
+              Response.json({ jsonrpc: "2.0", id: request.id, result: { content: [] } }),
+            );
+          }
+          assertEquals(headers.get(INGRESS_RUN_TERMINAL_TOKEN_HEADER), null);
+          return Promise.resolve(Response.json({
+            jsonrpc: "2.0",
+            id: request.id,
+            result: {
+              tools: [{
+                name: "finalize",
+                description: "Finalize the current run",
+                inputSchema: { type: "object", properties: {} },
+              }],
+            },
+          }));
+        }) as typeof fetch,
+      );
+
+      try {
+        const handler = createTestAgentStreamHandler({
+          ensureProjectDiscovery: async () => createEmptyDiscoveryResult(),
+          getAgent: (id) => id === "assistant-1" ? createAgent("assistant-1") : undefined,
+          getAllAgentIds: () => ["assistant-1"],
+          sessionManager: new AgentRunSessionManager(),
+          createRuntime: (runtimeAgent) => {
+            platformSources = (runtimeAgent.config as RuntimeRemoteToolConfig)
+              .__vfRemoteToolSources ?? [];
+            return {
+              stream: () =>
+                Promise.resolve(
+                  new ReadableStream<Uint8Array>({
+                    start(controller) {
+                      controller.close();
+                    },
+                  }),
+                ),
+            };
+          },
+        });
+        const body = createAgentStreamRequestBody({
+          credentials: { authToken: "run-invocation-token" },
+          agentConfig: {
+            id: "assistant-1",
+            name: "Project Assistant",
+            description: "Ends its own run.",
+            instructions: "Fail the run.",
+            skills: [],
+            tools: ["finalize"],
+          },
+        });
+        const { jws, publicKeyPem } = await createControlPlaneSignature(body, {
+          requestId: "run_1",
+        });
+        const result = await handler.handle(
+          new Request("https://example.com/api/control-plane/runs/run_1/stream", {
+            method: "POST",
+            headers: {
+              "content-type": "application/json",
+              "x-veryfront-control-plane-jws": jws,
+              ...(withTerminalToken
+                ? { [INGRESS_RUN_TERMINAL_TOKEN_HEADER]: "terminal-secret" }
+                : {}),
+            },
+            body,
+          }),
+          createCtx(publicKeyPem),
+        );
+        assertExists(result.response);
+        assertEquals(result.response.status, 200);
+        const source = platformSources.find((entry) => entry.id === VERYFRONT_API_MCP_SOURCE_ID);
+        assertExists(source);
+        await source.listTools({ runId: "run_1" });
+        for (const runId of ["run_1", "run_other"]) {
+          await source.executeTool("finalize", { runId, status: "failed" }, { runId });
+        }
+        const ordinary = { authorization: "Bearer run-invocation-token", terminal: null };
+        assertEquals(finalizeCalls, [
+          {
+            runId: "run_1",
+            ...ordinary,
+            ...(withTerminalToken ? { terminal: "terminal-secret" } : {}),
+          },
+          { runId: "run_other", ...ordinary },
+        ]);
+      } finally {
+        restoreMockFetch();
+        if (originalApiUrl === undefined) Deno.env.delete("VERYFRONT_API_URL");
+        else Deno.env.set("VERYFRONT_API_URL", originalApiUrl);
+        if (originalApiBaseUrl === undefined) Deno.env.delete("VERYFRONT_API_BASE_URL");
+        else Deno.env.set("VERYFRONT_API_BASE_URL", originalApiBaseUrl);
+      }
+    });
+  }
 
   it("does not trust forwarded integration metadata as a remote tool allowlist", async () => {
     let capturedAllowedTools: string[] | undefined;

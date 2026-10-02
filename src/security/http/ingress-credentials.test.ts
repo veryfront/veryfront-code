@@ -19,6 +19,7 @@ import {
   INGRESS_INFERENCE_TOKEN_HEADER,
   INGRESS_RUN_EVENT_TOKEN_HEADER,
   INGRESS_RUN_STOP_TOKEN_HEADER,
+  INGRESS_RUN_TERMINAL_TOKEN_HEADER,
   inheritIngressCredentials,
   readIngressCredential,
   requestForWebSocketUpgrade,
@@ -77,6 +78,7 @@ describe("security/http/ingress-credentials", () => {
       INGRESS_INFERENCE_TOKEN_HEADER,
       INGRESS_RUN_EVENT_TOKEN_HEADER,
       INGRESS_RUN_STOP_TOKEN_HEADER,
+      INGRESS_RUN_TERMINAL_TOKEN_HEADER,
     ] as const
   ) {
     for (const cookies of [[], ["a=1; Expires=Wed, 01 Oct 2026 07:28:00 GMT", "b=2; Path=/"]]) {
