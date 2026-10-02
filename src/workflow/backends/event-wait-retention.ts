@@ -92,12 +92,29 @@ export function takeRetainedRunEvent(
   eventName: string,
   publishedBefore?: Date,
 ): RunEventEnvelope | null {
-  const index = mailbox.findIndex((event) =>
+  const index = findRetainedRunEventIndex(mailbox, eventName, publishedBefore);
+  if (index === -1) return null;
+  return mailbox.splice(index, 1)[0] ?? null;
+}
+
+/** Whether the mailbox holds an event that `takeRetainedRunEvent` would take. */
+export function hasRetainedRunEvent(
+  mailbox: readonly RunEventEnvelope[],
+  eventName: string,
+  publishedBefore?: Date,
+): boolean {
+  return findRetainedRunEventIndex(mailbox, eventName, publishedBefore) !== -1;
+}
+
+function findRetainedRunEventIndex(
+  mailbox: readonly RunEventEnvelope[],
+  eventName: string,
+  publishedBefore?: Date,
+): number {
+  return mailbox.findIndex((event) =>
     event.eventName === eventName &&
     (publishedBefore === undefined || event.publishedAt.getTime() <= publishedBefore.getTime())
   );
-  if (index === -1) return null;
-  return mailbox.splice(index, 1)[0] ?? null;
 }
 
 /**

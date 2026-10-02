@@ -1,6 +1,15 @@
-import { API_CLIENT_ERROR, INVALID_ARGUMENT } from "#veryfront/errors";
+import { API_CLIENT_ERROR, INVALID_ARGUMENT, VeryfrontError } from "#veryfront/errors";
+import { logger as baseLogger } from "#veryfront/utils/logger/logger.ts";
 import type { VeryfrontApiClient } from "../../veryfront-api-client/index.ts";
+import {
+  admitVerifiedSourceContents,
+  assembleSourceListing,
+  forgetVerifiedSource,
+  hasVerifiedSourceContents,
+} from "./source-content-store.ts";
 import type { ContentSource, ResolvedContentContext } from "./types.ts";
+
+const logger = baseLogger.component("veryfront-fs-adapter");
 
 type ContextResolverClient = Pick<
   VeryfrontApiClient,
@@ -135,6 +144,50 @@ export async function resolveContentContext(
         releaseId: contentSource.releaseId,
       };
   }
+}
+
+/**
+ * List a source for the current credential. A branch whose contents this
+ * process already verified is listed as metadata only: the credential's own
+ * listing still decides which files exist, at which versions, and which it may
+ * see, and verified contents are attached by checksum. Any file without a
+ * verified content falls back to the complete listing, whose contents are
+ * then verified for later credentials.
+ */
+export async function fetchSourceListingForContext(
+  client: FileListClient,
+  context: ResolvedContentContext,
+  sourceKey: string,
+): Promise<{ files: Array<{ path: string; content?: string }>; contentReused: boolean }> {
+  if (context.sourceType !== "branch") {
+    return { files: await fetchFileListForContext(client, context), contentReused: false };
+  }
+
+  const branch = { type: "branch", name: context.branch ?? "main" } as const;
+  if (hasVerifiedSourceContents(sourceKey)) {
+    let metadata: Awaited<ReturnType<FileListClient["listAllFiles"]>> | undefined;
+    try {
+      metadata = await client.listAllFiles({ withoutContent: true }, branch);
+    } catch (error) {
+      // Only a rejected field selection is specific to this query. Transport,
+      // authorization and server failures would fail the complete listing
+      // too, so they surface here instead of being paid for twice.
+      if (!(error instanceof VeryfrontError && (error.status === 400 || error.status === 422))) {
+        throw error;
+      }
+      forgetVerifiedSource(sourceKey);
+      logger.debug("Metadata listing failed; listing contents", {
+        projectSlug: context.projectSlug,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+    const assembled = metadata && assembleSourceListing(sourceKey, metadata);
+    if (assembled) return { files: assembled, contentReused: true };
+  }
+
+  const files = await client.listAllFiles({}, branch);
+  await admitVerifiedSourceContents(sourceKey, files);
+  return { files, contentReused: false };
 }
 
 export function fetchFileListForContext(

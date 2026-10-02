@@ -214,6 +214,29 @@ describe("ApprovalManager", () => {
   });
 
   describe("checkExpiredApprovals", () => {
+    it("expires an approval at its deadline but leaves a future approval pending", async () => {
+      using _time = new FakeTime(new Date("2026-09-30T12:00:00.000Z"));
+      manager = new ApprovalManager({ backend, expirationCheckInterval: 0 });
+      for (const [id, offset] of [["due", 0], ["future", 1]] as const) {
+        await backend.createRun(createTestRun(id));
+        await backend.savePendingApproval(id, {
+          id: `approval-${id}`,
+          nodeId: "review",
+          message: "Review",
+          payload: {},
+          requestedAt: new Date(Date.now() - 1000),
+          expiresAt: new Date(Date.now() + offset),
+          status: "pending",
+        });
+      }
+      await manager.checkExpiredApprovals();
+      assertEquals((await backend.getPendingApproval("due", "approval-due"))?.status, "rejected");
+      assertEquals(
+        (await backend.getPendingApproval("future", "approval-future"))?.status,
+        "pending",
+      );
+    });
+
     it("expires only approvals past their expiresAt", async () => {
       manager = new ApprovalManager({ backend, expirationCheckInterval: 0 });
 
@@ -804,6 +827,46 @@ describe("ApprovalManager", () => {
       assertEquals((await backend.getRun(runId))?.status, "failed");
     });
 
+    it("expires an approval created exactly at its deadline before notifying", async () => {
+      using _time = new FakeTime(new Date("2026-08-24T10:00:00.000Z"));
+      let notifications = 0;
+      manager = new ApprovalManager({
+        backend,
+        expirationCheckInterval: 0,
+        notifier: () => {
+          notifications++;
+          return Promise.resolve();
+        },
+      });
+      const runId = "run-boundary-approval-timeout";
+      const run = createTestRun(runId, {
+        status: "waiting",
+        nodeStates: {
+          review: {
+            nodeId: "review",
+            status: "running",
+            attempt: 1,
+            startedAt: new Date("2026-08-24T09:30:00.000Z"),
+          },
+        },
+      });
+      await backend.createRun(run);
+
+      const request = await manager.createApproval(
+        run,
+        "review",
+        { type: "wait", waitType: "approval", timeout: "30m" },
+        run.context,
+      );
+
+      assertEquals(request.expiresAt, new Date("2026-08-24T10:00:00.000Z"));
+      assertEquals(notifications, 0);
+      assertEquals(
+        (await backend.getPendingApproval(runId, request.approvalId))?.status,
+        "rejected",
+      );
+    });
+
     it("omits expiresAt when no timeout is supplied", async () => {
       manager = new ApprovalManager({ backend, expirationCheckInterval: 0 });
 
@@ -1043,6 +1106,40 @@ describe("ApprovalManager", () => {
         "pending",
       );
       assertEquals((await backend.getRun(runId))?.nodeStates, {});
+    });
+
+    it("rejects a decision at the exact deadline but accepts one just before it", async () => {
+      using time = new FakeTime(new Date("2026-09-30T12:00:00.000Z"));
+      manager = new ApprovalManager({ backend, expirationCheckInterval: 0 });
+      for (const id of ["due", "live"]) {
+        await backend.createRun(createTestRun(`run-boundary-${id}`, { status: "waiting" }));
+        await backend.savePendingApproval(`run-boundary-${id}`, {
+          id: `apr-boundary-${id}`,
+          nodeId: "review",
+          message: "Review",
+          payload: {},
+          requestedAt: new Date(Date.now() - 1_000),
+          expiresAt: new Date(Date.now() + 1),
+          status: "pending",
+        });
+      }
+
+      await manager.reject("run-boundary-live", "apr-boundary-live", "alice");
+      time.tick(1);
+      await assertRejects(
+        () => manager.approve("run-boundary-due", "apr-boundary-due", "alice"),
+        Error,
+        "Approval has expired",
+      );
+
+      assertEquals(
+        (await backend.getPendingApproval("run-boundary-live", "apr-boundary-live"))?.status,
+        "rejected",
+      );
+      assertEquals(
+        (await backend.getPendingApproval("run-boundary-due", "apr-boundary-due"))?.status,
+        "pending",
+      );
     });
 
     it("rejects a malformed direct decision before changing the approval", async () => {
