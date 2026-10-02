@@ -7315,6 +7315,76 @@ describe("server/handlers/request/project-run-execute.handler cancellation", () 
     assertEquals(callback.init.body, "{}");
   });
 
+  for (const cancelled of [false, true]) {
+    it(`waits for every knowledge download after a sibling rejects (cancelled: ${cancelled})`, async () => {
+      const controller = new AbortController();
+      const first = Promise.withResolvers<Response>();
+      const sibling = Promise.withResolvers<Response>();
+      const started = Promise.withResolvers<void>();
+      let downloads = 0;
+      let siblingSettled = false;
+      const acknowledgements: boolean[] = [];
+      const runId = `run_knowledge_fanout_${cancelled}`;
+      const signed = await signedRequest(`/api/control-plane/runs/${runId}/execute`, {
+        runId,
+        kind: "task",
+        target: "task:knowledge-ingest",
+        projectId: "proj-1",
+        config: { paths: ["uploads/first.md", "uploads/sibling.md"] },
+      }, {
+        "x-token": "test-token",
+        "x-veryfront-run-stop-token": "opaque-stop-capability",
+      });
+      await withMockFetch(async (input) => {
+        const url = input instanceof Request ? input.url : String(input);
+        if (url.endsWith("/cancellation-ack")) {
+          acknowledgements.push(siblingSettled);
+          return Response.json({ acknowledged: true });
+        }
+        for (const name of ["first", "sibling"]) {
+          if (url.endsWith(`/uploads/uploads%2F${name}.md/url`)) {
+            return Response.json({ signed_url: `https://signed.example.test/${name}.md` });
+          }
+        }
+        assertStringIncludes(url, "https://signed.example.test/");
+        downloads++;
+        if (downloads === 2) started.resolve();
+        if (url.endsWith("/first.md")) return await first.promise;
+        try {
+          return await sibling.promise;
+        } finally {
+          siblingSettled = true;
+        }
+      }, async () => {
+        const pending = new ProjectRunExecuteHandler().handle(
+          new Request(signed.request, { signal: controller.signal }),
+          createCtx(signed.publicKeyPem),
+        );
+        let beforeSibling: string;
+        try {
+          await started.promise;
+          if (cancelled) controller.abort(new Error("Run cancelled"));
+          first.reject(new Error("first download failed"));
+          // Give an early return/acknowledgement a bounded observation window
+          // while the sibling remains explicitly held by the fixture.
+          beforeSibling = await Promise.race([
+            pending.then(() => "returned"),
+            delay(200).then(() => "waiting"),
+          ]);
+        } finally {
+          sibling.reject(new Error("sibling download failed"));
+        }
+        const result = await pending;
+        assertEquals(acknowledgements, cancelled ? [true] : []);
+        assertEquals(beforeSibling, "waiting", "a sibling download is still running");
+        assertExists(result.response);
+        const payload = await result.response.json();
+        assertEquals(payload.success, false);
+        assertStringIncludes(payload.error, cancelled ? "Run cancelled" : "first download failed");
+      });
+    });
+  }
+
   it("acknowledges an already-cancelled task whose deadline elapsed before execution", async () => {
     const controller = new AbortController();
     let starts = 0;

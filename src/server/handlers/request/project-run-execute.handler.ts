@@ -2476,18 +2476,25 @@ async function executeKnowledgeIngestRun(input: {
     const collection = await collectKnowledgeSources(options, {
       client,
       projectSlug: projectReference,
-      downloadUploads: (uploadTargets) =>
-        Promise.all(
-          uploadTargets.map((uploadPath) =>
-            downloadUploadToFile(
-              client,
-              projectReference,
-              uploadPath,
-              downloadOutputDir,
-              input.signal,
-            )
-          ),
-        ),
+      downloadUploads: async (uploadTargets) => {
+        const downloads = uploadTargets.map((uploadPath) =>
+          downloadUploadToFile(
+            client,
+            projectReference,
+            uploadPath,
+            downloadOutputDir,
+            input.signal,
+          )
+        );
+        try {
+          return await Promise.all(downloads);
+        } catch (error) {
+          // A rejected download does not prove its siblings have stopped.
+          // Settle every started operation before cleanup and stop acknowledgement.
+          await Promise.allSettled(downloads);
+          throw error;
+        }
+      },
       signal: input.signal,
     });
     input.signal.throwIfAborted();
