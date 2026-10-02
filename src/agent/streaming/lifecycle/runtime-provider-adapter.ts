@@ -391,8 +391,9 @@ function providerToolTerminalSignals(
     ? typed.output
     : typed.result;
   const inferredToolError = typed.type === "tool-error" ? undefined : getToolResultError(rawOutput);
+  // A preliminary provider error payload is progress, as on the legacy path.
   const isExplicitError = (typed.type === "tool-error" || typed.isError === true ||
-    isProviderToolResultError(rawOutput)) &&
+    (typed.preliminary !== true && isProviderToolResultError(rawOutput))) &&
     !isIntegrationAuthenticationActionResult(rawOutput);
   const isError = isExplicitError || inferredToolError !== undefined;
   const output = isError ? isExplicitError ? rawOutput : inferredToolError : rawOutput;
