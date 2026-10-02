@@ -1,9 +1,8 @@
 name: Install Chromium
 description: >
-  Configure apt for reliable browser provisioning, then run a bounded, retried
-  Playwright Chromium install. Shared by every browser job; callers keep a
-  step-level `timeout-minutes: 20` on the invoking step, matching the retry
-  loop's ~17 minute worst case (two full attempts plus lock waits and backoff).
+  Normalize Ubuntu apt mirrors and install Playwright Chromium with a single
+  bounded attempt. Dependency downloads fail fast with phase diagnostics;
+  callers retain their existing step-level timeout.
 
 inputs:
   install-command:
@@ -18,12 +17,13 @@ runs:
       shell: bash
       run: |
         sudo sed -E -i \
+          -e 's|mirror\+file:/[^[:space:]]+|https://archive.ubuntu.com/ubuntu|g' \
           -e 's|[[:alpha:]]*://azure.archive.ubuntu.com/ubuntu|https://archive.ubuntu.com/ubuntu|g' \
           -e 's|[[:alpha:]]*://security.ubuntu.com/ubuntu|https://archive.ubuntu.com/ubuntu|g' \
           /etc/apt/sources.list /etc/apt/sources.list.d/ubuntu.sources 2>/dev/null || true
         {
           echo 'Acquire::ForceIPv4 "true";'
-          echo 'Acquire::Retries "5";'
+          echo 'Acquire::Retries "0";'
           echo 'Acquire::http::Timeout "30";'
           echo 'Acquire::https::Timeout "30";'
         } | sudo tee /etc/apt/apt.conf.d/99veryfront-ci-retries
@@ -54,19 +54,14 @@ runs:
     - name: Install Chromium
       shell: bash
       run: |
-        readonly install_attempts=2
-        readonly install_timeout_minutes=7
+        readonly install_timeout_minutes=5
         readonly install_kill_grace_seconds=15
         readonly apt_lock_attempts=12
         readonly apt_lock_sleep_seconds=5
-        readonly retry_backoff_seconds=20
         readonly apt_lock_files="/var/lib/dpkg/lock-frontend /var/lib/dpkg/lock /var/cache/apt/archives/lock /var/lib/apt/lists/lock"
 
-        # Playwright shells out to apt-get itself, so a lock held by the
-        # runner image's own apt activity used to surface inside the install
-        # as an instant "Could not get lock" failure. A global lock timeout
-        # makes every apt invocation wait for the holder instead.
-        echo 'DPkg::Lock::Timeout "300";' | sudo tee /etc/apt/apt.conf.d/99vf-lock-timeout >/dev/null
+        # Bound lock acquisition inside Playwright's apt subprocesses too.
+        echo 'DPkg::Lock::Timeout "60";' | sudo tee /etc/apt/apt.conf.d/99vf-lock-timeout >/dev/null
 
         wait_for_apt_locks() {
           for _ in $(seq 1 "${apt_lock_attempts}"); do
@@ -78,31 +73,25 @@ runs:
           return 1
         }
 
-        # `timeout` signals only the wrapper process, so a timed-out attempt
-        # orphans the sudo apt-get underneath it. That orphan keeps holding
-        # the dpkg locks and starved every later attempt on this VM. Reap
-        # the lock holders and repair any half-configured packages before
-        # trying again.
-        reap_apt_lock_holders() {
-          sudo fuser -k -TERM ${apt_lock_files} >/dev/null 2>&1 || true
-          sleep 5
-          sudo fuser -k -KILL ${apt_lock_files} >/dev/null 2>&1 || true
-          sudo dpkg --configure -a >/dev/null 2>&1 || true
-        }
+        if ! wait_for_apt_locks; then
+          echo "::error::apt/dpkg locks still held after 60s; Chromium install did not start"
+          exit 1
+        fi
 
-        for attempt in $(seq 1 "${install_attempts}"); do
-          if ! wait_for_apt_locks; then
-            echo "::warning::apt/dpkg locks still held; reaping the holders"
-            reap_apt_lock_holders
-          fi
-          timeout --signal=TERM --kill-after="${install_kill_grace_seconds}s" "${install_timeout_minutes}m" \
-            ${{ inputs.install-command }} && exit 0
+        echo "Chromium dependency install: deadline ${install_timeout_minutes}m, kill grace ${install_kill_grace_seconds}s"
+        # Keep timeout in a conditional so bash -e preserves its exit code for
+        # the diagnostic. GNU timeout signals the install process group.
+        if timeout --signal=TERM --kill-after="${install_kill_grace_seconds}s" "${install_timeout_minutes}m" \
+          ${{ inputs.install-command }}; then
+          echo "Chromium dependency install completed"
+          exit 0
+        else
           status=$?
+        fi
 
-          if [ "$attempt" -eq "${install_attempts}" ]; then
-            exit "$status"
-          fi
-
-          reap_apt_lock_holders
-          sleep "${retry_backoff_seconds}"
-        done
+        if [ "$status" -eq 124 ] || [ "$status" -eq 137 ]; then
+          echo "::error::Chromium dependency install timed out after ${install_timeout_minutes}m (exit ${status}); inspect the last apt download or lock message above"
+        else
+          echo "::error::Chromium dependency install failed (exit ${status}); inspect the install log above"
+        fi
+        exit "$status"

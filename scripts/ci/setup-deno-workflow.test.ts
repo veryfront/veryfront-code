@@ -971,21 +971,31 @@ jobs:
       false,
       "APT mirror rewrites must not contain clear-text HTTP URLs",
     );
+    assertStringIncludes(
+      aptSetup,
+      "-e 's|mirror\\+file:/[^[:space:]]+|https://archive.ubuntu.com/ubuntu|g'",
+      "runner mirror lists must not bypass HTTPS archive normalization",
+    );
+    assertStringIncludes(aptSetup, 'Acquire::Retries "0";');
     for (
       const expected of [
-        'for attempt in $(seq 1 "${install_attempts}")',
         '--kill-after="${install_kill_grace_seconds}s" "${install_timeout_minutes}m"',
         'for _ in $(seq 1 "${apt_lock_attempts}")',
         'sleep "${apt_lock_sleep_seconds}"',
-        'sleep "${retry_backoff_seconds}"',
+        "::error::Chromium dependency install timed out",
+        "::error::apt/dpkg locks still held",
+        "::error::Chromium dependency install failed",
       ]
     ) {
       assertStringIncludes(install, expected);
     }
     assertEquals(install.includes("apt-get clean"), false);
     assertEquals(install.includes("rm -rf /var/lib/apt/lists"), false);
+    assertEquals(install.includes("install_attempts"), false);
+    assertEquals(install.includes("fuser -k"), false);
+    assertEquals(install.includes("dpkg --configure"), false);
+    assertStringIncludes(install, 'DPkg::Lock::Timeout "60";');
 
-    const attempts = shellInteger(install, "install_attempts");
     const installSeconds = shellInteger(
       install,
       "install_timeout_minutes",
@@ -996,14 +1006,15 @@ jobs:
     );
     const aptLockSeconds = shellInteger(install, "apt_lock_attempts") *
       shellInteger(install, "apt_lock_sleep_seconds");
-    const backoffSeconds = shellInteger(install, "retry_backoff_seconds");
-    const worstCaseSeconds = attempts *
-        (aptLockSeconds + installSeconds + installKillGrace) +
-      (attempts - 1) * backoffSeconds;
+    const worstCaseSeconds = aptLockSeconds + installSeconds + installKillGrace;
+    assert(
+      worstCaseSeconds <= 7 * 60,
+      `Chromium provisioning must fail within seven minutes; budget is ${worstCaseSeconds}s`,
+    );
     assert(
       worstCaseSeconds <=
         CHROMIUM_STEP_MINUTES * 60 - CHROMIUM_OVERHEAD_MARGIN_SECONDS,
-      `Chromium retries need at least ${CHROMIUM_OVERHEAD_MARGIN_SECONDS}s of outer-step overhead margin; budget is ${worstCaseSeconds}s`,
+      `Chromium provisioning needs at least ${CHROMIUM_OVERHEAD_MARGIN_SECONDS}s of outer-step overhead margin; budget is ${worstCaseSeconds}s`,
     );
 
     for (const jobName of ["tests-e2e-rsc-browser", "tests-binary-e2e"]) {
@@ -1071,9 +1082,7 @@ describe("parallel integration workflow contract", () => {
     const suite = "integration:legacy-tests-root";
     const full = await planSuiteFiles({ suite });
     const shards = await Promise.all(
-      [1, 2].map((index) =>
-        planSuiteFiles({ suite, shard: { index, total: 2 } })
-      ),
+      [1, 2].map((index) => planSuiteFiles({ suite, shard: { index, total: 2 } })),
     );
     const files = shards.flatMap((shard) => shard.files);
     assertEquals(
@@ -1192,4 +1201,94 @@ describe("parallel integration workflow contract", () => {
     assert(Array.isArray(mergeGate.needs));
     assert(mergeGate.needs.includes("ci") && mergeGate.needs.includes("tests"));
   });
+});
+
+for (const status of [0, 42, 124, 137]) {
+  it(`Chromium install preserves exit ${status} and reports its phase`, async () => {
+    const action = await parseYamlFile(".github/actions/install-chromium/action.yml");
+    const steps = asSteps(asRecord(action.runs, "runs").steps, "steps");
+    const step = steps.find((step) => step.name === "Install Chromium");
+    assert(step);
+    const script = String(step.run).replace("${{ inputs.install-command }}", "install-browser");
+    // Model external commands without touching apt or waiting for a real outage.
+    const output = await new Deno.Command("bash", {
+      args: [
+        "-e",
+        "-o",
+        "pipefail",
+        "-c",
+        `sudo() { if [ "$1" = fuser ]; then return 1; fi; cat >/dev/null; }
+         timeout() { return ${status}; }
+         sleep() { :; }
+         ${script}`,
+      ],
+      stdout: "piped",
+      stderr: "piped",
+    }).output();
+    assertEquals(output.code, status);
+    const log = new TextDecoder().decode(output.stdout);
+    assertStringIncludes(log, "Chromium dependency install: deadline 5m, kill grace 15s");
+    if (status === 124 || status === 137) {
+      assertStringIncludes(log, "::error::Chromium dependency install timed out");
+    } else if (status !== 0) {
+      assertStringIncludes(log, "::error::Chromium dependency install failed (exit 42)");
+    } else {
+      assertStringIncludes(log, "Chromium dependency install completed");
+    }
+  });
+}
+
+it("Chromium install fails on held apt locks before invoking the installer", async () => {
+  const action = await parseYamlFile(".github/actions/install-chromium/action.yml");
+  const steps = asSteps(asRecord(action.runs, "runs").steps, "steps");
+  const step = steps.find((step) => step.name === "Install Chromium");
+  assert(step);
+  const script = String(step.run).replace("${{ inputs.install-command }}", "install-browser");
+  const output = await new Deno.Command("bash", {
+    args: [
+      "-e",
+      "-o",
+      "pipefail",
+      "-c",
+      `sudo() { if [ "$1" = fuser ]; then return 0; fi; cat >/dev/null; }
+       timeout() { echo unexpected-install; return 0; }
+       sleep() { :; }
+       ${script}`,
+    ],
+    stdout: "piped",
+    stderr: "piped",
+  }).output();
+  assertEquals(output.code, 1);
+  const log = new TextDecoder().decode(output.stdout);
+  assertStringIncludes(log, "::error::apt/dpkg locks still held");
+  assertEquals(log.includes("unexpected-install"), false);
+});
+
+it("Chromium apt normalization handles runner mirror lists and direct sources", async () => {
+  const action = await parseYamlFile(".github/actions/install-chromium/action.yml");
+  const steps = asSteps(asRecord(action.runs, "runs").steps, "steps");
+  const setup = steps.find((step) => step.name === "Configure apt sources, retries, and mirrors");
+  assert(setup);
+  const expressions = [...String(setup.run).matchAll(/-e '([^']+)'/g)].map((match) => match[1]!);
+  const child = new Deno.Command("sed", {
+    args: ["-E", ...expressions.flatMap((expression) => ["-e", expression])],
+    stdin: "piped",
+    stdout: "piped",
+    stderr: "piped",
+  }).spawn();
+  const sources = [
+    "URIs: mirror+file:/etc/apt/apt-mirrors.txt",
+    "URIs: mirror+file:///etc/apt/apt-mirrors-security.txt",
+    "URIs: http://azure.archive.ubuntu.com/ubuntu",
+    "URIs: https://security.ubuntu.com/ubuntu",
+  ];
+  const writer = child.stdin.getWriter();
+  await writer.write(new TextEncoder().encode(sources.join("\n") + "\n"));
+  await writer.close();
+  const output = await child.output();
+  assertEquals(output.code, 0);
+  assertEquals(
+    new TextDecoder().decode(output.stdout),
+    sources.map(() => "URIs: https://archive.ubuntu.com/ubuntu\n").join(""),
+  );
 });
