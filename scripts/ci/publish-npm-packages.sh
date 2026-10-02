@@ -152,12 +152,12 @@ NPM_GIT_HEAD_LOOKUP_TIMEOUT_MS="${NPM_GIT_HEAD_LOOKUP_TIMEOUT_MS:-60000}"
 is_transient_publish_failure() {
   CONFLICT_OUTPUT_CANDIDATE="$1"
   printf '%s\n' "${CONFLICT_OUTPUT_CANDIDATE}" \
-    | grep -Eq 'npm error code E409|409 Conflict|Failed to save packument|IDENTITY_TOKEN_READ_ERROR'
+    | grep -E 'npm error code E409|409 Conflict|Failed to save packument|IDENTITY_TOKEN_READ_ERROR' >/dev/null
 }
 
 is_identity_token_read_failure() {
   IDENTITY_OUTPUT_CANDIDATE="$1"
-  printf '%s\n' "${IDENTITY_OUTPUT_CANDIDATE}" | grep -Fq 'IDENTITY_TOKEN_READ_ERROR'
+  printf '%s\n' "${IDENTITY_OUTPUT_CANDIDATE}" | grep -F 'IDENTITY_TOKEN_READ_ERROR' >/dev/null
 }
 
 # npm rejects a reused name/version with "You cannot publish over the

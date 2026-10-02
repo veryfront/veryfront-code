@@ -110,6 +110,25 @@ async function loggedNpmCalls(npmLog: string): Promise<string[]> {
   return (await Deno.readTextFile(npmLog)).trim().split("\n");
 }
 
+function shellFailureDiagnostics(
+  output: Deno.CommandOutput,
+  packageDir: string,
+  npmLog: string,
+): string {
+  const sanitize = (text: string): string =>
+    text
+      .replace(/Bearer\s+[^\s]+/g, "Bearer <REDACTED>")
+      .replace(/([?&]token=|_authToken=)[^\s&]+/g, "$1<REDACTED>")
+      .replaceAll(packageDir, "<package>")
+      .replaceAll(npmLog, "<npm-log>")
+      .replaceAll(scriptPath, "<publish-script>");
+  const bound = (text: string): string =>
+    text.length > 2_048 ? `${text.slice(0, 1_024)}\n<omitted>\n${text.slice(-1_024)}` : text;
+  return `shell exit=${output.code}\nstdout:\n${
+    bound(sanitize(decoder.decode(output.stdout)))
+  }\nstderr:\n${bound(sanitize(decoder.decode(output.stderr)))}`;
+}
+
 describe("npm package publishing", () => {
   it("publishes the canonical tarball without repacking the materialized package", async () => {
     await withTempDir(async (stateDir) => {
@@ -1387,40 +1406,113 @@ describe("npm package publishing", () => {
     });
   }
 
-  it("does not poll registry metadata after identity-token retries are exhausted", async () => {
-    await withPackageFixture("@veryfront/ext-llm-google", async ({ packageDir, npmLog }) => {
-      const output = await runBash(
-        [
-          "set -euo pipefail",
-          'source "$SCRIPT_PATH"',
-          "npm() {",
-          LOG_NPM_CALL,
-          '  if [ "$1" = "publish" ]; then',
-          '    printf "%s\\n" "$IDENTITY_TOKEN_OUTPUT"',
-          "    return 1",
-          "  fi",
-          "  return 1",
-          "}",
-          "sleep() { :; }",
-          'rc_publish_package_dir "$PACKAGE_DIR" || echo "EXIT=$?"',
-        ].join("\n"),
-        {
-          IDENTITY_TOKEN_OUTPUT,
-          GITHUB_SHA: "0".repeat(40),
-          NPM_LOG: npmLog,
-          NPM_PUBLISH_CONFLICT_ATTEMPTS: "2",
-          NPM_PUBLISH_CONFLICT_DELAY_SECONDS: "0",
-          PACKAGE_DIR: packageDir,
-          VERSION: "0.1.0",
+  it("classifies diagnostic-heavy identity-token failures without SIGPIPE", async () => {
+    const output = await runBash(
+      [
+        "set -euo pipefail",
+        'source "$SCRIPT_PATH"',
+        'is_transient_publish_failure "$IDENTITY_TOKEN_OUTPUT"',
+        'is_identity_token_read_failure "$IDENTITY_TOKEN_OUTPUT"',
+      ].join("\n"),
+      {
+        IDENTITY_TOKEN_OUTPUT: `${IDENTITY_TOKEN_OUTPUT}\n${"diagnostic ".repeat(10_000)}`,
+      },
+    );
+    assertEquals(output.code, 0, `classifier shell exit=${output.code}`);
+  });
+
+  it("redacts credentials and fixture paths from shell assertion diagnostics", () => {
+    const diagnostics = shellFailureDiagnostics(
+      {
+        code: 1,
+        success: false,
+        signal: null,
+        stdout: new TextEncoder().encode(
+          "Bearer fixture-secret\nhttps://registry.example/?token=fixture-secret\n_authToken=fixture-secret",
+        ),
+        stderr: new TextEncoder().encode(
+          `${scriptPath}: /fixture/package /fixture/npm.log`,
+        ),
+      },
+      "/fixture/package",
+      "/fixture/npm.log",
+    );
+    assertStringIncludes(diagnostics, "shell exit=1");
+    assertStringIncludes(diagnostics, "Bearer <REDACTED>");
+    assertStringIncludes(diagnostics, "token=<REDACTED>");
+    assertStringIncludes(diagnostics, "_authToken=<REDACTED>");
+    assertStringIncludes(diagnostics, "<publish-script>: <package> <npm-log>");
+    assertEquals(diagnostics.includes("fixture-secret"), false);
+    assertEquals(diagnostics.includes("/fixture"), false);
+  });
+
+  for (
+    const [suffix, identityOutput] of [
+      ["", IDENTITY_TOKEN_OUTPUT],
+      [
+        " with diagnostic-heavy output",
+        `${IDENTITY_TOKEN_OUTPUT}\n${
+          "diagnostic ".repeat(10_000)
+        }\nBearer fixture-secret\nhttps://registry.example/?token=fixture-secret\n_authToken=fixture-secret`,
+      ],
+    ]
+  ) {
+    it(`does not poll registry metadata after identity-token retries are exhausted${suffix}`, async () => {
+      await withPackageFixture(
+        "@veryfront/ext-llm-google",
+        async ({ packageDir, npmLog }) => {
+          const output = await runBash(
+            [
+              "set -euo pipefail",
+              'source "$SCRIPT_PATH"',
+              "npm() {",
+              LOG_NPM_CALL,
+              '  if [ "$1" = "publish" ]; then',
+              '    printf "%s\\n" "$IDENTITY_TOKEN_OUTPUT"',
+              "    return 1",
+              "  fi",
+              "  return 1",
+              "}",
+              "sleep() { :; }",
+              'rc_publish_package_dir "$PACKAGE_DIR" || echo "EXIT=$?"',
+            ].join("\n"),
+            {
+              IDENTITY_TOKEN_OUTPUT: identityOutput!,
+              GITHUB_SHA: "0".repeat(40),
+              NPM_LOG: npmLog,
+              NPM_PUBLISH_CONFLICT_ATTEMPTS: "2",
+              NPM_PUBLISH_CONFLICT_DELAY_SECONDS: "0",
+              PACKAGE_DIR: packageDir,
+              VERSION: "0.1.0",
+            },
+          );
+
+          const diagnostics = shellFailureDiagnostics(
+            output,
+            packageDir,
+            npmLog,
+          );
+          assertStringIncludes(
+            decoder.decode(output.stdout),
+            "EXIT=1",
+            diagnostics,
+          );
+          const calls = await loggedNpmCalls(npmLog);
+          assertEquals(
+            calls.filter((line) => line.startsWith("publish ")).length,
+            2,
+            diagnostics,
+          );
+          assertEquals(
+            calls.filter((line) => line.startsWith("view ")).length,
+            7,
+            diagnostics,
+          );
+          assertEquals(diagnostics.includes("fixture-secret"), false);
         },
       );
-
-      assertStringIncludes(decoder.decode(output.stdout), "EXIT=1");
-      const calls = await loggedNpmCalls(npmLog);
-      assertEquals(calls.filter((line) => line.startsWith("publish ")).length, 2);
-      assertEquals(calls.filter((line) => line.startsWith("view ")).length, 7);
     });
-  });
+  }
 
   it("accepts a 409 whose publish already landed in rc_publish_package_dir", async () => {
     await withPackageFixture("@veryfront/ext-llm-google", async ({ packageDir, npmLog }) => {
