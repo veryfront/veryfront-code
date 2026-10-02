@@ -23,6 +23,8 @@ import {
 import { beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { DAGExecutor } from "./index.ts";
 import { toPersistedNodeStates } from "./loop-node-strategy.ts";
+import { toPublicWorkflowRun } from "../../runtime/public-run.ts";
+import { WORKFLOW_RUNTIME_STATE_VERSION } from "../../runtime-state.ts";
 import { defineSchema } from "#veryfront/schemas/index.ts";
 import { NodeStateSchema } from "../../schemas/workflow.schema.ts";
 import type {
@@ -1662,7 +1664,15 @@ describe("DAGExecutor", () => {
         return { success: true, output: "old", executionTime: 0 };
       });
       const first = await new DAGExecutor({ stepExecutor: steps }).execute(nodes, createTestRun());
-      if (!configuredRetry) assertExists(first.nodeStates.repeat?._loopOutputRetry);
+      if (!configuredRetry) {
+        assertExists(first.nodeStates.repeat?._loopOutputRetry);
+        const publicFailed = toPublicWorkflowRun(createTestRun({
+          _runtimeStateVersion: WORKFLOW_RUNTIME_STATE_VERSION,
+          nodeStates: first.nodeStates,
+          context: first.context,
+        }));
+        assertEquals(Object.hasOwn(publicFailed.nodeStates.repeat!, "_loopOutputRetry"), false);
+      }
       const persistedStates = Object.fromEntries(
         Object.entries(first.nodeStates).map(([id, state]) => [
           id,
@@ -1689,6 +1699,15 @@ describe("DAGExecutor", () => {
       assertEquals(retried.nodeStates.repeat?._loopOutputRetry, undefined);
       assertEquals(retried.nodeStates["repeat/read-old"]?.status, "completed");
       assertEquals(retried.nodeStates["repeat/read-old"]?.output, "old");
+      const publicRun = toPublicWorkflowRun(createTestRun({
+        _runtimeStateVersion: WORKFLOW_RUNTIME_STATE_VERSION,
+        status: "completed",
+        nodeStates: retried.nodeStates,
+        context: retried.context,
+      }));
+      assertEquals(publicRun.nodeStates["repeat/read-old"]?.status, "completed");
+      assertEquals(publicRun.nodeStates["repeat/read-old"]?.output, "old");
+      assertEquals(Object.hasOwn(publicRun.nodeStates.repeat!, "_loopOutputRetry"), false);
       assertEquals(retried.nodeStates["repeat/child"]?._completedCompositeChildIds, [
         "repeat/read-old",
         "repeat/child",
