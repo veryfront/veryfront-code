@@ -93,6 +93,7 @@ export interface DenoNativeHttpServer {
 }
 
 export interface DenoServeHandlerInfo {
+  readonly completed?: Promise<void>;
   readonly remoteAddr?: {
     readonly transport?: unknown;
     readonly hostname?: unknown;
