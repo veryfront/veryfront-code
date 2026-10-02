@@ -1,4 +1,19 @@
-/** Internal source-owned diagnostic contract for integration operation failures. */
+/**
+ * Synchronous safe-fact projection for integration operation failures.
+ *
+ * Readers exclude accessors, native payloads and unrecognized fields. Diagnostic
+ * metadata never authorizes automatic replay of an integration operation.
+ *
+ * @example
+ * ```ts
+ * import { readIntegrationThrowableContext } from "veryfront/integrations/diagnostics";
+ *
+ * const context = readIntegrationThrowableContext(new Error("Operation failed"));
+ * console.log(context); // undefined when no validated integration context exists
+ * ```
+ *
+ * @module integrations/diagnostics
+ */
 import {
   readIntegrationFailureCondition,
   readIntegrationHttpProblem,
@@ -22,8 +37,9 @@ export function createIntegrationErrorContext(
   return { integrationOperation: true, ...facts, automaticReplay: false, retryable: false };
 }
 function dataProperties(value: unknown): Record<string, unknown> | undefined {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
+  if (typeof value !== "object" || value === null) return undefined;
   try {
+    if (Array.isArray(value)) return undefined;
     const prototype = Object.getPrototypeOf(value);
     if (prototype !== Object.prototype && prototype !== null) return undefined;
     const descriptors = Object.getOwnPropertyDescriptors(value);
