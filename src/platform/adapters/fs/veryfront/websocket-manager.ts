@@ -825,12 +825,26 @@ export class WebSocketManager {
    * the number of cached adapters. The poke already dropped this adapter's
    * listing, so the next read lists the project on demand, and the eviction
    * that follows a completed invalidation disposes the adapter.
+   *
+   * Returns whether a newer poke superseded this one while it ran. Evicting
+   * then would dispose the adapter and cancel the newer poke's invalidation.
    */
-  private async skipUnusedAdapterRelist(): Promise<void> {
-    await this.clearProjectCSSCaches();
+  private async skipUnusedAdapterRelist(sourceSnapshotVersion: number | undefined): Promise<
+    boolean
+  > {
+    try {
+      await this.clearProjectCSSCaches();
+    } catch (error) {
+      logger.warn("Failed to clear project CSS caches for an unused adapter", {
+        projectSlug: this.deps.projectSlug,
+        error,
+      });
+    }
     logger.debug("Skipped re-listing files for an adapter no request is using", {
       projectSlug: this.deps.projectSlug,
     });
+    const currentSnapshotVersion = this.deps.getSourceSnapshotVersion?.();
+    return currentSnapshotVersion !== undefined && currentSnapshotVersion !== sourceSnapshotVersion;
   }
 
   private async performSelectiveInvalidation(
@@ -942,7 +956,7 @@ export class WebSocketManager {
         await this.deps.cache.deleteByPrefixAsync("files:branch:");
       }
       if (contentContext?.sourceType === "branch" && !this.isAdapterInUse()) {
-        await this.skipUnusedAdapterRelist();
+        reloadSuperseded = await this.skipUnusedAdapterRelist(sourceSnapshotVersion);
       } else if (contentContext?.sourceType === "branch") {
         try {
           const files = await this.deps.client.listAllFiles({}, {
@@ -1149,7 +1163,7 @@ export class WebSocketManager {
       });
 
       if (contentContext?.sourceType === "branch" && !this.isAdapterInUse()) {
-        await this.skipUnusedAdapterRelist();
+        reloadSuperseded = await this.skipUnusedAdapterRelist(sourceSnapshotVersion);
       } else if (contentContext?.sourceType === "branch") {
         try {
           const files = await this.deps.client.listAllFiles({}, {
