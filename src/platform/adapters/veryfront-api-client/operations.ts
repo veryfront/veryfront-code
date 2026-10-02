@@ -321,7 +321,7 @@ function mapProjectFile<T extends ProjectFile>(file: T): ProjectFile {
     type: file.type,
     size: file.size,
     updated_at: file.updated_at,
-    ...(file.checksum === undefined ? {} : { checksum: file.checksum }),
+    ...(typeof file.checksum === "string" ? { checksum: file.checksum } : {}),
   };
 }
 

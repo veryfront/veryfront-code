@@ -264,6 +264,35 @@ describe("VeryfrontAPIOperations", () => {
       assertEquals(result.files[0]?.content, undefined);
     });
 
+    it("accepts null checksums on branch file lists and file reads", async () => {
+      const file = {
+        path: "agents/legacy.ts",
+        size: 18,
+        type: "file",
+        updated_at: "2026-10-02T00:00:00.000Z",
+        checksum: null,
+      };
+      stubJsonFetch((url) =>
+        url.includes("/files?")
+          ? {
+            data: [url.includes("fields=") ? file : { ...file, content: "export default {};" }],
+            page_info: { self: null, first: null, next: null, prev: null },
+          }
+          : { ...file, content: "export default {};" }
+      );
+
+      const full = await createOps().listBranchFiles("project-slug", "main");
+      const metadata = await createOps().listBranchFiles("project-slug", "main", {
+        fields: ["path", "checksum"],
+      });
+      const detail = await createOps().getBranchFile("project-slug", "main", "agents/legacy.ts");
+
+      assertEquals(full.files[0]?.content, "export default {};");
+      assertEquals("checksum" in full.files[0]!, false);
+      assertEquals("checksum" in metadata.files[0]!, false);
+      assertEquals(detail.content, "export default {};");
+    });
+
     it("keeps checksums on complete branch file lists", async () => {
       stubJsonFetch(() => ({
         data: [{

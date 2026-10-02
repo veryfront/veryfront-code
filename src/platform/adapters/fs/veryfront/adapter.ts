@@ -37,6 +37,7 @@ import {
 } from "./cache-keys.ts";
 import { isPrefixBeingInvalidated } from "./invalidation-state.ts";
 import { WebSocketManager } from "./websocket-manager.ts";
+import { admitVerifiedSourceContents } from "./source-content-store.ts";
 import {
   fetchSourceListingForContext,
   hasContentContextChanged,
@@ -927,9 +928,9 @@ export class VeryfrontFSAdapter implements FSAdapter {
     }
 
     // The retained listing is what this adapter last fetched or was poked
-    // with for this key, and every write to the key retains it too, so it
-    // answers before a cache round trip that could only return the same
-    // snapshot. A listing for another key is left untouched here.
+    // with for this key, and every write this adapter makes to the key
+    // retains it too, so it answers before the cache round trip. Every
+    // invalidation drops it, and a listing for another key is left untouched.
     let files = this.retainedFileList?.cacheKey === cacheKey
       ? this.readRetainedFileList<T>(cacheKey)
       : undefined;
@@ -1802,6 +1803,13 @@ export class VeryfrontFSAdapter implements FSAdapter {
       // Retain after the version bump so the poked listing -- not the one it
       // replaced -- is what later reads see when the cache keeps nothing.
       this.retainFileList(cacheKey, files);
+      // Poked listings carry contents, so fresh credentials can reuse them.
+      ignorePromiseRejection(
+        admitVerifiedSourceContents(
+          this.#getSourceContentKey(this.getEffectiveContentContext() ?? expectedContext),
+          files,
+        ),
+      );
       return this.sourceSnapshotVersion;
     });
   }

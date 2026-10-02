@@ -3,7 +3,7 @@ import { assertEquals } from "#veryfront/testing/assert.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import type { VeryfrontFSAdapter } from "./adapter.ts";
 import { fetchSourceListingForContext } from "./adapter-content-context.ts";
-import { createAdapter } from "./adapter.test-helpers.ts";
+import { createAdapter, waitFor } from "./adapter.test-helpers.ts";
 import { runWithRequestContext } from "./request-context.ts";
 import {
   admitVerifiedSourceContents,
@@ -46,7 +46,10 @@ async function sourceFiles(entries: Record<string, string>): Promise<SourceFile[
  * files that credential may see. A listing that selects fields returns
  * metadata only, as the API does for `fields=(...)` without `content`.
  */
-function createCredentialAdapter(visibleFiles: () => SourceFile[]): {
+function createCredentialAdapter(
+  visibleFiles: () => SourceFile[],
+  options: { failMetadata?: boolean } = {},
+): {
   adapter: VeryfrontFSAdapter;
   counts: ListingCounts;
 } {
@@ -81,6 +84,7 @@ function createCredentialAdapter(visibleFiles: () => SourceFile[]): {
       getAsync: (key: string) => Promise<unknown>;
     };
   };
+  const failMetadataListing = options.failMetadata ?? false;
   internals.client.initialize = () => Promise.resolve();
   internals.client.getProjectSlug = () => "test-project";
   internals.client.getProjectId = () => "project-123";
@@ -88,11 +92,13 @@ function createCredentialAdapter(visibleFiles: () => SourceFile[]): {
   internals.client.listAllFiles = (options) => {
     if (options?.fields) {
       counts.metadataListings++;
+      if (failMetadataListing) return Promise.reject(new Error("400 Bad Request"));
       return Promise.resolve(
         visibleFiles().map((file) => ({
           path: file.path,
           checksum: file.checksum,
-          size: file.content.length,
+          // Without content, the API reports the stored byte length.
+          size: new TextEncoder().encode(file.content).length,
           type: "file",
           updated_at: "2026-10-02T12:00:00.000Z",
         })),
@@ -275,6 +281,104 @@ describe("source content reuse across fresh credentials (issue inbox#2277)", () 
     assertEquals(listing.files.length, 1);
     assertEquals(calls, ["release:release-1"]);
     assertEquals(hasVerifiedSourceContents("source-a"), false);
+  });
+
+  it("keeps a refresh unchanged when reused contents are not ASCII", async () => {
+    const files = await sourceFiles({ "agents/greeter.ts": "export default 'Grüße 👋';" });
+
+    const credential = createCredentialAdapter(() => files);
+    await asCredential("credential-a", async () => {
+      await credential.adapter.initialize();
+      const version = credential.adapter.getSourceSnapshotVersion();
+      await credential.adapter.refreshSourceSnapshot("test-refresh");
+      assertEquals(
+        credential.adapter.getSourceSnapshotVersion(),
+        version,
+        "an assembled listing must compare equal to the complete listing it matches",
+      );
+    });
+    assertEquals(credential.counts.fullListings, 1);
+    assertEquals(credential.counts.metadataListings, 1);
+    credential.adapter.dispose();
+  });
+
+  it("lists contents when the metadata listing fails and stops retrying it", async () => {
+    const files = await sourceFiles({ "agents/assistant.ts": "export default {};" });
+
+    const first = createCredentialAdapter(() => files);
+    await asCredential("credential-a", () => first.adapter.initialize());
+    first.adapter.dispose();
+
+    const second = createCredentialAdapter(() => files, { failMetadata: true });
+    await asCredential("credential-b", async () => {
+      await second.adapter.initialize();
+      assertEquals(await second.adapter.readTextFile("agents/assistant.ts"), "export default {};");
+    });
+    assertEquals(second.counts.metadataListings, 1);
+    assertEquals(second.counts.fullListings, 1, "a failed metadata listing falls back to contents");
+    second.adapter.dispose();
+  });
+
+  it("admits poked listings so the next fresh credential reuses them", async () => {
+    const files = await sourceFiles({ "pages/index.tsx": "export default 'poked';" });
+    const credential = createCredentialAdapter(() => files);
+    const internals = credential.adapter as unknown as {
+      replaceSourceSnapshot: (
+        cacheKey: string,
+        files: SourceFile[],
+      ) => Promise<number | undefined>;
+    };
+
+    await asCredential("credential-a", async () => {
+      const applied = await internals.replaceSourceSnapshot(
+        "files:branch:test-project:main",
+        files,
+      );
+      assertEquals(typeof applied, "number");
+    });
+    await waitFor(() =>
+      Promise.resolve(hasVerifiedSourceContents("https://api.example.com|branch:test-project:main"))
+    );
+    credential.adapter.dispose();
+  });
+
+  it("evicts least recently used contents within its bound", async () => {
+    resetSourceContentStore({ maxContentUnits: 10 });
+    const [first, second, third] = await sourceFiles({
+      "a.ts": "aaaaa",
+      "b.ts": "bbbbb",
+      "c.ts": "cc",
+    });
+
+    await admitVerifiedSourceContents("source-a", [first!, second!]);
+    assertEquals(hasVerifiedSourceContents("source-a"), true);
+    // Using the first content makes the second the least recently used.
+    assertEquals(assembleSourceListing("source-a", [first!])?.length, 1);
+    await admitVerifiedSourceContents("source-c", [third!]);
+
+    assertEquals(assembleSourceListing("source-x", [first!, third!])?.length, 2);
+    assertEquals(assembleSourceListing("source-x", [second!]), undefined);
+  });
+
+  it("does not remember a source whose contents exceed the bound", async () => {
+    resetSourceContentStore({ maxContentUnits: 6 });
+    const files = await sourceFiles({ "a.ts": "aaaaa", "b.ts": "bbbbb", "huge.ts": "x".repeat(7) });
+
+    await admitVerifiedSourceContents("source-a", files.slice(0, 2));
+    assertEquals(hasVerifiedSourceContents("source-a"), false, "an evicted file cannot assemble");
+    await admitVerifiedSourceContents("source-b", files.slice(2));
+    assertEquals(hasVerifiedSourceContents("source-b"), false, "oversized content is not stored");
+  });
+
+  it("forgets the least recently verified source beyond its bound", async () => {
+    resetSourceContentStore({ maxSources: 1 });
+    const files = await sourceFiles({ "a.ts": "a" });
+
+    await admitVerifiedSourceContents("source-a", files);
+    await admitVerifiedSourceContents("source-b", files);
+
+    assertEquals(hasVerifiedSourceContents("source-a"), false);
+    assertEquals(hasVerifiedSourceContents("source-b"), true);
   });
 
   it("never admits content that does not match its reported checksum", async () => {

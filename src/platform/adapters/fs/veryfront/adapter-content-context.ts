@@ -1,11 +1,15 @@
 import { API_CLIENT_ERROR, INVALID_ARGUMENT } from "#veryfront/errors";
+import { logger as baseLogger } from "#veryfront/utils";
 import type { VeryfrontApiClient } from "../../veryfront-api-client/index.ts";
 import {
   admitVerifiedSourceContents,
   assembleSourceListing,
+  forgetVerifiedSource,
   hasVerifiedSourceContents,
 } from "./source-content-store.ts";
 import type { ContentSource, ResolvedContentContext } from "./types.ts";
+
+const logger = baseLogger.component("veryfront-fs-adapter");
 
 type ContextResolverClient = Pick<
   VeryfrontApiClient,
@@ -172,8 +176,19 @@ export async function fetchSourceListingForContext(
 
   const branch = { type: "branch", name: context.branch ?? "main" } as const;
   if (hasVerifiedSourceContents(sourceKey)) {
-    const metadata = await client.listAllFiles({ fields: SOURCE_METADATA_FIELDS }, branch);
-    const assembled = assembleSourceListing(sourceKey, metadata);
+    let metadata: Awaited<ReturnType<FileListClient["listAllFiles"]>> | undefined;
+    try {
+      metadata = await client.listAllFiles({ fields: SOURCE_METADATA_FIELDS }, branch);
+    } catch (error) {
+      // The complete listing below reports any failure that is not specific
+      // to the metadata query, so this one only stops further attempts.
+      forgetVerifiedSource(sourceKey);
+      logger.debug("Metadata listing failed; listing contents", {
+        projectSlug: context.projectSlug,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+    const assembled = metadata && assembleSourceListing(sourceKey, metadata);
     if (assembled) return { files: assembled, contentReused: true };
   }
 

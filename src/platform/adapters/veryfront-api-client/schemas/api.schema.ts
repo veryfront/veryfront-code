@@ -60,7 +60,7 @@ const branchFileFields = (v: SchemaValidator) => ({
   id: v.string().optional(),
   version_id: v.string().optional(),
   content: v.string(),
-  checksum: v.string().optional(),
+  checksum: v.string().nullable().optional(),
   ...baseFileFields(v),
 });
 
@@ -99,7 +99,7 @@ export const getProjectFileSchema = defineSchema((v) =>
     size: v.number(),
     type: fileTypeEnum(v),
     updated_at: v.string(),
-    checksum: v.string().optional(),
+    checksum: v.string().nullable().optional(),
   })
 );
 
@@ -141,7 +141,7 @@ export const getListBranchFileMetadataResponseSchema = defineSchema((v) =>
       v.object({
         id: v.string().optional(),
         version_id: v.string().optional(),
-        checksum: v.string().optional(),
+        checksum: v.string().nullable().optional(),
         ...baseFileFields(v),
       }),
     ),
