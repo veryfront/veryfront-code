@@ -251,6 +251,24 @@ export function buildDenoSuiteCommandArgs(
   ];
 }
 
+/** Report the raw child termination before preserving its failure exit code. */
+export function handleDenoSuiteStatus(
+  status: Deno.CommandStatus,
+  suite: DenoSuitePlanId,
+  batch: number,
+  totalBatches: number,
+  effects: {
+    report: (message: string) => void;
+    exit: (code: number) => never;
+  } = { report: (message) => console.error(message), exit: Deno.exit },
+): void {
+  if (status.success) return;
+  effects.report(
+    `[test-suite] ${suite} batch ${batch}/${totalBatches} failed: exit code=${status.code}, signal=${status.signal}`,
+  );
+  effects.exit(status.code);
+}
+
 if (import.meta.main) {
   const flags = parseDenoSuiteArgs(Deno.args);
   if (!flags.suite || !(flags.suite in DENO_SUITE_PROFILES)) {
@@ -292,6 +310,6 @@ if (import.meta.main) {
       stdout: "inherit",
       stderr: "inherit",
     }).spawn().status;
-    if (!status.success) Deno.exit(status.code);
+    handleDenoSuiteStatus(status, suite, index + 1, batches.length);
   }
 }
