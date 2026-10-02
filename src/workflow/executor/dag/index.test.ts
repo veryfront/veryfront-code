@@ -1806,6 +1806,107 @@ describe("DAGExecutor", () => {
     });
   }
 
+  for (const dynamicOuter of [false, true]) {
+    for (const configuredRetry of [false, true]) {
+      it(`removes prior dynamic children after ${configuredRetry ? "configured" : "durable"} ${dynamicOuter ? "outer" : "nested"} loop output retry`, async () => {
+        let selections = 0;
+        let nestedBuilds = 0;
+        const executions: string[] = [];
+        const deletes: string[][] = [];
+        const nodes = [
+          step("sibling", { tool: "effect" }),
+          loop("repeat", {
+            maxIterations: 2,
+            while: () => true,
+            steps: dynamicOuter
+              ? (_context, iteration) => {
+                const id = iteration.iteration === 0 ? "old" : "current";
+                return [subWorkflow(`${id}-child`, {
+                  workflow: {
+                    id: `${id}-workflow`,
+                    steps: [step(`${id}-effect`, { tool: "effect" })],
+                    output: (context) => {
+                      if (++selections === 2) throw new Error("second selector failed");
+                      return context[`${id}-effect`];
+                    },
+                  },
+                })];
+              }
+              : [subWorkflow("child", {
+                workflow: {
+                  id: "dynamic-child",
+                  steps: () => {
+                    const id = ++nestedBuilds === 1 ? "old" : "current";
+                    return [step(`${id}-effect`, { tool: "effect" })];
+                  },
+                  output: (context) => {
+                    if (++selections === 2) throw new Error("second selector failed");
+                    return context["current-effect"] ?? context["old-effect"];
+                  },
+                },
+              })],
+            ...(configuredRetry
+              ? { retry: { maxAttempts: 2, initialDelay: 1, maxDelay: 1, retryIf: () => true } }
+              : {}),
+          }),
+        ];
+        const steps = new MockStepExecutor(new Map(), (node) => {
+          executions.push(node.id);
+          return { success: true, output: node.id, executionTime: 0 };
+        });
+        const makeExecutor = () =>
+          new DAGExecutor({
+            stepExecutor: steps,
+            onNodeStatesChanged: ({ nodeStatePatch }) => {
+              deletes.push(nodeStatePatch.delete);
+            },
+          });
+        const first = await makeExecutor().execute(nodes, createTestRun());
+        let result = first;
+        if (!configuredRetry) {
+          assertEquals(first.completed, false);
+          assertExists(first.nodeStates["repeat/old-effect"]);
+          assertExists(first.nodeStates.repeat?._loopOutputRetry);
+          const backend = new MemoryBackend();
+          try {
+            await backend.createRun(
+              createTestRun({ context: first.context, nodeStates: first.nodeStates }),
+            );
+            const stored = await backend.getRun("test-run");
+            assertExists(stored);
+            result = await makeExecutor().execute(nodes, JSON.parse(JSON.stringify(stored)));
+          } finally {
+            await backend.destroy();
+          }
+        }
+        assertEquals(result.completed, true);
+        assertEquals(executions, ["sibling", "repeat/old-effect", "repeat/current-effect"]);
+        assertEquals(selections, 3);
+        assertEquals(result.nodeStates["repeat/old-effect"], undefined);
+        if (dynamicOuter) assertEquals(result.nodeStates["repeat/old-child"], undefined);
+        else assertEquals(nestedBuilds, 2);
+        assertEquals(result.nodeStates["repeat/current-effect"]?.status, "completed");
+        assertEquals(result.nodeStates["repeat/current-effect"]?.output, "repeat/current-effect");
+        assertEquals(result.nodeStates.sibling?.status, "completed");
+        if (!configuredRetry) {
+          assertEquals(deletes.some((ids) => ids.includes("repeat/old-effect")), true);
+        }
+        const inspected = toPublicWorkflowRun(createTestRun({
+          _runtimeStateVersion: WORKFLOW_RUNTIME_STATE_VERSION,
+          status: "completed",
+          nodeStates: result.nodeStates,
+          context: result.context,
+        }));
+        assertEquals(inspected.nodeStates["repeat/old-effect"], undefined);
+        assertEquals(
+          inspected.nodeStates["repeat/current-effect"]?.output,
+          "repeat/current-effect",
+        );
+        assertEquals(Object.hasOwn(inspected.nodeStates.repeat!, "_loopOutputRetry"), false);
+      });
+    }
+  }
+
   for (const detached of [false, true]) {
     it(`persists two prior loop histories before fresh executor retry${detached ? " with JSON detachment" : ""}`, async () => {
       let builds = 0;
