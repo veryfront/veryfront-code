@@ -172,16 +172,7 @@ jobs:
             typecheck) deno task typecheck ;;
             test-typecheck) deno task lint:test-typecheck ;;
           esac
-      # Throwaway issue #2442 Demo probe. This branch must never merge.
-      - name: Issue 2442 intentional failure probe
-        if: ${{ github.event_name == 'merge_group' && matrix.check == 'typecheck' }}
-        run: |
-          # Following queue prefixes inherit this file; only the probe may fail.
-          # Unknown ref shapes fail closed so the throwaway PR cannot merge.
-          if [[ "${GITHUB_REF:-}" =~ ^refs/heads/gh-readonly-queue/main/pr-([1-9][0-9]*)-[0-9a-f]{40}$ ]] && [[ "${BASH_REMATCH[1]}" != 4828 ]]; then
-            exit 0
-          fi
-          exit 1
+
 
   # ============================================
   # CI: Tests
@@ -265,6 +256,16 @@ jobs:
               if (!status.success) Deno.exit(status.code);
             }
           '
+      # Throwaway issue #2442 Demo probe. This branch must never merge.
+      - name: Issue 2442 intentional failure probe
+        if: ${{ github.event_name == 'merge_group' && matrix.shard == 1 }}
+        run: |
+          # Following queue prefixes inherit this file; only the probe may fail.
+          # Unknown ref shapes fail closed so the throwaway PR cannot merge.
+          if [[ "${GITHUB_REF:-}" =~ ^refs/heads/gh-readonly-queue/main/pr-([1-9][0-9]*)-[0-9a-f]{40}$ ]] && [[ "${BASH_REMATCH[1]}" != 4828 ]]; then
+            exit 0
+          fi
+          exit 1
       - name: Run CLI integration tests
         if: ${{ matrix.shard == 2 }}
         run: deno task test:integration:cli --no-lock

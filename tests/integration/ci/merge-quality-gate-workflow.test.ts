@@ -1100,9 +1100,9 @@ describe("trusted merge-group cancellation workflow", () => {
 });
 
 describe("issue 2442 throwaway merge-queue failure probe", () => {
-  it("fails only the merge-group typecheck lane and preserves ordinary CI", async () => {
+  it("fails only its merge-group integration shard after real tests", async () => {
     const jobs = asRecord((await readWorkflow()).jobs, "workflow jobs");
-    const job = asRecord(jobs.ci, "ci job");
+    const job = asRecord(jobs["tests-integration"], "integration job");
     assert(Array.isArray(job.steps));
     const step = asRecord(
       job.steps.find((value) =>
@@ -1112,7 +1112,21 @@ describe("issue 2442 throwaway merge-queue failure probe", () => {
     );
     assertEquals(
       step.if,
-      "${{ github.event_name == 'merge_group' && matrix.check == 'typecheck' }}",
+      "${{ github.event_name == 'merge_group' && matrix.shard == 1 }}",
+    );
+    const normalIndex = job.steps.findIndex((value) =>
+      asRecord(value, "integration step").name === "Run integration shard"
+    );
+    const faultIndex = job.steps.indexOf(step);
+    assert(normalIndex >= 0);
+    assertEquals(faultIndex, normalIndex + 1);
+    const ci = asRecord(jobs.ci, "ci job");
+    assert(Array.isArray(ci.steps));
+    assertEquals(
+      ci.steps.some((value) =>
+        asRecord(value, "ci step").name === "Issue 2442 intentional failure probe"
+      ),
+      false,
     );
     const suffix = "a".repeat(40);
     const cases: Array<[string, number]> = [
