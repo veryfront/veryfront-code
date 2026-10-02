@@ -1787,4 +1787,105 @@ describe("WebSocketManager", () => {
 
     manager.dispose();
   });
+
+  describe("adapters no request is using", () => {
+    const runScheduledTimers = (): void => {
+      const timers = Array.from(scheduledTimers.entries());
+      scheduledTimers.clear();
+      for (const [, timer] of timers) timer.callback();
+    };
+
+    function createRunAdapterManager(options: {
+      inUse: boolean;
+      listCalls: { count: number };
+      evictions: { count: number };
+      deletedPrefixes?: string[];
+    }): WebSocketManager {
+      return createWebSocketManager({
+        client: {
+          listAllFiles: () => {
+            options.listCalls.count++;
+            return Promise.resolve([makeProjectFile("data/rows.json", "[]")]);
+          },
+        },
+        cache: {
+          deleteByPrefixAsync: (prefix: string) => {
+            options.deletedPrefixes?.push(prefix);
+            return Promise.resolve(0);
+          },
+        },
+        invalidationCallbacks: {
+          isAdapterInUse: () => options.inUse,
+          evictCurrentAdapter: () => {
+            options.evictions.count++;
+          },
+        },
+      });
+    }
+
+    it("does not re-list the project for finished-run adapters on a write", async () => {
+      const listCalls = { count: 0 };
+      const evictions = { count: 0 };
+      const deletedPrefixes: string[] = [];
+      const finishedRuns = [1, 2, 3].map(() =>
+        createRunAdapterManager({ inUse: false, listCalls, evictions, deletedPrefixes })
+      );
+      for (const manager of finishedRuns) manager.connect("project-1");
+      assertEquals(MockWebSocket.instances.length, finishedRuns.length);
+
+      for (const socket of MockWebSocket.instances) {
+        deliverPoke(socket, { changedPaths: ["data/rows.json"], branchName: "main" });
+      }
+      runScheduledTimers();
+      await flushMicrotasks();
+
+      assertEquals(listCalls.count, 0, "a finished run's adapter must not list the project");
+      assertEquals(
+        evictions.count,
+        finishedRuns.length,
+        "each unused adapter must be evicted so later writes reach none of them",
+      );
+      assertEquals(
+        deletedPrefixes,
+        finishedRuns.map(() => "files:branch:"),
+        "the pre-write listing must not answer the next read",
+      );
+      for (const manager of finishedRuns) manager.dispose();
+    });
+
+    it("does not re-list the project for an unused adapter on a full invalidation", async () => {
+      const listCalls = { count: 0 };
+      const evictions = { count: 0 };
+      const manager = createRunAdapterManager({ inUse: false, listCalls, evictions });
+      manager.connect("project-1");
+      const socket = MockWebSocket.instances[0];
+      assertExists(socket);
+
+      deliverPoke(socket, { branchName: "main" });
+      runScheduledTimers();
+      await flushMicrotasks();
+
+      assertEquals(listCalls.count, 0);
+      assertEquals(evictions.count, 1);
+      manager.dispose();
+    });
+
+    it("re-lists an active run's adapter once for a burst of writes", async () => {
+      const listCalls = { count: 0 };
+      const evictions = { count: 0 };
+      const manager = createRunAdapterManager({ inUse: true, listCalls, evictions });
+      manager.connect("project-1");
+      const socket = MockWebSocket.instances[0];
+      assertExists(socket);
+
+      for (const path of ["data/a.json", "data/b.json", "data/c.json"]) {
+        deliverPoke(socket, { changedPaths: [path], branchName: "main" });
+      }
+      runScheduledTimers();
+      await flushMicrotasks();
+
+      assertEquals(listCalls.count, 1, "one coalesced re-list per active adapter");
+      manager.dispose();
+    });
+  });
 });

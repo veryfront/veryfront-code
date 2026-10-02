@@ -613,6 +613,47 @@ describe("ProxyFSAdapterManager", () => {
     });
   });
 
+  describe("adapter usage signal", () => {
+    it("reports an adapter as unused once no request has resolved it for a minute", async () => {
+      let clock = 1_000_000;
+      const probes: Array<() => boolean> = [];
+      const manager = createManager({
+        now: () => clock,
+        adapterFactory: (config) => {
+          const probe = config.invalidationCallbacks?.isAdapterInUse;
+          assertExists(probe, "the manager must wire a usage signal into each adapter");
+          probes.push(probe);
+          const adapter = new VeryfrontFSAdapter(config);
+          adapter.initialize = () => Promise.resolve();
+          return adapter;
+        },
+      });
+
+      try {
+        await manager.getAdapter("run-project", "run-token", undefined, false, null, null, "main");
+        assertEquals(probes.length, 1);
+        const isAdapterInUse = probes[0]!;
+        assertEquals(isAdapterInUse(), true, "a just-created adapter is in use");
+
+        clock += 60_000;
+        assertEquals(isAdapterInUse(), true, "an adapter used within the last minute is in use");
+
+        clock += 1;
+        assertEquals(
+          isAdapterInUse(),
+          false,
+          "an adapter of a finished run must stop counting as in use",
+        );
+
+        await manager.getAdapter("run-project", "run-token", undefined, false, null, null, "main");
+        assertEquals(probes.length, 1, "the cached adapter must be reused");
+        assertEquals(isAdapterInUse(), true, "a request resolving the adapter marks it in use");
+      } finally {
+        manager.dispose();
+      }
+    });
+  });
+
   describe("methods", () => {
     it("should have getAdapter method", () => {
       const manager = createManager();

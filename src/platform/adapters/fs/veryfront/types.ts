@@ -212,4 +212,10 @@ export interface InvalidationCallbacks {
   clearDomainCache?: () => void;
   /** Evict the current shared proxy adapter after successful invalidation */
   evictCurrentAdapter?: () => void;
+  /**
+   * Whether a request used the current shared proxy adapter recently. A branch
+   * poke skips re-listing the project for an adapter nobody is using, such as
+   * one cached for an agent run that already finished.
+   */
+  isAdapterInUse?: () => boolean;
 }
