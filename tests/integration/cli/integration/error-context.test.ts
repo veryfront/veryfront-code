@@ -2,6 +2,12 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertInstanceOf, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { cliErrorBoundary, VeryfrontError } from "veryfront/errors";
+import {
+  createIntegrationErrorContext,
+  isIntegrationErrorContext,
+  readIntegrationErrorContext,
+  readIntegrationThrowableContext,
+} from "veryfront/integrations/diagnostics";
 import { IntegrationApiError } from "veryfront/integrations";
 import { classifyCliError, safeJsonErrorContext } from "../../../../cli/router.ts";
 import { createErrorEnvelope, outputJson } from "../../../../cli/shared/json-output.ts";
@@ -231,5 +237,110 @@ describe("integration usage errors before HTTP", () => {
       await emittedContext(error);
       assertEquals(requests, 0);
     }
+  });
+});
+
+describe("public synchronous integration diagnostics", () => {
+  it("projects bounded safe facts immediately without permitting replay", () => {
+    const context = createIntegrationErrorContext({
+      kind: "http",
+      outcomeUnknown: false,
+      httpStatus: 429,
+      condition: {
+        slug: "rate-limit-exceeded",
+        status: 429,
+        retryable: true,
+        retry_after_seconds: 3,
+      },
+    });
+    const expected = {
+      kind: "http",
+      outcomeUnknown: false,
+      automaticReplay: false,
+      retryable: false,
+      httpStatus: 429,
+      condition: {
+        slug: "rate-limit-exceeded",
+        status: 429,
+        retryable: true,
+        retry_after_seconds: 3,
+      },
+    };
+    assertEquals(isIntegrationErrorContext(context), true);
+    const projection = readIntegrationErrorContext({ ...context, secret: "synthetic-private" });
+    assertEquals(projection instanceof Promise, false);
+    assertEquals(projection, expected);
+    const throwable = readIntegrationThrowableContext({ context });
+    assertEquals(throwable instanceof Promise, false);
+    assertEquals(throwable, expected);
+  });
+
+  it("rejects hostile direct inputs and nested proxies without throwing", () => {
+    const revoked = Proxy.revocable({}, {});
+    revoked.revoke();
+    const throwing = new Proxy({}, {
+      getPrototypeOf() {
+        throw new Error("hostile");
+      },
+    });
+    const descriptors = new Proxy({}, {
+      ownKeys() {
+        throw new Error("hostile");
+      },
+    });
+    for (const value of [revoked.proxy, throwing, descriptors]) {
+      assertEquals(isIntegrationErrorContext(value), false);
+      assertEquals(readIntegrationErrorContext(value), undefined);
+      assertEquals(readIntegrationThrowableContext({ context: value }), undefined);
+      assertEquals(
+        readIntegrationErrorContext({
+          ...createIntegrationErrorContext({ outcomeUnknown: true }),
+          condition: value,
+          httpProblem: value,
+        }),
+        { outcomeUnknown: true, automaticReplay: false, retryable: false },
+      );
+    }
+    assertEquals(readIntegrationThrowableContext(revoked.proxy), undefined);
+  });
+
+  it("rejects inherited and malformed flags without invoking accessors", () => {
+    const base = createIntegrationErrorContext({ outcomeUnknown: true });
+    let reads = 0;
+    const accessor = {
+      get context() {
+        reads++;
+        return base;
+      },
+    };
+    assertEquals(readIntegrationThrowableContext(accessor), undefined);
+    assertEquals(readIntegrationThrowableContext(Object.create({ context: base })), undefined);
+    const brandedAccessor = Object.defineProperty({}, "integrationOperation", {
+      get() {
+        reads++;
+        return true;
+      },
+    });
+    assertEquals(isIntegrationErrorContext(brandedAccessor), false);
+    assertEquals(readIntegrationErrorContext(brandedAccessor), undefined);
+    for (
+      const value of [
+        {},
+        Object.create(base),
+        [],
+        { ...base, automaticReplay: true },
+        { ...base, retryable: true },
+        { ...base, outcomeUnknown: "true" },
+      ]
+    ) assertEquals(readIntegrationErrorContext(value), undefined);
+    assertEquals(
+      readIntegrationErrorContext({
+        ...base,
+        condition: { slug: "invalid slug", status: 429, retryable: true },
+        httpProblem: { slug: "bad", status: 200 },
+      }),
+      { outcomeUnknown: true, automaticReplay: false, retryable: false },
+    );
+    assertEquals(reads, 0);
   });
 });
