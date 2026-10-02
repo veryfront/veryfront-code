@@ -839,8 +839,13 @@ export class EventWaitManager {
       !expireOverdueWaits || wait.expiresAt === undefined ||
       Date.now() < wait.expiresAt.getTime()
     ) return;
+    // At the deadline millisecond the inclusive mailbox cutoff is still open:
+    // another process can append an on-time event after the empty claim, so
+    // recheck the mailbox the way the sweep does. Once the clock has passed
+    // the deadline no on-time event can arrive and the empty claim suffices.
+    const mailboxClosed = Date.now() > wait.expiresAt.getTime();
     try {
-      await this.expire(wait, true);
+      await this.expire(wait, mailboxClosed);
     } catch (error) {
       logger.error(
         "Failed to expire an overdue event wait before matching",

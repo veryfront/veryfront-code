@@ -2818,6 +2818,26 @@ class FailOneNodeDeliveryBackend extends MemoryBackend {
   }
 }
 
+/** Appends one on-time event right after the first empty mailbox claim. */
+class AppendAfterEmptyClaimBackend extends MemoryBackend {
+  lateEvent: RunEventEnvelope | null = null;
+
+  override async claimRunEventForWait(
+    runId: string,
+    waitId: string,
+    eventName: string,
+    cutoff?: Date,
+  ): Promise<RunEventEnvelope | null> {
+    const event = await super.claimRunEventForWait(runId, waitId, eventName, cutoff);
+    const late = this.lateEvent;
+    if (event === null && late) {
+      this.lateEvent = null;
+      await this.appendRunEvent(runId, late);
+    }
+    return event;
+  }
+}
+
 class FailFirstDeliveryRunReadBackend extends MemoryBackend {
   private rejectDeliveryRead = false;
   private failedOnce = false;
@@ -3671,6 +3691,55 @@ describe("WorkflowClient durable event waits", () => {
     assertEquals((await backend.getRun("drained-due"))?.status, "failed");
     assertEquals((await backend.getRun("drained-future"))?.status, "waiting");
     assertEquals((await backend.getPendingEventWaits("drained-future")).length, 1);
+  });
+
+  it("delivers an event appended at the deadline after the drain's empty claim", async () => {
+    using _time = new FakeTime(new Date("2026-09-30T12:00:00.000Z"));
+    const racingBackend = new AppendAfterEmptyClaimBackend();
+    const racingClient = createWorkflowClient({ backend: racingBackend });
+    try {
+      const runId = "drained-due-late-append";
+      const deadline = new Date(Date.now());
+      await racingBackend.createRun({
+        id: runId,
+        workflowId: "event-expiry",
+        status: "waiting",
+        input: {},
+        nodeStates: { event: { nodeId: "event", status: "running", attempt: 1 } },
+        currentNodes: [],
+        context: { input: {} },
+        checkpoints: [],
+        pendingApprovals: [],
+        createdAt: new Date(0),
+        sourceIntegrationPolicy: UNRESTRICTED_SOURCE_INTEGRATION_POLICY,
+      });
+      await racingBackend.savePendingEventWait(runId, {
+        id: `wait_${runId}`,
+        runId,
+        nodeId: "event",
+        eventName: "ready",
+        waitKind: "event",
+        requestedAt: new Date(0),
+        expiresAt: deadline,
+        status: "pending",
+      });
+      // Another process appends at the deadline millisecond, after the drain's
+      // atomic claim found the mailbox empty but before it expires the wait.
+      racingBackend.lateEvent = {
+        id: "evt-drained-due-late-append",
+        eventName: "ready",
+        payload: { arrived: "at-deadline" },
+        publishedAt: deadline,
+      };
+
+      await racingClient.getEventWaitManager().drainPendingEvents(runId);
+
+      assertEquals(racingBackend.lateEvent, null);
+      assertEquals(await racingBackend.peekRunEvent(runId, "ready"), null);
+      assert((await racingBackend.getRun(runId))?.status !== "failed");
+    } finally {
+      await racingClient.destroy();
+    }
   });
 
   it("continues recovered-run drains after one run fails", async () => {
