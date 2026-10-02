@@ -297,7 +297,8 @@ function buildGoogleGenerateResult(
       providerExecuted: true;
     }
   > = [];
-  const toolCallRegistry = createGoogleToolCallCorrelationRegistry();
+  const toolCallScope = crypto.randomUUID();
+  const toolCallRegistry = createGoogleToolCallCorrelationRegistry(toolCallScope);
 
   for (const [index, part] of parts.entries()) {
     let thoughtSignature: string | undefined;
@@ -461,7 +462,12 @@ function buildGoogleGenerateResult(
   const usage = sanitizeRuntimeUsage(extractGoogleUsage(payload));
   let providerMetadata: Record<string, unknown> | undefined;
   try {
-    providerMetadata = createGoogleProviderMetadata(parts, groundingMetadata);
+    providerMetadata = createGoogleProviderMetadata(
+      parts,
+      groundingMetadata,
+      undefined,
+      toolCallScope,
+    );
   } catch {
     throw invalidGoogleResponse(
       context,
