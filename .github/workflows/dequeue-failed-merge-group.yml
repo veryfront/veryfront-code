@@ -1,0 +1,76 @@
+name: Remove failed merge-group entry
+
+on:
+  workflow_run:
+    workflows: [CI/CD]
+    types: [completed]
+
+permissions: {}
+
+jobs:
+  dequeue:
+    name: remove failed merge-group entry
+    if: ${{ github.event.workflow_run.event == 'merge_group' && github.event.workflow_run.conclusion != 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    permissions:
+      actions: read
+      contents: write
+      pull-requests: read
+    steps:
+      # workflow_run executes this protected-main workflow, never queued code.
+      - uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          retries: 0
+          script: |
+            const { owner, repo } = context.repo;
+            const repository = `${owner}/${repo}`;
+            const event = context.payload.workflow_run;
+            const fullSha = /^[0-9a-f]{40}$/;
+            if (context.eventName !== "workflow_run" || event?.event !== "merge_group") return;
+            if (!Number.isSafeInteger(event.id) || event.id < 1 || !fullSha.test(event.head_sha ?? "")) return;
+            const { data: run } = await github.rest.actions.getWorkflowRun({ owner, repo, run_id: event.id });
+            const validRun = (value) =>
+              value.id === event.id && value.event === "merge_group" &&
+              value.status === "completed" && ["failure", "cancelled", "timed_out"].includes(value.conclusion) &&
+              value.run_attempt === event.run_attempt && value.head_sha === event.head_sha &&
+              value.repository?.id === context.payload.repository?.id &&
+              value.repository?.full_name === repository && value.head_repository?.full_name === repository;
+            if (!validRun(run)) return;
+            const { data: workflow } = await github.rest.actions.getWorkflow({ owner, repo, workflow_id: "cicd.yml" });
+            if (workflow.id !== run.workflow_id || workflow.path !== ".github/workflows/cicd.yml") return;
+            const match = /^gh-readonly-queue\/main\/pr-([1-9][0-9]*)-([0-9a-f]{40})$/.exec(run.head_branch ?? "");
+            if (!match) return;
+            const number = Number(match[1]);
+            if (!Number.isSafeInteger(number)) return;
+            const jobs = await github.paginate(github.rest.actions.listJobsForWorkflowRunAttempt, {
+              owner, repo, run_id: run.id, attempt_number: run.run_attempt, per_page: 100,
+            });
+            const gates = jobs.filter((job) => job.name === "quality gate (merge)");
+            if (gates.length !== 1 || gates[0].status !== "completed" || gates[0].conclusion !== "failure" ||
+                !Number.isFinite(Date.parse(gates[0].completed_at))) return;
+            const query = `query FailedQueueBinding($owner: String!, $repo: String!, $number: Int!) {
+              repository(owner: $owner, name: $repo) {
+                pullRequest(number: $number) {
+                  id number state baseRefName
+                  mergeQueueEntry { id headCommit { oid } baseCommit { oid } }
+                }
+              }
+            }`;
+            const binding = async () => (await github.graphql(query, { owner, repo, number }))?.repository?.pullRequest;
+            const matches = (pull) => pull?.number === number && pull.state === "OPEN" &&
+              pull.baseRefName === "main" && pull.mergeQueueEntry?.headCommit?.oid === run.head_sha &&
+              pull.mergeQueueEntry?.baseCommit?.oid === match[2];
+            const pull = await binding();
+            if (!matches(pull)) return;
+            const { data: ref } = await github.rest.git.getRef({ owner, repo, ref: `heads/${run.head_branch}` });
+            if (ref.object?.sha !== run.head_sha) return;
+            const { data: latestRun } = await github.rest.actions.getWorkflowRun({ owner, repo, run_id: run.id });
+            if (!validRun(latestRun)) return;
+            const latest = await binding();
+            if (!matches(latest) || latest.id !== pull.id || latest.mergeQueueEntry.id !== pull.mergeQueueEntry.id) return;
+            // The API has no expected-head condition. This final read narrows,
+            // but cannot eliminate, an external rebuild/re-enqueue race.
+            await github.graphql(`mutation RemoveFailedQueueEntry($id: ID!) {
+              dequeuePullRequest(input: { id: $id }) { clientMutationId }
+            }`, { id: latest.id });
