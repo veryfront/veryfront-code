@@ -56,6 +56,7 @@ const KEPT = [
   "tests-proxy-binary",
   "build-binaries",
   "prerelease",
+  "github-prerelease",
   "release",
   "quality-gate-registry",
   "dispatch-release",

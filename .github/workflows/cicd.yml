@@ -1445,18 +1445,35 @@ jobs:
             | tee -a "$GITHUB_STEP_SUMMARY"
           scripts/ci/publish-npm-packages.sh rc-publish
 
+  github-prerelease:
+    name: GitHub prerelease
+    if: ${{ !cancelled() && needs.prerelease.result == 'success' }}
+    needs: [prerelease]
+    runs-on: ubuntu-latest
+    environment: production
+    permissions:
+      actions: read
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: ./.github/actions/setup-deno
+        timeout-minutes: 5
+
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           path: binaries
 
       - name: Prepare RC checkout for SBOM
         env:
-          VERSION: ${{ steps.version.outputs.version }}
+          VERSION: ${{ needs.prerelease.outputs.version }}
         run: deno run -A scripts/ci/prepare-rc-build.ts
 
       - name: Generate SBOM
         env:
-          VERSION: ${{ steps.version.outputs.version }}
+          VERSION: ${{ needs.prerelease.outputs.version }}
         run: |
           deno task sbom:all --output-dir "dist/sbom-${VERSION}"
           deno task sbom --lock scripts/build/proxy-deno.lock --output "dist/sbom-${VERSION}/proxy.json"
@@ -1474,7 +1491,7 @@ jobs:
 
       - name: Create GitHub pre-release
         env:
-          VERSION: ${{ steps.version.outputs.version }}
+          VERSION: ${{ needs.prerelease.outputs.version }}
           GH_TOKEN: ${{ steps.release-app-token.outputs.token }}
         run: |
           # Collect available binaries dynamically (Windows build is optional)
@@ -1797,8 +1814,8 @@ jobs:
 
   dispatch-release:
     name: dispatch release
-    if: ${{ always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && needs.quality-gate-registry.result == 'success' && ((needs.version-check.outputs.is_stable == 'true' && needs.release.result == 'success') || (needs.version-check.outputs.is_stable == 'false' && needs.prerelease.result == 'success')) }}
-    needs: [quality-gate-registry, prerelease, release, version-check]
+    if: ${{ always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && needs.quality-gate-registry.result == 'success' && ((needs.version-check.outputs.is_stable == 'true' && needs.release.result == 'success') || (needs.version-check.outputs.is_stable == 'false' && needs.prerelease.result == 'success' && needs.github-prerelease.result == 'success')) }}
+    needs: [quality-gate-registry, prerelease, github-prerelease, release, version-check]
     runs-on: ubuntu-latest
     environment: production
     timeout-minutes: 5

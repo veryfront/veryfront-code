@@ -505,7 +505,7 @@ printf '%064d  %s\n' 0 "$1"
     const jobs = await readJobs();
     for (
       const [jobName, stepName] of [
-        ["prerelease", "Create GitHub pre-release"],
+        ["github-prerelease", "Create GitHub pre-release"],
         ["release", "Create GitHub releases"],
       ] as const
     ) {
@@ -659,7 +659,11 @@ printf '%064d  %s\n' 0 "$1"
         );
       }
       assertEquals(
-        tokenRepositories(job),
+        tokenRepositories(
+          jobName === "prerelease"
+            ? asRecord(jobs["github-prerelease"], "GitHub prerelease job")
+            : job,
+        ),
         ["veryfront"],
         `${jobName} release token must only access the release repository`,
       );
@@ -682,16 +686,67 @@ printf '%064d  %s\n' 0 "$1"
     });
   }
 
+  it("publishes GitHub RC assets in parallel with registry validation without weakening dispatch", async () => {
+    const jobs = await readJobs();
+    const npm = asRecord(jobs.prerelease, "npm prerelease job");
+    const npmSteps = steps(npm, "npm prerelease job");
+    assertEquals(npmSteps.at(-1)?.name, "Publish tested RC npm artifact");
+    assertEquals(npmSteps.some((step) => step.id === "release-app-token"), false);
+
+    const github = asRecord(jobs["github-prerelease"], "GitHub prerelease job");
+    assertEquals(github.needs, ["prerelease"]);
+    assertEquals(github.if, "${{ !cancelled() && needs.prerelease.result == 'success' }}");
+    assertEquals(github.environment, npm.environment);
+    assertEquals(github["runs-on"], npm["runs-on"]);
+    assertEquals(github.permissions, { actions: "read", contents: "write" });
+    const githubSteps = steps(github, "GitHub prerelease job");
+    const checkout = githubSteps.find((step) => String(step.uses).startsWith("actions/checkout@"));
+    assert(checkout);
+    assertEquals(asRecord(checkout.with, "checkout inputs")["persist-credentials"], false);
+    const setup = githubSteps.find((step) => step.uses === "./.github/actions/setup-deno");
+    assert(setup);
+    const download = githubSteps.find((step) =>
+      String(step.uses).startsWith("actions/download-artifact@")
+    );
+    assert(download);
+    assertEquals(asRecord(download.with, "binary download inputs"), { path: "binaries" });
+    const prepare = namedStep(github, "Prepare RC checkout for SBOM");
+    assert(githubSteps.indexOf(checkout) < githubSteps.indexOf(setup));
+    assert(githubSteps.indexOf(setup) < githubSteps.indexOf(prepare));
+    assert(githubSteps.indexOf(download) < githubSteps.indexOf(prepare));
+    for (
+      const name of ["Prepare RC checkout for SBOM", "Generate SBOM", "Create GitHub pre-release"]
+    ) {
+      assertEquals(
+        asRecord(namedStep(github, name).env, `${name} environment`).VERSION,
+        "${{ needs.prerelease.outputs.version }}",
+      );
+    }
+    const publish = String(namedStep(github, "Create GitHub pre-release").run);
+    for (
+      const asset of [
+        "binaries/veryfront-*/veryfront-*",
+        "dist/sbom-${VERSION}/*.json",
+        "scripts/install.sh",
+        "--prerelease",
+      ]
+    ) {
+      assertStringIncludes(publish, asset);
+    }
+    const registry = asRecord(jobs["quality-gate-registry"], "registry job");
+    assertEquals(registry.needs, ["prerelease", "release", "version-check"]);
+  });
+
   it("prepares the computed RC version before prerelease SBOM generation", async () => {
     const jobs = await readJobs();
-    const prerelease = asRecord(jobs.prerelease, "prerelease job");
+    const prerelease = asRecord(jobs["github-prerelease"], "GitHub prerelease job");
     const prereleaseSteps = steps(prerelease, "prerelease job");
     const prepare = namedStep(prerelease, "Prepare RC checkout for SBOM");
     const generate = namedStep(prerelease, "Generate SBOM");
 
     assertEquals(
       asRecord(prepare.env, "RC SBOM preparation environment"),
-      { VERSION: "${{ steps.version.outputs.version }}" },
+      { VERSION: "${{ needs.prerelease.outputs.version }}" },
       "RC SBOM preparation must use the computed numbered version",
     );
     assertEquals(
@@ -1098,12 +1153,13 @@ fi
     assertEquals(dispatch.needs, [
       "quality-gate-registry",
       "prerelease",
+      "github-prerelease",
       "release",
       "version-check",
     ]);
     assertEquals(
       dispatch.if,
-      "${{ always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && needs.quality-gate-registry.result == 'success' && ((needs.version-check.outputs.is_stable == 'true' && needs.release.result == 'success') || (needs.version-check.outputs.is_stable == 'false' && needs.prerelease.result == 'success')) }}",
+      "${{ always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && needs.quality-gate-registry.result == 'success' && ((needs.version-check.outputs.is_stable == 'true' && needs.release.result == 'success') || (needs.version-check.outputs.is_stable == 'false' && needs.prerelease.result == 'success' && needs.github-prerelease.result == 'success')) }}",
       "release dispatch must require both registry validation and the selected release job to succeed",
     );
     assertEquals(
