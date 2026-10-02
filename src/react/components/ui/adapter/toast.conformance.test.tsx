@@ -12,6 +12,7 @@
  * @module react/components/ui/adapter/toast.conformance.test
  */
 import * as React from "react";
+import { FakeTime } from "#std/testing/time";
 import { createPortal, flushSync } from "react-dom";
 import { createRoot, hydrateRoot } from "react-dom/client";
 import { renderToString } from "react-dom/server";
@@ -435,6 +436,10 @@ describe("Builtin Toast viewport and timer lifecycle", () => {
       configurable: true,
       get: () => visibility,
     });
+    // Yield passive React effects without advancing the toast clock.
+    const hostSetTimeout = globalThis.setTimeout;
+    const yieldToReact = () => new Promise<void>((resolve) => hostSetTimeout(resolve, 0));
+    const time = new FakeTime();
     try {
       flushSync(() =>
         root.render(
@@ -444,24 +449,40 @@ describe("Builtin Toast viewport and timer lifecycle", () => {
         )
       );
       flushSync(() => api!.toast({ title: "Paused", duration: 60 }));
+      await yieldToReact();
+      flushSync(() => time.tick(20));
       const toast = document.querySelector<HTMLElement>('[role="status"]')!;
       flushSync(() =>
         toast.dispatchEvent(new dom.window.MouseEvent("mouseover", { bubbles: true }))
       );
-      await new Promise((resolve) => setTimeout(resolve, 80));
+      await yieldToReact();
+      flushSync(() => time.tick(80));
       assert(document.body.textContent?.includes("Paused"), "hover pauses timer");
       visibility = "hidden";
       flushSync(() => document.dispatchEvent(new dom.window.Event("visibilitychange")));
       flushSync(() =>
         toast.dispatchEvent(new dom.window.MouseEvent("mouseout", { bubbles: true }))
       );
-      await new Promise((resolve) => setTimeout(resolve, 80));
+      await yieldToReact();
+      flushSync(() => time.tick(80));
       assert(document.body.textContent?.includes("Paused"), "hidden document keeps timer paused");
       visibility = "visible";
       flushSync(() => document.dispatchEvent(new dom.window.Event("visibilitychange")));
-      await waitFor(() => !document.body.textContent?.includes("Paused"));
+      await yieldToReact();
+      flushSync(() => time.tick(39));
+      assert(
+        document.body.textContent?.includes("Paused"),
+        "visible document retains remaining time",
+      );
+      await yieldToReact();
+      flushSync(() => time.tick(1));
+      assert(!document.body.textContent?.includes("Paused"), "visible document resumes dismissal");
     } finally {
-      await unmountReactRoot(root);
+      flushSync(() => root.unmount());
+      // Drain scheduler callbacks before restoring timers for the next test.
+      time.tick(0);
+      time.restore();
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
       restore();
     }
   });
