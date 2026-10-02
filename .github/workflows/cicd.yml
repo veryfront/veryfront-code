@@ -2034,7 +2034,14 @@ jobs:
       queue: max
     name: dispatch release
     if: ${{ always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && needs.quality-gate-registry.result == 'success' && needs.publish-public-release.result == 'success' && ((needs.version-check.outputs.is_stable == 'true' && needs.release.result == 'success') || (needs.version-check.outputs.is_stable == 'false' && needs.prerelease.result == 'success' && needs.github-prerelease.result == 'success')) }}
-    needs: [quality-gate-registry, prerelease, github-prerelease, release, publish-public-release, version-check]
+    needs: [
+      quality-gate-registry,
+      prerelease,
+      github-prerelease,
+      release,
+      publish-public-release,
+      version-check,
+    ]
     runs-on: ubuntu-latest
     environment: production
     timeout-minutes: 5
