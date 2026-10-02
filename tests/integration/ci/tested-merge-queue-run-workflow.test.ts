@@ -91,17 +91,7 @@ function needs(value: YamlRecord): string[] {
 const STATUS_FUNCTION = /always\(\)|!cancelled\(\)|failure\(\)|cancelled\(\)/;
 
 function ancestors(jobs: YamlRecord, name: string, found = new Set<string>()): Set<string> {
-  for (
-    const dependency of needs(job(jobs, name)).filter((dependency) =>
-      [
-        "tested-run",
-        "version-check",
-        "quality-gate-artifact",
-        "quality-gate-release",
-        "build-binaries",
-      ].includes(dependency)
-    )
-  ) {
+  for (const dependency of needs(job(jobs, name))) {
     if (found.has(dependency)) continue;
     found.add(dependency);
     ancestors(jobs, dependency, found);
