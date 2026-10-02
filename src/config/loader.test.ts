@@ -5797,11 +5797,28 @@ export default config as const;
         return { ms: measured.ms, error };
       }
 
+      function longCauseControl(size: number): string {
+        // Match bounded scheme scans while breaking an unbounded mutant's runs.
+        return "1".repeat(199) + ("a".repeat(32) + "!")
+          .repeat(Math.ceil((size - 199) / 33)).slice(0, size - 199);
+      }
+
+      it("long-cause control exercises bounded scheme scans without unbounded runs", () => {
+        const control = longCauseControl(100000);
+        assertEquals(control.length, 100000);
+        assertEquals(control.slice(0, 199), "1".repeat(199));
+        // Alphabetic starts exercise the same bounded scheme scanner as the probe.
+        // Separators keep an unbounded scheme mutant cheap only in the control.
+        const runs = control.match(/[a-z]+/g) ?? [];
+        assertEquals(runs.reduce((count, run) => count + run.length, 0) > 90000, true);
+        assertEquals(runs.every((run) => run.length <= 32), true);
+      });
+
       it("summarizes a very long cause in time proportional to its length", async () => {
         const size = 100000;
         const control = await measureLoadCause(
           "vf-config-long-control-",
-          `throw new Error("1".repeat(${size}));\n`,
+          `throw new Error(${JSON.stringify(longCauseControl(size))});\n`,
         );
         const controlMs = Math.max(1, control.ms);
         const { ms: probeMs, error } = await measureLoadCause(
