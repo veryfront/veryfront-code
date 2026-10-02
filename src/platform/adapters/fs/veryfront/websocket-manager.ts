@@ -146,6 +146,8 @@ export class WebSocketManager {
   private nextPreviewInvalidationVersion = 0;
   private previewInvalidationVersions = new Map<string, number>();
   private activePreviewInvalidationPrefixes = new Set<string>();
+  /** Pokes accepted for invalidation, so a running invalidation can see newer ones. */
+  private acceptedPokes = 0;
   private pokeMetrics = {
     received: 0,
     invalidationsTriggered: 0,
@@ -588,6 +590,7 @@ export class WebSocketManager {
 
       const previewInvalidationToken = this.beginPreviewInvalidation(contentContext);
       this.deps.invalidationCallbacks.clearDomainCache?.();
+      this.acceptedPokes++;
       this.deps.clearMemoryCaches();
       logger.debug("All in-memory caches cleared immediately on POKE");
 
@@ -829,9 +832,7 @@ export class WebSocketManager {
    * Returns whether a newer poke superseded this one while it ran. Evicting
    * then would dispose the adapter and cancel the newer poke's invalidation.
    */
-  private async skipUnusedAdapterRelist(sourceSnapshotVersion: number | undefined): Promise<
-    boolean
-  > {
+  private async skipUnusedAdapterRelist(acceptedPokes: number): Promise<boolean> {
     try {
       await this.clearProjectCSSCaches();
     } catch (error) {
@@ -843,8 +844,7 @@ export class WebSocketManager {
     logger.debug("Skipped re-listing files for an adapter no request is using", {
       projectSlug: this.deps.projectSlug,
     });
-    const currentSnapshotVersion = this.deps.getSourceSnapshotVersion?.();
-    return currentSnapshotVersion !== undefined && currentSnapshotVersion !== sourceSnapshotVersion;
+    return this.acceptedPokes !== acceptedPokes;
   }
 
   /**
@@ -855,6 +855,7 @@ export class WebSocketManager {
   private async refreshBranchSnapshot(
     contentContext: ResolvedContentContext,
     sourceSnapshotVersion: number | undefined,
+    acceptedPokes: number,
     invalidationKind: "selective" | "full",
   ): Promise<{
     preparedStyleArtifact: PreviewStyleArtifactInfo | undefined;
@@ -863,7 +864,7 @@ export class WebSocketManager {
     if (!this.isAdapterInUse()) {
       return {
         preparedStyleArtifact: undefined,
-        reloadSuperseded: await this.skipUnusedAdapterRelist(sourceSnapshotVersion),
+        reloadSuperseded: await this.skipUnusedAdapterRelist(acceptedPokes),
       };
     }
 
@@ -933,6 +934,7 @@ export class WebSocketManager {
     previewInvalidationToken: PreviewInvalidationToken,
   ): Promise<void> {
     const startTime = currentTime();
+    const acceptedPokes = this.acceptedPokes;
     const sourceSnapshotVersion = this.deps.getSourceSnapshotVersion?.();
     let preparedStyleArtifact: PreviewStyleArtifactInfo | undefined;
     let reloadSuperseded = false;
@@ -1033,6 +1035,7 @@ export class WebSocketManager {
         ({ preparedStyleArtifact, reloadSuperseded } = await this.refreshBranchSnapshot(
           contentContext,
           sourceSnapshotVersion,
+          acceptedPokes,
           "selective",
         ));
       }
@@ -1089,6 +1092,9 @@ export class WebSocketManager {
     previewInvalidationToken: PreviewInvalidationToken,
   ): Promise<void> {
     const startTime = currentTime();
+    // Captured before the awaited deletions below, so a poke that arrives
+    // while they run counts as newer than this invalidation.
+    const acceptedPokes = this.acceptedPokes;
     let preparedStyleArtifact: PreviewStyleArtifactInfo | undefined;
     let reloadSuperseded = false;
     let succeeded = false;
@@ -1197,6 +1203,7 @@ export class WebSocketManager {
         ({ preparedStyleArtifact, reloadSuperseded } = await this.refreshBranchSnapshot(
           contentContext,
           sourceSnapshotVersion,
+          acceptedPokes,
           "full",
         ));
       }

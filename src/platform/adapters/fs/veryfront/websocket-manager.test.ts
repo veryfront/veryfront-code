@@ -2000,6 +2000,47 @@ describe("WebSocketManager", () => {
       manager.dispose();
     });
 
+    it("does not evict an unused adapter when a newer full poke arrives during its deletes", async () => {
+      const firstDeletesStarted = Promise.withResolvers<void>();
+      const releaseFirstDeletes = Promise.withResolvers<number>();
+      let blockDeletes = true;
+      const evictions = { count: 0 };
+      const manager = createWebSocketManager({
+        cache: {
+          deleteByPrefixAsync: () => {
+            if (!blockDeletes) return Promise.resolve(0);
+            firstDeletesStarted.resolve();
+            return releaseFirstDeletes.promise;
+          },
+        },
+        invalidationCallbacks: {
+          isAdapterInUse: () => false,
+          evictCurrentAdapter: () => {
+            evictions.count++;
+          },
+        },
+      });
+      manager.connect("project-1");
+      const socket = MockWebSocket.instances[0];
+      assertExists(socket);
+
+      deliverPoke(socket, { branchName: "main" });
+      runScheduledTimers();
+      await firstDeletesStarted.promise;
+      blockDeletes = false;
+      deliverPoke(socket, { branchName: "main" });
+      releaseFirstDeletes.resolve(0);
+      await flushMicrotasks();
+
+      assertEquals(evictions.count, 0, "evicting now would cancel the newer full poke");
+
+      runScheduledTimers();
+      await flushMicrotasks();
+
+      assertEquals(evictions.count, 1, "the newer full poke evicts once it completes");
+      manager.dispose();
+    });
+
     it("re-lists an active run's adapter once for a burst of writes", async () => {
       const listCalls = { count: 0 };
       const evictions = { count: 0 };
