@@ -739,7 +739,7 @@ done
 
     assertEquals(matrix.shard, [1, 2, 3, 4, 5, 6, 7, 8]);
     assertEquals(coverageShards.name, "coverage shard ${{ matrix.shard }}/8");
-    assertEquals(strategy["fail-fast"], false);
+    assertEquals(strategy["fail-fast"], "${{ github.event_name == 'merge_group' }}");
     const steps = (coverageShards.steps as unknown[]).map((step) =>
       asRecord(step, "coverage shard step")
     );
