@@ -118,3 +118,28 @@ const runtimeTools = await getRemoteIntegrationToolDefinitions();
 | `OAuthField`                                | Public API contract for oauth field.                                                                                                                                                                                                                                                                                                                                                                                                                                                | [source](https://github.com/veryfront/veryfront-code/blob/main/src/integrations/schema.ts)                     |
 | `RemoteIntegrationToolDiscoveryResult`      | Result of listing the integration tools available to the current run.                                                                                                                                                                                                                                                                                                                                                                                                               | [source](https://github.com/veryfront/veryfront-code/blob/main/src/integrations/remote-tools.ts)               |
 | `SalesforceServiceAccountToolSourceOptions` | Options for the local Salesforce service-account source.                                                                                                                                                                                                                                                                                                                                                                                                                            | [source](https://github.com/veryfront/veryfront-code/blob/main/src/integrations/salesforce-service-account.ts) |
+
+## Deep imports
+
+These import paths group focused functionality under this module. Each is a separate barrel; import only what you need.
+
+### `veryfront/integrations/diagnostics`
+
+Synchronous safe-fact projection for integration operation failures. Readers exclude accessors, native payloads and unrecognized fields. Diagnostic metadata never authorizes automatic replay of an integration operation.
+
+```ts
+import {
+  createIntegrationErrorContext,
+  isIntegrationErrorContext,
+  readIntegrationErrorContext,
+} from "veryfront/integrations/diagnostics";
+```
+
+#### Functions
+
+| Name                              | Description                                                                                         | Source                                                                                            |
+| --------------------------------- | --------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| `createIntegrationErrorContext`   |                                                                                                     | [source](https://github.com/veryfront/veryfront-code/blob/main/src/integrations/error-context.ts) |
+| `isIntegrationErrorContext`       | Recognizes only an own data discriminator; validation still occurs before serialization.            | [source](https://github.com/veryfront/veryfront-code/blob/main/src/integrations/error-context.ts) |
+| `readIntegrationErrorContext`     | Copy only validated safe facts. Accessors, prototypes, extensions and native payloads are excluded. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/integrations/error-context.ts) |
+| `readIntegrationThrowableContext` | Read only an own data context from the original throwable; generic boundaries discard it.           | [source](https://github.com/veryfront/veryfront-code/blob/main/src/integrations/error-context.ts) |
