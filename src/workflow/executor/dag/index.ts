@@ -1283,20 +1283,24 @@ function retainedPublicationChildren(
   return undefined;
 }
 
-/** Validate the executed tree before reusing the normal publication restorer. */
+/**
+ * Validate the executed tree before reusing the normal publication restorer.
+ * `stateOwner` is the owner path every retained state must record; `undefined`
+ * accepts only a fully ownerless legacy tree.
+ */
 function hasRetainedPublicationTree(
   nodes: readonly WorkflowNode[],
   nodeStates: Readonly<Record<string, NodeState>>,
-  ownerPath: string,
+  stateOwner: string | undefined,
 ): boolean {
   return nodes.every((node) => {
     const state = nodeStates[node.id];
-    if (state?._subWorkflowOwnerPath !== ownerPath) return false;
+    if (state === undefined || state._subWorkflowOwnerPath !== stateOwner) return false;
     if (state.status === "skipped") return true;
     if (state.status !== "completed" || node.config.type === "loop") return false;
     if (node.config.type === "parallel" || node.config.type === "branch") {
       const children = retainedPublicationChildren(node, state);
-      return children !== undefined && hasRetainedPublicationTree(children, nodeStates, ownerPath);
+      return children !== undefined && hasRetainedPublicationTree(children, nodeStates, stateOwner);
     }
     return true;
   });
@@ -1308,11 +1312,12 @@ function corroboratesLegacyParallelPublication(
   nodeStates: Readonly<Record<string, NodeState>>,
   ownerPath: string,
   resumeContext: Readonly<WorkflowContext>,
+  stateOwner: string | undefined,
 ): boolean {
   if (node.config.type !== "parallel") return false;
   const output = nodeStates[node.id]?.output;
   if (typeof output !== "object" || output === null || Array.isArray(output)) return false;
-  if (!hasRetainedPublicationTree(node.config.nodes, nodeStates, ownerPath)) return false;
+  if (!hasRetainedPublicationTree(node.config.nodes, nodeStates, stateOwner)) return false;
   const publications = Object.create(null) as WorkflowContext;
   restorePublishedChildOutputs(
     node.config.nodes,
@@ -1338,28 +1343,47 @@ function corroboratesLegacyParallelPublication(
   return Object.entries(result).every(([key, value]) => {
     if (matched.has(key) || key === "input") return true;
     const state = nodeStates[key];
-    return state?.status === "completed" && state._subWorkflowOwnerPath === ownerPath &&
+    return state?.status === "completed" && state._subWorkflowOwnerPath === stateOwner &&
       isDeepStrictEqual(value, state.output);
   });
 }
 
+/**
+ * Whether `nodeId` is a parallel whose loop-shaped output is corroborated by its
+ * retained children. `stateOwner` is the owner path the retained states record:
+ * `ownerPath` for owned rows, `undefined` for a fully ownerless legacy tree.
+ */
 function hasLegacyParallelPublication(
   nodes: readonly WorkflowNode[],
   nodeId: string,
   nodeStates: Readonly<Record<string, NodeState>>,
   ownerPath: string,
   resumeContext: Readonly<WorkflowContext>,
+  stateOwner: string | undefined,
 ): boolean {
   for (const node of nodes) {
     const state = nodeStates[node.id];
-    if (state?.status !== "completed" || state._subWorkflowOwnerPath !== ownerPath) continue;
+    if (state?.status !== "completed" || state._subWorkflowOwnerPath !== stateOwner) continue;
     if (node.id === nodeId) {
-      return corroboratesLegacyParallelPublication(node, nodeStates, ownerPath, resumeContext);
+      return corroboratesLegacyParallelPublication(
+        node,
+        nodeStates,
+        ownerPath,
+        resumeContext,
+        stateOwner,
+      );
     }
     const children = retainedPublicationChildren(node, state);
     if (
       children &&
-      hasLegacyParallelPublication(children, nodeId, nodeStates, ownerPath, resumeContext)
+      hasLegacyParallelPublication(
+        children,
+        nodeId,
+        nodeStates,
+        ownerPath,
+        resumeContext,
+        stateOwner,
+      )
     ) {
       return true;
     }
@@ -1399,16 +1423,32 @@ function assertNoLegacyLoopPublication(
     if (state._subWorkflowOwnerPath !== undefined) {
       if (
         state._subWorkflowOwnerPath === ownerPath &&
-        !hasLegacyParallelPublication(nodes, nodeId, nodeStates, ownerPath, scope.resumeContext)
+        !hasLegacyParallelPublication(
+          nodes,
+          nodeId,
+          nodeStates,
+          ownerPath,
+          scope.resumeContext,
+          ownerPath,
+        )
       ) throw legacyLoopContextError(nodeId);
       continue;
     }
     // Retained child IDs identify removed producers when owner metadata is absent.
     // Older rows without that evidence may only use unclaimed legacy states;
     // root declarations and already-produced sibling records stay outside.
+    // A fully ownerless parallel stays restorable when its children corroborate it.
     if (
       !scope.declaredNodeIds.has(nodeId) && !previouslyProducedNodeIds.has(nodeId) &&
-      (recordedChildIds === undefined || recordedChildIds.includes(nodeId))
+      (recordedChildIds === undefined || recordedChildIds.includes(nodeId)) &&
+      !hasLegacyParallelPublication(
+        nodes,
+        nodeId,
+        nodeStates,
+        ownerPath,
+        scope.resumeContext,
+        undefined,
+      )
     ) throw legacyLoopContextError(nodeId);
   }
 }
@@ -1430,7 +1470,14 @@ function restorePublishedChildOutputs(
       requireExactPublication && state?.status === "completed" &&
       (node.config.type === "loop" ||
         mayHoldLoopPublication(state) &&
-          !hasLegacyParallelPublication([node], node.id, nodeStates, ownerPath, resumeContext))
+          !hasLegacyParallelPublication(
+            [node],
+            node.id,
+            nodeStates,
+            ownerPath,
+            resumeContext,
+            state._subWorkflowOwnerPath,
+          ))
     ) {
       // Legacy loop output flattens callback updates over framework metadata.
       // The current definition cannot prove which callbacks produced that row,

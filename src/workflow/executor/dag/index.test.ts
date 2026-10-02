@@ -1010,6 +1010,79 @@ describe("DAGExecutor", () => {
       });
     }
 
+    for (const scenario of ["corroborated", "mismatched value", "partly owned"] as const) {
+      it(`checks a fully ownerless legacy parallel with typed loop-named children: ${scenario}`, async () => {
+        const recoverable = scenario === "corroborated";
+        const expected = { iterations: 1, previousResults: [] };
+        let childCalls = 0;
+        const observed: unknown[] = [];
+        const exec = new DAGExecutor({
+          stepExecutor: new MockStepExecutor(new Map(), (node, context) => {
+            if (node.id === "observe") {
+              const output = {
+                iterations: context["collect/iterations"],
+                previousResults: context["collect/previousResults"],
+              };
+              observed.push(output);
+              return { success: true, output, executionTime: 0 };
+            }
+            childCalls++;
+            return {
+              success: true,
+              output: node.id.endsWith("/iterations") ? 1 : [],
+              executionTime: 0,
+            };
+          }),
+        });
+        const nodes = [subWorkflow("child", {
+          workflow: {
+            id: "legacy-ownerless-parallel-typed-children",
+            steps: [
+              parallel("collect", [
+                step("iterations", { tool: "read" }),
+                step("previousResults", { tool: "read" }),
+              ]),
+              { ...step("observe", { tool: "read" }), dependsOn: ["collect"] },
+            ],
+            output: (context) => context.observe,
+          },
+        })];
+        const first = await exec.execute(nodes, createTestRun());
+        assertEquals(first.completed, true);
+        const states = structuredClone(first.nodeStates);
+        states.child!.status = "failed";
+        delete states.child!._subWorkflowContext;
+        delete states.observe;
+        // Rows written before owner paths existed carry no owner metadata at all.
+        for (const [nodeId, state] of Object.entries(states)) {
+          if (nodeId === "child") continue;
+          if (scenario === "partly owned" && nodeId === "collect/previousResults") continue;
+          delete state._subWorkflowOwnerPath;
+        }
+        // Old parallel publications used bare child ids rather than namespaced ids.
+        states.collect!.output = { ...expected };
+        if (scenario === "mismatched value") states["collect/previousResults"]!.output = ["other"];
+        const persisted = JSON.parse(JSON.stringify(
+          prepareNodeStatesUserData(states, "legacy-ownerless-parallel-typed-children", {}),
+        )) as Record<string, NodeState>;
+        assertEquals(Object.hasOwn(persisted.collect!, "_subWorkflowOwnerPath"), false);
+        const retried = await exec.execute(nodes, createTestRun({ nodeStates: persisted }));
+        assertEquals(retried.completed, recoverable);
+        if (recoverable) {
+          assertEquals(retried.error, undefined);
+          assertEquals(observed, [expected, expected]);
+          assertEquals(retried.context.child, expected);
+        } else {
+          assertStringIncludes(
+            retried.error ?? "",
+            "Legacy nested-loop context cannot be restored",
+          );
+          assertEquals(observed, [expected]);
+        }
+        assertEquals(childCalls, 2);
+      });
+    }
+
     for (const callbackItems of [false, true]) {
       it(`restores a persisted legacy parallel wrapper in a ${callbackItems ? "callback" : "static"} map`, async () => {
         let itemCalls = 0;
