@@ -666,7 +666,8 @@
     "exclude": [
       "dist/",
       "coverage/",
-      "src/studio/bridge/"
+      "src/studio/bridge/",
+      "src/runs/contract/runs-api.types.ts"
     ],
     "rules": {
       "tags": [
@@ -696,7 +697,8 @@
     ],
     "exclude": [
       "dist/",
-      "coverage/"
+      "coverage/",
+      "src/runs/contract/runs-api.types.ts"
     ],
     "useTabs": false,
     "lineWidth": 100,

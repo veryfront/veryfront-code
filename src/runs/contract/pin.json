@@ -1,0 +1,9 @@
+{
+  "contract": "0.8.0",
+  "release": "https://github.com/veryfront/veryfront-issue-inbox/releases/tag/runs-target-0.8.0-b2a6c32770d2",
+  "archiveSha256": "b2a6c32770d2031e19f813580481b95000bab90847133b0e05169478d2b47107",
+  "generatedBy": "veryfront-api: pnpm contracts:runs:generate -- --out <dir>",
+  "files": {
+    "runs-api.types.ts": "16eca4bc80208292a9343ff6eceb3e979e794e5d2a8ef213772b9746a4257b7e"
+  }
+}
