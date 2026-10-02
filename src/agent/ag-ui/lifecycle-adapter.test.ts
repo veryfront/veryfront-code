@@ -232,8 +232,9 @@ describe("lifecycle AG-UI adapter", () => {
       {
         toolCallId: "provider-1",
         content: { content: "final" },
+        isError: false,
       },
-      "the final provider result must reach the client even when it carries preliminary: false",
+      "the final provider result must reach the client with an explicit isError flag, even when it carries preliminary: false",
     );
   });
 

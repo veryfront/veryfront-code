@@ -31,6 +31,35 @@ function steps(
 }
 
 describe("npm smoke Node support contract", () => {
+  it("runs this contract in the required lint CI suite", async () => {
+    const config = JSON.parse(
+      await Deno.readTextFile(
+        new URL("../../deno.json", import.meta.url),
+      ),
+    );
+    assert(
+      config.tasks["lint:ci"].split(" && ").some((command: string) =>
+        command.startsWith("deno test ") &&
+        command.split(" ").includes("scripts/build/runtime-support.test.ts")
+      ),
+      "Required lint CI must execute the runtime support contract",
+    );
+    const workflow = record(
+      parse(await Deno.readTextFile(WORKFLOW_PATH)),
+      "CI workflow",
+    );
+    const checks = record(
+      record(workflow.jobs, "CI workflow jobs").ci,
+      "CI checks job",
+    );
+    assert(
+      steps(checks, "checks job").some((step) =>
+        String(step.run).includes('.tasks["lint:ci"]')
+      ),
+      "The workflow checks job must execute lint:ci",
+    );
+  });
+
   it("runs the packed npm smoke on the exact minimum and current release line", async () => {
     const workflow = record(
       parse(await Deno.readTextFile(WORKFLOW_PATH)),
@@ -132,7 +161,7 @@ describe("npm smoke Node support contract", () => {
     const artifactBuild = steps(
       artifactJob,
       "npm compatibility artifact job",
-    ).find((step) => step.id === "build");
+    ).find((step) => step.name === "Build and pack tested npm output");
     assert(artifactBuild, "The npm artifact job must build the test artifact");
     const artifactBuildScript = String(artifactBuild.run);
     assert(
@@ -141,7 +170,7 @@ describe("npm smoke Node support contract", () => {
     );
     assert(
       artifactBuildScript.includes(
-        'VERSION="${BASE_VERSION}.${GITHUB_RUN_NUMBER}"',
+        'VERSION="${BASE_VERSION}.${RELEASE_NUMBER}"',
       ),
       "The tested npm artifact must use the same numbered RC version as prerelease publish",
     );
@@ -151,11 +180,35 @@ describe("npm smoke Node support contract", () => {
       "The numbered RC version must be prepared before the npm artifact is built",
     );
 
+    assertEquals(
+      record(artifactBuild.env, "npm artifact build environment")
+        .RELEASE_NUMBER,
+      "${{ needs.tested-run.outputs.release_number || github.run_number }}",
+      "The artifact must retain the tested merge-queue release number",
+    );
     const prereleaseJob = record(jobs.prerelease, "prerelease job");
     assert(
       Array.isArray(prereleaseJob.needs) &&
-        prereleaseJob.needs.includes("npm-compatibility-artifact"),
-      "Prerelease publish must depend on the tested npm compatibility artifact",
+        prereleaseJob.needs.includes("quality-gate-artifact"),
+      "Prerelease publish must depend on the tested npm artifact quality gate",
+    );
+    const artifactGate = record(
+      jobs["quality-gate-artifact"],
+      "artifact quality gate",
+    );
+    assert(
+      Array.isArray(artifactGate.needs) &&
+        artifactGate.needs.includes("npm-compatibility-artifact"),
+      "The artifact quality gate must depend on the tested npm artifact",
+    );
+    const versionStep = steps(prereleaseJob, "prerelease job").find((step) =>
+      step.id === "version"
+    );
+    assert(versionStep, "Prerelease publish must compute its RC version");
+    assertEquals(
+      record(versionStep.env, "prerelease version environment").RUN_NUMBER,
+      "${{ needs.tested-run.outputs.release_number }}",
+      "Prerelease publish must use the tested artifact's release number",
     );
     const prereleaseSteps = steps(prereleaseJob, "prerelease job");
     assert(
