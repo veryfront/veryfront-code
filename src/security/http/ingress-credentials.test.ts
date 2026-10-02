@@ -15,6 +15,7 @@ import {
   INGRESS_API_TOKEN_HEADER,
   INGRESS_INFERENCE_TOKEN_HEADER,
   INGRESS_RUN_EVENT_TOKEN_HEADER,
+  INGRESS_RUN_STOP_TOKEN_HEADER,
   inheritIngressCredentials,
   readIngressCredential,
   requestForWebSocketUpgrade,
@@ -67,6 +68,75 @@ function readLikeFramework(request: Request): void {
 const DENO_INTERNALS = { ignore: !isDeno };
 
 describe("security/http/ingress-credentials", () => {
+  for (
+    const name of [
+      INGRESS_API_TOKEN_HEADER,
+      INGRESS_INFERENCE_TOKEN_HEADER,
+      INGRESS_RUN_EVENT_TOKEN_HEADER,
+      INGRESS_RUN_STOP_TOKEN_HEADER,
+    ] as const
+  ) {
+    for (const cookies of [[], ["a=1; Expires=Wed, 01 Oct 2026 07:28:00 GMT", "b=2; Path=/"]]) {
+      it(`seals ${name} without ordinary headers and preserves ${cookies.length} cookies`, async () => {
+        const headers = new Headers({ [name]: "single-credential" });
+        for (const cookie of cookies) headers.append("set-cookie", cookie);
+        const controller = new AbortController();
+        const original = new Request("https://project.example/run", {
+          method: "POST",
+          body: new Uint8Array([65]),
+          headers,
+          signal: controller.signal,
+          redirect: "manual",
+        });
+        recordRequestPeerFromTransport(original, {
+          runtime: "deno",
+          transport: "tcp",
+          hostname: "10.0.0.7",
+        });
+        const originalHeaders = [...original.headers];
+        const sealed = sealIngressCredentials(original);
+        assertEquals(sealed.headers.get(name), null);
+        assertEquals(sealed.headers.getSetCookie(), cookies);
+        assertEquals(readIngressCredential(sealed, name), "single-credential");
+        assertEquals([...original.headers], originalHeaders);
+        assertEquals(sealed.method, "POST");
+        assertEquals(sealed.url, original.url);
+        assertEquals(sealed.redirect, "manual");
+        assertEquals(getRequestPeerProvenance(sealed), getRequestPeerProvenance(original));
+        assertEquals(sealed.signal.aborted, false);
+        controller.abort();
+        assertEquals(sealed.signal.aborted, true);
+        assertEquals(await sealed.text(), "A");
+        assertStrictEquals(sealIngressCredentials(sealed), sealed);
+      });
+    }
+
+    for (const replacement of [undefined, "replacement-credential"]) {
+      it(`carries ${name} to copies and interceptors with override: ${replacement !== undefined}`, () => {
+        const source = sealIngressCredentials(
+          new Request("https://project.example/run", {
+            headers: { [name]: "original-credential" },
+          }),
+        );
+        const copy = inheritIngressCredentials(source, new Request(source));
+        assertEquals(copy.headers.get(name), null);
+        assertEquals(readIngressCredential(copy, name), "original-credential");
+        const intercepted = sealInterceptedRequest(
+          source,
+          new Request(source, {
+            headers: replacement === undefined ? {} : { [name]: replacement },
+          }),
+        );
+        assertEquals(intercepted.headers.get(name), null);
+        assertEquals(
+          readIngressCredential(intercepted, name),
+          replacement ?? "original-credential",
+        );
+        assertEquals(readIngressCredential(source, name), "original-credential");
+      });
+    }
+  }
+
   it("seals a stop-only credential and carries it to framework copies", () => {
     const name = "x-veryfront-run-stop-token";
     const original = new Request("https://project.example/run", {

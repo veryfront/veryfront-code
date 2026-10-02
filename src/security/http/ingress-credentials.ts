@@ -27,6 +27,7 @@ const ObjectFreeze = Object.freeze;
 const ObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 const HeadersGet = NativeHeaders.prototype.get;
 const HeadersAppend = NativeHeaders.prototype.append;
+const HeadersDelete = NativeHeaders.prototype.delete;
 const HeadersEntries = NativeHeaders.prototype.entries;
 const HeadersIteratorNext = Object.getPrototypeOf(new NativeHeaders().entries()).next as (
   this: IterableIterator<[string, string]>,
@@ -164,10 +165,18 @@ function sealWith(request: Request, credentials: IngressCredentials): Request {
   const remaining = toHeaderRecordWithoutCredentials(request);
   init.headers = remaining.record;
   const sealed = new NativeRequest(request, init);
+  // Bun can retain the source headers when the override record is empty.
+  // Scrub only the private copy, through captured methods, before publishing it.
+  const sealedHeaders = IntrinsicReflectApply(RequestHeadersGetter, sealed, []) as Headers;
+  IntrinsicReflectApply(HeadersDelete, sealedHeaders, [INGRESS_API_TOKEN_HEADER]);
+  IntrinsicReflectApply(HeadersDelete, sealedHeaders, [INGRESS_INFERENCE_TOKEN_HEADER]);
+  IntrinsicReflectApply(HeadersDelete, sealedHeaders, [INGRESS_RUN_EVENT_TOKEN_HEADER]);
+  IntrinsicReflectApply(HeadersDelete, sealedHeaders, [INGRESS_RUN_STOP_TOKEN_HEADER]);
+  // Clear any cookies retained by the constructor before replaying each field.
+  IntrinsicReflectApply(HeadersDelete, sealedHeaders, ["set-cookie"]);
   if (remaining.setCookies.length > 0) {
     // Appended one by one so each stays its own field. The copy holds no
     // credential and is not yet reachable by project code.
-    const sealedHeaders = IntrinsicReflectApply(RequestHeadersGetter, sealed, []) as Headers;
     for (let index = 0; index < remaining.setCookies.length; index++) {
       IntrinsicReflectApply(HeadersAppend, sealedHeaders, [
         "set-cookie",
