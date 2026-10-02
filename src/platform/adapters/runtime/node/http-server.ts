@@ -14,7 +14,12 @@ import {
   type NodeWebSocketServerOptions,
   snapshotNodeWebSocketServerProvider,
 } from "#veryfront/extensions/websocket";
-import { recordRequestPeerFromTransport } from "../shared/request-peer.ts";
+import {
+  recordRequestPeerFromTransport,
+  recordRequestTransportLifetime,
+} from "../shared/request-peer.ts";
+
+const NodeTransportWithResolvers = Promise.withResolvers.bind(Promise);
 
 const pendingWebSocketUpgrades = new Map<
   string,
@@ -447,6 +452,20 @@ export function createNodeRequestListener(
   return async (_req, _res) => {
     const requestAbort = new AbortController();
     let responseReader: ReadableStreamDefaultReader<Uint8Array> | undefined;
+    const transportCompleted = NodeTransportWithResolvers<void>();
+    const finishTransport = () => {
+      _res.off("finish", finishTransport);
+      _res.off("close", closeTransport);
+      transportCompleted.resolve();
+    };
+    const closeTransport = () => {
+      if (!_res.writableFinished && !requestAbort.signal.aborted) {
+        requestAbort.abort(clientDisconnectedError());
+      }
+      finishTransport();
+    };
+    _res.once("finish", finishTransport);
+    _res.once("close", closeTransport);
     const abortForDisconnect = () => {
       if (!requestAbort.signal.aborted) requestAbort.abort(clientDisconnectedError());
       void responseReader?.cancel(requestAbort.signal.reason).catch(() => undefined);
@@ -479,6 +498,7 @@ export function createNodeRequestListener(
       if (body) requestInit.duplex = "half";
 
       const request = new Request(url.toString(), requestInit);
+      recordRequestTransportLifetime(request, transportCompleted.promise);
       if (typeof _req.socket.remoteAddress === "string") {
         recordRequestPeerFromTransport(request, {
           runtime: "node",

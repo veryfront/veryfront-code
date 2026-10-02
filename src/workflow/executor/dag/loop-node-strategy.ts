@@ -235,7 +235,15 @@ export async function executeLoopNodeStrategy(
       legacyStaticChildIds,
     );
 
-  let exposedIterationNodeStates: Record<string, NodeState> = resumeIterationNodeStates
+  // Output retry restores private children that were never published. Diff
+  // against the last published iteration so success also removes old children.
+  let exposedIterationNodeStates: Record<string, NodeState> = outputRetryLoopState
+    ? Object.fromEntries(
+      (outputRetryLoopState.completedNodeIds ?? []).flatMap((id) =>
+        nodeStates[id] ? [[id, nodeStates[id]]] : []
+      ),
+    )
+    : resumeIterationNodeStates
     ? { ...resumeIterationNodeStates }
     : {};
 
@@ -398,6 +406,7 @@ export async function executeLoopNodeStrategy(
           __veryfrontLoopState: { ownerNodeId: node.id, version: 1 },
           iteration,
           previousResults,
+          completedNodeIds: Object.keys(exposedIterationNodeStates),
           iterationNodeStates: toPersistedNodeStates(result.nodeStates),
           context: cloneExecutionState(result.context, "Loop output retry context"),
           evaluationContext,

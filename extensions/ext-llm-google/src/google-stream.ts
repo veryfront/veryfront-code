@@ -195,7 +195,8 @@ export async function* streamGoogleCompatibleParts(
     }
   >();
   const pendingAnonymousCodeExecutions: AnonymousCodeExecutionReplay[] = [];
-  const toolCallRegistry = createGoogleToolCallCorrelationRegistry();
+  const toolCallScope = crypto.randomUUID();
+  const toolCallRegistry = createGoogleToolCallCorrelationRegistry(toolCallScope);
   const rawAssistantParts: Array<Record<string, unknown>> = [];
   // Original stream position of each retained part. Fallback tool-call IDs and
   // replay derive from these, so merging text chunks never changes an ID.
@@ -914,6 +915,7 @@ export async function* streamGoogleCompatibleParts(
       rawAssistantParts,
       groundingMetadata,
       mergedTextChunks ? rawAssistantPartPositions : undefined,
+      toolCallScope,
     );
   } catch {
     // The stream accounts for retained raw parts and correlation state under

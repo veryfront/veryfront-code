@@ -36,7 +36,7 @@ async function fixture(
     model: ReturnType<typeof scriptedModel>,
     dispatched: string[],
   ) => Promise<void>,
-  reply: (name: string, count: number) => unknown = () => ({
+  reply: (name: string, count: number, input: Record<string, unknown>) => unknown = () => ({
     structuredContent: failedResult,
     content: [],
   }),
@@ -61,7 +61,7 @@ async function fixture(
       }
       : await (() => {
         dispatched.push(request.params.name);
-        return reply(request.params.name, dispatched.length);
+        return reply(request.params.name, dispatched.length, request.params.arguments);
       })();
     return Response.json({ jsonrpc: "2.0", id: request.id, result });
   }, async () => {
@@ -605,6 +605,136 @@ describe("runtime finalize terminal control", () => {
       }),
     );
   });
+
+  for (const streaming of [false, true]) {
+    for (
+      const [kind, transformed] of [
+        ["undefined", undefined],
+        ["nested undefined", { city: undefined }],
+        ["non-finite number", Number.NaN],
+        ["bigint", 1n],
+      ] as const
+    ) {
+      it(`rejects non-JSON transformed output before terminal dispatch and permits valid failure; ${kind}; stream=${streaming}`, async () => {
+        const recovered = {
+          code: "TRANSFORM_RECOVERED",
+          message: "Local rejection remained recoverable",
+        };
+        await fixture(
+          [
+            {
+              toolCalls: [{
+                ...failCall,
+                id: "invalid-transform",
+                input: { status: "completed", output: { city: "Test City" } },
+              }],
+            },
+            {
+              toolCalls: [
+                { ...failCall, input: { status: "failed", error: recovered } },
+                markerCall,
+              ],
+            },
+            { text: "must not run" },
+          ],
+          async (runtime, model, dispatched) => {
+            if (streaming) {
+              const body = await new Response(
+                await runtime.stream([{
+                  id: "input-1",
+                  role: "user",
+                  parts: [{ type: "text", text: "run" }],
+                }], { runId: "run-current", toolCallId: "caller-transform" }),
+              ).text();
+              assert(body.includes(recovered.code), body);
+              assert(!body.includes("RUN_OUTCOME_UNKNOWN"), body);
+              assertEquals(body.match(/"type":"error"/g)?.length, 1);
+              assert(!body.includes('"type":"message-finish"'), body);
+              assert(body.includes('"toolCallId":"invalid-transform"'), body);
+            } else {
+              const error = await assertRejects(
+                () =>
+                  runtime.generate("run", { runId: "run-current", toolCallId: "caller-transform" }),
+                Error,
+                recovered.message,
+              );
+              assertEquals((error as Error & { code: string }).code, recovered.code);
+            }
+            assertEquals(dispatched, [failCall.name]);
+            assertEquals(model.callCount, 2);
+          },
+          (_name, _count, input) => {
+            assertEquals(input, { status: "failed", error: recovered });
+            return {
+              content: [],
+              structuredContent: {
+                completed: true,
+                run: { run_id: "run-current", status: "failed", error: recovered },
+              },
+            };
+          },
+          defineSchema((v) => v.object({ city: v.string() }).transform(() => transformed))(),
+          undefined,
+          undefined,
+          "resolver-transform",
+        );
+      });
+    }
+
+    it(`persists JSON-compatible transformed finalize output; stream=${streaming}`, async () => {
+      const canonical = { city: "TEST CITY" };
+      await fixture(
+        [{
+          toolCalls: [{
+            ...failCall,
+            input: { status: "completed", output: { city: "Test City" } },
+          }, markerCall],
+        }],
+        async (runtime, model, dispatched) => {
+          if (streaming) {
+            const body = await new Response(
+              await runtime.stream([{
+                id: "input-1",
+                role: "user",
+                parts: [{ type: "text", text: "run" }],
+              }], { runId: "run-current", toolCallId: "caller-transform" }),
+            ).text();
+            assertEquals(body.match(/"type":"message-finish"/g)?.length, 1);
+            assert(!body.includes('"type":"error"'), body);
+            assert(body.includes('"object":{"city":"TEST CITY"}'), body);
+          } else {
+            assertEquals(
+              (await runtime.generate("run", {
+                runId: "run-current",
+                toolCallId: "caller-transform",
+              })).object,
+              canonical,
+            );
+          }
+          assertEquals(dispatched, [failCall.name]);
+          assertEquals(model.callCount, 1);
+        },
+        (_name, _count, input) => {
+          assertEquals(input, { status: "completed", output: canonical });
+          return {
+            content: [],
+            structuredContent: {
+              completed: true,
+              run: { run_id: "run-current", status: "completed", output: input.output },
+            },
+          };
+        },
+        defineSchema((v) =>
+          v.object({ city: v.string() }).transform((value) => ({
+            city: value.city.toUpperCase(),
+          }))
+        )(),
+        undefined,
+        undefined,
+        "resolver-transform",
+      );
+    });
+  }
 
   it("rejects schema-invalid finalization then accepts valid output without ending early", async () => {
     const output = { ingested: 3 };

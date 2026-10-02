@@ -1,0 +1,21 @@
+name: Cancel failed merge-group run
+
+on:
+  workflow_call:
+
+permissions:
+  actions: write
+
+jobs:
+  cancel:
+    if: ${{ github.event_name == 'merge_group' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      # Ordinary cancellation allows always() jobs to continue. Force cancellation
+      # stops even always() jobs and leaves unfinished checks unsuccessful.
+      # No checkout: repository code must never execute with this write token.
+      - name: Force-cancel the failed merge-group run
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh api --method POST "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/force-cancel"

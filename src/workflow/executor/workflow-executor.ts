@@ -184,6 +184,7 @@ export class WorkflowExecutor {
   private cancellationUpdates = new Map<string, Promise<void>>();
   private cancelledWaitCleanupTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private cancelledWaitCleanupAttempts = new Map<string, number>();
+  private executionOperations = new Map<string, Set<Promise<unknown>>>();
 
   /** Default lock duration: 30 seconds */
   private static readonly DEFAULT_LOCK_DURATION = 30_000;
@@ -728,6 +729,7 @@ export class WorkflowExecutor {
     ].filter((link) => link !== undefined);
 
     await withSpan("workflow.run", async () => {
+      const lifecycle = Promise.withResolvers<void>();
       await executeWorkflowRunControl({
         backend: this.config.backend,
         run,
@@ -747,6 +749,9 @@ export class WorkflowExecutor {
         },
         isCurrentExecution: (runId, controller) => this.isCurrentExecution(runId, controller),
         execute: ({ controller, signal, ownership }) => {
+          // Admission establishes local ownership before any dynamic steps run.
+          // Retain it through terminal hooks as well as the raw DAG operations.
+          this.trackExecutionOperation(run.id, lifecycle.promise);
           const nodes = this.resolveNodes(workflow, run.context);
           const runWithTenantContext: WorkflowRun = run._tenant
             ? {
@@ -757,6 +762,7 @@ export class WorkflowExecutor {
 
           return runWithWorkflowTenant(run._tenant, () =>
             this.executeWithTimeout(
+              run.id,
               () =>
                 this.dagExecutor.execute(
                   nodes,
@@ -807,7 +813,7 @@ export class WorkflowExecutor {
         onLiveWaiting: (waitingRun, nodeId, waitConfig) =>
           this.config.onLiveWaiting?.(waitingRun, nodeId, waitConfig),
         onWaitingBatchComplete: (waitingRun) => this.config.onWaitingBatchComplete?.(waitingRun),
-      });
+      }).finally(() => lifecycle.resolve());
     }, {
       "workflow.id": run.workflowId,
       "workflow.run_id": run.id,
@@ -909,6 +915,7 @@ export class WorkflowExecutor {
    * The timeout is always cleared in the finally block to prevent memory leaks.
    */
   private async executeWithTimeout<T>(
+    runId: string,
     fn: () => Promise<T>,
     timeout: string | number | undefined,
     executionController: AbortController,
@@ -916,6 +923,7 @@ export class WorkflowExecutor {
     executionController.signal.throwIfAborted();
     const timeoutMs = timeout === undefined ? undefined : parseDuration(timeout);
     const operation = Promise.resolve().then(fn);
+    this.trackExecutionOperation(runId, operation);
     const fencedOperation = operation.then((value) => {
       executionController.signal.throwIfAborted();
       return value;
@@ -948,6 +956,53 @@ export class WorkflowExecutor {
       if (timeoutId !== undefined) clearTimeout(timeoutId);
       if (rejectAbort) executionController.signal.removeEventListener("abort", rejectAbort);
     }
+  }
+
+  private trackExecutionOperation(runId: string, operation: Promise<unknown>): void {
+    let operations = this.executionOperations.get(runId);
+    if (!operations) {
+      operations = new Set();
+      this.executionOperations.set(runId, operations);
+    }
+    operations.add(operation);
+    void operation.then(
+      () => operations.delete(operation),
+      () => operations.delete(operation),
+    );
+  }
+
+  /**
+   * Wait until every admitted lifecycle and raw operation for this run has settled.
+   *
+   * @internal
+   */
+  async waitForExecutionStopped(runId: string): Promise<boolean> {
+    const operations = this.executionOperations.get(runId);
+    if (!operations) return false;
+
+    while (true) {
+      while (operations.size > 0) {
+        await Promise.allSettled([...operations]);
+      }
+      await this.stepExecutor.waitForExecutionStopped(runId);
+      if (operations.size === 0) break;
+    }
+    // Ownership was established by the captured entry, before cleanup could retire it.
+    return true;
+  }
+
+  /** @internal Retire lifecycle evidence after outstanding operations actually settle. */
+  clearExecutionStopEvidence(): void {
+    for (const [runId, operations] of this.executionOperations) {
+      const retire = async () => {
+        while (operations.size > 0) await Promise.allSettled([...operations]);
+        if (this.executionOperations.get(runId) === operations) {
+          this.executionOperations.delete(runId);
+        }
+      };
+      void retire();
+    }
+    this.stepExecutor.clearExecutionStopEvidence();
   }
 
   private async waitForCancellationGrace(operation: Promise<unknown>): Promise<void> {

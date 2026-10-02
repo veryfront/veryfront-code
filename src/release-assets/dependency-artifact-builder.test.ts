@@ -770,6 +770,34 @@ describe("release-assets/dependency-artifact-builder", () => {
     assertEquals(metrics, ["claim:", "failure:upstream_html"]);
   });
 
+  it("preserves cancellation while a build failure is being reported", async () => {
+    const rootUrl = dependencyArtifactUpstreamUrl(standardIdentity);
+    const controller = new AbortController();
+    const reportingStarted = Promise.withResolvers<void>();
+    const releaseReporting = Promise.withResolvers<{ accepted: true; state: "failed" }>();
+    const metrics: string[] = [];
+    const { client } = recordingClient();
+    client.reportResult = () => {
+      reportingStarted.resolve();
+      return releaseReporting.promise;
+    };
+
+    const build = runDependencyArtifactBuild(buildTaskInput(), client, {
+      signal: controller.signal,
+      fetch: fixtureFetch({
+        [rootUrl]: response("<!doctype html>", "text/html"),
+      }),
+      recordMetric: (metric) => metrics.push(`${metric.event}:${metric.failureCode ?? ""}`),
+    });
+
+    await reportingStarted.promise;
+    controller.abort(new Error("run cancelled during failure reporting"));
+    releaseReporting.resolve({ accepted: true, state: "failed" });
+
+    await assertRejects(() => build, Error, "run cancelled during failure reporting");
+    assertEquals(metrics, ["claim:"]);
+  });
+
   it("uses graph map keys as canonical source identities", async () => {
     const graph = await materializeDependencyArtifactGraph({
       modules: new Map([

@@ -2173,6 +2173,148 @@ describe("workflow/executor/workflow-executor", () => {
     assertEquals(cancelledRun.status, "cancelled");
   });
 
+  it("retains local stop evidence when dynamic steps fail before DAG execution", async () => {
+    const executor = new WorkflowExecutor({ backend: new MemoryBackend() });
+    executor.register(
+      workflow({
+        id: "pre-dag-dynamic-steps",
+        steps: () => {
+          throw new Error("Cannot resolve steps");
+        },
+      }).definition,
+    );
+    const handle = await executor.start("pre-dag-dynamic-steps", {});
+    await handle.settled();
+    assertEquals((await handle.status()).status, "failed");
+    assertEquals(await executor.waitForExecutionStopped(handle.runId), true);
+    assertEquals(await executor.waitForExecutionStopped("run-not-observed-here"), false);
+  });
+
+  for (const terminal of ["completed", "failed"] as const) {
+    it(`waits for a ${terminal} workflow lifecycle hook to settle before confirming stop`, async () => {
+      using time = new FakeTime();
+      const executor = new WorkflowExecutor({ backend: new MemoryBackend() });
+      const entered = Promise.withResolvers<void>();
+      const release = Promise.withResolvers<void>();
+      const hook = async () => {
+        entered.resolve();
+        await release.promise;
+      };
+      executor.register(
+        workflow({
+          id: `stop-lifecycle-${terminal}`,
+          steps: [step("work", {
+            tool: createTool("work", () => {
+              if (terminal === "failed") throw new Error("Work failed");
+              return { ok: true };
+            }),
+          })],
+          ...(terminal === "completed" ? { onComplete: hook } : { onError: hook }),
+        }).definition,
+      );
+      const handle = await executor.start(`stop-lifecycle-${terminal}`, {});
+      await entered.promise;
+      assertEquals((await handle.status()).status, terminal);
+      let stopped: boolean | undefined;
+      const stopWait = executor.waitForExecutionStopped(handle.runId).then((result) => {
+        stopped = result;
+      });
+      try {
+        await time.tickAsync(0);
+        assertEquals(stopped, undefined);
+      } finally {
+        release.resolve();
+        await handle.settled();
+        await stopWait;
+      }
+      assertEquals(stopped, true);
+    });
+  }
+
+  it("waits for a cancelled non-cooperative workflow tool to actually stop", async () => {
+    using time = new FakeTime();
+    const backend = new MemoryBackend();
+    const executor = new WorkflowExecutor({
+      backend,
+      cancellationGracePeriod: 5,
+    });
+    const operation = Promise.withResolvers<unknown>();
+    const operationStarted = Promise.withResolvers<void>();
+    executor.register(
+      workflow({
+        id: "wait-for-execution-stopped",
+        steps: [
+          step("blocking-tool", {
+            tool: createTool("blocking-tool", () => {
+              operationStarted.resolve();
+              return operation.promise;
+            }),
+          }),
+        ],
+      }).definition,
+    );
+
+    const handle = await executor.start("wait-for-execution-stopped", {});
+    await operationStarted.promise;
+    await handle.cancel();
+    await time.tickAsync(5);
+    await handle.settled();
+
+    let stopped: boolean | undefined;
+    const stopWait = executor.waitForExecutionStopped(handle.runId).then((result) => {
+      stopped = result;
+    });
+    await time.tickAsync(0);
+    assertEquals(stopped, undefined);
+
+    operation.resolve({ ok: true });
+    await time.tickAsync(0);
+    await stopWait;
+    assertEquals(stopped, true);
+    assertEquals(await executor.waitForExecutionStopped("run-not-observed-here"), false);
+  });
+
+  it("tracks a non-cooperative workflow tool started by a resumed workflow", async () => {
+    using time = new FakeTime();
+    const backend = new MemoryBackend();
+    const executor = new WorkflowExecutor({ backend, cancellationGracePeriod: 5 });
+    const operation = Promise.withResolvers<unknown>();
+    const operationStarted = Promise.withResolvers<void>();
+    executor.register(
+      workflow({
+        id: "resumed-execution-stop-evidence",
+        steps: [
+          step("blocking-tool", {
+            tool: createTool("blocking-tool", () => {
+              operationStarted.resolve();
+              return operation.promise;
+            }),
+          }),
+        ],
+      }).definition,
+    );
+    const run = { ...createRun("resumed-execution-stop-evidence"), status: "running" as const };
+    await backend.createRun(run);
+
+    const resume = executor.resume(run.id);
+    await operationStarted.promise;
+    await executor.cancel(run.id);
+    await time.tickAsync(5);
+    await resume;
+
+    let stopped = false;
+    const stopWait = executor.waitForExecutionStopped(run.id).then((result) => {
+      stopped = result;
+    });
+    await time.tickAsync(0);
+    assertEquals(stopped, false);
+
+    operation.resolve({ ok: true });
+    await time.tickAsync(0);
+    await stopWait;
+    assertEquals(stopped, true);
+  });
+
   it("notifies the wait manager when cancellation resolves a timed event wait", async () => {
     const backend = new MemoryBackend();
     const resolved: Array<{ runId: string; waitId: string }> = [];

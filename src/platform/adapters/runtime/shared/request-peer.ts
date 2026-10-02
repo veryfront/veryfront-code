@@ -9,6 +9,9 @@
  * @module platform/adapters/runtime/shared/request-peer
  */
 
+import { isNativePromiseWithoutHooks } from "#veryfront/platform/compat/error-introspection.ts";
+import { primordialPromiseThen } from "#veryfront/platform/compat/primordials/promise.ts";
+
 export type RequestPeerRuntime = "node" | "deno" | "bun";
 
 export interface RequestPeerProvenance {
@@ -27,6 +30,48 @@ const WeakMapHas = WeakMap.prototype.has;
 const WeakMapSet = WeakMap.prototype.set;
 const WeakSetAdd = WeakSet.prototype.add;
 const WeakSetHas = WeakSet.prototype.has;
+const RequestSignalGetter = Object.getOwnPropertyDescriptor(Request.prototype, "signal")!.get!;
+const ObjectFreeze = Object.freeze;
+
+interface RequestTransportLifetime {
+  readonly signal: AbortSignal;
+  readonly completed?: Promise<unknown>;
+}
+const requestTransportLifetimes = new WeakMap<Request, RequestTransportLifetime>();
+
+/** @internal Capture native transport lifetime before framework request replacement. */
+export function recordRequestTransportLifetime(
+  request: Request,
+  completed?: Promise<unknown>,
+): void {
+  if (getRequestTransportLifetime(request)) return;
+  const lifetime: RequestTransportLifetime = ObjectFreeze({
+    signal: IntrinsicReflectApply(RequestSignalGetter, request, []) as AbortSignal,
+    completed,
+  });
+  setTransportLifetime(request, lifetime);
+}
+
+function setTransportLifetime(request: Request, lifetime: RequestTransportLifetime): void {
+  IntrinsicReflectApply(WeakMapSet, requestTransportLifetimes, [request, lifetime]);
+  if (!lifetime.completed) return;
+  const release = () => {
+    if (getRequestTransportLifetime(request) === lifetime) {
+      IntrinsicReflectApply(WeakMapDelete, requestTransportLifetimes, [request]);
+    }
+  };
+  void primordialPromiseThen(lifetime.completed, release, release);
+}
+
+/** @internal Response construction is not native transport completion. */
+export function getRequestTransportLifetime(
+  request: Request,
+): RequestTransportLifetime | undefined {
+  return IntrinsicReflectApply(WeakMapGet, requestTransportLifetimes, [request]) as
+    | RequestTransportLifetime
+    | undefined;
+}
+
 const requestPeerProvenance = new WeakMap<Request, RequestPeerProvenance>();
 const interceptorHandledRequests = new WeakSet<Request>();
 
@@ -114,6 +159,7 @@ export function recordRequestPeerFromTransport(
     return false;
   }
 
+  if (!getRequestTransportLifetime(request)) recordRequestTransportLifetime(request);
   setProvenance(
     request,
     Object.freeze({
@@ -133,6 +179,11 @@ export function recordDenoServeRequestPeer(
   if (typeof info !== "object" || info === null) return false;
 
   try {
+    const completed = (info as { readonly completed?: unknown }).completed;
+    recordRequestTransportLifetime(
+      request,
+      isNativePromiseWithoutHooks(completed) ? completed : undefined,
+    );
     const remoteAddress = (info as {
       readonly remoteAddr?: {
         readonly transport?: unknown;
@@ -236,6 +287,12 @@ export function inheritRequestPeerProvenance<T extends Request>(
 ): T {
   if (source === target) return target;
 
+  const lifetime = getRequestTransportLifetime(source);
+  if (lifetime === undefined) {
+    IntrinsicReflectApply(WeakMapDelete, requestTransportLifetimes, [target]);
+  } else {
+    setTransportLifetime(target, lifetime);
+  }
   const provenance = getProvenance(source);
   if (provenance === undefined) deleteProvenance(target);
   else setProvenance(target, provenance);

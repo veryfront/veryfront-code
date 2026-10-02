@@ -23,12 +23,32 @@ describe("child-run-result-summary", () => {
   it("summarizes a child result larger than the run output limit", () => {
     const summary = buildChildRunResultSummary("word ".repeat(300_000));
 
-    const marker = ` … [truncated ${summary.omittedChars} chars]`;
+    const marker = `… [truncated ${summary.omittedChars} chars]`;
     assertEquals(summary.truncated, true);
     assertEquals(summary.originalChars, 1_499_999);
     assertEquals(summary.limitChars, 64_000);
     assertEquals(summary.text.endsWith(marker), true);
-    assertEquals(summary.text.length - marker.length <= 64_000, true);
+    assertEquals(summary.text.length <= 64_000, true);
+    assertEquals(summary.returnedChars, summary.text.length);
+    assertEquals(
+      summary.omittedChars,
+      summary.originalChars! - (summary.text.length - marker.length),
+    );
+  });
+
+  it("includes the truncation marker in summary and structured text budgets", () => {
+    for (const mode of ["summary", "structured"] as const) {
+      for (const size of [64_000, 64_001, 163_990, 1_048_577]) {
+        const text = "x".repeat(size);
+        const result = buildChildRunResultSummary(text, { mode });
+        const retained = result.text.split("… [truncated")[0]!.length;
+        assertEquals(result.text.length <= 64_000, true);
+        assertEquals(result.returnedChars, result.text.length);
+        assertEquals(result.omittedChars, size - retained);
+        assertEquals(result.truncated, size > 64_000);
+        if (size === 64_000) assertEquals(result.text, text);
+      }
+    }
   });
 
   describe("summarizeChildRunResultText", () => {
