@@ -21,6 +21,12 @@ import {
   verifyControlPlaneRequest,
 } from "#veryfront/internal-agents/control-plane-auth.ts";
 import {
+  INGRESS_API_TOKEN_HEADER,
+  INGRESS_INFERENCE_TOKEN_HEADER,
+  inheritIngressCredentials,
+  readIngressCredential,
+} from "#veryfront/security/http/ingress-credentials.ts";
+import {
   INTERNAL_AGENT_CONTROL_PLANE_MAX_BODY_BYTES,
   InternalAgentRequestBodyTooLargeError,
   readInternalAgentRequestBody,
@@ -45,6 +51,12 @@ import {
   schemaIdentitySha256,
   type SchemaViolation,
 } from "#veryfront/task/io-contract.ts";
+import {
+  checkRunOutputBytes,
+  measureSerializedRunOutputBytes,
+  parseSerializedRunOutput,
+  serializeRunOutput,
+} from "#veryfront/task/run-output-limit.ts";
 import { type DiscoveredEval, findEvalById } from "#veryfront/eval/discovery.ts";
 import { runEval } from "#veryfront/eval/runner.ts";
 import {
@@ -215,8 +227,15 @@ export interface ProjectRunExecuteResponse {
   result?: unknown;
   logs?: string | null;
   error?: string | null;
-  error_code?: "RUN_TIMEOUT" | "INPUT_VALIDATION_FAILED" | "OUTPUT_VALIDATION_FAILED";
-  /** Structured failure detail, such as schema validation errors. */
+  error_code?:
+    | "RUN_TIMEOUT"
+    | "INPUT_VALIDATION_FAILED"
+    | "OUTPUT_VALIDATION_FAILED"
+    | "OUTPUT_TOO_LARGE";
+  /**
+   * Structured failure detail, such as schema validation errors, or
+   * `{ size_bytes, limit_bytes }` for `OUTPUT_TOO_LARGE`.
+   */
   error_detail?: unknown;
   /** The task threw a RetryableError; the API may start another attempt. */
   retryable?: true;
@@ -671,6 +690,56 @@ function createInputValidationFailure(
   };
 }
 
+/**
+ * Applies the run output limit before a response is sent (veryfront/veryfront-issue-inbox#2113).
+ * A successful result over the limit becomes an OUTPUT_TOO_LARGE failure without the result; a
+ * failed response drops an oversized result and keeps its own error. Nothing is truncated.
+ */
+function enforceRunOutputLimit(response: ProjectRunExecuteResponse): {
+  response: ProjectRunExecuteResponse;
+  wireJson: string;
+} {
+  if (!("result" in response)) {
+    return { response, wireJson: serializeRunOutput(response) ?? "null" };
+  }
+  // Serialize once: the checked serialization is the one sent, so a result whose `toJSON`
+  // or getters change between serializations cannot slip past the limit.
+  const serialized = serializeRunOutput(response.result);
+  const tooLarge = checkRunOutputBytes(measureSerializedRunOutputBytes(serialized));
+  if (!tooLarge) {
+    const safeResponse = {
+      ...response,
+      result: serialized === undefined ? undefined : parseSerializedRunOutput(serialized),
+    };
+    // Emit the exact bytes that were measured. Re-serializing the parsed copy can grow it,
+    // for example `JSON.rawJSON("1e20")` is 4 bytes checked but 21 bytes once parsed.
+    const { result: _checked, ...envelope } = response;
+    return {
+      response: safeResponse,
+      wireJson: withSerializedResult(serializeRunOutput(envelope) ?? "{}", serialized),
+    };
+  }
+
+  const { result: _oversized, ...withoutResult } = response;
+  const safeResponse = response.success
+    ? {
+      ...withoutResult,
+      success: false,
+      error: tooLarge.message,
+      error_code: tooLarge.code,
+      error_detail: tooLarge.detail,
+    }
+    : withoutResult;
+  return { response: safeResponse, wireJson: serializeRunOutput(safeResponse) ?? "null" };
+}
+
+/** Appends an already serialized `result` member to a serialized response envelope. */
+function withSerializedResult(envelopeJson: string, serializedResult: string | undefined): string {
+  if (serializedResult === undefined) return envelopeJson;
+  const member = `"result":${serializedResult}`;
+  return envelopeJson === "{}" ? `{${member}}` : `${envelopeJson.slice(0, -1)},${member}}`;
+}
+
 function createExecutionFailure(error: unknown, durationMs: number): ProjectRunExecuteResponse {
   return {
     success: false,
@@ -952,9 +1021,11 @@ async function executeDiscoveredTaskRun(
 async function waitForWorkflowResult(
   client: WorkflowClientView,
   runId: string,
-  shouldCancel: () => boolean,
+  signal: AbortSignal,
   deps: ProjectRunExecuteHandlerDeps,
   releasedKeys?: string[],
+  pollingStopped?: AbortSignal,
+  cancelRun?: () => Promise<void>,
 ): Promise<WorkflowRunView> {
   const deadline = deps.now() + DEFAULT_WORKFLOW_STATUS_TIMEOUT_MS;
   let previousKeys: string[] | undefined;
@@ -965,13 +1036,17 @@ async function waitForWorkflowResult(
     if (!run) throw RESOURCE_NOT_FOUND.create({ detail: `Workflow run not found: ${runId}` });
 
     // A waiting run is resumable, so an aborted request cancels it too.
-    if (shouldCancel() && !isTerminalWorkflowStatus(run.status)) {
-      await client.cancel(runId);
+    if (signal.aborted && !isTerminalWorkflowStatus(run.status)) {
+      await (cancelRun ? cancelRun() : client.cancel(runId));
       return {
         status: "cancelled",
         output: run.output,
         error: { message: "Workflow run cancelled" },
       };
+    }
+
+    if (pollingStopped?.aborted) {
+      throw TIMEOUT_ERROR.create({ detail: `Workflow run timed out: ${runId}` });
     }
 
     if (isTerminalWorkflowStatus(run.status)) return run;
@@ -1284,8 +1359,10 @@ async function resumeWaitingWorkflowRun(
   client: WorkflowClientView,
   runId: string,
   resume: WorkflowResumeSignal,
-  shouldCancel: () => boolean,
+  signal: AbortSignal,
   deps: ProjectRunExecuteHandlerDeps,
+  pollingStopped: AbortSignal,
+  cancelRun: () => Promise<void>,
 ): Promise<{ run: WorkflowRunView } | { failure: string }> {
   if (client.statePersistence !== "durable") {
     return { failure: "Cannot resume a workflow run without durable workflow persistence" };
@@ -1296,12 +1373,38 @@ async function resumeWaitingWorkflowRun(
   // A re-dispatch that repeats a decision already applied (the previous
   // attempt died after applying it) just reports where the run is now.
   if (current.status !== "waiting") {
-    return { run: await waitForWorkflowResult(client, runId, shouldCancel, deps) };
+    return {
+      run: await waitForWorkflowResult(
+        client,
+        runId,
+        signal,
+        deps,
+        undefined,
+        pollingStopped,
+        cancelRun,
+      ),
+    };
   }
 
   const parked = await readPendingWaits(client, runId, current);
   if (await isStaleDecision(resume, parked)) {
-    return { run: await waitForWorkflowResult(client, runId, shouldCancel, deps) };
+    return {
+      run: await waitForWorkflowResult(
+        client,
+        runId,
+        signal,
+        deps,
+        undefined,
+        pollingStopped,
+        cancelRun,
+      ),
+    };
+  }
+  // A timed-out request still applies its decision: the timeout reports the
+  // run waiting and the recheck dispatch names no decision to apply again.
+  if (signal.aborted) {
+    await cancelRun();
+    return { run: { status: "cancelled", error: { message: "Workflow run cancelled" } } };
   }
   const applied = isParkedOnNothing(parked)
     ? { released: true }
@@ -1310,10 +1413,19 @@ async function resumeWaitingWorkflowRun(
 
   // The decision can resume the run in the background, so the run may still
   // read `waiting` on the boundary it was just released from while the
-  // released node completes. Poll past it; a later pause on a different
-  // boundary is a new `waiting`.
+  // released node completes. Poll past it; a later pause is a new boundary.
   const releasedKeys = applied.released ? waitKeys(parked) : undefined;
-  return { run: await waitForWorkflowResult(client, runId, shouldCancel, deps, releasedKeys) };
+  return {
+    run: await waitForWorkflowResult(
+      client,
+      runId,
+      signal,
+      deps,
+      releasedKeys,
+      pollingStopped,
+      cancelRun,
+    ),
+  };
 }
 
 function isTerminalWorkflowStatus(status: string): boolean {
@@ -1386,8 +1498,8 @@ async function runDiscoveredWorkflow(
   let activeResume: Promise<unknown> | undefined;
   try {
     client.register(workflow.definition);
-    // The run was cancelled while the workflow was being loaded: do not start or resume it.
-    if (signal.aborted) {
+    // A first dispatch has no durable run yet. A resume must cancel its persisted run below.
+    if (signal.aborted && !request.resume) {
       return {
         success: false,
         error: "Workflow run cancelled",
@@ -1398,14 +1510,52 @@ async function runDiscoveredWorkflow(
 
     let run: WorkflowRunView;
     if (request.resume) {
-      let resumeTimedOut = false;
+      const resumeRequest = new AbortController();
+      const pollingStopped = new AbortController();
+      let cancellation: Promise<void> | undefined;
+      let cancellationResult: WorkflowRunView | undefined;
+      const cancelRun = () =>
+        cancellation ??= (async () => {
+          const current = await client.getRun(request.runId);
+          if (current && isTerminalWorkflowStatus(current.status)) {
+            cancellationResult = current;
+            return;
+          }
+          try {
+            await client.cancel(request.runId);
+          } catch (error) {
+            const latest = await client.getRun(request.runId);
+            if (!latest || !isTerminalWorkflowStatus(latest.status)) throw error;
+            cancellationResult = latest;
+            return;
+          }
+          cancellationResult = {
+            status: "cancelled",
+            error: { message: "Workflow run cancelled" },
+          };
+        })();
+      const forwardCancellation = () => {
+        resumeRequest.abort();
+        void cancelRun().catch(() => {});
+      };
+      signal.addEventListener("abort", forwardCancellation, { once: true });
+      if (signal.aborted) forwardCancellation();
       const operation = resumeWaitingWorkflowRun(
         client,
         request.runId,
         request.resume,
-        () => !resumeTimedOut && signal.aborted,
+        resumeRequest.signal,
         deps,
-      );
+        pollingStopped.signal,
+        cancelRun,
+      ).then(async (result) => {
+        await cancellation;
+        return cancellationResult ? { run: cancellationResult } : result;
+      }, async (error) => {
+        await cancellation;
+        if (cancellationResult) return { run: cancellationResult };
+        throw error;
+      });
       activeResume = operation;
       void operation.then(() => {
         activeResume = undefined;
@@ -1417,12 +1567,21 @@ async function runDiscoveredWorkflow(
         operation,
         new Promise<{ timedOut: true }>((resolve) => {
           timer = setTimeout(() => {
-            resumeTimedOut = true;
+            signal.removeEventListener("abort", forwardCancellation);
+            pollingStopped.abort();
             resolve({ timedOut: true });
           }, deps.workflowResumeTimeoutMs ?? DEFAULT_WORKFLOW_STATUS_TIMEOUT_MS);
         }),
-      ]).finally(() => clearTimeout(timer));
-      if ("timedOut" in resumed) {
+      ]).finally(() => {
+        clearTimeout(timer);
+        signal.removeEventListener("abort", forwardCancellation);
+      });
+      // A settled cancellation reports what it found, including a run that
+      // was already terminal. One still in flight leaves the run to the recheck.
+      const outcome = "timedOut" in resumed && cancellationResult
+        ? { run: cancellationResult }
+        : resumed;
+      if ("timedOut" in outcome) {
         // The resumed execution keeps running durably, so the run did not
         // fail: keep the canonical run waiting and have the control plane
         // dispatch it again soon. That dispatch names no pending wait, so it
@@ -1439,15 +1598,15 @@ async function runDiscoveredWorkflow(
           duration_ms: Math.max(0, deps.now() - startedAt),
         };
       }
-      if ("failure" in resumed) {
+      if ("failure" in outcome) {
         return {
           success: false,
-          error: resumed.failure,
+          error: outcome.failure,
           logs: null,
           duration_ms: Math.max(0, deps.now() - startedAt),
         };
       }
-      run = resumed.run;
+      run = outcome.run;
     } else {
       // A null input counts as no input, the same as on the API run record.
       let handle: Awaited<ReturnType<typeof client.start>>;
@@ -1461,8 +1620,22 @@ async function runDiscoveredWorkflow(
         if (failure) return failure;
         throw error;
       }
-      run = await waitForWorkflowResult(client, handle.runId, () => signal.aborted, deps);
+      run = await waitForWorkflowResult(client, handle.runId, signal, deps);
+      const pausedOn = run.status === "waiting"
+        ? waitKeys(await readPendingWaits(client, handle.runId, run))
+        : undefined;
       await handle.settled?.();
+      if (pausedOn) {
+        const refreshed = await client.getRun(handle.runId) ?? run;
+        // An expiring delay or a delivered event can advance the run past the
+        // polled pause while it settles: poll it again until a new pause
+        // stabilizes, which also cancels the run when the request was aborted.
+        run = isTerminalWorkflowStatus(refreshed.status) ||
+            (refreshed.status === "waiting" &&
+              sameKeys(waitKeys(await readPendingWaits(client, handle.runId, refreshed)), pausedOn))
+          ? refreshed
+          : await waitForWorkflowResult(client, handle.runId, signal, deps);
+      }
     }
     const durationMs = Math.max(0, deps.now() - startedAt);
 
@@ -1626,7 +1799,6 @@ const RequestHeadersGetter = Object.getOwnPropertyDescriptor(Request.prototype, 
 const RequestUrlGetter = Object.getOwnPropertyDescriptor(Request.prototype, "url")!.get!;
 const RequestMethodGetter = Object.getOwnPropertyDescriptor(Request.prototype, "method")!.get!;
 const RequestSignalGetter = Object.getOwnPropertyDescriptor(Request.prototype, "signal")!.get!;
-const HeadersGet = Headers.prototype.get;
 const HeadersAppend = Headers.prototype.append;
 const HeadersEntries = Headers.prototype.entries;
 const HeadersIteratorNext = Object.getPrototypeOf(new Headers().entries()).next as (
@@ -1661,12 +1833,14 @@ function withoutProjectRunInferenceToken(req: Request): Request {
     if (IntrinsicReflectApply(StringToLowerCase, name, []) === skipped) continue;
     IntrinsicReflectApply(HeadersAppend, headers, [name, step.value[1]]);
   }
-  return new NativeRequest(IntrinsicReflectApply(RequestUrlGetter, req, []) as string, {
+  const copy = new NativeRequest(IntrinsicReflectApply(RequestUrlGetter, req, []) as string, {
     method: IntrinsicReflectApply(RequestMethodGetter, req, []) as string,
     headers,
     // The run is cancelled through this signal; the copy must keep it.
     signal: IntrinsicReflectApply(RequestSignalGetter, req, []) as AbortSignal,
   });
+  // The run still reads its `x-token` from the ingress credentials.
+  return inheritIngressCredentials(req, copy);
 }
 
 /**
@@ -1676,18 +1850,18 @@ function withoutProjectRunInferenceToken(req: Request): Request {
  * when the control plane sent none, which keeps the pre-header behaviour.
  */
 function readProjectRunInferenceToken(req: Request): string | undefined {
-  // Captured accessors: a project that patches `Headers.prototype.get` must not
-  // see the credential of this or any later execute request on the same host.
-  const headers = IntrinsicReflectApply(RequestHeadersGetter, req, []) as Headers;
-  const value = IntrinsicReflectApply(HeadersGet, headers, [
-    PROJECT_RUN_INFERENCE_TOKEN_HEADER,
-  ]) as string | null;
+  // Held outside the headers since ingress, or read through captured accessors
+  // for a request that did not pass it: a project that patches
+  // `Headers.prototype.get` must not see the credential of this or any later
+  // execute request on the same host.
+  const value = readIngressCredential(req, INGRESS_INFERENCE_TOKEN_HEADER);
   if (value === null) return undefined;
   return requireInferenceProviderCredential(value, "Inference token header");
 }
 
 function getRuntimeApiToken(req: Request, ctx: HandlerContext): string {
-  return req.headers.get("x-token") ?? ctx.proxyToken ?? ctx.requestContext?.token ?? "";
+  return readIngressCredential(req, INGRESS_API_TOKEN_HEADER) ?? ctx.proxyToken ??
+    ctx.requestContext?.token ?? "";
 }
 
 function getHeaderFirstValue(value: string | null): string | undefined {
@@ -2741,7 +2915,8 @@ async function executeReleaseAssetBuildRun(input: {
     );
 
     const apiBaseUrl = getEnvironmentConfig().apiBaseUrl;
-    const token = input.req.headers.get("x-token") ?? input.ctx.proxyToken ??
+    const token = readIngressCredential(input.req, INGRESS_API_TOKEN_HEADER) ??
+      input.ctx.proxyToken ??
       input.ctx.requestContext?.token ?? "";
     if (!token) throw INVALID_ARGUMENT.create({ detail: "Missing project runtime API token" });
 
@@ -3106,7 +3281,8 @@ async function executeStyleArtifactBuildRun(input: {
       "#veryfront/html/styles-builder/style-scope-profile.ts"
     );
 
-    const token = input.req.headers.get("x-token") ?? input.ctx.proxyToken ??
+    const token = readIngressCredential(input.req, INGRESS_API_TOKEN_HEADER) ??
+      input.ctx.proxyToken ??
       input.ctx.requestContext?.token ?? "";
     if (!token) throw INVALID_ARGUMENT.create({ detail: "Missing project runtime API token" });
 
@@ -3321,20 +3497,25 @@ export class ProjectRunExecuteHandler extends BaseHandler {
           async () => {
             const startedAt = this.deps.now();
             try {
-              const response = inferenceToken === undefined
-                ? await executeProjectRun(request, ctx, req, this.deps)
-                : await runWithProjectRunInferenceCredential(
-                  inferenceToken,
-                  () =>
-                    executeProjectRun(
-                      request,
-                      ctx,
-                      withoutProjectRunInferenceToken(req),
-                      this.deps,
-                    ),
-                );
+              const limited = enforceRunOutputLimit(
+                inferenceToken === undefined
+                  ? await executeProjectRun(request, ctx, req, this.deps)
+                  : await runWithProjectRunInferenceCredential(
+                    inferenceToken,
+                    () =>
+                      executeProjectRun(
+                        request,
+                        ctx,
+                        withoutProjectRunInferenceToken(req),
+                        this.deps,
+                      ),
+                  ),
+              );
+              const response = limited.response;
               if (!response.success) setActiveSpanErrorStatus(new Error("Project run failed"));
-              return this.respond(builder.json(response, 200));
+              return this.respond(
+                builder.withContentType("application/json; charset=utf-8", limited.wireJson, 200),
+              );
             } catch (error) {
               setActiveSpanErrorStatus(new Error(telemetryErrorType(error)));
               return this.respond(

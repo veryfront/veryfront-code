@@ -107,6 +107,9 @@ export function toPersistedNodeStates(
       nodeId: state.nodeId,
       status: state.status,
       attempt: state.attempt,
+      ...(state._stepInputRecorded !== undefined
+        ? { _stepInputRecorded: state._stepInputRecorded }
+        : {}),
       ...(state._waitInstanceId !== undefined ? { _waitInstanceId: state._waitInstanceId } : {}),
       ...(state._subWorkflowOwnerPath !== undefined
         ? { _subWorkflowOwnerPath: state._subWorkflowOwnerPath }

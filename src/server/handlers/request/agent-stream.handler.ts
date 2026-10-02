@@ -33,7 +33,10 @@ import {
   registerRuntimeInferenceCredential,
   type RuntimeAgentStreamExecutionDeps,
 } from "#veryfront/internal-agents/run-stream.ts";
-import { createRuntimeAgentFromMarkdownDefinition } from "#veryfront/agent/runtime/agent-markdown-adapter.ts";
+import {
+  createRuntimeAgentFromMarkdownDefinition,
+  inheritRuntimeAgentMarkdownDefinition,
+} from "#veryfront/agent/runtime/agent-markdown-adapter.ts";
 import {
   bindRemoteToolSourceToProject,
   getRequestedUnresolvedBooleanToolNames,
@@ -121,7 +124,10 @@ import { runWithExactSourceIntegrationPolicy } from "#veryfront/integrations/sou
 import { compareStrings } from "#veryfront/utils/compare.ts";
 import { isProviderReplayCheckpointEmissionEnabled } from "#veryfront/agent/hosted/chat-preparation.ts";
 import { getServerResolvedProviderReplayCheckpoints } from "#veryfront/agent/hosted/runtime-request-config.ts";
-import { RUN_EVENT_APPEND_TOKEN_HEADER } from "#veryfront/agent/hosted/chat-request-parser.ts";
+import {
+  INGRESS_RUN_EVENT_TOKEN_HEADER,
+  readIngressCredential,
+} from "#veryfront/security/http/ingress-credentials.ts";
 import { FSAdapterWrapper } from "#veryfront/platform/adapters/fs/wrapper.ts";
 import { MultiProjectFSAdapter } from "#veryfront/platform/adapters/fs/veryfront/multi-project-adapter.ts";
 import { runWithoutRequestContext } from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
@@ -1134,7 +1140,7 @@ export class AgentStreamHandler extends BaseHandler {
         expectedSubject: payload.runId,
         expectedSurface: "studio",
       });
-      const runEventAppendToken = req.headers.get(RUN_EVENT_APPEND_TOKEN_HEADER);
+      const runEventAppendToken = readIngressCredential(req, INGRESS_RUN_EVENT_TOKEN_HEADER);
       if (
         payload.sourceProject && (
           payload.sourceProject.projectId !== ctx.projectId ||
@@ -1363,6 +1369,12 @@ export class AgentStreamHandler extends BaseHandler {
                           availableToolNames: runtimeInput.tools.map((tool) => tool.name),
                           conversationId: runtimeInput.threadId,
                         });
+                        // The remote-tool wrappers clone the agent; keep its
+                        // markdown definition so fail-closed selectors survive.
+                        inheritRuntimeAgentMarkdownDefinition(
+                          runtimeBaseAgent as Agent,
+                          runtimeAgent,
+                        );
 
                         // Source-defined MCP tool headers resolve these via
                         // _getProjectEnv(); they are the same variables the source

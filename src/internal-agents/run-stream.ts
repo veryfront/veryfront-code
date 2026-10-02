@@ -15,6 +15,7 @@ import {
   markTrustedHostToolProvenance,
   markTrustedHostToolSet,
 } from "#veryfront/tool/host-tool-provenance.ts";
+import { isReservedPlatformToolName } from "#veryfront/tool/platform-tool-policy.ts";
 import {
   type Agent,
   type AgentMessage as Message,
@@ -310,6 +311,15 @@ const controlPlaneNames = [
   "studio_todo_write",
 ];
 
+const controlPlaneNameSet = new _Set(controlPlaneNames);
+
+// Control-plane tools and the reserved `veryfront__` platform namespace are
+// executed or aliased server-side, so they never count as client tools.
+function isPlatformToolName(toolName: string): boolean {
+  return isReservedPlatformToolName(toolName) ||
+    IntrinsicReflectApply(IntrinsicSetHas, controlPlaneNameSet, [toolName]);
+}
+
 const CHILD_RUN_CONTROL_PLANE_TOOL_NAMES = new Set([
   INVOKE_AGENT_TOOL_ID,
   `veryfront__${INVOKE_AGENT_TOOL_ID}`,
@@ -419,6 +429,9 @@ export function buildMergedTools(
 ) {
   const serverResolvedProjectToolNames = getServerResolvedProjectToolNames(input.forwardedProps);
   const explicitlyDeniedToolNames = getExplicitlyDeniedToolNames(agent);
+  // A markdown `tools: true` + `deniedTools` agent fails closed on the
+  // server-executed tools the control plane injects. Client tools run on the
+  // caller, so they still merge unless the agent denies them by name.
   const markdownDefinition = getRuntimeAgentMarkdownDefinition(agent);
   const failClosedUnrestrictedSelector = markdownDefinition?.tools === true &&
     Boolean(markdownDefinition.deniedTools?.length);
@@ -448,7 +461,7 @@ export function buildMergedTools(
   const injectedTools = Object.fromEntries(
     input.tools
       .filter((tool) =>
-        !failClosedUnrestrictedSelector &&
+        (!failClosedUnrestrictedSelector || !isPlatformToolName(tool.name)) &&
         (!authoritativeSourceToolNames.has(tool.name) ||
           (tool.name === INVOKE_AGENT_TOOL_ID && controlPlaneOwnsDelegation)) &&
         !isExplicitlyDeniedToolName(

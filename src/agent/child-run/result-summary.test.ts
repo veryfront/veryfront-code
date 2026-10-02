@@ -1,4 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
+import { cpuUsage } from "node:process";
 import {
   assertEquals,
   assertObjectMatch,
@@ -17,6 +18,19 @@ import {
 } from "./result-summary.ts";
 
 describe("child-run-result-summary", () => {
+  // veryfront/veryfront-issue-inbox#2113: the run output cap does not change what the parent
+  // model sees; an oversized child output still reaches it only as a compact summary.
+  it("summarizes a child result larger than the run output limit", () => {
+    const summary = buildChildRunResultSummary("word ".repeat(300_000));
+
+    const marker = ` … [truncated ${summary.omittedChars} chars]`;
+    assertEquals(summary.truncated, true);
+    assertEquals(summary.originalChars, 1_499_999);
+    assertEquals(summary.limitChars, 64_000);
+    assertEquals(summary.text.endsWith(marker), true);
+    assertEquals(summary.text.length - marker.length <= 64_000, true);
+  });
+
   describe("summarizeChildRunResultText", () => {
     it("returns short text unchanged", () => {
       assertEquals(summarizeChildRunResultText("hello"), "hello");
@@ -190,9 +204,10 @@ describe("child-run-result-summary", () => {
     it("normalizes unterminated horizontal whitespace in bounded linear time", () => {
       buildChildRunResultSummary(" ".repeat(1_000), { mode: "structured" });
       const measure = (length: number): number => {
-        const start = performance.now();
+        const start = cpuUsage();
         buildChildRunResultSummary(" ".repeat(length), { mode: "structured" });
-        return performance.now() - start;
+        const elapsed = cpuUsage(start);
+        return (elapsed.user + elapsed.system) / 1_000;
       };
 
       const shortElapsedMs = measure(16_000);
@@ -1269,12 +1284,14 @@ describe("child-run-result-summary", () => {
     it("bounds malformed recovered import parsing", () => {
       const text = "I don't expect a problem. " + "p".repeat(70_000) +
         "\nimport " + " ".repeat(3_000) + "\n" + "p".repeat(59_000);
-      const start = performance.now();
+      // Charge actual work, not time descheduled on a contended test host.
+      const start = cpuUsage();
 
       const result = buildChildRunResultSummary(text, { mode: "structured" });
 
       assertEquals(result.contractFacts, undefined);
-      assertEquals(performance.now() - start < 500, true);
+      const elapsed = cpuUsage(start);
+      assertEquals((elapsed.user + elapsed.system) / 1_000 < 500, true);
     });
 
     it("does not retain facts from an unterminated short array", () => {
@@ -1428,17 +1445,19 @@ describe("child-run-result-summary", () => {
     it("bounds cleanup of unclosed transcript tags", () => {
       for (const tag of ["<tool_response>", "<tool_call>", "<invoke "]) {
         const text = tag.repeat(32_000);
-        const started = performance.now();
+        const started = cpuUsage();
         buildChildRunResultSummary(text, { mode: "structured" });
-        assertEquals(performance.now() - started < 1_000, true);
+        const elapsed = cpuUsage(started);
+        assertEquals((elapsed.user + elapsed.system) / 1_000 < 1_000, true);
       }
     });
 
     it("cleans large tag-only results without a per-tag index", () => {
       const text = "<parameter>".repeat(1_000_000);
-      const started = performance.now();
+      const started = cpuUsage();
       assertEquals(buildChildRunResultSummary(text, { mode: "structured" }).text, "");
-      assertEquals(performance.now() - started < 2_000, true);
+      const elapsed = cpuUsage(started);
+      assertEquals((elapsed.user + elapsed.system) / 1_000 < 2_000, true);
     });
 
     it("bounds shell-fence checks before unrelated tags", () => {

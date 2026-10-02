@@ -1,3 +1,8 @@
+import {
+  createHostedHttpIngress,
+  type HostedHttpIngressOptions,
+  isHostedHttpApplicationRequest,
+} from "../isolated-http/hosted-http-ingress.ts";
 /**
  * Veryfront Core HTTP Handler - Composition Root
  *
@@ -16,6 +21,10 @@ import {
   snapshotInstalledProjectHttpBinding,
 } from "./installed-project.ts";
 import { inheritRequestPeerProvenance } from "#veryfront/platform/adapters/runtime/shared/request-peer.ts";
+import {
+  inheritIngressCredentials,
+  sealIngressCredentials,
+} from "#veryfront/security/http/ingress-credentials.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
 import { getConfig } from "#veryfront/config/loader.ts";
 import {
@@ -160,6 +169,7 @@ import {
   resolveProjectRuntimeContext,
 } from "./project-runtime-context.ts";
 import { runWithRetainedPreviewDocumentSourceSnapshot } from "#veryfront/server/handlers/request/source-snapshot-freshness.ts";
+import { parseProxyEnvironment } from "./proxy-environment.ts";
 import {
   isSharedProjectRuntime,
   requiresIsolatedProjectRuntime,
@@ -419,6 +429,8 @@ export function createHandlerRegistry(
 }
 
 export interface RuntimeHandlerOptions {
+  /** Host-owned immutable-release ingress, admitted before project adapter/configuration loading. */
+  hostedHttp?: HostedHttpIngressOptions;
   projectDir: string;
   /** Image-owned immutable release identity; never derived from request metadata. */
   installedProject?: InstalledProjectHttpBinding;
@@ -460,6 +472,13 @@ export function createVeryfrontHandler(
   ) {
     throw new TypeError("Installed projects require one fixed local source");
   }
+  if (
+    opts.hostedHttp && (
+      installedProject || opts.config?.fs?.veryfront?.proxyMode !== true ||
+      opts.localProjects !== undefined || opts.allowHostProjectCodeExecution === true
+    )
+  ) throw new TypeError("Hosted HTTP ingress requires a proxy without host project execution");
+  const hostedHttp = opts.hostedHttp ? createHostedHttpIngress(opts.hostedHttp) : undefined;
   const handleApplicationAuthRequest = createApplicationAuthRequestHandler();
   const isDebugEnabled = (): boolean => {
     if (opts.debug) return true;
@@ -532,7 +551,11 @@ export function createVeryfrontHandler(
     logger.debug("Running in proxy mode - lazy initialization enabled");
   }
 
-  const handler = async (req: Request): Promise<Response> => {
+  const handler = async (incoming: Request): Promise<Response> => {
+    // First, before any header read: project code sharing this isolate may
+    // have replaced Headers.prototype methods, and every later read on a
+    // request that still carries run credentials would expose them.
+    const req = sealIngressCredentials(incoming);
     const url = new URL(req.url);
     // Stop admission before project resolution can load more tenant code.
     // Existing response bodies keep draining; kubelet probes remain reachable.
@@ -743,6 +766,26 @@ export function createVeryfrontHandler(
           // identity. Local development uses the configured default project;
           // hosted requests use the edge-derived header or routed host.
           const wsSlugOverride = undefined;
+
+          // Hosted application requests must be admitted before legacy domain
+          // release lookup. Missing release/environment identity is an ingress
+          // refusal, not permission to resolve a mutable release on the host.
+          if (hostedHttp && isHostedHttpApplicationRequest(request)) {
+            if (!requestMetricsIncremented) {
+              await incrementRequestMetrics();
+              requestMetricsIncremented = true;
+            }
+            return hostedHttp(request, {
+              projectId: headers.projectId,
+              projectSlug: headers.projectSlug,
+              releaseId: headers.releaseId,
+              environmentId: headers.environmentId,
+              environmentName: headers.environmentName,
+              mode: parseProxyEnvironment(headers.environment ?? null),
+              proxyTrusted,
+              sourceToken: reqCtx.token,
+            });
+          }
 
           // Resolve project from various sources
           const projectRes = await profilePhase(
@@ -1017,7 +1060,17 @@ export function createVeryfrontHandler(
             // closes with an unexpected EOF.
             const timeoutRequest = isHMRWebSocketUpgrade(req, url.pathname)
               ? req
-              : inheritRequestPeerProvenance(req, new Request(req, { signal }));
+              : inheritIngressCredentials(
+                req,
+                inheritRequestPeerProvenance(
+                  req,
+                  new Request(req, {
+                    // The timeout manager detaches its parent listener when headers
+                    // arrive. Hosted executor streams still own the inbound abort.
+                    signal: hostedHttp ? AbortSignal.any([req.signal, signal]) : signal,
+                  }),
+                ),
+              );
             return runWithRequestProfiling(
               {
                 category: profileCategory,
@@ -1042,7 +1095,7 @@ export function createVeryfrontHandler(
           },
           url.pathname,
           req.method,
-          { signal: req.signal },
+          { signal: req.signal, settleResponseBody: hostedHttp !== undefined },
         );
 
         if (error) {
@@ -1077,6 +1130,7 @@ export function createVeryfrontHandler(
           isTimeout,
           requestProfileRecord,
           settled,
+          hostedHttp !== undefined,
         );
       } finally {
         endRequestLifecycle(lifecycle);

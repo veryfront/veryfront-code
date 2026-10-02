@@ -33,6 +33,7 @@ import { requestTracker } from "./request-tracker.ts";
 import { defaultDiscoveryCache } from "./local-project-discovery.ts";
 import { recordRequestPeerFromTransport } from "#veryfront/platform/adapters/runtime/shared/request-peer.ts";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
+import { installCredentialProbes } from "#veryfront/security/http/credential-probes.test-helpers.ts";
 import { createMockOidcProvider } from "#veryfront/security/application-auth/mock-oidc-provider.ts";
 import { createSessionCookie } from "#veryfront/security/application-auth/cookies.ts";
 import type { MiddlewareFunction } from "#veryfront/server/dev-server/middleware.ts";
@@ -457,6 +458,34 @@ describe("server/runtime-handler/index", () => {
     });
     assertEquals(isolationCalls, { check: 0, start: 0, complete: 0 });
     assertEquals(requestTracker.getStats(), trackerBefore);
+  });
+
+  it("takes run credentials off the request before any framework header read", async () => {
+    const handler = createProxyModeHandler();
+    const secrets = ["proxy-token-4f1c", "inference-token-9a2e", "run-event-token-77d0"];
+    const request = new Request("http://localhost/page", {
+      headers: {
+        origin: "https://studio.example",
+        "x-project-slug": "demo",
+        "x-token": secrets[0]!,
+        "X-Veryfront-Inference-Token": secrets[1]!,
+        "X-Veryfront-Run-Event-Token": secrets[2]!,
+      },
+    });
+    // Installed as by project code from an earlier request in this isolate.
+    const probes = installCredentialProbes();
+    let response: Response;
+    try {
+      response = await handler(request);
+    } finally {
+      probes.restore();
+    }
+
+    // Past the x-token check, so the pipeline still read the credential.
+    assertEquals(response.status, 502);
+    assertEquals((await response.json()).error, "Untrusted proxy context");
+    assertEquals((probes.calls.get ?? 0) > 0, true);
+    for (const secret of secrets) assertEquals(probes.saw(secret), false, secret);
   });
 
   it("runs application auth admission before project middleware and registry", async () => {

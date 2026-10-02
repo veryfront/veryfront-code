@@ -573,13 +573,19 @@ describe("executor hosted agent bridge", () => {
 
   it("fences setup that never settles before its cancellation deadline", async () => {
     const entered = Promise.withResolvers<void>();
+    const cancellationReceived = Promise.withResolvers<void>();
     const source = Promise.withResolvers<ReadableStream<Uint8Array>>();
     const runtimeCleaned = Promise.withResolvers<void>();
+    let cancellationReceiptWatchdog: ReturnType<typeof setTimeout> | undefined;
+    let cancellationDeadlineWatchdog: ReturnType<typeof setTimeout> | undefined;
     let cleaned = 0;
     const channels = pair(
       createExecutorAgentOperations({
         preparedRuntimeHandle: handle,
-        startStream: () => {
+        startStream: ({ abortSignal }) => {
+          abortSignal.addEventListener("abort", () => cancellationReceived.resolve(), {
+            once: true,
+          });
           entered.resolve();
           return source.promise;
         },
@@ -601,14 +607,34 @@ describe("executor hosted agent bridge", () => {
       await entered.promise;
       controller.abort();
       await rejected;
-      await new Promise<void>((resolve) => setTimeout(resolve, 50));
+      await Promise.race([
+        cancellationReceived.promise,
+        new Promise<never>((_, reject) => {
+          cancellationReceiptWatchdog = setTimeout(
+            () => reject(new Error("executor cancellation was not received within the test bound")),
+            5_000,
+          );
+        }),
+      ]);
+      clearTimeout(cancellationReceiptWatchdog);
+      const closeError = await Promise.race([
+        channels.executor.closed,
+        new Promise<never>((_, reject) => {
+          cancellationDeadlineWatchdog = setTimeout(
+            () => reject(new Error("executor cancellation deadline exceeded the test bound")),
+            250,
+          );
+        }),
+      ]);
       assertEquals(channels.executor.signal.aborted, true);
       assertEquals(
-        (await channels.executor.closed).message,
+        closeError.message,
         "Executor handler cancellation deadline exceeded",
       );
       assertEquals(cleaned, 0);
     } finally {
+      clearTimeout(cancellationReceiptWatchdog);
+      clearTimeout(cancellationDeadlineWatchdog);
       source.resolve(sse([{ type: "message-finish" }]));
       await runtimeCleaned.promise;
       await channels.close();
