@@ -23,10 +23,11 @@ describe("mock dependency capture consistency", () => {
     clearReactVersionCache();
   });
 
-  for (const mutates of [false, true]) {
+  for (const mutation of ["none", "write", "in-place"]) {
+    const mutates = mutation !== "none";
     it(
       mutates
-        ? "rejects package.json that changes during every capture attempt"
+        ? `rejects package.json with ${mutation} mutation during every capture attempt`
         : "captures unchanged package.json while the clock advances during reads",
       async () => {
         using time = new FakeTime(1_000);
@@ -34,18 +35,22 @@ describe("mock dependency capture consistency", () => {
         const path = "/mock-capture/package.json";
         const packageJson = (version: string) =>
           JSON.stringify({ dependencies: { react: version } });
-        adapter.fs.files.set(path, packageJson("19.2.4"));
+        const bytes = new TextEncoder().encode(packageJson("19.2.4"));
+        if (mutation === "in-place") adapter.fs.byteFiles.set(path, bytes);
+        else adapter.fs.files.set(path, packageJson("19.2.4"));
         let reads = 0;
         const result = await readProjectDependencyVersions({
           projectDir: "/mock-capture",
-          cacheNamespace: `mock-capture-${mutates}`,
+          cacheNamespace: `mock-capture-${mutation}`,
           fs: {
             stat: adapter.fs.stat,
             readFile: async (file) => {
               const content = await adapter.fs.readFile(file);
               reads++;
               time.tick(100);
-              if (mutates) {
+              if (mutation === "in-place") {
+                bytes.set(new TextEncoder().encode(packageJson(`19.2.${reads + 4}`)));
+              } else if (mutation === "write") {
                 await adapter.fs.writeFile(file, packageJson(`19.2.${reads + 4}`));
               }
               return content;

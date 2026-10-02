@@ -37,6 +37,19 @@ describe("mock file modification times", () => {
     assertEquals(binary.mtime!.getTime() > after.mtime!.getTime(), true);
   });
 
+  it("updates mtimes after in-place binary fixture mutation", async () => {
+    using time = new FakeTime(1_000);
+    const adapter = createMockAdapter();
+    const bytes = new Uint8Array([1, 2]);
+    adapter.fs.byteFiles.set("/data.bin", bytes);
+    const before = await adapter.fs.stat("/data.bin");
+    bytes[0] = 3;
+    const after = await adapter.fs.stat("/data.bin");
+    assertEquals(after.mtime!.getTime() > before.mtime!.getTime(), true);
+    time.tick(100);
+    assertEquals((await adapter.fs.stat("/data.bin")).mtime, after.mtime);
+  });
+
   it("tracks direct fixture replacement and recreation without changing other files", async () => {
     using _time = new FakeTime(1_000);
     const adapter = createMockAdapter();

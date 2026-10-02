@@ -133,12 +133,15 @@ function encodeMockUtf8Prefix(content: string, byteLimit: number): Uint8Array {
 export function createMockAdapter(): MockRuntimeAdapter {
   let fileGeneration = 0;
   let lastModification = 0;
-  const modificationTimes = new Map<string, number>();
+  const modificationTimes = new Map<string, { mtime: number; bytes?: Uint8Array }>();
+  function recordModification(path: string, bytes?: Uint8Array): void {
+    fileGeneration++;
+    lastModification = Math.max(Date.now(), lastModification + 1);
+    modificationTimes.set(path, { mtime: lastModification, bytes: bytes?.slice() });
+  }
   class GenerationMap<T> extends Map<string, T> {
     override set(key: string, value: T): this {
-      fileGeneration++;
-      lastModification = Math.max(Date.now(), lastModification + 1);
-      modificationTimes.set(key, lastModification);
+      recordModification(key, value instanceof Uint8Array ? value : undefined);
       return super.set(key, value);
     }
 
@@ -383,17 +386,21 @@ export function createMockAdapter(): MockRuntimeAdapter {
             isFile: true,
             isDirectory: false,
             isSymlink: false,
-            mtime: new Date(modificationTimes.get(normalizedPath)!),
+            mtime: new Date(modificationTimes.get(normalizedPath)!.mtime),
           });
         }
         const bytes = byteFiles.get(normalizedPath);
         if (bytes != null) {
+          const previousBytes = modificationTimes.get(normalizedPath)?.bytes;
+          if (!previousBytes || !equalBytes(previousBytes, bytes)) {
+            recordModification(normalizedPath, bytes);
+          }
           return Promise.resolve({
             size: bytes.byteLength,
             isFile: true,
             isDirectory: false,
             isSymlink: false,
-            mtime: new Date(modificationTimes.get(normalizedPath)!),
+            mtime: new Date(modificationTimes.get(normalizedPath)!.mtime),
           });
         }
 
