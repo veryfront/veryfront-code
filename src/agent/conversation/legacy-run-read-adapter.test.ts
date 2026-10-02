@@ -1151,7 +1151,11 @@ describe("conversation run lifecycle read adapter", () => {
       aguiEvents.filter((event) => event.event === "ToolCallResult"),
       [{
         event: "ToolCallResult",
-        payload: { toolCallId: "provider-1", content: { forecast: "sunny" } },
+        payload: {
+          toolCallId: "provider-1",
+          content: { forecast: "sunny" },
+          isError: false,
+        },
       }],
     );
   });

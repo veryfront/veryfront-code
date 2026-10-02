@@ -971,6 +971,14 @@ jobs:
       false,
       "APT mirror rewrites must not contain clear-text HTTP URLs",
     );
+    // Runner images route the archive through `mirror+file:` lists whose
+    // first entry is the azure mirror; rewriting only the sources files left
+    // that mirror in charge when it throttled .deb downloads (inbox #2483).
+    assertStringIncludes(aptSetup, "mirror\\+file:");
+    assertStringIncludes(
+      aptSetup,
+      'for apt_file in ${apt_source_files} ${mirror_lists}; do',
+    );
     for (
       const expected of [
         'for attempt in $(seq 1 "${install_attempts}")',
@@ -982,6 +990,16 @@ jobs:
     ) {
       assertStringIncludes(install, expected);
     }
+    assertStringIncludes(
+      install,
+      '[ "$status" -eq 124 ] || [ "$status" -eq 137 ]',
+      "a timed-out attempt must be named as a stalled download, not a bare exit 124",
+    );
+    assertStringIncludes(install, "::error title=Chromium install::");
+    assert(
+      shellInteger(install, "install_attempts") >= 3,
+      "a single throttled mirror must not consume the whole step budget",
+    );
     assertEquals(install.includes("apt-get clean"), false);
     assertEquals(install.includes("rm -rf /var/lib/apt/lists"), false);
 
