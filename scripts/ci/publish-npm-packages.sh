@@ -167,7 +167,7 @@ is_identity_token_read_failure() {
 is_npm_version_already_published() {
   ALREADY_PUBLISHED_OUTPUT_CANDIDATE="$1"
   printf '%s\n' "${ALREADY_PUBLISHED_OUTPUT_CANDIDATE}" \
-    | grep -Fq "previously published versions: ${VERSION}"
+    | grep -F "previously published versions: ${VERSION}" >/dev/null
 }
 
 note_conflict_publish_landed() {
