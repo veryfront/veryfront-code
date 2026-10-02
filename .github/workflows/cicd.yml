@@ -1487,7 +1487,7 @@ jobs:
           owner: veryfront
           repositories: |
             veryfront
-          permission-contents: read
+          permission-contents: write
 
       - name: Create GitHub pre-release
         env:

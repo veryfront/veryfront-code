@@ -703,6 +703,12 @@ printf '%064d  %s\n' 0 "$1"
     assertEquals(github["runs-on"], npm["runs-on"]);
     assertEquals(github.permissions, { actions: "read", contents: "read" });
     assertEquals(npm.permissions, { actions: "read", contents: "read", "id-token": "write" });
+    const token = namedStep(github, "Create release GitHub App token");
+    assertEquals(asRecord(token.with, "release App token inputs")["permission-contents"], "write");
+    assertEquals(
+      asRecord(namedStep(github, "Create GitHub pre-release").env, "release environment").GH_TOKEN,
+      "${{ steps.release-app-token.outputs.token }}",
+    );
     const githubSteps = steps(github, "GitHub prerelease job");
     const checkout = githubSteps.find((step) => String(step.uses).startsWith("actions/checkout@"));
     assert(checkout);
