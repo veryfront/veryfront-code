@@ -67,6 +67,41 @@ function readLikeFramework(request: Request): void {
 const DENO_INTERNALS = { ignore: !isDeno };
 
 describe("security/http/ingress-credentials", () => {
+  it("seals a stop-only credential and carries it to framework copies", () => {
+    const name = "x-veryfront-run-stop-token";
+    const original = new Request("https://project.example/run", {
+      headers: { [name]: "stop-only-capability" },
+    });
+    const sealed = sealIngressCredentials(original);
+    assertEquals(sealed.headers.get(name), null);
+    assertEquals(readIngressCredential(sealed, name), "stop-only-capability");
+    const copy = inheritIngressCredentials(sealed, new Request(sealed));
+    assertEquals(copy.headers.get(name), null);
+    assertEquals(readIngressCredential(copy, name), "stop-only-capability");
+  });
+
+  for (const replacement of [undefined, "replacement-stop-capability"]) {
+    it(`carries stop credentials through interception with override: ${replacement !== undefined}`, () => {
+      const name = "x-veryfront-run-stop-token";
+      const source = sealIngressCredentials(
+        new Request("https://project.example/run", {
+          headers: { [name]: "original-stop-capability" },
+        }),
+      );
+      const intercepted = sealInterceptedRequest(
+        source,
+        new Request(source, {
+          headers: replacement === undefined ? {} : { [name]: replacement },
+        }),
+      );
+      assertEquals(intercepted.headers.get(name), null);
+      assertEquals(
+        readIngressCredential(intercepted, name),
+        replacement ?? "original-stop-capability",
+      );
+    });
+  }
+
   it(
     "takes every run credential off the request before a patched intrinsic can see it",
     DENO_INTERNALS,

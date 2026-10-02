@@ -7366,6 +7366,47 @@ describe("server/handlers/request/project-run-execute.handler cancellation", () 
     assertEquals(callback.init.signal?.aborted, false);
   });
 
+  it("acknowledges a cancelled task from an already-sealed ingress request", async () => {
+    const controller = new AbortController();
+    let exposed: string | null | undefined;
+    const callbacks: Array<{ url: string; init: ReturnType<typeof observeFetchRequestInit> }> = [];
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      executeKnowledgeIngest: async ({ req, signal }) => {
+        exposed = req.headers.get("x-veryfront-run-stop-token");
+        controller.abort(new Error("Run cancelled"));
+        assertEquals(signal.aborted, true);
+        return { success: false, error: "Run cancelled" };
+      },
+    }));
+    const signed = await signedRequest("/api/control-plane/runs/run_sealed_stop/execute", {
+      runId: "run_sealed_stop",
+      kind: "task",
+      target: "task:knowledge-ingest",
+      projectId: "proj-1",
+    }, { "x-veryfront-run-stop-token": "sealed-stop-capability" });
+    const request = sealIngressCredentials(
+      new Request(signed.request, { signal: controller.signal }),
+    );
+    assertEquals(request.headers.get("x-veryfront-run-stop-token"), null);
+    await withMockFetch(async (url, init) => {
+      callbacks.push({ url: String(url), init: observeFetchRequestInit(init) });
+      return Response.json({ acknowledged: true });
+    }, async () => {
+      await handler.handle(request, createCtx(signed.publicKeyPem));
+    });
+    assertEquals(exposed, null);
+    assertEquals(callbacks.length, 1);
+    const callback = callbacks[0];
+    assertExists(callback);
+    assertEquals(new URL(callback.url).pathname, "/runs/run_sealed_stop/cancellation-ack");
+    assertEquals(
+      new Headers(callback.init.headers).get("authorization"),
+      "Bearer sealed-stop-capability",
+    );
+    assertEquals(callback.init.method, "POST");
+    assertEquals(callback.init.signal?.aborted, false);
+  });
+
   it("keeps the stop credential out of reserved task requests and preserves cancellation", async () => {
     let leaked: string | null | undefined;
     const controller = new AbortController();

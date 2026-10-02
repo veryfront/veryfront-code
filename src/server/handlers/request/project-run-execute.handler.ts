@@ -28,6 +28,7 @@ import {
 import {
   INGRESS_API_TOKEN_HEADER,
   INGRESS_INFERENCE_TOKEN_HEADER,
+  INGRESS_RUN_STOP_TOKEN_HEADER,
   inheritIngressCredentials,
   readIngressCredential,
 } from "#veryfront/security/http/ingress-credentials.ts";
@@ -112,7 +113,6 @@ const TaskAbortController = AbortController;
 const TaskAbort = AbortController.prototype.abort;
 const TaskAbortSignalAny = AbortSignal.any;
 const RunStopTimeout = AbortSignal.timeout;
-const RUN_STOP_TOKEN_HEADER = "x-veryfront-run-stop-token";
 
 const EXECUTE_PATH_REGEX = /^\/api\/control-plane\/runs\/([^/]+)\/execute$/;
 const DEFAULT_WORKFLOW_STATUS_POLL_INTERVAL_MS = 100;
@@ -1782,7 +1782,7 @@ function withoutProjectRunInferenceToken(req: Request): Request {
     if (step.done) break;
     const name = step.value[0];
     const lowerName = IntrinsicReflectApply(StringToLowerCase, name, []);
-    if (lowerName === skipped || lowerName === RUN_STOP_TOKEN_HEADER) continue;
+    if (lowerName === skipped || lowerName === INGRESS_RUN_STOP_TOKEN_HEADER) continue;
     IntrinsicReflectApply(HeadersAppend, headers, [name, step.value[1]]);
   }
   const copy = new NativeRequest(IntrinsicReflectApply(RequestUrlGetter, req, []) as string, {
@@ -1813,10 +1813,7 @@ function readProjectRunInferenceToken(req: Request): string | undefined {
 
 /** Independent evidence of a settled execution, never evidence from abort alone. */
 function createRunStopAcknowledger(req: Request, runId: string): (() => Promise<void>) | undefined {
-  const headers = IntrinsicReflectApply(RequestHeadersGetter, req, []) as Headers;
-  const rawToken = IntrinsicReflectApply(HeadersGet, headers, [RUN_STOP_TOKEN_HEADER]) as
-    | string
-    | null;
+  const rawToken = readIngressCredential(req, INGRESS_RUN_STOP_TOKEN_HEADER);
   if (rawToken === null) return undefined;
   const token = requireInferenceProviderCredential(rawToken, "Run stop token header");
   let url: string;
@@ -3492,10 +3489,8 @@ export class ProjectRunExecuteHandler extends BaseHandler {
         }
         const inferenceToken = readProjectRunInferenceToken(req);
         const acknowledgeStop = createRunStopAcknowledger(req, request.runId);
-        const stopCredentialPresent =
-          IntrinsicReflectApply(HeadersGet, IntrinsicReflectApply(RequestHeadersGetter, req, []), [
-            RUN_STOP_TOKEN_HEADER,
-          ]) !== null;
+        const stopCredentialPresent = readIngressCredential(req, INGRESS_RUN_STOP_TOKEN_HEADER) !==
+          null;
         const executionRequest = inferenceToken === undefined && !stopCredentialPresent
           ? req
           : withoutProjectRunInferenceToken(req);
