@@ -12,6 +12,7 @@ import { mkdir, writeTextFile } from "#veryfront/testing/deno-compat";
 import { TEST_TIMEOUTS } from "../../../tests/_helpers/constants.ts";
 import { withTestContext } from "../../../tests/_helpers/context.ts";
 import {
+  createTrackedRequests,
   fetchWithTimeout,
   pollUrlReady,
   waitForPromiseWithTimeout,
@@ -63,6 +64,7 @@ const ANSI_ESCAPE_PATTERN = new RegExp(`${String.fromCharCode(27)}\\[[0-?]*[ -/]
 
 interface CliRun {
   output: () => string;
+  request: typeof fetchWithTimeout;
   stop: () => Promise<void>;
 }
 
@@ -189,6 +191,7 @@ function startVeryfrontDev(
     stderr: "piped",
   });
 
+  const requests = createTrackedRequests();
   const child = command.spawn();
   const status = child.status;
   const decoder = new TextDecoder();
@@ -214,6 +217,7 @@ function startVeryfrontDev(
 
   return {
     output: () => stripAnsi(captured),
+    request: requests.fetch,
     stop: async () => {
       try {
         child.kill("SIGTERM");
@@ -233,6 +237,7 @@ function startVeryfrontDev(
       }
 
       await Promise.all([stdoutDone, stderrDone]);
+      await requests.settle();
     },
   };
 }
@@ -288,8 +293,11 @@ async function readResponseTextAndRelease(response: PageResponse): Promise<strin
   }
 }
 
-async function requestPageAndApi(port: number): Promise<void> {
-  const pageResponse = await fetchWithTimeout(`http://127.0.0.1:${port}/`);
+async function requestPageAndApi(
+  port: number,
+  request: typeof fetchWithTimeout,
+): Promise<void> {
+  const pageResponse = await request(`http://127.0.0.1:${port}/`);
   try {
     assertEquals(pageResponse.status, 200);
     assertStringIncludes(await pageResponse.text(), "quiet dev logs page");
@@ -297,7 +305,7 @@ async function requestPageAndApi(port: number): Promise<void> {
     await pageResponse.body?.cancel().catch(() => {});
   }
 
-  const apiResponse = await fetchWithTimeout(`http://127.0.0.1:${port}/api/ping`);
+  const apiResponse = await request(`http://127.0.0.1:${port}/api/ping`);
   try {
     assertEquals(apiResponse.status, 200);
     assertEquals(await apiResponse.json(), { ok: true });
@@ -401,10 +409,11 @@ describe(
             timeoutMs: TEST_TIMEOUTS.SERVER_STARTUP,
             requestTimeoutMs: 1_000,
             verifyWithSecondRequest: false,
+            request: run.request,
           });
           assert(ready.ready, `dev server did not become ready:\n${run.output()}`);
 
-          await requestPageAndApi(port);
+          await requestPageAndApi(port, run.request);
           await run.stop();
 
           const output = run.output();
@@ -437,10 +446,11 @@ describe(
             timeoutMs: TEST_TIMEOUTS.SERVER_STARTUP,
             requestTimeoutMs: 1_000,
             verifyWithSecondRequest: false,
+            request: run.request,
           });
           assert(ready.ready, `debug dev server did not become ready:\n${run.output()}`);
 
-          await requestPageAndApi(port);
+          await requestPageAndApi(port, run.request);
           await run.stop();
 
           const output = run.output();
@@ -478,6 +488,7 @@ describe(
             timeoutMs: TEST_TIMEOUTS.SERVER_STARTUP,
             requestTimeoutMs: 1_000,
             verifyWithSecondRequest: false,
+            request: run.request,
           });
           assert(ready.ready, `HMR dev server did not become ready:\n${run.output()}`);
 
@@ -489,7 +500,12 @@ describe(
 `,
           );
 
-          await waitForPageContent(port, "updated dev logs page");
+          await waitForPageContent(
+            port,
+            "updated dev logs page",
+            TEST_TIMEOUTS.SERVER_STARTUP,
+            run.request,
+          );
 
           await new Promise((resolve) => setTimeout(resolve, 250));
           await run.stop();
