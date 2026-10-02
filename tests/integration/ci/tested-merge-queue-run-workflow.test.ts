@@ -17,7 +17,7 @@ const REUSED_RUN_ID_EXPRESSION =
 // Jobs the merge-queue run already ran on this commit.
 const SKIPPED_ON_REUSE = [
   "ci",
-  "tests",
+  "tests-integration",
   "npm-compatibility-artifact",
   "tests-windows-localhost",
   "coverage-shards",
@@ -44,6 +44,8 @@ const COVERAGE_GATE = "coverage";
 // Jobs that still run on a reused main run, or never run on main.
 const KEPT = [
   "tested-run",
+  // Required integration check; it accepts skipped shards on a reused run.
+  "tests",
   "sonar-coverage",
   "sonar",
   "sonar-quality-gate",

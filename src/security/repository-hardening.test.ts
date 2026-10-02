@@ -7,6 +7,7 @@ const WORKFLOW_PR_GUARD =
 const CREATE_APP_TOKEN_ACTION =
   "actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1";
 const TRUSTED_AGGREGATE_JOBS = new Set([
+  "tests",
   "quality-gate-merge",
   "quality-gate-artifact",
 ]);
