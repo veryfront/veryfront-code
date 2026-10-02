@@ -207,7 +207,7 @@ function parseSerializedToolOutput(output: unknown): unknown {
 }
 
 /** A provider error payload, e.g. `{ type: "web_search_tool_result_error", error_code }`. */
-function isProviderToolResultError(output: unknown): boolean {
+export function isProviderToolResultError(output: unknown): boolean {
   const type = readToolResultOwnDataProperty(output, "type");
   return typeof type === "string" &&
     ReflectApply(StringPrototypeEndsWith, type, [

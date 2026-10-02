@@ -8,6 +8,7 @@ import {
 import {
   getToolResultError,
   isIntegrationAuthenticationActionResult,
+  isProviderToolResultError,
 } from "#veryfront/tool/result.ts";
 import { resolveKnownProviderTerminalError } from "../stream-outcome.ts";
 import { mergeToolCallInput } from "../tool-input.ts";
@@ -390,7 +391,8 @@ function providerToolTerminalSignals(
     ? typed.output
     : typed.result;
   const inferredToolError = typed.type === "tool-error" ? undefined : getToolResultError(rawOutput);
-  const isExplicitError = (typed.type === "tool-error" || typed.isError === true) &&
+  const isExplicitError = (typed.type === "tool-error" || typed.isError === true ||
+    isProviderToolResultError(rawOutput)) &&
     !isIntegrationAuthenticationActionResult(rawOutput);
   const isError = isExplicitError || inferredToolError !== undefined;
   const output = isError ? isExplicitError ? rawOutput : inferredToolError : rawOutput;
