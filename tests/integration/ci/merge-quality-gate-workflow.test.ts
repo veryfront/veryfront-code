@@ -46,7 +46,8 @@ const TESTED_RUN_DOWNLOAD = {
   "run-id": TESTED_RUN_ID_EXPRESSION,
   "github-token": "${{ github.token }}",
 };
-const SONAR_GATE_JOB_EXPRESSION = `\${{ always() && ${SONAR_REQUIRED_CONDITION} }}`;
+const SONAR_GATE_JOB_EXPRESSION =
+  `\${{ always() && github.event_name != 'push' && ${SONAR_REQUIRED_CONDITION} }}`;
 const SONAR_JOB_TIMEOUT_MINUTES = 28;
 const SONAR_QUALITY_GATE_TIMEOUT_SECONDS = 1200;
 const SONAR_CHECK_NAME = "SonarQube Cloud quality gate";
@@ -253,7 +254,7 @@ describe("merge quality gate workflow", () => {
     const step = gateStep(gate);
 
     assertEquals(gate.needs, REQUIRED_DEPENDENCIES);
-    assertEquals(gate.if, "${{ always() }}");
+    assertEquals(gate.if, "${{ always() && github.event_name != 'push' }}");
     assertEquals(
       asRecord(step.env, "merge quality gate result env"),
       {
@@ -565,6 +566,13 @@ done
     assertStringIncludes(retryContract, "wrapper], env=env");
     for (const [index, step] of steps.entries()) {
       if (index === fetchIndex || index === scanIndex) continue;
+      if (step.name === "Require server-side quality gate") {
+        assertEquals(index, scanIndex + 1);
+        assertEquals(step.run, sonarGateStep(await readSonarGate()).run);
+        assertEquals(step.env, { SONAR_RESULT: "${{ steps.sonar-scan.outcome }}" });
+        assertEquals(step.if, "${{ always() }}");
+        continue;
+      }
       assertEquals(
         step.run,
         undefined,
@@ -714,8 +722,8 @@ done
       const job = asRecord(jobs[jobName], `${jobName} job`);
       assert(Array.isArray(job.needs), `${jobName} needs must be an array`);
       assert(
-        job.needs.includes("quality-gate-merge"),
-        `${jobName} must wait for the complete merge correctness gate`,
+        job.needs.includes("sonar") && gateStep(job).run === gateStep(await readMergeGate()).run,
+        `${jobName} must wait for Sonar and evaluate the complete merge correctness gate`,
       );
     }
   });
@@ -886,8 +894,80 @@ done
   });
 });
 
+describe("main release gate folding", () => {
+  it("removes standalone Sonar and merge runners from the main push path", async () => {
+    const jobs = asRecord((await readWorkflow()).jobs, "jobs");
+    for (const name of ["sonar-quality-gate", "quality-gate-merge"]) {
+      assertStringIncludes(String(asRecord(jobs[name], name).if), "github.event_name != 'push'");
+    }
+    const scan = asRecord(jobs.sonar, "sonar");
+    const folded = sonarGateStep(scan);
+    assertEquals(folded.if, "${{ always() }}");
+    assertEquals(
+      asRecord(folded.env, "scan gate env").SONAR_RESULT,
+      "${{ steps.sonar-scan.outcome }}",
+    );
+    for (const name of ["prerelease", "release"]) {
+      const publisher = asRecord(jobs[name], name);
+      assertEquals(jobNeeds(publisher, name).includes("quality-gate-merge"), false);
+      const aggregate = gateStep(publisher);
+      const original = gateStep(await readMergeGate());
+      assertEquals(aggregate.run, original.run);
+      assertEquals(asRecord(aggregate.env, "publisher env"), {
+        ...asRecord(original.env, "original env"),
+        SONAR_RESULT: "${{ needs.sonar.result }}",
+      });
+      for (const dependency of REQUIRED_DEPENDENCIES) {
+        assert(
+          jobNeeds(publisher, name).includes(
+            dependency === "sonar-quality-gate" ? "sonar" : dependency,
+          ),
+        );
+      }
+      const steps = publisher.steps as YamlRecord[];
+      assertEquals(
+        steps[0],
+        aggregate,
+        "correctness must pass before any repository or publisher code runs",
+      );
+    }
+  });
+
+  it("folded publisher blocks every failed dependency and preserves authoritative reuse", async () => {
+    const jobs = asRecord((await readWorkflow()).jobs, "jobs");
+    for (const name of ["prerelease", "release"]) {
+      const aggregate = gateStep(asRecord(jobs[name], name));
+      const run = async (overrides: Record<string, string>, reusedRunId = "") => {
+        const env = Object.fromEntries(Object.keys(RESULT_ENV).map((key) => [key, "success"]));
+        return await new Deno.Command("bash", {
+          args: ["-c", String(aggregate.run)],
+          env: { ...env, SONAR_REQUIRED: "true", REUSED_RUN_ID: reusedRunId, ...overrides },
+          stdout: "piped",
+          stderr: "piped",
+        }).output();
+      };
+      assertEquals((await run({})).code, 0);
+      for (const key of Object.keys(RESULT_ENV)) {
+        for (const result of ["failure", "cancelled", "skipped"]) {
+          assertEquals((await run({ [key]: result })).code, 1, `${name} ${key}=${result}`);
+          if (result !== "skipped" || key === "SONAR_RESULT") {
+            assertEquals((await run({ [key]: result }, "12345")).code, 1);
+          }
+        }
+      }
+      const reused = Object.fromEntries(
+        Object.keys(RESULT_ENV).filter((key) => key !== "SONAR_RESULT").map((
+          key,
+        ) => [key, "skipped"]),
+      );
+      assertEquals((await run(reused, "12345")).code, 0);
+      assertEquals((await run(reused)).code, 1);
+    }
+  });
+});
+
 describe("trusted merge-group cancellation workflow", () => {
-  it("force-cancels only merge-group runs without checkout or repository code", async () => {
+  it("cancels only merge-group runs while preserving always aggregators", async () => {
     const workflow = asRecord(
       parse(await readRepoFile(".github/workflows/cancel-failed-merge-group.yml")),
       "cancel workflow",
@@ -906,7 +986,7 @@ describe("trusted merge-group cancellation workflow", () => {
     assertEquals(step.env, { GH_TOKEN: "${{ github.token }}" });
     assertEquals(
       String(step.run).trim(),
-      'gh api --method POST "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/force-cancel"',
+      'gh api --method POST "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/cancel"',
     );
   });
 
@@ -941,7 +1021,7 @@ describe("trusted merge-group cancellation workflow", () => {
         assertEquals(output.code, exitCode);
         assertEquals(
           await Deno.readTextFile(`${directory}/args`),
-          "api\n--method\nPOST\nrepos/veryfront/veryfront-code/actions/runs/123456/force-cancel\n",
+          "api\n--method\nPOST\nrepos/veryfront/veryfront-code/actions/runs/123456/cancel\n",
         );
       }
     } finally {

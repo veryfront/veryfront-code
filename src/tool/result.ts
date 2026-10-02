@@ -206,9 +206,12 @@ function parseSerializedToolOutput(output: unknown): unknown {
   }
 }
 
-/** A provider error payload, e.g. `{ type: "web_search_tool_result_error", error_code }`. */
-function isProviderToolResultError(output: unknown): boolean {
-  const type = readToolResultOwnDataProperty(output, "type");
+/**
+ * A provider error payload, e.g. `{ type: "web_search_tool_result_error", error_code }`,
+ * as an object or serialized as a JSON string.
+ */
+export function isProviderToolResultError(output: unknown): boolean {
+  const type = readToolResultOwnDataProperty(parseSerializedToolOutput(output), "type");
   return typeof type === "string" &&
     ReflectApply(StringPrototypeEndsWith, type, [
       PROVIDER_TOOL_RESULT_ERROR_TYPE_SUFFIX,

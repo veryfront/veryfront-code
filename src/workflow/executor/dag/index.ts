@@ -6,6 +6,7 @@
  * @module ai/workflow/executor/dag
  */
 
+import { isDeepStrictEqual } from "node:util";
 import type {
   BranchNodeConfig,
   NodeState,
@@ -1229,9 +1230,10 @@ const LOOP_EXIT_REASONS: ReadonlySet<unknown> = new Set(["condition", "maxIterat
 /**
  * Whether a persisted state may hold loop output, whatever node now uses its id.
  * Callback updates can overwrite result keys with undefined, which durable JSON
- * omits. Step and sub-workflow states record input provenance; loop states do not.
- * Legacy composite output keys child results by bare id, so a result key counts
- * only when its value has the loop result shape.
+ * omits, or replace every metadata value with user data. Step and sub-workflow
+ * states record input provenance; loop states do not. Legacy composite output
+ * keys child results by bare id, so fewer than three keys count only when their
+ * values have the loop result shape.
  */
 function mayHoldLoopPublication(state: NodeState): boolean {
   const { output } = state;
@@ -1241,12 +1243,128 @@ function mayHoldLoopPublication(state: NodeState): boolean {
     typeof output !== "object" || output === null || Array.isArray(output)
   ) return false;
   const result = output as Record<string, unknown>;
-  const loopShapedKeys = [
+  // Preserve refusal when callbacks replace all metadata values with user data.
+  if (["exitReason", "iterations", "previousResults"].every((key) => Object.hasOwn(result, key))) {
+    return true;
+  }
+  return [
     Object.hasOwn(result, "exitReason") && LOOP_EXIT_REASONS.has(result.exitReason),
     Object.hasOwn(result, "iterations") && Number.isInteger(result.iterations),
     Object.hasOwn(result, "previousResults") && Array.isArray(result.previousResults),
-  ].filter(Boolean).length;
-  return loopShapedKeys >= 2;
+  ].filter(Boolean).length >= 2;
+}
+
+/** Follow only completed, owned composite paths retained by the checkpoint. */
+function retainedPublicationChildren(
+  node: WorkflowNode,
+  state: NodeState,
+): readonly WorkflowNode[] | undefined {
+  if (node.config.type === "parallel") return node.config.nodes;
+  if (node.config.type === "branch") {
+    const output = state.output;
+    if (typeof output !== "object" || output === null || !("branch" in output)) return undefined;
+    if (output.branch === "then") return node.config.then;
+    if (output.branch === "else") return node.config.else ?? [];
+    return undefined;
+  }
+  if (node.config.type === "map") {
+    if (!Array.isArray(state.output)) return undefined;
+    if (Array.isArray(node.config.items) && node.config.items.length !== state.output.length) {
+      return undefined;
+    }
+    const wrappers: WorkflowNode[] = [];
+    for (let index = 0; index < state.output.length; index++) {
+      const wrapper = rebaseMapProcessorNode(`${node.id}_${index}`, node.config.processor);
+      if (wrapper === undefined) return undefined;
+      wrappers.push(wrapper);
+    }
+    return wrappers;
+  }
+  return undefined;
+}
+
+/** Validate the executed tree before reusing the normal publication restorer. */
+function hasRetainedPublicationTree(
+  nodes: readonly WorkflowNode[],
+  nodeStates: Readonly<Record<string, NodeState>>,
+  ownerPath: string,
+): boolean {
+  return nodes.every((node) => {
+    const state = nodeStates[node.id];
+    if (state?._subWorkflowOwnerPath !== ownerPath) return false;
+    if (state.status === "skipped") return true;
+    if (state.status !== "completed" || node.config.type === "loop") return false;
+    if (node.config.type === "parallel" || node.config.type === "branch") {
+      const children = retainedPublicationChildren(node, state);
+      return children !== undefined && hasRetainedPublicationTree(children, nodeStates, ownerPath);
+    }
+    return true;
+  });
+}
+
+/** Corroborate every surviving value against current or inherited publications. */
+function corroboratesLegacyParallelPublication(
+  node: WorkflowNode,
+  nodeStates: Readonly<Record<string, NodeState>>,
+  ownerPath: string,
+  resumeContext: Readonly<WorkflowContext>,
+): boolean {
+  if (node.config.type !== "parallel") return false;
+  const output = nodeStates[node.id]?.output;
+  if (typeof output !== "object" || output === null || Array.isArray(output)) return false;
+  if (!hasRetainedPublicationTree(node.config.nodes, nodeStates, ownerPath)) return false;
+  const publications = Object.create(null) as WorkflowContext;
+  restorePublishedChildOutputs(
+    node.config.nodes,
+    nodeStates,
+    publications,
+    ownerPath,
+    resumeContext,
+  );
+  const result = output as Record<string, unknown>;
+  const matched = new Set<string>();
+  for (const [key, value] of Object.entries(publications)) {
+    const aliases = [key, key.startsWith(`${node.id}/`) ? key.slice(node.id.length + 1) : key];
+    let found = false;
+    for (const alias of aliases) {
+      if (Object.hasOwn(result, alias) && isDeepStrictEqual(result[alias], value)) {
+        matched.add(alias);
+        found = true;
+      }
+    }
+    // JSON persistence drops undefined object properties.
+    if (!found && value !== undefined) return false;
+  }
+  return Object.entries(result).every(([key, value]) => {
+    if (matched.has(key) || key === "input") return true;
+    const state = nodeStates[key];
+    return state?.status === "completed" && state._subWorkflowOwnerPath === ownerPath &&
+      isDeepStrictEqual(value, state.output);
+  });
+}
+
+function hasLegacyParallelPublication(
+  nodes: readonly WorkflowNode[],
+  nodeId: string,
+  nodeStates: Readonly<Record<string, NodeState>>,
+  ownerPath: string,
+  resumeContext: Readonly<WorkflowContext>,
+): boolean {
+  for (const node of nodes) {
+    const state = nodeStates[node.id];
+    if (state?.status !== "completed" || state._subWorkflowOwnerPath !== ownerPath) continue;
+    if (node.id === nodeId) {
+      return corroboratesLegacyParallelPublication(node, nodeStates, ownerPath, resumeContext);
+    }
+    const children = retainedPublicationChildren(node, state);
+    if (
+      children &&
+      hasLegacyParallelPublication(children, nodeId, nodeStates, ownerPath, resumeContext)
+    ) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function legacyLoopContextError(nodeId: string): Error {
@@ -1262,6 +1380,7 @@ function legacyLoopContextError(nodeId: string): Error {
  * be loop output, including states whose ids the current definition dropped.
  */
 function assertNoLegacyLoopPublication(
+  nodes: readonly WorkflowNode[],
   ownerPath: string,
   nodeStates: Record<string, NodeState>,
   scope: ExecutionScope,
@@ -1278,7 +1397,10 @@ function assertNoLegacyLoopPublication(
   for (const [nodeId, state] of Object.entries(nodeStates)) {
     if (state.status !== "completed" || !mayHoldLoopPublication(state)) continue;
     if (state._subWorkflowOwnerPath !== undefined) {
-      if (state._subWorkflowOwnerPath === ownerPath) throw legacyLoopContextError(nodeId);
+      if (
+        state._subWorkflowOwnerPath === ownerPath &&
+        !hasLegacyParallelPublication(nodes, nodeId, nodeStates, ownerPath, scope.resumeContext)
+      ) throw legacyLoopContextError(nodeId);
       continue;
     }
     // Retained child IDs identify removed producers when owner metadata is absent.
@@ -1306,7 +1428,9 @@ function restorePublishedChildOutputs(
     if (state?._subWorkflowOwnerPath && state._subWorkflowOwnerPath !== ownerPath) continue;
     if (
       requireExactPublication && state?.status === "completed" &&
-      (node.config.type === "loop" || mayHoldLoopPublication(state))
+      (node.config.type === "loop" ||
+        mayHoldLoopPublication(state) &&
+          !hasLegacyParallelPublication([node], node.id, nodeStates, ownerPath, resumeContext))
     ) {
       // Legacy loop output flattens callback updates over framework metadata.
       // The current definition cannot prove which callbacks produced that row,
@@ -2708,7 +2832,9 @@ export class DAGExecutor {
       const childContext: WorkflowContext = savedContext
         ? { input, ...cloneExecutionState(savedContext, "Sub-workflow context") }
         : { input };
-      if (savedContext === undefined) assertNoLegacyLoopPublication(ownerPath, nodeStates, scope);
+      if (savedContext === undefined) {
+        assertNoLegacyLoopPublication(steps, ownerPath, nodeStates, scope);
+      }
       restorePublishedChildOutputs(
         steps,
         seededNodeStates,

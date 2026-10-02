@@ -11,7 +11,13 @@ async function runWithOperatorOrigin<T = Record<string, unknown>>(code: string):
     cwd: Deno.cwd(),
     env: { PLATFORM_DOMAIN_SUFFIXES: root, PLATFORM_STUDIO_ORIGIN: origin },
   }).output();
-  assertEquals(result.success, true, new TextDecoder().decode(result.stderr));
+  const stderr = new TextDecoder().decode(result.stderr);
+  assertEquals(
+    result.success,
+    true,
+    `operator-origin subprocess exited with code ${result.code}` +
+      `${result.signal ? ` (signal ${result.signal})` : ""}; stderr:\n${stderr}`,
+  );
   return JSON.parse(new TextDecoder().decode(result.stdout)) as T;
 }
 
@@ -100,10 +106,22 @@ describe("host-owned Studio origin", () => {
       const calls = [];
       const preview = "https://app.preview.${root}:58443/page";
       const studio = ${JSON.stringify(origin)};
+      // No runScripts: jsdom would back the window with a node:vm context, and
+      // Deno 2.7 can panic finalizing that context's weak handle when the
+      // isolate tears down (V8 "Check failed: node->IsInUse()"). Page scripts
+      // run against the window's own bindings instead.
+      const runInWindow = (window, source) => new Function(
+        "window", "document", "location", "HTMLLinkElement", "WebSocket",
+        "setTimeout", "clearTimeout", "setInterval", "clearInterval", source,
+      )(
+        window, window.document, window.location, window.HTMLLinkElement,
+        window.WebSocket, window.setTimeout.bind(window),
+        window.clearTimeout.bind(window), window.setInterval.bind(window),
+        window.clearInterval.bind(window),
+      );
       const options = {
         url: preview,
         referrer: studio + "/project",
-        runScripts: "dangerously",
         beforeParse(window) {
           Object.defineProperty(window, "parent", {
             configurable: true,
@@ -122,7 +140,7 @@ describe("host-owned Studio origin", () => {
         send() {}
       }
       dom.window.WebSocket = FakeWebSocket;
-      dom.window.eval(getPreviewHMRScript());
+      runInWindow(dom.window, getPreviewHMRScript());
       FakeWebSocket.instance.onmessage({data: JSON.stringify({
         type: "update", path: "styles.css",
       })});
@@ -133,6 +151,9 @@ describe("host-owned Studio origin", () => {
         statusCode: 500, title: "Error", message: "failure",
       });
       const errorDom = new JSDOM(errorHtml, options);
+      for (const script of errorDom.window.document.querySelectorAll("script")) {
+        runInWindow(errorDom.window, script.textContent);
+      }
       errorDom.window.close();
       console.log(JSON.stringify(calls));
     `);

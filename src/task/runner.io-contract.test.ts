@@ -146,6 +146,25 @@ describe("src/task/runner declared schemas (warning phase)", () => {
     assertEquals(result.inputSchemaSha256, await schemaIdentitySha256(ticketInputSchema));
   });
 
+  it("rejects input that violates an asynchronous raw inputSchema without running the task", async () => {
+    const { task, calls } = schemaTask({ inputSchema: { $async: true, ...ticketInputSchema } });
+
+    const result = await runTask({ task, input: { ticketText: 42 } }, createInMemoryHostRuntime());
+
+    assertEquals(calls.length, 0);
+    assertEquals(result.errorCode, "INPUT_VALIDATION_FAILED");
+    assertEquals(result.errorDetail?.errors[0]?.path, "/ticketText");
+  });
+
+  it("passes input that satisfies an asynchronous raw inputSchema to run()", async () => {
+    const { task, calls } = schemaTask({ inputSchema: { $async: true, ...ticketInputSchema } });
+
+    const result = await runTask({ task, input: { ticketText: "x" } }, createInMemoryHostRuntime());
+
+    assertEquals(result.success, true);
+    assertEquals(calls[0]?.input, { ticketText: "x" });
+  });
+
   it("passes the parsed input to run() and keeps the submitted input", async () => {
     const inputSchema = defineSchema((v) =>
       v.object({ ticketText: v.string(), priority: v.string().default("normal") })
