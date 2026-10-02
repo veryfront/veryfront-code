@@ -1016,17 +1016,19 @@ describe("DAGExecutor", () => {
           workflow: { id: "unrelated-sibling", steps: [unrelated] },
         });
         let outputCalls = 0;
-        const child = subWorkflow("child", {
-          workflow: {
-            id: "no-loop-child",
-            steps: [],
-            output: () => {
-              if (++outputCalls === 1) throw new Error("selector failed");
-              return "restored";
+        const child = {
+          ...subWorkflow("child", {
+            workflow: {
+              id: "no-loop-child",
+              steps: [],
+              output: () => {
+                if (++outputCalls === 1) throw new Error("selector failed");
+                return "restored";
+              },
             },
-          },
+          }),
           dependsOn: [otherOwner === "root" ? "repeat" : "sibling"],
-        });
+        };
         const nodes = [otherOwner === "root" ? unrelated : sibling, child];
         const first = await executor.execute(nodes, createTestRun());
         assertEquals(first.completed, false);
