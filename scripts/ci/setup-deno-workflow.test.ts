@@ -431,6 +431,75 @@ describe("setup-deno installer resilience", () => {
   }
 });
 
+const CHROMIUM_ACTION_PATH = ".github/actions/install-chromium/action.yml";
+
+async function chromiumInstallScript(): Promise<string> {
+  const action = await parseYamlFile(CHROMIUM_ACTION_PATH);
+  const runs = asRecord(action.runs, `${CHROMIUM_ACTION_PATH}.runs`);
+  const step = asSteps(runs.steps, `${CHROMIUM_ACTION_PATH}.runs.steps`).find(
+    (entry) => entry.name === "Install Chromium",
+  );
+  assert(step, "the shared action must install Chromium");
+  return String(step.run).replace("${{ inputs.install-command }}", "true");
+}
+
+/**
+ * Runs the action's install shell with apt locks clear and `timeout` replaced
+ * by a function that exits with `status` after `elapsedSeconds` of simulated
+ * time, so a test can tell an early SIGKILL from a deadline kill without
+ * sleeping.
+ */
+async function runChromiumInstall(
+  { status, elapsedSeconds }: { status: number; elapsedSeconds: number },
+): Promise<InstallerResult> {
+  const root = await Deno.makeTempDir({ prefix: "install-chromium-" });
+  try {
+    await Deno.writeTextFile(
+      `${root}/install.sh`,
+      [
+        'sudo() { if [ "$1" = fuser ]; then return 1; fi; cat >/dev/null; }',
+        "sleep() { :; }",
+        `timeout() { SECONDS=$((SECONDS + ${elapsedSeconds})); return ${status}; }`,
+        await chromiumInstallScript(),
+      ].join("\n"),
+    );
+    const { code, stdout, stderr } = await new Deno.Command("bash", {
+      args: [`${root}/install.sh`],
+      stdout: "piped",
+      stderr: "piped",
+    }).output();
+    return {
+      code,
+      stdout: new TextDecoder().decode(stdout),
+      stderr: new TextDecoder().decode(stderr),
+    };
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+}
+
+describe("install-chromium failure diagnosis", () => {
+  it("names the install deadline when timeout reports exit 124", async () => {
+    const result = await runChromiumInstall({ status: 124, elapsedSeconds: 240 });
+    assertEquals(result.code, 124);
+    assertStringIncludes(result.stdout, "exceeded 4m (stalled download");
+  });
+
+  it("names the install deadline when the deadline kill escalates to exit 137", async () => {
+    const result = await runChromiumInstall({ status: 137, elapsedSeconds: 255 });
+    assertEquals(result.code, 137);
+    assertStringIncludes(result.stdout, "exceeded 4m (stalled download");
+  });
+
+  it("reports an early SIGKILL as forced termination, not a deadline expiry", async () => {
+    const result = await runChromiumInstall({ status: 137, elapsedSeconds: 0 });
+    assertEquals(result.code, 137);
+    assertEquals(result.stdout.includes("exceeded"), false, result.stdout);
+    assertStringIncludes(result.stdout, "was killed (exit 137) after 0s");
+    assertStringIncludes(result.stdout, "possibly the OOM killer");
+  });
+});
+
 describe("setup-deno CI contract", () => {
   it("skips only valid reusable-workflow jobs without steps", () => {
     assertEquals(
@@ -990,11 +1059,6 @@ jobs:
     ) {
       assertStringIncludes(install, expected);
     }
-    assertStringIncludes(
-      install,
-      '[ "$status" -eq 124 ] || [ "$status" -eq 137 ]',
-      "a timed-out attempt must be named as a stalled download, not a bare exit 124",
-    );
     assertStringIncludes(install, "::error title=Chromium install::");
     assert(
       shellInteger(install, "install_attempts") >= 3,
