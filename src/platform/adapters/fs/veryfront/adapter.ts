@@ -1767,6 +1767,8 @@ export class VeryfrontFSAdapter implements FSAdapter {
     // from, so publish the listing under the key that context reads.
     const cacheKey = scopeFileListCacheKeyToRequestAuthority(sourceCacheKey);
     const expectedContext = this.contentContext;
+    const effectiveContext = this.getEffectiveContentContext();
+    const sourceContentKey = effectiveContext && this.#getSourceContentKey(effectiveContext);
     return this.#runSourceSnapshotMutation(async () => {
       if (
         !expectedContext ||
@@ -1804,12 +1806,9 @@ export class VeryfrontFSAdapter implements FSAdapter {
       // replaced -- is what later reads see when the cache keeps nothing.
       this.retainFileList(cacheKey, files);
       // Poked listings carry contents, so fresh credentials can reuse them.
-      ignorePromiseRejection(
-        admitVerifiedSourceContents(
-          this.#getSourceContentKey(this.getEffectiveContentContext() ?? expectedContext),
-          files,
-        ),
-      );
+      if (sourceContentKey) {
+        ignorePromiseRejection(admitVerifiedSourceContents(sourceContentKey, files));
+      }
       return this.sourceSnapshotVersion;
     });
   }

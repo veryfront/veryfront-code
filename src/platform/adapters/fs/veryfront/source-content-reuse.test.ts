@@ -1,5 +1,6 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { API_CLIENT_ERROR } from "#veryfront/errors";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import type { VeryfrontFSAdapter } from "./adapter.ts";
 import { fetchSourceListingForContext } from "./adapter-content-context.ts";
@@ -48,7 +49,7 @@ async function sourceFiles(entries: Record<string, string>): Promise<SourceFile[
  */
 function createCredentialAdapter(
   visibleFiles: () => SourceFile[],
-  options: { failMetadata?: boolean } = {},
+  options: { failMetadataStatus?: number } = {},
 ): {
   adapter: VeryfrontFSAdapter;
   counts: ListingCounts;
@@ -84,7 +85,7 @@ function createCredentialAdapter(
       getAsync: (key: string) => Promise<unknown>;
     };
   };
-  const failMetadataListing = options.failMetadata ?? false;
+  const failMetadataStatus = options.failMetadataStatus;
   internals.client.initialize = () => Promise.resolve();
   internals.client.getProjectSlug = () => "test-project";
   internals.client.getProjectId = () => "project-123";
@@ -92,7 +93,14 @@ function createCredentialAdapter(
   internals.client.listAllFiles = (options) => {
     if (options?.fields) {
       counts.metadataListings++;
-      if (failMetadataListing) return Promise.reject(new Error("400 Bad Request"));
+      if (failMetadataStatus !== undefined) {
+        return Promise.reject(
+          API_CLIENT_ERROR.create({
+            detail: "Metadata listing failed",
+            status: failMetadataStatus,
+          }),
+        );
+      }
       return Promise.resolve(
         visibleFiles().map((file) => ({
           path: file.path,
@@ -309,13 +317,33 @@ describe("source content reuse across fresh credentials (issue inbox#2277)", () 
     await asCredential("credential-a", () => first.adapter.initialize());
     first.adapter.dispose();
 
-    const second = createCredentialAdapter(() => files, { failMetadata: true });
+    const second = createCredentialAdapter(() => files, { failMetadataStatus: 400 });
     await asCredential("credential-b", async () => {
       await second.adapter.initialize();
       assertEquals(await second.adapter.readTextFile("agents/assistant.ts"), "export default {};");
     });
     assertEquals(second.counts.metadataListings, 1);
     assertEquals(second.counts.fullListings, 1, "a failed metadata listing falls back to contents");
+    second.adapter.dispose();
+  });
+
+  it("surfaces a server failure of the metadata listing without listing twice", async () => {
+    const files = await sourceFiles({ "agents/assistant.ts": "export default {};" });
+
+    const first = createCredentialAdapter(() => files);
+    await asCredential("credential-a", () => first.adapter.initialize());
+    first.adapter.dispose();
+
+    const second = createCredentialAdapter(() => files, { failMetadataStatus: 503 });
+    await asCredential("credential-b", async () => {
+      await assertRejects(() => second.adapter.initialize());
+    });
+    assertEquals(second.counts.fullListings, 0, "a server failure must not be paid for twice");
+    assertEquals(
+      hasVerifiedSourceContents("https://api.example.com|branch:test-project:main"),
+      true,
+      "a transient failure must not disable reuse for other credentials",
+    );
     second.adapter.dispose();
   });
 

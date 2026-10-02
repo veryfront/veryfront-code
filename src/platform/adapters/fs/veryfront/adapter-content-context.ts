@@ -1,5 +1,5 @@
-import { API_CLIENT_ERROR, INVALID_ARGUMENT } from "#veryfront/errors";
-import { logger as baseLogger } from "#veryfront/utils";
+import { API_CLIENT_ERROR, INVALID_ARGUMENT, VeryfrontError } from "#veryfront/errors";
+import { logger as baseLogger } from "#veryfront/utils/logger/logger.ts";
 import type { VeryfrontApiClient } from "../../veryfront-api-client/index.ts";
 import {
   admitVerifiedSourceContents,
@@ -180,8 +180,12 @@ export async function fetchSourceListingForContext(
     try {
       metadata = await client.listAllFiles({ fields: SOURCE_METADATA_FIELDS }, branch);
     } catch (error) {
-      // The complete listing below reports any failure that is not specific
-      // to the metadata query, so this one only stops further attempts.
+      // Only a rejected field selection is specific to this query. Transport,
+      // authorization and server failures would fail the complete listing
+      // too, so they surface here instead of being paid for twice.
+      if (!(error instanceof VeryfrontError && (error.status === 400 || error.status === 422))) {
+        throw error;
+      }
       forgetVerifiedSource(sourceKey);
       logger.debug("Metadata listing failed; listing contents", {
         projectSlug: context.projectSlug,
