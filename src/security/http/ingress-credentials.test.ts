@@ -8,8 +8,11 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { isDeno } from "#veryfront/platform/compat/runtime.ts";
 import {
   getRequestPeerProvenance,
+  getRequestTransportLifetime,
+  inheritRequestPeerProvenance,
   recordDenoServeRequestPeer,
   recordRequestPeerFromTransport,
+  recordRequestTransportLifetime,
 } from "#veryfront/platform/adapters/runtime/shared/request-peer.ts";
 import {
   INGRESS_API_TOKEN_HEADER,
@@ -436,4 +439,50 @@ describe("security/http/ingress-credentials", () => {
     inheritIngressCredentials(unsealed, copy);
     assertEquals(readIngressCredential(copy, INGRESS_API_TOKEN_HEADER), null);
   });
+  it("keeps native transport lifetime through credential sealing and timeout copies", () => {
+    const request = new Request("http://localhost/api/control-plane/runs/run_1/execute", {
+      headers: { [INGRESS_RUN_STOP_TOKEN_HEADER]: "stop-capability" },
+    });
+    const completed = Promise.resolve();
+    recordRequestTransportLifetime(request, completed);
+
+    const sealed = sealIngressCredentials(request);
+    const timeoutCopy = inheritRequestPeerProvenance(
+      sealed,
+      new Request(sealed, { signal: AbortSignal.timeout(1_000) }),
+    );
+
+    assertEquals(sealed.headers.get(INGRESS_RUN_STOP_TOKEN_HEADER), null);
+    assertEquals(getRequestTransportLifetime(sealed), {
+      signal: request.signal,
+      completed,
+    });
+    assertEquals(getRequestTransportLifetime(timeoutCopy), {
+      signal: request.signal,
+      completed,
+    });
+  });
+
+  it(
+    "does not expose sealed credentials through patched weak collection methods",
+    DENO_INTERNALS,
+    () => {
+      const token = "stop-capability";
+      const request = new Request("http://localhost/api/control-plane/runs/run_1/execute", {
+        headers: { [INGRESS_RUN_STOP_TOKEN_HEADER]: token },
+      });
+      const probes = installCredentialProbes();
+      let sealed: Request;
+      try {
+        recordRequestTransportLifetime(request, Promise.resolve());
+        sealed = sealIngressCredentials(request);
+        getRequestTransportLifetime(sealed);
+      } finally {
+        probes.restore();
+      }
+
+      assertEquals(probes.saw(token), false);
+      assert(sealed.headers.get(INGRESS_RUN_STOP_TOKEN_HEADER) === null);
+    },
+  );
 });

@@ -15,7 +15,7 @@ import { createWebSocketUpgradeResponse } from "../../base.ts";
 import { createNodeServer, createNodeServerWithStartupOwner, NodeServer } from "./http-server.ts";
 import type { NodeHttpServer } from "./types.ts";
 import { NodeServerAdapter } from "./websocket-adapter.ts";
-import { getRequestPeerProvenance } from "../shared/request-peer.ts";
+import { getRequestPeerProvenance, getRequestTransportLifetime } from "../shared/request-peer.ts";
 import { isTrustedLocalControlRequest } from "#veryfront/security/http/local-control-request.ts";
 import { WsNodeWebSocketServerProvider } from "../../../../../extensions/ext-node-websocket-ws/src/index.ts";
 import { NODE_WEBSOCKET_SERVER_PROVIDER_PACKAGE } from "#veryfront/extensions/websocket";
@@ -1246,6 +1246,126 @@ describe("NodeServer lifecycle", () => {
       await handlerStarted.promise;
       client.destroy();
       await requestAborted.promise;
+    } finally {
+      client.destroy();
+      await server.stop();
+    }
+  });
+
+  it("settles native response completion after handler return and tears down its lifetime", async () => {
+    if (!isNode) return;
+    const handlerReturned = createDeferred<void>();
+    const releaseBody = createDeferred<void>();
+    let request: Request | undefined;
+    let lifetime: ReturnType<typeof getRequestTransportLifetime>;
+    let completionCalls = 0;
+    const server = await createNodeServer((incoming) => {
+      request = incoming;
+      lifetime = getRequestTransportLifetime(incoming);
+      void lifetime?.completed?.then(() => completionCalls++);
+      handlerReturned.resolve();
+      return new Response(
+        new ReadableStream<Uint8Array>({
+          async start(controller) {
+            controller.enqueue(new TextEncoder().encode("held"));
+            await releaseBody.promise;
+            controller.close();
+          },
+        }),
+      );
+    }, {
+      hostname: "127.0.0.1",
+      port: 0,
+    });
+    const client = nodeRequest({
+      host: "127.0.0.1",
+      port: server.addr.port,
+      path: "/held-response",
+    });
+    const responseEnded = new Promise<void>((resolve, reject) => {
+      client.once("response", (response) => {
+        response.resume();
+        response.once("end", resolve);
+        response.once("error", reject);
+      });
+      client.once("error", reject);
+    });
+    client.end();
+
+    try {
+      await handlerReturned.promise;
+      assertStrictEquals(lifetime?.signal, request?.signal);
+      assertEquals(lifetime?.signal.aborted, false);
+      assertEquals(completionCalls, 0, "handler return must not complete the native response");
+
+      releaseBody.resolve();
+      await responseEnded;
+      await lifetime?.completed;
+      await Promise.resolve();
+
+      assertEquals(completionCalls, 1);
+      assertEquals(lifetime?.signal.aborted, false);
+      assertEquals(request && getRequestTransportLifetime(request), undefined);
+    } finally {
+      releaseBody.resolve();
+      client.destroy();
+      await server.stop();
+    }
+  });
+
+  it("aborts and settles native response completion once when a held client disconnects", async () => {
+    if (!isNode) return;
+    const handlerReturned = createDeferred<void>();
+    const transportAborted = createDeferred<void>();
+    let request: Request | undefined;
+    let lifetime: ReturnType<typeof getRequestTransportLifetime>;
+    let completionCalls = 0;
+    const server = await createNodeServer((incoming) => {
+      request = incoming;
+      lifetime = getRequestTransportLifetime(incoming);
+      lifetime?.signal.addEventListener("abort", () => transportAborted.resolve(), { once: true });
+      void lifetime?.completed?.then(() => completionCalls++);
+      handlerReturned.resolve();
+      return new Response(
+        new ReadableStream<Uint8Array>({
+          pull(controller) {
+            controller.enqueue(new Uint8Array(64 * 1024));
+          },
+        }),
+      );
+    }, {
+      hostname: "127.0.0.1",
+      port: 0,
+    });
+    const client = nodeRequest({
+      host: "127.0.0.1",
+      port: server.addr.port,
+      path: "/held-disconnect",
+    });
+    client.on("error", () => {});
+    const responseReceived = new Promise<import("node:http").IncomingMessage>((resolve) => {
+      client.once("response", (response) => {
+        response.pause();
+        resolve(response);
+      });
+    });
+    client.end();
+
+    try {
+      await handlerReturned.promise;
+      const response = await responseReceived;
+      assertEquals(lifetime?.signal.aborted, false);
+      assertEquals(completionCalls, 0);
+
+      response.destroy();
+      client.destroy();
+      await transportAborted.promise;
+      await lifetime?.completed;
+      await Promise.resolve();
+
+      assertEquals(lifetime?.signal.aborted, true);
+      assertEquals(completionCalls, 1);
+      assertEquals(request && getRequestTransportLifetime(request), undefined);
     } finally {
       client.destroy();
       await server.stop();
