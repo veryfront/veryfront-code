@@ -46,6 +46,7 @@ import { INVALID_ARGUMENT, VeryfrontError } from "#veryfront/errors";
 import { __subscribeLogRecordEmitter, type LogEntry } from "#veryfront/utils/logger/logger.ts";
 import { serializeWorkflowContext } from "../../context-serialization.ts";
 import {
+  branch,
   loop,
   map,
   parallel,
@@ -1009,52 +1010,162 @@ describe("DAGExecutor", () => {
       });
     }
 
-    it("restores a persisted legacy parallel wrapper in a static map", async () => {
-      let childCalls = 0;
-      let outputCalls = 0;
-      const exec = new DAGExecutor({
-        stepExecutor: new MockStepExecutor(new Map(), (node) => {
-          childCalls++;
-          return {
-            success: true,
-            output: node.id.endsWith("/iterations") ? 1 : [],
-            executionTime: 0,
-          };
-        }),
-      });
-      const nodes = [subWorkflow("child", {
-        workflow: {
-          id: "legacy-map-parallel",
-          steps: [map("mapped", {
-            items: [1],
-            processor: parallel("worker", [
-              step("iterations", { tool: "read" }),
-              step("previousResults", { tool: "read" }),
-            ]),
-          })],
-          output: (context) => {
-            if (++outputCalls === 1) throw new Error("selector failed");
-            return context.mapped;
+    for (const callbackItems of [false, true]) {
+      it(`restores a persisted legacy parallel wrapper in a ${callbackItems ? "callback" : "static"} map`, async () => {
+        let itemCalls = 0;
+        let childCalls = 0;
+        let outputCalls = 0;
+        const exec = new DAGExecutor({
+          stepExecutor: new MockStepExecutor(new Map(), (node) => {
+            childCalls++;
+            return {
+              success: true,
+              output: node.id.endsWith("/iterations") ? 1 : [],
+              executionTime: 0,
+            };
+          }),
+        });
+        const nodes = [subWorkflow("child", {
+          workflow: {
+            id: "legacy-map-parallel",
+            steps: [map("mapped", {
+              items: callbackItems
+                ? () => {
+                  itemCalls++;
+                  return [1];
+                }
+                : [1],
+              processor: parallel("worker", [
+                step("iterations", { tool: "read" }),
+                step("previousResults", { tool: "read" }),
+              ]),
+            })],
+            output: (context) => {
+              if (++outputCalls === 1) throw new Error("selector failed");
+              return context.mapped;
+            },
           },
-        },
-      })];
-      const first = await exec.execute(nodes, createTestRun());
-      assertEquals(first.completed, false);
-      const states = structuredClone(first.nodeStates);
-      delete states.child!._subWorkflowContext;
-      assertEquals(states.mapped_0!.status, "completed");
-      const parallelOutput = states.mapped_0!.output as WorkflowContext;
-      states.mapped_0!.output = { input: parallelOutput.input, iterations: 1, previousResults: [] };
-      const persisted = JSON.parse(JSON.stringify(
-        prepareNodeStatesUserData(states, "legacy-map-parallel", {}),
-      )) as Record<string, NodeState>;
-      const retried = await exec.execute(nodes, createTestRun({ nodeStates: persisted }));
-      assertEquals(retried.error, undefined);
-      assertEquals(retried.completed, true);
-      assertEquals(retried.context.child, persisted.mapped!.output);
-      assertEquals(childCalls, 2);
-      assertEquals(outputCalls, 2);
-    });
+        })];
+        const first = await exec.execute(nodes, createTestRun());
+        assertEquals(first.completed, false);
+        const states = structuredClone(first.nodeStates);
+        delete states.child!._subWorkflowContext;
+        assertEquals(states.mapped_0!.status, "completed");
+        const parallelOutput = states.mapped_0!.output as WorkflowContext;
+        states.mapped_0!.output = {
+          input: parallelOutput.input,
+          iterations: 1,
+          previousResults: [],
+        };
+        const persisted = JSON.parse(JSON.stringify(
+          prepareNodeStatesUserData(states, "legacy-map-parallel", {}),
+        )) as Record<string, NodeState>;
+        const retried = await exec.execute(nodes, createTestRun({ nodeStates: persisted }));
+        assertEquals(retried.error, undefined);
+        assertEquals(retried.completed, true);
+        assertEquals(retried.context.child, persisted.mapped!.output);
+        assertEquals(childCalls, 2);
+        assertEquals(outputCalls, 2);
+        assertEquals(itemCalls, callbackItems ? 1 : 0);
+      });
+    }
+
+    for (
+      const composite of ["parallel", "then", "else", "empty", "skipped", "undefined"] as const
+    ) {
+      it(`restores legacy parallel publications with a ${composite} composite child`, async () => {
+        let childCalls = 0;
+        let conditionCalls = 0;
+        let outputCalls = 0;
+        const exec = new DAGExecutor({
+          stepExecutor: new MockStepExecutor(new Map(), (node) => {
+            childCalls++;
+            return {
+              success: true,
+              output: node.id.endsWith("/iterations")
+                ? 1
+                : node.id.endsWith("/previousResults")
+                ? []
+                : composite === "undefined"
+                ? undefined
+                : "descendant",
+              executionTime: 0,
+            };
+          }),
+        });
+        const extra = step("value", { tool: "read" });
+        const nested = composite === "skipped"
+          ? step("skipped", {
+            tool: "read",
+            skip: () => {
+              conditionCalls++;
+              return true;
+            },
+          })
+          : composite === "undefined"
+          ? extra
+          : composite === "parallel"
+          ? parallel("nested", [extra])
+          : branch("choice", {
+            condition: () => {
+              conditionCalls++;
+              return composite === "then";
+            },
+            then: [extra],
+            else: composite === "empty" ? [] : [step("other", { tool: "read" })],
+          });
+        const nodes = [subWorkflow("child", {
+          workflow: {
+            id: "legacy-composite-parallel",
+            steps: [
+              parallel("collect", [
+                step("iterations", { tool: "read" }),
+                step("previousResults", { tool: "read" }),
+                nested,
+              ]),
+            ],
+            output: (context) => {
+              if (++outputCalls === 1) throw new Error("selector failed");
+              return context;
+            },
+          },
+        })];
+        const first = await exec.execute(nodes, createTestRun());
+        assertEquals(first.completed, false);
+        const states = structuredClone(first.nodeStates);
+        delete states.child!._subWorkflowContext;
+        const output = states.collect!.output as WorkflowContext;
+        states.collect!.output = Object.fromEntries(
+          Object.entries(output).map((
+            [key, value],
+          ) => [key.startsWith("collect/") ? key.slice("collect/".length) : key, value]),
+        );
+        const persisted = JSON.parse(
+          JSON.stringify(prepareNodeStatesUserData(states, "legacy-composite-parallel", {})),
+        ) as Record<string, NodeState>;
+        const retried = await exec.execute(nodes, createTestRun({ nodeStates: persisted }));
+        assertEquals(retried.error, undefined);
+        assertEquals(retried.completed, true);
+        const recovered = retried.context.child as WorkflowContext;
+        assertEquals(recovered["collect/iterations"], 1);
+        assertEquals(recovered["collect/previousResults"], []);
+        if (composite !== "empty" && composite !== "skipped" && composite !== "undefined") {
+          assertEquals(
+            recovered[
+              composite === "parallel"
+                ? "collect/nested/value"
+                : composite === "then"
+                ? "collect/choice/then/value"
+                : "collect/choice/else/other"
+            ],
+            "descendant",
+          );
+        }
+        assertEquals(childCalls, composite === "empty" || composite === "skipped" ? 2 : 3);
+        assertEquals(conditionCalls, composite === "parallel" || composite === "undefined" ? 0 : 1);
+        assertEquals(outputCalls, 2);
+      });
+    }
 
     for (
       const omittedKey of [
