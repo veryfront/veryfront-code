@@ -13,6 +13,7 @@ import {
   type ExecutorBootstrapEnvironment,
   startExecutorNodeBootstrap,
 } from "#veryfront/agent/hosted/executor-node-bootstrap.ts";
+import { createExecutorNodeClock } from "#veryfront/agent/hosted/executor-node-deadline.ts";
 import { connectExecutorTransport } from "#veryfront/agent/hosted/executor-node-transport.ts";
 import { createHostedExecutorSessionClock } from "#veryfront/agent/hosted/executor-session.ts";
 import { ManualMonotonicClock } from "#veryfront/agent/streaming/lifecycle/testing.ts";
@@ -95,7 +96,7 @@ if (typeof Deno !== "undefined") {
             child.once("close", resolve);
           });
           assertEquals(code, 0, output);
-          const expectedTests = index === 3 ? 19 : 1;
+          const expectedTests = index === 3 ? 22 : 1;
           assertEquals((output.match(/^ {4}# Subtest:/gm) ?? []).length, expectedTests, output);
           assertMatch(output, new RegExp(`# tests ${expectedTests}\\n`));
           assertMatch(output, /# cancelled 0\n/);
@@ -226,6 +227,48 @@ if (typeof Deno !== "undefined") {
       } finally {
         await setImmediate();
       }
+    });
+
+    it("rechecks an early key timer and reports the workload deadline when both are due", async () => {
+      let now = 0;
+      const scheduled = new Map<object, { callback: () => void; delayMs: number }>();
+      const key = Promise.withResolvers<Uint8Array>();
+      const bytes = randomBytes(32);
+      const starting = startExecutorNodeBootstrap({
+        operations,
+        environment: environment({ VERYFRONT_EXECUTOR_ACTIVE_DEADLINE_SECONDS: "1" }),
+        readKey: () => key.promise,
+        clock: {
+          now: () => now,
+          schedule(callback, delayMs) {
+            const handle = {};
+            scheduled.set(handle, { callback, delayMs });
+            return handle;
+          },
+          cancel: (handle) => {
+            scheduled.delete(handle as object);
+          },
+        },
+      });
+      try {
+        await setImmediate();
+        const [handle, wake] = [...scheduled.entries()][1]!;
+        assertEquals(wake.delayMs, 1_000);
+        scheduled.delete(handle);
+        now = 999;
+        wake.callback();
+        assertEquals(await settledThisTurn(starting), "pending");
+        const next = [...scheduled.values()].at(-1)!;
+        assertEquals(next.delayMs, 1);
+        now = 1_000;
+        next.callback();
+        await assertRejects(() => starting, Error, "Executor bootstrap deadline exceeded");
+      } finally {
+        key.resolve(bytes);
+        await starting.catch(() => {});
+        await setImmediate();
+      }
+      assert(bytes.every((byte) => byte === 0));
     });
 
     it("expires during delayed key acquisition and wipes the late key", async () => {
@@ -494,6 +537,43 @@ if (typeof Deno !== "undefined") {
       await setImmediate();
     });
 
+    it("keeps the one-second workload alive when its timer wakes early", async () => {
+      let now = 0;
+      const scheduled = new Map<object, { callback: () => void; delayMs: number }>();
+      const bootstrap = await startExecutorNodeBootstrap({
+        operations,
+        environment: environment({ VERYFRONT_EXECUTOR_ACTIVE_DEADLINE_SECONDS: "1" }),
+        readKey: () => Promise.resolve(randomBytes(32)),
+        clock: {
+          now: () => now,
+          schedule(callback, delayMs) {
+            const handle = {};
+            scheduled.set(handle, { callback, delayMs });
+            return handle;
+          },
+          cancel: (handle) => {
+            scheduled.delete(handle as object);
+          },
+        },
+      });
+      try {
+        const [handle, wake] = [...scheduled.entries()][0]!;
+        assertEquals(wake.delayMs, 100);
+        scheduled.delete(handle);
+        now = 999;
+        wake.callback();
+        assertEquals(await settledThisTurn(bootstrap.ready), "pending");
+        const next = [...scheduled.values()][0]!;
+        assertEquals(next.delayMs, 1);
+        now = 1_000;
+        next.callback();
+        await assertRejects(() => bootstrap.ready, Error, "Executor bootstrap deadline exceeded");
+      } finally {
+        bootstrap.close();
+        await setImmediate();
+      }
+    });
+
     it("enforces the validated workload lifetime before attachment", async () => {
       const bootstrap = await startExecutorNodeBootstrap({
         operations,
@@ -502,6 +582,27 @@ if (typeof Deno !== "undefined") {
       });
       try {
         await assertRejects(() => bootstrap.ready, Error, "Executor bootstrap deadline exceeded");
+      } finally {
+        bootstrap.close();
+        await setImmediate();
+      }
+    });
+
+    it("expires an idle bootstrap after a forward UTC correction", async () => {
+      let wall = 1_000;
+      const elapsed = new ManualMonotonicClock();
+      const bootstrap = await startExecutorNodeBootstrap({
+        operations,
+        environment: environment({ VERYFRONT_EXECUTOR_HARD_DEADLINE_AT: "11000" }),
+        readKey: () => Promise.resolve(randomBytes(32)),
+        clock: createExecutorNodeClock(() => wall, elapsed),
+      });
+      try {
+        wall = 12_000;
+        elapsed.advanceBy(1_000);
+        const outcome = await settledThisTurn(bootstrap.ready);
+        assert(outcome instanceof Error);
+        assertEquals(outcome.message, "Executor bootstrap deadline exceeded");
       } finally {
         bootstrap.close();
         await setImmediate();
