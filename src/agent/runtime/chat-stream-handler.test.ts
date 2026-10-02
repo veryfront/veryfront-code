@@ -2851,18 +2851,20 @@ describe("processStream active mode", () => {
 
   it("fails an unflagged provider error payload in both modes", async () => {
     const providerError = { type: "web_search_tool_result_error", error_code: "max_uses_exceeded" };
-    const { active } = await assertModeParity([
-      {
-        type: "tool-result",
-        toolCallId: "native-provider-error",
-        toolName: "web_search",
-        input: { query: "x" },
-        output: providerError,
-      },
-      { type: "finish", finishReason: "stop", totalUsage: null },
-    ]);
+    for (const output of [providerError, JSON.stringify(providerError)]) {
+      const { active } = await assertModeParity([
+        {
+          type: "tool-result",
+          toolCallId: "native-provider-error",
+          toolName: "web_search",
+          input: { query: "x" },
+          output,
+        },
+        { type: "finish", finishReason: "stop", totalUsage: null },
+      ]);
 
-    assertEquals(active.events.at(-1)?.type, "tool-output-error");
+      assertEquals(active.events.at(-1)?.type, "tool-output-error");
+    }
   });
 
   it("matches legacy reconnect auth actions as provider-tool output", async () => {
