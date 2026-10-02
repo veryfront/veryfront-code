@@ -7,6 +7,7 @@ import {
   filterPrivateArray,
   findLastPrivateArrayIndex,
   flatMapPrivateArray,
+  forEachPrivateArray,
   joinPrivateArray,
   pushPrivateArray,
   slicePrivateArray,
@@ -155,6 +156,31 @@ describe("private array concatenation", () => {
     assertStrictEquals(flattened[0], kept);
     assertStrictEquals(flattened[1], kept);
     assertStrictEquals(flattened[2], values[2]);
+  });
+
+  it("visits own entries in order without consulting the iterator or inherited indexes", () => {
+    const values = [1, , 3];
+    Object.setPrototypeOf(
+      values,
+      Object.create(Array.prototype, {
+        1: {
+          get() {
+            throw new Error("inherited index read");
+          },
+        },
+        [Symbol.iterator]: {
+          get() {
+            throw new Error("iterator read");
+          },
+        },
+      }),
+    );
+    const visited: [number | undefined, number][] = [];
+    forEachPrivateArray(values, (value, index, source) => {
+      assertStrictEquals(source, values);
+      visited.push([value, index]);
+    });
+    assertEquals(visited, [[1, 0], [3, 2]]);
   });
 
   it("joins text in order, including separators for sparse and empty entries", () => {

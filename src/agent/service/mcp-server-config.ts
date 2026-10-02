@@ -1,3 +1,5 @@
+import { createProjectScopedMcpUrl } from "./project-scoped-mcp-url.ts";
+export { createProjectScopedMcpUrl } from "./project-scoped-mcp-url.ts";
 import type { RemoteMCPToolSourceConfig } from "#veryfront/tool";
 import type { AgentMcpToolPolicy } from "../types.ts";
 import { buildStudioMcpHeaders } from "../project/live-studio-mcp-tools.ts";
@@ -43,29 +45,6 @@ export type CreateAgentServiceRemoteMcpConfigInput = {
 
 export function defaultAgentServiceMcpServers(): AgentServiceMcpServerConfig[] {
   return [{ kind: "veryfront-api" }];
-}
-
-/** Build the project-scoped control-plane MCP URL for the active project. */
-export function createProjectScopedMcpUrl(
-  apiMcpUrl: string,
-  projectId: string | null | undefined,
-): string {
-  const normalizedProjectId = projectId?.trim();
-  if (!normalizedProjectId) return apiMcpUrl;
-
-  let url: URL;
-  try {
-    url = new URL(apiMcpUrl);
-  } catch {
-    // Let the remote MCP boundary produce its standard configuration error.
-    return apiMcpUrl;
-  }
-  const basePath = url.pathname
-    .replace(/\/projects\/[^/]+\/mcp\/?$/, "")
-    .replace(/\/mcp\/?$/, "")
-    .replace(/\/+$/, "");
-  url.pathname = `${basePath}/projects/${encodeURIComponent(normalizedProjectId)}/mcp`;
-  return url.toString();
 }
 
 function createGenericRemoteMcpConfig(
