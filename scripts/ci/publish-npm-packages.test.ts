@@ -1,4 +1,5 @@
 import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
+import { parse } from "#std/yaml/parse";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { withTempDir } from "#veryfront/testing/deno-compat.ts";
 
@@ -2459,4 +2460,104 @@ describe("npm package publishing", () => {
       });
     }
   }
+});
+
+describe("RC publication deadline", () => {
+  for (const status of [0, 124, 137, 42]) {
+    it(`preserves publish status ${status} and diagnoses deadline failures`, async () => {
+      const workflow = parse(
+        await Deno.readTextFile(
+          new URL("../../.github/workflows/cicd.yml", import.meta.url),
+        ),
+      ) as {
+        jobs: { prerelease: { steps: { name?: string; run?: string }[] } };
+      };
+      const publish = workflow.jobs.prerelease.steps.find((step) =>
+        step.name === "Publish tested RC npm artifact"
+      )!;
+      await withTempDir(async (stateDir) => {
+        const output = await runBash(
+          [
+            "set -euo pipefail",
+            "deno() { :; }",
+            'timeout() { return "$PUBLISH_STATUS"; }',
+            publish.run!,
+          ].join("\n"),
+          {
+            PUBLISH_STATUS: String(status),
+            GITHUB_STEP_SUMMARY: `${stateDir}/summary`,
+          },
+        );
+        assertEquals(output.code, status, decoder.decode(output.stderr));
+        const stderr = decoder.decode(output.stderr);
+        if (status === 124 || status === 137) {
+          assertStringIncludes(
+            stderr,
+            "RC npm publication exceeded its eight-minute deadline",
+          );
+        } else {
+          assertEquals(stderr, "");
+        }
+      });
+    });
+  }
+
+  it("fails explicitly when RC metadata does not converge", async () => {
+    const output = await runBash(
+      [
+        "set -euo pipefail",
+        'source "$SCRIPT_PATH"',
+        "verify_npm_compatibility_artifact() { :; }",
+        "package_dirs() { echo npm; }",
+        "canonical_tarball_for_package_dir() { echo package.tgz; }",
+        "jq() { echo veryfront; }",
+        "rc_tag_for_package() { echo rc; }",
+        "rc_publish_package_dir() { :; }",
+        "wait_for_npm_git_head() { PUBLISHED_GIT_HEAD=''; return 1; }",
+        "run_rc_publish",
+      ].join("\n"),
+      {
+        VERSION: "0.1.0-rc.1",
+        GITHUB_SHA: "expected-head",
+        NPM_PACK_DIR: "artifact",
+      },
+    );
+    assertEquals(output.code, 1);
+    assertStringIncludes(
+      decoder.decode(output.stderr),
+      "RC registry metadata did not converge for veryfront@0.1.0-rc.1",
+    );
+  });
+});
+
+describe("RC metadata verification order", () => {
+  it("publishes the batch before waiting for metadata and excludes historical tags", async () => {
+    const output = await runBash(
+      [
+        "set -euo pipefail",
+        'source "$SCRIPT_PATH"',
+        "verify_npm_compatibility_artifact() { :; }",
+        "package_dirs() { printf '%s\\n' extension history npm; }",
+        "canonical_tarball_for_package_dir() { echo package.tgz; }",
+        'jq() { echo "$PACKAGE_DIR"; }',
+        'rc_tag_for_package() { if [ "$1" = history ]; then echo rc-history; else echo rc; fi; }',
+        'rc_publish_package_dir() { echo "publish:$1:$3"; }',
+        'wait_for_npm_git_head() { echo "verify:$1:$2"; }',
+        "run_rc_publish",
+      ].join("\n"),
+      {
+        VERSION: "0.1.0-rc.1",
+        GITHUB_SHA: "expected-head",
+        NPM_PACK_DIR: "artifact",
+      },
+    );
+    assertEquals(output.code, 0, decoder.decode(output.stderr));
+    assertEquals(decoder.decode(output.stdout).trim().split("\n"), [
+      "publish:extension:rc",
+      "publish:history:rc-history",
+      "publish:npm:rc",
+      "verify:extension:rc",
+      "verify:npm:rc",
+    ]);
+  });
 });

@@ -226,6 +226,19 @@ describe("npm smoke Node support contract", () => {
       step.name === "Publish tested RC npm artifact"
     );
     assert(publishStep, "Prerelease publish must publish the tested artifact");
+    assertEquals(publishStep["timeout-minutes"], 10);
+    assertEquals(
+      record(publishStep.env, "RC publish environment")
+        .NPM_GIT_HEAD_WAIT_TOTAL_SECONDS,
+      "180",
+      "RC metadata propagation must share a three-minute budget across packages",
+    );
+    assert(
+      String(publishStep.run).includes(
+        "timeout --signal=TERM --kill-after=10s 8m scripts/ci/publish-npm-packages.sh rc-publish",
+      ),
+      "RC publishing must terminate stalled subprocesses within eight minutes",
+    );
     const publishScript = String(publishStep.run);
     assert(
       publishScript.includes(
