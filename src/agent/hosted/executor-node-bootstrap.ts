@@ -170,7 +170,7 @@ export async function startExecutorNodeBootstrap(
   }
   if (!options.operations) throw new TypeError("Executor bootstrap requires registered operations");
   const operations = new Map(options.operations);
-  const lifetimeRemaining = remaining();
+  remaining();
   const authority = new AbortController();
   const ready = Promise.withResolvers<ExecutorChannel>();
   const closed = Promise.withResolvers<never>();
@@ -184,7 +184,7 @@ export async function startExecutorNodeBootstrap(
     if (failure) return;
     failure = error;
     lifetimeTimer();
-    clock.cancel(keyTimer);
+    keyTimer();
     options.signal?.removeEventListener("abort", abort);
     authority.abort(error);
     key?.fill(0);
@@ -200,9 +200,17 @@ export async function startExecutorNodeBootstrap(
     deadline,
     () => stop(new Error("Executor bootstrap deadline exceeded")),
   );
-  const keyTimer = clock.schedule(
-    () => stop(new Error("Executor bootstrap key read deadline exceeded")),
-    Math.min(lifetimeRemaining, 5_000),
+  const keyTimer = scheduleExecutorNodeDeadline(
+    clock,
+    Math.min(deadline, startedAt + 5_000),
+    () =>
+      stop(
+        new Error(
+          clock.now() >= deadline
+            ? "Executor bootstrap deadline exceeded"
+            : "Executor bootstrap key read deadline exceeded",
+        ),
+      ),
   );
   options.signal?.addEventListener("abort", abort, { once: true });
   try {
@@ -231,7 +239,7 @@ export async function startExecutorNodeBootstrap(
       throw new Error("Executor bootstrap key read failed");
     });
     await Promise.race([reading, closed.promise]);
-    clock.cancel(keyTimer);
+    keyTimer();
     if (failure) throw failure;
     // The TLS listener synchronously snapshots its key before returning its promise.
     const listening = listenExecutorTransport({

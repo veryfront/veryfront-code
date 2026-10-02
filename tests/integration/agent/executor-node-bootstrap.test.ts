@@ -95,7 +95,7 @@ if (typeof Deno !== "undefined") {
             child.once("close", resolve);
           });
           assertEquals(code, 0, output);
-          const expectedTests = index === 3 ? 20 : 1;
+          const expectedTests = index === 3 ? 21 : 1;
           assertEquals((output.match(/^ {4}# Subtest:/gm) ?? []).length, expectedTests, output);
           assertMatch(output, new RegExp(`# tests ${expectedTests}\\n`));
           assertMatch(output, /# cancelled 0\n/);
@@ -226,6 +226,48 @@ if (typeof Deno !== "undefined") {
       } finally {
         await setImmediate();
       }
+    });
+
+    it("rechecks an early key timer and reports the workload deadline when both are due", async () => {
+      let now = 0;
+      const scheduled = new Map<object, { callback: () => void; delayMs: number }>();
+      const key = Promise.withResolvers<Uint8Array>();
+      const bytes = randomBytes(32);
+      const starting = startExecutorNodeBootstrap({
+        operations,
+        environment: environment({ VERYFRONT_EXECUTOR_ACTIVE_DEADLINE_SECONDS: "1" }),
+        readKey: () => key.promise,
+        clock: {
+          now: () => now,
+          schedule(callback, delayMs) {
+            const handle = {};
+            scheduled.set(handle, { callback, delayMs });
+            return handle;
+          },
+          cancel: (handle) => {
+            scheduled.delete(handle as object);
+          },
+        },
+      });
+      try {
+        await setImmediate();
+        const [handle, wake] = [...scheduled.entries()][1]!;
+        assertEquals(wake.delayMs, 1_000);
+        scheduled.delete(handle);
+        now = 999;
+        wake.callback();
+        assertEquals(await settledThisTurn(starting), "pending");
+        const next = [...scheduled.values()].at(-1)!;
+        assertEquals(next.delayMs, 1);
+        now = 1_000;
+        next.callback();
+        await assertRejects(() => starting, Error, "Executor bootstrap deadline exceeded");
+      } finally {
+        key.resolve(bytes);
+        await starting.catch(() => {});
+        await setImmediate();
+      }
+      assert(bytes.every((byte) => byte === 0));
     });
 
     it("expires during delayed key acquisition and wipes the late key", async () => {
