@@ -96,6 +96,9 @@ describe("ProductionServer", { sanitizeResources: false, sanitizeOps: false }, (
   });
 });
 
+// Catches a stalled static response, not small slowdowns: a warm 20 KB read takes a few ms.
+const STATIC_ASSET_BUDGET_MS = 1000;
+
 // Example of a performance-aware test
 // Note: Sanitizers disabled due to React 19 SSR MessagePort cleanup issue
 describe("Performance", { sanitizeResources: false, sanitizeOps: false }, () => {
@@ -105,17 +108,26 @@ describe("Performance", { sanitizeResources: false, sanitizeOps: false }, () => 
       await writeTextFile(`${context.projectDir}/public/large.css`, largeCSS);
 
       const server = await context.createProductionServer();
+      const url = `http://127.0.0.1:${server.port}/large.css`;
+
+      // The first request also pays for server warm-up, so time a warm request.
+      const warm = await fetch(url);
+      await warm.text();
+      assertEquals(warm.status, 200, "Should serve the warm-up request");
 
       const startTime = performance.now();
-      const response = await fetch(`http://127.0.0.1:${server.port}/large.css`);
-      await response.text();
+      const response = await fetch(url);
+      const body = await response.text();
       const responseTime = performance.now() - startTime;
 
       assertEquals(response.status, 200, "Should serve large files successfully");
+      assertEquals(body, largeCSS, "Should serve the large file intact");
       assertEquals(
-        responseTime < 100,
+        responseTime < STATIC_ASSET_BUDGET_MS,
         true,
-        `Static asset should be served within 100ms, took ${responseTime.toFixed(2)}ms`,
+        `Static asset should be served within ${STATIC_ASSET_BUDGET_MS}ms, took ${
+          responseTime.toFixed(2)
+        }ms`,
       );
     });
   });

@@ -65,6 +65,8 @@ Configure these GitHub Apps before the first release after this checklist lands:
 | Docs sync                             | `veryfront-docs`                                                             | Contents: write                       | `VERYFRONT_DOCS_APP_CLIENT_ID`, `VERYFRONT_DOCS_APP_PRIVATE_KEY`       |
 | Homebrew tap                          | `homebrew-tap`                                                               | Contents: write, Pull requests: write | `HOMEBREW_TAP_APP_CLIENT_ID`, `HOMEBREW_TAP_APP_PRIVATE_KEY`           |
 
+The release App private key must only be used on fresh public-upload and downstream-dispatch runners. These runners must never check out repository code, invoke local actions, run package code, or execute downloaded assets. npm publishers and SBOM preparation pass inert assets through a SHA-addressed artifact and never receive the release App identity or key. Limiting the repositories on one installation token does not limit what its private key can mint.
+
 Store app client IDs as GitHub Actions variables. Store private keys as `production` environment secrets where the workflow uses `environment: production`; use the narrowest available scope for any workflow that cannot use an environment.
 
 After a successful dry release or equivalent workflow validation, remove the old repository secrets `GH_PAT_VERYFRONT` and `GH_PAT_HOMEBREW_TAP`.

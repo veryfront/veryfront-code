@@ -130,6 +130,135 @@ function shellFailureDiagnostics(
 }
 
 describe("npm package publishing", () => {
+  for (
+    const [current, candidate, expectedTag] of [
+      ["0.1.2-rc.201", "0.1.2-rc.200", "rc-history"],
+      ["0.1.2-rc.200", "0.1.2-rc.201", "rc"],
+      ["0.1.2-rc.201", "0.1.2-rc.201", "rc"],
+      ["0.1.10-rc.1", "0.1.9-rc.999", "rc-history"],
+      ["0.1.2-rc.1000", "0.1.2-rc.999", "rc-history"],
+      ["", "0.1.2-rc.200", "rc"],
+      ["0.1.2-beta.201", "0.1.2-beta.200", "rc-history"],
+      ["0.1.2-rc.preview.200", "0.1.2-rc.preview.201", "rc"],
+      ["0.1.2-alpha.10.200", "0.1.2-alpha.9.999", "rc-history"],
+      ["0.1.2-beta.200", "0.1.2-rc.1", "rc"],
+      ["0.1.2-rc.preview.200", "0.1.2-rc.999", "rc-history"],
+      ["0.1.2-rc.1.200", "0.1.2-rc.1.preview.1", "rc"],
+    ]
+  ) {
+    it(`keeps rc monotonic when ${candidate} follows ${current || "no tag"}`, async () => {
+      const output = await runBash(
+        [
+          "set -euo pipefail",
+          'source "$SCRIPT_PATH"',
+          'npm() { echo "$CURRENT_TAGS"; }',
+          "rc_tag_for_package veryfront",
+        ].join("\n"),
+        { CURRENT_TAGS: current ? `rc: ${current}` : "", VERSION: candidate! },
+      );
+      assertEquals(output.code, 0, decoder.decode(output.stderr));
+      assertEquals(decoder.decode(output.stdout).trim(), expectedTag);
+    });
+  }
+
+  it("fails closed on an unavailable rc tag lookup", async () => {
+    const output = await runBash(
+      [
+        "set -euo pipefail",
+        'source "$SCRIPT_PATH"',
+        'npm() { echo "npm error code E503" >&2; return 1; }',
+        "rc_tag_for_package veryfront",
+      ].join("\n"),
+      { VERSION: "0.1.2-rc.200" },
+    );
+    assertEquals(output.code, 1);
+    assertStringIncludes(decoder.decode(output.stderr), "rc tag lookup failed");
+  });
+
+  for (const current of ["0.1.2", "0.1.2-rc..200", "0.1.2-rc.0201"]) {
+    it(`rejects unexpected rc tag ${current}`, async () => {
+      const output = await runBash(
+        [
+          "set -euo pipefail",
+          'source "$SCRIPT_PATH"',
+          'npm() { echo "$CURRENT_TAGS"; }',
+          "rc_tag_for_package veryfront",
+        ].join("\n"),
+        { CURRENT_TAGS: `rc: ${current}`, VERSION: "0.1.2-rc.200" },
+      );
+      assertEquals(output.code === 0, false);
+    });
+  }
+
+  it("publishes an older immutable RC after a newer one without moving rc backwards", async () => {
+    await withPackageFixture("veryfront", async ({ packageDir, npmLog }) => {
+      const tagState = `${packageDir}/rc-tag`;
+      await Deno.writeTextFile(tagState, "");
+      const output = await runBash(
+        [
+          "set -euo pipefail",
+          'source "$SCRIPT_PATH"',
+          "verify_npm_compatibility_artifact() { :; }",
+          'package_dirs() { echo "$PACKAGE_DIR"; }',
+          'canonical_tarball_for_package_dir() { echo "candidate-$VERSION.tgz"; }',
+          "npm() {",
+          LOG_NPM_CALL,
+          '  if [ "$1" = dist-tag ]; then tag=$(cat "$TAG_STATE"); if [ -n "$tag" ]; then echo "rc: $tag"; fi; return 0; fi',
+          '  if [ "$1" = view ]; then if [ "$3" = gitHead ]; then echo "$GITHUB_SHA"; return 0; fi; return 1; fi',
+          '  if [ "${!#}" = rc ]; then echo "$VERSION" > "$TAG_STATE"; fi',
+          "}",
+          "VERSION=0.1.2-rc.201; run_rc_publish",
+          "VERSION=0.1.2-rc.200; run_rc_publish",
+        ].join("\n"),
+        {
+          PACKAGE_DIR: packageDir,
+          NPM_LOG: npmLog,
+          TAG_STATE: tagState,
+          NPM_PACK_DIR: packageDir,
+          GITHUB_SHA: "expected-commit",
+        },
+      );
+      assertEquals(output.code, 0, decoder.decode(output.stderr));
+      assertEquals((await Deno.readTextFile(tagState)).trim(), "0.1.2-rc.201");
+      assertEquals(
+        (await loggedNpmCalls(npmLog)).filter((call) => call.startsWith("publish ")),
+        [
+          "publish candidate-0.1.2-rc.201.tgz --provenance --access public --tag rc",
+          "publish candidate-0.1.2-rc.200.tgz --provenance --access public --tag rc-history",
+        ],
+      );
+    });
+  });
+
+  it("waits for the RC tag write before releasing the publisher lock", async () => {
+    await withTempDir(async (stateDir) => {
+      const count = `${stateDir}/reads`;
+      await Deno.writeTextFile(count, "0");
+      const output = await runBash(
+        [
+          "set -euo pipefail",
+          'source "$SCRIPT_PATH"',
+          "sleep() { :; }",
+          "npm() {",
+          '  if [ "$1" = view ]; then echo "$GITHUB_SHA"; return; fi',
+          '  n=$(cat "$READ_COUNT"); n=$((n + 1)); echo "$n" > "$READ_COUNT"',
+          `  if [ "$n" -eq 1 ]; then echo 'rc: 0.1.2-rc.200'; else echo 'rc: 0.1.2-rc.201'; fi`,
+          "}",
+          "wait_for_npm_git_head veryfront rc",
+        ].join("\n"),
+        {
+          VERSION: "0.1.2-rc.201",
+          GITHUB_SHA: "expected-commit",
+          READ_COUNT: count,
+          NPM_GIT_HEAD_WAIT_ATTEMPTS: "2",
+          NPM_GIT_HEAD_WAIT_DELAY_SECONDS: "0",
+        },
+      );
+      assertEquals(output.code, 0, decoder.decode(output.stderr));
+      assertEquals((await Deno.readTextFile(count)).trim(), "2");
+    });
+  });
+
   it("publishes the canonical tarball without repacking the materialized package", async () => {
     await withTempDir(async (stateDir) => {
       const packageDir = `${stateDir}/npm`;
@@ -163,6 +292,8 @@ describe("npm package publishing", () => {
           "verify_npm_compatibility_artifact() { :; }",
           "package_dirs() { printf '%s\\n' \"$PACKAGE_DIR\"; }",
           "update_package_version() { return 97; }",
+          "rc_tag_for_package() { echo rc; }",
+          "wait_for_npm_git_head() { return 0; }",
           "npm() {",
           '  printf "%s\\n" "$*" >> "$NPM_LOG"',
           '  if [ "$1" = "view" ]; then return 1; fi',
