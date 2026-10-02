@@ -1125,6 +1125,12 @@ export function collectWorkflowJsonRecords(
       reflectApply(weakMapGet, records, [source]) !== undefined
     ) continue;
     reflectApply(weakMapSet, records, [source, candidateShape]);
+    if (
+      candidateShape === WORKFLOW_CHECKPOINT_RECORD ||
+      candidateShape === WORKFLOW_RESUME_ENVELOPE_RECORD
+    ) {
+      registerNodeStateRecords(ownDataValue(source, "nodeStates"), records);
+    }
     const fields = candidateShape.fields;
     if (fields === undefined) continue;
     for (const key of objectKeys(fields)) {
@@ -1135,6 +1141,69 @@ export function collectWorkflowJsonRecords(
     }
   }
   return records;
+}
+
+/** Read framework links without invoking getters or inherited hooks. */
+function ownDataValue(source: JsonTraversalReference, key: string): unknown {
+  const descriptor = objectGetOwnPropertyDescriptor(source, key);
+  return descriptor !== undefined && "value" in descriptor ? descriptor.value : undefined;
+}
+
+/**
+ * Register only the private framework records reachable from node states.
+ * Discover the whole graph before encoding any field, including earlier aliases.
+ * Input/output payload children retain their ordinary JSON semantics.
+ */
+function registerNodeStateRecords(
+  nodeStates: unknown,
+  records: WorkflowJsonRecords,
+): void {
+  if (!canIdentifyProxyWithoutHooks) return;
+  type RecordKind = "states" | "state" | "retry" | "context" | "prior-contexts";
+  const pending: Array<readonly [unknown, RecordKind]> = [[nodeStates, "states"]];
+  const visited = new WeakMapConstructor<object, Set<RecordKind>>();
+  while (pending.length > 0) {
+    const [candidate, kind] = pending[pending.length - 1]!;
+    pending.length -= 1;
+    if (typeof candidate !== "object" || candidate === null) continue;
+    const source = (reflectApply(weakMapGet, deferredWorkflowJsonSources, [candidate]) ??
+      candidate) as JsonTraversalReference;
+    if (isProxyWithoutHooks(source)) continue;
+    let kinds = reflectApply(weakMapGet, visited, [source]) as Set<RecordKind> | undefined;
+    if (kinds !== undefined && reflectApply(setHas, kinds, [kind])) continue;
+    if (kinds === undefined) {
+      kinds = new SetConstructor<RecordKind>();
+      reflectApply(weakMapSet, visited, [source, kinds]);
+    }
+    reflectApply(setAdd, kinds, [kind]);
+    if (kind === "prior-contexts") {
+      if (!arrayIsArray(source)) continue;
+      const length = ownDataValue(source, "length");
+      if (typeof length !== "number") continue;
+      for (let index = 0; index < length; index++) {
+        pending[pending.length] = [ownDataValue(source, `${index}`), "context"];
+      }
+      continue;
+    }
+    reflectApply(weakMapSet, records, [source, WORKFLOW_NODE_RECORD]);
+    switch (kind) {
+      case "states":
+        for (const key of objectKeys(source)) {
+          pending[pending.length] = [ownDataValue(source, key), "state"];
+        }
+        break;
+      case "state":
+        pending[pending.length] = [ownDataValue(source, "_subWorkflowContext"), "context"];
+        pending[pending.length] = [ownDataValue(source, "_loopOutputRetry"), "retry"];
+        break;
+      case "retry":
+        pending[pending.length] = [ownDataValue(source, "context"), "context"];
+        pending[pending.length] = [ownDataValue(source, "evaluationContext"), "context"];
+        pending[pending.length] = [ownDataValue(source, "iterationNodeStates"), "states"];
+        pending[pending.length] = [ownDataValue(source, "previousResults"), "prior-contexts"];
+        break;
+    }
+  }
 }
 
 /** Build the exact value JSON will encode, collecting what it cannot carry. */
@@ -1711,7 +1780,12 @@ export function serializeWorkflowContext(
 }
 
 /** The node-state fields that carry step data or a resumable child-context snapshot. */
-const NODE_STATE_USER_DATA_FIELDS = ["input", "output", "_subWorkflowContext"] as const;
+const NODE_STATE_USER_DATA_FIELDS = [
+  "input",
+  "output",
+  "_subWorkflowContext",
+  "_loopOutputRetry",
+] as const;
 
 type NodeStateUserDataField = typeof NODE_STATE_USER_DATA_FIELDS[number];
 
@@ -1721,6 +1795,8 @@ type NodeStateUserDataField = typeof NODE_STATE_USER_DATA_FIELDS[number];
  * A node state's `input` and `output` hold what a step received and returned,
  * so they are the same user data `context` holds. `_subWorkflowContext` is the
  * resumable snapshot of that same context while a nested workflow is incomplete.
+ * `_loopOutputRetry` holds private contexts and encoded child states after a
+ * completed child selector fails. Its framework timestamps are already strings.
  * Leaving any of these outside the policy made Redis rewrite a `Date` and fail
  * on a BigInt while the memory backend kept both, and `strictContext` saw neither.
  *
@@ -1733,7 +1809,12 @@ type NodeStateUserDataField = typeof NODE_STATE_USER_DATA_FIELDS[number];
  * as they are.
  */
 export function prepareNodeStatesUserData<
-  T extends { input?: unknown; output?: unknown; _subWorkflowContext?: unknown },
+  T extends {
+    input?: unknown;
+    output?: unknown;
+    _subWorkflowContext?: unknown;
+    _loopOutputRetry?: unknown;
+  },
 >(
   nodeStates: Readonly<Record<string, T>>,
   runId: string | undefined,
@@ -1751,6 +1832,10 @@ export function prepareNodeStatesUserData<
       writable: true,
     });
   }
+
+  records ??= new WeakMapConstructor();
+  registerNodeStateRecords(nodeStates, records);
+  registerNodeStateRecords(prepared, records);
 
   for (const field of NODE_STATE_USER_DATA_FIELDS) {
     const values = collectNodeStateField(prepared, field);
@@ -1776,7 +1861,7 @@ export function prepareNodeStatesUserData<
 function collectNodeStateField(
   nodeStates: Record<
     string,
-    { input?: unknown; output?: unknown; _subWorkflowContext?: unknown }
+    { input?: unknown; output?: unknown; _subWorkflowContext?: unknown; _loopOutputRetry?: unknown }
   >,
   field: NodeStateUserDataField,
 ): Record<string, unknown> | undefined {

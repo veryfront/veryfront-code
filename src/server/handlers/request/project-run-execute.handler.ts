@@ -17,12 +17,28 @@ import {
 import { CONTROL_PLANE_RUNS_PATH_PREFIX } from "#veryfront/channels/control-plane.ts";
 import { getEnvironmentConfig } from "#veryfront/config";
 import {
+  requireHostPrivateApiHttps,
+  resolveHostOwnedSourceApiBaseUrl,
+} from "#veryfront/config/host-api-base.ts";
+import {
+  isAbortSignalAborted,
+  removeAbortSignalListener,
+} from "#veryfront/platform/compat/abort-signal.ts";
+import {
+  primordialPromiseCatch,
+  primordialPromiseResolve,
+  primordialPromiseThen,
+} from "#veryfront/platform/compat/primordials/promise.ts";
+import { getRequestTransportLifetime } from "#veryfront/platform/adapters/runtime/shared/request-peer.ts";
+import { createVeryfrontApiOriginBoundOutboundFetch } from "#veryfront/security/http/outbound-fetch.ts";
+import {
   ControlPlaneRequestError,
   verifyControlPlaneRequest,
 } from "#veryfront/internal-agents/control-plane-auth.ts";
 import {
   INGRESS_API_TOKEN_HEADER,
   INGRESS_INFERENCE_TOKEN_HEADER,
+  INGRESS_RUN_STOP_TOKEN_HEADER,
   inheritIngressCredentials,
   readIngressCredential,
 } from "#veryfront/security/http/ingress-credentials.ts";
@@ -106,6 +122,8 @@ const TaskClearTimeout = globalThis.clearTimeout;
 const TaskAbortController = AbortController;
 const TaskAbort = AbortController.prototype.abort;
 const TaskAbortSignalAny = AbortSignal.any;
+const RunStopTimeout = AbortSignal.timeout;
+const RunStopAddListener = EventTarget.prototype.addEventListener;
 
 const EXECUTE_PATH_REGEX = /^\/api\/control-plane\/runs\/([^/]+)\/execute$/;
 const DEFAULT_WORKFLOW_STATUS_POLL_INTERVAL_MS = 100;
@@ -323,6 +341,8 @@ interface WorkflowClientView {
   getApprovalManager?(): { checkExpiredApprovals(runId?: string): Promise<void> };
   getEventWaitManager?(): { checkExpiredEventWaits(runId?: string): Promise<void> };
   cancel(runId: string): Promise<void>;
+  /** Positive only for locally owned execution whose underlying operation has stopped. */
+  waitForExecutionStopped?(runId: string): Promise<boolean>;
   destroy(): Promise<void>;
 }
 
@@ -893,11 +913,13 @@ async function runWhileActive<T>(signal: AbortSignal, operation: () => Promise<T
 async function executeTaskRun(
   request: ProjectRunExecuteRequest,
   execute: (control?: TaskDeadlineControl) => Promise<ProjectRunExecuteResponse>,
+  acknowledgeNotStarted?: () => Promise<void>,
 ): Promise<ProjectRunExecuteResponse> {
   if (!request.deadlineAt) return execute();
   const deadline = TaskDateParse(request.deadlineAt);
   const controller = new TaskAbortController();
   let expired = false;
+  let executionStarted = false;
   const signal = controller.signal;
   const error = TIMEOUT_ERROR.create({
     detail:
@@ -930,6 +952,7 @@ async function executeTaskRun(
       };
       arm();
     });
+    executionStarted = true;
     const result = await Promise.race([
       expiration,
       execute(control),
@@ -942,6 +965,7 @@ async function executeTaskRun(
     return { success: false, error: error.message, error_code: "RUN_TIMEOUT" };
   } finally {
     TaskClearTimeout(timer);
+    if (!executionStarted) await acknowledgeNotStarted?.();
   }
 }
 
@@ -1437,45 +1461,63 @@ async function executeWorkflowRun(
   ctx: HandlerContext,
   signal: AbortSignal,
   deps: ProjectRunExecuteHandlerDeps,
+  acknowledgeStop?: () => Promise<void>,
 ): Promise<ProjectRunExecuteResponse> {
-  const startedAt = deps.now();
-  const workflowId = stripTargetPrefix(request.target, "workflow:");
-  await deps.ensureProjectDiscovery(ctx);
-  const workflow = await deps.findWorkflowById(workflowId, {
-    projectDir: ctx.projectDir,
-    adapter: ctx.adapter,
-    config: ctx.config,
-    debug: ctx.debug,
-    allowHostProjectCodeExecution: ctx.allowHostProjectCodeExecution,
-  });
-
-  if (!workflow) {
-    return {
-      success: false,
-      error: `Workflow not found: ${workflowId}`,
-      logs: null,
-      duration_ms: 0,
-    };
-  }
-
-  // The same identity a task run reports, from the same helper, so the API stores one
-  // canonical sha256 per declared schema whatever the run kind (#2108).
-  const { inputSchema, outputSchema } = workflow.definition;
-  const inputSchemaSha256 = await schemaIdentitySha256(inputSchema);
-  const outputSchemaSha256 = await schemaIdentitySha256(outputSchema);
-  let response: ProjectRunExecuteResponse;
+  let executionEntered = false;
   try {
-    response = await runDiscoveredWorkflow(request, ctx, workflow, signal, deps, startedAt);
-  } catch (error) {
-    // A failure after discovery still ran against the declared schemas; keep their identity.
-    response = createExecutionFailure(error, Math.max(0, deps.now() - startedAt));
+    const startedAt = deps.now();
+    const workflowId = stripTargetPrefix(request.target, "workflow:");
+    await deps.ensureProjectDiscovery(ctx);
+    const workflow = await deps.findWorkflowById(workflowId, {
+      projectDir: ctx.projectDir,
+      adapter: ctx.adapter,
+      config: ctx.config,
+      debug: ctx.debug,
+      allowHostProjectCodeExecution: ctx.allowHostProjectCodeExecution,
+    });
+
+    if (!workflow) {
+      // An initial dispatch has no execution to stop; a resume may still run elsewhere.
+      if (!request.resume) await acknowledgeStop?.();
+      return {
+        success: false,
+        error: `Workflow not found: ${workflowId}`,
+        logs: null,
+        duration_ms: 0,
+      };
+    }
+
+    // The same identity a task run reports, from the same helper, so the API stores one
+    // canonical sha256 per declared schema whatever the run kind (#2108).
+    const { inputSchema, outputSchema } = workflow.definition;
+    const inputSchemaSha256 = await schemaIdentitySha256(inputSchema);
+    const outputSchemaSha256 = await schemaIdentitySha256(outputSchema);
+    let response: ProjectRunExecuteResponse;
+    try {
+      executionEntered = true;
+      response = await runDiscoveredWorkflow(
+        request,
+        ctx,
+        workflow,
+        signal,
+        deps,
+        startedAt,
+        acknowledgeStop,
+      );
+    } catch (error) {
+      // A failure after discovery still ran against the declared schemas; keep their identity.
+      response = createExecutionFailure(error, Math.max(0, deps.now() - startedAt));
+    }
+    return {
+      ...response,
+      // Omitted rather than null, so a schema-less workflow response is byte-identical to before.
+      ...(inputSchemaSha256 ? { input_schema_sha256: inputSchemaSha256 } : {}),
+      ...(outputSchemaSha256 ? { output_schema_sha256: outputSchemaSha256 } : {}),
+    };
+  } finally {
+    // Discovery/schema preparation never admitted execution; resumes may still run elsewhere.
+    if (!executionEntered && !request.resume) await acknowledgeStop?.();
   }
-  return {
-    ...response,
-    // Omitted rather than null, so a schema-less workflow response is byte-identical to before.
-    ...(inputSchemaSha256 ? { input_schema_sha256: inputSchemaSha256 } : {}),
-    ...(outputSchemaSha256 ? { output_schema_sha256: outputSchemaSha256 } : {}),
-  };
 }
 
 async function runDiscoveredWorkflow(
@@ -1485,21 +1527,38 @@ async function runDiscoveredWorkflow(
   signal: AbortSignal,
   deps: ProjectRunExecuteHandlerDeps,
   startedAt: number,
+  acknowledgeStop?: () => Promise<void>,
 ): Promise<ProjectRunExecuteResponse> {
-  const client = await deps.createWorkflowClient(
-    withRuntimeStepRegistries({ debug: ctx.debug }),
-    {
-      projectId: request.projectId,
-      runtimeTargetKind: request.runtimeTargetKind,
-      runtimeTargetEnvironmentId: request.runtimeTargetEnvironmentId,
-      runtimeTargetBranchId: request.runtimeTargetBranchId,
-    },
-  );
+  let client: WorkflowClientView;
+  try {
+    client = await deps.createWorkflowClient(
+      withRuntimeStepRegistries({ debug: ctx.debug }),
+      {
+        projectId: request.projectId,
+        runtimeTargetKind: request.runtimeTargetKind,
+        runtimeTargetEnvironmentId: request.runtimeTargetEnvironmentId,
+        runtimeTargetBranchId: request.runtimeTargetBranchId,
+      },
+    );
+  } catch (error) {
+    if (!request.resume) await acknowledgeStop?.();
+    throw error;
+  }
+  let executionStarted = false;
   let activeResume: Promise<unknown> | undefined;
+  let stopped: Promise<boolean> | undefined;
+  let stopAcknowledgement: Promise<void> | undefined;
+  const acknowledgeSettledStop = () => {
+    if (!stopped || stopAcknowledgement) return;
+    stopAcknowledgement = primordialPromiseThen(stopped, async (confirmed) => {
+      if (confirmed) await acknowledgeStop?.();
+    });
+  };
   try {
     client.register(workflow.definition);
     // A first dispatch has no durable run yet. A resume must cancel its persisted run below.
     if (signal.aborted && !request.resume) {
+      await acknowledgeStop?.();
       return {
         success: false,
         error: "Workflow run cancelled",
@@ -1611,13 +1670,19 @@ async function runDiscoveredWorkflow(
       // A null input counts as no input, the same as on the API run record.
       let handle: Awaited<ReturnType<typeof client.start>>;
       try {
+        executionStarted = true;
         handle = await client.start(workflow.id, request.input ?? {}, {
           runId: request.runId,
           [CONTROL_PLANE_OWNED_START]: true,
         });
       } catch (error) {
         const failure = createInputValidationFailure(error, Math.max(0, deps.now() - startedAt));
-        if (failure) return failure;
+        if (failure) {
+          // Input parsing happens before the workflow backend creates a run,
+          // so this typed failure proves that no lifecycle was admitted.
+          await acknowledgeStop?.();
+          return failure;
+        }
         throw error;
       }
       run = await waitForWorkflowResult(client, handle.runId, signal, deps);
@@ -1723,20 +1788,45 @@ async function runDiscoveredWorkflow(
       duration_ms: durationMs,
     };
   } finally {
+    // Initial preparation did not admit execution; resumes can still run remotely.
+    if (!request.resume && !executionStarted) await acknowledgeStop?.();
+    const captureStopped = async (): Promise<boolean> => {
+      try {
+        return await (client.waitForExecutionStopped?.(request.runId) ?? false);
+      } catch {
+        return false;
+      }
+    };
     if (activeResume) {
-      // A timed-out request must not destroy resources still used by durable execution.
-      void activeResume.then(() => client.destroy(), () => client.destroy()).catch((error) => {
-        serverLogger.warn("[project-run-execute] Failed to destroy workflow client", {
-          runId: request.runId,
-          errorName: error instanceof Error ? error.name : "unknown",
-        });
-      });
+      // Capture ownership after resume admission, before cleanup can retire it.
+      // Do not join this continuation to the timeout response.
+      const finishResume = () => {
+        const evidence = captureStopped();
+        void primordialPromiseCatch(
+          primordialPromiseThen(primordialPromiseResolve(undefined), () => client.destroy()),
+          (error) => {
+            serverLogger.warn("[project-run-execute] Failed to destroy workflow client", {
+              runId: request.runId,
+              errorName: error instanceof Error ? error.name : "unknown",
+            });
+          },
+        );
+        return evidence;
+      };
+      stopped = primordialPromiseThen(activeResume, finishResume, finishResume);
+      acknowledgeSettledStop();
     } else {
-      await destroyWorkflowClient(
-        client,
-        request.runId,
-        deps.workflowClientDestroyTimeoutMs ?? DEFAULT_WORKFLOW_CLIENT_DESTROY_TIMEOUT_MS,
-      );
+      stopped = captureStopped();
+      acknowledgeSettledStop();
+      try {
+        await destroyWorkflowClient(
+          client,
+          request.runId,
+          deps.workflowClientDestroyTimeoutMs ?? DEFAULT_WORKFLOW_CLIENT_DESTROY_TIMEOUT_MS,
+        );
+      } finally {
+        if (isAbortSignalAborted(signal)) await stopAcknowledgement;
+      }
     }
   }
 }
@@ -1809,7 +1899,7 @@ const NativeHeaders = Headers;
 
 /**
  * The execute request as the run sees it: the same URL, method and headers,
- * and cancellation signal, minus the inference credential. Project code (a task, workflow or eval
+ * and cancellation signal, minus the inference and stop acknowledgement credentials. Project code (a task, workflow or eval
  * module) loads during execution and can patch `Headers.prototype.get`, so the
  * request it can reach must no longer carry the credential. The body was read
  * and verified before this point and is not needed again.
@@ -1830,7 +1920,8 @@ function withoutProjectRunInferenceToken(req: Request): Request {
     >;
     if (step.done) break;
     const name = step.value[0];
-    if (IntrinsicReflectApply(StringToLowerCase, name, []) === skipped) continue;
+    const lowerName = IntrinsicReflectApply(StringToLowerCase, name, []);
+    if (lowerName === skipped || lowerName === INGRESS_RUN_STOP_TOKEN_HEADER) continue;
     IntrinsicReflectApply(HeadersAppend, headers, [name, step.value[1]]);
   }
   const copy = new NativeRequest(IntrinsicReflectApply(RequestUrlGetter, req, []) as string, {
@@ -1857,6 +1948,72 @@ function readProjectRunInferenceToken(req: Request): string | undefined {
   const value = readIngressCredential(req, INGRESS_INFERENCE_TOKEN_HEADER);
   if (value === null) return undefined;
   return requireInferenceProviderCredential(value, "Inference token header");
+}
+
+/** Independent evidence of a settled execution, never evidence from abort alone. */
+function createRunStopAcknowledger(req: Request, runId: string): (() => Promise<void>) | undefined {
+  const rawToken = readIngressCredential(req, INGRESS_RUN_STOP_TOKEN_HEADER);
+  if (rawToken === null) return undefined;
+  const token = requireInferenceProviderCredential(rawToken, "Run stop token header");
+  let url: string;
+  let transport: typeof fetch;
+  try {
+    const apiUrl = requireHostPrivateApiHttps(resolveHostOwnedSourceApiBaseUrl());
+    url = `${apiUrl}/runs/${encodeURIComponent(runId)}/cancellation-ack`;
+    transport = createVeryfrontApiOriginBoundOutboundFetch(apiUrl);
+  } catch {
+    serverLogger.warn("[project-run-execute] Stop acknowledgement transport is unavailable", {
+      runId,
+    });
+    return undefined;
+  }
+  const lifetime = getRequestTransportLifetime(req);
+  const signal = lifetime?.signal ??
+    IntrinsicReflectApply(RequestSignalGetter, req, []) as AbortSignal;
+  let stopped = false;
+  let cancellationObserved = isAbortSignalAborted(signal);
+  let acknowledgement: Promise<void> | undefined;
+  const reconcile = (): Promise<void> => {
+    if (!stopped || !cancellationObserved) return primordialPromiseResolve(undefined);
+    return acknowledgement ??= sendAcknowledgement();
+  };
+  const observeCancellation = () => {
+    if (!isAbortSignalAborted(signal)) return;
+    cancellationObserved = true;
+    removeAbortSignalListener(signal, observeCancellation);
+    void reconcile();
+  };
+  ReflectApply(RunStopAddListener, signal, ["abort", observeCancellation]);
+  if (isAbortSignalAborted(signal)) observeCancellation();
+  const finishResponse = () => {
+    // Completion retires observation, not pending positive settlement evidence.
+    if (isAbortSignalAborted(signal)) observeCancellation();
+    removeAbortSignalListener(signal, observeCancellation);
+  };
+  if (lifetime?.completed) {
+    void primordialPromiseThen(lifetime.completed, finishResponse, finishResponse);
+  }
+  async function sendAcknowledgement(): Promise<void> {
+    try {
+      const response = await transport(url, {
+        method: "POST",
+        redirect: "error",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: "{}",
+        // Execution's signal is already aborted; this request owns its deadline.
+        signal: ReflectApply(RunStopTimeout, AbortSignal, [10_000]),
+      });
+      await response.body?.cancel();
+      if (!response.ok) throw new TaskError("Run stop acknowledgement rejected");
+    } catch {
+      // Best effort. Missing acknowledgement remains unconfirmed in the API.
+      serverLogger.warn("[project-run-execute] Could not acknowledge stopped execution", { runId });
+    }
+  }
+  return () => {
+    stopped = true;
+    return reconcile();
+  };
 }
 
 function getRuntimeApiToken(req: Request, ctx: HandlerContext): string {
@@ -2486,18 +2643,25 @@ async function executeKnowledgeIngestRun(input: {
     const collection = await collectKnowledgeSources(options, {
       client,
       projectSlug: projectReference,
-      downloadUploads: (uploadTargets) =>
-        Promise.all(
-          uploadTargets.map((uploadPath) =>
-            downloadUploadToFile(
-              client,
-              projectReference,
-              uploadPath,
-              downloadOutputDir,
-              input.signal,
-            )
-          ),
-        ),
+      downloadUploads: async (uploadTargets) => {
+        const downloads = uploadTargets.map((uploadPath) =>
+          downloadUploadToFile(
+            client,
+            projectReference,
+            uploadPath,
+            downloadOutputDir,
+            input.signal,
+          )
+        );
+        try {
+          return await Promise.all(downloads);
+        } catch (error) {
+          // A rejected download does not prove its siblings have stopped.
+          // Settle every started operation before cleanup and stop acknowledgement.
+          await Promise.allSettled(downloads);
+          throw error;
+        }
+      },
       signal: input.signal,
     });
     input.signal.throwIfAborted();
@@ -3386,6 +3550,7 @@ async function executeStyleArtifactBuildRun(input: {
         undefined,
         input.signal,
       ).catch(() => undefined);
+      input.signal.throwIfAborted();
     }
 
     return {
@@ -3420,29 +3585,34 @@ function executeProjectRun(
   ctx: HandlerContext,
   req: Request,
   deps: ProjectRunExecuteHandlerDeps,
+  acknowledgeStop?: () => Promise<void>,
 ): Promise<ProjectRunExecuteResponse> {
   if (request.kind === "task") {
-    return executeTaskRun(request, (control) => {
-      const signal = control
-        ? ReflectApply(TaskAbortSignalAny, AbortSignal, [[req.signal, control.signal]])
-        : req.signal;
-      switch (request.target) {
-        case "task:eval":
-          return executeEvalTaskRun(request, ctx, req, req.signal, deps, control);
-        case "task:knowledge-ingest":
-          return deps.executeKnowledgeIngest({ request, ctx, req, signal });
-        case "task:release-asset-build":
-          return deps.executeReleaseAssetBuild({ request, ctx, req, signal });
-        case "task:dependency-artifact-build":
-          return deps.executeDependencyArtifactBuild({ request, ctx, req, signal });
-        case "task:style-artifact-build":
-          return deps.executeStyleArtifactBuild({ request, ctx, req, signal });
-        default:
-          return executeDiscoveredTaskRun(request, ctx, req.signal, deps, control);
+    return executeTaskRun(request, async (control) => {
+      try {
+        const signal = control
+          ? ReflectApply(TaskAbortSignalAny, AbortSignal, [[req.signal, control.signal]])
+          : req.signal;
+        switch (request.target) {
+          case "task:eval":
+            return await executeEvalTaskRun(request, ctx, req, req.signal, deps, control);
+          case "task:knowledge-ingest":
+            return await deps.executeKnowledgeIngest({ request, ctx, req, signal });
+          case "task:release-asset-build":
+            return await deps.executeReleaseAssetBuild({ request, ctx, req, signal });
+          case "task:dependency-artifact-build":
+            return await deps.executeDependencyArtifactBuild({ request, ctx, req, signal });
+          case "task:style-artifact-build":
+            return await deps.executeStyleArtifactBuild({ request, ctx, req, signal });
+          default:
+            return await executeDiscoveredTaskRun(request, ctx, req.signal, deps, control);
+        }
+      } finally {
+        await acknowledgeStop?.();
       }
-    });
+    }, acknowledgeStop);
   }
-  return executeWorkflowRun(request, ctx, req.signal, deps);
+  return executeWorkflowRun(request, ctx, req.signal, deps, acknowledgeStop);
 }
 
 export class ProjectRunExecuteHandler extends BaseHandler {
@@ -3491,6 +3661,12 @@ export class ProjectRunExecuteHandler extends BaseHandler {
           return this.respond(builder.json({ error: "Invalid control-plane signature" }, 401));
         }
         const inferenceToken = readProjectRunInferenceToken(req);
+        const acknowledgeStop = createRunStopAcknowledger(req, request.runId);
+        const stopCredentialPresent = readIngressCredential(req, INGRESS_RUN_STOP_TOKEN_HEADER) !==
+          null;
+        const executionRequest = inferenceToken === undefined && !stopCredentialPresent
+          ? req
+          : withoutProjectRunInferenceToken(req);
 
         return await withSpan(
           "project_run.execute",
@@ -3499,15 +3675,22 @@ export class ProjectRunExecuteHandler extends BaseHandler {
             try {
               const limited = enforceRunOutputLimit(
                 inferenceToken === undefined
-                  ? await executeProjectRun(request, ctx, req, this.deps)
+                  ? await executeProjectRun(
+                    request,
+                    ctx,
+                    executionRequest,
+                    this.deps,
+                    acknowledgeStop,
+                  )
                   : await runWithProjectRunInferenceCredential(
                     inferenceToken,
                     () =>
                       executeProjectRun(
                         request,
                         ctx,
-                        withoutProjectRunInferenceToken(req),
+                        executionRequest,
                         this.deps,
+                        acknowledgeStop,
                       ),
                   ),
               );

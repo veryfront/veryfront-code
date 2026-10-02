@@ -1,4 +1,5 @@
-import { describe, it } from "@std/testing/bdd";
+import { type Stub, stub } from "#std/testing/mock";
+import { afterEach, beforeEach, describe, it } from "@std/testing/bdd";
 import { assertEquals, assertRejects } from "@std/assert";
 
 import {
@@ -98,6 +99,13 @@ async function expectInvalidSuccessfulResponse(
   }
   throw new Error("Expected ProviderRequestError, but the request resolved");
 }
+
+const TEST_SCOPE = "11111111-1111-4111-8111-111111111111";
+let uuidStub: Stub<Crypto>;
+beforeEach(() => {
+  uuidStub = stub(crypto, "randomUUID", (): typeof TEST_SCOPE => TEST_SCOPE);
+});
+afterEach(() => uuidStub.restore());
 
 describe("ext-llm-google/google-provider", () => {
   it("creates a Google-compatible language runtime without SDK helpers for generate", async () => {
@@ -760,7 +768,7 @@ describe("ext-llm-google/google-provider", () => {
         ],
         finishReason: { unified: "stop", raw: "STOP" },
         providerMetadata: {
-          google: { rawAssistantParts },
+          google: { toolCallScope: TEST_SCOPE, rawAssistantParts },
         },
       });
     });
@@ -844,7 +852,7 @@ describe("ext-llm-google/google-provider", () => {
         ],
         finishReason: { unified: "stop", raw: "STOP" },
         providerMetadata: {
-          google: { rawAssistantParts },
+          google: { toolCallScope: TEST_SCOPE, rawAssistantParts },
         },
       });
     });
@@ -887,14 +895,14 @@ describe("ext-llm-google/google-provider", () => {
           content: [
             {
               type: "tool-call",
-              toolCallId: "google-code-execution-0",
+              toolCallId: `google-code-execution-${TEST_SCOPE}-0`,
               toolName: "code_execution",
               input: '{"language":"PYTHON","code":"raise RuntimeError(\'boom\')"}',
               providerExecuted: true,
             },
             {
               type: "tool-result",
-              toolCallId: "google-code-execution-0",
+              toolCallId: `google-code-execution-${TEST_SCOPE}-0`,
               toolName: "code_execution",
               result: { outcome, output: "boom" },
               isError: true,
@@ -903,7 +911,7 @@ describe("ext-llm-google/google-provider", () => {
           ],
           finishReason: { unified: "stop", raw: "STOP" },
           providerMetadata: {
-            google: { rawAssistantParts },
+            google: { toolCallScope: TEST_SCOPE, rawAssistantParts },
           },
         });
       }
@@ -1055,7 +1063,7 @@ describe("ext-llm-google/google-provider", () => {
         input: "{}",
       }]);
       assertEquals(result.providerMetadata, {
-        google: { rawAssistantParts },
+        google: { toolCallScope: TEST_SCOPE, rawAssistantParts },
       });
       if (!result.content) {
         throw new Error("Expected Google tool-call content");

@@ -1820,3 +1820,673 @@ describe("serializeWorkflowContext", () => {
     assertEquals(JSON.parse(serialized).step, { a: { id: 1 }, b: { id: 1 } });
   });
 });
+
+describe("retry framework record traversal", () => {
+  for (const strictContext of [false, true]) {
+    it(`preserves two previous result contexts, strict=${strictContext}`, () => {
+      let calls = 0;
+      let reads = 0;
+      const first = {
+        input: {},
+        first: { keep: 1 },
+        toJSON() {
+          calls++;
+          return { corrupted: true };
+        },
+      };
+      const second = Object.defineProperty(
+        { input: {}, second: { keep: 2 } },
+        "toJSON",
+        {
+          enumerable: true,
+          get() {
+            reads++;
+            return () => ({ corrupted: true });
+          },
+        },
+      );
+      const states = {
+        repeat: {
+          _loopOutputRetry: {
+            previousResults: [second, first],
+            iterationNodeStates: {},
+          },
+        },
+      };
+
+      if (strictContext) {
+        assertThrows(
+          () => prepareNodeStatesUserData(states, "previous-results", { strictContext }),
+          VeryfrontError,
+        );
+      } else {
+        const persisted = JSON.parse(
+          JSON.stringify(
+            prepareNodeStatesUserData(states, "previous-results", { strictContext }),
+          ),
+        );
+        assertEquals(persisted.repeat._loopOutputRetry.previousResults, [
+          { input: {}, second: { keep: 2 } },
+          { input: {}, first: { keep: 1 } },
+        ]);
+      }
+
+      assertEquals(calls, 0);
+      // Framework record discovery is descriptor-only. Normalization retains
+      // the established policy of reading an own accessor once.
+      assertEquals(reads, 1);
+    });
+  }
+
+  it("follows nested previous results when an identity has context and state roles", () => {
+    let calls = 0;
+    const descendant = {
+      input: {},
+      value: { keep: 3 },
+      toJSON() {
+        calls++;
+        return { corrupted: true };
+      },
+    };
+    const contextAndState = {
+      input: {},
+      value: { keep: 1 },
+      _loopOutputRetry: {
+        previousResults: [descendant],
+        iterationNodeStates: {},
+      },
+    };
+    const sibling = {
+      input: {},
+      value: { keep: 2 },
+      toJSON() {
+        calls++;
+        return { corrupted: true };
+      },
+    };
+    const prepared = prepareNodeStatesUserData(
+      {
+        repeat: {
+          _loopOutputRetry: {
+            previousResults: [contextAndState, sibling],
+            iterationNodeStates: { child: contextAndState },
+          },
+        },
+      },
+      "nested-previous-results",
+      {},
+    );
+
+    assertEquals<unknown>(prepared.repeat!._loopOutputRetry.previousResults, [
+      {
+        input: {},
+        value: { keep: 1 },
+        _loopOutputRetry: {
+          previousResults: [{ input: {}, value: { keep: 3 } }],
+          iterationNodeStates: {},
+        },
+      },
+      { input: {}, value: { keep: 2 } },
+    ]);
+    assertEquals(calls, 0);
+  });
+
+  it("discovers previous results through a deferred checkpoint before an earlier alias", () => {
+    let calls = 0;
+    const previous = {
+      input: {},
+      value: { keep: 1 },
+      toJSON() {
+        calls++;
+        return { corrupted: true };
+      },
+    };
+    const checkpoint = {
+      context: { input: {}, earlierAlias: previous },
+      nodeStates: {
+        repeat: {
+          _loopOutputRetry: {
+            previousResults: [previous],
+            iterationNodeStates: {},
+          },
+        },
+      },
+    };
+    const records = collectWorkflowJsonRecords(
+      deferWorkflowJsonValue(checkpoint),
+      WORKFLOW_CHECKPOINT_RECORD,
+    );
+    const persisted = JSON.parse(
+      prepareWorkflowJson(
+        checkpoint.context,
+        "checkpoint.context",
+        "deferred-previous-results",
+        {},
+        WORKFLOW_NODE_RECORD,
+        records,
+      ).serialized,
+    );
+
+    assertEquals(persisted.earlierAlias, { input: {}, value: { keep: 1 } });
+    assertEquals(calls, 0);
+  });
+
+  it("discovers previous results beyond the normalization depth cutoff", () => {
+    let calls = 0;
+    const previous = {
+      input: {},
+      value: { keep: 1 },
+      toJSON() {
+        calls++;
+        return { corrupted: true };
+      },
+    };
+    let states: Record<string, unknown> = {
+      child: { _loopOutputRetry: { previousResults: [previous], iterationNodeStates: {} } },
+    };
+    for (let index = 0; index < MAX_TRAVERSAL_DEPTH + 5; index++) {
+      states = { child: { _loopOutputRetry: { iterationNodeStates: states } } };
+    }
+    const records = collectWorkflowJsonRecords(
+      { context: { input: {}, alias: previous }, nodeStates: states },
+      WORKFLOW_CHECKPOINT_RECORD,
+    );
+
+    assertEquals(
+      JSON.parse(
+        prepareWorkflowJson(previous, "alias", "deep-previous-results", {}, undefined, records)
+          .serialized,
+      ),
+      { input: {}, value: { keep: 1 } },
+    );
+    assertEquals(calls, 0);
+  });
+
+  it("discovers only own sparse previous-result entries without reading traps", () => {
+    let inheritedIndexReads = 0;
+    let iteratorReads = 0;
+    let ownIndexReads = 0;
+    const inherited = {
+      input: {},
+      inherited: true,
+      toJSON: () => ({ corrupted: true }),
+    };
+    const present = {
+      input: {},
+      present: true,
+      toJSON: () => ({ corrupted: true }),
+    };
+    const accessor = {
+      input: {},
+      accessor: true,
+      toJSON: () => ({ corrupted: true }),
+    };
+    const prototype = Object.create(Array.prototype);
+    Object.defineProperty(prototype, "0", {
+      get() {
+        inheritedIndexReads++;
+        return inherited;
+      },
+    });
+    Object.defineProperty(prototype, Symbol.iterator, {
+      get() {
+        iteratorReads++;
+        return Array.prototype[Symbol.iterator];
+      },
+    });
+    const previousResults: unknown[] = [];
+    Object.setPrototypeOf(previousResults, prototype);
+    previousResults.length = 3;
+    Object.defineProperty(previousResults, "1", {
+      enumerable: true,
+      get() {
+        ownIndexReads++;
+        return accessor;
+      },
+    });
+    previousResults[2] = present;
+
+    const records = collectWorkflowJsonRecords(
+      {
+        context: { input: {} },
+        nodeStates: {
+          repeat: { _loopOutputRetry: { previousResults, iterationNodeStates: {} } },
+        },
+      },
+      WORKFLOW_CHECKPOINT_RECORD,
+    );
+
+    assertStrictEquals(records.get(present), WORKFLOW_NODE_RECORD);
+    assertEquals(records.has(inherited), false);
+    assertEquals(records.has(accessor), false);
+    assertEquals(inheritedIndexReads, 0);
+    assertEquals(iteratorReads, 0);
+    assertEquals(ownIndexReads, 0);
+  });
+
+  for (
+    const mode of ["own", "nested", "inherited", "accessor", "inherited accessor", "data"] as const
+  ) {
+    for (const field of ["context", "evaluationContext"] as const) {
+      for (const strictContext of [false, true]) {
+        it(`preserves ${field} records with ${mode} toJSON, strict=${strictContext}`, () => {
+          let calls = 0;
+          let reads = 0;
+          const hook = () => {
+            calls++;
+            return { corrupted: true };
+          };
+          const context: Record<string, unknown> = { input: {}, other: { keep: 1 } };
+          if (mode === "own" || mode === "nested") context.toJSON = hook;
+          if (mode === "inherited") Object.setPrototypeOf(context, { toJSON: hook });
+          if (mode === "accessor") {
+            Object.defineProperty(context, "toJSON", {
+              enumerable: true,
+              get() {
+                reads++;
+                return hook;
+              },
+            });
+          }
+          if (mode === "inherited accessor") {
+            Object.setPrototypeOf(context, {
+              get toJSON() {
+                reads++;
+                return hook;
+              },
+            });
+          }
+          if (mode === "data") context.toJSON = { keep: 2 };
+          const retry = {
+            iteration: 0,
+            previousResults: [],
+            context: {},
+            evaluationContext: {},
+            iterationNodeStates: {},
+            [field]: context,
+          };
+          const states = {
+            repeat: {
+              _loopOutputRetry: mode === "nested"
+                ? {
+                  ...retry,
+                  context: {},
+                  evaluationContext: {},
+                  iterationNodeStates: { child: { _loopOutputRetry: retry } },
+                }
+                : retry,
+            },
+          };
+          if (strictContext && mode !== "data") {
+            assertThrows(
+              () => prepareNodeStatesUserData(states, "record-retry", { strictContext }),
+              VeryfrontError,
+            );
+          } else {
+            const persisted = JSON.parse(
+              JSON.stringify(prepareNodeStatesUserData(states, "record-retry", { strictContext })),
+            );
+            const envelope = mode === "nested"
+              ? persisted.repeat!._loopOutputRetry.iterationNodeStates.child._loopOutputRetry
+              : persisted.repeat!._loopOutputRetry;
+            assertEquals(envelope[field].other, { keep: 1 });
+            if (mode === "data") assertEquals(envelope[field].toJSON, { keep: 2 });
+          }
+          assertEquals(calls, 0);
+          assertEquals(reads, mode === "accessor" ? 1 : 0);
+        });
+      }
+    }
+  }
+
+  it("discovers records before earlier aliases and beyond the normalization cutoff", () => {
+    let calls = 0;
+    const context = {
+      input: {},
+      other: 1,
+      toJSON: () => {
+        calls++;
+        return {};
+      },
+    };
+    let nested: unknown = context;
+    for (let i = 0; i < MAX_TRAVERSAL_DEPTH + 5; i++) nested = { nested };
+    const states = {
+      earlier: { output: nested },
+      repeat: {
+        _loopOutputRetry: {
+          context,
+          iterationNodeStates: {
+            child: { _subWorkflowContext: { input: {}, toJSON: { keep: 2 } } },
+          },
+        },
+      },
+    };
+    const prepared = prepareNodeStatesUserData(states, "record-retry", {});
+    let leaf = (prepared.earlier as { output: unknown }).output as Record<string, unknown>;
+    for (let i = 0; i < MAX_TRAVERSAL_DEPTH + 5; i++) leaf = leaf.nested as Record<string, unknown>;
+    assertEquals(leaf, { input: {}, other: 1 });
+    assertEquals(calls, 0);
+  });
+
+  it("discovers retry records before checkpoint context and resume aliases are encoded", () => {
+    let calls = 0;
+    const context = {
+      input: {},
+      other: 1,
+      toJSON: () => {
+        calls++;
+        return {};
+      },
+    };
+    const checkpoint = {
+      context: { input: {}, alias: context },
+      nodeStates: {},
+      _resumeEnvelope: {
+        context: { input: {}, alias: context },
+        nodeStates: { repeat: { _loopOutputRetry: { context } } },
+      },
+    };
+    const records = collectWorkflowJsonRecords(checkpoint, WORKFLOW_CHECKPOINT_RECORD);
+    const persisted = JSON.parse(
+      prepareWorkflowJson(
+        checkpoint.context,
+        "checkpoint.context",
+        "record-retry",
+        {},
+        WORKFLOW_NODE_RECORD,
+        records,
+      ).serialized,
+    );
+    assertEquals(persisted.alias, { input: {}, other: 1 });
+    assertEquals(calls, 0);
+  });
+
+  it("discovers deeply nested retry records iteratively without invoking descriptors", () => {
+    let calls = 0;
+    const context = {
+      input: {},
+      other: 1,
+      toJSON: () => {
+        calls++;
+        return {};
+      },
+    };
+    let states: Record<string, unknown> = { child: { _subWorkflowContext: context } };
+    for (let i = 0; i < MAX_TRAVERSAL_DEPTH + 5; i++) {
+      states = { child: { _loopOutputRetry: { iterationNodeStates: states } } };
+    }
+    const records = collectWorkflowJsonRecords(
+      { nodeStates: states, context: { input: {}, alias: context } },
+      WORKFLOW_CHECKPOINT_RECORD,
+    );
+    assertEquals(
+      JSON.parse(
+        prepareWorkflowJson(context, "alias", "record-retry", {}, undefined, records).serialized,
+      ),
+      {
+        input: {},
+        other: 1,
+      },
+    );
+    assertEquals(calls, 0);
+  });
+
+  it("keeps arbitrary payload hooks and unknown retry envelope fields", () => {
+    let calls = 0;
+    const states = {
+      repeat: {
+        _loopOutputRetry: {
+          context: {
+            input: {},
+            toJSON: { keep: 2 },
+            payload: {
+              toJSON() {
+                calls++;
+                return 7;
+              },
+            },
+          },
+          extension: { keep: 3 },
+          iterationNodeStates: {},
+        },
+      },
+    };
+    const prepared = prepareNodeStatesUserData(states, "record-retry", {});
+    assertEquals<unknown>(prepared.repeat!._loopOutputRetry.context.payload, 7);
+    assertEquals(prepared.repeat!._loopOutputRetry.extension, { keep: 3 });
+    assertEquals(calls, 1);
+  });
+
+  it("keeps same-named state payload and unknown retry fields as ordinary values", () => {
+    const calls: string[] = [];
+    const ordinary = (name: string) => ({
+      previousResults: [{ input: {}, toJSON: () => (calls.push(name), { ordinary: name }) }],
+      context: { toJSON: () => (calls.push(`${name}-context`), { ordinary: name }) },
+      evaluationContext: {
+        toJSON: () => (calls.push(`${name}-evaluation`), { ordinary: name }),
+      },
+      _loopOutputRetry: {
+        toJSON: () => (calls.push(`${name}-retry`), { ordinary: name }),
+      },
+    });
+    const states = {
+      repeat: {
+        input: ordinary("input"),
+        output: ordinary("output"),
+        _loopOutputRetry: {
+          previousResults: [],
+          iterationNodeStates: {},
+          extension: ordinary("extension"),
+        },
+      },
+    };
+
+    const prepared = prepareNodeStatesUserData(states, "ordinary-same-named-fields", {});
+
+    assertEquals<unknown>(prepared.repeat!.input, {
+      previousResults: [{ ordinary: "input" }],
+      context: { ordinary: "input" },
+      evaluationContext: { ordinary: "input" },
+      _loopOutputRetry: { ordinary: "input" },
+    });
+    assertEquals<unknown>(prepared.repeat!.output, {
+      previousResults: [{ ordinary: "output" }],
+      context: { ordinary: "output" },
+      evaluationContext: { ordinary: "output" },
+      _loopOutputRetry: { ordinary: "output" },
+    });
+    assertEquals<unknown>(prepared.repeat!._loopOutputRetry.extension, {
+      previousResults: [{ ordinary: "extension" }],
+      context: { ordinary: "extension" },
+      evaluationContext: { ordinary: "extension" },
+      _loopOutputRetry: { ordinary: "extension" },
+    });
+    assertEquals(calls.length, 12);
+  });
+
+  it("does not promote arbitrary children of a trusted previous result", () => {
+    let calls = 0;
+    const previous = {
+      input: {},
+      payload: {
+        previousResults: [{
+          toJSON() {
+            calls++;
+            return { ordinary: true };
+          },
+        }],
+        context: {
+          toJSON() {
+            calls++;
+            return { ordinary: true };
+          },
+        },
+        evaluationContext: {
+          toJSON() {
+            calls++;
+            return { ordinary: true };
+          },
+        },
+        _loopOutputRetry: {
+          toJSON() {
+            calls++;
+            return { ordinary: true };
+          },
+        },
+      },
+    };
+
+    const prepared = prepareNodeStatesUserData(
+      {
+        repeat: {
+          _loopOutputRetry: { previousResults: [previous], iterationNodeStates: {} },
+        },
+      },
+      "previous-result-payload",
+      {},
+    );
+
+    assertEquals<unknown>(prepared.repeat!._loopOutputRetry.previousResults[0]?.payload, {
+      previousResults: [{ ordinary: true }],
+      context: { ordinary: true },
+      evaluationContext: { ordinary: true },
+      _loopOutputRetry: { ordinary: true },
+    });
+    assertEquals(calls, 4);
+  });
+
+  it("keeps the previous-results array toJSON hook as ordinary array behavior", () => {
+    let calls = 0;
+    const previousResults = [{ input: {}, keep: 1 }];
+    Object.defineProperty(previousResults, "toJSON", {
+      enumerable: false,
+      value() {
+        calls++;
+        return [{ replacement: true }];
+      },
+    });
+
+    const prepared = prepareNodeStatesUserData(
+      {
+        repeat: { _loopOutputRetry: { previousResults, iterationNodeStates: {} } },
+      },
+      "previous-results-array-hook",
+      {},
+    );
+
+    assertEquals<unknown>(prepared.repeat!._loopOutputRetry.previousResults, [
+      { replacement: true },
+    ]);
+    assertEquals(calls, 1);
+  });
+
+  it("keeps completion-history replacements ordinary while protecting retained history", () => {
+    let retainedCalls = 0;
+    let replacementCalls = 0;
+    const retained = {
+      input: {},
+      keep: 1,
+      toJSON() {
+        retainedCalls++;
+        return { corrupted: true };
+      },
+    };
+    const replacement = {
+      input: {},
+      toJSON() {
+        replacementCalls++;
+        return { completion: true };
+      },
+    };
+    const prepared = prepareNodeStatesUserData(
+      {
+        repeat: {
+          output: { previousResults: [replacement] },
+          _loopOutputRetry: {
+            previousResults: [retained],
+            iterationNodeStates: {},
+          },
+        },
+      },
+      "completion-history-replacement",
+      {},
+    );
+
+    assertEquals<unknown>(prepared.repeat!.output, {
+      previousResults: [{ completion: true }],
+    });
+    assertEquals<unknown>(prepared.repeat!._loopOutputRetry.previousResults, [
+      { input: {}, keep: 1 },
+    ]);
+    assertEquals(retainedCalls, 0);
+    assertEquals(replacementCalls, 1);
+  });
+
+  it("retains ordinary Date, BigInt, and undefined semantics in previous contexts", () => {
+    const stateWith = (value: unknown) => ({
+      repeat: {
+        _loopOutputRetry: {
+          previousResults: [{ input: {}, value }],
+          iterationNodeStates: {},
+        },
+      },
+    });
+
+    assertEquals(
+      prepareNodeStatesUserData(stateWith(new Date(0)), "previous-date", {}).repeat!
+        ._loopOutputRetry.previousResults[0]?.value,
+      "1970-01-01T00:00:00.000Z",
+    );
+    assertThrows(
+      () => prepareNodeStatesUserData(stateWith(1n), "previous-bigint", {}),
+      VeryfrontError,
+      "BigInt",
+    );
+    const undefinedContext = prepareNodeStatesUserData(
+      stateWith(undefined),
+      "previous-undefined",
+      {},
+    ).repeat!._loopOutputRetry.previousResults[0];
+    assertEquals(undefinedContext !== undefined, true);
+    assertEquals(Object.hasOwn(undefinedContext!, "value"), false);
+    assertThrows(
+      () =>
+        prepareNodeStatesUserData(stateWith(undefined), "previous-undefined-strict", {
+          strictContext: true,
+        }),
+      VeryfrontError,
+    );
+  });
+
+  it("preserves own special node ids and rejects cycles without executing hooks", () => {
+    let calls = 0;
+    const children = JSON.parse(
+      '{"__proto__":{"_subWorkflowContext":{"input":{},"toJSON":{"keep":2}}}}',
+    );
+    const context: Record<string, unknown> = {
+      input: {},
+      toJSON: () => {
+        calls++;
+        return {};
+      },
+    };
+    const retry = { context, iterationNodeStates: children };
+    const prepared = prepareNodeStatesUserData(
+      { repeat: { _loopOutputRetry: retry } },
+      "record-retry",
+      {},
+    );
+    assertEquals(
+      Object.hasOwn(prepared.repeat!._loopOutputRetry.iterationNodeStates, "__proto__"),
+      true,
+    );
+    context.self = retry;
+    assertThrows(
+      () => prepareNodeStatesUserData({ repeat: { _loopOutputRetry: retry } }, "record-retry", {}),
+      VeryfrontError,
+      "circular reference",
+    );
+    assertEquals(calls, 0);
+  });
+});

@@ -61,6 +61,59 @@ export async function fetchWithTimeout(
 }
 
 /**
+ * Keep ownership of requests that miss their header deadline. Deno 2.7 can
+ * leak an internal response body if abort races with header delivery, before
+ * fetch returns a Response that the caller can cancel. Cancel late responses
+ * instead, and await settle() after stopping the server that owns the requests.
+ */
+export function createTrackedRequests(): {
+  fetch: typeof fetchWithTimeout;
+  settle: () => Promise<void>;
+} {
+  const pending = new Set<Promise<Response>>();
+  const cleanupErrors: unknown[] = [];
+  return {
+    fetch: async (url, timeoutMs = SERVER_CONFIG.FETCH_TIMEOUT) => {
+      let timedOut = false;
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const timeoutError = new DOMException("The request timed out", "AbortError");
+      const request = fetch(url).then(async (response) => {
+        if (timedOut) {
+          try {
+            await response.body?.cancel();
+          } catch (error) {
+            cleanupErrors.push(error);
+          }
+          throw timeoutError;
+        }
+        return response;
+      });
+      pending.add(request);
+      const timeout = new Promise<never>((_, reject) => {
+        timer = setTimeout(() => {
+          timedOut = true;
+          reject(timeoutError);
+        }, timeoutMs);
+      });
+      // Retain timed-out requests until their late body is closed or the
+      // owning server stops and the connection rejects. Always handle errors.
+      void request.finally(() => pending.delete(request)).catch(() => {});
+      try {
+        return await Promise.race([request, timeout]);
+      } finally {
+        clearTimeout(timer);
+      }
+    },
+    settle: async () => {
+      await Promise.allSettled([...pending]);
+      if (cleanupErrors.length > 0) {
+        throw new AggregateError(cleanupErrors, "Failed to cancel late response bodies");
+      }
+    },
+  };
+}
+
+/**
  * Issue a GET over loopback with an explicit HTTP Host header.
  *
  * Deno fetch cannot override Host, but some Linux CI environments do not
@@ -104,13 +157,14 @@ async function probeHttpReady(
   url: string,
   requestTimeoutMs: number,
   verifyWithSecondRequest: boolean,
+  request: typeof fetchWithTimeout,
 ): Promise<boolean> {
   const isUp = (status: number) => status >= 200 && status < 600;
-  const response = await fetchWithTimeout(url, requestTimeoutMs);
+  const response = await request(url, requestTimeoutMs);
   try {
     if (!isUp(response.status)) return false;
     if (!verifyWithSecondRequest) return true;
-    const verify = await fetchWithTimeout(url, requestTimeoutMs);
+    const verify = await request(url, requestTimeoutMs);
     try {
       return isUp(verify.status);
     } finally {
@@ -136,6 +190,7 @@ export async function pollUrlReady(
     retryDelayMs?: number;
     requestTimeoutMs?: number;
     verifyWithSecondRequest?: boolean;
+    request?: typeof fetchWithTimeout;
   } = {},
 ): Promise<UrlReadyResult> {
   const {
@@ -143,6 +198,7 @@ export async function pollUrlReady(
     retryDelayMs = CLEANUP_CONFIG.CLEANUP_RETRY_DELAY,
     requestTimeoutMs = SERVER_CONFIG.FETCH_TIMEOUT,
     verifyWithSecondRequest = true,
+    request = fetchWithTimeout,
   } = options;
 
   const startTime = Date.now();
@@ -151,7 +207,7 @@ export async function pollUrlReady(
   while (Date.now() - startTime < timeoutMs) {
     attempts++;
     try {
-      if (await probeHttpReady(url, requestTimeoutMs, verifyWithSecondRequest)) {
+      if (await probeHttpReady(url, requestTimeoutMs, verifyWithSecondRequest, request)) {
         return { ready: true, attempts, lastError };
       }
     } catch (error) {

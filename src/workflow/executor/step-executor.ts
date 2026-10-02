@@ -181,6 +181,7 @@ function buildAgentStepOutput(fields: Record<string, unknown>): Record<string, u
 export class StepExecutor {
   private config: StepExecutorConfig;
   private nonCooperativeErrors = new WeakSet<Error>();
+  private executionOperations = new Map<string, Set<Promise<unknown>>>();
 
   constructor(config: StepExecutorConfig = {}) {
     this.config = { defaultTimeout: DEFAULT_STEP_TIMEOUT_MS, ...config };
@@ -243,6 +244,7 @@ export class StepExecutor {
             timeout,
             node.id,
             abortSignal,
+            runId,
           );
         });
         abortSignal?.throwIfAborted();
@@ -313,6 +315,7 @@ export class StepExecutor {
     timeout: number,
     nodeId: string,
     parentSignal?: AbortSignal,
+    runId?: string,
   ): Promise<T> {
     const attemptController = new AbortController();
     const forwardAbort = () => attemptController.abort(parentSignal?.reason);
@@ -320,6 +323,7 @@ export class StepExecutor {
     else parentSignal?.addEventListener("abort", forwardAbort, { once: true });
 
     const operation = Promise.resolve().then(() => fn(attemptController.signal));
+    if (runId !== undefined) this.trackExecutionOperation(runId, operation);
     const fencedOperation = operation.then((value) => {
       attemptController.signal.throwIfAborted();
       return value;
@@ -348,6 +352,42 @@ export class StepExecutor {
       clearTimeout(timeoutId);
       if (rejectAbort) attemptController.signal.removeEventListener("abort", rejectAbort);
       parentSignal?.removeEventListener("abort", forwardAbort);
+    }
+  }
+
+  private trackExecutionOperation(runId: string, operation: Promise<unknown>): void {
+    let operations = this.executionOperations.get(runId);
+    if (!operations) {
+      operations = new Set();
+      this.executionOperations.set(runId, operations);
+    }
+    operations.add(operation);
+    void operation.then(
+      () => operations.delete(operation),
+      () => operations.delete(operation),
+    );
+  }
+
+  /** @internal Wait until every raw step operation observed locally for this run has settled. */
+  async waitForExecutionStopped(runId: string): Promise<void> {
+    const operations = this.executionOperations.get(runId);
+    if (!operations) return;
+
+    while (operations.size > 0) {
+      await Promise.allSettled([...operations]);
+    }
+  }
+
+  /** @internal Retire lifecycle evidence after outstanding operations actually settle. */
+  clearExecutionStopEvidence(): void {
+    for (const [runId, operations] of this.executionOperations) {
+      const retire = async () => {
+        while (operations.size > 0) await Promise.allSettled([...operations]);
+        if (this.executionOperations.get(runId) === operations) {
+          this.executionOperations.delete(runId);
+        }
+      };
+      void retire();
     }
   }
 
