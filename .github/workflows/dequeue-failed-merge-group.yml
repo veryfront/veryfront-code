@@ -1,4 +1,5 @@
 name: Remove failed merge-group entry
+run-name: Remove failed merge group ${{ github.event.workflow_run.id }}
 
 on:
   workflow_run:

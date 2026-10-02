@@ -61,6 +61,7 @@ type Fixture = ReturnType<typeof fixture>;
 
 async function workflow() {
   return parse(await Deno.readTextFile(WORKFLOW_PATH)) as {
+    "run-name": string;
     on: Record<string, unknown>;
     permissions: Record<string, string>;
     jobs: Record<string, {
@@ -197,6 +198,7 @@ describe("failed merge-group queue cleanup", () => {
   it("uses protected workflow completion with no source execution or gate changes", async () => {
     const w = await workflow();
     assertEquals(w.on, { workflow_run: { workflows: ["CI/CD"], types: ["completed"] } });
+    assertEquals(w["run-name"], "Remove failed merge group ${{ github.event.workflow_run.id }}");
     assertEquals(w.permissions, {});
     const job = w.jobs.dequeue;
     assertEquals(
