@@ -939,7 +939,11 @@ printf '%064d  %s\n' 0 "$1"
     for (const [name, value] of Object.entries(jobs)) {
       const job = asRecord(value, name);
       if (job.uses !== undefined) {
-        assertEquals(job.uses, "./.github/workflows/cancel-failed-merge-group.yml");
+        assert(
+          /^veryfront\/veryfront-code\/\.github\/workflows\/cancel-failed-merge-group\.yml@[0-9a-f]{40}$/
+            .test(String(job.uses)),
+          `${name} must run the cancellation workflow pinned to a trusted commit`,
+        );
         assertEquals(job.if, "${{ failure() && github.event_name == 'merge_group' }}");
         assertEquals(job.permissions, { actions: "write" });
         assertEquals(job.steps, undefined);

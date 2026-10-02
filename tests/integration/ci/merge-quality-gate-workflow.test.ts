@@ -9,6 +9,9 @@ const WORKFLOW_PATH = new URL(
   "../../../.github/workflows/cicd.yml",
   import.meta.url,
 );
+// Cancellation runs from an immutable reviewed commit, never the queued revision.
+const TRUSTED_CANCELLATION_WORKFLOW =
+  "veryfront/veryfront-code/.github/workflows/cancel-failed-merge-group.yml@3b3d0a12d0e309608de6fe62ce1061688952503c";
 const REQUIRED_DEPENDENCIES = [
   "ci",
   "coverage",
@@ -861,9 +864,10 @@ done
   });
 });
 
-describe("failed merge-group cancellation", () => {
-  it("observes every merge correctness prerequisite independently without privileged test jobs", async () => {
+describe("trusted merge-group cancellation workflow", () => {
+  it("observes every merge and artifact gate prerequisite independently without privileged test jobs", async () => {
     const jobs = asRecord((await readWorkflow()).jobs, "workflow jobs");
+    const artifactGate = asRecord(jobs["quality-gate-artifact"], "artifact quality gate");
     const ancestors = new Set<string>();
     const visit = (name: string) => {
       if (ancestors.has(name)) return;
@@ -871,11 +875,15 @@ describe("failed merge-group cancellation", () => {
       for (const dependency of jobNeeds(asRecord(jobs[name], name), name)) visit(dependency);
     };
     for (const name of REQUIRED_DEPENDENCIES) visit(name);
+    for (const name of jobNeeds(artifactGate, "quality-gate-artifact")) visit(name);
+    for (const name of ["tests-npm-install-smoke", "tests-runtime-critical-flow"]) {
+      assert(ancestors.has(name), `${name} must be observed`);
+    }
     for (const name of ancestors) {
       const observer = asRecord(jobs[`cancel-after-${name}`], `${name} failure observer`);
       assertEquals(observer.needs, [name]);
       assertEquals(observer.if, "${{ failure() && github.event_name == 'merge_group' }}");
-      assertEquals(observer.uses, "./.github/workflows/cancel-failed-merge-group.yml");
+      assertEquals(observer.uses, TRUSTED_CANCELLATION_WORKFLOW);
       assertEquals(observer.permissions, { actions: "write" });
       assertEquals(observer.steps, undefined);
       const target = asRecord(jobs[name], name);
@@ -896,12 +904,25 @@ describe("failed merge-group cancellation", () => {
     }
   });
 
+  it("never runs a cancellation workflow from the queued revision", async () => {
+    const jobs = asRecord((await readWorkflow()).jobs, "workflow jobs");
+    for (const [name, job] of Object.entries(jobs)) {
+      const uses = asRecord(job, name).uses;
+      if (typeof uses !== "string" || !uses.includes("cancel-failed-merge-group")) continue;
+      assertEquals(
+        uses,
+        TRUSTED_CANCELLATION_WORKFLOW,
+        `${name} must use the pinned trusted workflow`,
+      );
+    }
+  });
+
   it("force-cancels only merge-group runs without checkout or repository code", async () => {
     const workflow = asRecord(
       parse(await readRepoFile(".github/workflows/cancel-failed-merge-group.yml")),
       "cancel workflow",
     );
-    assertEquals(Object.keys(asRecord(workflow.on, "cancel triggers")), ["workflow_call"]);
+    assertEquals(asRecord(workflow.on, "cancel triggers"), { workflow_call: null });
     assertEquals(workflow.permissions, { actions: "write" });
     const jobs = asRecord(workflow.jobs, "cancel jobs");
     assertEquals(Object.keys(jobs), ["cancel"]);
@@ -936,9 +957,9 @@ describe("failed merge-group cancellation", () => {
       await Deno.chmod(`${directory}/gh`, 0o700);
       for (const exitCode of [0, 7]) {
         const output = await new Deno.Command("bash", {
-          args: ["-e", "-c", String(step.run)],
+          args: ["-e", "-c", 'PATH="$CANCEL_BIN"\n' + String(step.run)],
           env: {
-            PATH: `${directory}:${Deno.env.get("PATH") ?? ""}`,
+            CANCEL_BIN: directory,
             GITHUB_REPOSITORY: "veryfront/veryfront-code",
             GITHUB_RUN_ID: "123456",
             CANCEL_ARGS: `${directory}/args`,

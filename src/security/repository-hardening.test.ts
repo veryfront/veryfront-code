@@ -409,7 +409,11 @@ describe("repository hardening", () => {
           assertEquals(jobIf.trim(), "if: ${{ failure() && github.event_name == 'merge_group' }}");
           assertEquals(block.includes("actions/checkout@"), false);
           assertEquals(block.includes("run:"), false);
-          assert(block.includes("uses: ./.github/workflows/cancel-failed-merge-group.yml"));
+          assert(
+            /\n {4}uses: veryfront\/veryfront-code\/\.github\/workflows\/cancel-failed-merge-group\.yml@[0-9a-f]{40}\n/
+              .test(`${block}\n`),
+            `expected ${jobName} to run the cancellation workflow pinned to a trusted commit`,
+          );
           const cancellation = stripComments(
             await readText(".github/workflows/cancel-failed-merge-group.yml"),
           );

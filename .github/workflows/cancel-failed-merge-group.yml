@@ -13,7 +13,7 @@ jobs:
     timeout-minutes: 2
     steps:
       # Ordinary cancellation allows always() jobs to continue. Force cancellation
-      # concludes every check unsuccessfully, including pending required gates.
+      # stops even always() jobs and leaves unfinished checks unsuccessful.
       # No checkout: repository code must never execute with this write token.
       - name: Force-cancel the failed merge-group run
         env:
