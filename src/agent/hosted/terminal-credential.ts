@@ -6,8 +6,13 @@ import type { AgentServiceMcpServerConfig } from "../service/mcp-server-config.t
 import { createProjectScopedMcpUrl } from "../service/project-scoped-mcp-url.ts";
 
 export const RUN_TERMINAL_TOKEN_HEADER = "X-Veryfront-Run-Terminal-Token";
+/** Names the finalize call so the API can close it before the run's terminal event. */
+export const RUN_TERMINAL_TOOL_CALL_ID_HEADER = "X-Veryfront-Run-Terminal-Tool-Call-Id";
 const NativeHeaders = Headers;
 const headersSet = Headers.prototype.set;
+const regExpTest = RegExp.prototype.test;
+/** Printable ASCII, bounded: always a valid header value, and what the API accepts. */
+const TOOL_CALL_ID_PATTERN = /^[\x21-\x7e]{1,200}$/;
 const apply = Reflect.apply;
 const credentials = createPrivateWeakStore<
   object,
@@ -51,6 +56,12 @@ export function hostedTerminalToolSourceFactory(
         const headers = new NativeHeaders(original);
         if (!context?.runId || context.runId === authority.runId) {
           apply(headersSet, headers, [RUN_TERMINAL_TOKEN_HEADER, authority.token]);
+          const toolCallId = context?.toolCallId;
+          if (
+            typeof toolCallId === "string" && apply(regExpTest, TOOL_CALL_ID_PATTERN, [toolCallId])
+          ) {
+            apply(headersSet, headers, [RUN_TERMINAL_TOOL_CALL_ID_HEADER, toolCallId]);
+          }
         }
         return headers;
       },
