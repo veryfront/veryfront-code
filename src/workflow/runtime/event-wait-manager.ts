@@ -1510,12 +1510,22 @@ export class EventWaitManager {
 
     // A delay's deadline is its delivery, so the record resolves as delivered
     // rather than expired: the node completed on time, it did not time out.
+    // An event wait's expiry is refused while an on-time event is buffered,
+    // in the same atomic step, so mail appended after the last mailbox check
+    // still wins the deadline.
+    const unlessBuffered = wait.waitKind === "event" && wait.expiresAt !== undefined
+      ? { eventName: wait.eventName, publishedBefore: wait.expiresAt }
+      : undefined;
     const claimed = await backend.resolvePendingEventWait(
       wait.runId,
       wait.id,
       wait.waitKind === "delay" ? "delivered" : "expired",
+      unlessBuffered,
     );
-    if (!claimed) return;
+    if (!claimed) {
+      if (unlessBuffered) this.scheduleDeliveryRetry(wait.runId);
+      return;
+    }
     const claimKey = timedWaitClaimKey(wait.runId, wait.id);
     this.activeTimedWaitClaims.add(claimKey);
     try {

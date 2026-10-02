@@ -469,11 +469,18 @@ export interface WorkflowBackend {
    * Resolve a wait atomically, but only while it is still pending. Exactly one
    * caller wins: delivery, expiry, and cancellation race for the same record,
    * and only one of them may act on it.
+   *
+   * With `unlessBuffered`, also refuse (returning false and changing nothing)
+   * while the run's mailbox holds an event with that name published at or
+   * before the cutoff. Expiry passes its deadline here so an on-time event
+   * appended after the caller last looked still wins: a durable backend must
+   * test the mailbox in the same transaction or script as the resolve.
    */
   resolvePendingEventWait?(
     runId: string,
     waitId: string,
     status: "delivered" | "expired" | "cancelled",
+    unlessBuffered?: { eventName: string; publishedBefore: Date },
   ): Promise<boolean>;
   /**
    * Return a claimed wait to pending, after acting on the claim failed.

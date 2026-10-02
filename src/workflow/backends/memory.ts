@@ -53,6 +53,7 @@ import { appendRetainedPendingApproval } from "./approval-retention.ts";
 import {
   appendRetainedPendingEventWait,
   appendRetainedRunEvent,
+  hasRetainedRunEvent,
   restoreRetainedRunEvent,
   takeRetainedRunEvent,
 } from "./event-wait-retention.ts";
@@ -1536,11 +1537,19 @@ export class MemoryBackend implements WorkflowBackend {
     runId: string,
     waitId: string,
     status: "delivered" | "expired" | "cancelled",
+    unlessBuffered?: { eventName: string; publishedBefore: Date },
   ): Promise<boolean> {
     const wait = this.eventWaits.get(runId)?.find((candidate) => candidate.id === waitId);
     // Pending-precondition gate: delivery, expiry, and cancellation race for
     // the same record, and only the winner may act on the run.
     if (wait?.status !== "pending") return Promise.resolve(false);
+    const mailbox = this.runEvents.get(runId);
+    if (
+      unlessBuffered && mailbox &&
+      hasRetainedRunEvent(mailbox, unlessBuffered.eventName, unlessBuffered.publishedBefore)
+    ) {
+      return Promise.resolve(false);
+    }
     wait.status = status;
     if (status === "delivered" || status === "expired") wait.claimedAt = new Date();
     this.advanceRunRetentionRevision(runId);

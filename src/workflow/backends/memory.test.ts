@@ -2760,6 +2760,44 @@ describe("MemoryBackend", () => {
       );
     });
 
+    it("refuses an expiry while an event published by the cutoff is buffered", async () => {
+      const deadline = new Date("2026-10-02T08:00:00.000Z");
+      await backend.savePendingEventWait("run-events", createEventWait("evw-1"));
+      const unlessBuffered = { eventName: "payment.confirmed", publishedBefore: deadline };
+      await backend.appendRunEvent("run-events", {
+        id: "late",
+        eventName: "payment.confirmed",
+        payload: {},
+        publishedAt: new Date(deadline.getTime() + 1),
+      });
+      await backend.appendRunEvent("run-events", {
+        id: "other-name",
+        eventName: "payment.refunded",
+        payload: {},
+        publishedAt: deadline,
+      });
+      await backend.appendRunEvent("run-events", {
+        id: "on-time",
+        eventName: "payment.confirmed",
+        payload: {},
+        publishedAt: deadline,
+      });
+
+      assertEquals(
+        await backend.resolvePendingEventWait("run-events", "evw-1", "expired", unlessBuffered),
+        false,
+        "an on-time event must win the deadline",
+      );
+      assertEquals((await backend.getPendingEventWaits("run-events")).length, 1);
+
+      assertEquals(await backend.removeRunEvent("run-events", "on-time"), true);
+      assertEquals(
+        await backend.resolvePendingEventWait("run-events", "evw-1", "expired", unlessBuffered),
+        true,
+        "late or differently named mail must not hold the wait open",
+      );
+    });
+
     it("allows a new event-wait instance while the previous timeout claim is live", async () => {
       await backend.savePendingEventWait(
         "run-events",
