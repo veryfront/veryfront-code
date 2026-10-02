@@ -7575,6 +7575,65 @@ describe("server/handlers/request/project-run-execute.handler cancellation", () 
     });
   }
 
+  for (const status of ["completed", "waiting"] as const) {
+    it(`destroys a ${status} workflow client before waiting for raw stop evidence`, async () => {
+      const controller = new AbortController();
+      const evidenceRequested = Promise.withResolvers<void>();
+      const stopped = Promise.withResolvers<boolean>();
+      let destroyed = false;
+      let callbacks = 0;
+      const handler = new ProjectRunExecuteHandler(createDeps({
+        createWorkflowClient: () => ({
+          register: () => {},
+          start: async () => ({
+            runId: "run_cleanup_before_stop",
+            settled: async () => {
+              controller.abort(new Error("Run cancelled after its boundary settled"));
+            },
+          }),
+          getRun: async () => ({ status }),
+          cancel: async () => {},
+          waitForExecutionStopped: () => {
+            evidenceRequested.resolve();
+            return stopped.promise;
+          },
+          destroy: async () => {
+            destroyed = true;
+          },
+        }),
+      }));
+      const signed = await signedRequest(
+        "/api/control-plane/runs/run_cleanup_before_stop/execute",
+        {
+          runId: "run_cleanup_before_stop",
+          kind: "workflow",
+          target: "workflow:publish",
+          projectId: "proj-1",
+        },
+        { "x-veryfront-run-stop-token": "opaque-stop-capability" },
+      );
+      await withMockFetch(async () => {
+        callbacks++;
+        return Response.json({ acknowledged: true });
+      }, async () => {
+        const pending = handler.handle(
+          new Request(signed.request, { signal: controller.signal }),
+          createCtx(signed.publicKeyPem),
+        );
+        try {
+          await evidenceRequested.promise;
+          await delay(0);
+          assertEquals(callbacks, 0);
+          assertEquals(destroyed, true, "raw work must not block client cleanup");
+        } finally {
+          stopped.resolve(true);
+          await pending;
+        }
+      });
+      assertEquals(callbacks, 1);
+    });
+  }
+
   for (const status of ["completed", "failed"] as const) {
     for (const owned of [true, false]) {
       it(`acknowledges cancellation during ${status} workflow cleanup only with local settlement (owned: ${owned})`, async () => {

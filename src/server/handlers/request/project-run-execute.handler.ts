@@ -1577,7 +1577,6 @@ async function runDiscoveredWorkflow(
         .catch(() => false);
       if (signal.aborted) {
         acknowledgeSettledStop();
-        await stopAcknowledgement;
       }
     }
 
@@ -1587,7 +1586,6 @@ async function runDiscoveredWorkflow(
       stopped = (client.waitForExecutionStopped?.(request.runId) ?? Promise.resolve(false))
         .catch(() => false);
       acknowledgeSettledStop();
-      await stopAcknowledgement;
       return {
         success: false,
         result: run.output,
