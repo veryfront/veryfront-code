@@ -1047,6 +1047,36 @@ function local(
     );
   });
 
+  it("retains server effects through the shared upstream WebSocket fixture", () => {
+    assertEquals(
+      collectSemanticMarkers(
+        `
+import { startUpstreamServer } from "#veryfront/testing/upstream-websocket-server.ts";
+import { startUpstreamServer as startPeer } from "#veryfront/testing/upstream-websocket-server";
+import * as fixtures from "#veryfront/testing/upstream-websocket-server.ts";
+import { startUpstreamServer as relativeFixture } from "./testing/upstream-websocket-server.ts";
+const loaded = await import("#veryfront/testing/upstream-websocket-server.ts");
+await startUpstreamServer();
+await startPeer();
+await fixtures.startUpstreamServer();
+await relativeFixture();
+await loaded.startUpstreamServer();
+function local(startUpstreamServer: () => Promise<void>) {
+  startUpstreamServer();
+}
+`,
+        "src/example.test.ts",
+      ).map((marker) => [marker.effect, marker.symbol]),
+      [
+        ["server", "startUpstreamServer"],
+        ["server", "startPeer"],
+        ["server", "fixtures.startUpstreamServer"],
+        ["server", "relativeFixture"],
+        ["server", "loaded.startUpstreamServer"],
+      ],
+    );
+  });
+
   it("classifies repository mock-fetch helpers as network effects", () => {
     assertEquals(
       collectSemanticMarkers(

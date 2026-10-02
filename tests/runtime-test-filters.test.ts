@@ -29,6 +29,7 @@ import { loadSuitePlan, validateSuitePlan } from "./load-suite-plan.mjs";
 
 /** The files the shared list exists to exclude. */
 const DENO_ONLY_FILES = [
+  "src/proxy/websocket-client.test.ts",
   "src/server/dev-server/handler-only.integration.test.ts",
   "src/testing/cwd-exclusion-a.test.ts",
   "src/testing/cwd-exclusion-b.test.ts",

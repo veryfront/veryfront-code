@@ -17,6 +17,10 @@
  * exercises a Deno unit-preload fixture that resolves pinned `npm:` specifiers;
  * Bun and Node test the published runtime artifacts instead.
  *
+ * The upstream WebSocket client test drives the native `WebSocketStream`, which
+ * only Deno exposes (the proxy binary is compiled with `--unstable-net`); its
+ * loopback renderer lives in a Node-API fixture, so the file mentions no `Deno.`.
+ *
  * Kept here rather than duplicated in each runner so the two cannot drift, and
  * so it can be tested -- see ./runtime-test-filters.test.ts.
  *
@@ -25,6 +29,7 @@
 
 /** Glob patterns for tests that must not run outside Deno. */
 export const DENO_ONLY_TESTS = [
+  "src/proxy/websocket-client.test.ts",
   "src/server/dev-server/handler-only.integration.test.ts",
   "src/testing/cwd-exclusion-*.test.ts",
   "src/testing/offline-react-transport.test.ts",
