@@ -11,7 +11,7 @@ const WORKFLOW_PATH = new URL(
 );
 // Cancellation runs from an immutable main commit, never the queued revision.
 const TRUSTED_CANCELLATION_WORKFLOW =
-  "veryfront/veryfront-code/.github/workflows/cancel-failed-merge-group.yml@29b0bef58e94113b7e8756358559fe07e0f24271";
+  "veryfront/veryfront-code/.github/workflows/cancel-failed-merge-group.yml@390518b5b3d634f050d1fc63b54ec1e44d1e2e8d";
 const REQUIRED_DEPENDENCIES = [
   "ci",
   "coverage",
@@ -723,6 +723,18 @@ done
     }
   });
 
+  it("stops the heavy coverage collector only for cancelled merge-group runs", async () => {
+    const jobs = asRecord((await readWorkflow()).jobs, "cicd workflow jobs");
+    const coverage = asRecord(jobs.coverage, "coverage gate job");
+    assertEquals(
+      coverage.if,
+      "${{ always() && (github.event_name != 'merge_group' || !cancelled()) && needs.tested-run.outputs.reuse != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}",
+    );
+    for (const name of ["tests", "sonar-quality-gate", "quality-gate-merge"]) {
+      assertStringIncludes(String(asRecord(jobs[name], name).if), "always()");
+    }
+  });
+
   it("preserves all required coverage shards, the aggregate gate, and the floor", async () => {
     const workflow = await readWorkflow();
     const jobs = asRecord(workflow.jobs, "cicd workflow jobs");
@@ -739,7 +751,7 @@ done
 
     assertEquals(matrix.shard, [1, 2, 3, 4, 5, 6, 7, 8]);
     assertEquals(coverageShards.name, "coverage shard ${{ matrix.shard }}/8");
-    assertEquals(strategy["fail-fast"], false);
+    assertEquals(strategy["fail-fast"], "${{ github.event_name == 'merge_group' }}");
     const steps = (coverageShards.steps as unknown[]).map((step) =>
       asRecord(step, "coverage shard step")
     );
