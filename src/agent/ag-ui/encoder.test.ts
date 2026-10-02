@@ -526,6 +526,35 @@ describe("agent/ag-ui-encoder", () => {
     );
   });
 
+  it("keeps the provider verdict on a provider-executed result and classifies forwarded ones", () => {
+    const state = createAgUiEncoderState({ nowMs: null, epochMs: null });
+    const output = { error: "result metadata", answer: 42 };
+
+    assertEquals(
+      mapRuntimeStreamEventToAgUiEvents(state, {
+        type: "tool-output-available",
+        toolCallId: "tool-1",
+        output,
+        providerExecuted: true,
+      }),
+      [{
+        event: "ToolCallResult",
+        payload: { toolCallId: "tool-1", content: output, isError: false },
+      }],
+    );
+    assertEquals(
+      mapRuntimeStreamEventToAgUiEvents(state, {
+        type: "tool-output-available",
+        toolCallId: "tool-2",
+        output,
+      }),
+      [{
+        event: "ToolCallResult",
+        payload: { toolCallId: "tool-2", content: output, isError: true },
+      }],
+    );
+  });
+
   it("flags provider error and serialized error outputs as error results", () => {
     const state = createAgUiEncoderState({ nowMs: null, epochMs: null });
     const providerError = { type: "web_search_tool_result_error", error_code: "max_uses_exceeded" };
