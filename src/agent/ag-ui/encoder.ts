@@ -616,6 +616,8 @@ function completeToolInput(
 /**
  * Tool results carry the canonical `content` field. The value is passed through
  * unchanged, which is exactly what the API stores for a legacy `result` field.
+ * `isError` is always explicit: the API never defaults a missing flag to false,
+ * so an unflagged success would be served with `isError` unrecoverable.
  */
 function createToolResultEvent(
   toolCallId: unknown,
@@ -627,7 +629,7 @@ function createToolResultEvent(
     payload: {
       toolCallId,
       content,
-      ...(isError ? { isError: true } : {}),
+      isError,
     },
   };
 }

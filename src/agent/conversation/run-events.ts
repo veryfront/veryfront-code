@@ -372,6 +372,9 @@ export class ConversationRunEventEncoder {
           ...(this.toolInputs.has(chunk.toolCallId)
             ? { input: this.toolInputs.get(chunk.toolCallId) }
             : {}),
+          // The stream handler sends error-shaped outputs as tool-output-error, so this
+          // is a success. Say so: the API never defaults a missing isError to false.
+          isError: false,
         }];
         this.releaseToolCallState(chunk.toolCallId);
         return events;

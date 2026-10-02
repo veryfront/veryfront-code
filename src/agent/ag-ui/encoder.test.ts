@@ -112,7 +112,7 @@ describe("agent/ag-ui-encoder", () => {
       }),
       [{
         event: "ToolCallResult",
-        payload: { toolCallId: "tool-1", content: { ok: true } },
+        payload: { toolCallId: "tool-1", content: { ok: true }, isError: false },
       }],
     );
     assertEquals(
@@ -500,6 +500,7 @@ describe("agent/ag-ui-encoder", () => {
         payload: {
           toolCallId: "tool-provider",
           content: { type: "web_search_result", answer: "resident" },
+          isError: false,
         },
       }],
     );

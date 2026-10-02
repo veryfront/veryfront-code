@@ -54,6 +54,7 @@ describe("agent/conversation-run-events", () => {
         toolCallId: "tc-1",
         content: "ok",
         role: "tool",
+        isError: false,
       }],
     );
   });
@@ -71,6 +72,7 @@ describe("agent/conversation-run-events", () => {
           content: output,
           contentEncoding: "text",
           role: "tool",
+          isError: false,
         }],
       );
     }
@@ -91,6 +93,7 @@ describe("agent/conversation-run-events", () => {
         toolCallId: "tc-1",
         content: '{"ok":true}',
         role: "tool",
+        isError: false,
       }],
     );
   });
