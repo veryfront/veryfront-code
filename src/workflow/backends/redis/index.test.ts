@@ -3848,6 +3848,187 @@ describe("RedisBackend", () => {
       assertEquals(nodeStates?.other?.output, { keep: "output" });
     });
 
+    it("persists loop retry previous contexts without invoking a callable root toJSON", async () => {
+      let calls = 0;
+      const retryState = (phase: string) => ({
+        nodeId: "repeat",
+        status: "failed" as const,
+        attempt: 1,
+        _loopOutputRetry: {
+          iteration: 2,
+          previousResults: [
+            {
+              input: { phase },
+              toJSON: () => {
+                calls++;
+                return { corrupted: true };
+              },
+              sibling: { keep: `${phase}-callable` },
+            },
+            {
+              input: { phase },
+              toJSON: { keep: `${phase}-data` },
+              sibling: { keep: `${phase}-data-sibling` },
+            },
+          ],
+          context: { input: {} },
+          evaluationContext: { input: {} },
+          iterationNodeStates: {},
+        },
+      });
+      const expectedResults = (phase: string) => [
+        {
+          input: { phase },
+          sibling: { keep: `${phase}-callable` },
+        },
+        {
+          input: { phase },
+          toJSON: { keep: `${phase}-data` },
+          sibling: { keep: `${phase}-data-sibling` },
+        },
+      ];
+      const runId = "run-loop-retry-previous-results";
+      const runKey = `test:schema-v1:run:${runId}`;
+      const checkpointKey = `test:schema-v1:checkpoints:${runId}`;
+      const storedRunResults = () => {
+        const rawNodeStates = mockRedis.hashes.get(runKey)?.get("nodeStates");
+        assertExists(rawNodeStates);
+        return JSON.parse(rawNodeStates).repeat._loopOutputRetry.previousResults;
+      };
+      const readRunResults = async () => {
+        const reader = new RedisBackend({ client: mockRedis, prefix: "test:" });
+        const run = await reader.getRun(runId);
+        assertExists(run);
+        return run.nodeStates.repeat?._loopOutputRetry?.previousResults;
+      };
+
+      await backend.createRun(createTestRun(runId, {
+        nodeStates: { repeat: retryState("created") },
+      }));
+      assertEquals(calls, 0);
+      assertEquals(storedRunResults(), expectedResults("created"));
+      assertEquals(await readRunResults(), expectedResults("created"));
+      assertEquals(calls, 0);
+
+      await backend.updateRun(runId, {
+        nodeStates: { repeat: retryState("updated") },
+      });
+      assertEquals(calls, 0);
+      assertEquals(storedRunResults(), expectedResults("updated"));
+      assertEquals(await readRunResults(), expectedResults("updated"));
+      assertEquals(calls, 0);
+
+      await backend.saveCheckpoint(runId, {
+        id: "cp-loop-retry-previous-results",
+        nodeId: "repeat",
+        timestamp: new Date(1),
+        context: { input: {} },
+        nodeStates: { repeat: retryState("checkpointed") },
+      });
+      assertEquals(calls, 0);
+      const rawCheckpoint = mockRedis.lists.get(checkpointKey)?.at(-1);
+      assertExists(rawCheckpoint);
+      assertEquals(
+        JSON.parse(rawCheckpoint).nodeStates.repeat._loopOutputRetry.previousResults,
+        expectedResults("checkpointed"),
+      );
+      const checkpointReader = new RedisBackend({ client: mockRedis, prefix: "test:" });
+      assertEquals(
+        (await checkpointReader.getLatestCheckpoint(runId))?.nodeStates.repeat
+          ?._loopOutputRetry?.previousResults,
+        expectedResults("checkpointed"),
+      );
+      assertEquals(calls, 0);
+    });
+
+    it("strictly rejects callable loop retry previous contexts before Redis storage", async () => {
+      let calls = 0;
+      const retryState = () => ({
+        nodeId: "repeat",
+        status: "failed" as const,
+        attempt: 1,
+        _loopOutputRetry: {
+          iteration: 2,
+          previousResults: [
+            {
+              input: { iteration: 0 },
+              toJSON: () => {
+                calls++;
+                return { corrupted: true };
+              },
+              sibling: { keep: "first" },
+            },
+            {
+              input: { iteration: 1 },
+              toJSON: () => {
+                calls++;
+                return { corrupted: true };
+              },
+              sibling: { keep: "second" },
+            },
+          ],
+          context: { input: {} },
+          evaluationContext: { input: {} },
+          iterationNodeStates: {},
+        },
+      });
+      const strictBackend = new RedisBackend({
+        client: mockRedis as unknown as RedisAdapter,
+        prefix: "strict-loop-retry-results:",
+        strictContext: true,
+      });
+      const createRunId = "run-strict-loop-retry-results-create";
+
+      await assertRejects(
+        () =>
+          strictBackend.createRun(createTestRun(createRunId, {
+            nodeStates: { repeat: retryState() },
+          })),
+        Error,
+        "strictContext enabled: nodeStates._loopOutputRetry",
+      );
+      assertEquals(calls, 0);
+      assertEquals(
+        mockRedis.hashes.has(`strict-loop-retry-results:schema-v1:run:${createRunId}`),
+        false,
+      );
+
+      const writeRunId = "run-strict-loop-retry-results-write";
+      await strictBackend.createRun(createTestRun(writeRunId));
+      const runKey = `strict-loop-retry-results:schema-v1:run:${writeRunId}`;
+      const storedBeforeUpdate = mockRedis.hashes.get(runKey)?.get("nodeStates");
+      await assertRejects(
+        () =>
+          strictBackend.updateRun(writeRunId, {
+            nodeStates: { repeat: retryState() },
+          }),
+        Error,
+        "strictContext enabled: nodeStates._loopOutputRetry",
+      );
+      assertEquals(calls, 0);
+      assertEquals(mockRedis.hashes.get(runKey)?.get("nodeStates"), storedBeforeUpdate);
+
+      await assertRejects(
+        () =>
+          strictBackend.saveCheckpoint(writeRunId, {
+            id: "cp-strict-loop-retry-results",
+            nodeId: "repeat",
+            timestamp: new Date(1),
+            context: { input: {} },
+            nodeStates: { repeat: retryState() },
+          }),
+        Error,
+        "strictContext enabled: nodeStates._loopOutputRetry",
+      );
+      assertEquals(calls, 0);
+      assertEquals(
+        mockRedis.lists.has(
+          `strict-loop-retry-results:schema-v1:checkpoints:${writeRunId}`,
+        ),
+        false,
+      );
+    });
+
     it("rejects node-state user data JSON cannot encode, naming the field (#2242)", async () => {
       await backend.createRun(createTestRun("run-node-state-bigint"));
       await assertRejects(

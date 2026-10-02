@@ -1806,6 +1806,103 @@ describe("DAGExecutor", () => {
     });
   }
 
+  for (const detached of [false, true]) {
+    it(`persists two prior loop histories before fresh executor retry${detached ? " with JSON detachment" : ""}`, async () => {
+      let builds = 0;
+      let selections = 0;
+      let hookCalls = 0;
+      const executions: number[] = [];
+      const selected: unknown[] = [];
+      const nodes = [loop("repeat", {
+        maxIterations: 3,
+        while: () => true,
+        steps: [subWorkflow("child", {
+          workflow: {
+            id: "three-iteration-child",
+            steps: () => {
+              builds++;
+              return [step(builds <= 3 ? "effect" : "unadmitted", { tool: "effect" })];
+            },
+            output: (context) => {
+              if (++selections === 3) throw new Error("third iteration selector failed");
+              selected.push(context.effect);
+              return context.effect;
+            },
+          },
+          input: (context: WorkflowContext) => ({
+            iteration: (context._loop as { iteration: number }).iteration,
+          }),
+        })],
+      })];
+      const steps = new MockStepExecutor(new Map(), (_node, context) => {
+        const iteration = (context.input as { iteration: number }).iteration;
+        executions.push(iteration);
+        return { success: true, output: `effect-${iteration}`, executionTime: 0 };
+      });
+      const first = await new DAGExecutor({ stepExecutor: steps }).execute(nodes, createTestRun());
+      assertEquals(first.completed, false);
+      const retry = first.nodeStates.repeat?._loopOutputRetry as {
+        previousResults: WorkflowContext[];
+      };
+      assertExists(retry);
+      assertEquals(retry.previousResults.length, 2);
+      for (const prior of retry.previousResults) {
+        prior.toJSON = () => {
+          hookCalls++;
+          return { corrupted: true };
+        };
+      }
+      const backend = new MemoryBackend();
+      try {
+        await backend.createRun(createTestRun({
+          context: first.context,
+          nodeStates: first.nodeStates,
+        }));
+        assertEquals(hookCalls, 0);
+        await backend.updateRun("test-run", { nodeStates: first.nodeStates });
+        assertEquals(hookCalls, 0);
+        const stored = await backend.getRun("test-run");
+        assertExists(stored);
+        assertEquals(hookCalls, 0);
+        const storedRetry = stored.nodeStates.repeat?._loopOutputRetry as {
+          previousResults: WorkflowContext[];
+        };
+        assertEquals(storedRetry.previousResults.map((prior) => prior["repeat/child"]), [
+          "effect-0",
+          "effect-1",
+        ]);
+        const restored = detached ? JSON.parse(JSON.stringify(stored)) : stored;
+        const result = await new DAGExecutor({ stepExecutor: steps }).execute(nodes, restored);
+        assertEquals(result.completed, true);
+        assertEquals(hookCalls, 0);
+        assertEquals(builds, 3);
+        assertEquals(selections, 4);
+        assertEquals(executions, [0, 1, 2]);
+        assertEquals(selected, ["effect-0", "effect-1", "effect-2"]);
+        assertEquals(result.nodeStates.repeat?._loopOutputRetry, undefined);
+        assertEquals(result.context.repeat_loop_state, undefined);
+        assertEquals(result.nodeStates["repeat/effect"]?.status, "completed");
+        assertEquals(result.nodeStates["repeat/effect"]?.output, "effect-2");
+        const output = result.nodeStates.repeat?.output as { previousResults: WorkflowContext[] };
+        assertEquals(output.previousResults.map((prior) => prior["repeat/child"]), [
+          "effect-0",
+          "effect-1",
+          "effect-2",
+        ]);
+        const publicRun = toPublicWorkflowRun(createTestRun({
+          _runtimeStateVersion: WORKFLOW_RUNTIME_STATE_VERSION,
+          status: "completed",
+          context: result.context,
+          nodeStates: result.nodeStates,
+        }));
+        assertEquals(publicRun.nodeStates["repeat/effect"]?.output, "effect-2");
+        assertEquals(Object.hasOwn(publicRun.nodeStates.repeat!, "_loopOutputRetry"), false);
+      } finally {
+        await backend.destroy();
+      }
+    });
+  }
+
   it("rebuilds a retried dynamic loop iteration from the context its condition admitted", async () => {
     let selections = 0;
     const executions: string[] = [];

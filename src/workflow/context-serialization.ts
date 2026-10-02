@@ -1144,7 +1144,7 @@ export function collectWorkflowJsonRecords(
 }
 
 /** Read framework links without invoking getters or inherited hooks. */
-function ownDataValue(source: object, key: string): unknown {
+function ownDataValue(source: JsonTraversalReference, key: string): unknown {
   const descriptor = objectGetOwnPropertyDescriptor(source, key);
   return descriptor !== undefined && "value" in descriptor ? descriptor.value : undefined;
 }
@@ -1159,7 +1159,7 @@ function registerNodeStateRecords(
   records: WorkflowJsonRecords,
 ): void {
   if (!canIdentifyProxyWithoutHooks) return;
-  type RecordKind = "states" | "state" | "retry" | "context";
+  type RecordKind = "states" | "state" | "retry" | "context" | "prior-contexts";
   const pending: Array<readonly [unknown, RecordKind]> = [[nodeStates, "states"]];
   const visited = new WeakMapConstructor<object, Set<RecordKind>>();
   while (pending.length > 0) {
@@ -1167,7 +1167,7 @@ function registerNodeStateRecords(
     pending.length -= 1;
     if (typeof candidate !== "object" || candidate === null) continue;
     const source = (reflectApply(weakMapGet, deferredWorkflowJsonSources, [candidate]) ??
-      candidate) as object;
+      candidate) as JsonTraversalReference;
     if (isProxyWithoutHooks(source)) continue;
     let kinds = reflectApply(weakMapGet, visited, [source]) as Set<RecordKind> | undefined;
     if (kinds !== undefined && reflectApply(setHas, kinds, [kind])) continue;
@@ -1176,6 +1176,15 @@ function registerNodeStateRecords(
       reflectApply(weakMapSet, visited, [source, kinds]);
     }
     reflectApply(setAdd, kinds, [kind]);
+    if (kind === "prior-contexts") {
+      if (!arrayIsArray(source)) continue;
+      const length = ownDataValue(source, "length");
+      if (typeof length !== "number") continue;
+      for (let index = 0; index < length; index++) {
+        pending[pending.length] = [ownDataValue(source, `${index}`), "context"];
+      }
+      continue;
+    }
     reflectApply(weakMapSet, records, [source, WORKFLOW_NODE_RECORD]);
     switch (kind) {
       case "states":
@@ -1191,6 +1200,7 @@ function registerNodeStateRecords(
         pending[pending.length] = [ownDataValue(source, "context"), "context"];
         pending[pending.length] = [ownDataValue(source, "evaluationContext"), "context"];
         pending[pending.length] = [ownDataValue(source, "iterationNodeStates"), "states"];
+        pending[pending.length] = [ownDataValue(source, "previousResults"), "prior-contexts"];
         break;
     }
   }
