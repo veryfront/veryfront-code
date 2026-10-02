@@ -42,6 +42,10 @@ import {
 import { DEFAULT_MAX_BODY_SIZE_BYTES } from "#veryfront/utils/constants/index.ts";
 import { isWellFormedString } from "#veryfront/utils/is-well-formed-string.ts";
 import { isCanonicalOpaqueProjectIdentifier } from "#veryfront/utils/project-identity.ts";
+import {
+  INGRESS_API_TOKEN_HEADER,
+  readIngressCredential,
+} from "#veryfront/security/http/ingress-credentials.ts";
 
 export interface InternalControlPlaneSignatureLogger {
   warn: (msg: string, extra?: Record<string, unknown>) => void;
@@ -298,7 +302,7 @@ async function checkInternalControlPlaneSignature(
 
   // The candidate only matters when there is an x-token to use for metadata
   // lookup or forward after the resolved project binding succeeds.
-  if (!req.headers.get("x-token")) return "missing_x_token";
+  if (!readIngressCredential(req, INGRESS_API_TOKEN_HEADER)) return "missing_x_token";
 
   const publicKeyPem = getHostEnv(PUBLIC_KEY_ENV_VAR);
   if (!publicKeyPem) return "verification_key_not_configured";

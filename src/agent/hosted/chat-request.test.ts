@@ -24,6 +24,7 @@ import {
 } from "./chat-request.ts";
 import { createHostedRunEventWriterCapabilityForRequest } from "./child-run-event-writer-token.ts";
 import { createHostedInferenceModelResolver } from "./inference-credential.ts";
+import { sealIngressCredentials } from "#veryfront/security/http/ingress-credentials.ts";
 
 const conversationId = "10000000-1000-4000-8000-100000000001";
 const messageId = "10000000-1000-4000-8000-100000000002";
@@ -1901,6 +1902,39 @@ describe("agent/hosted-chat-request", () => {
     assertEquals(parsed.persistLatestUserMessageBeforeDurableRun, false);
   });
 
+  it("reads the run credentials the runtime took off the request at ingress", async () => {
+    const request = sealIngressCredentials(
+      new Request("https://agent.example.test/api/runs", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "X-Veryfront-Run-Event-Token": "run-event-service-token",
+          "X-Veryfront-Inference-Token": "run-scoped-inference-token",
+        },
+        body: JSON.stringify({
+          messages: [{ id: "m1", role: "user", parts: [{ type: "text", text: "Hello" }] }],
+          context: { conversationId, projectId, branchId },
+          durableRootRun: { runId: "run_root_1", messageId },
+        }),
+      }),
+    );
+    assertEquals(request.headers.get("X-Veryfront-Run-Event-Token"), null);
+    const verifiedRunEventTokens: string[] = [];
+
+    const parsed = await parseHostedChatRequestFromRequest(request, {
+      authenticate: () => Promise.resolve({ userId, authToken: "control-plane-token" }),
+      verifyProjectAccess: () => Promise.resolve({ success: true as const }),
+      verifyRunEventAppendToken: ({ token }) => {
+        verifiedRunEventTokens.push(token);
+        return Promise.resolve(true);
+      },
+    });
+    if (parsed instanceof Response) throw new Error("Expected parsed request");
+
+    assertEquals(verifiedRunEventTokens, ["run-event-service-token"]);
+    assertEquals(typeof createHostedInferenceModelResolver(parsed), "function");
+  });
+
   it("reads the default-chat inference header through captured intrinsics", async () => {
     const request = new Request("https://agent.example.test/api/runs", {
       method: "POST",
@@ -2451,6 +2485,77 @@ describe("agent/hosted-chat-request", () => {
         assertStringIncludes(await parsed.text(), "resumeToolCall");
       }
     }
+  });
+
+  it("rejects signed-null replay substitutions with overflowing nested JSON numbers", async () => {
+    for (
+      const [signedInput, rawInput] of [
+        [{ nested: { limit: null } }, '{"nested":{"limit":1e999}}'],
+        [{ nested: [null] }, '{"nested":[-1e999]}'],
+      ] as const
+    ) {
+      const signedCall = {
+        id: "call-overflow:resume-1",
+        name: "outlook__list_messages",
+        input: signedInput,
+      };
+      const body = JSON.stringify({
+        messages: [],
+        context: { conversationId, projectId, branchId },
+        durableRootRun: { runId: "run_root_1", messageId },
+        resumeToolCall: signedCall,
+      }).replace(JSON.stringify(signedInput), rawInput);
+      const parsed = await parseHostedChatRequestFromRequest(
+        new Request("https://agent.example.com/api/runs", {
+          method: "POST",
+          headers: { "X-Veryfront-Run-Event-Token": "verified-writer" },
+          body,
+        }),
+        {
+          authenticate: () => Promise.resolve({ userId, authToken: "user-api-token" }),
+          verifyProjectAccess: () => Promise.resolve({ success: true }),
+          verifyRunEventAppendToken: async () => ({
+            verified: true,
+            resumeToolCallSha256: await computeHash(JSON.stringify(signedCall)),
+          }),
+        },
+      );
+      if (!(parsed instanceof Response)) {
+        throw new Error("Expected rejected overflowing replay input");
+      }
+      assertEquals(parsed.status, 400);
+      assertEquals((await parsed.json()).errorCode, "VALIDATION_ERROR");
+    }
+  });
+
+  it("preserves signed null and finite nested replay inputs", async () => {
+    const signedCall = {
+      id: "call-finite:resume-1",
+      name: "outlook__list_messages",
+      input: { nested: { limit: null, max: 1e308 }, items: [null, -1e308, 0, 1.5] },
+    };
+    const parsed = await parseHostedChatRequestFromRequest(
+      new Request("https://agent.example.com/api/runs", {
+        method: "POST",
+        headers: { "X-Veryfront-Run-Event-Token": "verified-writer" },
+        body: JSON.stringify({
+          messages: [],
+          context: { conversationId, projectId, branchId },
+          durableRootRun: { runId: "run_root_1", messageId },
+          resumeToolCall: signedCall,
+        }),
+      }),
+      {
+        authenticate: () => Promise.resolve({ userId, authToken: "user-api-token" }),
+        verifyProjectAccess: () => Promise.resolve({ success: true }),
+        verifyRunEventAppendToken: async () => ({
+          verified: true,
+          resumeToolCallSha256: await computeHash(JSON.stringify(signedCall)),
+        }),
+      },
+    );
+    if (parsed instanceof Response) throw new Error(`Unexpected response ${parsed.status}`);
+    assertEquals(parsed.serverResolvedResumeToolCall, signedCall);
   });
 
   it("does not treat inherited or accessor verifier digests as signed replay authority", async () => {

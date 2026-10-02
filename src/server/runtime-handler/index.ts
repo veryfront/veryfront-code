@@ -21,6 +21,10 @@ import {
   snapshotInstalledProjectHttpBinding,
 } from "./installed-project.ts";
 import { inheritRequestPeerProvenance } from "#veryfront/platform/adapters/runtime/shared/request-peer.ts";
+import {
+  inheritIngressCredentials,
+  sealIngressCredentials,
+} from "#veryfront/security/http/ingress-credentials.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
 import { getConfig } from "#veryfront/config/loader.ts";
 import {
@@ -547,7 +551,11 @@ export function createVeryfrontHandler(
     logger.debug("Running in proxy mode - lazy initialization enabled");
   }
 
-  const handler = async (req: Request): Promise<Response> => {
+  const handler = async (incoming: Request): Promise<Response> => {
+    // First, before any header read: project code sharing this isolate may
+    // have replaced Headers.prototype methods, and every later read on a
+    // request that still carries run credentials would expose them.
+    const req = sealIngressCredentials(incoming);
     const url = new URL(req.url);
     // Stop admission before project resolution can load more tenant code.
     // Existing response bodies keep draining; kubelet probes remain reachable.
@@ -1052,13 +1060,16 @@ export function createVeryfrontHandler(
             // closes with an unexpected EOF.
             const timeoutRequest = isHMRWebSocketUpgrade(req, url.pathname)
               ? req
-              : inheritRequestPeerProvenance(
+              : inheritIngressCredentials(
                 req,
-                new Request(req, {
-                  // The timeout manager detaches its parent listener when headers
-                  // arrive. Hosted executor streams still own the inbound abort.
-                  signal: hostedHttp ? AbortSignal.any([req.signal, signal]) : signal,
-                }),
+                inheritRequestPeerProvenance(
+                  req,
+                  new Request(req, {
+                    // The timeout manager detaches its parent listener when headers
+                    // arrive. Hosted executor streams still own the inbound abort.
+                    signal: hostedHttp ? AbortSignal.any([req.signal, signal]) : signal,
+                  }),
+                ),
               );
             return runWithRequestProfiling(
               {

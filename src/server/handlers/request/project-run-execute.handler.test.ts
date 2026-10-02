@@ -59,6 +59,7 @@ import { createProjectRunInferenceModelResolver } from "#veryfront/agent/runtime
 import { stop as stopEsbuild } from "veryfront/extensions/bundler";
 import * as otelApi from "npm:@opentelemetry/api@1.9.1";
 import { AsyncLocalStorageContextManager } from "npm:@opentelemetry/context-async-hooks@2.9.0";
+import { sealIngressCredentials } from "#veryfront/security/http/ingress-credentials.ts";
 import {
   BasicTracerProvider,
   InMemorySpanExporter,
@@ -6971,6 +6972,40 @@ describe("project run inference credential header", () => {
       assertEquals(lines.some((line) => line.includes(INFERENCE_TOKEN)), false);
     });
   }
+
+  it("reads both run credentials from a request the runtime sealed at ingress", async () => {
+    let receivedAuthToken: string | undefined;
+    let resolverInScope: boolean | undefined;
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      runTask: runTaskDefinition,
+      createEvalAgentAdapter: (config) => {
+        receivedAuthToken = config.authToken;
+        resolverInScope = createProjectRunInferenceModelResolver() !== undefined;
+        return async () => ({ text: "Paris" });
+      },
+    }));
+    const { request, publicKeyPem } = await signedRequest(
+      "/api/control-plane/runs/run_eval_sealed/execute",
+      {
+        runId: "run_eval_sealed",
+        kind: "task",
+        target: "task:eval",
+        projectId: "proj-1",
+        config: { eval_id: "eval:deep-research", agent_id: "researcher" },
+      },
+      { "x-token": "project-runtime-token", "X-Veryfront-Inference-Token": INFERENCE_TOKEN },
+    );
+    const sealed = sealIngressCredentials(request);
+    assertEquals(sealed.headers.get("x-token"), null);
+    assertEquals(sealed.headers.get("X-Veryfront-Inference-Token"), null);
+
+    const result = await handler.handle(sealed, createCtx(publicKeyPem));
+
+    assertExists(result.response);
+    assertEquals(result.response.status, 200, JSON.stringify(await result.response.json()));
+    assertEquals(receivedAuthToken, "project-runtime-token");
+    assertEquals(resolverInScope, true);
+  });
 
   it("keeps the credential out of reach of eval project code that patches Headers.get", async () => {
     const seen: unknown[] = [];
