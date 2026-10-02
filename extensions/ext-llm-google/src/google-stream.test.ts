@@ -14,6 +14,11 @@ import {
   MAX_GOOGLE_PROVIDER_METADATA_BYTES,
   readGoogleRawAssistantReplay,
 } from "./google-thought-signatures.ts";
+import {
+  FIXED_GOOGLE_ANONYMOUS_ID_NONCE,
+  fixedAnonymousToolCallId,
+  withFixedGoogleAnonymousIdNonce,
+} from "./google-anonymous-id.test-helpers.ts";
 
 function streamFromText(text: string): ReadableStream<Uint8Array> {
   const encoder = new TextEncoder();
@@ -396,151 +401,159 @@ describe("ext-llm-google/google-stream", () => {
     ]);
   });
 
-  it("keeps anonymous function ids stable from stream output through exact continuation replay", async () => {
-    const signedThought = {
-      text: "Think",
-      thought: true,
-      thoughtSignature: "thought-signature",
-    };
-    const anonymousFunctionCall = {
-      functionCall: {
-        name: "lookup",
-        args: { city: "Paris" },
-      },
-    };
-    const executableCode = {
-      executableCode: {
-        id: "tool-2",
-        language: "PYTHON",
-        code: "print('ok')",
-      },
-    };
-    const executionResult = {
-      codeExecutionResult: {
-        id: "tool-2",
-        outcome: "OUTCOME_OK",
-        output: "ok\n",
-      },
-    };
-    const rawAssistantParts = [
-      signedThought,
-      anonymousFunctionCall,
-      executableCode,
-      executionResult,
-    ];
-    const parts = await collectParts(streamFromText([
-      data({
-        candidates: [{
-          content: { role: "model", parts: rawAssistantParts },
-          finishReason: "STOP",
-        }],
-      }),
-      "data: [DONE]\r\n\r\n",
-    ].join("")));
-
-    assertEquals(
-      parts.filter((part) =>
-        typeof part === "object" &&
-        part !== null &&
-        "type" in part &&
-        part.type === "tool-call"
-      ),
-      [{
-        type: "tool-call",
-        toolCallId: "tool-1",
-        toolName: "lookup",
-        input: '{"city":"Paris"}',
-      }, {
-        type: "tool-call",
-        toolCallId: "tool-2",
-        toolName: "code_execution",
-        input: '{"language":"PYTHON","code":"print(\'ok\')"}',
-        providerExecuted: true,
-      }],
-    );
-    assertEquals(parts.at(-1), {
-      type: "finish",
-      finishReason: { unified: "tool-calls", raw: "STOP" },
-      providerMetadata: {
-        google: { rawAssistantParts },
-      },
-    });
-
-    const continuation = buildGoogleGenerateContentRequest(
-      "google",
-      {
-        prompt: [{
-          role: "assistant",
-          content: [{
-            type: "reasoning",
-            text: "Think",
-          }, {
-            type: "tool-call",
-            toolCallId: "tool-1",
-            toolName: "lookup",
-            input: { city: "Paris" },
-          }, {
-            type: "tool-call",
-            toolCallId: "tool-2",
-            toolName: "code_execution",
-            input: { language: "PYTHON", code: "print('ok')" },
-            providerExecuted: true,
-          }, {
-            type: "tool-result",
-            toolCallId: "tool-2",
-            toolName: "code_execution",
-            result: { outcome: "OUTCOME_OK", output: "ok\n" },
-            providerExecuted: true,
+  it("keeps anonymous function ids stable from stream output through exact continuation replay", () =>
+    withFixedGoogleAnonymousIdNonce(async () => {
+      const signedThought = {
+        text: "Think",
+        thought: true,
+        thoughtSignature: "thought-signature",
+      };
+      const anonymousFunctionCall = {
+        functionCall: {
+          name: "lookup",
+          args: { city: "Paris" },
+        },
+      };
+      const executableCode = {
+        executableCode: {
+          id: "tool-2",
+          language: "PYTHON",
+          code: "print('ok')",
+        },
+      };
+      const executionResult = {
+        codeExecutionResult: {
+          id: "tool-2",
+          outcome: "OUTCOME_OK",
+          output: "ok\n",
+        },
+      };
+      const rawAssistantParts = [
+        signedThought,
+        anonymousFunctionCall,
+        executableCode,
+        executionResult,
+      ];
+      const parts = await collectParts(streamFromText([
+        data({
+          candidates: [{
+            content: { role: "model", parts: rawAssistantParts },
+            finishReason: "STOP",
           }],
-          providerMetadata: {
-            google: { rawAssistantParts },
+        }),
+        "data: [DONE]\r\n\r\n",
+      ].join("")));
+
+      assertEquals(
+        parts.filter((part) =>
+          typeof part === "object" &&
+          part !== null &&
+          "type" in part &&
+          part.type === "tool-call"
+        ),
+        [{
+          type: "tool-call",
+          toolCallId: fixedAnonymousToolCallId(1),
+          toolName: "lookup",
+          input: '{"city":"Paris"}',
+        }, {
+          type: "tool-call",
+          toolCallId: "tool-2",
+          toolName: "code_execution",
+          input: '{"language":"PYTHON","code":"print(\'ok\')"}',
+          providerExecuted: true,
+        }],
+      );
+      assertEquals(parts.at(-1), {
+        type: "finish",
+        finishReason: { unified: "tool-calls", raw: "STOP" },
+        providerMetadata: {
+          google: {
+            rawAssistantParts,
+            anonymousToolCallIdNonce: FIXED_GOOGLE_ANONYMOUS_ID_NONCE,
           },
+        },
+      });
+
+      const continuation = buildGoogleGenerateContentRequest(
+        "google",
+        {
+          prompt: [{
+            role: "assistant",
+            content: [{
+              type: "reasoning",
+              text: "Think",
+            }, {
+              type: "tool-call",
+              toolCallId: fixedAnonymousToolCallId(1),
+              toolName: "lookup",
+              input: { city: "Paris" },
+            }, {
+              type: "tool-call",
+              toolCallId: "tool-2",
+              toolName: "code_execution",
+              input: { language: "PYTHON", code: "print('ok')" },
+              providerExecuted: true,
+            }, {
+              type: "tool-result",
+              toolCallId: "tool-2",
+              toolName: "code_execution",
+              result: { outcome: "OUTCOME_OK", output: "ok\n" },
+              providerExecuted: true,
+            }],
+            providerMetadata: {
+              google: {
+                rawAssistantParts,
+                anonymousToolCallIdNonce: FIXED_GOOGLE_ANONYMOUS_ID_NONCE,
+              },
+            },
+          }],
+        },
+        createWarningCollector(),
+      );
+
+      assertEquals(continuation.contents, [{
+        role: "model",
+        parts: rawAssistantParts,
+      }]);
+    }));
+
+  it("coalesces replayed anonymous function calls by candidate position", () =>
+    withFixedGoogleAnonymousIdNonce(async () => {
+      const functionCall = {
+        functionCall: {
+          name: "lookup",
+          args: { city: "Paris" },
+        },
+      };
+      const parts = await collectParts(streamFromText([
+        data({
+          candidates: [{ content: { role: "model", parts: [functionCall] } }],
+        }),
+        data({
+          candidates: [{
+            content: { role: "model", parts: [functionCall] },
+            finishReason: "STOP",
+          }],
+        }),
+        "data: [DONE]\r\n\r\n",
+      ].join("")));
+
+      assertEquals(
+        parts.filter((part) =>
+          typeof part === "object" &&
+          part !== null &&
+          "type" in part &&
+          part.type === "tool-call"
+        ),
+        [{
+          type: "tool-call",
+          toolCallId: fixedAnonymousToolCallId(0),
+          toolName: "lookup",
+          input: '{"city":"Paris"}',
         }],
-      },
-      createWarningCollector(),
-    );
-
-    assertEquals(continuation.contents, [{
-      role: "model",
-      parts: rawAssistantParts,
-    }]);
-  });
-
-  it("coalesces replayed anonymous function calls by candidate position", async () => {
-    const functionCall = {
-      functionCall: {
-        name: "lookup",
-        args: { city: "Paris" },
-      },
-    };
-    const parts = await collectParts(streamFromText([
-      data({
-        candidates: [{ content: { role: "model", parts: [functionCall] } }],
-      }),
-      data({
-        candidates: [{
-          content: { role: "model", parts: [functionCall] },
-          finishReason: "STOP",
-        }],
-      }),
-      "data: [DONE]\r\n\r\n",
-    ].join("")));
-
-    assertEquals(
-      parts.filter((part) =>
-        typeof part === "object" &&
-        part !== null &&
-        "type" in part &&
-        part.type === "tool-call"
-      ),
-      [{
-        type: "tool-call",
-        toolCallId: "tool-0",
-        toolName: "lookup",
-        input: '{"city":"Paris"}',
-      }],
-    );
-  });
+      );
+    }));
 
   it("coalesces replayed anonymous code execution pairs by candidate position", async () => {
     const executableCode = {
@@ -645,37 +658,38 @@ describe("ext-llm-google/google-stream", () => {
     ]);
   });
 
-  it("rejects a provider id that collides with an anonymous raw-position id", async () => {
-    await assertRejects(
-      () =>
-        collectParts(streamFromText(data({
-          candidates: [{
-            content: {
-              role: "model",
-              parts: [{
-                text: "Think",
-                thought: true,
-                thoughtSignature: "thought-signature",
-              }, {
-                functionCall: {
-                  name: "lookup",
-                  args: { city: "Paris" },
-                },
-              }, {
-                executableCode: {
-                  id: "tool-1",
-                  language: "PYTHON",
-                  code: "print('collision')",
-                },
-              }],
-            },
-            finishReason: "STOP",
-          }],
-        }))),
-      ProviderRequestError,
-      "candidate executable code id was duplicated",
-    );
-  });
+  it("rejects a provider id that collides with an anonymous raw-position id", () =>
+    withFixedGoogleAnonymousIdNonce(async () => {
+      await assertRejects(
+        () =>
+          collectParts(streamFromText(data({
+            candidates: [{
+              content: {
+                role: "model",
+                parts: [{
+                  text: "Think",
+                  thought: true,
+                  thoughtSignature: "thought-signature",
+                }, {
+                  functionCall: {
+                    name: "lookup",
+                    args: { city: "Paris" },
+                  },
+                }, {
+                  executableCode: {
+                    id: fixedAnonymousToolCallId(1),
+                    language: "PYTHON",
+                    code: "print('collision')",
+                  },
+                }],
+              },
+              finishReason: "STOP",
+            }],
+          }))),
+        ProviderRequestError,
+        "candidate executable code id was duplicated",
+      );
+    }));
 
   it("retains an empty final text part carrying a thought signature", async () => {
     const visibleText = { text: "Answer." };
@@ -1295,58 +1309,60 @@ describe("ext-llm-google/google-stream", () => {
     );
   });
 
-  it("keeps fallback tool-call ids stable when text chunks merge", async () => {
-    const parts = await collectParts(streamFromText([
-      data({ candidates: [{ content: { parts: [{ text: "a" }] } }] }),
-      data({ candidates: [{ content: { parts: [{ text: "b" }] } }] }),
-      data({
-        candidates: [{ content: { parts: [{ functionCall: { name: "lookup", args: {} } }] } }],
-      }),
-      data({
-        candidates: [{
-          content: { parts: [{ functionCall: { id: "tool-1", name: "lookup", args: {} } }] },
-        }],
-      }),
-      data({ candidates: [{ finishReason: "STOP" }] }),
-      "data: [DONE]\r\n\r\n",
-    ].join("")));
+  it("keeps fallback tool-call ids stable when text chunks merge", () =>
+    withFixedGoogleAnonymousIdNonce(async () => {
+      const parts = await collectParts(streamFromText([
+        data({ candidates: [{ content: { parts: [{ text: "a" }] } }] }),
+        data({ candidates: [{ content: { parts: [{ text: "b" }] } }] }),
+        data({
+          candidates: [{ content: { parts: [{ functionCall: { name: "lookup", args: {} } }] } }],
+        }),
+        data({
+          candidates: [{
+            content: { parts: [{ functionCall: { id: "tool-1", name: "lookup", args: {} } }] },
+          }],
+        }),
+        data({ candidates: [{ finishReason: "STOP" }] }),
+        "data: [DONE]\r\n\r\n",
+      ].join("")));
 
-    assertEquals(
-      parts
-        .filter((part) => (part as { type?: string }).type === "tool-call")
-        .map((part) => (part as { toolCallId: string }).toolCallId),
-      ["tool-2", "tool-1"],
-    );
-  });
+      assertEquals(
+        parts
+          .filter((part) => (part as { type?: string }).type === "tool-call")
+          .map((part) => (part as { toolCallId: string }).toolCallId),
+        [fixedAnonymousToolCallId(2), "tool-1"],
+      );
+    }));
 
-  it("replays original part positions after a long merged text run", async () => {
-    const LONG_STREAM_CHUNKS = 20_000;
-    const parts = await collectParts(streamFromText([
-      data({
-        candidates: [{
-          content: { parts: [{ text: "", thought: true, thoughtSignature: "c2ln" }] },
-        }],
-      }),
-      ...Array.from(
-        { length: LONG_STREAM_CHUNKS },
-        () => data({ candidates: [{ content: { parts: [{ text: "x" }] } }] }),
-      ),
-      data({
-        candidates: [{ content: { parts: [{ functionCall: { name: "lookup", args: {} } }] } }],
-      }),
-      data({ candidates: [{ finishReason: "STOP" }] }),
-      "data: [DONE]\r\n\r\n",
-    ].join("")));
+  it("replays original part positions after a long merged text run", () =>
+    withFixedGoogleAnonymousIdNonce(async () => {
+      const LONG_STREAM_CHUNKS = 20_000;
+      const parts = await collectParts(streamFromText([
+        data({
+          candidates: [{
+            content: { parts: [{ text: "", thought: true, thoughtSignature: "c2ln" }] },
+          }],
+        }),
+        ...Array.from(
+          { length: LONG_STREAM_CHUNKS },
+          () => data({ candidates: [{ content: { parts: [{ text: "x" }] } }] }),
+        ),
+        data({
+          candidates: [{ content: { parts: [{ functionCall: { name: "lookup", args: {} } }] } }],
+        }),
+        data({ candidates: [{ finishReason: "STOP" }] }),
+        "data: [DONE]\r\n\r\n",
+      ].join("")));
 
-    const toolCall = parts.find((part) => (part as { type?: string }).type === "tool-call") as {
-      toolCallId: string;
-    };
-    assertEquals(toolCall.toolCallId, `tool-${LONG_STREAM_CHUNKS + 1}`);
-    const finish = parts.at(-1) as { providerMetadata?: Record<string, unknown> };
-    const replay = readGoogleRawAssistantReplay(finish.providerMetadata);
-    assertEquals(replay?.partIndexes, [0, 1, LONG_STREAM_CHUNKS + 1]);
-    assertEquals(replay?.parts.length, 3);
-  });
+      const toolCall = parts.find((part) => (part as { type?: string }).type === "tool-call") as {
+        toolCallId: string;
+      };
+      assertEquals(toolCall.toolCallId, fixedAnonymousToolCallId(LONG_STREAM_CHUNKS + 1));
+      const finish = parts.at(-1) as { providerMetadata?: Record<string, unknown> };
+      const replay = readGoogleRawAssistantReplay(finish.providerMetadata);
+      assertEquals(replay?.partIndexes, [0, 1, LONG_STREAM_CHUNKS + 1]);
+      assertEquals(replay?.parts.length, 3);
+    }));
 
   it("charges merged text by its escaped JSON size", async () => {
     // Each control character is one UTF-8 byte but six bytes once escaped.

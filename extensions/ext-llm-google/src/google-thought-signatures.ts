@@ -6,6 +6,7 @@ import {
 import {
   createGoogleToolCallCorrelationRegistry,
   type GoogleSupportedPartDataField,
+  isGoogleAnonymousToolCallIdNonce,
   readGoogleCodeExecutionResult,
   readGoogleExecutableCode,
   readGooglePartDataField,
@@ -14,6 +15,7 @@ import {
 const GOOGLE_METADATA_KEY = "google";
 const RAW_ASSISTANT_PARTS_KEY = "rawAssistantParts";
 const RAW_ASSISTANT_PART_INDEXES_KEY = "rawAssistantPartIndexes";
+const ANONYMOUS_TOOL_CALL_ID_NONCE_KEY = "anonymousToolCallIdNonce";
 const GROUNDING_METADATA_KEY = "groundingMetadata";
 /**
  * Maximum raw assistant parts retained for replay. Part indexes record each
@@ -100,6 +102,35 @@ function readGoogleRawPartsValue(
 function readGoogleRawPartIndexesValue(
   googleMetadata: unknown,
 ): unknown {
+  return readGoogleMetadataDataProperty(
+    googleMetadata,
+    RAW_ASSISTANT_PART_INDEXES_KEY,
+    "Google raw assistant part indexes must be an enumerable data property",
+  );
+}
+
+function readGoogleAnonymousToolCallIdNonceValue(
+  googleMetadata: unknown,
+): string | undefined {
+  const value = readGoogleMetadataDataProperty(
+    googleMetadata,
+    ANONYMOUS_TOOL_CALL_ID_NONCE_KEY,
+    "Google anonymous tool call id nonce must be an enumerable data property",
+  );
+  if (value === undefined) {
+    return undefined;
+  }
+  if (!isGoogleAnonymousToolCallIdNonce(value)) {
+    throw new TypeError("Google anonymous tool call id nonce was malformed");
+  }
+  return value;
+}
+
+function readGoogleMetadataDataProperty(
+  googleMetadata: unknown,
+  key: string,
+  invalidDescriptorMessage: string,
+): unknown {
   if (
     googleMetadata === null ||
     typeof googleMetadata !== "object" ||
@@ -111,7 +142,7 @@ function readGoogleRawPartIndexesValue(
   try {
     descriptor = Object.getOwnPropertyDescriptor(
       googleMetadata,
-      RAW_ASSISTANT_PART_INDEXES_KEY,
+      key,
     );
   } catch {
     throw new TypeError("Google provider metadata could not be inspected");
@@ -123,9 +154,7 @@ function readGoogleRawPartIndexesValue(
     descriptor.enumerable !== true ||
     !Object.hasOwn(descriptor, "value")
   ) {
-    throw new TypeError(
-      "Google raw assistant part indexes must be an enumerable data property",
-    );
+    throw new TypeError(invalidDescriptorMessage);
   }
   return descriptor.value;
 }
@@ -271,11 +300,27 @@ export function readGoogleThoughtSignature(
   return signature;
 }
 
+function hasAnonymousGoogleFunctionCall(
+  parts: readonly Record<string, unknown>[],
+): boolean {
+  return parts.some((part) => {
+    const functionCall = readRecord(part.functionCall);
+    return functionCall !== undefined && typeof functionCall.id !== "string";
+  });
+}
+
 export function createGoogleProviderMetadata(
   parts: Array<Record<string, unknown>>,
   groundingMetadata?: Record<string, unknown>,
   rawAssistantPartIndexes?: readonly number[],
+  anonymousToolCallIdNonce?: string,
 ): Record<string, unknown> | undefined {
+  if (
+    anonymousToolCallIdNonce !== undefined &&
+    !isGoogleAnonymousToolCallIdNonce(anonymousToolCallIdNonce)
+  ) {
+    throw new TypeError("Google anonymous tool call id nonce was malformed");
+  }
   const needsExactReplay = needsGoogleExactReplay(parts);
   if (!needsExactReplay && groundingMetadata === undefined) {
     return undefined;
@@ -300,6 +345,7 @@ export function createGoogleProviderMetadata(
     ownedParts = validateGoogleRawAssistantParts(
       partsSnapshot as readonly JsonSnapshotValue[],
       ownedPartIndexes,
+      anonymousToolCallIdNonce,
     );
     rawAssistantPartIndexes = ownedPartIndexes;
   }
@@ -309,6 +355,12 @@ export function createGoogleProviderMetadata(
       ...(needsExactReplay ? { [RAW_ASSISTANT_PARTS_KEY]: ownedParts } : {}),
       ...(needsExactReplay && rawAssistantPartIndexes !== undefined
         ? { [RAW_ASSISTANT_PART_INDEXES_KEY]: rawAssistantPartIndexes }
+        : {}),
+      // Replay must re-derive the ids this response's id-less function calls
+      // were given, so the nonce travels with the exact raw parts.
+      ...(anonymousToolCallIdNonce !== undefined && ownedParts !== undefined &&
+          hasAnonymousGoogleFunctionCall(ownedParts)
+        ? { [ANONYMOUS_TOOL_CALL_ID_NONCE_KEY]: anonymousToolCallIdNonce }
         : {}),
       ...(groundingMetadata !== undefined ? { [GROUNDING_METADATA_KEY]: groundingMetadata } : {}),
     },
@@ -323,6 +375,7 @@ export function createGoogleProviderMetadata(
 function validateGoogleRawAssistantParts(
   rawParts: readonly JsonSnapshotValue[],
   rawPartIndexes?: readonly number[],
+  anonymousToolCallIdNonce?: string,
 ): readonly Record<string, unknown>[] {
   if (rawParts.length === 0) {
     throw new TypeError("Google raw assistant parts must be a non-empty array");
@@ -335,7 +388,7 @@ function validateGoogleRawAssistantParts(
 
   let hasThoughtSignature = false;
   let hasCodeExecution = false;
-  const toolCallRegistry = createGoogleToolCallCorrelationRegistry();
+  const toolCallRegistry = createGoogleToolCallCorrelationRegistry(anonymousToolCallIdNonce);
   for (let partIndex = 0; partIndex < rawParts.length; partIndex += 1) {
     const rawPart = rawParts[partIndex];
     if (rawPart === undefined) {
@@ -423,6 +476,8 @@ function validateGoogleRawAssistantPartIndexes(
 export type GoogleRawAssistantReplay = {
   parts: readonly Record<string, unknown>[];
   partIndexes: readonly number[];
+  /** Absent for histories persisted before id-less calls carried a nonce. */
+  anonymousToolCallIdNonce?: string;
 };
 
 export function readGoogleRawAssistantReplay(
@@ -437,9 +492,13 @@ export function readGoogleRawAssistantReplay(
   }
   const rawParts = readGoogleRawPartsValue(rawGoogleMetadata);
   const rawPartIndexes = readGoogleRawPartIndexesValue(rawGoogleMetadata);
+  const anonymousToolCallIdNonce = readGoogleAnonymousToolCallIdNonceValue(rawGoogleMetadata);
   if (rawParts === undefined) {
     if (rawPartIndexes !== undefined) {
       throw new TypeError("Google raw assistant part indexes require raw parts");
+    }
+    if (anonymousToolCallIdNonce !== undefined) {
+      throw new TypeError("Google anonymous tool call id nonce requires raw parts");
     }
     return undefined;
   }
@@ -457,8 +516,10 @@ export function readGoogleRawAssistantReplay(
     parts: validateGoogleRawAssistantParts(
       rawPartsSnapshot as readonly JsonSnapshotValue[],
       partIndexes,
+      anonymousToolCallIdNonce,
     ),
     partIndexes,
+    ...(anonymousToolCallIdNonce !== undefined ? { anonymousToolCallIdNonce } : {}),
   };
 }
 
@@ -484,13 +545,13 @@ export function reconcileGoogleProviderMetadata(
   if (replay === undefined) {
     return providerMetadata;
   }
-  const { partIndexes, parts: rawAssistantParts } = replay;
+  const { anonymousToolCallIdNonce, partIndexes, parts: rawAssistantParts } = replay;
 
   const suppressedIds = new Set(suppressedToolCalls.map((toolCall) => toolCall.id));
   const matchedSuppressedIds = new Set<string>();
   const retainedParts: Record<string, unknown>[] = [];
   const retainedPartIndexes: number[] = [];
-  const registry = createGoogleToolCallCorrelationRegistry();
+  const registry = createGoogleToolCallCorrelationRegistry(anonymousToolCallIdNonce);
   let retainedToolPart = false;
 
   for (let partIndex = 0; partIndex < rawAssistantParts.length; partIndex += 1) {
@@ -537,6 +598,7 @@ export function reconcileGoogleProviderMetadata(
     retainedParts,
     undefined,
     retainedPartIndexes,
+    anonymousToolCallIdNonce,
   );
   if (reconciled === undefined && retainedToolPart) {
     throw new TypeError(

@@ -303,15 +303,6 @@ export function createAgUiRuntimeChatStreamEncoder(
     });
   };
 
-  // A settled call frees its id. Providers without call ids (Gemini 2.5:
-  // `tool-<partIndex>` per response) reuse one in a later step, and that new
-  // call must be announced with its own tool-input-start.
-  const settleToolCall = (toolCallId: string) => {
-    emittedToolInputStartIds.delete(toolCallId);
-    toolParts.delete(toolCallId);
-    pendingToolDeltas.delete(toolCallId);
-  };
-
   const flushPendingToolDeltas = (toolCallId: string): ChatStreamEvent[] => {
     const pending = pendingToolDeltas.get(toolCallId);
     if (!pending) {
@@ -537,9 +528,6 @@ export function createAgUiRuntimeChatStreamEncoder(
             return events;
           }
           const providerExecuted = getBooleanField(event, "providerExecuted");
-          if (event.preliminary !== true) {
-            settleToolCall(toolCallId);
-          }
           events.push({
             type: "tool-output-available",
             toolCallId,
@@ -556,7 +544,6 @@ export function createAgUiRuntimeChatStreamEncoder(
           }
           const errorText = getStringField(event, "errorText") ?? "Tool execution failed";
           const providerExecuted = getBooleanField(event, "providerExecuted");
-          settleToolCall(toolCallId);
           events.push({
             type: "tool-output-error",
             toolCallId,

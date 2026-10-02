@@ -42,6 +42,7 @@ import {
   type OpenAICompatibleLanguageOptions,
 } from "./google-request-builder.ts";
 import {
+  createGoogleAnonymousToolCallIdNonce,
   createGoogleToolCallCorrelationRegistry,
   GOOGLE_CODE_EXECUTION_TOOL_NAME,
   googleCodeExecutionInput,
@@ -297,7 +298,10 @@ function buildGoogleGenerateResult(
       providerExecuted: true;
     }
   > = [];
-  const toolCallRegistry = createGoogleToolCallCorrelationRegistry();
+  // One nonce per model response keeps id-less calls unique across the steps
+  // of an agent run; replay metadata carries it so history re-derives the ids.
+  const anonymousToolCallIdNonce = createGoogleAnonymousToolCallIdNonce();
+  const toolCallRegistry = createGoogleToolCallCorrelationRegistry(anonymousToolCallIdNonce);
 
   for (const [index, part] of parts.entries()) {
     let thoughtSignature: string | undefined;
@@ -461,7 +465,12 @@ function buildGoogleGenerateResult(
   const usage = sanitizeRuntimeUsage(extractGoogleUsage(payload));
   let providerMetadata: Record<string, unknown> | undefined;
   try {
-    providerMetadata = createGoogleProviderMetadata(parts, groundingMetadata);
+    providerMetadata = createGoogleProviderMetadata(
+      parts,
+      groundingMetadata,
+      undefined,
+      anonymousToolCallIdNonce,
+    );
   } catch {
     throw invalidGoogleResponse(
       context,

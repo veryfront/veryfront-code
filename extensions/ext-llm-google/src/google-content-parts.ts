@@ -48,14 +48,46 @@ export type GoogleToolCallCorrelationRegistry = {
   assertSettled(): void;
 };
 
+const GOOGLE_ANONYMOUS_TOOL_CALL_ID_NONCE_PATTERN = /^[0-9a-f]{16}$/;
+
+/**
+ * Creates the per-response nonce that makes id-less Gemini function calls
+ * unique across an agent run.
+ *
+ * Gemini 2.5 returns function calls without ids. A position-only fallback
+ * (`tool-<partIndex>`) repeats in every model response, so a later step's call
+ * would reuse an earlier step's id and consumers keyed by tool call id would
+ * merge or drop it.
+ */
+export function createGoogleAnonymousToolCallIdNonce(): string {
+  const bytes = crypto.getRandomValues(new Uint8Array(8));
+  return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+export function isGoogleAnonymousToolCallIdNonce(value: unknown): value is string {
+  return typeof value === "string" && GOOGLE_ANONYMOUS_TOOL_CALL_ID_NONCE_PATTERN.test(value);
+}
+
 /**
  * Owns Gemini's tool-call id allocation and code-execution pairing rules.
  *
  * The response normalizer and exact-replay validator must derive identical
- * ids for anonymous code execution. Keeping the allocator here prevents those
- * two protocol boundaries from drifting independently.
+ * ids for anonymous calls and code execution. Keeping the allocator here
+ * prevents those two protocol boundaries from drifting independently.
+ *
+ * Provider-supplied function call ids are used unchanged. An id-less function
+ * call gets `tool-<partIndex>-<nonce>` when the response's nonce is known, and
+ * the legacy `tool-<partIndex>` only for histories persisted without one.
  */
-export function createGoogleToolCallCorrelationRegistry(): GoogleToolCallCorrelationRegistry {
+export function createGoogleToolCallCorrelationRegistry(
+  anonymousToolCallIdNonce?: string,
+): GoogleToolCallCorrelationRegistry {
+  if (
+    anonymousToolCallIdNonce !== undefined &&
+    !isGoogleAnonymousToolCallIdNonce(anonymousToolCallIdNonce)
+  ) {
+    throw new TypeError("Google anonymous tool call id nonce was malformed");
+  }
   const usedToolCallIds = new Set<string>();
   const pendingCodeExecutionsByProviderId = new Map<string, string>();
   const pendingAnonymousCodeExecutions: string[] = [];
@@ -71,7 +103,14 @@ export function createGoogleToolCallCorrelationRegistry(): GoogleToolCallCorrela
 
   return {
     registerFunctionCall(partIndex, providerId) {
-      return reserve(providerId ?? `tool-${partIndex}`);
+      if (providerId !== undefined) {
+        return reserve(providerId);
+      }
+      return reserve(
+        anonymousToolCallIdNonce === undefined
+          ? `tool-${partIndex}`
+          : `tool-${partIndex}-${anonymousToolCallIdNonce}`,
+      );
     },
     registerCodeExecution(providerId) {
       if (providerId !== undefined) {

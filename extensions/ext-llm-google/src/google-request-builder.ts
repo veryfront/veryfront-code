@@ -107,8 +107,9 @@ function invalidGoogleProviderHistory(): TypeError {
 function readGoogleRawToolHistory(
   rawAssistantParts: readonly Record<string, unknown>[],
   rawAssistantPartIndexes: readonly number[],
+  anonymousToolCallIdNonce: string | undefined,
 ): GoogleRawToolHistory {
-  const registry = createGoogleToolCallCorrelationRegistry();
+  const registry = createGoogleToolCallCorrelationRegistry(anonymousToolCallIdNonce);
   const ordinaryCalls: CanonicalProviderCall[] = [];
   const legacyOrdinaryCalls: CanonicalProviderCall[] = [];
   const providerCalls: CanonicalProviderCall[] = [];
@@ -143,7 +144,11 @@ function readGoogleRawToolHistory(
       // Histories persisted before raw-position ids used the anonymous-call
       // occurrence instead. Build both complete projections so validation
       // cannot accept a mixture that no implementation ever emitted.
-      const legacyId = providerId === undefined ? `tool-${anonymousFunctionCallIndex++}` : id;
+      // A nonce marks a history written after both legacy schemes, so only
+      // the nonce-qualified id is valid for it.
+      const legacyId = providerId === undefined && anonymousToolCallIdNonce === undefined
+        ? `tool-${anonymousFunctionCallIndex++}`
+        : id;
       const call = {
         name: functionCall.name,
         input: functionCallArgs,
@@ -262,6 +267,7 @@ function validateGoogleToolReplay(
   message: Extract<ModelRuntimePromptMessage, { readonly role: "assistant" }>,
   rawAssistantParts: readonly Record<string, unknown>[],
   rawAssistantPartIndexes: readonly number[],
+  anonymousToolCallIdNonce: string | undefined,
 ): void {
   const providerToolCalls = (message.providerToolCalls ?? []).map((call) => ({
     id: call.toolCallId,
@@ -334,7 +340,11 @@ function validateGoogleToolReplay(
 
   let rawHistory: GoogleRawToolHistory;
   try {
-    rawHistory = readGoogleRawToolHistory(rawAssistantParts, rawAssistantPartIndexes);
+    rawHistory = readGoogleRawToolHistory(
+      rawAssistantParts,
+      rawAssistantPartIndexes,
+      anonymousToolCallIdNonce,
+    );
   } catch {
     throw invalidGoogleProviderHistory();
   }
@@ -441,6 +451,7 @@ function toGoogleContents(
             message,
             rawAssistantReplay.parts,
             rawAssistantReplay.partIndexes,
+            rawAssistantReplay.anonymousToolCallIdNonce,
           );
           contents.push({ role: "model", parts: rawAssistantReplay.parts });
           break;

@@ -9,6 +9,7 @@ import {
   stringifyJsonValue,
 } from "veryfront/provider/shared";
 import {
+  createGoogleAnonymousToolCallIdNonce,
   createGoogleToolCallCorrelationRegistry,
   GOOGLE_CODE_EXECUTION_TOOL_NAME,
   googleCodeExecutionInput,
@@ -195,7 +196,10 @@ export async function* streamGoogleCompatibleParts(
     }
   >();
   const pendingAnonymousCodeExecutions: AnonymousCodeExecutionReplay[] = [];
-  const toolCallRegistry = createGoogleToolCallCorrelationRegistry();
+  // One nonce per model response keeps id-less calls unique across the steps
+  // of an agent run; replay metadata carries it so history re-derives the ids.
+  const anonymousToolCallIdNonce = createGoogleAnonymousToolCallIdNonce();
+  const toolCallRegistry = createGoogleToolCallCorrelationRegistry(anonymousToolCallIdNonce);
   const rawAssistantParts: Array<Record<string, unknown>> = [];
   // Original stream position of each retained part. Fallback tool-call IDs and
   // replay derive from these, so merging text chunks never changes an ID.
@@ -914,6 +918,7 @@ export async function* streamGoogleCompatibleParts(
       rawAssistantParts,
       groundingMetadata,
       mergedTextChunks ? rawAssistantPartPositions : undefined,
+      anonymousToolCallIdNonce,
     );
   } catch {
     // The stream accounts for retained raw parts and correlation state under

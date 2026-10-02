@@ -74,58 +74,6 @@ describe("agent/ag-ui-runtime-chat-stream-encoder", () => {
     );
   });
 
-  it("announces a new call that reuses a settled call's id in a later step", () => {
-    // Gemini 2.5 returns no function-call ids, so the Google adapter derives
-    // `tool-<partIndex>` per response and a later step can reuse `tool-0`.
-    const encoder = createAgUiRuntimeChatStreamEncoder({ responseMessageId: "msg-1" });
-    const callTool = (toolName: string) => [
-      ...encoder.encode({ type: "step-start" }),
-      ...encoder.encode({ type: "tool-input-start", toolCallId: "tool-0", toolName }),
-      ...encoder.encode({ type: "tool-input-delta", toolCallId: "tool-0", inputTextDelta: "{}" }),
-      ...encoder.encode({
-        type: "tool-input-available",
-        toolCallId: "tool-0",
-        toolName,
-        input: {},
-      }),
-      ...encoder.encode({
-        type: "tool-output-available",
-        toolCallId: "tool-0",
-        output: { ok: true },
-      }),
-      ...encoder.encode({ type: "step-end" }),
-    ];
-    const starts = (events: ReturnType<typeof callTool>) =>
-      events.filter((event) => event.type === "tool-input-start");
-
-    assertEquals(starts(callTool("tool_search")), [
-      { type: "tool-input-start", toolCallId: "tool-0", toolName: "tool_search" },
-    ]);
-    assertEquals(starts(callTool("veryfront__list_files")), [
-      { type: "tool-input-start", toolCallId: "tool-0", toolName: "veryfront__list_files" },
-    ]);
-  });
-
-  it("still announces a call once when its output is preliminary", () => {
-    const encoder = createAgUiRuntimeChatStreamEncoder({ responseMessageId: "msg-1" });
-    const events = [
-      ...encoder.encode({ type: "tool-input-start", toolCallId: "t", toolName: "x" }),
-      ...encoder.encode({
-        type: "tool-output-available",
-        toolCallId: "t",
-        output: 1,
-        preliminary: true,
-      }),
-      ...encoder.encode({
-        type: "tool-input-available",
-        toolCallId: "t",
-        toolName: "x",
-        input: {},
-      }),
-    ];
-    assertEquals(events.filter((event) => event.type === "tool-input-start").length, 1);
-  });
-
   it("replays buffered deltas after a late tool-input-start", () => {
     const encoder = createAgUiRuntimeChatStreamEncoder({
       responseMessageId: "msg-1",
