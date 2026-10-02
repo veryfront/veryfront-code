@@ -24,7 +24,10 @@ import {
   type RuntimeRemoteToolConfig,
   VERYFRONT_API_MCP_SOURCE_ID,
 } from "#veryfront/agent/runtime/mcp-server-tool-sources.ts";
-import { INGRESS_RUN_TERMINAL_TOKEN_HEADER } from "#veryfront/security/http/ingress-credentials.ts";
+import {
+  INGRESS_RUN_TERMINAL_TOKEN_HEADER,
+  sealIngressCredentials,
+} from "#veryfront/security/http/ingress-credentials.ts";
 import { getRuntimeSourceIntegrationPolicy } from "#veryfront/agent/runtime/runtime-tool-config.ts";
 import type { ProviderReplayCheckpoint } from "#veryfront/agent/runtime/provider-replay.ts";
 import { dynamicTool, type RemoteToolSource } from "#veryfront/tool";
@@ -1393,8 +1396,25 @@ describe("server/handlers/request/agent-stream.handler", () => {
     }
   });
 
-  for (const withTerminalToken of [true, false]) {
-    it(`sends finalize terminal authority only for this run: token=${withTerminalToken}`, async () => {
+  for (
+    const { name, terminalToken, authToken, expected } of [
+      {
+        name: "run-bound credential",
+        terminalToken: "terminal-secret",
+        authToken: "run-invocation-token",
+        expected: "terminal-secret",
+      },
+      { name: "no token", terminalToken: null, authToken: "run-invocation-token", expected: null },
+      {
+        name: "host proxy identity",
+        terminalToken: "terminal-secret",
+        authToken: null,
+        expected: null,
+      },
+    ]
+  ) {
+    it(`sends finalize terminal authority only for this run: ${name}`, async () => {
+      const authorization = `Bearer ${authToken ?? "host-proxy-token"}`;
       const finalizeCalls: Array<
         { runId: unknown; authorization: string | null; terminal: string | null }
       > = [];
@@ -1458,7 +1478,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
           },
         });
         const body = createAgentStreamRequestBody({
-          credentials: { authToken: "run-invocation-token" },
+          ...(authToken ? { credentials: { authToken } } : {}),
           agentConfig: {
             id: "assistant-1",
             name: "Project Assistant",
@@ -1471,20 +1491,21 @@ describe("server/handlers/request/agent-stream.handler", () => {
         const { jws, publicKeyPem } = await createControlPlaneSignature(body, {
           requestId: "run_1",
         });
-        const result = await handler.handle(
+        const request = sealIngressCredentials(
           new Request("https://example.com/api/control-plane/runs/run_1/stream", {
             method: "POST",
             headers: {
               "content-type": "application/json",
               "x-veryfront-control-plane-jws": jws,
-              ...(withTerminalToken
-                ? { [INGRESS_RUN_TERMINAL_TOKEN_HEADER]: "terminal-secret" }
-                : {}),
+              ...(terminalToken ? { [INGRESS_RUN_TERMINAL_TOKEN_HEADER]: terminalToken } : {}),
             },
             body,
           }),
-          createCtx(publicKeyPem),
         );
+        assertEquals(request.headers.get(INGRESS_RUN_TERMINAL_TOKEN_HEADER), null);
+        const ctx = createCtx(publicKeyPem);
+        ctx.proxyToken = "host-proxy-token";
+        const result = await handler.handle(request, ctx);
         assertExists(result.response);
         assertEquals(result.response.status, 200);
         const source = platformSources.find((entry) => entry.id === VERYFRONT_API_MCP_SOURCE_ID);
@@ -1493,14 +1514,9 @@ describe("server/handlers/request/agent-stream.handler", () => {
         for (const runId of ["run_1", "run_other"]) {
           await source.executeTool("finalize", { runId, status: "failed" }, { runId });
         }
-        const ordinary = { authorization: "Bearer run-invocation-token", terminal: null };
         assertEquals(finalizeCalls, [
-          {
-            runId: "run_1",
-            ...ordinary,
-            ...(withTerminalToken ? { terminal: "terminal-secret" } : {}),
-          },
-          { runId: "run_other", ...ordinary },
+          { runId: "run_1", authorization, terminal: expected },
+          { runId: "run_other", authorization, terminal: null },
         ]);
       } finally {
         restoreMockFetch();
@@ -1511,6 +1527,43 @@ describe("server/handlers/request/agent-stream.handler", () => {
       }
     });
   }
+
+  it("rejects a malformed run terminal token before running the agent", async () => {
+    let runtimeCreated = false;
+    const handler = createTestAgentStreamHandler({
+      ensureProjectDiscovery: async () => createEmptyDiscoveryResult(),
+      getAgent: (id) => id === "assistant-1" ? createAgent("assistant-1") : undefined,
+      getAllAgentIds: () => ["assistant-1"],
+      sessionManager: new AgentRunSessionManager(),
+      createRuntime: () => {
+        runtimeCreated = true;
+        throw new Error("must not run");
+      },
+    });
+    const body = createAgentStreamRequestBody({
+      credentials: { authToken: "run-invocation-token" },
+    });
+    const { jws, publicKeyPem } = await createControlPlaneSignature(body, {
+      requestId: "run_1",
+    });
+    const result = await handler.handle(
+      sealIngressCredentials(
+        new Request("https://example.com/api/control-plane/runs/run_1/stream", {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            "x-veryfront-control-plane-jws": jws,
+            [INGRESS_RUN_TERMINAL_TOKEN_HEADER]: "terminal secret",
+          },
+          body,
+        }),
+      ),
+      createCtx(publicKeyPem),
+    );
+    assertExists(result.response);
+    assertEquals(result.response.status, 400);
+    assertEquals(runtimeCreated, false);
+  });
 
   it("does not trust forwarded integration metadata as a remote tool allowlist", async () => {
     let capturedAllowedTools: string[] | undefined;

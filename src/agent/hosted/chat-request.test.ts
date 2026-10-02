@@ -4,11 +4,7 @@ import resumeDigestContract from "../../../tests/fixtures/contracts/api-auth-res
 import "#veryfront/schemas/_test-setup.ts";
 import { computeHash } from "#veryfront/utils/hash-utils.ts";
 import { convertUiMessagesToProviderModelMessages } from "../../chat/provider-message-conversion.ts";
-import {
-  assertEquals,
-  assertNotStrictEquals,
-  assertStringIncludes,
-} from "#veryfront/testing/assert.ts";
+import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { DEFAULT_MAX_BODY_SIZE_BYTES } from "#veryfront/utils/constants/index.ts";
 import {
@@ -29,7 +25,7 @@ import {
 import { createHostedRunEventWriterCapabilityForRequest } from "./child-run-event-writer-token.ts";
 import { createHostedInferenceModelResolver } from "./inference-credential.ts";
 import { hostedTerminalToolSourceFactory } from "./terminal-credential.ts";
-import { createRemoteMCPToolSource } from "#veryfront/tool/remote-mcp.ts";
+import type { RemoteMCPToolSourceConfig, RemoteToolSource } from "#veryfront/tool";
 import { sealIngressCredentials } from "#veryfront/security/http/ingress-credentials.ts";
 
 const conversationId = "10000000-1000-4000-8000-100000000001";
@@ -1941,11 +1937,25 @@ describe("agent/hosted-chat-request", () => {
     assertEquals(verifiedRunEventTokens, ["run-event-service-token"]);
     assertEquals(typeof createHostedInferenceModelResolver(parsed), "function");
     assertEquals(request.headers.get("X-Veryfront-Run-Terminal-Token"), null);
-    const fallback = createRemoteMCPToolSource;
-    assertNotStrictEquals(
-      hostedTerminalToolSourceFactory(parsed, "https://api.example/mcp", fallback),
-      fallback,
+    const sent: Array<[string, string | null]> = [];
+    const recording = (config: RemoteMCPToolSourceConfig): RemoteToolSource => ({
+      id: config.id ?? "veryfront-api",
+      listTools: () => Promise.resolve([]),
+      executeTool: async (name, _args, context) => {
+        const headers = typeof config.headers === "function"
+          ? await config.headers(context)
+          : config.headers;
+        sent.push([name, new Headers(headers).get("X-Veryfront-Run-Terminal-Token")]);
+        return { content: [] };
+      },
+    });
+    const source = hostedTerminalToolSourceFactory(parsed, "https://api.example/mcp", recording)(
+      { id: "veryfront-api", endpoint: "https://api.example/mcp" },
+      { kind: "veryfront-api" },
     );
+    await source.executeTool("finalize", { status: "failed" }, { runId: "run_root_1" });
+    await source.executeTool("get_project", {}, { runId: "run_root_1" });
+    assertEquals(sent, [["finalize", "run-terminal-token"], ["get_project", null]]);
   });
 
   it("reads the default-chat inference header through captured intrinsics", async () => {

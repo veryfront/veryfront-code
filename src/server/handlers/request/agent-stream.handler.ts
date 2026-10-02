@@ -105,6 +105,7 @@ import {
 import { reportHandlerFailure } from "./report-handler-failure.ts";
 import { buildRuntimeShuttingDownResponse } from "./runtime-shutdown-response.ts";
 import { createRunPlatformToolSource } from "./run-terminal-tool-source.ts";
+import { requireInferenceProviderCredential } from "#veryfront/provider/runtime-loader/provider-request-init.ts";
 import { isServerShuttingDown } from "../../shutdown-state.ts";
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 import { resolveVeryfrontApiBaseUrlFromHostEnv } from "#veryfront/platform/cloud/resolver.ts";
@@ -548,6 +549,17 @@ function isPlatformToolDeniedByAgent(
   if (configuredTools[canonicalName] === false) return true;
   const projectTool = resolveVisibleRegistryTool(legacyName, agent.id);
   return !projectTool && configuredTools[legacyName] === false;
+}
+
+/** The control plane's finalize credential, validated like the other signed run credentials. */
+function readRunTerminalToken(req: Request): string | null {
+  const value = readIngressCredential(req, INGRESS_RUN_TERMINAL_TOKEN_HEADER);
+  if (value === null) return null;
+  try {
+    return requireInferenceProviderCredential(value, "Run terminal token header");
+  } catch {
+    throw new ControlPlaneRequestError(400, "INVALID_RUN_TERMINAL_TOKEN");
+  }
 }
 
 async function withVeryfrontPlatformRemoteTools(input: {
@@ -1144,7 +1156,7 @@ export class AgentStreamHandler extends BaseHandler {
         expectedSurface: "studio",
       });
       const runEventAppendToken = readIngressCredential(req, INGRESS_RUN_EVENT_TOKEN_HEADER);
-      const terminalToken = readIngressCredential(req, INGRESS_RUN_TERMINAL_TOKEN_HEADER);
+      const terminalToken = readRunTerminalToken(req);
       if (
         payload.sourceProject && (
           payload.sourceProject.projectId !== ctx.projectId ||
@@ -1363,8 +1375,10 @@ export class AgentStreamHandler extends BaseHandler {
                           projectId: executionProject?.projectId ??
                             projectScopedContext.projectId ?? null,
                           availableToolNames: runtimeInput.tools.map((tool) => tool.name),
-                          // The API binds this credential to the signed run-bound token above.
-                          terminalAuthority: verifiedClaims && terminalToken
+                          // The API binds the terminal token to the signed run-bound credential,
+                          // never to the host proxy token this source would otherwise fall back to.
+                          terminalAuthority: verifiedClaims && terminalToken &&
+                              payload.credentials?.authToken
                             ? { token: terminalToken, runId: payload.runId }
                             : null,
                         });
