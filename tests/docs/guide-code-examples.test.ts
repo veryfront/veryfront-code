@@ -98,6 +98,7 @@ const EXISTING_GUIDE_EXAMPLE_SUITE = [
 
 const THIS_GUIDE_EXAMPLE_SUITE = [
   "agent-service-runtime.md",
+  "ai-gateway-quickstart.md",
   "application-auth.md",
   "build-a-rag-app.md",
   "chat-hooks.md",
@@ -258,6 +259,137 @@ describe("Guide: providers.md", () => {
     assertEquals(await neutralBaseUrl("acme-labs"), `${api}/ai/v1`);
     assertStringIncludes(section, "`<provider>/<model>`");
     assertStringIncludes(section, `curl ${api}/ai/models`);
+  });
+});
+
+describe("Guide: ai-gateway-quickstart.md", () => {
+  const api = "https://api.veryfront.com";
+
+  function neutralBaseUrl(provider: string): Promise<string> {
+    return withEnv(
+      { VERYFRONT_CLOUD_GATEWAY_ROUTES: "" },
+      () => Promise.resolve(getVeryfrontCloudGatewayBaseUrl(api, provider)),
+    );
+  }
+
+  function section(guide: string, heading: string): string {
+    const start = guide.indexOf(heading);
+    assert(start !== -1, `ai-gateway-quickstart.md has the ${heading} section`);
+    const level = heading.slice(0, heading.indexOf(" ") + 1);
+    const end = guide.indexOf(`\n${level}`, start + heading.length);
+    return guide.slice(start, end === -1 ? undefined : end);
+  }
+
+  it("gives every OpenAI-protocol tool the base URL the SDK sends OpenAI models to", async () => {
+    const guide = await readGuide("ai-gateway-quickstart.md");
+    const base = await neutralBaseUrl("openai");
+
+    assertStringIncludes(section(guide, "### Codex CLI"), `base_url = "${base}"`);
+    assertStringIncludes(section(guide, "### Aider"), `OPENAI_API_BASE="${base}"`);
+    assertStringIncludes(section(guide, "### Continue"), `apiBase: ${base}`);
+    assertStringIncludes(section(guide, "### OpenCode"), `"baseURL": "${base}"`);
+    assertStringIncludes(section(guide, "### OpenAI SDK (TypeScript)"), `baseURL: "${base}"`);
+    assertStringIncludes(section(guide, "### OpenAI SDK (Python)"), `base_url="${base}"`);
+    assertStringIncludes(section(guide, "### LangChain (Python)"), `base_url="${base}"`);
+    assertStringIncludes(
+      section(guide, "### Vercel AI SDK"),
+      `createOpenAI({\n  baseURL: "${base}"`,
+    );
+  });
+
+  it("gives Anthropic clients the Messages base URL in the form each one expects", async () => {
+    const guide = await readGuide("ai-gateway-quickstart.md");
+    const base = await neutralBaseUrl("anthropic");
+    // Claude Code and the Anthropic SDK append /v1/messages; the Vercel
+    // provider appends /messages to a base that already ends in /v1.
+    assertEquals(base.endsWith("/v1"), true);
+    const withoutVersion = base.slice(0, -"/v1".length);
+
+    assertStringIncludes(
+      section(guide, "### Claude Code"),
+      `ANTHROPIC_BASE_URL="${withoutVersion}"`,
+    );
+    assertStringIncludes(
+      section(guide, "### Anthropic SDK (TypeScript)"),
+      `baseURL: "${withoutVersion}"`,
+    );
+    assertStringIncludes(
+      section(guide, "### Vercel AI SDK"),
+      `createAnthropic({\n  baseURL: "${base}"`,
+    );
+  });
+
+  it("gives Google GenAI the base that its default API version extends to the Gemini route", async () => {
+    const guide = await readGuide("ai-gateway-quickstart.md");
+    const base = await neutralBaseUrl("google");
+
+    assertEquals(base, `${api}/ai/v1beta`);
+    assertStringIncludes(
+      section(guide, "### Google GenAI (TypeScript)"),
+      `baseUrl: "${base.slice(0, -"/v1beta".length)}"`,
+    );
+    // The SDK sends `apiKey` as x-goog-api-key, not as a Bearer token (pinned in
+    // tests/integration/docs/provider-client-examples.test.ts), so the guide must
+    // name that header wherever it states how the key is sent.
+    assertStringIncludes(section(guide, "### Google GenAI (TypeScript)"), "`x-goog-api-key`");
+    assertStringIncludes(section(guide, "## Base URLs and key types"), "`x-goog-api-key`");
+  });
+
+  it("lists models from the neutral model list and names the project for account keys", async () => {
+    const guide = await readGuide("ai-gateway-quickstart.md");
+    const models = section(guide, "## Choose a model");
+
+    assertStringIncludes(models, `curl ${await neutralBaseUrl("openai")}/models`);
+    assertStringIncludes(models, `curl ${await neutralBaseUrl("google")}/models`);
+    assertStringIncludes(models, "`<provider>/<model>`");
+    assertStringIncludes(
+      section(guide, "## Base URLs and key types"),
+      "`x-veryfront-project-slug: <PROJECT_SLUG>`",
+    );
+  });
+
+  it("gives every request snippet an account-key form", async () => {
+    const guide = await readGuide("ai-gateway-quickstart.md");
+    const header = "x-veryfront-project-slug";
+
+    // Every curl command has a twin that sends the project header.
+    const curls = [...guide.matchAll(/```bash\n(curl [\s\S]*?)```/g)].map((match) => match[1]!);
+    const urls = new Set(curls.map((curl) => curl.split(/\s/)[1]!));
+    assert(urls.size >= 3, "the guide lists models and verifies a request with curl");
+    for (const url of urls) {
+      const forms = curls.filter((curl) => curl.split(/\s/)[1] === url);
+      assert(
+        forms.some((curl) => !curl.includes(header)),
+        `${url} has a project-key form`,
+      );
+      assert(
+        forms.some((curl) => curl.includes(`-H "${header}: <PROJECT_SLUG>"`)),
+        `${url} has an account-key form`,
+      );
+    }
+
+    // Every SDK snippet carries the header line to uncomment.
+    const sdks = section(guide, "## SDKs");
+    const snippets = [...sdks.matchAll(/```(?:ts|python)\n([\s\S]*?)```/g)].map((match) =>
+      match[1]!
+    );
+    assertEquals(snippets.length, 7);
+    for (const snippet of snippets) {
+      assertStringIncludes(snippet, `"${header}": "<PROJECT_SLUG>"`);
+    }
+
+    // Every harness with a snippet documents the header.
+    for (
+      const harness of [
+        "### Claude Code",
+        "### Codex CLI",
+        "### Aider",
+        "### Continue",
+        "### OpenCode",
+      ]
+    ) {
+      assertStringIncludes(section(guide, harness), header);
+    }
   });
 });
 

@@ -1284,12 +1284,14 @@ describe("child-run-result-summary", () => {
     it("bounds malformed recovered import parsing", () => {
       const text = "I don't expect a problem. " + "p".repeat(70_000) +
         "\nimport " + " ".repeat(3_000) + "\n" + "p".repeat(59_000);
-      const start = performance.now();
+      // Charge actual work, not time descheduled on a contended test host.
+      const start = cpuUsage();
 
       const result = buildChildRunResultSummary(text, { mode: "structured" });
 
       assertEquals(result.contractFacts, undefined);
-      assertEquals(performance.now() - start < 500, true);
+      const elapsed = cpuUsage(start);
+      assertEquals((elapsed.user + elapsed.system) / 1_000 < 500, true);
     });
 
     it("does not retain facts from an unterminated short array", () => {
@@ -1443,17 +1445,19 @@ describe("child-run-result-summary", () => {
     it("bounds cleanup of unclosed transcript tags", () => {
       for (const tag of ["<tool_response>", "<tool_call>", "<invoke "]) {
         const text = tag.repeat(32_000);
-        const started = performance.now();
+        const started = cpuUsage();
         buildChildRunResultSummary(text, { mode: "structured" });
-        assertEquals(performance.now() - started < 1_000, true);
+        const elapsed = cpuUsage(started);
+        assertEquals((elapsed.user + elapsed.system) / 1_000 < 1_000, true);
       }
     });
 
     it("cleans large tag-only results without a per-tag index", () => {
       const text = "<parameter>".repeat(1_000_000);
-      const started = performance.now();
+      const started = cpuUsage();
       assertEquals(buildChildRunResultSummary(text, { mode: "structured" }).text, "");
-      assertEquals(performance.now() - started < 2_000, true);
+      const elapsed = cpuUsage(started);
+      assertEquals((elapsed.user + elapsed.system) / 1_000 < 2_000, true);
     });
 
     it("bounds shell-fence checks before unrelated tags", () => {

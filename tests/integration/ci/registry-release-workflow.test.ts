@@ -993,7 +993,8 @@ printf '%064d  %s\n' 0 "$1"
       "registry quality gate job",
     );
     const gateSteps = steps(gate, "registry quality gate job");
-    const registryStep = gateSteps.find((step) => step.name === "Validate exact registry release");
+    const buildStep = namedStep(gate, "Build registry validation image");
+    const registryStep = namedStep(gate, "Validate exact registry release");
 
     assertEquals(gate.needs, [
       "prerelease",
@@ -1027,20 +1028,81 @@ printf '%064d  %s\n' 0 "$1"
         PUBLIC_RELEASE_RESULT: "${{ needs.publish-public-release.result }}",
       },
     );
-    assert(registryStep, "registry quality gate must run the smoke script");
+    assertEquals(buildStep["timeout-minutes"], 5);
+    assertStringIncludes(
+      String(buildStep.run),
+      "FROM node:24-bookworm-slim@sha256:5cbc7caba8c2c0f0bca675d1b61b9f2857e1cf1853c6164ee9dd409501a936e7",
+    );
+    assertStringIncludes(
+      String(buildStep.run),
+      "0cd918870657ccc3d96ac682290e894dda374e2a742424aae9118b258a6cf7a3  /tmp/deno.zip",
+    );
+    assertStringIncludes(
+      String(buildStep.run),
+      "https://github.com/denoland/deno/releases/download/v2.7.7/deno-x86_64-unknown-linux-gnu.zip",
+    );
+    assertStringIncludes(String(buildStep.run), 'build_context="$(mktemp -d)"');
+    assertStringIncludes(String(buildStep.run), "RUN mkdir /registry && chown 1000:1000 /registry");
+    assertStringIncludes(
+      String(buildStep.run),
+      'docker build --platform linux/amd64 --tag "$REGISTRY_IMAGE" "$build_context"',
+    );
     assertEquals(
-      registryStep.run,
-      "bash scripts/ci/registry-release-smoke.sh",
+      asRecord(buildStep.env, "registry image build environment"),
+      {
+        REGISTRY_IMAGE:
+          "veryfront-registry-validation:${{ github.run_id }}-${{ github.run_attempt }}",
+      },
+    );
+    assertEquals(
+      String(buildStep.run).includes("GITHUB_WORKSPACE"),
+      false,
+      "the image build context must not contain repository content",
+    );
+    assert(
+      gateSteps.indexOf(buildStep) < gateSteps.indexOf(registryStep),
+      "registry image must be built before validation",
+    );
+    assertEquals(
+      gateSteps.some((step) => String(step.uses) === "./.github/actions/setup-deno"),
+      false,
+    );
+    assertEquals(
+      gateSteps.some((step) => String(step.uses).startsWith("actions/setup-node@")),
+      false,
     );
     assertEquals(
       asRecord(registryStep.env, "registry quality gate environment"),
       {
+        REGISTRY_IMAGE:
+          "veryfront-registry-validation:${{ github.run_id }}-${{ github.run_attempt }}",
         RC_VERSION: "${{ needs.prerelease.outputs.version }}",
         STABLE_VERSION: "${{ needs.release.outputs.version }}",
         GITHUB_SHA: "${{ github.sha }}",
         IS_STABLE: "${{ needs.version-check.outputs.is_stable }}",
       },
     );
+    for (
+      const required of [
+        "docker run --rm --init",
+        "--platform linux/amd64",
+        "--user 1000:1000",
+        "--read-only",
+        "--cap-drop ALL",
+        "--security-opt no-new-privileges=true",
+        "--network=bridge",
+        "--volume /registry",
+        "--tmpfs /tmp:rw,nosuid,nodev,size=64m",
+        "type=bind,source=${GITHUB_WORKSPACE},target=/source,readonly",
+        "tar -C /source --exclude=.git --exclude=node_modules --no-same-owner",
+        "bash scripts/ci/registry-release-smoke.sh",
+      ]
+    ) {
+      assertStringIncludes(String(registryStep.run), required);
+    }
+    assertEquals(String(registryStep.run).includes("--pid"), false);
+    assertEquals(String(registryStep.run).includes("--network=host"), false);
+    assertEquals(String(registryStep.run).includes("--network=container"), false);
   });
 
   it("gives the registry gate room for the poll and the smoke that follows", async () => {
@@ -1049,19 +1111,10 @@ printf '%064d  %s\n' 0 "$1"
     // killed while the smoke was still installing -- an unclassified failure
     // in place of the classified one the poll exists to produce.
     const jobs = await readJobs();
-    const gate = asRecord(
-      jobs["quality-gate-registry"],
-      "registry quality gate job",
-    );
-    const setupStep = steps(gate, "registry quality gate job").find((step) =>
-      String(step.uses) === "./.github/actions/setup-deno"
-    );
-    const setupMs = Number(asRecord(setupStep ?? {}, "setup step")["timeout-minutes"]) *
-      60_000;
-    assert(
-      Number.isFinite(setupMs) && setupMs > 0,
-      "setup-deno must bound its own step",
-    );
+    const gate = asRecord(jobs["quality-gate-registry"], "registry quality gate job");
+    const setupStep = namedStep(gate, "Build registry validation image");
+    const setupMs = Number(setupStep["timeout-minutes"]) * 60_000;
+    assert(Number.isFinite(setupMs) && setupMs > 0, "image build must retain the setup budget");
 
     const { maxAttempts, retryDelayMs } = readPropagationBudget({});
     // The last lookup may begin at the deadline and still spend its request
@@ -1122,6 +1175,196 @@ printf '%064d  %s\n' 0 "$1"
         );
       }
     }
+  });
+
+  it("isolates registry and installed-package code from the credential-bearing host", async () => {
+    const jobs = await readJobs();
+    const registry = asRecord(jobs["quality-gate-registry"], "registry quality gate job");
+    const registrySteps = steps(registry, "registry quality gate job");
+    const registryStep = namedStep(registry, "Validate exact registry release");
+
+    // The registry job runs the public package it validates. Only fixed
+    // workflow code and pinned third-party actions may run on its host;
+    // repository scripts run inside the hardened container command only.
+    assertEquals(
+      registrySteps.map((step) => String(step.name ?? step.uses).split(" #")[0]),
+      [
+        "Report selected release result",
+        "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+        "Build registry validation image",
+        "Validate exact registry release",
+      ],
+      "registry gate must not add host execution around the container",
+    );
+    for (const step of registrySteps) {
+      assertEquals(
+        String(step.uses).startsWith("./"),
+        false,
+        "registry gate must not use local actions",
+      );
+    }
+    assertEquals(
+      registrySteps.filter((step) => String(step.run).includes("scripts/")),
+      [registryStep],
+      "repository scripts may appear only inside the fixed container command",
+    );
+    assertEquals(
+      registrySteps.some((step) =>
+        String(step.uses).startsWith("actions/create-github-app-token@")
+      ),
+      false,
+      "registry gate must not hold the downstream release token",
+    );
+    assertEquals(registry.environment, undefined);
+
+    // The downstream App token exists only in jobs that start after the
+    // registry container has terminated, and those jobs run no repository code.
+    for (const [name, value] of Object.entries(jobs)) {
+      const job = asRecord(value, name);
+      const jobSteps = steps(job, name);
+      if (
+        !jobSteps.some((step) => String(step.uses).startsWith("peter-evans/repository-dispatch@"))
+      ) {
+        continue;
+      }
+      assertEquals(name, "dispatch-release");
+      assert(
+        (job.needs as string[]).includes("quality-gate-registry"),
+        `${name} must start only after the registry container job has finished`,
+      );
+      const tokenIndex = jobSteps.findIndex((step) =>
+        step.name === "Create release GitHub App token"
+      );
+      assert(tokenIndex >= 0, `${name} must create its release token after validation`);
+      assertEquals(
+        jobSteps.slice(0, tokenIndex + 1).map((step) =>
+          String(step.name ?? step.uses).split(" #")[0]
+        ),
+        ["Resolve published version", "Build dispatch payload", "Create release GitHub App token"],
+        `${name} must not add arbitrary host execution before token creation`,
+      );
+      for (const step of jobSteps) {
+        assertEquals(
+          String(step.uses).startsWith("./"),
+          false,
+          `${name} must not use local actions`,
+        );
+        assertEquals(
+          String(step.uses).startsWith("actions/checkout@"),
+          false,
+          `${name} must not check out repository code`,
+        );
+        assertEquals(
+          String(step.run).includes("scripts/"),
+          false,
+          `${name} must not execute repository scripts`,
+        );
+      }
+    }
+  });
+
+  it("runs registry validation through the hardened container and always cleans it up", async () => {
+    const jobs = await readJobs();
+    const gate = asRecord(jobs["quality-gate-registry"], "registry quality gate job");
+    const registryStep = namedStep(gate, "Validate exact registry release");
+
+    await withTempDir(async (tempDir) => {
+      const binDir = `${tempDir}/bin`;
+      const dockerLog = `${tempDir}/docker.log`;
+      await Deno.mkdir(binDir);
+      await Deno.writeTextFile(
+        `${binDir}/docker`,
+        `#!/usr/bin/env bash
+set -euo pipefail
+printf 'CALL' >> "$DOCKER_LOG"
+for arg in "$@"; do
+  encoded="$(printf '%s' "$arg" | base64 | tr -d '\n')"
+  printf '\t%s' "$encoded" >> "$DOCKER_LOG"
+done
+printf '\n' >> "$DOCKER_LOG"
+if [ "\${1:-}" = run ]; then
+  exit "$DOCKER_RUN_STATUS"
+fi
+`,
+      );
+      await Deno.chmod(`${binDir}/docker`, 0o755);
+
+      for (const runStatus of [0, 23]) {
+        await Deno.writeTextFile(dockerLog, "");
+        const output = await new Deno.Command("bash", {
+          args: ["-c", String(registryStep.run)],
+          env: {
+            PATH: `${binDir}:${Deno.env.get("PATH")}`,
+            DOCKER_LOG: dockerLog,
+            DOCKER_RUN_STATUS: String(runStatus),
+            REGISTRY_IMAGE: "veryfront-registry-validation:123-4",
+            RC_VERSION: "1.2.3-rc.4",
+            STABLE_VERSION: "",
+            GITHUB_SHA: "0123456789abcdef",
+            IS_STABLE: "false",
+            GITHUB_WORKSPACE: "/synthetic/workspace",
+            GITHUB_RUN_ID: "123",
+            GITHUB_RUN_ATTEMPT: "4",
+          },
+          stdout: "piped",
+          stderr: "piped",
+        }).output();
+        assertEquals(output.code, runStatus);
+
+        const calls = (await Deno.readTextFile(dockerLog)).trim().split("\n").map((record) =>
+          record.split("\t").slice(1).map((arg) => atob(arg))
+        );
+        assertEquals(calls.length, 2);
+        assertEquals(calls[0], [
+          "run",
+          "--rm",
+          "--init",
+          "--platform",
+          "linux/amd64",
+          "--name",
+          "veryfront-registry-validation-123-4",
+          "--user",
+          "1000:1000",
+          "--read-only",
+          "--cap-drop",
+          "ALL",
+          "--security-opt",
+          "no-new-privileges=true",
+          "--network=bridge",
+          "--volume",
+          "/registry",
+          "--tmpfs",
+          "/tmp:rw,nosuid,nodev,size=64m",
+          "--mount",
+          "type=bind,source=/synthetic/workspace,target=/source,readonly",
+          "--env",
+          "RC_VERSION",
+          "--env",
+          "STABLE_VERSION",
+          "--env",
+          "GITHUB_SHA",
+          "--env",
+          "IS_STABLE",
+          "--env",
+          "HOME=/registry/home",
+          "--env",
+          "DENO_DIR=/registry/deno-cache",
+          "--env",
+          "TMPDIR=/registry/tmp",
+          "--env",
+          "npm_config_cache=/registry/npm-cache",
+          "--env",
+          "CI=true",
+          "veryfront-registry-validation:123-4",
+          "bash",
+          "-euo",
+          "pipefail",
+          "-c",
+          "mkdir -p /registry/home /registry/deno-cache /registry/tmp /registry/npm-cache /registry/workspace\ntar -C /source --exclude=.git --exclude=node_modules --no-same-owner -cf - . | tar -C /registry/workspace --no-same-owner -xf -\ncd /registry/workspace\nbash scripts/ci/registry-release-smoke.sh",
+        ]);
+        assertEquals(calls[1], ["rm", "-f", "veryfront-registry-validation-123-4"]);
+      }
+    });
   });
 
   it("dispatches exactly three downstream releases only after the registry gate", async () => {

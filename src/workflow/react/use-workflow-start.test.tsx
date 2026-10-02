@@ -58,6 +58,57 @@ function installDom(): () => void {
 describe("useWorkflowStart", () => {
   afterEach(restoreMockFetch);
 
+  for (const phase of ["fetch", "body"] as const) {
+    for (const outcome of ["success", "failure"] as const) {
+      it(`ignores workflow list ${phase} ${outcome} after unmount and DOM teardown`, async () => {
+        const restoreDom = installDom();
+        const response = Promise.withResolvers<Response>();
+        const body = Promise.withResolvers<{ runs: never[]; cursor: string }>();
+        const bodyStarted = Promise.withResolvers<void>();
+        let requestCount = 0;
+        installMockFetch(
+          (() => {
+            requestCount++;
+            return response.promise;
+          }) as typeof fetch,
+        );
+
+        function Capture(): null {
+          useWorkflowList();
+          return null;
+        }
+
+        const root = createRoot(document.getElementById("root")!);
+        try {
+          flushSync(() => root.render(<Capture />));
+          assertEquals(requestCount, 1);
+          if (phase === "body") {
+            const delayedBodyResponse = Response.json({});
+            delayedBodyResponse.json = () => {
+              bodyStarted.resolve();
+              return body.promise;
+            };
+            response.resolve(delayedBodyResponse);
+            await bodyStarted.promise;
+          }
+        } finally {
+          flushSync(() => root.unmount());
+          restoreDom();
+        }
+
+        if (outcome === "failure") {
+          (phase === "fetch" ? response : body).reject(new Error("late response failure"));
+        } else if (phase === "fetch") {
+          response.resolve(Response.json({ runs: [], cursor: "next-page" }));
+        } else {
+          body.resolve({ runs: [], cursor: "next-page" });
+        }
+        // Drain the fetch/body continuations after the browser globals are gone.
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+    }
+  }
+
   it("keeps a start launched from a layout effect current on mount", async () => {
     const restoreDom = installDom();
     const response = Promise.withResolvers<Response>();

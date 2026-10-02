@@ -1,12 +1,15 @@
-import { MAX_REMOTE_INTEGRATION_TOOL_NAME_LENGTH } from "#veryfront/integrations/limits.ts";
-import { parseIntegrationToolIdentity } from "#veryfront/integrations/source-policy.ts";
-import { createIntegrationErrorContext } from "#veryfront/integrations/error-context.ts";
 import type { ParsedArgs } from "#cli/shared/types";
 import { parseArgsOrThrow } from "#cli/shared/args";
 import { resolveManagementConfigNoModule } from "#cli/shared/config";
 import { projectApiReference } from "#cli/shared/project-resolution";
 import { getEnvironmentConfig } from "veryfront/config";
-import { createIntegrationClient, IntegrationApiError } from "veryfront/integrations";
+import {
+  createIntegrationClient,
+  createIntegrationErrorContext,
+  IntegrationApiError,
+  MAX_REMOTE_INTEGRATION_TOOL_NAME_LENGTH,
+  parseIntegrationToolIdentity,
+} from "veryfront/integrations";
 import { defineError, INVALID_ARGUMENT } from "veryfront/errors";
 import { exitProcess, registerTerminationSignals } from "#cli/utils";
 import {

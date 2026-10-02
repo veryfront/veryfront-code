@@ -10,6 +10,7 @@
     "noEmit": true,
     "jsx": "react-jsx",
     "paths": {
+      "veryfront/integrations/diagnostics": ["./src/integrations/error-context.ts"],
       "#deno-config": ["./deno.json"],
       "#std/assert": ["./src/testing/assert.ts"],
       "#std/assert.ts": ["./src/testing/assert.ts"],
