@@ -5797,14 +5797,23 @@ export default config as const;
         return { ms: measured.ms, error };
       }
 
-      function longCauseControl(size: number): string {
+      function longCauseControlSource(size: number): string {
         // Match bounded scheme scans while breaking an unbounded mutant's runs.
-        return "1".repeat(199) + ("a".repeat(32) + "!")
-          .repeat(Math.ceil((size - 199) / 33)).slice(0, size - 199);
+        return `"1".repeat(199) + ("a".repeat(32) + "!").repeat(Math.ceil((${size} - 199) / 33)).slice(0, ${size} - 199)`;
       }
 
-      it("long-cause control exercises bounded scheme scans without unbounded runs", () => {
-        const control = longCauseControl(100000);
+      it("keeps the long-cause eval argument below platform command-line limits", () => {
+        assertEquals(longCauseControlSource(100000).length < 1000, true);
+      });
+
+      it("long-cause control exercises bounded scheme scans without unbounded runs", async () => {
+        const output = await new Deno.Command(Deno.execPath(), {
+          args: ["eval", `console.log(JSON.stringify(${longCauseControlSource(100000)}))`],
+          stdout: "piped",
+          stderr: "piped",
+        }).output();
+        assertEquals(output.code, 0, new TextDecoder().decode(output.stderr));
+        const control: string = JSON.parse(new TextDecoder().decode(output.stdout));
         assertEquals(control.length, 100000);
         assertEquals(control.slice(0, 199), "1".repeat(199));
         // Alphabetic starts exercise the same bounded scheme scanner as the probe.
@@ -5818,7 +5827,7 @@ export default config as const;
         const size = 100000;
         const control = await measureLoadCause(
           "vf-config-long-control-",
-          `throw new Error(${JSON.stringify(longCauseControl(size))});\n`,
+          `throw new Error(${longCauseControlSource(size)});\n`,
         );
         const controlMs = Math.max(1, control.ms);
         const { ms: probeMs, error } = await measureLoadCause(
