@@ -1377,8 +1377,7 @@ export class AgentStreamHandler extends BaseHandler {
                           availableToolNames: runtimeInput.tools.map((tool) => tool.name),
                           // The API binds the terminal token to the signed run-bound credential,
                           // never to the host proxy token this source would otherwise fall back to.
-                          terminalAuthority: verifiedClaims && terminalToken &&
-                              payload.credentials?.authToken
+                          terminalAuthority: terminalToken && payload.credentials?.authToken
                             ? { token: terminalToken, runId: payload.runId }
                             : null,
                         });

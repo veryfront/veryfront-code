@@ -4,9 +4,10 @@ import type { RemoteToolSource } from "#veryfront/tool";
 import { INGRESS_RUN_TERMINAL_TOKEN_HEADER } from "#veryfront/security/http/ingress-credentials.ts";
 
 /**
- * Builds the platform MCP source for one control-plane run. Only that run's
- * finalize call carries the API-minted terminal credential; discovery, every
- * other tool and another run's finalize go through the ordinary source.
+ * Builds the platform MCP source for one control-plane run. The API-minted
+ * terminal credential is attached only to finalize calls whose context names
+ * the dispatched run; discovery and every other tool use the ordinary source.
+ * Inherited delegate contexts are rebound to that run (inbox#2496).
  */
 export function createRunPlatformToolSource(
   config: RemoteMCPToolSourceConfig & { headers: Record<string, string> },
