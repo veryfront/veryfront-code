@@ -111,17 +111,17 @@ describe("cicd coverage workflow", () => {
     const workflow = await readWorkflow();
 
     assertStringIncludes(workflow, "coverage-shards:");
-    assertStringIncludes(workflow, "name: coverage shard ${{ matrix.shard }}/4");
+    assertStringIncludes(workflow, "name: coverage shard ${{ matrix.shard }}/8");
     assertEquals(
       jobTimeoutMinutes(workflow, "coverage-shards"),
       20,
       "coverage shard job-level timeout must stay at 20 minutes",
     );
     assertSetupDenoStepTimeout(workflow, "coverage-shards");
-    assertStringIncludes(workflow, "shard: [1, 2, 3, 4]");
+    assertStringIncludes(workflow, "shard: [1, 2, 3, 4, 5, 6, 7, 8]");
     assertStringIncludes(
       workflow,
-      "deno task coverage:ci:shard -- --shard=${{ matrix.shard }}/4 --coverage-dir=coverage-shard-${{ matrix.shard }}",
+      "deno task coverage:ci:shard -- --shard=${{ matrix.shard }}/8 --coverage-dir=coverage-shard-${{ matrix.shard }}",
     );
     assertStringIncludes(workflow, "actions/upload-artifact");
     assertStringIncludes(workflow, "name: coverage-shard-${{ matrix.shard }}");
