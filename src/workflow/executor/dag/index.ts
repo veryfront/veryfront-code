@@ -1226,16 +1226,16 @@ function createSeededSubWorkflowNodeStates(
 
 /**
  * Whether a persisted state may hold loop output, whatever node now uses its id.
- * Loop output always carries all three result keys. Step and sub-workflow states
- * record their input or a durable input marker; loop states never do.
+ * Callback updates can overwrite result keys with undefined, which durable JSON
+ * omits. Step and sub-workflow states record input provenance; loop states do not.
  */
 function mayHoldLoopPublication(state: NodeState): boolean {
   const { output } = state;
   return !Object.hasOwn(state, "input") && state._stepInputRecorded !== true &&
     state._subWorkflowInputParsed !== true &&
     typeof output === "object" && output !== null && !Array.isArray(output) &&
-    Object.hasOwn(output, "exitReason") && Object.hasOwn(output, "iterations") &&
-    Object.hasOwn(output, "previousResults");
+    ["exitReason", "iterations", "previousResults"].filter((key) => Object.hasOwn(output, key))
+        .length >= 2;
 }
 
 function legacyLoopContextError(nodeId: string): Error {
@@ -1252,12 +1252,30 @@ function legacyLoopContextError(nodeId: string): Error {
  */
 function assertNoLegacyLoopPublication(
   ownerPath: string,
-  nodeStates: Readonly<Record<string, NodeState>>,
+  nodeStates: Record<string, NodeState>,
+  scope: ExecutionScope,
 ): void {
+  const ownerNodeId = scope.subWorkflowReservationOwners.get(ownerPath);
+  const recordedChildIds = ownerNodeId === undefined
+    ? undefined
+    : nodeStates[ownerNodeId]?._subWorkflowCompletedChildIds;
+  const previouslyProducedNodeIds = collectPreviouslyProducedSubWorkflowNodeIds(
+    ownerPath,
+    nodeStates,
+    scope,
+  );
   for (const [nodeId, state] of Object.entries(nodeStates)) {
+    if (state.status !== "completed" || !mayHoldLoopPublication(state)) continue;
+    if (state._subWorkflowOwnerPath !== undefined) {
+      if (state._subWorkflowOwnerPath === ownerPath) throw legacyLoopContextError(nodeId);
+      continue;
+    }
+    // Retained child IDs identify removed producers when owner metadata is absent.
+    // Older rows without that evidence may only use unclaimed legacy states;
+    // root declarations and already-produced sibling records stay outside.
     if (
-      state._subWorkflowOwnerPath === ownerPath && state.status === "completed" &&
-      mayHoldLoopPublication(state)
+      !scope.declaredNodeIds.has(nodeId) && !previouslyProducedNodeIds.has(nodeId) &&
+      (recordedChildIds === undefined || recordedChildIds.includes(nodeId))
     ) throw legacyLoopContextError(nodeId);
   }
 }
@@ -2679,7 +2697,7 @@ export class DAGExecutor {
       const childContext: WorkflowContext = savedContext
         ? { input, ...cloneExecutionState(savedContext, "Sub-workflow context") }
         : { input };
-      if (savedContext === undefined) assertNoLegacyLoopPublication(ownerPath, nodeStates);
+      if (savedContext === undefined) assertNoLegacyLoopPublication(ownerPath, nodeStates, scope);
       restorePublishedChildOutputs(
         steps,
         seededNodeStates,
