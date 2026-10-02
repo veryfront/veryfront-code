@@ -34,6 +34,7 @@ import {
   getDependencyArtifactAssetUploadResponseSchema,
   getDependencyArtifactBuildResultResponseSchema,
   getEnvironmentFileDetailSchema,
+  getListBranchFileMetadataResponseSchema,
   getListBranchFilesResponseSchema,
   getListEnvironmentFilesResponseSchema,
   getListProjectsResponseSchema,
@@ -217,6 +218,8 @@ export interface ListFilesOptions {
   pattern?: string;
   sortBy?: "path" | "updated_at";
   sortOrder?: "asc" | "desc";
+  /** Response fields to select, for example a metadata listing without `content`. */
+  fields?: readonly string[];
 }
 
 export interface FileListResult {
@@ -287,6 +290,7 @@ function buildListParams(options: ListFilesOptions): URLSearchParams {
     pattern,
     sortBy = "updated_at",
     sortOrder = "desc",
+    fields,
   } = options;
 
   const params = new URLSearchParams({
@@ -298,6 +302,7 @@ function buildListParams(options: ListFilesOptions): URLSearchParams {
   if (cursor) params.set("cursor", cursor);
   if (path) params.set("path", path);
   if (pattern) params.set("pattern", pattern);
+  if (fields) params.set("fields", `(${fields.join(",")})`);
 
   return params;
 }
@@ -316,6 +321,7 @@ function mapProjectFile<T extends ProjectFile>(file: T): ProjectFile {
     type: file.type,
     size: file.size,
     updated_at: file.updated_at,
+    ...(file.checksum === undefined ? {} : { checksum: file.checksum }),
   };
 }
 
@@ -505,7 +511,9 @@ export class VeryfrontAPIOperations {
     logger.debug("listBranchFiles", { projectRef, branchRef, pattern: options.pattern });
 
     const raw = await this.request(url);
-    const response = getListBranchFilesResponseSchema().parse(raw);
+    const response = options.fields && !options.fields.includes("content")
+      ? getListBranchFileMetadataResponseSchema().parse(raw)
+      : getListBranchFilesResponseSchema().parse(raw);
 
     return {
       files: response.data.map(mapProjectFile),

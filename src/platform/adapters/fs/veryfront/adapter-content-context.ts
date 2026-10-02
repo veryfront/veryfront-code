@@ -1,5 +1,10 @@
 import { API_CLIENT_ERROR, INVALID_ARGUMENT } from "#veryfront/errors";
 import type { VeryfrontApiClient } from "../../veryfront-api-client/index.ts";
+import {
+  admitVerifiedSourceContents,
+  assembleSourceListing,
+  hasVerifiedSourceContents,
+} from "./source-content-store.ts";
 import type { ContentSource, ResolvedContentContext } from "./types.ts";
 
 type ContextResolverClient = Pick<
@@ -135,6 +140,46 @@ export async function resolveContentContext(
         releaseId: contentSource.releaseId,
       };
   }
+}
+
+/** Every listing field except `content`, which verified contents supply. */
+const SOURCE_METADATA_FIELDS = [
+  "id",
+  "version_id",
+  "path",
+  "size",
+  "type",
+  "updated_at",
+  "checksum",
+] as const;
+
+/**
+ * List a source for the current credential. A branch whose contents this
+ * process already verified is listed as metadata only: the credential's own
+ * listing still decides which files exist, at which versions, and which it may
+ * see, and verified contents are attached by checksum. Any file without a
+ * verified content falls back to the complete listing, whose contents are
+ * then verified for later credentials.
+ */
+export async function fetchSourceListingForContext(
+  client: FileListClient,
+  context: ResolvedContentContext,
+  sourceKey: string,
+): Promise<{ files: Array<{ path: string; content?: string }>; contentReused: boolean }> {
+  if (context.sourceType !== "branch") {
+    return { files: await fetchFileListForContext(client, context), contentReused: false };
+  }
+
+  const branch = { type: "branch", name: context.branch ?? "main" } as const;
+  if (hasVerifiedSourceContents(sourceKey)) {
+    const metadata = await client.listAllFiles({ fields: SOURCE_METADATA_FIELDS }, branch);
+    const assembled = assembleSourceListing(sourceKey, metadata);
+    if (assembled) return { files: assembled, contentReused: true };
+  }
+
+  const files = await client.listAllFiles({}, branch);
+  await admitVerifiedSourceContents(sourceKey, files);
+  return { files, contentReused: false };
 }
 
 export function fetchFileListForContext(
