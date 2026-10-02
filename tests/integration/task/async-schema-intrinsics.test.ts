@@ -16,6 +16,38 @@ const inputSchema = {
 } satisfies JsonSchema;
 
 describe("async JSON Schema validation with replaced built-ins", () => {
+  it("copies rejected issues without inherited setters or replaced property definition", async () => {
+    const validator = createZodAdapter().compileJsonSchema!(inputSchema);
+    const originalIndex = Reflect.getOwnPropertyDescriptor(Array.prototype, "0");
+    const originalDefineProperty = Object.defineProperty;
+    const pending = validator({ ticketText: 42 });
+    let setterCalls = 0;
+    let result: Awaited<ReturnType<typeof validator>>;
+    try {
+      Reflect.defineProperty(Array.prototype, "0", {
+        set: () => {
+          setterCalls++;
+        },
+        configurable: true,
+      });
+      Object.defineProperty = () => {
+        throw new Error("replaced Object.defineProperty");
+      };
+      result = await pending;
+    } finally {
+      Object.defineProperty = originalDefineProperty;
+      Reflect.deleteProperty(Array.prototype, "0");
+      if (originalIndex) Reflect.defineProperty(Array.prototype, "0", originalIndex);
+    }
+
+    assertEquals(setterCalls, 0);
+    assertEquals(result.success, false);
+    if (!result.success) {
+      assertEquals(result.errors[0]?.instancePath, "/ticketText");
+      assertEquals(result.errors[0]?.keyword, "type");
+    }
+  });
+
   it("maps rejected validation errors after the synchronous guard ends", async () => {
     const validator = createZodAdapter().compileJsonSchema!(inputSchema);
     const originalMap = Reflect.getOwnPropertyDescriptor(Array.prototype, "map")!;
