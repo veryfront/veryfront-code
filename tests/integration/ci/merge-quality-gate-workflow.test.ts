@@ -548,7 +548,8 @@ done
     );
     assertEquals(asRecord(scanStep.env, "Sonar scan environment"), {
       SONAR_TOKEN: "\${{ secrets.SONAR_TOKEN }}",
-      INPUT_ARGS: "",
+      INPUT_ARGS:
+        "${{ github.event_name == 'merge_group' && format('-Dsonar.branch.name={0} -Dsonar.branch.target=main', github.ref_name) || '' }}",
       INPUT_PROJECTBASEDIR: ".",
       INPUT_SCANNERVERSION: "8.1.0.6389",
       INPUT_SCANNERBINARIESURL: "https://binaries.sonarsource.com/Distribution/sonar-scanner-cli",

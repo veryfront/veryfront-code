@@ -800,7 +800,10 @@ jobs:
         shell: bash
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-          INPUT_ARGS: ""
+          # merge_group is not auto-detected by Sonar. Without an explicit
+          # branch, concurrent queue groups overwrite main's analysis. Keep
+          # each queue ref separate and compare its new code with main.
+          INPUT_ARGS: ${{ github.event_name == 'merge_group' && format('-Dsonar.branch.name={0} -Dsonar.branch.target=main', github.ref_name) || '' }}
           INPUT_PROJECTBASEDIR: "."
           INPUT_SCANNERVERSION: "8.1.0.6389"
           INPUT_SCANNERBINARIESURL: https://binaries.sonarsource.com/Distribution/sonar-scanner-cli

@@ -32,7 +32,13 @@ artifact. Without such a run, main runs the full pipeline. Evidence:
 
 The scanner emits the diagnostic `SonarQube Cloud scan` check.
 `SonarQube Cloud quality gate` is the only Sonar check required by the ruleset
-and depends on that scanner result.
+and depends on that scanner result. Merge queue scans explicitly analyze their
+unique `gh-readonly-queue` branch with `main` as the target branch. Sonar does
+not auto-detect `merge_group` events; leaving the branch unset publishes queue
+analyses into `main`, where concurrent groups compete with each other and main
+pushes. Pull requests and main pushes retain Sonar's automatic detection.
+The 28-minute scan budget, 20-minute server wait, required quality gate, and
+single infrastructure-error retry remain unchanged.
 
 The active merge queue ruleset gives required checks at least 70 minutes to
 report a conclusion. This covers the longest configured dependency path: 60
