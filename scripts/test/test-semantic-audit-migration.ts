@@ -4668,7 +4668,7 @@ export const TEST_SEMANTIC_AUDIT_MIGRATION_ENTRIES:
         "Inject an environment/runtime-state boundary (and transport fake where applicable) instead of reading or mutating Deno.env, process.env, signals, exits, or global runtime objects.",
       "removalPr": "PR 4c",
     }),
-    entry("src/proxy/websocket-client.test.ts", ["process", "server"], {
+    entry("src/proxy/websocket-client.test.ts", ["process"], {
       "disposition": "integration-relocation",
       "owner": "server-routes",
       "rationale":
