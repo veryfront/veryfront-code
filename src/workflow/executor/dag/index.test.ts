@@ -1009,6 +1009,45 @@ describe("DAGExecutor", () => {
       assertEquals(outputCalls, 2);
     });
 
+    it("restores a legacy parallel whose children use two loop-named ids", async () => {
+      let outputCalls = 0;
+      let childCalls = 0;
+      const exec = new DAGExecutor({
+        stepExecutor: new MockStepExecutor(new Map(), () => {
+          childCalls++;
+          return { success: true, output: "value", executionTime: 0 };
+        }),
+      });
+      const nodes = [subWorkflow("child", {
+        workflow: {
+          id: "legacy-parallel-loop-ids",
+          steps: [parallel("group", [
+            step("iterations", { tool: "read" }),
+            step("previousResults", { tool: "read" }),
+          ])],
+          output: (context) => {
+            if (++outputCalls === 1) throw new Error("selector failed");
+            return context["group/previousResults"];
+          },
+        },
+      })];
+      const first = await exec.execute(nodes, createTestRun());
+      assertEquals(first.completed, false);
+      const states = structuredClone(first.nodeStates);
+      delete states.child!._subWorkflowContext;
+      const persisted = JSON.parse(JSON.stringify(
+        prepareNodeStatesUserData(states, "legacy-parallel-loop-ids", {}),
+      )) as Record<string, NodeState>;
+      // Legacy parallel output stored children under their bare ids.
+      persisted.group!.output = { iterations: "value", previousResults: "value" };
+      const retried = await exec.execute(nodes, createTestRun({ nodeStates: persisted }));
+      assertEquals(retried.error, undefined);
+      assertEquals(retried.completed, true);
+      assertEquals(retried.context.child, "value");
+      assertEquals(childCalls, 2);
+      assertEquals(outputCalls, 2);
+    });
+
     for (const otherOwner of ["root", "sibling", "explicit"] as const) {
       it(`restores a legacy no-loop child beside an unrelated ${otherOwner} loop`, async () => {
         const unrelated = loop("repeat", { steps: [], maxIterations: 1, while: () => false });

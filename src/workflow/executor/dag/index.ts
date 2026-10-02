@@ -1224,18 +1224,29 @@ function createSeededSubWorkflowNodeStates(
   return { seededNodeStates, ownedNodeIds };
 }
 
+const LOOP_EXIT_REASONS: ReadonlySet<unknown> = new Set(["condition", "maxIterations", "error"]);
+
 /**
  * Whether a persisted state may hold loop output, whatever node now uses its id.
  * Callback updates can overwrite result keys with undefined, which durable JSON
  * omits. Step and sub-workflow states record input provenance; loop states do not.
+ * Legacy composite output keys child results by bare id, so a result key counts
+ * only when its value has the loop result shape.
  */
 function mayHoldLoopPublication(state: NodeState): boolean {
   const { output } = state;
-  return !Object.hasOwn(state, "input") && state._stepInputRecorded !== true &&
-    state._subWorkflowInputParsed !== true &&
-    typeof output === "object" && output !== null && !Array.isArray(output) &&
-    ["exitReason", "iterations", "previousResults"].filter((key) => Object.hasOwn(output, key))
-        .length >= 2;
+  if (
+    Object.hasOwn(state, "input") || state._stepInputRecorded === true ||
+    state._subWorkflowInputParsed === true ||
+    typeof output !== "object" || output === null || Array.isArray(output)
+  ) return false;
+  const result = output as Record<string, unknown>;
+  const loopShapedKeys = [
+    Object.hasOwn(result, "exitReason") && LOOP_EXIT_REASONS.has(result.exitReason),
+    Object.hasOwn(result, "iterations") && Number.isInteger(result.iterations),
+    Object.hasOwn(result, "previousResults") && Array.isArray(result.previousResults),
+  ].filter(Boolean).length;
+  return loopShapedKeys >= 2;
 }
 
 function legacyLoopContextError(nodeId: string): Error {
