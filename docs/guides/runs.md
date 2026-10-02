@@ -164,7 +164,8 @@ oversized result never leaves the runtime. The Veryfront API applies the same
 limit when it stores any run's final output, including agent runs.
 
 A delegating agent still receives a compact summary of a child run's result,
-not the child's full output. To return more data, write it somewhere durable
+not the child's full output. The `summary` and `structured` modes limit returned
+text to 64,000 characters, including the truncation marker. To return more data, write it somewhere durable
 and return a reference to it.
 
 ## List project runs
