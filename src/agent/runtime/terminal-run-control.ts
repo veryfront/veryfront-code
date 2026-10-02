@@ -61,9 +61,20 @@ export function terminalDispatchRecord(
 
 function terminalOutcome(
   record: AdmittedDispatch,
-  ...args: ConstructorParameters<typeof TerminalRunControlError>
+  code: string,
+  message: string,
+  status: string,
+  output?: unknown,
+  acknowledgedResult?: unknown,
 ): TerminalRunControlError {
-  const error = new TerminalRunControlError(...args);
+  const error = new TerminalRunControlError(
+    code,
+    message,
+    status,
+    output,
+    acknowledgedResult,
+    record.callId,
+  );
   defineProperties(error, {
     terminalToolCallId: { value: record.callId, writable: false, configurable: false },
     status: { value: error.status, writable: false, configurable: false },
@@ -223,7 +234,6 @@ class TerminalRunControl {
             "unknown",
             undefined,
             undefined,
-            dispatch.callId,
           );
           this.controller.abort(error);
           throw error;
@@ -250,7 +260,6 @@ class TerminalRunControl {
           run.status,
           run.output,
           result,
-          dispatch.callId,
         );
         this.controller.abort(error);
         throw error;
@@ -265,7 +274,6 @@ class TerminalRunControl {
         "unknown",
         undefined,
         undefined,
-        dispatch.callId,
       );
       this.controller.abort(error);
       throw error;

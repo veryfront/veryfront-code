@@ -1716,17 +1716,20 @@ const freezeAdmitted = Object.freeze;
 const ownContextKeys = Reflect.ownKeys;
 const contextDescriptor = Object.getOwnPropertyDescriptor;
 const defineContextProperty = Object.defineProperty;
+const readContextProperty = Reflect.get;
 
 function applicationExecutionContext(
   context: ToolExecutionContext | undefined,
 ): ToolExecutionContext {
   const projected: ToolExecutionContext = {};
   if (!context) return projected;
-  for (const key of ownContextKeys(context)) {
+  const keys = ownContextKeys(context);
+  for (let index = 0; index < keys.length; index++) {
+    const key = keys[index]!;
     if (key === "toolCallId" || key === "agentId") continue;
     if (!contextDescriptor(context, key)?.enumerable) continue;
     defineContextProperty(projected, key, {
-      value: Reflect.get(context, key),
+      value: readContextProperty(context, key),
       enumerable: true,
       writable: true,
       configurable: true,
@@ -1746,7 +1749,8 @@ interface AdmittedToolTurn {
 
 function snapshotAdmittedToolTurn(message: Message, start: number): AdmittedToolTurn {
   const calls: { toolCallId: string; toolName: string; input: Record<string, unknown> }[] = [];
-  for (const part of message.parts) {
+  for (let index = 0; index < message.parts.length; index++) {
+    const part = message.parts[index]!;
     const call = getAgentRuntimeToolCallPart(part);
     if (call) {
       pushPrivateArray(
@@ -1768,7 +1772,9 @@ function findAdmittedToolResult(
   callId: string,
 ): ToolResultPart | undefined {
   for (let index = turn.start; index < messages.length; index++) {
-    for (const part of messages[index]!.parts) {
+    const parts = messages[index]!.parts;
+    for (let partIndex = 0; partIndex < parts.length; partIndex++) {
+      const part = parts[partIndex]!;
       if (part.type === "tool-result" && part.toolCallId === callId) return part as ToolResultPart;
     }
   }
@@ -5288,7 +5294,9 @@ export class AgentRuntime {
   private unresolvedTerminalSiblings(currentMessages: Message[], turn: AdmittedToolTurn) {
     const resolvedIds = createPrivateSet<string>();
     for (let index = turn.start; index < currentMessages.length; index++) {
-      for (const part of currentMessages[index]!.parts) {
+      const parts = currentMessages[index]!.parts;
+      for (let partIndex = 0; partIndex < parts.length; partIndex++) {
+        const part = parts[partIndex]!;
         if (part.type === "tool-result") resolvedIds.add(part.toolCallId);
       }
     }

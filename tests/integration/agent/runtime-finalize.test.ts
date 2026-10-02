@@ -177,6 +177,97 @@ describe("runtime finalize terminal control", () => {
     }
   }
 
+  for (const mode of ["generate", "stream", "resume"] as const) {
+    for (const status of ["completed", "failed", "unknown"] as const) {
+      it(`keeps terminal receipts private from replaced intrinsics: ${mode}/${status}`, async () => {
+        const call = { ...failCall, input: { status: "completed", output: "done" } };
+        await fixture(
+          [{ toolCalls: [call, markerCall] }],
+          async (runtime, model, dispatched) => {
+            if (mode === "resume") {
+              await runtime.getMemory().add({
+                id: "parked-private-turn",
+                role: "assistant",
+                parts: [call, markerCall].map((item) => ({
+                  type: "tool-call" as const,
+                  toolCallId: item.id,
+                  toolName: item.name,
+                  args: item.input,
+                })),
+              });
+            }
+            const iterator = Array.prototype[Symbol.iterator];
+            const get = Reflect.get;
+            const apply = Reflect.apply;
+            const observations: string[] = [];
+            let output;
+            try {
+              Array.prototype[Symbol.iterator] = function () {
+                for (let index = 0; index < this.length; index++) {
+                  const value = this[index];
+                  if (
+                    value && typeof value === "object" &&
+                    (value.type === "tool-call" || value.type === "tool-result") &&
+                    (value.toolCallId === "fail-1" || value.toolCallId === "marker-1")
+                  ) observations.push("private terminal part");
+                }
+                if (
+                  this[0] === "RUN_TERMINAL" || this[0] === "RUN_OUTCOME_UNKNOWN" ||
+                  this[0] === failure.code
+                ) observations.push("terminal outcome arguments");
+                if (this[0] === "runId") observations.push("execution context keys");
+                return apply(iterator, this, []);
+              };
+              Reflect.get = (target, key, receiver) => {
+                if (key === "runId" && target.runId === "run-current") {
+                  observations.push("execution context read");
+                }
+                return get(target, key, receiver);
+              };
+              const context = { runId: "run-current" };
+              if (mode === "generate") {
+                if (status === "completed") output = await runtime.generate("run", context);
+                else await assertRejects(() => runtime.generate("run", context));
+              } else {
+                output = await new Response(await runtime.stream("run", context)).text();
+              }
+            } finally {
+              Array.prototype[Symbol.iterator] = iterator;
+              Reflect.get = get;
+            }
+            assertEquals(observations, []);
+            if (mode === "generate" && status === "completed") {
+              assertEquals((output as { object: unknown }).object, "done");
+            }
+            const receipts = (await runtime.getMemory().getMessages()).flatMap((message) =>
+              message.parts.filter((part) => part.type === "tool-result")
+            );
+            assertEquals(receipts.map((part) => part.toolCallId), ["fail-1", "marker-1"]);
+            assertEquals(dispatched, status === "unknown" ? [call.name, call.name] : [call.name]);
+            assertEquals(model.callCount, mode === "resume" ? 0 : 1);
+          },
+          () => {
+            if (status === "unknown") throw new Error("transport unavailable");
+            return {
+              content: [],
+              structuredContent: {
+                completed: true,
+                run: {
+                  run_id: "run-current",
+                  status,
+                  ...(status === "completed" ? { output: "done" } : { error: failure }),
+                },
+              },
+            };
+          },
+          undefined,
+          undefined,
+          mode === "resume" ? call : undefined,
+        );
+      });
+    }
+  }
+
   it("retains admitted turn recovery data after an acknowledged receipt cannot persist", async () => {
     await fixture(
       [{
