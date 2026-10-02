@@ -415,6 +415,31 @@ describe("repository hardening", () => {
           continue;
         }
 
+        if (path === ".github/workflows/cicd.yml" && jobName.startsWith("cancel-after-")) {
+          assertEquals(jobIf.trim(), "if: ${{ failure() && github.event_name == 'merge_group' }}");
+          assertEquals(block.includes("actions/checkout@"), false);
+          assertEquals(block.includes("run:"), false);
+          assert(
+            /\n {4}uses: veryfront\/veryfront-code\/\.github\/workflows\/cancel-failed-merge-group\.yml@[0-9a-f]{40}\n/
+              .test(`${block}\n`),
+            `expected ${jobName} to run the cancellation workflow pinned to a trusted commit`,
+          );
+          const cancellation = stripComments(
+            await readText(".github/workflows/cancel-failed-merge-group.yml"),
+          );
+          assert(cancellation.includes("workflow_call:"));
+          assertEquals(cancellation.includes("pull_request:"), false);
+          assertEquals(cancellation.includes("actions/checkout@"), false);
+          assertEquals(cancellation.includes("uses:"), false);
+          assert(cancellation.includes("if: ${{ github.event_name == 'merge_group' }}"));
+          assert(
+            cancellation.includes(
+              'run: gh api --method POST "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/cancel"',
+            ),
+          );
+          continue;
+        }
+
         assert(
           jobIf.includes(WORKFLOW_PR_GUARD),
           `expected ${path} job ${jobName} to carry the fork guard on its own job-level if:, not on a step`,
