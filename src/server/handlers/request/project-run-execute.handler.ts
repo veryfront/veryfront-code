@@ -171,6 +171,7 @@ const NumberIsFinite = Number.isFinite;
 const NumberParseInt = Number.parseInt;
 const MathTrunc = Math.trunc;
 const ObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const ObjectHasOwn = Object.hasOwn;
 const ObjectSetPrototypeOf = Object.setPrototypeOf;
 const NumberPrototypeToString = Number.prototype.toString;
 const StringPrototypeCharCodeAt = String.prototype.charCodeAt;
@@ -374,7 +375,21 @@ interface WorkflowClientView {
   destroy(): Promise<void>;
 }
 
+interface TaskDeadlineClock {
+  now: () => number;
+  setTimeout: typeof globalThis.setTimeout;
+  clearTimeout: typeof globalThis.clearTimeout;
+}
+
+const defaultTaskDeadlineClock: TaskDeadlineClock = Object.freeze({
+  now: TaskDateNow,
+  setTimeout: TaskSetTimeout,
+  clearTimeout: TaskClearTimeout,
+});
+
 export interface ProjectRunExecuteHandlerDeps {
+  /** Host-owned clock; defaults to intrinsics captured before project code runs. */
+  taskDeadlineClock?: TaskDeadlineClock;
   runTask(options: RunTaskOptions): Promise<TaskRunResult>;
   findWorkflowById(
     workflowId: string,
@@ -979,8 +994,10 @@ async function executeTaskRun(
   request: ProjectRunExecuteRequest,
   execute: (control?: TaskDeadlineControl) => Promise<ProjectRunExecuteResponse>,
   acknowledgeNotStarted?: () => Promise<void>,
+  clock: TaskDeadlineClock = defaultTaskDeadlineClock,
 ): Promise<ProjectRunExecuteResponse> {
   if (!request.deadlineAt) return execute();
+  const { now, setTimeout: schedule, clearTimeout: clear } = clock;
   const deadline = TaskDateParse(request.deadlineAt);
   const controller = new TaskAbortController();
   let expired = false;
@@ -1001,18 +1018,18 @@ async function executeTaskRun(
   const control: TaskDeadlineControl = {
     signal,
     throwIfExpired() {
-      if (TaskDateNow() >= deadline) throw expire();
+      if (now() >= deadline) throw expire();
     },
   };
   try {
     control.throwIfExpired();
     const expiration = new Promise<never>((_resolve, reject) => {
       const arm = () => {
-        const remaining = deadline - TaskDateNow();
+        const remaining = deadline - now();
         if (remaining <= 0) {
           reject(expire());
         } else {
-          timer = TaskSetTimeout(arm, Math.min(remaining, MAX_TIMER_DELAY_MS));
+          timer = schedule(arm, Math.min(remaining, MAX_TIMER_DELAY_MS));
         }
       };
       arm();
@@ -1025,11 +1042,11 @@ async function executeTaskRun(
     control.throwIfExpired();
     return result;
   } catch (failure) {
-    if (!expired && TaskDateNow() >= deadline) expire();
+    if (!expired && now() >= deadline) expire();
     if (!expired) throw failure;
     return { success: false, error: error.message, error_code: "RUN_TIMEOUT" };
   } finally {
-    TaskClearTimeout(timer);
+    clear(timer);
     if (!executionStarted) await acknowledgeNotStarted?.();
   }
 }
@@ -3865,29 +3882,38 @@ function executeProjectRun(
   acknowledgePause?: () => Promise<boolean | undefined>,
 ): Promise<ProjectRunExecuteResponse> {
   if (request.kind === "task") {
-    return executeTaskRun(request, async (control) => {
-      try {
-        const signal = control
-          ? ReflectApply(TaskAbortSignalAny, AbortSignal, [[req.signal, control.signal]])
-          : req.signal;
-        switch (request.target) {
-          case "task:eval":
-            return await executeEvalTaskRun(request, ctx, req, req.signal, deps, control);
-          case "task:knowledge-ingest":
-            return await deps.executeKnowledgeIngest({ request, ctx, req, signal });
-          case "task:release-asset-build":
-            return await deps.executeReleaseAssetBuild({ request, ctx, req, signal });
-          case "task:dependency-artifact-build":
-            return await deps.executeDependencyArtifactBuild({ request, ctx, req, signal });
-          case "task:style-artifact-build":
-            return await deps.executeStyleArtifactBuild({ request, ctx, req, signal });
-          default:
-            return await executeDiscoveredTaskRun(request, ctx, req.signal, deps, control);
+    const clockDescriptor = ObjectGetOwnPropertyDescriptor(deps, "taskDeadlineClock");
+    const clock = clockDescriptor && ObjectHasOwn(clockDescriptor, "value")
+      ? clockDescriptor.value as TaskDeadlineClock | undefined
+      : undefined;
+    return executeTaskRun(
+      request,
+      async (control) => {
+        try {
+          const signal = control
+            ? ReflectApply(TaskAbortSignalAny, AbortSignal, [[req.signal, control.signal]])
+            : req.signal;
+          switch (request.target) {
+            case "task:eval":
+              return await executeEvalTaskRun(request, ctx, req, req.signal, deps, control);
+            case "task:knowledge-ingest":
+              return await deps.executeKnowledgeIngest({ request, ctx, req, signal });
+            case "task:release-asset-build":
+              return await deps.executeReleaseAssetBuild({ request, ctx, req, signal });
+            case "task:dependency-artifact-build":
+              return await deps.executeDependencyArtifactBuild({ request, ctx, req, signal });
+            case "task:style-artifact-build":
+              return await deps.executeStyleArtifactBuild({ request, ctx, req, signal });
+            default:
+              return await executeDiscoveredTaskRun(request, ctx, req.signal, deps, control);
+          }
+        } finally {
+          await acknowledgeStop?.();
         }
-      } finally {
-        await acknowledgeStop?.();
-      }
-    }, acknowledgeStop);
+      },
+      acknowledgeStop,
+      clock,
+    );
   }
   return executeWorkflowRun(request, ctx, req.signal, deps, acknowledgeStop, acknowledgePause);
 }
