@@ -9,10 +9,6 @@ export function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-export function normalizeNewlines(value: string): string {
-  return value.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
-}
-
 export function toRenderableCustomChunk(value: unknown): ParsedRenderableCustomChunk | null {
   if (!isRecord(value) || typeof value.type !== "string") {
     return null;
@@ -144,18 +140,4 @@ export function mapFinishReason(reason: string | undefined): ChatFinishReason | 
     default:
       return "other";
   }
-}
-
-export function splitSseFrames(value: string): { frames: string[]; remainder: string } {
-  const blocks = value.split("\n\n");
-  return {
-    frames: blocks.slice(0, -1),
-    remainder: blocks.at(-1) ?? "",
-  };
-}
-
-export function isCommentOnlySseFrame(raw: string): boolean {
-  return raw
-    .split("\n")
-    .every((line) => line.trim().length === 0 || line.trimStart().startsWith(":"));
 }

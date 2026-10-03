@@ -4,15 +4,18 @@ import {
 } from "#veryfront/agent/streaming/tool-input.ts";
 import {
   formatToolErrorText,
-  isCommentOnlySseFrame,
   isRecord,
   mapFinishReason,
-  normalizeNewlines,
   parseSerializedToolResult,
-  splitSseFrames,
   toRenderableCustomChunk,
 } from "./ag-ui-helpers.ts";
 import type { ChatStreamEvent } from "./protocol.ts";
+import {
+  isCommentOnlySseFrame,
+  MAX_SSE_FRAME_CHARS,
+  normalizeNewlines,
+  splitSseFrames,
+} from "#veryfront/utils/sse-frames.ts";
 import type { ChatUiMessage, ChatUiMessagePart } from "./types.ts";
 import { tryResolve } from "#veryfront/extensions/contracts.ts";
 import { defineSchema } from "#veryfront/schemas/index.ts";
@@ -91,7 +94,7 @@ export type AgUiDecodedChunk = {
 export type AgUiDecoderValidationMode = "permissive" | "strict";
 
 /** Default maximum characters retained for one AG-UI SSE frame. */
-export const DEFAULT_AG_UI_MAX_FRAME_CHARS = 8 * 1024 * 1024;
+export const DEFAULT_AG_UI_MAX_FRAME_CHARS = MAX_SSE_FRAME_CHARS;
 
 /** State for AG-UI chat event decoder. */
 export type AgUiChatEventDecoderState = {
