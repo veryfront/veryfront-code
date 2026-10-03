@@ -182,7 +182,9 @@ the npm package pins. It has one method per contract operation, and its request
 and response types come from that pinned contract. The SDK sends every request
 through the canonical Veryfront API transport from `createRunsApiTransport`,
 which owns the origin, credentials, retries, body limits and telemetry. Set
-`authMode: "api-key"` to send a project API key as `X-API-Key`. The legacy client at
+`authMode: "api-key"` to send a project API key as `X-API-Key`. Until the
+hosted API switches to the target contract, set `baseUrl` to an origin that
+serves it. The legacy client at
 `veryfront/runs` stays available until consumers switch over.
 
 ```ts
@@ -195,7 +197,7 @@ import {
 
 const sdk = createRunsSdk({
   transport: createRunsApiTransport({
-    baseUrl: "https://api.veryfront.com",
+    baseUrl: "<RUNS_API_ORIGIN>",
     getToken: () => process.env.VERYFRONT_API_TOKEN!,
   }),
 });

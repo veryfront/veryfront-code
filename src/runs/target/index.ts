@@ -11,7 +11,7 @@
  *
  * const runs = createRunsSdk({
  *   transport: createRunsApiTransport({
- *     baseUrl: "https://api.veryfront.com",
+ *     baseUrl: "<RUNS_API_ORIGIN>",
  *     getToken: () => process.env.VERYFRONT_API_TOKEN!,
  *   }),
  * });
