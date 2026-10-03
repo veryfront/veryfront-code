@@ -996,18 +996,34 @@ for (const [operationId, fixture] of Object.entries(fixtures)) {
   if (RUNS_OPERATIONS[operationId].stream) {
     const frames = [];
     for await (const frame of result) frames.push(frame);
-    ok(frames.length > 0, operationId + ' streamed no frames');
+    const expected = fixture.response.body.split('\\n\\n').filter(Boolean).map((block) => {
+      const lines = block.split('\\n');
+      const id = lines.find((line) => line.startsWith('id: '));
+      const data = lines.filter((line) => line.startsWith('data: ')).map((line) => line.slice(6));
+      return { id: id ? id.slice(4) : null, event: JSON.parse(data.join('\\n')) };
+    });
+    ok(expected.length > 0, operationId + ' fixture has no frames');
+    deepStrictEqual(frames, expected, operationId);
   } else {
     deepStrictEqual(await result, fixture.response.body, operationId);
   }
-  deepStrictEqual(requests.map((request) => request.url), [baseUrl + fixture.url], operationId);
-  deepStrictEqual(requests[0].method, RUNS_OPERATIONS[operationId].method, operationId);
-  deepStrictEqual(requests[0].headers.get('authorization'), 'Bearer consumer-token');
+  const [request] = requests;
+  deepStrictEqual(requests.map(({ url }) => url), [baseUrl + fixture.url], operationId);
+  deepStrictEqual(request.method, RUNS_OPERATIONS[operationId].method, operationId);
+  deepStrictEqual(request.headers.get('authorization'), 'Bearer consumer-token');
+  for (const [name, value] of Object.entries(fixture.input.headers ?? {})) {
+    deepStrictEqual(request.headers.get(name), String(value), operationId + ' ' + name);
+  }
+  if (fixture.input.body !== undefined) {
+    deepStrictEqual(JSON.parse(await request.text()), fixture.input.body, operationId + ' body');
+  }
 }
 `;
 
 async function checkRunsSdkExport(workDir: string): Promise<void> {
-  console.log("== 6c. runs/target SDK drives Runs operations from the published exports map");
+  console.log(
+    "== 6c. runs/target SDK drives Runs operations from the published exports map",
+  );
   const fixtures = Object.fromEntries(
     RUNS_SDK_CONSUMER_OPERATIONS.map((operationId) => [
       operationId,
@@ -1024,7 +1040,9 @@ async function checkRunsSdkExport(workDir: string): Promise<void> {
     RUNS_SDK_SCRIPT,
   ], { cwd: workDir, timeoutMs: 120_000 });
   if (runsSdk.code !== 0) {
-    fail(`veryfront/runs/target did not drive the Runs SDK from an installed package\n${runsSdk.combined}`);
+    fail(
+      `veryfront/runs/target did not drive the Runs SDK from an installed package\n${runsSdk.combined}`,
+    );
   }
 }
 

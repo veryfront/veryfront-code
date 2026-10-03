@@ -201,13 +201,15 @@ for await (const frame of sdk.streamRunEvents({ path: { run_id: run.id } })) {
 type Run = RunsContractComponents["schemas"]["Run"];
 ```
 
-The package ships the contract as types, not runtime schemas. An app that
-validates responses at its own boundary declares its validators against these
-types, for example `RunsOutput<"getRun">` or
-`RunsContractComponents["schemas"]["Run"]`. It doesn't copy the contract.
-When the pinned contract changes, a validator that no longer matches fails to
-compile. Error responses reject with a `VeryfrontError`, and `runsProblemOf(error)`
-returns the RFC 9457 problem body.
+The package ships the pinned contract as TypeScript types, not runtime
+validators. An app that consumes the SDK at its own boundary uses these types
+instead of copying the contract, for example `RunsOutput<"getRun">` or
+`RunsContractComponents["schemas"]["Run"]`. If it also validates responses at
+runtime, it types each validator against them. Then a contract change that
+removes or retypes a field fails to compile. A new optional field still
+compiles, so update the validator when the pinned contract changes. Error
+responses reject with a `VeryfrontError`, and `runsProblemOf(error)` returns the
+RFC 9457 problem body.
 
 ## Scheduling
 
