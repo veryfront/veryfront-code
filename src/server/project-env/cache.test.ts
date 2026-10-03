@@ -1,6 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert";
 import { describe, it } from "#veryfront/testing/bdd";
+import { FakeTime } from "#std/testing/time";
 import {
   EnvironmentVariableCache,
   type ProjectEnvironmentScope,
@@ -133,6 +134,7 @@ describe("project-env/cache", () => {
   });
 
   it("fails closed after TTL instead of serving stale secrets", async () => {
+    using time = new FakeTime(Date.now());
     let fetchCount = 0;
     const cache = new EnvironmentVariableCache(async () => {
       fetchCount++;
@@ -141,7 +143,7 @@ describe("project-env/cache", () => {
     }, 20);
 
     assertEquals(await cache.get(scope()), { API_KEY: "now-stale" });
-    await delay(30);
+    time.tick(20);
     await assertRejects(() => cache.get(scope()), Error, "credential revoked");
   });
 
@@ -228,6 +230,7 @@ describe("project-env/cache", () => {
   });
 
   it("retries the upstream once the failure TTL has elapsed", async () => {
+    using time = new FakeTime(Date.now());
     let fetchCount = 0;
     const cache = new EnvironmentVariableCache(
       () => {
@@ -241,12 +244,16 @@ describe("project-env/cache", () => {
 
     await assertRejects(() => cache.get(scope()), Error, "refused 1");
     await assertRejects(() => cache.get(scope()), Error, "refused 1");
-    await delay(30);
+    time.tick(19);
+    await assertRejects(() => cache.get(scope()), Error, "refused 1");
+    assertEquals(fetchCount, 1);
+    time.tick(1);
     await assertRejects(() => cache.get(scope()), Error, "refused 2");
     assertEquals(fetchCount, 2);
   });
 
   it("clears a recorded failure once a fetch succeeds", async () => {
+    using time = new FakeTime(Date.now());
     let fetchCount = 0;
     const cache = new EnvironmentVariableCache(
       () => {
@@ -260,7 +267,7 @@ describe("project-env/cache", () => {
     );
 
     await assertRejects(() => cache.get(scope()), Error, "refused");
-    await delay(30);
+    time.tick(20);
     assertEquals(await cache.get(scope()), { VALUE: "recovered" });
     assertEquals(await cache.get(scope()), { VALUE: "recovered" });
     assertEquals(fetchCount, 2);

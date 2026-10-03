@@ -519,10 +519,12 @@ describe("proxy routing invalidation Redis bus", () => {
     assert(busA);
     assert(busB);
     const publish = busA.publish(createEvent());
+    let duplicatePublish: Promise<unknown> | undefined;
     try {
       const result = await settleWithin(publish, "two-replica invalidation");
+      duplicatePublish = busA.publish(createEvent());
       const duplicateResult = await settleWithin(
-        busA.publish(createEvent()),
+        duplicatePublish,
         "duplicate two-replica invalidation",
       );
 
@@ -534,6 +536,7 @@ describe("proxy routing invalidation Redis bus", () => {
       await busA.close();
       await busB.close();
       await publish.catch(() => undefined);
+      await duplicatePublish?.catch(() => undefined);
     }
     assertEquals(redis.clients.length, 4);
   });
