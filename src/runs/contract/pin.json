@@ -1,9 +1,9 @@
 {
   "contract": "0.8.0",
-  "release": "https://github.com/veryfront/veryfront-issue-inbox/releases/tag/runs-target-0.8.0-b2a6c32770d2",
-  "archiveSha256": "b2a6c32770d2031e19f813580481b95000bab90847133b0e05169478d2b47107",
+  "release": "https://github.com/veryfront/veryfront-issue-inbox/releases/tag/runs-target-0.8.0-806fa3bcbf98",
+  "archiveSha256": "806fa3bcbf986cef2037859b1c6e84f1daaf90d48b13c45c6812445b85342e96",
   "generatedBy": "veryfront-api: pnpm contracts:runs:generate -- --out <dir> (the kit's runs-api.types.ts)",
   "files": {
-    "runs-api.generated.ts": "16eca4bc80208292a9343ff6eceb3e979e794e5d2a8ef213772b9746a4257b7e"
+    "runs-api.generated.ts": "d3be5fb515b4e4c8bfd5bf58289ead53551b8953a5c1bd26818dd98ddf43081a"
   }
 }
