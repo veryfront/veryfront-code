@@ -2,7 +2,7 @@ import type { operations, paths } from "../contract/runs-api.generated.ts";
 
 /**
  * Method and path for each Runs target operation, keyed by the contract's operation ID.
- * `operations.test.ts` checks every entry against the pinned `paths` at compile time.
+ * `client.test.ts` checks every entry against the pinned `paths` at compile time.
  */
 export const RUNS_OPERATIONS = {
   listRuns: { method: "GET", path: "/runs" },

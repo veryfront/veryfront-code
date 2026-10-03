@@ -43,6 +43,11 @@ export interface RunsCallOptions {
   /** Overrides the configured credential, for example with a run execution token. */
   credential?: RunsCredential;
   signal?: AbortSignal;
+  /**
+   * Receives the success response headers, for example the `ETag` of `getRun` that
+   * `updateRun` needs as `If-Match`, or the `Location` of `createRun`.
+   */
+  onHeaders?: (headers: Headers) => void;
 }
 
 type Operation<K extends RunsOperationId> = operations[K];
@@ -125,8 +130,12 @@ const FALLBACK_PROBLEM_CODE = "UNEXPECTED_RESPONSE";
 
 /** Create a typed Runs SDK over the given transport. */
 export function createRunsSdk(config: RunsSdkConfig): RunsSdk {
-  const send = (operationId: RunsOperationId, input: WireInput, options: RunsCallOptions) =>
-    config.transport(buildRequest(config, operationId, input, options));
+  const send = async (operationId: RunsOperationId, input: WireInput, options: RunsCallOptions) => {
+    const response = await config.transport(buildRequest(config, operationId, input, options));
+    if (!response.ok) throw await problemError(operationId, response);
+    options.onHeaders?.(response.headers);
+    return response;
+  };
 
   const call = async (
     operationId: RunsOperationId,
@@ -228,16 +237,14 @@ function buildRequest(
 }
 
 async function readJson(operationId: RunsOperationId, response: Response): Promise<unknown> {
-  if (!response.ok) throw await problemError(operationId, response);
   if (response.status === 204) return undefined;
-  return await response.json();
+  return parseJson(operationId, await response.text());
 }
 
 async function* readFrames(
   operationId: RunsOperationId,
   response: Response,
 ): AsyncGenerator<RunStreamFrame> {
-  if (!response.ok) throw await problemError(operationId, response);
   if (!response.body) return;
   let buffer = "";
   for await (const chunk of response.body.pipeThrough(new TextDecoderStream())) {
@@ -245,7 +252,7 @@ async function* readFrames(
     buffer = `${buffer}${chunk}`.replace(/\r\n|\r(?!$)/g, "\n");
     let boundary = buffer.indexOf("\n\n");
     while (boundary >= 0) {
-      const frame = parseFrame(buffer.slice(0, boundary));
+      const frame = parseFrame(operationId, buffer.slice(0, boundary));
       buffer = buffer.slice(boundary + 2);
       if (frame) yield frame;
       boundary = buffer.indexOf("\n\n");
@@ -254,7 +261,7 @@ async function* readFrames(
 }
 
 /** Parse one SSE frame; comment-only frames such as keep-alives yield nothing. */
-function parseFrame(raw: string): RunStreamFrame | null {
+function parseFrame(operationId: RunsOperationId, raw: string): RunStreamFrame | null {
   let id: string | null = null;
   const data: string[] = [];
   for (const line of raw.split("\n")) {
@@ -266,7 +273,21 @@ function parseFrame(raw: string): RunStreamFrame | null {
     else if (field === "data") data.push(value);
   }
   if (data.length === 0) return null;
-  return { id, event: JSON.parse(data.join("\n")) };
+  return { id, event: parseJson(operationId, data.join("\n")) as RunStreamFrame["event"] };
+}
+
+/** Parse a success body; malformed JSON becomes an API client error, not a `SyntaxError`. */
+function parseJson(operationId: RunsOperationId, text: string): unknown {
+  try {
+    return JSON.parse(text);
+  } catch (cause) {
+    throw API_CLIENT_ERROR.create({
+      detail: `${operationId} returned a body that is not valid JSON`,
+      status: 502,
+      cause,
+      context: { operationId },
+    });
+  }
 }
 
 async function problemError(operationId: RunsOperationId, response: Response) {

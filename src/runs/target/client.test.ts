@@ -30,7 +30,7 @@ type ContractOperation<K extends RunsOperationId> =
 type IsEventStream<K extends RunsOperationId> = operations[K]["responses"] extends
   { 200: { content: { "text/event-stream": string } } } ? true : false;
 
-// Compile-time checks: `deno test` type-checks this file.
+// Compile-time checks: `deno check` and the CI test typecheck (`lint:test-typecheck`) enforce them.
 export type RunsSdkTypeChecks = [
   // Every route resolves to exactly its operation in the pinned `paths`.
   Expect<Equal<{ [K in RunsOperationId]: ContractOperation<K> }, operations>>,
@@ -47,7 +47,21 @@ export type RunsSdkTypeChecks = [
   Expect<Equal<RunsResult<"streamRunEvents">, AsyncIterable<RunStreamFrame>>>,
   Expect<Equal<RunsInput<"createRun">["body"], Schemas["CreateRunRequest"]>>,
   Expect<Equal<RunsInput<"createRun">["headers"], { "Idempotency-Key": string }>>,
-  Expect<Equal<Extract<RunsPaginatedOperationId, "listRuns" | "getRun">, "listRuns">>,
+  Expect<
+    Equal<
+      RunsPaginatedOperationId,
+      | "listRuns"
+      | "listProjectRuns"
+      | "listConversationRuns"
+      | "listRunEvents"
+      | "listRunInputRequests"
+      | "listConversationInputRequests"
+      | "listProjectWebhookRuns"
+      | "listEvalRuns"
+      | "listRunChildRuns"
+      | "listConversationChildRuns"
+    >
+  >,
 ];
 
 const BASE_URL = "https://api.example.test";
@@ -201,6 +215,37 @@ describe("Runs target SDK", () => {
     await sdk.getRun({ path: { run_id: RUN_ID } }, { signal: controller.signal });
     controller.abort();
     assertEquals(requests[0]?.signal.aborted, true);
+  });
+
+  it("hands success headers to onHeaders so a getRun ETag can guard updateRun", async () => {
+    const { sdk, requests } = sdkWith([
+      Response.json(FIXTURE_RUN, { headers: { ETag: '"run-version-7"' } }),
+      fixtureResponse("updateRun"),
+    ]);
+    let etag: string | null = null;
+    await sdk.getRun({ path: { run_id: RUN_ID } }, {
+      onHeaders: (headers) => etag = headers.get("ETag"),
+    });
+    assert(etag);
+    await sdk.updateRun({
+      path: { run_id: RUN_ID },
+      headers: { "If-Match": etag },
+      body: { title: "Renamed" },
+    });
+    assertEquals(requests[1]?.headers.get("If-Match"), '"run-version-7"');
+  });
+
+  it("maps a malformed success body or stream frame to an API client error", async () => {
+    const { sdk } = sdkWith([
+      new Response("<html>", { status: 200 }),
+      streamResponse(["id: 1\ndata: {not json\n\n"]),
+    ]);
+    const bodyError = await rejection(() => sdk.getRun({ path: { run_id: RUN_ID } }));
+    assertEquals(bodyError.status, 502);
+    const frameError = await rejection(() =>
+      collect(sdk.streamRunEvents({ path: { run_id: RUN_ID } }))
+    );
+    assertEquals(frameError.status, 502);
   });
 
   it("follows page_info.next with unchanged filters until it is null", async () => {
