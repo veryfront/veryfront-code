@@ -11,20 +11,50 @@ interface ExampleMedia {
   schema?: Schema;
   examples?: Record<string, { value: unknown }>;
 }
+interface ContractParameter {
+  name: string;
+  in: string;
+  required?: boolean;
+  example?: unknown;
+}
 interface ContractOperation {
   operationId: string;
-  parameters?: Array<{
-    name: string;
-    in: string;
-    required?: boolean;
-    example?: unknown;
-  }>;
+  parameters?: ContractParameter[];
   requestBody?: { content: Record<string, ExampleMedia> };
   responses: Record<string, { content?: Record<string, ExampleMedia> }>;
 }
 export interface RunsExampleDocument {
   components?: { schemas: Record<string, Schema> };
-  paths: Record<string, Record<string, ContractOperation>>;
+  paths: Record<string, ContractPathItem>;
+}
+const HTTP_METHODS = [
+  "get",
+  "put",
+  "post",
+  "delete",
+  "options",
+  "head",
+  "patch",
+  "trace",
+] as const;
+/** A path item: operations by HTTP method, plus shared parameters and ignored metadata. */
+type ContractPathItem =
+  & Partial<Record<(typeof HTTP_METHODS)[number], ContractOperation>>
+  & { parameters?: ContractParameter[] };
+
+function isHttpMethod(key: string): key is (typeof HTTP_METHODS)[number] {
+  return (HTTP_METHODS as readonly string[]).includes(key);
+}
+
+/** Path-level parameters, overridden by operation parameters with the same name and location. */
+function mergeParameters(
+  shared: ContractParameter[] = [],
+  own: ContractParameter[] = [],
+): ContractParameter[] {
+  const key = (parameter: ContractParameter) =>
+    `${parameter.in}:${parameter.name}`;
+  const owned = new Set(own.map(key));
+  return [...shared.filter((parameter) => !owned.has(key(parameter))), ...own];
 }
 interface Fixture {
   input: Record<string, unknown>;
@@ -79,13 +109,20 @@ export function extractRunsFixtures(
   document: RunsExampleDocument,
 ): Record<string, Fixture> {
   const fixtures: Record<string, Fixture> = {};
-  for (const [path, methods] of Object.entries(document.paths)) {
-    for (const operation of Object.values(methods)) {
+  for (const [path, pathItem] of Object.entries(document.paths)) {
+    for (const method of Object.keys(pathItem).filter(isHttpMethod)) {
+      const operation = pathItem[method];
+      if (!operation) continue;
       const id = operation.operationId;
       const input: Record<string, unknown> = {};
       let url = path;
       const query = new URLSearchParams();
-      for (const parameter of operation.parameters ?? []) {
+      for (
+        const parameter of mergeParameters(
+          pathItem.parameters,
+          operation.parameters,
+        )
+      ) {
         if (parameter.example === undefined) {
           if (parameter.required) {
             throw new Error(

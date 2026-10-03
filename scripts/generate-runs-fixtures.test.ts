@@ -130,6 +130,28 @@ describe("Runs fixture generation", () => {
     assertEquals(fixture.url, "/runs/run-example?status=running");
   });
 
+  it("applies path-level parameters and ignores path-item metadata", () => {
+    const changed = structuredClone(document) as RunsExampleDocument;
+    const pathItem = changed.paths["/runs/{run_id}"]!;
+    const shared = pathItem.get!.parameters!;
+    delete pathItem.get!.parameters;
+    pathItem.parameters = [...shared, {
+      name: "label",
+      in: "query",
+      example: "shared",
+    }];
+    pathItem.get!.parameters = [{
+      name: "label",
+      in: "query",
+      example: "own",
+    }];
+    Object.assign(pathItem, { summary: "Run", servers: [] });
+    const fixture = extractRunsFixtures(changed).getRun!;
+    assertEquals(fixture.input.path, { run_id: "run-example" });
+    assertEquals(fixture.input.query, { label: "own" });
+    assertEquals(fixture.url, "/runs/run-example?label=own");
+  });
+
   it("fails rather than inventing missing success examples", () => {
     const changed: RunsExampleDocument = structuredClone(document);
     changed.paths["/runs/{run_id}"]!.get!.responses["200"]!

@@ -9,7 +9,7 @@ release and archive hash, then regenerate the SDK fixtures:
 ```sh
 deno task contracts:runs:fixtures
 deno task test:file scripts/generate-runs-fixtures.test.ts
-deno task test:file src/runs/target/client.test.ts tests/integration/contracts/runs-target-types.test.ts
+deno task test:file tests/integration/integrations/runs-target-sdk/client.test.ts tests/integration/contracts/runs-target-types.test.ts
 ```
 
 The generator selects the first named request and success response example for
