@@ -134,6 +134,32 @@ function createEvalTransportModel(input: {
   };
 }
 
+function manualTaskDeadlineClock() {
+  let now = Date.UTC(2026, 9, 3);
+  let nextId = 0;
+  const timers = new Map<number, { callback: () => void; at: number }>();
+  return {
+    now: () => now,
+    setTimer: (callback: () => void, delayMs: number) => {
+      const id = ++nextId;
+      timers.set(id, { callback, at: now + delayMs });
+      return id;
+    },
+    clearTimer: (id: number | undefined) => {
+      if (id !== undefined) timers.delete(id);
+    },
+    advance: (milliseconds: number) => {
+      now += milliseconds;
+      for (const [id, timer] of timers) {
+        if (timer.at <= now) {
+          timers.delete(id);
+          timer.callback();
+        }
+      }
+    },
+  };
+}
+
 describe("createKnowledgeEventLogger", () => {
   it("caps the number of accumulated knowledge ingest events", () => {
     const lines: string[] = [];
@@ -1011,10 +1037,13 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     });
 
     it(`stops reserved task side effects when its deadline expires: ${target}`, async () => {
+      const clock = manualTaskDeadlineClock();
+      const started = Promise.withResolvers<void>();
       let receivedSignal: AbortSignal | undefined;
       let sideEffects = 0;
       const execute = async (input: unknown) => {
         receivedSignal = (input as { signal?: AbortSignal }).signal;
+        started.resolve();
         if (!receivedSignal) return { success: true };
         await new Promise<void>((resolve) =>
           receivedSignal!.addEventListener("abort", () => resolve(), { once: true })
@@ -1030,6 +1059,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
           executeDependencyArtifactBuild: execute,
           executeStyleArtifactBuild: execute,
         }),
+        clock,
       );
       const { request, publicKeyPem } = await signedRequest(
         "/api/control-plane/runs/run_deadline/execute",
@@ -1038,11 +1068,19 @@ describe("server/handlers/request/project-run-execute.handler", () => {
           kind: "task",
           target: `task:${target}`,
           projectId: "proj-1",
-          deadlineAt: new Date(Date.now() + 25).toISOString(),
+          deadlineAt: new Date(clock.now() + 25).toISOString(),
         },
       );
 
-      const result = await handler.handle(request, createCtx(publicKeyPem));
+      const pending = handler.handle(request, createCtx(publicKeyPem));
+      await Promise.race([
+        started.promise,
+        pending.then(() => {
+          throw new Error("Deadline test completed before executor admission");
+        }),
+      ]);
+      clock.advance(25);
+      const result = await pending;
 
       assertExists(result.response);
       assertExists(receivedSignal);
