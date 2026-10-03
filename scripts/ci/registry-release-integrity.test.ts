@@ -3,6 +3,7 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   formatRegistryReleaseFailure,
   pollRegistryPackage,
+  pollRegistryPackages,
   readPropagationBudget,
   RegistryReleaseError,
 } from "./registry-release-integrity.ts";
@@ -59,6 +60,61 @@ async function captureError(
     return error;
   }
 }
+
+describe("registry package batch", () => {
+  it("starts every package before waiting and finishes at independent convergence", async () => {
+    const reads: string[] = [];
+    const attempts: number[] = [0, 0];
+    const waits: number[][] = [[], []];
+    const options = [2, 3].map((convergesAt, index) => {
+      const packageName = `package-${index}`;
+      let now = 0;
+      return {
+        packageName,
+        version: VERSION,
+        expectedGitHead: GIT_HEAD,
+        maxAttempts: 3,
+        retryDelayMs: 10,
+        requestTimeoutMs: 15_000,
+        now: () => now,
+        delay: (ms: number) => {
+          waits[index]!.push(ms);
+          now += ms;
+          return Promise.resolve();
+        },
+        fetcher: (input: RequestInfo | URL) => {
+          if (String(input).endsWith(`/${VERSION}`)) {
+            reads.push(`${packageName}:${now}`);
+            attempts[index]!++;
+            return Promise.resolve(
+              attempts[index]! < convergesAt
+                ? new Response("not found", { status: 404 })
+                : Response.json(publishedPackage({ name: packageName })),
+            );
+          }
+          const metadata = publishedPackage({ name: packageName });
+          return Promise.resolve(Response.json({
+            name: packageName,
+            versions: { [VERSION]: metadata },
+          }));
+        },
+      };
+    });
+    await pollRegistryPackages(options);
+    assertEquals(reads.slice(0, 2), ["package-0:0", "package-1:0"]);
+    assertEquals(attempts, [2, 3]);
+    assertEquals(waits, [[10], [10, 10]]);
+    assertEquals(reads.filter((read) => read.startsWith("package-0:")), [
+      "package-0:0",
+      "package-0:10",
+    ]);
+    assertEquals(reads.filter((read) => read.startsWith("package-1:")), [
+      "package-1:0",
+      "package-1:10",
+      "package-1:20",
+    ]);
+  });
+});
 
 describe("registry propagation budget", () => {
   it("waits long enough for npm to publish the version everywhere", () => {

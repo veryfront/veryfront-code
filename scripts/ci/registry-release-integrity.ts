@@ -603,6 +603,13 @@ export function readPropagationBudget(
   };
 }
 
+/** Verify each package independently so propagation waits overlap. */
+export async function pollRegistryPackages(
+  packages: readonly PollRegistryPackageOptions[],
+): Promise<void> {
+  await Promise.all(packages.map(pollRegistryPackage));
+}
+
 async function main(args: string[]): Promise<void> {
   const options = readCliOptions(args);
   // Read individually: enumerating the environment needs unrestricted access,
@@ -615,18 +622,16 @@ async function main(args: string[]): Promise<void> {
       "VF_REGISTRY_PROPAGATION_DELAY_MS",
     ),
   });
-  await Promise.all(options.packages.map((packageName) =>
-    pollRegistryPackage({
-      packageName,
-      version: options.version,
-      expectedGitHead: options.gitHead,
-      requireRcTag: options.requireRcTag,
-      registryUrl: options.registryUrl,
-      ...budget,
-      requestTimeoutMs: REQUEST_TIMEOUT_MS,
-      onRetry: console.log,
-    })
-  ));
+  await pollRegistryPackages(options.packages.map((packageName) => ({
+    packageName,
+    version: options.version,
+    expectedGitHead: options.gitHead,
+    requireRcTag: options.requireRcTag,
+    registryUrl: options.registryUrl,
+    ...budget,
+    requestTimeoutMs: REQUEST_TIMEOUT_MS,
+    onRetry: console.log,
+  })));
   console.log(
     `Registry release integrity: ${options.packages.length} exact package versions verified.`,
   );
