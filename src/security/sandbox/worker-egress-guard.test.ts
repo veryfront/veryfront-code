@@ -25,7 +25,9 @@ import {
 } from "./worker-egress-guard.ts";
 import type { WorkerEgressFetch } from "./worker-egress-guard.ts";
 import {
+  ARRAY_WRITE_ROUTES,
   HEADER_METHODS,
+  installArrayWriteProbe,
   installCredentialProbes,
 } from "#veryfront/security/http/credential-probes.test-helpers.ts";
 
@@ -1279,4 +1281,54 @@ describe("worker-egress-guard guardedEgressFetch credential headers", () => {
     assertEquals(transportCalls, 0);
     assertEquals(probes.saw(BEARER), false);
   });
+});
+
+describe("worker-egress-guard guardedEgressFetch observed array writes", () => {
+  const BEARER = "Bearer vf-egress-array-bearer-2b71";
+
+  for (const route of ARRAY_WRITE_ROUTES) {
+    it(`refuses before copying the credential headers while ${route} observes array writes`, async () => {
+      let sent = 0;
+      const fetchImpl: WorkerEgressFetch = () => {
+        sent++;
+        return Promise.resolve(new Response("ok"));
+      };
+      const brokerFetch: WorkerEgressFetch = () => {
+        sent++;
+        return Promise.resolve(new Response("ok"));
+      };
+      const probe = installArrayWriteProbe(route);
+      try {
+        await assertRejects(
+          () =>
+            guardedEgressFetch(
+              "http://93.184.216.34/v1/messages",
+              { headers: { authorization: BEARER }, redirect: "error" },
+              { fetchImpl },
+            ),
+          TypeError,
+          "Refused a credential-bearing request",
+        );
+        await assertRejects(
+          () =>
+            guardedEgressFetch(
+              "http://93.184.216.34/v1/messages",
+              { headers: { authorization: BEARER }, redirect: "error" },
+              {
+                fetchImpl: brokerFetch,
+                options: {
+                  httpBroker: { url: "http://broker.example.test/fetch", token: "broker-token" },
+                },
+              },
+            ),
+          TypeError,
+          "Refused a credential-bearing request",
+        );
+      } finally {
+        probe.restore();
+      }
+      assertEquals(probe.saw(BEARER), false);
+      assertEquals(sent, 0);
+    });
+  }
 });

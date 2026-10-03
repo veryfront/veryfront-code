@@ -1,4 +1,4 @@
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { isDeno, isNode } from "#veryfront/platform/compat/runtime.ts";
 import {
@@ -11,13 +11,35 @@ import {
   planPinnedConnectAttempts,
 } from "./pinned-fetch.ts";
 import { copyNativeHeaders } from "./native-request-init.ts";
-import { installCredentialProbes } from "#veryfront/security/http/credential-probes.test-helpers.ts";
+import {
+  installArrayWriteProbe,
+  installCredentialProbes,
+} from "#veryfront/security/http/credential-probes.test-helpers.ts";
 
 // Probe tests pin what Deno 2.7.7's own Request and fetch call through the
 // live prototypes; Node's undici and Bun take different internal paths.
 const DENO_INTERNALS = { ignore: !isDeno };
 
 describe("fetchWithPinnedAddresses", () => {
+  const BEARER = "Bearer vf-pinned-bearer-41c9";
+
+  it("refuses before copying the headers while an index accessor observes array writes", async () => {
+    const probe = installArrayWriteProbe("Array.prototype index");
+    try {
+      await assertRejects(
+        () =>
+          fetchWithPinnedAddresses(new URL("http://pinned.example.test/"), ["127.0.0.1"], {
+            headers: { authorization: BEARER },
+          }),
+        TypeError,
+        "Refused a credential-bearing request",
+      );
+    } finally {
+      probe.restore();
+    }
+    assertEquals(probe.saw(BEARER), false);
+  });
+
   it("preserves Fetch null-body semantics for 204, 205, and 304", async () => {
     for (const status of [204, 205, 304]) {
       const response = createPinnedFetchResponse(

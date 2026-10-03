@@ -5,10 +5,14 @@
  */
 
 import type { ClientRequest, IncomingMessage, RequestOptions } from "node:http";
+import * as nodeHttp from "node:http";
+import * as nodeHttps from "node:https";
 import type { Readable } from "node:stream";
 import { VERSION } from "#veryfront/utils/version-constant.ts";
 import { isErrorAcrossRealms } from "../error-introspection.ts";
 import {
+  assertNativeRequestProcessing,
+  assertObjectPrototypeUnchanged,
   copyNativeHeaders,
   createNativeRequestInit,
   readOwnInitField,
@@ -26,6 +30,34 @@ const HeadersSet = Headers.prototype.set;
 const RequestHeadersGetter = Object.getOwnPropertyDescriptor(NativeRequest.prototype, "headers")!
   .get!;
 const RequestArrayBuffer = NativeRequest.prototype.arrayBuffer;
+const URLHrefGetter = Object.getOwnPropertyDescriptor(URL.prototype, "href")!.get!;
+const FunctionHasInstance = Function.prototype[Symbol.hasInstance];
+const NativeURLSearchParams = URLSearchParams;
+const NativeBlob = Blob;
+const NativeFormData = typeof FormData === "undefined" ? undefined : FormData;
+const BlobTypeGetter = Object.getOwnPropertyDescriptor(Blob.prototype, "type")!.get!;
+
+type NodeRequestFunction = typeof import("node:http").request;
+
+/**
+ * `node:http` and `node:https` `request`, copied into constants while this
+ * module evaluates. Static imports evaluate before any module that imports
+ * this one, project code included, and the copies do not follow later
+ * changes to the live bindings (`syncBuiltinESMExports`): the function
+ * receives the options and their credential-bearing headers.
+ */
+const capturedHttpRequest: NodeRequestFunction = nodeHttp.request;
+const capturedHttpsRequest: NodeRequestFunction = nodeHttps.request;
+
+function nodeRequestFor(protocol: string): NodeRequestFunction {
+  return protocol === "https:" ? capturedHttpsRequest : capturedHttpRequest;
+}
+
+function isInstance(value: unknown, constructor: unknown): boolean {
+  return IntrinsicReflectApply(FunctionHasInstance, constructor, [value]) as boolean;
+}
+const ObjectAssign = Object.assign;
+const ObjectCreate = Object.create;
 
 function hasHeader(headers: Headers, name: string): boolean {
   return IntrinsicReflectApply(HeadersHas, headers, [name]) as boolean;
@@ -203,19 +235,33 @@ async function normalizeRequestBody(
   init: RequestInit,
   headers: Headers,
 ): Promise<BodyInit | null> {
+  // The body's kind and type are read first, through captured primitives
+  // (a constructor's own Symbol.hasInstance is never consulted); a proxy body
+  // can still run code here, so the headers are checked after these reads and
+  // before the first header operation.
   const body = readOwnInitField(init, "body") ?? null;
-  if (body instanceof URLSearchParams && !hasHeader(headers, "content-type")) {
+  const isSearchParams = isInstance(body, NativeURLSearchParams);
+  const isBlob = !isSearchParams && isInstance(body, NativeBlob);
+  const blobType = isBlob ? IntrinsicReflectApply(BlobTypeGetter, body, []) as string : "";
+  const isFormData = !isSearchParams && !isBlob && NativeFormData !== undefined &&
+    isInstance(body, NativeFormData);
+  assertNativeRequestProcessing();
+  if (isSearchParams && !hasHeader(headers, "content-type")) {
     setHeader(headers, "content-type", "application/x-www-form-urlencoded;charset=UTF-8");
-  } else if (body instanceof Blob && body.type && !hasHeader(headers, "content-type")) {
-    setHeader(headers, "content-type", body.type);
-  } else if (typeof FormData !== "undefined" && body instanceof FormData) {
+  } else if (isBlob && blobType && !hasHeader(headers, "content-type")) {
+    setHeader(headers, "content-type", blobType);
+  } else if (isFormData) {
+    // A string, read with the captured getter: converting a URL object would
+    // call a patchable toString inside the constructor.
+    const href = IntrinsicReflectApply(URLHrefGetter, url, []) as string;
+    const method = readOwnInitField(init, "method") ?? "POST";
+    // The instanceof checks above and the method read can run project code,
+    // and the constructor calls Headers members with these headers as `this`
+    // while it adds the multipart content type: check right before it.
+    assertNativeRequestProcessing();
     const normalized = new NativeRequest(
-      url,
-      createNativeRequestInit(undefined, {
-        method: readOwnInitField(init, "method") ?? "POST",
-        headers,
-        body,
-      }),
+      href,
+      createNativeRequestInit(undefined, { method, headers, body }),
     );
     const normalizedHeaders = toNativeHeaderRecord(
       IntrinsicReflectApply(RequestHeadersGetter, normalized, []) as Headers,
@@ -297,28 +343,41 @@ export async function fetchWithPinnedAddresses(
   if (addresses.length === 0) {
     throw new Error(`No validated addresses are available for ${url.host}`);
   }
-  const headers = applyRuntimeDefaultRequestHeaders(
-    copyNativeHeaders(readOwnInitField(init, "headers")),
-    readOwnInitField(init, "mode"),
-  );
+  // Filling and reading a native Headers writes into arrays an index accessor
+  // or a replaced array species would observe; each turn that touches the
+  // credential-bearing headers is checked first.
+  // Init fields first: an own getter runs project code, which must not run
+  // once the credential-bearing headers exist.
+  const mode = readOwnInitField(init, "mode");
+  const initHeaders = readOwnInitField(init, "headers");
+  assertNativeRequestProcessing();
+  const headers = applyRuntimeDefaultRequestHeaders(copyNativeHeaders(initHeaders), mode);
   const body = await normalizeRequestBody(url, init, headers);
   const method = (readOwnInitField(init, "method") ?? "GET").toUpperCase();
+  assertNativeRequestProcessing();
   const requestHeaders = toNativeHeaderRecord(headers);
   const setCookies = readSeparateSetCookies(requestHeaders);
   const signal = readOwnInitField(init, "signal") ?? undefined;
 
-  const transport = url.protocol === "https:"
-    ? await import("node:https")
-    : await import("node:http");
+  const sendRequest = nodeRequestFor(url.protocol);
   const attempts = planPinnedConnectAttempts(addresses);
   const bodyIsReplayable = isReplayableRequestBody(body);
   let lastConnectError: unknown;
 
   for (let attemptIndex = 0; attemptIndex < attempts.length; attemptIndex++) {
+    // Null-prototype options and headers: whatever node:http reads from them
+    // directly never falls through to Object.prototype. It reads most options
+    // from its own ordinary copy, though, which assertObjectPrototypeUnchanged
+    // covers before the call.
+    const outgoingHeaders = ObjectAssign(ObjectCreate(null), requestHeaders, {
+      // node:http sends each element of an array value as its own field.
+      ...(setCookies === undefined ? {} : { "set-cookie": [...setCookies] }),
+      host: url.host,
+    }) as Record<string, string | string[]>;
     const requestOptions: RequestOptions & {
       autoSelectFamily?: boolean;
       ca?: string[];
-    } = {
+    } = ObjectAssign(ObjectCreate(null), {
       protocol: url.protocol,
       // Connect straight to the validated address. Overriding DNS through a
       // custom `lookup` is the documented way to pin and Node honours it, but
@@ -330,12 +389,7 @@ export async function fetchWithPinnedAddresses(
       port: url.port || (url.protocol === "https:" ? 443 : 80),
       path: `${url.pathname}${url.search}`,
       method,
-      headers: {
-        ...requestHeaders,
-        // node:http sends each element of an array value as its own field.
-        ...(setCookies === undefined ? {} : { "set-cookie": [...setCookies] }),
-        host: url.host,
-      },
+      headers: outgoingHeaders,
 
       ...(url.protocol === "https:"
         ? {
@@ -343,7 +397,7 @@ export async function fetchWithPinnedAddresses(
           ...(tls.trustedCaCertificates?.length ? { ca: [...tls.trustedCaCertificates] } : {}),
         }
         : {}),
-    };
+    });
 
     let pendingRequest: ClientRequest | undefined;
     try {
@@ -355,7 +409,10 @@ export async function fetchWithPinnedAddresses(
           cleanupAbortListener();
           reject(error);
         };
-        const request = transport.request(requestOptions, async (message) => {
+        // Same turn as the call: node:http processes the headers synchronously.
+        assertNativeRequestProcessing();
+        assertObjectPrototypeUnchanged();
+        const request = sendRequest(requestOptions, async (message) => {
           responseMessage = message;
           try {
             const responseHeaders = copyResponseHeaders(message);

@@ -1166,9 +1166,20 @@ const CROSS_ORIGIN_CREDENTIAL_HEADERS = [
   "x-goog-api-key",
 ] as const;
 
+/** Headers that describe a request body, dropped when a redirect drops the body. */
+const BODY_HEADERS = [
+  "content-encoding",
+  "content-language",
+  "content-length",
+  "content-location",
+  "content-type",
+] as const;
+
 function stripHopByHopHeaders(headers: Headers): void {
-  for (const name of HOP_BY_HOP_HEADERS) {
-    IntrinsicReflectApply(HeadersDelete, headers, [name]);
+  // Indexed: a for-of would run a patchable array iterator while the headers
+  // hold credentials.
+  for (let index = 0; index < HOP_BY_HOP_HEADERS.length; index++) {
+    IntrinsicReflectApply(HeadersDelete, headers, [HOP_BY_HOP_HEADERS[index]]);
   }
 }
 
@@ -1191,6 +1202,9 @@ async function fetchThroughHttpBroker(
   targetUrl: string,
   init: RequestInit,
 ): Promise<Response> {
+  // Everything up to the send below runs in this turn, so one check covers the
+  // copy, the header edits and the native call that see the broker token.
+  assertNativeRequestProcessing();
   const headers = copyNativeHeaders(readOwnInitField(init, "headers"));
   stripHopByHopHeaders(headers);
   IntrinsicReflectApply(HeadersDelete, headers, ["content-length"]);
@@ -1202,7 +1216,6 @@ async function fetchThroughHttpBroker(
     redirect: "manual",
     client: undefined,
   });
-  assertNativeRequestProcessing();
   // Indexed, not destructured: see the per-hop send in guardedEgressFetch.
   const brokerArguments = nativeFetchArguments(broker.url, brokerInit);
   const brokerResponse = await fetchImpl(brokerArguments[0], brokerArguments[1]);
@@ -1337,6 +1350,8 @@ export async function guardedEgressFetch(
   let method = (readOwnInitField(init, "method") ??
     (requestInput ? getNativeRequestProperty(requestInput, "method") : "GET")).toUpperCase();
   // Copied with captured iteration, and handed to the native call as a record.
+  // Filling a native Headers writes into arrays, so that fill is checked too.
+  assertNativeRequestProcessing();
   const headers = copyNativeHeaders(
     readOwnInitField(init, "headers") ??
       (requestInput ? getNativeRequestProperty(requestInput, "headers") : undefined),
@@ -1394,6 +1409,10 @@ export async function guardedEgressFetch(
     let pinnedResponse: Promise<Response> | undefined;
     const isNetworkRequest = hostname !== null &&
       (parsedUrl.protocol === "http:" || parsedUrl.protocol === "https:");
+    // Building this hop's init iterates the credential-bearing headers. The
+    // await and URL reads above can run project code, so the check comes after
+    // them; the header conversion checks array integrity again itself.
+    assertNativeRequestProcessing();
     const requestInit: RequestInit & { duplex?: "half" } = createNativeRequestInit(init, {
       ...carryInit,
       method,
@@ -1522,36 +1541,39 @@ export async function guardedEgressFetch(
       fromUrl: parsedUrl,
       toUrl: nextUrl,
     };
+    // Every value the header edits depend on is read first: the URL and
+    // Response getters are live prototype members project code can replace,
+    // and must not run between the check and the edits.
+    const crossOrigin = nextUrl.origin !== new NativeURL(url).origin;
+    const nextHref = nextUrl.href;
+    const status = response.status;
+    // Standard fetch redirect method/body rules: 301/302 downgrade POST, while
+    // 303 downgrades every method except GET and HEAD. 307/308 always preserve.
+    const downgrades = ((status === 301 || status === 302) && method === "POST") ||
+      (status === 303 && method !== "GET" && method !== "HEAD");
+    // Deleting a header splices the native list, which hands the removed entry
+    // to the array species: check right before the edits, which use indexed
+    // loops rather than a patchable array iterator.
+    assertNativeRequestProcessing();
     // Cross-origin redirect: strip credential-bearing headers, matching the
     // platform fetch this guard replaces, so a redirect target cannot receive
     // the caller's Authorization/Cookie.
-    if (nextUrl.origin !== new NativeURL(url).origin) {
-      for (const header of CROSS_ORIGIN_CREDENTIAL_HEADERS) {
-        IntrinsicReflectApply(HeadersDelete, headers, [header]);
+    if (crossOrigin) {
+      for (let index = 0; index < CROSS_ORIGIN_CREDENTIAL_HEADERS.length; index++) {
+        IntrinsicReflectApply(HeadersDelete, headers, [CROSS_ORIGIN_CREDENTIAL_HEADERS[index]]);
       }
     }
-    url = nextUrl.href;
+    if (downgrades) {
+      for (let index = 0; index < BODY_HEADERS.length; index++) {
+        IntrinsicReflectApply(HeadersDelete, headers, [BODY_HEADERS[index]]);
+      }
+    }
+    url = nextHref;
     didRedirect = true;
 
-    // Standard fetch redirect method/body rules: 301/302 downgrade POST, while
-    // 303 downgrades every method except GET and HEAD. 307/308 always preserve.
-    const downgrades =
-      ((response.status === 301 || response.status === 302) && method === "POST") ||
-      (response.status === 303 && method !== "GET" && method !== "HEAD");
     if (downgrades) {
       method = "GET";
       body = undefined;
-      for (
-        const header of [
-          "content-encoding",
-          "content-language",
-          "content-length",
-          "content-location",
-          "content-type",
-        ]
-      ) {
-        IntrinsicReflectApply(HeadersDelete, headers, [header]);
-      }
     } else if (!isReplayableBody(body)) {
       throw new WorkerEgressBlockedError(
         "Worker network egress blocked: cannot safely follow a body-preserving redirect",

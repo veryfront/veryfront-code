@@ -502,7 +502,11 @@ function toNeutralRouteRequest(
   text: string,
   provider: string,
 ): Request {
+  // The headers hold the bearer. Reading the body awaited, and rewriting it
+  // runs JSON.stringify, which calls any toJSON project code installed: check
+  // after both, right before the headers change.
   const wireBody = toWireModelBody(text, provider);
+  assertNativeRequestProcessing();
   if (wireBody === undefined) {
     return withCredentialHeaders(request, headers, text);
   }
@@ -525,13 +529,14 @@ function sendOnNeutralRoute(
   headers: Headers,
   wireModelProvider: string | undefined,
   initBody: unknown,
+  onBuilt: (outbound: Request) => Request,
 ): Promise<Response> {
   const send = (outbound: Request): Promise<Response> =>
     IntrinsicReflectApply(
       PromisePrototypeThen,
       createVeryfrontApiOriginBoundOutboundFetch(
         apiBaseUrl,
-      )(outbound),
+      )(onBuilt(outbound)),
       [normalizeNeutralGatewayRefusal],
     ) as Promise<Response>;
 
@@ -753,42 +758,49 @@ export function createVeryfrontCloudFetch(
     IntrinsicReflectApply(HeadersDelete, headers, ["x-goog-api-key"]);
     IntrinsicReflectApply(HeadersDelete, headers, ["x-veryfront-project-slug"]);
     IntrinsicReflectApply(HeadersDelete, headers, ["x-veryfront-billing-group-id"]);
-    IntrinsicReflectApply(HeadersSet, headers, ["Authorization", `Bearer ${trustedApiToken}`]);
 
-    if (projectSlug) {
-      IntrinsicReflectApply(HeadersSet, headers, ["x-veryfront-project-slug", projectSlug]);
-    }
-
+    // Everything that can reach project code (the cloud context store, the
+    // caller's init) is read before the bearer joins the headers, so nothing
+    // can replace an array intrinsic between the check below and the send.
     const cloudContext = getCurrentVeryfrontCloudContext();
     const billingGroup = cloudContext?.billingGroupId;
     const billingGroupId = billingGroup === undefined
       ? undefined
       : IntrinsicReflectApply(StringPrototypeTrim, billingGroup, []) as string;
+    const initBody = init && IntrinsicReflectApply(ObjectHasOwn, undefined, [init, "body"])
+      ? init.body
+      : undefined;
+    // Consults the internal-provider-origin allowlist and the operator-configured Veryfront API
+    // origin; resolved per call since it snapshots the host transport eagerly.
+    const wireModelProvider = options?.wireModelProvider;
+    const neutralRoute = options?.neutralRoute;
+
+    // Setting the bearer pushes it onto the header list's internal array.
+    assertNativeRequestProcessing();
+    IntrinsicReflectApply(HeadersSet, headers, ["Authorization", `Bearer ${trustedApiToken}`]);
+    if (projectSlug) {
+      IntrinsicReflectApply(HeadersSet, headers, ["x-veryfront-project-slug", projectSlug]);
+    }
     if (billingGroupId) {
       IntrinsicReflectApply(HeadersSet, headers, [
         "x-veryfront-billing-group-id",
         billingGroupId,
       ]);
-      markCurrentVeryfrontCloudBillingGroupUsed();
     }
 
-    // Consults the internal-provider-origin allowlist and the operator-configured Veryfront API
-    // origin; resolved per call since it snapshots the host transport eagerly.
-    const wireModelProvider = options?.wireModelProvider;
+    // The billing group counts as used only once the outbound request is
+    // built, past every refusal check: a refused call sends nothing, and an
+    // eval must not finalize a group no request reached.
+    const built = (outbound: Request): Request => {
+      if (billingGroupId) markCurrentVeryfrontCloudBillingGroupUsed();
+      return outbound;
+    };
     const responsePromise = IntrinsicReflectApply(
       PromisePrototypeThen,
-      wireModelProvider || options?.neutralRoute
-        ? sendOnNeutralRoute(
-          apiBaseUrl,
-          request,
-          headers,
-          wireModelProvider,
-          init && IntrinsicReflectApply(ObjectHasOwn, undefined, [init, "body"])
-            ? init.body
-            : undefined,
-        )
+      wireModelProvider || neutralRoute
+        ? sendOnNeutralRoute(apiBaseUrl, request, headers, wireModelProvider, initBody, built)
         : createVeryfrontApiOriginBoundOutboundFetch(apiBaseUrl)(
-          withCredentialHeaders(request, headers),
+          built(withCredentialHeaders(request, headers)),
         ),
       [markVeryfrontGatewayResponse, rethrowAsGatewayTransportFailure],
     ) as Promise<Response>;
