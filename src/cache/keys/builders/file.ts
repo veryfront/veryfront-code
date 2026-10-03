@@ -9,11 +9,16 @@
 
 import { VERSION } from "#veryfront/utils/version.ts";
 import { CacheKeyPrefix, type FileOperationContext } from "../prefixes.ts";
-import { isCacheKeyPassThroughSafe } from "../api-policy.ts";
+import { API_CACHE_KEY_MAX_LENGTH, isCacheKeyPassThroughSafe } from "../api-policy.ts";
 import { encodeCacheKeySegment } from "../segment-codec.ts";
 import { hashPathWithName } from "../utils.ts";
+import { hashString } from "../../hash.ts";
+
 import { CACHE_INVARIANT_VIOLATION } from "#veryfront/errors";
 import { encodeCacheSourceIdentity, type EncodedCacheSourceIdentity } from "../source-identity.ts";
+
+// Leave room for the request-authority suffix on a shared listing key.
+const MAX_FILE_LIST_SOURCE_KEY_LENGTH = API_CACHE_KEY_MAX_LENGTH - 64;
 
 function encodeFileSourceIdentity(ctx: FileOperationContext): EncodedCacheSourceIdentity {
   if (ctx.sourceType === "branch") {
@@ -119,7 +124,31 @@ export function buildDirCacheKeyPrefix(ctx: FileOperationContext | null | undefi
 }
 
 export function buildFileListCacheKey(ctx: FileOperationContext | null | undefined): string {
-  return buildFileOperationPrefix(CacheKeyPrefix.FILES, ctx, "files:unknown");
+  const sourceKey = buildFileOperationPrefix(CacheKeyPrefix.FILES, ctx, "files:unknown");
+  if (
+    !ctx ||
+    isCacheKeyPassThroughSafe(`${sourceKey}:authority:entry`) &&
+      sourceKey.length <= MAX_FILE_LIST_SOURCE_KEY_LENGTH &&
+      !ctx.projectSlug.includes(":")
+  ) return sourceKey;
+
+  // Keep the project prefix used by broad publish invalidation. Reserve extra
+  // segments so encoded identities cannot alias an ordinary source.
+  const sourceType = ctx.sourceType === "environment" ? "env" : ctx.sourceType;
+  // A delimiter in the slug could forge another project's fallback segments.
+  const project = !ctx.projectSlug.includes(":") &&
+      isCacheKeyPassThroughSafe(`${ctx.projectSlug}:`)
+    ? ctx.projectSlug
+    : encodeCacheKeySegment(ctx.projectSlug);
+  const prefix = `${CacheKeyPrefix.FILES}:${sourceType}:${project}`;
+  const encoded = `${prefix}:encoded:${encodeCacheKeySegment(sourceKey)}:source:value`;
+  if (encoded.length <= MAX_FILE_LIST_SOURCE_KEY_LENGTH) return encoded;
+
+  // Match the bounded, domain-separated 128-bit source identities used by
+  // other synchronous cache-key builders for inputs too long to inline.
+  return `${prefix}:hashed:${hashString(`file-list-source:a:${sourceKey}`)}:${
+    hashString(`file-list-source:b:${sourceKey}`)
+  }:source:value`;
 }
 
 export function buildFileOperationCacheKey(prefix: string, path: string): string {

@@ -33,7 +33,7 @@ const objectCreate = Object.create;
 const objectDefineProperty = Object.defineProperty;
 const objectFreeze = Object.freeze;
 const objectHasOwnProperty = Object.prototype.hasOwnProperty;
-const objectKeys = Object.keys;
+const stringCharCodeAt = String.prototype.charCodeAt;
 const stringSplit = String.prototype.split;
 const stringToLowerCase = String.prototype.toLowerCase;
 const stringTrim = String.prototype.trim;
@@ -175,27 +175,41 @@ function isPromiseLike(value: unknown): value is PromiseLike<unknown> {
     typeof (value as { then?: unknown }).then === "function";
 }
 
+function isRunUuid(value: unknown): value is string {
+  if (typeof value !== "string" || value.length !== 36) return false;
+  for (let index = 0; index < 36; index++) {
+    const code = apply(stringCharCodeAt, value, [index]) as number;
+    const hyphen = index === 8 || index === 13 || index === 18 || index === 23;
+    const hex = (code >= 48 && code <= 57) || (code >= 97 && code <= 102) ||
+      (code >= 65 && code <= 70);
+    if (hyphen ? code !== 45 : !hex) return false;
+  }
+  return true;
+}
+
+function ownValue(value: unknown, key: string): unknown {
+  if (typeof value !== "object" || value === null) return undefined;
+  return apply(objectHasOwnProperty, value, [key])
+    ? (value as Record<string, unknown>)[key]
+    : undefined;
+}
+
 function parseRunEventToken(value: unknown, canonicalChildRunId: string): string {
+  if (typeof value !== "object" || value === null || arrayIsArray(value)) {
+    throw new HostedChildRunEventWriterTokenExchangeError();
+  }
+  const token = ownValue(value, "token");
+  const permissions = ownValue(value, "permissions");
   if (
-    typeof value !== "object" || value === null || arrayIsArray(value) ||
-    objectKeys(value).length !== 5 ||
-    !apply(objectHasOwnProperty, value, ["token"])
+    !isValidRunEventWriterToken(token) ||
+    ownValue(value, "token_type") !== "Bearer" ||
+    ownValue(value, "run_id") !== canonicalChildRunId ||
+    typeof ownValue(value, "expires_at") !== "string" ||
+    !arrayIsArray(permissions) || permissions.length !== 1 ||
+    permissions[0] !== "run.events.append"
   ) {
     throw new HostedChildRunEventWriterTokenExchangeError();
   }
-
-  const receipt = value as Record<string, unknown>;
-  if (
-    receipt.run_id !== canonicalChildRunId || receipt.token_type !== "Bearer" ||
-    typeof receipt.expires_at !== "string" || !/^\d{4}-\d{2}-\d{2}T/.test(receipt.expires_at) ||
-    !arrayIsArray(receipt.permissions) || receipt.permissions.length !== 1 ||
-    receipt.permissions[0] !== "run.events.append"
-  ) throw new HostedChildRunEventWriterTokenExchangeError();
-  const token = receipt.token;
-  if (!isValidRunEventWriterToken(token)) {
-    throw new HostedChildRunEventWriterTokenExchangeError();
-  }
-
   return token;
 }
 
@@ -367,11 +381,7 @@ export function createHostedRunEventWriterCapability(input: {
     enumerable: false,
     value: async (childRunId: string, abortSignal?: AbortSignal, canonicalChildRunId?: string) => {
       const canonical = canonicalChildRunId ?? childRunId;
-      if (
-        !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
-          canonical,
-        )
-      ) {
+      if (!isRunUuid(canonical)) {
         throw new HostedChildRunEventWriterTokenExchangeError();
       }
       const childToken = await exchangeChildRunEventWriterToken(state, canonical, abortSignal);

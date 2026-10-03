@@ -17,6 +17,20 @@ import {
   runWithVerifiedHostedRunEventWriterRequest,
 } from "./child-run-event-writer-token.ts";
 
+/** A target `RunEventToken` response for `runId`. */
+function eventToken(
+  token: unknown,
+  runId = "22222222-2222-4222-8222-222222222222",
+): Record<string, unknown> {
+  return {
+    token,
+    token_type: "Bearer",
+    expires_at: "2026-10-03T03:00:00.000Z",
+    run_id: runId,
+    permissions: ["run.events.append"],
+  };
+}
+
 Deno.test("explicit authority-less scopes clear and restore ambient writer authority", async () => {
   const capability = createHostedRunEventWriterCapability({
     apiUrl: "https://api.example.com/",
@@ -340,6 +354,23 @@ Deno.test("run event writer capability preserves the configured API base path", 
   );
 });
 
+Deno.test("mintChildRunEventWriterCapability accepts additive RunEventToken fields", async () => {
+  const capability = await createHostedRunEventWriterCapability({
+    apiUrl: "https://api.example.com",
+    runId: "run_parent",
+    runEventAppendToken: "parent-writer-token",
+    fetch: () =>
+      Promise.resolve(
+        Response.json(
+          { ...eventToken("child-writer-token"), audience: "veryfront-api" },
+          { status: 201, headers: { "Cache-Control": "no-store" } },
+        ),
+      ),
+  }).mintChildRunEventWriterCapability("22222222-2222-4222-8222-222222222222");
+
+  assertEquals(typeof capability.mintChildRunEventWriterCapability, "function");
+});
+
 Deno.test("mintChildRunEventWriterCapability rejects responses without no-store", async () => {
   await assertRejects(
     () =>
@@ -364,7 +395,7 @@ Deno.test("mintChildRunEventWriterCapability rejects an oversized response body"
         fetch: () =>
           Promise.resolve(
             new Response(
-              `${" ".repeat(20_000)}{"run_event_token":"child-writer-token"}`,
+              `${" ".repeat(20_000)}${JSON.stringify(eventToken("child-writer-token"))}`,
               { headers: { "Cache-Control": "no-store" } },
             ),
           ),
@@ -448,9 +479,14 @@ Deno.test("mintChildRunEventWriterCapability rejects control-plane errors withou
 for (
   const body of [
     {},
-    { run_event_token: "" },
-    { run_event_token: 1 },
-    { run_event_token: "child-writer-token", extra: true },
+    { run_event_token: "child-writer-token" },
+    eventToken(""),
+    eventToken(1),
+    eventToken("child-writer-token", "run_other"),
+    { ...eventToken("child-writer-token"), token_type: "Basic" },
+    { ...eventToken("child-writer-token"), permissions: ["run.events.append", "run.events.read"] },
+    { ...eventToken("child-writer-token"), permissions: [] },
+    { ...eventToken("child-writer-token"), expires_at: undefined },
   ]
 ) {
   Deno.test(`mintChildRunEventWriterCapability rejects invalid response ${JSON.stringify(body)}`, async () => {
@@ -470,6 +506,88 @@ for (
     );
   });
 }
+
+const childRunUuid = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+
+Deno.test("mintChildRunEventWriterCapability requires explicit canonical mapping for a public child ID", async () => {
+  let calls = 0;
+  const parent = createHostedRunEventWriterCapability({
+    apiUrl: "https://api.example.com",
+    runId: "run_parent",
+    runEventAppendToken: "parent-writer-token",
+    fetch: () => {
+      calls++;
+      return Promise.resolve(Response.json(eventToken("child-writer-token", childRunUuid), {
+        status: 201,
+        headers: { "Cache-Control": "no-store" },
+      }));
+    },
+  });
+  await assertRejects(
+    () => parent.mintChildRunEventWriterCapability("run_child"),
+    HostedChildRunEventWriterTokenExchangeError,
+  );
+  assertEquals(calls, 0);
+  const child = await parent.mintChildRunEventWriterCapability(
+    "run_child",
+    undefined,
+    childRunUuid,
+  );
+  assertEquals(typeof child.mintChildRunEventWriterCapability, "function");
+  assertEquals(calls, 1);
+});
+
+Deno.test("mintChildRunEventWriterCapability keeps requiring a run UUID when tenant code patches RegExp", async () => {
+  const originalExec = RegExp.prototype.exec;
+  // Lie only about the forged run ID so the runtime's own regular expressions keep working.
+  RegExp.prototype.exec = function (this: RegExp, input: string) {
+    return input === "run_other"
+      ? (Object.assign([input], { index: 0, input }) as RegExpExecArray)
+      : originalExec.call(this, input);
+  };
+  try {
+    await assertRejects(
+      () =>
+        createHostedRunEventWriterCapability({
+          apiUrl: "https://api.example.com",
+          runId: "run_parent",
+          runEventAppendToken: "parent-writer-token",
+          fetch: () =>
+            Promise.resolve(
+              Response.json(eventToken("child-writer-token", "run_other"), {
+                headers: { "Cache-Control": "no-store" },
+              }),
+            ),
+        }).mintChildRunEventWriterCapability(childRunUuid),
+      HostedChildRunEventWriterTokenExchangeError,
+      "Unable to initialize durable child event persistence",
+    );
+  } finally {
+    RegExp.prototype.exec = originalExec;
+  }
+});
+
+Deno.test("mintChildRunEventWriterCapability rejects another run UUID for a child addressed by UUID", async () => {
+  await assertRejects(
+    () =>
+      createHostedRunEventWriterCapability({
+        apiUrl: "https://api.example.com",
+        runId: "run_parent",
+        runEventAppendToken: "parent-writer-token",
+        fetch: () =>
+          Promise.resolve(
+            Response.json(
+              eventToken("child-writer-token", "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"),
+              {
+                headers: { "Cache-Control": "no-store" },
+              },
+            ),
+          ),
+      }).mintChildRunEventWriterCapability(childRunUuid),
+    HostedChildRunEventWriterTokenExchangeError,
+    "Unable to initialize durable child event persistence",
+  );
+});
 
 Deno.test("mintChildRunEventWriterCapability maps aborts to a sanitized error", async () => {
   const controller = new AbortController();
