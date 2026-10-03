@@ -101,7 +101,6 @@ describe("project runs CLI fixture mapping", () => {
     ) {
       const { requests } = await execute(argv(id), [fixtureResponse(id)], "execution-token");
       assert(requests[0]);
-      assert(requests[0]);
       assertEquals(requests[0].headers.get("Authorization"), "Bearer execution-token");
     }
   });
@@ -150,6 +149,28 @@ describe("project runs CLI fixture mapping", () => {
     assertEquals(JSON.parse(await requests[0].text()), body);
   });
 
+  it("rejects a missing follow run ID before sending a stream request", async () => {
+    const fixture = createFixtureTransport([Response.json({ status: "pending" })]);
+    await assertRejects(
+      () =>
+        runProjectRuns(
+          parseCliArgs([...argv("createRun"), "--follow"]),
+          createRunsSdk({ transport: fixture.transport }),
+          () => Promise.resolve(),
+        ),
+      Error,
+      "does not include a run ID",
+    );
+    assertEquals(fixture.requests.length, 1);
+  });
+
+  it("accepts the router's global no-animation flag", async () => {
+    const result = await execute([...argv("getRun"), "--no-animation"], [
+      fixtureResponse("getRun"),
+    ]);
+    assertEquals(result.requests.length, 1);
+  });
+
   it("rejects usage mistakes before any SDK request", async () => {
     for (
       const args of [
@@ -158,6 +179,7 @@ describe("project runs CLI fixture mapping", () => {
         ["project", "runs", "list", "--query", "[]"],
         ["project", "runs", "list", "--query", '{"limit":{}}'],
         ["project", "runs", "list", "--unknown"],
+        ["project", "runs", "event-token", "--run-id", "r1", "--body", "{}"],
         ["project", "runs", "get", "--run-id", "r1", "--all"],
         ["project", "runs", "list", "--follow"],
         ["project", "runs", "stream", "--run-id", "r1", "--output", "frames.json"],

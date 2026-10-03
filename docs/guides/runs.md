@@ -222,6 +222,8 @@ Set `VERYFRONT_API_URL` to your API origin in your process environment. Use your
 normal CLI login, or supply `--credential-file <TOKEN_FILE>` for an execution
 or event-writer token. Add `--credential-mode api-key` for a project API key.
 A repository-supplied API origin cannot receive a credential from that file.
+Without `--credential-file`, the credential mode applies to your configured CLI
+credential. Select `api-key` only when that credential is a project API key.
 
 | Command                 | SDK operation                   | Required route flags                             |
 | ----------------------- | ------------------------------- | ------------------------------------------------ |
@@ -260,11 +262,17 @@ A repository-supplied API origin cannot receive a credential from that file.
 Supply request bodies with `--body '<JSON>'`. Supply filters and paging arguments
 with `--query '<JSON>'`, preserving the contract's snake_case keys and JSON types.
 Use `--idempotency-key` for idempotent mutations and `--if-match` for `update`.
+`create`, `resume`, `update`, `create-input`, `respond`, `finalize`, and `heartbeat`
+require `--body`. `create`, `cancel`, `resume`, `create-input`, `respond`,
+`cancel-input`, `pause`, and `finalize` require `--idempotency-key`. `update`
+requires `--if-match`. The table lists route flags only.
 The service validates the shared contract. The CLI adds no lifecycle policy.
 
 Use `--all` on list commands to follow SDK pagination. Use `get --follow` or
 `create --follow` to stream after the initial response. `stream --last-event-id`
-resumes after a durable event ID. `--json` returns the normal success or error
+resumes after a durable event ID. The `event-token` success response intentionally
+returns a scoped credential. Save that result securely; do not include it in logs
+or shared evidence. `--json` returns the normal success or error
 envelope; streams emit one envelope per line (NDJSON). Stream output uses stdout
 and does not accept `--output`.
 

@@ -7,10 +7,13 @@ import { handleProjectCommand } from "../../../../../cli/commands/project/handle
 
 const [projectDir, scenario] = Deno.args;
 if (!projectDir) throw new Error("A project directory is required.");
-const argv = scenario === "stream"
+const argv = scenario?.startsWith("stream")
   ? ["project", "runs", "stream", "--run-id", "r1"]
-  : ["project", "runs", "get", "--run-id", "r1"];
-argv.push("--json", "--project-dir", projectDir, "--credential-file", `${projectDir}/credential`);
+  : scenario === "login-list" || scenario === "login-analytics"
+  ? ["project", "runs", scenario === "login-list" ? "list" : "analytics"]
+  : ["project", "runs", scenario === "event-token" ? "event-token" : "get", "--run-id", "r1"];
+argv.push("--json", "--project-dir", projectDir);
+if (!scenario?.startsWith("login-")) argv.push("--credential-file", `${projectDir}/credential`);
 if (scenario === "api-key") argv.push("--credential-mode", "api-key");
 setJsonMode(true);
 await withMockFetch((_url, init) => {
@@ -32,5 +35,27 @@ await withMockFetch((_url, init) => {
       detail: "The request was rejected.",
     }, { status }));
   }
-  return Promise.resolve(fixtureResponse(scenario === "stream" ? "streamRunEvents" : "getRun"));
+  if (scenario === "stream-network") {
+    return Promise.reject(new TypeError("Fixture network failure"));
+  }
+  if (scenario === "stream-malformed") {
+    return Promise.resolve(
+      new Response('id: 1\ndata: {"type":"RUN_STARTED"}\n\ndata: not-json\n\n', {
+        headers: { "Content-Type": "text/event-stream" },
+      }),
+    );
+  }
+  if (scenario === "login-list") return Promise.resolve(fixtureResponse("listRuns"));
+  if (scenario === "login-analytics") {
+    return Promise.resolve(fixtureResponse("getAccountRunAnalytics"));
+  }
+  if (scenario === "event-token") return Promise.resolve(fixtureResponse("createRunEventToken"));
+  if (scenario === "business-output") {
+    return fixtureResponse("getRun").json().then((body) =>
+      Response.json({ ...body, output: { token_count: 2, password_policy: "minimum-length" } })
+    );
+  }
+  return Promise.resolve(
+    fixtureResponse(scenario?.startsWith("stream") ? "streamRunEvents" : "getRun"),
+  );
 }, () => handleProjectCommand(parseCliArgs(argv)));

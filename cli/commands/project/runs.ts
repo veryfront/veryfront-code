@@ -1,4 +1,4 @@
-import { INVALID_ARGUMENT } from "veryfront/errors";
+import { API_CLIENT_ERROR, INVALID_ARGUMENT } from "veryfront/errors";
 import type { ParsedArgs } from "#cli/shared/types";
 import type {
   RunsInput,
@@ -74,7 +74,7 @@ const BODY_REQUIRED = new Set<RunsOperationId>([
   "finalizeRun",
   "createRunHeartbeat",
 ]);
-const BODY_OPTIONAL = new Set<RunsOperationId>(["appendRunEvents", "createRunEventToken"]);
+const BODY_OPTIONAL = new Set<RunsOperationId>(["appendRunEvents"]);
 const QUERY_OPERATIONS = new Set<RunsOperationId>([
   ...PAGINATED,
   "getAccountRunAnalytics",
@@ -134,6 +134,10 @@ export function parseRunsInvocation(args: ParsedArgs) {
     "output",
     "o",
     "no-input",
+    "no-animation",
+    "no-browser",
+    "version",
+    "v",
     "project-dir",
     "credential-file",
     "credential-mode",
@@ -251,7 +255,15 @@ export async function runProjectRuns(
   const result = await call(input);
   await emit(result ?? null);
   if (follow) {
-    const runId = (result as { id: string }).id;
+    const runId = result !== null && typeof result === "object" && "id" in result
+      ? result.id
+      : undefined;
+    if (typeof runId !== "string" || runId.length === 0) {
+      throw API_CLIENT_ERROR.create({
+        detail: "The run response does not include a run ID for --follow.",
+        status: 502,
+      });
+    }
     for await (
       const frame of sdk.streamRunEvents({
         path: { run_id: runId },
