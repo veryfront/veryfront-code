@@ -9,6 +9,12 @@
 import { API_CLIENT_ERROR } from "#veryfront/errors/error-registry.ts";
 import { VeryfrontError } from "#veryfront/errors/types.ts";
 import type { components, operations } from "../contract/runs-api.generated.ts";
+import {
+  isCommentOnlySseFrame,
+  MAX_SSE_FRAME_CHARS,
+  normalizeNewlines,
+  splitSseFrames,
+} from "#veryfront/utils/sse-frames.ts";
 import { RUNS_OPERATIONS } from "./operations.ts";
 
 /** Contract operation ID. */
@@ -251,34 +257,34 @@ async function* readFrames(
   response: Response,
 ): AsyncGenerator<RunStreamFrame> {
   if (!response.body) return;
-  for await (const raw of rawFrames(response.body)) {
-    const frame = parseFrame(operationId, raw);
-    if (frame) yield frame;
-  }
-}
-
-/** Split an event stream into raw frames, normalizing CRLF and CR line ends to LF. */
-async function* rawFrames(body: ReadableStream<BufferSource>): AsyncGenerator<string> {
-  let buffer = "";
-  function* complete(): Generator<string> {
-    let boundary = buffer.indexOf("\n\n");
-    while (boundary >= 0) {
-      yield buffer.slice(0, boundary);
-      buffer = buffer.slice(boundary + 2);
-      boundary = buffer.indexOf("\n\n");
+  let remainder = "";
+  function* complete(input: string): Generator<RunStreamFrame> {
+    const split = splitSseFrames(normalizeNewlines(input));
+    remainder = split.remainder;
+    if (remainder.length > MAX_SSE_FRAME_CHARS) {
+      throw API_CLIENT_ERROR.create({
+        detail: `${operationId} sent an event-stream frame over ${MAX_SSE_FRAME_CHARS} characters`,
+        status: 502,
+        context: { operationId },
+      });
+    }
+    for (const raw of split.frames) {
+      const frame = isCommentOnlySseFrame(raw) ? null : parseFrame(operationId, raw);
+      if (frame) yield frame;
     }
   }
-  for await (const chunk of body.pipeThrough(new TextDecoderStream())) {
-    // A trailing CR may be the first half of a CRLF split across chunks.
-    buffer = `${buffer}${chunk}`.replace(/\r\n|\r(?!$)/g, "\n");
-    yield* complete();
+  for await (const chunk of response.body.pipeThrough(new TextDecoderStream())) {
+    // A trailing CR may be the first half of a CRLF split across chunks; hold it back.
+    const combined = `${remainder}${chunk}`;
+    const held = combined.endsWith("\r");
+    yield* complete(held ? combined.slice(0, -1) : combined);
+    if (held) remainder += "\r";
   }
   // At the end of the body a trailing CR is a line end in its own right.
-  buffer = buffer.replace(/\r$/, "\n");
-  yield* complete();
+  yield* complete(remainder);
 }
 
-/** Parse one SSE frame; comment-only frames such as keep-alives yield nothing. */
+/** Parse one SSE frame; a frame without data yields nothing. */
 function parseFrame(operationId: RunsOperationId, raw: string): RunStreamFrame | null {
   let id: string | null = null;
   const data: string[] = [];
