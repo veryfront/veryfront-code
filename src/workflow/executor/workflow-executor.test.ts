@@ -2174,7 +2174,10 @@ describe("workflow/executor/workflow-executor", () => {
   });
 
   it("retains local stop evidence when dynamic steps fail before DAG execution", async () => {
-    const executor = new WorkflowExecutor({ backend: new MemoryBackend() });
+    const executor = new WorkflowExecutor({
+      backend: new MemoryBackend(),
+      retainExecutionStopEvidence: true,
+    });
     executor.register(
       workflow({
         id: "pre-dag-dynamic-steps",
@@ -2237,6 +2240,7 @@ describe("workflow/executor/workflow-executor", () => {
     const executor = new WorkflowExecutor({
       backend,
       cancellationGracePeriod: 5,
+      retainExecutionStopEvidence: true,
     });
     const operation = Promise.withResolvers<unknown>();
     const operationStarted = Promise.withResolvers<void>();
@@ -2277,7 +2281,11 @@ describe("workflow/executor/workflow-executor", () => {
   it("tracks a non-cooperative workflow tool started by a resumed workflow", async () => {
     using time = new FakeTime();
     const backend = new MemoryBackend();
-    const executor = new WorkflowExecutor({ backend, cancellationGracePeriod: 5 });
+    const executor = new WorkflowExecutor({
+      backend,
+      cancellationGracePeriod: 5,
+      retainExecutionStopEvidence: true,
+    });
     const operation = Promise.withResolvers<unknown>();
     const operationStarted = Promise.withResolvers<void>();
     executor.register(

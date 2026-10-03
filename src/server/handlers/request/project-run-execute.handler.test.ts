@@ -4368,6 +4368,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     const order: string[] = [];
     let hasAgentRegistry = false;
     let hasToolRegistry = false;
+    let retainsStopEvidence = false;
     const handler = new ProjectRunExecuteHandler(createDeps({
       ensureProjectDiscovery: async () => {
         order.push("discover");
@@ -4378,6 +4379,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
           "function";
         hasToolRegistry = typeof config?.executor?.stepExecutor?.toolRegistry?.get ===
           "function";
+        retainsStopEvidence = config?.executor?.retainExecutionStopEvidence === true;
         order.push("create-client");
         return {
           register: () => {},
@@ -4422,6 +4424,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     });
     assertEquals(hasAgentRegistry, true);
     assertEquals(hasToolRegistry, true);
+    assertEquals(retainsStopEvidence, true, "the per-request client acknowledges stops (#2365)");
     assertEquals(order, ["discover", "create-client", "start"]);
   });
 

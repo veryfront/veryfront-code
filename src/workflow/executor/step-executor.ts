@@ -145,6 +145,12 @@ export interface StepExecutorConfig {
   onStepStart?: (nodeId: string, input: unknown, runId?: string) => void;
   onStepComplete?: (nodeId: string, output: unknown, runId?: string) => void;
   onStepError?: (nodeId: string, error: Error, runId?: string) => void;
+  /**
+   * @internal Keep each run's stop evidence after its operations settle, until
+   * clearExecutionStopEvidence(). Only short-lived clients that acknowledge
+   * cancellation need it; long-lived clients would otherwise grow per run.
+   */
+  retainExecutionStopEvidence?: boolean;
 }
 
 export interface StepResult {
@@ -362,19 +368,24 @@ export class StepExecutor {
       this.executionOperations.set(runId, operations);
     }
     operations.add(operation);
-    void operation.then(
-      () => operations.delete(operation),
-      () => operations.delete(operation),
-    );
+    const settle = () => {
+      operations.delete(operation);
+      if (
+        !this.config.retainExecutionStopEvidence && operations.size === 0 &&
+        this.executionOperations.get(runId) === operations
+      ) {
+        this.executionOperations.delete(runId);
+      }
+    };
+    void operation.then(settle, settle);
   }
 
   /** @internal Wait until every raw step operation observed locally for this run has settled. */
   async waitForExecutionStopped(runId: string): Promise<void> {
-    const operations = this.executionOperations.get(runId);
-    if (!operations) return;
-
-    while (operations.size > 0) {
+    let operations = this.executionOperations.get(runId);
+    while (operations && operations.size > 0) {
       await Promise.allSettled([...operations]);
+      operations = this.executionOperations.get(runId) ?? operations;
     }
   }
 

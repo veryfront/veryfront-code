@@ -1532,7 +1532,11 @@ async function runDiscoveredWorkflow(
   let client: WorkflowClientView;
   try {
     client = await deps.createWorkflowClient(
-      withRuntimeStepRegistries({ debug: ctx.debug }),
+      // Per-request client: keep stop evidence for the cancellation acknowledgement.
+      withRuntimeStepRegistries({
+        debug: ctx.debug,
+        executor: { retainExecutionStopEvidence: true },
+      }),
       {
         projectId: request.projectId,
         runtimeTargetKind: request.runtimeTargetKind,

@@ -402,6 +402,39 @@ describe("StepExecutor timeout isolation", () => {
     assertEquals(attempts, 1);
   });
 
+  it("retains settled run stop evidence only when acknowledgements are requested (#2365)", async () => {
+    const retainedRunCount = (executor: StepExecutor) =>
+      (executor as unknown as { executionOperations: Map<string, unknown> }).executionOperations
+        .size;
+    const node = step("finish", {
+      tool: {
+        id: "finish-tool",
+        description: "Settles immediately",
+        execute: () => Promise.resolve({ ok: true }),
+        // deno-lint-ignore no-explicit-any
+      } as any,
+    });
+    const ordinary = new StepExecutor();
+    const acknowledging = new StepExecutor({ retainExecutionStopEvidence: true });
+
+    for (let index = 0; index < 25; index++) {
+      assertEquals(
+        (await ordinary.execute(node, makeContext(), undefined, `run-${index}`)).success,
+        true,
+      );
+      await acknowledging.execute(node, makeContext(), undefined, `run-${index}`);
+    }
+    await Promise.resolve();
+
+    assertEquals(retainedRunCount(ordinary), 0);
+    assertEquals(retainedRunCount(acknowledging), 25);
+    await acknowledging.waitForExecutionStopped("run-0");
+    acknowledging.clearExecutionStopEvidence();
+    await Promise.resolve();
+    await Promise.resolve();
+    assertEquals(retainedRunCount(acknowledging), 0);
+  });
+
   it("does not overlap retries when a timed-out tool ignores cancellation", async () => {
     using time = new FakeTime();
     const firstStarted = Promise.withResolvers<void>();
