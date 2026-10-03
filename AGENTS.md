@@ -354,6 +354,7 @@ For code changes, also run the narrowest relevant test command. Add broader test
 Before completion, report the verification commands and their results. If a command cannot run, report the blocker and the safest next step.
 
 For public documentation, also follow [Public copy rules](#public-copy-rules).
+For reviews of `docs/guides/`, use [vf-doc-review](.claude/skills/vf-doc-review/SKILL.md).
 
 ## Documentation conventions
 
