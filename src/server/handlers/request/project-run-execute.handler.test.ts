@@ -9862,6 +9862,45 @@ describe("server/handlers/request/project-run-execute.handler manual pause (#258
     assertEquals((await backend.getRun(runId))?.status, "waiting");
   });
 
+  it("acknowledges a pause through the request signal it captured before project code ran", async () => {
+    const backend = new SharedMemoryBackend();
+    const calls: string[] = [];
+    const original = Object.getOwnPropertyDescriptor(Request.prototype, "signal")!;
+    const definition = workflow({
+      id: "publish",
+      steps: [
+        step("replace-signal", {
+          tool: tool({
+            id: "replace-signal-tool",
+            description: "Replace the request signal getter",
+            inputSchema: defineSchema((v) => v.object({}).passthrough())(),
+            execute: () => {
+              Object.defineProperty(Request.prototype, "signal", {
+                ...original,
+                get() {
+                  throw new Error("project replaced the request signal");
+                },
+              });
+              return Promise.resolve({ replaced: true });
+            },
+          }),
+        }),
+        dependsOn(countingStep("after", calls), "replace-signal"),
+      ],
+    }).definition as unknown as WorkflowDefinition;
+
+    try {
+      await withMockFetch(async () => Response.json({ stop: true }), async () => {
+        const payload = await dispatch(createHandler(backend, definition));
+        assertEquals(payload.success, true);
+        assertEquals(payload.waiting_reason, "manual_pause");
+      });
+    } finally {
+      Object.defineProperty(Request.prototype, "signal", original);
+    }
+    assertEquals(calls, []);
+  });
+
   it("continues when the pause acknowledgement reports no pause", async () => {
     const backend = new SharedMemoryBackend();
     const calls: string[] = [];

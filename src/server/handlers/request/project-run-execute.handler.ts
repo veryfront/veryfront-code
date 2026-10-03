@@ -2190,6 +2190,9 @@ function createRunPauseAcknowledger(
     });
     return undefined;
   }
+  // Captured before project code runs, so a replaced `Request.prototype.signal` getter cannot
+  // throw from or forge the acknowledgement.
+  const signal = IntrinsicReflectApply(RequestSignalGetter, req, []) as AbortSignal;
   return async () => {
     for (let attempt = 1;; attempt++) {
       try {
@@ -2200,7 +2203,7 @@ function createRunPauseAcknowledger(
           body: "{}",
           // A cancelled request stops waiting for the answer at once.
           signal: ReflectApply(TaskAbortSignalAny, AbortSignal, [[
-            req.signal,
+            signal,
             ReflectApply(RunStopTimeout, AbortSignal, [WORKFLOW_PAUSE_ACK_TIMEOUT_MS]),
           ]]),
         });
@@ -2223,7 +2226,7 @@ function createRunPauseAcknowledger(
         // A transport failure or unreadable reply is retried like a 5xx.
       }
       // A cancelled request stops at this boundary; the cancellation then ends the run.
-      if (req.signal.aborted) return true;
+      if (isAbortSignalAborted(signal)) return true;
       if (attempt >= WORKFLOW_PAUSE_ACK_ATTEMPTS) {
         serverLogger.warn("[project-run-execute] Could not read the pause acknowledgement", {
           runId,
