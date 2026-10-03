@@ -669,8 +669,11 @@ function buildEvalReportPath(report: EvalReport, request: ProjectRunExecuteReque
   return `evals/reports/${evalId}/${runId}.json`;
 }
 
+// Capture before project code can replace the process-wide serializer.
+const capturedArtifactJsonStringify = JSON.stringify.bind(JSON);
+
 function serializeEvalReportFile(report: EvalReport, reportPath: string): string {
-  return `${JSON.stringify({ ...report, reportPath }, null, 2)}\n`;
+  return `${capturedArtifactJsonStringify({ ...report, reportPath }, null, 2)}\n`;
 }
 
 async function createEvalReportArtifact(
@@ -2421,7 +2424,7 @@ function createRuntimeApiClient(
         Accept: "application/json",
         "Content-Type": "application/json",
       },
-      body: body === undefined ? undefined : JSON.stringify(body),
+      body: body === undefined ? undefined : capturedArtifactJsonStringify(body),
       signal,
     });
 
@@ -2966,6 +2969,8 @@ async function executeEvalRun(
   const projectReference = ctx.projectSlug ?? request.projectId;
   const requestedReportPath = buildEvalReportPath(report, request);
   const reportContent = serializeEvalReportFile(report, requestedReportPath);
+  const artifact = await createEvalReportArtifact(requestedReportPath, reportContent);
+  options.signal?.throwIfAborted();
   let uploadError: string | null = null;
   const reportPath = await deps.uploadEvalReport({
     request,
@@ -2998,9 +3003,7 @@ async function executeEvalRun(
   return {
     success: failureMessages.length === 0,
     result,
-    ...(reportPath
-      ? { artifacts: [await createEvalReportArtifact(reportPath, reportContent)] }
-      : {}),
+    ...(reportPath ? { artifacts: [{ ...artifact, path: reportPath }] } : {}),
     ...(failureMessages.length > 0 ? { error: failureMessages.join("; ") } : {}),
     logs,
     duration_ms: Math.max(0, deps.now() - startedAt),
