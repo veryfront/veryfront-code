@@ -40,8 +40,10 @@ export function scopeToRequestAuthority(scope: string): string {
  * Scope a file-list cache key to the active request credential. Every writer
  * and reader of an adapter's listing must agree on this key, or a hosted read
  * misses the listing its own adapter just fetched and lists the source again.
+ * Use an API-safe separator so shared keys retain their source prefix and
+ * source-wide invalidation can delete every credential variant.
  */
 export function scopeFileListCacheKeyToRequestAuthority(cacheKey: string): string {
   const authority = getRequestAuthorityCacheVariant();
-  return authority ? `${cacheKey}|${authority}` : cacheKey;
+  return authority ? `${cacheKey}:${authority}` : cacheKey;
 }

@@ -1377,13 +1377,13 @@ describe("ReadOperations", () => {
       assertEquals(observedReadBranches.sort(), ["feature", "main"]);
       assertEquals(
         observedListScopes.some((scope) =>
-          scope.startsWith("files:branch:test:main|authority:") && scope.endsWith(":main")
+          scope.startsWith("files:branch:test:main:authority:") && scope.endsWith(":main")
         ),
         true,
       );
       assertEquals(
         observedListScopes.some((scope) =>
-          scope.startsWith("files:branch:test:feature|authority:") && scope.endsWith(":feature")
+          scope.startsWith("files:branch:test:feature:authority:") && scope.endsWith(":feature")
         ),
         true,
       );
