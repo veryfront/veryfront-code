@@ -1,0 +1,262 @@
+import { INVALID_ARGUMENT } from "veryfront/errors";
+import type { ParsedArgs } from "#cli/shared/types";
+import type {
+  RunsInput,
+  RunsOperationId,
+  RunsPaginatedOperationId,
+  RunsSdk,
+} from "#veryfront/runs/target/client.ts";
+import { RUNS_OPERATIONS } from "#veryfront/runs/target/operations.ts";
+
+/** Public subcommands of the existing project family, one per target operation. */
+export const RUNS_COMMANDS = {
+  listRuns: "list",
+  createRun: "create",
+  getRun: "get",
+  updateRun: "update",
+  deleteRun: "delete",
+  cancelRun: "cancel",
+  resumeRun: "resume",
+  listProjectRuns: "project-list",
+  listConversationRuns: "conversation-list",
+  getAccountRunAnalytics: "analytics",
+  listRunEvents: "events",
+  appendRunEvents: "append-events",
+  getRunEvent: "event",
+  getRunEventsSummary: "events-summary",
+  getRunSnapshot: "snapshot",
+  streamRunEvents: "stream",
+  listRunEventTypes: "event-types",
+  listRunInputRequests: "inputs",
+  createRunInputRequest: "create-input",
+  listConversationInputRequests: "conversation-inputs",
+  listProjectWebhookRuns: "webhook-list",
+  listEvalRuns: "eval-list",
+  getInputRequest: "input",
+  createInputResponse: "respond",
+  cancelInputRequest: "cancel-input",
+  pauseRun: "pause",
+  finalizeRun: "finalize",
+  createRunHeartbeat: "heartbeat",
+  createRunEventToken: "event-token",
+  listRunChildRuns: "children",
+  listConversationChildRuns: "conversation-children",
+} as const satisfies Record<RunsOperationId, string>;
+
+const PAGINATED = new Set<RunsPaginatedOperationId>([
+  "listRuns",
+  "listProjectRuns",
+  "listConversationRuns",
+  "listRunEvents",
+  "listRunInputRequests",
+  "listConversationInputRequests",
+  "listProjectWebhookRuns",
+  "listEvalRuns",
+  "listRunChildRuns",
+  "listConversationChildRuns",
+]);
+const IDEMPOTENT = new Set<RunsOperationId>([
+  "createRun",
+  "cancelRun",
+  "resumeRun",
+  "createRunInputRequest",
+  "createInputResponse",
+  "cancelInputRequest",
+  "pauseRun",
+  "finalizeRun",
+]);
+const BODY_REQUIRED = new Set<RunsOperationId>([
+  "createRun",
+  "updateRun",
+  "resumeRun",
+  "createRunInputRequest",
+  "createInputResponse",
+  "finalizeRun",
+  "createRunHeartbeat",
+]);
+const BODY_OPTIONAL = new Set<RunsOperationId>(["appendRunEvents", "createRunEventToken"]);
+const QUERY_OPERATIONS = new Set<RunsOperationId>([
+  ...PAGINATED,
+  "getAccountRunAnalytics",
+  "getRunEventsSummary",
+]);
+
+function usage(detail: string): never {
+  throw INVALID_ARGUMENT.create({ detail });
+}
+
+function stringOption(args: ParsedArgs, name: string, required = false): string | undefined {
+  const value = args[name];
+  if (value === undefined && !required) return undefined;
+  if ((typeof value !== "string" && typeof value !== "number") || String(value).length === 0) {
+    usage(`Supply --${name} with a value.`);
+  }
+  return String(value);
+}
+
+function jsonOption(args: ParsedArgs, name: string): unknown {
+  const text = stringOption(args, name);
+  if (text === undefined) return undefined;
+  try {
+    return JSON.parse(text);
+  } catch {
+    usage(`Supply valid JSON for --${name}.`);
+  }
+}
+
+/** Decode CLI syntax only; the shared contract and service own request validation. */
+export function parseRunsInvocation(args: ParsedArgs) {
+  const action = args._[2];
+  const entry = Object.entries(RUNS_COMMANDS).find(([, command]) => command === action);
+  if (!entry || args._.length !== 3) {
+    usage(
+      `Use veryfront project runs <command>. Commands: ${Object.values(RUNS_COMMANDS).join(", ")}.`,
+    );
+  }
+  const operationId = entry[0] as RunsOperationId;
+  const names = [...RUNS_OPERATIONS[operationId].path.matchAll(/\{(\w+)\}/g)].map((match) =>
+    match[1]!
+  ).filter(Boolean);
+  const allowed = new Set([
+    "_",
+    "__explicit",
+    "json",
+    "j",
+    "help",
+    "h",
+    "quiet",
+    "q",
+    "verbose",
+    "color",
+    "no-color",
+    "yes",
+    "y",
+    "output",
+    "o",
+    "no-input",
+    "project-dir",
+    "credential-file",
+    "credential-mode",
+    "all",
+    "follow",
+    "query",
+    "body",
+    "idempotency-key",
+    "if-match",
+    "last-event-id",
+    ...names.map((name) => name.replaceAll("_", "-")),
+  ]);
+  for (const name of Object.keys(args)) {
+    if (!allowed.has(name)) usage(`Unknown option --${name}.`);
+  }
+  const path = Object.fromEntries(names.map((name) => [
+    name,
+    stringOption(args, name.replaceAll("_", "-"), true),
+  ]));
+  const headers: Record<string, string> = {};
+  const idempotencyKey = stringOption(args, "idempotency-key", IDEMPOTENT.has(operationId));
+  const ifMatch = stringOption(args, "if-match", operationId === "updateRun");
+  const lastEventId = stringOption(args, "last-event-id");
+  if (idempotencyKey !== undefined) {
+    if (!IDEMPOTENT.has(operationId)) usage("This command does not accept --idempotency-key.");
+    headers["Idempotency-Key"] = idempotencyKey;
+  }
+  if (ifMatch !== undefined) {
+    if (operationId !== "updateRun") usage("Only update accepts --if-match.");
+    headers["If-Match"] = ifMatch;
+  }
+  const body = jsonOption(args, "body");
+  if (body === undefined && BODY_REQUIRED.has(operationId)) {
+    usage("Supply --body with a JSON request.");
+  }
+  if (body !== undefined && !BODY_REQUIRED.has(operationId) && !BODY_OPTIONAL.has(operationId)) {
+    usage("This command does not accept --body.");
+  }
+  const query = jsonOption(args, "query");
+  if (query !== undefined) {
+    if (!QUERY_OPERATIONS.has(operationId)) usage("This command does not accept --query.");
+    if (query === null || typeof query !== "object" || Array.isArray(query)) {
+      usage("Supply --query with a JSON object.");
+    }
+    for (const value of Object.values(query)) {
+      if (
+        ![value].flat().every((item) =>
+          item === null || ["string", "number", "boolean"].includes(typeof item)
+        )
+      ) {
+        usage("Query values must be strings, numbers, booleans, null, or arrays of those values.");
+      }
+    }
+  }
+  for (const flag of ["all", "follow"]) {
+    if (args[flag] !== undefined && typeof args[flag] !== "boolean") {
+      usage(`--${flag} is a boolean flag.`);
+    }
+  }
+  const all = args.all === true;
+  const follow = args.follow === true;
+  if (all && !PAGINATED.has(operationId as RunsPaginatedOperationId)) {
+    usage("--all requires a paginated list command.");
+  }
+  if (follow && !["getRun", "createRun"].includes(operationId)) {
+    usage("--follow requires get or create.");
+  }
+  const stream = follow || operationId === "streamRunEvents";
+  if (lastEventId !== undefined) {
+    if (!stream) usage("--last-event-id requires stream or --follow.");
+    if (operationId === "streamRunEvents") headers["Last-Event-ID"] = lastEventId;
+  }
+  if (stream && (args.output !== undefined || args.o !== undefined)) {
+    usage("Stream output uses stdout; --output is not supported.");
+  }
+  return {
+    operationId,
+    input: {
+      ...(names.length ? { path } : {}),
+      ...(query !== undefined ? { query } : {}),
+      ...(Object.keys(headers).length ? { headers } : {}),
+      ...(body !== undefined ? { body } : {}),
+    },
+    all,
+    follow,
+    stream,
+    lastEventId,
+  };
+}
+
+/** Execute only SDK calls and emit their results; no lifecycle or paging policy lives here. */
+export async function runProjectRuns(
+  args: ParsedArgs,
+  sdk: RunsSdk,
+  emit: (data: unknown) => Promise<void>,
+): Promise<void> {
+  const { operationId, input, all, follow, lastEventId } = parseRunsInvocation(args);
+  if (operationId === "streamRunEvents") {
+    for await (const frame of sdk.streamRunEvents(input as RunsInput<"streamRunEvents">)) {
+      await emit(frame);
+    }
+    return;
+  }
+  if (all) {
+    const items: unknown[] = [];
+    for await (
+      const item of sdk.paginate(operationId as RunsPaginatedOperationId, input as never)
+    ) items.push(item);
+    await emit(items);
+    return;
+  }
+  // The dynamic command is checked against the operation registry above. Request shapes
+  // are decoded at the CLI boundary; validation stays in the shared contract/service.
+  const call = sdk[operationId] as (input: unknown) => Promise<unknown>;
+  const result = await call(input);
+  await emit(result ?? null);
+  if (follow) {
+    const runId = (result as { id: string }).id;
+    for await (
+      const frame of sdk.streamRunEvents({
+        path: { run_id: runId },
+        ...(lastEventId !== undefined ? { headers: { "Last-Event-ID": lastEventId } } : {}),
+      })
+    ) await emit(frame);
+  }
+}
