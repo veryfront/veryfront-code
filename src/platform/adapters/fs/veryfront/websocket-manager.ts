@@ -5,6 +5,7 @@ import type { ProjectFile, VeryfrontApiClient } from "../../veryfront-api-client
 import type {
   ContentSource,
   InvalidationCallbacks,
+  InvalidationProjectContext,
   PreviewStyleArtifactInfo,
   ResolvedContentContext,
 } from "./types.ts";
@@ -1140,7 +1141,7 @@ export class WebSocketManager {
           preparedStyleArtifact,
         );
 
-        await this.deps.invalidationCallbacks.triggerReload?.(changedPaths, projectContext);
+        void this.triggerReload(changedPaths, projectContext);
       }
 
       logger.info("Selective invalidation complete", {
@@ -1304,7 +1305,7 @@ export class WebSocketManager {
           preparedStyleArtifact,
         );
 
-        await this.deps.invalidationCallbacks.triggerReload?.(undefined, projectContext);
+        void this.triggerReload(undefined, projectContext);
       }
 
       logger.debug("CACHE INVALIDATION COMPLETE", {
@@ -1323,6 +1324,22 @@ export class WebSocketManager {
           this.deps.invalidationCallbacks.evictCurrentAdapter?.();
         }
       }
+    }
+  }
+
+  private async triggerReload(
+    changedPaths: string[] | undefined,
+    projectContext: InvalidationProjectContext,
+  ): Promise<void> {
+    try {
+      // Observe async failures without delaying completed cache invalidation.
+      await this.deps.invalidationCallbacks.triggerReload?.(changedPaths, projectContext);
+    } catch (error) {
+      const kind = changedPaths === undefined ? "full" : "selective";
+      logger.error(`Queued ${kind} invalidation failed`, {
+        projectSlug: this.deps.projectSlug,
+        error,
+      });
     }
   }
 

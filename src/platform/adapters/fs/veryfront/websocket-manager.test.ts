@@ -1221,6 +1221,61 @@ describe("WebSocketManager", () => {
   });
 
   for (const mode of ["full", "selective"] as const) {
+    it(`finalizes ${mode} invalidation and processes later pokes while reload is pending`, async () => {
+      let resolveReload!: () => void;
+      const pendingReload = new Promise<void>((resolve) => {
+        resolveReload = resolve;
+      });
+      let reloadCalls = 0;
+      let evictions = 0;
+      const manager = createWebSocketManager({
+        invalidationCallbacks: {
+          triggerReload: () => {
+            reloadCalls++;
+            return reloadCalls === 1 ? pendingReload : Promise.resolve();
+          },
+          evictCurrentAdapter: () => {
+            evictions++;
+          },
+        },
+      });
+      const poke = mode === "selective"
+        ? { branchName: "main", changedPaths: ["app/page.tsx"] }
+        : { branchName: "main" };
+      const eventLoopTurn = () => new Promise<void>((resolve) => originalSetTimeout(resolve, 0));
+      try {
+        manager.connect("project-1");
+        const socket = MockWebSocket.instances[0];
+        assertExists(socket);
+        deliverPoke(socket, poke);
+        assertEquals(runOnlyScheduledTimer(), 100);
+        await eventLoopTurn();
+        assertEquals(reloadCalls, 1);
+        assertEquals(evictions, 1, "reload completion must not delay adapter eviction");
+        assertEquals(isPrefixBeingInvalidated("file:branch:test-project:main"), false);
+        const ackCount = () =>
+          socket.sentMessages.map((message) => JSON.parse(message))
+            .filter((message) => message.type === "poke_ack").length;
+        assertEquals(ackCount(), 1);
+
+        deliverPoke(socket, poke);
+        assertEquals(runOnlyScheduledTimer(), 100);
+        await eventLoopTurn();
+        assertEquals(reloadCalls, 2);
+        assertEquals(evictions, 2);
+        assertEquals(ackCount(), 2);
+        assertEquals(isPrefixBeingInvalidated("file:branch:test-project:main"), false);
+
+        resolveReload();
+        await eventLoopTurn();
+        assertEquals(evictions, 2, "settling an older reload must not evict a newer adapter");
+        assertEquals(ackCount(), 2);
+      } finally {
+        resolveReload();
+        manager.dispose();
+      }
+    });
+
     for (const rejection of [null, new Error("reload failed")]) {
       it(`contains async ${mode} reload rejection (${String(rejection)}) and recovers after reconnect`, async () => {
         const unhandled: unknown[] = [];
