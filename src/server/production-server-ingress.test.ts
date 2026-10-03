@@ -98,4 +98,33 @@ describe("production server ingress", () => {
       else setEnv("PROXY_MODE", previous);
     }
   });
+
+  it("refuses the interceptor when bootstrap loads hosted proxy mode", async () => {
+    const previous = getEnv("PROXY_MODE");
+    if (previous !== undefined) deleteEnv("PROXY_MODE");
+    try {
+      const adapter = createMockAdapter();
+      await assertRejects(
+        () =>
+          startProductionServerWithDependencies({
+            projectDir: "/combined-mode",
+            port: 0,
+            adapter,
+            unhandledRejectionGuard: false,
+            requestInterceptor: (request) => request,
+          }, {
+            // Stands in for bootstrap loading PROXY_MODE from the project env.
+            bootstrap: () => {
+              setEnv("PROXY_MODE", "1");
+              return Promise.resolve(createBootstrap(adapter));
+            },
+          }),
+        TypeError,
+        "local development only",
+      );
+    } finally {
+      if (previous === undefined) deleteEnv("PROXY_MODE");
+      else setEnv("PROXY_MODE", previous);
+    }
+  });
 });

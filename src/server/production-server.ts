@@ -266,12 +266,17 @@ export function startProductionServerWithDependencies(
       // project code shares. That is acceptable for a developer's own token on
       // their machine only. A deployed runtime (hosted proxy mode without the
       // local CLI marker) gets its credentials from a separate proxy hop.
-      if (requestInterceptor && getEnv("PROXY_MODE") === "1" && !isLocalCliProxyMode()) {
-        throw new TypeError(
-          "requestInterceptor (combined mode) is for local development only and is refused " +
-            "in hosted proxy mode",
-        );
-      }
+      // Checked again after bootstrap, which can load PROXY_MODE from the
+      // project environment.
+      const refuseHostedInterceptor = () => {
+        if (requestInterceptor && getEnv("PROXY_MODE") === "1" && !isLocalCliProxyMode()) {
+          throw new TypeError(
+            "requestInterceptor (combined mode) is for local development only and is refused " +
+              "in hosted proxy mode",
+          );
+        }
+      };
+      refuseHostedInterceptor();
 
       const baseAdapter = suppliedBootstrap?.adapter ?? options.adapter ?? (await runtime.get());
       let initialOnRecycle = options.onMemoryRecycle;
@@ -301,6 +306,7 @@ export function startProductionServerWithDependencies(
         // Use pre-computed bootstrap result if provided, otherwise bootstrap here
         const bootstrap = suppliedBootstrap ??
           await dependencies.bootstrap(projectDir, baseAdapter);
+        refuseHostedInterceptor();
         if (!suppliedBootstrap) {
           ownedBootstrap = bootstrap;
           // Bootstrap loads the project's .env. Keep parent-env monitoring active

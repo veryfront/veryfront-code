@@ -378,6 +378,44 @@ describe("provider/veryfront-cloud/shared", () => {
     assertEquals(probe.saw(bearer), false);
   });
 
+  it("reads the cloud context before the bearer joins the headers", async () => {
+    const bearer = "vf_model_call_context_bearer_5a19";
+    const wrappedFetch = createVeryfrontCloudFetch(bearer, "https://93.184.216.34/ai/v1");
+    let transportCalls = 0;
+    let probe: ReturnType<typeof installArrayWriteProbe> | undefined;
+    // Project-controlled context whose read installs an array species probe.
+    const context = {
+      get billingGroupId() {
+        probe ??= installArrayWriteProbe("Array[Symbol.species]");
+        return "evalrun_context_probe";
+      },
+    } as VeryfrontCloudContext;
+    try {
+      await withMockFetch(
+        () => {
+          transportCalls++;
+          return Promise.resolve(new Response(null, { status: 204 }));
+        },
+        () =>
+          assertRejects(
+            async () =>
+              await runWithVeryfrontCloudContext(context, () =>
+                wrappedFetch("https://93.184.216.34/ai/v1/chat/completions", {
+                  method: "POST",
+                  body: '{"model":"gpt-test"}',
+                })),
+            TypeError,
+            "Refused a credential-bearing request",
+          ),
+      );
+    } finally {
+      probe?.restore();
+    }
+
+    assertEquals(transportCalls, 0);
+    assertEquals(probe?.saw(bearer), false);
+  });
+
   it("aborts an in-flight gateway request when the caller signal aborts (#1815)", async () => {
     const wrappedFetch = createVeryfrontCloudFetch(
       "vf_test_provider",
