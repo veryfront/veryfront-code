@@ -146,8 +146,11 @@ const WORKFLOW_PAUSE_ACK_RETRY_MS = 100;
 const WORKFLOW_PAUSE_ACK_TIMEOUT_MS = 2_000;
 /** After a check the control plane did not answer, boundaries skip asking for this long. */
 const WORKFLOW_PAUSE_CHECK_BACKOFF_MS = 30_000;
-/** How often a manual resume retries while the paused execution still releases the run. */
-const WORKFLOW_MANUAL_RESUME_ATTEMPTS = 50;
+/**
+ * How often a manual resume retries, 100ms apart, while the paused execution still holds the
+ * run: about 35s, past the 30s workflow lock lease a parking execution that died may leave.
+ */
+const WORKFLOW_MANUAL_RESUME_ATTEMPTS = 350;
 /** Prefix of a `wait_id` that lists one short hash per wait record of the pause. */
 const WAIT_ID_PREFIX = "w";
 const WAIT_ID_HASH_LENGTH = 16;
@@ -2195,10 +2198,20 @@ function createRunPauseAcknowledger(
           redirect: "error",
           headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
           body: "{}",
-          signal: ReflectApply(RunStopTimeout, AbortSignal, [WORKFLOW_PAUSE_ACK_TIMEOUT_MS]),
+          // A cancelled request stops waiting for the answer at once.
+          signal: ReflectApply(TaskAbortSignalAny, AbortSignal, [[
+            req.signal,
+            ReflectApply(RunStopTimeout, AbortSignal, [WORKFLOW_PAUSE_ACK_TIMEOUT_MS]),
+          ]]),
         });
         if (response.status < 500) {
           if (!response.ok) {
+            if (response.status === 401 || response.status === 403) {
+              serverLogger.warn("[project-run-execute] Pause acknowledgement was not authorized", {
+                runId,
+                status: response.status,
+              });
+            }
             await response.body?.cancel();
             return false;
           }
@@ -2209,6 +2222,8 @@ function createRunPauseAcknowledger(
       } catch {
         // A transport failure or unreadable reply is retried like a 5xx.
       }
+      // A cancelled request stops at this boundary; the cancellation then ends the run.
+      if (req.signal.aborted) return true;
       if (attempt >= WORKFLOW_PAUSE_ACK_ATTEMPTS) {
         serverLogger.warn("[project-run-execute] Could not read the pause acknowledgement", {
           runId,
