@@ -7911,6 +7911,31 @@ describe("project run inference credential header", () => {
 // veryfront-issue-inbox#2086: a cancelled project run must reach the running
 // task or workflow, not only the control-plane row.
 describe("server/handlers/request/project-run-execute.handler cancellation", () => {
+  it("refuses invalid stop setup without retaining a phantom execution on retry", async () => {
+    const registry = new RunStopRegistry();
+    let calls = 0;
+    const handler = new ProjectRunExecuteHandler(
+      createDeps({
+        runTask: async () => {
+          calls++;
+          return { success: true, result: "settled", durationMs: 1 };
+        },
+      }),
+      registry,
+    );
+    const runId = "run_invalid_stop_setup";
+    const body = { runId, kind: "task", target: "task:sync-calendar-events", projectId: "proj-1" };
+    const rejected = await signedRequest(`/api/control-plane/runs/${runId}/execute`, body, {
+      "x-veryfront-run-stop-token": " ",
+    });
+    await handler.handle(rejected.request, createCtx(rejected.publicKeyPem));
+    assertEquals(calls, 0);
+    const retry = await signedRequest(`/api/control-plane/runs/${runId}/execute`, body);
+    await handler.handle(retry.request, createCtx(retry.publicKeyPem));
+    assertEquals(calls, 1);
+    assertEquals(registry.requestStop(runId), { accepted: true, stopped: true });
+  });
+
   it("delivers a durable stop independently of the original transport and confirms only settled task work", async () => {
     const registry = new RunStopRegistry();
     let begin!: () => void;

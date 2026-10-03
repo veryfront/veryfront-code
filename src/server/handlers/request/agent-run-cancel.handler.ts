@@ -77,6 +77,7 @@ export class AgentRunCancelHandler extends BaseHandler {
           : undefined;
         const accepted = this.sessionManager.cancelRun(runId);
         if (stop) {
+          if (!accepted && !stop.accepted) return this.respond(builder.build(null, 204));
           return this.respond(
             builder.json(
               { accepted: accepted || stop.accepted, stopped: stop.stopped },

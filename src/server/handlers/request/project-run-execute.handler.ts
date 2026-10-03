@@ -3974,22 +3974,22 @@ export class ProjectRunExecuteHandler extends BaseHandler {
         }
         const inferenceToken = readProjectRunInferenceToken(req);
         const stopController = new TaskAbortController();
-        const settledStop = this.stopRegistry.register(request.runId, () => {
-          ReflectApply(TaskAbort, stopController, [new Error("Run cancelled")]);
-        });
         const executionSignal = ReflectApply(TaskAbortSignalAny, AbortSignal, [[
           IntrinsicReflectApply(RequestSignalGetter, req, []) as AbortSignal,
           stopController.signal,
         ]]) as AbortSignal;
         const callback = createRunStopAcknowledger(req, request.runId, executionSignal);
-        const acknowledgeStop = async () => {
-          settledStop();
-          await callback?.();
-        };
         const acknowledgePause = request.kind === "workflow"
           ? createRunPauseAcknowledger(req, request.runId, this.deps.sleep)
           : undefined;
         const executionRequest = withoutProjectRunInferenceToken(req, executionSignal);
+        const settledStop = this.stopRegistry.register(request.runId, () => {
+          ReflectApply(TaskAbort, stopController, [new Error("Run cancelled")]);
+        });
+        const acknowledgeStop = async () => {
+          settledStop();
+          await callback?.();
+        };
 
         return await withSpan(
           "project_run.execute",

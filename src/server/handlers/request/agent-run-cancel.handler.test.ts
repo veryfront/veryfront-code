@@ -13,6 +13,27 @@ import {
 } from "./internal-agent-run.test-helpers.ts";
 
 describe("server/handlers/request/agent-run-cancel.handler", () => {
+  it("keeps an absent execution distinguishable when stop confirmation is requested", async () => {
+    const runId = "run_missing_stop";
+    const body = JSON.stringify({ runId, confirmStopped: true });
+    const { jws, publicKeyPem } = await createControlPlaneSignature(body, {
+      requestId: runId,
+      requestMethod: "DELETE",
+      requestPath: `/api/control-plane/runs/${runId}`,
+    });
+    const handler = new AgentRunCancelHandler(new AgentRunSessionManager());
+    const result = await handler.handle(
+      new Request(`https://example.com/api/control-plane/runs/${runId}`, {
+        method: "DELETE",
+        body,
+        headers: { "content-type": "application/json", "x-veryfront-control-plane-jws": jws },
+      }),
+      createCtx(publicKeyPem),
+    );
+    assertExists(result.response);
+    assertEquals(result.response.status, 204);
+  });
+
   it("retries stop signalling until the owned execution positively settles", async () => {
     const runId = "run_stop_delivery";
     let signals = 0;
