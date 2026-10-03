@@ -157,6 +157,7 @@ export function createRunsSdk(config: RunsSdkConfig): RunsSdk {
     options: RunsCallOptions = {},
   ): AsyncGenerator<unknown> {
     let cursor = input.query?.cursor;
+    const seen = new Set([cursor]);
     while (true) {
       const page = await call(
         operationId,
@@ -166,12 +167,13 @@ export function createRunsSdk(config: RunsSdkConfig): RunsSdk {
       yield* page.data;
       const next = page.page_info?.next ?? null;
       if (next === null) return;
-      if (next === cursor) {
+      if (seen.has(next)) {
         throw API_CLIENT_ERROR.create({
-          detail: `${operationId} returned its request cursor as page_info.next`,
+          detail: `${operationId} returned an already used cursor as page_info.next`,
           status: 502,
         });
       }
+      seen.add(next);
       cursor = next;
     }
   }

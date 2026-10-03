@@ -264,7 +264,7 @@ describe("Runs target SDK", () => {
     ]);
   });
 
-  it("stops paginating when the server repeats the request cursor", async () => {
+  it("stops paginating when the server returns an already used cursor", async () => {
     const { sdk } = sdkWith([
       Response.json({ data: [], page_info: { next: "same" } }),
     ]);
@@ -274,6 +274,18 @@ describe("Runs target SDK", () => {
       )
     );
     assertEquals(error.status, 502);
+  });
+
+  it("stops paginating when the cursors cycle", async () => {
+    const page = (next: string) => Response.json({ data: [], page_info: { next } });
+    const { sdk, requests } = sdkWith([page("b"), page("a")]);
+    const error = await rejection(() =>
+      collect(
+        sdk.paginate("listRunChildRuns", { path: { run_id: RUN_ID }, query: { cursor: "a" } }),
+      )
+    );
+    assertEquals(error.status, 502);
+    assertEquals(requests.length, 2);
   });
 
   it("parses event-stream frames split across chunks, CRLF line ends and keep-alive comments", async () => {
