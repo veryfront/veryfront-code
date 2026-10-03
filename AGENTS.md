@@ -377,5 +377,6 @@ filler, repeated information, marketing claims, and vague qualifiers. Use simple
 words. Add headings, lists, or tables only when they help readers find or compare
 information. Preserve technical accuracy when shortening text.
 
-Describe the prose as based on ASD-STE100 principles. Do not claim full
-compliance without checking the text against the complete standard.
+When discussing compliance, describe the prose as based on ASD-STE100
+principles. Do not claim full compliance without checking the text against the
+complete standard.
