@@ -126,6 +126,7 @@ const TaskAbort = AbortController.prototype.abort;
 const TaskAbortSignalAny = AbortSignal.any;
 const RunStopTimeout = AbortSignal.timeout;
 const RunStopAddListener = EventTarget.prototype.addEventListener;
+const ResponsePrototypeJson = Response.prototype.json;
 
 const EXECUTE_PATH_REGEX = /^\/api\/control-plane\/runs\/([^/]+)\/execute$/;
 const DEFAULT_WORKFLOW_STATUS_POLL_INTERVAL_MS = 100;
@@ -139,6 +140,19 @@ const WORKFLOW_UNPERSISTED_WAIT_GRACE_MS = 5_000;
 const DEFAULT_WORKFLOW_CLIENT_DESTROY_TIMEOUT_MS = 5_000;
 /** When the control plane re-dispatches a resume whose request timed out, to report where the run got to. */
 const WORKFLOW_RESUME_RECHECK_MS = 30_000;
+/** At most one pause acknowledgement per run in this window; a boundary inside it skips the call. */
+const WORKFLOW_PAUSE_CHECK_INTERVAL_MS = 1_000;
+const WORKFLOW_PAUSE_ACK_ATTEMPTS = 3;
+const WORKFLOW_PAUSE_ACK_RETRY_MS = 100;
+/** One pause-ack request; the run waits for the answer at its boundary. */
+const WORKFLOW_PAUSE_ACK_TIMEOUT_MS = 2_000;
+/** After a check the control plane did not answer, boundaries skip asking for this long. */
+const WORKFLOW_PAUSE_CHECK_BACKOFF_MS = 30_000;
+/**
+ * How often a manual resume retries, 100ms apart, while the paused execution still holds the
+ * run: about 35s, past the 30s workflow lock lease a parking execution that died may leave.
+ */
+const WORKFLOW_MANUAL_RESUME_ATTEMPTS = 350;
 /** Prefix of a `wait_id` that lists one short hash per wait record of the pause. */
 const WAIT_ID_PREFIX = "w";
 const WAIT_ID_HASH_LENGTH = 16;
@@ -213,7 +227,12 @@ export type WorkflowResumeSignal =
   }
   | { type: "event"; name: string; payload?: unknown; wait_id?: string }
   | { type: "deadline"; wait_id?: string }
-  | { type: "child_run"; wait_id: string };
+  | { type: "child_run"; wait_id: string }
+  /** Continue a run that paused at a safe boundary on a manual pause request. It names no wait. */
+  | { type: "manual" };
+
+/** A resume that releases wait records, as opposed to a manual resume of a paused run. */
+type WorkflowWaitResumeSignal = Exclude<WorkflowResumeSignal, { type: "manual" }>;
 
 export interface WorkflowWaitingDependency {
   kind: "run";
@@ -241,7 +260,7 @@ export interface ProjectRunExecuteResponse {
   success: boolean;
   /** Lifecycle outcome. Sent for a pause, which `success` alone cannot express (#2085). */
   status?: "waiting";
-  waiting_reason?: "approval" | "event" | "child_run";
+  waiting_reason?: "approval" | "event" | "child_run" | "manual_pause";
   /** Every independently durable run that must terminate before this workflow continues. */
   waiting_on?: WorkflowWaitingDependency[];
   waiting?: WorkflowWaitingDetails;
@@ -320,6 +339,8 @@ interface WorkflowClientView {
     options?: { runId?: string; [CONTROL_PLANE_OWNED_START]?: true },
   ): Promise<WorkflowStartHandle>;
   getRun(runId: string): Promise<WorkflowRunView | null>;
+  /** Continue a durable run that paused at a safe boundary. */
+  resume?(runId: string): Promise<void>;
   getPendingEventWaits?(runId: string): Promise<WorkflowEventWaitView[]>;
   resumeChildRuns?(
     runId: string,
@@ -654,6 +675,8 @@ function parseResumeSignal(
       return { type: "deadline", ...parseResumeWaitId(value.wait_id) };
     case "child_run":
       return { type: "child_run", wait_id: parseResumeId(value.wait_id, "resume.wait_id") };
+    case "manual":
+      return { type: "manual" };
     default:
       throw INPUT_VALIDATION_FAILED.create({ detail: "Invalid resume.type" });
   }
@@ -1119,7 +1142,9 @@ async function waitForWorkflowResult(
 
     if (run.status === "waiting") {
       if (client.statePersistence !== "durable") return run;
-      const keys = waitKeys(await readPendingWaits(client, runId, run));
+      const parked = await readPendingWaits(client, runId, run);
+      if (isManualPause(run, parked)) return run;
+      const keys = waitKeys(parked);
       // A backend without event waits saves no record for a `waitForEvent()`
       // or `delay()`, so nothing can ever resume the run: fail it instead of
       // polling until the status timeout. An approval pause still saves its
@@ -1274,6 +1299,15 @@ function isParkedOnNothing(
   return approvals.length === 0 && eventWaits.length === 0 && childRunWaits.length === 0;
 }
 
+/**
+ * A run paused at a safe boundary on request. A wait pause always names the
+ * nodes it is parked on; a manual pause names none and holds no wait record.
+ */
+function isManualPause(run: WorkflowRunView, parked: PendingWorkflowWaits): boolean {
+  return run.status === "waiting" && run.currentNodes !== undefined &&
+    run.currentNodes.length === 0 && isParkedOnNothing(parked);
+}
+
 async function waitKeyHash(key: string): Promise<string> {
   return (await computeHash(key)).slice(0, WAIT_ID_HASH_LENGTH);
 }
@@ -1337,7 +1371,7 @@ async function deliverResumeEvent(
 async function applyResumeSignal(
   client: WorkflowClientView,
   runId: string,
-  resume: WorkflowResumeSignal,
+  resume: WorkflowWaitResumeSignal,
   parked: PendingWorkflowWaits,
   nowMs: number,
 ): Promise<{ released: boolean } | { failure: string }> {
@@ -1377,7 +1411,7 @@ async function applyResumeSignal(
  * every pending wait belongs to the pause it was scheduled for.
  */
 async function isStaleDecision(
-  resume: WorkflowResumeSignal,
+  resume: WorkflowWaitResumeSignal,
   parked: PendingWorkflowWaits,
 ): Promise<boolean> {
   if (resume.wait_id === undefined) return false;
@@ -1397,7 +1431,10 @@ async function isStaleDecision(
 }
 
 /** The pending wait records an approval or event decision would release. */
-function targetedWaitKeys(resume: WorkflowResumeSignal, parked: PendingWorkflowWaits): string[] {
+function targetedWaitKeys(
+  resume: WorkflowWaitResumeSignal,
+  parked: PendingWorkflowWaits,
+): string[] {
   if (resume.type === "child_run") {
     return waitKeys({ approvals: [], eventWaits: [], childRunWaits: parked.childRunWaits });
   }
@@ -1429,42 +1466,65 @@ async function resumeWaitingWorkflowRun(
   deps: ProjectRunExecuteHandlerDeps,
   pollingStopped: AbortSignal,
   cancelRun: () => Promise<void>,
+  acknowledgePause?: () => Promise<boolean | undefined>,
 ): Promise<{ run: WorkflowRunView } | { failure: string }> {
   if (client.statePersistence !== "durable") {
     return { failure: "Cannot resume a workflow run without durable workflow persistence" };
+  }
+  if (resume.type === "manual") {
+    return await resumeManuallyPausedRun(
+      client,
+      runId,
+      signal,
+      deps,
+      pollingStopped,
+      cancelRun,
+      acknowledgePause,
+    );
   }
   const current = await client.getRun(runId);
   if (!current) return { failure: `Workflow run not found: ${runId}` };
 
   // A re-dispatch that repeats a decision already applied (the previous
-  // attempt died after applying it) just reports where the run is now.
+  // attempt died after applying it) just reports where the run is now. An
+  // older attempt the control plane told to stop may park it meanwhile; that
+  // pause continues like a manual resume, which asks the control plane first.
   if (current.status !== "waiting") {
-    return {
-      run: await waitForWorkflowResult(
-        client,
-        runId,
-        signal,
-        deps,
-        undefined,
-        pollingStopped,
-        cancelRun,
-      ),
-    };
+    return await resumeManuallyPausedRun(
+      client,
+      runId,
+      signal,
+      deps,
+      pollingStopped,
+      cancelRun,
+      acknowledgePause,
+    );
   }
 
   const parked = await readPendingWaits(client, runId, current);
+  // A pause the control plane did not keep (it told a stale attempt to stop) parks the run
+  // with no wait. It continues like a manual resume, which asks the control plane first.
+  if (isManualPause(current, parked)) {
+    return await resumeManuallyPausedRun(
+      client,
+      runId,
+      signal,
+      deps,
+      pollingStopped,
+      cancelRun,
+      acknowledgePause,
+    );
+  }
   if (await isStaleDecision(resume, parked)) {
-    return {
-      run: await waitForWorkflowResult(
-        client,
-        runId,
-        signal,
-        deps,
-        undefined,
-        pollingStopped,
-        cancelRun,
-      ),
-    };
+    return await resumeManuallyPausedRun(
+      client,
+      runId,
+      signal,
+      deps,
+      pollingStopped,
+      cancelRun,
+      acknowledgePause,
+    );
   }
   // A timed-out request still applies its decision: the timeout reports the
   // run waiting and the recheck dispatch names no decision to apply again.
@@ -1494,6 +1554,51 @@ async function resumeWaitingWorkflowRun(
   };
 }
 
+/**
+ * Continue a run paused at a safe boundary under the same run id. The
+ * persisted node states carry every completed node, so only the rest runs.
+ * The paused execution may still be releasing the run when this dispatch
+ * arrives: wait for it to settle, and retry while it still holds the run.
+ *
+ * The run is still at a boundary, so the attempt asks the control plane
+ * before every resume. A duplicate of an earlier resume dispatch, or an
+ * attempt whose run was paused again meanwhile, is told to stop and reports
+ * the pause instead of releasing it.
+ */
+async function resumeManuallyPausedRun(
+  client: WorkflowClientView,
+  runId: string,
+  signal: AbortSignal,
+  deps: ProjectRunExecuteHandlerDeps,
+  pollingStopped: AbortSignal,
+  cancelRun: () => Promise<void>,
+  acknowledgePause?: () => Promise<boolean | undefined>,
+): Promise<{ run: WorkflowRunView } | { failure: string }> {
+  const settle = () =>
+    waitForWorkflowResult(client, runId, signal, deps, undefined, pollingStopped, cancelRun);
+  let current = await settle();
+  for (let attempt = 1;; attempt++) {
+    if (!isManualPause(current, await readPendingWaits(client, runId, current))) {
+      return { run: current };
+    }
+    if (!signal.aborted && await acknowledgePause?.()) return { run: current };
+    if (signal.aborted) {
+      await cancelRun();
+      return { run: { status: "cancelled", error: { message: "Workflow run cancelled" } } };
+    }
+    if (!client.resume) return { failure: "Workflow client cannot resume paused runs" };
+    try {
+      await client.resume(runId);
+      break;
+    } catch (error) {
+      if (attempt >= WORKFLOW_MANUAL_RESUME_ATTEMPTS) throw error;
+      await deps.sleep(DEFAULT_WORKFLOW_STATUS_POLL_INTERVAL_MS);
+      current = await settle();
+    }
+  }
+  return { run: await settle() };
+}
+
 function isTerminalWorkflowStatus(status: string): boolean {
   return status === "completed" || status === "failed" || status === "cancelled";
 }
@@ -1504,6 +1609,7 @@ async function executeWorkflowRun(
   signal: AbortSignal,
   deps: ProjectRunExecuteHandlerDeps,
   acknowledgeStop?: () => Promise<void>,
+  acknowledgePause?: () => Promise<boolean | undefined>,
 ): Promise<ProjectRunExecuteResponse> {
   let executionEntered = false;
   try {
@@ -1545,6 +1651,7 @@ async function executeWorkflowRun(
         deps,
         startedAt,
         acknowledgeStop,
+        acknowledgePause,
       );
     } catch (error) {
       // A failure after discovery still ran against the declared schemas; keep their identity.
@@ -1570,14 +1677,38 @@ async function runDiscoveredWorkflow(
   deps: ProjectRunExecuteHandlerDeps,
   startedAt: number,
   acknowledgeStop?: () => Promise<void>,
+  acknowledgePause?: () => Promise<boolean | undefined>,
 ): Promise<ProjectRunExecuteResponse> {
+  // Only a durable run can pause: an ephemeral one has nothing to resume from.
+  let pauseChecksEnabled = false;
+  let lastPauseCheckAt: number | undefined;
+  let pauseCheckWindowMs = WORKFLOW_PAUSE_CHECK_INTERVAL_MS;
+  const shouldPause = async (runId: string): Promise<boolean> => {
+    if (!acknowledgePause || !pauseChecksEnabled || runId !== request.runId) return false;
+    if (isAbortSignalAborted(signal)) return false;
+    const now = deps.now();
+    if (
+      lastPauseCheckAt !== undefined && now - lastPauseCheckAt < pauseCheckWindowMs
+    ) return false;
+    const answer = await acknowledgePause();
+    // The window starts when the answer arrives, so a slow reply cannot make every boundary
+    // ask, and an unanswered check backs off longer.
+    pauseCheckWindowMs = answer === undefined
+      ? WORKFLOW_PAUSE_CHECK_BACKOFF_MS
+      : WORKFLOW_PAUSE_CHECK_INTERVAL_MS;
+    lastPauseCheckAt = deps.now();
+    return answer === true;
+  };
   let client: WorkflowClientView;
   try {
     client = await deps.createWorkflowClient(
       // Per-request client: keep stop evidence for the cancellation acknowledgement.
       withRuntimeStepRegistries({
         debug: ctx.debug,
-        executor: { retainExecutionStopEvidence: true },
+        executor: {
+          retainExecutionStopEvidence: true,
+          ...(acknowledgePause ? { shouldPause } : {}),
+        },
       }),
       {
         projectId: request.projectId,
@@ -1590,6 +1721,7 @@ async function runDiscoveredWorkflow(
     if (!request.resume) await acknowledgeStop?.();
     throw error;
   }
+  pauseChecksEnabled = client.statePersistence === "durable";
   let executionStarted = false;
   let activeResume: Promise<unknown> | undefined;
   let stopped: Promise<boolean> | undefined;
@@ -1653,6 +1785,7 @@ async function runDiscoveredWorkflow(
         deps,
         pollingStopped.signal,
         cancelRun,
+        acknowledgePause,
       ).then(async (result) => {
         await cancellation;
         return cancellationResult ? { run: cancellationResult } : result;
@@ -1776,6 +1909,18 @@ async function runDiscoveredWorkflow(
       // plane keeps the canonical run `waiting` (#2085) and knows when to
       // dispatch it again (#2110). The pause payload is never sent as output.
       const parked = await readPendingWaits(client, request.runId, run);
+      if (isManualPause(run, parked)) {
+        // The control plane already recorded this pause through the pause
+        // acknowledgement; this response converges a lost acknowledgement.
+        return {
+          success: true,
+          status: "waiting",
+          waiting_reason: "manual_pause",
+          waiting: {},
+          logs: null,
+          duration_ms: durationMs,
+        };
+      }
       const waiting = await describeWorkflowWait(parked);
       const waitingOn = childRunDependencies(parked);
       if (waitingOn.length > MAX_WORKFLOW_CHILD_RUN_DEPENDENCIES) {
@@ -2059,6 +2204,81 @@ function createRunStopAcknowledger(req: Request, runId: string): (() => Promise<
   return () => {
     stopped = true;
     return reconcile();
+  };
+}
+
+/**
+ * Ask the control plane whether this attempt should stop at a safe boundary.
+ * A `{ "stop": true }` reply means the API confirmed a requested pause for this
+ * attempt, or the attempt no longer holds the run. The call is idempotent, so a
+ * transport error or 5xx is retried a few times and then answers `undefined`
+ * (unknown, so continue); anything else, including 401, reads as continue.
+ */
+function createRunPauseAcknowledger(
+  req: Request,
+  runId: string,
+  sleep: (ms: number) => Promise<void>,
+): (() => Promise<boolean | undefined>) | undefined {
+  const rawToken = readIngressCredential(req, INGRESS_RUN_STOP_TOKEN_HEADER);
+  if (rawToken === null) return undefined;
+  const token = requireInferenceProviderCredential(rawToken, "Run stop token header");
+  let url: string;
+  let transport: typeof fetch;
+  try {
+    const apiUrl = requireHostPrivateApiHttps(resolveHostOwnedSourceApiBaseUrl());
+    url = `${apiUrl}/runs/${encodeURIComponent(runId)}/pause-ack`;
+    transport = createVeryfrontApiOriginBoundOutboundFetch(apiUrl);
+  } catch {
+    serverLogger.warn("[project-run-execute] Pause acknowledgement transport is unavailable", {
+      runId,
+    });
+    return undefined;
+  }
+  // Captured before project code runs, so a replaced `Request.prototype.signal` getter cannot
+  // throw from or forge the acknowledgement.
+  const signal = IntrinsicReflectApply(RequestSignalGetter, req, []) as AbortSignal;
+  return async () => {
+    for (let attempt = 1;; attempt++) {
+      try {
+        const response = await transport(url, {
+          method: "POST",
+          redirect: "error",
+          headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+          body: "{}",
+          // A cancelled request stops waiting for the answer at once.
+          signal: ReflectApply(TaskAbortSignalAny, AbortSignal, [[
+            signal,
+            ReflectApply(RunStopTimeout, AbortSignal, [WORKFLOW_PAUSE_ACK_TIMEOUT_MS]),
+          ]]),
+        });
+        if (response.status < 500) {
+          if (!response.ok) {
+            if (response.status === 401 || response.status === 403) {
+              serverLogger.warn("[project-run-execute] Pause acknowledgement was not authorized", {
+                runId,
+                status: response.status,
+              });
+            }
+            await response.body?.cancel();
+            return false;
+          }
+          const body: unknown = await ReflectApply(ResponsePrototypeJson, response, []);
+          return isRecord(body) && body.stop === true;
+        }
+        await response.body?.cancel();
+      } catch {
+        // A transport failure or unreadable reply is retried like a 5xx.
+      }
+      // A cancelled request stops at this boundary; the cancellation then ends the run.
+      if (isAbortSignalAborted(signal)) return true;
+      if (attempt >= WORKFLOW_PAUSE_ACK_ATTEMPTS) {
+        serverLogger.warn("[project-run-execute] Could not read the pause acknowledgement", {
+          runId,
+        });
+        return undefined;
+      }
+      await sleep(WORKFLOW_PAUSE_ACK_RETRY_MS);
+    }
   };
 }
 
@@ -3642,6 +3862,7 @@ function executeProjectRun(
   req: Request,
   deps: ProjectRunExecuteHandlerDeps,
   acknowledgeStop?: () => Promise<void>,
+  acknowledgePause?: () => Promise<boolean | undefined>,
 ): Promise<ProjectRunExecuteResponse> {
   if (request.kind === "task") {
     return executeTaskRun(request, async (control) => {
@@ -3668,7 +3889,7 @@ function executeProjectRun(
       }
     }, acknowledgeStop);
   }
-  return executeWorkflowRun(request, ctx, req.signal, deps, acknowledgeStop);
+  return executeWorkflowRun(request, ctx, req.signal, deps, acknowledgeStop, acknowledgePause);
 }
 
 export class ProjectRunExecuteHandler extends BaseHandler {
@@ -3718,6 +3939,9 @@ export class ProjectRunExecuteHandler extends BaseHandler {
         }
         const inferenceToken = readProjectRunInferenceToken(req);
         const acknowledgeStop = createRunStopAcknowledger(req, request.runId);
+        const acknowledgePause = request.kind === "workflow"
+          ? createRunPauseAcknowledger(req, request.runId, this.deps.sleep)
+          : undefined;
         const stopCredentialPresent = readIngressCredential(req, INGRESS_RUN_STOP_TOKEN_HEADER) !==
           null;
         const executionRequest = inferenceToken === undefined && !stopCredentialPresent
@@ -3737,6 +3961,7 @@ export class ProjectRunExecuteHandler extends BaseHandler {
                     executionRequest,
                     this.deps,
                     acknowledgeStop,
+                    acknowledgePause,
                   )
                   : await runWithProjectRunInferenceCredential(
                     inferenceToken,
@@ -3747,6 +3972,7 @@ export class ProjectRunExecuteHandler extends BaseHandler {
                         executionRequest,
                         this.deps,
                         acknowledgeStop,
+                        acknowledgePause,
                       ),
                   ),
               );

@@ -49,6 +49,8 @@ const logger = baseLogger.component("workflow-run-control");
 export interface WorkflowRunControlExecuteResult {
   completed?: boolean;
   waiting?: boolean;
+  /** Stopped at a safe batch boundary on request; the persisted states resume it. */
+  paused?: boolean;
   waitingNode?: string;
   waitingConfig?: WaitNodeConfig;
   /**
@@ -136,6 +138,7 @@ export interface WorkflowRunControlExecuteOutcome {
   status:
     | "completed"
     | "waiting"
+    | "paused"
     | "failed"
     | "cancelled"
     | "skipped"
@@ -1011,6 +1014,32 @@ export async function executeWorkflowRunControl(
       if (finalRun.status === "cancelled") return { status: "cancelled", run: finalRun };
       await input.onComplete?.(finalRun);
       return { status: "completed", run: finalRun };
+    }
+
+    if (result.paused) {
+      // The DAG persisted the settled batch before asking to pause. Park with
+      // no current nodes and no wait record: nothing but a resume can continue
+      // the run, which then finds every completed node already recorded.
+      const parked = await pauseRun(input, executionController, result, {
+        currentNodes: [],
+        statusOnly: true,
+      });
+      if (!parked) return { status: "ownership-lost" };
+      pausedForWaiting = true;
+      await releaseWaitingLock();
+      const releasedRun = await backend.getRun(runId);
+      if (
+        releasedRun?.status !== "waiting" ||
+        executionController.signal.aborted ||
+        !input.isCurrentExecution(runId, executionController) ||
+        (expectedWorkerId !== undefined && releasedRun.workerId !== expectedWorkerId)
+      ) {
+        return {
+          status: releasedRun?.status === "cancelled" ? "cancelled" : "skipped",
+          run: releasedRun ?? undefined,
+        };
+      }
+      return { status: "paused", run: releasedRun };
     }
 
     if (result.waiting) {
