@@ -153,6 +153,41 @@ describe("transforms/mdx/esm-module-loader/utils/source-spans", () => {
     }
   });
 
+  it("keeps single-line statement scans linear", () => {
+    // Generated and minified modules put every statement on one line; each
+    // statement boundary asks whether it sits inside a line comment.
+    const matchCss = (specifier: string) => specifier.endsWith(".css") ? specifier : null;
+    const makeSource = (count: number) =>
+      `${'import"pkg";'.repeat(count)}import styles from "../styles/late.css";`;
+    const scan = (source: string) => findStaticImportFromSpans(source, matchCss, UNBOUNDED);
+
+    // The size^e check cannot separate this case: its quadratic term is a
+    // cheap per-character loop that a 4x input only grows by about size^1.65.
+    // At the release-file scanner bound (50,000 statements) a quadratic scan
+    // costs tens of seconds of CPU, and a linear one well under a second.
+    const source = makeSource(50_000);
+    const start = cpuUsage();
+    assertEquals(scan(source).map((span) => span.path), ["../styles/late.css"]);
+    const elapsed = cpuUsage(start);
+    const cpuMillis = (elapsed.user + elapsed.system) / 1_000;
+    assert(
+      cpuMillis < 5_000,
+      `Expected a ${Math.round(source.length / 1024)} KB single-line scan to use under 5 s ` +
+        `of CPU, got ${cpuMillis.toFixed(1)} ms`,
+    );
+  });
+
+  it("still hides imports behind a line comment that follows quoted slashes", () => {
+    const matchRelative = (specifier: string) => specifier.startsWith("./") ? specifier : null;
+    const source = `${'x="//";'.repeat(200)}// import hidden from "./hidden.js";\n` +
+      'import real from "./real.js";';
+
+    assertEquals(
+      findStaticImportFromSpans(source, matchRelative, UNBOUNDED).map((span) => span.path),
+      ["./real.js"],
+    );
+  });
+
   describe("replaceSourceSpans", () => {
     it("replaces a single span", () => {
       const source = 'from "./old.js"';
@@ -1695,6 +1730,15 @@ import real from "./real.js";`,
         durationMs < maxMillis,
         `Expected a ${Math.round(source.length / 1024)} KB line-broken division scan to ` +
           `finish within ${maxMillis} ms, got ${durationMs.toFixed(1)} ms`,
+      );
+    });
+
+    it("scales line-broken division scans linearly", () => {
+      assertLinearScan(
+        "line-broken division",
+        specifiers,
+        (size) => "x\n/2/x;\n".repeat(size),
+        500,
       );
     });
 
