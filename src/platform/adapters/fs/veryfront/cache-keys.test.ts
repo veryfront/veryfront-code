@@ -159,6 +159,19 @@ describe("cache-keys", () => {
       }
     });
 
+    it("does not let a delimiter-containing project slug alias another project's listing", () => {
+      const fallback = buildFileListCacheKey({ ...mainBranchCtx, projectSlug: "p", branch: "a b" });
+      const forgedSlug = fallback.slice("files:branch:".length, -":value".length);
+      const forged = buildFileListCacheKey({
+        ...mainBranchCtx,
+        projectSlug: forgedSlug,
+        branch: "value",
+      });
+      assertNotEquals(forged, fallback);
+      assertEquals(isCacheKeyPassThroughSafe(`${forged}:authority:credential`), true);
+      assertEquals(isValidCachePattern(`${forged}:authority:*`), true);
+    });
+
     it("should build environment-based key", () => {
       assertEquals(
         buildFileListCacheKey(envCtx),

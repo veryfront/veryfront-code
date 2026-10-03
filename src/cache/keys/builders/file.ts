@@ -70,13 +70,16 @@ export function buildFileListCacheKey(ctx: FileOperationContext | null | undefin
   if (
     !ctx ||
     isCacheKeyPassThroughSafe(`${sourceKey}:authority:entry`) &&
-      sourceKey.length <= MAX_FILE_LIST_SOURCE_KEY_LENGTH
+      sourceKey.length <= MAX_FILE_LIST_SOURCE_KEY_LENGTH &&
+      !ctx.projectSlug.includes(":")
   ) return sourceKey;
 
   // Keep the project prefix used by broad publish invalidation. Reserve extra
   // segments so encoded identities cannot alias an ordinary source.
   const sourceType = ctx.sourceType === "environment" ? "env" : ctx.sourceType;
-  const project = isCacheKeyPassThroughSafe(`${ctx.projectSlug}:`)
+  // A delimiter in the slug could forge another project's fallback segments.
+  const project = !ctx.projectSlug.includes(":") &&
+      isCacheKeyPassThroughSafe(`${ctx.projectSlug}:`)
     ? ctx.projectSlug
     : encodeCacheKeySegment(ctx.projectSlug);
   const prefix = `${CacheKeyPrefix.FILES}:${sourceType}:${project}`;
