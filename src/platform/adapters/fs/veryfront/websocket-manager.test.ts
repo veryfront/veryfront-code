@@ -47,6 +47,7 @@ class MockWebSocket {
   onerror: ((this: WebSocket, ev: Event) => unknown) | null = null;
 
   protocols: string | string[] | undefined;
+  sentMessages: string[] = [];
 
   constructor(readonly url: string, protocols?: string | string[]) {
     this.protocols = protocols;
@@ -57,8 +58,8 @@ class MockWebSocket {
     this.readyState = MockWebSocket.CLOSED;
   }
 
-  send(_data: string): void {
-    // no-op
+  send(data: string): void {
+    this.sentMessages.push(data);
   }
 
   emitClose(): void {
@@ -1300,6 +1301,148 @@ describe("WebSocketManager", () => {
     assertEquals(reloadBranches, ["feature-b"]);
     manager.dispose();
   });
+
+  for (const mode of ["full", "selective"] as const) {
+    it(`finalizes ${mode} invalidation and processes later pokes while reload is pending`, async () => {
+      let resolveReload!: () => void;
+      const pendingReload = new Promise<void>((resolve) => {
+        resolveReload = resolve;
+      });
+      let reloadCalls = 0;
+      let evictions = 0;
+      const manager = createWebSocketManager({
+        invalidationCallbacks: {
+          triggerReload: () => {
+            reloadCalls++;
+            return reloadCalls === 1 ? pendingReload : Promise.resolve();
+          },
+          evictCurrentAdapter: () => {
+            evictions++;
+          },
+        },
+      });
+      const poke = mode === "selective"
+        ? { branchName: "main", changedPaths: ["app/page.tsx"] }
+        : { branchName: "main" };
+      const eventLoopTurn = () => new Promise<void>((resolve) => originalSetTimeout(resolve, 0));
+      try {
+        manager.connect("project-1");
+        const socket = MockWebSocket.instances[0];
+        assertExists(socket);
+        deliverPoke(socket, poke);
+        assertEquals(runOnlyScheduledTimer(), 100);
+        await eventLoopTurn();
+        assertEquals(reloadCalls, 1);
+        assertEquals(evictions, 1, "reload completion must not delay adapter eviction");
+        assertEquals(isPrefixBeingInvalidated("file:branch:test-project:main"), false);
+        const ackCount = () =>
+          socket.sentMessages.map((message) => JSON.parse(message))
+            .filter((message) => message.type === "poke_ack").length;
+        assertEquals(ackCount(), 1);
+
+        deliverPoke(socket, poke);
+        assertEquals(runOnlyScheduledTimer(), 100);
+        await eventLoopTurn();
+        assertEquals(reloadCalls, 2);
+        assertEquals(evictions, 2);
+        assertEquals(ackCount(), 2);
+        assertEquals(isPrefixBeingInvalidated("file:branch:test-project:main"), false);
+
+        resolveReload();
+        await eventLoopTurn();
+        assertEquals(evictions, 2, "settling an older reload must not evict a newer adapter");
+        assertEquals(ackCount(), 2);
+      } finally {
+        resolveReload();
+        manager.dispose();
+      }
+    });
+
+    for (const rejection of [null, new Error("reload failed")]) {
+      it(`contains async ${mode} reload rejection (${String(rejection)}) and recovers after reconnect`, async () => {
+        const unhandled: unknown[] = [];
+        const errors: string[] = [];
+        const originalError = console.error;
+        const previousFormat = Deno.env.get("LOG_FORMAT");
+        Deno.env.set("LOG_FORMAT", "json");
+        __resetLoggerConfigForTests();
+        console.error = (message: unknown) => errors.push(String(message));
+        const onUnhandled = (event: PromiseRejectionEvent): void => {
+          unhandled.push(event.reason);
+          event.preventDefault();
+        };
+        globalThis.addEventListener("unhandledrejection", onUnhandled);
+        let failReload = true;
+        let completedReloads = 0;
+        let evictions = 0;
+        const manager = createWebSocketManager({
+          invalidationCallbacks: {
+            triggerReload: () => {
+              if (failReload) return Promise.reject(rejection);
+              completedReloads++;
+              return Promise.resolve();
+            },
+            evictCurrentAdapter: () => {
+              evictions++;
+            },
+          },
+        });
+        const poke = mode === "selective"
+          ? { branchName: "main", changedPaths: ["app/page.tsx"] }
+          : { branchName: "main" };
+        const eventLoopTurn = () => new Promise<void>((resolve) => originalSetTimeout(resolve, 0));
+
+        try {
+          manager.connect("project-1");
+          const socket = MockWebSocket.instances[0];
+          assertExists(socket);
+          deliverPoke(socket, poke);
+          assertEquals(runOnlyScheduledTimer(), 100);
+          await eventLoopTurn();
+          assertEquals(unhandled, [], "reload rejection must reach the queue catch");
+          const errorEntries = errors.map((entry) => JSON.parse(entry));
+          const queuedError = errorEntries.find((entry) =>
+            entry.message === `Queued ${mode} invalidation failed`
+          );
+          assertExists(queuedError);
+          assertEquals(queuedError.projectSlug, "test-project");
+          assertEquals(isPrefixBeingInvalidated("file:branch:test-project:main"), false);
+          assertEquals(evictions, 1, "completed cache invalidation must evict the adapter");
+          const acknowledgements = socket.sentMessages.map((message) => JSON.parse(message))
+            .filter((message) => message.type === "poke_ack");
+          assertEquals(acknowledgements.length, 1);
+          assertEquals(acknowledgements[0].data.invalidationType, mode);
+
+          failReload = false;
+          deliverPoke(socket, poke);
+          assertEquals(runOnlyScheduledTimer(), 100);
+          await eventLoopTurn();
+          assertEquals(completedReloads, 1, "later pokes must complete on the same socket");
+
+          socket.emitClose();
+          assertEquals(runOnlyScheduledTimer(), 5000);
+          const reconnectedSocket = MockWebSocket.instances[1];
+          assertExists(reconnectedSocket);
+          reconnectedSocket.onopen?.call(
+            reconnectedSocket as unknown as WebSocket,
+            new Event("open"),
+          );
+          deliverPoke(reconnectedSocket, poke);
+          assertEquals(runOnlyScheduledTimer(), 100);
+          await eventLoopTurn();
+          assertEquals(completedReloads, 2, "later pokes must complete after reconnect");
+          assertEquals(unhandled, []);
+        } finally {
+          manager.dispose();
+          globalThis.removeEventListener("unhandledrejection", onUnhandled);
+          console.error = originalError;
+          if (previousFormat === undefined) Deno.env.delete("LOG_FORMAT");
+          else Deno.env.set("LOG_FORMAT", previousFormat);
+          __resetLoggerConfigForTests();
+        }
+      });
+    }
+  }
 
   it("ignores branchId-only pokes on the default-branch preview", () => {
     let clearCalls = 0;

@@ -6,6 +6,7 @@ import type { ProjectFile, VeryfrontApiClient } from "../../veryfront-api-client
 import type {
   ContentSource,
   InvalidationCallbacks,
+  InvalidationProjectContext,
   PreviewStyleArtifactInfo,
   ResolvedContentContext,
 } from "./types.ts";
@@ -1062,7 +1063,7 @@ export class WebSocketManager {
     const acceptedPokes = this.acceptedPokes;
     let preparedStyleArtifact: PreviewStyleArtifactInfo | undefined;
     let reloadSuperseded = false;
-    let succeeded = false;
+    let cacheInvalidated = false;
     let reservedDataKind: "data" | "definition" | undefined;
 
     try {
@@ -1176,6 +1177,7 @@ export class WebSocketManager {
       }
 
       this.pokeMetrics.invalidationsTriggered++;
+      cacheInvalidated = true;
 
       if (reloadSuperseded) {
         logger.debug("Skipping reload for superseded selective invalidation", {
@@ -1200,7 +1202,7 @@ export class WebSocketManager {
           preparedStyleArtifact,
         );
 
-        this.deps.invalidationCallbacks.triggerReload?.(changedPaths, projectContext);
+        void this.triggerReload(changedPaths, projectContext);
       }
 
       logger.info("Selective invalidation complete", {
@@ -1209,11 +1211,9 @@ export class WebSocketManager {
         totalInvalidations: this.pokeMetrics.invalidationsTriggered,
         reloadTriggered: !reloadSuperseded,
       });
-
-      this.sendPokeAck("selective", changedPaths);
-      succeeded = true;
     } finally {
-      if (succeeded) {
+      if (cacheInvalidated) {
+        this.sendPokeAck("selective", changedPaths);
         this.completePreviewInvalidation(previewInvalidationToken);
         // A patched adapter is current; evicting it would make the next
         // request list the whole project again.
@@ -1234,7 +1234,7 @@ export class WebSocketManager {
     const acceptedPokes = this.acceptedPokes;
     let preparedStyleArtifact: PreviewStyleArtifactInfo | undefined;
     let reloadSuperseded = false;
-    let succeeded = false;
+    let cacheInvalidated = false;
 
     try {
       logger.debug("CACHE INVALIDATION STARTED - clearing all caches");
@@ -1346,6 +1346,7 @@ export class WebSocketManager {
       }
 
       this.pokeMetrics.invalidationsTriggered++;
+      cacheInvalidated = true;
 
       if (reloadSuperseded) {
         logger.debug("Skipping reload for superseded full invalidation", {
@@ -1365,7 +1366,7 @@ export class WebSocketManager {
           preparedStyleArtifact,
         );
 
-        this.deps.invalidationCallbacks.triggerReload?.(undefined, projectContext);
+        void this.triggerReload(undefined, projectContext);
       }
 
       logger.debug("CACHE INVALIDATION COMPLETE", {
@@ -1376,16 +1377,30 @@ export class WebSocketManager {
         durationMs: currentTime() - startTime,
         totalInvalidations: this.pokeMetrics.invalidationsTriggered,
       });
-
-      this.sendPokeAck("full");
-      succeeded = true;
     } finally {
-      if (succeeded) {
+      if (cacheInvalidated) {
+        this.sendPokeAck("full");
         this.completePreviewInvalidation(previewInvalidationToken);
         if (!reloadSuperseded) {
           this.deps.invalidationCallbacks.evictCurrentAdapter?.();
         }
       }
+    }
+  }
+
+  private async triggerReload(
+    changedPaths: string[] | undefined,
+    projectContext: InvalidationProjectContext,
+  ): Promise<void> {
+    try {
+      // Observe async failures without delaying completed cache invalidation.
+      await this.deps.invalidationCallbacks.triggerReload?.(changedPaths, projectContext);
+    } catch (error) {
+      const kind = changedPaths === undefined ? "full" : "selective";
+      logger.error(`Queued ${kind} invalidation failed`, {
+        projectSlug: this.deps.projectSlug,
+        error,
+      });
     }
   }
 
