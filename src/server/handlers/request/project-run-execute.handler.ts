@@ -3955,7 +3955,7 @@ const defaultDeps: ProjectRunExecuteHandlerDeps = {
   executeReleaseAssetBuild: executeReleaseAssetBuildRun,
   executeDependencyArtifactBuild: executeDependencyArtifactBuildRun,
   executeStyleArtifactBuild: executeStyleArtifactBuildRun,
-  sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+  sleep: (ms) => new IntrinsicPromise<void>((resolve) => TaskSetTimeout(resolve, ms)),
   now: () => Date.now(),
 };
 

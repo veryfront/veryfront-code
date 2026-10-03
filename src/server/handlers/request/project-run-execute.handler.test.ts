@@ -10444,6 +10444,29 @@ describe("server/handlers/request/project-run-execute.handler manual pause (#258
     assertEquals(calls, ["first"]);
   });
 
+  it("uses captured primitives for the default pause backoff after project globals change", async () => {
+    // Use the handler's actual default dependency while keeping the public dependency
+    // interface unchanged. This sleeper also serves the unknown acknowledgement path.
+    const { sleep } = Reflect.get(new ProjectRunExecuteHandler(), "deps") as Pick<
+      ProjectRunExecuteHandlerDeps,
+      "sleep"
+    >;
+    const hostPromise = globalThis.Promise;
+    const hostSetTimeout = globalThis.setTimeout;
+    try {
+      globalThis.Promise = function () {
+        throw new Error("Project Promise constructor used by host backoff");
+      } as unknown as typeof Promise;
+      globalThis.setTimeout = (() => {
+        throw new Error("Project timer used by host backoff");
+      }) as typeof setTimeout;
+      await sleep(0);
+    } finally {
+      globalThis.Promise = hostPromise;
+      globalThis.setTimeout = hostSetTimeout;
+    }
+  });
+
   it("refuses manual resume without a capability instead of releasing the boundary", async () => {
     const backend = new SharedMemoryBackend();
     const calls: string[] = [];
