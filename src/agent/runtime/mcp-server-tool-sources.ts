@@ -1,3 +1,4 @@
+import { bindTerminalRunCredentialOwner } from "./terminal-run-control.ts";
 import {
   createLivePlatformMcpSource,
   withPlatformMcpPolicyAliases,
@@ -239,7 +240,7 @@ function withBoundRemoteToolContext(
       (mergedContext as Record<string, unknown>)[key] = boundContext[key];
     }
   }
-  return mergedContext;
+  return bindTerminalRunCredentialOwner(mergedContext, boundContext);
 }
 
 /**

@@ -1,5 +1,6 @@
 import { createPrivateWeakStore } from "#veryfront/security/private-weak-store.ts";
 import {
+  hasCurrentTerminalRunCredentialAuthority,
   RUN_TERMINAL_TOOL_CALL_ID_HEADER,
   terminalToolCallIdHeaderValue,
 } from "../runtime/terminal-run-control.ts";
@@ -54,7 +55,9 @@ export function hostedTerminalToolSourceFactory(
           ? await config.headers(context)
           : config.headers;
         const headers = new NativeHeaders(original);
-        if (!context?.runId || context.runId === authority.runId) {
+        if (
+          context?.runId === authority.runId && hasCurrentTerminalRunCredentialAuthority(context)
+        ) {
           apply(headersSet, headers, [RUN_TERMINAL_TOKEN_HEADER, authority.token]);
           const toolCallId = terminalToolCallIdHeaderValue(context);
           if (toolCallId) {
