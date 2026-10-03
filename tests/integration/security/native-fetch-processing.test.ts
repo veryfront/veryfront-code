@@ -17,6 +17,7 @@ import {
 } from "../../../src/platform/compat/http/native-request-init.ts";
 import { fetchWithPinnedAddresses } from "../../../src/platform/compat/http/pinned-fetch.ts";
 import * as nodeHttp from "node:http";
+import * as nodeNet from "node:net";
 import { EventEmitter } from "node:events";
 import { guardedEgressFetch } from "../../../src/security/sandbox/worker-egress-guard.ts";
 
@@ -206,6 +207,7 @@ describe("node:http members the pinned transport depends on", () => {
     ["ClientRequest.prototype.setHeader (own)", () => nodeHttp.ClientRequest.prototype, "setHeader"],
     ["EventEmitter.prototype.emit", () => EventEmitter.prototype, "emit"],
     ["Agent.prototype.addRequest", () => nodeHttp.Agent.prototype, "addRequest"],
+    ["net.Socket.prototype.write", () => nodeNet.Socket.prototype, "write"],
   ];
 
   for (const [label, target, key] of hooks) {

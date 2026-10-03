@@ -7,6 +7,8 @@
 import type { ClientRequest, IncomingMessage, RequestOptions } from "node:http";
 import * as nodeHttp from "node:http";
 import * as nodeHttps from "node:https";
+import * as nodeNet from "node:net";
+import * as nodeTls from "node:tls";
 import type { Readable } from "node:stream";
 import { VERSION } from "#veryfront/utils/version-constant.ts";
 import { isErrorAcrossRealms } from "../error-introspection.ts";
@@ -115,6 +117,9 @@ const NODE_REQUEST_MEMBERS: readonly MemberSnapshot[] = (() => {
   addChain(nodeHttp.ClientRequest.prototype);
   // The response's `req` is the request, so its members reach the headers too.
   addChain(nodeHttp.IncomingMessage.prototype);
+  // The serialized header block, bearer included, is written to the socket.
+  addChain(nodeTls.TLSSocket.prototype);
+  addChain(nodeNet.Socket.prototype);
   addChain(nodeHttps.Agent.prototype);
   addChain(nodeHttp.Agent.prototype);
   addChain(privateHttpAgent);
@@ -194,7 +199,7 @@ export function assertNodeRequestMembersUnchanged(): void {
       throw new TypeError(
         `Refused a credential-bearing request to protect its token: the node:http member ${member} ` +
           "was replaced, added or removed after load, and node:http calls it with the request " +
-          "headers in reach. Do not patch node:http, its agents or EventEmitter.",
+          "headers in reach. Do not patch node:http, node:net, node:tls, streams or EventEmitter.",
       );
     }
   }
@@ -639,6 +644,16 @@ export async function fetchWithPinnedAddresses(
           }
         });
 
+        // node:http writes the header block once a socket is assigned, a later
+        // turn than the check above: check again when the socket arrives, and
+        // destroy the request before anything is written if a member changed.
+        request.once("socket", () => {
+          try {
+            assertNodeRequestMembersUnchanged();
+          } catch (error) {
+            request.destroy(isErrorAcrossRealms(error) ? error : undefined);
+          }
+        });
         request.once("error", rejectBeforeResponse);
         // Bun reports connect failures through
         // `process.nextTick(() => self.emit("error", err))`, so the emit can
