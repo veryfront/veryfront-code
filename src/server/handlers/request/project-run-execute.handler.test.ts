@@ -9922,6 +9922,11 @@ describe("server/handlers/request/project-run-execute.handler cancellation", () 
 });
 
 describe("project run control-plane Authorization", () => {
+  // The release asset build starts the esbuild service.
+  afterAll(async () => {
+    await stopEsbuild();
+  });
+
   const SERVICE_TOKEN = "project-run-service-account-canary-71d4";
   const conversationId = "44444444-4444-4444-8444-444444444444";
   // Everything but Headers has/append, which native fetch calls with the
@@ -10115,6 +10120,66 @@ describe("project run control-plane Authorization", () => {
     assertExists(result.response);
     assertEquals(result.response.status, 200);
     assertEquals(recorder.upserts.length, 1);
+    assertEquals(authorizations.length > 0, true);
+    assertEquals(authorizations.every((value) => value === `Bearer ${SERVICE_TOKEN}`), true);
+  });
+
+  it("authenticates a release asset build with the sealed Authorization when x-token is absent", async () => {
+    const signed = await signedRequest(
+      "/api/control-plane/runs/run_release_asset_authz/execute",
+      {
+        runId: "run_release_asset_authz",
+        kind: "task",
+        target: "task:release-asset-build",
+        projectId: "proj-1",
+        config: { release_id: "release-1", release_version: 1 },
+      },
+      { authorization: `Bearer ${SERVICE_TOKEN}` },
+    );
+    const sealed = sealIngressCredentials(signed.request);
+    const ctx = createCtx(signed.publicKeyPem);
+    ctx.config = {};
+    const authorizations: (string | null)[] = [];
+
+    const result = await withMockFetch(
+      (async (input, init) => {
+        const url = String(input);
+        authorizations.push(
+          new Headers(observeFetchRequestInit(init).headers).get("authorization"),
+        );
+        if (url.endsWith("/asset-manifest/builds")) {
+          return Response.json({ id: "build-1", manifest_version: 1, state: "building" });
+        }
+        if (url.includes("/releases/release-1/files?")) {
+          return Response.json({
+            data: [{
+              id: "file-1",
+              version_id: "version-1",
+              path: "pages/index.tsx",
+              content: "export default function Page() { return null; }",
+              type: "page",
+              size: 49,
+              updated_at: "2026-09-30T00:00:00.000Z",
+            }],
+            page_info: { self: null, first: null, next: null, prev: null },
+            release_id: "release-1",
+            release_version: "1",
+          });
+        }
+        if (url.endsWith("/asset-manifest/assets")) {
+          return Response.json({ stored: true, existed: false });
+        }
+        if (url.endsWith("/asset-manifest")) {
+          return Response.json({ state: "ready", manifest_version: 1 });
+        }
+        return new Response("Not found", { status: 404 });
+      }) as typeof fetch,
+      async () => await new ProjectRunExecuteHandler().handle(sealed, ctx),
+    );
+
+    assertExists(result.response);
+    const payload = await result.response.json();
+    assertEquals(payload.success, true, payload.error);
     assertEquals(authorizations.length > 0, true);
     assertEquals(authorizations.every((value) => value === `Bearer ${SERVICE_TOKEN}`), true);
   });

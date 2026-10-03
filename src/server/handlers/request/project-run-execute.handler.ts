@@ -2512,11 +2512,11 @@ function createLocalEvalAgentFetch(input: {
 
   return async (requestInput, init) => {
     const request = new NativeRequest(requestInput, withoutLocalEvalCredentials(init));
-    // Not local: the adapter's own credentials go to that endpoint, through the
-    // host transport captured at load rather than a global fetch project code
-    // may have replaced.
+    // Not local: the adapter's credentials are minted for the local endpoint
+    // only, so the request goes without them, through the host transport
+    // captured at load rather than a global fetch project code may replace.
     if (!isLocalAgUiEndpoint(request.url)) {
-      return trustedHostFetch(requestInput, createNativeRequestInit(init));
+      return trustedHostFetch(requestInput, withoutLocalEvalCredentials(init));
     }
     const runtimeRestrictions = input.runtimeRestrictions ??
       await readLocalEvalRuntimeRestrictions(request);
