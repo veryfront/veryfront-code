@@ -46,8 +46,10 @@ identifier crosses into the executor. A missing, expired or revoked vault entry 
 anything is sent.
 
 A flag, `VERYFRONT_RUN_CREDENTIAL_ATTACHMENT=isolate|host`, controls rollout. With `host`, the
-shared host refuses credentialed runs instead of executing them in-process. An unknown value keeps
-`isolate` behaviour and logs a startup error.
+shared host refuses credentialed runs instead of executing them in-process. An unset value means
+`isolate`. Any other value is a configuration error: the server refuses to start, so a misspelled
+`host` cannot silently keep credentials in-process, and the failure surfaces at deploy time rather
+than as refused runs.
 
 ## Facts established by the spike
 
