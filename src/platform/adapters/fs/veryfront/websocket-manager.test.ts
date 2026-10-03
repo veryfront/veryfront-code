@@ -2311,6 +2311,65 @@ describe("WebSocketManager", () => {
       manager.dispose();
     });
 
+    it("retires an adapter whose cross-branch cache clear the API rejected", async () => {
+      let deleteCalls = 0;
+      const evictions = { count: 0 };
+      const manager = createWebSocketManager({
+        branch: "feature-x",
+        cache: {
+          deleteByPrefixAsync: () => {
+            deleteCalls++;
+            return Promise.reject(rejectedCredential(401));
+          },
+        },
+        invalidationCallbacks: {
+          evictCurrentAdapter: () => {
+            evictions.count++;
+          },
+        },
+      });
+      manager.connect("project-1");
+      const socket = MockWebSocket.instances[0];
+      assertExists(socket);
+
+      deliverPoke(socket, { changedPaths: ["app/page.tsx"], branchName: "main" });
+      await flushMicrotasks();
+      const rejectedCalls = deleteCalls;
+      deliverPoke(socket, { changedPaths: ["app/other.tsx"], branchName: "main" });
+      await flushMicrotasks();
+
+      assertEquals(evictions.count, 1);
+      assertEquals(deleteCalls, rejectedCalls, "a refused credential is not tried again");
+      manager.dispose();
+    });
+
+    it("keeps handling pokes for a standalone adapter that cannot be replaced", async () => {
+      let deleteCalls = 0;
+      const manager = createWebSocketManager({
+        cache: {
+          deleteByPrefixAndSuffixAsync: () => {
+            deleteCalls++;
+            return Promise.reject(rejectedCredential(401));
+          },
+        },
+      });
+      manager.connect("project-1");
+      const socket = MockWebSocket.instances[0];
+      assertExists(socket);
+
+      deliverPoke(socket, { changedPaths: ["data/rows.json"], branchName: "main" });
+      runScheduledTimers();
+      await flushMicrotasks();
+      const firstCalls = deleteCalls;
+      deliverPoke(socket, { changedPaths: ["data/other.json"], branchName: "main" });
+      runScheduledTimers();
+      await flushMicrotasks();
+
+      assertEquals(firstCalls > 0, true);
+      assertEquals(deleteCalls, firstCalls * 2, "a recovered credential must still invalidate");
+      manager.dispose();
+    });
+
     it("evicts an adapter whose queued invalidation the API rejected for its credential", async () => {
       for (const status of [401, 403]) {
         const evictions = { count: 0 };

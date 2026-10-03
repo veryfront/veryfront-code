@@ -229,11 +229,13 @@ export class WebSocketManager {
       () => {
         for (const prefix of pendingPrefixes) removePendingInvalidation(prefix);
       },
-      (error) =>
+      (error) => {
+        if (this.retireOnCredentialRejection(error)) return;
         logger.error("Branch poke cache invalidation failed", {
           projectSlug: this.deps.projectSlug,
           error: error instanceof Error ? error.message : String(error),
-        }),
+        });
+      },
     );
   }
 
@@ -469,26 +471,35 @@ export class WebSocketManager {
    * Evict the adapter once its credential is expired or rejected. The socket
    * keeps the credential of the request that opened it, so every later poke
    * would run its cache invalidations under that credential and be refused.
-   * Requests carrying a current credential get a fresh adapter.
+   * Requests carrying a current credential get a fresh adapter. A standalone
+   * adapter cannot be replaced that way, so it keeps handling pokes. Reports
+   * whether the adapter is retired.
    */
-  private retireForCredential(reason: "expired" | "rejected"): void {
-    if (this.credentialRetired || this.disposed) return;
+  private retireForCredential(reason: "expired" | "rejected"): boolean {
+    if (this.credentialRetired) return true;
+    if (!this.deps.invalidationCallbacks.evictCurrentAdapter) return false;
     this.credentialRetired = true;
+    if (this.disposed) return true;
     logger.info(
       reason === "expired"
         ? "Retiring adapter whose API credential expired"
         : "Retiring adapter whose API credential was rejected",
       { projectSlug: this.deps.projectSlug },
     );
-    this.deps.invalidationCallbacks.evictCurrentAdapter?.();
+    this.deps.invalidationCallbacks.evictCurrentAdapter();
+    return true;
   }
 
   /** Whether this adapter's credential can no longer invalidate caches. */
   private retireIfCredentialUnusable(): boolean {
     if (this.credentialRetired) return true;
-    if (!this.deps.invalidationCallbacks.isCredentialExpired?.()) return false;
-    this.retireForCredential("expired");
-    return true;
+    return this.deps.invalidationCallbacks.isCredentialExpired?.() === true &&
+      this.retireForCredential("expired");
+  }
+
+  /** Retire the adapter when the API refused its credential. */
+  private retireOnCredentialRejection(error: unknown): boolean {
+    return isCacheCredentialRejection(error) && this.retireForCredential("rejected");
   }
 
   /**
@@ -510,10 +521,7 @@ export class WebSocketManager {
       try {
         await perform(invalidation);
       } catch (error) {
-        if (isCacheCredentialRejection(error)) {
-          this.retireForCredential("rejected");
-          continue;
-        }
+        if (this.retireOnCredentialRejection(error)) continue;
         logger.error(failureMessage, {
           projectSlug: this.deps.projectSlug,
           error,
@@ -790,6 +798,7 @@ export class WebSocketManager {
           totalDeleted,
         });
       } catch (error) {
+        this.retireOnCredentialRejection(error);
         logger.error("PUBLISH POKE - failed to clear persistent cache (stale data may be served)", {
           projectSlug: this.deps.projectSlug,
           error: error instanceof Error ? error.message : String(error),
