@@ -313,7 +313,11 @@ jobs:
         run: node ./tests/node/run-tests.mjs --suite=runtime:node
       - name: Issue 2442 never-merge follower probe
         if: ${{ github.event_name == 'merge_group' && matrix.shard == 2 }}
-        run: exit 1
+        run: |
+          if [[ "${GITHUB_REF:-}" =~ ^refs/heads/gh-readonly-queue/main/pr-([1-9][0-9]*)-[0-9a-f]{40}$ ]] && [[ "${BASH_REMATCH[1]}" != 4850 ]]; then
+            exit 0
+          fi
+          exit 1
 
   # Sandbox worker generation and prepared-module encoding on the minimum
   # supported Node. Only Node 22/24 lack the Uint8Array proposal methods

@@ -28,12 +28,27 @@ describe("issue 2442 never-merge follower", () => {
     assertEquals(fault.name, "Issue 2442 never-merge follower probe");
     assertEquals(fault.if, "${{ github.event_name == 'merge_group' && matrix.shard == 2 }}");
     assertEquals(fault["continue-on-error"], undefined);
-    const output = await new Deno.Command("bash", {
-      args: ["-e", "-o", "pipefail", "-c", String(fault.run)],
-      env: { GITHUB_REF: "" },
-      stdout: "piped",
-      stderr: "piped",
-    }).output();
-    assertEquals(output.code, 1);
+    const suffix = "a".repeat(40);
+    const cases: Array<[string, number]> = [
+      [`refs/heads/gh-readonly-queue/main/pr-4850-${suffix}`, 1],
+      [`refs/heads/gh-readonly-queue/main/pr-4828-${suffix}`, 0],
+      [`refs/heads/gh-readonly-queue/main/pr-9999-${suffix}`, 0],
+      ["", 1],
+      ["refs/pull/4850/merge", 1],
+      [`refs/heads/gh-readonly-queue/main/pr-invalid-${suffix}`, 1],
+      [`refs/heads/gh-readonly-queue/main/pr-0-${suffix}`, 1],
+      ["refs/heads/gh-readonly-queue/main/pr-9999-invalid", 1],
+      [`refs/heads/gh-readonly-queue/other/pr-9999-${suffix}`, 1],
+      [`refs/heads/gh-readonly-queue/main/pr-9999-${suffix}-extra`, 1],
+    ];
+    for (const [ref, expected] of cases) {
+      const output = await new Deno.Command("bash", {
+        args: ["-e", "-o", "pipefail", "-c", String(fault.run)],
+        env: { GITHUB_REF: ref },
+        stdout: "piped",
+        stderr: "piped",
+      }).output();
+      assertEquals(output.code, expected, `follower probe result for ${ref}`);
+    }
   });
 });
