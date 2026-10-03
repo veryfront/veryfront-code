@@ -50,7 +50,7 @@ describe("cache-keys", () => {
     it("should build branch-based key", () => {
       assertEquals(
         buildFileCacheKeyPrefix(branchCtx),
-        "file:branch:my-project:feature%2Fx",
+        "file:branch-v2:Im15LXByb2plY3Qi:ImZlYXR1cmUveCI",
       );
     });
 
@@ -85,7 +85,7 @@ describe("cache-keys", () => {
     it("should build branch-based key", () => {
       assertEquals(
         buildStatCacheKeyPrefix(branchCtx),
-        "stat:branch:my-project:feature%2Fx",
+        "stat:branch-v2:Im15LXByb2plY3Qi:ImZlYXR1cmUveCI",
       );
     });
 
@@ -105,7 +105,7 @@ describe("cache-keys", () => {
     it("should build branch-based key", () => {
       assertEquals(
         buildDirCacheKeyPrefix(branchCtx),
-        "dir:branch:my-project:feature%2Fx",
+        "dir:branch-v2:Im15LXByb2plY3Qi:ImZlYXR1cmUveCI",
       );
     });
   });
