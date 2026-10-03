@@ -44,6 +44,7 @@ interface TokenManagerOptions {
   maxConcurrentFetches?: number;
   maxQueuedFetches?: number;
   maxConcurrentResolutions?: number;
+  fetchImpl?: typeof fetch;
 }
 
 export interface TokenRequestOptions {
@@ -81,6 +82,7 @@ function containsAsciiControlCharacter(value: string): boolean {
 
 export class TokenManager {
   private cache: TokenCache;
+  private readonly fetchImpl: typeof fetch | undefined;
   private pendingRequests = new Map<string, PendingTokenRequest>();
   private negativeCache = new Map<string, NegativeCacheEntry>();
   private refreshBuffer: number;
@@ -143,6 +145,7 @@ export class TokenManager {
       );
     }
     this.cache = options.cache ?? new MemoryCache();
+    this.fetchImpl = options.fetchImpl;
     this.refreshBuffer = refreshBuffer;
     this.maxConcurrentResolutions = maxConcurrentResolutions;
     this.fetchAdmission = new PermitSemaphore(maxConcurrentFetches, {
@@ -536,6 +539,7 @@ export class TokenManager {
         projectSlug,
         customDomain,
         signal,
+        fetchImpl: this.fetchImpl,
       });
     } catch (error) {
       if (

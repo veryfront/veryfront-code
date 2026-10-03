@@ -58,6 +58,8 @@ export interface ProjectMetadataClientOptions {
   logger?: ProjectMetadataLogger;
   timeoutMs?: number;
   maxInflight?: number;
+  /** Background jobs retain admission until their transport actually settles. */
+  waitForProducer?: boolean;
 }
 
 export interface ProjectMetadataLookupOptions {
@@ -581,7 +583,9 @@ export function createProjectMetadataClient(
     });
 
     try {
-      return await awaitAbortable(producer, controller.signal);
+      return options.waitForProducer
+        ? await producer
+        : await awaitAbortable(producer, controller.signal);
     } finally {
       clearTimeout(timeoutId);
       externalSignal?.removeEventListener("abort", abortFromCaller);
