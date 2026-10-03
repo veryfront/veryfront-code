@@ -81,5 +81,21 @@ describe("runtime cancellation settlement", () => {
     abandoned("abandoned");
     owner();
     assertEquals(retry.requestStop("resume"), { accepted: true, stopped: true });
+
+    const ordered = new RunStopRegistry();
+    const settledOwner = ordered.register("resume", () => {});
+    const unowned = ordered.register("resume", () => {});
+    settledOwner();
+    unowned("abandoned");
+    assertEquals(ordered.requestStop("resume"), { accepted: true, stopped: true });
+
+    const fresh = new RunStopRegistry();
+    const first = fresh.register("resume", () => {});
+    const second = fresh.register("resume", () => {});
+    first();
+    second();
+    const orphan2 = fresh.register("resume", () => {});
+    orphan2("abandoned");
+    assertEquals(fresh.requestStop("resume"), { accepted: false, stopped: false });
   });
 });

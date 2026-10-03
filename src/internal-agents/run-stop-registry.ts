@@ -4,6 +4,8 @@ export type RunStopSettlement = "stopped" | "abandoned";
 export class RunStopRegistry {
   private readonly runs = new Map<string, Set<() => void>>();
   private readonly stopped = new Set<string>();
+  /** Runs where an earlier execution settled positively while others were still registered. */
+  private readonly settledWhileShared = new Set<string>();
   private readonly cancelled = new Map<string, number>();
 
   private prune(): void {
@@ -34,6 +36,7 @@ export class RunStopRegistry {
       // Reserve its future tombstone before admitting a producer, so stop delivery cannot fail at capacity.
       if (this.capacityUsed() >= 10_000) throw new Error("Cancellation registry capacity reached");
       this.runs.set(runId, executions = new Set());
+      this.settledWhileShared.delete(runId);
     }
     this.stopped.delete(runId);
     executions.add(abort);
@@ -42,9 +45,14 @@ export class RunStopRegistry {
       if (settled) return;
       settled = true;
       executions.delete(abort);
-      if (executions.size > 0) return;
+      if (executions.size > 0) {
+        if (outcome === "stopped") this.settledWhileShared.add(runId);
+        return;
+      }
       this.runs.delete(runId);
-      if (outcome === "abandoned") return;
+      // An abandoned last registration must not erase an earlier execution's positive evidence.
+      const settledEarlier = this.settledWhileShared.delete(runId);
+      if (outcome === "abandoned" && !settledEarlier) return;
       this.stopped.add(runId);
       // Evict only settlement receipts; active executions always remain tracked.
       if (this.stopped.size > 10_000) this.stopped.delete(this.stopped.values().next().value!);
