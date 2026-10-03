@@ -116,9 +116,12 @@ export const SENSITIVE_EXTENSION_CAPABILITY_POLICIES:
       ],
     },
     {
-      label: "PurgeCSS CPU discovery",
+      label: "PurgeCSS platform discovery",
       packageName: "@veryfront/ext-css-purgecss",
-      requiredCapabilities: [{ type: "system:read", apis: ["cpus"] }],
+      requiredCapabilities: [{
+        type: "env:read",
+        keys: ["__MINIMATCH_TESTING_PLATFORM__"],
+      }],
       exactCapabilities: true,
     },
     {

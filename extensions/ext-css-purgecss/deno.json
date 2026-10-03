@@ -8,7 +8,7 @@
     "contracts": {
       "provides": ["CSSPurgingEngine"]
     },
-    "capabilities": [{ "type": "system:read", "apis": ["cpus"] }]
+    "capabilities": [{ "type": "env:read", "keys": ["__MINIMATCH_TESTING_PLATFORM__"] }]
   },
   "imports": {
     "purgecss": "npm:purgecss@7.0.2",
@@ -18,6 +18,6 @@
     "veryfront/extensions/css": "../../src/extensions/css/index.ts"
   },
   "tasks": {
-    "test": "deno test --frozen --no-check --allow-sys=cpus src/"
+    "test": "deno test --frozen --no-check --allow-env=__MINIMATCH_TESTING_PLATFORM__ src/"
   }
 }
