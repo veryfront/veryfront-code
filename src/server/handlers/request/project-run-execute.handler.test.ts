@@ -50,6 +50,17 @@ import {
 import { observeFetchRequestInit, withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { __subscribeLogRecordEmitter } from "#veryfront/utils/logger/logger.ts";
 import { computeHash } from "#veryfront/utils/hash-utils.ts";
+
+async function expectedReportArtifact(report: EvalReport, sourcePath: string, path = sourcePath) {
+  const content = `${JSON.stringify({ ...report, reportPath: sourcePath }, null, 2)}\n`;
+  return {
+    kind: "eval-report",
+    path,
+    contentType: "application/json",
+    size_bytes: new TextEncoder().encode(content).byteLength,
+    sha256: await computeHash(content),
+  };
+}
 import {
   createKnowledgeEventLogger,
   ProjectRunExecuteHandler,
@@ -2821,11 +2832,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     const payload = await result.response.json();
     assertEquals(payload.success, true);
     assertEquals(payload.result, report.summary);
-    assertEquals(payload.artifacts, [{
-      kind: "eval-report",
-      path: reportPath,
-      contentType: "application/json",
-    }]);
+    assertEquals(payload.artifacts, [await expectedReportArtifact(report, reportPath)]);
     assertEquals(String(payload.logs).split("\n"), [
       '{"level":"info","message":"Eval case completed","case_index":1,"total_cases":2,"repetition":1}',
       '{"level":"info","message":"Eval case completed","case_index":2,"total_cases":2,"repetition":2}',
@@ -2969,7 +2976,12 @@ describe("server/handlers/request/project-run-execute.handler", () => {
       const finishUpload = Promise.withResolvers<void>();
       const handler = new ProjectRunExecuteHandler(createDeps({
         runTask: runTaskDefinition,
-        uploadEvalReport: uploadEvalReportToProjectFiles,
+        uploadEvalReport: async (input) => {
+          uploadedContent = `${
+            JSON.stringify({ ...input.report, reportPath: input.reportPath }, null, 2)
+          }\n`;
+          return await uploadEvalReportToProjectFiles(input);
+        },
       }));
       const signed = await signedRequest(
         "/api/control-plane/runs/run_eval_report_http/execute",
@@ -2986,6 +2998,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
       const request = new Request(signed.request, { signal: controller.signal });
       let written = false;
       let uploads = 0;
+      let uploadedContent = "";
       let signal: AbortSignal | null | undefined;
       const result = await withMockFetch(async (url, init) => {
         const options = observeFetchRequestInit(init);
@@ -3016,6 +3029,11 @@ describe("server/handlers/request/project-run-execute.handler", () => {
         assertStringIncludes(payload.error, "cancelled");
         assertEquals(payload.artifacts, undefined);
       } else {
+        assertEquals(payload.artifacts[0].sha256, await computeHash(uploadedContent));
+        assertEquals(
+          payload.artifacts[0].size_bytes,
+          new TextEncoder().encode(uploadedContent).byteLength,
+        );
         assertEquals(
           payload.artifacts[0].path,
           "evals/reports/deep-research/run_eval_report_http.json",
@@ -3291,11 +3309,13 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     assertEquals(await result.response.json(), {
       success: true,
       result: report.summary,
-      artifacts: [{
-        kind: "eval-report",
-        path: "evals/reports/default.json",
-        contentType: "application/json",
-      }],
+      artifacts: [
+        await expectedReportArtifact(
+          report,
+          "evals/reports/deep-research/run_eval_1.json",
+          "evals/reports/default.json",
+        ),
+      ],
       duration_ms: 0,
       logs: null,
     });
@@ -3579,7 +3599,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     assertEquals(await result.response.json(), {
       success: true,
       result: report.summary,
-      artifacts: [{ kind: "eval-report", path: reportPath, contentType: "application/json" }],
+      artifacts: [await expectedReportArtifact(report, reportPath)],
       duration_ms: 0,
       logs: null,
     });
@@ -4354,11 +4374,13 @@ describe("server/handlers/request/project-run-execute.handler", () => {
       success: false,
       result: report.summary,
       error: "1 eval record failed",
-      artifacts: [{
-        kind: "eval-report",
-        path: "evals/reports/default.json",
-        contentType: "application/json",
-      }],
+      artifacts: [
+        await expectedReportArtifact(
+          report,
+          "evals/reports/deep-research/run_eval_failed_adapter.json",
+          "evals/reports/default.json",
+        ),
+      ],
       logs: null,
       duration_ms: 0,
     });

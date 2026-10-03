@@ -58,6 +58,7 @@ import type { VeryfrontApiClient } from "#veryfront/platform/adapters/veryfront-
 import type { ResolvedContentContext } from "#veryfront/platform/adapters/fs/veryfront/types.ts";
 import type { StyleScopeProfile } from "#veryfront/html/styles-builder/style-scope-profile.ts";
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
+import { utf8ByteLength } from "#veryfront/utils/utf8-byte-length.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
 import type { DiscoveryResult } from "#veryfront/discovery";
 import { findProjectRuntimeTask } from "#veryfront/task/project-runtime.ts";
@@ -274,6 +275,7 @@ interface EvalReportUploadInput {
   report: EvalReport;
   projectReference: string;
   reportPath: string;
+  content?: string;
   signal?: AbortSignal;
 }
 
@@ -667,8 +669,21 @@ function buildEvalReportPath(report: EvalReport, request: ProjectRunExecuteReque
   return `evals/reports/${evalId}/${runId}.json`;
 }
 
-function createEvalReportArtifact(path: string): Record<string, string> {
-  return { kind: "eval-report", path, contentType: "application/json" };
+function serializeEvalReportFile(report: EvalReport, reportPath: string): string {
+  return `${JSON.stringify({ ...report, reportPath }, null, 2)}\n`;
+}
+
+async function createEvalReportArtifact(
+  path: string,
+  content: string,
+): Promise<Record<string, string | number>> {
+  return {
+    kind: "eval-report",
+    path,
+    contentType: "application/json",
+    size_bytes: utf8ByteLength(content),
+    sha256: await computeHash(content),
+  };
 }
 
 function getRunId(pathname: string): string | null {
@@ -2454,10 +2469,9 @@ export async function uploadEvalReportToProjectFiles(
   const client = createRuntimeApiClient(input.req, input.ctx);
   const encodedProject = encodeURIComponent(input.projectReference);
   const encodedPath = encodeURIComponent(input.reportPath);
-  const reportWithPath = { ...input.report, reportPath: input.reportPath };
   const response = await client.put<{ path?: string }>(
     `/projects/${encodedProject}/files/${encodedPath}`,
-    { content: `${JSON.stringify(reportWithPath, null, 2)}\n` },
+    { content: input.content ?? serializeEvalReportFile(input.report, input.reportPath) },
     { signal: input.signal },
   );
   input.signal?.throwIfAborted();
@@ -2951,6 +2965,7 @@ async function executeEvalRun(
   const failed = Math.max(report.summary.failed, countFailedEvalRecords(report));
   const projectReference = ctx.projectSlug ?? request.projectId;
   const requestedReportPath = buildEvalReportPath(report, request);
+  const reportContent = serializeEvalReportFile(report, requestedReportPath);
   let uploadError: string | null = null;
   const reportPath = await deps.uploadEvalReport({
     request,
@@ -2959,6 +2974,7 @@ async function executeEvalRun(
     report,
     projectReference,
     reportPath: requestedReportPath,
+    content: reportContent,
     signal: options.signal,
   }).catch((error) => {
     uploadError = `Eval report upload failed: ${errorMessage(error)}`;
@@ -2982,7 +2998,9 @@ async function executeEvalRun(
   return {
     success: failureMessages.length === 0,
     result,
-    ...(reportPath ? { artifacts: [createEvalReportArtifact(reportPath)] } : {}),
+    ...(reportPath
+      ? { artifacts: [await createEvalReportArtifact(reportPath, reportContent)] }
+      : {}),
     ...(failureMessages.length > 0 ? { error: failureMessages.join("; ") } : {}),
     logs,
     duration_ms: Math.max(0, deps.now() - startedAt),
