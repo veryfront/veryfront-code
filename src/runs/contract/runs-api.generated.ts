@@ -1867,8 +1867,8 @@ export interface components {
             type: "INPUT_REQUEST_UPDATED";
         };
         InputResponse: {
-            /** @description Authenticated principal that submitted the response. */
-            actor: components["schemas"]["Actor"];
+            /** @description Authenticated principal that submitted the response, or `unavailable` for a historical response without authoritative provenance. */
+            actor: components["schemas"]["Actor"] | components["schemas"]["UnavailableActor"];
             /**
              * Format: date-time
              * @description When the response was submitted.
@@ -6521,6 +6521,23 @@ export interface components {
             toolCallName: string | null;
             /** @enum {string} */
             type: "TOOL_CALL_STATUS_CHANGED";
+        };
+        /** @description A historical response without authoritative submitting-credential provenance. The server never infers or looks up a replacement actor. */
+        UnavailableActor: {
+            /** @description Actor ID stored with the response. It is not promoted to an authenticated actor. */
+            legacy_id?: string;
+            /**
+             * @description Role tag stored with the response. It is not an authenticated actor type.
+             * @enum {string}
+             */
+            legacy_role?: "human" | "agent" | "integration" | "system" | "user" | "api_key" | "service_account";
+            /**
+             * @description `not_recorded`: the server never stored the submitting credential. `identity_removed`: the recorded identity was later revoked or deleted.
+             * @enum {string}
+             */
+            reason: "not_recorded" | "identity_removed";
+            /** @enum {string} */
+            type: "unavailable";
         };
         /** @description Update the run title or labels. */
         UpdateRunRequest: {
