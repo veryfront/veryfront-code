@@ -31,6 +31,7 @@ const cases: Array<{ code: ConstructorParameters<typeof ExecutorAgentError>[0]; 
     { code: "PROJECT_SCHEMA_ERROR", status: 400 },
     { code: "MODEL_UNSUPPORTED_ASSISTANT_PREFILL", status: 400 },
     { code: "OUTPUT_SCHEMA_NOT_CLOSED", status: 400 },
+    { code: "OUTPUT_SCHEMA_INVALID", status: 400 },
     { code: "EXTERNAL_SERVICE_ERROR", status: 502 },
     { code: "DURABLE_RUN_EVENT_PERSISTENCE_FAILED", status: 500 },
     { code: "ABORTED", status: 499 },
