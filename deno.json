@@ -507,6 +507,7 @@
     "release": "deno run -A scripts/release.ts",
     "test": "deno task generate && deno task test:unit:parallel && deno task test:unit:serial && deno task test:unit:cwd && deno task test:unit:cwd-exclusion && deno task test:integration:source && deno task test:integration:root",
     "test:unit": "deno task generate && deno task test:unit:parallel && deno task test:unit:serial && deno task test:unit:cwd && deno task test:unit:cwd-exclusion",
+    "contracts:runs:fixtures": "deno run --allow-read --allow-write --allow-run=deno scripts/generate-runs-fixtures.ts",
     "test:file": "deno run --allow-run=deno --allow-env scripts/test/run-test-file.ts",
     "test:unit:parallel": "deno run --config=scripts/test.deno.json --allow-read --allow-run=deno --allow-env scripts/test/run-deno-suite.ts --suite=unit:parallel",
     "test:unit:serial": "deno run --config=scripts/test.deno.json --allow-read --allow-run=deno --allow-env scripts/test/run-deno-suite.ts --suite=unit:serial",

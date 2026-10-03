@@ -4,6 +4,9 @@
   "archiveSha256": "806fa3bcbf986cef2037859b1c6e84f1daaf90d48b13c45c6812445b85342e96",
   "generatedBy": "veryfront-api: pnpm contracts:runs:generate -- --out <dir> (the kit's runs-api.types.ts)",
   "files": {
-    "runs-api.generated.ts": "d3be5fb515b4e4c8bfd5bf58289ead53551b8953a5c1bd26818dd98ddf43081a"
-  }
+    "runs-api.generated.ts": "d3be5fb515b4e4c8bfd5bf58289ead53551b8953a5c1bd26818dd98ddf43081a",
+    "openapi.target.json": "a555d30e95aa9efb00220ff52de228d92782c5f2f4ab630fcefeebd74d005c9f",
+    "runs-fixtures.generated.ts": "993bde1015dc6cc35ae763a813adff37d731687f56bbcd0cd5d967bc22d8b7e4"
+  },
+  "fixturesGeneratedBy": "deno task contracts:runs:fixtures"
 }
