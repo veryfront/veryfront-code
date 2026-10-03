@@ -10341,6 +10341,50 @@ describe("server/handlers/request/project-run-execute.handler manual pause (#258
     assertEquals(calls, ["first"]);
   });
 
+  it("wakes the pause decision backoff on cancellation after project code replaced Promise.race", async () => {
+    const backend = new SharedMemoryBackend();
+    const calls: string[] = [];
+    const controller = new AbortController();
+    const hostRace = Promise.race;
+    const neverSettles = () => new Promise<never>(() => {});
+    let releaseBackoff: (() => void) | undefined;
+    const sleep = (ms: number): Promise<void> => {
+      if (ms < 30_000) return delay(Math.min(ms, 10));
+      // The backoff has been entered; later host code may use the real race again.
+      Promise.race = hostRace;
+      controller.abort(new Error("run cancelled"));
+      return new Promise<void>((resolve) => {
+        releaseBackoff = resolve;
+      });
+    };
+    try {
+      await withMockFetch(() => {
+        // Project code running before the boundary replaces the global race.
+        Promise.race = neverSettles as unknown as typeof Promise.race;
+        return Promise.resolve(Response.json({ stop: true }, { status: 401 }));
+      }, async () => {
+        let guard: ReturnType<typeof setTimeout> | undefined;
+        const outcome = await hostRace.call(Promise, [
+          dispatch(
+            createHandler(backend, threeSteps(calls), { sleep }),
+            undefined,
+            controller.signal,
+          ),
+          new Promise<"backoff not woken">((resolve) => {
+            guard = setTimeout(() => resolve("backoff not woken"), 2_000);
+          }),
+        ]).finally(() => clearTimeout(guard));
+        assertNotEquals(outcome, "backoff not woken");
+        assertEquals((outcome as Record<string, unknown>).success, false);
+      });
+    } finally {
+      Promise.race = hostRace;
+      releaseBackoff?.();
+    }
+    assertExists(releaseBackoff);
+    assertEquals(calls, ["first"]);
+  });
+
   it("refuses manual resume without a capability instead of releasing the boundary", async () => {
     const backend = new SharedMemoryBackend();
     const calls: string[] = [];
