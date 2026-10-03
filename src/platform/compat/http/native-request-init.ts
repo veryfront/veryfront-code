@@ -389,6 +389,9 @@ export function createNativeRequest(input: RequestInfo | URL, init: RequestInit)
  * iteration, an array by index, and a record by its own keys.
  */
 export function copyNativeHeaders(source: HeadersInit | undefined | null): Headers {
+  // Checked here, at the fill itself, so no caller can let project code run
+  // between its own check and this point.
+  assertArrayWritesUnobserved();
   const headers = new NativeHeaders();
   if (source === undefined || source === null) return headers;
   if (isNativeHeaders(source)) {
@@ -435,6 +438,8 @@ export function copyNativeHeaders(source: HeadersInit | undefined | null): Heade
  * out of the record and travel beside it (see {@link nativeFetchArguments}).
  */
 export function toNativeHeaderRecord(headers: Headers): Record<string, string> {
+  // Native iteration pushes every entry onto a fresh array: checked at the read.
+  assertArrayWritesUnobserved();
   const record = ObjectCreate(null) as Record<string, string>;
   const iterator = IntrinsicReflectApply(HeadersEntries, headers, []) as IterableIterator<
     [string, string]

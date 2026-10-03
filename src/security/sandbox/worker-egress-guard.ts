@@ -1391,9 +1391,6 @@ export async function guardedEgressFetch(
   for (let hop = 0;; hop++) {
     const parsedUrl = new NativeURL(url);
     await deps.authorizeUrl?.(parsedUrl);
-    // Building this hop's init iterates the credential-bearing headers, and the
-    // await above let project code run.
-    assertNativeRequestProcessing();
     const hostname = getUrlHostname(parsedUrl);
     let tunnel: PinnedSocksTunnel | undefined;
     let client: Deno.HttpClient | undefined;
@@ -1401,6 +1398,10 @@ export async function guardedEgressFetch(
     let pinnedResponse: Promise<Response> | undefined;
     const isNetworkRequest = hostname !== null &&
       (parsedUrl.protocol === "http:" || parsedUrl.protocol === "https:");
+    // Building this hop's init iterates the credential-bearing headers. The
+    // await and URL reads above can run project code, so the check comes after
+    // them; the header conversion checks array integrity again itself.
+    assertNativeRequestProcessing();
     const requestInit: RequestInit & { duplex?: "half" } = createNativeRequestInit(init, {
       ...carryInit,
       method,

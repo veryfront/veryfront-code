@@ -39,9 +39,13 @@ describe("platform/compat/http/native-request-init", () => {
       try {
         assertThrows(() => assertArrayWritesUnobserved(), TypeError, "Refused");
         assertThrows(() => assertNativeRequestProcessing(), TypeError, "Refused");
+        // The helpers check at the fill and the read themselves.
+        assertThrows(() => copyNativeHeaders({ authorization: BEARER }), TypeError, "Refused");
+        assertThrows(() => toNativeHeaderRecord(new Headers()), TypeError, "Refused");
         // What the refusal prevents: the runtime's own header handling,
         // through captured methods alone, hands the bearer to the probe.
-        const headers = copyNativeHeaders({ authorization: BEARER });
+        const headers = new Headers();
+        Reflect.apply(Headers.prototype.append, headers, ["authorization", BEARER]);
         Reflect.apply(Headers.prototype.get, headers, ["authorization"]);
         Reflect.apply(Headers.prototype.delete, headers, ["authorization"]);
         exposed = probe.saw(BEARER);
