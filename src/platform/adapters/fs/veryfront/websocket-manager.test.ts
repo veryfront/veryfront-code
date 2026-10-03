@@ -130,6 +130,10 @@ function createWebSocketManager(options: {
     files: Array<{ path: string; content?: string }>,
     expectedSnapshotVersion?: number,
   ) => Promise<number | undefined>;
+  canPatchReservedDataPaths?: (changedPaths: readonly string[]) => boolean;
+  refreshReservedDataPaths?: (
+    changedPaths: readonly string[],
+  ) => Promise<"data" | "definition" | undefined>;
   cache?: Partial<FileCache>;
 } = {}): WebSocketManager {
   const cache = {
@@ -171,6 +175,8 @@ function createWebSocketManager(options: {
     getFileListCacheKey: options.getFileListCacheKey,
     getSourceSnapshotVersion: options.getSourceSnapshotVersion,
     replaceSourceSnapshot: options.replaceSourceSnapshot ?? (async () => 0),
+    canPatchReservedDataPaths: options.canPatchReservedDataPaths,
+    refreshReservedDataPaths: options.refreshReservedDataPaths,
     pregenerateStyles: options.pregenerateStyles,
     createWebSocket: (url, protocols) => new globalThis.WebSocket(url, protocols),
   });
@@ -1816,6 +1822,126 @@ describe("WebSocketManager", () => {
     assertEquals(evicted, 1);
 
     manager.dispose();
+  });
+
+  describe("reserved data pokes", () => {
+    const runScheduledTimers = (): void => {
+      const timers = Array.from(scheduledTimers.entries());
+      scheduledTimers.clear();
+      for (const [, timer] of timers) timer.callback();
+    };
+
+    function createReservedDataManager(
+      kind: "data" | "definition" | undefined,
+      events: string[],
+    ): WebSocketManager {
+      return createWebSocketManager({
+        client: {
+          listAllFiles: () => {
+            events.push("list");
+            return Promise.resolve([]);
+          },
+        },
+        cache: {
+          deleteByPrefixAsync: (prefix: string) => {
+            events.push(`delete:${prefix}`);
+            return Promise.resolve(0);
+          },
+        },
+        clearMemoryCaches: () => {
+          events.push("clear-memory");
+        },
+        canPatchReservedDataPaths: (paths) =>
+          paths.every((path) => path.startsWith("knowledge/") && path.endsWith(".md")),
+        refreshReservedDataPaths: (paths) => {
+          events.push(`patch:${paths.join(",")}`);
+          return Promise.resolve(kind);
+        },
+        invalidationCallbacks: {
+          clearSSRModuleCacheForProject: () => {
+            events.push("clear-ssr");
+          },
+          clearProjectDiscoveryCacheForProject: () => {
+            events.push("clear-discovery");
+          },
+          clearRendererCacheForProject: () => {
+            events.push("clear-renderer");
+          },
+          clearProjectCSSCache: () => {
+            events.push("clear-css");
+          },
+          triggerReload: (changedPaths) => {
+            events.push(`reload:${changedPaths?.join(",")}`);
+          },
+          evictCurrentAdapter: () => {
+            events.push("evict");
+          },
+        },
+      });
+    }
+
+    async function pokeOnce(manager: WebSocketManager, changedPaths: string[][]) {
+      manager.connect("project-1");
+      const socket = MockWebSocket.instances[0];
+      assertExists(socket);
+      for (const paths of changedPaths) {
+        deliverPoke(socket, { changedPaths: paths, branchName: "main" });
+      }
+      runScheduledTimers();
+      await flushMicrotasks();
+    }
+
+    it("patches data files without clearing, re-listing or evicting the adapter", async () => {
+      const events: string[] = [];
+      const manager = createReservedDataManager("data", events);
+      await pokeOnce(manager, [["knowledge/a.md"], ["knowledge/b.md"]]);
+
+      assertEquals(events, [
+        "patch:knowledge/a.md,knowledge/b.md",
+        "clear-renderer",
+        "reload:knowledge/a.md,knowledge/b.md",
+      ]);
+      manager.dispose();
+    });
+
+    it("drops derived caches for a possible Markdown definition", async () => {
+      const events: string[] = [];
+      const manager = createReservedDataManager("definition", events);
+      await pokeOnce(manager, [["knowledge/agent/AGENT.md"]]);
+
+      assertEquals(events, [
+        "patch:knowledge/agent/AGENT.md",
+        "clear-ssr",
+        "clear-discovery",
+        "clear-renderer",
+        "clear-css",
+        "reload:knowledge/agent/AGENT.md",
+      ]);
+      manager.dispose();
+    });
+
+    it("clears and re-lists when the data files cannot be patched", async () => {
+      const events: string[] = [];
+      const manager = createReservedDataManager(undefined, events);
+      await pokeOnce(manager, [["knowledge/a.md"]]);
+
+      assertEquals(events.slice(0, 2), ["patch:knowledge/a.md", "clear-memory"]);
+      assertEquals(events.includes("delete:files:branch:"), true);
+      assertEquals(events.includes("list"), true);
+      assertEquals(events.at(-1), "evict");
+      manager.dispose();
+    });
+
+    it("clears and re-lists a batch that also changed source files", async () => {
+      const events: string[] = [];
+      const manager = createReservedDataManager("data", events);
+      await pokeOnce(manager, [["knowledge/a.md"], ["agents/support.ts"]]);
+
+      assertEquals(events[0], "clear-memory");
+      assertEquals(events.some((event) => event.startsWith("patch:")), false);
+      assertEquals(events.includes("list"), true);
+      manager.dispose();
+    });
   });
 
   describe("adapters no request is using", () => {

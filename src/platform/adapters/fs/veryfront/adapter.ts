@@ -74,6 +74,9 @@ const SOURCE_SNAPSHOT_HASH_CHUNK_CODE_UNITS = 32 * 1_024;
 const SOURCE_SNAPSHOT_YIELD_CODE_UNITS = 2 * 1_024 * 1_024;
 const SOURCE_SNAPSHOT_YIELD_RECORDS = 256;
 const SOURCE_SNAPSHOT_DIGEST_BYTES = 32;
+/** Pokes naming more reserved data files than this invalidate the whole snapshot. */
+const MAX_RESERVED_DATA_POKE_PATHS = 16;
+const RESERVED_DATA_PATCH_RETENTION_MS = 10 * 60 * 1_000;
 const DateNow = Date.now;
 const IntrinsicArrayIsArray = Array.isArray;
 const ArrayPrototypeSome = Array.prototype.some;
@@ -624,6 +627,104 @@ function isRetainedMarkdownDefinition(
   return false;
 }
 
+function isKnowledgeMarkdownPath(projectPath: string): boolean {
+  return IntrinsicReflectApply(StringPrototypeStartsWith, projectPath, ["knowledge/"]) === true &&
+    IntrinsicReflectApply(StringPrototypeEndsWith, projectPath, [".md"]) === true;
+}
+
+function isEvalReportPath(projectPath: string): boolean {
+  return IntrinsicReflectApply(StringPrototypeStartsWith, projectPath, ["evals/reports/"]) ===
+      true &&
+    IntrinsicReflectApply(StringPrototypeEndsWith, projectPath, [".json"]) === true;
+}
+
+/**
+ * Reserved data files: knowledge Markdown and eval reports. Agents and tools
+ * write these at run time, so they change far more often than source code.
+ */
+function isReservedDataPath(projectPath: string): boolean {
+  return isKnowledgeMarkdownPath(projectPath) || isEvalReportPath(projectPath);
+}
+
+/**
+ * Whether `projectPath` is a reserved data file that cannot affect an agent's
+ * configuration: neither a Markdown agent or skill definition under the given
+ * discovery roots nor a file an active skill reads at run time. The agent-config
+ * fingerprint skips these files, and a write to one leaves the source snapshot
+ * in place.
+ */
+function isExcludedAgentConfigDataPath(
+  projectPath: string,
+  markdownPaths: SourceSnapshotMarkdownPaths,
+  skillDirectories: Map<string, true>,
+): boolean {
+  if (!isReservedDataPath(projectPath)) return false;
+  if (isRuntimeReadableSkillFile(projectPath, skillDirectories)) return false;
+  return !isKnowledgeMarkdownPath(projectPath) ||
+    !isRetainedMarkdownDefinition(projectPath, markdownPaths);
+}
+
+/** One reserved data file as the API last reported it; `null` means deleted. */
+interface ReservedDataPatch {
+  projectPath: string;
+  entry: SourceSnapshotFile | null;
+}
+
+/**
+ * What a reserved-data poke changed. `data`: no changed path can affect an
+ * agent configuration. `definition`: a changed path may be a Markdown agent or
+ * skill definition, or the discovery roots that decide it are not known.
+ */
+export type ReservedDataRefreshKind = "data" | "definition";
+
+function toSnapshotProjectPath(file: SourceSnapshotFile): string | undefined {
+  const path = getOwnSourceSnapshotValue(file, "path");
+  return typeof path === "string" ? normalizeSourceSnapshotRetainPath(path) : undefined;
+}
+
+function findReservedDataPatch(
+  patches: readonly ReservedDataPatch[],
+  projectPath: string,
+): ReservedDataPatch | undefined {
+  for (let index = 0; index < patches.length; index++) {
+    if (patches[index]!.projectPath === projectPath) return patches[index];
+  }
+  return undefined;
+}
+
+/**
+ * Copy `files` with each patched path replaced by its new entry, removed when
+ * the file was deleted, or appended when the file is new. Unpatched entries
+ * keep their identity and order.
+ */
+function patchSourceSnapshotEntries(
+  files: readonly SourceSnapshotFile[],
+  patches: readonly ReservedDataPatch[],
+): SourceSnapshotFile[] {
+  const patched: SourceSnapshotFile[] = [];
+  const seen = new IntrinsicMap<string, true>();
+  for (let index = 0; index < files.length; index++) {
+    const file = files[index]!;
+    const projectPath = toSnapshotProjectPath(file);
+    const patch = projectPath === undefined
+      ? undefined
+      : findReservedDataPatch(patches, projectPath);
+    if (!patch) {
+      patched[patched.length] = file;
+      continue;
+    }
+    if (IntrinsicReflectApply(MapPrototypeGet, seen, [patch.projectPath]) === true) continue;
+    IntrinsicReflectApply(MapPrototypeSet, seen, [patch.projectPath, true]);
+    if (patch.entry) patched[patched.length] = patch.entry;
+  }
+  for (let index = 0; index < patches.length; index++) {
+    const patch = patches[index]!;
+    if (IntrinsicReflectApply(MapPrototypeGet, seen, [patch.projectPath]) === true) continue;
+    if (patch.entry) patched[patched.length] = patch.entry;
+  }
+  return patched;
+}
+
 async function computeSourceSnapshotFingerprint(
   files: SourceSnapshotFile[],
   purpose: "complete" | "agent-config",
@@ -648,21 +749,9 @@ async function computeSourceSnapshotFingerprint(
       activeSkills.projectPaths,
       [fileIndex],
     ) as string;
-    const isKnowledgeMarkdown =
-      IntrinsicReflectApply(StringPrototypeStartsWith, projectPath, ["knowledge/"]) === true &&
-      IntrinsicReflectApply(StringPrototypeEndsWith, projectPath, [".md"]) === true;
-    const isEvalReport =
-      IntrinsicReflectApply(StringPrototypeStartsWith, projectPath, ["evals/reports/"]) === true &&
-      IntrinsicReflectApply(StringPrototypeEndsWith, projectPath, [".json"]) === true;
-    const isRetainedRuntimeSkillFile = (isKnowledgeMarkdown || isEvalReport) &&
-      isRuntimeReadableSkillFile(projectPath, activeSkills.skillDirectories);
-    const isRetainedKnowledgeMarkdown = isKnowledgeMarkdown &&
-      (isRetainedMarkdownDefinition(projectPath, markdownPaths) ||
-        isRetainedRuntimeSkillFile);
     if (
       purpose === "agent-config" &&
-      ((isKnowledgeMarkdown && !isRetainedKnowledgeMarkdown) ||
-        (isEvalReport && !isRetainedRuntimeSkillFile))
+      isExcludedAgentConfigDataPath(projectPath, markdownPaths, activeSkills.skillDirectories)
     ) {
       if ((fileIndex + 1) % SOURCE_SNAPSHOT_YIELD_RECORDS === 0) {
         await yieldSourceSnapshotTask();
@@ -799,6 +888,22 @@ export class VeryfrontFSAdapter implements FSAdapter {
     | { version: number; scopeKey: string; value: Promise<string | undefined> }
     | undefined;
   private sourceSnapshotRefreshPromise: Promise<void> | null = null;
+  /**
+   * Markdown discovery roots from the latest discovery-aware agent-config
+   * fingerprint. They decide whether a knowledge Markdown write can change an
+   * agent definition; unknown roots treat every such write as one that can.
+   */
+  #agentMarkdownDiscoveryPaths: SourceSnapshotMarkdownPaths | undefined;
+  /** Advances each time reserved data files are patched into the snapshot. */
+  #reservedDataGeneration = 0;
+  /** Generation and time at which each reserved data path was last patched. */
+  readonly #reservedDataPatches = new IntrinsicMap<
+    string,
+    { generation: number; patchedAt: number }
+  >();
+  /** Newest refresh requested per reserved data path, so older replies stand down. */
+  #reservedDataRequestSequence = 0;
+  readonly #reservedDataLatestRequests = new IntrinsicMap<string, number>();
   private sourceSnapshotMutationTail: Promise<void> = IntrinsicReflectApply(
     PromiseResolve,
     IntrinsicPromise,
@@ -1156,8 +1261,16 @@ export class VeryfrontFSAdapter implements FSAdapter {
       clearMemoryCaches: () => this.clearMemoryCaches(),
       getFileListCacheKey: () => this.getCurrentFileListCacheKey(),
       getSourceSnapshotVersion: () => this.sourceSnapshotVersion,
-      replaceSourceSnapshot: (cacheKey, files, expectedSnapshotVersion) =>
-        this.replaceSourceSnapshot(cacheKey, files, expectedSnapshotVersion),
+      replaceSourceSnapshot: (cacheKey, files, expectedSnapshotVersion, expectedDataGeneration) =>
+        this.replaceSourceSnapshot(
+          cacheKey,
+          files,
+          expectedSnapshotVersion,
+          expectedDataGeneration,
+        ),
+      getReservedDataGeneration: () => this.#reservedDataGeneration,
+      canPatchReservedDataPaths: (changedPaths) => this.canPatchReservedDataPaths(changedPaths),
+      refreshReservedDataPaths: (changedPaths) => this.refreshReservedDataPaths(changedPaths),
       pregenerateStyles: (files) => this.triggerCSSPregeneration(files),
     });
 
@@ -1278,11 +1391,12 @@ export class VeryfrontFSAdapter implements FSAdapter {
     );
     const initializationIdentity = this.#getCurrentSourceSnapshotIdentity();
     const initializationSnapshotVersion = this.sourceSnapshotVersion;
+    const initializationDataGeneration = this.#reservedDataGeneration;
     logger.debug("Step 4: fetchFileList START", { projectSlug, cacheKey });
 
     try {
-      const listing = await this.#fetchSourceListing(initializationContext);
-      const files = listing.files;
+      const fetchedListing = await this.#fetchSourceListing(initializationContext);
+      let files = fetchedListing.files;
       const fileSummary = summarizeFileList(files);
 
       const initialSnapshotApplied = await this.#runSourceSnapshotMutation(async () => {
@@ -1292,6 +1406,8 @@ export class VeryfrontFSAdapter implements FSAdapter {
           this.sourceSnapshotVersion !== initializationSnapshotVersion;
         if (isSnapshotSuperseded()) return false;
 
+        files = this.#overlayReservedDataPatches(files, initializationDataGeneration);
+        const listing = { ...fetchedListing, files };
         await this.#storeFileList(cacheKey, listing);
         if (isSnapshotSuperseded()) {
           await this.cache.deleteAsync(cacheKey);
@@ -1567,6 +1683,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
     if (!warmupContext) return;
     const warmupIdentity = this.#getSourceSnapshotIdentity(warmupContext);
     const warmupSnapshotVersion = this.sourceSnapshotVersion;
+    const warmupDataGeneration = this.#reservedDataGeneration;
     let warmupPromise: Promise<Array<{ path: string; content?: string }> | null> | null = null;
     warmupPromise = (async () => {
       try {
@@ -1592,8 +1709,9 @@ export class VeryfrontFSAdapter implements FSAdapter {
           releaseId: warmupContext.releaseId,
         });
 
-        const listing = await this.#fetchSourceListing(warmupContext);
-        const files = listing.files;
+        const fetchedListing = await this.#fetchSourceListing(warmupContext);
+        let files = fetchedListing.files;
+        let listing = fetchedListing;
 
         // A WebSocket snapshot can land while this fetch is open. Publishing
         // the pre-poke listing would roll both the cache and this caller's
@@ -1608,6 +1726,8 @@ export class VeryfrontFSAdapter implements FSAdapter {
             return false;
           }
 
+          files = this.#overlayReservedDataPatches(files, warmupDataGeneration);
+          listing = { ...fetchedListing, files };
           const sourceChanged = this.sourceSnapshotFiles === undefined
             ? this.hasAppliedSourceSnapshot
             : !sourceSnapshotsEqual(this.sourceSnapshotFiles, files);
@@ -1725,6 +1845,9 @@ export class VeryfrontFSAdapter implements FSAdapter {
     this.sourceSnapshotFingerprint = undefined;
     this.agentConfigSourceSnapshotFingerprint = undefined;
     this.scopedAgentConfigSourceSnapshotFingerprint = undefined;
+    // A source poke can change the configured discovery roots. Treat every
+    // knowledge write as a possible definition until a run reports them again.
+    this.#agentMarkdownDiscoveryPaths = undefined;
     this.clearRetainedFileList();
     this.readOps.clearFileListIndex();
     this.statOps.clearIndex();
@@ -1761,8 +1884,9 @@ export class VeryfrontFSAdapter implements FSAdapter {
 
   private replaceSourceSnapshot(
     sourceCacheKey: string,
-    files: SourceSnapshotFile[],
+    listedFiles: SourceSnapshotFile[],
     expectedSnapshotVersion = this.sourceSnapshotVersion,
+    expectedDataGeneration = this.#reservedDataGeneration,
   ): Promise<number | undefined> {
     // Pokes for a hosted adapter run in the credential context it connected
     // from, so publish the listing under the key that context reads.
@@ -1784,6 +1908,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
         return undefined;
       }
 
+      const files = this.#overlayReservedDataPatches(listedFiles, expectedDataGeneration);
       await this.cache.setAsync(cacheKey, files);
       if (
         this.contentContext !== expectedContext ||
@@ -1812,6 +1937,219 @@ export class VeryfrontFSAdapter implements FSAdapter {
       }
       return this.sourceSnapshotVersion;
     });
+  }
+
+  /**
+   * Re-apply reserved data files patched after a listing started. The listing
+   * may predate those writes; the patched entries are the newer answer.
+   */
+  #overlayReservedDataPatches(
+    files: SourceSnapshotFile[],
+    sinceGeneration: number,
+  ): SourceSnapshotFile[] {
+    const current = this.sourceSnapshotFiles;
+    if (!current || this.#reservedDataGeneration === sinceGeneration) return files;
+    const patches: ReservedDataPatch[] = [];
+    for (const [projectPath, patch] of this.#reservedDataPatches) {
+      if (patch.generation > sinceGeneration) {
+        patches[patches.length] = { projectPath, entry: null };
+      }
+    }
+    if (patches.length === 0) return files;
+    for (let index = 0; index < current.length; index++) {
+      const projectPath = toSnapshotProjectPath(current[index]!);
+      const patch = projectPath === undefined
+        ? undefined
+        : findReservedDataPatch(patches, projectPath);
+      if (patch && !patch.entry) patch.entry = current[index]!;
+    }
+    return patchSourceSnapshotEntries(files, patches);
+  }
+
+  #recordReservedDataPatches(patches: readonly ReservedDataPatch[]): void {
+    this.#reservedDataGeneration++;
+    const now = currentTime();
+    for (let index = 0; index < patches.length; index++) {
+      IntrinsicReflectApply(MapPrototypeSet, this.#reservedDataPatches, [
+        patches[index]!.projectPath,
+        { generation: this.#reservedDataGeneration, patchedAt: now },
+      ]);
+    }
+    // A listing that started before a patch finishes within its request
+    // deadline, so older records can no longer be needed by an overlay.
+    for (const [projectPath, patch] of this.#reservedDataPatches) {
+      if (now - patch.patchedAt > RESERVED_DATA_PATCH_RETENTION_MS) {
+        IntrinsicReflectApply(MapPrototypeDelete, this.#reservedDataPatches, [projectPath]);
+        IntrinsicReflectApply(MapPrototypeDelete, this.#reservedDataLatestRequests, [projectPath]);
+      }
+    }
+  }
+
+  /**
+   * Whether a poke that changed only `changedPaths` can be applied by patching
+   * those reserved data files into the current branch snapshot, leaving its
+   * version and identity in place. Agents write knowledge files continuously
+   * during runs; superseding the whole snapshot for each write would restart
+   * every in-flight source refresh, so agent startup never settles.
+   */
+  canPatchReservedDataPaths(changedPaths: readonly string[]): boolean {
+    if (changedPaths.length === 0 || changedPaths.length > MAX_RESERVED_DATA_POKE_PATHS) {
+      return false;
+    }
+    if (!this.sourceSnapshotFiles || this.getEffectiveContentContext()?.sourceType !== "branch") {
+      return false;
+    }
+    for (let index = 0; index < changedPaths.length; index++) {
+      if (!isReservedDataPath(normalizeSourceSnapshotRetainPath(changedPaths[index]!))) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  /**
+   * Fetch the changed reserved data files and patch them into the snapshot:
+   * content replaced, deleted files removed, new files added. The snapshot
+   * version and identity stay, so refreshes in flight still apply. Returns
+   * undefined when the files cannot be patched; the caller then invalidates
+   * the whole snapshot.
+   */
+  async refreshReservedDataPaths(
+    changedPaths: readonly string[],
+  ): Promise<ReservedDataRefreshKind | undefined> {
+    if (!this.canPatchReservedDataPaths(changedPaths)) return undefined;
+    const context = this.contentContext;
+    const effectiveContext = this.getEffectiveContentContext();
+    if (!context || effectiveContext?.sourceType !== "branch") return undefined;
+    const cacheKey = this.getCurrentFileListCacheKey();
+
+    const projectPaths: string[] = [];
+    for (let index = 0; index < changedPaths.length; index++) {
+      const projectPath = normalizeSourceSnapshotRetainPath(changedPaths[index]!);
+      let duplicate = false;
+      for (let seen = 0; seen < projectPaths.length; seen++) {
+        if (projectPaths[seen] === projectPath) duplicate = true;
+      }
+      if (!duplicate) projectPaths[projectPaths.length] = projectPath;
+    }
+    const requestSequence = ++this.#reservedDataRequestSequence;
+    for (let index = 0; index < projectPaths.length; index++) {
+      IntrinsicReflectApply(MapPrototypeSet, this.#reservedDataLatestRequests, [
+        projectPaths[index]!,
+        requestSequence,
+      ]);
+    }
+
+    let fetched: ReservedDataPatch[];
+    try {
+      fetched = await IntrinsicReflectApply(PromiseAll, IntrinsicPromise, [
+        projectPaths.map((projectPath) =>
+          this.#fetchReservedDataPatch(projectPath, effectiveContext)
+        ),
+      ]) as ReservedDataPatch[];
+    } catch (error) {
+      logger.warn("Failed to refresh changed reserved data files", {
+        projectSlug: this.projectSlug,
+        changedPathsCount: projectPaths.length,
+        error,
+      });
+      return undefined;
+    }
+
+    const applied = await this.#runSourceSnapshotMutation(async () => {
+      if (this.contentContext !== context || this.getCurrentFileListCacheKey() !== cacheKey) {
+        return false;
+      }
+      const current = this.sourceSnapshotFiles;
+      if (!current) return true;
+      const patches: ReservedDataPatch[] = [];
+      for (let index = 0; index < fetched.length; index++) {
+        const patch = fetched[index]!;
+        const latest = IntrinsicReflectApply(MapPrototypeGet, this.#reservedDataLatestRequests, [
+          patch.projectPath,
+        ]);
+        if (latest === requestSequence) patches[patches.length] = patch;
+      }
+      if (patches.length === 0) return true;
+
+      const patched = patchSourceSnapshotEntries(current, patches);
+      const snapshotVersion = this.sourceSnapshotVersion;
+      this.sourceSnapshotFiles = patched;
+      this.sourceSnapshotFingerprint = undefined;
+      this.agentConfigSourceSnapshotFingerprint = undefined;
+      this.scopedAgentConfigSourceSnapshotFingerprint = undefined;
+      const retained = this.retainedFileList;
+      if (retained) {
+        retained.files = retained.files === current
+          ? patched
+          : patchSourceSnapshotEntries(retained.files, patches);
+      }
+      this.readOps.clearFileListIndex();
+      this.statOps.clearIndex();
+      this.dirOps.clearTree();
+      this.#recordReservedDataPatches(patches);
+
+      if (retained) {
+        await this.cache.setAsync(retained.cacheKey, retained.files);
+        if (this.sourceSnapshotVersion !== snapshotVersion) {
+          await this.cache.deleteAsync(retained.cacheKey);
+        }
+      } else if (cacheKey) {
+        await this.cache.deleteAsync(cacheKey);
+      }
+      return true;
+    });
+    if (!applied) return undefined;
+
+    logger.debug("Patched reserved data files into the source snapshot", {
+      projectSlug: this.projectSlug,
+      changedPathsCount: projectPaths.length,
+      sourceSnapshotVersion: this.sourceSnapshotVersion,
+    });
+    return await this.#classifyReservedDataPaths(projectPaths);
+  }
+
+  async #fetchReservedDataPatch(
+    projectPath: string,
+    context: ResolvedContentContext,
+  ): Promise<ReservedDataPatch> {
+    try {
+      const file = await this.client.getFile(projectPath, { expectedMissing: true }, {
+        type: "branch",
+        name: context.branch ?? "main",
+      });
+      const entry: SourceSnapshotFile = { path: file.path, content: file.content };
+      if (file.id !== undefined) entry.id = file.id;
+      if (file.version_id !== undefined) entry.version_id = file.version_id;
+      if (file.type !== undefined) entry.type = file.type;
+      if (file.size !== undefined) entry.size = file.size;
+      return { projectPath, entry };
+    } catch (error) {
+      if (isNotFoundLikeError(error)) return { projectPath, entry: null };
+      throw error;
+    }
+  }
+
+  async #classifyReservedDataPaths(
+    projectPaths: readonly string[],
+  ): Promise<ReservedDataRefreshKind> {
+    const markdownPaths = this.#agentMarkdownDiscoveryPaths;
+    const files = this.sourceSnapshotFiles;
+    if (!markdownPaths || !files) return "definition";
+    const activeSkills = await collectActiveSkillDirectories(files, markdownPaths);
+    if (!activeSkills) return "definition";
+    for (let index = 0; index < projectPaths.length; index++) {
+      if (
+        !isExcludedAgentConfigDataPath(
+          projectPaths[index]!,
+          markdownPaths,
+          activeSkills.skillDirectories,
+        )
+      ) {
+        return "definition";
+      }
+    }
+    return "data";
   }
 
   async #invalidateDerivedSourceCaches(): Promise<void> {
@@ -1862,10 +2200,10 @@ export class VeryfrontFSAdapter implements FSAdapter {
       buildFileListCacheKey(effectiveRefreshContext),
     );
     const refreshIdentity = this.#getCurrentSourceSnapshotIdentity();
-    const previousFiles = this.sourceSnapshotFiles;
     const previousVersion = this.sourceSnapshotVersion;
-    const listing = await this.#fetchSourceListing(effectiveRefreshContext);
-    const files = listing.files;
+    const previousDataGeneration = this.#reservedDataGeneration;
+    const fetchedListing = await this.#fetchSourceListing(effectiveRefreshContext);
+    let files = fetchedListing.files;
     const result = await this.#runSourceSnapshotMutation(async () => {
       const isSnapshotSuperseded = () =>
         this.contentContext !== refreshContext ||
@@ -1875,7 +2213,12 @@ export class VeryfrontFSAdapter implements FSAdapter {
         return { applied: false, sourceChanged: false };
       }
 
-      const sourceChanged = !sourceSnapshotsEqual(previousFiles, files);
+      // Reserved data writes patch the snapshot without superseding this
+      // refresh. Compare against the patched snapshot, and keep any patch
+      // newer than this listing.
+      files = this.#overlayReservedDataPatches(files, previousDataGeneration);
+      const listing = { ...fetchedListing, files };
+      const sourceChanged = !sourceSnapshotsEqual(this.sourceSnapshotFiles, files);
       if (sourceChanged) {
         this.fileListWarmupPromise = null;
         this.fileListWarmupKey = null;
@@ -2050,6 +2393,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
     const markdownScopeKey = hasMarkdownPaths
       ? buildSourceSnapshotMarkdownScopeKey(markdownPaths)
       : undefined;
+    if (hasMarkdownPaths) this.#agentMarkdownDiscoveryPaths = markdownPaths;
     const files = this.sourceSnapshotFiles;
     if (!files) {
       return IntrinsicReflectApply(PromiseResolve, IntrinsicPromise, [undefined]) as Promise<
