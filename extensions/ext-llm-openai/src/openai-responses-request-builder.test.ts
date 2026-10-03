@@ -1,3 +1,6 @@
+import "#veryfront/schemas/_test-setup.ts";
+import { defineSchema } from "#veryfront/schemas/index.ts";
+import { resolveAgentOutputSchema } from "#veryfront/agent/output-schema.ts";
 import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { ModelRuntimePromptMessage, RuntimePromptMessage } from "veryfront/provider/shared";
@@ -27,6 +30,54 @@ function createWarningCollector() {
 }
 
 describe("ext-llm-openai/openai-responses-request-builder", () => {
+  it("keeps agent object output schemas explicitly non-strict on the OpenAI Responses route", () => {
+    const outputSchema = defineSchema((v) => v.object({ ingested: v.number() }))();
+    const resolved = resolveAgentOutputSchema(outputSchema, "outcome-schema");
+    const body = buildOpenAIResponsesRequest(
+      "gpt-5.4-mini",
+      "veryfront-cloud",
+      {
+        prompt: [{ role: "user", content: [{ type: "text", text: "Return JSON." }] }],
+        responseFormat: resolved!.responseFormat,
+      },
+      true,
+      createWarningCollector(),
+    );
+    assertEquals(body.text, {
+      format: {
+        type: "json_schema",
+        name: "response",
+        schema: {
+          type: "object",
+          properties: { ingested: { type: "number" } },
+          required: ["ingested"],
+        },
+        strict: false,
+      },
+    });
+  });
+
+  it("preserves optional properties and explicit non-strict output formats", () => {
+    const schema = {
+      type: "object",
+      properties: { ingested: { type: "number" }, note: { type: "string" } },
+      required: ["ingested"],
+    };
+    const body = buildOpenAIResponsesRequest(
+      "gpt-5.4-mini",
+      "openai",
+      {
+        prompt: [{ role: "user", content: [{ type: "text", text: "Return JSON." }] }],
+        responseFormat: { type: "json_schema", name: "response", schema, strict: false },
+      },
+      false,
+      createWarningCollector(),
+    );
+    assertEquals(body.text, {
+      format: { type: "json_schema", name: "response", schema, strict: false },
+    });
+  });
+
   it("requests reasoning summaries by default for Veryfront Cloud GPT-5.5 Responses models", () => {
     const warnings = createWarningCollector();
 
