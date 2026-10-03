@@ -36,12 +36,16 @@ Option D. Tenant code runs only in an isolated executor. The project-free host k
 credential in a vault keyed by the executor's authenticated channel binding. The executor reaches
 the gateway and the API only through two channel operations:
 
-- the existing semantic `model.*` operations (`src/agent/hosted/executor-model-bridge.ts`), whose
-  resolver runs on the host;
-- a new `vf.egress` operation that names a logical route, never a URL.
+- **Model calls** use only the existing semantic `model.*` operations
+  (`src/agent/hosted/executor-model-bridge.ts`). The host-side broker enforces allowed model IDs,
+  grant admission, invocation authority and model-call persistence before dispatch
+  (`src/agent/hosted/executor-model-dispatch.ts`). The executor has no raw path to the gateway.
+- **Veryfront API calls** use a new `vf.egress` operation. It names a logical API route and its
+  parameters, never a URL or a path.
 
-The host builds the URL from host configuration, filters executor headers against an allowlist,
-attaches the credential for the route's class, and sends through the origin-bound transport
+For `vf.egress`, the host builds the URL from host configuration and the route's fixed template,
+filters executor headers against an allowlist, attaches the credential for the route, and sends
+through the origin-bound transport
 (`createVeryfrontApiOriginBoundOutboundFetch`, `redirect: "error"`). No bearer, capsule or token
 identifier crosses into the executor. A missing, expired or revoked vault entry fails closed before
 anything is sent.
@@ -64,6 +68,27 @@ decision, belong to the host.
   `CREDENTIAL_UNAVAILABLE`. Nothing is sent upstream. One run's binding can never resolve another
   run's credentials.
 
+### `vf.egress` routes
+
+Each logical route is a host-owned, frozen entry with:
+
+- a fixed method and path template, such as a release asset upload under the run's project and
+  release;
+- typed parameters for each template segment;
+- a query allowlist with typed values;
+- the credential class it attaches;
+- a request-body cap.
+
+The host builds the path only from the template. It never appends a caller-supplied suffix.
+
+- The project and run identity in a template come from the vault entry, never from the executor.
+- Executor-supplied parameters must match their type and a strict segment pattern. The host refuses
+  a value that is `.` or `..`, or that contains `/`, `\`, `%` or control characters. It also
+  refuses any query name or value outside the allowlist.
+- After construction, the URL must keep the configured origin and match the route template exactly.
+  Otherwise the call is refused. This prevents same-origin requests to endpoints outside the route
+  table.
+
 ### `vf.egress` request and response streaming
 
 An executor operation takes one JSON input, and each protocol frame is at most 1 MiB
@@ -73,26 +98,37 @@ An executor operation takes one JSON input, and each protocol frame is at most 1
 `src/platform/adapters/veryfront-api-client/operations.ts`). Request bodies therefore never travel
 inside the `vf.egress` input:
 
-- **Head.** The `vf.egress` input carries only the request head: route, path suffix, query, method,
-  allowlisted headers, and whether a body follows. It is a stream operation, so the response comes
-  back as a head frame followed by body chunk frames under the credit window.
-- **Request body.** When a body follows, the executor installs a `vf.egress.body` stream operation
-  for that request, and the host pulls the body from it. This mirrors how `http.request-body` moves
-  request bodies in `src/server/isolated-http/executor-http.ts`. Each chunk frame stays below the
-  frame limit after encoding. Because the body is a streamed result, the same credit window bounds
-  it: the host holds at most one window of chunks per call. The host feeds the chunks to the
-  upstream request through a pull-based stream, so a slow upstream stops the executor's producer.
-- **Size caps per route class.** The host enforces a byte cap per route class while it counts the
-  streamed bytes: API JSON routes 1 MiB, asset-upload routes 10 MiB, and gateway model routes 16 MiB.
-  A body that exceeds its cap, or that does not match a declared length, aborts the upstream request.
+- **Head.** The `vf.egress` input carries only the request head: an opaque request ID, the route,
+  its parameters and query, allowlisted headers, and whether a body follows. It is a stream
+  operation, so the response comes back as a head frame followed by body chunk frames under the
+  credit window.
+- **Request body.** When a body follows, the host pulls it by calling the executor-installed
+  `vf.egress.body` stream operation with the request ID from the head. This mirrors the request ID
+  and the `http.request-body` operation in `src/server/isolated-http/executor-http.ts`.
+  - An operation's context carries only the binding, signal and deadline, so the request ID is what
+    pairs a body with its head when uploads run concurrently.
+  - The executor serves each ID's body once. The host accepts a body only for a `vf.egress` call it
+    has open on the same channel.
+  - Each chunk frame stays below the frame limit after encoding. Because the body is a streamed
+    result, the credit window bounds it: the host holds at most one window of chunks per call.
+  - The host feeds the chunks to the upstream request through a pull-based stream, so a slow
+    upstream stops the executor's producer.
+- **Size caps per route.** Each route's body cap comes from that route's own contract, not from one
+  cap for every JSON request.
+  - Asset uploads are capped at `RELEASE_ASSET_MAX_SIZE_BYTES`.
+  - The release asset manifest cap is derived from the worst-case encoded size that
+    `RELEASE_ASSET_MANIFEST_LIMITS` allows. Every manifest the current API client can send must fit.
+  - A route without a contract-derived bound is not added to the table until it has one.
+  - The host counts streamed bytes. A body over its cap, or one that does not match a declared
+    length, aborts the upstream request.
 - **Abort.** Cancelling either stream, executor cancellation, vault revocation and the run deadline
   all abort the upstream request through one combined signal. A request body that ends early or
   fails never completes an upstream request. The upstream request is aborted, not sent truncated.
 - **HTTPS only.** The origin-bound transport also accepts `http:` origins, so it is not enough on
   its own. Before attaching any credential, the host requires an `https:` origin
-  (`requireSecureInferenceApiBaseUrl` in `src/provider/veryfront-cloud/shared.ts` for the gateway,
-  and `requireHostPrivateApiHttps` in `src/config/host-api-base.ts` for the API). It refuses the
-  call otherwise.
+  (`requireHostPrivateApiHttps` in `src/config/host-api-base.ts`). It refuses the call otherwise.
+  The `model.*` broker applies the same rule to the gateway origin
+  (`requireSecureInferenceApiBaseUrl` in `src/provider/veryfront-cloud/shared.ts`).
 
 A planned flag, `VERYFRONT_RUN_CREDENTIAL_ATTACHMENT=isolate|host`, will control rollout. It is not
 implemented yet. With `host`, the shared host refuses credentialed runs instead of executing them in-process. An unset value means
@@ -188,11 +224,14 @@ Each step lands behind the flag, in pre-production first.
 1. Interim shared-host fixes (#2188), including the `VeryfrontApiClient` transport.
 2. A host-only run-credential vault keyed by the run binding, with revocation and expiry.
 3. The `vf.egress` host operation. Its tests must cover:
-   - the route table, header allowlist and HTTPS-origin checks;
-   - credential class per route;
+   - the route table: fixed templates, typed parameters and query allowlists, with refusal of
+     absolute paths, `..`, encoded separators and unlisted query values;
+   - the header allowlist and HTTPS-origin checks;
+   - credential class per route, and no route that reaches the model gateway;
    - request-body streaming: a 10 MiB upload streams through `vf.egress.body` while host memory
      stays within one credit window of frames;
-   - per-route size caps;
+   - concurrent uploads, eight at once, each paired with its own body by request ID;
+   - per-route size caps, including a worst-case schema-valid release manifest that must succeed;
    - abort on executor cancel, revocation and deadline;
    - fail-closed lookups for unknown or revoked bindings.
 4. The executor-side transport and a bootstrap guard that rejects `VERYFRONT_*TOKEN*` variables.
