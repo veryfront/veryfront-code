@@ -28,6 +28,7 @@ const HeadersSet = Headers.prototype.set;
 const RequestHeadersGetter = Object.getOwnPropertyDescriptor(NativeRequest.prototype, "headers")!
   .get!;
 const RequestArrayBuffer = NativeRequest.prototype.arrayBuffer;
+const URLHrefGetter = Object.getOwnPropertyDescriptor(URL.prototype, "href")!.get!;
 const ObjectAssign = Object.assign;
 const ObjectCreate = Object.create;
 
@@ -214,7 +215,9 @@ async function normalizeRequestBody(
     setHeader(headers, "content-type", body.type);
   } else if (typeof FormData !== "undefined" && body instanceof FormData) {
     const normalized = new NativeRequest(
-      url,
+      // A string, read with the captured getter: converting a URL object
+      // would call a patchable toString after the header record was checked.
+      IntrinsicReflectApply(URLHrefGetter, url, []) as string,
       createNativeRequestInit(undefined, {
         method: readOwnInitField(init, "method") ?? "POST",
         headers,
@@ -304,11 +307,12 @@ export async function fetchWithPinnedAddresses(
   // Filling and reading a native Headers writes into arrays an index accessor
   // or a replaced array species would observe; each turn that touches the
   // credential-bearing headers is checked first.
+  // Init fields first: an own getter runs project code, which must not run
+  // once the credential-bearing headers exist.
+  const mode = readOwnInitField(init, "mode");
+  const initHeaders = readOwnInitField(init, "headers");
   assertNativeRequestProcessing();
-  const headers = applyRuntimeDefaultRequestHeaders(
-    copyNativeHeaders(readOwnInitField(init, "headers")),
-    readOwnInitField(init, "mode"),
-  );
+  const headers = applyRuntimeDefaultRequestHeaders(copyNativeHeaders(initHeaders), mode);
   const body = await normalizeRequestBody(url, init, headers);
   const method = (readOwnInitField(init, "method") ?? "GET").toUpperCase();
   assertNativeRequestProcessing();
