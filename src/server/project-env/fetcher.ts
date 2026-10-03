@@ -225,8 +225,11 @@ export async function fetchProjectEnvVars(
 ): Promise<Record<string, string>> {
   // The internal origin is host-owned. Project overlays and project env files
   // cannot redirect either the tenant credential or the host credential.
-  const internalOrigin = getHostEnvExcludingEnvFile("VERYFRONT_API_INTERNAL_URL");
-  const origin = internalOrigin === undefined ? apiBaseUrl : stripTrailingSlashes(internalOrigin);
+  // Blank values count as unset, matching the proxy's `getEnv(...) || apiBaseUrl`.
+  const internalOrigin = stripTrailingSlashes(
+    getHostEnvExcludingEnvFile("VERYFRONT_API_INTERNAL_URL")?.trim() ?? "",
+  );
+  const origin = internalOrigin || apiBaseUrl;
   const managementUrl = `${origin}/projects/${
     encodeURIComponent(projectSlug)
   }/environment-variables?environment_id=${

@@ -58,4 +58,45 @@ describe("project environment internal origin", () => {
       });
     }
   });
+
+  it("treats a blank host internal origin as unset", async () => {
+    const keys = [
+      "VERYFRONT_API_INTERNAL_URL",
+      "VERYFRONT_API_INTERNAL_USER",
+      "VERYFRONT_API_INTERNAL_PASS",
+    ];
+    const previous = keys.map((key) => Deno.env.get(key));
+    try {
+      Deno.env.set(keys[1]!, "test-user");
+      Deno.env.set(keys[2]!, "test-pass");
+      for (const blank of ["", "   "]) {
+        Deno.env.set(keys[0]!, blank);
+        const urls: string[] = [];
+        await withMockFetch(
+          (async (input) => {
+            urls.push(input instanceof Request ? input.url : String(input));
+            return Response.json({ data: [] });
+          }) as typeof fetch,
+          () =>
+            fetchProjectEnvVars(
+              "https://public-api.example.test",
+              "my-project",
+              "env-1",
+              "fresh-credential",
+            ),
+        );
+        assertEquals(
+          urls.map((url) => new URL(url).origin),
+          ["https://public-api.example.test", "https://public-api.example.test"],
+          `VERYFRONT_API_INTERNAL_URL=${JSON.stringify(blank)} must fall back to the API base URL`,
+        );
+      }
+    } finally {
+      keys.forEach((key, index) => {
+        const value = previous[index];
+        if (value === undefined) Deno.env.delete(key);
+        else Deno.env.set(key, value);
+      });
+    }
+  });
 });
