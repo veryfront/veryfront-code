@@ -159,16 +159,21 @@ field, it must be a non-empty array of trimmed strings. Scope values cannot
 contain commas or control
 characters, including Unicode C1 controls and line separators, because Deno
 uses commas to separate permissions and these characters make command and
-audit boundaries ambiguous. Scope strings must contain well-formed Unicode;
+audit boundaries ambiguous.
+
+Scope strings must contain well-formed Unicode;
 the same rule applies to every capability metadata key and string so audit
 records remain single-line and unambiguous. Audit output JSON-quotes capability
 types and field names. Raw capability text is limited to 32,768 UTF-8 bytes and
-UTF-16 code units, and its rendered audit output to 49,152 of each. Veryfront
+UTF-16 code units, and its rendered audit output to 49,152 of each.
+
+Veryfront
 does not normalize filesystem paths. The combined serialized Deno permission
 flags for one extension are limited to 8,192 UTF-8 bytes and 8,192 UTF-16 code
 units so an accepted declaration remains launchable across supported operating
 systems. For `net:listen`, `host` is valid only together with a non-empty
 `ports` array.
+
 Veryfront rejects unknown fields on recognized capability types so a typo such
 as `path` instead of `paths` cannot silently broaden access.
 System API scopes must use a `Deno.SysPermissionDescriptor.kind` supported by

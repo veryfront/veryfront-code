@@ -82,12 +82,15 @@ servers.
 The standalone service shares a process with the Agent code it loads. Use it
 for trusted code. Captured request accessors protect specific ingress operations;
 they do not provide process isolation for request bodies or credentials.
+
 Custom host route handlers receive the original request and remain responsible
 for authentication and credential handling.
 Dispatch visits the host route table and matched path segments by index so a
 replaced array iterator cannot inject a handler before host authentication.
 CORS allowlist membership, response header writes, and route path parsing also
-use captured operations. Sparse route, origin, method, and header arrays ignore inherited
+use captured operations.
+
+Sparse route, origin, method, and header arrays ignore inherited
 entries. Route handlers retain ordinary-object params; decoded keys bypass
 inherited setters.
 
@@ -96,7 +99,9 @@ to native constructors. These defaults override writable inherited data properti
 including CORS headers for a denied origin, and apply only to omitted values.
 If `Object.prototype` defines an accessor for `headers`, `status`, or `statusText`,
 response construction throws a `TypeError` before native option conversion can
-invoke it. On Node, non-writable inherited data properties for these fields also
+invoke it.
+
+On Node, non-writable inherited data properties for these fields also
 cause native construction to throw a `TypeError`. The runtime does not remove
 these properties, return an empty response, or
 retry with weaker CORS rules. Invalid response values still fail native
@@ -531,16 +536,23 @@ the trusted broker owns the agent loop and privileged operations.
 The fixed context also accepts optional `userId` and `projectSlug` from the approved
 execution grant. Project tools receive those captured values; caller conflicts fail.
 For canonical execution using a globally owned source, `context.projectId` may be
-explicitly `null`. The tool receives no project ID, while its canonical run ID
+explicitly `null`.
+
+The tool receives no project ID, while its canonical run ID
 remains bound. A projectless context must not include a project slug, and a
 project-owned source still requires a project ID. Omitting `projectId` does not
-select global execution. Global steering may be provided as an explicit granted
+select global execution.
+
+Global steering may be provided as an explicit granted
 capability; it is not inferred from a placeholder project. This support does not
 enable ephemeral execution or project transitions in the trusted broker.
 An explicitly enabled project source can receive the current call's `activeSkillId`
-and bounded `activeSkillToolAvailability`. Omitted skill fields clear prior values.
+and bounded `activeSkillToolAvailability`.
+
+Omitted skill fields clear prior values.
 Credentials and other caller context fields do not cross the project channel.
 Unknown startup `mode` values fail before bootstrap configuration or artifact access.
+
 Selected inline tools and discovered tools are combined under the exact project
 source policy, including metadata access and later execution. Framework-generated
 agent runtime tools are excluded from the project-only catalog, even when their
@@ -588,12 +600,16 @@ cancellation bearer with its configured public key. Two claim shapes are accepte
 one for each shape the API mints: a project- and run-scoped `veryfront-server`
 service-account bearer carrying `tokenUse: project_scoped_service_account`, and,
 for a run with no project, the requester's own session bearer, which carries no
-`tokenUse` at all. Both shapes are pinned by a contract fixture holding payloads
+`tokenUse` at all.
+
+Both shapes are pinned by a contract fixture holding payloads
 captured from the API's minting code, so a claim change on either side fails a
 test instead of rejecting every cancellation in production. A general user token
 without a matching run claim is insufficient, and development decode-only
 authentication does not grant cancellation. Custom route sets must supply
-`verifyRunCancellationToken`; omission returns HTTP 403. The API retains actor and
+`verifyRunCancellationToken`; omission returns HTTP 403.
+
+The API retains actor and
 collaborator authorization before minting the runtime credential. Request-owned
 AG-UI streams still support cancellation through their request signal.
 
@@ -609,22 +625,30 @@ cancels by run id and cannot create a delayed-start cancellation.
 Resume carries the same contract. The default runtime verifies the bearer the API
 signs for `POST /api/control-plane/runs/:runId/resume` against the same public key.
 The default route set also serves `POST /api/runs/:runId/resume` with the same
-verification and signal handler. Both routes refuse an invalid bearer before
+verification and signal handler.
+
+Both routes refuse an invalid bearer before
 changing the waiting run. Resume has no separate mint: the API signs it with the run-bound service credential it already
 uses for the stream, so two claim shapes are accepted, both bound to one run and one
 project. A run whose record names an actor service account and an agent access grant
 carries `tokenUse: run_scoped_service_account` with that grant recorded in the token;
 every other project-bound run carries the `veryfront-server` service-account bearer
-with `tokenUse: project_scoped_service_account`. The API refuses to resume a run with
+with `tokenUse: project_scoped_service_account`.
+
+The API refuses to resume a run with
 no project before it mints anything, so no projectless resume shape exists. Both
 shapes are pinned by a contract fixture holding payloads captured from the API's
 signing path, including the scope ordering, which differs between the two mints. The
 grant relation is recorded rather than re-derived, so the API's collaborator policy
-stays the API's decision. Custom route sets that serve resume must supply
+stays the API's decision.
+
+Custom route sets that serve resume must supply
 `verifyRunResumeToken`; omission returns HTTP 403. Both resume routes enforce the
 1 MiB request-body limit on the incoming stream before calling custom authentication.
 Authentication receives a separate request with the bounded original body, so it may
-read JSON without consuming the signal handler's input. Oversized declared or chunked
+read JSON without consuming the signal handler's input.
+
+Oversized declared or chunked
 bodies return HTTP 413 before authentication and cancel the remaining stream.
 Standalone resume and cancel handlers apply the same bound before run-id resolvers
 and authorizers receive a body. Cancellation without a body remains supported.
@@ -649,12 +673,16 @@ verification and output persistence. `createManagedAgUiBrokerHandler` handles
 direct `POST /api/ag-ui` requests with request-owned SSE. Its ingress must supply
 `verifyProjectAccess` for requests containing a project ID. Without that verifier,
 project requests return HTTP 403 before preparation or allocation; projectless
-requests can still proceed. Configure each direct
+requests can still proceed.
+
+Configure each direct
 adapter's owner in trusted service configuration; project owners reject requests
 for other projects before preparation or allocation. Their `prepare` callbacks
 receive private broker authority and bounded executor data separately. Resolve
 immutable sources and capabilities in the broker before returning the executor
-start input. These adapters share admission, duplicate handling, and retirement
+start input.
+
+These adapters share admission, duplicate handling, and retirement
 with the signed adapter.
 
 The broker installs invocation grants, describes
@@ -742,10 +770,13 @@ service list after the first heartbeat
 
 Broker model output limits and provider-tool descriptors must stay within the installed model grant.
 Each broker tool capability must also stay within the installed tool allowlist. Startup rejects broader
-broker authority before allocating an executor. Preparation uses the narrower broker model output
+broker authority before allocating an executor.
+
+Preparation uses the narrower broker model output
 limits and provider-tool list, so its default model requests fit the broker policy. Anthropic thinking
 with an additive token budget reserves that budget from the total allowance before preparation chooses
 the completion limit. Adaptive thinking uses the total allowance without an additive reservation.
+
 Preparation rejects an explicit completion limit that exceeds the remainder. Source IDs must
 belong to the installed host-facade or remote-source grants. Owner-scoped tool selectors use the same
 canonical names for capability checks and steering refreshes.
@@ -753,8 +784,12 @@ canonical names for capability checks and steering refreshes.
 Trusted ingress must provide `tools.catalog` with the complete tool inventory and ownership metadata,
 including project-local tools that have no broker capability. The broker resolves short selectors to
 owned tools first, then validates source capabilities against those exact IDs. Preparation and steering
-refreshes receive the same resolved grant. A shadowed global tool does not gain authority from an owned
+refreshes receive the same resolved grant.
+
+A shadowed global tool does not gain authority from an owned
 tool's short selector. The catalog must come from trusted source metadata before executor discovery.
 For selected host tools, the broker includes the catalog's owner and short-name mapping in the
-validated installation. Rebuilt executor facades retain that mapping, so an agent's short selector
+validated installation.
+
+Rebuilt executor facades retain that mapping, so an agent's short selector
 continues to select the same canonical tool. Remote source listings do not supply ownership authority.

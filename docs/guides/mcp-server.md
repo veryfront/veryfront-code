@@ -165,11 +165,15 @@ Resource patterns use `:name` URI-template parameters. Common forms include:
 Parameter names in one pattern must be unique and separated by literal text. A `:` that
 directly follows an alphanumeric character is always data, never a parameter: write
 `/files/file-:id`, not `/files/file:id`. This is the same uniform rule that keeps opaque
-identifiers like `urn:isbn` literal. For embedded
+identifiers like `urn:isbn` literal.
+
+For embedded
 parameters, the first following literal belongs to the template: `/file-:base.:ext` reads
 `file-report.final.pdf` as `base=report` and `ext=final.pdf`. Path captures stop at raw `/`,
 `?`, or `#`; query captures stop at raw `&` or `#`; and fragment captures cannot cross another `#`.
-Clients can percent-encode those characters inside a value. Captures are decoded exactly once
+Clients can percent-encode those characters inside a value.
+
+Captures are decoded exactly once
 before schema validation and loading, so `%2F` becomes `/`, `%252F` becomes `%2F`, and `+`
 stays `+`. A malformed percent escape does not match the resource and its loader is not called.
 

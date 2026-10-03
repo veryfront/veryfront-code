@@ -160,7 +160,9 @@ kept separate until they are placed back into `AgentConfig.remoteTools`.
 The default hosted server set is `[{ kind: "veryfront-api" }]`. Studio MCP is
 never enabled by default and is never inferred from allowed tool names or
 client-supplied Studio metadata. Enabling it requires an explicit `mcpServers`
-entry with `{ kind: "veryfront-studio" }`. That explicit entry still depends on
+entry with `{ kind: "veryfront-studio" }`.
+
+That explicit entry still depends on
 a hosted Studio MCP transport: when `studioMcpUrl` is missing or the client
 profile is not allowed to use Studio MCP, source creation fails with a config
 or permission error instead of silently skipping the server. Generic MCP

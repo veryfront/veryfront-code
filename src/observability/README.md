@@ -314,7 +314,9 @@ Exception telemetry never evaluates error-field accessors or a configured
 `Error.prepareStackTrace` hook. Safe own string-valued data fields preserve a
 bounded message, already-available stack, and built-in, aggregate, custom, or
 framework error name. A captured platform compatibility check identifies
-native errors without consulting mutable global constructors. DOMException
+native errors without consulting mutable global constructors.
+
+DOMException
 prototype accessors are never invoked: runtimes whose immutable brand check
 recognizes DOMException report the conservative name `DOMException` and omit
 its inherited message; older Node releases treat it as opaque. Older V8

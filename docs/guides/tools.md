@@ -63,16 +63,21 @@ the same project scope and policy restrictions as their legacy names.
 
 Connector allowlists do not remove trusted platform capabilities. That exception
 requires host-owned provenance; a remote source cannot claim it with a tool name
-or source ID. Hosted wrappers and child forks preserve provenance. Managed
+or source ID. Hosted wrappers and child forks preserve provenance.
+
+Managed
 executor installations carry broker-derived platform source and host-tool
 metadata, then restore provenance on the executor-local facades.
 Reserved platform names resolve only through trusted sources, regardless of
 custom server ordering. Hosted discovery applies connector policy to the same
 catalog snapshot it lists, without fetching each catalog a second time.
+
 Parent, child, hosted-project, and standalone API sources derive canonical aliases
 from the authenticated legacy catalog. API MCP allow/deny entries apply to both
 spellings; a run's tool-name ceiling still grants only its exact selected names.
-Canonical calls use the legacy wire name after project and access checks. Runtime
+Canonical calls use the legacy wire name after project and access checks.
+
+Runtime
 dispatch reuses the source selected during authorization for that call.
 
 ## Try a tool directly
@@ -142,7 +147,7 @@ every query term.
 Search work is bounded to 4,096 catalog candidates. Each parameter schema is
 inspected iteratively with depth, node, and byte budgets, and the whole search
 has an aggregate schema-work budget. A malformed, cyclic, or over-budget schema
-cannot abort the search; that tool simply cannot match by parameter description.
+cannot abort the search; that tool cannot match by parameter description.
 Name and description matching remains available for other healthy tools.
 
 The search loads schemas from the current authorized `tools` catalog. It also

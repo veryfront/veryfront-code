@@ -167,14 +167,18 @@ when the tool input is complete enough to commit.
 `invoke_agent` creates an isolated child run. The child receives its own
 conversation context and tool inventory. The parent transcript receives a compact
 summary/result and durable child-run identifiers, not the full child transcript.
+
 For cross-project delegation, `project_reference` accepts a project UUID or slug.
 The hosted runtime resolves it to the canonical project UUID before selecting
 project-agent settings, changing project context, or creating the child run.
-The default `result_mode` is `summary`. The `structured` mode extracts model,
+The default `result_mode` is `summary`.
+
+The `structured` mode extracts model,
 tool, provider tool, and import ids from bounded head-and-tail windows totaling
 128,000 characters. Model, provider tool, and import facts use 64,000
 characters at each end. Tool arrays use 32,000 characters at the start and
 96,000 at the end so a long declaration can retain a trailing critical id.
+
 Tail extraction stops when the omitted span exceeds 128,000 characters because
 the bounded scan cannot determine whether the tail begins inside a quoted value.
 Keep the complete declaration inside its applicable window. Use `full` when
@@ -370,7 +374,9 @@ resolves while the consumer holds a telemetry frame is cached by
 `trackProviderRead` and consumed on resume, but if the attempt limit wins
 first, the cached result is discarded and the failure is classified
 `STREAM_ATTEMPT_TIMEOUT` with `source: "runtime"`, never as provider semantic
-idle. Delivery latency belongs to Stream Delivery.
+idle.
+
+Delivery latency belongs to Stream Delivery.
 
 When a provider part and a deadline become ready together, `raceProviderRead`
 resolves the tie in a fixed order, which is what makes the race tests
