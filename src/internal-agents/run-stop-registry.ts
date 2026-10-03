@@ -14,12 +14,22 @@ export class RunStopRegistry {
     }
   }
 
+  private capacityUsed(): number {
+    let count = this.cancelled.size;
+    for (const runId of this.runs.keys()) if (!this.cancelled.has(runId)) count++;
+    return count;
+  }
+
   register(runId: string, abort: () => void): () => void {
     this.prune();
     if (this.cancelled.has(runId)) throw new Error("Run cancelled");
-    this.stopped.delete(runId);
     let executions = this.runs.get(runId);
-    if (!executions) this.runs.set(runId, executions = new Set());
+    if (!executions) {
+      // Reserve its future tombstone before admitting a producer, so stop delivery cannot fail at capacity.
+      if (this.capacityUsed() >= 10_000) throw new Error("Cancellation registry capacity reached");
+      this.runs.set(runId, executions = new Set());
+    }
+    this.stopped.delete(runId);
     executions.add(abort);
     let settled = false;
     return () => {
@@ -36,7 +46,7 @@ export class RunStopRegistry {
 
   requestStop(runId: string): { accepted: boolean; stopped: boolean } {
     this.prune();
-    if (!this.cancelled.has(runId) && this.cancelled.size >= 10_000) {
+    if (!this.cancelled.has(runId) && !this.runs.has(runId) && this.capacityUsed() >= 10_000) {
       throw new Error("Cancellation registry capacity reached");
     }
     // Beyond the maximum lifetime of a signed dispatch credential. Refuse delayed starts.
