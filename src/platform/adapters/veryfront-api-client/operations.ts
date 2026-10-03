@@ -533,13 +533,25 @@ export class VeryfrontAPIOperations {
     branchRef = "main",
     options: Omit<ListFilesOptions, "cursor"> = {},
   ): Promise<ProjectFile[]> {
-    const allFiles = await listAllFiles((cursor) =>
-      this.listBranchFiles(projectRef, branchRef, {
-        ...options,
-        cursor,
-        limit: options.withoutContent ? METADATA_PAGE_LIMIT : DEFAULT_PAGE_LIMIT,
-      })
-    );
+    const listPages = (limit: number) =>
+      listAllFiles((cursor) =>
+        this.listBranchFiles(projectRef, branchRef, { ...options, cursor, limit })
+      );
+    let allFiles: ProjectFile[];
+    if (options.withoutContent) {
+      try {
+        allFiles = await listPages(METADATA_PAGE_LIMIT);
+      } catch (error) {
+        // An API without large metadata pages rejects the page size; any other
+        // rejection of the metadata query repeats and surfaces from here.
+        if (!(error instanceof VeryfrontError && (error.status === 400 || error.status === 422))) {
+          throw error;
+        }
+        allFiles = await listPages(DEFAULT_PAGE_LIMIT);
+      }
+    } else {
+      allFiles = await listPages(DEFAULT_PAGE_LIMIT);
+    }
 
     logger.debug("listAllBranchFiles DONE", {
       projectRef,
