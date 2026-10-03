@@ -175,6 +175,40 @@ const page = await runs.list({ limit: 50 });
 console.log(page.data.map((run) => run.run_id));
 ```
 
+## Typed Runs contract SDK
+
+`veryfront/runs/target` publishes the typed SDK for the Runs target contract that
+the npm package pins. It has one method per contract operation, and its request
+and response types come from that pinned contract. You supply the HTTP
+transport. The legacy client at `veryfront/runs` stays available until consumers
+switch over.
+
+```ts
+import { createRunsSdk, type RunsContractComponents, type RunsOutput } from "veryfront/runs/target";
+
+const sdk = createRunsSdk({
+  baseUrl: "https://api.veryfront.com",
+  transport: fetch,
+  credential: { bearer: process.env.VERYFRONT_API_TOKEN! },
+});
+
+const run: RunsOutput<"getRun"> = await sdk.getRun({ path: { run_id: "run_123" } });
+const children = await sdk.listRunChildRuns({ path: { run_id: run.id } });
+for await (const frame of sdk.streamRunEvents({ path: { run_id: run.id } })) {
+  console.log(frame.id, frame.event);
+}
+
+type Run = RunsContractComponents["schemas"]["Run"];
+```
+
+The package ships the contract as types, not runtime schemas. An app that
+validates responses at its own boundary declares its validators against these
+types, for example `RunsOutput<"getRun">` or
+`RunsContractComponents["schemas"]["Run"]`. It doesn't copy the contract.
+When the pinned contract changes, a validator that no longer matches fails to
+compile. Error responses reject with a `VeryfrontError`, and `runsProblemOf(error)`
+returns the RFC 9457 problem body.
+
 ## Scheduling
 
 Schedules are definitions that create runs later. One-time and cron-style

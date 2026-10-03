@@ -15,6 +15,9 @@
  *      package's build output to reach the starter templates
  *  6b. `veryfront init --integrations linear` writes the Linear client, tools
  *      and auth route from the packed template manifest
+ *  6c. `veryfront/runs/target` resolves by its published subpath and its Runs
+ *      SDK drives run list/detail, stream/snapshot, child runs, resume and
+ *      input responses over the prepared operation fixtures
  *   7. TypeScript config graphs and CommonJS requires build at the Node 22.3
  *      minimum without native type stripping or staging-directory resolution
  *   8. the packed ai-agent starter starts under Node, renders a page, and
@@ -30,12 +33,14 @@
  * The runtime under test stays the packed npm artifact under the ambient Node
  * version: this orchestrator only spawns `npm`, `node`, and `deno eval`
  * against the installed package; it never imports the repository's runtime
- * sources into the smoke path.
+ * sources into the smoke path. The orchestrator reads the Runs operation
+ * fixtures from the repository and hands them to the consumer as JSON data.
  *
  * Requires: `deno task build:npm` output in ./npm, node + npm on PATH.
  */
 
 import { fromFileUrl } from "#std/path";
+import { RUNS_OPERATION_FIXTURES } from "../../src/runs/target/client.test-helpers.ts";
 import {
   formatNpmCompatibilityArtifactCliError,
   loadNpmCompatibilityArtifact,
@@ -953,6 +958,76 @@ async function checkScaffoldExport(workDir: string): Promise<void> {
   }
 }
 
+/** Operations a published Studio consumer drives through `veryfront/runs/target`. */
+const RUNS_SDK_CONSUMER_OPERATIONS = [
+  "listRuns",
+  "getRun",
+  "getRunSnapshot",
+  "streamRunEvents",
+  "listRunChildRuns",
+  "resumeRun",
+  "createInputResponse",
+] as const;
+
+const RUNS_SDK_SCRIPT = `
+const { readFile } = await import('node:fs/promises');
+const { deepStrictEqual, ok } = await import('node:assert/strict');
+const { createRunsSdk, RUNS_OPERATIONS } = await import('veryfront/runs/target');
+const fixtures = JSON.parse(await readFile('runs-operation-fixtures.json', 'utf8'));
+const baseUrl = 'https://api.example.test';
+for (const [operationId, fixture] of Object.entries(fixtures)) {
+  const requests = [];
+  const runs = createRunsSdk({
+    baseUrl,
+    credential: { bearer: 'consumer-token' },
+    transport: (request) => {
+      requests.push(request);
+      const { status, body } = fixture.response;
+      if (body === undefined) return Promise.resolve(new Response(null, { status }));
+      if (typeof body === 'string') {
+        return Promise.resolve(
+          new Response(body, { status, headers: { 'Content-Type': 'text/event-stream' } }),
+        );
+      }
+      return Promise.resolve(Response.json(body, { status }));
+    },
+  });
+  const result = runs[operationId](fixture.input);
+  if (RUNS_OPERATIONS[operationId].stream) {
+    const frames = [];
+    for await (const frame of result) frames.push(frame);
+    ok(frames.length > 0, operationId + ' streamed no frames');
+  } else {
+    deepStrictEqual(await result, fixture.response.body, operationId);
+  }
+  deepStrictEqual(requests.map((request) => request.url), [baseUrl + fixture.url], operationId);
+  deepStrictEqual(requests[0].method, RUNS_OPERATIONS[operationId].method, operationId);
+  deepStrictEqual(requests[0].headers.get('authorization'), 'Bearer consumer-token');
+}
+`;
+
+async function checkRunsSdkExport(workDir: string): Promise<void> {
+  console.log("== 6c. runs/target SDK drives Runs operations from the published exports map");
+  const fixtures = Object.fromEntries(
+    RUNS_SDK_CONSUMER_OPERATIONS.map((operationId) => [
+      operationId,
+      RUNS_OPERATION_FIXTURES[operationId],
+    ]),
+  );
+  await Deno.writeTextFile(
+    `${workDir}/runs-operation-fixtures.json`,
+    JSON.stringify(fixtures),
+  );
+  const runsSdk = await run("node", [
+    "--input-type=module",
+    "-e",
+    RUNS_SDK_SCRIPT,
+  ], { cwd: workDir, timeoutMs: 120_000 });
+  if (runsSdk.code !== 0) {
+    fail(`veryfront/runs/target did not drive the Runs SDK from an installed package\n${runsSdk.combined}`);
+  }
+}
+
 async function checkInitIntegrations(workDir: string): Promise<void> {
   console.log("== 6b. init --integrations writes the integration scaffold");
   const init = await run("node", [
@@ -1660,6 +1735,7 @@ async function runSmoke(workDir: string): Promise<void> {
     await checkAuthExtensionLoads(workDir, plan);
     await checkBrokenTransitiveDependency(workDir);
     await checkScaffoldExport(workDir);
+    await checkRunsSdkExport(workDir);
     await checkInitIntegrations(workDir);
     await checkNodeTypeScriptConfig(workDir);
 
