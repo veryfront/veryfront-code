@@ -17,6 +17,18 @@ Primary source areas:
 - [`src/workflow/worker/`](../../src/workflow/worker/)
 - [`src/workflow/api/`](../../src/workflow/api/)
 
+## Manual pause
+
+An API-owned durable workflow can pause between settled step batches. The runtime
+persists completed steps and checkpoints before asking the control plane whether
+to stop. A lost or rejected acknowledgement holds that boundary until an
+authoritative reply arrives or the execution is cancelled.
+
+Manual resume continues the same run without repeating completed steps. It checks
+current execution authority before releasing the boundary. After a restart, a
+persisted running record with no active nodes or waits can recover from its
+settled step state. The backend lock prevents two executions from resuming it.
+
 ## Runtime flow
 
 ```mermaid

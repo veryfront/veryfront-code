@@ -146,7 +146,7 @@ const WORKFLOW_PAUSE_ACK_ATTEMPTS = 3;
 const WORKFLOW_PAUSE_ACK_RETRY_MS = 100;
 /** One pause-ack request; the run waits for the answer at its boundary. */
 const WORKFLOW_PAUSE_ACK_TIMEOUT_MS = 2_000;
-/** After a check the control plane did not answer, boundaries skip asking for this long. */
+/** Backoff between unknown decision rounds while retaining the safe boundary. */
 const WORKFLOW_PAUSE_CHECK_BACKOFF_MS = 30_000;
 /**
  * How often a manual resume retries, 100ms apart, while the paused execution still holds the
@@ -171,6 +171,8 @@ const NumberIsFinite = Number.isFinite;
 const NumberParseInt = Number.parseInt;
 const MathTrunc = Math.trunc;
 const ObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const ObjectValues = Object.values;
+const ArraySome = Array.prototype.some;
 const ObjectSetPrototypeOf = Object.setPrototypeOf;
 const NumberPrototypeToString = Number.prototype.toString;
 const StringPrototypeCharCodeAt = String.prototype.charCodeAt;
@@ -1565,6 +1567,33 @@ async function resumeWaitingWorkflowRun(
  * attempt whose run was paused again meanwhile, is told to stop and reports
  * the pause instead of releasing it.
  */
+async function awaitRunPauseDecision(
+  acknowledge: () => Promise<boolean | undefined>,
+  signal: AbortSignal,
+  deps: Pick<ProjectRunExecuteHandlerDeps, "sleep">,
+): Promise<boolean> {
+  while (!isAbortSignalAborted(signal)) {
+    const decision = await acknowledge();
+    if (decision !== undefined) return decision;
+    // An unknown reply may hide a committed stop. Hold the durable boundary until
+    // the current authority explicitly permits continuation or cancellation ends it.
+    await deps.sleep(WORKFLOW_PAUSE_CHECK_BACKOFF_MS);
+  }
+  return true;
+}
+
+function isRecoverableManualPauseBoundary(
+  run: WorkflowRunView,
+  parked: PendingWorkflowWaits,
+): boolean {
+  return run.status === "running" && run.currentNodes?.length === 0 &&
+    isParkedOnNothing(parked) &&
+    IntrinsicReflectApply(ArraySome, ObjectValues(run.nodeStates ?? {}), [
+        (state: NonNullable<WorkflowRunView["nodeStates"]>[string]) =>
+          state?.status === "completed" || state?.status === "skipped",
+      ]) === true;
+}
+
 async function resumeManuallyPausedRun(
   client: WorkflowClientView,
   runId: string,
@@ -1576,16 +1605,24 @@ async function resumeManuallyPausedRun(
 ): Promise<{ run: WorkflowRunView } | { failure: string }> {
   const settle = () =>
     waitForWorkflowResult(client, runId, signal, deps, undefined, pollingStopped, cancelRun);
-  let current = await settle();
+  let current = await client.getRun(runId);
+  if (!current) return { failure: "Workflow run was not found" };
   for (let attempt = 1;; attempt++) {
-    if (!isManualPause(current, await readPendingWaits(client, runId, current))) {
-      return { run: current };
+    const parked = await readPendingWaits(client, runId, current);
+    if (!isManualPause(current, parked) && !isRecoverableManualPauseBoundary(current, parked)) {
+      current = await settle();
+      if (!isManualPause(current, await readPendingWaits(client, runId, current))) {
+        return { run: current };
+      }
+      continue;
     }
-    if (!signal.aborted && await acknowledgePause?.()) return { run: current };
-    if (signal.aborted) {
+    if (!acknowledgePause) return { failure: "Manual resume requires a run stop capability" };
+    const stop = await awaitRunPauseDecision(acknowledgePause, signal, deps);
+    if (isAbortSignalAborted(signal)) {
       await cancelRun();
       return { run: { status: "cancelled", error: { message: "Workflow run cancelled" } } };
     }
+    if (stop) return { run: { ...current, status: "waiting", currentNodes: [] } };
     if (!client.resume) return { failure: "Workflow client cannot resume paused runs" };
     try {
       await client.resume(runId);
@@ -1593,7 +1630,8 @@ async function resumeManuallyPausedRun(
     } catch (error) {
       if (attempt >= WORKFLOW_MANUAL_RESUME_ATTEMPTS) throw error;
       await deps.sleep(DEFAULT_WORKFLOW_STATUS_POLL_INTERVAL_MS);
-      current = await settle();
+      current = await client.getRun(runId);
+      if (!current) return { failure: "Workflow run was not found" };
     }
   }
   return { run: await settle() };
@@ -1682,22 +1720,16 @@ async function runDiscoveredWorkflow(
   // Only a durable run can pause: an ephemeral one has nothing to resume from.
   let pauseChecksEnabled = false;
   let lastPauseCheckAt: number | undefined;
-  let pauseCheckWindowMs = WORKFLOW_PAUSE_CHECK_INTERVAL_MS;
   const shouldPause = async (runId: string): Promise<boolean> => {
     if (!acknowledgePause || !pauseChecksEnabled || runId !== request.runId) return false;
     if (isAbortSignalAborted(signal)) return false;
     const now = deps.now();
     if (
-      lastPauseCheckAt !== undefined && now - lastPauseCheckAt < pauseCheckWindowMs
+      lastPauseCheckAt !== undefined && now - lastPauseCheckAt < WORKFLOW_PAUSE_CHECK_INTERVAL_MS
     ) return false;
-    const answer = await acknowledgePause();
-    // The window starts when the answer arrives, so a slow reply cannot make every boundary
-    // ask, and an unanswered check backs off longer.
-    pauseCheckWindowMs = answer === undefined
-      ? WORKFLOW_PAUSE_CHECK_BACKOFF_MS
-      : WORKFLOW_PAUSE_CHECK_INTERVAL_MS;
+    const answer = await awaitRunPauseDecision(acknowledgePause, signal, deps);
     lastPauseCheckAt = deps.now();
-    return answer === true;
+    return answer;
   };
   let client: WorkflowClientView;
   try {
@@ -2211,8 +2243,8 @@ function createRunStopAcknowledger(req: Request, runId: string): (() => Promise<
  * Ask the control plane whether this attempt should stop at a safe boundary.
  * A `{ "stop": true }` reply means the API confirmed a requested pause for this
  * attempt, or the attempt no longer holds the run. The call is idempotent, so a
- * transport error or 5xx is retried a few times and then answers `undefined`
- * (unknown, so continue); anything else, including 401, reads as continue.
+ * transport error or 5xx is retried a few times and then answers `undefined`.
+ * Unknown, rejected, and malformed replies never authorize continuation.
  */
 function createRunPauseAcknowledger(
   req: Request,
@@ -2260,10 +2292,12 @@ function createRunPauseAcknowledger(
               });
             }
             await response.body?.cancel();
-            return false;
+            return undefined;
           }
           const body: unknown = await ReflectApply(ResponsePrototypeJson, response, []);
-          return isRecord(body) && body.stop === true;
+          if (response.status === 200 && isRecord(body) && typeof body.stop === "boolean") {
+            return body.stop;
+          }
         }
         await response.body?.cancel();
       } catch {

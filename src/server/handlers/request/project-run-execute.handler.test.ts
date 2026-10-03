@@ -9899,6 +9899,8 @@ describe("server/handlers/request/project-run-execute.handler manual pause (#258
       statePersistence?: "durable" | "ephemeral";
       now?: () => number;
       onDiscover?: () => void;
+      onResume?: () => void;
+      sleep?: (ms: number) => Promise<void>;
     } = {},
   ): ProjectRunExecuteHandler {
     return new ProjectRunExecuteHandler(createDeps({
@@ -9911,12 +9913,19 @@ describe("server/handlers/request/project-run-execute.handler manual pause (#258
           definition,
         };
       },
-      createWorkflowClient: (config) =>
-        Object.assign(createWorkflowClient({ ...config, backend }), {
+      createWorkflowClient: (config) => {
+        const client = createWorkflowClient({ ...config, backend });
+        const resume = client.resume.bind(client);
+        return Object.assign(client, {
           statePersistence: options.statePersistence ?? "durable" as const,
-        }),
+          resume: (...args: Parameters<typeof resume>) => {
+            options.onResume?.();
+            return resume(...args);
+          },
+        });
+      },
       now: options.now ?? (() => 0),
-      sleep: (ms: number) => delay(Math.min(ms, 10)),
+      sleep: options.sleep ?? ((ms: number) => delay(Math.min(ms, 10))),
     }));
   }
 
@@ -9924,6 +9933,7 @@ describe("server/handlers/request/project-run-execute.handler manual pause (#258
     handler: ProjectRunExecuteHandler,
     resume?: Record<string, unknown>,
     signal?: AbortSignal,
+    stopToken = "opaque-stop-capability",
   ): Promise<Record<string, unknown>> {
     const { request, publicKeyPem } = await signedRequest(
       `/api/control-plane/runs/${runId}/execute`,
@@ -9934,7 +9944,7 @@ describe("server/handlers/request/project-run-execute.handler manual pause (#258
         projectId: "proj-1",
         ...(resume ? { resume } : {}),
       },
-      { "x-veryfront-run-stop-token": "opaque-stop-capability" },
+      { "x-veryfront-run-stop-token": stopToken },
     );
     const result = await handler.handle(
       signal ? new Request(request, { signal }) : request,
@@ -10008,9 +10018,10 @@ describe("server/handlers/request/project-run-execute.handler manual pause (#258
     assertEquals((await backend.getRun(runId))?.status, "waiting");
   });
 
-  it("neither fails nor forges a pause when project code replaces the request signal getter", async () => {
+  it("holds the boundary under request primitive tampering until cancellation", async () => {
     const backend = new SharedMemoryBackend();
     const calls: string[] = [];
+    const controller = new AbortController();
     const original = Object.getOwnPropertyDescriptor(Request.prototype, "signal")!;
     const definition = workflow({
       id: "publish",
@@ -10038,17 +10049,23 @@ describe("server/handlers/request/project-run-execute.handler manual pause (#258
 
     try {
       await withMockFetch(async () => Response.json({ stop: true }), async () => {
-        const payload = await dispatch(createHandler(backend, definition));
-        // The tampered request primitives keep the acknowledgement from being sent, so the
-        // pause stays unconfirmed and the run carries on instead of failing.
-        assertEquals(payload.success, true);
-        assertEquals(payload.status, undefined);
-        assertEquals(payload.error, undefined);
+        const payload = await dispatch(
+          createHandler(backend, definition, {
+            sleep: async () => {
+              controller.abort(new Error("Run cancelled"));
+            },
+          }),
+          undefined,
+          controller.signal,
+        );
+        // Tampered transport primitives cannot authorize execution beyond the boundary.
+        assertEquals(payload.success, false);
+        assertEquals(payload.error, "Workflow run cancelled");
       });
     } finally {
       Object.defineProperty(Request.prototype, "signal", original);
     }
-    assertEquals(calls, ["after"]);
+    assertEquals(calls, []);
   });
 
   it("continues when the pause acknowledgement reports no pause", async () => {
@@ -10091,30 +10108,101 @@ describe("server/handlers/request/project-run-execute.handler manual pause (#258
     assertEquals(pauseAckCalls(urls).length, 3);
   });
 
-  it("continues after the pause acknowledgement keeps failing or is rejected", async () => {
-    for (const reply of ["transport", "unauthorized"] as const) {
+  it("keeps a committed pause boundary while replies are lost, rejected, or malformed", async () => {
+    for (const reply of ["transport", "unauthorized", "malformed"] as const) {
       const backend = new SharedMemoryBackend();
       const calls: string[] = [];
-      const urls: string[] = [];
-      let now = 0;
-
-      await withMockFetch(async (input) => {
-        urls.push(String(input));
-        if (reply === "transport") throw new TypeError("connection reset");
-        return Response.json({ stop: true }, { status: 401 });
+      let requests = 0;
+      await withMockFetch(async () => {
+        if (++requests > 5) return Response.json({ stop: true });
+        if (reply === "transport") throw new TypeError("Committed acknowledgement reply lost");
+        if (reply === "unauthorized") return Response.json({ stop: true }, { status: 401 });
+        return Response.json({ stop: "false" });
       }, async () => {
         const payload = await dispatch(
-          createHandler(backend, threeSteps(calls), { now: () => (now += 1_000) }),
+          createHandler(backend, threeSteps(calls), { now: () => requests * 1_000 }),
         );
-        assertEquals(payload.success, true, reply);
-        assertEquals(payload.status, undefined, reply);
+        assertEquals(payload.waiting_reason, "manual_pause", reply);
       });
-
-      assertEquals(calls, ["first", "second", "third"], reply);
-      // A transport failure is retried three times, then the next boundary backs off for 30s;
-      // a rejection is an answer, so the next boundary (a second later) asks again.
-      assertEquals(pauseAckCalls(urls).length, reply === "transport" ? 3 : 2, reply);
+      assertEquals(calls, ["first"], reply);
+      assertEquals(requests, 6, reply);
     }
+  });
+
+  it("does not release a stale manual pause while acknowledgement replies are lost", async () => {
+    const backend = new SharedMemoryBackend();
+    const calls: string[] = [];
+    const definition = threeSteps(calls);
+    let requests = 0;
+    await withMockFetch(async () => {
+      if (++requests === 1 || requests > 6) return Response.json({ stop: true });
+      throw new TypeError("Stale generation stop reply lost");
+    }, async () => {
+      await dispatch(createHandler(backend, definition));
+      const resumed = await dispatch(createHandler(backend, definition), { type: "manual" });
+      assertEquals(resumed.waiting_reason, "manual_pause");
+    });
+    assertEquals(calls, ["first"]);
+    assertEquals(requests, 7);
+  });
+
+  it("refuses manual resume without a capability instead of releasing the boundary", async () => {
+    const backend = new SharedMemoryBackend();
+    const calls: string[] = [];
+    const definition = threeSteps(calls);
+    await withMockFetch(async () => Response.json({ stop: true }), async () => {
+      await dispatch(createHandler(backend, definition));
+      const { request, publicKeyPem } = await signedRequest(
+        `/api/control-plane/runs/${runId}/execute`,
+        {
+          runId,
+          kind: "workflow",
+          target: "workflow:publish",
+          projectId: "proj-1",
+          resume: { type: "manual" },
+        },
+      );
+      const result = await createHandler(backend, definition).handle(
+        request,
+        createCtx(publicKeyPem),
+      );
+      assertExists(result.response);
+      const payload = await result.response.json();
+      assertEquals(payload.success, false);
+      assertEquals(payload.error, "Manual resume requires a run stop capability");
+    });
+    assertEquals(calls, ["first"]);
+    assertEquals((await backend.getRun(runId))?.status, "waiting");
+  });
+
+  it("recovers a post-ack crash record before settling and executes completed nodes once", async () => {
+    const backend = new SharedMemoryBackend();
+    const calls: string[] = [];
+    const definition = threeSteps(calls);
+    let stop = true;
+    let attemptedResume = false;
+    await withMockFetch(async () => Response.json({ stop }), async () => {
+      await dispatch(createHandler(backend, definition));
+      // The real crash window retains the durable batch, but loses the local waiting commit.
+      await backend.updateRun(runId, { status: "running" });
+      stop = false;
+      const resumed = await dispatch(
+        createHandler(backend, definition, {
+          onResume: () => {
+            attemptedResume = true;
+          },
+          sleep: async (ms) => {
+            if (!attemptedResume) throw new Error("Recovery settled before attempting resume");
+            await delay(Math.min(ms, 10));
+          },
+        }),
+        { type: "manual" },
+      );
+      assertEquals(resumed.success, true);
+      assertEquals((await backend.getRun(runId))?.status, "completed");
+    });
+    assertEquals(attemptedResume, true);
+    assertEquals(calls, ["first", "second", "third"]);
   });
 
   it("continues a pause the control plane did not keep when another resume arrives", async () => {
@@ -10165,21 +10253,32 @@ describe("server/handlers/request/project-run-execute.handler manual pause (#258
     let acknowledgements = 0;
     let older: ReturnType<typeof dispatch> | undefined;
 
-    await withMockFetch(async () => {
-      const stop = ++acknowledgements === 1;
-      // The control plane answers the repeated decision once the older attempt reported its
-      // pause; both attempts poll the run, so either may see the pause first.
-      if (!stop) await older;
-      return Response.json({ stop });
+    await withMockFetch(async (_input, init) => {
+      const authorization = new Headers(observeFetchRequestInit(init).headers).get("authorization");
+      if (authorization === "Bearer opaque-stop-capability") {
+        if (++acknowledgements === 1) {
+          throw new TypeError("Committed pause acknowledgement reply lost");
+        }
+        return Response.json({ stop: true });
+      }
+      // Only the repeated attempt waits for the older dispatch's pause. An older
+      // acknowledgement retry must replay its stop rather than await itself.
+      await older;
+      return Response.json({ stop: false });
     }, async () => {
       // The older attempt is still running when the control plane re-sends a decision; the
       // control plane then tells the older attempt to stop at its boundary.
       older = dispatch(createHandler(backend, definition));
       while (!(await backend.getRun(runId))) await delay(1);
-      const repeated = dispatch(createHandler(backend, definition), {
-        type: "deadline",
-        wait_id: "w",
-      });
+      const repeated = dispatch(
+        createHandler(backend, definition),
+        {
+          type: "deadline",
+          wait_id: "w",
+        },
+        undefined,
+        "repeated-stop-capability",
+      );
       await delay(20);
       release();
       assertEquals((await older).waiting_reason, "manual_pause");
@@ -10189,6 +10288,7 @@ describe("server/handlers/request/project-run-execute.handler manual pause (#258
     });
 
     assertEquals(calls, ["first", "second"]);
+    assertEquals(acknowledgements, 2);
     assertEquals((await backend.getRun(runId))?.status, "completed");
   });
 
