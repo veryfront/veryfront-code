@@ -31,6 +31,7 @@ import {
   removeAbortSignalListener,
 } from "#veryfront/platform/compat/abort-signal.ts";
 import {
+  IntrinsicPromise,
   primordialPromiseCatch,
   primordialPromiseResolve,
   primordialPromiseThen,
@@ -1613,25 +1614,33 @@ async function awaitRunPauseDecision(
   return true;
 }
 
-/** Sleep that ends early once any of the signals aborts. */
+/**
+ * Sleep that ends early once any of the signals aborts. Project code may have
+ * replaced the global Promise by the time a pause boundary waits, so the race
+ * is built from host-captured Promise operations.
+ */
 async function sleepUntilAborted(
   sleep: (ms: number) => Promise<void>,
   ms: number,
   signals: readonly AbortSignal[],
 ): Promise<void> {
-  let wake: (() => void) | undefined;
-  const aborted = new Promise<void>((resolve) => {
-    wake = () => resolve();
-  });
-  const onAbort = () => wake?.();
   for (const signal of signals) {
     if (isAbortSignalAborted(signal)) return;
   }
+  let wake: (() => void) | undefined;
+  let fail: ((error: unknown) => void) | undefined;
+  const woken = new IntrinsicPromise<void>((resolve, reject) => {
+    wake = () => resolve();
+    fail = reject;
+  });
+  const onAbort = () => wake?.();
   for (const signal of signals) {
     addAbortSignalListenerOnce(signal, onAbort);
   }
   try {
-    await Promise.race([sleep(ms), aborted]);
+    // Listeners are in place first: the sleep itself may observe the abort.
+    void primordialPromiseThen(sleep(ms), () => wake?.(), (error) => fail?.(error));
+    await woken;
   } finally {
     for (const signal of signals) removeAbortSignalListener(signal, onAbort);
   }
