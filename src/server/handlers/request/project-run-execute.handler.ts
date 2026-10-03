@@ -673,7 +673,7 @@ function buildEvalReportPath(report: EvalReport, request: ProjectRunExecuteReque
 const capturedArtifactJsonStringify = JSON.stringify.bind(JSON);
 
 function serializeEvalReportFile(report: EvalReport, reportPath: string): string {
-  return `${capturedArtifactJsonStringify({ ...report, reportPath }, null, 2)}\n`;
+  return `${capturedArtifactJsonStringify({ __proto__: null, ...report, reportPath }, null, 2)}\n`;
 }
 
 async function createEvalReportArtifact(
@@ -2474,7 +2474,11 @@ export async function uploadEvalReportToProjectFiles(
   const encodedPath = encodeURIComponent(input.reportPath);
   const response = await client.put<{ path?: string }>(
     `/projects/${encodedProject}/files/${encodedPath}`,
-    { content: input.content ?? serializeEvalReportFile(input.report, input.reportPath) },
+    // The native serializer must not invoke an inherited project toJSON hook.
+    {
+      __proto__: null,
+      content: input.content ?? serializeEvalReportFile(input.report, input.reportPath),
+    },
     { signal: input.signal },
   );
   input.signal?.throwIfAborted();
