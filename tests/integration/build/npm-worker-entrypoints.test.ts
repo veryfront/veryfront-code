@@ -10,7 +10,7 @@ Deno.test("npm worker finalization rejects missing compiled worker", async () =>
   try {
     await assertRejects(
       () => finalizeNpmWorkerEntrypoints(root, { exports: {} }),
-      Error,
+      Deno.errors.NotFound,
     );
   } finally {
     await Deno.remove(root, { recursive: true });
@@ -37,6 +37,22 @@ Deno.test("npm worker stays compiled without a public export", async () => {
     await finalizeNpmWorkerEntrypoints(root, pkg);
     assertEquals(Object.keys(pkg.exports), ["."]);
     assertEquals(pkg.dependencies, { zod: "4.3.6" });
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+Deno.test("npm worker finalization rejects a directory in place of the worker", async () => {
+  const root = await makeTempDir();
+  try {
+    await Deno.mkdir(`${root}/esm/src/config/declarative-evaluator-worker-entry.js`, {
+      recursive: true,
+    });
+    await assertRejects(
+      () => finalizeNpmWorkerEntrypoints(root, { exports: {} }),
+      Error,
+      "Compiled declarative worker entry missing",
+    );
   } finally {
     await Deno.remove(root, { recursive: true });
   }
