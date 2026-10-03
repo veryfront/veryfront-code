@@ -23,6 +23,7 @@
 
 import { logger as baseLogger } from "#veryfront/utils";
 import { getEnvValue } from "#veryfront/cache/backends/helpers.ts";
+import { VERSIONED_RELEASE_FILE_KEY_PREFIX } from "#veryfront/cache/keys/builders/file.ts";
 import {
   cacheCredentialIdentity,
   resolveCacheRequestAuthority,
@@ -177,7 +178,9 @@ const IMMUTABLE_KEY_PREFIX_SEGMENTS = 4;
  * far larger change than the imprecision warrants; it is recorded here instead.
  */
 export function isImmutableReleaseFileCacheKey(key: string): boolean {
-  if (!key.startsWith(IMMUTABLE_KEY_PREFIX) && !key.startsWith("file:release-v2:")) return false;
+  if (!key.startsWith(IMMUTABLE_KEY_PREFIX) && !key.startsWith(VERSIONED_RELEASE_FILE_KEY_PREFIX)) {
+    return false;
+  }
   if (key.includes(SCOPE_SEPARATOR)) return false;
 
   const segments = key.split(":");

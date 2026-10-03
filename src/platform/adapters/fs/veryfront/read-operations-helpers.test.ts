@@ -14,6 +14,8 @@ import {
 import { VeryfrontError } from "#veryfront/errors";
 import { isCanonicalNotFoundError } from "#veryfront/platform/compat/not-found-error.ts";
 import type { ResolvedContentContext } from "./types.ts";
+import { scopeFileOperationCacheKeyPrefix } from "#veryfront/cache/keys/builders/file.ts";
+import { isCacheKeyPassThroughSafe } from "#veryfront/cache/keys/api-policy.ts";
 
 describe("read-operations helpers", () => {
   describe("assertProjectSourcePath", () => {
@@ -47,7 +49,11 @@ describe("read-operations helpers", () => {
 
       assertEquals(state.apiPath, "source/pages/index.tsx");
       assertEquals(state.cacheKeyPrefix, buildFileCacheKeyPrefix(context));
-      assertEquals(state.cacheKey, `${buildFileCacheKeyPrefix(context)}:pages/index.tsx`);
+      assertEquals(
+        state.cacheKey,
+        `${scopeFileOperationCacheKeyPrefix(buildFileCacheKeyPrefix(context))}:pages/index.tsx`,
+      );
+      assertEquals(isCacheKeyPassThroughSafe(state.cacheKey), true);
       assertEquals(state.hasKnownExtension, true);
       assertEquals(state.isPreviewMode, true);
       assertEquals(state.isPublished, false);

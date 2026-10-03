@@ -2254,10 +2254,12 @@ describe("WebSocketManager", () => {
 
       assertEquals(listCalls.count, 0);
       assertEquals(evictions.count, 1);
+      // The poke carries its source, so only that branch's entries are cleared.
       for (const operation of ["file", "stat", "dir"]) {
+        assertEquals(deletedPrefixes.includes(`${operation}:branch:test-project:main:`), true);
         for (const sourceType of ["branch", "release", "env"]) {
-          assertEquals(deletedPrefixes.includes(`${operation}:${sourceType}:`), true);
-          assertEquals(deletedPrefixes.includes(`${operation}:${sourceType}-v2:`), true);
+          assertEquals(deletedPrefixes.includes(`${operation}:${sourceType}:`), false);
+          assertEquals(deletedPrefixes.includes(`${operation}:${sourceType}-v2:`), false);
         }
       }
       manager.dispose();

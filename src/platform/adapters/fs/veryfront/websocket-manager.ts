@@ -16,6 +16,7 @@ import {
   buildFileListCacheKey,
   buildStatCacheKeyPrefix,
 } from "./cache-keys.ts";
+import { buildVersionedFileOperationProjectPrefix } from "#veryfront/cache/keys/builders/file.ts";
 import {
   addPendingInvalidation,
   getPendingInvalidationsCount,
@@ -153,6 +154,30 @@ interface WebSocketDeps {
     files: ProjectFile[],
   ) => Promise<PreviewStyleArtifactInfo | undefined>;
   createWebSocket?: WebSocketFactory;
+}
+
+const OPERATION_CACHE_TYPES = ["file", "stat", "dir"] as const;
+/** Legacy and versioned source namespaces of file/stat/directory keys. */
+const OPERATION_SOURCE_TYPES = [
+  "branch",
+  "release",
+  "env",
+  "branch-v2",
+  "release-v2",
+  "env-v2",
+] as const;
+
+/** Exact file, stat and directory source prefixes of one content context. */
+function buildOperationSourcePrefixes(contentContext: ResolvedContentContext): {
+  file: string;
+  stat: string;
+  dir: string;
+} {
+  return {
+    file: `${buildFileCacheKeyPrefix(contentContext)}:`,
+    stat: `${buildStatCacheKeyPrefix(contentContext)}:`,
+    dir: `${buildDirCacheKeyPrefix(contentContext)}:`,
+  };
 }
 
 export class WebSocketManager {
@@ -754,6 +779,11 @@ export class WebSocketManager {
       const sourceKey = sourceType === "release" ? "release" : "env";
       const base = `${sourceKey}:${this.deps.projectSlug}:`;
       addPrefixes([`file:${base}`, `stat:${base}`, `dir:${base}`, `files:${base}`]);
+      addPrefixes(
+        OPERATION_CACHE_TYPES.map((cacheType) =>
+          buildVersionedFileOperationProjectPrefix(cacheType, sourceKey, this.deps.projectSlug)
+        ),
+      );
     };
 
     if (releaseId) {
@@ -1078,8 +1108,13 @@ export class WebSocketManager {
         count: changedPaths.length,
       });
 
-      const sourceTypes = ["branch:", "release:", "env:"] as const;
-      const fileTypes = ["file:", "stat:"] as const;
+      // A known source deletes only its own exact prefixes. Without one, every
+      // legacy and versioned source namespace is cleared for the changed paths.
+      const exactPrefixes = contentContext ? buildOperationSourcePrefixes(contentContext) : null;
+      const prefixesFor = (cacheType: typeof OPERATION_CACHE_TYPES[number]): string[] =>
+        exactPrefixes
+          ? [exactPrefixes[cacheType]]
+          : OPERATION_SOURCE_TYPES.map((sourceType) => `${cacheType}:${sourceType}:`);
 
       const parentDirs = new Set<string>();
       const deletionPromises: Promise<number>[] = [];
@@ -1088,20 +1123,14 @@ export class WebSocketManager {
         const slashIndex = path.lastIndexOf("/");
         parentDirs.add(slashIndex > 0 ? path.substring(0, slashIndex) : "");
 
-        for (const fileType of fileTypes) {
-          for (const sourceType of sourceTypes) {
-            deletionPromises.push(
-              this.deps.cache.deleteByPrefixAndSuffixAsync(fileType + sourceType, path),
-            );
-          }
+        for (const prefix of [...prefixesFor("file"), ...prefixesFor("stat")]) {
+          deletionPromises.push(this.deps.cache.deleteByPrefixAndSuffixAsync(prefix, path));
         }
       }
 
       for (const parentDir of parentDirs) {
-        for (const sourceType of sourceTypes) {
-          deletionPromises.push(
-            this.deps.cache.deleteByPrefixAndSuffixAsync("dir:" + sourceType, parentDir),
-          );
+        for (const prefix of prefixesFor("dir")) {
+          deletionPromises.push(this.deps.cache.deleteByPrefixAndSuffixAsync(prefix, parentDir));
         }
       }
 
@@ -1235,10 +1264,24 @@ export class WebSocketManager {
     let preparedStyleArtifact: PreviewStyleArtifactInfo | undefined;
     let reloadSuperseded = false;
     let cacheInvalidated = false;
-    const deleteOperationSourcePrefix = async (prefix: string): Promise<number> => {
+    // A known source deletes only its own exact prefixes, preserving sibling
+    // branches. Publish handling clears release and environment scopes first.
+    const exactPrefixes = contentContext ? buildOperationSourcePrefixes(contentContext) : null;
+    const deleteOperationSourcePrefix = async (
+      cacheType: typeof OPERATION_CACHE_TYPES[number],
+      sourceType: "branch" | "release" | "env",
+    ): Promise<number> => {
+      if (exactPrefixes) {
+        const exactSourceType = contentContext?.sourceType === "environment"
+          ? "env"
+          : contentContext?.sourceType;
+        return exactSourceType === sourceType
+          ? await this.deps.cache.deleteByPrefixAsync(exactPrefixes[cacheType])
+          : 0;
+      }
       const [legacy, encoded] = await Promise.all([
-        this.deps.cache.deleteByPrefixAsync(`${prefix}:`),
-        this.deps.cache.deleteByPrefixAsync(`${prefix}-v2:`),
+        this.deps.cache.deleteByPrefixAsync(`${cacheType}:${sourceType}:`),
+        this.deps.cache.deleteByPrefixAsync(`${cacheType}:${sourceType}-v2:`),
       ]);
       return legacy + encoded;
     };
@@ -1260,15 +1303,15 @@ export class WebSocketManager {
         filesReleaseCount,
         filesEnvCount,
       ] = await Promise.all([
-        deleteOperationSourcePrefix("file:branch"),
-        deleteOperationSourcePrefix("file:release"),
-        deleteOperationSourcePrefix("file:env"),
-        deleteOperationSourcePrefix("stat:branch"),
-        deleteOperationSourcePrefix("stat:release"),
-        deleteOperationSourcePrefix("stat:env"),
-        deleteOperationSourcePrefix("dir:branch"),
-        deleteOperationSourcePrefix("dir:release"),
-        deleteOperationSourcePrefix("dir:env"),
+        deleteOperationSourcePrefix("file", "branch"),
+        deleteOperationSourcePrefix("file", "release"),
+        deleteOperationSourcePrefix("file", "env"),
+        deleteOperationSourcePrefix("stat", "branch"),
+        deleteOperationSourcePrefix("stat", "release"),
+        deleteOperationSourcePrefix("stat", "env"),
+        deleteOperationSourcePrefix("dir", "branch"),
+        deleteOperationSourcePrefix("dir", "release"),
+        deleteOperationSourcePrefix("dir", "env"),
         this.deps.cache.deleteByPrefixAsync("files:branch:"),
         this.deps.cache.deleteByPrefixAsync("files:release:"),
         this.deps.cache.deleteByPrefixAsync("files:env:"),
