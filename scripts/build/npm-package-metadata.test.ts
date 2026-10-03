@@ -576,8 +576,12 @@ describe("normalizeNpmPackageMetadata", () => {
     const manifestPath = "extensions/ext-content-mdx/deno.json";
     const spec = createExtensionPackageSpec({
       manifestPath,
-      manifest: JSON.parse(await Deno.readTextFile(manifestPath)),
-      rootConfig: JSON.parse(await Deno.readTextFile("deno.json")),
+      manifest: JSON.parse(
+        await Deno.readTextFile(new URL(manifestPath, repoRoot)),
+      ),
+      rootConfig: JSON.parse(
+        await Deno.readTextFile(new URL("deno.json", repoRoot)),
+      ),
       rootDir: Deno.cwd(),
       version: "0.1.1270",
       license: "Apache-2.0",
