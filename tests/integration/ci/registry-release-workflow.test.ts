@@ -1617,11 +1617,16 @@ fi
     }
   });
 
-  it("serializes RC tag writes and dispatch without replacing pending publishers", async () => {
+  it("serializes RC tag writes and dispatch independently without replacing pending jobs", async () => {
     const jobs = await readJobs();
-    for (const name of ["prerelease", "quality-gate-registry"]) {
+    for (
+      const [name, group] of [
+        ["prerelease", "veryfront-rc-publication"],
+        ["quality-gate-registry", "veryfront-rc-dispatch"],
+      ] as const
+    ) {
       const job = asRecord(jobs[name], name);
-      assertEquals(job.concurrency, { group: "veryfront-rc-publication", queue: "max" });
+      assertEquals(job.concurrency, { group, queue: "max" });
     }
     const dispatch = asRecord(jobs["quality-gate-registry"], "dispatch release job");
     const guard = namedStep(dispatch, "Check current RC tag");

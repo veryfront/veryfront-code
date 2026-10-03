@@ -1539,7 +1539,7 @@ jobs:
   # merge-queue run skips the test jobs upstream of the gates, and a job
   # without a status function would skip with them.
   prerelease:
-    # Serialize with RC publication so a newer release cannot overtake dispatch.
+    # Serialize npm publication and RC tag writes independently of dispatch.
     concurrency:
       group: veryfront-rc-publication
       queue: max
@@ -2315,9 +2315,9 @@ jobs:
           bash scripts/ci/registry-release-smoke.sh'
 
   quality-gate-registry:
-    # Serialize with RC publication so a newer release cannot overtake dispatch.
+    # Serialize dispatches; the current RC tag check rejects superseded releases.
     concurrency:
-      group: veryfront-rc-publication
+      group: veryfront-rc-dispatch
       queue: max
     name: quality gate (registry)
     if: ${{ always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && needs.version-check.result == 'success' && (needs.version-check.outputs.is_stable == 'false' || needs.version-check.outputs.stable_release_requested == 'true') }}
