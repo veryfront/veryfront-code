@@ -345,7 +345,7 @@ describe("agent/conversation-hosted-lifecycle", () => {
       status: "completed",
       output: null,
     });
-    assertEquals(JSON.parse(String(fetchCalls[1]?.[1]?.body)), {});
+    assertEquals(fetchCalls[1]?.[1]?.body, undefined);
 
     await adapter.finalizeRun?.(run, {
       status: "failed",
