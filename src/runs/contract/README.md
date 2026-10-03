@@ -14,7 +14,7 @@ deno task test:file src/runs/target/client.test.ts tests/integration/contracts/r
 
 The generator selects the first named request and success response example for
 each operation, uses parameter examples for the input and URL, and applies
-request schema defaults required by the generated types. It updates the source
+request schema defaults required by the generated types. It updates the generated-type, OpenAPI source
 and fixture hashes in `pin.json`. The SDK, integration and CLI tests share the
 generated fixture table through `client.test-helpers.ts`.
 

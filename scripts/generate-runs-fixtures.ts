@@ -154,8 +154,8 @@ export function renderRunsFixtures(document: RunsExampleDocument): string {
   }\n};\n`;
 }
 
-if (import.meta.main) {
-  const directory = new URL("../src/runs/contract/", import.meta.url);
+/** Write generated fixtures and refresh the pin for a contract directory. */
+export async function generateRunsFixtures(directory: URL): Promise<void> {
   const source = new URL("openapi.target.json", directory);
   const output = new URL("runs-fixtures.generated.ts", directory);
   const document: RunsExampleDocument = JSON.parse(
@@ -170,7 +170,13 @@ if (import.meta.main) {
   }
   const pinUrl = new URL("pin.json", directory);
   const pin = JSON.parse(await Deno.readTextFile(pinUrl));
-  for (const file of ["openapi.target.json", "runs-fixtures.generated.ts"]) {
+  for (
+    const file of [
+      "runs-api.generated.ts",
+      "openapi.target.json",
+      "runs-fixtures.generated.ts",
+    ]
+  ) {
     const hash = new Uint8Array(
       await crypto.subtle.digest(
         "SHA-256",
@@ -184,4 +190,8 @@ if (import.meta.main) {
   }
   pin.fixturesGeneratedBy = "deno task contracts:runs:fixtures";
   await Deno.writeTextFile(pinUrl, JSON.stringify(pin, null, 2) + "\n");
+}
+
+if (import.meta.main) {
+  await generateRunsFixtures(new URL("../src/runs/contract/", import.meta.url));
 }
