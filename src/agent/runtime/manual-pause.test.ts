@@ -12,6 +12,10 @@ import type { AgentConfig, Message } from "../types.ts";
 import type { RuntimeToolFilterConfig } from "./runtime-tool-config.ts";
 import { scriptedModel } from "./model-runtime.test-helpers.ts";
 
+function userMessage(text: string): Message[] {
+  return [{ id: "pause-input", role: "user", parts: [{ type: "text", text }] }];
+}
+
 describe("agent manual pause", () => {
   for (const [pauseStep, exhaustBudget] of [[1, false], [2, false], [1, true]] as const) {
     it(`parks at settled step ${pauseStep} and resumes without repeating it (budget=${exhaustBudget})`, async () => {
@@ -335,7 +339,8 @@ it("keeps an early pause from committing input before provider validation", asyn
       acknowledge: async () => true,
     },
   });
-  const body = await new Response(await runtime.stream("Private unvalidated input")).text();
+  const body = await new Response(await runtime.stream(userMessage("Private unvalidated input")))
+    .text();
   assertEquals(body.includes("data-veryfront.manual_pause"), true);
   assertEquals(await runtime.getMemory().getMessages(), []);
   assertEquals(model.callCount, 0);
@@ -377,12 +382,12 @@ it("restores private signed provider metadata after manual pause", async () => {
       },
     },
   });
-  await new Response(await paused.stream("Lookup")).text();
+  await new Response(await paused.stream(userMessage("Lookup"))).text();
   const resumed = new AgentRuntime("provider-pause", config, {
     manualPause: { load: async () => saved, acknowledge: async () => false },
   });
-  const body = await new Response(await resumed.stream("Lookup")).text();
-  const prompt = model.calls[1]?.prompt as Array<{ role: string; providerMetadata?: unknown }>;
+  const body = await new Response(await resumed.stream(userMessage("Lookup"))).text();
+  const prompt = model.calls[1]?.prompt ?? [];
   assertEquals(
     prompt.find((message) => message.role === "assistant")?.providerMetadata,
     providerMetadata,
@@ -426,7 +431,8 @@ it("holds an oversized pause until its dispatch stops without claiming confirmat
     resolveModelTransport: () => ({ model }),
   }, { manualPause: authority });
   let settled = false;
-  const response = new Response(await runtime.stream("x".repeat(2 * 1024 * 1024))).text();
+  const response = new Response(await runtime.stream(userMessage("x".repeat(2 * 1024 * 1024))))
+    .text();
   void response.then(() => settled = true);
   let watchdog: ReturnType<typeof setTimeout> | undefined;
   try {
@@ -473,7 +479,8 @@ it("continues oversized resumed progress after retiring the stale checkpoint", a
       },
     },
   });
-  const body = await new Response(await runtime.stream("x".repeat(2 * 1024 * 1024))).text();
+  const body = await new Response(await runtime.stream(userMessage("x".repeat(2 * 1024 * 1024))))
+    .text();
   assertEquals(releases, 1);
   assertEquals(model.callCount, 1);
   assertEquals(body.includes("message-finish"), true);
@@ -504,7 +511,7 @@ it("validates staged input before acknowledging an initial pause", async () => {
       },
     },
   });
-  await new Response(await runtime.stream("Unvalidated input")).text();
+  await new Response(await runtime.stream(userMessage("Unvalidated input"))).text();
   assertEquals(acknowledgements, 0);
   assertEquals(await runtime.getMemory().getMessages(), []);
   assertEquals(model.callCount, 0);
