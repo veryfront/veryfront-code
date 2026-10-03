@@ -25,6 +25,12 @@ const getLoadSchema = defineSchema((v) =>
   v.object({ stop: v.boolean(), checkpoint: v.union([v.null(), getAgentPauseCheckpointSchema()]) })
     .strict()
 );
+/**
+ * A host lifecycle object (agent creation options, root context, broker
+ * session) whose identity alone carries pause state; no fields are read.
+ */
+export type HostedAgentPauseCarrier = object;
+
 const credentials = createPrivateWeakStore<object, { token: string; runId: string }>();
 const creationCapabilities = createPrivateWeakStore<object, AgentManualPause>();
 const capabilityFactories = createPrivateWeakStore<
@@ -55,13 +61,11 @@ async function cancelResponse(response: Response): Promise<void> {
 
 async function readReply(response: Response, signal: AbortSignal): Promise<unknown> {
   const body = bodyOf(response);
-  const safeResponse = {
+  const safeBody = body === null ? null : {
     __proto__: null,
-    body: body === null ? null : {
-      __proto__: null,
-      getReader: () => getPrivateStreamReader(body),
-    },
-  } as unknown as Response;
+    getReader: () => getPrivateStreamReader(body),
+  };
+  const safeResponse = { __proto__: null, body: safeBody };
   const reply = await readResponseTextPrefix(safeResponse, 2 * 1024 * 1024, signal, {
     fatalUtf8: true,
   });
@@ -187,10 +191,10 @@ export function createHostedAgentManualPause(
 }
 
 export function registerHostedAgentPauseCreationOptions(
-  options: object,
+  options: HostedAgentPauseCarrier,
   request: ParsedHostedChatRequest,
   signal: AbortSignal,
-  rootContext?: object,
+  rootContext?: HostedAgentPauseCarrier,
 ): void {
   const capability = createHostedAgentManualPause(request, signal);
   if (capability) {
@@ -199,14 +203,16 @@ export function registerHostedAgentPauseCreationOptions(
   }
 }
 
-export function getHostedAgentPauseCreationOptions(options: object): AgentManualPause | undefined {
+export function getHostedAgentPauseCreationOptions(
+  options: HostedAgentPauseCarrier,
+): AgentManualPause | undefined {
   return creationCapabilities.get(options);
 }
 
 /** Carry exact-dispatch stop state through host lifecycle objects without public fields. */
 export function inheritHostedAgentPauseCapability(
-  target: object,
-  source: object,
+  target: HostedAgentPauseCarrier,
+  source: HostedAgentPauseCarrier,
   lifetimeSignal?: AbortSignal,
 ): void {
   const factory = capabilityFactories.get(source);
@@ -227,21 +233,21 @@ export function inheritHostedAgentPauseCapability(
   if (capability) creationCapabilities.set(target, capability);
 }
 
-export function hasHostedAgentPauseStopped(lifecycle: object): boolean {
+export function hasHostedAgentPauseStopped(lifecycle: HostedAgentPauseCarrier): boolean {
   const capability = creationCapabilities.get(lifecycle);
   return capability !== undefined && stoppedCapabilities.get(capability)?.stopped === true;
 }
 
 /** Broker-only lazy construction binds pause requests to the admitted session lifetime. */
 export function registerHostedAgentPauseFactory(
-  target: object,
+  target: HostedAgentPauseCarrier,
   factory: (signal: AbortSignal) => AgentManualPause | undefined,
 ): void {
   capabilityFactories.set(target, factory);
 }
 
 export function activateHostedAgentPauseCapability(
-  target: object,
+  target: HostedAgentPauseCarrier,
   signal: AbortSignal,
 ): AgentManualPause | undefined {
   const existing = creationCapabilities.get(target);

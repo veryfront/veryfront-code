@@ -3931,7 +3931,8 @@ export class AgentRuntime {
     const runtimeGeneratedMessageIds = createPrivateSet(
       checkpoint?.runtimeGeneratedMessageIds ?? [],
     );
-    for (const message of currentMessages) {
+    for (let index = 0; index < currentMessages.length; index++) {
+      const message = currentMessages[index]!;
       if (runtimeGeneratedMessageIds.has(message.id)) markRuntimeGeneratedUserMessage(message);
     }
     applyProviderReplayCheckpointsToMessages(
