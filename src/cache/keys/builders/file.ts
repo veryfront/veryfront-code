@@ -9,10 +9,10 @@
 
 import { VERSION } from "#veryfront/utils/version.ts";
 import { CacheKeyPrefix, type FileOperationContext } from "../prefixes.ts";
-import { hashPathWithName } from "../utils.ts";
-import { hashString } from "../../hash.ts";
 import { API_CACHE_KEY_MAX_LENGTH, isCacheKeyPassThroughSafe } from "../api-policy.ts";
 import { encodeCacheKeySegment } from "../segment-codec.ts";
+import { hashPathWithName } from "../utils.ts";
+import { hashString } from "../../hash.ts";
 
 import { CACHE_INVARIANT_VIOLATION } from "#veryfront/errors";
 import { encodeCacheSourceIdentity, type EncodedCacheSourceIdentity } from "../source-identity.ts";
@@ -53,16 +53,74 @@ function buildFileOperationPrefix(
   return `${prefix}:${sourceTypeKey}:${ctx.projectSlug}:${source.qualifier}`;
 }
 
+/** Literal prefix of versioned immutable release file keys. */
+export const VERSIONED_RELEASE_FILE_KEY_PREFIX = "file:release-v2:";
+
+/**
+ * Project-scoped prefix of versioned operation keys for one source type, for
+ * invalidations that know the project but not the exact source.
+ */
+export function buildVersionedFileOperationProjectPrefix(
+  prefix: string,
+  sourceType: "branch" | "release" | "env",
+  projectSlug: string,
+): string {
+  return `${prefix}:${sourceType}-v2:${encodeCacheKeySegment(projectSlug)}:`;
+}
+
+function encodeVersionedQualifier(ctx: FileOperationContext): string {
+  if (ctx.sourceType === "branch") return encodeCacheKeySegment(ctx.branch ?? "main");
+  const { releaseId } = ctx;
+  if (!releaseId) {
+    throw CACHE_INVARIANT_VIOLATION.create({
+      detail: `Missing releaseId for ${ctx.sourceType} sourceType (project: ${ctx.projectSlug})`,
+    });
+  }
+  if (ctx.sourceType === "release") return encodeCacheKeySegment(releaseId);
+  return `${encodeCacheKeySegment(ctx.environmentName ?? "")}:${encodeCacheKeySegment(releaseId)}`;
+}
+
+// Keep ordinary prefixes stable. Version the source type when URI escaping
+// would make the API rewrite a concrete key or refuse its deletion glob.
+function buildApiFileOperationPrefix(
+  prefix: string,
+  ctx: FileOperationContext | null | undefined,
+  unknownKey: string,
+): string {
+  const legacy = buildFileOperationPrefix(prefix, ctx, unknownKey);
+  if (!ctx) return legacy;
+  const legacyIsApiSafe = isCacheKeyPassThroughSafe(`${legacy}:entry`) &&
+    !ctx.projectSlug.includes(":");
+  if (legacyIsApiSafe) return legacy;
+  const sourceType = ctx.sourceType === "environment" ? "env" : ctx.sourceType;
+  return `${buildVersionedFileOperationProjectPrefix(prefix, sourceType, ctx.projectSlug)}${
+    encodeVersionedQualifier(ctx)
+  }`;
+}
+
+/** Marker between a file/stat/directory source prefix and its cache scope. */
+export const FILE_OPERATION_SCOPE_MARKER = "scope";
+
+/**
+ * Scope a file/stat/directory source prefix to a cache variant, such as the
+ * request credential, in an API-safe shape. The marker is always emitted, so
+ * scoped and unscoped identities never alias, and it follows the complete
+ * source prefix, so ownership decoding and source deletion globs still match.
+ */
+export function scopeFileOperationCacheKeyPrefix(prefix: string, variant?: string): string {
+  return `${prefix}:${FILE_OPERATION_SCOPE_MARKER}:${encodeCacheKeySegment(variant ?? "")}`;
+}
+
 export function buildFileCacheKeyPrefix(ctx: FileOperationContext | null | undefined): string {
-  return buildFileOperationPrefix(CacheKeyPrefix.FILE, ctx, "file:unknown");
+  return buildApiFileOperationPrefix(CacheKeyPrefix.FILE, ctx, "file:unknown");
 }
 
 export function buildStatCacheKeyPrefix(ctx: FileOperationContext | null | undefined): string {
-  return buildFileOperationPrefix(CacheKeyPrefix.STAT, ctx, "stat:unknown");
+  return buildApiFileOperationPrefix(CacheKeyPrefix.STAT, ctx, "stat:unknown");
 }
 
 export function buildDirCacheKeyPrefix(ctx: FileOperationContext | null | undefined): string {
-  return buildFileOperationPrefix(CacheKeyPrefix.DIR, ctx, "dir:unknown");
+  return buildApiFileOperationPrefix(CacheKeyPrefix.DIR, ctx, "dir:unknown");
 }
 
 export function buildFileListCacheKey(ctx: FileOperationContext | null | undefined): string {

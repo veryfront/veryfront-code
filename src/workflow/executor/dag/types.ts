@@ -117,6 +117,13 @@ export interface DAGExecutorConfig {
     nodeStatePatch: RecordPatch<NodeState>;
     ownership?: CheckpointOwnership;
   }) => Promise<boolean | void> | boolean | void;
+  /**
+   * Ask whether the run should pause at a safe boundary: after a root-graph
+   * batch has settled and its node states and checkpoints were persisted,
+   * before any further node starts. Resolving `true` stops scheduling and
+   * reports `paused`; a later execution continues from the persisted states.
+   */
+  shouldPause?: (runId: string) => Promise<boolean> | boolean;
   /** Max milliseconds to wait for an aborted composite attempt to settle (default: 1000) */
   cancellationGracePeriod?: number;
   debug?: boolean;
@@ -129,6 +136,8 @@ export type DAGExecutorInternalConfig =
 export interface DAGExecutionResult {
   completed: boolean;
   waiting: boolean;
+  /** Stopped at a safe boundary because `shouldPause` asked to; nothing is parked. */
+  paused?: boolean;
   waitingNode?: string;
   /** Exact config of the node that suspended this execution. */
   waitingConfig?: WaitNodeConfig;

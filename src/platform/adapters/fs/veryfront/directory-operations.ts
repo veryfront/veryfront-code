@@ -5,7 +5,7 @@ import { VeryfrontOperationsBase } from "./base-operations.ts";
 import { buildDirCacheKeyPrefix } from "./cache-keys.ts";
 import { loadAllProjectFiles } from "./file-list-access.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
-import { scopeToRequestAuthority } from "./request-authority.ts";
+import { scopeFileOperationToRequestAuthority } from "./request-authority.ts";
 
 const logger = baseLogger.component("directory-operations");
 
@@ -28,7 +28,7 @@ export class DirectoryOperations extends VeryfrontOperationsBase {
       async () => {
         const normalizedPath = this.normalizer.normalize(path);
         const ctx = this.contextProvider?.getContentContext();
-        const scopeKey = scopeToRequestAuthority(buildDirCacheKeyPrefix(ctx));
+        const scopeKey = scopeFileOperationToRequestAuthority(buildDirCacheKeyPrefix(ctx));
         const cacheKey = `${scopeKey}:${normalizedPath}`;
         const generation = this.treeGeneration;
         const isScopeInvalidated = () =>
@@ -69,7 +69,7 @@ export class DirectoryOperations extends VeryfrontOperationsBase {
           });
         }
 
-        const currentScopeKey = scopeToRequestAuthority(
+        const currentScopeKey = scopeFileOperationToRequestAuthority(
           buildDirCacheKeyPrefix(this.contextProvider?.getContentContext()),
         );
         if (
@@ -93,7 +93,7 @@ export class DirectoryOperations extends VeryfrontOperationsBase {
   private async ensureTreeBuilt(
     contentContext: ResolvedContentContext | null | undefined,
   ): Promise<Map<string, DirNode>> {
-    const scopeKey = scopeToRequestAuthority(buildDirCacheKeyPrefix(contentContext));
+    const scopeKey = scopeFileOperationToRequestAuthority(buildDirCacheKeyPrefix(contentContext));
     const isScopeInvalidated = () =>
       this.contextProvider?.isPersistentCacheInvalidated?.(scopeKey) ?? false;
     if (this.dirTree && this.treeScopeKey === scopeKey && !isScopeInvalidated()) {
@@ -181,7 +181,7 @@ export class DirectoryOperations extends VeryfrontOperationsBase {
           dirNode.files.set(fileName, file);
         }
 
-        const currentScopeKey = scopeToRequestAuthority(
+        const currentScopeKey = scopeFileOperationToRequestAuthority(
           buildDirCacheKeyPrefix(this.contextProvider?.getContentContext()),
         );
         const scopeInvalidated = this.contextProvider?.isPersistentCacheInvalidated?.(scopeKey) ??

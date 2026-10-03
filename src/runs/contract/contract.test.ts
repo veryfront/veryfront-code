@@ -6,7 +6,7 @@
  */
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import type { components } from "./runs-api.generated.ts";
+import type { components, operations } from "./runs-api.generated.ts";
 
 type Schemas = components["schemas"];
 type Lacks<T, K extends PropertyKey> = K extends keyof T ? false : true;
@@ -20,12 +20,39 @@ type NotNever<T> = [T] extends [never] ? false : true;
 export type RunsContractTypeChecks = [
   Expect<Lacks<Schemas["Run"], "run_id">>,
   Expect<Lacks<Schemas["Run"], "source">>,
+  Expect<
+    Equal<
+      { type: "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED" } extends
+        Schemas["AgentRunModelCallContextRecordedPayload"] ? true : false,
+      false
+    >
+  >,
   // A missing event would make the payload `never`, which every type extends.
   Expect<NotNever<PayloadOf<"MODEL_CALL_COMPLETED">>>,
   Expect<Equal<PayloadOf<"MODEL_CALL_COMPLETED">, Schemas["ModelCallCompletedPayload"]>>,
 ];
 
 describe("Runs target contract types", () => {
+  it("types redacted diagnostics in read results", () => {
+    const type = "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED";
+    const detail = { type } satisfies PayloadOf<typeof type>;
+    const snapshot = { type } satisfies Extract<
+      Schemas["RunSnapshotEvent"],
+      { event_type: typeof type }
+    >["payload"];
+    assertEquals(detail, { type });
+    assertEquals(snapshot, { type });
+  });
+  it("accepts omitted request defaults", () => {
+    const heartbeat =
+      {} satisfies operations["createRunHeartbeat"]["requestBody"]["content"]["application/json"];
+    const input = {
+      title: "Input",
+      fields: [{ name: "answer", type: "text", default: "Yes" }],
+    } satisfies operations["createRunInputRequest"]["requestBody"]["content"]["application/json"];
+    assertEquals(heartbeat, {});
+    assertEquals(input.fields[0]?.default, "Yes");
+  });
   it("type a child run request by the contract", () => {
     const child = {
       project_id: "00000000-0000-4000-8000-000000000001",

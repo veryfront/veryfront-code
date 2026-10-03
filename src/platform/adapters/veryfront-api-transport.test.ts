@@ -21,6 +21,76 @@ const baseConfig = {
 };
 
 describe("Veryfront API transport retry boundaries", () => {
+  it("removes competing API keys when the host selects bearer authentication", async () => {
+    await withMockFetch((_url, init) => {
+      const headers = new Headers(init?.headers);
+      assertEquals(headers.get("Authorization"), "Bearer token");
+      assertEquals(headers.get("X-API-Key"), null);
+      return Promise.resolve(Response.json({ data: [] }));
+    }, async () => {
+      const transport = createVeryfrontApiTransport({
+        ...baseConfig,
+        authMode: "bearer",
+        defaultHeaders: { "X-API-Key": "default-key" },
+        retry: { maxRetries: 0, initialDelay: 0, maxDelay: 0 },
+      });
+      assertEquals(
+        await transport.request("/runs", {
+          headers: { "X-API-Key": "request-key" },
+        }),
+        { data: [] },
+      );
+    });
+  });
+
+  it("rejects unsupported authentication modes before reading credentials", () => {
+    let reads = 0;
+    assertThrows(
+      () =>
+        createVeryfrontApiTransport({
+          ...baseConfig,
+          getToken: () => {
+            reads++;
+            return "token";
+          },
+          authMode: "unsupported" as "bearer",
+          retry: { maxRetries: 0, initialDelay: 0, maxDelay: 0 },
+        }),
+      TypeError,
+      "authMode",
+    );
+    assertEquals(reads, 0);
+  });
+
+  it("supports anonymous requests without reading or forwarding credentials", async () => {
+    await withMockFetch((_url, init) => {
+      assertEquals(new Headers(init?.headers).get("Authorization"), null);
+      assertEquals(new Headers(init?.headers).get("X-API-Key"), null);
+      return Promise.resolve(Response.json({ data: [] }));
+    }, async () => {
+      const transport = createVeryfrontApiTransport({
+        ...baseConfig,
+        authMode: "none",
+        getToken: () => {
+          throw new Error("anonymous requests must not read credentials");
+        },
+        defaultHeaders: { Authorization: "Bearer stale", "X-API-Key": "stale" },
+        retry: { maxRetries: 0, initialDelay: 0, maxDelay: 0 },
+      });
+      assertEquals(await transport.request("/runs/event-types"), { data: [] });
+    });
+  });
+
+  it("decodes a 204 response without trying to parse an empty JSON body", async () => {
+    await withMockFetch(() => Promise.resolve(new Response(null, { status: 204 })), async () => {
+      const transport = createVeryfrontApiTransport({
+        ...baseConfig,
+        retry: { maxRetries: 0, initialDelay: 0, maxDelay: 0 },
+      });
+      assertEquals(await transport.request("/runs/run-1", { method: "DELETE" }), undefined);
+    });
+  });
+
   it("rejects retry policies that exceed ten total attempts", () => {
     assertThrows(
       () =>

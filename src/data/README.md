@@ -401,4 +401,4 @@ Veryfront's data fetching API is compatible with Next.js:
 | `notFound()`         | `notFound()` (same)     |
 | `redirect()`         | `redirect()` (same)     |
 
-Simply rename `getServerSideProps` to `getServerData` and use Veryfront's import aliases.
+Rename `getServerSideProps` to `getServerData`. Use Veryfront's import aliases.

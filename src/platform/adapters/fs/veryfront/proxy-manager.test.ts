@@ -654,6 +654,70 @@ describe("ProxyFSAdapterManager", () => {
     });
   });
 
+  describe("adapter credential expiry", () => {
+    const encodeSegment = (value: unknown): string =>
+      btoa(JSON.stringify(value)).replaceAll("+", "-").replaceAll("/", "_").replaceAll("=", "");
+    const jwtExpiringAt = (expSeconds: unknown): string =>
+      `${encodeSegment({ alg: "RS256", typ: "JWT" })}.${
+        encodeSegment({ sub: "run", exp: expSeconds })
+      }.signature`;
+
+    async function captureExpiryProbe(
+      token: string,
+      now: () => number,
+    ): Promise<() => boolean> {
+      const probes: Array<() => boolean> = [];
+      const manager = createManager({
+        now,
+        adapterFactory: (config) => {
+          const probe = config.invalidationCallbacks?.isCredentialExpired;
+          assertExists(probe, "the manager must wire a credential expiry signal into each adapter");
+          probes.push(probe);
+          const adapter = new VeryfrontFSAdapter(config);
+          adapter.initialize = () => Promise.resolve();
+          return adapter;
+        },
+      });
+      try {
+        await manager.getAdapter("run-project", token, undefined, false, null, null, "main");
+      } finally {
+        manager.dispose();
+      }
+      assertEquals(probes.length, 1);
+      return probes[0]!;
+    }
+
+    it("reports the adapter's credential as expired from the token's exp claim", async () => {
+      let clock = 1_000_000_000;
+      const isCredentialExpired = await captureExpiryProbe(
+        jwtExpiringAt(1_000_000 + 300),
+        () => clock,
+      );
+
+      assertEquals(isCredentialExpired(), false, "a command token is valid for its lifetime");
+      clock += 299_999;
+      assertEquals(isCredentialExpired(), false);
+      clock += 1;
+      assertEquals(isCredentialExpired(), true, "the credential expires at its exp claim");
+    });
+
+    it("never reports a credential without a readable exp claim as expired", async () => {
+      const farFuture = () => 9_000_000_000_000;
+      for (
+        const token of [
+          "opaque-api-key",
+          "a.not-json.c",
+          jwtExpiringAt("300"),
+          jwtExpiringAt(Number.MAX_VALUE),
+          `${encodeSegment({})}.${encodeSegment(["exp"])}.sig`,
+        ]
+      ) {
+        const isCredentialExpired = await captureExpiryProbe(token, farFuture);
+        assertEquals(isCredentialExpired(), false, `token ${token} has no expiry to act on`);
+      }
+    });
+  });
+
   describe("adapter usage after slow initialization", () => {
     it("counts an adapter as in use when its initialization outlasts the usage window", async () => {
       let clock = 1_000_000;

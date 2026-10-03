@@ -1,3 +1,7 @@
+import {
+  decodeFileOperationSource,
+  isVersionedFileOperationSource,
+} from "./keys/file-operation-source.ts";
 import { rendererLogger } from "#veryfront/utils";
 import { getRedisClient, isRedisConfigured } from "#veryfront/utils/redis-client.ts";
 import { type Span, SpanNames } from "#veryfront/observability";
@@ -430,6 +434,9 @@ export function isKeyForProject(key: string, projectId: string): boolean {
   const normalizedKey = stripRedisPrefix(key);
   const parts = normalizedKey.split(":");
   if (parts.length < 2) return false;
+  if (isVersionedFileOperationSource(parts)) {
+    return decodeFileOperationSource(parts)?.projectSlug === projectId;
+  }
 
   // Versioned cache keys: v{version}:{projectId}:...
   if (parts[0]?.startsWith("v") && parts[1] === projectId) return true;
@@ -465,6 +472,9 @@ export function isKeyForProjectEnvironment(
 
 export function extractProjectIdFromKey(key: string): string | null {
   const parts = key.split(":");
+  if (isVersionedFileOperationSource(parts)) {
+    return decodeFileOperationSource(parts)?.projectSlug ?? null;
+  }
   return parts[1] ?? null;
 }
 
@@ -511,6 +521,13 @@ function getEnvironmentFromKey(key: string, projectId: string): CacheEnvironment
   const normalizedKey = stripRedisPrefix(key);
   const parts = normalizedKey.split(":");
   if (parts.length < 2) return null;
+  if (isVersionedFileOperationSource(parts)) {
+    const source = decodeFileOperationSource(parts);
+    if (!source) return null;
+    // Environment names are user-facing labels (for example `Staging`); every
+    // release-pinned source serves production, matching distributed ownership.
+    return source.sourceType === "branch" ? "preview" : "production";
+  }
 
   // Render cache keys: {projectId}:{environment}:{releaseKey}:{version}:...
   if (parts[0] === projectId && (parts[1] === "production" || parts[1] === "preview")) {
@@ -552,6 +569,12 @@ function isKeyForContentSource(
 ): boolean {
   const normalizedKey = stripRedisPrefix(key);
   const parts = normalizedKey.split(":");
+
+  if (isVersionedFileOperationSource(parts)) {
+    const source = decodeFileOperationSource(parts);
+    return source?.projectSlug === projectId &&
+      (source.qualifier === contentSourceId || source.releaseId === contentSourceId);
+  }
 
   const candidates = new Set<string>([
     contentSourceId,

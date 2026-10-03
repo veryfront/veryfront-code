@@ -108,7 +108,7 @@ cp tests/_examples/integration-server.example.ts tests/integration/my-feature/my
 
 ## Related Documentation
 
-- [Test Style Guide](../README.md) - Comprehensive testing guidelines
+- [Test Style Guide](../README.md) - Testing guidelines
 - [TestContext API](../_helpers/context.ts) - Server test utilities
 - [Test Constants](../_helpers/constants.ts) - Timeout and configuration values
 
@@ -117,7 +117,7 @@ cp tests/_examples/integration-server.example.ts tests/integration/my-feature/my
 To add a new example:
 
 1. Create a new `.example.ts` file in this directory
-2. Include comprehensive comments explaining each pattern
+2. Explain why each pattern is used
 3. Add a checklist of best practices at the end
 4. Update this README with the new example
 5. Ensure the example can run standalone

@@ -267,6 +267,57 @@ describe("VeryfrontAPIOperations", () => {
       assertEquals(result.files[0]?.content, undefined);
     });
 
+    it("lists branch metadata in 1000-file pages and contents in 100-file pages", async () => {
+      const limits: Array<string | null> = [];
+      stubJsonFetch((url) => {
+        const params = new URL(url).searchParams;
+        limits.push(params.get("limit"));
+        const next = params.has("cursor") ? null : "page-2";
+        return { data: [], page_info: { self: null, first: null, next, prev: null } };
+      });
+
+      await createOps().listAllBranchFiles("project-slug", "main", { withoutContent: true });
+      await createOps().listAllBranchFiles("project-slug", "main");
+
+      assertEquals(limits, ["1000", "1000", "100", "100"]);
+    });
+
+    it("lists branch metadata in 100-file pages when the API rejects larger pages", async () => {
+      const limits: Array<string | null> = [];
+      installMockFetch(
+        ((input: RequestInfo | URL) => {
+          const limit = new URL(String(input)).searchParams.get("limit");
+          limits.push(limit);
+          const rejected = limit === "1000";
+          return Promise.resolve(
+            new Response(
+              JSON.stringify(
+                rejected
+                  ? { status: 400, detail: "limit: Number must be less than or equal to 100" }
+                  : {
+                    data: [{
+                      path: "agents/a.ts",
+                      size: 1,
+                      type: "file",
+                      updated_at: "2026-10-03T00:00:00.000Z",
+                    }],
+                    page_info: { self: null, first: null, next: null, prev: null },
+                  },
+              ),
+              { status: rejected ? 400 : 200, headers: { "Content-Type": "application/json" } },
+            ),
+          );
+        }) as typeof fetch,
+      );
+
+      const files = await createOps().listAllBranchFiles("project-slug", "main", {
+        withoutContent: true,
+      });
+
+      assertEquals(files.map((file) => file.path), ["agents/a.ts"]);
+      assertEquals(limits, ["1000", "100"]);
+    });
+
     it("selects metadata only on branch listings", async () => {
       const requestedUrls: string[] = [];
       stubJsonFetch((url) => {

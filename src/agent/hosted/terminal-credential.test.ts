@@ -1,3 +1,5 @@
+import { createTerminalRunControl } from "#veryfront/agent/runtime/terminal-run-control.ts";
+import { bindRuntimeRemoteToolSourcesToCredentialOwner } from "#veryfront/agent/runtime/mcp-server-tool-sources.ts";
 import { assert, assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { ParsedHostedChatRequest } from "./chat-request-parser.ts";
@@ -9,6 +11,8 @@ import {
   RUN_TERMINAL_TOKEN_HEADER,
   RUN_TERMINAL_TOOL_CALL_ID_HEADER,
 } from "./terminal-credential.ts";
+
+const rootContext = () => createTerminalRunControl({ runId: "run-1" }).context;
 
 const request = () =>
   ({
@@ -83,7 +87,7 @@ describe("private terminal credential routing", () => {
       assertEquals(source.id, "custom-platform");
       assertEquals((await source.listTools()).map((tool) => tool.name), ["ordinary"]);
       for (const name of ["finalize", "veryfront__finalize"]) {
-        await source.executeTool(name, {}, { runId: "run-1" });
+        await source.executeTool(name, {}, rootContext());
         const call = calls.at(-1)!;
         assertEquals(call.endpoint, "https://api.example/projects/project-1/mcp");
         assertEquals(call.headers.get(RUN_TERMINAL_TOKEN_HEADER), "test-authority");
@@ -97,7 +101,7 @@ describe("private terminal credential routing", () => {
       await source.executeTool("finalize", {}, { runId: "run-other" });
       assertEquals(calls.at(-1)!.headers.get(RUN_TERMINAL_TOKEN_HEADER), null);
       await source.executeTool("finalize", {}, undefined);
-      assertEquals(calls.at(-1)!.headers.get(RUN_TERMINAL_TOKEN_HEADER), "test-authority");
+      assertEquals(calls.at(-1)!.headers.get(RUN_TERMINAL_TOKEN_HEADER), null);
       assertEquals(Object.keys(original), ["Authorization"]);
     });
   }
@@ -110,16 +114,50 @@ describe("private terminal credential routing", () => {
       { id: "platform", endpoint: "https://active.example/mcp" },
       { kind: "veryfront-api" },
     );
-    await source.executeTool("veryfront__finalize", {}, { runId: "run-1", toolCallId: "call_fin" });
+    await source.executeTool("veryfront__finalize", {}, {
+      ...rootContext(),
+      toolCallId: "call_fin",
+    });
     assertEquals(calls.at(-1)!.headers.get(RUN_TERMINAL_TOOL_CALL_ID_HEADER), "call_fin");
     await source.executeTool("finalize", {}, { runId: "run-other", toolCallId: "call_fin" });
     assertEquals(calls.at(-1)!.headers.get(RUN_TERMINAL_TOOL_CALL_ID_HEADER), null);
     await source.executeTool("ordinary", {}, { runId: "run-1", toolCallId: "call_other" });
     assertEquals(calls.at(-1)!.headers.get(RUN_TERMINAL_TOOL_CALL_ID_HEADER), null);
-    for (const context of [{ runId: "run-1" }, { runId: "run-1", toolCallId: "call\nfin" }]) {
+    for (const context of [rootContext(), { ...rootContext(), toolCallId: "call\nfin" }]) {
       await source.executeTool("finalize", {}, context);
       assertEquals(calls.at(-1)!.headers.get(RUN_TERMINAL_TOKEN_HEADER), "test-authority");
       assertEquals(calls.at(-1)!.headers.get(RUN_TERMINAL_TOOL_CALL_ID_HEADER), null);
+    }
+  });
+
+  it("withholds root authority from an in-process delegate despite credential-owner rebinding", async () => {
+    const value = request();
+    registerHostedTerminalCredential(value, "test-authority");
+    const { calls, fallback } = recorder();
+    const source = hostedTerminalToolSourceFactory(value, "https://api.example/mcp", fallback)(
+      { endpoint: "https://api.example/mcp" },
+      { kind: "veryfront-api" },
+    );
+    const root = rootContext();
+    const child = createTerminalRunControl({ runId: "run-child" }).context;
+    const inherited = bindRuntimeRemoteToolSourcesToCredentialOwner([source], root)![0]!;
+    const unowned = bindRuntimeRemoteToolSourcesToCredentialOwner([source], {
+      runId: "run-1",
+    })![0]!;
+    await unowned.executeTool("finalize", {}, root);
+    assertEquals(calls.at(-1)!.headers.get(RUN_TERMINAL_TOKEN_HEADER), null);
+    const grandchild = createTerminalRunControl({ runId: "run-grandchild" }).context;
+    const deepInherited = bindRuntimeRemoteToolSourcesToCredentialOwner([inherited], child)![0]!;
+    for (const name of ["finalize", "veryfront__finalize"]) {
+      await deepInherited.executeTool(name, {}, grandchild);
+      assertEquals(calls.at(-1)!.headers.get(RUN_TERMINAL_TOKEN_HEADER), null);
+      await inherited.executeTool(name, {
+        status: "failed",
+        error: { code: "FAILED", message: "Failed" },
+      }, child);
+      assertEquals(calls.at(-1)!.headers.get(RUN_TERMINAL_TOKEN_HEADER), null);
+      await source.executeTool(name, {}, root);
+      assertEquals(calls.at(-1)!.headers.get(RUN_TERMINAL_TOKEN_HEADER), "test-authority");
     }
   });
 

@@ -360,8 +360,8 @@ export interface paths {
          * Create run event token
          * @description Create run event token.
          *
-         *     - The parent execution credential may mint append-only authority for the direct child identified by run_id.
-         *     - The token cannot read events, finalize, heartbeat or create children.
+         *     - The parent execution credential, or an event token delegated under its execution generation, may mint append-only authority for the direct child identified by run_id.
+         *     - The token may mint event tokens for its own direct children while the root execution generation is current. It cannot read events, finalize, heartbeat or create children.
          */
         post: operations["createRunEventToken"];
         delete?: never;
@@ -680,7 +680,15 @@ export interface components {
             /** @enum {string} */
             type: "AGENT_RUN_AUTHORIZATION_SEALED";
         };
+        AgentRunAuthorizationSealedPayloadRedacted: {
+            /** @enum {string} */
+            type: "AGENT_RUN_AUTHORIZATION_SEALED";
+        };
         AgentRunBillingUsageRetainedPayload: {
+            /** @enum {string} */
+            type: "AGENT_RUN_BILLING_USAGE_RETAINED";
+        };
+        AgentRunBillingUsageRetainedPayloadRedacted: {
             /** @enum {string} */
             type: "AGENT_RUN_BILLING_USAGE_RETAINED";
         };
@@ -709,6 +717,10 @@ export interface components {
             /** @enum {string} */
             type: "AGENT_RUN_CONTEXT_COMPACTED";
         };
+        AgentRunContextCompactedPayloadRedacted: {
+            /** @enum {string} */
+            type: "AGENT_RUN_CONTEXT_COMPACTED";
+        };
         AgentRunControlPlaneDispatchAcceptedPayload: {
             /** @enum {string} */
             type: "AGENT_RUN_CONTROL_PLANE_DISPATCH_ACCEPTED";
@@ -717,11 +729,19 @@ export interface components {
             /** @enum {string} */
             type: "AGENT_RUN_CONTROL_PLANE_DISPATCH_ACCEPTED";
         };
+        AgentRunControlPlaneDispatchAcceptedPayloadRedacted: {
+            /** @enum {string} */
+            type: "AGENT_RUN_CONTROL_PLANE_DISPATCH_ACCEPTED";
+        };
         AgentRunControlPlaneDispatchReceiptPayload: {
             /** @enum {string} */
             type: "AGENT_RUN_CONTROL_PLANE_DISPATCH_RECEIPT";
         } & {
             requestHash: string;
+            /** @enum {string} */
+            type: "AGENT_RUN_CONTROL_PLANE_DISPATCH_RECEIPT";
+        };
+        AgentRunControlPlaneDispatchReceiptPayloadRedacted: {
             /** @enum {string} */
             type: "AGENT_RUN_CONTROL_PLANE_DISPATCH_RECEIPT";
         };
@@ -736,6 +756,10 @@ export interface components {
             /** @enum {string} */
             type: "AGENT_RUN_DETACHED_ACCEPTED";
         };
+        AgentRunDetachedAcceptedPayloadRedacted: {
+            /** @enum {string} */
+            type: "AGENT_RUN_DETACHED_ACCEPTED";
+        };
         AgentRunIntegrationConnectionRefusedPayload: {
             integration: string;
             message: string;
@@ -744,6 +768,10 @@ export interface components {
             type: "AGENT_RUN_INTEGRATION_CONNECTION_REFUSED";
         };
         AgentRunInvokeAgentBillingModeRetainedPayload: {
+            /** @enum {string} */
+            type: "AGENT_RUN_INVOKE_AGENT_BILLING_MODE_RETAINED";
+        };
+        AgentRunInvokeAgentBillingModeRetainedPayloadRedacted: {
             /** @enum {string} */
             type: "AGENT_RUN_INVOKE_AGENT_BILLING_MODE_RETAINED";
         };
@@ -859,6 +887,10 @@ export interface components {
             /** @enum {string} */
             type: "AGENT_RUN_MODEL_CALL_CONTEXT";
         };
+        AgentRunModelCallContextPayloadRedacted: {
+            /** @enum {string} */
+            type: "AGENT_RUN_MODEL_CALL_CONTEXT";
+        };
         AgentRunModelCallContextRecordedPayload: {
             /** @enum {string} */
             type: "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED";
@@ -971,6 +1003,10 @@ export interface components {
             /** @enum {string} */
             type: "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED";
         };
+        AgentRunModelCallContextRecordedPayloadRedacted: {
+            /** @enum {string} */
+            type: "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED";
+        };
         AgentRunProviderReplayCheckpointedPayload: {
             /** @enum {string} */
             type: "AGENT_RUN_PROVIDER_REPLAY_CHECKPOINTED";
@@ -1002,6 +1038,10 @@ export interface components {
              * @enum {number}
              */
             version: 1;
+        };
+        AgentRunProviderReplayCheckpointedPayloadRedacted: {
+            /** @enum {string} */
+            type: "AGENT_RUN_PROVIDER_REPLAY_CHECKPOINTED";
         };
         AgentRunProviderReplayCheckpointPayload: {
             /** @enum {string} */
@@ -1035,7 +1075,15 @@ export interface components {
              */
             version: 1;
         };
+        AgentRunProviderReplayCheckpointPayloadRedacted: {
+            /** @enum {string} */
+            type: "AGENT_RUN_PROVIDER_REPLAY_CHECKPOINT";
+        };
         AgentRunProviderReplayTurnFinishedPayload: {
+            /** @enum {string} */
+            type: "AGENT_RUN_PROVIDER_REPLAY_TURN_FINISHED";
+        };
+        AgentRunProviderReplayTurnFinishedPayloadRedacted: {
             /** @enum {string} */
             type: "AGENT_RUN_PROVIDER_REPLAY_TURN_FINISHED";
         };
@@ -1043,7 +1091,15 @@ export interface components {
             /** @enum {string} */
             type: "AGENT_RUN_PROVIDER_REPLAY_TURN_STARTED";
         };
+        AgentRunProviderReplayTurnStartedPayloadRedacted: {
+            /** @enum {string} */
+            type: "AGENT_RUN_PROVIDER_REPLAY_TURN_STARTED";
+        };
         AgentRunReplayedUploadsSealedPayload: {
+            /** @enum {string} */
+            type: "AGENT_RUN_REPLAYED_UPLOADS_SEALED";
+        };
+        AgentRunReplayedUploadsSealedPayloadRedacted: {
             /** @enum {string} */
             type: "AGENT_RUN_REPLAYED_UPLOADS_SEALED";
         };
@@ -1073,6 +1129,10 @@ export interface components {
             type: "AGENT_RUN_TOOL_EXPOSURE_CHECKPOINTED";
             version: 1 | 2;
         };
+        AgentRunToolExposureCheckpointedPayloadRedacted: {
+            /** @enum {string} */
+            type: "AGENT_RUN_TOOL_EXPOSURE_CHECKPOINTED";
+        };
         AgentRunToolExposureCheckpointPayload: {
             /** @enum {string} */
             type: "AGENT_RUN_TOOL_EXPOSURE_CHECKPOINT";
@@ -1086,6 +1146,10 @@ export interface components {
             /** @enum {string} */
             type: "AGENT_RUN_TOOL_EXPOSURE_CHECKPOINT";
             version: 1 | 2;
+        };
+        AgentRunToolExposureCheckpointPayloadRedacted: {
+            /** @enum {string} */
+            type: "AGENT_RUN_TOOL_EXPOSURE_CHECKPOINT";
         };
         AgentRunToolResultDeliveryFailedPayload: {
             /** @enum {string} */
@@ -1318,12 +1382,29 @@ export interface components {
             title: string;
             tool_call_id?: string;
         };
+        CreateInputRequestRequestInput: {
+            description?: string;
+            /** Format: date-time */
+            expires_at?: string;
+            fields: components["schemas"]["InputRequestFieldInput"][];
+            metadata?: {
+                [key: string]: unknown;
+            };
+            /** @enum {string} */
+            requested_responder_type?: "human" | "agent" | "system";
+            title: string;
+            tool_call_id?: string;
+        };
         CreateRunHeartbeatRequest: {
             /**
              * Format: int64
              * @default 60
              */
             lease_duration_seconds: number;
+        };
+        CreateRunHeartbeatRequestInput: {
+            /** Format: int64 */
+            lease_duration_seconds?: number;
         };
         /** @description Create a direct run with project_id, target:{type,id}, and optional input, or execute a saved schedule or webhook. Input is business data; configuration and execution settings are separate. */
         CreateRunRequest: components["schemas"]["DirectRunRequest"] | components["schemas"]["ScheduleRunRequest"] | components["schemas"]["WebhookRunRequest"];
@@ -1722,6 +1803,53 @@ export interface components {
             }[];
             /** @default false */
             required: boolean;
+            /** @enum {string} */
+            type: "select" | "radio";
+        };
+        InputRequestFieldInput: {
+            description?: string;
+            label?: string;
+            name: string;
+            required?: boolean;
+            /** @enum {string} */
+            type: "password";
+        } | {
+            default?: string;
+            description?: string;
+            label?: string;
+            name: string;
+            required?: boolean;
+            /** @enum {string} */
+            type: "text" | "textarea" | "email" | "url";
+        } | {
+            /** Format: double */
+            default?: number;
+            description?: string;
+            label?: string;
+            name: string;
+            required?: boolean;
+            /** @enum {string} */
+            type: "number";
+        } | {
+            default?: boolean;
+            description?: string;
+            label?: string;
+            name: string;
+            required?: boolean;
+            /** @enum {string} */
+            type: "checkbox" | "confirm";
+        } | {
+            default?: string;
+            description?: string;
+            label?: string;
+            name: string;
+            options: {
+                description?: string;
+                label: string;
+                recommended?: boolean;
+                value: string;
+            }[];
+            required?: boolean;
             /** @enum {string} */
             type: "select" | "radio";
         };
@@ -2987,7 +3115,7 @@ export interface components {
             origin_event_type: string;
             /** @description The parent span id associated with this record. */
             parent_span_id: string | null;
-            payload: components["schemas"]["AgentRunAuthorizationSealedPayload"];
+            payload: components["schemas"]["AgentRunAuthorizationSealedPayload"] | components["schemas"]["AgentRunAuthorizationSealedPayloadRedacted"];
             /**
              * Format: uuid
              * @description Run identifier associated with the record.
@@ -3227,7 +3355,7 @@ export interface components {
             origin_event_type: string;
             /** @description The parent span id associated with this record. */
             parent_span_id: string | null;
-            payload: components["schemas"]["AgentRunContextCompactedPayload"];
+            payload: components["schemas"]["AgentRunContextCompactedPayload"] | components["schemas"]["AgentRunContextCompactedPayloadRedacted"];
             /**
              * Format: uuid
              * @description Run identifier associated with the record.
@@ -3257,7 +3385,7 @@ export interface components {
             origin_event_type: string;
             /** @description The parent span id associated with this record. */
             parent_span_id: string | null;
-            payload: components["schemas"]["AgentRunToolExposureCheckpointedPayload"];
+            payload: components["schemas"]["AgentRunToolExposureCheckpointedPayload"] | components["schemas"]["AgentRunToolExposureCheckpointedPayloadRedacted"];
             /**
              * Format: uuid
              * @description Run identifier associated with the record.
@@ -3287,7 +3415,7 @@ export interface components {
             origin_event_type: string;
             /** @description The parent span id associated with this record. */
             parent_span_id: string | null;
-            payload: components["schemas"]["AgentRunProviderReplayCheckpointedPayload"];
+            payload: components["schemas"]["AgentRunProviderReplayCheckpointedPayload"] | components["schemas"]["AgentRunProviderReplayCheckpointedPayloadRedacted"];
             /**
              * Format: uuid
              * @description Run identifier associated with the record.
@@ -3317,7 +3445,7 @@ export interface components {
             origin_event_type: string;
             /** @description The parent span id associated with this record. */
             parent_span_id: string | null;
-            payload: components["schemas"]["AgentRunProviderReplayTurnStartedPayload"];
+            payload: components["schemas"]["AgentRunProviderReplayTurnStartedPayload"] | components["schemas"]["AgentRunProviderReplayTurnStartedPayloadRedacted"];
             /**
              * Format: uuid
              * @description Run identifier associated with the record.
@@ -3347,7 +3475,7 @@ export interface components {
             origin_event_type: string;
             /** @description The parent span id associated with this record. */
             parent_span_id: string | null;
-            payload: components["schemas"]["AgentRunProviderReplayTurnFinishedPayload"];
+            payload: components["schemas"]["AgentRunProviderReplayTurnFinishedPayload"] | components["schemas"]["AgentRunProviderReplayTurnFinishedPayloadRedacted"];
             /**
              * Format: uuid
              * @description Run identifier associated with the record.
@@ -3377,7 +3505,7 @@ export interface components {
             origin_event_type: string;
             /** @description The parent span id associated with this record. */
             parent_span_id: string | null;
-            payload: components["schemas"]["AgentRunModelCallContextRecordedPayload"];
+            payload: components["schemas"]["AgentRunModelCallContextRecordedPayload"] | components["schemas"]["AgentRunModelCallContextRecordedPayloadRedacted"];
             /**
              * Format: uuid
              * @description Run identifier associated with the record.
@@ -3407,7 +3535,7 @@ export interface components {
             origin_event_type: string;
             /** @description The parent span id associated with this record. */
             parent_span_id: string | null;
-            payload: components["schemas"]["AgentRunControlPlaneDispatchAcceptedPayload"];
+            payload: components["schemas"]["AgentRunControlPlaneDispatchAcceptedPayload"] | components["schemas"]["AgentRunControlPlaneDispatchAcceptedPayloadRedacted"];
             /**
              * Format: uuid
              * @description Run identifier associated with the record.
@@ -3437,7 +3565,7 @@ export interface components {
             origin_event_type: string;
             /** @description The parent span id associated with this record. */
             parent_span_id: string | null;
-            payload: components["schemas"]["AgentRunDetachedAcceptedPayload"];
+            payload: components["schemas"]["AgentRunDetachedAcceptedPayload"] | components["schemas"]["AgentRunDetachedAcceptedPayloadRedacted"];
             /**
              * Format: uuid
              * @description Run identifier associated with the record.
@@ -3467,7 +3595,7 @@ export interface components {
             origin_event_type: string;
             /** @description The parent span id associated with this record. */
             parent_span_id: string | null;
-            payload: components["schemas"]["AgentRunInvokeAgentBillingModeRetainedPayload"];
+            payload: components["schemas"]["AgentRunInvokeAgentBillingModeRetainedPayload"] | components["schemas"]["AgentRunInvokeAgentBillingModeRetainedPayloadRedacted"];
             /**
              * Format: uuid
              * @description Run identifier associated with the record.
@@ -3497,7 +3625,7 @@ export interface components {
             origin_event_type: string;
             /** @description The parent span id associated with this record. */
             parent_span_id: string | null;
-            payload: components["schemas"]["AgentRunBillingUsageRetainedPayload"];
+            payload: components["schemas"]["AgentRunBillingUsageRetainedPayload"] | components["schemas"]["AgentRunBillingUsageRetainedPayloadRedacted"];
             /**
              * Format: uuid
              * @description Run identifier associated with the record.
@@ -3527,7 +3655,7 @@ export interface components {
             origin_event_type: string;
             /** @description The parent span id associated with this record. */
             parent_span_id: string | null;
-            payload: components["schemas"]["AgentRunReplayedUploadsSealedPayload"];
+            payload: components["schemas"]["AgentRunReplayedUploadsSealedPayload"] | components["schemas"]["AgentRunReplayedUploadsSealedPayloadRedacted"];
             /**
              * Format: uuid
              * @description Run identifier associated with the record.
@@ -3947,7 +4075,7 @@ export interface components {
             origin_event_type: string;
             /** @description The parent span id associated with this record. */
             parent_span_id: string | null;
-            payload: components["schemas"]["AgentRunControlPlaneDispatchReceiptPayload"];
+            payload: components["schemas"]["AgentRunControlPlaneDispatchReceiptPayload"] | components["schemas"]["AgentRunControlPlaneDispatchReceiptPayloadRedacted"];
             /**
              * Format: uuid
              * @description Run identifier associated with the record.
@@ -3977,7 +4105,7 @@ export interface components {
             origin_event_type: string;
             /** @description The parent span id associated with this record. */
             parent_span_id: string | null;
-            payload: components["schemas"]["AgentRunToolExposureCheckpointPayload"];
+            payload: components["schemas"]["AgentRunToolExposureCheckpointPayload"] | components["schemas"]["AgentRunToolExposureCheckpointPayloadRedacted"];
             /**
              * Format: uuid
              * @description Run identifier associated with the record.
@@ -4007,7 +4135,7 @@ export interface components {
             origin_event_type: string;
             /** @description The parent span id associated with this record. */
             parent_span_id: string | null;
-            payload: components["schemas"]["AgentRunProviderReplayCheckpointPayload"];
+            payload: components["schemas"]["AgentRunProviderReplayCheckpointPayload"] | components["schemas"]["AgentRunProviderReplayCheckpointPayloadRedacted"];
             /**
              * Format: uuid
              * @description Run identifier associated with the record.
@@ -4037,7 +4165,7 @@ export interface components {
             origin_event_type: string;
             /** @description The parent span id associated with this record. */
             parent_span_id: string | null;
-            payload: components["schemas"]["AgentRunModelCallContextPayload"];
+            payload: components["schemas"]["AgentRunModelCallContextPayload"] | components["schemas"]["AgentRunModelCallContextPayloadRedacted"];
             /**
              * Format: uuid
              * @description Run identifier associated with the record.
@@ -4960,7 +5088,7 @@ export interface components {
             origin_event_type: string;
             /** @description The parent span id associated with this record. */
             parent_span_id: string | null;
-            payload: components["schemas"]["AgentRunAuthorizationSealedPayload"];
+            payload: components["schemas"]["AgentRunAuthorizationSealedPayload"] | components["schemas"]["AgentRunAuthorizationSealedPayloadRedacted"];
             /**
              * Format: uuid
              * @description Run identifier associated with the record.
@@ -5200,7 +5328,7 @@ export interface components {
             origin_event_type: string;
             /** @description The parent span id associated with this record. */
             parent_span_id: string | null;
-            payload: components["schemas"]["AgentRunContextCompactedPayload"];
+            payload: components["schemas"]["AgentRunContextCompactedPayload"] | components["schemas"]["AgentRunContextCompactedPayloadRedacted"];
             /**
              * Format: uuid
              * @description Run identifier associated with the record.
@@ -5230,7 +5358,7 @@ export interface components {
             origin_event_type: string;
             /** @description The parent span id associated with this record. */
             parent_span_id: string | null;
-            payload: components["schemas"]["AgentRunToolExposureCheckpointedPayload"];
+            payload: components["schemas"]["AgentRunToolExposureCheckpointedPayload"] | components["schemas"]["AgentRunToolExposureCheckpointedPayloadRedacted"];
             /**
              * Format: uuid
              * @description Run identifier associated with the record.
@@ -5260,7 +5388,7 @@ export interface components {
             origin_event_type: string;
             /** @description The parent span id associated with this record. */
             parent_span_id: string | null;
-            payload: components["schemas"]["AgentRunProviderReplayCheckpointedPayload"];
+            payload: components["schemas"]["AgentRunProviderReplayCheckpointedPayload"] | components["schemas"]["AgentRunProviderReplayCheckpointedPayloadRedacted"];
             /**
              * Format: uuid
              * @description Run identifier associated with the record.
@@ -5290,7 +5418,7 @@ export interface components {
             origin_event_type: string;
             /** @description The parent span id associated with this record. */
             parent_span_id: string | null;
-            payload: components["schemas"]["AgentRunProviderReplayTurnStartedPayload"];
+            payload: components["schemas"]["AgentRunProviderReplayTurnStartedPayload"] | components["schemas"]["AgentRunProviderReplayTurnStartedPayloadRedacted"];
             /**
              * Format: uuid
              * @description Run identifier associated with the record.
@@ -5320,7 +5448,7 @@ export interface components {
             origin_event_type: string;
             /** @description The parent span id associated with this record. */
             parent_span_id: string | null;
-            payload: components["schemas"]["AgentRunProviderReplayTurnFinishedPayload"];
+            payload: components["schemas"]["AgentRunProviderReplayTurnFinishedPayload"] | components["schemas"]["AgentRunProviderReplayTurnFinishedPayloadRedacted"];
             /**
              * Format: uuid
              * @description Run identifier associated with the record.
@@ -5350,7 +5478,7 @@ export interface components {
             origin_event_type: string;
             /** @description The parent span id associated with this record. */
             parent_span_id: string | null;
-            payload: components["schemas"]["AgentRunModelCallContextRecordedPayload"];
+            payload: components["schemas"]["AgentRunModelCallContextRecordedPayload"] | components["schemas"]["AgentRunModelCallContextRecordedPayloadRedacted"];
             /**
              * Format: uuid
              * @description Run identifier associated with the record.
@@ -5380,7 +5508,7 @@ export interface components {
             origin_event_type: string;
             /** @description The parent span id associated with this record. */
             parent_span_id: string | null;
-            payload: components["schemas"]["AgentRunControlPlaneDispatchAcceptedPayload"];
+            payload: components["schemas"]["AgentRunControlPlaneDispatchAcceptedPayload"] | components["schemas"]["AgentRunControlPlaneDispatchAcceptedPayloadRedacted"];
             /**
              * Format: uuid
              * @description Run identifier associated with the record.
@@ -5410,7 +5538,7 @@ export interface components {
             origin_event_type: string;
             /** @description The parent span id associated with this record. */
             parent_span_id: string | null;
-            payload: components["schemas"]["AgentRunDetachedAcceptedPayload"];
+            payload: components["schemas"]["AgentRunDetachedAcceptedPayload"] | components["schemas"]["AgentRunDetachedAcceptedPayloadRedacted"];
             /**
              * Format: uuid
              * @description Run identifier associated with the record.
@@ -5440,7 +5568,7 @@ export interface components {
             origin_event_type: string;
             /** @description The parent span id associated with this record. */
             parent_span_id: string | null;
-            payload: components["schemas"]["AgentRunInvokeAgentBillingModeRetainedPayload"];
+            payload: components["schemas"]["AgentRunInvokeAgentBillingModeRetainedPayload"] | components["schemas"]["AgentRunInvokeAgentBillingModeRetainedPayloadRedacted"];
             /**
              * Format: uuid
              * @description Run identifier associated with the record.
@@ -5470,7 +5598,7 @@ export interface components {
             origin_event_type: string;
             /** @description The parent span id associated with this record. */
             parent_span_id: string | null;
-            payload: components["schemas"]["AgentRunBillingUsageRetainedPayload"];
+            payload: components["schemas"]["AgentRunBillingUsageRetainedPayload"] | components["schemas"]["AgentRunBillingUsageRetainedPayloadRedacted"];
             /**
              * Format: uuid
              * @description Run identifier associated with the record.
@@ -5500,7 +5628,7 @@ export interface components {
             origin_event_type: string;
             /** @description The parent span id associated with this record. */
             parent_span_id: string | null;
-            payload: components["schemas"]["AgentRunReplayedUploadsSealedPayload"];
+            payload: components["schemas"]["AgentRunReplayedUploadsSealedPayload"] | components["schemas"]["AgentRunReplayedUploadsSealedPayloadRedacted"];
             /**
              * Format: uuid
              * @description Run identifier associated with the record.
@@ -5920,7 +6048,7 @@ export interface components {
             origin_event_type: string;
             /** @description The parent span id associated with this record. */
             parent_span_id: string | null;
-            payload: components["schemas"]["AgentRunControlPlaneDispatchReceiptPayload"];
+            payload: components["schemas"]["AgentRunControlPlaneDispatchReceiptPayload"] | components["schemas"]["AgentRunControlPlaneDispatchReceiptPayloadRedacted"];
             /**
              * Format: uuid
              * @description Run identifier associated with the record.
@@ -5950,7 +6078,7 @@ export interface components {
             origin_event_type: string;
             /** @description The parent span id associated with this record. */
             parent_span_id: string | null;
-            payload: components["schemas"]["AgentRunToolExposureCheckpointPayload"];
+            payload: components["schemas"]["AgentRunToolExposureCheckpointPayload"] | components["schemas"]["AgentRunToolExposureCheckpointPayloadRedacted"];
             /**
              * Format: uuid
              * @description Run identifier associated with the record.
@@ -5980,7 +6108,7 @@ export interface components {
             origin_event_type: string;
             /** @description The parent span id associated with this record. */
             parent_span_id: string | null;
-            payload: components["schemas"]["AgentRunProviderReplayCheckpointPayload"];
+            payload: components["schemas"]["AgentRunProviderReplayCheckpointPayload"] | components["schemas"]["AgentRunProviderReplayCheckpointPayloadRedacted"];
             /**
              * Format: uuid
              * @description Run identifier associated with the record.
@@ -6010,7 +6138,7 @@ export interface components {
             origin_event_type: string;
             /** @description The parent span id associated with this record. */
             parent_span_id: string | null;
-            payload: components["schemas"]["AgentRunModelCallContextPayload"];
+            payload: components["schemas"]["AgentRunModelCallContextPayload"] | components["schemas"]["AgentRunModelCallContextPayloadRedacted"];
             /**
              * Format: uuid
              * @description Run identifier associated with the record.
@@ -8770,7 +8898,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["CreateRunHeartbeatRequest"];
+                "application/json": components["schemas"]["CreateRunHeartbeatRequestInput"];
             };
         };
         responses: {
@@ -8978,7 +9106,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["CreateInputRequestRequest"];
+                "application/json": components["schemas"]["CreateInputRequestRequestInput"];
             };
         };
         responses: {

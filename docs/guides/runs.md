@@ -175,6 +175,54 @@ const page = await runs.list({ limit: 50 });
 console.log(page.data.map((run) => run.run_id));
 ```
 
+## Typed Runs contract SDK
+
+`veryfront/runs/target` publishes the typed SDK for the Runs target contract that
+the npm package pins. It has one method per contract operation, and its request
+and response types come from that pinned contract. The SDK sends every request
+through the canonical Veryfront API transport from `createRunsApiTransport`,
+which owns the origin, credentials, retries, body limits and telemetry. Set
+`authMode: "api-key"` to send a project API key as `X-API-Key`. Until the
+hosted API switches to the target contract, set `baseUrl` to an origin that
+serves it. The legacy client at
+`veryfront/runs` stays available until consumers switch over.
+
+```ts
+import {
+  createRunsApiTransport,
+  createRunsSdk,
+  type RunsContractComponents,
+  type RunsOutput,
+} from "veryfront/runs/target";
+
+const sdk = createRunsSdk({
+  transport: createRunsApiTransport({
+    baseUrl: "<RUNS_API_ORIGIN>",
+    getToken: () => process.env.VERYFRONT_API_TOKEN!,
+  }),
+});
+
+const run: RunsOutput<"getRun"> = await sdk.getRun({
+  path: { run_id: "11111111-1111-4111-8111-111111111111" },
+});
+const children = await sdk.listRunChildRuns({ path: { run_id: run.id } });
+for await (const frame of sdk.streamRunEvents({ path: { run_id: run.id } })) {
+  console.log(frame.id, frame.event);
+}
+
+type Run = RunsContractComponents["schemas"]["Run"];
+```
+
+The package ships the pinned contract as TypeScript types, not runtime
+validators. An app that consumes the SDK at its own boundary uses these types
+instead of copying the contract, for example `RunsOutput<"getRun">` or
+`RunsContractComponents["schemas"]["Run"]`. If it also validates responses at
+runtime, it types each validator against them. Then a contract change that
+removes or retypes a field fails to compile. A new optional field still
+compiles, so update the validator when the pinned contract changes. Error
+responses reject with a `VeryfrontError`, and `runsProblemOf(error)` returns the
+RFC 9457 problem body.
+
 ## Scheduling
 
 Schedules are definitions that create runs later. One-time and cron-style
@@ -211,3 +259,94 @@ for (const entry of events.data) {
 
 A working setup ends with `status: "completed"` and an event log whose entries
 describe the run.
+
+## Runs target CLI reference
+
+Use `veryfront project runs <command>` with an API that serves the Runs 0.8.0
+contract. The CLI calls the typed Runs SDK. Target deployment and live parity
+are tracked separately from the fixture tests for these commands.
+
+Set `VERYFRONT_API_URL` to your API origin in your process environment. Use your
+normal CLI login, or supply `--credential-file <TOKEN_FILE>` for an execution
+or event-writer token. Add `--credential-mode api-key` for a project API key.
+A repository-supplied API origin cannot receive a credential from that file.
+Without `--credential-file`, the credential mode applies to your configured CLI
+credential. Select `api-key` only when that credential is a project API key.
+
+| Command                 | SDK operation                   | Required route flags                             |
+| ----------------------- | ------------------------------- | ------------------------------------------------ |
+| `list`                  | `listRuns`                      | None                                             |
+| `create`                | `createRun`                     | None                                             |
+| `get`                   | `getRun`                        | `--run-id`                                       |
+| `update`                | `updateRun`                     | `--run-id`                                       |
+| `delete`                | `deleteRun`                     | `--run-id`                                       |
+| `cancel`                | `cancelRun`                     | `--run-id`                                       |
+| `resume`                | `resumeRun`                     | `--run-id`                                       |
+| `project-list`          | `listProjectRuns`               | `--project-reference`                            |
+| `conversation-list`     | `listConversationRuns`          | `--conversation-id`                              |
+| `analytics`             | `getAccountRunAnalytics`        | None                                             |
+| `events`                | `listRunEvents`                 | `--run-id`                                       |
+| `append-events`         | `appendRunEvents`               | `--run-id`                                       |
+| `event`                 | `getRunEvent`                   | `--run-id`, `--event-id`                         |
+| `events-summary`        | `getRunEventsSummary`           | `--run-id`                                       |
+| `snapshot`              | `getRunSnapshot`                | `--run-id`                                       |
+| `stream`                | `streamRunEvents`               | `--run-id`                                       |
+| `event-types`           | `listRunEventTypes`             | None                                             |
+| `inputs`                | `listRunInputRequests`          | `--run-id`                                       |
+| `create-input`          | `createRunInputRequest`         | `--run-id`                                       |
+| `conversation-inputs`   | `listConversationInputRequests` | `--conversation-id`                              |
+| `webhook-list`          | `listProjectWebhookRuns`        | `--project-reference`, `--webhook-definition-id` |
+| `eval-list`             | `listEvalRuns`                  | `--project-reference`, `--eval-id`               |
+| `input`                 | `getInputRequest`               | `--input-request-id`                             |
+| `respond`               | `createInputResponse`           | `--input-request-id`                             |
+| `cancel-input`          | `cancelInputRequest`            | `--input-request-id`                             |
+| `pause`                 | `pauseRun`                      | `--run-id`                                       |
+| `finalize`              | `finalizeRun`                   | `--run-id`                                       |
+| `heartbeat`             | `createRunHeartbeat`            | `--run-id`                                       |
+| `event-token`           | `createRunEventToken`           | `--run-id`                                       |
+| `children`              | `listRunChildRuns`              | `--run-id`                                       |
+| `conversation-children` | `listConversationChildRuns`     | `--conversation-id`                              |
+
+Supply request bodies with `--body '<JSON>'`. Supply filters and paging arguments
+with `--query '<JSON>'`, preserving the contract's snake_case keys and JSON types.
+Use `--idempotency-key` for idempotent mutations and `--if-match` for `update`.
+`create`, `resume`, `update`, `create-input`, `respond`, `finalize`, and `heartbeat`
+require `--body`. `create`, `cancel`, `resume`, `create-input`, `respond`,
+`cancel-input`, `pause`, and `finalize` require `--idempotency-key`. `update`
+requires `--if-match`. The table lists route flags only.
+The service validates the shared contract. The CLI adds no lifecycle policy.
+
+Use `--all` on list commands to follow SDK pagination. Use `get --follow` or
+`create --follow` to stream after the initial response. `stream --last-event-id`
+resumes after a durable event ID. The `event-token` success response intentionally
+returns a scoped credential. Save that result securely; do not include it in logs
+or shared evidence. `--json` returns the normal success or error
+envelope; streams emit one envelope per line (NDJSON). Stream output uses stdout
+and does not accept `--output`.
+
+```sh
+veryfront project runs project-list --project-reference <PROJECT_ID> --json \
+  --query '{"limit":20,"root_only":true}' --all
+veryfront project runs get --run-id <RUN_ID> --json
+veryfront project runs create --idempotency-key <REQUEST_KEY> --json \
+  --body '{"project_id":"<PROJECT_ID>","target":{"type":"task","id":"health-check"}}'
+veryfront project runs create --idempotency-key <REQUEST_KEY> --json \
+  --body '{"project_id":"<PROJECT_ID>","source":{"type":"schedule","id":"<SCHEDULE_ID>"}}'
+veryfront project runs stream --run-id <RUN_ID> --last-event-id <EVENT_ID> --json
+veryfront project runs finalize --run-id <RUN_ID> --idempotency-key <REQUEST_KEY> \
+  --credential-file <EXECUTION_TOKEN_FILE> --json \
+  --body '{"status":"completed","output":null}'
+```
+
+Validation Problems (HTTP 400 or 422) exit with code 2. Other Problems exit with
+code 1. JSON errors retain the server's Problem code. Local syntax errors use
+the CLI's normal usage-error envelope.
+
+The target CLI includes children, individual events, event types, all input
+request actions, runtime finalization, heartbeats, and event-writer credentials.
+Use `finalize` for completion with output or failure. Remote direct and saved
+schedule creation both use `create`. Existing local `task`, `workflow`, `eval`,
+and `schedule` execution commands retain their local behavior. The existing
+`schedule run --remote` legacy source-name resolver stays until the coordinated
+consumer cutover; use the target `create` invocation with a saved schedule UUID
+for the 0.8.0 contract. These tests do not prove deployed parity.

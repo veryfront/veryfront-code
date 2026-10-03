@@ -330,6 +330,28 @@ async function runReleaseScript({
   }).output();
 }
 
+it("starts the largest assets first in the concurrent upload batch", async () => {
+  await withTempDir(async (stateDir) => {
+    const small = `${stateDir}/metadata.json`;
+    const large = `${stateDir}/veryfront large binary`;
+    const medium = `${stateDir}/veryfront-proxy`;
+    await Deno.writeTextFile(small, "x");
+    await Deno.writeTextFile(large, "x".repeat(1024));
+    await Deno.writeTextFile(medium, "x".repeat(64));
+    const output = await runReleaseScript({
+      stateDir,
+      asset: small,
+      extraAssets: [large, medium],
+    });
+    assertEquals(output.code, 0, decoder.decode(output.stderr));
+    const ghLog = await Deno.readTextFile(`${stateDir}/gh.log`);
+    const uploads = ghLog.trim().split("\n").filter((call) => call.startsWith("release upload "));
+    assertEquals(uploads, [
+      `release upload v1.2.3-rc.4 ${large} ${medium} ${small} --repo veryfront/veryfront --clobber`,
+    ], ghLog);
+  });
+});
+
 describe("registry release workflow", () => {
   it("publishes stable assets while preserving a previously published RC and its tag", async () => {
     const jobs = await readJobs();
@@ -1595,11 +1617,16 @@ fi
     }
   });
 
-  it("serializes RC tag writes and dispatch without replacing pending publishers", async () => {
+  it("serializes RC tag writes and dispatch independently without replacing pending jobs", async () => {
     const jobs = await readJobs();
-    for (const name of ["prerelease", "quality-gate-registry"]) {
+    for (
+      const [name, group] of [
+        ["prerelease", "veryfront-rc-publication"],
+        ["quality-gate-registry", "veryfront-rc-dispatch"],
+      ] as const
+    ) {
       const job = asRecord(jobs[name], name);
-      assertEquals(job.concurrency, { group: "veryfront-rc-publication", queue: "max" });
+      assertEquals(job.concurrency, { group, queue: "max" });
     }
     const dispatch = asRecord(jobs["quality-gate-registry"], "dispatch release job");
     const guard = namedStep(dispatch, "Check current RC tag");
