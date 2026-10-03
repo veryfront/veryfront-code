@@ -270,7 +270,7 @@ describe("WebSocketManager", () => {
   };
 
   const flushMicrotasks = async (): Promise<void> => {
-    for (let i = 0; i < 6; i++) await Promise.resolve();
+    for (let i = 0; i < 12; i++) await Promise.resolve();
   };
 
   beforeEach(() => {
@@ -1419,6 +1419,36 @@ describe("WebSocketManager", () => {
     manager.dispose();
   });
 
+  it("clears the CSS caches when a full invalidation's source fetch fails", async () => {
+    const styleEvents: string[] = [];
+
+    const manager = createWebSocketManager({
+      client: {
+        listAllFiles: () => Promise.reject(new Error("fetch failed")),
+      },
+      invalidationCallbacks: {
+        clearProjectCSSCache: () => {
+          styleEvents.push("invalidate");
+        },
+        triggerReload: () => {
+          styleEvents.push("reload");
+        },
+      },
+    });
+
+    manager.connect("project-1");
+    const socket = MockWebSocket.instances[0];
+    assertExists(socket);
+
+    deliverPoke(socket, { branchName: "main" });
+
+    assertEquals(runOnlyScheduledTimer(), 100);
+    await flushMicrotasks();
+
+    assertEquals(styleEvents, ["invalidate", "reload"]);
+    manager.dispose();
+  });
+
   it("clears the CSS caches when the source fetch fails before any clear ran", async () => {
     const styleEvents: string[] = [];
 
@@ -1786,5 +1816,247 @@ describe("WebSocketManager", () => {
     assertEquals(evicted, 1);
 
     manager.dispose();
+  });
+
+  describe("adapters no request is using", () => {
+    const runScheduledTimers = (): void => {
+      const timers = Array.from(scheduledTimers.entries());
+      scheduledTimers.clear();
+      for (const [, timer] of timers) timer.callback();
+    };
+
+    function createRunAdapterManager(options: {
+      inUse: boolean;
+      listCalls: { count: number };
+      evictions: { count: number };
+      deletedPrefixes?: string[];
+    }): WebSocketManager {
+      return createWebSocketManager({
+        client: {
+          listAllFiles: () => {
+            options.listCalls.count++;
+            return Promise.resolve([makeProjectFile("data/rows.json", "[]")]);
+          },
+        },
+        cache: {
+          deleteByPrefixAsync: (prefix: string) => {
+            options.deletedPrefixes?.push(prefix);
+            return Promise.resolve(0);
+          },
+        },
+        invalidationCallbacks: {
+          isAdapterInUse: () => options.inUse,
+          evictCurrentAdapter: () => {
+            options.evictions.count++;
+          },
+        },
+      });
+    }
+
+    it("does not re-list the project for finished-run adapters on a write", async () => {
+      const listCalls = { count: 0 };
+      const evictions = { count: 0 };
+      const deletedPrefixes: string[] = [];
+      const finishedRuns = [1, 2, 3].map(() =>
+        createRunAdapterManager({ inUse: false, listCalls, evictions, deletedPrefixes })
+      );
+      for (const manager of finishedRuns) manager.connect("project-1");
+      assertEquals(MockWebSocket.instances.length, finishedRuns.length);
+
+      for (const socket of MockWebSocket.instances) {
+        deliverPoke(socket, { changedPaths: ["data/rows.json"], branchName: "main" });
+      }
+      runScheduledTimers();
+      await flushMicrotasks();
+
+      assertEquals(listCalls.count, 0, "a finished run's adapter must not list the project");
+      assertEquals(
+        evictions.count,
+        finishedRuns.length,
+        "each unused adapter must be evicted so later writes reach none of them",
+      );
+      assertEquals(
+        deletedPrefixes,
+        finishedRuns.map(() => "files:branch:"),
+        "the pre-write listing must not answer the next read",
+      );
+      for (const manager of finishedRuns) manager.dispose();
+    });
+
+    it("does not re-list the project for an unused adapter on a full invalidation", async () => {
+      const listCalls = { count: 0 };
+      const evictions = { count: 0 };
+      const manager = createRunAdapterManager({ inUse: false, listCalls, evictions });
+      manager.connect("project-1");
+      const socket = MockWebSocket.instances[0];
+      assertExists(socket);
+
+      deliverPoke(socket, { branchName: "main" });
+      runScheduledTimers();
+      await flushMicrotasks();
+
+      assertEquals(listCalls.count, 0);
+      assertEquals(evictions.count, 1);
+      manager.dispose();
+    });
+
+    it("still reloads and clears styles when it skips the re-list", async () => {
+      const events: string[] = [];
+      const manager = createWebSocketManager({
+        client: {
+          listAllFiles: () => Promise.reject(new Error("must not list")),
+        },
+        invalidationCallbacks: {
+          isAdapterInUse: () => false,
+          clearProjectCSSCache: () => {
+            events.push("clear-css");
+          },
+          triggerReload: (changedPaths) => {
+            events.push(`reload:${changedPaths?.join(",")}`);
+          },
+          evictCurrentAdapter: () => {
+            events.push("evict");
+          },
+        },
+      });
+      manager.connect("project-1");
+      const socket = MockWebSocket.instances[0];
+      assertExists(socket);
+
+      deliverPoke(socket, { changedPaths: ["data/rows.json"], branchName: "main" });
+      runScheduledTimers();
+      await flushMicrotasks();
+
+      assertEquals(events, ["clear-css", "reload:data/rows.json", "evict"]);
+      manager.dispose();
+    });
+
+    it("evicts an unused adapter even when clearing its styles fails", async () => {
+      const evictions = { count: 0 };
+      const manager = createWebSocketManager({
+        invalidationCallbacks: {
+          isAdapterInUse: () => false,
+          clearProjectCSSCache: () => Promise.reject(new Error("css store unavailable")),
+          evictCurrentAdapter: () => {
+            evictions.count++;
+          },
+        },
+      });
+      manager.connect("project-1");
+      const socket = MockWebSocket.instances[0];
+      assertExists(socket);
+
+      deliverPoke(socket, { changedPaths: ["data/rows.json"], branchName: "main" });
+      runScheduledTimers();
+      await flushMicrotasks();
+
+      assertEquals(evictions.count, 1);
+      manager.dispose();
+    });
+
+    it("does not evict an unused adapter while a newer write is pending", async () => {
+      let sourceSnapshotVersion = 1;
+      const firstDeletesStarted = Promise.withResolvers<void>();
+      const releaseFirstDeletes = Promise.withResolvers<number>();
+      let deleteCalls = 0;
+      const evictions = { count: 0 };
+      const manager = createWebSocketManager({
+        cache: {
+          deleteByPrefixAndSuffixAsync: () => {
+            deleteCalls++;
+            if (deleteCalls > 1) return Promise.resolve(0);
+            firstDeletesStarted.resolve();
+            return releaseFirstDeletes.promise;
+          },
+        },
+        clearMemoryCaches: () => {
+          sourceSnapshotVersion++;
+        },
+        getSourceSnapshotVersion: () => sourceSnapshotVersion,
+        invalidationCallbacks: {
+          isAdapterInUse: () => false,
+          evictCurrentAdapter: () => {
+            evictions.count++;
+          },
+        },
+      });
+      manager.connect("project-1");
+      const socket = MockWebSocket.instances[0];
+      assertExists(socket);
+
+      deliverPoke(socket, { changedPaths: ["data/a.json"], branchName: "main" });
+      runScheduledTimers();
+      await firstDeletesStarted.promise;
+      deliverPoke(socket, { changedPaths: ["data/b.json"], branchName: "main" });
+      releaseFirstDeletes.resolve(0);
+      await flushMicrotasks();
+
+      assertEquals(evictions.count, 0, "evicting now would cancel the newer write");
+
+      runScheduledTimers();
+      await flushMicrotasks();
+
+      assertEquals(evictions.count, 1, "the newer write evicts once it completes");
+      manager.dispose();
+    });
+
+    it("does not evict an unused adapter when a newer full poke arrives during its deletes", async () => {
+      const firstDeletesStarted = Promise.withResolvers<void>();
+      const releaseFirstDeletes = Promise.withResolvers<number>();
+      let blockDeletes = true;
+      const evictions = { count: 0 };
+      const manager = createWebSocketManager({
+        cache: {
+          deleteByPrefixAsync: () => {
+            if (!blockDeletes) return Promise.resolve(0);
+            firstDeletesStarted.resolve();
+            return releaseFirstDeletes.promise;
+          },
+        },
+        invalidationCallbacks: {
+          isAdapterInUse: () => false,
+          evictCurrentAdapter: () => {
+            evictions.count++;
+          },
+        },
+      });
+      manager.connect("project-1");
+      const socket = MockWebSocket.instances[0];
+      assertExists(socket);
+
+      deliverPoke(socket, { branchName: "main" });
+      runScheduledTimers();
+      await firstDeletesStarted.promise;
+      blockDeletes = false;
+      deliverPoke(socket, { branchName: "main" });
+      releaseFirstDeletes.resolve(0);
+      await flushMicrotasks();
+
+      assertEquals(evictions.count, 0, "evicting now would cancel the newer full poke");
+
+      runScheduledTimers();
+      await flushMicrotasks();
+
+      assertEquals(evictions.count, 1, "the newer full poke evicts once it completes");
+      manager.dispose();
+    });
+
+    it("re-lists an active run's adapter once for a burst of writes", async () => {
+      const listCalls = { count: 0 };
+      const evictions = { count: 0 };
+      const manager = createRunAdapterManager({ inUse: true, listCalls, evictions });
+      manager.connect("project-1");
+      const socket = MockWebSocket.instances[0];
+      assertExists(socket);
+
+      for (const path of ["data/a.json", "data/b.json", "data/c.json"]) {
+        deliverPoke(socket, { changedPaths: [path], branchName: "main" });
+      }
+      runScheduledTimers();
+      await flushMicrotasks();
+
+      assertEquals(listCalls.count, 1, "one coalesced re-list per active adapter");
+      manager.dispose();
+    });
   });
 });

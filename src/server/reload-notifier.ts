@@ -58,7 +58,7 @@ class ReloadNotifierImpl {
     });
 
     for (const path of changedPaths ?? []) this.pendingChangedPaths.add(path);
-    if (projectInfo) this.pendingProject = projectInfo;
+    if (projectInfo) this.pendingProject = mergePendingProject(this.pendingProject, projectInfo);
 
     this.notifyInvalidateListeners();
 
@@ -149,4 +149,30 @@ function normalizeProjectInfo(project?: ReloadProjectInput): ReloadProjectInfo |
   if (!project) return undefined;
   if (typeof project === "string") return { projectSlug: project };
   return project;
+}
+
+function isSameReloadTarget(a: ReloadProjectInfo, b: ReloadProjectInfo): boolean {
+  return a.projectSlug === b.projectSlug &&
+    a.projectId === b.projectId &&
+    a.environment === b.environment &&
+    (a.branch ?? null) === (b.branch ?? null) &&
+    (a.releaseId ?? null) === (b.releaseId ?? null);
+}
+
+/**
+ * Several adapters can report the same project update within one debounce
+ * window. Only an adapter that re-listed the project prepares a style
+ * artifact, so a later report without one must not drop it.
+ */
+function mergePendingProject(
+  pending: ReloadProjectInfo | undefined,
+  next: ReloadProjectInfo,
+): ReloadProjectInfo {
+  if (next.styleArtifactHash || !pending?.styleArtifactHash) return next;
+  if (!isSameReloadTarget(pending, next)) return next;
+  return {
+    ...next,
+    styleArtifactHash: pending.styleArtifactHash,
+    styleAssetPath: pending.styleAssetPath,
+  };
 }
