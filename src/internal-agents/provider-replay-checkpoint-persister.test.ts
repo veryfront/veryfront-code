@@ -6,6 +6,7 @@ import {
   assertStringIncludes,
 } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { isDeno } from "#veryfront/platform/compat/runtime.ts";
 import {
   createProviderReplayCheckpointEvent,
   parseProviderReplayCheckpointEvent,
@@ -107,7 +108,11 @@ describe("run-scoped provider replay checkpoint persistence", () => {
     );
   });
 
-  it("sends the append token without a patched Headers member or init getter seeing it", async () => {
+  // The probes pin what Deno's own Headers and init processing call; Node's
+  // undici takes different internal paths.
+  it("sends the append token without a patched Headers member or init getter seeing it", {
+    ignore: !isDeno,
+  }, async () => {
     const TOKEN = "vf-replay-append-token-canary-1d73";
     const authorizations: (string | undefined)[] = [];
     const persist = createRunScopedProviderReplayCheckpointPersister({

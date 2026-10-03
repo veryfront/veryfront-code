@@ -6,6 +6,7 @@ import {
   assertThrows,
 } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { isDeno } from "#veryfront/platform/compat/runtime.ts";
 import { withEnv } from "#veryfront/testing/deno-compat.ts";
 import { observeFetchRequestInit, withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import {
@@ -212,7 +213,11 @@ describe("tool/remote-mcp", () => {
     assertEquals(transportCalls, 0);
   });
 
-  it("keeps a source's bearer away from patched Headers members and inherited getters", async () => {
+  // The probes pin what Deno's own Headers and init processing call; Node's
+  // undici takes different internal paths.
+  it("keeps a source's bearer away from patched Headers members and inherited getters", {
+    ignore: !isDeno,
+  }, async () => {
     const BEARER = "Bearer vf-remote-mcp-run-token-canary-4b8e";
     const authorizations: (string | undefined)[] = [];
     const createSource = createRemoteMCPToolSourceFactoryWithTransport({
