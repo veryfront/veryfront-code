@@ -502,9 +502,11 @@ function toNeutralRouteRequest(
   text: string,
   provider: string,
 ): Request {
-  // The headers hold the bearer, and reading a request body awaited first.
-  assertNativeRequestProcessing();
+  // The headers hold the bearer. Reading the body awaited, and rewriting it
+  // runs JSON.stringify, which calls any toJSON project code installed: check
+  // after both, right before the headers change.
   const wireBody = toWireModelBody(text, provider);
+  assertNativeRequestProcessing();
   if (wireBody === undefined) {
     return withCredentialHeaders(request, headers, text);
   }
