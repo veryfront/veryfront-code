@@ -5,6 +5,7 @@ import type { VeryfrontFSAdapter } from "./adapter.ts";
 import { buildFileListCacheKey } from "./cache-keys.ts";
 import { createAdapter, waitFor } from "./adapter.test-helpers.ts";
 import { clearAllPendingInvalidations } from "./invalidation-state.ts";
+import { runWithRequestContext } from "./request-context.ts";
 
 type ListedFile = { path: string; version_id?: string; content?: string };
 type FetchedFile = { path: string; content: string; id?: string; type?: string; size?: number };
@@ -239,7 +240,7 @@ describe("reserved data pokes", () => {
       const cached = await (harness.adapter as unknown as {
         cache: { getAsync: <T>(key: string) => Promise<T | undefined> };
       }).cache.getAsync<ListedFile[]>(buildFileListCacheKey(context));
-      assertEquals(cached?.map((file) => file.path).sort(), [AGENT_SOURCE.path, created].sort());
+      assertEquals(cached, undefined, "the cached pre-write listing must not answer later reads");
     } finally {
       harness.dispose();
     }
@@ -370,6 +371,28 @@ describe("reserved data pokes", () => {
       await first;
 
       assertEquals(snapshotContent(harness, NOTE_PATH), "newer");
+    } finally {
+      harness.dispose();
+    }
+  });
+
+  it("serves the patched data file to reads under another request credential", async () => {
+    const harness = await createHarness();
+    try {
+      const { adapter } = harness;
+      const runContext = { projectSlug: "test-project", token: "run-token", branch: "main" };
+      assertEquals(await runWithRequestContext(runContext, () => adapter.readFile(NOTE_PATH)), "0");
+      const listsBeforeWrite = harness.listCalls();
+
+      harness.setListing([AGENT_SOURCE, note("1")]);
+      harness.setRemoteFile(NOTE_PATH, { path: NOTE_PATH, content: "1" });
+      harness.poke([NOTE_PATH]);
+      await waitForPatch(harness, NOTE_PATH, "1");
+
+      assertEquals(await runWithRequestContext(runContext, () => adapter.readFile(NOTE_PATH)), "1");
+      assertEquals(await adapter.readFile(NOTE_PATH), "1");
+      assertEquals(harness.internals.clearMemoryCalls, 0);
+      assertEquals(harness.listCalls() - listsBeforeWrite <= 1, true);
     } finally {
       harness.dispose();
     }

@@ -95,6 +95,7 @@ const PromisePrototypeThen = IntrinsicPromise.prototype.then;
 const PromiseResolve = IntrinsicPromise.resolve;
 const IntrinsicSetTimeout = globalThis.setTimeout;
 const MapPrototypeDelete = Map.prototype.delete;
+const MapPrototypeForEach = Map.prototype.forEach;
 const MapPrototypeGet = Map.prototype.get;
 const MapPrototypeSet = Map.prototype.set;
 const StringPrototypeCharCodeAt = String.prototype.charCodeAt;
@@ -1950,11 +1951,13 @@ export class VeryfrontFSAdapter implements FSAdapter {
     const current = this.sourceSnapshotFiles;
     if (!current || this.#reservedDataGeneration === sinceGeneration) return files;
     const patches: ReservedDataPatch[] = [];
-    for (const [projectPath, patch] of this.#reservedDataPatches) {
-      if (patch.generation > sinceGeneration) {
-        patches[patches.length] = { projectPath, entry: null };
-      }
-    }
+    IntrinsicReflectApply(MapPrototypeForEach, this.#reservedDataPatches, [
+      (patch: { generation: number }, projectPath: string) => {
+        if (patch.generation > sinceGeneration) {
+          patches[patches.length] = { projectPath, entry: null };
+        }
+      },
+    ]);
     if (patches.length === 0) return files;
     for (let index = 0; index < current.length; index++) {
       const projectPath = toSnapshotProjectPath(current[index]!);
@@ -1977,9 +1980,27 @@ export class VeryfrontFSAdapter implements FSAdapter {
     }
     // A listing that started before a patch finishes within its request
     // deadline, so older records can no longer be needed by an overlay.
-    for (const [projectPath, patch] of this.#reservedDataPatches) {
-      if (now - patch.patchedAt > RESERVED_DATA_PATCH_RETENTION_MS) {
-        IntrinsicReflectApply(MapPrototypeDelete, this.#reservedDataPatches, [projectPath]);
+    const expired: string[] = [];
+    IntrinsicReflectApply(MapPrototypeForEach, this.#reservedDataPatches, [
+      (patch: { patchedAt: number }, projectPath: string) => {
+        if (now - patch.patchedAt > RESERVED_DATA_PATCH_RETENTION_MS) {
+          expired[expired.length] = projectPath;
+        }
+      },
+    ]);
+    for (let index = 0; index < expired.length; index++) {
+      IntrinsicReflectApply(MapPrototypeDelete, this.#reservedDataPatches, [expired[index]!]);
+    }
+  }
+
+  /** Forget the paths whose newest refresh is `requestSequence`; it has finished. */
+  #settleReservedDataRequests(projectPaths: readonly string[], requestSequence: number): void {
+    for (let index = 0; index < projectPaths.length; index++) {
+      const projectPath = projectPaths[index]!;
+      const latest = IntrinsicReflectApply(MapPrototypeGet, this.#reservedDataLatestRequests, [
+        projectPath,
+      ]);
+      if (latest === requestSequence) {
         IntrinsicReflectApply(MapPrototypeDelete, this.#reservedDataLatestRequests, [projectPath]);
       }
     }
@@ -2021,7 +2042,12 @@ export class VeryfrontFSAdapter implements FSAdapter {
     const context = this.contentContext;
     const effectiveContext = this.getEffectiveContentContext();
     if (!context || effectiveContext?.sourceType !== "branch") return undefined;
-    const cacheKey = this.getCurrentFileListCacheKey();
+    // Listings of this source are cached once per request credential; the
+    // poke names the source, so every credential's listing takes the patch.
+    const sourceKey = buildFileListCacheKey(effectiveContext);
+    const isSourceListingKey = (key: string) =>
+      key === sourceKey ||
+      IntrinsicReflectApply(StringPrototypeStartsWith, key, [`${sourceKey}|authority:`]) === true;
 
     const projectPaths: string[] = [];
     for (let index = 0; index < changedPaths.length; index++) {
@@ -2040,14 +2066,20 @@ export class VeryfrontFSAdapter implements FSAdapter {
       ]);
     }
 
+    const fetches: Promise<ReservedDataPatch>[] = [];
+    for (let index = 0; index < projectPaths.length; index++) {
+      fetches[fetches.length] = this.#fetchReservedDataPatch(
+        projectPaths[index]!,
+        effectiveContext,
+      );
+    }
     let fetched: ReservedDataPatch[];
     try {
       fetched = await IntrinsicReflectApply(PromiseAll, IntrinsicPromise, [
-        projectPaths.map((projectPath) =>
-          this.#fetchReservedDataPatch(projectPath, effectiveContext)
-        ),
+        fetches,
       ]) as ReservedDataPatch[];
     } catch (error) {
+      this.#settleReservedDataRequests(projectPaths, requestSequence);
       logger.warn("Failed to refresh changed reserved data files", {
         projectSlug: this.projectSlug,
         changedPathsCount: projectPaths.length,
@@ -2057,7 +2089,12 @@ export class VeryfrontFSAdapter implements FSAdapter {
     }
 
     const applied = await this.#runSourceSnapshotMutation(async () => {
-      if (this.contentContext !== context || this.getCurrentFileListCacheKey() !== cacheKey) {
+      const currentContext = this.getEffectiveContentContext();
+      if (
+        this.contentContext !== context ||
+        !currentContext ||
+        buildFileListCacheKey(currentContext) !== sourceKey
+      ) {
         return false;
       }
       const current = this.sourceSnapshotFiles;
@@ -2073,18 +2110,15 @@ export class VeryfrontFSAdapter implements FSAdapter {
       if (patches.length === 0) return true;
 
       const patched = patchSourceSnapshotEntries(current, patches);
-      const snapshotVersion = this.sourceSnapshotVersion;
       this.sourceSnapshotFiles = patched;
       this.sourceSnapshotFingerprint = undefined;
       this.agentConfigSourceSnapshotFingerprint = undefined;
       this.scopedAgentConfigSourceSnapshotFingerprint = undefined;
-      let retained = this.retainedFileList;
-      if (retained && retained.cacheKey !== cacheKey) {
+      const retained = this.retainedFileList;
+      if (retained && !isSourceListingKey(retained.cacheKey)) {
         // A listing retained for another source must not take these entries.
         this.clearRetainedFileList();
-        retained = null;
-      }
-      if (retained) {
+      } else if (retained) {
         retained.files = retained.files === current
           ? patched
           : patchSourceSnapshotEntries(retained.files, patches);
@@ -2094,16 +2128,16 @@ export class VeryfrontFSAdapter implements FSAdapter {
       this.dirOps.clearTree();
       this.#recordReservedDataPatches(patches);
 
-      if (retained) {
-        await this.cache.setAsync(retained.cacheKey, retained.files);
-        if (this.sourceSnapshotVersion !== snapshotVersion) {
-          await this.cache.deleteAsync(retained.cacheKey);
-        }
-      } else if (cacheKey) {
-        await this.cache.deleteAsync(cacheKey);
-      }
+      // Cached listings of this source still hold the old entries. The
+      // retained listing answers this adapter's reads first, so dropping them
+      // costs no listing here and avoids uploading the project per write.
+      await IntrinsicReflectApply(PromiseAll, IntrinsicPromise, [[
+        this.cache.deleteAsync(sourceKey),
+        this.cache.deleteByPrefixAsync(`${sourceKey}|authority:`),
+      ]]);
       return true;
     });
+    this.#settleReservedDataRequests(projectPaths, requestSequence);
     if (!applied) return undefined;
 
     logger.debug("Patched reserved data files into the source snapshot", {
