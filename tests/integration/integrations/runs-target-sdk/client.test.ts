@@ -1,7 +1,7 @@
 import { assert, assertEquals, assertRejects } from "#veryfront/testing/assert";
 import { describe, it } from "#veryfront/testing/bdd";
 import { VeryfrontError } from "#veryfront/errors/types.ts";
-import type { components, operations, paths } from "../contract/runs-api.generated.ts";
+import type { components, operations, paths } from "#veryfront/runs/contract/runs-api.generated.ts";
 import {
   createRunsSdk,
   type RunsInput,
@@ -12,13 +12,13 @@ import {
   runsProblemOf,
   type RunsResult,
   type RunStreamFrame,
-} from "./client.ts";
+} from "#veryfront/runs/target/client.ts";
 import {
   createFixtureTransport,
   fixtureResponse,
   RUNS_OPERATION_FIXTURES,
-} from "./client.test-helpers.ts";
-import { RUNS_OPERATIONS } from "./operations.ts";
+} from "#veryfront/runs/target/client.test-helpers.ts";
+import { RUNS_OPERATIONS } from "#veryfront/runs/target/operations.ts";
 
 type Schemas = components["schemas"];
 type Expect<T extends true> = T;

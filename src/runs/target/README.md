@@ -41,4 +41,9 @@ than buffering the entire event stream. The host's transport owns tracing,
 metrics, retry decisions, redirect protection and outbound origin authorization.
 
 The target routes remain gated by the consumer integration work in issue #2239;
-unit fixture replay does not establish deployed five-surface parity.
+fixture replay does not establish deployed five-surface parity.
+
+Contract fixtures exercise the real host HTTP stack in
+`tests/integration/integrations/runs-target-sdk/client.test.ts`, included in the
+existing client-coverage job. Transport boundary regressions and the real
+redirect test live under `tests/integration/semantic-unit-boundary/src/runs/target/`.
