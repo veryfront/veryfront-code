@@ -348,6 +348,12 @@ describe("reserved data pokes", () => {
         "data",
       );
       assertEquals(await adapter.refreshReservedDataPaths([AGENT_SOURCE.path]), undefined);
+
+      // Another branch may configure other roots; forget the reported ones.
+      adapter.setRequestBranch("draft");
+      adapter.setRequestBranch(null);
+      await adapter.ensureSourceSnapshotFresh("reselect", { maxAgeMs: 0 });
+      assertEquals(await adapter.refreshReservedDataPaths([NOTE_PATH]), "definition");
     } finally {
       harness.dispose();
     }

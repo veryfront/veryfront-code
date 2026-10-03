@@ -1843,12 +1843,12 @@ export class VeryfrontFSAdapter implements FSAdapter {
     this.sourceSnapshotCheckedAt = 0;
     this.sourceSnapshotIdentity = undefined;
     this.sourceSnapshotFiles = undefined;
-    this.sourceSnapshotFingerprint = undefined;
-    this.agentConfigSourceSnapshotFingerprint = undefined;
-    this.scopedAgentConfigSourceSnapshotFingerprint = undefined;
     // A source poke can change the configured discovery roots. Treat every
     // knowledge write as a possible definition until a run reports them again.
     this.#agentMarkdownDiscoveryPaths = undefined;
+    this.sourceSnapshotFingerprint = undefined;
+    this.agentConfigSourceSnapshotFingerprint = undefined;
+    this.scopedAgentConfigSourceSnapshotFingerprint = undefined;
     this.clearRetainedFileList();
     this.readOps.clearFileListIndex();
     this.statOps.clearIndex();
@@ -2581,6 +2581,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
     this.sourceSnapshotCheckedAt = 0;
     this.sourceSnapshotIdentity = undefined;
     this.sourceSnapshotFiles = undefined;
+    this.#agentMarkdownDiscoveryPaths = undefined;
     this.sourceSnapshotFingerprint = undefined;
     this.agentConfigSourceSnapshotFingerprint = undefined;
     this.scopedAgentConfigSourceSnapshotFingerprint = undefined;
@@ -2743,6 +2744,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
     this.sourceSnapshotRefreshPromise = null;
     this.sourceSnapshotIdentity = undefined;
     this.sourceSnapshotFiles = undefined;
+    this.#agentMarkdownDiscoveryPaths = undefined;
   }
 
   setRequestBranch(branch: string | null): void {
@@ -2827,6 +2829,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
       this.sourceSnapshotVersion = nextSourceSnapshotGeneration();
       this.sourceSnapshotIdentity = undefined;
       this.sourceSnapshotFiles = undefined;
+      this.#agentMarkdownDiscoveryPaths = undefined;
       this.sourceSnapshotRefreshPromise = null;
       logger.debug("Cleared index and dirTree due to context change", {
         oldContext,
