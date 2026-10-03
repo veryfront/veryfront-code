@@ -20,12 +20,29 @@ type NotNever<T> = [T] extends [never] ? false : true;
 export type RunsContractTypeChecks = [
   Expect<Lacks<Schemas["Run"], "run_id">>,
   Expect<Lacks<Schemas["Run"], "source">>,
+  Expect<
+    Equal<
+      { type: "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED" } extends
+        Schemas["AgentRunModelCallContextRecordedPayload"] ? true : false,
+      false
+    >
+  >,
   // A missing event would make the payload `never`, which every type extends.
   Expect<NotNever<PayloadOf<"MODEL_CALL_COMPLETED">>>,
   Expect<Equal<PayloadOf<"MODEL_CALL_COMPLETED">, Schemas["ModelCallCompletedPayload"]>>,
 ];
 
 describe("Runs target contract types", () => {
+  it("types redacted diagnostics in read results", () => {
+    const type = "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED";
+    const detail = { type } satisfies PayloadOf<typeof type>;
+    const snapshot = { type } satisfies Extract<
+      Schemas["RunSnapshotEvent"],
+      { event_type: typeof type }
+    >["payload"];
+    assertEquals(detail, { type });
+    assertEquals(snapshot, { type });
+  });
   it("accepts omitted request defaults", () => {
     const heartbeat =
       {} satisfies operations["createRunHeartbeat"]["requestBody"]["content"]["application/json"];
