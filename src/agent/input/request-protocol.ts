@@ -127,7 +127,7 @@ export interface InputRequestRestOutput {
   id: string;
   conversationId: string;
   runId: string;
-  toolCallId: string;
+  toolCallId?: string;
   kind: "form";
   status: "open" | "submitted" | "cancelled" | "expired";
   requestedResponderType: "human" | "agent" | "system";
@@ -144,6 +144,61 @@ export interface InputRequestRestOutput {
   latestResponse: InputResponseRestOutput | null;
 }
 
+// Canonical reads accept wider field labels/descriptions than local form creation.
+// Keep this projection separate so reading a valid request never relaxes creation.
+const getInputRequestReadFieldSchema = defineSchema((v) => {
+  const base = {
+    name: v.string().min(1).max(128),
+    label: v.string().max(1000),
+    description: v.string().max(4000).optional(),
+    required: v.boolean().optional().default(false),
+    secret: v.boolean().optional().default(false),
+  };
+  const option = v.object({
+    value: v.string().min(1),
+    label: v.string().min(1),
+    description: v.string().optional(),
+    recommended: v.boolean().optional(),
+  });
+  return v.discriminatedUnion("type", [
+    v.object({
+      ...base,
+      type: v.enum(["text", "email", "url", "password", "number"] as const),
+      defaultValue: v.string().optional(),
+    }),
+    v.object({
+      ...base,
+      type: v.literal("textarea"),
+      defaultValue: v.string().optional(),
+      rows: v.number().int().positive().optional().default(3),
+    }),
+    v.object({
+      ...base,
+      type: v.literal("select"),
+      options: v.array(option).min(1).max(100),
+      defaultValue: v.string().optional(),
+    }),
+    v.object({
+      ...base,
+      type: v.literal("radio"),
+      options: v.array(option).min(1).max(100),
+      defaultValue: v.string().optional(),
+    }),
+    v.object({
+      ...base,
+      type: v.literal("checkbox"),
+      defaultValue: v.boolean().optional().default(false),
+    }),
+    v.object({
+      ...base,
+      type: v.literal("confirm"),
+      defaultValue: v.boolean().optional(),
+      confirmLabel: v.string().optional().default("Yes"),
+      denyLabel: v.string().optional().default("No"),
+    }),
+  ]);
+});
+
 /** Zod schema for get input request rest. */
 export const getInputRequestRestSchema = defineSchema((v) =>
   v
@@ -151,13 +206,13 @@ export const getInputRequestRestSchema = defineSchema((v) =>
       id: v.string().uuid(),
       conversation_id: v.string().uuid(),
       run_id: v.string().min(1),
-      tool_call_id: v.string().min(1),
+      tool_call_id: v.string().min(1).optional(),
       kind: v.literal("form"),
       status: v.enum(["open", "submitted", "cancelled", "expired"] as const),
       requested_responder_type: v.enum(["human", "agent", "system"] as const),
       title: v.string(),
       description: v.string().nullable(),
-      fields: v.array(getHumanInputFieldSchema()),
+      fields: v.array(getInputRequestReadFieldSchema()),
       recommendations: v.record(v.string(), v.unknown()).nullable().optional(),
       metadata: v.record(v.string(), v.unknown()).nullable().optional(),
       created_at: v.string(),
@@ -174,7 +229,7 @@ export const getInputRequestRestSchema = defineSchema((v) =>
         id: v2.id as string,
         conversationId: v2.conversation_id as string,
         runId: v2.run_id as string,
-        toolCallId: v2.tool_call_id as string,
+        ...(typeof v2.tool_call_id === "string" ? { toolCallId: v2.tool_call_id } : {}),
         kind: v2.kind as "form",
         status: v2.status as InputRequestRestOutput["status"],
         requestedResponderType: v2
@@ -205,13 +260,13 @@ export const getInputRequestOutputSchema = defineSchema((v) =>
     id: v.string().uuid(),
     conversationId: v.string().uuid(),
     runId: v.string().min(1),
-    toolCallId: v.string().min(1),
+    toolCallId: v.string().min(1).optional(),
     kind: v.literal("form"),
     status: v.enum(["open", "submitted", "cancelled", "expired"] as const),
     requestedResponderType: v.enum(["human", "agent", "system"] as const),
     title: v.string(),
     description: v.string().nullable(),
-    fields: v.array(getHumanInputFieldSchema()),
+    fields: v.array(getInputRequestReadFieldSchema()),
     recommendations: v.record(v.string(), v.unknown()).nullable(),
     metadata: v.record(v.string(), v.unknown()).nullable(),
     createdAt: v.string(),

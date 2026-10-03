@@ -1,6 +1,7 @@
 import { createPrivateWeakStore } from "#veryfront/security/private-weak-store.ts";
 import {
   hostedInheritedEventWriter,
+  hostedInheritedTerminalReceipt,
   hostedTerminalRunFinalizer,
   transferHostedTerminalAuthority,
   withHostedInheritedLease,
@@ -544,6 +545,9 @@ export type ExecuteHostedDurableChildForkInput<
   buildSetupFailureResult: (failure: HostedDurableChildSetupFailure) => TResult;
   buildTerminalFailureResult: (failure: HostedDurableChildTerminalFailure) => TResult;
   buildSuccessResult: (success: HostedDurableChildSuccess<TLocalResult>) => TResult;
+  buildReplayedSuccessResult?: (
+    success: HostedDurableChildSuccess<ChildRunExecutionResult>,
+  ) => TResult;
   onLifecycleError?: (error: unknown) => Promise<void> | void;
   onLifecycleFinalized?: (input: {
     identifiers: HostedChildRunIdentifiers;
@@ -924,13 +928,45 @@ async function executeHostedDurableChildForkWithCapability<
     identifiers.status === "completed" || identifiers.status === "failed" ||
     identifiers.status === "cancelled"
   ) {
+    const receipt = hostedInheritedTerminalReceipt(identifiers);
+    if (!receipt || receipt.status !== identifiers.status) {
+      throw new Error("The admitted terminal child is missing its durable outcome");
+    }
+    if (receipt.status === "completed") {
+      if (!input.buildReplayedSuccessResult) {
+        throw new Error("A completed child replay renderer is required");
+      }
+      const text = typeof receipt.output === "string"
+        ? receipt.output
+        : receipt.output === null
+        ? null
+        : JSON.stringify(receipt.output);
+      // No local steps or tool calls execute during replay. Historical execution details
+      // are not present in the canonical admission resource.
+      const result: ChildRunExecutionResult = {
+        success: true,
+        description: input.forkInput.description,
+        summary: buildChildRunResultSummary(text ?? ""),
+        steps: 0,
+        toolCalls: [],
+        toolResults: [],
+        durationMs: 0,
+      };
+      return input.buildReplayedSuccessResult({
+        result,
+        identifiers,
+        targets,
+        snapshot: { ...result, fullResultText: text, error: null },
+      });
+    }
     return input.buildTerminalFailureResult({
-      status: identifiers.status === "completed" ? "failed" : identifiers.status,
+      status: receipt.status,
       identifiers,
       targets,
-      terminalErrorCode: "DURABLE_CHILD_ALREADY_TERMINAL",
-      terminalErrorMessage:
-        "The admitted child is already terminal; local execution was not repeated",
+      terminalErrorCode: receipt.error?.code ??
+        (receipt.status === "cancelled" ? "DURABLE_CHILD_CANCELLED" : input.executionFailedCode),
+      terminalErrorMessage: receipt.error?.message ??
+        (receipt.status === "cancelled" ? "Child run cancelled" : "Child run failed"),
     });
   }
 

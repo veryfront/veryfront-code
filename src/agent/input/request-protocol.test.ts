@@ -342,6 +342,111 @@ describe("agent/input-request-protocol", () => {
     });
   }
 
+  it("preserves canonical field bounds and confirm defaults on reads and lifecycle events", async () => {
+    const fields = [
+      { type: "text", name: "empty_label", label: "", required: false },
+      {
+        type: "text",
+        name: "long_label",
+        label: "l".repeat(1000),
+        description: "d".repeat(4000),
+        required: false,
+      },
+      { type: "confirm", name: "accepted", label: "Accept", default: true, required: false },
+      { type: "confirm", name: "declined", label: "Decline", default: false, required: false },
+    ];
+    stubFetchWithRecorder(() =>
+      new Response(
+        JSON.stringify({
+          input_request_id: INPUT_REQUEST_ID,
+          project_id: "55555555-5555-4555-a555-555555555555",
+          run_id: RUN_ID,
+          title: "Direct request",
+          fields,
+          status: "open",
+          requested_responder_type: "human",
+          response: null,
+          created_at: CREATED_AT,
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      )
+    );
+    const result = await getInputRequest({
+      authToken: AUTH_TOKEN,
+      apiUrl: API_URL,
+      conversationId: CONVERSATION_ID,
+      inputRequestId: INPUT_REQUEST_ID,
+    });
+    const normalized = result.fields as Record<string, unknown>[];
+    assertEquals(normalized.map((field) => field.label), fields.map((field) => field.label));
+    assertEquals(normalized[1]?.description, "d".repeat(4000));
+    assertEquals(normalized.slice(2).map((field) => field.defaultValue), [true, false]);
+    const event = buildInputRequestLifecycleDataEvent({ action: "created", inputRequest: result });
+    assertEquals(JSON.parse(JSON.stringify(event)).data.inputRequest.fields, normalized);
+  });
+
+  it("keeps legacy creation field bounds before HTTP", async () => {
+    let calls = 0;
+    stubFetchWithRecorder(() => {
+      calls++;
+      return jsonResponse(createInputRequestRecord(), 201);
+    });
+    for (
+      const field of [
+        { type: "text", name: "answer", label: "" },
+        { type: "text", name: "answer", label: "l".repeat(257) },
+        { type: "text", name: "answer", label: "Answer", description: "d".repeat(1025) },
+      ]
+    ) {
+      await assertRejects(() =>
+        createInputRequest({
+          authToken: AUTH_TOKEN,
+          apiUrl: API_URL,
+          conversationId: CONVERSATION_ID,
+          runId: RUN_ID,
+          toolCallId: TOOL_CALL_ID,
+          expiresAt: EXPIRES_AT,
+          form: { title: "Form", fields: [field] } as unknown as Parameters<
+            typeof createInputRequest
+          >[0]["form"],
+        })
+      );
+    }
+    assertEquals(calls, 0);
+  });
+
+  it("preserves an absent tool call ID in canonical reads and lifecycle events", async () => {
+    stubFetchWithRecorder(() =>
+      new Response(
+        JSON.stringify({
+          input_request_id: INPUT_REQUEST_ID,
+          project_id: "55555555-5555-4555-a555-555555555555",
+          conversation_id: CONVERSATION_ID,
+          run_id: RUN_ID,
+          title: "Direct request",
+          fields: [{ type: "text", name: "answer", label: "Answer", required: false }],
+          status: "open",
+          requested_responder_type: "human",
+          response: null,
+          created_at: CREATED_AT,
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      )
+    );
+
+    const result = await getInputRequest({
+      authToken: AUTH_TOKEN,
+      apiUrl: API_URL,
+      conversationId: CONVERSATION_ID,
+      inputRequestId: INPUT_REQUEST_ID,
+    });
+
+    assertEquals(result.toolCallId, undefined);
+    assertEquals(Object.hasOwn(result, "toolCallId"), false);
+    const event = buildInputRequestLifecycleDataEvent({ action: "created", inputRequest: result });
+    assertEquals(JSON.stringify(event).includes("toolCallId"), false);
+  });
+
   it("fetches and normalizes durable input request snapshots", async () => {
     stubFetchWithRecorder((input, init) => {
       assertEquals(

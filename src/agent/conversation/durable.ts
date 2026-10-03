@@ -1395,7 +1395,7 @@ export async function finalizeConversationAgentRun(
       )}`,
     },
     body: cancelled
-      ? {}
+      ? undefined
       : input.status === "completed"
       ? { status: "completed", output: input.output ?? null }
       : {

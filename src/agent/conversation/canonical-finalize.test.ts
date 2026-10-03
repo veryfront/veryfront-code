@@ -46,6 +46,25 @@ describe("canonical runtime finalization", () => {
     assertEquals(calls[0].headers.has("Idempotency-Key"), true);
     assertEquals(await calls[0].json(), { status: "completed", output: { result: "done" } });
   });
+  it("cancels through the canonical bodyless operation with exact terminal authority", async () => {
+    let captured: Request | undefined;
+    await finalizeConversationAgentRun({
+      ...base,
+      status: "cancelled",
+      terminalAuthToken: token,
+      fetch: (input, init) => {
+        captured = new Request(input, init);
+        return Promise.resolve(Response.json({ id: canonical, status: "cancelled" }));
+      },
+    });
+    assert(captured);
+    assertEquals(captured.url, `https://api.example.test/runs/${canonical}/cancel`);
+    assertEquals(captured.headers.get("X-Veryfront-Run-Terminal-Token"), token);
+    assertEquals(captured.headers.get("Authorization"), "Bearer run-invocation");
+    assertEquals(captured.headers.has("Idempotency-Key"), true);
+    assertEquals(captured.body, null);
+    assertEquals(await captured.text(), "");
+  });
   it("fails closed without the exact run's terminal capability", async () => {
     const fetch = () => {
       throw new Error("must not send");

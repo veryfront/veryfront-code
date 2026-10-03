@@ -830,6 +830,8 @@ async function executeDefaultHostedInvokeAgentToolWithCapability<
           durableInvokeRecorder.recordTerminalFailure(failure),
         buildSuccessResult: (success) =>
           durableInvokeRecorder.recordSuccess(success, { resultMode: input.result_mode }),
+        buildReplayedSuccessResult: (success) =>
+          durableInvokeRecorder.recordSuccess(success, { resultMode: input.result_mode }),
         runtime: {
           bootstrapChildRun: bootstrapHostedChildRun,
           createLifecycleAdapter: createConversationChildLifecycleAdapter,

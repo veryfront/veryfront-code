@@ -48,6 +48,20 @@ const credentials = createPrivateWeakStore<
   }
 >();
 
+type InheritedTerminalReceipt = {
+  status: "completed" | "failed" | "cancelled";
+  output: unknown;
+  error?: { code: string; message: string };
+};
+const terminalReceipts = createPrivateWeakStore<object, InheritedTerminalReceipt>();
+
+/** Read the original terminal outcome returned by authenticated child admission. */
+export function hostedInheritedTerminalReceipt(
+  descriptor: HostedTerminalDescriptor,
+): InheritedTerminalReceipt | undefined {
+  return terminalReceipts.get(descriptor);
+}
+
 /** Keep terminal authority out of parsed request fields and executor-visible context. */
 export function registerHostedTerminalCredential(
   request: ParsedHostedChatRequest,
@@ -237,6 +251,15 @@ export function hostedInheritedRunAdmitter(
       status: row.status === "waiting" ? "waiting_for_tool" as const : row.status,
       streamProtocolVersion: 2 as const,
     };
+    if (row.status === "completed" || row.status === "failed" || row.status === "cancelled") {
+      terminalReceipts.set(run, {
+        status: row.status,
+        output: row.output ?? null,
+        ...(typeof row.error?.code === "string" && typeof row.error?.message === "string"
+          ? { error: { code: row.error.code, message: row.error.message } }
+          : {}),
+      });
+    }
     credentials.set(run, {
       token,
       authToken,
@@ -259,6 +282,8 @@ export function transferHostedTerminalAuthority(
 ): void {
   const authority = credentials.get(source);
   if (authority) credentials.set(target, authority);
+  const receipt = terminalReceipts.get(source);
+  if (receipt) terminalReceipts.set(target, receipt);
 }
 
 /** Keep an inherited local execution leased while its callback is running. */

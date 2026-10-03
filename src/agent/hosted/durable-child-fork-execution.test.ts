@@ -32,6 +32,13 @@ import {
 } from "./child-run-event-writer-token.ts";
 import type { AgentTraceAttributes } from "./trace-attributes.ts";
 
+import {
+  hostedInheritedRunAdmitter,
+  registerHostedTerminalCredential,
+  transferHostedTerminalAuthority,
+} from "./terminal-credential.ts";
+import type { ParsedHostedChatRequest } from "./chat-request-parser.ts";
+import type { BootstrapHostedChildRunResult } from "./child-bootstrap.ts";
 const API_URL = "https://api.example.com";
 const AUTH_TOKEN = "token-123";
 const PARENT_RUN_EVENT_TOKEN = "parent-run-event-token";
@@ -83,6 +90,7 @@ type InjectedRunLifecycle = NonNullable<
 >;
 
 function runForkWithInjectedLifecycle(input: {
+  replay?: BootstrapHostedChildRunResult;
   runLifecycle: () => ReturnType<InjectedRunLifecycle>;
   buildTerminalFailureResult: (failure: HostedDurableChildTerminalFailure) => DurableChildResult;
   onLifecycleFinalized?: Parameters<
@@ -93,8 +101,9 @@ function runForkWithInjectedLifecycle(input: {
     apiUrl: API_URL,
     runId: "run_parent_1",
     runEventAppendToken: PARENT_RUN_EVENT_TOKEN,
-    fetch: () =>
-      Promise.resolve(Response.json(
+    fetch: () => {
+      if (input.replay) throw new Error("Terminal replay must not exchange event credentials");
+      return Promise.resolve(Response.json(
         {
           token: CHILD_RUN_EVENT_TOKEN,
           run_id: "88888888-8888-4888-8888-888888888888",
@@ -103,7 +112,8 @@ function runForkWithInjectedLifecycle(input: {
           permissions: ["run.events.append"],
         },
         { headers: { "Cache-Control": "no-store" } },
-      )),
+      ));
+    },
   });
 
   return runWithHostedRunEventWriterCapability(
@@ -131,10 +141,11 @@ function runForkWithInjectedLifecycle(input: {
         buildSetupFailureResult: (failure) => ({ status: "setup_failed", failure }),
         buildTerminalFailureResult: input.buildTerminalFailureResult,
         buildSuccessResult: (success) => ({ status: "completed", success }),
+        buildReplayedSuccessResult: (success) => ({ status: "completed", success }),
         onLifecycleFinalized: input.onLifecycleFinalized,
         runtime: {
           bootstrapChildRun: () =>
-            Promise.resolve({ ...INJECTED_CHILD_IDENTIFIERS, status: "running" }),
+            Promise.resolve(input.replay ?? { ...INJECTED_CHILD_IDENTIFIERS, status: "running" }),
           createLifecycleAdapter: () => ({}),
           runLifecycle: input.runLifecycle as InjectedRunLifecycle,
         },
@@ -1658,3 +1669,102 @@ describe("agent/hosted/durable-child-fork-execution result contract", () => {
     );
   });
 });
+
+for (
+  const terminal of [
+    { status: "completed", output: "Persisted child answer" },
+    { status: "completed", output: null },
+    { status: "completed" },
+    { status: "failed", error: { code: "ORIGINAL_FAILURE", message: "Original failure" } },
+    { status: "cancelled" },
+  ] as const
+) {
+  it(`replays canonical child ${JSON.stringify(terminal)} without execution or terminal writes`, async () => {
+    const canonicalId = INJECTED_CHILD_IDENTIFIERS.childRunId;
+    const token = (runId: string) =>
+      `header.${
+        btoa(
+          JSON.stringify({
+            runId,
+            canonicalRunId: canonicalId,
+            tokenUse: "run_event_writer",
+            writerPurpose: "current_run_terminal",
+            dispatchNonce: "generation",
+          }),
+        )
+      }.signature`;
+    const request = {
+      projectId: PROJECT_ID,
+      authToken: AUTH_TOKEN,
+      durableRootRun: { runId: "run_parent_1" },
+    } as ParsedHostedChatRequest;
+    registerHostedTerminalCredential(request, token("run_parent_1"));
+    let requests = 0;
+    const admit = hostedInheritedRunAdmitter(request, {
+      apiUrl: API_URL,
+      fetch: () => {
+        requests++;
+        return Promise.resolve(
+          Response.json({
+            id: canonicalId,
+            conversation_id: CHILD_CONVERSATION_ID,
+            output_message_id: CHILD_MESSAGE_ID,
+            ...terminal,
+          }, {
+            headers: {
+              "Cache-Control": "no-store",
+              "X-Veryfront-Run-Terminal-Token": token(canonicalId),
+              "X-Veryfront-Run-Invocation-Token": "invocation",
+              "X-Veryfront-Run-Renewal-Token": "renewal",
+              "X-Veryfront-Run-Event-Token": "event",
+              "X-Veryfront-Run-Event-Sequence": "7",
+              "X-Veryfront-Run-External-Event-Sequence": "3",
+            },
+          }),
+        );
+      },
+    })!;
+    const run = await admit("tool-call-1", "Find logs")({
+      authToken: AUTH_TOKEN,
+      apiUrl: API_URL,
+      parentRunId: "run_parent_1",
+      agentId: "child",
+      projectId: PROJECT_ID,
+    });
+    const replay = { ...INJECTED_CHILD_IDENTIFIERS, status: run.status };
+    transferHostedTerminalAuthority(run, replay);
+    let lifecycleCalls = 0;
+    const result = await runForkWithInjectedLifecycle({
+      replay,
+      runLifecycle: () => {
+        lifecycleCalls++;
+        throw new Error("Must not execute or finalize a completed child");
+      },
+      buildTerminalFailureResult: (failure) => ({ status: "terminal_failed", failure }),
+    });
+    assertEquals(lifecycleCalls, 0);
+    assertEquals(requests, 1);
+    if (terminal.status === "completed") {
+      assertEquals(result.status, "completed");
+      if (result.status !== "completed") throw new Error("Expected replayed success");
+      assertEquals(
+        result.success.snapshot.fullResultText,
+        "output" in terminal ? terminal.output : null,
+      );
+      assertEquals(result.success.snapshot.success, true);
+    } else {
+      assertEquals(result.status, "terminal_failed");
+      if (result.status !== "terminal_failed") {
+        throw new Error("Expected original terminal outcome");
+      }
+      assertEquals(result.failure.status, terminal.status);
+      assertEquals(
+        result.failure.terminalErrorCode,
+        terminal.status === "failed" ? "ORIGINAL_FAILURE" : "DURABLE_CHILD_CANCELLED",
+      );
+      if (terminal.status === "failed") {
+        assertEquals(result.failure.terminalErrorMessage, terminal.error.message);
+      }
+    }
+  });
+}
