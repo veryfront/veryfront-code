@@ -35,6 +35,9 @@ const MathCeil = Math.ceil;
 const NumberIsSafeInteger = Number.isSafeInteger;
 const ObjectFreeze = Object.freeze;
 const ObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const ErrorEventErrorGetter = typeof ErrorEvent === "function"
+  ? ObjectGetOwnPropertyDescriptor(ErrorEvent.prototype, "error")?.get
+  : undefined;
 const PromisePrototypeThen = Promise.prototype.then;
 const PromiseReject = Promise.reject;
 const PromiseResolve = Promise.resolve;
@@ -448,6 +451,16 @@ function workerEntryUrl(): URL {
   );
 }
 
+function classifyWorkerError(event: ErrorEvent): "null" | "Worker error" {
+  try {
+    return ErrorEventErrorGetter && ReflectApply(ErrorEventErrorGetter, event, []) === null
+      ? "null"
+      : "Worker error";
+  } catch {
+    return "Worker error";
+  }
+}
+
 function createDenoWorkerEndpoint(
   WorkerConstructor: typeof Worker = Worker,
 ): DeclarativeConfigWorkerEndpoint {
@@ -471,7 +484,7 @@ function createDenoWorkerEndpoint(
       getBaseLogger("SERVER", { injectTraceContext: false }).component("config-worker").error(
         "Hosted configuration worker failed",
         {
-          error: event.error === null ? "null" : "Worker error",
+          error: classifyWorkerError(event),
           evaluationActive: onWorkerError !== undefined,
         },
       );

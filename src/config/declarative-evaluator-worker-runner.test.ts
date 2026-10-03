@@ -63,7 +63,7 @@ describe("declarative config runtime worker", () => {
 });
 
 describe("Deno configuration worker error isolation", () => {
-  for (const outcome of ["abort", "error", "success"] as const) {
+  for (const outcome of ["abort", "error", "success", "hostile-getter"] as const) {
     it(`contains a late null worker error after evaluation ${outcome}`, async () => {
       if (!isDeno) return;
       const context = await prepareDeclarativeConfigContext({
@@ -81,12 +81,18 @@ describe("Deno configuration worker error isolation", () => {
       const unsubscribe = __subscribeLogRecordEmitter((record) => {
         if (record.message === "Hosted configuration worker failed") logs.push(record);
       });
+      class HostileErrorEvent extends ErrorEvent {
+        override get error(): unknown {
+          throw new Error("private project getter must not run");
+        }
+      }
       class TestWorker extends EventTarget {
         postMessage() {
           if (outcome === "abort") controller.abort();
-          else if (outcome === "error") {
-            const event = new ErrorEvent("error", {
-              error: new Error("private project error"),
+          else if (outcome === "error" || outcome === "hostile-getter") {
+            const EventConstructor = outcome === "hostile-getter" ? HostileErrorEvent : ErrorEvent;
+            const event = new EventConstructor("error", {
+              error: outcome === "hostile-getter" ? null : new Error("private project error"),
               cancelable: true,
             });
             failures.push(event);
@@ -129,7 +135,7 @@ describe("Deno configuration worker error isolation", () => {
           ) as DeclarativeConfigEvaluationError;
           assertEquals(error.reason, outcome === "abort" ? "worker-aborted" : "worker-unavailable");
         }
-        assertEquals(failures.length, outcome === "error" ? 2 : 1);
+        assertEquals(failures.length, outcome === "error" || outcome === "hostile-getter" ? 2 : 1);
         assertEquals(
           failures.every((event) => event.defaultPrevented),
           true,
@@ -137,8 +143,11 @@ describe("Deno configuration worker error isolation", () => {
         );
         assertEquals(logs.at(-1)?.context?.error, "null");
         assertEquals(logs.at(-1)?.context?.evaluationActive, false);
-        if (outcome === "error") {
-          assertEquals(logs[0]?.context?.error, "Worker error");
+        if (outcome === "error" || outcome === "hostile-getter") {
+          assertEquals(
+            logs[0]?.context?.error,
+            outcome === "hostile-getter" ? "null" : "Worker error",
+          );
           assertEquals(logs[0]?.context?.evaluationActive, true);
         }
       } finally {
