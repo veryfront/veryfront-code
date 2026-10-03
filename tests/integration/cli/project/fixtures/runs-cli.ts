@@ -54,7 +54,7 @@ await withMockFetch((_url, init) => {
       }),
     );
   }
-  if (name === "login-list") return Promise.resolve(fixtureResponse("listRuns"));
+  if (scenario === "login-list") return Promise.resolve(fixtureResponse("listRuns"));
   if (scenario === "login-analytics") {
     return Promise.resolve(fixtureResponse("getAccountRunAnalytics"));
   }
