@@ -15,6 +15,9 @@
  *      package's build output to reach the starter templates
  *  6b. `veryfront init --integrations linear` writes the Linear client, tools
  *      and auth route from the packed template manifest
+ *  6c. `veryfront/runs/target` resolves by its published subpath and its Runs
+ *      SDK drives run list/detail, stream/snapshot, child runs, resume and
+ *      input responses over the prepared operation fixtures
  *   7. TypeScript config graphs and CommonJS requires build at the Node 22.3
  *      minimum without native type stripping or staging-directory resolution
  *   8. the packed ai-agent starter starts under Node, renders a page, and
@@ -30,7 +33,8 @@
  * The runtime under test stays the packed npm artifact under the ambient Node
  * version: this orchestrator only spawns `npm`, `node`, and `deno eval`
  * against the installed package; it never imports the repository's runtime
- * sources into the smoke path.
+ * sources into the smoke path. A `deno eval` against the repository config
+ * writes the Runs operation fixtures as JSON data for the consumer.
  *
  * Requires: `deno task build:npm` output in ./npm, node + npm on PATH.
  */
@@ -953,6 +957,123 @@ async function checkScaffoldExport(workDir: string): Promise<void> {
   }
 }
 
+/** Operations a published Studio consumer drives through `veryfront/runs/target`. */
+const RUNS_SDK_CONSUMER_OPERATIONS = [
+  "listRuns",
+  "getRun",
+  "getRunSnapshot",
+  "streamRunEvents",
+  "listRunChildRuns",
+  "resumeRun",
+  "createInputResponse",
+] as const;
+
+const RUNS_SDK_SCRIPT = `
+const { readFile } = await import('node:fs/promises');
+const { createServer } = await import('node:http');
+const { deepStrictEqual, ok } = await import('node:assert/strict');
+const { createRunsApiTransport, createRunsSdk, RUNS_OPERATIONS } = await import(
+  'veryfront/runs/target'
+);
+const fixtures = JSON.parse(await readFile('runs-operation-fixtures.json', 'utf8'));
+let fixture;
+const requests = [];
+const server = createServer((request, response) => {
+  const chunks = [];
+  request.on('data', (chunk) => chunks.push(chunk));
+  request.on('end', () => {
+    requests.push({
+      method: request.method,
+      url: request.url,
+      headers: request.headers,
+      body: Buffer.concat(chunks).toString('utf8'),
+    });
+    const { status, body } = fixture.response;
+    if (body === undefined) return response.writeHead(status).end();
+    if (typeof body === 'string') {
+      return response.writeHead(status, { 'Content-Type': 'text/event-stream' }).end(body);
+    }
+    response.writeHead(status, { 'Content-Type': 'application/json' }).end(JSON.stringify(body));
+  });
+});
+await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+try {
+  const runs = createRunsSdk({
+    transport: createRunsApiTransport({
+      baseUrl: 'http://127.0.0.1:' + server.address().port,
+      getToken: () => 'consumer-token',
+      retry: { maxRetries: 0, initialDelay: 0, maxDelay: 0 },
+    }),
+  });
+  for (const [operationId, operationFixture] of Object.entries(fixtures)) {
+    fixture = operationFixture;
+    requests.length = 0;
+    const result = runs[operationId](fixture.input);
+    if (RUNS_OPERATIONS[operationId].stream) {
+      const frames = [];
+      for await (const frame of result) frames.push(frame);
+      const expected = fixture.response.body.split('\\n\\n').filter(Boolean).map((block) => {
+        const lines = block.split('\\n');
+        const id = lines.find((line) => line.startsWith('id: '));
+        const data = lines.filter((line) => line.startsWith('data: ')).map((line) => line.slice(6));
+        return { id: id ? id.slice(4) : null, event: JSON.parse(data.join('\\n')) };
+      });
+      ok(expected.length > 0, operationId + ' fixture has no frames');
+      deepStrictEqual(frames, expected, operationId);
+    } else {
+      deepStrictEqual(await result, fixture.response.body, operationId);
+    }
+    const [request] = requests;
+    deepStrictEqual(requests.map(({ url }) => url), [fixture.url], operationId);
+    deepStrictEqual(request.method, RUNS_OPERATIONS[operationId].method, operationId);
+    deepStrictEqual(request.headers.authorization, 'Bearer consumer-token', operationId);
+    for (const [name, value] of Object.entries(fixture.input.headers ?? {})) {
+      deepStrictEqual(request.headers[name.toLowerCase()], String(value), operationId + ' ' + name);
+    }
+    if (fixture.input.body !== undefined) {
+      deepStrictEqual(JSON.parse(request.body), fixture.input.body, operationId + ' body');
+    }
+  }
+} finally {
+  server.close();
+}
+`;
+
+async function checkRunsSdkExport(workDir: string): Promise<void> {
+  console.log(
+    "== 6c. runs/target SDK drives Runs operations from the published exports map",
+  );
+  const fixturesModule = `${ROOT_DIR}/src/runs/target/client.test-helpers.ts`;
+  const fixturesPath = `${workDir}/runs-operation-fixtures.json`;
+  await runChecked(
+    "write Runs operation fixtures",
+    "deno",
+    [
+      "eval",
+      `--config=${ROOT_DIR}/deno.json`,
+      `const { RUNS_OPERATION_FIXTURES } = await import(${
+        JSON.stringify(fixturesModule)
+      });
+const operations = ${JSON.stringify(RUNS_SDK_CONSUMER_OPERATIONS)};
+await Deno.writeTextFile(
+  ${JSON.stringify(fixturesPath)},
+  JSON.stringify(Object.fromEntries(operations.map((id) => [id, RUNS_OPERATION_FIXTURES[id]]))),
+);`,
+    ],
+    { cwd: ROOT_DIR, timeoutMs: 120_000 },
+  );
+  const runsSdk = await run("node", [
+    "--input-type=module",
+    "-e",
+    RUNS_SDK_SCRIPT,
+  ], { cwd: workDir, timeoutMs: 120_000 });
+  if (runsSdk.code !== 0) {
+    fail(
+      `veryfront/runs/target did not drive the Runs SDK from an installed package\n${runsSdk.combined}`,
+    );
+  }
+}
+
 async function checkInitIntegrations(workDir: string): Promise<void> {
   console.log("== 6b. init --integrations writes the integration scaffold");
   const init = await run("node", [
@@ -1660,6 +1781,7 @@ async function runSmoke(workDir: string): Promise<void> {
     await checkAuthExtensionLoads(workDir, plan);
     await checkBrokenTransitiveDependency(workDir);
     await checkScaffoldExport(workDir);
+    await checkRunsSdkExport(workDir);
     await checkInitIntegrations(workDir);
     await checkNodeTypeScriptConfig(workDir);
 

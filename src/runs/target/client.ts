@@ -37,7 +37,11 @@ export interface RunStreamFrame {
 
 /** Configuration for {@link createRunsSdk}. */
 export interface RunsSdkConfig {
-  /** Host-owned canonical transport, including origin, credentials and telemetry. */
+  /**
+   * Host-owned canonical transport, including origin, credentials and telemetry, for example
+   * from `createRunsApiTransport`. A test double must pass each response to `init.onResponse`
+   * and resolve with its result.
+   */
   transport: VeryfrontApiTransport<unknown>;
 }
 

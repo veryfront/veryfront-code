@@ -55,8 +55,10 @@ function deleteHeader(headers: Headers, name: string): void {
   IntrinsicReflectApply(HeadersPrototypeDelete, headers, [name]);
 }
 
+/** Retries after a failed attempt, with exponential backoff between `initialDelay` and `maxDelay` ms. */
 export type TransportRetryConfig = BoundedRetryConfig;
 
+/** Options for one transport request. */
 export interface TransportRequestInit {
   /** Decode a response within the transport attempt, including its deadline and tracing. */
   onResponse?: VeryfrontApiTransportConfig<unknown>["onResponse"];
@@ -113,6 +115,7 @@ export interface VeryfrontApiTransportConfig<T> {
   };
 }
 
+/** Sends requests to the Veryfront API with the transport's origin, credentials and retries. */
 export interface VeryfrontApiTransport<T> {
   request(pathOrUrl: string, init?: TransportRequestInit): Promise<T>;
 }

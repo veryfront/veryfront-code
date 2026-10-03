@@ -175,6 +175,54 @@ const page = await runs.list({ limit: 50 });
 console.log(page.data.map((run) => run.run_id));
 ```
 
+## Typed Runs contract SDK
+
+`veryfront/runs/target` publishes the typed SDK for the Runs target contract that
+the npm package pins. It has one method per contract operation, and its request
+and response types come from that pinned contract. The SDK sends every request
+through the canonical Veryfront API transport from `createRunsApiTransport`,
+which owns the origin, credentials, retries, body limits and telemetry. Set
+`authMode: "api-key"` to send a project API key as `X-API-Key`. Until the
+hosted API switches to the target contract, set `baseUrl` to an origin that
+serves it. The legacy client at
+`veryfront/runs` stays available until consumers switch over.
+
+```ts
+import {
+  createRunsApiTransport,
+  createRunsSdk,
+  type RunsContractComponents,
+  type RunsOutput,
+} from "veryfront/runs/target";
+
+const sdk = createRunsSdk({
+  transport: createRunsApiTransport({
+    baseUrl: "<RUNS_API_ORIGIN>",
+    getToken: () => process.env.VERYFRONT_API_TOKEN!,
+  }),
+});
+
+const run: RunsOutput<"getRun"> = await sdk.getRun({
+  path: { run_id: "11111111-1111-4111-8111-111111111111" },
+});
+const children = await sdk.listRunChildRuns({ path: { run_id: run.id } });
+for await (const frame of sdk.streamRunEvents({ path: { run_id: run.id } })) {
+  console.log(frame.id, frame.event);
+}
+
+type Run = RunsContractComponents["schemas"]["Run"];
+```
+
+The package ships the pinned contract as TypeScript types, not runtime
+validators. An app that consumes the SDK at its own boundary uses these types
+instead of copying the contract, for example `RunsOutput<"getRun">` or
+`RunsContractComponents["schemas"]["Run"]`. If it also validates responses at
+runtime, it types each validator against them. Then a contract change that
+removes or retypes a field fails to compile. A new optional field still
+compiles, so update the validator when the pinned contract changes. Error
+responses reject with a `VeryfrontError`, and `runsProblemOf(error)` returns the
+RFC 9457 problem body.
+
 ## Scheduling
 
 Schedules are definitions that create runs later. One-time and cron-style
