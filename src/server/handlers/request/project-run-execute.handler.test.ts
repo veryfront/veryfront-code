@@ -1094,11 +1094,6 @@ describe("server/handlers/request/project-run-execute.handler", () => {
       };
       const handler = new ProjectRunExecuteHandler(
         createDeps({
-          taskDeadlineClock: {
-            now: Date.now,
-            setTimeout: globalThis.setTimeout,
-            clearTimeout: globalThis.clearTimeout,
-          },
           executeKnowledgeIngest: execute,
           executeReleaseAssetBuild: execute,
           executeDependencyArtifactBuild: execute,
@@ -9012,25 +9007,22 @@ describe("server/handlers/request/project-run-execute.handler cancellation", () 
   });
 
   it("does not acknowledge a timed-out task until its callback actually settles", async () => {
-    const realSetTimeout = globalThis.setTimeout;
-    using time = new FakeTime(Date.now());
+    const clock = manualTaskDeadlineClock();
     const controller = new AbortController();
     const started = Promise.withResolvers<void>();
     const settle = Promise.withResolvers<void>();
     const acknowledged = Promise.withResolvers<void>();
     const callbacks: Array<{ url: string; init: ReturnType<typeof observeFetchRequestInit> }> = [];
-    const handler = new ProjectRunExecuteHandler(createDeps({
-      taskDeadlineClock: {
-        now: Date.now,
-        setTimeout: globalThis.setTimeout,
-        clearTimeout: globalThis.clearTimeout,
-      },
-      runTask: async () => {
-        started.resolve();
-        await settle.promise;
-        return { success: true, result: "late", durationMs: 1 };
-      },
-    }));
+    const handler = new ProjectRunExecuteHandler(
+      createDeps({
+        runTask: async () => {
+          started.resolve();
+          await settle.promise;
+          return { success: true, result: "late", durationMs: 1 };
+        },
+      }),
+      clock,
+    );
     const signed = await signedRequest(
       "/api/control-plane/runs/run_deadline_late_stop/execute",
       {
@@ -9038,14 +9030,13 @@ describe("server/handlers/request/project-run-execute.handler cancellation", () 
         kind: "task",
         target: "task:sync-calendar-events",
         projectId: "proj-1",
-        deadlineAt: new Date(Date.now() + 25).toISOString(),
+        deadlineAt: new Date(clock.now() + 25).toISOString(),
       },
       { "x-veryfront-run-stop-token": "opaque-stop-capability" },
     );
 
     // Signing and dispatch can outlast the deadline on a busy host.
-    // The deadline clock starts advancing only after task admission.
-    await new Promise((resolve) => realSetTimeout(resolve, 50));
+    // The deadline clock advances only after task admission.
 
     await withMockFetch(async (input, init) => {
       callbacks.push({ url: String(input), init: observeFetchRequestInit(init) });
@@ -9057,7 +9048,7 @@ describe("server/handlers/request/project-run-execute.handler cancellation", () 
         createCtx(signed.publicKeyPem),
       );
       await started.promise;
-      await time.tickAsync(25);
+      clock.advance(25);
       const result = await waitForBarrier(
         pending,
         "deadline response remained blocked by the task callback",
