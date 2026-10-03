@@ -273,12 +273,18 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
     allowDiscovery: getEnv("NODE_ENV") !== "production",
   });
   const localProjects = localProjectResolver.localProjects;
-  const metadataClient = createProjectMetadataClient({
+  const metadataClientOptions = {
     apiBaseUrl: config.apiBaseUrl,
     fetchImpl: options.metadataFetch,
     logger,
     maxInflight: options.metadataMaxInflight,
     timeoutMs: options.metadataTimeoutMs,
+  };
+  const metadataClient = createProjectMetadataClient(metadataClientOptions);
+  const refreshMetadataClient = createProjectMetadataClient({
+    ...metadataClientOptions,
+    maxInflight: 4,
+    waitForProducer: true,
   });
 
   const tokenManager = new TokenManager(
@@ -303,7 +309,7 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
   let routingLookupGeneration = 0;
   let closed = false;
   const routingRefresh = new RoutingRefreshScheduler(
-    Math.min(4, Math.max(0, (options.metadataMaxInflight ?? 200) - 1)),
+    4,
     Math.min(64, routingCacheMaxEntries),
   );
 
@@ -386,7 +392,7 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
         // Access stays authoritative per request. This read only keeps its
         // transport and repository path warm during idle periods.
         try {
-          await metadataClient.lookupAccess(lookupKey, token, false, { signal });
+          await refreshMetadataClient.lookupAccess(lookupKey, token, false, { signal });
         } catch (error) {
           if (!isProxyLookupAuthError(error)) throw error;
           await tokenManager.invalidateToken(
@@ -400,17 +406,20 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
             identity.customDomain,
             { signal },
           );
-          await metadataClient.lookupAccess(lookupKey, token, false, { signal });
+          await refreshMetadataClient.lookupAccess(lookupKey, token, false, { signal });
         }
         if (!isCurrent()) return;
-        await resolveProjectRoutingLookup(
-          lookupKey,
-          token,
-          undefined,
-          signal,
-          undefined,
-          { refresh: true, identity },
-        );
+        const generation = routingLookupGeneration;
+        beginRoutingLookup(generation);
+        try {
+          const result = await refreshMetadataClient.lookupRouting(lookupKey, token, { signal });
+          // A cancelled or expired refresh must never restore an evicted key.
+          if (result && isCurrent() && !wasRoutingLookupInvalidated(cacheKey, result, generation)) {
+            setCachedRoutingLookup(cacheKey, result, lookupKey, identity);
+          }
+        } finally {
+          endRoutingLookup(generation);
+        }
       } catch {
         // Keep the original expiry on failure; never extend stale routing.
         if (!signal.aborted) logger?.warn("Background proxy routing refresh failed", { lookupKey });
@@ -519,7 +528,7 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
     timing?: ProxyServerTiming,
     signal?: AbortSignal,
     isResultUsable?: (result: ProjectRoutingLookupResult) => boolean,
-    refreshOptions: { refresh?: boolean; identity?: RoutingRefreshIdentity } = {},
+    refreshIdentity?: RoutingRefreshIdentity,
   ): Promise<ProjectRoutingLookupResult | null> {
     const cacheKey = normalizeProjectLookupKey(lookupKey);
     const canUseResult = (result: ProjectRoutingLookupResult | null): boolean =>
@@ -534,7 +543,7 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
       timing ?? { enabled: false, startedAt: 0, phases: new Map() },
       "proxy.routing_lookup",
       async () => {
-        const cached = refreshOptions.refresh ? null : getCachedRoutingLookup(cacheKey);
+        const cached = getCachedRoutingLookup(cacheKey);
         if (cached && canUseResult(cached)) {
           logger?.debug("Proxy routing metadata cache hit", { lookupKey });
           return cached;
@@ -568,7 +577,7 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
 
               if (!wasRoutingLookupInvalidated(cacheKey, result, startedAtGeneration)) {
                 if (result) {
-                  setCachedRoutingLookup(cacheKey, result, lookupKey, refreshOptions.identity);
+                  setCachedRoutingLookup(cacheKey, result, lookupKey, refreshIdentity);
                 }
                 return result;
               }
@@ -646,9 +655,7 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
         undefined,
         undefined,
         undefined,
-        {
-          identity: { scope, projectSlug: input.projectSlug },
-        },
+        { scope, projectSlug: input.projectSlug },
       );
       const environment = result?.environments?.find((candidate) =>
         candidate.id === input.environmentId
@@ -770,7 +777,7 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
           requireActiveRelease
             ? (result) => hasActiveReleaseForMatchedEnvironment(result, envMatcher)
             : undefined,
-          { identity: refreshIdentity },
+          refreshIdentity,
         );
         if (!routingResult) {
           return await resolveFullProjectLookupAndProtection(
