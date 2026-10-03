@@ -972,7 +972,7 @@ const RUNS_SDK_SCRIPT = `
 const { readFile } = await import('node:fs/promises');
 const { createServer } = await import('node:http');
 const { deepStrictEqual, ok } = await import('node:assert/strict');
-const { createCanonicalVeryfrontApiTransport, createRunsSdk, RUNS_OPERATIONS } = await import(
+const { createRunsApiTransport, createRunsSdk, RUNS_OPERATIONS } = await import(
   'veryfront/runs/target'
 );
 const fixtures = JSON.parse(await readFile('runs-operation-fixtures.json', 'utf8'));
@@ -999,11 +999,11 @@ const server = createServer((request, response) => {
 await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
 try {
   const runs = createRunsSdk({
-    transport: createCanonicalVeryfrontApiTransport(
-      'http://127.0.0.1:' + server.address().port,
-      () => 'consumer-token',
-      { maxRetries: 0, initialDelay: 0, maxDelay: 0 },
-    ),
+    transport: createRunsApiTransport({
+      baseUrl: 'http://127.0.0.1:' + server.address().port,
+      getToken: () => 'consumer-token',
+      retry: { maxRetries: 0, initialDelay: 0, maxDelay: 0 },
+    }),
   });
   for (const [operationId, operationFixture] of Object.entries(fixtures)) {
     fixture = operationFixture;

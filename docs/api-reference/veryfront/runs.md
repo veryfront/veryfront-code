@@ -102,11 +102,7 @@ These import paths group focused functionality under this module. Each is a sepa
 Typed SDK for the Runs target contract, with the pinned contract's operation, input and output types, and the canonical Veryfront API transport it sends requests through. The legacy client stays at `veryfront/runs` until the cutover removes it.
 
 ```ts
-import {
-  createCanonicalVeryfrontApiTransport,
-  createRunsSdk,
-  runsProblemOf,
-} from "veryfront/runs/target";
+import { createRunsApiTransport, createRunsSdk, runsProblemOf } from "veryfront/runs/target";
 ```
 
 #### Components
@@ -117,30 +113,32 @@ import {
 
 #### Functions
 
-| Name                                   | Description                                                                         | Source                                                                                                           |
-| -------------------------------------- | ----------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
-| `createCanonicalVeryfrontApiTransport` | Canonical transport: span tracing, request metrics, API_CLIENT_ERROR mapping.       | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/adapters/veryfront-api-transport.ts) |
-| `createRunsSdk`                        | Create a typed Runs SDK over the given transport.                                   | [source](https://github.com/veryfront/veryfront-code/blob/main/src/runs/target/client.ts)                        |
-| `runsProblemOf`                        | The problem body of an error thrown by the SDK, or `undefined` for any other error. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/runs/target/client.ts)                        |
+| Name                     | Description                                                                                                                                                          | Source                                                                                       |
+| ------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| `createRunsApiTransport` | Create the canonical Veryfront API transport for `createRunsSdk`. It owns the origin, credentials, retries, response body limits and telemetry of every SDK request. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/runs/target/transport.ts) |
+| `createRunsSdk`          | Create a typed Runs SDK over the given transport.                                                                                                                    | [source](https://github.com/veryfront/veryfront-code/blob/main/src/runs/target/client.ts)    |
+| `runsProblemOf`          | The problem body of an error thrown by the SDK, or `undefined` for any other error.                                                                                  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/runs/target/client.ts)    |
 
 #### Types
 
-| Name                       | Description                                                                           | Source                                                                                                           |
-| -------------------------- | ------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
-| `RunsArgs`                 | Method arguments; the input is optional when it has no required field.                | [source](https://github.com/veryfront/veryfront-code/blob/main/src/runs/target/client.ts)                        |
-| `RunsCallOptions`          | Per-call options.                                                                     | [source](https://github.com/veryfront/veryfront-code/blob/main/src/runs/target/client.ts)                        |
-| `RunsContractComponents`   |                                                                                       | [source](https://github.com/veryfront/veryfront-code/blob/main/src/runs/contract/runs-api.generated.ts)          |
-| `RunsContractOperations`   |                                                                                       | [source](https://github.com/veryfront/veryfront-code/blob/main/src/runs/contract/runs-api.generated.ts)          |
-| `RunsContractPaths`        |                                                                                       | [source](https://github.com/veryfront/veryfront-code/blob/main/src/runs/contract/runs-api.generated.ts)          |
-| `RunsInput`                | Request of one operation: path, query and header parameters plus the JSON body.       | [source](https://github.com/veryfront/veryfront-code/blob/main/src/runs/target/client.ts)                        |
-| `RunsOperationId`          | Contract operation ID.                                                                | [source](https://github.com/veryfront/veryfront-code/blob/main/src/runs/target/client.ts)                        |
-| `RunsOperationRoute`       | HTTP route of one Runs operation.                                                     | [source](https://github.com/veryfront/veryfront-code/blob/main/src/runs/target/operations.ts)                    |
-| `RunsOutput`               | Success body of one operation; `undefined` for 204 responses.                         | [source](https://github.com/veryfront/veryfront-code/blob/main/src/runs/target/client.ts)                        |
-| `RunsPaginatedOperationId` | Operations whose responses page with `page_info.next` and a `cursor` query parameter. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/runs/target/client.ts)                        |
-| `RunsProblem`              | RFC 9457 problem body that every Runs error response carries.                         | [source](https://github.com/veryfront/veryfront-code/blob/main/src/runs/target/client.ts)                        |
-| `RunsResult`               | What an SDK method returns: the parsed body, or the frames of an event stream.        | [source](https://github.com/veryfront/veryfront-code/blob/main/src/runs/target/client.ts)                        |
-| `RunsSdk`                  | Typed client for every Runs target operation.                                         | [source](https://github.com/veryfront/veryfront-code/blob/main/src/runs/target/client.ts)                        |
-| `RunsSdkConfig`            | Configuration for `createRunsSdk`.                                                    | [source](https://github.com/veryfront/veryfront-code/blob/main/src/runs/target/client.ts)                        |
-| `RunStreamFrame`           | One server-sent frame of `streamRunEvents`.                                           | [source](https://github.com/veryfront/veryfront-code/blob/main/src/runs/target/client.ts)                        |
-| `TransportRetryConfig`     |                                                                                       | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/adapters/veryfront-api-transport.ts) |
-| `VeryfrontApiTransport`    |                                                                                       | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/adapters/veryfront-api-transport.ts) |
+| Name                       | Description                                                                                        | Source                                                                                                           |
+| -------------------------- | -------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| `RunsApiTransportOptions`  | Options for `createRunsApiTransport`.                                                              | [source](https://github.com/veryfront/veryfront-code/blob/main/src/runs/target/transport.ts)                     |
+| `RunsArgs`                 | Method arguments; the input is optional when it has no required field.                             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/runs/target/client.ts)                        |
+| `RunsCallOptions`          | Per-call options.                                                                                  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/runs/target/client.ts)                        |
+| `RunsContractComponents`   | Schemas of the pinned Runs contract, for example `RunsContractComponents["schemas"]["Run"]`.       | [source](https://github.com/veryfront/veryfront-code/blob/main/src/runs/target/index.ts)                         |
+| `RunsContractOperations`   | Operations of the pinned Runs contract, keyed by operation ID.                                     | [source](https://github.com/veryfront/veryfront-code/blob/main/src/runs/target/index.ts)                         |
+| `RunsContractPaths`        | Paths of the pinned Runs contract, keyed by URL template.                                          | [source](https://github.com/veryfront/veryfront-code/blob/main/src/runs/target/index.ts)                         |
+| `RunsInput`                | Request of one operation: path, query and header parameters plus the JSON body.                    | [source](https://github.com/veryfront/veryfront-code/blob/main/src/runs/target/client.ts)                        |
+| `RunsOperationId`          | Contract operation ID.                                                                             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/runs/target/client.ts)                        |
+| `RunsOperationRoute`       | HTTP route of one Runs operation.                                                                  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/runs/target/operations.ts)                    |
+| `RunsOutput`               | Success body of one operation; `undefined` for 204 responses.                                      | [source](https://github.com/veryfront/veryfront-code/blob/main/src/runs/target/client.ts)                        |
+| `RunsPaginatedOperationId` | Operations whose responses page with `page_info.next` and a `cursor` query parameter.              | [source](https://github.com/veryfront/veryfront-code/blob/main/src/runs/target/client.ts)                        |
+| `RunsProblem`              | RFC 9457 problem body that every Runs error response carries.                                      | [source](https://github.com/veryfront/veryfront-code/blob/main/src/runs/target/client.ts)                        |
+| `RunsResult`               | What an SDK method returns: the parsed body, or the frames of an event stream.                     | [source](https://github.com/veryfront/veryfront-code/blob/main/src/runs/target/client.ts)                        |
+| `RunsSdk`                  | Typed client for every Runs target operation.                                                      | [source](https://github.com/veryfront/veryfront-code/blob/main/src/runs/target/client.ts)                        |
+| `RunsSdkConfig`            | Configuration for `createRunsSdk`.                                                                 | [source](https://github.com/veryfront/veryfront-code/blob/main/src/runs/target/client.ts)                        |
+| `RunStreamFrame`           | One server-sent frame of `streamRunEvents`.                                                        | [source](https://github.com/veryfront/veryfront-code/blob/main/src/runs/target/client.ts)                        |
+| `TransportRequestInit`     | Options for one transport request.                                                                 | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/adapters/veryfront-api-transport.ts) |
+| `TransportRetryConfig`     | Retries after a failed attempt, with exponential backoff between `initialDelay` and `maxDelay` ms. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/adapters/veryfront-api-transport.ts) |
+| `VeryfrontApiTransport`    | Sends requests to the Veryfront API with the transport's origin, credentials and retries.          | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/adapters/veryfront-api-transport.ts) |

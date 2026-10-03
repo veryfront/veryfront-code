@@ -5,18 +5,13 @@ the API origin, credentials, retry policy and outbound authorization once, on th
 transport, rather than supplying a second fetch implementation to the SDK.
 
 ```ts
-import { createCanonicalVeryfrontApiTransport } from "#veryfront/platform/adapters/veryfront-api-transport.ts";
-import { createRunsSdk } from "#veryfront/runs/target/client.ts";
+import { createRunsApiTransport, createRunsSdk } from "veryfront/runs/target";
 
 const token = Deno.env.get("VERYFRONT_API_TOKEN");
 if (!token) throw new Error("Set VERYFRONT_API_TOKEN");
 const apiUrl = Deno.env.get("VERYFRONT_API_URL");
 if (!apiUrl) throw new Error("Set VERYFRONT_API_URL to your API origin");
-const transport = createCanonicalVeryfrontApiTransport(
-  apiUrl,
-  () => token,
-  { maxRetries: 2, initialDelay: 100, maxDelay: 1000 },
-);
+const transport = createRunsApiTransport({ baseUrl: apiUrl, getToken: () => token });
 const sdk = createRunsSdk({ transport });
 const runs = await sdk.listProjectRuns({
   path: { project_reference: "<PROJECT_ID>" },
@@ -25,9 +20,8 @@ const runs = await sdk.listProjectRuns({
 
 Replace the former `baseUrl`, `transport: fetch` and `credential` SDK options with
 one canonical transport object. For execution-token requests, use a transport
-whose `getToken` supplies that execution token. For project API keys, pass
-`"api-key"` as the canonical factory's fifth argument (after outbound policy),
-and return the API key from `getToken`. The host then sends only `X-API-Key`, not
+whose `getToken` supplies that execution token. For project API keys, set
+`authMode: "api-key"` and return the API key from `getToken`. The host then sends only `X-API-Key`, not
 a bearer header. Use `"none"` for public anonymous operations. Direct transport
 configuration accepts the same `authMode` values. Credential selection stays in
 the host transport rather than the SDK.

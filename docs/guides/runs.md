@@ -180,24 +180,24 @@ console.log(page.data.map((run) => run.run_id));
 `veryfront/runs/target` publishes the typed SDK for the Runs target contract that
 the npm package pins. It has one method per contract operation, and its request
 and response types come from that pinned contract. The SDK sends every request
-through the canonical Veryfront API transport, which owns the origin,
-credentials, retries, body limits and telemetry. The legacy client at
+through the canonical Veryfront API transport from `createRunsApiTransport`,
+which owns the origin, credentials, retries, body limits and telemetry. Set
+`authMode: "api-key"` to send a project API key as `X-API-Key`. The legacy client at
 `veryfront/runs` stays available until consumers switch over.
 
 ```ts
 import {
-  createCanonicalVeryfrontApiTransport,
+  createRunsApiTransport,
   createRunsSdk,
   type RunsContractComponents,
   type RunsOutput,
 } from "veryfront/runs/target";
 
 const sdk = createRunsSdk({
-  transport: createCanonicalVeryfrontApiTransport(
-    "https://api.veryfront.com",
-    () => process.env.VERYFRONT_API_TOKEN!,
-    { maxRetries: 2, initialDelay: 200, maxDelay: 2_000 },
-  ),
+  transport: createRunsApiTransport({
+    baseUrl: "https://api.veryfront.com",
+    getToken: () => process.env.VERYFRONT_API_TOKEN!,
+  }),
 });
 
 const run: RunsOutput<"getRun"> = await sdk.getRun({

@@ -1,5 +1,5 @@
 import {
-  createCanonicalVeryfrontApiTransport,
+  createRunsApiTransport,
   createRunsSdk,
   type RunsContractComponents,
   type RunsInput,
@@ -10,10 +10,10 @@ import {
 type Run = RunsContractComponents["schemas"]["Run"];
 
 const runs = createRunsSdk({
-  transport: createCanonicalVeryfrontApiTransport("https://api.veryfront.com", () => "<TOKEN>", {
-    maxRetries: 2,
-    initialDelay: 200,
-    maxDelay: 2_000,
+  transport: createRunsApiTransport({
+    baseUrl: "https://api.veryfront.com",
+    getToken: () => "<TOKEN>",
+    authMode: "api-key",
   }),
 });
 

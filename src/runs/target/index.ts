@@ -7,18 +7,13 @@
  *
  * @example
  * ```ts
- * import {
- *   createCanonicalVeryfrontApiTransport,
- *   createRunsSdk,
- *   type RunsOutput,
- * } from "veryfront/runs/target";
+ * import { createRunsApiTransport, createRunsSdk, type RunsOutput } from "veryfront/runs/target";
  *
  * const runs = createRunsSdk({
- *   transport: createCanonicalVeryfrontApiTransport(
- *     "https://api.veryfront.com",
- *     () => process.env.VERYFRONT_API_TOKEN!,
- *     { maxRetries: 2, initialDelay: 200, maxDelay: 2_000 },
- *   ),
+ *   transport: createRunsApiTransport({
+ *     baseUrl: "https://api.veryfront.com",
+ *     getToken: () => process.env.VERYFRONT_API_TOKEN!,
+ *   }),
  * });
  *
  * const run: RunsOutput<"getRun"> = await runs.getRun({ path: { run_id: "11111111-1111-4111-8111-111111111111" } });
@@ -43,14 +38,18 @@ export {
   type RunsSdkConfig,
   type RunStreamFrame,
 } from "./client.ts";
-export {
-  createCanonicalVeryfrontApiTransport,
-  type TransportRetryConfig,
-  type VeryfrontApiTransport,
+export { createRunsApiTransport, type RunsApiTransportOptions } from "./transport.ts";
+export type {
+  TransportRequestInit,
+  TransportRetryConfig,
+  VeryfrontApiTransport,
 } from "#veryfront/platform/adapters/veryfront-api-transport.ts";
 export { RUNS_OPERATIONS, type RunsOperationRoute } from "./operations.ts";
-export type {
-  components as RunsContractComponents,
-  operations as RunsContractOperations,
-  paths as RunsContractPaths,
-} from "../contract/runs-api.generated.ts";
+import type { components, operations, paths } from "../contract/runs-api.generated.ts";
+
+/** Schemas of the pinned Runs contract, for example `RunsContractComponents["schemas"]["Run"]`. */
+export type RunsContractComponents = components;
+/** Operations of the pinned Runs contract, keyed by operation ID. */
+export type RunsContractOperations = operations;
+/** Paths of the pinned Runs contract, keyed by URL template. */
+export type RunsContractPaths = paths;
