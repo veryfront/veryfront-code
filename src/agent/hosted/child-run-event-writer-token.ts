@@ -169,7 +169,8 @@ function isPromiseLike(value: unknown): value is PromiseLike<unknown> {
     typeof (value as { then?: unknown }).then === "function";
 }
 
-function ownValue(value: object, key: string): unknown {
+function ownValue(value: unknown, key: string): unknown {
+  if (typeof value !== "object" || value === null) return undefined;
   return apply(objectHasOwnProperty, value, [key])
     ? (value as Record<string, unknown>)[key]
     : undefined;
