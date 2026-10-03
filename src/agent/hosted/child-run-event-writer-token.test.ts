@@ -510,6 +510,47 @@ for (
   });
 }
 
+const childRunUuid = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+
+Deno.test("mintChildRunEventWriterCapability accepts the run UUID an old run_ ID resolves to", async () => {
+  const child = await createHostedRunEventWriterCapability({
+    apiUrl: "https://api.example.com",
+    runId: "run_parent",
+    runEventAppendToken: "parent-writer-token",
+    fetch: () =>
+      Promise.resolve(
+        Response.json(eventToken("child-writer-token", childRunUuid), {
+          status: 201,
+          headers: { "Cache-Control": "no-store" },
+        }),
+      ),
+  }).mintChildRunEventWriterCapability("run_child");
+
+  assertEquals(typeof child.mintChildRunEventWriterCapability, "function");
+});
+
+Deno.test("mintChildRunEventWriterCapability rejects another run UUID for a child addressed by UUID", async () => {
+  await assertRejects(
+    () =>
+      createHostedRunEventWriterCapability({
+        apiUrl: "https://api.example.com",
+        runId: "run_parent",
+        runEventAppendToken: "parent-writer-token",
+        fetch: () =>
+          Promise.resolve(
+            Response.json(
+              eventToken("child-writer-token", "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"),
+              {
+                headers: { "Cache-Control": "no-store" },
+              },
+            ),
+          ),
+      }).mintChildRunEventWriterCapability(childRunUuid),
+    HostedChildRunEventWriterTokenExchangeError,
+    "Unable to initialize durable child event persistence",
+  );
+});
+
 Deno.test("mintChildRunEventWriterCapability maps aborts to a sanitized error", async () => {
   const controller = new AbortController();
   controller.abort("parent-writer-token-must-not-leak");

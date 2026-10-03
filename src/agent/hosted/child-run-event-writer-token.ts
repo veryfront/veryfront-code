@@ -32,6 +32,7 @@ const objectCreate = Object.create;
 const objectDefineProperty = Object.defineProperty;
 const objectFreeze = Object.freeze;
 const objectHasOwnProperty = Object.prototype.hasOwnProperty;
+const regExpTest = RegExp.prototype.test;
 const stringSplit = String.prototype.split;
 const stringToLowerCase = String.prototype.toLowerCase;
 const stringTrim = String.prototype.trim;
@@ -176,6 +177,21 @@ function ownValue(value: unknown, key: string): unknown {
     : undefined;
 }
 
+const RUN_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function isRunUuid(value: unknown): value is string {
+  return typeof value === "string" && (apply(regExpTest, RUN_UUID, [value]) as boolean);
+}
+
+/**
+ * The API names a run by its UUID and still resolves old `run_…` IDs (Runs API 5 ADR,
+ * veryfront-issue-inbox#2254): a child addressed by UUID comes back unchanged, one addressed by an
+ * old ID comes back as its UUID.
+ */
+function namesChildRun(runId: unknown, childRunId: string): boolean {
+  return runId === childRunId || (!isRunUuid(childRunId) && isRunUuid(runId));
+}
+
 /** Reads the target `RunEventToken`: an append-only Bearer token bound to exactly this child run. */
 function parseRunEventToken(value: unknown, childRunId: string): string {
   if (typeof value !== "object" || value === null || arrayIsArray(value)) {
@@ -186,7 +202,7 @@ function parseRunEventToken(value: unknown, childRunId: string): string {
   if (
     !isValidRunEventWriterToken(token) ||
     ownValue(value, "token_type") !== "Bearer" ||
-    ownValue(value, "run_id") !== childRunId ||
+    !namesChildRun(ownValue(value, "run_id"), childRunId) ||
     typeof ownValue(value, "expires_at") !== "string" ||
     !arrayIsArray(permissions) || permissions.length !== 1 ||
     permissions[0] !== "run.events.append"
