@@ -2,7 +2,7 @@ import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import {
   finalizeNpmWorkerEntrypoints,
   NPM_WORKER_ENTRYPOINT,
-} from "./npm-worker-entrypoints.ts";
+} from "../../../scripts/build/npm-worker-entrypoints.ts";
 
 Deno.test("npm worker finalization rejects missing compiled worker", async () => {
   const root = await Deno.makeTempDir();
