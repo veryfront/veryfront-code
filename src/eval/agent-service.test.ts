@@ -7,6 +7,11 @@ import {
   assertThrows,
 } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { isDeno } from "#veryfront/platform/compat/runtime.ts";
+import {
+  HEADER_METHODS,
+  installCredentialProbes,
+} from "#veryfront/security/http/credential-probes.test-helpers.ts";
 import { AgUiRequestSchema } from "veryfront/agent";
 import { datasets, evalAgent, type EvalAgentAdapterResult, metrics, runEval } from "veryfront/eval";
 import { defineSchema } from "veryfront/schemas";
@@ -397,6 +402,50 @@ describe("eval/agent-service", () => {
     assertEquals(report.records.map((record) => record.completed), [false, false]);
   });
 
+  it(
+    "sends the eval bearer without a patched intrinsic seeing it",
+    { ignore: !isDeno },
+    async () => {
+      const bearer = "vf-eval-bearer-3c19";
+      const received: { authorization: string | null; token: string | null }[] = [];
+      // The fetch stands in for native fetch: it builds the Request natively and
+      // reads it with the originals.
+      const headersGet = Headers.prototype.get;
+      const adapter = createAgentServiceEvalAdapter({
+        endpoint: "http://127.0.0.1:4311/api/ag-ui",
+        authToken: bearer,
+        fetch: (input, init) => {
+          const request = new Request(input, init);
+          received.push({
+            authorization: Reflect.apply(headersGet, request.headers, ["authorization"]),
+            token: Reflect.apply(headersGet, request.headers, ["x-token"]),
+          });
+          return Promise.resolve(createSseResponse([
+            { event: "RunStarted", data: { runId: "run_probe" } },
+            { event: "RunFinished", data: {} },
+          ]));
+        },
+      });
+      const definition = evalAgent({
+        id: "eval:probe",
+        target: "agent:veryfront",
+        dataset: datasets.inline([{ id: "smoke", input: "Hi" }]),
+      });
+      // Everything but Headers has/append, whose replacement makes the send refuse.
+      const probes = installCredentialProbes({
+        headerMethods: HEADER_METHODS.filter((name) => name !== "has" && name !== "append"),
+      });
+      try {
+        await runEval(definition, { adapters: { agent: adapter } });
+      } finally {
+        probes.restore();
+      }
+
+      assertEquals(received, [{ authorization: `Bearer ${bearer}`, token: bearer }]);
+      assertEquals(probes.saw(bearer), false);
+    },
+  );
+
   it("creates an EvalAgentAdapter for live AG-UI agent-service execution", async () => {
     const requests: Array<{ url: string; init: RequestInit; body: Record<string, unknown> }> = [];
     const adapter = createAgentServiceEvalAdapter({
@@ -469,7 +518,7 @@ describe("eval/agent-service", () => {
     assertEquals(requests[0]?.url, "http://127.0.0.1:4311/api/ag-ui");
     assertEquals(requests[0]?.init.method, "POST");
     assertEquals(
-      (requests[0]?.init.headers as Record<string, string>).Authorization,
+      (requests[0]?.init.headers as Record<string, string>).authorization,
       "Bearer token",
     );
     assertEquals(

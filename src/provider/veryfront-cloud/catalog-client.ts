@@ -19,6 +19,7 @@
  * - A failed load never throws. It is logged once and retried after
  *   {@link VERYFRONT_CLOUD_CATALOG_RETRY_MS}.
  */
+import { createNativeRequestInit } from "#veryfront/platform/compat/http/native-request-init.ts";
 import { createVeryfrontApiOriginBoundOutboundFetch } from "#veryfront/security/http/outbound-fetch.ts";
 import { logger } from "#veryfront/utils/logger/logger.ts";
 
@@ -315,9 +316,10 @@ function loggableErrorMessage(error: unknown): string {
 async function fetchCatalog(
   options: VeryfrontCloudCatalogScope,
 ): Promise<VeryfrontCloudCatalog> {
-  // A null-prototype record, not a Headers object: project code can replace the
-  // global Headers class and its methods, and a Headers init would run their
-  // patchable iterator over the bearer. A plain record takes neither path.
+  // A null-prototype record, sent in a null-prototype init that sets every
+  // field itself. A Headers object would be read through a patchable iterator,
+  // and an init field missing from an ordinary object would be looked up on
+  // Object.prototype, where a getter could read `this.headers`.
   const headers = ObjectCreate(null) as Record<string, string>;
   headers["accept"] = "application/json";
   headers["authorization"] = `Bearer ${options.apiToken}`;
@@ -330,7 +332,7 @@ async function fetchCatalog(
   try {
     const response = await createVeryfrontApiOriginBoundOutboundFetch(options.apiBaseUrl)(
       catalogUrl(options.apiBaseUrl),
-      { method: "GET", headers, signal },
+      createNativeRequestInit(undefined, { method: "GET", headers, signal }),
     );
     if (!response.ok) {
       await response.body?.cancel();

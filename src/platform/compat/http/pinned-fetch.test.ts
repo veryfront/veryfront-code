@@ -1,6 +1,6 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { isNode } from "#veryfront/platform/compat/runtime.ts";
+import { isDeno, isNode } from "#veryfront/platform/compat/runtime.ts";
 import {
   applyRuntimeDefaultRequestHeaders,
   createPinnedFetchResponse,
@@ -10,6 +10,12 @@ import {
   isRetriableConnectFailure,
   planPinnedConnectAttempts,
 } from "./pinned-fetch.ts";
+import { copyNativeHeaders } from "./native-request-init.ts";
+import { installCredentialProbes } from "#veryfront/security/http/credential-probes.test-helpers.ts";
+
+// Probe tests pin what Deno 2.7.7's own Request and fetch call through the
+// live prototypes; Node's undici and Bun take different internal paths.
+const DENO_INTERNALS = { ignore: !isDeno };
 
 describe("fetchWithPinnedAddresses", () => {
   it("preserves Fetch null-body semantics for 204, 205, and 304", async () => {
@@ -157,6 +163,25 @@ describe("fetchWithPinnedAddresses", () => {
       });
     }
   });
+
+  it(
+    "fills in the defaults without a patched intrinsic seeing the credential",
+    DENO_INTERNALS,
+    () => {
+      const bearer = "Bearer vf-pinned-bearer-2e71";
+      const headers = copyNativeHeaders({ authorization: bearer });
+      const probes = installCredentialProbes();
+      try {
+        applyRuntimeDefaultRequestHeaders(headers, "cors");
+      } finally {
+        probes.restore();
+      }
+
+      assertEquals(probes.saw(bearer), false);
+      assertEquals(headers.get("authorization"), bearer);
+      assertEquals(headers.get("sec-fetch-mode"), "cors");
+    },
+  );
 
   it("keeps caller-supplied headers ahead of the runtime defaults", () => {
     const headers = applyRuntimeDefaultRequestHeaders(

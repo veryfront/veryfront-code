@@ -10,6 +10,7 @@ import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 import { getHostEnvExcludingEnvFile } from "#veryfront/platform/compat/process/env.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { fetchWithPinnedAddresses } from "#veryfront/platform/compat/http/pinned-fetch.ts";
+import { createNativeRequestInit } from "#veryfront/platform/compat/http/native-request-init.ts";
 import { isBun } from "#veryfront/platform/compat/runtime.ts";
 import {
   guardedEgressFetch,
@@ -449,7 +450,7 @@ function createOriginBoundFetchWithTransport(
     const guardedInput: RequestInfo | URL = isRequestInput ? (input as Request) : target;
     return await fetchWithBoundaryErrors(
       guardedInput,
-      { ...init, redirect: "error" },
+      createNativeRequestInit(init, { redirect: "error" }),
       {
         authorizeUrl(url) {
           if (readNativeURLString(url, URLOriginGet) !== baseOrigin) {
