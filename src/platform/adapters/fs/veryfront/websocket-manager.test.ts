@@ -6,6 +6,12 @@ import type { FileCache } from "../cache/file-cache.ts";
 import type { InvalidationCallbacks } from "./types.ts";
 import { WebSocketManager } from "./websocket-manager.ts";
 import { REQUEST_ERROR } from "#veryfront/errors/error-registry/server.ts";
+import { isDeno } from "#veryfront/platform/compat/runtime.ts";
+import {
+  createPreparedDeclarativeConfigWorkerPayload,
+  prepareDeclarativeConfigContext,
+} from "#veryfront/config/declarative-evaluator.ts";
+import { declarativeConfigWorkerRunnerInternals } from "#veryfront/config/declarative-evaluator-worker-runner.ts";
 import {
   buildReloadProjectContext,
   getReconnectDelay,
@@ -359,6 +365,81 @@ describe("WebSocketManager", () => {
     assertEquals(scheduledTimers.size, 0);
 
     manager.dispose();
+  });
+
+  it("contains a null worker error during poke refresh and keeps serving later pokes after reconnect", async () => {
+    if (!isDeno) return;
+    const context = await prepareDeclarativeConfigContext({
+      environmentName: "preview",
+      environment: {},
+    });
+    const payload = createPreparedDeclarativeConfigWorkerPayload(
+      "export default { title: 'test' };",
+      context,
+      "veryfront.config.ts",
+    );
+    const controller = new AbortController();
+    const failures: ErrorEvent[] = [];
+    class AbortingWorker extends EventTarget {
+      postMessage() {
+        controller.abort();
+      }
+      terminate() {
+        const event = new ErrorEvent("error", {
+          error: null,
+          message: "Uncaught null",
+          cancelable: true,
+        });
+        failures.push(event);
+        this.dispatchEvent(event);
+      }
+    }
+    let refreshCalls = 0;
+    let reloadCalls = 0;
+    const manager = createWebSocketManager({
+      pregenerateStyles: async () => {
+        if (++refreshCalls === 1) {
+          await declarativeConfigWorkerRunnerInternals.evaluateWithEndpointFactory(
+            payload,
+            { signal: controller.signal },
+            async () =>
+              declarativeConfigWorkerRunnerInternals.createDenoWorkerEndpoint(
+                AbortingWorker as unknown as typeof Worker,
+              ),
+          );
+        }
+        return undefined;
+      },
+      invalidationCallbacks: {
+        triggerReload: () => {
+          reloadCalls++;
+        },
+      },
+    });
+    try {
+      manager.connect("project-1");
+      const socket = MockWebSocket.instances[0]!;
+      deliverPoke(socket, { changedPaths: ["app/page.tsx"] });
+      runOnlyScheduledTimer();
+      await new Promise<void>((resolve) => originalSetTimeout(resolve, 0));
+      assertEquals(failures.length, 1);
+      assertEquals(
+        failures[0]!.defaultPrevented,
+        true,
+        "worker failure must not escape the poke refresh",
+      );
+      assertEquals(reloadCalls, 1);
+      socket.emitClose();
+      runOnlyScheduledTimer();
+      deliverPoke(MockWebSocket.instances.at(-1)!, { changedPaths: ["app/page.tsx"] });
+      runOnlyScheduledTimer();
+      await flushMicrotasks();
+      assertEquals(refreshCalls, 2);
+      assertEquals(reloadCalls, 2);
+      assertEquals(isPrefixBeingInvalidated("file:branch:test-project:main:"), false);
+    } finally {
+      manager.dispose();
+    }
   });
 
   it("should return initial poke metrics", () => {
