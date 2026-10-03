@@ -96,45 +96,53 @@ export function createRunBoundAgentManualPause(input: {
   const token = input.token;
   const signal = input.signal;
   const path = `${apiUrl}/runs/${encode(input.runId)}`;
+  const send = async (suffix: string, body: string | undefined) => {
+    try {
+      return await transport(`${path}/${suffix}`, {
+        method: body === undefined ? "GET" : "POST",
+        redirect: "error",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body,
+        signal: requestSignal(signal),
+      });
+    } catch {
+      // An unknown write stays at this boundary; the retry sends identical bytes.
+      return undefined;
+    }
+  };
+  /** Settles one reply: a parsed value, undefined to retry, or a thrown boundary. */
+  const settle = async <T>(
+    response: Response | undefined,
+    parse: (value: unknown) => T,
+  ): Promise<{ value: T } | undefined> => {
+    if (!response) return undefined;
+    const status = apply(responseStatus, response, []) as number;
+    if (status >= 200 && status < 300) {
+      try {
+        return { value: parse(await readReply(response, signal)) };
+      } catch {
+        // Malformed or lost replies never become permission to continue.
+        return undefined;
+      }
+    }
+    await cancelResponse(response);
+    if (status < 500) throw agentManualPauseBoundary();
+    return undefined;
+  };
   const request = async <T>(
     suffix: string,
     body: string | undefined,
     parse: (value: unknown) => T,
+    attempt = 0,
   ): Promise<T> => {
-    for (let attempt = 0;; attempt++) {
-      if (signal.aborted) throw agentManualPauseBoundary();
-      let response: Response | undefined;
-      try {
-        response = await transport(`${path}/${suffix}`, {
-          method: body === undefined ? "GET" : "POST",
-          redirect: "error",
-          headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-          body,
-          signal: requestSignal(signal),
-        });
-      } catch {
-        // An unknown write stays at this boundary; the retry sends identical bytes.
-      }
-      const status = response ? apply(responseStatus, response, []) as number : undefined;
-      const ok = status !== undefined && status >= 200 && status < 300;
-      if (response && !ok && status! < 500) {
-        await cancelResponse(response);
-        throw agentManualPauseBoundary();
-      }
-      if (response && ok) {
-        try {
-          return parse(await readReply(response, signal));
-        } catch {
-          // Malformed or lost replies never become permission to continue.
-        }
-      } else {
-        if (response) await cancelResponse(response);
-      }
-      if (signal.aborted) throw agentManualPauseBoundary();
-      await new NativePromise<void>((resolve) =>
-        schedule(resolve, minimum(1000, 100 * 2 ** minimum(attempt, 4)))
-      );
-    }
+    if (signal.aborted) throw agentManualPauseBoundary();
+    const settled = await settle(await send(suffix, body), parse);
+    if (settled) return settled.value;
+    if (signal.aborted) throw agentManualPauseBoundary();
+    await new NativePromise<void>((resolve) =>
+      schedule(resolve, minimum(1000, 100 * 2 ** minimum(attempt, 4)))
+    );
+    return request(suffix, body, parse, attempt + 1);
   };
   const state = { stopped: false };
   const capability = freeze({

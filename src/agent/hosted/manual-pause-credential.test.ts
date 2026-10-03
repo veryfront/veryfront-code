@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   activateHostedAgentPauseCapability,
@@ -65,6 +65,90 @@ describe("hosted agent pause capability", () => {
     assertEquals(await authority.load(), checkpoint);
     assertEquals(await authority.acknowledge(checkpoint), false);
     assertEquals(attempts, 2);
+  });
+
+  it("cancels and retries server-error replies until an acknowledgement settles", async () => {
+    const statuses: number[] = [];
+    let cancelled = 0;
+    const authority = createRunBoundAgentManualPause({
+      apiUrl: "https://api.example.com",
+      runId: "run_pause_test",
+      token: "pause-test-token",
+      signal: new AbortController().signal,
+      fetch: () => {
+        const status = statuses.length === 0 ? 503 : 200;
+        statuses.push(status);
+        if (status === 200) return Promise.resolve(Response.json({ stop: true }));
+        const body = new ReadableStream<Uint8Array>({
+          cancel() {
+            cancelled++;
+          },
+        });
+        return Promise.resolve(new Response(body, { status }));
+      },
+    });
+    assertEquals(await authority.acknowledge(checkpoint), true);
+    assertEquals(statuses, [503, 200]);
+    assertEquals(cancelled, 1);
+    assertEquals(hasHostedAgentPauseStopped(authority), true);
+  });
+
+  it("holds the boundary without retrying when the API rejects the pause request", async () => {
+    let attempts = 0;
+    let cancelled = 0;
+    const authority = createRunBoundAgentManualPause({
+      apiUrl: "https://api.example.com//",
+      runId: "run_pause_test",
+      token: "pause-test-token",
+      signal: new AbortController().signal,
+      fetch: (url) => {
+        assertEquals(String(url), "https://api.example.com/runs/run_pause_test/pause-ack");
+        attempts++;
+        const body = new ReadableStream<Uint8Array>({
+          cancel() {
+            cancelled++;
+          },
+        });
+        return Promise.resolve(new Response(body, { status: 409 }));
+      },
+    });
+    const error = await assertRejects(() => authority.acknowledge(checkpoint));
+    assertEquals(isAgentManualPauseBoundary(error), true);
+    assertEquals(attempts, 1);
+    assertEquals(cancelled, 1);
+    assertEquals(hasHostedAgentPauseStopped(authority), true);
+  });
+
+  it("stays stopped when the checkpoint load reports the run was stopped", async () => {
+    const authority = createRunBoundAgentManualPause({
+      apiUrl: "https://api.example.com",
+      runId: "run_pause_test",
+      token: "pause-test-token",
+      signal: new AbortController().signal,
+      fetch: () => Promise.resolve(Response.json({ stop: true, checkpoint: null })),
+    });
+    const error = await assertRejects(() => authority.load());
+    assertEquals(isAgentManualPauseBoundary(error), true);
+    assertEquals(hasHostedAgentPauseStopped(authority), true);
+  });
+
+  it("never contacts the API once the pause lifetime has ended", async () => {
+    const lifetime = new AbortController();
+    lifetime.abort();
+    let attempts = 0;
+    const authority = createRunBoundAgentManualPause({
+      apiUrl: "https://api.example.com",
+      runId: "run_pause_test",
+      token: "pause-test-token",
+      signal: lifetime.signal,
+      fetch: () => {
+        attempts++;
+        return Promise.resolve(Response.json({ stop: false, checkpoint: null }));
+      },
+    });
+    const error = await assertRejects(() => authority.load());
+    assertEquals(isAgentManualPauseBoundary(error), true);
+    assertEquals(attempts, 0);
   });
 });
 
