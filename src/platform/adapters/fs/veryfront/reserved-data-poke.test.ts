@@ -138,6 +138,17 @@ async function createHarness(
   };
 }
 
+type ListingStart = { dataGeneration: number; readSequence: number };
+type PushedListingInternals = {
+  replaceSourceSnapshot: (
+    cacheKey: string,
+    files: ListedFile[],
+    expectedSnapshotVersion?: number,
+    listingStart?: ListingStart,
+  ) => Promise<number | undefined>;
+  wsManager: { deps: { beginSourceListing: () => ListingStart } };
+};
+
 function snapshotPaths(harness: AdapterHarness): string[] {
   return (harness.internals.sourceSnapshotFiles ?? []).map((file) => file.path).sort();
 }
@@ -291,17 +302,9 @@ describe("reserved data pokes", () => {
       const { adapter } = harness;
       const context = adapter.getContentContext();
       assertExists(context);
-      const internals = adapter as unknown as {
-        replaceSourceSnapshot: (
-          cacheKey: string,
-          files: ListedFile[],
-          expectedSnapshotVersion?: number,
-          expectedDataGeneration?: number,
-        ) => Promise<number | undefined>;
-        wsManager: { deps: { getReservedDataGeneration: () => number } };
-      };
+      const internals = adapter as unknown as PushedListingInternals;
       const version = adapter.getSourceSnapshotVersion();
-      const generation = internals.wsManager.deps.getReservedDataGeneration();
+      const listingStart = internals.wsManager.deps.beginSourceListing();
 
       harness.setRemoteFile(NOTE_PATH, { path: NOTE_PATH, content: "patched" });
       harness.poke([NOTE_PATH]);
@@ -311,10 +314,39 @@ describe("reserved data pokes", () => {
         buildFileListCacheKey(context),
         [AGENT_SOURCE, note("listed-before-write")],
         version,
-        generation,
+        listingStart,
       );
       assertExists(applied);
       assertEquals(snapshotContent(harness, NOTE_PATH), "patched");
+    } finally {
+      harness.dispose();
+    }
+  });
+
+  it("drops a data reply older than a listing that started after it", async () => {
+    const harness = await createHarness();
+    try {
+      const { adapter } = harness;
+      const context = adapter.getContentContext();
+      assertExists(context);
+      const internals = adapter as unknown as PushedListingInternals & {
+        client: { getFile: (path: string) => Promise<FetchedFile> };
+      };
+      const reply = Promise.withResolvers<FetchedFile>();
+      internals.client.getFile = () => reply.promise;
+
+      const lateReply = adapter.refreshReservedDataPaths([NOTE_PATH]);
+      const listingStart = internals.wsManager.deps.beginSourceListing();
+      await internals.replaceSourceSnapshot(
+        buildFileListCacheKey(context),
+        [AGENT_SOURCE, note("v2")],
+        adapter.getSourceSnapshotVersion(),
+        listingStart,
+      );
+      reply.resolve({ path: NOTE_PATH, content: "v1" });
+      await lateReply;
+
+      assertEquals(snapshotContent(harness, NOTE_PATH), "v2");
     } finally {
       harness.dispose();
     }

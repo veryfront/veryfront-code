@@ -678,6 +678,14 @@ interface ReservedDataPatch {
  */
 export type ReservedDataRefreshKind = "data" | "definition";
 
+/** Where a source listing started, relative to reserved data patches and reads. */
+interface SourceListingStart {
+  /** Reserved data generation; patches after it are re-applied to the listing. */
+  dataGeneration: number;
+  /** Order of this read among listings and reserved data fetches. */
+  readSequence: number;
+}
+
 function toSnapshotProjectPath(file: SourceSnapshotFile): string | undefined {
   const path = getOwnSourceSnapshotValue(file, "path");
   return typeof path === "string" ? normalizeSourceSnapshotRetainPath(path) : undefined;
@@ -902,6 +910,10 @@ export class VeryfrontFSAdapter implements FSAdapter {
     string,
     { generation: number; patchedAt: number }
   >();
+  /** Orders listings and reserved data fetches by when they started reading. */
+  #sourceReadSequence = 0;
+  /** Read sequence of the newest listing applied to the snapshot. */
+  #appliedListingReadSequence = 0;
   /** Newest refresh requested per reserved data path, so older replies stand down. */
   #reservedDataRequestSequence = 0;
   readonly #reservedDataLatestRequests = new IntrinsicMap<string, number>();
@@ -1262,14 +1274,9 @@ export class VeryfrontFSAdapter implements FSAdapter {
       clearMemoryCaches: () => this.clearMemoryCaches(),
       getFileListCacheKey: () => this.getCurrentFileListCacheKey(),
       getSourceSnapshotVersion: () => this.sourceSnapshotVersion,
-      replaceSourceSnapshot: (cacheKey, files, expectedSnapshotVersion, expectedDataGeneration) =>
-        this.replaceSourceSnapshot(
-          cacheKey,
-          files,
-          expectedSnapshotVersion,
-          expectedDataGeneration,
-        ),
-      getReservedDataGeneration: () => this.#reservedDataGeneration,
+      replaceSourceSnapshot: (cacheKey, files, expectedSnapshotVersion, listingStart) =>
+        this.replaceSourceSnapshot(cacheKey, files, expectedSnapshotVersion, listingStart),
+      beginSourceListing: () => this.#beginSourceListing(),
       canPatchReservedDataPaths: (changedPaths) => this.canPatchReservedDataPaths(changedPaths),
       refreshReservedDataPaths: (changedPaths) => this.refreshReservedDataPaths(changedPaths),
       pregenerateStyles: (files) => this.triggerCSSPregeneration(files),
@@ -1392,7 +1399,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
     );
     const initializationIdentity = this.#getCurrentSourceSnapshotIdentity();
     const initializationSnapshotVersion = this.sourceSnapshotVersion;
-    const initializationDataGeneration = this.#reservedDataGeneration;
+    const initializationListing = this.#beginSourceListing();
     logger.debug("Step 4: fetchFileList START", { projectSlug, cacheKey });
 
     try {
@@ -1407,7 +1414,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
           this.sourceSnapshotVersion !== initializationSnapshotVersion;
         if (isSnapshotSuperseded()) return false;
 
-        files = this.#overlayReservedDataPatches(files, initializationDataGeneration);
+        files = this.#overlayReservedDataPatches(files, initializationListing);
         const listing = { ...fetchedListing, files };
         await this.#storeFileList(cacheKey, listing);
         if (isSnapshotSuperseded()) {
@@ -1416,6 +1423,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
         }
 
         this.markSourceSnapshotChanged(files, initializationIdentity);
+        this.#noteListingApplied(initializationListing);
         // Retain after the generation bump so the first read can reuse the
         // initialized snapshot even when the configured cache keeps nothing.
         this.retainFileList(cacheKey, files);
@@ -1684,7 +1692,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
     if (!warmupContext) return;
     const warmupIdentity = this.#getSourceSnapshotIdentity(warmupContext);
     const warmupSnapshotVersion = this.sourceSnapshotVersion;
-    const warmupDataGeneration = this.#reservedDataGeneration;
+    const warmupListing = this.#beginSourceListing();
     let warmupPromise: Promise<Array<{ path: string; content?: string }> | null> | null = null;
     warmupPromise = (async () => {
       try {
@@ -1727,7 +1735,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
             return false;
           }
 
-          files = this.#overlayReservedDataPatches(files, warmupDataGeneration);
+          files = this.#overlayReservedDataPatches(files, warmupListing);
           listing = { ...fetchedListing, files };
           const sourceChanged = this.sourceSnapshotFiles === undefined
             ? this.hasAppliedSourceSnapshot
@@ -1767,6 +1775,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
           // no poke advanced the generation. Publish that generation before
           // retaining the list so in-memory indexes rebuild from these bytes.
           this.markSourceSnapshotChanged(files, warmupIdentity);
+          this.#noteListingApplied(warmupListing);
           if (sourceChanged) {
             this.statOps.clearIndex();
             this.dirOps.clearTree();
@@ -1887,7 +1896,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
     sourceCacheKey: string,
     listedFiles: SourceSnapshotFile[],
     expectedSnapshotVersion = this.sourceSnapshotVersion,
-    expectedDataGeneration = this.#reservedDataGeneration,
+    listingStart: SourceListingStart = this.#beginSourceListing(),
   ): Promise<number | undefined> {
     // Pokes for a hosted adapter run in the credential context it connected
     // from, so publish the listing under the key that context reads.
@@ -1909,7 +1918,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
         return undefined;
       }
 
-      const files = this.#overlayReservedDataPatches(listedFiles, expectedDataGeneration);
+      const files = this.#overlayReservedDataPatches(listedFiles, listingStart);
       await this.cache.setAsync(cacheKey, files);
       if (
         this.contentContext !== expectedContext ||
@@ -1929,6 +1938,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
       this.statOps.clearIndex();
       this.dirOps.clearTree();
       this.markSourceSnapshotChanged(files);
+      this.#noteListingApplied(listingStart);
       // Retain after the version bump so the poked listing -- not the one it
       // replaced -- is what later reads see when the cache keeps nothing.
       this.retainFileList(cacheKey, files);
@@ -1944,10 +1954,24 @@ export class VeryfrontFSAdapter implements FSAdapter {
    * Re-apply reserved data files patched after a listing started. The listing
    * may predate those writes; the patched entries are the newer answer.
    */
+  #beginSourceListing(): SourceListingStart {
+    return {
+      dataGeneration: this.#reservedDataGeneration,
+      readSequence: ++this.#sourceReadSequence,
+    };
+  }
+
+  #noteListingApplied(listing: SourceListingStart): void {
+    if (listing.readSequence > this.#appliedListingReadSequence) {
+      this.#appliedListingReadSequence = listing.readSequence;
+    }
+  }
+
   #overlayReservedDataPatches(
     files: SourceSnapshotFile[],
-    sinceGeneration: number,
+    listing: SourceListingStart,
   ): SourceSnapshotFile[] {
+    const sinceGeneration = listing.dataGeneration;
     const current = this.sourceSnapshotFiles;
     if (!current || this.#reservedDataGeneration === sinceGeneration) return files;
     const patches: ReservedDataPatch[] = [];
@@ -2059,6 +2083,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
       if (!duplicate) projectPaths[projectPaths.length] = projectPath;
     }
     const requestSequence = ++this.#reservedDataRequestSequence;
+    const readSequence = ++this.#sourceReadSequence;
     for (let index = 0; index < projectPaths.length; index++) {
       IntrinsicReflectApply(MapPrototypeSet, this.#reservedDataLatestRequests, [
         projectPaths[index]!,
@@ -2098,7 +2123,9 @@ export class VeryfrontFSAdapter implements FSAdapter {
         return false;
       }
       const current = this.sourceSnapshotFiles;
-      if (!current) return true;
+      // A listing that started reading after these fetches already carries
+      // these writes or newer ones; the fetched entries may be older.
+      if (!current || this.#appliedListingReadSequence > readSequence) return true;
       const patches: ReservedDataPatch[] = [];
       for (let index = 0; index < fetched.length; index++) {
         const patch = fetched[index]!;
@@ -2243,7 +2270,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
     );
     const refreshIdentity = this.#getCurrentSourceSnapshotIdentity();
     const previousVersion = this.sourceSnapshotVersion;
-    const previousDataGeneration = this.#reservedDataGeneration;
+    const refreshListing = this.#beginSourceListing();
     const fetchedListing = await this.#fetchSourceListing(effectiveRefreshContext);
     let files = fetchedListing.files;
     const result = await this.#runSourceSnapshotMutation(async () => {
@@ -2258,7 +2285,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
       // Reserved data writes patch the snapshot without superseding this
       // refresh. Compare against the patched snapshot, and keep any patch
       // newer than this listing.
-      files = this.#overlayReservedDataPatches(files, previousDataGeneration);
+      files = this.#overlayReservedDataPatches(files, refreshListing);
       const listing = { ...fetchedListing, files };
       const sourceChanged = !sourceSnapshotsEqual(this.sourceSnapshotFiles, files);
       if (sourceChanged) {
@@ -2296,6 +2323,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
         // snapshot has been invalidated. Concurrent followers remain attached
         // to the refresh singleflight until this point.
         this.markSourceSnapshotChanged(files, refreshIdentity);
+        this.#noteListingApplied(refreshListing);
       } else {
         // Equal listings keep the published array identity. A fingerprint may
         // still be hashing this exact snapshot, and replacing an equal array
@@ -2303,6 +2331,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
         // the version that keys its cache.
         this.sourceSnapshotIdentity = refreshIdentity;
         this.sourceSnapshotCheckedAt = currentTime();
+        this.#noteListingApplied(refreshListing);
         // The API just confirmed this listing is current, so the index built
         // from it may answer "absent" on its own again. Skipping this leaves
         // the index expired after the first probe past

@@ -95,6 +95,11 @@ function sanitizeWebSocketLogUrl(url: string | undefined): string | undefined {
   return typeof url === "string" ? sanitizeUrlForSpan(url) : undefined;
 }
 
+interface SourceListingStart {
+  dataGeneration: number;
+  readSequence: number;
+}
+
 interface WebSocketDeps {
   apiBaseUrl: string;
   apiToken: string;
@@ -121,10 +126,13 @@ interface WebSocketDeps {
     cacheKey: string,
     files: ProjectFile[],
     expectedSnapshotVersion?: number,
-    expectedDataGeneration?: number,
+    listingStart?: SourceListingStart,
   ) => Promise<number | undefined>;
-  /** Advances each time reserved data files are patched into the snapshot. */
-  getReservedDataGeneration?: () => number;
+  /**
+   * Mark the start of a source listing, so reserved data patches that land
+   * while it is in flight survive it and older ones yield to it.
+   */
+  beginSourceListing?: () => SourceListingStart;
   /**
    * Whether a poke that changed only `changedPaths` can be applied by patching
    * reserved data files (knowledge Markdown, eval reports) into the snapshot
@@ -910,7 +918,7 @@ export class WebSocketManager {
     // failed must not be retried there either.
     let clearedProjectCSSCaches = false;
     try {
-      const dataGeneration = this.deps.getReservedDataGeneration?.();
+      const listingStart = this.deps.beginSourceListing?.();
       const files = await this.deps.client.listAllFiles({}, {
         type: "branch",
         name: contentContext.branch ?? "main",
@@ -920,7 +928,7 @@ export class WebSocketManager {
         cacheKey,
         files,
         sourceSnapshotVersion,
-        dataGeneration,
+        listingStart,
       );
       clearedProjectCSSCaches = true;
       await this.clearProjectCSSCaches();
