@@ -60,3 +60,19 @@ describe("superseded-run cancellation contract", () => {
     });
   }
 });
+
+describe("RC publication and dispatch concurrency contract", () => {
+  it("uses separate FIFO groups so publishers and dispatch gates cannot block each other", async () => {
+    const workflow = asRecord(
+      parse(
+        await Deno.readTextFile(new URL("../../../.github/workflows/cicd.yml", import.meta.url)),
+      ),
+      "cicd.yml",
+    );
+    const jobs = asRecord(workflow.jobs, "cicd.yml jobs");
+    const prerelease = asRecord(jobs.prerelease, "prerelease");
+    const dispatch = asRecord(jobs["quality-gate-registry"], "quality-gate-registry");
+    assertEquals(prerelease.concurrency, { group: "veryfront-rc-publication", queue: "max" });
+    assertEquals(dispatch.concurrency, { group: "veryfront-rc-dispatch", queue: "max" });
+  });
+});
