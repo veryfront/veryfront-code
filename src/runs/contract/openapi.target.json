@@ -2,7 +2,7 @@
   "openapi": "3.2.0",
   "info": {
     "title": "Runs API target",
-    "version": "0.8.0",
+    "version": "0.8.1",
     "description": "The proposed Runs API contract, grouped by resource and purpose.",
     "x-api-id": "5f1f0b8a-6b0e-4c1a-9b35-0f3a1e6d84c7",
     "x-audience": "external-public"
@@ -12830,6 +12830,25 @@
             "required": [
               "reason",
               "dependencies"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "resume_at": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "reason": {
+                "type": "string",
+                "enum": [
+                  "timer"
+                ]
+              }
+            },
+            "required": [
+              "resume_at",
+              "reason"
             ]
           }
         ],
