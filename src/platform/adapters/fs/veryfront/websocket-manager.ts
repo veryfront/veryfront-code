@@ -1,6 +1,7 @@
 import { getBaseLogger } from "#veryfront/utils/logger/logger.ts";
 import { sanitizeUrlForSpan } from "#veryfront/utils/logger/redact.ts";
 import type { FileCache } from "../cache/file-cache.ts";
+import { isCacheCredentialRejection } from "#veryfront/cache/backends/api.ts";
 import type { ProjectFile, VeryfrontApiClient } from "../../veryfront-api-client/index.ts";
 import type {
   ContentSource,
@@ -170,6 +171,8 @@ export class WebSocketManager {
   private wsConsecutiveFailures = 0;
   private wsErrorLogged = false;
   private disposed = false;
+  /** Set once the adapter was evicted because the API no longer accepts its credential. */
+  private credentialRetired = false;
   private nextPreviewInvalidationVersion = 0;
   private previewInvalidationVersions = new Map<string, number>();
   private activePreviewInvalidationPrefixes = new Set<string>();
@@ -462,10 +465,45 @@ export class WebSocketManager {
     }
   }
 
+  /**
+   * Evict the adapter once its credential is expired or rejected. The socket
+   * keeps the credential of the request that opened it, so every later poke
+   * would run its cache invalidations under that credential and be refused.
+   * Requests carrying a current credential get a fresh adapter.
+   */
+  private retireForCredential(reason: "expired" | "rejected"): void {
+    if (this.credentialRetired) return;
+    this.credentialRetired = true;
+    logger.info("Retiring adapter whose API credential is no longer accepted", {
+      projectSlug: this.deps.projectSlug,
+      reason,
+    });
+    this.deps.invalidationCallbacks.evictCurrentAdapter?.();
+  }
+
+  private handleQueuedInvalidationFailure(
+    message: "Queued full invalidation failed" | "Queued selective invalidation failed",
+    error: unknown,
+  ): void {
+    if (isCacheCredentialRejection(error)) {
+      this.retireForCredential("rejected");
+      return;
+    }
+    logger.error(message, {
+      projectSlug: this.deps.projectSlug,
+      error,
+    });
+  }
+
   private handlePokeMessage(event: MessageEvent): void {
     try {
       const message = parsePokeWebSocketMessage(event.data as string);
       if (!message) return;
+      if (this.credentialRetired) return;
+      if (this.deps.invalidationCallbacks.isCredentialExpired?.()) {
+        this.retireForCredential("expired");
+        return;
+      }
       const payload = message.payload;
 
       // Validate payload fields rather than blindly casting Record<string,unknown>.
@@ -780,10 +818,7 @@ export class WebSocketManager {
           try {
             await this.performInvalidation(invalidation.contentContext, invalidation.token);
           } catch (error) {
-            logger.error("Queued full invalidation failed", {
-              projectSlug: this.deps.projectSlug,
-              error,
-            });
+            this.handleQueuedInvalidationFailure("Queued full invalidation failed", error);
           }
         }
       })();
@@ -833,10 +868,7 @@ export class WebSocketManager {
               invalidation.reservedDataOnly,
             );
           } catch (error) {
-            logger.error("Queued selective invalidation failed", {
-              projectSlug: this.deps.projectSlug,
-              error,
-            });
+            this.handleQueuedInvalidationFailure("Queued selective invalidation failed", error);
           }
         }
       })();

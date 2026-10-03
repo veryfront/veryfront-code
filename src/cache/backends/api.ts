@@ -121,7 +121,7 @@ type PatternDeleteRound = {
 const ignoreSettlement = (): void => {};
 
 /** The cache API refused the credential itself, not the operation. */
-function isCredentialRejection(error: unknown): boolean {
+export function isCacheCredentialRejection(error: unknown): boolean {
   if (!(error instanceof VeryfrontError)) return false;
   const context = error.context as { upstreamStatus?: unknown } | undefined;
   return context?.upstreamStatus === 401 || context?.upstreamStatus === 403;
@@ -360,7 +360,7 @@ export class ApiCacheBackend implements CacheBackend {
       }, {
         isNeutralError: (error) =>
           error instanceof CacheValueTooLargeError ||
-          options.credentialRejectionIsNeutral === true && isCredentialRejection(error),
+          options.credentialRejectionIsNeutral === true && isCacheCredentialRejection(error),
       });
     } catch (error) {
       if (error instanceof CacheValueTooLargeError) throw error;
@@ -571,7 +571,7 @@ export class ApiCacheBackend implements CacheBackend {
       }
       if (round.nextCredential === credential) return round.next;
       return round.next.catch((error: unknown) => {
-        if (!isCredentialRejection(error)) throw error;
+        if (!isCacheCredentialRejection(error)) throw error;
         return run();
       });
     }
