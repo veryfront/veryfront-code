@@ -832,6 +832,35 @@ describe("agent/durable", () => {
     );
   });
 
+  it("rejects a pure-private append without the external cursor before fetch", async () => {
+    let fetchCalls = 0;
+
+    await assertRejects(
+      () =>
+        appendConversationRunEvents({
+          canonicalRunId: CANONICAL_ID,
+          authToken: AUTH_TOKEN,
+          apiUrl: API_URL,
+          conversationId: CONVERSATION_ID,
+          runId: "run_mcc_missing_external_cursor",
+          expectedPreviousEventId: 6,
+          events: [modelCallContextEvent("missing-external-cursor")],
+          fetch: async () => {
+            fetchCalls += 1;
+            return jsonResponse({
+              run_id: CANONICAL_ID,
+              latest_event_id: 7,
+              appended_count: 1,
+            }, 200);
+          },
+        }),
+      DurableRunEventPersistenceError,
+      "requires the caller's external event sequence",
+    );
+
+    assertEquals(fetchCalls, 0);
+  });
+
   it("backfills pure-private cursors without mutating camel or snake response bodies", async () => {
     const cases = [
       {

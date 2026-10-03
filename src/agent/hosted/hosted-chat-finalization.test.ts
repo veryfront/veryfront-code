@@ -565,6 +565,7 @@ describe("agent/hosted-chat-finalization", () => {
     assertEquals(terminalStates.map(({ output: _output, ...state }) => state), [{
       status: "completed",
     }]);
+    assertEquals((terminalStates[0]!.output as ChatUiMessage).parts.length > 0, true);
   });
 
   it("fails detached empty output only without mirrored output or fallback content", async () => {
@@ -619,9 +620,8 @@ describe("agent/hosted-chat-finalization", () => {
     });
 
     assertEquals(calls, ["flush", "terminal:completed:", "cleanup"]);
-    assertEquals(terminalStates.map(({ output: _output, ...state }) => state), [{
-      status: "completed",
-    }]);
+    assertEquals(terminalStates, [{ status: "completed" }]);
+    assertEquals("output" in terminalStates[0]!, false);
   });
 
   for (const kind of ["response", "detached"] as const) {

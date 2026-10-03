@@ -343,7 +343,7 @@ export async function finalizeHostedChatRun(
   let metadata: HostedLifecycleTerminalState["metadata"] | undefined;
   let emptyFailure: boolean;
   let hasOutput: boolean;
-  let output: ChatUiMessage;
+  let output: ChatUiMessage | undefined;
 
   if (input.kind === "response") {
     const state = createHostedChatFinalizeResponseBuildState(input)(finalStep);
@@ -360,7 +360,11 @@ export async function finalizeHostedChatRun(
   } else {
     const state = createHostedChatFinalizeDetachedBuildState(input)(finalStep);
 
-    output = state.finalizedMessage;
+    // A detached run can complete on mirrored output alone (for example a late
+    // provider body-read failure leaves the final step empty). The empty
+    // fallback message is not the run's result, so omit it rather than
+    // persisting an empty business output over the mirrored response.
+    output = state.hasContent ? state.finalizedMessage : undefined;
     fallbackChunks = state.fallbackChunks;
     hasIncompleteToolParts = state.hasIncompleteToolParts;
     metadata = undefined;
@@ -412,7 +416,7 @@ export async function finalizeHostedChatRun(
     lifecycleAdapter: input.lifecycleAdapter,
     terminalState: {
       ...terminalState,
-      ...(terminalState.status === "completed" ? { output } : {}),
+      ...(terminalState.status === "completed" && output !== undefined ? { output } : {}),
       ...(metadata !== undefined ? { metadata } : {}),
     },
   });

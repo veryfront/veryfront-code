@@ -1254,6 +1254,14 @@ export async function appendConversationRunEvents(input: {
       "Private run event append requires expected_previous_event_id",
     );
   }
+  // The API omits the external cursor from pure-private receipts, so the
+  // caller's known cursor is the only way to return a total result. Fail
+  // before sending rather than reporting a committed append as failed.
+  if (isPurePrivateEventBatch && input.expectedPreviousExternalEventSequence === undefined) {
+    throw new DurableRunEventPersistenceError(
+      "Private run event append requires the caller's external event sequence",
+    );
+  }
 
   const timedAbort = createTimedAbortSignal(AGENT_RUN_API_TIMEOUT_MS, input.abortSignal);
 
