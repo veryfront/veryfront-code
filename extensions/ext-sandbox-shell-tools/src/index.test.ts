@@ -78,3 +78,63 @@ describe("ext-sandbox-shell-tools", () => {
     assertEquals(result, { tools: { bash: { description: "Run commands" } } });
   });
 });
+
+describe("sandbox shell execution parity", () => {
+  it("executes commands in the destination and preserves bounded results", async () => {
+    let received = "";
+    const { tools } = await createBashSandboxShellToolsProvider({
+      sandbox: {
+        executeCommand: async (command) => {
+          received = command;
+          return { stdout: "x".repeat(30_001), stderr: "warning", exitCode: 7 };
+        },
+      },
+      destination: "/workspace",
+      promptOptions: { toolPrompt: "custom tools" },
+    });
+    const bash = normalizeBashToolSet(tools).bash!;
+    const result = await bash.execute!({ command: "echo hello" }) as {
+      stdout: string;
+      stderr: string;
+      exitCode: number;
+    };
+    assertEquals(received, 'cd "/workspace" && echo hello');
+    assertEquals(
+      result.stdout,
+      "x".repeat(30_000) + "\n\n[stdout truncated: 1 characters removed]",
+    );
+    assertEquals(result.stderr, "warning");
+    assertEquals(result.exitCode, 7);
+    assertEquals(bash.description?.includes("custom tools"), true);
+  });
+
+  it("resolves file paths from the destination and keeps read/write schemas", async () => {
+    let readPath = "";
+    let written: unknown[] = [];
+    const { tools } = await createBashSandboxShellToolsProvider({
+      sandbox: {
+        executeCommand: async () => ({ stdout: "", stderr: "", exitCode: 0 }),
+        readFile: (path) => {
+          readPath = path;
+          return "file contents";
+        },
+        writeFiles: (files) => {
+          written = files;
+        },
+      },
+      destination: "/workspace",
+      promptOptions: { toolPrompt: "tools" },
+    });
+    const normalized = normalizeBashToolSet(tools);
+    assertEquals(normalized.readFile!.inputSchemaJson?.required, ["path"]);
+    assertEquals(normalized.writeFile!.inputSchemaJson?.required, ["path", "content"]);
+    assertEquals(await normalized.readFile!.execute!({ path: "src/../a.txt" }), {
+      content: "file contents",
+    });
+    assertEquals(readPath, "/workspace/a.txt");
+    assertEquals(await normalized.writeFile!.execute!({ path: "/tmp/a.txt", content: "new" }), {
+      success: true,
+    });
+    assertEquals(written, [{ path: "/tmp/a.txt", content: "new" }]);
+  });
+});

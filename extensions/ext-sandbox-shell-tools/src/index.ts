@@ -1,5 +1,5 @@
 /**
- * ext-sandbox-shell-tools, SandboxShellToolsProvider backed by bash-tool.
+ * ext-sandbox-shell-tools, SandboxShellToolsProvider backed by AI SDK tools.
  *
  * @module extensions/ext-sandbox-shell-tools
  */
@@ -24,7 +24,7 @@ export function createSandboxShellToolsProvider(
 
 const provider = createSandboxShellToolsProvider(async (input) => {
   const { asSchema } = await import("ai");
-  const { createBashTool: createBashToolImpl } = await import("bash-tool");
+  const { createBashTool: createBashToolImpl } = await import("./tools.ts");
   const result = await createBashToolImpl(input);
   const tools = Object.fromEntries(
     await Promise.all(
