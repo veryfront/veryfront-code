@@ -1,4 +1,5 @@
 export {
+  captureHostApiOrigin,
   deleteEnv,
   env,
   type EnvBooleanOptions,

@@ -4,6 +4,7 @@ import { describe, it } from "#veryfront/testing/bdd";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { fetchProjectEnvVars } from "#veryfront/server/project-env/fetcher.ts";
 import { runWithProjectEnv } from "#veryfront/server/project-env/storage.ts";
+import { resetHostApiOriginSnapshot } from "#veryfront/platform/compat/process/env.ts";
 
 describe("project environment internal origin", () => {
   it("uses the host internal origin for each fresh credential and ignores tenant overrides", async () => {
@@ -13,6 +14,7 @@ describe("project environment internal origin", () => {
       "VERYFRONT_API_INTERNAL_PASS",
     ];
     const previous = keys.map((key) => Deno.env.get(key));
+    resetHostApiOriginSnapshot();
     const requests: Array<{ origin: string; authorization: string | null }> = [];
     try {
       Deno.env.set(keys[0]!, "http://api.internal.test");
@@ -28,19 +30,22 @@ describe("project environment internal origin", () => {
           return Response.json({ data: [] });
         }) as typeof fetch,
         async () => {
-          await runWithProjectEnv(
-            { VERYFRONT_API_INTERNAL_URL: "https://tenant.example.test" },
-            async () => {
-              for (const token of ["fresh-credential-1", "fresh-credential-2"]) {
-                await fetchProjectEnvVars(
+          for (const token of ["fresh-credential-1", "fresh-credential-2"]) {
+            await runWithProjectEnv(
+              { VERYFRONT_API_INTERNAL_URL: "https://tenant.example.test" },
+              () =>
+                fetchProjectEnvVars(
                   "https://public-api.example.test",
                   "my-project",
                   "env-1",
                   token,
-                );
-              }
-            },
-          );
+                ),
+            );
+            // A later host process mutation (for example by project code
+            // running in this process) must not redirect host-credentialed
+            // requests.
+            Deno.env.set(keys[0]!, "https://attacker.example.test");
+          }
         },
       );
       assertEquals(
@@ -51,6 +56,7 @@ describe("project environment internal origin", () => {
       assertEquals(requests[2]?.authorization, "Bearer fresh-credential-2");
       assertEquals(requests[1]?.authorization?.startsWith("Basic "), true);
     } finally {
+      resetHostApiOriginSnapshot();
       keys.forEach((key, index) => {
         const value = previous[index];
         if (value === undefined) Deno.env.delete(key);
@@ -66,11 +72,13 @@ describe("project environment internal origin", () => {
       "VERYFRONT_API_INTERNAL_PASS",
     ];
     const previous = keys.map((key) => Deno.env.get(key));
+    resetHostApiOriginSnapshot();
     try {
       Deno.env.set(keys[1]!, "test-user");
       Deno.env.set(keys[2]!, "test-pass");
       for (const blank of ["", "   "]) {
         Deno.env.set(keys[0]!, blank);
+        resetHostApiOriginSnapshot();
         const urls: string[] = [];
         await withMockFetch(
           (async (input) => {
@@ -92,6 +100,7 @@ describe("project environment internal origin", () => {
         );
       }
     } finally {
+      resetHostApiOriginSnapshot();
       keys.forEach((key, index) => {
         const value = previous[index];
         if (value === undefined) Deno.env.delete(key);

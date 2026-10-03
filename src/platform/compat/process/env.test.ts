@@ -4,6 +4,7 @@ import { isDeno } from "#veryfront/platform/compat/runtime.ts";
 import { fromFileUrl } from "#std/path";
 import {
   captureHostApiEnvironment,
+  captureHostApiOrigin,
   clearEnvFileValueSources,
   deleteEnv,
   deleteHostSecret,
@@ -15,6 +16,7 @@ import {
   hasEnvFileValueSource,
   markEnvFileValue,
   registerTrustedProjectEnvSnapshot,
+  resetHostApiOriginSnapshot,
   setEnv,
   setHostSecret,
 } from "./env.ts";
@@ -72,20 +74,19 @@ describe("host environment access", () => {
     }
   });
 
-  it("keeps the internal API origin at the value paired with a registered login", () => {
-    setEnv("VERYFRONT_API_INTERNAL_URL", "https://trusted-internal.example");
-    captureHostApiEnvironment();
-    setEnv("VERYFRONT_API_INTERNAL_URL", "https://project-mutated.example");
-    setHostSecret("VERYFRONT_API_TOKEN", "host-private-token");
-
+  it("keeps a captured API origin without a registered API token", () => {
+    const key = "VF_HOST_API_ORIGIN_CAPTURE_TEST";
+    resetHostApiOriginSnapshot();
+    setEnv(key, "https://trusted-internal.example");
     try {
-      assertEquals(
-        getHostApiOriginExcludingEnvFile("VERYFRONT_API_INTERNAL_URL"),
-        "https://trusted-internal.example",
-      );
+      captureHostApiOrigin(key);
+      setEnv(key, "https://project-mutated.example");
+      assertEquals(getHostApiOriginExcludingEnvFile(key), "https://trusted-internal.example");
+      deleteEnv(key);
+      assertEquals(getHostApiOriginExcludingEnvFile(key), "https://trusted-internal.example");
     } finally {
-      deleteHostSecret("VERYFRONT_API_TOKEN");
-      deleteEnv("VERYFRONT_API_INTERNAL_URL");
+      resetHostApiOriginSnapshot();
+      deleteEnv(key);
     }
   });
 
@@ -98,14 +99,16 @@ describe("host environment access", () => {
           ["https://internal.example/base/", "https://internal.example/base"],
           ["   ", undefined],
           ["/", undefined],
+          [undefined, undefined],
         ] as const
       ) {
-        setEnv(key, value);
+        resetHostApiOriginSnapshot();
+        if (value === undefined) deleteEnv(key);
+        else setEnv(key, value);
         assertEquals(getHostApiOriginExcludingEnvFile(key), expected, JSON.stringify(value));
       }
-      deleteEnv(key);
-      assertEquals(getHostApiOriginExcludingEnvFile(key), undefined);
     } finally {
+      resetHostApiOriginSnapshot();
       deleteEnv(key);
     }
   });

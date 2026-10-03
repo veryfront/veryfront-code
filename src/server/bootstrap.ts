@@ -39,7 +39,7 @@ import {
 import { getErrorMessage, INVALID_ARGUMENT } from "#veryfront/errors";
 import { enhanceAdapterWithFS } from "#veryfront/platform/adapters/fs/integration.ts";
 import { isExtendedFSAdapter } from "#veryfront/platform/adapters/fs/wrapper.ts";
-import { getEnv, getHostEnv } from "#veryfront/platform/compat/process.ts";
+import { captureHostApiOrigin, getEnv, getHostEnv } from "#veryfront/platform/compat/process.ts";
 import { isProxyTopologyTrusted } from "#veryfront/platform/compat/proxy-topology.ts";
 import { initializeEsbuild } from "#veryfront/platform/compat/esbuild.ts";
 import { __registerLogRecordEmitter, logger } from "#veryfront/utils/logger/logger.ts";
@@ -647,6 +647,8 @@ function validateProductionEnvironment(): void {
       );
       throw INVALID_ARGUMENT.create({ detail: missingInternalCredentials });
     }
+    // Fix the host-owned internal origin before any project module can run.
+    captureHostApiOrigin("VERYFRONT_API_INTERNAL_URL");
 
     if (!isProxyTopologyTrusted()) {
       logger.error(
