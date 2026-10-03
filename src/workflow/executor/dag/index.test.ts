@@ -1320,7 +1320,7 @@ describe("DAGExecutor", () => {
       });
     }
 
-    for (const provenance of ["child context", "branch selection"] as const) {
+    for (const provenance of ["child context", "branch selection", "loop snapshot"] as const) {
       it(`recovers a legitimate empty branch from durable ${provenance}`, async () => {
         let conditionCalls = 0;
         let selectorCalls = 0;
@@ -1345,7 +1345,9 @@ describe("DAGExecutor", () => {
         const first = await exec.execute(nodes, createTestRun());
         assertEquals(first.completed, false);
         const persisted = JSON.parse(JSON.stringify(
-          prepareNodeStatesUserData(first.nodeStates, "durable-empty-branch", {}),
+          provenance === "loop snapshot"
+            ? toPersistedNodeStates(first.nodeStates)
+            : prepareNodeStatesUserData(first.nodeStates, "durable-empty-branch", {}),
         )) as Record<string, NodeState>;
         assertEquals(persisted.pick!._branchSelected, "else");
         if (provenance === "child context") delete persisted.pick!._branchSelected;
