@@ -311,6 +311,9 @@ jobs:
         env:
           VF_TEST_SHARD: ${{ matrix.shard }}/2
         run: node ./tests/node/run-tests.mjs --suite=runtime:node
+      - name: Issue 2442 never-merge follower probe
+        if: ${{ github.event_name == 'merge_group' && matrix.shard == 2 }}
+        run: exit 1
 
   # Sandbox worker generation and prepared-module encoding on the minimum
   # supported Node. Only Node 22/24 lack the Uint8Array proposal methods
