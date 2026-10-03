@@ -50,6 +50,12 @@ type NodeRequestFunction = typeof import("node:http").request;
  * this one, project code included, and the copies do not follow later
  * changes to the live bindings (`syncBuiltinESMExports`): the function
  * receives the options and their credential-bearing headers.
+ *
+ * This assumes the host is the process entry and loads this module while the
+ * framework starts, before any project module, as hosted runtimes do. A
+ * project that is itself the process entry and evaluates first owns the
+ * process; keeping credentials out of such a process is the out-of-isolate
+ * hop, not something this module can attest.
  */
 const capturedHttpRequest: NodeRequestFunction = nodeHttp.request;
 const capturedHttpsRequest: NodeRequestFunction = nodeHttps.request;
