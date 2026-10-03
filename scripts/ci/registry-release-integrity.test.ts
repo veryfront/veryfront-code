@@ -848,3 +848,217 @@ describe("registry full-metadata fallback", () => {
     ]);
   });
 });
+
+describe("RC tag verification within registry propagation", () => {
+  const rcVersion = "0.1.1253-rc.100";
+  const metadata = { ...publishedPackage(), version: rcVersion };
+  const index = {
+    ...installIndex(),
+    versions: {
+      [rcVersion]: { ...installIndex().versions[VERSION], version: rcVersion },
+    },
+  };
+  function fetcherFor(tags: unknown[], observed: string[]) {
+    return ((input: RequestInfo | URL) => {
+      const url = String(input);
+      observed.push(url);
+      const payload = url.endsWith("/dist-tags")
+        ? tags.shift()
+        : url.endsWith(rcVersion)
+        ? metadata
+        : index;
+      return Promise.resolve(
+        payload instanceof Response ? payload : Response.json(payload),
+      );
+    }) as typeof fetch;
+  }
+  for (
+    const tag of [
+      rcVersion,
+      "0.1.1253-rc.101",
+      "0.1.1253-rc.999999999999999999999999",
+      "0.2.0-rc.1",
+      "0.1.1253-rc.100.extra",
+      "0.1.1253-rc.word",
+      "0.1.1253-z",
+    ]
+  ) {
+    it(`accepts current or superseding RC tag ${tag}`, async () => {
+      const observed: string[] = [];
+      const result = await pollRegistryPackage({
+        packageName: PACKAGE_NAME,
+        version: rcVersion,
+        expectedGitHead: GIT_HEAD,
+        maxAttempts: 1,
+        retryDelayMs: 0,
+        requestTimeoutMs: 1000,
+        requireRcTag: true,
+        fetcher: fetcherFor([{ rc: tag }], observed),
+      });
+      assertEquals(result.version, rcVersion);
+      assertEquals(
+        observed.filter((url) => url.endsWith("/dist-tags")).length,
+        1,
+      );
+    });
+  }
+  for (
+    const initial of [{}, { rc: "0.1.1253-rc.99" }, { rc: "0.1.1253-rc" }, {
+      rc: "0.1.1253-qa.101",
+    }, { rc: "0.1.1253-1" }]
+  ) {
+    it(`waits for missing or older tag ${JSON.stringify(initial)}`, async () => {
+      const observed: string[] = [];
+      let waits = 0;
+      await pollRegistryPackage({
+        packageName: PACKAGE_NAME,
+        version: rcVersion,
+        expectedGitHead: GIT_HEAD,
+        maxAttempts: 2,
+        retryDelayMs: 0,
+        requestTimeoutMs: 1000,
+        requireRcTag: true,
+        fetcher: fetcherFor([initial, { rc: rcVersion }], observed),
+        delay: () => {
+          waits++;
+          return Promise.resolve();
+        },
+      });
+      assertEquals(waits, 1);
+      assertEquals(
+        observed.filter((url) => url.endsWith("/dist-tags")).length,
+        2,
+      );
+    });
+  }
+  for (
+    const tag of [
+      "invalid",
+      "0.1.1253-rc.0100",
+      "0.1.1253",
+      "0.01.1253-rc.100",
+      "0.1.1253-rc..100",
+      123,
+    ]
+  ) {
+    it(`fails closed on malformed tag ${tag}`, async () => {
+      const error = await captureError(() =>
+        pollRegistryPackage({
+          packageName: PACKAGE_NAME,
+          version: rcVersion,
+          expectedGitHead: GIT_HEAD,
+          maxAttempts: 2,
+          retryDelayMs: 0,
+          requestTimeoutMs: 1000,
+          requireRcTag: true,
+          fetcher: fetcherFor([{ rc: tag }], []),
+          delay: () => Promise.resolve(),
+        })
+      );
+      assertEquals(error.classification, "wrong-version");
+      assertStringIncludes(error.message, "RC tag");
+    });
+  }
+  it("fails explicitly when the RC tag never converges", async () => {
+    const error = await captureError(() =>
+      pollRegistryPackage({
+        packageName: PACKAGE_NAME,
+        version: rcVersion,
+        expectedGitHead: GIT_HEAD,
+        maxAttempts: 2,
+        retryDelayMs: 0,
+        requestTimeoutMs: 1000,
+        requireRcTag: true,
+        fetcher: fetcherFor([{}, {}], []),
+        delay: () => Promise.resolve(),
+      })
+    );
+    assertEquals(error.classification, "missing-version");
+    assertStringIncludes(error.message, "RC tag");
+    assertStringIncludes(
+      formatRegistryReleaseFailure(error),
+      "REGISTRY RELEASE FAIL [missing-version]",
+    );
+  });
+  it("shares the attempt deadline with scoped tag reads under a configured registry base", async () => {
+    const urls: string[] = [];
+    const signals: (AbortSignal | null | undefined)[] = [];
+    await pollRegistryPackage({
+      packageName: PACKAGE_NAME,
+      version: rcVersion,
+      expectedGitHead: GIT_HEAD,
+      registryUrl: "https://registry.example.test/base/",
+      requireRcTag: true,
+      maxAttempts: 1,
+      retryDelayMs: 0,
+      requestTimeoutMs: 1000,
+      fetcher: ((
+        input: RequestInfo | URL,
+        init?: { signal?: AbortSignal | null; headers?: HeadersInit },
+      ) => {
+        const url = String(input);
+        urls.push(url);
+        signals.push(init?.signal);
+        if (url.endsWith("/dist-tags")) {
+          assertEquals(
+            new Headers(init?.headers).get("Cache-Control"),
+            "no-cache",
+          );
+        }
+        return Promise.resolve(Response.json(
+          url.endsWith("/dist-tags")
+            ? { rc: rcVersion }
+            : url.endsWith(rcVersion)
+            ? metadata
+            : index,
+        ));
+      }) as typeof fetch,
+    });
+    assertEquals(
+      urls[2],
+      "https://registry.example.test/base/-/package/@veryfront%2Fext-auth-jwt/dist-tags",
+    );
+    assertEquals(signals.length, 3);
+    assertEquals(signals.every((signal) => signal === signals[0]), true);
+  });
+  it("waits for a tag endpoint 404 within the existing propagation attempts", async () => {
+    const observed: string[] = [];
+    await pollRegistryPackage({
+      packageName: PACKAGE_NAME,
+      version: rcVersion,
+      expectedGitHead: GIT_HEAD,
+      requireRcTag: true,
+      maxAttempts: 2,
+      retryDelayMs: 0,
+      requestTimeoutMs: 1000,
+      fetcher: fetcherFor([new Response("missing", { status: 404 }), {
+        rc: rcVersion,
+      }], observed),
+      delay: () => Promise.resolve(),
+    });
+    assertEquals(
+      observed.filter((url) => url.endsWith("/dist-tags")).length,
+      2,
+    );
+  });
+  it("fails closed on a tag endpoint HTTP error", async () => {
+    const error = await captureError(() =>
+      pollRegistryPackage({
+        packageName: PACKAGE_NAME,
+        version: rcVersion,
+        expectedGitHead: GIT_HEAD,
+        requireRcTag: true,
+        maxAttempts: 2,
+        retryDelayMs: 0,
+        requestTimeoutMs: 1000,
+        fetcher: fetcherFor(
+          [new Response("registry failure", { status: 500 })],
+          [],
+        ),
+        delay: () => Promise.resolve(),
+      })
+    );
+    assertEquals(error.classification, "lookup");
+    assertStringIncludes(error.safeReason ?? "", "HTTP 500");
+  });
+});

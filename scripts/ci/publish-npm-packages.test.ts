@@ -2505,7 +2505,7 @@ describe("RC publication deadline", () => {
     });
   }
 
-  it("fails explicitly when RC metadata does not converge", async () => {
+  it("does not fail a successful publish while metadata is still propagating", async () => {
     const output = await runBash(
       [
         "set -euo pipefail",
@@ -2525,11 +2525,8 @@ describe("RC publication deadline", () => {
         NPM_PACK_DIR: "artifact",
       },
     );
-    assertEquals(output.code, 1);
-    assertStringIncludes(
-      decoder.decode(output.stderr),
-      "RC registry metadata did not converge for veryfront@0.1.0-rc.1",
-    );
+    assertEquals(output.code, 0, decoder.decode(output.stderr));
+    assertEquals(decoder.decode(output.stderr), "");
   });
 });
 
@@ -2644,7 +2641,7 @@ describe("RC metadata verification order", () => {
     assertEquals(output.code, 0, decoder.decode(output.stderr));
   });
 
-  it("publishes the batch before waiting for metadata and excludes historical tags", async () => {
+  it("publishes the batch without waiting for registry propagation", async () => {
     const output = await runBash(
       [
         "set -euo pipefail",
@@ -2669,8 +2666,6 @@ describe("RC metadata verification order", () => {
       "publish:extension:rc",
       "publish:history:rc-history",
       "publish:npm:rc",
-      "verify:extension:rc",
-      "verify:npm:rc",
     ]);
   });
 });

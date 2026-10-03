@@ -53,6 +53,7 @@ export interface PollRegistryPackageOptions {
   maxAttempts: number;
   retryDelayMs: number;
   requestTimeoutMs: number;
+  requireRcTag?: boolean;
   fetcher?: typeof fetch;
   delay?: (milliseconds: number) => Promise<void>;
   onRetry?: (message: string) => void;
@@ -314,6 +315,89 @@ async function verifyInstallIndex(
   return undefined;
 }
 
+// Keep ordering in parity with the publisher's precision-safe rc_key comparator.
+function prereleaseParts(version: string): string[] | undefined {
+  const match =
+    /^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)$/
+      .exec(version);
+  if (!match) return undefined;
+  const prerelease = match[4].split(".");
+  if (prerelease.some((part) => /^0[0-9]+$/.test(part))) return undefined;
+  return [...match.slice(1, 4), ...prerelease];
+}
+
+function comparePrereleases(left: string[], right: string[]): number {
+  for (let index = 0; index < Math.min(left.length, right.length); index++) {
+    const a = left[index];
+    const b = right[index];
+    const numericA = /^[0-9]+$/.test(a);
+    const numericB = /^[0-9]+$/.test(b);
+    if (numericA !== numericB) return numericA ? -1 : 1;
+    if (numericA && a.length !== b.length) return a.length - b.length;
+    if (a !== b) return a < b ? -1 : 1;
+  }
+  return left.length - right.length;
+}
+
+async function verifyRcTag(
+  options: PollRegistryPackageOptions,
+  fetcher: typeof fetch,
+  spec: string,
+  signal: AbortSignal,
+): Promise<RegistryReleaseError | undefined> {
+  signal.throwIfAborted();
+  const packageUrl = registryPackageUrl(
+    options.registryUrl ?? DEFAULT_REGISTRY_URL,
+    options.packageName,
+  );
+  const base = new URL(
+    normalizedRegistryUrl(options.registryUrl ?? DEFAULT_REGISTRY_URL),
+  );
+  const encodedName = packageUrl.slice(base.href.length);
+  const response = await fetcher(
+    new URL(`-/package/${encodedName}/dist-tags`, base).href,
+    {
+      signal,
+      headers: { "Cache-Control": "no-cache" },
+    },
+  );
+  const missing = () =>
+    new RegistryReleaseError(
+      "missing-version",
+      `${spec} registry RC tag has not converged yet.`,
+      registryErrorContext(options, "RC tag missing or older than candidate"),
+    );
+  if (response.status === 404) {
+    await response.body?.cancel();
+    return missing();
+  }
+  if (!response.ok) {
+    throw new RegistryReleaseError(
+      "lookup",
+      `${spec} registry RC tag lookup failed.`,
+      registryErrorContext(
+        options,
+        `RC tag lookup failed with HTTP ${response.status}`,
+      ),
+    );
+  }
+  const tags: unknown = await response.json();
+  signal.throwIfAborted();
+  if (isRecord(tags) && tags.rc === undefined) return missing();
+  const current = isRecord(tags) && typeof tags.rc === "string"
+    ? prereleaseParts(tags.rc)
+    : undefined;
+  const candidate = prereleaseParts(options.version);
+  if (!current || !candidate) {
+    throw new RegistryReleaseError(
+      "wrong-version",
+      `${spec} registry RC tag is malformed.`,
+      registryErrorContext(options, "RC tag or candidate format invalid"),
+    );
+  }
+  return comparePrereleases(current, candidate) < 0 ? missing() : undefined;
+}
+
 /** One registry lookup. Throws terminal failures; returns retryable ones. */
 async function attemptRegistryLookup(
   options: PollRegistryPackageOptions,
@@ -321,7 +405,7 @@ async function attemptRegistryLookup(
   spec: string,
 ): Promise<RegistryAttempt> {
   try {
-    // Both surfaces share one request deadline; retries retain the existing poll budget.
+    // All registry surfaces share one request deadline; retries retain the existing poll budget.
     const signal = AbortSignal.timeout(options.requestTimeoutMs);
     const response = await fetcher(
       registryVersionUrl(
@@ -363,6 +447,10 @@ async function attemptRegistryLookup(
       signal,
     );
     if (installFailure) return { kind: "failure", failure: installFailure };
+    if (options.requireRcTag) {
+      const tagFailure = await verifyRcTag(options, fetcher, spec, signal);
+      if (tagFailure) return { kind: "failure", failure: tagFailure };
+    }
     return { kind: "metadata", metadata };
   } catch (error) {
     if (error instanceof RegistryReleaseError) throw error;
@@ -437,6 +525,7 @@ interface CliOptions {
   gitHead: string;
   registryUrl: string;
   packages: string[];
+  requireRcTag: boolean;
 }
 
 function readCliOptions(args: string[]): CliOptions {
@@ -444,9 +533,11 @@ function readCliOptions(args: string[]): CliOptions {
   let gitHead = "";
   let registryUrl = DEFAULT_REGISTRY_URL;
   const packages: string[] = [];
+  let requireRcTag = false;
   for (let index = 0; index < args.length; index++) {
     const argument = args[index];
-    if (argument === "--version") version = args[++index] ?? "";
+    if (argument === "--require-rc-tag") requireRcTag = true;
+    else if (argument === "--version") version = args[++index] ?? "";
     else if (argument === "--git-head") gitHead = args[++index] ?? "";
     else if (argument === "--registry-url") registryUrl = args[++index] ?? "";
     else if (argument === "--package") packages.push(args[++index] ?? "");
@@ -457,11 +548,11 @@ function readCliOptions(args: string[]): CliOptions {
     packages.some((name) => !name)
   ) {
     throw new Error(
-      "Usage: registry-release-integrity.ts --version <VERSION> --git-head <SHA> [--registry-url <URL>] --package <NAME> [--package <NAME> ...]",
+      "Usage: registry-release-integrity.ts --version <VERSION> --git-head <SHA> [--registry-url <URL>] [--require-rc-tag] --package <NAME> [--package <NAME> ...]",
     );
   }
   normalizedRegistryUrl(registryUrl);
-  return { version, gitHead, registryUrl, packages };
+  return { version, gitHead, registryUrl, packages, requireRcTag };
 }
 
 function sanitizeFailureContextPart(value: string): string {
@@ -529,6 +620,7 @@ async function main(args: string[]): Promise<void> {
       packageName,
       version: options.version,
       expectedGitHead: options.gitHead,
+      requireRcTag: options.requireRcTag,
       registryUrl: options.registryUrl,
       ...budget,
       requestTimeoutMs: REQUEST_TIMEOUT_MS,
