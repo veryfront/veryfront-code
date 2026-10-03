@@ -119,6 +119,12 @@ export interface WorkflowExecutorConfig {
   resultWaitTimeout?: number;
   /** Max milliseconds to wait for aborted execution to settle before detaching it (default: 1000) */
   cancellationGracePeriod?: number;
+  /**
+   * @internal Keep each run's stop evidence after its operations settle, until
+   * clearExecutionStopEvidence(). Only short-lived clients that acknowledge
+   * cancellation need it; long-lived clients would otherwise grow per run.
+   */
+  retainExecutionStopEvidence?: boolean;
   /** Callback when workflow starts */
   onStart?: (run: WorkflowRun) => void;
   /** Callback when workflow completes */
@@ -965,10 +971,16 @@ export class WorkflowExecutor {
       this.executionOperations.set(runId, operations);
     }
     operations.add(operation);
-    void operation.then(
-      () => operations.delete(operation),
-      () => operations.delete(operation),
-    );
+    const settle = () => {
+      operations.delete(operation);
+      if (
+        !this.config.retainExecutionStopEvidence && operations.size === 0 &&
+        this.executionOperations.get(runId) === operations
+      ) {
+        this.executionOperations.delete(runId);
+      }
+    };
+    void operation.then(settle, settle);
   }
 
   /**
@@ -977,14 +989,16 @@ export class WorkflowExecutor {
    * @internal
    */
   async waitForExecutionStopped(runId: string): Promise<boolean> {
-    const operations = this.executionOperations.get(runId);
+    let operations = this.executionOperations.get(runId);
     if (!operations) return false;
 
     while (true) {
       while (operations.size > 0) {
         await Promise.allSettled([...operations]);
+        operations = this.executionOperations.get(runId) ?? operations;
       }
       await this.stepExecutor.waitForExecutionStopped(runId);
+      operations = this.executionOperations.get(runId) ?? operations;
       if (operations.size === 0) break;
     }
     // Ownership was established by the captured entry, before cleanup could retire it.

@@ -181,7 +181,10 @@ describe("WorkflowClient", () => {
   for (const waitBeforeCancel of [true, false]) {
     it(`preserves actual raw-operation settlement through client cleanup (wait before cancel: ${waitBeforeCancel})`, async () => {
       await client.destroy();
-      client = createWorkflowClient({ backend, executor: { cancellationGracePeriod: 0 } });
+      client = createWorkflowClient({
+        backend,
+        executor: { cancellationGracePeriod: 0, retainExecutionStopEvidence: true },
+      });
       const started = Promise.withResolvers<void>();
       const operation = Promise.withResolvers<unknown>();
       client.register(workflow({
@@ -238,6 +241,8 @@ describe("WorkflowClient", () => {
   });
 
   it("reports execution-stop evidence only for DAG operations observed by this client", async () => {
+    await client.destroy();
+    client = createWorkflowClient({ backend, executor: { retainExecutionStopEvidence: true } });
     client.register(workflow({
       id: "local-execution-stop-evidence",
       steps: [step("finish", { tool: createMockTool("finish", { ok: true }) })],
@@ -248,6 +253,47 @@ describe("WorkflowClient", () => {
 
     assertEquals(await client.waitForExecutionStopped(handle.runId), true);
     assertEquals(await client.waitForExecutionStopped("run-not-observed-here"), false);
+  });
+
+  it("does not retain stop evidence for settled runs on an ordinary long-lived client (#2365)", async () => {
+    client.register(workflow({
+      id: "ordinary-client-history",
+      steps: [step("finish", { tool: createMockTool("finish", { ok: true }) })],
+    }));
+
+    const runIds: string[] = [];
+    for (let index = 0; index < 25; index++) {
+      const handle = await client.start("ordinary-client-history", { index });
+      await handle.settled();
+      runIds.push(handle.runId);
+    }
+    await delay(0);
+
+    for (const runId of runIds) {
+      assertEquals(await client.waitForExecutionStopped(runId), false, runId);
+    }
+
+    // A run still executing here keeps its evidence until it settles.
+    const started = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<unknown>();
+    client.register(workflow({
+      id: "ordinary-client-active",
+      steps: [step("hold", {
+        tool: {
+          ...createMockTool("hold", {}),
+          execute: () => {
+            started.resolve();
+            return release.promise;
+          },
+        },
+      })],
+    }));
+    const active = await client.start("ordinary-client-active", {});
+    await started.promise;
+    const stopped = client.waitForExecutionStopped(active.runId);
+    release.resolve({ ok: true });
+    assertEquals(await stopped, true);
+    await active.settled();
   });
 
   it("hands a parent the selected output of a nested workflow that declares one (#2107)", async () => {

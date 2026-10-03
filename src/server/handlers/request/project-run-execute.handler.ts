@@ -341,7 +341,10 @@ interface WorkflowClientView {
   getApprovalManager?(): { checkExpiredApprovals(runId?: string): Promise<void> };
   getEventWaitManager?(): { checkExpiredEventWaits(runId?: string): Promise<void> };
   cancel(runId: string): Promise<void>;
-  /** Positive only for locally owned execution whose underlying operation has stopped. */
+  /**
+   * Positive only for locally owned execution whose underlying operation has stopped.
+   * Settled runs keep this evidence only with `executor.retainExecutionStopEvidence`.
+   */
   waitForExecutionStopped?(runId: string): Promise<boolean>;
   destroy(): Promise<void>;
 }
@@ -1532,7 +1535,11 @@ async function runDiscoveredWorkflow(
   let client: WorkflowClientView;
   try {
     client = await deps.createWorkflowClient(
-      withRuntimeStepRegistries({ debug: ctx.debug }),
+      // Per-request client: keep stop evidence for the cancellation acknowledgement.
+      withRuntimeStepRegistries({
+        debug: ctx.debug,
+        executor: { retainExecutionStopEvidence: true },
+      }),
       {
         projectId: request.projectId,
         runtimeTargetKind: request.runtimeTargetKind,
