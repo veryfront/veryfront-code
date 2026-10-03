@@ -10217,6 +10217,37 @@ describe("server/handlers/request/project-run-execute.handler manual pause (#258
     assertEquals((await backend.getRun(runId))?.status, "waiting");
   });
 
+  it("holds the boundary when a continue reply arrives after manual resume has timed out", async () => {
+    const backend = new SharedMemoryBackend();
+    const calls: string[] = [];
+    const definition = threeSteps(calls);
+    const acknowledgementStarted = Promise.withResolvers<void>();
+    const lateReply = Promise.withResolvers<Response>();
+    let requests = 0;
+    let resumes = 0;
+    await withMockFetch(async () => {
+      if (++requests === 1) return Response.json({ stop: true });
+      acknowledgementStarted.resolve();
+      return await lateReply.promise;
+    }, async () => {
+      await dispatch(createHandler(backend, definition));
+      const resumed = dispatch(
+        createHandler(backend, definition, {
+          workflowResumeTimeoutMs: 20,
+          onResume: () => resumes++,
+        }),
+        { type: "manual" },
+      );
+      await acknowledgementStarted.promise;
+      assertEquals((await resumed).status, "waiting");
+      lateReply.resolve(Response.json({ stop: false }));
+      await delay(60);
+      assertEquals(resumes, 0);
+      assertEquals(calls, ["first"]);
+      assertEquals((await backend.getRun(runId))?.status, "waiting");
+    });
+  });
+
   it("refuses manual resume without a capability instead of releasing the boundary", async () => {
     const backend = new SharedMemoryBackend();
     const calls: string[] = [];

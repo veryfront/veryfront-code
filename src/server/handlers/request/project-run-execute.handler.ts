@@ -1586,8 +1586,8 @@ async function awaitRunPauseDecision(
     (pollingStopped !== undefined && isAbortSignalAborted(pollingStopped));
   for (let round = 1; !ended(); round++) {
     const decision = await acknowledge();
-    if (decision !== undefined) return decision;
     if (ended()) break;
+    if (decision !== undefined) return decision;
     // An unknown reply may hide a committed stop. Hold the durable boundary until
     // the current authority explicitly permits continuation or cancellation ends it.
     serverLogger.warn("[project-run-execute] Pause decision unknown; holding the boundary", {
