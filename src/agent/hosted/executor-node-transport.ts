@@ -23,6 +23,8 @@ const TLS_OPTIONS = {
 } as const;
 
 interface ExecutorTransportOptions {
+  /** Trusted clock for allocation and handshake deadlines. */
+  clock?: HostedExecutorSessionClock;
   binding: ExecutorBinding;
   /** Fresh 32-byte allocation authority, delivered to both peers by their owner. */
   key: Uint8Array;
@@ -38,8 +40,6 @@ export interface ConnectExecutorTransportOptions extends ExecutorTransportOption
 }
 
 export interface ListenExecutorTransportOptions extends ExecutorTransportOptions {
-  /** Trusted test clock for the listener lifetime. Socket handshake timers stay real. */
-  clock?: HostedExecutorSessionClock;
   host: string;
   /** Zero requests an ephemeral port. */
   port: number;
@@ -110,6 +110,8 @@ export async function connectExecutorTransport(
   options: ConnectExecutorTransportOptions,
 ): Promise<ExecutorNodeTransport> {
   const { key, identity, timeoutMs } = validateOptions(options, options.podIp, options.port);
+  const clock = options.clock ?? executorNodeClock;
+  const deadline = clock.now() + timeoutMs;
   return await new Promise<ExecutorNodeTransport>((resolve, reject) => {
     let socket: TLSSocket | undefined;
     let streams: ReturnType<typeof socketTransport> | undefined;
@@ -119,7 +121,7 @@ export async function connectExecutorTransport(
       if (stopped) return;
       stopped = true;
       lifetime();
-      clearTimeout(handshake);
+      handshake();
       options.signal?.removeEventListener("abort", abort);
       key.fill(0);
       if (streams) streams.fail(error);
@@ -128,13 +130,14 @@ export async function connectExecutorTransport(
     };
     const abort = () => stop(new Error("Executor transport aborted"));
     const lifetime = scheduleExecutorNodeDeadline(
-      executorNodeClock,
-      executorNodeClock.now() + timeoutMs,
+      clock,
+      deadline,
       () => stop(new Error("Executor transport deadline exceeded")),
     );
-    const handshake = setTimeout(
+    const handshake = scheduleExecutorNodeDeadline(
+      clock,
+      Math.min(deadline, clock.now() + HANDSHAKE_TIMEOUT_MS),
       () => stop(new Error("Executor transport handshake deadline exceeded")),
-      Math.min(timeoutMs, HANDSHAKE_TIMEOUT_MS),
     );
     options.signal?.addEventListener("abort", abort, { once: true });
     const failed = () => stop(new Error("Executor transport authentication failed"));
@@ -167,7 +170,7 @@ export async function connectExecutorTransport(
           failed();
           return;
         }
-        clearTimeout(handshake);
+        handshake();
         key.fill(0);
         socket!.removeListener("error", failed);
         socket!.removeListener("close", failed);
@@ -192,7 +195,7 @@ export async function listenExecutorTransport(
   const attachment = Promise.withResolvers<ExecutorNodeTransport>();
   const ready = Promise.withResolvers<ExecutorTransportListener>();
   void attachment.promise.catch(() => {});
-  const pending = new Map<Socket, ReturnType<typeof setTimeout>>();
+  const pending = new Map<Socket, () => void>();
   const identified = new WeakSet<TLSSocket>();
   let streams: ReturnType<typeof socketTransport> | undefined;
   let stopped = false;
@@ -221,7 +224,7 @@ export async function listenExecutorTransport(
     key.fill(0);
     server.close();
     for (const [socket, timer] of pending) {
-      clearTimeout(timer);
+      timer();
       socket.destroy();
     }
     pending.clear();
@@ -231,9 +234,10 @@ export async function listenExecutorTransport(
   };
   const abort = () => stop(new Error("Executor transport aborted"));
   const clock = options.clock ?? executorNodeClock;
+  const deadline = clock.now() + timeoutMs;
   const lifetime = scheduleExecutorNodeDeadline(
     clock,
-    clock.now() + timeoutMs,
+    deadline,
     () => stop(new Error("Executor transport deadline exceeded")),
   );
   options.signal?.addEventListener("abort", abort, { once: true });
@@ -244,10 +248,14 @@ export async function listenExecutorTransport(
       socket.destroy();
       return;
     }
-    const timer = setTimeout(() => socket.destroy(), Math.min(timeoutMs, HANDSHAKE_TIMEOUT_MS));
+    const timer = scheduleExecutorNodeDeadline(
+      clock,
+      Math.min(deadline, clock.now() + HANDSHAKE_TIMEOUT_MS),
+      () => socket.destroy(),
+    );
     pending.set(socket, timer);
     socket.once("close", () => {
-      clearTimeout(timer);
+      timer();
       pending.delete(socket);
     });
   });
@@ -264,7 +272,7 @@ export async function listenExecutorTransport(
     // TLS wraps the raw connection. The remote endpoint uniquely identifies the
     // accepted TCP connection without accessing Node's private socket fields.
     for (const [raw, timer] of pending) {
-      clearTimeout(timer);
+      timer();
       if (raw.remoteAddress !== socket.remoteAddress || raw.remotePort !== socket.remotePort) {
         raw.destroy();
       }

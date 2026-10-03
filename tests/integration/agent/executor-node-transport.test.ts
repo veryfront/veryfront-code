@@ -170,6 +170,109 @@ if (typeof Deno !== "undefined") {
       }
     });
 
+    it("keeps a client handshake pending after early delivery and expires at the five-second cap", async () => {
+      let now = 0;
+      const scheduled = new Map<object, { callback: () => void; delayMs: number }>();
+      const clock = {
+        now: () => now,
+        schedule(callback: () => void, delayMs: number) {
+          const handle = {};
+          scheduled.set(handle, { callback, delayMs });
+          return handle;
+        },
+        cancel: (handle: unknown) => {
+          scheduled.delete(handle as object);
+        },
+      };
+      const tcp = createTcpServer();
+      const accepted = new Promise<import("node:net").Socket>((resolve) =>
+        tcp.once("connection", resolve)
+      );
+      await new Promise<void>((resolve) => tcp.listen(0, host, resolve));
+      const address = tcp.address();
+      assert(address && typeof address !== "string");
+      const controller = new AbortController();
+      const connecting = connectExecutorTransport({
+        podIp: host,
+        port: address.port,
+        binding,
+        key: randomBytes(32),
+        timeoutMs: 30_000,
+        signal: controller.signal,
+        clock,
+      });
+      const outcome = connecting.then(() => "connected", (error: Error) => error.message);
+      const raw = await accepted;
+      raw.resume();
+      try {
+        const entry = [...scheduled.entries()].find(([, wake]) => wake.delayMs === 5_000);
+        assert(entry, "client handshake must use the guarded clock");
+        scheduled.delete(entry[0]);
+        now = 4_999;
+        entry[1].callback();
+        assertEquals(await Promise.race([outcome, setImmediate("pending")]), "pending");
+        const next = [...scheduled.entries()].find(([, wake]) => wake.delayMs === 1);
+        assert(next);
+        scheduled.delete(next[0]);
+        now = 5_000;
+        next[1].callback();
+        assertEquals(await outcome, "Executor transport handshake deadline exceeded");
+        assertEquals(scheduled.size, 0);
+      } finally {
+        controller.abort();
+        await outcome;
+        raw.destroy();
+        await new Promise<void>((resolve) => tcp.close(() => resolve()));
+      }
+    });
+
+    it("keeps an unauthenticated socket open after early delivery and expires at the five-second cap", async () => {
+      let now = 0;
+      const scheduled = new Map<object, { callback: () => void; delayMs: number }>();
+      const listener = await listenExecutorTransport({
+        host,
+        port: 0,
+        binding,
+        key: randomBytes(32),
+        timeoutMs: 30_000,
+        clock: {
+          now: () => now,
+          schedule(callback, delayMs) {
+            const handle = {};
+            scheduled.set(handle, { callback, delayMs });
+            return handle;
+          },
+          cancel: (handle) => {
+            scheduled.delete(handle as object);
+          },
+        },
+      });
+      const raw = connectTcp({ host, port: listener.address.port });
+      const closed = new Promise<string>((resolve) => raw.once("close", () => resolve("closed")));
+      try {
+        await new Promise<void>((resolve) => raw.once("connect", resolve));
+        await setImmediate();
+        const entry = [...scheduled.entries()].find(([, wake]) => wake.delayMs === 5_000);
+        assert(entry, "unauthenticated socket must use the guarded clock");
+        scheduled.delete(entry[0]);
+        now = 4_999;
+        entry[1].callback();
+        assertEquals(await Promise.race([closed, setImmediate("pending")]), "pending");
+        const next = [...scheduled.entries()].find(([, wake]) => wake.delayMs === 1);
+        assert(next);
+        scheduled.delete(next[0]);
+        now = 5_000;
+        next[1].callback();
+        assertEquals(await closed, "closed");
+        assertEquals(await Promise.race([listener.connection, setImmediate("pending")]), "pending");
+      } finally {
+        listener.close();
+        raw.destroy();
+        await closed;
+        assertEquals(scheduled.size, 0);
+      }
+    });
+
     it("exchanges bounded binary chunks in both directions", { timeout: 5_000 }, async () => {
       const { listener, client, server } = await pair();
       const bytes = randomBytes(1024 * 1024);
