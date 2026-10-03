@@ -33,14 +33,13 @@
  * The runtime under test stays the packed npm artifact under the ambient Node
  * version: this orchestrator only spawns `npm`, `node`, and `deno eval`
  * against the installed package; it never imports the repository's runtime
- * sources into the smoke path. The orchestrator reads the Runs operation
- * fixtures from the repository and hands them to the consumer as JSON data.
+ * sources into the smoke path. A `deno eval` against the repository config
+ * writes the Runs operation fixtures as JSON data for the consumer.
  *
  * Requires: `deno task build:npm` output in ./npm, node + npm on PATH.
  */
 
 import { fromFileUrl } from "#std/path";
-import { RUNS_OPERATION_FIXTURES } from "../../src/runs/target/client.test-helpers.ts";
 import {
   formatNpmCompatibilityArtifactCliError,
   loadNpmCompatibilityArtifact,
@@ -1024,15 +1023,24 @@ async function checkRunsSdkExport(workDir: string): Promise<void> {
   console.log(
     "== 6c. runs/target SDK drives Runs operations from the published exports map",
   );
-  const fixtures = Object.fromEntries(
-    RUNS_SDK_CONSUMER_OPERATIONS.map((operationId) => [
-      operationId,
-      RUNS_OPERATION_FIXTURES[operationId],
-    ]),
-  );
-  await Deno.writeTextFile(
-    `${workDir}/runs-operation-fixtures.json`,
-    JSON.stringify(fixtures),
+  const fixturesModule = `${ROOT_DIR}/src/runs/target/client.test-helpers.ts`;
+  const fixturesPath = `${workDir}/runs-operation-fixtures.json`;
+  await runChecked(
+    "write Runs operation fixtures",
+    "deno",
+    [
+      "eval",
+      `--config=${ROOT_DIR}/deno.json`,
+      `const { RUNS_OPERATION_FIXTURES } = await import(${
+        JSON.stringify(fixturesModule)
+      });
+const operations = ${JSON.stringify(RUNS_SDK_CONSUMER_OPERATIONS)};
+await Deno.writeTextFile(
+  ${JSON.stringify(fixturesPath)},
+  JSON.stringify(Object.fromEntries(operations.map((id) => [id, RUNS_OPERATION_FIXTURES[id]]))),
+);`,
+    ],
+    { cwd: ROOT_DIR, timeoutMs: 120_000 },
   );
   const runsSdk = await run("node", [
     "--input-type=module",
