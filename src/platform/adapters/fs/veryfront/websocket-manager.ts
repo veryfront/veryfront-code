@@ -57,6 +57,8 @@ interface PendingSelectiveInvalidation {
   contentContext: ResolvedContentContext | null;
   changedPaths: Set<string>;
   token: PreviewInvalidationToken;
+  /** Every poke in this batch changed only reserved data files and kept the snapshot. */
+  reservedDataOnly: boolean;
 }
 
 function createIntrinsicWebSocket(
@@ -93,6 +95,11 @@ function sanitizeWebSocketLogUrl(url: string | undefined): string | undefined {
   return typeof url === "string" ? sanitizeUrlForSpan(url) : undefined;
 }
 
+interface SourceListingStart {
+  dataGeneration: number;
+  readSequence: number;
+}
+
 interface WebSocketDeps {
   apiBaseUrl: string;
   apiToken: string;
@@ -119,7 +126,27 @@ interface WebSocketDeps {
     cacheKey: string,
     files: ProjectFile[],
     expectedSnapshotVersion?: number,
+    listingStart?: SourceListingStart,
   ) => Promise<number | undefined>;
+  /**
+   * Mark the start of a source listing, so reserved data patches that land
+   * while it is in flight survive it and older ones yield to it.
+   */
+  beginSourceListing?: () => SourceListingStart;
+  /**
+   * Whether a poke that changed only `changedPaths` can be applied by patching
+   * reserved data files (knowledge Markdown, eval reports) into the snapshot
+   * instead of invalidating it.
+   */
+  canPatchReservedDataPaths?: (changedPaths: readonly string[]) => boolean;
+  /**
+   * Patch the changed reserved data files into the snapshot. Resolves
+   * `"definition"` when a changed path may define an agent or skill, `"data"`
+   * when none can, and undefined when the snapshot must be invalidated.
+   */
+  refreshReservedDataPaths?: (
+    changedPaths: readonly string[],
+  ) => Promise<"data" | "definition" | undefined>;
   pregenerateStyles?: (
     files: ProjectFile[],
   ) => Promise<PreviewStyleArtifactInfo | undefined>;
@@ -591,8 +618,19 @@ export class WebSocketManager {
       const previewInvalidationToken = this.beginPreviewInvalidation(contentContext);
       this.deps.invalidationCallbacks.clearDomainCache?.();
       this.acceptedPokes++;
-      this.deps.clearMemoryCaches();
-      logger.debug("All in-memory caches cleared immediately on POKE");
+      // A write to reserved data files is patched into the snapshot once the
+      // files are fetched. Clearing it here would supersede every in-flight
+      // source refresh, and agents write these files throughout a run.
+      const reservedDataOnly = !isPublishPoke &&
+        contentContext?.sourceType === "branch" &&
+        !!changedPaths?.length &&
+        this.deps.canPatchReservedDataPaths?.(changedPaths) === true;
+      if (reservedDataOnly) {
+        logger.debug("Keeping the source snapshot for a reserved data POKE");
+      } else {
+        this.deps.clearMemoryCaches();
+        logger.debug("All in-memory caches cleared immediately on POKE");
+      }
 
       if (isPublishPoke && this.deps.projectSlug) {
         this.clearPersistentCacheForPublish(normalizedPokeReleaseId, normalizedPokeEnvironment);
@@ -603,6 +641,7 @@ export class WebSocketManager {
           changedPaths,
           contentContext,
           previewInvalidationToken,
+          reservedDataOnly,
         );
         return;
       }
@@ -755,15 +794,18 @@ export class WebSocketManager {
     changedPaths: string[],
     contentContext: ResolvedContentContext | null,
     token: PreviewInvalidationToken,
+    reservedDataOnly = false,
   ): void {
     const contextKey = this.invalidationContextKey(contentContext);
     const pending = this.pendingSelectiveInvalidations.get(contextKey) ?? {
       contentContext,
       changedPaths: new Set<string>(),
       token,
+      reservedDataOnly,
     };
     for (const path of changedPaths) pending.changedPaths.add(path);
     pending.token = token;
+    pending.reservedDataOnly &&= reservedDataOnly;
     this.pendingSelectiveInvalidations.set(contextKey, pending);
 
     if (this.selectiveInvalidationTimer) clearTimeout(this.selectiveInvalidationTimer);
@@ -788,6 +830,7 @@ export class WebSocketManager {
               [...invalidation.changedPaths],
               invalidation.contentContext,
               invalidation.token,
+              invalidation.reservedDataOnly,
             );
           } catch (error) {
             logger.error("Queued selective invalidation failed", {
@@ -875,6 +918,7 @@ export class WebSocketManager {
     // failed must not be retried there either.
     let clearedProjectCSSCaches = false;
     try {
+      const listingStart = this.deps.beginSourceListing?.();
       const files = await this.deps.client.listAllFiles({}, {
         type: "branch",
         name: contentContext.branch ?? "main",
@@ -884,6 +928,7 @@ export class WebSocketManager {
         cacheKey,
         files,
         sourceSnapshotVersion,
+        listingStart,
       );
       clearedProjectCSSCaches = true;
       await this.clearProjectCSSCaches();
@@ -928,19 +973,45 @@ export class WebSocketManager {
     return { preparedStyleArtifact, reloadSuperseded };
   }
 
+  /**
+   * Patch a reserved-data-only batch into the snapshot. Falls back to clearing
+   * the snapshot, which the poke skipped, when the adapter is idle (it is
+   * evicted instead) or the files cannot be patched.
+   */
+  private async patchReservedData(
+    changedPaths: string[],
+  ): Promise<"data" | "definition" | undefined> {
+    const kind = this.isAdapterInUse()
+      ? await this.deps.refreshReservedDataPaths?.(changedPaths)
+      : undefined;
+    if (kind === undefined) {
+      this.deps.clearMemoryCaches();
+      logger.debug("All in-memory caches cleared for an unpatched reserved data POKE");
+    }
+    return kind;
+  }
+
   private async performSelectiveInvalidation(
     changedPaths: string[],
     contentContext: ResolvedContentContext | null,
     previewInvalidationToken: PreviewInvalidationToken,
+    reservedDataOnly = false,
   ): Promise<void> {
     const startTime = currentTime();
     const acceptedPokes = this.acceptedPokes;
-    const sourceSnapshotVersion = this.deps.getSourceSnapshotVersion?.();
     let preparedStyleArtifact: PreviewStyleArtifactInfo | undefined;
     let reloadSuperseded = false;
     let succeeded = false;
+    let reservedDataKind: "data" | "definition" | undefined;
 
     try {
+      if (reservedDataOnly) reservedDataKind = await this.patchReservedData(changedPaths);
+      // Read after any fallback clear above, which advances the version.
+      const sourceSnapshotVersion = this.deps.getSourceSnapshotVersion?.();
+      // Pure data writes cannot change modules, routes, discovered agents or
+      // styles; a possible Markdown definition still drops those caches.
+      const refreshesDerivedCaches = reservedDataKind !== "data";
+
       logger.debug("Performing selective invalidation", {
         count: changedPaths.length,
       });
@@ -990,14 +1061,16 @@ export class WebSocketManager {
         usePerProject: !!this.deps.invalidationCallbacks.clearSSRModuleCacheForProject,
       });
 
-      if (this.deps.invalidationCallbacks.clearSSRModuleCacheForProject && projectId) {
+      if (!refreshesDerivedCaches) {
+        logger.debug("Keeping module, route and discovery caches for reserved data files");
+      } else if (this.deps.invalidationCallbacks.clearSSRModuleCacheForProject && projectId) {
         invalidations.push(
           this.deps.invalidationCallbacks.clearSSRModuleCacheForProject(projectId),
         );
       } else {
         invalidations.push(this.deps.invalidationCallbacks.clearSSRModuleCache?.());
       }
-      if (projectId) {
+      if (projectId && refreshesDerivedCaches) {
         if (this.deps.invalidationCallbacks.clearRouterDetectionCacheForProject) {
           invalidations.push(
             this.deps.invalidationCallbacks.clearRouterDetectionCacheForProject(projectId),
@@ -1018,8 +1091,9 @@ export class WebSocketManager {
 
       // A branch poke clears the CSS caches after `replaceSourceSnapshot`
       // installs the new sources instead of here, so a concurrent request
-      // cannot refill them from the snapshot this poke is replacing.
-      if (contentContext?.sourceType !== "branch") {
+      // cannot refill them from the snapshot this poke is replacing. A
+      // patched possible definition replaced nothing, so it clears them here.
+      if (contentContext?.sourceType !== "branch" || reservedDataKind === "definition") {
         invalidations.push(this.clearProjectCSSCaches());
       }
 
@@ -1030,7 +1104,7 @@ export class WebSocketManager {
         await Promise.all(pendingInvalidations);
       }
 
-      if (contentContext?.sourceType === "branch") {
+      if (contentContext?.sourceType === "branch" && reservedDataKind === undefined) {
         await this.deps.cache.deleteByPrefixAsync("files:branch:");
         ({ preparedStyleArtifact, reloadSuperseded } = await this.refreshBranchSnapshot(
           contentContext,
@@ -1080,7 +1154,9 @@ export class WebSocketManager {
     } finally {
       if (succeeded) {
         this.completePreviewInvalidation(previewInvalidationToken);
-        if (!reloadSuperseded) {
+        // A patched adapter is current; evicting it would make the next
+        // request list the whole project again.
+        if (!reloadSuperseded && reservedDataKind === undefined) {
           this.deps.invalidationCallbacks.evictCurrentAdapter?.();
         }
       }

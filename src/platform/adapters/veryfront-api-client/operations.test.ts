@@ -363,6 +363,7 @@ describe("VeryfrontAPIOperations", () => {
         id: "file-id",
         type: "function",
         size: 40,
+        updated_at: "2026-04-23T00:00:00.000Z",
       }, "branch file detail must map every payload field");
     });
 

@@ -241,6 +241,7 @@ export interface FileDetail {
   version_id?: string;
   type?: string;
   size?: number;
+  updated_at?: string;
   release_id?: string;
   release_version?: string | null;
 }
@@ -567,8 +568,10 @@ export class VeryfrontAPIOperations {
           path: response.path,
           content: response.content,
           id: response.id,
+          ...(response.version_id === undefined ? {} : { version_id: response.version_id }),
           type: response.type,
           size: response.size,
+          updated_at: response.updated_at,
         };
       },
       {
