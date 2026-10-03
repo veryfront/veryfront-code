@@ -64,7 +64,7 @@ describe("ext-css-purgecss", () => {
       engine.cacheIdentity,
       `ext-css-purgecss@${extensionPackage.version}`,
     );
-    assertStringIncludes(engine.cacheIdentity, "purgecss@8.0.0");
+    assertStringIncludes(engine.cacheIdentity, "purgecss@7.0.2");
     assertThrows(
       () => {
         (engine as { cacheIdentity: string }).cacheIdentity = "changed@2";

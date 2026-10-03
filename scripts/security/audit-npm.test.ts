@@ -93,3 +93,23 @@ describe("audit task", () => {
     );
   });
 });
+
+describe("sandbox and CSS dependency security", () => {
+  it("keeps the unpatched braces chain out of the committed runtime graph", async () => {
+    const lock = JSON.parse(await Deno.readTextFile("deno.lock"));
+    const vulnerable = Object.keys(lock.npm).filter((name) =>
+      name.startsWith("braces@")
+    );
+    assertEquals(
+      vulnerable,
+      [],
+      "GHSA-vfj7-8cjw-p6xm has no patched braces release",
+    );
+    const manifest = JSON.parse(
+      await Deno.readTextFile(
+        "extensions/ext-sandbox-shell-tools/deno.json",
+      ),
+    );
+    assertEquals(manifest.imports["bash-tool"], undefined);
+  });
+});

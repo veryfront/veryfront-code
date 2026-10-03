@@ -3,15 +3,15 @@
 > **Category:** Sandbox | **Contract:** `SandboxShellToolsProvider` |
 > **Built-in**
 
-Provides the `SandboxShellToolsProvider` contract using `bash-tool`.
+Provides the `SandboxShellToolsProvider` contract using AI SDK tools and Zod schemas.
 
 Core Veryfront code depends on the sandbox shell tools contract only. This
-extension owns the third-party shell tool implementation and its transitive
-dependencies.
+extension creates command, read-file, and write-file tools for the supplied sandbox.
+Command output retains the 30,000-character limit for each output stream.
 
 ## Supply-chain boundary
 
-This extension is a sensitive sandbox execution boundary. Keep `bash-tool`,
+This extension is a sensitive sandbox execution boundary. Keep AI SDK, Zod,
 `just-bash`, and related shell execution dependencies in this extension instead
 of importing them from core, CLI, React, or unrelated extensions.
 
