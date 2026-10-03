@@ -297,7 +297,7 @@ describe("npm package publishing", () => {
           "package_dirs() { printf '%s\\n' \"$PACKAGE_DIR\"; }",
           "update_package_version() { return 97; }",
           "rc_tag_for_package() { echo rc; }",
-          "wait_for_npm_git_head() { return 0; }",
+          'lookup_npm_git_head() { PUBLISHED_GIT_HEAD="$GITHUB_SHA"; }',
           "npm() {",
           '  printf "%s\\n" "$*" >> "$NPM_LOG"',
           '  if [ "$1" = "view" ]; then return 1; fi',
@@ -2516,13 +2516,14 @@ describe("RC publication deadline", () => {
         "jq() { echo veryfront; }",
         "rc_tag_for_package() { echo rc; }",
         "rc_publish_package_dir() { :; }",
-        "wait_for_npm_git_head() { PUBLISHED_GIT_HEAD=''; return 1; }",
+        "lookup_npm_git_head() { PUBLISHED_GIT_HEAD=''; return 0; }",
         "run_rc_publish",
       ].join("\n"),
       {
         VERSION: "0.1.0-rc.1",
         GITHUB_SHA: "expected-head",
         NPM_PACK_DIR: "artifact",
+        NPM_GIT_HEAD_WAIT_TOTAL_SECONDS: "0",
       },
     );
     assertEquals(output.code, 1);
@@ -2534,6 +2535,106 @@ describe("RC publication deadline", () => {
 });
 
 describe("RC metadata verification order", () => {
+  it("removes verified packages from later batch rounds", async () => {
+    const output = await runBash(
+      [
+        "set -euo pipefail",
+        'source "$SCRIPT_PATH"',
+        "reads=0",
+        'lookup_npm_git_head() { echo "read:$1"; PUBLISHED_GIT_HEAD=""; if [ "$1" = first ]; then PUBLISHED_GIT_HEAD="$GITHUB_SHA"; else reads=$((reads + 1)); if [ "$reads" -eq 2 ]; then PUBLISHED_GIT_HEAD="$GITHUB_SHA"; fi; fi; }',
+        "sleep() { echo sleep; }",
+        "wait_for_rc_batch_metadata first second",
+      ].join("\n"),
+      { VERSION: "0.1.0-rc.1", GITHUB_SHA: "expected-head" },
+    );
+    assertEquals(output.code, 0, decoder.decode(output.stderr));
+    assertEquals(
+      decoder.decode(output.stdout).trim().split("\n")
+        .filter((line) => line === "sleep" || line.startsWith("read:")),
+      ["read:first", "read:second", "sleep", "read:second"],
+    );
+  });
+
+  for (
+    const failure of ["wrong hash", "lookup failure", "budget", "attempts", "zero attempts"]
+  ) {
+    it(`fails batch verification on ${failure}`, async () => {
+      const output = await runBash(
+        [
+          "set -euo pipefail",
+          'source "$SCRIPT_PATH"',
+          'lookup_npm_git_head() { echo "read:$1"; PUBLISHED_GIT_HEAD=""; if [ "$FAILURE" = "lookup failure" ]; then return 1; fi; if [ "$FAILURE" = "wrong hash" ]; then PUBLISHED_GIT_HEAD=other-head; fi; }',
+          "sleep() { echo sleep; }",
+          "wait_for_rc_batch_metadata first second",
+        ].join("\n"),
+        {
+          VERSION: "0.1.0-rc.1",
+          GITHUB_SHA: "expected-head",
+          FAILURE: failure,
+          NPM_GIT_HEAD_WAIT_TOTAL_SECONDS: failure === "budget" ? "0" : "180",
+          NPM_GIT_HEAD_WAIT_ATTEMPTS: failure === "zero attempts" ? "0" : "1",
+          NPM_GIT_HEAD_WAIT_DELAY_SECONDS: "10",
+        },
+      );
+      assertEquals(output.code, 1);
+      const reads = decoder.decode(output.stdout).trim().split("\n");
+      assertEquals(
+        reads,
+        failure === "wrong hash" || failure === "lookup failure" || failure === "zero attempts"
+          ? ["read:first"]
+          : failure === "budget"
+          ? ["read:first", "read:second", "read:first"]
+          : [
+            "read:first",
+            "read:second",
+            "Waiting for npm registry metadata for pending RC packages (round 1/1).",
+            "sleep",
+            "read:first",
+          ],
+      );
+    });
+  }
+
+  it("checks every pending package before sleeping once per convergence round", async () => {
+    await withTempDir(async (stateDir) => {
+      const output = await runBash(
+        [
+          "set -euo pipefail",
+          'source "$SCRIPT_PATH"',
+          "verify_npm_compatibility_artifact() { :; }",
+          "package_dirs() { echo 'first second'; }",
+          "canonical_tarball_for_package_dir() { echo package.tgz; }",
+          'jq() { echo "$PACKAGE_DIR"; }',
+          "rc_tag_for_package() { echo rc; }",
+          "rc_publish_package_dir() { :; }",
+          'lookup_npm_git_head() { n=0; if [ -f "$STATE/$1" ]; then n=$(cat "$STATE/$1"); fi; n=$((n + 1)); echo "$n" > "$STATE/$1"; PUBLISHED_GIT_HEAD=""; if [ "$n" -ge 3 ]; then PUBLISHED_GIT_HEAD="$GITHUB_SHA"; fi; echo "read:$1:$n"; }',
+          "sleep() { echo sleep; }",
+          "run_rc_publish",
+        ].join("\n"),
+        {
+          VERSION: "0.1.0-rc.1",
+          GITHUB_SHA: "expected-head",
+          NPM_PACK_DIR: "artifact",
+          STATE: stateDir,
+          NPM_GIT_HEAD_WAIT_TOTAL_SECONDS: "30",
+          NPM_GIT_HEAD_WAIT_DELAY_SECONDS: "10",
+        },
+      );
+      assertEquals(output.code, 0, decoder.decode(output.stderr));
+      const observations = decoder.decode(output.stdout).trim().split("\n")
+        .filter((line) => line === "sleep" || line.startsWith("read:"));
+      assertEquals(observations, [
+        "read:first:1",
+        "read:second:1",
+        "sleep",
+        "read:first:2",
+        "read:second:2",
+        "sleep",
+        "read:first:3",
+        "read:second:3",
+      ]);
+    });
+  });
   for (
     const [scenario, body, status, tag, transportStatus] of [
       [
@@ -2655,7 +2756,7 @@ describe("RC metadata verification order", () => {
         'jq() { echo "$PACKAGE_DIR"; }',
         'rc_tag_for_package() { if [ "$1" = history ]; then echo rc-history; else echo rc; fi; }',
         'rc_publish_package_dir() { echo "publish:$1:$3"; }',
-        'wait_for_npm_git_head() { echo "verify:$1:$2"; }',
+        'lookup_npm_git_head() { echo "verify:$1:$2"; PUBLISHED_GIT_HEAD="$GITHUB_SHA"; }',
         "run_rc_publish",
       ].join("\n"),
       {

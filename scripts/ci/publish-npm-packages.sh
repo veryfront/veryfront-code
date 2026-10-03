@@ -354,6 +354,9 @@ lookup_npm_git_head() {
   PUBLISHED_GIT_HEAD=""
   if [[ "${2:-}" == rc ]]; then
     PUBLISHED_GIT_HEAD="$(lookup_npm_rc_git_head "$1")" || return 1
+    if [[ -z "${PUBLISHED_GIT_HEAD}" ]]; then
+      echo "RC version metadata is not yet visible for $1@${VERSION}." >&2
+    fi
   else
     PUBLISHED_GIT_HEAD="$(npm view "$1@${VERSION}" gitHead --fetch-timeout="${NPM_GIT_HEAD_LOOKUP_TIMEOUT_MS}" --fetch-retries=1 2>/dev/null || true)"
   fi
@@ -363,6 +366,7 @@ lookup_npm_git_head() {
     # Keep the existing metadata budget while the dedicated tag endpoint
     # catches up. Do not release the publisher lock on version metadata alone.
     if [[ "${current_rc}" != "${VERSION}" ]]; then
+      echo "RC current tag does not yet match $1@${VERSION}." >&2
       PUBLISHED_GIT_HEAD=""
     fi
   fi
@@ -506,6 +510,43 @@ rc_tag_for_package() {
   '
 }
 
+# Poll the pending batch once per round so normal propagation overlaps. Each
+# lookup and each round's single sleep consume the existing shared budget.
+wait_for_rc_batch_metadata() {
+  local pending="$*" next_pending package_name attempt final_round=0
+  local rounds=$((NPM_GIT_HEAD_WAIT_ATTEMPTS + 1))
+  if [[ "${NPM_GIT_HEAD_WAIT_ATTEMPTS}" -le 0 ]]; then
+    rounds=1
+    final_round=1
+  fi
+  for attempt in $(seq 1 "${rounds}"); do
+    next_pending=""
+    for package_name in ${pending}; do
+      PACKAGE_NAME="${package_name}"
+      if ! lookup_npm_git_head "${package_name}" rc; then
+        echo "::error::RC registry metadata lookup failed for ${package_name}@${VERSION}." >&2
+        return 1
+      fi
+      if [[ "${PUBLISHED_GIT_HEAD}" == "${GITHUB_SHA}" ]]; then continue; fi
+      if [[ -n "${PUBLISHED_GIT_HEAD}" || "${final_round}" == 1 ]]; then
+        echo "::error::RC registry metadata did not converge for ${package_name}@${VERSION} within the shared ${NPM_GIT_HEAD_WAIT_TOTAL_SECONDS}s budget, or its gitHead differs; refusing to release an unverified RC." >&2
+        return 1
+      fi
+      next_pending+=" ${package_name}"
+    done
+    [[ -n "${next_pending}" ]] || return 0
+    pending="${next_pending}"
+    if [[ "${NPM_GIT_HEAD_WAIT_SPENT_SECONDS}" -ge "${NPM_GIT_HEAD_WAIT_TOTAL_SECONDS}" ]]; then
+      final_round=1
+    else
+      echo "Waiting for npm registry metadata for pending RC packages (round ${attempt}/${NPM_GIT_HEAD_WAIT_ATTEMPTS})."
+      sleep "${NPM_GIT_HEAD_WAIT_DELAY_SECONDS}"
+      NPM_GIT_HEAD_WAIT_SPENT_SECONDS=$((NPM_GIT_HEAD_WAIT_SPENT_SECONDS + NPM_GIT_HEAD_WAIT_DELAY_SECONDS))
+    fi
+    if [[ "${attempt}" -ge "${NPM_GIT_HEAD_WAIT_ATTEMPTS}" ]]; then final_round=1; fi
+  done
+}
+
 run_rc_publish() {
   require_env VERSION GITHUB_SHA NPM_PACK_DIR
   verify_npm_compatibility_artifact
@@ -528,12 +569,8 @@ run_rc_publish() {
 
   # Let registry propagation overlap across the batch. Keep the publisher lock
   # until every current RC's gitHead and tag have converged to this release.
-  for PACKAGE_NAME in ${rc_packages_to_verify}; do
-    if ! wait_for_npm_git_head "${PACKAGE_NAME}" rc; then
-      echo "::error::RC registry metadata did not converge for ${PACKAGE_NAME}@${VERSION} within the shared ${NPM_GIT_HEAD_WAIT_TOTAL_SECONDS}s budget, or its gitHead differs; refusing to release an unverified RC." >&2
-      return 1
-    fi
-  done
+  wait_for_rc_batch_metadata ${rc_packages_to_verify}
+
 }
 
 is_npm_package_not_found() {
