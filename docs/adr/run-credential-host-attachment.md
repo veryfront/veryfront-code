@@ -1,7 +1,8 @@
 # Run credentials are attached by a project-free host over the executor channel
 
-Status: accepted (veryfront/veryfront-issue-inbox#2402). The executor-side run profile and
-activation it depends on are tracked in veryfront/veryfront-issue-inbox#2626.
+Status: proposed. The owner chose option D in the issue tracker on 2026-10-03
+(veryfront/veryfront-issue-inbox#2402). This ADR becomes accepted when its dependency, the
+executor-side run profile and its activation (veryfront/veryfront-issue-inbox#2626), lands.
 
 ## Context
 
@@ -26,7 +27,7 @@ The goal of #2402 is that no copy of a run credential exists anywhere project co
 | B. Credential Worker in the same process                             | JS only; memory still readable | Worker round trip and a body clone                                                      | Yes                                 | Large serve-path refactor                                                                             |
 | B'. Project code in a restricted Worker                              | JS plus Worker permissions     | Loopback broker hop                                                                     | No                                  | Worker isolation is unsupported in compiled binaries (`src/security/sandbox/isolation-capability.ts`) |
 | C. Per-pod sidecar or egress proxy                                   | Separate container             | One extra hop on every request                                                          | Yes                                 | New container per pod                                                                                 |
-| C'. Proxy tier as the hop                                            | Separate process               | One intra-cluster hop per credentialed call                                             | Yes, if the proxy token is included | Proxy role and API changes                                                                            |
+| C'. Proxy mode (`src/proxy/`) as the hop                             | Separate process               | One extra network hop per credentialed call                                             | Yes, if the proxy token is included | Proxy role and API changes                                                                            |
 | **D. Project-free host attaches over the isolated-executor channel** | **Separate pod**               | **One channel round trip per request head; streaming uses the channel's credit window** | **No**                              | **Executor stack must be active**                                                                     |
 
 ## Decision
@@ -45,7 +46,8 @@ attaches the credential for the route's class, and sends through the origin-boun
 identifier crosses into the executor. A missing, expired or revoked vault entry fails closed before
 anything is sent.
 
-A flag, `VERYFRONT_RUN_CREDENTIAL_ATTACHMENT=isolate|host`, controls rollout. With `host`, the
+A planned flag, `VERYFRONT_RUN_CREDENTIAL_ATTACHMENT=isolate|host`, will control rollout. It is not
+implemented yet. With `host`, the
 shared host refuses credentialed runs instead of executing them in-process. An unset value means
 `isolate`. Any other value, including a misspelled or malformed one, is a configuration error and
 the server refuses to start. A typo then fails the rollout loudly: new instances never become ready
@@ -75,16 +77,14 @@ this decision relies on.
      `src/agent/service/managed-broker.ts` and `src/server/isolated-http/hosted-http-broker.ts`).
      The listening side runs inside the executor (`src/agent/hosted/executor-node-bootstrap.ts`).
    - **Consequence:** the credential hop lives in a Node host process. For agent runs, that is the
-     hosted agent service, which is already a Node deployment of this framework. For tasks,
+     agent service, which already runs this framework on Node. For tasks,
      workflows and evals, the run-execution host is a Node deployment (veryfront-issue-inbox#2626),
      not the Deno compiled server. Porting the channel to certificate-based TLS so that Deno could
      host it would change the channel's authentication model, and is out of scope.
 
-2. **Control-plane run requests reach the shared server through the proxy tier.** The control plane
-   sends to the project's managed hostname, which the edge routes to the proxy, and the proxy
-   forwards to the server. Traces show control-plane run requests entering through the proxy and
-   being forwarded to the server. The hop therefore does not change ingress routing. The proxy keeps
-   minting its own token, which stays out of scope here (see below).
+2. **Control-plane run requests reach the shared server through the same ingress path as
+   application traffic**, not through a separate channel. This was verified against a deployed
+   environment on 2026-10-03. The hop therefore does not change ingress routing.
 
 3. **`VeryfrontApiClient` sends through a patchable transport.**
    - The canonical API transport calls the global `fetch` at request time when no outbound policy
@@ -96,6 +96,7 @@ this decision relies on.
    - The release, dependency and style artifact builds in `project-run-execute.handler.ts` build
      this client with the run's runtime API token, so the token is exposed there today. This is an
      interim fix for the shared host, alongside the other global-`fetch` paths in #2188.
+
 4. **No shared-server caller puts a run credential in `VeryfrontCloudContext.apiToken`.** The callers
    that put a request token there (`src/agent/hosted/default-chat-runtime.ts`, `createCloudContext`;
    `cloud-chat-execution-preparation.ts`; `context-summary-generator.ts`;
@@ -107,32 +108,31 @@ this decision relies on.
    - the context store still uses live `AsyncLocalStorage.prototype` methods
      (`src/provider/veryfront-cloud/context.ts`), so capturing `run` and `getStore` at module load
      is cheap defence in depth.
+
 5. **The shared server's deployment does not provide the ambient `VERYFRONT_API_TOKEN`.** This
-   was checked on the pre-production environment; production must be confirmed at rollout. The
+   was verified against a deployed environment on 2026-10-03, and must be confirmed for each
+   environment at rollout. The
    ambient-token fallback (`src/platform/cloud/resolver.ts`) is therefore not a run-credential
    source on the shared host. Executors will also refuse to start if any `VERYFRONT_*TOKEN*`
    variable is present.
+
 6. **The executor stack is not active yet.** Making it active is a precondition, and is tracked in
    veryfront-issue-inbox#2626.
 
 ## Latency budget
 
-The budget, measured as trace deltas against the pre-change baseline, is:
+The budget, measured against a baseline taken before the change, is:
 
 - p50 time to first token: at most +5 ms;
 - p95 time to first token: at most +15 ms;
 - streaming throughput: at most 2% lower.
 
-Baseline facts:
+The baseline was measured in a deployed environment and is kept with the issue. Against current
+model-call durations, the budget is well under 1% at both p50 and p95.
 
-- Against current server-to-gateway model calls, the budget is under 0.2% of median call duration
-  and under 0.2% of p95 call duration.
-- The platform's own pre-upstream overhead (gateway admission before the provider call starts) is
-  already about 1% of the median call. The hop's p50 budget is about one seventh of that overhead.
-- **Time to first token is not instrumented today.** For most calls, the gateway and server spans
-  end with the full response, not at the first chunk. Before the pre-production comparison, the hop and
-  the executor-side transport must record a time-to-first-chunk attribute on the model-call span.
-  Until then, the full-duration and pre-upstream-overhead baselines stand in.
+Time to first token is not recorded today: model-call spans cover the full response. Before the
+comparison, the hop and the executor-side transport must record time to first chunk on the
+model-call span.
 
 ## Consequences
 
@@ -143,7 +143,7 @@ Baseline facts:
   captured, origin-bound transport, and keep its token out of public instance state.
 - The hop needs a Node host for every execution profile. The Deno compiled server never terminates
   the executor channel.
-- The proxy's per-request token on ordinary page and API traffic is not a run credential. Run code
+- The proxy mode's per-request token (`src/proxy/handler.ts`) on ordinary page and API traffic is not a run credential. Run code
   uses it through the same `VeryfrontApiClient` transport (the filesystem adapter), so it is
   exposed in the same way. It is tracked separately from this decision.
 - Once production has used `host` for two release cycles, a later decision removes the in-isolate
