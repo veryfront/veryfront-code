@@ -2078,7 +2078,12 @@ export class VeryfrontFSAdapter implements FSAdapter {
       this.sourceSnapshotFingerprint = undefined;
       this.agentConfigSourceSnapshotFingerprint = undefined;
       this.scopedAgentConfigSourceSnapshotFingerprint = undefined;
-      const retained = this.retainedFileList;
+      let retained = this.retainedFileList;
+      if (retained && retained.cacheKey !== cacheKey) {
+        // A listing retained for another source must not take these entries.
+        this.clearRetainedFileList();
+        retained = null;
+      }
       if (retained) {
         retained.files = retained.files === current
           ? patched

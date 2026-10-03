@@ -375,6 +375,24 @@ describe("reserved data pokes", () => {
     }
   });
 
+  it("drops a listing retained for another source instead of patching it", async () => {
+    const harness = await createHarness();
+    try {
+      const internals = harness.adapter as unknown as {
+        retainedFileList: { cacheKey: string; files: ListedFile[] } | null;
+      };
+      assertExists(internals.retainedFileList);
+      internals.retainedFileList.cacheKey = "files:branch:test-project:other";
+      harness.setRemoteFile(NOTE_PATH, { path: NOTE_PATH, content: "patched" });
+
+      assertEquals(await harness.adapter.refreshReservedDataPaths([NOTE_PATH]), "definition");
+      assertEquals(internals.retainedFileList, null);
+      assertEquals(snapshotContent(harness, NOTE_PATH), "patched");
+    } finally {
+      harness.dispose();
+    }
+  });
+
   it("refuses to patch more data files than one poke may name", async () => {
     const harness = await createHarness();
     try {
