@@ -222,6 +222,7 @@ type UploadFailureStatus = 1 | 64;
 async function runReleaseScript({
   stateDir,
   asset,
+  extraAssets = [],
   initialReleaseState = "missing",
   createFailure = "none",
   failedUploadAttempts = 0,
@@ -230,6 +231,7 @@ async function runReleaseScript({
 }: {
   stateDir: string;
   asset: string;
+  extraAssets?: string[];
   initialReleaseState?: ReleaseState;
   createFailure?: CreateFailure;
   failedUploadAttempts?: number;
@@ -251,7 +253,7 @@ async function runReleaseScript({
       [
         "set -euo pipefail",
         'release_script="$1"',
-        'asset="$2"',
+        "shift",
         "gh() {",
         '  printf "%s\\n" "$*" >> "$GH_LOG"',
         '  if [ "$1" = "release" ] && [ "$2" = "view" ]; then',
@@ -272,6 +274,11 @@ async function runReleaseScript({
         "    fi",
         "  fi",
         '  if [ "$1" = "release" ] && [ "$2" = "upload" ]; then',
+        "    shift 3",
+        '    while [ "$1" != "--repo" ]; do',
+        '      [ -f "$1" ] || return 1',
+        "      shift",
+        "    done",
         '    count="$(cat "$UPLOAD_COUNT")"',
         "    count=$((count + 1))",
         '    printf "%s" "$count" > "$UPLOAD_COUNT"',
@@ -301,11 +308,12 @@ async function runReleaseScript({
         '  --notes "Install notes" \\',
         "  --prerelease \\",
         "  -- \\",
-        '  "$asset"',
+        '  "$@"',
       ].join("\n"),
       "release-script-test",
       RELEASE_SCRIPT_PATH,
       asset,
+      ...extraAssets,
     ],
     env: {
       GH_LOG: ghLog,
@@ -360,7 +368,12 @@ case "$1:$2" in
     [ -f "$STATE_DIR/releases/$3" ] || exit 1
     if [ "$(cat "$STATE_DIR/releases/$3")" = draft ]; then echo true; else echo false; fi ;;
   release:create) printf draft > "$STATE_DIR/releases/$3" ;;
-  release:upload) [ -f "$4" ] ;;
+  release:upload)
+    shift 3
+    while [ "$1" != --repo ]; do
+      [ -f "$1" ] || exit 1
+      shift
+    done ;;
   release:edit) printf published > "$STATE_DIR/releases/$3" ;;
   release:delete) rm -f "$STATE_DIR/releases/$3" ;;
   *) exit 1 ;;
@@ -397,12 +410,63 @@ printf '%064d  %s\n' 0 "$1"
         await Deno.readTextFile(retainedRelease),
         "published RC assets and tag",
       );
-      assertStringIncludes(
-        await Deno.readTextFile(`${stateDir}/gh.log`),
-        "--prerelease=false --latest",
-      );
+      const calls = (await Deno.readTextFile(`${stateDir}/gh.log`)).trim()
+        .split("\n");
+      const uploads = calls.filter((call) => call.startsWith("release upload "));
+      assertEquals(uploads.length, 1);
+      for (
+        const asset of [
+          "install.sh",
+          "install.ps1",
+          "veryfront-linux-x64",
+          "sbom.json",
+          "SHA256SUMS",
+        ]
+      ) {
+        assertStringIncludes(uploads[0], `public-release-assets/${asset}`);
+      }
+      assertStringIncludes(calls.join("\n"), "--prerelease=false --latest");
     });
   });
+
+  for (const failedUploadAttempts of [0, 1, 3]) {
+    it(`uploads every asset in one batch with ${failedUploadAttempts} failed attempts`, async () => {
+      await withTempDir(async (stateDir) => {
+        const assets = [
+          `${stateDir}/veryfront-linux-x64`,
+          `${stateDir}/veryfront macos arm64`,
+          `${stateDir}/SHA256SUMS`,
+        ];
+        for (const asset of assets) await Deno.writeTextFile(asset, "binary");
+        const output = await runReleaseScript({
+          stateDir,
+          asset: assets[0],
+          extraAssets: assets.slice(1),
+          failedUploadAttempts,
+        });
+        const calls = (await Deno.readTextFile(`${stateDir}/gh.log`)).trim()
+          .split("\n");
+        const uploads = calls.filter((call) => call.startsWith("release upload "));
+        assertEquals(uploads.length, Math.min(failedUploadAttempts + 1, 3));
+        for (const upload of uploads) {
+          assertEquals(
+            upload,
+            `release upload v1.2.3-rc.4 ${assets.join(" ")} --repo veryfront/veryfront --clobber`,
+          );
+        }
+        assertEquals(output.code, failedUploadAttempts === 3 ? 1 : 0);
+        const publications = calls.filter((call) => call.startsWith("release edit "));
+        assertEquals(publications.length, failedUploadAttempts === 3 ? 0 : 1);
+        const deletions = calls.filter((call) => call.startsWith("release delete "));
+        assertEquals(deletions.length, failedUploadAttempts === 3 ? 1 : 0);
+        if (publications.length) {
+          assert(
+            calls.indexOf(publications[0]) > calls.lastIndexOf(uploads.at(-1)!),
+          );
+        }
+      });
+    });
+  }
 
   it("publishes after retrying a transient release asset upload failure", async () => {
     await withTempDir(async (stateDir) => {
