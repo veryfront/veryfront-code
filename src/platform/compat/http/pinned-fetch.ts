@@ -15,6 +15,7 @@ import {
   assertObjectPrototypeUnchanged,
   copyNativeHeaders,
   createNativeRequestInit,
+  descriptorField,
   readOwnInitField,
   readSeparateSetCookies,
   toNativeHeaderRecord,
@@ -33,6 +34,7 @@ const RequestArrayBuffer = NativeRequest.prototype.arrayBuffer;
 const ReflectGetPrototypeOf = Reflect.getPrototypeOf;
 const ReflectOwnKeys = Reflect.ownKeys;
 const ObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const ObjectHasOwn = Object.hasOwn;
 const URLHrefGetter = Object.getOwnPropertyDescriptor(URL.prototype, "href")!.get!;
 const FunctionHasInstance = Function.prototype[Symbol.hasInstance];
 const NativeURLSearchParams = URLSearchParams;
@@ -105,6 +107,8 @@ const NODE_REQUEST_MEMBERS: readonly MemberSnapshot[] = (() => {
     }
   };
   addChain(nodeHttp.ClientRequest.prototype);
+  // The response's `req` is the request, so its members reach the headers too.
+  addChain(nodeHttp.IncomingMessage.prototype);
   addChain(nodeHttps.Agent.prototype);
   addChain(nodeHttp.Agent.prototype);
   addChain(privateHttpAgent);
@@ -117,13 +121,28 @@ function isSameMember(
   original: PropertyDescriptor | undefined,
 ): boolean {
   if (current === undefined || original === undefined) return current === original;
+  const originalValue = descriptorField(original, "value");
   // Data members of the agents (socket maps, counters) change as they work;
-  // only functions and accessors are compared.
-  if (typeof original.value !== "function" && "value" in original) {
-    return "value" in current && typeof current.value !== "function";
+  // only functions and accessors are compared. Fields are read as own
+  // properties: an inherited `get` on Object.prototype would otherwise run.
+  if (typeof originalValue !== "function" && hasOwnField(original, "value")) {
+    return hasOwnField(current, "value") &&
+      typeof descriptorField(current, "value") !== "function";
   }
-  return current.value === original.value && current.get === original.get &&
-    current.set === original.set;
+  return descriptorField(current, "value") === originalValue &&
+    descriptorField(current, "get") === descriptorField(original, "get") &&
+    descriptorField(current, "set") === descriptorField(original, "set");
+}
+
+function hasOwnField(descriptor: PropertyDescriptor, field: "value"): boolean {
+  return IntrinsicReflectApply(ObjectHasOwn, undefined, [descriptor, field]) as boolean;
+}
+
+function isFunctionOrAccessor(descriptor: PropertyDescriptor | undefined): boolean {
+  if (descriptor === undefined) return false;
+  return typeof descriptorField(descriptor, "value") === "function" ||
+    descriptorField(descriptor, "get") !== undefined ||
+    descriptorField(descriptor, "set") !== undefined;
 }
 
 /**
@@ -150,10 +169,7 @@ export function assertNodeRequestMembersUnchanged(): void {
       const original = position === -1 ? undefined : snapshot.descriptors[position];
       const current = ObjectGetOwnPropertyDescriptor(snapshot.target, keys[key]!);
       if (
-        position === -1
-          ? typeof current?.value === "function" || current?.get !== undefined ||
-            current?.set !== undefined
-          : !isSameMember(current, original)
+        position === -1 ? isFunctionOrAccessor(current) : !isSameMember(current, original)
       ) {
         changed = true;
         member = String(keys[key]);
@@ -161,7 +177,7 @@ export function assertNodeRequestMembersUnchanged(): void {
     }
     for (let key = 0; !changed && key < snapshot.keys.length; key++) {
       if (
-        typeof snapshot.descriptors[key]?.value === "function" &&
+        isFunctionOrAccessor(snapshot.descriptors[key]) &&
         ObjectGetOwnPropertyDescriptor(snapshot.target, snapshot.keys[key]!) === undefined
       ) {
         changed = true;
@@ -337,7 +353,7 @@ export function isRetriableConnectFailure(error: unknown): boolean {
  * retry would send nothing.
  */
 export function isReplayableRequestBody(body: BodyInit | null): boolean {
-  // A Blob counts: it is immutable and `writeRequestBody` calls `body.stream()`
+  // A Blob counts: it is immutable and `prepareRequestPayload` calls `body.stream()`
   // per attempt, so each attempt gets a fresh stream over identical bytes. A
   // ReadableStream does not, because the attempt that failed already drained it.
   return body === null || typeof body === "string" ||
@@ -401,30 +417,44 @@ async function normalizeRequestBody(
   return body;
 }
 
-async function writeRequestBody(request: ClientRequest, body: BodyInit | null): Promise<void> {
-  if (body === null) {
-    request.end();
-    return;
-  }
-  if (typeof body === "string" || body instanceof URLSearchParams) {
-    request.end(String(body));
-    return;
-  }
-  if (body instanceof ArrayBuffer) {
-    request.end(new Uint8Array(body));
-    return;
-  }
-  if (ArrayBuffer.isView(body)) {
-    request.end(new Uint8Array(body.buffer, body.byteOffset, body.byteLength));
-    return;
-  }
+type RequestPayload =
+  | { readonly kind: "chunk"; readonly chunk: string | Uint8Array | undefined }
+  | { readonly kind: "stream"; readonly source: Readable };
 
+/**
+ * The request body in the form node:http writes, prepared before the request
+ * exists: preparing it can run project code (a `toString`, typed-array getters,
+ * a Blob's `stream`), which must not run while a request holds the headers.
+ */
+async function prepareRequestPayload(body: BodyInit | null): Promise<RequestPayload> {
+  if (body === null) return { kind: "chunk", chunk: undefined };
+  if (typeof body === "string" || body instanceof URLSearchParams) {
+    return { kind: "chunk", chunk: String(body) };
+  }
+  if (body instanceof ArrayBuffer) return { kind: "chunk", chunk: new Uint8Array(body) };
+  if (ArrayBuffer.isView(body)) {
+    return {
+      kind: "chunk",
+      chunk: new Uint8Array(body.buffer, body.byteOffset, body.byteLength),
+    };
+  }
   const { Readable } = await import("node:stream");
   const webStream = body instanceof Blob ? body.stream() : body;
-  const source = Readable.fromWeb(
-    webStream as import("node:stream/web").ReadableStream<Uint8Array>,
-  );
-  await new Promise<void>((resolve, reject) => {
+  return {
+    kind: "stream",
+    source: Readable.fromWeb(webStream as import("node:stream/web").ReadableStream<Uint8Array>),
+  };
+}
+
+/** Write a prepared payload; a chunk is written in the caller's turn. */
+function writeRequestPayload(request: ClientRequest, payload: RequestPayload): Promise<void> {
+  if (payload.kind === "chunk") {
+    if (payload.chunk === undefined) request.end();
+    else request.end(payload.chunk);
+    return Promise.resolve();
+  }
+  const source = payload.source;
+  return new Promise<void>((resolve, reject) => {
     source.once("error", reject);
     request.once("error", reject);
     request.once("finish", resolve);
@@ -525,23 +555,46 @@ export async function fetchWithPinnedAddresses(
         : {}),
     });
 
+    // Prepared before the request exists: it can run project code.
+    const payload = await prepareRequestPayload(body);
     let pendingRequest: ClientRequest | undefined;
     try {
       return await new Promise<Response>((resolve, reject) => {
         let settled = false;
         let responseMessage: IncomingMessage | undefined;
+        const abortReason = () =>
+          signal?.reason ?? new DOMException("The operation was aborted", "AbortError");
+        const abort = () => {
+          const reason = abortReason();
+          responseMessage?.destroy(isErrorAcrossRealms(reason) ? reason : undefined);
+          // Registered before the request exists; it only fires afterwards.
+          request.destroy(isErrorAcrossRealms(reason) ? reason : undefined);
+          if (!settled) rejectBeforeResponse(reason);
+        };
         const cleanupAbortListener = () => signal?.removeEventListener("abort", abort);
         const rejectBeforeResponse = (error: unknown) => {
           cleanupAbortListener();
           reject(error);
         };
-        // Same turn as the call: node:http processes the headers synchronously.
+        // The signal's members can run project code, so they are used before
+        // the request, and its headers, exist.
+        if (signal?.aborted) {
+          reject(abortReason());
+          return;
+        }
+        signal?.addEventListener("abort", abort, { once: true });
+        // Same turn as the call and every request operation below: node:http
+        // processes the headers synchronously, and nothing between here and
+        // the body write runs project code.
         assertNativeRequestProcessing();
         assertObjectPrototypeUnchanged();
         assertNodeRequestMembersUnchanged();
         const request = sendRequest(requestOptions, async (message) => {
           responseMessage = message;
           try {
+            // The response's `req` is the request: checked again before any
+            // member of either runs in this turn.
+            assertNodeRequestMembersUnchanged();
             const responseHeaders = copyResponseHeaders(message);
             const status = message.statusCode ?? 500;
             if (method === "HEAD" || NULL_BODY_STATUSES.has(status)) {
@@ -580,18 +633,6 @@ export async function fetchWithPinnedAddresses(
           }
         });
 
-        const abort = () => {
-          const reason = signal?.reason ??
-            new DOMException("The operation was aborted", "AbortError");
-          responseMessage?.destroy(isErrorAcrossRealms(reason) ? reason : undefined);
-          request.destroy(isErrorAcrossRealms(reason) ? reason : undefined);
-          if (!settled) rejectBeforeResponse(reason);
-        };
-        signal?.addEventListener("abort", abort, { once: true });
-        if (signal?.aborted) {
-          abort();
-          return;
-        }
         request.once("error", rejectBeforeResponse);
         // Bun reports connect failures through
         // `process.nextTick(() => self.emit("error", err))`, so the emit can
@@ -603,7 +644,7 @@ export async function fetchWithPinnedAddresses(
         // error still rejects through `rejectBeforeResponse`.
         request.on("error", () => {});
         pendingRequest = request;
-        void writeRequestBody(request, body).catch((error) => request.destroy(error));
+        void writeRequestPayload(request, payload).catch((error) => request.destroy(error));
       });
     } catch (error) {
       // Release the socket of the attempt being abandoned. The sink above stays

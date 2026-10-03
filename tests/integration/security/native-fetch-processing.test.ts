@@ -10,6 +10,7 @@ import {
   recordNativePrototypeUse,
 } from "../../../src/platform/compat/http/native-request-use.test-helpers.ts";
 import {
+  assertNativeRequestProcessing,
   assertObjectPrototypeUnchanged,
   copyNativeHeaders,
   createNativeRequestInit,
@@ -237,4 +238,29 @@ describe("node:http members the pinned transport depends on", () => {
       assertEquals(sawBearer, false);
     });
   }
+});
+
+describe("the native-processing checks themselves", () => {
+  it("never read an inherited descriptor field", () => {
+    // A data descriptor owns no `get` or `set`: reading them would run a
+    // getter project code put on Object.prototype, with the descriptor (and
+    // the member it describes) as `this`.
+    let calls = 0;
+    const hook: PropertyDescriptor = {
+      configurable: true,
+      get() {
+        calls++;
+        return undefined;
+      },
+    };
+    Object.defineProperty(Object.prototype, "get", hook);
+    Object.defineProperty(Object.prototype, "set", hook);
+    try {
+      assertNativeRequestProcessing();
+    } finally {
+      delete (Object.prototype as { get?: unknown }).get;
+      delete (Object.prototype as { set?: unknown }).set;
+    }
+    assertEquals(calls, 0);
+  });
 });
