@@ -425,6 +425,37 @@ describe("agent/ag-ui-run-control", () => {
     await pending;
   });
 
+  it("returns a positive stop receipt only after detached producer settlement", async () => {
+    let settled = false;
+    const handler = createAgUiCancelHandler({
+      authorizeRunControl: allowRunControl,
+      sessionManager: new RunResumeSessionManager<{ ok: boolean }>(),
+      hasSettledExecution: () => settled,
+      hasPendingExecution: () => !settled,
+    });
+    const send = () =>
+      handler(
+        new Request("https://example.com/api/runs/run_stop?confirm_stopped=true", {
+          method: "DELETE",
+        }),
+      );
+    assertEquals(await (await send()).json(), { accepted: true, stopped: false });
+    const missing = createAgUiCancelHandler({
+      authorizeRunControl: allowRunControl,
+      sessionManager: new RunResumeSessionManager<{ ok: boolean }>(),
+    });
+    assertEquals(
+      (await missing(
+        new Request("https://example.com/api/runs/missing?confirm_stopped=true", {
+          method: "DELETE",
+        }),
+      )).status,
+      204,
+    );
+    settled = true;
+    assertEquals(await (await send()).json(), { accepted: true, stopped: true });
+  });
+
   it("returns 204 when cancelling an already inactive run", async () => {
     const handler = createAgUiCancelHandler({
       authorizeRunControl: allowRunControl,

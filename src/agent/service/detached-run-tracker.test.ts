@@ -244,3 +244,19 @@ describe("agent/detached-run-tracker", () => {
     assertEquals(unhandled, undefined);
   });
 });
+
+it("stop receipt waits for every detached producer, including a parked turn", async () => {
+  const tracker = createDetachedRunTracker();
+  const oldTurn = deferred();
+  const newTurn = deferred();
+  tracker.registerExecution("run_stop", oldTurn.promise);
+  tracker.registerExecution("run_stop", newTurn.promise);
+  assertEquals(tracker.hasSettledExecution?.("run_stop"), false);
+  assertEquals(tracker.hasSettledExecution?.("missing"), false);
+  await newTurn.resolve();
+  await Promise.resolve();
+  assertEquals(tracker.hasSettledExecution?.("run_stop"), false);
+  await oldTurn.resolve();
+  await Promise.resolve();
+  assertEquals(tracker.hasSettledExecution?.("run_stop"), true);
+});
