@@ -1576,12 +1576,24 @@ async function awaitRunPauseDecision(
   acknowledge: () => Promise<boolean | undefined>,
   signal: AbortSignal,
   deps: Pick<ProjectRunExecuteHandlerDeps, "sleep">,
+  runId: string,
+  pollingStopped?: AbortSignal,
 ): Promise<boolean> {
-  while (!isAbortSignalAborted(signal)) {
+  // A stopped poll (the resume request already answered) ends the wait like a
+  // cancellation: the run holds its boundary and a later dispatch decides.
+  const ended = () =>
+    isAbortSignalAborted(signal) ||
+    (pollingStopped !== undefined && isAbortSignalAborted(pollingStopped));
+  for (let round = 1; !ended(); round++) {
     const decision = await acknowledge();
     if (decision !== undefined) return decision;
+    if (ended()) break;
     // An unknown reply may hide a committed stop. Hold the durable boundary until
     // the current authority explicitly permits continuation or cancellation ends it.
+    serverLogger.warn("[project-run-execute] Pause decision unknown; holding the boundary", {
+      runId,
+      round,
+    });
     await deps.sleep(WORKFLOW_PAUSE_CHECK_BACKOFF_MS);
   }
   return true;
@@ -1622,7 +1634,13 @@ async function resumeManuallyPausedRun(
       continue;
     }
     if (!acknowledgePause) return { failure: "Manual resume requires a run stop capability" };
-    const stop = await awaitRunPauseDecision(acknowledgePause, signal, deps);
+    const stop = await awaitRunPauseDecision(
+      acknowledgePause,
+      signal,
+      deps,
+      runId,
+      pollingStopped,
+    );
     if (isAbortSignalAborted(signal)) {
       await cancelRun();
       return { run: { status: "cancelled", error: { message: "Workflow run cancelled" } } };
@@ -1732,7 +1750,7 @@ async function runDiscoveredWorkflow(
     if (
       lastPauseCheckAt !== undefined && now - lastPauseCheckAt < WORKFLOW_PAUSE_CHECK_INTERVAL_MS
     ) return false;
-    const answer = await awaitRunPauseDecision(acknowledgePause, signal, deps);
+    const answer = await awaitRunPauseDecision(acknowledgePause, signal, deps, runId);
     lastPauseCheckAt = deps.now();
     return answer;
   };

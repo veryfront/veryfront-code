@@ -9939,6 +9939,7 @@ describe("server/handlers/request/project-run-execute.handler manual pause (#258
       onDiscover?: () => void;
       onResume?: () => void;
       sleep?: (ms: number) => Promise<void>;
+      workflowResumeTimeoutMs?: number;
     } = {},
   ): ProjectRunExecuteHandler {
     return new ProjectRunExecuteHandler(createDeps({
@@ -9964,6 +9965,9 @@ describe("server/handlers/request/project-run-execute.handler manual pause (#258
       },
       now: options.now ?? (() => 0),
       sleep: options.sleep ?? ((ms: number) => delay(Math.min(ms, 10))),
+      ...(options.workflowResumeTimeoutMs === undefined
+        ? {}
+        : { workflowResumeTimeoutMs: options.workflowResumeTimeoutMs }),
     }));
   }
 
@@ -10182,6 +10186,35 @@ describe("server/handlers/request/project-run-execute.handler manual pause (#258
     });
     assertEquals(calls, ["first"]);
     assertEquals(requests, 7);
+  });
+
+  it("stops asking for the pause decision once a timed-out manual resume has answered", async () => {
+    const backend = new SharedMemoryBackend();
+    const calls: string[] = [];
+    const definition = threeSteps(calls);
+    let authorized = true;
+    let requests = 0;
+    await withMockFetch(async () => {
+      requests++;
+      return authorized
+        ? Response.json({ stop: true })
+        : Response.json({ stop: false }, { status: 401 });
+    }, async () => {
+      await dispatch(createHandler(backend, definition));
+      authorized = false;
+      const resumed = await dispatch(
+        createHandler(backend, definition, { workflowResumeTimeoutMs: 20 }),
+        { type: "manual" },
+      );
+      assertEquals(resumed.status, "waiting");
+      // Let a round already in flight finish, then no further round may start.
+      await delay(60);
+      const settled = requests;
+      await delay(120);
+      assertEquals(requests, settled);
+    });
+    assertEquals(calls, ["first"]);
+    assertEquals((await backend.getRun(runId))?.status, "waiting");
   });
 
   it("refuses manual resume without a capability instead of releasing the boundary", async () => {
