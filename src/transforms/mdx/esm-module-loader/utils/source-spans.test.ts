@@ -1698,6 +1698,15 @@ import real from "./real.js";`,
       );
     });
 
+    it("scales line-broken division scans linearly", () => {
+      assertLinearScan(
+        "line-broken division",
+        specifiers,
+        (size) => "x\n/2/x;\n".repeat(size),
+        500,
+      );
+    });
+
     it("keeps shift-expression tag lookahead within a bounded runtime", () => {
       const source = "x<<y;\n".repeat(12_000);
       const startedAt = performance.now();

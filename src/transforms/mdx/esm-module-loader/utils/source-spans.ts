@@ -692,7 +692,13 @@ function previousSignificantIndex(source: string, index: number): number {
 
 function lineCommentStart(source: string, index: number): number | null {
   let cursor = index;
-  while (cursor > 0 && !isLineTerminator(source[cursor - 1] ?? "")) cursor--;
+  let hasCommentMarker = false;
+  while (cursor >= 0 && !isLineTerminator(source[cursor] ?? "")) {
+    if (source[cursor] === "/" && source[cursor + 1] === "/") hasCommentMarker = true;
+    cursor--;
+  }
+  if (!hasCommentMarker) return null;
+  cursor++;
 
   let quote: string | null = null;
   for (; cursor <= index; cursor++) {
@@ -727,18 +733,10 @@ function previousSignificantIndexBeforeIgnored(source: string, index: number): n
       }
     }
 
-    const lineStart = MathMax(
-      stringLastIndexOf(source, "\n", cursor),
-      stringLastIndexOf(source, "\r", cursor),
-      stringLastIndexOf(source, "\u2028", cursor),
-      stringLastIndexOf(source, "\u2029", cursor),
-    ) + 1;
-    if (stringLastIndexOf(source, "//", cursor) >= lineStart) {
-      const commentStart = lineCommentStart(source, cursor);
-      if (commentStart !== null) {
-        cursor = commentStart;
-        continue;
-      }
+    const commentStart = lineCommentStart(source, cursor);
+    if (commentStart !== null) {
+      cursor = commentStart;
+      continue;
     }
 
     return cursor;
@@ -883,6 +881,16 @@ function normalizedDeclarationPrefix(source: string, start: number, end: number)
   return regexpReplaceAll(COMMENT_PATTERN, stringTrimStart(stringSlice(source, start, end)), " ");
 }
 
+function statementSeparatorStartBefore(source: string, index: number): number {
+  // Stop at the nearest boundary instead of searching the entire prefix for
+  // each separator kind, which is quadratic when a kind never occurs.
+  for (let cursor = index - 1; cursor >= 0; cursor--) {
+    const char = source[cursor];
+    if (char === ";" || char === "{" || char === "}") return cursor + 1;
+  }
+  return 0;
+}
+
 function declarationStatementStartBefore(
   source: string,
   index: number,
@@ -892,11 +900,7 @@ function declarationStatementStartBefore(
     "function",
   ],
 ): number {
-  const separatorStart = MathMax(
-    stringLastIndexOf(source, ";", index - 1),
-    stringLastIndexOf(source, "{", index - 1),
-    stringLastIndexOf(source, "}", index - 1),
-  ) + 1;
+  const separatorStart = statementSeparatorStartBefore(source, index);
   return declarationAsiBoundaryBefore(source, separatorStart, index, keywords) ?? separatorStart;
 }
 
@@ -1248,11 +1252,7 @@ function isTypeAliasDeclarationBeforeRegex(
     return false;
   }
 
-  const separatorStart = MathMax(
-    stringLastIndexOf(source, ";", regexIndex - 1),
-    stringLastIndexOf(source, "{", regexIndex - 1),
-    stringLastIndexOf(source, "}", regexIndex - 1),
-  ) + 1;
+  const separatorStart = statementSeparatorStartBefore(source, regexIndex);
   if (!hasDeclarationKeywordBefore(source, separatorStart, regexIndex, ["export", "type"])) {
     return false;
   }
@@ -1280,11 +1280,7 @@ function isTypeScriptAmbientDeclarationBeforeRegex(
     return false;
   }
 
-  const separatorStart = MathMax(
-    stringLastIndexOf(source, ";", regexIndex - 1),
-    stringLastIndexOf(source, "{", regexIndex - 1),
-    stringLastIndexOf(source, "}", regexIndex - 1),
-  ) + 1;
+  const separatorStart = statementSeparatorStartBefore(source, regexIndex);
   if (!hasDeclarationKeywordBefore(source, separatorStart, regexIndex, ["declare", "export"])) {
     return false;
   }
