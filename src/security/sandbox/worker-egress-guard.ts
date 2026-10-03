@@ -1541,34 +1541,39 @@ export async function guardedEgressFetch(
       fromUrl: parsedUrl,
       toUrl: nextUrl,
     };
+    // Every value the header edits depend on is read first: the URL and
+    // Response getters are live prototype members project code can replace,
+    // and must not run between the check and the edits.
+    const crossOrigin = nextUrl.origin !== new NativeURL(url).origin;
+    const nextHref = nextUrl.href;
+    const status = response.status;
+    // Standard fetch redirect method/body rules: 301/302 downgrade POST, while
+    // 303 downgrades every method except GET and HEAD. 307/308 always preserve.
+    const downgrades = ((status === 301 || status === 302) && method === "POST") ||
+      (status === 303 && method !== "GET" && method !== "HEAD");
+    // Deleting a header splices the native list, which hands the removed entry
+    // to the array species: check right before the edits, which use indexed
+    // loops rather than a patchable array iterator.
+    assertNativeRequestProcessing();
     // Cross-origin redirect: strip credential-bearing headers, matching the
     // platform fetch this guard replaces, so a redirect target cannot receive
-    // the caller's Authorization/Cookie. Deleting a header splices the native
-    // list, which hands the removed entry to the array species, so the check
-    // runs after the URL getters (which project code can replace) and the
-    // deletes use an indexed loop rather than a patchable array iterator.
-    const crossOrigin = nextUrl.origin !== new NativeURL(url).origin;
-    assertNativeRequestProcessing();
+    // the caller's Authorization/Cookie.
     if (crossOrigin) {
       for (let index = 0; index < CROSS_ORIGIN_CREDENTIAL_HEADERS.length; index++) {
         IntrinsicReflectApply(HeadersDelete, headers, [CROSS_ORIGIN_CREDENTIAL_HEADERS[index]]);
       }
     }
-    url = nextUrl.href;
-    didRedirect = true;
-
-    // Standard fetch redirect method/body rules: 301/302 downgrade POST, while
-    // 303 downgrades every method except GET and HEAD. 307/308 always preserve.
-    const downgrades =
-      ((response.status === 301 || response.status === 302) && method === "POST") ||
-      (response.status === 303 && method !== "GET" && method !== "HEAD");
     if (downgrades) {
-      method = "GET";
-      body = undefined;
-      // Indexed, as above: the headers still hold the caller's credentials.
       for (let index = 0; index < BODY_HEADERS.length; index++) {
         IntrinsicReflectApply(HeadersDelete, headers, [BODY_HEADERS[index]]);
       }
+    }
+    url = nextHref;
+    didRedirect = true;
+
+    if (downgrades) {
+      method = "GET";
+      body = undefined;
     } else if (!isReplayableBody(body)) {
       throw new WorkerEgressBlockedError(
         "Worker network egress blocked: cannot safely follow a body-preserving redirect",
