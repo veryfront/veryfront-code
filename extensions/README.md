@@ -110,7 +110,7 @@ the same contract.
 
 | Package                                                           | Contract                    | Description                                 |
 | ----------------------------------------------------------------- | --------------------------- | ------------------------------------------- |
-| [`@veryfront/ext-sandbox-shell-tools`](./ext-sandbox-shell-tools) | `SandboxShellToolsProvider` | Sandbox shell tool creation via `bash-tool` |
+| [`@veryfront/ext-sandbox-shell-tools`](./ext-sandbox-shell-tools) | `SandboxShellToolsProvider` | Sandbox shell tools via AI SDK and Zod |
 
 ## Built-in first-party selection
 
@@ -174,7 +174,7 @@ the runtime-specific package they execute.
 ## npm service installs
 
 Install extension packages by the features a service executes. Do not install
-raw transitive dependencies such as `bash-tool`, `just-bash`, `jose`,
+raw transitive dependencies such as `ai`, `zod`, `just-bash`, `jose`,
 `better-sqlite3`, `@aws-sdk/client-s3`, `@kreuzberg/node`, `@mdx-js/mdx`, or
 `tailwindcss` directly to satisfy Veryfront runtime features.
 
@@ -333,7 +333,7 @@ inside their named extension boundaries.
 
 | Class               | Extension                 | Boundary components                       | Capability surface             |
 | ------------------- | ------------------------- | ----------------------------------------- | ------------------------------ |
-| Sandbox execution   | `ext-sandbox-shell-tools` | `bash-tool`, `just-bash`                  | `SandboxShellToolsProvider`    |
+| Sandbox execution   | `ext-sandbox-shell-tools` | `ai`, `just-bash`, `zod`                  | `SandboxShellToolsProvider`    |
 | Native SQLite store | `ext-db-sqlite`           | `better-sqlite3`, `@types/better-sqlite3` | `SqliteStore`, filesystem I/O  |
 | Document extraction | `ext-document-kreuzberg`  | `@kreuzberg/wasm`                         | `DocumentExtractor`, file read |
 | Redis runtime       | `ext-redis`               | `redis`, `@redis/client`                  | Network and environment access |
