@@ -274,7 +274,8 @@ export function DesignSystemChat() {
 
 ## Integration with Design Systems
 
-Primitives work seamlessly with any design system:
+The following examples use Tailwind CSS, CSS Modules, Styled Components, and
+shadcn/ui with the primitives:
 
 ### Tailwind CSS
 

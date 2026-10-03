@@ -153,6 +153,8 @@ export interface WorkflowExecutorConfig {
   onWaitingBatchComplete?: (run: WorkflowRun) => void | Promise<void>;
   /** Notify the owning wait manager after cancellation resolves a durable wait. */
   onEventWaitResolved?: (runId: string, waitId: string) => void | Promise<void>;
+  /** Ask whether a run should pause at its next safe batch boundary; see `DAGExecutorConfig`. */
+  shouldPause?: (runId: string) => Promise<boolean> | boolean;
 }
 
 /** Controller for a running workflow. */
@@ -224,6 +226,7 @@ export class WorkflowExecutor {
         this.config.backend.prepareNodeStatesForPersistence?.(runId, nodeStates) ?? nodeStates,
       maxConcurrency: this.config.maxConcurrency,
       debug: this.config.debug,
+      shouldPause: this.config.shouldPause,
       // waiting state is handled by executeAsync() after DAG execution returns with waiting: true
       onWaiting: () => {},
       onChildRecoveryAdmitted: ({ runId, nodeStatePatch, ownership }) => {

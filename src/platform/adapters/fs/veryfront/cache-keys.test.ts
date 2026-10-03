@@ -1,5 +1,9 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertNotEquals } from "#veryfront/testing/assert.ts";
+import {
+  isCacheKeyPassThroughSafe,
+  isValidCachePattern,
+} from "#veryfront/cache/keys/api-policy.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   buildDirCacheKeyPrefix,
@@ -50,7 +54,7 @@ describe("cache-keys", () => {
     it("should build branch-based key", () => {
       assertEquals(
         buildFileCacheKeyPrefix(branchCtx),
-        "file:branch:my-project:feature%2Fx",
+        "file:branch-v2:Im15LXByb2plY3Qi:ImZlYXR1cmUveCI",
       );
     });
 
@@ -85,7 +89,7 @@ describe("cache-keys", () => {
     it("should build branch-based key", () => {
       assertEquals(
         buildStatCacheKeyPrefix(branchCtx),
-        "stat:branch:my-project:feature%2Fx",
+        "stat:branch-v2:Im15LXByb2plY3Qi:ImZlYXR1cmUveCI",
       );
     });
 
@@ -105,7 +109,7 @@ describe("cache-keys", () => {
     it("should build branch-based key", () => {
       assertEquals(
         buildDirCacheKeyPrefix(branchCtx),
-        "dir:branch:my-project:feature%2Fx",
+        "dir:branch-v2:Im15LXByb2plY3Qi:ImZlYXR1cmUveCI",
       );
     });
   });
@@ -116,10 +120,56 @@ describe("cache-keys", () => {
     });
 
     it("should build branch-based key", () => {
-      assertEquals(
-        buildFileListCacheKey(branchCtx),
-        "files:branch:my-project:feature%2Fx",
-      );
+      const key = buildFileListCacheKey(branchCtx);
+      assertEquals(key.startsWith("files:branch:"), true);
+      assertEquals(isCacheKeyPassThroughSafe(`${key}:authority:credential`), true);
+      assertEquals(isValidCachePattern(`${key}:authority:*`), true);
+      assertNotEquals(key, buildFileListCacheKey({ ...branchCtx, branch: "feature%2Fx" }));
+    });
+
+    it("keeps encoded and bounded source identities distinct and API-safe", () => {
+      const contexts = [
+        { ...mainBranchCtx, branch: "vf-sanitized" },
+        { ...mainBranchCtx, branch: "x".repeat(600) },
+        { ...mainBranchCtx, branch: "y".repeat(600) },
+        { ...envCtx, environmentName: "Preview/test", releaseId: "release:1" },
+        { ...releaseCtx, projectSlug: "vf-sanitized" },
+      ];
+      const keys = contexts.map(buildFileListCacheKey);
+      assertEquals(new Set(keys).size, keys.length);
+      for (const key of keys) {
+        assertEquals(isCacheKeyPassThroughSafe(`${key}:authority:${"a".repeat(26)}`), true);
+        assertEquals(isValidCachePattern(`${key}:authority:*`), true);
+      }
+    });
+
+    it("preserves project prefixes for publish invalidation of encoded and hashed listings", () => {
+      for (
+        const ctx of [
+          { ...envCtx, environmentName: "Preview/test" },
+          { ...envCtx, environmentName: "x".repeat(600) },
+          { ...releaseCtx, releaseId: "release/1" },
+          { ...releaseCtx, releaseId: "x".repeat(600) },
+        ]
+      ) {
+        const sourceType = ctx.sourceType === "environment" ? "env" : "release";
+        const key = buildFileListCacheKey(ctx);
+        assertEquals(key.startsWith(`files:${sourceType}:${ctx.projectSlug}:`), true);
+        assertEquals(isCacheKeyPassThroughSafe(`${key}:authority:credential`), true);
+      }
+    });
+
+    it("does not let a delimiter-containing project slug alias another project's listing", () => {
+      const fallback = buildFileListCacheKey({ ...mainBranchCtx, projectSlug: "p", branch: "a b" });
+      const forgedSlug = fallback.slice("files:branch:".length, -":value".length);
+      const forged = buildFileListCacheKey({
+        ...mainBranchCtx,
+        projectSlug: forgedSlug,
+        branch: "value",
+      });
+      assertNotEquals(forged, fallback);
+      assertEquals(isCacheKeyPassThroughSafe(`${forged}:authority:credential`), true);
+      assertEquals(isValidCachePattern(`${forged}:authority:*`), true);
     });
 
     it("should build environment-based key", () => {

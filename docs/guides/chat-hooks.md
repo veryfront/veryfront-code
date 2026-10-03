@@ -171,13 +171,17 @@ export default function ConversationList() {
 A failed save remains visible in the current React tree. Treat it as
 unsaved until the adapter completes a later save.
 Deletion is confirm-on-success in the React tree: the conversation remains
-visible while the adapter is deleting it. A delete rejected before its durable
+visible while the adapter is deleting it.
+
+A delete rejected before its durable
 intent is stored leaves the record unchanged. Once that intent is durable,
 recovery always finishes the deletion; the original storage error is still
 reported, and the next locked operation retries any unfinished work.
 After deletion succeeds, ordinary `save()` calls for that id remain suppressed
 until a later list confirms its absence, preventing late stream callbacks from
-resurrecting it. To intentionally reuse the deleted id when that confirmation
+resurrecting it.
+
+To intentionally reuse the deleted id when that confirmation
 cannot complete, call
 `conversations.save(replacement, { recreateDeleted: true })` explicitly.
 

@@ -216,7 +216,7 @@ chained by `previous_execution` links, and every span still carries `workflow.ru
 filtering on that attribute reassembles the whole run as it always did.
 
 The link is built from a W3C `traceparent` persisted on the run record when each execution
-claims it. A run executed with tracing disabled simply stores nothing and the next
+claims it. A run executed with tracing disabled stores nothing and the next
 execution links to nothing, so the chain degrades to `workflow.run_id` correlation.
 
 Node spans carry `workflow.node.status`, and a failed node or run sets the span status to
@@ -224,7 +224,9 @@ ERROR, so the usual errored-spans filters in Jaeger, Tempo and Datadog work. A c
 is not a failure: the in-flight node span ends as ERROR reporting `Node "<id>" failed`, while
 the `workflow.run` span stays unset, so cancellations do not show up in errored-run queries.
 Span statuses never carry the underlying error text, on this path or any other: they name the
-node, or a bounded classification such as `ECONNRESET`. The detail stays in the run record and
+node, or a bounded classification such as `ECONNRESET`.
+
+The detail stays in the run record and
 the logs. The `exception` event a failed span records carries no `exception.stacktrace` either,
 because the error the span reports is a classification built where the failure was noticed, so
 its frames would name framework files and the absolute paths they sit at rather than the
@@ -237,5 +239,7 @@ earlier ones are. When the retries exhaust and every attempt fails, the sibling 
 identical in name, status and attributes, and only the span id and the timestamps separate
 them. `workflow.node.attempts` does not help either, because it reads `1` on every child: the
 attempt counter lives on the parent composite span, and each child re-runs from scratch
-counting its own attempts from one. The parent node span carries a `workflow.node.retry` event
+counting its own attempts from one.
+
+The parent node span carries a `workflow.node.retry` event
 per retry, which is the reliable way to count them.

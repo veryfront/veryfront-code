@@ -25,12 +25,14 @@ network, or workspace fallback.
 ## Configuration and capabilities
 
 The factory accepts no options. It receives only bounded in-memory CSS and
-content snapshots from core. PurgeCSS 7 uses `glob`, whose matcher reads the
-`__MINIMATCH_TESTING_PLATFORM__` environment key during module loading. The
-extension declares only `env:read` for that key. In Deno this maps to
-`--allow-env=__MINIMATCH_TESTING_PLATFORM__`. The exact capability audit rejects
-unscoped environment access and any additional key or capability. The extension
-requests no filesystem, network, subprocess, native, or system capability.
+content snapshots from core. PurgeCSS 7 uses `glob`, whose matcher reads
+`__MINIMATCH_TESTING_PLATFORM__` during module loading. Its PostCSS dependency
+loads `picocolors`, which reads `NO_COLOR`, `FORCE_COLOR`, `TERM`, and `CI` to
+select terminal colors. The extension scopes `env:read` to those five keys. Its
+standalone test task grants the same keys, so module loading works even when
+`FORCE_COLOR` is unset. The exact capability audit rejects unscoped environment
+access and any additional key or capability. The extension requests no
+filesystem, network, subprocess, native, or system capability.
 
 PurgeCSS does not expose an operation-level cancellation signal, so this
 contract cannot interrupt an invocation after it enters the provider. Core

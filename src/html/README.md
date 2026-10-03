@@ -2,7 +2,9 @@
 
 ## Purpose
 
-The HTML module provides comprehensive HTML document generation and manipulation utilities for server-side rendering (SSR). It handles HTML shell generation, meta tag injection, hydration script generation, and content manipulation with proper escaping and security.
+The HTML module generates and modifies documents for server-side rendering
+(SSR). It builds the HTML shell, inserts metadata, and generates hydration
+scripts. It also provides escaping and sanitization utilities.
 
 ## Scope
 

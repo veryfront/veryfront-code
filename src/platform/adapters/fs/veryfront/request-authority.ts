@@ -1,4 +1,5 @@
 import { currentRequestContext } from "#veryfront/platform/request-context-access.ts";
+import { scopeFileOperationCacheKeyPrefix } from "#veryfront/cache/keys/builders/file.ts";
 
 const requestAuthoritySalt = crypto.randomUUID();
 const intrinsicApply = Reflect.apply;
@@ -37,11 +38,21 @@ export function scopeToRequestAuthority(scope: string): string {
 }
 
 /**
+ * Scope a file, stat or directory source prefix to the active request
+ * credential in a shape the API cache stores unchanged.
+ */
+export function scopeFileOperationToRequestAuthority(prefix: string): string {
+  return scopeFileOperationCacheKeyPrefix(prefix, getRequestAuthorityCacheVariant());
+}
+
+/**
  * Scope a file-list cache key to the active request credential. Every writer
  * and reader of an adapter's listing must agree on this key, or a hosted read
  * misses the listing its own adapter just fetched and lists the source again.
+ * Use an API-safe separator so shared keys retain their source prefix and
+ * source-wide invalidation can delete every credential variant.
  */
 export function scopeFileListCacheKeyToRequestAuthority(cacheKey: string): string {
   const authority = getRequestAuthorityCacheVariant();
-  return authority ? `${cacheKey}|${authority}` : cacheKey;
+  return authority ? `${cacheKey}:${authority}` : cacheKey;
 }
