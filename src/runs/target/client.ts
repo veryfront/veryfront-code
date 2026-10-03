@@ -251,18 +251,31 @@ async function* readFrames(
   response: Response,
 ): AsyncGenerator<RunStreamFrame> {
   if (!response.body) return;
+  for await (const raw of rawFrames(response.body)) {
+    const frame = parseFrame(operationId, raw);
+    if (frame) yield frame;
+  }
+}
+
+/** Split an event stream into raw frames, normalizing CRLF and CR line ends to LF. */
+async function* rawFrames(body: ReadableStream<Uint8Array>): AsyncGenerator<string> {
   let buffer = "";
-  for await (const chunk of response.body.pipeThrough(new TextDecoderStream())) {
-    // A trailing CR may be the first half of a CRLF split across chunks.
-    buffer = `${buffer}${chunk}`.replace(/\r\n|\r(?!$)/g, "\n");
+  function* complete(): Generator<string> {
     let boundary = buffer.indexOf("\n\n");
     while (boundary >= 0) {
-      const frame = parseFrame(operationId, buffer.slice(0, boundary));
+      yield buffer.slice(0, boundary);
       buffer = buffer.slice(boundary + 2);
-      if (frame) yield frame;
       boundary = buffer.indexOf("\n\n");
     }
   }
+  for await (const chunk of body.pipeThrough(new TextDecoderStream())) {
+    // A trailing CR may be the first half of a CRLF split across chunks.
+    buffer = `${buffer}${chunk}`.replace(/\r\n|\r(?!$)/g, "\n");
+    yield* complete();
+  }
+  // At the end of the body a trailing CR is a line end in its own right.
+  buffer = buffer.replace(/\r$/, "\n");
+  yield* complete();
 }
 
 /** Parse one SSE frame; comment-only frames such as keep-alives yield nothing. */

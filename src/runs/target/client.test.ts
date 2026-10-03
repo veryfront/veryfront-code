@@ -329,6 +329,13 @@ describe("Runs target SDK", () => {
     ]);
   });
 
+  it("parses an event stream that ends its lines with a bare CR", async () => {
+    const event = JSON.stringify({ type: "RUN_STARTED", threadId: "t", runId: RUN_ID });
+    const { sdk } = sdkWith([streamResponse([`id: 1\rdata: ${event}\r`, `\r`])]);
+    const frames = await collect(sdk.streamRunEvents({ path: { run_id: RUN_ID } }));
+    assertEquals(frames, [{ id: "1", event: JSON.parse(event) }]);
+  });
+
   it("maps a problem response to an error that keeps the domain code and status", async () => {
     const problem: RunsProblem = {
       type: "https://veryfront.com/problems/conflict",
