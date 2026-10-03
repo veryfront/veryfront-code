@@ -7,16 +7,16 @@ import { handleProjectCommand } from "../../../../../cli/commands/project/handle
 
 const [projectDir, scenario] = Deno.args;
 if (!projectDir) throw new Error("A project directory is required.");
-const argv = scenario?.startsWith("stream")
-  ? ["project", "runs", "stream", "--run-id", "r1"]
-  : scenario === "login-list" || scenario === "login-analytics"
-  ? ["project", "runs", scenario === "login-list" ? "list" : "analytics"]
-  : ["project", "runs", scenario === "event-token" ? "event-token" : "get", "--run-id", "r1"];
-argv.push("--json", "--project-dir", projectDir);
-if (!scenario?.startsWith("login-")) argv.push("--credential-file", `${projectDir}/credential`);
-if (scenario === "api-key") argv.push("--credential-mode", "api-key");
-setJsonMode(true);
-await withMockFetch((_url, init) => {
+
+function commandFor(name: string | undefined): string[] {
+  if (name?.startsWith("stream")) return ["project", "runs", "stream", "--run-id", "r1"];
+  if (name === "login-list") return ["project", "runs", "list"];
+  if (name === "login-analytics") return ["project", "runs", "analytics"];
+  const action = name === "event-token" ? "event-token" : "get";
+  return ["project", "runs", action, "--run-id", "r1"];
+}
+
+function assertCredentialHeaders(init: RequestInit | undefined): void {
   const headers = new Headers(init?.headers);
   if (scenario === "api-key") {
     if (headers.get("X-API-Key") !== "scoped-test-token" || headers.has("Authorization")) {
@@ -25,6 +25,15 @@ await withMockFetch((_url, init) => {
   } else if (headers.get("Authorization") !== "Bearer scoped-test-token") {
     throw new Error("Incorrect scoped credential.");
   }
+}
+
+const argv = commandFor(scenario);
+argv.push("--json", "--project-dir", projectDir);
+if (!scenario?.startsWith("login-")) argv.push("--credential-file", `${projectDir}/credential`);
+if (scenario === "api-key") argv.push("--credential-mode", "api-key");
+setJsonMode(true);
+await withMockFetch((_url, init) => {
+  assertCredentialHeaders(init);
   if (scenario === "validation" || scenario === "forbidden") {
     const status = scenario === "validation" ? 422 : 403;
     return Promise.resolve(Response.json({
@@ -45,14 +54,14 @@ await withMockFetch((_url, init) => {
       }),
     );
   }
-  if (scenario === "login-list") return Promise.resolve(fixtureResponse("listRuns"));
+  if (name === "login-list") return Promise.resolve(fixtureResponse("listRuns"));
   if (scenario === "login-analytics") {
     return Promise.resolve(fixtureResponse("getAccountRunAnalytics"));
   }
   if (scenario === "event-token") return Promise.resolve(fixtureResponse("createRunEventToken"));
   if (scenario === "business-output") {
     return fixtureResponse("getRun").json().then((body) =>
-      Response.json({ ...body, output: { token_count: 2, password_policy: "minimum-length" } })
+      Response.json({ ...body, output: { token_count: 2, credential_policy: "minimum-length" } })
     );
   }
   return Promise.resolve(

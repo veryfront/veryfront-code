@@ -76,7 +76,7 @@ describe("project runs CLI output and host credentials", () => {
     assertEquals(result.code, 0, result.stderr);
     assertEquals(JSON.parse(result.stdout).data.output, {
       token_count: 2,
-      password_policy: "minimum-length",
+      credential_policy: "minimum-length",
     });
   });
 

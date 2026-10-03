@@ -22,42 +22,60 @@ import type { ParsedArgs } from "#cli/shared/types";
 import { exitProcess } from "#cli/utils";
 import { parseRunsInvocation, runProjectRuns } from "./runs.ts";
 
+const COMMAND = "project runs";
+
 /** Use the normal trusted endpoint resolver; explicit scoped credentials come from a file. */
 export async function handleProjectRuns(args: ParsedArgs): Promise<void> {
   const invocation = parseRunsInvocation(args);
   const projectDir = typeof args["project-dir"] === "string" ? args["project-dir"] : Deno.cwd();
-  const command = "project runs";
   try {
     const sdk = await createProjectRunsSdk(args, projectDir);
-    await runProjectRuns(args, sdk, async (data) => {
-      // Successful command results are intentional API output, not diagnostic logs.
-      // Preserve the contract payload, including event-token credentials.
-      if (invocation.stream && isJsonMode()) {
-        streamJsonLine({ ...createSuccessEnvelope(command, data) });
-      } else if (isJsonMode()) await outputJson(createSuccessEnvelope(command, data));
-      else console.log(JSON.stringify(data, null, invocation.stream ? undefined : 2));
-    });
+    await runProjectRuns(args, sdk, (data) => emitRunsResult(data, invocation.stream));
   } catch (error) {
-    const problem = runsProblemOf(error);
-    if (!problem && !(invocation.stream && isJsonMode())) throw error;
-    const vfError = wrapUnknownError(error);
-    const exitCode = problem
-      ? (problem.status === 400 || problem.status === 422 ? 2 : 1)
-      : vfError.exitCode ?? 1;
-    const usage = exitCode === 2;
-    const safe = redactForSerialization({
-      code: problem?.code ?? (usage ? "USAGE_ERROR" : "RUNTIME_ERROR"),
-      slug: usage ? "invalid-arguments" : "command-failed",
-      registrySlug: vfError.slug,
-      message: problem ? problem.detail ?? problem.title : vfError.detail ?? vfError.message,
-    }) as ErrorEnvelope["error"];
-    if (isJsonMode()) {
-      const envelope = createErrorEnvelope(command, safe);
-      if (invocation.stream) streamJsonLine({ ...envelope });
-      else await outputJson(envelope);
-    } else console.error(safe.message);
-    exitProcess(exitCode);
+    await reportRunsFailure(error, invocation.stream);
   }
+}
+
+/**
+ * Successful command results are intentional API output, not diagnostic logs.
+ * Preserve the contract payload, including event-token credentials.
+ */
+async function emitRunsResult(data: unknown, stream: boolean): Promise<void> {
+  if (!isJsonMode()) {
+    console.log(JSON.stringify(data, null, stream ? undefined : 2));
+  } else if (stream) {
+    streamJsonLine({ ...createSuccessEnvelope(COMMAND, data) });
+  } else {
+    await outputJson(createSuccessEnvelope(COMMAND, data));
+  }
+}
+
+function runsExitCode(problem: ReturnType<typeof runsProblemOf>, fallback: number | undefined) {
+  if (!problem) return fallback ?? 1;
+  return problem.status === 400 || problem.status === 422 ? 2 : 1;
+}
+
+async function reportRunsFailure(error: unknown, stream: boolean): Promise<void> {
+  const problem = runsProblemOf(error);
+  if (!problem && !(stream && isJsonMode())) throw error;
+  const vfError = wrapUnknownError(error);
+  const exitCode = runsExitCode(problem, vfError.exitCode);
+  const usage = exitCode === 2;
+  const message = problem ? problem.detail ?? problem.title : vfError.detail ?? vfError.message;
+  const safe = redactForSerialization({
+    code: problem?.code ?? (usage ? "USAGE_ERROR" : "RUNTIME_ERROR"),
+    slug: usage ? "invalid-arguments" : "command-failed",
+    registrySlug: vfError.slug,
+    message,
+  }) as ErrorEnvelope["error"];
+  if (!isJsonMode()) {
+    console.error(safe.message);
+  } else if (stream) {
+    streamJsonLine({ ...createErrorEnvelope(COMMAND, safe) });
+  } else {
+    await outputJson(createErrorEnvelope(COMMAND, safe));
+  }
+  exitProcess(exitCode);
 }
 
 /** Resolve host-owned credentials without executing project modules or requiring a user login for scoped calls. */

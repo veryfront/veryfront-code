@@ -104,8 +104,40 @@ function jsonOption(args: ParsedArgs, name: string): unknown {
   }
 }
 
-/** Decode CLI syntax only; the shared contract and service own request validation. */
-export function parseRunsInvocation(args: ParsedArgs) {
+const GLOBAL_OPTIONS = [
+  "_",
+  "__explicit",
+  "json",
+  "j",
+  "help",
+  "h",
+  "quiet",
+  "q",
+  "verbose",
+  "color",
+  "no-color",
+  "yes",
+  "y",
+  "output",
+  "o",
+  "no-input",
+  "no-animation",
+  "no-browser",
+  "version",
+  "v",
+  "project-dir",
+  "credential-file",
+  "credential-mode",
+  "all",
+  "follow",
+  "query",
+  "body",
+  "idempotency-key",
+  "if-match",
+  "last-event-id",
+];
+
+function resolveOperation(args: ParsedArgs): RunsOperationId {
   const action = args._[2];
   const entry = Object.entries(RUNS_COMMANDS).find(([, command]) => command === action);
   if (!entry || args._.length !== 3) {
@@ -113,54 +145,28 @@ export function parseRunsInvocation(args: ParsedArgs) {
       `Use veryfront project runs <command>. Commands: ${Object.values(RUNS_COMMANDS).join(", ")}.`,
     );
   }
-  const operationId = entry[0] as RunsOperationId;
-  const names = [...RUNS_OPERATIONS[operationId].path.matchAll(/\{(\w+)\}/g)].map((match) =>
-    match[1]!
-  ).filter(Boolean);
+  return entry[0] as RunsOperationId;
+}
+
+function pathParameterNames(operationId: RunsOperationId): string[] {
+  return [...RUNS_OPERATIONS[operationId].path.matchAll(/\{(\w+)\}/g)].map((match) => match[1]!)
+    .filter(Boolean);
+}
+
+function assertKnownOptions(args: ParsedArgs, pathNames: string[]): void {
   const allowed = new Set([
-    "_",
-    "__explicit",
-    "json",
-    "j",
-    "help",
-    "h",
-    "quiet",
-    "q",
-    "verbose",
-    "color",
-    "no-color",
-    "yes",
-    "y",
-    "output",
-    "o",
-    "no-input",
-    "no-animation",
-    "no-browser",
-    "version",
-    "v",
-    "project-dir",
-    "credential-file",
-    "credential-mode",
-    "all",
-    "follow",
-    "query",
-    "body",
-    "idempotency-key",
-    "if-match",
-    "last-event-id",
-    ...names.map((name) => name.replaceAll("_", "-")),
+    ...GLOBAL_OPTIONS,
+    ...pathNames.map((name) => name.replaceAll("_", "-")),
   ]);
   for (const name of Object.keys(args)) {
     if (!allowed.has(name)) usage(`Unknown option --${name}.`);
   }
-  const path = Object.fromEntries(names.map((name) => [
-    name,
-    stringOption(args, name.replaceAll("_", "-"), true),
-  ]));
+}
+
+function parseHeaders(args: ParsedArgs, operationId: RunsOperationId): Record<string, string> {
   const headers: Record<string, string> = {};
   const idempotencyKey = stringOption(args, "idempotency-key", IDEMPOTENT.has(operationId));
   const ifMatch = stringOption(args, "if-match", operationId === "updateRun");
-  const lastEventId = stringOption(args, "last-event-id");
   if (idempotencyKey !== undefined) {
     if (!IDEMPOTENT.has(operationId)) usage("This command does not accept --idempotency-key.");
     headers["Idempotency-Key"] = idempotencyKey;
@@ -169,6 +175,10 @@ export function parseRunsInvocation(args: ParsedArgs) {
     if (operationId !== "updateRun") usage("Only update accepts --if-match.");
     headers["If-Match"] = ifMatch;
   }
+  return headers;
+}
+
+function parseBody(args: ParsedArgs, operationId: RunsOperationId): unknown {
   const body = jsonOption(args, "body");
   if (body === undefined && BODY_REQUIRED.has(operationId)) {
     usage("Supply --body with a JSON request.");
@@ -176,22 +186,33 @@ export function parseRunsInvocation(args: ParsedArgs) {
   if (body !== undefined && !BODY_REQUIRED.has(operationId) && !BODY_OPTIONAL.has(operationId)) {
     usage("This command does not accept --body.");
   }
+  return body;
+}
+
+function isQueryScalar(item: unknown): boolean {
+  return item === null || ["string", "number", "boolean"].includes(typeof item);
+}
+
+function parseQuery(args: ParsedArgs, operationId: RunsOperationId): unknown {
   const query = jsonOption(args, "query");
-  if (query !== undefined) {
-    if (!QUERY_OPERATIONS.has(operationId)) usage("This command does not accept --query.");
-    if (query === null || typeof query !== "object" || Array.isArray(query)) {
-      usage("Supply --query with a JSON object.");
-    }
-    for (const value of Object.values(query)) {
-      if (
-        ![value].flat().every((item) =>
-          item === null || ["string", "number", "boolean"].includes(typeof item)
-        )
-      ) {
-        usage("Query values must be strings, numbers, booleans, null, or arrays of those values.");
-      }
+  if (query === undefined) return undefined;
+  if (!QUERY_OPERATIONS.has(operationId)) usage("This command does not accept --query.");
+  if (query === null || typeof query !== "object" || Array.isArray(query)) {
+    usage("Supply --query with a JSON object.");
+  }
+  for (const value of Object.values(query)) {
+    if (![value].flat().every(isQueryScalar)) {
+      usage("Query values must be strings, numbers, booleans, null, or arrays of those values.");
     }
   }
+  return query;
+}
+
+function parseStreamOptions(
+  args: ParsedArgs,
+  operationId: RunsOperationId,
+  headers: Record<string, string>,
+) {
   for (const flag of ["all", "follow"]) {
     if (args[flag] !== undefined && typeof args[flag] !== "boolean") {
       usage(`--${flag} is a boolean flag.`);
@@ -206,6 +227,7 @@ export function parseRunsInvocation(args: ParsedArgs) {
     usage("--follow requires get or create.");
   }
   const stream = follow || operationId === "streamRunEvents";
+  const lastEventId = stringOption(args, "last-event-id");
   if (lastEventId !== undefined) {
     if (!stream) usage("--last-event-id requires stream or --follow.");
     if (operationId === "streamRunEvents") headers["Last-Event-ID"] = lastEventId;
@@ -213,19 +235,45 @@ export function parseRunsInvocation(args: ParsedArgs) {
   if (stream && (args.output !== undefined || args.o !== undefined)) {
     usage("Stream output uses stdout; --output is not supported.");
   }
+  return { all, follow, stream, lastEventId };
+}
+
+/** Decode CLI syntax only; the shared contract and service own request validation. */
+export function parseRunsInvocation(args: ParsedArgs) {
+  const operationId = resolveOperation(args);
+  const names = pathParameterNames(operationId);
+  assertKnownOptions(args, names);
+  const path = Object.fromEntries(names.map((name) => [
+    name,
+    stringOption(args, name.replaceAll("_", "-"), true),
+  ]));
+  const headers = parseHeaders(args, operationId);
+  const body = parseBody(args, operationId);
+  const query = parseQuery(args, operationId);
+  const streamOptions = parseStreamOptions(args, operationId, headers);
   return {
     operationId,
     input: {
       ...(names.length ? { path } : {}),
-      ...(query !== undefined ? { query } : {}),
+      ...(query === undefined ? {} : { query }),
       ...(Object.keys(headers).length ? { headers } : {}),
-      ...(body !== undefined ? { body } : {}),
+      ...(body === undefined ? {} : { body }),
     },
-    all,
-    follow,
-    stream,
-    lastEventId,
+    ...streamOptions,
   };
+}
+
+function runIdOf(result: unknown): string {
+  const runId = result !== null && typeof result === "object" && "id" in result
+    ? result.id
+    : undefined;
+  if (typeof runId !== "string" || runId.length === 0) {
+    throw API_CLIENT_ERROR.create({
+      detail: "The run response does not include a run ID for --follow.",
+      status: 502,
+    });
+  }
+  return runId;
 }
 
 /** Execute only SDK calls and emit their results; no lifecycle or paging policy lives here. */
@@ -254,21 +302,10 @@ export async function runProjectRuns(
   const call = sdk[operationId] as (input: unknown) => Promise<unknown>;
   const result = await call(input);
   await emit(result ?? null);
-  if (follow) {
-    const runId = result !== null && typeof result === "object" && "id" in result
-      ? result.id
-      : undefined;
-    if (typeof runId !== "string" || runId.length === 0) {
-      throw API_CLIENT_ERROR.create({
-        detail: "The run response does not include a run ID for --follow.",
-        status: 502,
-      });
-    }
-    for await (
-      const frame of sdk.streamRunEvents({
-        path: { run_id: runId },
-        ...(lastEventId !== undefined ? { headers: { "Last-Event-ID": lastEventId } } : {}),
-      })
-    ) await emit(frame);
-  }
+  if (!follow) return;
+  const followInput = {
+    path: { run_id: runIdOf(result) },
+    ...(lastEventId === undefined ? {} : { headers: { "Last-Event-ID": lastEventId } }),
+  };
+  for await (const frame of sdk.streamRunEvents(followInput)) await emit(frame);
 }
