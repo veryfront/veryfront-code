@@ -54,7 +54,9 @@ anything is sent.
 
 The vault key is the full channel binding: `allocationId`, `generation` and `invocationId`. The host
 creates the entry itself, when it allocates an executor for one authorized run, and records that
-run's identity (project, run and agent) with the credentials. The executor never supplies or chooses
+run's signed grant with the credentials: project, run, agent, run kind, and the resource selectors
+fixed by the signed run configuration (for example the release ID and version of a release build,
+or the artifact ID and attempt of a dependency build). The executor never supplies or chooses
 the key. `createExecutorChannel` only checks that every frame carries the channel's own binding
 (`src/agent/executor/channel.ts`, `#accept`). Binding a channel to a run, and every credential
 decision, belong to the host.
@@ -62,8 +64,16 @@ decision, belong to the host.
 - The transport is authenticated with a fresh per-allocation key and has no reconnect or replay
   (`src/agent/hosted/executor-node-transport.ts`, `src/agent/executor/channel.ts`). A new
   generation is a new allocation, with a new key and a new vault entry.
-- The entry is revoked when the invocation settles, when the allocation is revoked, or when the run
-  deadline passes, whichever comes first. After that, every lookup fails closed.
+- Executor-facing credentials (the inference token and the runtime API token) are revoked when the
+  invocation settles, when the allocation is revoked, or when the run deadline passes, whichever
+  comes first. After that, every executor lookup fails closed.
+- Run-control credentials (the stop, terminal and run-event tokens) are never reachable through
+  `vf.egress`. Only the host's own run lifecycle uses them. They keep a separate, bounded lifetime
+  that extends past the run deadline for settlement and acknowledgement, because the stop
+  acknowledgement is sent after execution settles, which can be after the deadline
+  (`createRunStopAcknowledger` in `src/server/handlers/request/project-run-execute.handler.ts`).
+  They are revoked once the acknowledgement or terminal report is sent, or once that bounded window
+  ends.
 - A lookup for a binding this host process did not issue, or one already revoked, returns
   `CREDENTIAL_UNAVAILABLE`. Nothing is sent upstream. One run's binding can never resolve another
   run's credentials.
@@ -81,7 +91,14 @@ Each logical route is a host-owned, frozen entry with:
 
 The host builds the path only from the template. It never appends a caller-supplied suffix.
 
-- The project and run identity in a template come from the vault entry, never from the executor.
+- Each run kind grants only the routes it needs, such as release asset upload for a release build.
+  A route outside the run's grant is refused.
+- The project, the run, and every resource selector that the signed run configuration fixes come
+  from the vault entry, never from the executor. That includes the release ID and version, and the
+  dependency artifact ID and attempt. Fixed templates stop path traversal, but not substitution of
+  another valid object. If the executor supplies a selector, the host rejects it unless it matches
+  the vault value. Only parameters the configuration leaves open, such as an asset's content hash,
+  come from the executor.
 - Executor-supplied parameters must match their type and a strict segment pattern. The host refuses
   a value that is `.` or `..`, or that contains `/`, `\`, `%` or control characters. It also
   refuses any query name or value outside the allowlist.
@@ -109,8 +126,15 @@ inside the `vf.egress` input:
     pairs a body with its head when uploads run concurrently.
   - The executor serves each ID's body once. The host accepts a body only for a `vf.egress` call it
     has open on the same channel.
-  - Each chunk frame stays below the frame limit after encoding. Because the body is a streamed
-    result, the credit window bounds it: the host holds at most one window of chunks per call.
+  - The channel shares one retention budget across all its streams (`EXECUTOR_MAX_RETAINED_BYTES`,
+    enforced by `#retainPayload` in `src/agent/executor/channel.ts`). The credit window applies
+    per stream.
+  - The host therefore caps the streams open on a channel at 8. That count covers `vf.egress`
+    calls and any other streaming operation on the same channel. Further calls wait for a free
+    slot instead of overrunning the budget.
+  - Each encoded chunk is at most `EXECUTOR_MAX_RETAINED_BYTES / (8 * EXECUTOR_STREAM_WINDOW)`, so
+    every open stream's full window fits the budget together. With today's constants that is
+    128 KiB. Response chunks use the same size.
   - The host feeds the chunks to the upstream request through a pull-based stream, so a slow
     upstream stops the executor's producer.
 - **Size caps per route.** Each route's body cap comes from that route's own contract, not from one
@@ -121,6 +145,12 @@ inside the `vf.egress` input:
   - A route without a contract-derived bound is not added to the table until it has one.
   - The host counts streamed bytes. A body over its cap, or one that does not match a declared
     length, aborts the upstream request.
+- **Response caps per route.** Each route also has a response cap derived from its contract. The
+  default is no larger than the API client's current success-body limit
+  (`DEFAULT_VERYFRONT_API_SUCCESS_BODY_BYTES`, 64 MiB, in
+  `src/platform/adapters/veryfront-api-transport.ts`). The host rejects a response whose
+  `Content-Length` exceeds the cap, counts streamed response bytes before forwarding them, and
+  aborts the upstream request once the cap is reached.
 - **Abort.** Cancelling either stream, executor cancellation, vault revocation and the run deadline
   all abort the upstream request through one combined signal. A request body that ends early or
   fails never completes an upstream request. The upstream request is aborted, not sent truncated.
@@ -222,7 +252,10 @@ model-call span.
 Each step lands behind the flag, in pre-production first.
 
 1. Interim shared-host fixes (#2188), including the `VeryfrontApiClient` transport.
-2. A host-only run-credential vault keyed by the run binding, with revocation and expiry.
+2. A host-only run-credential vault keyed by the run binding. It stores the signed grant and
+   resource selectors, revokes executor-facing credentials at settle, revoke or deadline, and keeps
+   run-control credentials for a bounded post-deadline window. A test sends a stop acknowledgement
+   after the deadline.
 3. The `vf.egress` host operation. Its tests must cover:
    - the route table: fixed templates, typed parameters and query allowlists, with refusal of
      absolute paths, `..`, encoded separators and unlisted query values;
@@ -230,7 +263,12 @@ Each step lands behind the flag, in pre-production first.
    - credential class per route, and no route that reaches the model gateway;
    - request-body streaming: a 10 MiB upload streams through `vf.egress.body` while host memory
      stays within one credit window of frames;
-   - concurrent uploads, eight at once, each paired with its own body by request ID;
+   - concurrent uploads, eight at once against slow consumers, each paired with its own body by
+     request ID, and staying within the channel's shared retention budget;
+   - a ninth concurrent call waits instead of overrunning the budget;
+   - response caps, including an oversized `Content-Length` and an oversized streamed response;
+   - per-run route grants, and rejection of a release ID, release version, artifact ID or attempt
+     that differs from the signed run configuration;
    - per-route size caps, including a worst-case schema-valid release manifest that must succeed;
    - abort on executor cancel, revocation and deadline;
    - fail-closed lookups for unknown or revoked bindings.
