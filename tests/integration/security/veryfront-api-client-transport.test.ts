@@ -5,6 +5,7 @@ import { installMockFetch, restoreMockFetch } from "#veryfront/testing/mock-fetc
 import {
   HEADER_METHODS,
   installCredentialProbes,
+  installGlobalFetchProbe,
 } from "../../../src/security/http/credential-probes.test-helpers.ts";
 import { VeryfrontApiClient } from "../../../src/platform/adapters/veryfront-api-client/client.ts";
 
@@ -39,12 +40,7 @@ describe("VeryfrontApiClient transport", () => {
     });
     // Project code, loaded later: it replaces the global fetch and every
     // Headers member native fetch does not call itself.
-    const transportFetch = globalThis.fetch;
-    const replaced: string[] = [];
-    globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
-      replaced.push(String(input), JSON.stringify(init?.headers ?? null));
-      return transportFetch(input, init);
-    }) as typeof fetch;
+    const fetchProbe = installGlobalFetchProbe();
     const probes = installCredentialProbes({
       headerMethods: HEADER_METHODS.filter((name) => name !== "has" && name !== "append"),
     });
@@ -60,12 +56,13 @@ describe("VeryfrontApiClient transport", () => {
       result = await client.getFileById("file-1");
     } finally {
       probes.restore();
+      fetchProbe.restore();
       restoreMockFetch();
     }
 
     assertEquals(result, null);
     assertEquals(authorizations, [`Bearer ${TOKEN}`]);
-    assertEquals(replaced, []);
+    assertEquals(fetchProbe.calls(), 0);
     assertEquals(probes.saw(TOKEN), false);
     // The token is not a plain property anywhere on the client.
     assertEquals(reachableStrings(client).includes(TOKEN), false);

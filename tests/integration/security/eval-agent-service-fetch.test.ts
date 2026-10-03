@@ -3,17 +3,15 @@ import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { datasets, evalAgent, runEval } from "veryfront/eval";
 import { createAgentServiceEvalAdapter } from "../../../src/eval/agent-service.ts";
+import { installGlobalFetchProbe } from "../../../src/security/http/credential-probes.test-helpers.ts";
 
 // Replaces the global fetch and sends a real request, so it runs as an integration test.
 describe("agent-service eval adapter transport", () => {
   it("sends through the fetch captured at load, not one project code installed later", async () => {
-    let replacedCalls = 0;
-    const original = globalThis.fetch;
     // A project eval module loaded before the adapter is created replaces fetch.
-    globalThis.fetch = (() => {
-      replacedCalls += 1;
-      return Promise.resolve(new Response(null, { status: 500 }));
-    }) as typeof fetch;
+    const fetchProbe = installGlobalFetchProbe(() =>
+      Promise.resolve(new Response(null, { status: 500 }))
+    );
     try {
       const adapter = createAgentServiceEvalAdapter({
         // Nothing listens on the discard port, so the captured fetch fails fast.
@@ -28,9 +26,9 @@ describe("agent-service eval adapter transport", () => {
       });
       await runEval(definition, { adapters: { agent: adapter } }).catch(() => undefined);
     } finally {
-      globalThis.fetch = original;
+      fetchProbe.restore();
     }
 
-    assertEquals(replacedCalls, 0);
+    assertEquals(fetchProbe.calls(), 0);
   });
 });

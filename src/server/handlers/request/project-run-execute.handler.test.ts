@@ -73,6 +73,7 @@ import { sealIngressCredentials } from "#veryfront/security/http/ingress-credent
 import {
   HEADER_METHODS,
   installCredentialProbes,
+  installGlobalFetchProbe,
 } from "#veryfront/security/http/credential-probes.test-helpers.ts";
 import {
   BasicTracerProvider,
@@ -9714,25 +9715,6 @@ describe("project run control-plane Authorization", () => {
       headerMethods: HEADER_METHODS.filter((name) => name !== "has" && name !== "append"),
     });
 
-  /**
-   * Stand-in for project code that loaded for the run: it replaces the global
-   * fetch and records whatever it is handed.
-   */
-  function replaceGlobalFetch(): { saw(secret: string): boolean; restore(): void } {
-    const original = globalThis.fetch;
-    const seen: string[] = [];
-    globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
-      seen.push(String(input), JSON.stringify(observeFetchRequestInit(init).headers ?? null));
-      return original(input, init);
-    }) as typeof fetch;
-    return {
-      saw: (secret) => seen.some((text) => text.includes(secret)),
-      restore: () => {
-        globalThis.fetch = original;
-      },
-    };
-  }
-
   it("takes Authorization off a control-plane run route and leaves it on application routes", () => {
     const run = sealIngressCredentials(
       new Request("https://example.com/api/control-plane/runs/run_1/execute", {
@@ -9774,7 +9756,8 @@ describe("project run control-plane Authorization", () => {
     const sealed = sealIngressCredentials(request);
 
     const probes = projectCodeProbes();
-    const fetchProbe = replaceGlobalFetch();
+    // Project code loaded for the run replaces the global fetch.
+    const fetchProbe = installGlobalFetchProbe();
     let result;
     try {
       result = await handler.handle(sealed, createCtx(publicKeyPem));
@@ -9831,7 +9814,8 @@ describe("project run control-plane Authorization", () => {
     assertEquals(sealed.headers.get("authorization"), null);
 
     const probes = projectCodeProbes();
-    const fetchProbe = replaceGlobalFetch();
+    // Project code loaded for the run replaces the global fetch.
+    const fetchProbe = installGlobalFetchProbe();
     let result;
     try {
       result = await withEnvValue(
