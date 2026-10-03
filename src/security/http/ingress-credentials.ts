@@ -35,6 +35,10 @@ const HeadersIteratorNext = Object.getPrototypeOf(new NativeHeaders().entries())
 const RequestHeadersGetter = Object.getOwnPropertyDescriptor(NativeRequest.prototype, "headers")!
   .get!;
 const StringToLowerCase = String.prototype.toLowerCase;
+const StringStartsWith = String.prototype.startsWith;
+const NativeURL = URL;
+const RequestUrlGetter = Object.getOwnPropertyDescriptor(NativeRequest.prototype, "url")!.get!;
+const URLPathnameGetter = Object.getOwnPropertyDescriptor(NativeURL.prototype, "pathname")!.get!;
 const WeakMapDelete = NativeWeakMap.prototype.delete;
 const WeakMapGet = NativeWeakMap.prototype.get;
 const WeakMapHas = NativeWeakMap.prototype.has;
@@ -50,13 +54,26 @@ export const INGRESS_RUN_EVENT_TOKEN_HEADER = "x-veryfront-run-event-token";
 export const INGRESS_RUN_STOP_TOKEN_HEADER = "x-veryfront-run-stop-token";
 /** The control plane's exact-run, generation-fenced finalize credential. */
 export const INGRESS_RUN_TERMINAL_TOKEN_HEADER = "x-veryfront-run-terminal-token";
+/**
+ * `Authorization`, taken off only on control-plane run routes, where the
+ * control plane sends the same service-account token as in `x-token`.
+ * Application routes keep it: tenant apps authenticate their own users with it.
+ */
+export const INGRESS_AUTHORIZATION_HEADER = "authorization";
+/**
+ * Control-plane run routes (execute, stream, resume, stop). The same value as
+ * `CONTROL_PLANE_RUNS_PATH_PREFIX`, which a test pins; importing it here would
+ * pull the control-plane schemas into every ingress.
+ */
+export const INGRESS_RUN_ROUTE_PREFIX = "/api/control-plane/runs/";
 
 export type IngressCredentialHeader =
   | typeof INGRESS_API_TOKEN_HEADER
   | typeof INGRESS_INFERENCE_TOKEN_HEADER
   | typeof INGRESS_RUN_EVENT_TOKEN_HEADER
   | typeof INGRESS_RUN_STOP_TOKEN_HEADER
-  | typeof INGRESS_RUN_TERMINAL_TOKEN_HEADER;
+  | typeof INGRESS_RUN_TERMINAL_TOKEN_HEADER
+  | typeof INGRESS_AUTHORIZATION_HEADER;
 
 type IngressCredentials = { readonly [name in IngressCredentialHeader]: string | null };
 
@@ -91,7 +108,16 @@ interface HeadersWithoutCredentials {
   readonly setCookies: string[];
 }
 
-function toHeaderRecordWithoutCredentials(request: Request): HeadersWithoutCredentials {
+function isRunRoute(request: Request): boolean {
+  const url = new NativeURL(IntrinsicReflectApply(RequestUrlGetter, request, []) as string);
+  const pathname = IntrinsicReflectApply(URLPathnameGetter, url, []) as string;
+  return IntrinsicReflectApply(StringStartsWith, pathname, [INGRESS_RUN_ROUTE_PREFIX]) as boolean;
+}
+
+function toHeaderRecordWithoutCredentials(
+  request: Request,
+  withoutAuthorization: boolean,
+): HeadersWithoutCredentials {
   const record = ObjectCreate(null) as Record<string, string>;
   const setCookies: string[] = [];
   const headers = IntrinsicReflectApply(RequestHeadersGetter, request, []) as Headers;
@@ -108,7 +134,8 @@ function toHeaderRecordWithoutCredentials(request: Request): HeadersWithoutCrede
     if (
       name === INGRESS_API_TOKEN_HEADER || name === INGRESS_INFERENCE_TOKEN_HEADER ||
       name === INGRESS_RUN_EVENT_TOKEN_HEADER || name === INGRESS_RUN_STOP_TOKEN_HEADER ||
-      name === INGRESS_RUN_TERMINAL_TOKEN_HEADER
+      name === INGRESS_RUN_TERMINAL_TOKEN_HEADER ||
+      (withoutAuthorization && name === INGRESS_AUTHORIZATION_HEADER)
     ) continue;
     if (name === "set-cookie") {
       // Not a credential, so this list may use ordinary array writes.
@@ -145,6 +172,9 @@ export function sealIngressCredentials(request: Request): Request {
 function readCredentialHeaders(request: Request): IngressCredentials {
   return ObjectFreeze({
     __proto__: null,
+    [INGRESS_AUTHORIZATION_HEADER]: isRunRoute(request)
+      ? readNativeHeader(request, INGRESS_AUTHORIZATION_HEADER)
+      : null,
     [INGRESS_API_TOKEN_HEADER]: readNativeHeader(request, INGRESS_API_TOKEN_HEADER),
     [INGRESS_INFERENCE_TOKEN_HEADER]: readNativeHeader(request, INGRESS_INFERENCE_TOKEN_HEADER),
     [INGRESS_RUN_EVENT_TOKEN_HEADER]: readNativeHeader(request, INGRESS_RUN_EVENT_TOKEN_HEADER),
@@ -161,7 +191,8 @@ function hasAnyCredential(credentials: IngressCredentials): boolean {
     credentials[INGRESS_INFERENCE_TOKEN_HEADER] !== null ||
     credentials[INGRESS_RUN_EVENT_TOKEN_HEADER] !== null ||
     credentials[INGRESS_RUN_STOP_TOKEN_HEADER] !== null ||
-    credentials[INGRESS_RUN_TERMINAL_TOKEN_HEADER] !== null;
+    credentials[INGRESS_RUN_TERMINAL_TOKEN_HEADER] !== null ||
+    credentials[INGRESS_AUTHORIZATION_HEADER] !== null;
 }
 
 /** A copy of `request` without the credential headers, holding `credentials`. */
@@ -171,7 +202,8 @@ function sealWith(request: Request, credentials: IngressCredentials): Request {
   // Null prototype: the constructor reads `body`, `method`, `signal` and the
   // other init fields by name, and an inherited getter would see `headers`.
   const init = ObjectCreate(null) as RequestInit;
-  const remaining = toHeaderRecordWithoutCredentials(request);
+  const withoutAuthorization = credentials[INGRESS_AUTHORIZATION_HEADER] !== null;
+  const remaining = toHeaderRecordWithoutCredentials(request, withoutAuthorization);
   init.headers = remaining.record;
   const sealed = new NativeRequest(request, init);
   // Bun can retain the source headers when the override record is empty.
@@ -182,6 +214,9 @@ function sealWith(request: Request, credentials: IngressCredentials): Request {
   IntrinsicReflectApply(HeadersDelete, sealedHeaders, [INGRESS_RUN_EVENT_TOKEN_HEADER]);
   IntrinsicReflectApply(HeadersDelete, sealedHeaders, [INGRESS_RUN_STOP_TOKEN_HEADER]);
   IntrinsicReflectApply(HeadersDelete, sealedHeaders, [INGRESS_RUN_TERMINAL_TOKEN_HEADER]);
+  if (withoutAuthorization) {
+    IntrinsicReflectApply(HeadersDelete, sealedHeaders, [INGRESS_AUTHORIZATION_HEADER]);
+  }
   // Clear any cookies retained by the constructor before replaying each field.
   IntrinsicReflectApply(HeadersDelete, sealedHeaders, ["set-cookie"]);
   if (remaining.setCookies.length > 0) {
@@ -275,6 +310,8 @@ export function sealInterceptedRequest(source: Request, intercepted: Request): R
         before[INGRESS_RUN_STOP_TOKEN_HEADER],
       [INGRESS_RUN_TERMINAL_TOKEN_HEADER]: after[INGRESS_RUN_TERMINAL_TOKEN_HEADER] ??
         before[INGRESS_RUN_TERMINAL_TOKEN_HEADER],
+      [INGRESS_AUTHORIZATION_HEADER]: after[INGRESS_AUTHORIZATION_HEADER] ??
+        before[INGRESS_AUTHORIZATION_HEADER],
     } as IngressCredentials),
   ]);
   return sealed;
@@ -293,7 +330,12 @@ export function readIngressCredential(
   const credentials = IntrinsicReflectApply(WeakMapGet, ingressCredentials, [request]) as
     | IngressCredentials
     | undefined;
-  return credentials === undefined ? readNativeHeader(request, name) : credentials[name];
+  if (credentials === undefined) return readNativeHeader(request, name);
+  // Off a run route `Authorization` stays in the headers, so it is read there.
+  if (name === INGRESS_AUTHORIZATION_HEADER && credentials[name] === null) {
+    return readNativeHeader(request, name);
+  }
+  return credentials[name];
 }
 
 /**

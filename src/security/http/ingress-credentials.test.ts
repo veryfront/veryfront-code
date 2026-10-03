@@ -14,10 +14,13 @@ import {
   recordRequestPeerFromTransport,
   recordRequestTransportLifetime,
 } from "#veryfront/platform/adapters/runtime/shared/request-peer.ts";
+import { CONTROL_PLANE_RUNS_PATH_PREFIX } from "#veryfront/channels/control-plane.ts";
 import {
   INGRESS_API_TOKEN_HEADER,
+  INGRESS_AUTHORIZATION_HEADER,
   INGRESS_INFERENCE_TOKEN_HEADER,
   INGRESS_RUN_EVENT_TOKEN_HEADER,
+  INGRESS_RUN_ROUTE_PREFIX,
   INGRESS_RUN_STOP_TOKEN_HEADER,
   INGRESS_RUN_TERMINAL_TOKEN_HEADER,
   inheritIngressCredentials,
@@ -487,4 +490,26 @@ describe("security/http/ingress-credentials", () => {
       assert(sealed.headers.get(INGRESS_RUN_STOP_TOKEN_HEADER) === null);
     },
   );
+
+  it("seals Authorization on control-plane run routes only", () => {
+    assertEquals(INGRESS_RUN_ROUTE_PREFIX, CONTROL_PLANE_RUNS_PATH_PREFIX);
+
+    const run = sealIngressCredentials(
+      new Request("https://project.example/api/control-plane/runs/run_1/stream", {
+        method: "POST",
+        headers: { Authorization: "Bearer service-token" },
+      }),
+    );
+    assertEquals(run.headers.get("authorization"), null);
+    assertEquals(readIngressCredential(run, INGRESS_AUTHORIZATION_HEADER), "Bearer service-token");
+
+    const app = sealIngressCredentials(
+      new Request("https://project.example/api/control-plane-runs/x", {
+        headers: { Authorization: "Bearer user-token", "x-token": API_TOKEN },
+      }),
+    );
+    assertEquals(app.headers.get("authorization"), "Bearer user-token");
+    assertEquals(readIngressCredential(app, INGRESS_AUTHORIZATION_HEADER), "Bearer user-token");
+    assertEquals(readIngressCredential(app, INGRESS_API_TOKEN_HEADER), API_TOKEN);
+  });
 });

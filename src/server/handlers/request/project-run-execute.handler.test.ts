@@ -71,6 +71,10 @@ import * as otelApi from "npm:@opentelemetry/api@1.9.1";
 import { AsyncLocalStorageContextManager } from "npm:@opentelemetry/context-async-hooks@2.9.0";
 import { sealIngressCredentials } from "#veryfront/security/http/ingress-credentials.ts";
 import {
+  HEADER_METHODS,
+  installCredentialProbes,
+} from "#veryfront/security/http/credential-probes.test-helpers.ts";
+import {
   BasicTracerProvider,
   InMemorySpanExporter,
   SimpleSpanProcessor,
@@ -9697,5 +9701,182 @@ describe("server/handlers/request/project-run-execute.handler cancellation", () 
     assertExists(result.response);
     const json = await result.response.json();
     assertEquals(json.success, false);
+  });
+});
+
+describe("project run control-plane Authorization", () => {
+  const SERVICE_TOKEN = "project-run-service-account-canary-71d4";
+  const conversationId = "44444444-4444-4444-8444-444444444444";
+  // Everything but Headers has/append, which native fetch calls with the
+  // headers as `this`; replacing those makes the egress refuse instead.
+  const projectCodeProbes = () =>
+    installCredentialProbes({
+      headerMethods: HEADER_METHODS.filter((name) => name !== "has" && name !== "append"),
+    });
+
+  /**
+   * Stand-in for project code that loaded for the run: it replaces the global
+   * fetch and records whatever it is handed.
+   */
+  function replaceGlobalFetch(): { saw(secret: string): boolean; restore(): void } {
+    const original = globalThis.fetch;
+    const seen: string[] = [];
+    globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
+      seen.push(String(input), JSON.stringify(observeFetchRequestInit(init).headers ?? null));
+      return original(input, init);
+    }) as typeof fetch;
+    return {
+      saw: (secret) => seen.some((text) => text.includes(secret)),
+      restore: () => {
+        globalThis.fetch = original;
+      },
+    };
+  }
+
+  it("takes Authorization off a control-plane run route and leaves it on application routes", () => {
+    const run = sealIngressCredentials(
+      new Request("https://example.com/api/control-plane/runs/run_1/execute", {
+        method: "POST",
+        headers: { authorization: `Bearer ${SERVICE_TOKEN}`, "x-token": SERVICE_TOKEN },
+      }),
+    );
+    assertEquals(run.headers.get("authorization"), null);
+    assertEquals(run.headers.get("x-token"), null);
+
+    const app = sealIngressCredentials(
+      new Request("https://example.com/api/me", {
+        headers: { authorization: "Bearer tenant-user-token", "x-token": SERVICE_TOKEN },
+      }),
+    );
+    assertEquals(app.headers.get("authorization"), "Bearer tenant-user-token");
+    assertEquals(app.headers.get("x-token"), null);
+  });
+
+  it("keeps Authorization and x-token out of reach of task project code", async () => {
+    let ran = false;
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      runTask: async () => {
+        ran = true;
+        return { success: true, result: { ok: true }, durationMs: 1 };
+      },
+    }));
+    const { request, publicKeyPem } = await signedRequest(
+      "/api/control-plane/runs/run_task_authz/execute",
+      {
+        runId: "run_task_authz",
+        kind: "task",
+        target: "task:sync-calendar-events",
+        projectId: "proj-1",
+      },
+      { authorization: `Bearer ${SERVICE_TOKEN}`, "x-token": SERVICE_TOKEN },
+    );
+    // The runtime handler seals before any project code can run.
+    const sealed = sealIngressCredentials(request);
+
+    const probes = projectCodeProbes();
+    const fetchProbe = replaceGlobalFetch();
+    let result;
+    try {
+      result = await handler.handle(sealed, createCtx(publicKeyPem));
+    } finally {
+      fetchProbe.restore();
+      probes.restore();
+    }
+
+    assertExists(result.response);
+    assertEquals(result.response.status, 200);
+    assertEquals(ran, true);
+    assertEquals(probes.saw(SERVICE_TOKEN), false);
+    assertEquals(fetchProbe.saw(SERVICE_TOKEN), false);
+  });
+
+  it("authenticates a durable eval with the sealed Authorization, out of project code's reach", async () => {
+    const authorizations: (string | null)[] = [];
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      runTask: runTaskDefinition,
+      findEvalById: async (target) =>
+        target === "eval:deep-research"
+          ? {
+            id: "eval:deep-research",
+            name: "Deep research quality",
+            filePath: "evals/deep-research.eval.ts",
+            exportName: "default",
+            definition: evalAgent({
+              id: "eval:deep-research",
+              target: "agent:researcher",
+              dataset: datasets.inline([{ id: "q1", input: "France capital?" }]),
+              metrics: [metrics.answer.contains({ text: "Paris" }).gate()],
+            }),
+          }
+          : null,
+      runEval: runEvalDefinition,
+      createEvalAgentAdapter: (config) =>
+        createAgentServiceEvalAdapter({ ...config, requestTimeoutMs: 250 }),
+    }));
+    const { request, publicKeyPem } = await signedRequest(
+      "/api/control-plane/runs/run_eval_authz/execute",
+      {
+        runId: "run_eval_authz",
+        kind: "task",
+        target: "task:eval",
+        projectId: "proj-1",
+        runtimeAgUiEndpoint: "https://demo-project.preview.veryfront.org/api/ag-ui",
+        config: { eval_id: "eval:deep-research" },
+      },
+      // No x-token: the run authenticates with the token from Authorization.
+      { authorization: `Bearer ${SERVICE_TOKEN}` },
+      "https://veryfront.org",
+    );
+    const sealed = sealIngressCredentials(request);
+    assertEquals(sealed.headers.get("authorization"), null);
+
+    const probes = projectCodeProbes();
+    const fetchProbe = replaceGlobalFetch();
+    let result;
+    try {
+      result = await withEnvValue(
+        "VERYFRONT_API_BASE_URL",
+        "https://api.example.test/",
+        () =>
+          withMockFetch(
+            async (input, init) => {
+              const url = new URL(String(input));
+              const observed = observeFetchRequestInit(init);
+              // The transport hands native fetch a null-prototype header record;
+              // read it by own key, as native fetch does, not through Headers.
+              const headers = observed.headers as Record<string, string> | undefined;
+              authorizations.push(
+                headers && Object.hasOwn(headers, "authorization") ? headers.authorization! : null,
+              );
+              if ((observed.method ?? "GET") === "POST" && url.pathname.endsWith("/runs")) {
+                return Response.json({
+                  accepted: true,
+                  run: { run_id: "eval-child-run" },
+                  conversation_id: conversationId,
+                }, { status: 202 });
+              }
+              return new Response(
+                [
+                  `event: RunStarted\ndata: ${JSON.stringify({ runId: "eval-child-run" })}\n\n`,
+                  `event: TextMessageContent\ndata: ${JSON.stringify({ delta: "Paris" })}\n\n`,
+                  `event: RunFinished\ndata: ${JSON.stringify({})}\n\n`,
+                ].join(""),
+                { headers: { "content-type": "text/event-stream" } },
+              );
+            },
+            () => handler.handle(sealed, createCtx(publicKeyPem)),
+          ),
+      );
+    } finally {
+      fetchProbe.restore();
+      probes.restore();
+    }
+
+    assertExists(result.response);
+    assertEquals(result.response.status, 200);
+    assertEquals((await result.response.json()).result.failed, 0);
+    assertEquals(authorizations, [`Bearer ${SERVICE_TOKEN}`, `Bearer ${SERVICE_TOKEN}`]);
+    assertEquals(probes.observed.filter((text) => text.includes(SERVICE_TOKEN)), []);
+    assertEquals(fetchProbe.saw(SERVICE_TOKEN), false);
   });
 });
