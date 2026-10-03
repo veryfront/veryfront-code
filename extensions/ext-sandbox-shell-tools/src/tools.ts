@@ -1,5 +1,5 @@
 import { posix } from "node:path";
-import { tool } from "ai";
+import { tool, type ToolSet } from "ai";
 import { z } from "zod";
 import type { CreateSandboxShellToolsInput } from "veryfront/extensions/sandbox";
 
@@ -13,7 +13,7 @@ function truncateOutput(output: string, stream: string): string {
 }
 
 /** Create tools for the supplied sandbox without local file discovery. */
-export function createBashTool(input: CreateSandboxShellToolsInput) {
+export function createBashTool(input: CreateSandboxShellToolsInput): { tools: ToolSet } {
   const { sandbox, destination, promptOptions } = input;
   const tools = {
     bash: tool({
