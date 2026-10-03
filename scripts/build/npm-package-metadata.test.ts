@@ -836,8 +836,8 @@ describe("npm supply-chain policy", () => {
       "extensions/ext-sandbox-shell-tools/src/index.ts",
     );
 
-    assertEquals(source.includes('import("bash-tool")'), true);
-    assertEquals(source.includes('from "bash-tool"'), false);
+    assertEquals(source.includes('import("./tools.ts")'), true);
+    assertEquals(source.includes('from "./tools.ts"'), false);
   });
 
   it("keeps CLI startup off first-party extension package imports", async () => {

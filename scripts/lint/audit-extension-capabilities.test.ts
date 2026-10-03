@@ -648,9 +648,12 @@ describe("auditExtensionCapabilities", () => {
     );
   });
 
-  it("requires the scoped PurgeCSS CPU discovery capability", () => {
+  it("requires the scoped PurgeCSS platform discovery capability", () => {
     const manifestPath = "extensions/ext-css-purgecss/deno.json";
-    const exactCapabilities = [{ type: "system:read", apis: ["cpus"] }];
+    const exactCapabilities = [{
+      type: "env:read",
+      keys: ["__MINIMATCH_TESTING_PLATFORM__"],
+    }];
     assertEquals(
       auditExtensionCapabilities([
         input({
@@ -670,7 +673,7 @@ describe("auditExtensionCapabilities", () => {
     ]);
 
     assertEquals(issues.map((issue) => issue.message), [
-      'extensions/ext-css-purgecss/deno.json sensitive extension "PurgeCSS CPU discovery" must declare exactly [{"apis":["cpus"],"type":"system:read"}]; received []',
+      'extensions/ext-css-purgecss/deno.json sensitive extension "PurgeCSS platform discovery" must declare exactly [{"keys":["__MINIMATCH_TESTING_PLATFORM__"],"type":"env:read"}]; received []',
     ]);
   });
 
@@ -678,9 +681,12 @@ describe("auditExtensionCapabilities", () => {
     const manifestPath = "extensions/ext-css-purgecss/deno.json";
     for (
       const capabilities of [
-        [{ type: "system:read", apis: ["cpus", "hostname"] }],
+        [{ type: "env:read" }],
         [
-          { type: "system:read", apis: ["cpus"] },
+          {
+            type: "env:read",
+            keys: ["__MINIMATCH_TESTING_PLATFORM__", "HOME"],
+          },
           { type: "net:outbound", hosts: ["*"] },
         ],
       ]
@@ -695,7 +701,7 @@ describe("auditExtensionCapabilities", () => {
       assertEquals(issues.length, 1);
       assertEquals(
         issues[0]?.message.startsWith(
-          'extensions/ext-css-purgecss/deno.json sensitive extension "PurgeCSS CPU discovery" must declare exactly [{"apis":["cpus"],"type":"system:read"}]; received ',
+          'extensions/ext-css-purgecss/deno.json sensitive extension "PurgeCSS platform discovery" must declare exactly [{"keys":["__MINIMATCH_TESTING_PLATFORM__"],"type":"env:read"}]; received ',
         ),
         true,
       );

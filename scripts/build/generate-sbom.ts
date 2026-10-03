@@ -64,7 +64,7 @@ export const SENSITIVE_DEPENDENCY_BOUNDARIES = [
   {
     label: "sandbox execution",
     sourceLocation: "extensions/ext-sandbox-shell-tools/deno.json",
-    expectedComponents: ["bash-tool", "just-bash"],
+    expectedComponents: ["ai", "just-bash", "zod"],
   },
   {
     label: "native SQLite storage",

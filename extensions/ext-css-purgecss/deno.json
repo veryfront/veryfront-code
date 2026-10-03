@@ -8,16 +8,16 @@
     "contracts": {
       "provides": ["CSSPurgingEngine"]
     },
-    "capabilities": [{ "type": "system:read", "apis": ["cpus"] }]
+    "capabilities": [{ "type": "env:read", "keys": ["__MINIMATCH_TESTING_PLATFORM__"] }]
   },
   "imports": {
-    "purgecss": "npm:purgecss@8.0.0",
+    "purgecss": "npm:purgecss@7.0.2",
     "@std/assert": "jsr:@std/assert@1.0.19",
     "@std/testing/bdd": "jsr:@std/testing@1.0.17/bdd",
     "veryfront/extensions": "../../src/extensions/types.ts",
     "veryfront/extensions/css": "../../src/extensions/css/index.ts"
   },
   "tasks": {
-    "test": "deno test --frozen --no-check --allow-sys=cpus src/"
+    "test": "deno test --frozen --no-check --allow-env=__MINIMATCH_TESTING_PLATFORM__ src/"
   }
 }

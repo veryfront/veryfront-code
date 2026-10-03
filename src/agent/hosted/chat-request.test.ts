@@ -1,3 +1,4 @@
+import { createTerminalRunControl } from "#veryfront/agent/runtime/terminal-run-control.ts";
 import resumeDigestContract from "../../../tests/fixtures/contracts/api-auth-resume-call-digest.json" with {
   type: "json",
 };
@@ -1953,9 +1954,14 @@ describe("agent/hosted-chat-request", () => {
       { id: "veryfront-api", endpoint: "https://api.example/mcp" },
       { kind: "veryfront-api" },
     );
+    const rootContext = createTerminalRunControl({ runId: "run_root_1" }).context;
+    await source.executeTool("finalize", { status: "failed" }, rootContext);
+    await source.executeTool("get_project", {}, rootContext);
     await source.executeTool("finalize", { status: "failed" }, { runId: "run_root_1" });
-    await source.executeTool("get_project", {}, { runId: "run_root_1" });
-    assertEquals(sent, [["finalize", "run-terminal-token"], ["get_project", null]]);
+    assertEquals(sent, [["finalize", "run-terminal-token"], ["get_project", null], [
+      "finalize",
+      null,
+    ]]);
   });
 
   it("reads the default-chat inference header through captured intrinsics", async () => {

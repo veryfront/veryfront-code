@@ -4,6 +4,7 @@ import { hasToolExecutionErrorMarker } from "#veryfront/tool/result.ts";
 import type { ToolExecutionContext } from "#veryfront/tool/types.ts";
 
 const controlKey = Symbol("terminal-run-control");
+const credentialOwnerKey = Symbol("terminal-credential-owner");
 const terminalErrors = new WeakSet<object>();
 const dispatches = new WeakMap<object, AdmittedDispatch>();
 const outcomes = new WeakMap<object, AdmittedDispatch>();
@@ -96,7 +97,38 @@ export function isTerminalRunControlError(error: unknown): error is TerminalRunC
     apply(weakSetHas, terminalErrors, [error]) === true;
 }
 
-type ControlContext = ToolExecutionContext & { [controlKey]?: TerminalRunControl };
+type ControlContext = ToolExecutionContext & {
+  [controlKey]?: TerminalRunControl;
+  [credentialOwnerKey]?: TerminalRunControl | null;
+};
+
+/** Preserve the original invocation owner when remote credentials cross delegation boundaries. */
+export function bindTerminalRunCredentialOwner(
+  context: ToolExecutionContext,
+  owner: ToolExecutionContext,
+): ToolExecutionContext {
+  const ownerControl = owner as ControlContext;
+  if (
+    !ownerControl[controlKey] && ownerControl[credentialOwnerKey] === undefined &&
+    !(context as ControlContext)[controlKey]
+  ) return context;
+  return {
+    ...context,
+    [credentialOwnerKey]: ownerControl[credentialOwnerKey] !== undefined
+      ? ownerControl[credentialOwnerKey]
+      : ownerControl[controlKey] ?? null,
+  };
+}
+
+/** A delegate's independent terminal control cannot exercise its ancestor's credential. */
+export function hasCurrentTerminalRunCredentialAuthority(
+  context: ToolExecutionContext | undefined,
+): boolean {
+  const controlContext = context as ControlContext | undefined;
+  const control = controlContext?.[controlKey];
+  return !!control && (controlContext?.[credentialOwnerKey] === undefined ||
+    controlContext[credentialOwnerKey] === control);
+}
 
 /** An authoritative terminal action stops this execution, including sibling tools. */
 export class TerminalRunControlError extends Error {
