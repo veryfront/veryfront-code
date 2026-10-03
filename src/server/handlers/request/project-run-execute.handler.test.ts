@@ -9922,9 +9922,32 @@ describe("server/handlers/request/project-run-execute.handler manual pause (#258
       });
 
       assertEquals(calls, ["first", "second", "third"], reply);
-      // Two boundaries; a transport failure is retried three times at each.
-      assertEquals(pauseAckCalls(urls).length, reply === "transport" ? 6 : 2, reply);
+      // A transport failure is retried three times, then the next boundary backs off for 30s;
+      // a rejection is an answer, so the next boundary (a second later) asks again.
+      assertEquals(pauseAckCalls(urls).length, reply === "transport" ? 3 : 2, reply);
     }
+  });
+
+  it("continues a pause the control plane did not keep when another resume arrives", async () => {
+    const backend = new SharedMemoryBackend();
+    const calls: string[] = [];
+    const definition = threeSteps(calls);
+    let stop = true;
+
+    await withMockFetch(async () => Response.json({ stop }), async () => {
+      // A stale attempt was told to stop: the engine parks with no wait.
+      await dispatch(createHandler(backend, definition));
+      stop = false;
+      const rechecked = await dispatch(createHandler(backend, definition), {
+        type: "deadline",
+        wait_id: "w",
+      });
+      assertEquals(rechecked.success, true);
+      assertEquals(rechecked.status, undefined);
+    });
+
+    assertEquals(calls, ["first", "second", "third"]);
+    assertEquals((await backend.getRun(runId))?.status, "completed");
   });
 
   it("checks for a pause at most once per second", async () => {

@@ -142,6 +142,10 @@ const WORKFLOW_RESUME_RECHECK_MS = 30_000;
 const WORKFLOW_PAUSE_CHECK_INTERVAL_MS = 1_000;
 const WORKFLOW_PAUSE_ACK_ATTEMPTS = 3;
 const WORKFLOW_PAUSE_ACK_RETRY_MS = 100;
+/** One pause-ack request; the run waits for the answer at its boundary. */
+const WORKFLOW_PAUSE_ACK_TIMEOUT_MS = 2_000;
+/** After a check the control plane did not answer, boundaries skip asking for this long. */
+const WORKFLOW_PAUSE_CHECK_BACKOFF_MS = 30_000;
 /** How often a manual resume retries while the paused execution still releases the run. */
 const WORKFLOW_MANUAL_RESUME_ATTEMPTS = 50;
 /** Prefix of a `wait_id` that lists one short hash per wait record of the pause. */
@@ -1417,7 +1421,7 @@ async function resumeWaitingWorkflowRun(
   deps: ProjectRunExecuteHandlerDeps,
   pollingStopped: AbortSignal,
   cancelRun: () => Promise<void>,
-  acknowledgePause?: () => Promise<boolean>,
+  acknowledgePause?: () => Promise<boolean | undefined>,
 ): Promise<{ run: WorkflowRunView } | { failure: string }> {
   if (client.statePersistence !== "durable") {
     return { failure: "Cannot resume a workflow run without durable workflow persistence" };
@@ -1453,6 +1457,19 @@ async function resumeWaitingWorkflowRun(
   }
 
   const parked = await readPendingWaits(client, runId, current);
+  // A pause the control plane did not keep (it told a stale attempt to stop) parks the run
+  // with no wait. It continues like a manual resume, which asks the control plane first.
+  if (isManualPause(current, parked)) {
+    return await resumeManuallyPausedRun(
+      client,
+      runId,
+      signal,
+      deps,
+      pollingStopped,
+      cancelRun,
+      acknowledgePause,
+    );
+  }
   if (await isStaleDecision(resume, parked)) {
     return {
       run: await waitForWorkflowResult(
@@ -1512,7 +1529,7 @@ async function resumeManuallyPausedRun(
   deps: ProjectRunExecuteHandlerDeps,
   pollingStopped: AbortSignal,
   cancelRun: () => Promise<void>,
-  acknowledgePause?: () => Promise<boolean>,
+  acknowledgePause?: () => Promise<boolean | undefined>,
 ): Promise<{ run: WorkflowRunView } | { failure: string }> {
   if (!client.resume) return { failure: "Workflow client cannot resume paused runs" };
   const settle = () =>
@@ -1549,7 +1566,7 @@ async function executeWorkflowRun(
   signal: AbortSignal,
   deps: ProjectRunExecuteHandlerDeps,
   acknowledgeStop?: () => Promise<void>,
-  acknowledgePause?: () => Promise<boolean>,
+  acknowledgePause?: () => Promise<boolean | undefined>,
 ): Promise<ProjectRunExecuteResponse> {
   let executionEntered = false;
   try {
@@ -1617,20 +1634,27 @@ async function runDiscoveredWorkflow(
   deps: ProjectRunExecuteHandlerDeps,
   startedAt: number,
   acknowledgeStop?: () => Promise<void>,
-  acknowledgePause?: () => Promise<boolean>,
+  acknowledgePause?: () => Promise<boolean | undefined>,
 ): Promise<ProjectRunExecuteResponse> {
   // Only a durable run can pause: an ephemeral one has nothing to resume from.
   let pauseChecksEnabled = false;
   let lastPauseCheckAt: number | undefined;
+  let pauseCheckWindowMs = WORKFLOW_PAUSE_CHECK_INTERVAL_MS;
   const shouldPause = async (runId: string): Promise<boolean> => {
     if (!acknowledgePause || !pauseChecksEnabled || runId !== request.runId) return false;
     if (signal.aborted) return false;
     const now = deps.now();
     if (
-      lastPauseCheckAt !== undefined && now - lastPauseCheckAt < WORKFLOW_PAUSE_CHECK_INTERVAL_MS
+      lastPauseCheckAt !== undefined && now - lastPauseCheckAt < pauseCheckWindowMs
     ) return false;
-    lastPauseCheckAt = now;
-    return await acknowledgePause();
+    const answer = await acknowledgePause();
+    // The window starts when the answer arrives, so a slow reply cannot make every boundary
+    // ask, and an unanswered check backs off longer.
+    pauseCheckWindowMs = answer === undefined
+      ? WORKFLOW_PAUSE_CHECK_BACKOFF_MS
+      : WORKFLOW_PAUSE_CHECK_INTERVAL_MS;
+    lastPauseCheckAt = deps.now();
+    return answer === true;
   };
   let client: WorkflowClientView;
   try {
@@ -2140,14 +2164,14 @@ function createRunStopAcknowledger(req: Request, runId: string): (() => Promise<
  * Ask the control plane whether this attempt should stop at a safe boundary.
  * A `{ "stop": true }` reply means the API confirmed a requested pause for this
  * attempt, or the attempt no longer holds the run. The call is idempotent, so a
- * transport error or 5xx is retried a few times; anything else, including 401,
- * reads as continue.
+ * transport error or 5xx is retried a few times and then answers `undefined`
+ * (unknown, so continue); anything else, including 401, reads as continue.
  */
 function createRunPauseAcknowledger(
   req: Request,
   runId: string,
   sleep: (ms: number) => Promise<void>,
-): (() => Promise<boolean>) | undefined {
+): (() => Promise<boolean | undefined>) | undefined {
   const rawToken = readIngressCredential(req, INGRESS_RUN_STOP_TOKEN_HEADER);
   if (rawToken === null) return undefined;
   const token = requireInferenceProviderCredential(rawToken, "Run stop token header");
@@ -2171,7 +2195,7 @@ function createRunPauseAcknowledger(
           redirect: "error",
           headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
           body: "{}",
-          signal: ReflectApply(RunStopTimeout, AbortSignal, [10_000]),
+          signal: ReflectApply(RunStopTimeout, AbortSignal, [WORKFLOW_PAUSE_ACK_TIMEOUT_MS]),
         });
         if (response.status < 500) {
           if (!response.ok) {
@@ -2189,7 +2213,7 @@ function createRunPauseAcknowledger(
         serverLogger.warn("[project-run-execute] Could not read the pause acknowledgement", {
           runId,
         });
-        return false;
+        return undefined;
       }
       await sleep(WORKFLOW_PAUSE_ACK_RETRY_MS);
     }
@@ -3766,7 +3790,7 @@ function executeProjectRun(
   req: Request,
   deps: ProjectRunExecuteHandlerDeps,
   acknowledgeStop?: () => Promise<void>,
-  acknowledgePause?: () => Promise<boolean>,
+  acknowledgePause?: () => Promise<boolean | undefined>,
 ): Promise<ProjectRunExecuteResponse> {
   if (request.kind === "task") {
     return executeTaskRun(request, async (control) => {
