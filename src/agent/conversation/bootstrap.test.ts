@@ -432,6 +432,29 @@ describe("agent/conversation-bootstrap", () => {
     }]);
   });
 
+  it("rejects a bootstrap without the admission capability before any write", async () => {
+    let writes = 0;
+    await assertRejects(
+      () =>
+        bootstrapConversationAgentRun({
+          authToken: AUTH_TOKEN,
+          apiUrl: API_URL,
+          parentConversationId: CONVERSATION_ID,
+          ensureProjectId: PROJECT_ID,
+          get conversationBody() {
+            writes += 1;
+            return { title: "Child task" };
+          },
+          handoffMessageBody: { role: "user", parts: [{ type: "text", text: "Do the task" }] },
+          runId: "run_child_missing_admission",
+          agentId: "invoke-agent-child",
+        }),
+      Error,
+      "requires the bound admission capability",
+    );
+    assertEquals(writes, 0);
+  });
+
   it("preserves the bound admission result and propagates its failures", async () => {
     stubFetchSequence(
       jsonResponse({ id: CHILD_CONVERSATION_ID, project_id: null }, 201),

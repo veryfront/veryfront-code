@@ -260,6 +260,51 @@ describe("external agent worker client", () => {
     );
   });
 
+  it("keeps claim credentials across a lease renewal and drops them when the lease is lost", async () => {
+    const { calls, fetchImpl } = fetchSequence(
+      jsonResponse({ worker: worker(), token: WORKER_TOKEN }, 201),
+      jsonResponse(claim()),
+      jsonResponse({ run: claim().run }),
+      jsonResponse({ id: CANONICAL_RUN_ID, status: "completed" }),
+      jsonResponse({ run: null }),
+    );
+    const client = createExternalAgentWorkerClient({
+      apiUrl: API_URL,
+      authToken: API_TOKEN,
+      fetch: fetchImpl,
+    });
+    const registeredWorker = await client.registerWorker({
+      projectReference: PROJECT_REFERENCE,
+      implementationKind: "veryfront-codex",
+      implementationDisplayName: "Veryfront Codex",
+      workerKey: "local-codex",
+    });
+    await client.claimRun({ workerId: registeredWorker.id, leaseDurationSeconds: 30 });
+
+    const renewed = await client.renewLease({
+      workerId: registeredWorker.id,
+      runId: RUN_ID,
+      leaseDurationSeconds: 30,
+    });
+    await client.completeRun({ runId: RUN_ID, status: "completed" });
+
+    assertEquals(renewed?.run_id, RUN_ID);
+    assertEquals(String(calls[3]?.[0]), `${API_URL}/runs/${CANONICAL_RUN_ID}/finalize`);
+
+    const lost = await client.renewLease({
+      workerId: registeredWorker.id,
+      runId: RUN_ID,
+      leaseDurationSeconds: 30,
+    });
+    assertEquals(lost, null);
+    await assertRejects(
+      () => client.completeRun({ runId: RUN_ID, status: "completed" }),
+      Error,
+      "Current worker claim authority is required",
+    );
+    assertEquals(calls.length, 5);
+  });
+
   it("forwards the terminal error of a failed completion", async () => {
     const { calls, fetchImpl } = fetchSequence(
       jsonResponse(claim()),

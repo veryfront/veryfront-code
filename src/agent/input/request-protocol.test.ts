@@ -159,6 +159,39 @@ describe("agent/input-request-protocol", () => {
     });
   });
 
+  it("sends only finite number defaults and omits blank or non-numeric ones", async () => {
+    let capturedInit: RequestInit | undefined;
+    stubFetchWithRecorder((_input, init) => {
+      capturedInit = init;
+      return jsonResponse(createInputRequestRecord({}), 201);
+    });
+
+    await createInputRequest({
+      authToken: AUTH_TOKEN,
+      apiUrl: API_URL,
+      conversationId: CONVERSATION_ID,
+      runId: RUN_ID,
+      toolCallId: TOOL_CALL_ID,
+      form: {
+        title: "Numbers",
+        fields: [
+          { type: "number", name: "count", label: "Count", defaultValue: " 42 " },
+          { type: "number", name: "blank", label: "Blank", defaultValue: "  " },
+          { type: "number", name: "word", label: "Word", defaultValue: "many" },
+        ],
+      } as unknown as Parameters<typeof createInputRequest>[0]["form"],
+      expiresAt: EXPIRES_AT,
+    });
+
+    const fields = JSON.parse(String(capturedInit?.body)).fields as Record<string, unknown>[];
+    assertEquals(fields.map((field) => [field.name, field.default]), [
+      ["count", 42],
+      ["blank", undefined],
+      ["word", undefined],
+    ]);
+    assertEquals(fields.map((field) => Object.hasOwn(field, "default")), [true, false, false]);
+  });
+
   it("fetches and normalizes durable input request snapshots", async () => {
     stubFetchWithRecorder((input, init) => {
       assertEquals(

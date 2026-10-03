@@ -260,6 +260,10 @@ export function transferHostedTerminalAuthority(
   if (authority) credentials.set(target, authority);
 }
 
+function isRetryableLeaseRenewalStatus(status: number): boolean {
+  return status === 408 || status === 429 || status >= 500;
+}
+
 /** Keep an inherited local execution leased while its callback is running. */
 export async function withHostedInheritedLease<T>(
   descriptor: HostedTerminalDescriptor,
@@ -316,19 +320,30 @@ export async function withHostedInheritedLease<T>(
         controller.signal.addEventListener("abort", onAbort, { once: true });
       });
       if (controller.signal.aborted) return await new Promise<never>(() => {});
-      const response = await (authority.fetch ?? hostFetch)(
-        `${authority.apiUrl}/runs/${canonicalId}/heartbeats`,
-        {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${authority.renewalToken}`,
-            "Content-Type": "application/json",
+      let response: Response;
+      try {
+        response = await (authority.fetch ?? hostFetch)(
+          `${authority.apiUrl}/runs/${canonicalId}/heartbeats`,
+          {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${authority.renewalToken}`,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({ lease_duration_seconds: 60 }),
+            signal: controller.signal,
           },
-          body: JSON.stringify({ lease_duration_seconds: 60 }),
-          signal: controller.signal,
-        },
-      );
+        );
+      } catch {
+        // A transport failure says nothing about the lease. Retry while the
+        // current lease is valid; the expiry timer is the authoritative stop.
+        continue;
+      }
       if (!response.ok) {
+        if (isRetryableLeaseRenewalStatus(response.status)) {
+          await response.body?.cancel().catch(() => {});
+          continue;
+        }
         throw new Error(`Inherited child lease renewal failed (${response.status})`);
       }
       const receipt = await response.json();

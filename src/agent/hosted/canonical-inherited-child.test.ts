@@ -168,3 +168,80 @@ for (const mode of ["fenced", "hung", "expired", "parent-before", "parent-during
     assertEquals(calls, mode === "expired" || mode.startsWith("parent-") ? 1 : 2);
   });
 }
+
+it("keeps local work running across transient renewal failures while the lease is valid", async () => {
+  const request = {
+    projectId: parentId,
+    authToken: "parent-invocation",
+    durableRootRun: { runId: "parent" },
+  } as ParsedHostedChatRequest;
+  registerHostedTerminalCredential(request, token("parent", parentId));
+  const heartbeatOutcomes: string[] = [];
+  let renewed!: () => void;
+  const renewedOnce = new Promise<void>((resolve) => {
+    renewed = resolve;
+  });
+  let calls = 0;
+  const admit = hostedInheritedRunAdmitter(request, {
+    apiUrl: "https://api.example.test",
+    fetch: () => {
+      calls++;
+      if (calls === 1) {
+        return Promise.resolve(
+          Response.json({
+            id: childId,
+            conversation_id: parentId,
+            output_message_id: childId,
+            status: "running",
+          }, {
+            headers: {
+              "Cache-Control": "no-store",
+              "X-Veryfront-Run-Invocation-Token": "child-invocation",
+              "X-Veryfront-Run-Terminal-Token": token("child", childId),
+              "X-Veryfront-Run-Event-Token": "child-event",
+              "X-Veryfront-Run-Renewal-Token": "child-renewal",
+              "X-Veryfront-Run-Event-Sequence": "0",
+              "X-Veryfront-Run-External-Event-Sequence": "0",
+              "X-Veryfront-Run-Lease-Expires-At": new Date(Date.now() + 400).toISOString(),
+            },
+          }),
+        );
+      }
+      if (calls === 2) {
+        heartbeatOutcomes.push("network");
+        return Promise.reject(new TypeError("network connection lost"));
+      }
+      if (calls === 3) {
+        heartbeatOutcomes.push("503");
+        return Promise.resolve(Response.json({ detail: "unavailable" }, { status: 503 }));
+      }
+      heartbeatOutcomes.push("renewed");
+      renewed();
+      return Promise.resolve(
+        Response.json({
+          run_id: childId,
+          expires_at: new Date(Date.now() + 60_000).toISOString(),
+        }),
+      );
+    },
+  })!;
+  const run = await admit("tool-lease-transient", "prompt")({
+    authToken: "ignored",
+    apiUrl: "ignored",
+    conversationId: parentId,
+    parentRunId: "parent",
+    agentId: "agent",
+    projectId: parentId,
+  });
+  let abortedBeforeRenewal: boolean | undefined;
+
+  const result = await withHostedInheritedLease(run, async (signal) => {
+    await renewedOnce;
+    abortedBeforeRenewal = signal!.aborted;
+    return "completed";
+  });
+
+  assertEquals(result, "completed");
+  assertEquals(heartbeatOutcomes, ["network", "503", "renewed"]);
+  assertEquals(abortedBeforeRenewal, false);
+});

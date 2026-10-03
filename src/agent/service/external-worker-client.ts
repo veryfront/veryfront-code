@@ -380,7 +380,9 @@ class DefaultExternalAgentWorkerClient implements ExternalAgentWorkerClient {
       terminalRoute(response.credentials.run_terminal_token, response.run.run_id);
       apply(mapSet, this.#runCredentials, [response.run.run_id, response.credentials]);
     }
-    if (!response.run || !response.credentials) {
+    // The lease endpoint returns only `{ run }`; renewal keeps the claim's
+    // credentials. Drop them only when the lease is no longer held.
+    if (!response.run) {
       apply(mapDelete, this.#runCredentials, [input.runId]);
     }
     return response.run;

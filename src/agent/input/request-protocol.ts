@@ -210,6 +210,14 @@ export type FormInputToolInput = InferSchema<ReturnType<typeof getFormInputToolI
 /** Output from input request. */
 export type InputRequestOutput = InputRequestRestOutput;
 
+/** Number defaults travel as strings; never invent `0` or a `null` default. */
+function parseNumberFieldDefault(value: string): number | undefined {
+  const trimmed = value.trim();
+  if (trimmed === "") return undefined;
+  const parsed = Number(trimmed);
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
 /** Request payload for create input. */
 export async function createInputRequest(input: {
   authToken: string;
@@ -263,7 +271,7 @@ export async function createInputRequest(input: {
               ...(type !== "password"
                 ? {
                   default: type === "number" && typeof source.defaultValue === "string"
-                    ? Number(source.defaultValue)
+                    ? parseNumberFieldDefault(source.defaultValue)
                     : source.defaultValue,
                 }
                 : {}),
