@@ -145,7 +145,7 @@ function isIndexLikeKey(key: PropertyKey): boolean {
   return true;
 }
 
-function hasOwnIndexLikeKey(target: object): boolean {
+function hasOwnIndexLikeKey(target: typeof ArrayPrototype | typeof ObjectPrototype): boolean {
   // Reflect.ownKeys on these ordinary intrinsics runs no project code; the
   // values, which may be accessors, are never read.
   const keys = ReflectOwnKeys(target);

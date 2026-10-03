@@ -270,12 +270,15 @@ export function installArrayWriteProbe(route: ArrayWriteRoute): ArrayWriteProbe 
       // A value without a string form cannot carry the secret.
     }
   };
-  const indexAccessors = (target: object, keys: string[]) => {
+  const indexAccessors = (
+    target: unknown[] | typeof Object.prototype | Record<string, unknown>,
+    keys: string[],
+  ) => {
     for (const key of keys) {
       defineProperty(target, key, {
         configurable: true,
         get: () => undefined,
-        set(this: object, value: unknown) {
+        set(this: unknown[] | Record<string, unknown>, value: unknown) {
           record(value);
           defineProperty(this, key, {
             value,

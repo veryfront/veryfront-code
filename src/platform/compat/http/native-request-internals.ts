@@ -30,7 +30,9 @@ let locked = false;
  *
  * @internal Exported for tests.
  */
-export function lockSymbolMembers(target: object): void {
+export function lockSymbolMembers(
+  target: typeof Request.prototype | typeof Headers.prototype | Record<PropertyKey, unknown>,
+): void {
   const keys = ObjectGetOwnPropertySymbols(target);
   for (let index = 0; index < keys.length; index++) {
     const key = keys[index]!;
