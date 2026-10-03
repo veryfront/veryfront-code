@@ -1,10 +1,9 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
-import { createProjectMetadataClient } from "#veryfront/proxy/project-metadata-client.ts";
+import { createProjectMetadataClient } from "./project-metadata-client.ts";
 import { assertEquals } from "#veryfront/testing/assert";
 import { describe, it } from "#veryfront/testing/bdd";
 import { FakeTime } from "#std/testing/time";
-import { RoutingRefreshScheduler } from "#veryfront/proxy/routing-refresh-scheduler.ts";
+import { RoutingRefreshScheduler } from "./routing-refresh-scheduler.ts";
 
 describe("routing refresh admission", () => {
   it("bounds a synchronized burst and cancels queued and running refreshes", async () => {
@@ -58,36 +57,33 @@ it("keeps foreground metadata admission available during more than 200 due refre
   const scheduler = new RoutingRefreshScheduler(4);
   const pending = Promise.withResolvers<Response>();
   let backgroundRequests = 0;
-  await withMockFetch(
-    (async (input) => {
-      const url = new URL(input instanceof Request ? input.url : input);
-      if (url.pathname.endsWith("/foreground")) {
-        return Response.json({ id: "proj-123", slug: "foreground", environments: [] });
-      }
-      backgroundRequests++;
-      return await pending.promise;
-    }) as typeof fetch,
-    async () => {
-      const metadata = createProjectMetadataClient({
-        apiBaseUrl: "https://api.example.test",
-        maxInflight: 5,
-      });
-      for (let i = 0; i < 250; i++) {
-        scheduler.schedule(String(i), 45_000, async (signal) => {
-          await metadata.lookupAccess(`project-${i}`, "service-token", false, { signal });
-        });
-      }
-      try {
-        await time.tickAsync(45_000);
-        await time.runMicrotasks();
-        assertEquals(backgroundRequests, 4);
-        const foreground = await metadata.lookupAccess("foreground", "service-token", false);
-        assertEquals(foreground?.slug, "foreground");
-      } finally {
-        scheduler.close();
-        pending.resolve(new Response(null, { status: 404 }));
-        await time.runMicrotasks();
-      }
-    },
-  );
+  const fakeFetch = (async (input: RequestInfo | URL) => {
+    const url = new URL(input instanceof Request ? input.url : input);
+    if (url.pathname.endsWith("/foreground")) {
+      return Response.json({ id: "proj-123", slug: "foreground", environments: [] });
+    }
+    backgroundRequests++;
+    return await pending.promise;
+  }) as typeof fetch;
+  const metadata = createProjectMetadataClient({
+    apiBaseUrl: "https://api.example.test",
+    fetchImpl: fakeFetch,
+    maxInflight: 5,
+  });
+  for (let i = 0; i < 250; i++) {
+    scheduler.schedule(String(i), 45_000, async (signal) => {
+      await metadata.lookupAccess(`project-${i}`, "service-token", false, { signal });
+    });
+  }
+  try {
+    await time.tickAsync(45_000);
+    await time.runMicrotasks();
+    assertEquals(backgroundRequests, 4);
+    const foreground = await metadata.lookupAccess("foreground", "service-token", false);
+    assertEquals(foreground?.slug, "foreground");
+  } finally {
+    scheduler.close();
+    pending.resolve(new Response(null, { status: 404 }));
+    await time.runMicrotasks();
+  }
 });

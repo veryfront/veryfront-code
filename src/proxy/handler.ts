@@ -190,6 +190,8 @@ export interface ProxyHandlerOptions {
   cache?: TokenCache;
   logger?: ProxyLogger;
   metadataFetch?: typeof fetch;
+  tokenFetch?: typeof fetch;
+  routingCacheMaxEntries?: number;
   metadataTimeoutMs?: number;
   metadataMaxInflight?: number;
 }
@@ -262,11 +264,20 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
     DEFAULT_PROXY_ROUTING_CACHE_TTL_MS,
     MAX_PROXY_ROUTING_CACHE_TTL_MS,
   );
-  const routingCacheMaxEntries = readBoundedNonNegativeIntegerEnv(
-    "VERYFRONT_PROXY_ROUTING_CACHE_MAX_ENTRIES",
-    DEFAULT_PROXY_ROUTING_CACHE_MAX_ENTRIES,
-    MAX_PROXY_ROUTING_CACHE_ENTRIES,
-  );
+  if (
+    options.routingCacheMaxEntries !== undefined &&
+    !(Number.isSafeInteger(options.routingCacheMaxEntries) &&
+      options.routingCacheMaxEntries >= 0 &&
+      options.routingCacheMaxEntries <= MAX_PROXY_ROUTING_CACHE_ENTRIES)
+  ) {
+    throw new RangeError("routingCacheMaxEntries must be a bounded non-negative integer");
+  }
+  const routingCacheMaxEntries = options.routingCacheMaxEntries ??
+    readBoundedNonNegativeIntegerEnv(
+      "VERYFRONT_PROXY_ROUTING_CACHE_MAX_ENTRIES",
+      DEFAULT_PROXY_ROUTING_CACHE_MAX_ENTRIES,
+      MAX_PROXY_ROUTING_CACHE_ENTRIES,
+    );
   const localProjectResolver = createLocalProjectResolver({
     localProjects: config.localProjects,
     logger,
@@ -295,7 +306,7 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
       previewApiClientId: config.previewApiClientId,
       previewApiClientSecret: config.previewApiClientSecret,
     },
-    { cache },
+    { cache, fetchImpl: options.tokenFetch },
   );
   const routingLookupCache = new Map<string, ProjectRoutingCacheEntry>();
   const routingLookupInflight = new Map<string, ProjectRoutingInflightEntry>();
@@ -376,7 +387,10 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
     };
     routingLookupCache.set(cacheKey, entry);
     if (!identity) return;
-    const delayMs = Math.max(1, Math.floor(routingCacheTtlMs * (0.65 + Math.random() * 0.1)));
+    // Spread refreshes across replicas; the jitter is not security-sensitive,
+    // but the CSPRNG keeps the draw out of the shared Math.random sequence.
+    const jitter = crypto.getRandomValues(new Uint32Array(1))[0]! / 0x1_0000_0000;
+    const delayMs = Math.max(1, Math.floor(routingCacheTtlMs * (0.65 + jitter * 0.1)));
     routingRefresh.schedule(cacheKey, delayMs, async (signal) => {
       const isCurrent = () =>
         !closed && !signal.aborted &&

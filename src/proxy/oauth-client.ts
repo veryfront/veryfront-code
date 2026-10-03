@@ -44,6 +44,7 @@ interface OAuthTokenConfig {
   customDomain?: string;
   timeoutMs?: number;
   signal?: AbortSignal;
+  fetchImpl?: typeof fetch;
 }
 
 function resolveOAuthUrl(apiBaseUrl: string): URL {
@@ -154,7 +155,7 @@ export async function fetchOAuthToken(
         const response = await withSpan(
           ProxySpanNames.HTTP_CLIENT_FETCH,
           (): Promise<Response> =>
-            fetch(url, {
+            (config.fetchImpl ?? fetch)(url, {
               method: "POST",
               headers,
               body: JSON.stringify(body),
