@@ -261,7 +261,7 @@ async function* readFrames(
   function* complete(input: string): Generator<RunStreamFrame> {
     const split = splitSseFrames(normalizeNewlines(input));
     remainder = split.remainder;
-    if (remainder.length > MAX_SSE_FRAME_CHARS) {
+    if ([remainder, ...split.frames].some((raw) => raw.length > MAX_SSE_FRAME_CHARS)) {
       throw API_CLIENT_ERROR.create({
         detail: `${operationId} sent an event-stream frame over ${MAX_SSE_FRAME_CHARS} characters`,
         status: 502,

@@ -345,6 +345,13 @@ describe("Runs target SDK", () => {
     assertEquals((error.context as { operationId?: string }).operationId, "streamRunEvents");
   });
 
+  it("rejects a complete event-stream frame over the frame cap", async () => {
+    const mib = "x".repeat(1024 * 1024);
+    const { sdk } = sdkWith([streamResponse([`data: "${mib.repeat(4)}`, `${mib.repeat(5)}"\n\n`])]);
+    const error = await rejection(() => collect(sdk.streamRunEvents({ path: { run_id: RUN_ID } })));
+    assertEquals(error.status, 502);
+  });
+
   it("maps a problem response to an error that keeps the domain code and status", async () => {
     const problem: RunsProblem = {
       type: "https://veryfront.com/problems/conflict",
