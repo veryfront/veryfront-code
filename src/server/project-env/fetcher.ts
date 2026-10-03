@@ -4,7 +4,7 @@
  * @module server/project-env/fetcher
  */
 
-import { getHostEnvExcludingEnvFile } from "#veryfront/platform/compat/process.ts";
+import { getHostApiOriginExcludingEnvFile } from "#veryfront/platform/compat/process.ts";
 import { getBaseLogger } from "#veryfront/utils";
 import { readResponseTextPrefix } from "#veryfront/utils/response-body.ts";
 import {
@@ -198,12 +198,6 @@ function projectAuthorizationError(status: number): Error {
   });
 }
 
-function stripTrailingSlashes(value: string): string {
-  let end = value.length;
-  while (end > 0 && value.codePointAt(end - 1) === 47) end -= 1;
-  return value.slice(0, end);
-}
-
 /**
  * Fetch environment variables for a project from the Veryfront API.
  *
@@ -212,8 +206,10 @@ function stripTrailingSlashes(value: string): string {
  * values. This prevents a tenant-controlled environment ID from turning the
  * runtime's internal credentials into a cross-project confused deputy.
  *
- * Deployments that configure internal credentials must expose the internal
- * endpoint. There is intentionally no fallback after that privileged path fails.
+ * Both requests go to the host-owned `VERYFRONT_API_INTERNAL_URL` origin when
+ * it is set, otherwise to `apiBaseUrl`. Deployments that configure internal
+ * credentials must expose the internal endpoint on that origin. There is
+ * intentionally no fallback after that privileged path fails.
  * Response: { data: [{ key: string, value: string }] }
  */
 export async function fetchProjectEnvVars(
@@ -226,10 +222,9 @@ export async function fetchProjectEnvVars(
   // The internal origin is host-owned. Project overlays and project env files
   // cannot redirect either the tenant credential or the host credential.
   // Blank values count as unset, matching the proxy's `getEnv(...) || apiBaseUrl`.
-  const internalOrigin = stripTrailingSlashes(
-    getHostEnvExcludingEnvFile("VERYFRONT_API_INTERNAL_URL")?.trim() ?? "",
-  );
-  const origin = internalOrigin || apiBaseUrl;
+  // The value is normalized with captured intrinsics, and it is part of the
+  // host API snapshot, so project code cannot steer it after startup.
+  const origin = getHostApiOriginExcludingEnvFile("VERYFRONT_API_INTERNAL_URL") ?? apiBaseUrl;
   const managementUrl = `${origin}/projects/${
     encodeURIComponent(projectSlug)
   }/environment-variables?environment_id=${

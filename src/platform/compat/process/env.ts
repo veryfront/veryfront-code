@@ -46,6 +46,8 @@ const setHas = Set.prototype.has;
 // influence — how a host value is classified as blank.
 const stringTrim = String.prototype.trim;
 const stringToLowerCase = String.prototype.toLowerCase;
+const stringCharCodeAt = String.prototype.charCodeAt;
+const stringSlice = String.prototype.slice;
 
 /**
  * Host-private credentials, deliberately kept out of the process environment.
@@ -73,7 +75,11 @@ const stringToLowerCase = String.prototype.toLowerCase;
 const hostSecrets: Map<string, string> = new MapConstructor();
 const envFileValueKeys: Set<string> = new SetConstructor();
 const hostApiEnvSnapshot: Map<string, string | undefined> = new MapConstructor();
-const HOST_API_ENV_KEYS = ["VERYFRONT_API_URL", "VERYFRONT_API_BASE_URL"] as const;
+const HOST_API_ENV_KEYS = [
+  "VERYFRONT_API_URL",
+  "VERYFRONT_API_BASE_URL",
+  "VERYFRONT_API_INTERNAL_URL",
+] as const;
 
 /** Capture operator-owned API routing before project modules can mutate the process. */
 export function captureHostApiEnvironment(): void {
@@ -253,6 +259,20 @@ export function getHostEnvExcludingEnvFile(key: string): string | undefined {
   }
   if (hasEnvFileValueSource(key)) return getHostSecret(key);
   return getHostEnv(key);
+}
+
+/**
+ * Read a host-owned API origin outside the project snapshot, normalized with
+ * intrinsics captured before project code runs. Surrounding whitespace and
+ * trailing slashes are dropped, and a blank value counts as unset.
+ */
+export function getHostApiOriginExcludingEnvFile(key: string): string | undefined {
+  const value = getHostEnvExcludingEnvFile(key);
+  if (typeof value !== "string") return undefined;
+  const trimmed = apply(stringTrim, value, []) as string;
+  let end = trimmed.length;
+  while (end > 0 && (apply(stringCharCodeAt, trimmed, [end - 1]) as number) === 47) end -= 1;
+  return end === 0 ? undefined : apply(stringSlice, trimmed, [0, end]) as string;
 }
 
 /** The host process environment alone, without host-private credentials. */

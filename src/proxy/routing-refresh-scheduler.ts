@@ -1,5 +1,24 @@
 import { unrefTimer } from "#veryfront/platform/compat/process.ts";
 
+/**
+ * Delay before an idle routing refresh. Refreshes are spread across replicas
+ * over a window of 10% of the TTL that ends no later than 75% of it, and they
+ * start early enough that the credential, access warm-up, and routing requests
+ * can each take a full metadata timeout and still land before the entry
+ * expires. When the TTL cannot fit that budget
+ * the refresh starts at half the TTL rather than immediately, so a short TTL
+ * never turns into a refresh loop.
+ */
+export function routingRefreshDelayRange(
+  ttlMs: number,
+  metadataTimeoutMs: number,
+): { minMs: number; maxMs: number } {
+  const latestStartMs = Math.max(Math.floor(ttlMs * 0.5), ttlMs - 3 * metadataTimeoutMs);
+  const maxMs = Math.max(1, Math.min(Math.floor(ttlMs * 0.75), latestStartMs));
+  const minMs = Math.max(1, maxMs - Math.floor(ttlMs * 0.1));
+  return { minMs, maxMs };
+}
+
 type Refresh = (signal: AbortSignal) => Promise<void>;
 
 /** Bound background work independently of foreground metadata admission. */

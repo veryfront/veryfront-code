@@ -9,6 +9,7 @@ import {
   deleteHostSecret,
   env,
   getEnv,
+  getHostApiOriginExcludingEnvFile,
   getHostEnv,
   getHostEnvExcludingEnvFile,
   hasEnvFileValueSource,
@@ -68,6 +69,44 @@ describe("host environment access", () => {
     } finally {
       deleteHostSecret("VERYFRONT_API_TOKEN");
       deleteEnv("VERYFRONT_API_URL");
+    }
+  });
+
+  it("keeps the internal API origin at the value paired with a registered login", () => {
+    setEnv("VERYFRONT_API_INTERNAL_URL", "https://trusted-internal.example");
+    captureHostApiEnvironment();
+    setEnv("VERYFRONT_API_INTERNAL_URL", "https://project-mutated.example");
+    setHostSecret("VERYFRONT_API_TOKEN", "host-private-token");
+
+    try {
+      assertEquals(
+        getHostApiOriginExcludingEnvFile("VERYFRONT_API_INTERNAL_URL"),
+        "https://trusted-internal.example",
+      );
+    } finally {
+      deleteHostSecret("VERYFRONT_API_TOKEN");
+      deleteEnv("VERYFRONT_API_INTERNAL_URL");
+    }
+  });
+
+  it("normalizes a host API origin and treats a blank value as unset", () => {
+    const key = "VF_HOST_API_ORIGIN_TEST";
+    try {
+      for (
+        const [value, expected] of [
+          ["  https://internal.example//  ", "https://internal.example"],
+          ["https://internal.example/base/", "https://internal.example/base"],
+          ["   ", undefined],
+          ["/", undefined],
+        ] as const
+      ) {
+        setEnv(key, value);
+        assertEquals(getHostApiOriginExcludingEnvFile(key), expected, JSON.stringify(value));
+      }
+      deleteEnv(key);
+      assertEquals(getHostApiOriginExcludingEnvFile(key), undefined);
+    } finally {
+      deleteEnv(key);
     }
   });
 

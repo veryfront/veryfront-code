@@ -87,6 +87,108 @@ describe("idle proxy routing refresh", () => {
     assertEquals(routingLookups, 3, "close must cancel scheduled refreshes");
   });
 
+  function createMetadataFetch(options: { delayMs?: () => number } = {}) {
+    const calls = { routing: 0, access: 0, token: 0, authorizations: [] as string[] };
+    const fakeFetch = (async (input, init) => {
+      const path = new URL(input instanceof Request ? input.url : input).pathname;
+      if (path === "/auth/token") {
+        calls.token++;
+        return new Response(null, { status: 401 });
+      }
+      calls.authorizations.push(new Headers(init?.headers).get("authorization") ?? "");
+      const isRouting = path.includes("/proxy-routing/");
+      if (isRouting) calls.routing++;
+      else if (path.includes("/proxy-access/")) calls.access++;
+      else return new Response(null, { status: 404 });
+      const delayMs = options.delayMs?.() ?? 0;
+      if (delayMs > 0) await new Promise((resolve) => setTimeout(resolve, delayMs));
+      return Response.json({
+        id: "proj-123",
+        slug: "my-project",
+        name: "My Project",
+        environments: [{
+          id: "env-1",
+          name: "production",
+          domains: ["example.com"],
+          ...(isRouting ? { active_release_id: "rel-123" } : { protected: false }),
+        }],
+      });
+    }) as typeof fetch;
+    return { calls, fakeFetch };
+  }
+
+  it("refreshes a lookup authenticated by the static token with that token", async () => {
+    using time = new FakeTime();
+    const { calls, fakeFetch } = createMetadataFetch();
+    const handler = createProxyHandler({
+      metadataFetch: fakeFetch,
+      tokenFetch: fakeFetch,
+      config: {
+        apiBaseUrl: "https://api.example.test",
+        apiClientId: "",
+        apiClientSecret: "",
+        previewApiClientId: "",
+        previewApiClientSecret: "",
+        apiToken: "static-token",
+      },
+    });
+    const request = () => new Request("https://example.com/page");
+    try {
+      assertEquals((await handler.processRequest(request())).error, undefined);
+      for (let elapsed = 0; elapsed < 61_000; elapsed += 1_000) await time.tickAsync(1_000);
+      await time.runMicrotasks();
+      const routingLookups = calls.routing;
+      assertEquals(routingLookups >= 2, true, "static-token routing must refresh while idle");
+      assertEquals(calls.token, 0, "refresh must not request an OAuth token");
+      assertEquals(calls.authorizations.every((value) => value === "Bearer static-token"), true);
+      assertEquals((await handler.processRequest(request())).error, undefined);
+      assertEquals(
+        calls.routing,
+        routingLookups,
+        "first request after idle must use refreshed routing",
+      );
+    } finally {
+      await handler.close();
+    }
+  });
+
+  it("finishes a refresh whose requests each take nearly the full timeout", async () => {
+    using time = new FakeTime();
+    let slow = false;
+    const { calls, fakeFetch } = createMetadataFetch({ delayMs: () => slow ? 14_000 : 0 });
+    const handler = createProxyHandler({
+      metadataFetch: fakeFetch,
+      metadataTimeoutMs: 15_000,
+      config: {
+        apiBaseUrl: "https://api.example.test",
+        apiClientId: "",
+        apiClientSecret: "",
+        previewApiClientId: "",
+        previewApiClientSecret: "",
+        apiToken: "static-token",
+      },
+    });
+    const request = () => new Request("https://example.com/page");
+    try {
+      assertEquals((await handler.processRequest(request())).error, undefined);
+      slow = true;
+      for (let elapsed = 0; elapsed < 58_000; elapsed += 1_000) await time.tickAsync(1_000);
+      await time.runMicrotasks();
+      assertEquals(calls.routing, 2, "slow refresh must still complete");
+      slow = false;
+      await time.tickAsync(3_000);
+      const routingLookups = calls.routing;
+      assertEquals((await handler.processRequest(request())).error, undefined);
+      assertEquals(
+        calls.routing,
+        routingLookups,
+        "first request after idle must use refreshed routing",
+      );
+    } finally {
+      await handler.close();
+    }
+  });
+
   it("rejects an unbounded routing cache size", () => {
     for (const routingCacheMaxEntries of [-1, 1.5, 10_001]) {
       assertThrows(

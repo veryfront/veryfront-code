@@ -1,5 +1,5 @@
 import { TokenManager, type TokenScope } from "./token-manager.ts";
-import { RoutingRefreshScheduler } from "./routing-refresh-scheduler.ts";
+import { routingRefreshDelayRange, RoutingRefreshScheduler } from "./routing-refresh-scheduler.ts";
 import { isErrorAcrossRealms } from "#veryfront/platform/compat/error-introspection.ts";
 import {
   isHostedVeryfrontDomain,
@@ -40,6 +40,7 @@ import {
   type ProjectRoutingLookupResult,
   ProxyLookupAuthError,
   ProxyLookupFailure,
+  resolveProjectMetadataTimeoutMs,
 } from "./project-metadata-client.ts";
 import { resolveProxyRequestAuthority, resolveProxyRequestHost } from "./request-host.ts";
 import { createProxyEndToEndHeaders } from "./hop-by-hop-headers.ts";
@@ -79,6 +80,12 @@ interface RoutingRefreshIdentity {
   scope: TokenScope;
   projectSlug?: string;
   customDomain?: string;
+  /**
+   * Where the foreground metadata credential came from. A lookup authenticated
+   * by the configured static token must refresh with that token: OAuth client
+   * credentials are absent or failing in exactly that deployment.
+   */
+  credential: "service" | "static";
 }
 
 const DEFAULT_PROXY_ROUTING_CACHE_TTL_MS = 60_000;
@@ -315,6 +322,10 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
     timeoutMs: options.metadataTimeoutMs,
   };
   const metadataClient = createProjectMetadataClient(metadataClientOptions);
+  const routingRefreshDelay = routingRefreshDelayRange(
+    routingCacheTtlMs,
+    resolveProjectMetadataTimeoutMs(options.metadataTimeoutMs),
+  );
   const refreshMetadataClient = createProjectMetadataClient({
     ...metadataClientOptions,
     maxInflight: 4,
@@ -410,16 +421,17 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
     };
     routingLookupCache.set(cacheKey, entry);
     if (!identity) return;
-    // Spread refreshes across replicas over 65-75% of the TTL.
-    const delayMs = Math.max(1, Math.floor(routingCacheTtlMs * 0.65)) +
-      uniformRandomIntInclusive(Math.floor(routingCacheTtlMs * 0.1));
+    const delayMs = routingRefreshDelay.minMs +
+      uniformRandomIntInclusive(routingRefreshDelay.maxMs - routingRefreshDelay.minMs);
     routingRefresh.schedule(cacheKey, delayMs, async (signal) => {
       const isCurrent = () =>
         !closed && !signal.aborted &&
         routingLookupCache.get(cacheKey) === entry && entry.expiresAt > Date.now();
       if (!isCurrent()) return;
       try {
-        let token = await tokenManager.getToken(
+        const staticToken = identity.credential === "static" ? config.apiToken : undefined;
+        if (identity.credential === "static" && !staticToken) return;
+        let token = staticToken ?? await tokenManager.getToken(
           identity.scope,
           identity.projectSlug,
           identity.customDomain,
@@ -430,7 +442,8 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
         try {
           await refreshMetadataClient.lookupAccess(lookupKey, token, false, { signal });
         } catch (error) {
-          if (!isProxyLookupAuthError(error)) throw error;
+          // A rejected static token cannot be renewed here; let the entry expire.
+          if (staticToken || !isProxyLookupAuthError(error)) throw error;
           await tokenManager.invalidateToken(
             identity.scope,
             identity.projectSlug,
@@ -691,7 +704,7 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
         undefined,
         undefined,
         undefined,
-        { scope, projectSlug: input.projectSlug },
+        { scope, projectSlug: input.projectSlug, credential: "service" },
       );
       const environment = result?.environments?.find((candidate) =>
         candidate.id === input.environmentId
@@ -1057,7 +1070,14 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
           signedInternalControlPlaneCandidate,
           verifySignedInternalControlPlaneBinding,
           scope === "production",
-          { scope, ...tokenIdentity },
+          {
+            scope,
+            ...tokenIdentity,
+            credential: tokenSource === "static" && !!config.apiToken &&
+                metadataToken === config.apiToken
+              ? "static"
+              : "service",
+          },
         );
 
       try {

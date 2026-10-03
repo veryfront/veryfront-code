@@ -7,6 +7,7 @@ export {
   getEnvNumber,
   getEnvOverlayStorage,
   getEnvString,
+  getHostApiOriginExcludingEnvFile,
   getHostEnv,
   getHostEnvExcludingEnvFile,
   setEnv,

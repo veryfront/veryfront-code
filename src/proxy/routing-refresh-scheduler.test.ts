@@ -3,7 +3,7 @@ import { createProjectMetadataClient } from "./project-metadata-client.ts";
 import { assertEquals } from "#veryfront/testing/assert";
 import { describe, it } from "#veryfront/testing/bdd";
 import { FakeTime } from "#std/testing/time";
-import { RoutingRefreshScheduler } from "./routing-refresh-scheduler.ts";
+import { routingRefreshDelayRange, RoutingRefreshScheduler } from "./routing-refresh-scheduler.ts";
 
 describe("routing refresh admission", () => {
   it("bounds a synchronized burst and cancels queued and running refreshes", async () => {
@@ -49,6 +49,18 @@ describe("routing refresh admission", () => {
     await time.runMicrotasks();
     assertEquals(started, ["first", "second"]);
     scheduler.close();
+  });
+
+  it("leaves a full timeout for each refresh request before the entry expires", () => {
+    for (const timeoutMs of [1_000, 5_000, 10_000]) {
+      const { minMs, maxMs } = routingRefreshDelayRange(60_000, timeoutMs);
+      assertEquals(minMs <= maxMs, true);
+      assertEquals(60_000 - maxMs >= 3 * timeoutMs, true, `timeout ${timeoutMs}`);
+    }
+    // A TTL that cannot fit the budget refreshes at half the TTL, never in a loop.
+    assertEquals(routingRefreshDelayRange(60_000, 30_000).maxMs, 30_000);
+    assertEquals(routingRefreshDelayRange(60_000, 1_000), { minMs: 39_000, maxMs: 45_000 });
+    assertEquals(routingRefreshDelayRange(1, 10_000), { minMs: 1, maxMs: 1 });
   });
 });
 

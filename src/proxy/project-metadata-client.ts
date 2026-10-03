@@ -139,7 +139,8 @@ function resolveApiBaseUrl(value: string): URL {
   return base;
 }
 
-function resolveTimeoutMs(value: number | undefined): number {
+/** @internal Resolve and validate a metadata lookup timeout. */
+export function resolveProjectMetadataTimeoutMs(value: number | undefined): number {
   if (value === undefined) return DEFAULT_LOOKUP_TIMEOUT_MS;
   if (!Number.isSafeInteger(value) || value < 1 || value > MAX_LOOKUP_TIMEOUT_MS) {
     throw new RangeError(
@@ -450,7 +451,7 @@ export function createProjectMetadataClient(
   options: ProjectMetadataClientOptions,
 ): ProjectMetadataClient {
   const baseUrl = resolveApiBaseUrl(options.apiBaseUrl);
-  const timeoutMs = resolveTimeoutMs(options.timeoutMs);
+  const timeoutMs = resolveProjectMetadataTimeoutMs(options.timeoutMs);
   const maxInflight = resolveMaxInflight(options.maxInflight);
   const fetchImpl = options.fetchImpl ?? fetch;
   const logger = options.logger;
