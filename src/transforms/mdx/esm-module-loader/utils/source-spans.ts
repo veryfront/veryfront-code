@@ -690,32 +690,79 @@ function previousSignificantIndex(source: string, index: number): number {
   return cursor;
 }
 
-function lineCommentStart(source: string, index: number): number | null {
-  let cursor = index;
-  let hasCommentMarker = false;
-  while (cursor >= 0 && !isLineTerminator(source[cursor] ?? "")) {
-    if (source[cursor] === "/" && source[cursor + 1] === "/") hasCommentMarker = true;
-    cursor--;
-  }
-  if (!hasCommentMarker) return null;
-  cursor++;
+/**
+ * Forward line-comment classification state for the most recently scanned
+ * source. Backward token walks ask about many nearby positions on the same
+ * line; rescanning that line from its start on every query is quadratic for
+ * long single-line (generated or minified) modules, so the scan resumes from
+ * where the previous query stopped while the queries move forward.
+ */
+interface LineCommentScan {
+  source: string;
+  /** Start of the line holding every position in `[lineStart, scannedTo)`. */
+  lineStart: number;
+  /** First position not yet classified. */
+  scannedTo: number;
+  quote: string | null;
+  /** Start of the first `//` outside a quote on this line, once found. */
+  commentStart: number | null;
+}
 
-  let quote: string | null = null;
-  for (; cursor <= index; cursor++) {
+let lineCommentScan: LineCommentScan | null = null;
+
+function startLineCommentScan(source: string, index: number): LineCommentScan {
+  let lineStart = index;
+  while (lineStart > 0 && !isLineTerminator(source[lineStart - 1] ?? "")) lineStart--;
+  return { source, lineStart, scannedTo: lineStart, quote: null, commentStart: null };
+}
+
+function advanceLineCommentScan(scan: LineCommentScan, index: number): void {
+  const { source } = scan;
+  let cursor = scan.scannedTo;
+  const end = MathMin(index, source.length - 1);
+  while (cursor <= end) {
     const char = source[cursor]!;
-    if (quote !== null) {
-      if (char === "\\") cursor++;
-      else if (char === quote) quote = null;
+    if (isLineTerminator(char)) {
+      scan.lineStart = cursor + 1;
+      scan.quote = null;
+      scan.commentStart = null;
+      cursor++;
+      continue;
+    }
+    if (scan.commentStart !== null) {
+      // The rest of the line is comment; only a line terminator changes state.
+      cursor++;
+      continue;
+    }
+    if (scan.quote !== null) {
+      if (char === "\\" && !isLineTerminator(source[cursor + 1] ?? "")) cursor += 2;
+      else {
+        if (char === scan.quote) scan.quote = null;
+        cursor++;
+      }
       continue;
     }
     if (char === '"' || char === "'" || char === "`") {
-      quote = char;
-      continue;
+      scan.quote = char;
+    } else if (char === "/" && source[cursor + 1] === "/") {
+      scan.commentStart = cursor;
     }
-    if (char === "/" && source[cursor + 1] === "/") return cursor;
+    cursor++;
   }
+  scan.scannedTo = cursor;
+}
 
-  return null;
+function lineCommentStart(source: string, index: number): number | null {
+  if (index < 0 || isLineTerminator(source[index] ?? "")) return null;
+
+  let scan = lineCommentScan;
+  if (scan === null || scan.source !== source || index < scan.lineStart) {
+    scan = startLineCommentScan(source, index);
+    lineCommentScan = scan;
+  }
+  if (index >= scan.scannedTo) advanceLineCommentScan(scan, index);
+
+  return scan.commentStart !== null && scan.commentStart <= index ? scan.commentStart : null;
 }
 
 function previousSignificantIndexBeforeIgnored(source: string, index: number): number {
