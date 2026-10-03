@@ -10017,11 +10017,18 @@ describe("server/handlers/request/project-run-execute.handler manual pause (#258
       ],
     }).definition as unknown as WorkflowDefinition;
     let acknowledgements = 0;
+    let older: ReturnType<typeof dispatch> | undefined;
 
-    await withMockFetch(async () => Response.json({ stop: ++acknowledgements === 1 }), async () => {
+    await withMockFetch(async () => {
+      const stop = ++acknowledgements === 1;
+      // The control plane answers the repeated decision once the older attempt reported its
+      // pause; both attempts poll the run, so either may see the pause first.
+      if (!stop) await older;
+      return Response.json({ stop });
+    }, async () => {
       // The older attempt is still running when the control plane re-sends a decision; the
       // control plane then tells the older attempt to stop at its boundary.
-      const older = dispatch(createHandler(backend, definition));
+      older = dispatch(createHandler(backend, definition));
       while (!(await backend.getRun(runId))) await delay(1);
       const repeated = dispatch(createHandler(backend, definition), {
         type: "deadline",
