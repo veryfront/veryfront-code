@@ -648,11 +648,17 @@ describe("auditExtensionCapabilities", () => {
     );
   });
 
-  it("requires the scoped PurgeCSS platform discovery capability", () => {
+  it("requires the scoped PurgeCSS platform and color discovery capability", () => {
     const manifestPath = "extensions/ext-css-purgecss/deno.json";
     const exactCapabilities = [{
       type: "env:read",
-      keys: ["__MINIMATCH_TESTING_PLATFORM__"],
+      keys: [
+        "__MINIMATCH_TESTING_PLATFORM__",
+        "NO_COLOR",
+        "FORCE_COLOR",
+        "TERM",
+        "CI",
+      ],
     }];
     assertEquals(
       auditExtensionCapabilities([
@@ -673,7 +679,7 @@ describe("auditExtensionCapabilities", () => {
     ]);
 
     assertEquals(issues.map((issue) => issue.message), [
-      'extensions/ext-css-purgecss/deno.json sensitive extension "PurgeCSS platform discovery" must declare exactly [{"keys":["__MINIMATCH_TESTING_PLATFORM__"],"type":"env:read"}]; received []',
+      'extensions/ext-css-purgecss/deno.json sensitive extension "PurgeCSS platform and color discovery" must declare exactly [{"keys":["CI","FORCE_COLOR","NO_COLOR","TERM","__MINIMATCH_TESTING_PLATFORM__"],"type":"env:read"}]; received []',
     ]);
   });
 
@@ -685,7 +691,14 @@ describe("auditExtensionCapabilities", () => {
         [
           {
             type: "env:read",
-            keys: ["__MINIMATCH_TESTING_PLATFORM__", "HOME"],
+            keys: [
+              "__MINIMATCH_TESTING_PLATFORM__",
+              "NO_COLOR",
+              "FORCE_COLOR",
+              "TERM",
+              "CI",
+              "HOME",
+            ],
           },
           { type: "net:outbound", hosts: ["*"] },
         ],
@@ -701,7 +714,7 @@ describe("auditExtensionCapabilities", () => {
       assertEquals(issues.length, 1);
       assertEquals(
         issues[0]?.message.startsWith(
-          'extensions/ext-css-purgecss/deno.json sensitive extension "PurgeCSS platform discovery" must declare exactly [{"keys":["__MINIMATCH_TESTING_PLATFORM__"],"type":"env:read"}]; received ',
+          'extensions/ext-css-purgecss/deno.json sensitive extension "PurgeCSS platform and color discovery" must declare exactly [{"keys":["CI","FORCE_COLOR","NO_COLOR","TERM","__MINIMATCH_TESTING_PLATFORM__"],"type":"env:read"}]; received ',
         ),
         true,
       );
