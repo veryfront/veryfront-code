@@ -630,6 +630,9 @@ export async function prepareHostedChatExecution<
   if (input.request.conversationId && !input.request.durableRootRun) {
     throw new Error("Hosted conversation execution requires an API-admitted durable root run");
   }
+  if (input.request.durableRootRun && !hostedTerminalCanonicalRunId(input.request)) {
+    throw new Error("Current run terminal authority is required");
+  }
   const normalized = normalizeParsedHostedChatRequest(input.request);
   const rootRunEventWriterCapability = input.request.durableRootRun
     ? createHostedRunEventWriterCapabilityForRequest(input.request, {

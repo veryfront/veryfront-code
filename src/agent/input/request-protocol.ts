@@ -1,6 +1,6 @@
 import { computeHash } from "#veryfront/utils/hash-utils.ts";
 import { defineSchema } from "#veryfront/schemas/index.ts";
-import { NETWORK_ERROR } from "#veryfront/errors";
+import { INVALID_ARGUMENT, NETWORK_ERROR } from "#veryfront/errors";
 import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
 import type { ToolExecutionDataEvent } from "#veryfront/tool/types.ts";
 import { getHumanInputFieldSchema, humanInputRequestBaseFields } from "./human-input.ts";
@@ -246,6 +246,53 @@ export type FormInputToolInput = InferSchema<ReturnType<typeof getFormInputToolI
 /** Output from input request. */
 export type InputRequestOutput = InputRequestRestOutput;
 
+function toCanonicalInputRequestField(source: Record<string, unknown>) {
+  const unsupportedOptions = [
+    "placeholder",
+    "pattern",
+    "minLength",
+    "maxLength",
+    "min",
+    "max",
+    "rows",
+    "confirmLabel",
+    "denyLabel",
+  ];
+  for (const property of unsupportedOptions) {
+    const value = source[property];
+    if (value === undefined) continue;
+    // These values are injected by the form parser and match the default controls.
+    if (source.type === "textarea" && property === "rows" && value === 3) continue;
+    if (source.type === "confirm" && property === "confirmLabel" && value === "Yes") continue;
+    if (source.type === "confirm" && property === "denyLabel" && value === "No") continue;
+    throw INVALID_ARGUMENT.create({
+      detail: `Canonical input field "${source.name}" does not support "${property}"`,
+    });
+  }
+  const type = source.secret === true ? "password" : source.type;
+  let defaultValue = source.defaultValue;
+  if (type === "number" && typeof defaultValue === "string") {
+    if (defaultValue.trim() === "" || !Number.isFinite(Number(defaultValue))) {
+      throw INVALID_ARGUMENT.create({
+        detail:
+          `Canonical input field "${source.name}" requires a finite, non-empty numeric defaultValue`,
+      });
+    }
+    defaultValue = Number(defaultValue);
+  }
+  return Object.fromEntries(
+    Object.entries({
+      name: source.name,
+      label: source.label,
+      description: source.description,
+      required: source.required,
+      type,
+      ...(type !== "password" ? { default: defaultValue } : {}),
+      ...(source.options ? { options: source.options } : {}),
+    }).filter(([, value]) => value !== undefined),
+  );
+}
+
 /** Request payload for create input. */
 export async function createInputRequest(input: {
   authToken: string;
@@ -286,27 +333,9 @@ export async function createInputRequest(input: {
       },
       body: JSON.stringify({
         ...requestBody,
-        fields: requestBody.fields.map((field) => {
-          const source = field as Record<string, unknown>;
-          const type = source.secret === true ? "password" : source.type;
-          return Object.fromEntries(
-            Object.entries({
-              name: source.name,
-              label: source.label,
-              description: source.description,
-              required: source.required,
-              type,
-              ...(type !== "password"
-                ? {
-                  default: type === "number" && typeof source.defaultValue === "string"
-                    ? Number(source.defaultValue)
-                    : source.defaultValue,
-                }
-                : {}),
-              ...(source.options ? { options: source.options } : {}),
-            }).filter(([, value]) => value !== undefined),
-          );
-        }),
+        fields: requestBody.fields.map((field) =>
+          toCanonicalInputRequestField(field as Record<string, unknown>)
+        ),
       }),
       signal: AbortSignal.timeout(15_000),
     },

@@ -1,6 +1,7 @@
 import { computeHash } from "#veryfront/utils/hash-utils.ts";
 import { createHostedRunEventWriterCapability } from "./child-run-event-writer-token.ts";
 import type {
+  BoundConversationAgentRunFinalizer,
   ConversationRunProjection,
   createConversationAgentRun,
 } from "../conversation/durable.ts";
@@ -93,7 +94,7 @@ export function bindHostedTerminalRun(
 /** Build a bound finalizer without exposing its terminal credential to runtime inputs. */
 export function hostedTerminalRunFinalizer(
   run: { runId: string } | null,
-): typeof finalizeConversationAgentRun | undefined {
+): BoundConversationAgentRunFinalizer | undefined {
   const authority = run ? credentials.get(run) : undefined;
   if (!authority?.apiUrl) return undefined;
   const apiUrl = authority.apiUrl;
@@ -316,19 +317,26 @@ export async function withHostedInheritedLease<T>(
         controller.signal.addEventListener("abort", onAbort, { once: true });
       });
       if (controller.signal.aborted) return await new Promise<never>(() => {});
-      const response = await (authority.fetch ?? hostFetch)(
-        `${authority.apiUrl}/runs/${canonicalId}/heartbeats`,
-        {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${authority.renewalToken}`,
-            "Content-Type": "application/json",
+      let response: Response;
+      try {
+        response = await (authority.fetch ?? hostFetch)(
+          `${authority.apiUrl}/runs/${canonicalId}/heartbeats`,
+          {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${authority.renewalToken}`,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({ lease_duration_seconds: 60 }),
+            signal: controller.signal,
           },
-          body: JSON.stringify({ lease_duration_seconds: 60 }),
-          signal: controller.signal,
-        },
-      );
+        );
+      } catch (error) {
+        if (controller.signal.aborted) throw error;
+        continue;
+      }
       if (!response.ok) {
+        if (response.status === 429 || response.status >= 500) continue;
         throw new Error(`Inherited child lease renewal failed (${response.status})`);
       }
       const receipt = await response.json();

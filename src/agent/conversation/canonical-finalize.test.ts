@@ -51,7 +51,7 @@ describe("canonical runtime finalization", () => {
       throw new Error("must not send");
     };
     await assertRejects(
-      () => finalizeConversationAgentRun({ ...base, fetch }),
+      () => finalizeConversationAgentRun({ ...base, terminalAuthToken: "", fetch }),
       Error,
       "terminal authority",
     );

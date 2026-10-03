@@ -7,6 +7,7 @@ import {
   buildInputRequestLifecycleDataEvent,
   createInputRequest,
   getCreateInputRequestResponseSchema,
+  getFormInputToolInputSchema,
   getInputRequest,
 } from "./request-protocol.ts";
 import {
@@ -103,6 +104,120 @@ function stubFetchWithRecorder(
 describe("agent/input-request-protocol", () => {
   afterEach(() => {
     restoreMockFetch();
+  });
+
+  const createWithField = (field: Record<string, unknown>) =>
+    createInputRequest({
+      authToken: AUTH_TOKEN,
+      apiUrl: API_URL,
+      conversationId: CONVERSATION_ID,
+      runId: RUN_ID,
+      toolCallId: TOOL_CALL_ID,
+      expiresAt: EXPIRES_AT,
+      form: getFormInputToolInputSchema().parse({
+        title: "Input",
+        fields: [{ name: "answer", label: "Answer", ...field }],
+      }),
+    });
+
+  for (const defaultValue of ["", " ", "not-a-number", "NaN", "Infinity", "-Infinity", "1e309"]) {
+    it(`rejects invalid numeric default ${JSON.stringify(defaultValue)} before HTTP`, async () => {
+      let requests = 0;
+      stubFetchWithRecorder(() => {
+        requests++;
+        return jsonResponse(createInputRequestRecord(), 201);
+      });
+      const error = await assertRejects(() => createWithField({ type: "number", defaultValue }));
+      if (!(error instanceof Error)) throw new Error("Expected an input validation error");
+      assertEquals(error.message.includes('field "answer"'), true);
+      assertEquals(error.message.includes("defaultValue"), true);
+      assertEquals(requests, 0);
+    });
+  }
+
+  for (
+    const field of [
+      { type: "text", placeholder: "Example" },
+      { type: "text", pattern: "[a-z]+" },
+      { type: "text", minLength: 1 },
+      { type: "text", maxLength: 20 },
+      { type: "number", min: 1 },
+      { type: "number", max: 10 },
+      { type: "textarea", rows: 8 },
+      { type: "confirm", confirmLabel: "Approve" },
+      { type: "confirm", denyLabel: "Reject" },
+    ]
+  ) {
+    it(`rejects unsupported canonical field options ${JSON.stringify(field)} before HTTP`, async () => {
+      let requests = 0;
+      stubFetchWithRecorder(() => {
+        requests++;
+        return jsonResponse(createInputRequestRecord(), 201);
+      });
+      const error = await assertRejects(() => createWithField(field));
+      if (!(error instanceof Error)) throw new Error("Expected an input validation error");
+      assertEquals(error.message.includes('field "answer"'), true);
+      const property = Object.keys(field).find((key) => key !== "type")!;
+      assertEquals(error.message.includes(`"${property}"`), true);
+      assertEquals(requests, 0);
+    });
+  }
+
+  for (const [defaultValue, expected] of [["0", 0], [" 2.5 ", 2.5], ["1e3", 1000]] as const) {
+    it(`preserves finite numeric default ${defaultValue}`, async () => {
+      let body: Record<string, unknown> = {};
+      stubFetchWithRecorder((_input, init) => {
+        body = JSON.parse(String(init?.body));
+        return jsonResponse(createInputRequestRecord(), 201);
+      });
+      await createWithField({ type: "number", defaultValue });
+      assertEquals(body.fields, [{
+        name: "answer",
+        label: "Answer",
+        required: false,
+        type: "number",
+        default: expected,
+      }]);
+    });
+  }
+
+  it("retains supported choice properties and accepts injected textarea/confirm defaults", async () => {
+    const bodies: { fields: unknown[] }[] = [];
+    stubFetchWithRecorder((_input, init) => {
+      bodies.push(JSON.parse(String(init?.body)));
+      return jsonResponse(createInputRequestRecord(), 201);
+    });
+    const options = [{ value: "one", label: "One", description: "First", recommended: true }];
+    await createWithField({
+      type: "select",
+      required: true,
+      description: "Pick",
+      options,
+      defaultValue: "one",
+    });
+    await createWithField({ type: "textarea" });
+    await createWithField({ type: "confirm" });
+    assertEquals(bodies[0]?.fields, [{
+      name: "answer",
+      label: "Answer",
+      description: "Pick",
+      required: true,
+      type: "select",
+      default: "one",
+      options,
+    }]);
+    assertEquals(bodies[1]?.fields, [{
+      name: "answer",
+      label: "Answer",
+      required: false,
+      type: "textarea",
+    }]);
+    assertEquals(bodies[2]?.fields, [{
+      name: "answer",
+      label: "Answer",
+      required: false,
+      type: "confirm",
+    }]);
   });
 
   it("creates durable form input requests through the conversation endpoint", async () => {

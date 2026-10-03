@@ -1,4 +1,7 @@
-import { finalizeConversationAgentRun } from "./durable.ts";
+import {
+  type BoundConversationAgentRunFinalizer,
+  finalizeConversationAgentRun,
+} from "./durable.ts";
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
@@ -57,6 +60,9 @@ describe("agent/conversation-hosted-lifecycle", () => {
         latestEventId: 1,
         latestExternalEventSequence: 2,
         status: "running",
+        waitingToolCallId: null,
+        waitingToolName: null,
+        streamProtocolVersion: 1 as const,
       }),
       mapChunkToEvents: (chunk) => [{ type: "STATE_DELTA", chunk }],
       resolveFinalizeInput: () => ({ model: "gpt-5.4", provider: "openai" }),
@@ -100,6 +106,9 @@ describe("agent/conversation-hosted-lifecycle", () => {
         latestEventId: 1,
         latestExternalEventSequence: 2,
         status: "running",
+        waitingToolCallId: null,
+        waitingToolName: null,
+        streamProtocolVersion: 1 as const,
       }),
       resolveFinalizeInput: () => ({ model: "gpt-5.4", provider: "openai" }),
     });
@@ -160,6 +169,9 @@ describe("agent/conversation-hosted-lifecycle", () => {
         latestEventId: 1,
         latestExternalEventSequence: 2,
         status: "running",
+        waitingToolCallId: null,
+        waitingToolName: null,
+        streamProtocolVersion: 1 as const,
       }),
       resolveFinalizeInput: () => ({ model: "gpt-5.4", provider: "openai" }),
     });
@@ -229,6 +241,9 @@ describe("agent/conversation-hosted-lifecycle", () => {
         latestEventId: 1,
         latestExternalEventSequence: 2,
         status: "running",
+        waitingToolCallId: null,
+        waitingToolName: null,
+        streamProtocolVersion: 1 as const,
       }),
       resolveFinalizeInput: () => ({ model: "gpt-5.4", provider: "openai" }),
     });
@@ -283,6 +298,9 @@ describe("agent/conversation-hosted-lifecycle", () => {
       latestEventId: 0,
       latestExternalEventSequence: 0,
       status: "running" as const,
+      waitingToolCallId: null,
+      waitingToolName: null,
+      streamProtocolVersion: 1 as const,
     };
     const adapter = createConversationHostedLifecycleAdapter<unknown>({
       finalize: canonicalFinalize,
@@ -550,7 +568,7 @@ describe("agent/conversation-hosted-lifecycle", () => {
   });
 });
 
-const canonicalFinalize: typeof finalizeConversationAgentRun = (input) =>
+const canonicalFinalize: BoundConversationAgentRunFinalizer = (input) =>
   finalizeConversationAgentRun({
     ...input,
     terminalAuthToken: `header.${

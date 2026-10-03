@@ -444,7 +444,7 @@ export interface CreateConversationAgentRunInput {
 export interface FinalizeConversationAgentRunInput {
   authToken: string;
   /** Private API-issued current generation authority, never model-visible context. */
-  terminalAuthToken?: string;
+  terminalAuthToken: string;
   /** Final execution output persisted by the target finalize operation. */
   output?: unknown;
   apiUrl: string;
@@ -460,6 +460,11 @@ export interface FinalizeConversationAgentRunInput {
   /** Explicit trusted-host transport for broker-owned finalization. */
   fetch?: typeof globalThis.fetch;
 }
+
+/** Trusted finalizer that retains the exact-run credential outside caller-visible inputs. */
+export type BoundConversationAgentRunFinalizer = (
+  input: Omit<FinalizeConversationAgentRunInput, "terminalAuthToken">,
+) => Promise<void>;
 
 /** Minimal receipt fields required by the runtime from the canonical Run response. */
 export const FinalizedCanonicalRunSchema = lazySchema(

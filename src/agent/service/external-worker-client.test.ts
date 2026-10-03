@@ -260,6 +260,26 @@ describe("external agent worker client", () => {
     );
   });
 
+  it("clears previous authority when renewal cannot issue current credentials", async () => {
+    const { calls, fetchImpl } = fetchSequence(
+      jsonResponse(claim()),
+      jsonResponse({ run: { ...claim().run, status: "completed" } }),
+    );
+    const client = createExternalAgentWorkerClient({
+      apiUrl: API_URL,
+      authToken: API_TOKEN,
+      fetch: fetchImpl,
+    });
+    await client.claimRun({ workerId: WORKER_ID, leaseDurationSeconds: 30 });
+    await client.renewLease({ workerId: WORKER_ID, runId: RUN_ID, leaseDurationSeconds: 30 });
+    await assertRejects(
+      () => client.completeRun({ runId: RUN_ID, status: "completed" }),
+      Error,
+      "Current worker claim authority is required",
+    );
+    assertEquals(calls.length, 2);
+  });
+
   it("forwards the terminal error of a failed completion", async () => {
     const { calls, fetchImpl } = fetchSequence(
       jsonResponse(claim()),

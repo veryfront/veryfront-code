@@ -379,6 +379,29 @@ describe("agent/conversation-bootstrap", () => {
     );
   });
 
+  it("refuses missing admission authority before any conversation writes", async () => {
+    let calls = 0;
+    stubFetchWithRecorder(() => {
+      calls++;
+      return jsonResponse({ id: CHILD_CONVERSATION_ID, project_id: PROJECT_ID }, 201);
+    });
+    await assertRejects(
+      () =>
+        bootstrapConversationAgentRun({
+          authToken: AUTH_TOKEN,
+          apiUrl: API_URL,
+          parentConversationId: CONVERSATION_ID,
+          ensureProjectId: PROJECT_ID,
+          conversationBody: {},
+          handoffMessageBody: {},
+          agentId: "child",
+        }),
+      Error,
+      "admission capability",
+    );
+    assertEquals(calls, 0);
+  });
+
   it("bootstraps a conversation-backed run through its bound admission capability", async () => {
     const requests: unknown[] = [];
     const projection = {

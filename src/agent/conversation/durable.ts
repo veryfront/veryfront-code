@@ -11,6 +11,7 @@ import {
 import type {
   ActiveConversationRunStatus,
   AppendConversationRunEventsResponse,
+  BoundConversationAgentRunFinalizer,
   ConversationRunAppendCursorResyncResult,
   ConversationRunAppendFailureOutcome,
   ConversationRunAppendRecoveryOutcome,
@@ -62,6 +63,7 @@ import {
 export type {
   ActiveConversationRunStatus,
   AppendConversationRunEventsResponse,
+  BoundConversationAgentRunFinalizer,
   ConversationAgentRunUsage,
   ConversationRunAppendCursorResyncResult,
   ConversationRunAppendExecutionOutcome,
@@ -1368,6 +1370,14 @@ export async function createConversationAgentRun(
   );
 }
 
+/** Require the private exact-run finalizer instead of falling back to a credential-free request. */
+export function requireBoundConversationAgentRunFinalizer(
+  finalize: BoundConversationAgentRunFinalizer | undefined,
+): BoundConversationAgentRunFinalizer {
+  if (!finalize) throw new Error("Current run terminal authority is required");
+  return finalize;
+}
+
 /** Finalize conversation agent run helper. */
 export async function finalizeConversationAgentRun(
   input: FinalizeConversationAgentRunInput,
@@ -1379,7 +1389,7 @@ export async function finalizeConversationAgentRun(
     url: `${input.apiUrl}/runs/${route.id}/${cancelled ? "cancel" : "finalize"}`,
     method: "POST",
     headers: {
-      "X-Veryfront-Run-Terminal-Token": input.terminalAuthToken!,
+      "X-Veryfront-Run-Terminal-Token": input.terminalAuthToken,
       "Idempotency-Key": `runtime-terminal:${await computeHash(
         `${route.id}:${route.generation}:${input.status}`,
       )}`,

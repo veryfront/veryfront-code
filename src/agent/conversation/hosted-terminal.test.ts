@@ -1,4 +1,7 @@
-import { finalizeConversationAgentRun } from "./durable.ts";
+import {
+  type BoundConversationAgentRunFinalizer,
+  finalizeConversationAgentRun,
+} from "./durable.ts";
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
@@ -33,8 +36,8 @@ const terminalToken = `header.${
     }),
   )
 }.signature`;
-let finalizedInput: Parameters<typeof finalizeConversationAgentRun>[0];
-const canonicalFinalize: typeof finalizeConversationAgentRun = (input) => {
+let finalizedInput: Parameters<BoundConversationAgentRunFinalizer>[0];
+const canonicalFinalize: BoundConversationAgentRunFinalizer = (input) => {
   finalizedInput = input;
   return finalizeConversationAgentRun({ ...input, terminalAuthToken: terminalToken });
 };

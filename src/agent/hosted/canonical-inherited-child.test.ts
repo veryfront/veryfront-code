@@ -85,7 +85,16 @@ it("admits one inherited child with the parent's capability and binds exact-chil
 
 import { assertRejects } from "#veryfront/testing/assert.ts";
 import { withHostedInheritedLease } from "./terminal-credential.ts";
-for (const mode of ["fenced", "hung", "expired", "parent-before", "parent-during"] as const) {
+for (
+  const mode of [
+    "fenced",
+    "hung",
+    "expired",
+    "parent-before",
+    "parent-during",
+    "retry-expired",
+  ] as const
+) {
   const hangs = mode === "hung";
   it(`aborts local work when renewal ${mode}`, async () => {
     const request = {
@@ -126,6 +135,7 @@ for (const mode of ["fenced", "hung", "expired", "parent-before", "parent-during
         assertEquals(String(input), `https://api.example.test/runs/${childId}/heartbeats`);
         assertEquals(new Headers(init?.headers).get("Authorization"), "Bearer child-renewal");
         if (hangs) return new Promise<Response>(() => {});
+        if (mode === "retry-expired") return Promise.resolve(Response.json({}, { status: 503 }));
         return Promise.resolve(Response.json({ detail: "generation fenced" }, { status: 403 }));
       },
     })!;
@@ -159,12 +169,83 @@ for (const mode of ["fenced", "hung", "expired", "parent-before", "parent-during
       Error,
       mode.startsWith("parent-")
         ? "Parent execution cancelled"
-        : mode === "expired" || hangs
+        : mode === "expired" || mode === "retry-expired" || hangs
         ? "lease expired"
         : "lease renewal failed",
     );
     clearTimeout(cancelTimer);
     assertEquals(aborted, mode !== "expired" && mode !== "parent-before");
-    assertEquals(calls, mode === "expired" || mode.startsWith("parent-") ? 1 : 2);
+    if (mode === "retry-expired") assertEquals(calls > 1, true);
+    else assertEquals(calls, mode === "expired" || mode.startsWith("parent-") ? 1 : 2);
+  });
+}
+
+for (const failure of ["network", 503, 429] as const) {
+  it(`retries transient renewal ${failure} while the current lease remains valid`, async () => {
+    const request = {
+      projectId: parentId,
+      authToken: "parent-invocation",
+      durableRootRun: { runId: "parent" },
+    } as ParsedHostedChatRequest;
+    registerHostedTerminalCredential(request, token("parent", parentId));
+    let renewals = 0;
+    const completed = Promise.withResolvers<string>();
+    const admit = hostedInheritedRunAdmitter(request, {
+      apiUrl: "https://api.example.test",
+      fetch: (input) => {
+        if (String(input).endsWith("/heartbeats")) {
+          renewals++;
+          if (renewals === 1) {
+            if (failure === "network") {
+              return Promise.reject(new TypeError("temporary transport failure"));
+            }
+            return Promise.resolve(Response.json({}, { status: failure }));
+          }
+          setTimeout(() => completed.resolve("completed"), 1);
+          return Promise.resolve(
+            Response.json({
+              run_id: childId,
+              expires_at: new Date(Date.now() + 1000).toISOString(),
+            }),
+          );
+        }
+        return Promise.resolve(
+          Response.json({
+            id: childId,
+            conversation_id: parentId,
+            output_message_id: childId,
+            status: "running",
+          }, {
+            headers: {
+              "Cache-Control": "no-store",
+              "X-Veryfront-Run-Invocation-Token": "child-invocation",
+              "X-Veryfront-Run-Terminal-Token": token("child", childId),
+              "X-Veryfront-Run-Event-Token": "child-event",
+              "X-Veryfront-Run-Renewal-Token": "child-renewal",
+              "X-Veryfront-Run-Event-Sequence": "0",
+              "X-Veryfront-Run-External-Event-Sequence": "0",
+              "X-Veryfront-Run-Lease-Expires-At": new Date(Date.now() + 200).toISOString(),
+            },
+          }),
+        );
+      },
+    })!;
+    const run = await admit("retry-tool", "prompt")({
+      authToken: "ignored",
+      apiUrl: "ignored",
+      parentRunId: "parent",
+      agentId: "agent",
+      projectId: parentId,
+    });
+    const result = await withHostedInheritedLease(run, (signal) => {
+      signal!.addEventListener(
+        "abort",
+        () => completed.reject(new Error("aborted before completion")),
+        { once: true },
+      );
+      return completed.promise;
+    });
+    assertEquals(result, "completed");
+    assertEquals(renewals, 2);
   });
 }

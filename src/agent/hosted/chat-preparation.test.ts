@@ -17,6 +17,7 @@ import {
   prepareHostedChatRuntimeMessages,
 } from "./chat-preparation.ts";
 import { buildVeryfrontCloudRuntimeInstructions } from "./cloud-runtime-system-messages.ts";
+import { registerHostedTerminalCredential } from "./terminal-credential.ts";
 import { registerHostedRunEventWriterToken } from "./child-run-event-writer-token.ts";
 
 const userMessage: ChatUiMessage = {
@@ -134,9 +135,12 @@ function replayCheckpoint() {
 }
 
 function createParsedHostedChatRequest(
-  overrides: Partial<ParsedHostedChatRequest> & { runEventAppendToken?: string } = {},
+  overrides: Partial<ParsedHostedChatRequest> & {
+    runEventAppendToken?: string;
+    terminalAuthToken?: string | null;
+  } = {},
 ): ParsedHostedChatRequest {
-  const { runEventAppendToken, ...requestOverrides } = overrides;
+  const { runEventAppendToken, terminalAuthToken, ...requestOverrides } = overrides;
   const request: ParsedHostedChatRequest = {
     agentId: undefined,
     userId: "user-1",
@@ -170,6 +174,20 @@ function createParsedHostedChatRequest(
         runId: request.durableRootRun?.runId ?? "10000000-0000-4000-8000-000000000005",
         fetch: globalThis.fetch,
       },
+    );
+  }
+  if (request.durableRootRun && terminalAuthToken !== null) {
+    registerHostedTerminalCredential(
+      request,
+      terminalAuthToken ?? `header.${
+        btoa(JSON.stringify({
+          runId: request.durableRootRun.runId,
+          canonicalRunId: "10000000-0000-4000-8000-000000000005",
+          tokenUse: "run_event_writer",
+          writerPurpose: "current_run_terminal",
+          dispatchNonce: "test-generation",
+        }))
+      }.signature`,
     );
   }
   return request;
@@ -2446,3 +2464,64 @@ Deno.test("prepareHostedChatExecution keeps customer data out of the unreadable-
     assertEquals(serialized.includes("filename"), false);
   });
 });
+
+for (
+  const [condition, terminalAuthToken] of [
+    ["missing", null],
+    ["malformed", "invalid-token"],
+    [
+      "foreign-run",
+      `header.${
+        btoa(JSON.stringify({
+          runId: "different-run",
+          canonicalRunId: "10000000-0000-4000-8000-000000000005",
+          tokenUse: "run_event_writer",
+          writerPurpose: "current_run_terminal",
+          dispatchNonce: "test-generation",
+        }))
+      }.signature`,
+    ],
+  ] as const
+) {
+  Deno.test(`durable hosted ingress rejects ${condition} terminal authority before any execution setup`, async () => {
+    let sideEffects = 0;
+    await assertRejects(
+      () =>
+        prepareHostedChatExecution({
+          request: createParsedHostedChatRequest({
+            terminalAuthToken,
+            conversationId: "conversation-1",
+            projectId: "project-1",
+            durableRootRun: {
+              runId: "10000000-0000-4000-8000-000000000005",
+              messageId: "message-1",
+              latestEventId: 0,
+              latestExternalEventSequence: 0,
+            },
+          }),
+          agentConfig: { id: "agent-1" },
+          apiUrl: "https://api.example.com",
+          abortSignal: new AbortController().signal,
+          resolveModelId: () => {
+            sideEffects++;
+            throw new Error("model setup executed");
+          },
+          fetchSteering: () => {
+            sideEffects++;
+            throw new Error("steering executed");
+          },
+          buildInstructions: () => {
+            sideEffects++;
+            throw new Error("instructions executed");
+          },
+          createRuntime: () => {
+            sideEffects++;
+            throw new Error("runtime executed");
+          },
+        }),
+      Error,
+      "Current run terminal authority is required",
+    );
+    assertEquals(sideEffects, 0);
+  });
+}

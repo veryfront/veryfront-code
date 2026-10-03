@@ -1,7 +1,8 @@
 import {
+  type BoundConversationAgentRunFinalizer,
   type ConversationAgentRunUsage,
   type ConversationRunProjection,
-  finalizeConversationAgentRun,
+  requireBoundConversationAgentRunFinalizer,
 } from "./durable.ts";
 import type { HostedLifecycleTerminalState } from "../hosted/lifecycle.ts";
 import { resolveKnownProviderTerminalError } from "#veryfront/agent/streaming/stream-outcome.ts";
@@ -150,7 +151,7 @@ export async function dispatchConversationHostedStreamErrorState(
 /** Options accepted by create conversation hosted terminal adapter. */
 export interface CreateConversationHostedTerminalAdapterOptions {
   /** Trusted exact-run finalizer that retains API terminal authority privately. */
-  finalize?: typeof finalizeConversationAgentRun;
+  finalize?: BoundConversationAgentRunFinalizer;
   authToken: string;
   apiUrl: string;
   run: ConversationRunProjection | null;
@@ -313,7 +314,7 @@ export function createConversationHostedTerminalAdapter(
     const modelId = terminalState.metadata?.modelId ?? options.fallbackModelId;
 
     try {
-      await (options.finalize ?? finalizeConversationAgentRun)({
+      await requireBoundConversationAgentRunFinalizer(options.finalize)({
         authToken: options.authToken,
         apiUrl: options.apiUrl,
         conversationId: options.run.conversationId,
