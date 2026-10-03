@@ -5,6 +5,7 @@ import type { ProjectFile, VeryfrontApiClient } from "../../veryfront-api-client
 import type { FileCache } from "../cache/file-cache.ts";
 import type { InvalidationCallbacks } from "./types.ts";
 import { WebSocketManager } from "./websocket-manager.ts";
+import { REQUEST_ERROR } from "#veryfront/errors/error-registry/server.ts";
 import {
   buildReloadProjectContext,
   getReconnectDelay,
@@ -2182,6 +2183,265 @@ describe("WebSocketManager", () => {
       await flushMicrotasks();
 
       assertEquals(listCalls.count, 1, "one coalesced re-list per active adapter");
+      manager.dispose();
+    });
+  });
+
+  describe("adapters whose credential the API no longer accepts", () => {
+    const runScheduledTimers = (): void => {
+      const timers = Array.from(scheduledTimers.entries());
+      scheduledTimers.clear();
+      for (const [, timer] of timers) timer.callback();
+    };
+
+    const rejectedCredential = (status: number) =>
+      REQUEST_ERROR.create({
+        detail: `HTTP ${status}: Invalid authentication token`,
+        context: { upstreamStatus: status },
+      });
+
+    it("retires an adapter whose credential expired instead of invalidating under it", async () => {
+      const cacheCalls: string[] = [];
+      const evictions = { count: 0 };
+      const domainCacheClears = { count: 0 };
+      const manager = createWebSocketManager({
+        cache: {
+          deleteByPrefixAsync: (prefix: string) => {
+            cacheCalls.push(prefix);
+            return Promise.resolve(0);
+          },
+          deleteByPrefixAndSuffixAsync: (prefix: string, suffix: string) => {
+            cacheCalls.push(`${prefix}*:${suffix}`);
+            return Promise.resolve(0);
+          },
+        },
+        invalidationCallbacks: {
+          isCredentialExpired: () => true,
+          clearDomainCache: () => {
+            domainCacheClears.count++;
+          },
+          evictCurrentAdapter: () => {
+            evictions.count++;
+          },
+        },
+      });
+      manager.connect("project-1");
+      const socket = MockWebSocket.instances[0];
+      assertExists(socket);
+
+      deliverPoke(socket, { changedPaths: ["data/rows.json"], branchName: "main" });
+      deliverPoke(socket, { branchName: "main" });
+      runScheduledTimers();
+      await flushMicrotasks();
+
+      assertEquals(cacheCalls, [], "an expired credential must not reach the cache API");
+      assertEquals(evictions.count, 1, "the adapter retires on the first poke after expiry");
+      assertEquals(domainCacheClears.count, 2, "the process-wide domain cache is still cleared");
+      manager.dispose();
+    });
+
+    it("retires an adapter whose credential expired between the poke and its batch", async () => {
+      let expired = false;
+      const cacheCalls: string[] = [];
+      const evictions = { count: 0 };
+      const manager = createWebSocketManager({
+        cache: {
+          deleteByPrefixAsync: (prefix: string) => {
+            cacheCalls.push(prefix);
+            return Promise.resolve(0);
+          },
+          deleteByPrefixAndSuffixAsync: (prefix: string, suffix: string) => {
+            cacheCalls.push(`${prefix}*:${suffix}`);
+            return Promise.resolve(0);
+          },
+        },
+        invalidationCallbacks: {
+          isCredentialExpired: () => expired,
+          evictCurrentAdapter: () => {
+            evictions.count++;
+          },
+        },
+      });
+      manager.connect("project-1");
+      const socket = MockWebSocket.instances[0];
+      assertExists(socket);
+
+      deliverPoke(socket, { changedPaths: ["data/rows.json"], branchName: "main" });
+      deliverPoke(socket, { branchName: "main" });
+      expired = true;
+      runScheduledTimers();
+      await flushMicrotasks();
+
+      assertEquals(cacheCalls, [], "a batch that runs after expiry must not reach the cache API");
+      assertEquals(evictions.count, 1);
+      manager.dispose();
+    });
+
+    it("ignores later pokes once the API rejected the adapter's credential", async () => {
+      let deleteCalls = 0;
+      const evictions = { count: 0 };
+      const manager = createWebSocketManager({
+        cache: {
+          deleteByPrefixAndSuffixAsync: () => {
+            deleteCalls++;
+            return Promise.reject(rejectedCredential(401));
+          },
+        },
+        invalidationCallbacks: {
+          evictCurrentAdapter: () => {
+            evictions.count++;
+          },
+        },
+      });
+      manager.connect("project-1");
+      const socket = MockWebSocket.instances[0];
+      assertExists(socket);
+
+      deliverPoke(socket, { changedPaths: ["data/rows.json"], branchName: "main" });
+      runScheduledTimers();
+      await flushMicrotasks();
+      const rejectedCalls = deleteCalls;
+
+      deliverPoke(socket, { changedPaths: ["data/other.json"], branchName: "main" });
+      runScheduledTimers();
+      await flushMicrotasks();
+
+      assertEquals(deleteCalls, rejectedCalls, "a refused credential is not tried again");
+      assertEquals(evictions.count, 1);
+      manager.dispose();
+    });
+
+    it("retires an adapter whose cross-branch cache clear the API rejected", async () => {
+      let deleteCalls = 0;
+      const evictions = { count: 0 };
+      const manager = createWebSocketManager({
+        branch: "feature-x",
+        cache: {
+          deleteByPrefixAsync: () => {
+            deleteCalls++;
+            return Promise.reject(rejectedCredential(401));
+          },
+        },
+        invalidationCallbacks: {
+          evictCurrentAdapter: () => {
+            evictions.count++;
+          },
+        },
+      });
+      manager.connect("project-1");
+      const socket = MockWebSocket.instances[0];
+      assertExists(socket);
+
+      deliverPoke(socket, { changedPaths: ["app/page.tsx"], branchName: "main" });
+      await flushMicrotasks();
+      const rejectedCalls = deleteCalls;
+      deliverPoke(socket, { changedPaths: ["app/other.tsx"], branchName: "main" });
+      await flushMicrotasks();
+
+      assertEquals(evictions.count, 1);
+      assertEquals(deleteCalls, rejectedCalls, "a refused credential is not tried again");
+      manager.dispose();
+    });
+
+    it("keeps handling pokes for a standalone adapter that cannot be replaced", async () => {
+      let deleteCalls = 0;
+      const manager = createWebSocketManager({
+        cache: {
+          deleteByPrefixAndSuffixAsync: () => {
+            deleteCalls++;
+            return Promise.reject(rejectedCredential(401));
+          },
+        },
+      });
+      manager.connect("project-1");
+      const socket = MockWebSocket.instances[0];
+      assertExists(socket);
+
+      deliverPoke(socket, { changedPaths: ["data/rows.json"], branchName: "main" });
+      runScheduledTimers();
+      await flushMicrotasks();
+      const firstCalls = deleteCalls;
+      deliverPoke(socket, { changedPaths: ["data/other.json"], branchName: "main" });
+      runScheduledTimers();
+      await flushMicrotasks();
+
+      assertEquals(firstCalls > 0, true);
+      assertEquals(deleteCalls, firstCalls * 2, "a recovered credential must still invalidate");
+      manager.dispose();
+    });
+
+    it("evicts an adapter whose queued invalidation the API rejected for its credential", async () => {
+      for (const status of [401, 403]) {
+        const evictions = { count: 0 };
+        const manager = createWebSocketManager({
+          cache: {
+            deleteByPrefixAndSuffixAsync: () => Promise.reject(rejectedCredential(status)),
+          },
+          invalidationCallbacks: {
+            isCredentialExpired: () => false,
+            evictCurrentAdapter: () => {
+              evictions.count++;
+            },
+          },
+        });
+        manager.connect("project-1");
+        const socket = MockWebSocket.instances.at(-1);
+        assertExists(socket);
+
+        deliverPoke(socket, { changedPaths: ["data/rows.json"], branchName: "main" });
+        runScheduledTimers();
+        await flushMicrotasks();
+
+        assertEquals(evictions.count, 1, `HTTP ${status} retires the adapter`);
+        manager.dispose();
+      }
+    });
+
+    it("evicts an adapter whose queued full invalidation the API rejected", async () => {
+      const evictions = { count: 0 };
+      const manager = createWebSocketManager({
+        cache: {
+          deleteByPrefixAsync: () => Promise.reject(rejectedCredential(401)),
+        },
+        invalidationCallbacks: {
+          evictCurrentAdapter: () => {
+            evictions.count++;
+          },
+        },
+      });
+      manager.connect("project-1");
+      const socket = MockWebSocket.instances[0];
+      assertExists(socket);
+
+      deliverPoke(socket, { branchName: "main" });
+      runScheduledTimers();
+      await flushMicrotasks();
+
+      assertEquals(evictions.count, 1);
+      manager.dispose();
+    });
+
+    it("keeps an adapter whose invalidation failed for another reason", async () => {
+      const evictions = { count: 0 };
+      const manager = createWebSocketManager({
+        cache: {
+          deleteByPrefixAndSuffixAsync: () => Promise.reject(rejectedCredential(502)),
+        },
+        invalidationCallbacks: {
+          evictCurrentAdapter: () => {
+            evictions.count++;
+          },
+        },
+      });
+      manager.connect("project-1");
+      const socket = MockWebSocket.instances[0];
+      assertExists(socket);
+
+      deliverPoke(socket, { changedPaths: ["data/rows.json"], branchName: "main" });
+      runScheduledTimers();
+      await flushMicrotasks();
+
+      assertEquals(evictions.count, 0, "a backend outage says nothing about the credential");
       manager.dispose();
     });
   });

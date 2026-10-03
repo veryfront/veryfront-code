@@ -14,6 +14,23 @@ const options = {
 };
 
 describe("runtime stream Provider Adapter", () => {
+  it("reports unsupported OpenAI output schemas as actionable terminal failures", () => {
+    const error = {
+      type: "invalid_request_error",
+      code: "invalid_json_schema",
+      param: "text.format.schema",
+      message: "Invalid schema for response_format: root must be an object. <REDACTED>",
+    };
+    assertEquals(classifyRuntimeProviderError(error), {
+      code: "OUTPUT_SCHEMA_INVALID",
+      publicMessage:
+        "The model provider rejected the outputSchema. Use a root object with supported JSON Schema keywords. " +
+        "For strict output, set additionalProperties: false on every object and include every property in required.",
+      retryable: false,
+      terminal: true,
+    });
+  });
+
   it("looks up existing private tools without consulting an own find override", () => {
     let reads = 0;
     const tools = [{

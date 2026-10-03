@@ -20,6 +20,13 @@ export const OUTPUT_SCHEMA_NOT_CLOSED_ERROR = {
     "built with defineSchema(), or set the property directly on a raw JSON Schema.",
 } as const;
 
+export const OUTPUT_SCHEMA_INVALID_ERROR = {
+  code: "OUTPUT_SCHEMA_INVALID",
+  message:
+    "The model provider rejected the outputSchema. Use a root object with supported JSON Schema keywords. " +
+    "For strict output, set additionalProperties: false on every object and include every property in required.",
+} as const;
+
 export const AI_PROVIDER_SPEND_LIMIT_ERROR = {
   code: "AI_PROVIDER_SPEND_LIMIT_EXCEEDED",
   message:
@@ -84,6 +91,7 @@ export const CURATED_PROVIDER_FAILURE_CODES = [
   "PROJECT_SCHEMA_ERROR",
   "MODEL_UNSUPPORTED_ASSISTANT_PREFILL",
   "OUTPUT_SCHEMA_NOT_CLOSED",
+  "OUTPUT_SCHEMA_INVALID",
   "AI_PROVIDER_SPEND_LIMIT_EXCEEDED",
   "AI_PROVIDER_WORKSPACE_LIMIT_EXCEEDED",
   "AI_PROVIDER_BILLING_ERROR",
@@ -126,6 +134,7 @@ const failures = {
     status: 400,
   },
   OUTPUT_SCHEMA_NOT_CLOSED: { ...OUTPUT_SCHEMA_NOT_CLOSED_ERROR, status: 400 },
+  OUTPUT_SCHEMA_INVALID: { ...OUTPUT_SCHEMA_INVALID_ERROR, status: 400 },
   AI_PROVIDER_SPEND_LIMIT_EXCEEDED: AI_PROVIDER_SPEND_LIMIT_ERROR,
   AI_PROVIDER_WORKSPACE_LIMIT_EXCEEDED: AI_PROVIDER_WORKSPACE_LIMIT_ERROR,
   AI_PROVIDER_BILLING_ERROR: AI_PROVIDER_BILLING_ERROR,

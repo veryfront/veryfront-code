@@ -362,19 +362,22 @@ export class StepExecutor {
       this.executionOperations.set(runId, operations);
     }
     operations.add(operation);
-    void operation.then(
-      () => operations.delete(operation),
-      () => operations.delete(operation),
-    );
+    const settle = () => {
+      operations.delete(operation);
+      // A missing entry means settled; run ownership is tracked by WorkflowExecutor.
+      if (operations.size === 0 && this.executionOperations.get(runId) === operations) {
+        this.executionOperations.delete(runId);
+      }
+    };
+    void operation.then(settle, settle);
   }
 
   /** @internal Wait until every raw step operation observed locally for this run has settled. */
   async waitForExecutionStopped(runId: string): Promise<void> {
-    const operations = this.executionOperations.get(runId);
-    if (!operations) return;
-
-    while (operations.size > 0) {
+    let operations = this.executionOperations.get(runId);
+    while (operations && operations.size > 0) {
       await Promise.allSettled([...operations]);
+      operations = this.executionOperations.get(runId) ?? operations;
     }
   }
 

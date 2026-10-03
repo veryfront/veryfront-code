@@ -1588,7 +1588,16 @@ describe("run-scoped inference credential", () => {
           ) as string | null;
           return new Response(null, { status: 204 });
         },
-        () => wrappedFetch("https://93.184.216.34/ai/gateway/openai/v1/chat/completions"),
+        // Native fetch reads the live Request headers getter, so the replaced
+        // one makes the gateway refuse before any native call. Framework code
+        // never used it on the way there: that would have thrown its own error.
+        () =>
+          assertRejects(
+            async () =>
+              await wrappedFetch("https://93.184.216.34/ai/gateway/openai/v1/chat/completions"),
+            TypeError,
+            "Refused a credential-bearing request",
+          ),
       );
     } finally {
       globalThis.URL = NativeURL;
@@ -1601,7 +1610,7 @@ describe("run-scoped inference credential", () => {
     }
 
     assertEquals(observedValidationTokens, []);
-    assertEquals(capturedAuthorization, `Bearer ${inferenceToken}`);
+    assertEquals(capturedAuthorization, null);
   });
 
   it("keeps inference credentials out of replaced web constructors", async () => {

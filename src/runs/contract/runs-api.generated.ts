@@ -1318,12 +1318,29 @@ export interface components {
             title: string;
             tool_call_id?: string;
         };
+        CreateInputRequestRequestInput: {
+            description?: string;
+            /** Format: date-time */
+            expires_at?: string;
+            fields: components["schemas"]["InputRequestFieldInput"][];
+            metadata?: {
+                [key: string]: unknown;
+            };
+            /** @enum {string} */
+            requested_responder_type?: "human" | "agent" | "system";
+            title: string;
+            tool_call_id?: string;
+        };
         CreateRunHeartbeatRequest: {
             /**
              * Format: int64
              * @default 60
              */
             lease_duration_seconds: number;
+        };
+        CreateRunHeartbeatRequestInput: {
+            /** Format: int64 */
+            lease_duration_seconds?: number;
         };
         /** @description Create a direct run with project_id, target:{type,id}, and optional input, or execute a saved schedule or webhook. Input is business data; configuration and execution settings are separate. */
         CreateRunRequest: components["schemas"]["DirectRunRequest"] | components["schemas"]["ScheduleRunRequest"] | components["schemas"]["WebhookRunRequest"];
@@ -1722,6 +1739,53 @@ export interface components {
             }[];
             /** @default false */
             required: boolean;
+            /** @enum {string} */
+            type: "select" | "radio";
+        };
+        InputRequestFieldInput: {
+            description?: string;
+            label?: string;
+            name: string;
+            required?: boolean;
+            /** @enum {string} */
+            type: "password";
+        } | {
+            default?: string;
+            description?: string;
+            label?: string;
+            name: string;
+            required?: boolean;
+            /** @enum {string} */
+            type: "text" | "textarea" | "email" | "url";
+        } | {
+            /** Format: double */
+            default?: number;
+            description?: string;
+            label?: string;
+            name: string;
+            required?: boolean;
+            /** @enum {string} */
+            type: "number";
+        } | {
+            default?: boolean;
+            description?: string;
+            label?: string;
+            name: string;
+            required?: boolean;
+            /** @enum {string} */
+            type: "checkbox" | "confirm";
+        } | {
+            default?: string;
+            description?: string;
+            label?: string;
+            name: string;
+            options: {
+                description?: string;
+                label: string;
+                recommended?: boolean;
+                value: string;
+            }[];
+            required?: boolean;
             /** @enum {string} */
             type: "select" | "radio";
         };
@@ -8770,7 +8834,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["CreateRunHeartbeatRequest"];
+                "application/json": components["schemas"]["CreateRunHeartbeatRequestInput"];
             };
         };
         responses: {
@@ -8978,7 +9042,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["CreateInputRequestRequest"];
+                "application/json": components["schemas"]["CreateInputRequestRequestInput"];
             };
         };
         responses: {

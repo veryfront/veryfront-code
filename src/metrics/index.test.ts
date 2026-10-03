@@ -19,6 +19,11 @@ import {
 } from "#veryfront/utils/logger/logger.ts";
 import { withEnv } from "#veryfront/testing/deno-compat.ts";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
+import { isDeno } from "#veryfront/platform/compat/runtime.ts";
+import {
+  HEADER_METHODS,
+  installCredentialProbes,
+} from "#veryfront/security/http/credential-probes.test-helpers.ts";
 import { FakeTime } from "#std/testing/time";
 import { metrics } from "./index.ts";
 
@@ -295,7 +300,7 @@ describe("metrics public SDK", () => {
     assertEquals(requests.length, 1);
     assertEquals(requests[0]?.url, "https://collector.example/otlp/v1/metrics");
     assertEquals(
-      (requests[0]?.init?.headers as Record<string, string>).Authorization,
+      (requests[0]?.init?.headers as Record<string, string>).authorization,
       "Basic secret",
     );
 
@@ -479,7 +484,7 @@ describe("metrics public SDK", () => {
       "http://veryfront-api:80/internal/metrics/otlp/v1/metrics",
     );
     assertEquals(
-      (requests[0]?.init?.headers as Record<string, string>).Authorization,
+      (requests[0]?.init?.headers as Record<string, string>).authorization,
       "Basic aW50ZXJuYWwtdXNlcjppbnRlcm5hbC1wYXNz",
     );
   });
@@ -528,6 +533,34 @@ describe("metrics public SDK", () => {
       const requests = await exportedRequests(() => emitAsProject("project-token", "orders_total"));
 
       assertEquals(headersOf(requests[0])["x-token"], "project-token");
+    });
+
+    it("sends the token without a patched intrinsic seeing it", { ignore: !isDeno }, async () => {
+      const received: (string | null)[] = [];
+      // The mock stands in for native fetch: it builds the Request natively
+      // and reads it with the originals.
+      const headersGet = Headers.prototype.get;
+      // Everything but Headers has/append, whose replacement makes the send refuse.
+      const probes = installCredentialProbes({
+        headerMethods: HEADER_METHODS.filter((name) => name !== "has" && name !== "append"),
+      });
+      try {
+        await withEnv(internalProxyEnv, async () => {
+          await withMockFetch(
+            ((url: string | URL | Request, init?: RequestInit) => {
+              const request = new Request(url, init);
+              received.push(Reflect.apply(headersGet, request.headers, ["x-token"]) as string);
+              return Promise.resolve(new Response("{}", { status: 200 }));
+            }) as typeof fetch,
+            () => emitAsProject("probed-project-token", "orders_total"),
+          );
+        });
+      } finally {
+        probes.restore();
+      }
+
+      assertEquals(received, ["probed-project-token"]);
+      assertEquals(probes.saw("probed-project-token"), false);
     });
 
     it("refuses redirects, so the token never follows one to another host", async () => {
@@ -694,7 +727,7 @@ describe("metrics public SDK", () => {
 
     assertEquals(observedValues, []);
     assertEquals(
-      (requests[0]?.headers as Record<string, string>).Authorization,
+      (requests[0]?.headers as Record<string, string>).authorization,
       "Basic aW50ZXJuYWwtdXNlcjppbnRlcm5hbC1wYXNz",
     );
   });
@@ -803,7 +836,7 @@ describe("metrics public SDK", () => {
       "a project-configured OTLP endpoint must never receive other environments' samples",
     );
     assertEquals(
-      (attackerRequest?.init?.headers as Record<string, string>).Authorization,
+      (attackerRequest?.init?.headers as Record<string, string>).authorization,
       undefined,
       "internal proxy credentials must never reach a project-configured endpoint",
     );
@@ -1410,7 +1443,7 @@ describe("metrics public SDK", () => {
       "http://veryfront-api:80/internal/metrics/otlp/v1/metrics",
     );
     assertEquals(
-      (requests[0]?.init?.headers as Record<string, string>).Authorization,
+      (requests[0]?.init?.headers as Record<string, string>).authorization,
       "Basic aW50ZXJuYWwtdXNlcjppbnRlcm5hbC1wYXNz",
     );
   });

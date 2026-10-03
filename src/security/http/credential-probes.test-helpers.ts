@@ -5,7 +5,7 @@
  * recorded text contains a credential.
  */
 
-type HeaderMethod =
+export type HeaderMethod =
   | "append"
   | "entries"
   | "forEach"
@@ -15,7 +15,7 @@ type HeaderMethod =
   | "set"
   | "values";
 
-const HEADER_METHODS: readonly HeaderMethod[] = [
+export const HEADER_METHODS: readonly HeaderMethod[] = [
   "append",
   "entries",
   "forEach",
@@ -39,14 +39,25 @@ export interface CredentialProbes {
   restore(): void;
 }
 
-export function installCredentialProbes(): CredentialProbes {
+export interface CredentialProbeOptions {
+  /**
+   * The `Headers.prototype` methods to replace, all of them by default. Native
+   * `fetch` calls `has` and `append` with the headers as `this`, so the egress
+   * stack refuses to send once those are replaced; leaving them out shows what
+   * the remaining probes see on a request that is sent.
+   */
+  readonly headerMethods?: readonly HeaderMethod[];
+}
+
+export function installCredentialProbes(options: CredentialProbeOptions = {}): CredentialProbes {
+  const headerMethods = options.headerMethods ?? HEADER_METHODS;
   const prototype = Headers.prototype;
   const iteratorPrototype = Object.getPrototypeOf(new Headers().entries()) as Record<
     string,
     unknown
   >;
   const originalMethods = new Map<PropertyKey, (...args: unknown[]) => unknown>();
-  for (const name of [...HEADER_METHODS, Symbol.iterator]) {
+  for (const name of [...headerMethods, Symbol.iterator]) {
     originalMethods.set(name, Reflect.get(prototype, name));
   }
   const originalEntries = prototype.entries;
