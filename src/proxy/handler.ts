@@ -7,7 +7,7 @@ import {
 } from "#veryfront/server/utils/domain-parser.ts";
 import type { TokenCache } from "./cache/types.ts";
 import { computeContentSourceId } from "#veryfront/cache/keys.ts";
-import { getEnv } from "#veryfront/platform/compat/process.ts";
+import { getEnv, unrefTimer } from "#veryfront/platform/compat/process.ts";
 import { checkProtectedProxyAccess } from "./proxy-access-control.ts";
 import { createLocalProjectResolver } from "./local-project-resolver.ts";
 import {
@@ -67,6 +67,7 @@ export const INTERNAL_PROXY_HEADERS = [
 interface ProjectRoutingCacheEntry {
   value: ProjectRoutingLookupResult;
   expiresAt: number;
+  refreshTimer?: ReturnType<typeof setTimeout>;
 }
 
 interface ProjectRoutingInflightEntry {
@@ -294,6 +295,12 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
     DEFAULT_PROXY_ROUTING_CACHE_MAX_ENTRIES,
   );
   let routingLookupGeneration = 0;
+  let closed = false;
+
+  function deleteCachedRoutingLookup(cacheKey: string): void {
+    clearTimeout(routingLookupCache.get(cacheKey)?.refreshTimer);
+    routingLookupCache.delete(cacheKey);
+  }
 
   async function resolveProjectLookup(
     lookupKey: string,
@@ -319,7 +326,7 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
     }
 
     if (cached.expiresAt <= Date.now()) {
-      routingLookupCache.delete(cacheKey);
+      deleteCachedRoutingLookup(cacheKey);
       return null;
     }
 
@@ -328,8 +335,13 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
     return cached.value;
   }
 
-  function setCachedRoutingLookup(cacheKey: string, value: ProjectRoutingLookupResult): void {
-    if (routingCacheTtlMs <= 0 || routingCacheMaxEntries <= 0) {
+  function setCachedRoutingLookup(
+    cacheKey: string,
+    value: ProjectRoutingLookupResult,
+    lookupKey: string,
+    token: string,
+  ): void {
+    if (closed || routingCacheTtlMs <= 0 || routingCacheMaxEntries <= 0) {
       return;
     }
 
@@ -337,14 +349,39 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
       while (routingLookupCache.size >= routingCacheMaxEntries) {
         const oldestKey = routingLookupCache.keys().next().value;
         if (!oldestKey) break;
-        routingLookupCache.delete(oldestKey);
+        deleteCachedRoutingLookup(oldestKey);
       }
     }
 
-    routingLookupCache.set(cacheKey, {
+    deleteCachedRoutingLookup(cacheKey);
+    const entry: ProjectRoutingCacheEntry = {
       value,
       expiresAt: Date.now() + routingCacheTtlMs,
-    });
+    };
+    routingLookupCache.set(cacheKey, entry);
+    entry.refreshTimer = setTimeout(() => {
+      if (closed || routingLookupCache.get(cacheKey) !== entry) return;
+      // Access remains authoritative per request. This read only keeps its
+      // transport and repository path warm during idle periods.
+      void (async () => {
+        try {
+          await metadataClient.lookupAccess(lookupKey, token, false);
+          if (closed || routingLookupCache.get(cacheKey) !== entry) return;
+          await resolveProjectRoutingLookup(
+            lookupKey,
+            token,
+            undefined,
+            undefined,
+            undefined,
+            true,
+          );
+        } catch {
+          // Keep the original expiry on failure; never extend stale routing.
+          logger?.warn("Background proxy routing refresh failed", { lookupKey });
+        }
+      })();
+    }, Math.max(1, Math.floor(routingCacheTtlMs * 0.75)));
+    unrefTimer(entry.refreshTimer);
   }
 
   function hasActiveReleaseForMatchedEnvironment(
@@ -423,7 +460,7 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
     let evictedEntries = 0;
     for (const [cacheKey, entry] of routingLookupCache) {
       if (entry.value.id !== input.projectId && cacheKey !== normalizedProjectSlug) continue;
-      routingLookupCache.delete(cacheKey);
+      deleteCachedRoutingLookup(cacheKey);
       rememberInvalidationGeneration(lookupKeyInvalidationGenerations, cacheKey, generation);
       evictedEntries++;
     }
@@ -448,12 +485,13 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
     timing?: ProxyServerTiming,
     signal?: AbortSignal,
     isResultUsable?: (result: ProjectRoutingLookupResult) => boolean,
+    refresh = false,
   ): Promise<ProjectRoutingLookupResult | null> {
     const cacheKey = normalizeProjectLookupKey(lookupKey);
     const canUseResult = (result: ProjectRoutingLookupResult | null): boolean =>
       !result || !isResultUsable || isResultUsable(result);
     const discardIncompleteResult = (): void => {
-      routingLookupCache.delete(cacheKey);
+      deleteCachedRoutingLookup(cacheKey);
       logger?.info("Refreshing incomplete proxy routing metadata", { lookupKey });
     };
     let hasRejectedIncompleteResult = false;
@@ -462,7 +500,7 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
       timing ?? { enabled: false, startedAt: 0, phases: new Map() },
       "proxy.routing_lookup",
       async () => {
-        const cached = getCachedRoutingLookup(cacheKey);
+        const cached = refresh ? null : getCachedRoutingLookup(cacheKey);
         if (cached && canUseResult(cached)) {
           logger?.debug("Proxy routing metadata cache hit", { lookupKey });
           return cached;
@@ -495,7 +533,7 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
               const result = await metadataClient.lookupRouting(lookupKey, token);
 
               if (!wasRoutingLookupInvalidated(cacheKey, result, startedAtGeneration)) {
-                if (result) setCachedRoutingLookup(cacheKey, result);
+                if (result) setCachedRoutingLookup(cacheKey, result, lookupKey, token);
                 return result;
               }
 
@@ -714,7 +752,7 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
           accessResult.id !== routingResult.id ||
           accessResult.slug !== routingResult.slug
         ) {
-          routingLookupCache.delete(normalizeProjectLookupKey(lookupKey));
+          deleteCachedRoutingLookup(normalizeProjectLookupKey(lookupKey));
           return await resolveFullProjectLookupAndProtection(
             req,
             url,
@@ -737,7 +775,7 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
           routingEnv.id !== accessEnv.id ||
           routingEnv.name !== accessEnv.name
         ) {
-          routingLookupCache.delete(normalizeProjectLookupKey(lookupKey));
+          deleteCachedRoutingLookup(normalizeProjectLookupKey(lookupKey));
           return await resolveFullProjectLookupAndProtection(
             req,
             url,
@@ -965,7 +1003,7 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
           lookupType: error.lookupType,
         });
 
-        routingLookupCache.delete(normalizeProjectLookupKey(lookupKey));
+        deleteCachedRoutingLookup(normalizeProjectLookupKey(lookupKey));
         await tokenManager.invalidateToken(
           scope,
           tokenIdentity.projectSlug,
@@ -1371,6 +1409,8 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
   }
 
   async function close() {
+    closed = true;
+    for (const cacheKey of routingLookupCache.keys()) deleteCachedRoutingLookup(cacheKey);
     localProjectResolver.clear();
     await tokenManager.close();
   }

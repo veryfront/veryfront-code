@@ -4,6 +4,7 @@
  * @module server/project-env/fetcher
  */
 
+import { getHostEnvExcludingEnvFile } from "#veryfront/platform/compat/process.ts";
 import { getBaseLogger } from "#veryfront/utils";
 import { readResponseTextPrefix } from "#veryfront/utils/response-body.ts";
 import {
@@ -216,12 +217,16 @@ export async function fetchProjectEnvVars(
   token: string,
   signal?: AbortSignal,
 ): Promise<Record<string, string>> {
-  const managementUrl = `${apiBaseUrl}/projects/${
+  // The internal origin is host-owned. Project overlays and project env files
+  // cannot redirect either the tenant credential or the host credential.
+  const origin = getHostEnvExcludingEnvFile("VERYFRONT_API_INTERNAL_URL")?.replace(/\/+$/u, "") ??
+    apiBaseUrl;
+  const managementUrl = `${origin}/projects/${
     encodeURIComponent(projectSlug)
   }/environment-variables?environment_id=${
     encodeURIComponent(environmentId)
   }&limit=${ENV_VARS_FETCH_LIMIT}`;
-  const internalUrl = `${apiBaseUrl}/internal/project-environment-variables?environment_id=${
+  const internalUrl = `${origin}/internal/project-environment-variables?environment_id=${
     encodeURIComponent(environmentId)
   }&project_slug=${encodeURIComponent(projectSlug)}`;
 
