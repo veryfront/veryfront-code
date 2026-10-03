@@ -709,6 +709,9 @@ describe("useWorkflowStart", () => {
     const restoreDom = installDom();
     const oldRefreshResponse = Promise.withResolvers<Response>();
     const replacementResponse = Promise.withResolvers<Response>();
+    const initialCommitted = Promise.withResolvers<void>();
+    const replacementCommitted = Promise.withResolvers<void>();
+    let replacementResolved = false;
     let oldRequestCount = 0;
     let hook: UseWorkflowListResult | null = null;
 
@@ -730,13 +733,18 @@ describe("useWorkflowStart", () => {
         autoRefresh: false,
         headers: { Authorization: `Bearer ${token}` },
       });
+      useLayoutEffect(() => {
+        if (hook!.isLoading) return;
+        if (token === "old") initialCommitted.resolve();
+        else if (replacementResolved) replacementCommitted.resolve();
+      });
       return null;
     }
 
     const root = createRoot(document.getElementById("root")!);
     try {
       flushSync(() => root.render(<Capture token="old" />));
-      await new Promise((resolve) => setTimeout(resolve, 20));
+      await initialCommitted.promise;
       assertEquals(hook!.isLoading, false);
 
       const obsoleteRefresh = hook!.refresh();
@@ -745,15 +753,16 @@ describe("useWorkflowStart", () => {
 
       oldRefreshResponse.resolve(Response.json({ runs: [] }));
       await obsoleteRefresh;
-      await new Promise((resolve) => setTimeout(resolve, 0));
+      flushSync(() => {});
       assertEquals(
         hook!.isLoading,
         true,
         "the obsolete refresh must not clear loading for the replacement request",
       );
 
+      replacementResolved = true;
       replacementResponse.resolve(Response.json({ runs: [] }));
-      await new Promise((resolve) => setTimeout(resolve, 20));
+      await replacementCommitted.promise;
       assertEquals(hook!.isLoading, false);
     } finally {
       flushSync(() => root.unmount());
