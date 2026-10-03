@@ -1,3 +1,4 @@
+import { makeTempDir } from "#veryfront/testing/deno-compat.ts";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import {
   finalizeNpmWorkerEntrypoints,
@@ -5,7 +6,7 @@ import {
 } from "../../../scripts/build/npm-worker-entrypoints.ts";
 
 Deno.test("npm worker finalization rejects missing compiled worker", async () => {
-  const root = await Deno.makeTempDir();
+  const root = await makeTempDir();
   try {
     await assertRejects(
       () => finalizeNpmWorkerEntrypoints(root, { exports: {} }),
@@ -17,7 +18,7 @@ Deno.test("npm worker finalization rejects missing compiled worker", async () =>
 });
 
 Deno.test("npm worker stays compiled without a public export", async () => {
-  const root = await Deno.makeTempDir();
+  const root = await makeTempDir();
   try {
     await Deno.mkdir(`${root}/esm/src/config`, { recursive: true });
     await Deno.writeTextFile(
