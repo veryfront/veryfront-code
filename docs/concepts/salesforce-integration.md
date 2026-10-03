@@ -45,13 +45,17 @@ This gives agents enough flexibility to work across Salesforce orgs while
 avoiding a brittle tool list full of every possible provider operation. Tool
 metadata describes each tool's inputs and effects. The caller remains
 responsible for deciding when to invoke a write tool such as creating a case,
-adding a case comment, or updating a case. Veryfront does not require a separate
+adding a case comment, or updating a case.
+
+Veryfront does not require a separate
 integration policy to discover or call the tool. For local Salesforce
 service-account execution, the source's explicit `allowedTools` grant
 determines which catalog tools are exposed, while Salesforce permissions remain
 the provider access boundary. For managed execution, agent tool selection
 determines which tools the agent can discover and call; source configuration
-can narrow that selection. Tool metadata describes inputs and effects but does
+can narrow that selection.
+
+Tool metadata describes inputs and effects but does
 not select or authorize a tool.
 
 ## Why this scales across Salesforce orgs

@@ -274,7 +274,7 @@ export function DesignSystemChat() {
 
 ## Integration with Design Systems
 
-Primitives work seamlessly with any design system:
+Use the primitives with Tailwind CSS or CSS Modules:
 
 ### Tailwind CSS
 
