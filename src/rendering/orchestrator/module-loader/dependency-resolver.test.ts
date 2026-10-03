@@ -3,6 +3,7 @@ import { assertEquals, assertRejects, assertStringIncludes } from "#veryfront/te
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { dirname, join } from "#veryfront/compat/path/index.ts";
 import { getLocalAdapter } from "#veryfront/platform/adapters/registry.ts";
+import { createMockAdapter } from "#veryfront/platform/adapters/mock.ts";
 import { __subscribeLogRecordEmitter, type LogEntry } from "#veryfront/utils/logger/logger.ts";
 import {
   type ResolvedModuleDependency,
@@ -166,7 +167,10 @@ describe("module-loader/dependency-resolver", () => {
   });
 
   it("accepts a module at the static import bound", async () => {
-    const adapter = await getLocalAdapter();
+    const adapter = createMockAdapter();
+    for (let index = 0; index < 500; index++) {
+      adapter.fs.files.set(`/project/value-${index}.ts`, `export default ${index};`);
+    }
     const fileContent = Array.from(
       { length: 500 },
       (_, index) => `import value${index} from "@/value-${index}";`,
@@ -183,6 +187,11 @@ describe("module-loader/dependency-resolver", () => {
       deps.length,
       500,
       "a module at exactly the bound must still resolve: the limit rejects more than 500",
+    );
+    assertEquals(
+      deps.map((dep) => dep.depFilePath),
+      Array.from({ length: 500 }, (_, index) => `/project/value-${index}.ts`),
+      "every import at the boundary must resolve to its fixture module",
     );
   });
 

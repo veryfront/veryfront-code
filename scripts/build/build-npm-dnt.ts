@@ -12,6 +12,7 @@
  */
 
 import { build, emptyDir } from "#dnt";
+import { finalizeNpmWorkerEntrypoints, NPM_WORKER_ENTRYPOINT } from "./npm-worker-entrypoints.ts";
 import { STANDARD_ROOT_NPM_EXTENSION_DIRECTORIES } from "#veryfront/extensions/first-party-defaults.ts";
 import { PUBLISHED_RUNTIME_HELPERS } from "../../src/platform/compat/published-runtime-helpers.ts";
 import {
@@ -79,7 +80,7 @@ const reactRange = npmDependencyRange(
 );
 
 await build({
-	entryPoints,
+	entryPoints: [...entryPoints, NPM_WORKER_ENTRYPOINT],
 	outDir: "./npm",
 
 	// Don't run tests during build (they're Deno-specific)
@@ -124,6 +125,10 @@ await build({
 	mappings: {
 		// esm.sh URLs - derived from deno.json imports
 		...esmShMappings,
+		// Keep the worker parser in its own npm package and dependency boundary.
+		"./extensions/ext-parser-babel/src/parser-only.ts": {
+			name: "@veryfront/ext-parser-babel", version, subPath: "parser-only",
+		},
 		// React must resolve to the CONSUMER's bare `react` / `react-dom` in the
 		// emitted package. The repo pins react through the local `./react/*.ts`
 		// deno shims (so Deno imports a stable esm.sh build); if dnt bundles those
@@ -201,6 +206,7 @@ await build({
 
 		const pkgPath = "./npm/package.json";
 		const initialPkg = JSON.parse(await Deno.readTextFile(pkgPath));
+		await finalizeNpmWorkerEntrypoints("./npm", initialPkg);
 		normalizeNpmPackageMetadata(initialPkg);
 		await Deno.writeTextFile(pkgPath, JSON.stringify(initialPkg, null, 2));
 
