@@ -539,6 +539,10 @@ describe("security/http/ingress-credentials", () => {
       ["POST", "/api/control-plane/runs/run_1/extra"],
       ["POST", "/api/control-plane/runs/run_1/execute/more"],
       ["POST", "/api/control-plane/runs//execute"],
+      // Percent-encoding is not decoded by URL.pathname, here or in the router.
+      ["POST", "/api/control-plane/runs/run_1%2Fexecute"],
+      ["POST", "/api/control-plane/runs/run%5F1/execute"],
+      ["POST", "/api/control-plane/runs/run_1/%65xecute"],
       ["DELETE", "/api/control-plane/runs/"],
       ["DELETE", "/api/control-plane/runs/run_1/"],
       ["POST", "/api/control-plane/agents/list"],

@@ -9863,4 +9863,110 @@ describe("project run control-plane Authorization", () => {
     assertEquals(probes.observed.filter((text) => text.includes(SERVICE_TOKEN)), []);
     assertEquals(fetchProbe.saw(SERVICE_TOKEN), false);
   });
+
+  it("authenticates a style build with the sealed Authorization when x-token is absent", async () => {
+    const { request, publicKeyPem } = await signedRequest(
+      "/api/control-plane/runs/run_style_authz/execute",
+      {
+        runId: "run_style_authz",
+        kind: "task",
+        target: "task:style-artifact-build",
+        projectId: "proj-1",
+        config: { environment_name: "Preview" },
+      },
+      { authorization: `Bearer ${SERVICE_TOKEN}` },
+    );
+    const sealed = sealIngressCredentials(request);
+    const { ctx } = createStyleArtifactCtx(publicKeyPem, {
+      files: [{ path: "pages/index.tsx", content: "export default () => null;" }],
+      stylesheet: "@tailwind utilities;",
+      stylesheetPath: "src/styles.css",
+    });
+    const recorder = createStyleArtifactFetchRecorder();
+    const authorizations: (string | undefined)[] = [];
+
+    const result = await withMockFetch(
+      ((input: string | URL | Request, init?: RequestInit) => {
+        const headers = init?.headers as Record<string, string> | undefined;
+        authorizations.push(
+          headers && Object.hasOwn(headers, "authorization") ? headers.authorization : undefined,
+        );
+        return recorder.fetch(input, init);
+      }) as typeof fetch,
+      async () => await new ProjectRunExecuteHandler().handle(sealed, ctx),
+    );
+
+    assertExists(result.response);
+    assertEquals(result.response.status, 200);
+    assertEquals(recorder.upserts.length, 1);
+    assertEquals(authorizations.length > 0, true);
+    assertEquals(authorizations.every((value) => value === `Bearer ${SERVICE_TOKEN}`), true);
+  });
+
+  it("hands the in-process AG-UI handler a local eval request without credentials", async () => {
+    const sourceAgent = createStreamingAgent("researcher", "Paris");
+    agentRegistry.register("researcher", {
+      ...sourceAgent,
+      config: {
+        ...sourceAgent.config,
+        resolveModelTransport: () =>
+          Promise.resolve({ model: createEvalTransportModel({ text: "Paris" }) }),
+      } as Agent["config"],
+    });
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      runTask: runTaskDefinition,
+      findEvalById: async (target) =>
+        target === "eval:deep-research"
+          ? {
+            id: "eval:deep-research",
+            name: "Deep research quality",
+            filePath: "evals/deep-research.eval.ts",
+            exportName: "default",
+            definition: evalAgent({
+              id: "eval:deep-research",
+              target: "agent:researcher",
+              dataset: datasets.inline([{ id: "q1", input: "France capital?" }]),
+              metrics: [metrics.answer.contains({ text: "Paris" }).gate()],
+            }),
+          }
+          : null,
+      runEval: runEvalDefinition,
+      createEvalAgentAdapter: (config) =>
+        createAgentServiceEvalAdapter({ ...config, requestTimeoutMs: 250 }),
+    }));
+    const { request, publicKeyPem } = await signedRequest(
+      "/api/control-plane/runs/run_eval_local_authz/execute",
+      {
+        runId: "run_eval_local_authz",
+        kind: "task",
+        target: "task:eval",
+        projectId: "proj-1",
+        runtimeAgUiEndpoint: "http://localhost:4311/api/ag-ui",
+        config: { eval_id: "eval:deep-research" },
+      },
+      { authorization: `Bearer ${SERVICE_TOKEN}`, "x-token": SERVICE_TOKEN },
+      "http://localhost:4311",
+    );
+    const sealed = sealIngressCredentials(request);
+
+    // The agent runs in this isolate: its header reads go through the probes.
+    const probes = projectCodeProbes();
+    let result;
+    try {
+      result = await withEnvValue(
+        "PORT",
+        "4311",
+        () => handler.handle(sealed, createCtx(publicKeyPem)),
+      );
+    } finally {
+      probes.restore();
+      agentRegistry.delete("researcher");
+    }
+
+    assertExists(result.response);
+    assertEquals(result.response.status, 200);
+    assertEquals((await result.response.json()).result.failed, 0);
+    assertEquals(Object.keys(probes.calls).length > 0, true);
+    assertEquals(probes.saw(SERVICE_TOKEN), false);
+  });
 });

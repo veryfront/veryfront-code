@@ -30,7 +30,10 @@ import {
   primordialPromiseThen,
 } from "#veryfront/platform/compat/primordials/promise.ts";
 import { getRequestTransportLifetime } from "#veryfront/platform/adapters/runtime/shared/request-peer.ts";
-import { createVeryfrontApiOriginBoundOutboundFetch } from "#veryfront/security/http/outbound-fetch.ts";
+import {
+  createVeryfrontApiOriginBoundOutboundFetch,
+  trustedHostFetch,
+} from "#veryfront/security/http/outbound-fetch.ts";
 import {
   createNativeRequestInit,
   readOwnInitField,
@@ -2226,7 +2229,12 @@ function createLocalEvalAgentFetch(input: {
 
   return async (requestInput, init) => {
     const request = new NativeRequest(requestInput, withoutLocalEvalCredentials(init));
-    if (!isLocalAgUiEndpoint(request.url)) return fetch(requestInput, init);
+    // Not local: the adapter's own credentials go to that endpoint, through the
+    // host transport captured at load rather than a global fetch project code
+    // may have replaced.
+    if (!isLocalAgUiEndpoint(request.url)) {
+      return trustedHostFetch(requestInput, createNativeRequestInit(init));
+    }
     const runtimeRestrictions = input.runtimeRestrictions ??
       await readLocalEvalRuntimeRestrictions(request);
     const handler = createAgUiHandler({
