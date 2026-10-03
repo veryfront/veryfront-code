@@ -402,6 +402,28 @@ describe("StepExecutor timeout isolation", () => {
     assertEquals(attempts, 1);
   });
 
+  it("does not retain stop evidence for settled runs (#2365)", async () => {
+    const node = step("finish", {
+      tool: {
+        id: "finish-tool",
+        description: "Settles immediately",
+        execute: () => Promise.resolve({ ok: true }),
+        // deno-lint-ignore no-explicit-any
+      } as any,
+    });
+    const executor = new StepExecutor();
+
+    for (let index = 0; index < 25; index++) {
+      const result = await executor.execute(node, makeContext(), undefined, `run-${index}`);
+      assertEquals(result.success, true);
+    }
+    await Promise.resolve();
+
+    const retained = (executor as unknown as { executionOperations: Map<string, unknown> })
+      .executionOperations;
+    assertEquals(retained.size, 0);
+  });
+
   it("does not overlap retries when a timed-out tool ignores cancellation", async () => {
     using time = new FakeTime();
     const firstStarted = Promise.withResolvers<void>();
