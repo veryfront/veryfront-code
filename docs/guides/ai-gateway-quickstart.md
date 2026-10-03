@@ -425,6 +425,10 @@ curl https://api.veryfront.com/ai/v1/chat/completions \
 A `401` means the key is missing or invalid. A `400` that asks for a project
 means an account key without the `x-veryfront-project-slug` header.
 
+Every gateway response, including errors and streams, carries an
+`x-request-id` header. Include its value when you report a problem, so the
+request can be found. Print it with `curl -i` or `curl -D -`.
+
 ## Related
 
 - [Providers](./providers.md) for inference inside a Veryfront project.
