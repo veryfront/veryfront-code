@@ -3,6 +3,7 @@ import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { requestWithRetry } from "./retry-handler.ts";
 import { VeryfrontError } from "#veryfront/errors/types.ts";
+import { installMockFetch, restoreMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import {
   type Context,
   installGlobalTelemetryAPI,
@@ -24,12 +25,12 @@ const traceparentPropagator: TextMapPropagator = {
   },
 };
 
-const originalFetch = globalThis.fetch;
-
+// The transport sends through the host transport captured at load, so the
+// stub replaces that as well as the global fetch.
 function setFetch(
   handler: (url: RequestInfo | URL, init?: RequestInit) => Promise<Response>,
 ): void {
-  globalThis.fetch = handler as typeof fetch;
+  installMockFetch(handler as typeof fetch);
 }
 
 async function captureVeryfrontError(
@@ -45,7 +46,7 @@ async function captureVeryfrontError(
 
 describe("retry-handler", () => {
   afterEach((): void => {
-    globalThis.fetch = originalFetch;
+    restoreMockFetch();
   });
 
   describe("requestWithRetry", () => {
@@ -64,7 +65,8 @@ describe("retry-handler", () => {
         capturedMethod = undefined;
         capturedBody = undefined;
         setFetch((_url, init) => {
-          capturedHeaders = init?.headers as Headers | undefined;
+          // The transport hands fetch a null-prototype header record.
+          capturedHeaders = init?.headers === undefined ? undefined : new Headers(init.headers);
           capturedMethod = init?.method;
           capturedBody = init?.body;
           return Promise.resolve(
