@@ -7,6 +7,7 @@ import {
   hostedTerminalToolSourceFactory,
   registerHostedTerminalCredential,
   RUN_TERMINAL_TOKEN_HEADER,
+  RUN_TERMINAL_TOOL_CALL_ID_HEADER,
 } from "./terminal-credential.ts";
 
 const request = () =>
@@ -100,6 +101,27 @@ describe("private terminal credential routing", () => {
       assertEquals(Object.keys(original), ["Authorization"]);
     });
   }
+
+  it("names the finalize call beside its terminal credential so the API can close it", async () => {
+    const value = request();
+    registerHostedTerminalCredential(value, "test-authority");
+    const { calls, fallback } = recorder();
+    const source = hostedTerminalToolSourceFactory(value, "https://api.example/mcp", fallback)(
+      { id: "platform", endpoint: "https://active.example/mcp" },
+      { kind: "veryfront-api" },
+    );
+    await source.executeTool("veryfront__finalize", {}, { runId: "run-1", toolCallId: "call_fin" });
+    assertEquals(calls.at(-1)!.headers.get(RUN_TERMINAL_TOOL_CALL_ID_HEADER), "call_fin");
+    await source.executeTool("finalize", {}, { runId: "run-other", toolCallId: "call_fin" });
+    assertEquals(calls.at(-1)!.headers.get(RUN_TERMINAL_TOOL_CALL_ID_HEADER), null);
+    await source.executeTool("ordinary", {}, { runId: "run-1", toolCallId: "call_other" });
+    assertEquals(calls.at(-1)!.headers.get(RUN_TERMINAL_TOOL_CALL_ID_HEADER), null);
+    for (const context of [{ runId: "run-1" }, { runId: "run-1", toolCallId: "call\nfin" }]) {
+      await source.executeTool("finalize", {}, context);
+      assertEquals(calls.at(-1)!.headers.get(RUN_TERMINAL_TOKEN_HEADER), "test-authority");
+      assertEquals(calls.at(-1)!.headers.get(RUN_TERMINAL_TOOL_CALL_ID_HEADER), null);
+    }
+  });
 
   it("never forwards terminal credentials to a non-platform source", async () => {
     const value = request();

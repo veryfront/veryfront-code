@@ -336,6 +336,21 @@ export async function dispatchWithTerminalRunControl(
   return execute();
 }
 
+/** Names the finalize call so the API can close it before the run's terminal event. */
+export const RUN_TERMINAL_TOOL_CALL_ID_HEADER = "X-Veryfront-Run-Terminal-Tool-Call-Id";
+const regExpTest = RegExp.prototype.test;
+/** Printable ASCII, bounded: always a valid header value, and what the API accepts. */
+const TOOL_CALL_ID_PATTERN = /^[\x21-\x7e]{1,200}$/;
+
+/** The finalize call's id as a header value, or undefined when it is absent or not sendable. */
+export function terminalToolCallIdHeaderValue(context?: ToolExecutionContext): string | undefined {
+  const toolCallId = context?.toolCallId;
+  return typeof toolCallId === "string" &&
+      apply(regExpTest, TOOL_CALL_ID_PATTERN, [toolCallId]) === true
+    ? toolCallId
+    : undefined;
+}
+
 export function isTerminalRunToolName(name: string): boolean {
   return name === "veryfront__finalize" || name === "finalize";
 }

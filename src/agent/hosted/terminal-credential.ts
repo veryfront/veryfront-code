@@ -1,4 +1,8 @@
 import { createPrivateWeakStore } from "#veryfront/security/private-weak-store.ts";
+import {
+  RUN_TERMINAL_TOOL_CALL_ID_HEADER,
+  terminalToolCallIdHeaderValue,
+} from "../runtime/terminal-run-control.ts";
 import { type RemoteMCPToolSourceConfig } from "#veryfront/tool/remote-mcp.ts";
 import type { RemoteToolSource } from "#veryfront/tool/types.ts";
 import type { ParsedHostedChatRequest } from "./chat-request-parser.ts";
@@ -6,6 +10,7 @@ import type { AgentServiceMcpServerConfig } from "../service/mcp-server-config.t
 import { createProjectScopedMcpUrl } from "../service/project-scoped-mcp-url.ts";
 
 export const RUN_TERMINAL_TOKEN_HEADER = "X-Veryfront-Run-Terminal-Token";
+export { RUN_TERMINAL_TOOL_CALL_ID_HEADER };
 const NativeHeaders = Headers;
 const headersSet = Headers.prototype.set;
 const apply = Reflect.apply;
@@ -51,6 +56,10 @@ export function hostedTerminalToolSourceFactory(
         const headers = new NativeHeaders(original);
         if (!context?.runId || context.runId === authority.runId) {
           apply(headersSet, headers, [RUN_TERMINAL_TOKEN_HEADER, authority.token]);
+          const toolCallId = terminalToolCallIdHeaderValue(context);
+          if (toolCallId) {
+            apply(headersSet, headers, [RUN_TERMINAL_TOOL_CALL_ID_HEADER, toolCallId]);
+          }
         }
         return headers;
       },
