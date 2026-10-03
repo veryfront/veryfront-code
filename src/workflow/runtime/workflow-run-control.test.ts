@@ -956,6 +956,38 @@ describe("workflow/runtime/workflow-run-control execute", () => {
     assertEquals(selected, 0);
   });
 
+  it("parks a run paused at a safe boundary with no current node and releases its lock", async () => {
+    const backend = new WaitingReleaseBackend();
+    const run = {
+      ...createRun("manual-pause"),
+      status: "running" as const,
+      currentNodes: ["first"],
+      workerId: "run-execution:owner",
+    };
+    await backend.createRun(run);
+    let selected = 0;
+
+    const outcome = await execute(backend, run, () => ({
+      paused: true,
+      context: { input: {}, first: { ok: true } },
+      nodeStates: { first: { nodeId: "first", status: "completed", attempt: 1 } },
+    }), {
+      enableLocking: true,
+      selectOutput: () => {
+        selected++;
+        return { unexpected: true };
+      },
+    });
+
+    assertEquals(outcome.status, "paused");
+    const persisted = await backend.getRun(run.id);
+    assertEquals(persisted?.status, "waiting");
+    assertEquals(persisted?.currentNodes, []);
+    assertEquals(persisted?.output, undefined);
+    assertEquals(selected, 0);
+    assertEquals(await backend.isLocked(run.id), false);
+  });
+
   it("re-parks a stalled wait node that still holds a durable event-wait record", async () => {
     const backend = new MemoryBackend();
     const run = { ...createRun("stalled-live-event-wait"), status: "running" as const };

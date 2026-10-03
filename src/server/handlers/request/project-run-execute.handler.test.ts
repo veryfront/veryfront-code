@@ -6935,6 +6935,13 @@ describe("server/handlers/request/project-run-execute.handler", () => {
           projectId: "proj-1",
           resume: { type: "child_run" },
         },
+        {
+          runId: "run_task_1",
+          kind: "task",
+          target: "task:sync",
+          projectId: "proj-1",
+          resume: { type: "manual" },
+        },
       ]
     ) {
       const handler = new ProjectRunExecuteHandler(createDeps());
@@ -9697,5 +9704,315 @@ describe("server/handlers/request/project-run-execute.handler cancellation", () 
     assertExists(result.response);
     const json = await result.response.json();
     assertEquals(json.success, false);
+  });
+});
+
+describe("server/handlers/request/project-run-execute.handler manual pause (#2588)", () => {
+  afterAll(async () => {
+    await stopEsbuild();
+  });
+
+  const runId = "run_7c1d2e3f-4a5b-4c6d-8e7f-9a0b1c2d3e4f";
+
+  /** Keeps durable state across dispatches; each dispatch destroys its own client. */
+  class SharedMemoryBackend extends MemoryBackend {
+    override destroy(): Promise<void> {
+      return Promise.resolve();
+    }
+  }
+
+  function countingStep(id: string, calls: string[]): WorkflowNode {
+    return step(id, {
+      tool: tool({
+        id: `${id}-tool`,
+        description: `Record ${id}`,
+        inputSchema: defineSchema((v) => v.object({}).passthrough())(),
+        execute: () => {
+          calls.push(id);
+          return Promise.resolve({ [id]: true });
+        },
+      }),
+    });
+  }
+
+  function threeSteps(calls: string[]): WorkflowDefinition {
+    return workflow({
+      id: "publish",
+      steps: [
+        countingStep("first", calls),
+        dependsOn(countingStep("second", calls), "first"),
+        dependsOn(countingStep("third", calls), "second"),
+      ],
+    }).definition as unknown as WorkflowDefinition;
+  }
+
+  function createHandler(
+    backend: MemoryBackend,
+    definition: WorkflowDefinition,
+    options: {
+      statePersistence?: "durable" | "ephemeral";
+      now?: () => number;
+      onDiscover?: () => void;
+    } = {},
+  ): ProjectRunExecuteHandler {
+    return new ProjectRunExecuteHandler(createDeps({
+      findWorkflowById: async () => {
+        options.onDiscover?.();
+        return {
+          id: "publish",
+          filePath: "workflows/publish.ts",
+          exportName: "default",
+          definition,
+        };
+      },
+      createWorkflowClient: (config) =>
+        Object.assign(createWorkflowClient({ ...config, backend }), {
+          statePersistence: options.statePersistence ?? "durable" as const,
+        }),
+      now: options.now ?? (() => 0),
+      sleep: (ms: number) => delay(Math.min(ms, 10)),
+    }));
+  }
+
+  async function dispatch(
+    handler: ProjectRunExecuteHandler,
+    resume?: Record<string, unknown>,
+    signal?: AbortSignal,
+  ): Promise<Record<string, unknown>> {
+    const { request, publicKeyPem } = await signedRequest(
+      `/api/control-plane/runs/${runId}/execute`,
+      {
+        runId,
+        kind: "workflow",
+        target: "workflow:publish",
+        projectId: "proj-1",
+        ...(resume ? { resume } : {}),
+      },
+      { "x-veryfront-run-stop-token": "opaque-stop-capability" },
+    );
+    const result = await handler.handle(
+      signal ? new Request(request, { signal }) : request,
+      createCtx(publicKeyPem),
+    );
+    assertExists(result.response);
+    return await result.response.json();
+  }
+
+  function pauseAckCalls(urls: string[]): string[] {
+    return urls.filter((url) => new URL(url).pathname === `/runs/${runId}/pause-ack`);
+  }
+
+  it("pauses at a batch boundary and resumes manually under the same run id", async () => {
+    const backend = new SharedMemoryBackend();
+    const calls: string[] = [];
+    const definition = threeSteps(calls);
+    const urls: string[] = [];
+    const authorizations: Array<string | null> = [];
+    let pauseRequested = true;
+
+    await withMockFetch(async (input, init) => {
+      urls.push(String(input));
+      authorizations.push(new Headers(observeFetchRequestInit(init).headers).get("authorization"));
+      const paused = pauseRequested;
+      pauseRequested = false;
+      return Response.json({ stop: paused });
+    }, async () => {
+      const first = await dispatch(createHandler(backend, definition));
+      assertEquals(first, {
+        success: true,
+        status: "waiting",
+        waiting_reason: "manual_pause",
+        waiting: {},
+        logs: null,
+        duration_ms: 0,
+      });
+      assertEquals(calls, ["first"]);
+      const paused = await backend.getRun(runId);
+      assertEquals(paused?.status, "waiting");
+      assertEquals(paused?.currentNodes, []);
+
+      const resumed = await dispatch(createHandler(backend, definition), { type: "manual" });
+      assertEquals(resumed.success, true);
+      assertEquals(resumed.status, undefined);
+      assertEquals(resumed.error, undefined);
+    });
+
+    assertEquals(calls, ["first", "second", "third"]);
+    assertEquals((await backend.getRun(runId))?.status, "completed");
+    assertEquals(pauseAckCalls(urls).length, urls.length);
+    // The boundary that paused, the check before resuming, and the next boundary.
+    assertEquals(urls.length, 3);
+    assertEquals(authorizations.every((value) => value === "Bearer opaque-stop-capability"), true);
+  });
+
+  it("reports the pause instead of releasing it when the resuming attempt is told to stop", async () => {
+    const backend = new SharedMemoryBackend();
+    const calls: string[] = [];
+    const definition = threeSteps(calls);
+
+    await withMockFetch(async () => Response.json({ stop: true }), async () => {
+      await dispatch(createHandler(backend, definition));
+      // A duplicate of an earlier resume dispatch, or an attempt whose run was paused again.
+      const duplicate = await dispatch(createHandler(backend, definition), { type: "manual" });
+      assertEquals(duplicate.status, "waiting");
+      assertEquals(duplicate.waiting_reason, "manual_pause");
+    });
+
+    assertEquals(calls, ["first"]);
+    assertEquals((await backend.getRun(runId))?.status, "waiting");
+  });
+
+  it("continues when the pause acknowledgement reports no pause", async () => {
+    const backend = new SharedMemoryBackend();
+    const calls: string[] = [];
+    const urls: string[] = [];
+    let now = 0;
+
+    await withMockFetch(async (input) => {
+      urls.push(String(input));
+      return Response.json({ stop: false });
+    }, async () => {
+      const payload = await dispatch(
+        createHandler(backend, threeSteps(calls), { now: () => (now += 1_000) }),
+      );
+      assertEquals(payload.success, true);
+      assertEquals(payload.status, undefined);
+    });
+
+    assertEquals(calls, ["first", "second", "third"]);
+    assertEquals(pauseAckCalls(urls).length, 2);
+  });
+
+  it("retries a failed pause acknowledgement and then pauses", async () => {
+    const backend = new SharedMemoryBackend();
+    const calls: string[] = [];
+    const urls: string[] = [];
+
+    await withMockFetch(async (input) => {
+      urls.push(String(input));
+      if (urls.length === 1) throw new TypeError("connection reset");
+      if (urls.length === 2) return new Response("unavailable", { status: 503 });
+      return Response.json({ stop: true });
+    }, async () => {
+      const payload = await dispatch(createHandler(backend, threeSteps(calls)));
+      assertEquals(payload.waiting_reason, "manual_pause");
+    });
+
+    assertEquals(calls, ["first"]);
+    assertEquals(pauseAckCalls(urls).length, 3);
+  });
+
+  it("continues after the pause acknowledgement keeps failing or is rejected", async () => {
+    for (const reply of ["transport", "unauthorized"] as const) {
+      const backend = new SharedMemoryBackend();
+      const calls: string[] = [];
+      const urls: string[] = [];
+      let now = 0;
+
+      await withMockFetch(async (input) => {
+        urls.push(String(input));
+        if (reply === "transport") throw new TypeError("connection reset");
+        return Response.json({ stop: true }, { status: 401 });
+      }, async () => {
+        const payload = await dispatch(
+          createHandler(backend, threeSteps(calls), { now: () => (now += 1_000) }),
+        );
+        assertEquals(payload.success, true, reply);
+        assertEquals(payload.status, undefined, reply);
+      });
+
+      assertEquals(calls, ["first", "second", "third"], reply);
+      // Two boundaries; a transport failure is retried three times at each.
+      assertEquals(pauseAckCalls(urls).length, reply === "transport" ? 6 : 2, reply);
+    }
+  });
+
+  it("checks for a pause at most once per second", async () => {
+    const backend = new SharedMemoryBackend();
+    const calls: string[] = [];
+    const urls: string[] = [];
+
+    await withMockFetch(async (input) => {
+      urls.push(String(input));
+      return Response.json({ stop: false });
+    }, async () => {
+      const payload = await dispatch(createHandler(backend, threeSteps(calls)));
+      assertEquals(payload.success, true);
+    });
+
+    assertEquals(calls, ["first", "second", "third"]);
+    assertEquals(pauseAckCalls(urls).length, 1);
+  });
+
+  it("never asks to pause an ephemeral run", async () => {
+    const backend = new SharedMemoryBackend();
+    const calls: string[] = [];
+    const urls: string[] = [];
+    let now = 0;
+
+    await withMockFetch(async (input) => {
+      urls.push(String(input));
+      return Response.json({ stop: true });
+    }, async () => {
+      const payload = await dispatch(
+        createHandler(backend, threeSteps(calls), {
+          statePersistence: "ephemeral",
+          now: () => (now += 1_000),
+        }),
+      );
+      assertEquals(payload.success, true);
+    });
+
+    assertEquals(calls, ["first", "second", "third"]);
+    assertEquals(pauseAckCalls(urls), []);
+  });
+
+  it("cancels a run whose request is aborted during the pause check", async () => {
+    const backend = new SharedMemoryBackend();
+    const calls: string[] = [];
+    const controller = new AbortController();
+
+    await withMockFetch(async (input) => {
+      if (new URL(String(input)).pathname.endsWith("/pause-ack")) {
+        controller.abort(new Error("Run cancelled"));
+        return Response.json({ stop: true });
+      }
+      return Response.json({ acknowledged: true });
+    }, async () => {
+      const payload = await dispatch(
+        createHandler(backend, threeSteps(calls)),
+        undefined,
+        controller.signal,
+      );
+      assertEquals(payload.success, false);
+      assertEquals(payload.error, "Workflow run cancelled");
+    });
+
+    assertEquals(calls, ["first"]);
+    assertEquals((await backend.getRun(runId))?.status, "cancelled");
+  });
+
+  it("cancels a paused run when the manual resume request is aborted", async () => {
+    const backend = new SharedMemoryBackend();
+    const calls: string[] = [];
+    const definition = threeSteps(calls);
+
+    await withMockFetch(async () => Response.json({ stop: true }), async () => {
+      const first = await dispatch(createHandler(backend, definition));
+      assertEquals(first.waiting_reason, "manual_pause");
+
+      const controller = new AbortController();
+      const resumed = await dispatch(
+        createHandler(backend, definition, {
+          onDiscover: () => controller.abort(new Error("Run cancelled")),
+        }),
+        { type: "manual" },
+        controller.signal,
+      );
+      assertEquals(resumed.success, false);
+    });
+
+    assertEquals(calls, ["first"]);
+    assertEquals((await backend.getRun(runId))?.status, "cancelled");
   });
 });

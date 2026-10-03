@@ -2176,6 +2176,24 @@ export class DAGExecutor {
         queued.add(nodeId);
         ready.push(nodeId);
       }
+
+      // The settled batch is persisted and checkpointed and nothing else has
+      // started: the only point where stopping leaves no node half-run. Queued
+      // nodes have no recorded state, so a later execution finds them ready.
+      if (isDurableRun && ready.length > 0 && this.config.shouldPause) {
+        const paused = await this.config.shouldPause(run.id);
+        abortSignal?.throwIfAborted();
+        if (paused) {
+          return {
+            completed: false,
+            waiting: false,
+            paused: true,
+            context,
+            nodeStates,
+            contextPatch,
+          };
+        }
+      }
     }
 
     const unfinished = getUnfinishedNodeDetails(nodes, nodeStates);

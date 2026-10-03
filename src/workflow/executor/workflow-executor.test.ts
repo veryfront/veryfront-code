@@ -2765,6 +2765,79 @@ describe("workflow/executor/workflow-executor", () => {
 // veryfront-issue-inbox#2107: a workflow can select its final output from its
 // context; a declared outputSchema checks the selected value and the parsed
 // value is stored; steps see the parsed input.
+describe("workflow/executor/workflow-executor manual pause (#2588)", () => {
+  function pausingWorkflow(calls: string[]) {
+    return workflow({
+      id: "pausable",
+      steps: [
+        step("first", { tool: createTool("first", () => calls.push("first")) }),
+        dependsOn(
+          step("second", { tool: createTool("second", () => calls.push("second")) }),
+          "first",
+        ),
+        dependsOn(
+          step("third", { tool: createTool("third", () => calls.push("third")) }),
+          "second",
+        ),
+      ],
+    }).definition;
+  }
+
+  it("pauses after a settled batch and resumes the same run without re-running it", async () => {
+    const backend = new MemoryBackend();
+    const calls: string[] = [];
+    const checks: string[] = [];
+    let pauseRequested = true;
+    const executor = new WorkflowExecutor({
+      backend,
+      shouldPause: (runId) => {
+        checks.push(runId);
+        const paused = pauseRequested;
+        pauseRequested = false;
+        return paused;
+      },
+    });
+    executor.register(pausingWorkflow(calls));
+
+    const handle = await executor.start("pausable", {});
+    await handle.settled();
+
+    const paused = await backend.getRun(handle.runId);
+    assertEquals(paused?.status, "waiting");
+    assertEquals(paused?.currentNodes, []);
+    assertEquals(paused?.nodeStates.first?.status, "completed");
+    assertEquals(paused?.nodeStates.second, undefined);
+    assertEquals(paused?.output, undefined);
+    assertEquals(calls, ["first"]);
+    assertEquals(await backend.isLocked(handle.runId), false);
+
+    await executor.resume(handle.runId);
+
+    const completed = await backend.getRun(handle.runId);
+    assertEquals(completed?.status, "completed");
+    assertEquals(calls, ["first", "second", "third"]);
+    // One check per boundary with work left: after "first" (paused), then
+    // after "second" on resume. The final batch has nothing left to stop.
+    assertEquals(checks, [handle.runId, handle.runId]);
+  });
+
+  it("keeps cancellation terminal for a paused run", async () => {
+    const backend = new MemoryBackend();
+    const calls: string[] = [];
+    const executor = new WorkflowExecutor({ backend, shouldPause: () => true });
+    executor.register(pausingWorkflow(calls));
+
+    const handle = await executor.start("pausable", {});
+    await handle.settled();
+    assertEquals((await backend.getRun(handle.runId))?.status, "waiting");
+
+    await executor.cancel(handle.runId);
+
+    assertEquals((await backend.getRun(handle.runId))?.status, "cancelled");
+    assertEquals(calls, ["first"]);
+  });
+});
+
 describe("workflow/executor/workflow-executor final output selection (#2107)", () => {
   function executorWith(definition: Parameters<typeof workflow>[0]) {
     const backend = new MemoryBackend();
