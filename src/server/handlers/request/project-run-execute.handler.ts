@@ -175,6 +175,7 @@ const NumberIsFinite = Number.isFinite;
 const NumberParseInt = Number.parseInt;
 const MathTrunc = Math.trunc;
 const ObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const ObjectHasOwn = Object.hasOwn;
 const ObjectValues = Object.values;
 const ArraySome = Array.prototype.some;
 const ObjectSetPrototypeOf = Object.setPrototypeOf;
@@ -381,6 +382,12 @@ interface WorkflowClientView {
 }
 
 export interface ProjectRunExecuteHandlerDeps {
+  /** Host-owned clock; defaults to intrinsics captured before project code runs. */
+  taskDeadlineClock?: {
+    now(): number;
+    setTimeout: typeof globalThis.setTimeout;
+    clearTimeout: typeof globalThis.clearTimeout;
+  };
   runTask(options: RunTaskOptions): Promise<TaskRunResult>;
   findWorkflowById(
     workflowId: string,
@@ -3968,10 +3975,26 @@ export class ProjectRunExecuteHandler extends BaseHandler {
 
   constructor(
     private readonly deps: ProjectRunExecuteHandlerDeps = defaultDeps,
-    taskDeadlineClock: TaskDeadlineClock = systemTaskDeadlineClock,
+    taskDeadlineClock?: TaskDeadlineClock,
   ) {
     super();
-    this.taskDeadlineClock = snapshotTaskDeadlineClock(taskDeadlineClock);
+    const descriptor = ObjectGetOwnPropertyDescriptor(deps, "taskDeadlineClock");
+    const hostClock = descriptor && ObjectHasOwn(descriptor, "value")
+      ? descriptor.value as ProjectRunExecuteHandlerDeps["taskDeadlineClock"]
+      : undefined;
+    const hostNow = hostClock?.now;
+    const hostSchedule = hostClock?.setTimeout;
+    const hostClear = hostClock?.clearTimeout;
+    const clock = taskDeadlineClock ?? (hostClock
+      ? {
+        now: () => ReflectApply(hostNow!, hostClock, []),
+        setTimer: (callback: () => void, delayMs: number) =>
+          ReflectApply(hostSchedule!, hostClock, [callback, delayMs]),
+        clearTimer: (handle: ReturnType<typeof setTimeout> | undefined) =>
+          ReflectApply(hostClear!, hostClock, [handle]),
+      }
+      : systemTaskDeadlineClock);
+    this.taskDeadlineClock = snapshotTaskDeadlineClock(clock);
   }
 
   async handle(req: Request, ctx: HandlerContext): Promise<HandlerResult> {

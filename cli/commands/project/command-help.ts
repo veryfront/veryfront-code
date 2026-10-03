@@ -1,10 +1,11 @@
+import { RUNS_COMMANDS } from "./runs.ts";
 import type { CommandHelp } from "../../help/types.ts";
 
 export const projectHelp: CommandHelp = {
   name: "project",
   aliases: ["projects"],
   category: "project",
-  description: "Delete a cloud project and everything it owns",
+  description: "Manage cloud projects and SDK-backed runs",
   usage: "veryfront project <command> [options]",
   options: [
     {
@@ -25,12 +26,20 @@ export const projectHelp: CommandHelp = {
     },
   ],
   examples: [
+    "veryfront project runs list --json",
+    "veryfront project runs get --run-id <RUN_ID> --json",
+    "veryfront project runs stream --run-id <RUN_ID> --json",
     "veryfront project delete",
     "veryfront project delete my-app --yes",
     "veryfront project delete my-app --force --json",
   ],
   notes: [
-    "Subcommands: delete",
+    "Subcommands: delete, runs",
+    `Runs commands: ${Object.values(RUNS_COMMANDS).join(", ")}`,
+    "Runs: supply route identifiers with --run-id, --event-id, --project-reference, --conversation-id, --webhook-definition-id, --eval-id, or --input-request-id.",
+    "Runs: --body and --query accept contract JSON; --idempotency-key, --if-match and --last-event-id map to request headers.",
+    "Runs: --all follows SDK pagination; get/create --follow streams events. JSON streams use NDJSON on stdout.",
+    "Runs: --credential-file supplies a scoped execution/event-writer token; --credential-mode api-key uses X-API-Key. The configured trusted API endpoint still applies.",
     "Deleting a project also removes its environments, releases, files, and uploads",
     "This is the scriptable counterpart to Studio's Settings -> Danger Zone -> Delete Project",
   ],
