@@ -14,7 +14,10 @@ import {
   recordRequestPeerFromTransport,
   recordRequestTransportLifetime,
 } from "#veryfront/platform/adapters/runtime/shared/request-peer.ts";
-import { CONTROL_PLANE_RUNS_PATH_PREFIX } from "#veryfront/channels/control-plane.ts";
+import {
+  CONTROL_PLANE_RUNS_PATH_PREFIX,
+  isControlPlaneSurfaceRoute,
+} from "#veryfront/channels/control-plane.ts";
 import {
   INGRESS_API_TOKEN_HEADER,
   INGRESS_AUTHORIZATION_HEADER,
@@ -24,6 +27,7 @@ import {
   INGRESS_RUN_STOP_TOKEN_HEADER,
   INGRESS_RUN_TERMINAL_TOKEN_HEADER,
   inheritIngressCredentials,
+  isControlPlaneRunRoute,
   readIngressCredential,
   requestForWebSocketUpgrade,
   sealIngressCredentials,
@@ -503,6 +507,15 @@ describe("security/http/ingress-credentials", () => {
     assertEquals(run.headers.get("authorization"), null);
     assertEquals(readIngressCredential(run, INGRESS_AUTHORIZATION_HEADER), "Bearer service-token");
 
+    // A project route under the reserved prefix keeps its Authorization.
+    const projectRoute = sealIngressCredentials(
+      new Request("https://project.example/api/control-plane/runs/run_1/extra", {
+        method: "POST",
+        headers: { Authorization: "Bearer user-token" },
+      }),
+    );
+    assertEquals(projectRoute.headers.get("authorization"), "Bearer user-token");
+
     const app = sealIngressCredentials(
       new Request("https://project.example/api/control-plane-runs/x", {
         headers: { Authorization: "Bearer user-token", "x-token": API_TOKEN },
@@ -511,5 +524,30 @@ describe("security/http/ingress-credentials", () => {
     assertEquals(app.headers.get("authorization"), "Bearer user-token");
     assertEquals(readIngressCredential(app, INGRESS_AUTHORIZATION_HEADER), "Bearer user-token");
     assertEquals(readIngressCredential(app, INGRESS_API_TOKEN_HEADER), API_TOKEN);
+  });
+
+  it("matches exactly the run routes the control-plane surface admits", () => {
+    const cases: [string, string][] = [
+      ["POST", "/api/control-plane/runs/run_1/execute"],
+      ["POST", "/api/control-plane/runs/run_1/stream"],
+      ["POST", "/api/control-plane/runs/run_1/resume"],
+      ["DELETE", "/api/control-plane/runs/run_1"],
+      ["post", "/api/control-plane/runs/run_1/execute"],
+      ["GET", "/api/control-plane/runs/run_1"],
+      ["GET", "/api/control-plane/runs/run_1/stream"],
+      ["POST", "/api/control-plane/runs/run_1"],
+      ["POST", "/api/control-plane/runs/run_1/extra"],
+      ["POST", "/api/control-plane/runs/run_1/execute/more"],
+      ["POST", "/api/control-plane/runs//execute"],
+      ["DELETE", "/api/control-plane/runs/"],
+      ["DELETE", "/api/control-plane/runs/run_1/"],
+      ["POST", "/api/control-plane/agents/list"],
+      ["POST", "/api/other"],
+    ];
+    for (const [method, pathname] of cases) {
+      const surface = isControlPlaneSurfaceRoute(method, pathname) &&
+        pathname !== "/api/control-plane/agents/list";
+      assertEquals(isControlPlaneRunRoute(method, pathname), surface, `${method} ${pathname}`);
+    }
   });
 });

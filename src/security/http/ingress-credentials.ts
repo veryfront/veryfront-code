@@ -36,6 +36,11 @@ const RequestHeadersGetter = Object.getOwnPropertyDescriptor(NativeRequest.proto
   .get!;
 const StringToLowerCase = String.prototype.toLowerCase;
 const StringStartsWith = String.prototype.startsWith;
+const StringIndexOf = String.prototype.indexOf;
+const StringSlice = String.prototype.slice;
+const StringToUpperCase = String.prototype.toUpperCase;
+const RequestMethodGetter = Object.getOwnPropertyDescriptor(NativeRequest.prototype, "method")!
+  .get!;
 const NativeURL = URL;
 const RequestUrlGetter = Object.getOwnPropertyDescriptor(NativeRequest.prototype, "url")!.get!;
 const URLPathnameGetter = Object.getOwnPropertyDescriptor(NativeURL.prototype, "pathname")!.get!;
@@ -61,7 +66,7 @@ export const INGRESS_RUN_TERMINAL_TOKEN_HEADER = "x-veryfront-run-terminal-token
  */
 export const INGRESS_AUTHORIZATION_HEADER = "authorization";
 /**
- * Control-plane run routes (execute, stream, resume, stop). The same value as
+ * The control-plane run route prefix. The same value as
  * `CONTROL_PLANE_RUNS_PATH_PREFIX`, which a test pins; importing it here would
  * pull the control-plane schemas into every ingress.
  */
@@ -108,10 +113,37 @@ interface HeadersWithoutCredentials {
   readonly setCookies: string[];
 }
 
+/**
+ * True only for the registered control-plane run routes:
+ * `POST /api/control-plane/runs/{runId}/execute|stream|resume` and
+ * `DELETE /api/control-plane/runs/{runId}`, the run shapes
+ * `isControlPlaneSurfaceRoute` admits (a test pins the two together). Any
+ * other path under the prefix falls through to project code, which keeps its
+ * `Authorization`. Parsed with captured string methods rather than a RegExp,
+ * whose `exec` project code could replace to make a run route not match.
+ */
+export function isControlPlaneRunRoute(method: string, pathname: string): boolean {
+  if (
+    !(IntrinsicReflectApply(StringStartsWith, pathname, [INGRESS_RUN_ROUTE_PREFIX]) as boolean)
+  ) return false;
+  const rest = IntrinsicReflectApply(StringSlice, pathname, [
+    INGRESS_RUN_ROUTE_PREFIX.length,
+  ]) as string;
+  const slash = IntrinsicReflectApply(StringIndexOf, rest, ["/"]) as number;
+  if (slash === 0 || rest.length === 0) return false;
+  const operation = slash === -1 ? "" : IntrinsicReflectApply(StringSlice, rest, [slash]) as string;
+  const upperMethod = IntrinsicReflectApply(StringToUpperCase, method, []) as string;
+  if (upperMethod === "DELETE") return operation === "";
+  if (upperMethod !== "POST") return false;
+  return operation === "/execute" || operation === "/stream" || operation === "/resume";
+}
+
 function isRunRoute(request: Request): boolean {
   const url = new NativeURL(IntrinsicReflectApply(RequestUrlGetter, request, []) as string);
-  const pathname = IntrinsicReflectApply(URLPathnameGetter, url, []) as string;
-  return IntrinsicReflectApply(StringStartsWith, pathname, [INGRESS_RUN_ROUTE_PREFIX]) as boolean;
+  return isControlPlaneRunRoute(
+    IntrinsicReflectApply(RequestMethodGetter, request, []) as string,
+    IntrinsicReflectApply(URLPathnameGetter, url, []) as string,
+  );
 }
 
 function toHeaderRecordWithoutCredentials(
