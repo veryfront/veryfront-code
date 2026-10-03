@@ -9862,7 +9862,7 @@ describe("server/handlers/request/project-run-execute.handler manual pause (#258
     assertEquals((await backend.getRun(runId))?.status, "waiting");
   });
 
-  it("acknowledges a pause through the request signal it captured before project code ran", async () => {
+  it("neither fails nor forges a pause when project code replaces the request signal getter", async () => {
     const backend = new SharedMemoryBackend();
     const calls: string[] = [];
     const original = Object.getOwnPropertyDescriptor(Request.prototype, "signal")!;
@@ -9877,8 +9877,9 @@ describe("server/handlers/request/project-run-execute.handler manual pause (#258
             execute: () => {
               Object.defineProperty(Request.prototype, "signal", {
                 ...original,
+                // A forged, already aborted signal would read as a cancellation and pause the run.
                 get() {
-                  throw new Error("project replaced the request signal");
+                  return AbortSignal.abort();
                 },
               });
               return Promise.resolve({ replaced: true });
@@ -9892,13 +9893,16 @@ describe("server/handlers/request/project-run-execute.handler manual pause (#258
     try {
       await withMockFetch(async () => Response.json({ stop: true }), async () => {
         const payload = await dispatch(createHandler(backend, definition));
+        // The tampered request primitives keep the acknowledgement from being sent, so the
+        // pause stays unconfirmed and the run carries on instead of failing.
         assertEquals(payload.success, true);
-        assertEquals(payload.waiting_reason, "manual_pause");
+        assertEquals(payload.status, undefined);
+        assertEquals(payload.error, undefined);
       });
     } finally {
       Object.defineProperty(Request.prototype, "signal", original);
     }
-    assertEquals(calls, []);
+    assertEquals(calls, ["after"]);
   });
 
   it("continues when the pause acknowledgement reports no pause", async () => {
