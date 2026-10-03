@@ -352,3 +352,27 @@ PY
 For code changes, also run the narrowest relevant test command. Add broader test, build, or docs generation commands when the touched code affects shared runtime, public APIs, CLI output, generated references, SSR/RSC behavior, or transport behavior.
 
 Before completion, report the verification commands and their results. If a command cannot run, report the blocker and the safest next step.
+
+## Documentation conventions
+
+Apply these conventions when writing or editing repository documentation.
+
+- Use [Diátaxis](https://diataxis.fr/) to organize tutorials, how-to guides,
+  reference, and explanation. Keep each document focused on its reader's task.
+- Use [ASD-STE100](https://www.asd-ste100.org/) principles for prose. Write short
+  sentences, use active voice, and use the same term for the same concept.
+  Put one action in each numbered instruction. Retain necessary software terms.
+- Use the [Google developer documentation style guide](https://developers.google.com/style)
+  for software terminology, formatting, and conventions not covered above.
+
+State the purpose or result first. Include prerequisites before commands and
+expected results where readers need to verify success. Distinguish required
+steps from optional steps and proposals from implemented behavior.
+
+Each sentence must explain a fact, an action, or a necessary reason. Remove
+filler, repeated information, marketing claims, and vague qualifiers. Use simple
+words. Add headings, lists, or tables only when they help readers find or compare
+information. Preserve technical accuracy when shortening text.
+
+Describe the prose as based on ASD-STE100 principles. Do not claim full
+compliance without checking the text against the complete standard.
