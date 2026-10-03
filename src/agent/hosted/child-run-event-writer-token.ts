@@ -32,7 +32,6 @@ const objectCreate = Object.create;
 const objectDefineProperty = Object.defineProperty;
 const objectFreeze = Object.freeze;
 const objectHasOwnProperty = Object.prototype.hasOwnProperty;
-const objectKeys = Object.keys;
 const stringSplit = String.prototype.split;
 const stringToLowerCase = String.prototype.toLowerCase;
 const stringTrim = String.prototype.trim;
@@ -170,17 +169,27 @@ function isPromiseLike(value: unknown): value is PromiseLike<unknown> {
     typeof (value as { then?: unknown }).then === "function";
 }
 
-function parseRunEventToken(value: unknown): string {
-  if (
-    typeof value !== "object" || value === null || arrayIsArray(value) ||
-    objectKeys(value).length !== 1 ||
-    !apply(objectHasOwnProperty, value, ["run_event_token"])
-  ) {
+function ownValue(value: object, key: string): unknown {
+  return apply(objectHasOwnProperty, value, [key])
+    ? (value as Record<string, unknown>)[key]
+    : undefined;
+}
+
+/** Reads the target `RunEventToken`: an append-only Bearer token bound to exactly this child run. */
+function parseRunEventToken(value: unknown, childRunId: string): string {
+  if (typeof value !== "object" || value === null || arrayIsArray(value)) {
     throw new HostedChildRunEventWriterTokenExchangeError();
   }
-
-  const token = (value as { run_event_token?: unknown }).run_event_token;
-  if (!isValidRunEventWriterToken(token)) {
+  const token = ownValue(value, "token");
+  const permissions = ownValue(value, "permissions");
+  if (
+    !isValidRunEventWriterToken(token) ||
+    ownValue(value, "token_type") !== "Bearer" ||
+    ownValue(value, "run_id") !== childRunId ||
+    typeof ownValue(value, "expires_at") !== "string" ||
+    !arrayIsArray(permissions) || permissions.length !== 1 ||
+    permissions[0] !== "run.events.append"
+  ) {
     throw new HostedChildRunEventWriterTokenExchangeError();
   }
 
@@ -206,11 +215,8 @@ async function exchangeChildRunEventWriterToken(
     abortSignal?.addEventListener("abort", onAbort, { once: true });
   }
   const timeoutId = setTimeout(() => cancel("timeout"), state.timeoutMs);
-  const url = state.resolveApiUrl(
-    `/runs/${encodeURIComponent(state.runId)}/children/${
-      encodeURIComponent(childRunId)
-    }/event-writer-token`,
-  );
+  // The parent credential names its own run; the API binds the child through the recorded lineage.
+  const url = state.resolveApiUrl(`/runs/${encodeURIComponent(childRunId)}/event-tokens`);
 
   try {
     const response = await state.fetch(url, {
@@ -245,7 +251,7 @@ async function exchangeChildRunEventWriterToken(
     } catch {
       throw new HostedChildRunEventWriterTokenExchangeError();
     }
-    const token = parseRunEventToken(responseValue);
+    const token = parseRunEventToken(responseValue, childRunId);
     if (cancellation) {
       throw new HostedChildRunEventWriterTokenExchangeError(cancellation);
     }
