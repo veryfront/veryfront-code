@@ -529,6 +529,36 @@ Deno.test("mintChildRunEventWriterCapability accepts the run UUID an old run_ ID
   assertEquals(typeof child.mintChildRunEventWriterCapability, "function");
 });
 
+Deno.test("mintChildRunEventWriterCapability keeps requiring a run UUID when tenant code patches RegExp", async () => {
+  const originalExec = RegExp.prototype.exec;
+  // Lie only about the forged run ID so the runtime's own regular expressions keep working.
+  RegExp.prototype.exec = function (this: RegExp, input: string) {
+    return input === "run_other"
+      ? (Object.assign([input], { index: 0, input }) as RegExpExecArray)
+      : originalExec.call(this, input);
+  };
+  try {
+    await assertRejects(
+      () =>
+        createHostedRunEventWriterCapability({
+          apiUrl: "https://api.example.com",
+          runId: "run_parent",
+          runEventAppendToken: "parent-writer-token",
+          fetch: () =>
+            Promise.resolve(
+              Response.json(eventToken("child-writer-token", "run_other"), {
+                headers: { "Cache-Control": "no-store" },
+              }),
+            ),
+        }).mintChildRunEventWriterCapability("run_child"),
+      HostedChildRunEventWriterTokenExchangeError,
+      "Unable to initialize durable child event persistence",
+    );
+  } finally {
+    RegExp.prototype.exec = originalExec;
+  }
+});
+
 Deno.test("mintChildRunEventWriterCapability rejects another run UUID for a child addressed by UUID", async () => {
   await assertRejects(
     () =>

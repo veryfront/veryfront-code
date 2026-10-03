@@ -32,7 +32,7 @@ const objectCreate = Object.create;
 const objectDefineProperty = Object.defineProperty;
 const objectFreeze = Object.freeze;
 const objectHasOwnProperty = Object.prototype.hasOwnProperty;
-const regExpTest = RegExp.prototype.test;
+const stringCharCodeAt = String.prototype.charCodeAt;
 const stringSplit = String.prototype.split;
 const stringToLowerCase = String.prototype.toLowerCase;
 const stringTrim = String.prototype.trim;
@@ -177,10 +177,17 @@ function ownValue(value: unknown, key: string): unknown {
     : undefined;
 }
 
-const RUN_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
+// Checked by character: RegExp methods reach `exec`, which tenant code can replace.
 function isRunUuid(value: unknown): value is string {
-  return typeof value === "string" && (apply(regExpTest, RUN_UUID, [value]) as boolean);
+  if (typeof value !== "string" || value.length !== 36) return false;
+  for (let index = 0; index < 36; index++) {
+    const code = apply(stringCharCodeAt, value, [index]) as number;
+    const isHyphenPosition = index === 8 || index === 13 || index === 18 || index === 23;
+    const isHexDigit = (code >= 48 && code <= 57) || (code >= 97 && code <= 102) ||
+      (code >= 65 && code <= 70);
+    if (isHyphenPosition ? code !== 45 : !isHexDigit) return false;
+  }
+  return true;
 }
 
 /**
