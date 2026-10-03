@@ -5,7 +5,7 @@
   "generatedBy": "veryfront-api: pnpm contracts:runs:generate -- --out <dir> (the kit's runs-api.types.ts)",
   "files": {
     "runs-api.generated.ts": "d3be5fb515b4e4c8bfd5bf58289ead53551b8953a5c1bd26818dd98ddf43081a",
-    "openapi.target.json": "a555d30e95aa9efb00220ff52de228d92782c5f2f4ab630fcefeebd74d005c9f",
+    "openapi.target.json": "4fa5538e9d6f7a1aceed3f5618bd4f6becc6372e732f52ca136dc8979caf4f1c",
     "runs-fixtures.generated.ts": "993bde1015dc6cc35ae763a813adff37d731687f56bbcd0cd5d967bc22d8b7e4"
   },
   "fixturesGeneratedBy": "deno task contracts:runs:fixtures"
