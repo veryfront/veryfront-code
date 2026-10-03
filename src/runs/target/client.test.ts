@@ -73,10 +73,10 @@ const FIXTURE_INPUTS = {
 };
 const FIXTURE_RUN = RUNS_OPERATION_FIXTURES.getRun.response.body;
 
-function sdkWith(responses: Response[], credential = { bearer: "user-token" }) {
+function sdkWith(responses: Response[]) {
   const fixture = createFixtureTransport(responses);
   return {
-    sdk: createRunsSdk({ baseUrl: BASE_URL, transport: fixture.transport, credential }),
+    sdk: createRunsSdk({ transport: fixture.transport }),
     ...fixture,
   };
 }
@@ -176,64 +176,53 @@ describe("Runs target SDK", () => {
   });
 
   it("encodes path parameters and tolerates a trailing slash on the base URL", async () => {
-    const fixture = createFixtureTransport([fixtureResponse("listProjectRuns")]);
-    const sdk = createRunsSdk({ baseUrl: `${BASE_URL}/`, transport: fixture.transport });
+    const fixture = createFixtureTransport(
+      [fixtureResponse("listProjectRuns")],
+      undefined,
+      `${BASE_URL}/`,
+    );
+    const sdk = createRunsSdk({ transport: fixture.transport });
     await sdk.listProjectRuns({ path: { project_reference: "team/a b" } });
     assertEquals(fixture.requests[0]?.url, `${BASE_URL}/projects/team%2Fa%20b/runs`);
   });
 
-  it("forwards the configured credential, an API key, or a per-call execution credential", async () => {
-    const { sdk, requests } = sdkWith([fixtureResponse("getRun"), fixtureResponse("finalizeRun")]);
+  it("leaves credential selection to the host-owned transport", async () => {
+    let token = "user-token";
+    const { transport, requests } = createFixtureTransport(
+      [fixtureResponse("getRun"), fixtureResponse("finalizeRun")],
+      () => token,
+    );
+    const sdk = createRunsSdk({ transport });
     await sdk.getRun({ path: { run_id: RUN_ID } });
-    await sdk.finalizeRun(FIXTURE_INPUTS.finalizeRun, {
-      credential: { bearer: "execution-token" },
-    });
+    token = "execution-token";
+    await sdk.finalizeRun(FIXTURE_INPUTS.finalizeRun);
     assertEquals(requests.map((request) => request.headers.get("Authorization")), [
       "Bearer user-token",
       "Bearer execution-token",
     ]);
-
-    const keyed = createFixtureTransport([fixtureResponse("getRun"), fixtureResponse("getRun")]);
-    const keyedSdk = createRunsSdk({
-      baseUrl: BASE_URL,
-      transport: keyed.transport,
-      credential: { apiKey: "<API_KEY>" },
-    });
-    await keyedSdk.getRun({ path: { run_id: RUN_ID } });
-    assertEquals(keyed.requests[0]?.headers.get("X-API-Key"), "<API_KEY>");
-    assertEquals(keyed.requests[0]?.headers.get("Authorization"), null);
-
-    const anonymous = createFixtureTransport([fixtureResponse("listRunEventTypes")]);
-    await createRunsSdk({ baseUrl: BASE_URL, transport: anonymous.transport }).listRunEventTypes();
-    assertEquals(anonymous.requests[0]?.headers.get("Authorization"), null);
-    assertEquals(anonymous.requests[0]?.headers.get("X-API-Key"), null);
   });
 
-  it("refuses redirects on credentialed requests and follows them on anonymous ones", async () => {
+  it("uses the canonical transport's fail-closed redirect policy", async () => {
     const keyed = createFixtureTransport([fixtureResponse("getRun"), fixtureResponse("getRun")]);
     await createRunsSdk({
-      baseUrl: BASE_URL,
       transport: keyed.transport,
-      credential: { apiKey: "<API_KEY>" },
     }).getRun({ path: { run_id: RUN_ID } });
     await createRunsSdk({
-      baseUrl: BASE_URL,
       transport: keyed.transport,
-      credential: { bearer: "user-token" },
     }).getRun({ path: { run_id: RUN_ID } });
     assertEquals(keyed.requests.map((request) => request.redirect), ["error", "error"]);
-
-    const anonymous = createFixtureTransport([fixtureResponse("listRunEventTypes")]);
-    await createRunsSdk({ baseUrl: BASE_URL, transport: anonymous.transport }).listRunEventTypes();
-    assertEquals(anonymous.requests[0]?.redirect, "follow");
   });
 
   it("passes the abort signal to the transport", async () => {
     const { sdk, requests } = sdkWith([fixtureResponse("getRun")]);
     const controller = new AbortController();
     await sdk.getRun({ path: { run_id: RUN_ID } }, { signal: controller.signal });
+    assertEquals(requests[0]?.signal.aborted, false);
     controller.abort();
-    assertEquals(requests[0]?.signal.aborted, true);
+    await assertRejects(() =>
+      sdk.getRun({ path: { run_id: RUN_ID } }, { signal: controller.signal })
+    );
+    assertEquals(requests.length, 1);
   });
 
   it("hands success headers to onHeaders so a getRun ETag can guard updateRun", async () => {

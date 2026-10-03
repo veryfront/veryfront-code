@@ -53,6 +53,8 @@ function setHeader(headers: Headers, name: string, value: string): void {
 export type TransportRetryConfig = BoundedRetryConfig;
 
 export interface TransportRequestInit {
+  /** Decode a response within the transport attempt, including its deadline and tracing. */
+  onResponse?: VeryfrontApiTransportConfig<unknown>["onResponse"];
   method?: string;
   headers?: HeadersInit;
   body?: BodyInit | null;
@@ -135,7 +137,7 @@ function createValidatedVeryfrontApiTransport<T>(
   const onRetry = config.onRetry;
   const { maxRetries, initialDelay, maxDelay } = retry;
   const onResponse = config.onResponse ??
-    (defaultOnResponse as (r: Response, i: TransportRequestInit, u: string) => Promise<T>);
+    (readVeryfrontApiResponse as (r: Response, i: TransportRequestInit, u: string) => Promise<T>);
   const shouldRetry = config.shouldRetry ?? defaultShouldRetry;
   const wrapFinalError = config.wrapFinalError ??
     ((err: Error) =>
@@ -166,6 +168,7 @@ function createValidatedVeryfrontApiTransport<T>(
       const body = init.body;
       const redirect = requireRedirectPolicy(init.redirect);
       const responseInit: TransportRequestInit = Object.freeze({
+        onResponse: init.onResponse,
         method,
         headers: new NativeHeaders(requestHeaders),
         body,
@@ -182,9 +185,11 @@ function createValidatedVeryfrontApiTransport<T>(
       // pick up mid-flight token mutations (setRequestToken/clearRequestToken),
       // matching the pre-transport requestWithRetry semantics.
       const token = getToken();
+      let responseError: unknown;
       return await retryWithBackoff(
         async (signal, attempt) => {
           const doFetch = async (): Promise<T> => {
+            responseError = undefined;
             const headers = new NativeHeaders(requestHeaders);
             for (const [k, v] of defaultHeaderSnapshot) {
               if (!hasHeader(headers, k)) setHeader(headers, k, v);
@@ -208,7 +213,17 @@ function createValidatedVeryfrontApiTransport<T>(
               })
               : await fetch(url, requestInit);
             afterFetch?.(res.status, performance.now() - start);
-            return await onResponse(res, responseInit, url, signal);
+            try {
+              return await (responseInit.onResponse ?? onResponse)(
+                res,
+                responseInit,
+                url,
+                signal,
+              ) as T;
+            } catch (error) {
+              if (responseInit.onResponse) responseError = error;
+              throw error;
+            }
           };
           try {
             return await (wrapFetch ? wrapFetch(doFetch, url, method, attempt) : doFetch());
@@ -241,6 +256,9 @@ function createValidatedVeryfrontApiTransport<T>(
             },
           wrapFinalError(lastError, lastAttempt) {
             if (lastError.name === "AbortError") logTimeout(url, timeoutMs, lastAttempt);
+            if (!config.wrapFinalError && responseError instanceof VeryfrontError) {
+              return responseError;
+            }
             return wrapFinalError(lastError, lastAttempt);
           },
         },
@@ -303,7 +321,8 @@ function logTimeout(url: string, timeoutMs: number, attempt: number): void {
   });
 }
 
-async function defaultOnResponse(
+/** Decode a canonical API response with bounded UTF-8 JSON/text and error bodies. */
+export async function readVeryfrontApiResponse(
   response: Response,
   init: TransportRequestInit,
   url: string,
@@ -340,6 +359,8 @@ async function defaultOnResponse(
       },
     });
   }
+
+  if (response.status === 204) return undefined;
 
   const maxResponseBytes = requireSuccessResponseByteLimit(init.maxResponseBytes);
   if (init.jsonStringFieldWithinLimit !== undefined) {

@@ -10,6 +10,7 @@ import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 
 import { createRunsSdk } from "#veryfront/runs/target/client.ts";
+import { createVeryfrontApiTransport } from "#veryfront/platform/adapters/veryfront-api-transport.ts";
 
 describe("runs SDK redirect boundary", () => {
   it("does not carry an API key across a cross-origin redirect", async () => {
@@ -24,9 +25,12 @@ describe("runs SDK redirect boundary", () => {
     );
     try {
       const sdk = createRunsSdk({
-        baseUrl: `http://127.0.0.1:${api.addr.port}`,
-        transport: fetch,
-        credential: { apiKey: "<API_KEY>" },
+        transport: createVeryfrontApiTransport({
+          baseUrl: `http://127.0.0.1:${api.addr.port}`,
+          getToken: () => "test-token",
+          defaultHeaders: { "X-API-Key": "<API_KEY>" },
+          retry: { maxRetries: 0, initialDelay: 0, maxDelay: 0 },
+        }),
       });
       await assertRejects(() => sdk.getRun({ path: { run_id: "run_redirect" } }));
       assertEquals(leaked, []);
