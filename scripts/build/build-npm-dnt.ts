@@ -12,6 +12,7 @@
  */
 
 import { build, emptyDir } from "#dnt";
+import { finalizeNpmWorkerEntrypoints, NPM_WORKER_ENTRYPOINT } from "./npm-worker-entrypoints.ts";
 import { STANDARD_ROOT_NPM_EXTENSION_DIRECTORIES } from "#veryfront/extensions/first-party-defaults.ts";
 import { PUBLISHED_RUNTIME_HELPERS } from "../../src/platform/compat/published-runtime-helpers.ts";
 import {
@@ -79,7 +80,7 @@ const reactRange = npmDependencyRange(
 );
 
 await build({
-	entryPoints,
+	entryPoints: [...entryPoints, NPM_WORKER_ENTRYPOINT],
 	outDir: "./npm",
 
 	// Don't run tests during build (they're Deno-specific)
@@ -201,6 +202,7 @@ await build({
 
 		const pkgPath = "./npm/package.json";
 		const initialPkg = JSON.parse(await Deno.readTextFile(pkgPath));
+		await finalizeNpmWorkerEntrypoints("./npm", initialPkg);
 		normalizeNpmPackageMetadata(initialPkg);
 		await Deno.writeTextFile(pkgPath, JSON.stringify(initialPkg, null, 2));
 
