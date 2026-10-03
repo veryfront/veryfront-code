@@ -11,6 +11,7 @@ import { getHostedRequestPreparationSignal } from "./request-preparation-context
 import { getServerResolvedToolExposureCheckpoint } from "../hosted/runtime-request-config.ts";
 import { createHostedRunEventWriterCapabilityForRequest } from "../hosted/child-run-event-writer-token.ts";
 import type { HostedAgentServiceDetachedExecutionInput } from "./routes.ts";
+import { runEventTokenResponse } from "../hosted/child-run-event-writer-token.test-helpers.ts";
 
 const runtimeSource = { type: "release", releaseId: "release-42" } as const;
 
@@ -825,12 +826,9 @@ it("agent service routes remove verified writer credentials before detached call
       const capability = createHostedRunEventWriterCapabilityForRequest(request, {
         apiUrl: "https://api.example.test",
         runId: "run-1",
-        fetch: async (_input, init) => {
+        fetch: async (input, init) => {
           childAuthorizations.push(getAuthorizationFromFetchInit(init));
-          return Response.json(
-            { run_event_token: "child-writer-token" },
-            { headers: { "Cache-Control": "no-store" } },
-          );
+          return runEventTokenResponse(new Request(input), "child-writer-token");
         },
       });
       await capability?.mintChildRunEventWriterCapability("child-run-1");
@@ -868,12 +866,9 @@ it("agent service routes preserve verified writer authority across request cloni
       const capability = createHostedRunEventWriterCapabilityForRequest(requestClone, {
         apiUrl: "https://api.example.test",
         runId: requestClone.durableRootRun?.runId ?? "missing-run",
-        fetch: async (_input, init) => {
+        fetch: async (input, init) => {
           childAuthorizations.push(getAuthorizationFromFetchInit(init));
-          return Response.json(
-            { run_event_token: "child-writer-token" },
-            { headers: { "Cache-Control": "no-store" } },
-          );
+          return runEventTokenResponse(new Request(input), "child-writer-token");
         },
       });
       await capability?.mintChildRunEventWriterCapability("child-run-1");

@@ -27,6 +27,7 @@ import {
   type DefaultHostedInvokeAgentTraceAttributes,
   executeDefaultHostedInvokeAgentTool,
 } from "./default-invoke-agent-tool.ts";
+import { runEventTokenResponse } from "./child-run-event-writer-token.test-helpers.ts";
 
 const createBashTool: CreateSandboxBashTool = () => Promise.resolve({ tools: {} });
 const DURABLE_CONTEXT_FAILURE_TEXT =
@@ -733,13 +734,9 @@ it("created invoke tools preserve distinct writer capabilities across concurrent
           await (isChildExchange
             ? waitForSiblingChildExchange()
             : waitForSiblingGrandchildExchange());
-          return Response.json(
-            {
-              run_event_token: isChildExchange
-                ? `child-${label}-writer-token`
-                : `grandchild-${label}-writer-token`,
-            },
-            { headers: { "Cache-Control": "no-store" } },
+          return runEventTokenResponse(
+            request.url,
+            isChildExchange ? `child-${label}-writer-token` : `grandchild-${label}-writer-token`,
           );
         },
       });
@@ -862,24 +859,20 @@ it("created invoke tools preserve distinct writer capabilities across concurrent
       tokenRequests.toSorted((left, right) => left.url.localeCompare(right.url)),
       [
         {
-          authorization: "Bearer child-a-writer-token",
-          url:
-            "https://writer-a.example.test/runs/run_child_a/children/run_grandchild_a/event-writer-token",
-        },
-        {
           authorization: "Bearer root-a-writer-token",
-          url:
-            "https://writer-a.example.test/runs/run_root_a/children/run_child_a/event-writer-token",
+          url: "https://writer-a.example.test/runs/run_child_a/event-tokens",
         },
         {
-          authorization: "Bearer child-b-writer-token",
-          url:
-            "https://writer-b.example.test/runs/run_child_b/children/run_grandchild_b/event-writer-token",
+          authorization: "Bearer child-a-writer-token",
+          url: "https://writer-a.example.test/runs/run_grandchild_a/event-tokens",
         },
         {
           authorization: "Bearer root-b-writer-token",
-          url:
-            "https://writer-b.example.test/runs/run_root_b/children/run_child_b/event-writer-token",
+          url: "https://writer-b.example.test/runs/run_child_b/event-tokens",
+        },
+        {
+          authorization: "Bearer child-b-writer-token",
+          url: "https://writer-b.example.test/runs/run_grandchild_b/event-tokens",
         },
       ],
     );
