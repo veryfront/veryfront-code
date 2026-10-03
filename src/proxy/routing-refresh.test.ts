@@ -9,18 +9,22 @@ describe("idle proxy routing refresh", () => {
   it("refreshes before expiry, warms access, and still checks access on the idle request", async () => {
     using time = new FakeTime();
     let routingLookups = 0;
+    let tokenRequests = 0;
+    const metadataTokens: string[] = [];
     let accessLookups = 0;
     let protectedEnvironment = false;
     await withMockFetch(
-      (async (input) => {
+      (async (input, init) => {
         const path = new URL(input instanceof Request ? input.url : input).pathname;
         if (path === "/auth/token") {
+          tokenRequests++;
           return Response.json({
-            access_token: "test-token",
+            access_token: `test-token-${tokenRequests}`,
             token_type: "Bearer",
-            expires_in: 3600,
+            expires_in: 30,
           });
         }
+        metadataTokens.push(new Headers(init?.headers).get("authorization") ?? "");
         const isRouting = path.includes("/proxy-routing/");
         if (isRouting) {
           routingLookups++;
@@ -58,6 +62,12 @@ describe("idle proxy routing refresh", () => {
           await time.runMicrotasks();
           assertEquals(routingLookups, 2, "routing must refresh while idle");
           assertEquals(accessLookups, 2, "refresh must warm the uncached access endpoint");
+          assertEquals(
+            tokenRequests,
+            2,
+            "refresh must obtain a current service credential after expiry",
+          );
+          assertEquals(metadataTokens.slice(2), ["Bearer test-token-2", "Bearer test-token-2"]);
           time.tick(16_000);
           protectedEnvironment = true;
           const denied = await handler.processRequest(request());

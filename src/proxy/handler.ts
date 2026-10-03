@@ -1,4 +1,5 @@
 import { TokenManager, type TokenScope } from "./token-manager.ts";
+import { RoutingRefreshScheduler } from "./routing-refresh-scheduler.ts";
 import { isErrorAcrossRealms } from "#veryfront/platform/compat/error-introspection.ts";
 import {
   isHostedVeryfrontDomain,
@@ -7,7 +8,7 @@ import {
 } from "#veryfront/server/utils/domain-parser.ts";
 import type { TokenCache } from "./cache/types.ts";
 import { computeContentSourceId } from "#veryfront/cache/keys.ts";
-import { getEnv, unrefTimer } from "#veryfront/platform/compat/process.ts";
+import { getEnv } from "#veryfront/platform/compat/process.ts";
 import { checkProtectedProxyAccess } from "./proxy-access-control.ts";
 import { createLocalProjectResolver } from "./local-project-resolver.ts";
 import {
@@ -67,12 +68,17 @@ export const INTERNAL_PROXY_HEADERS = [
 interface ProjectRoutingCacheEntry {
   value: ProjectRoutingLookupResult;
   expiresAt: number;
-  refreshTimer?: ReturnType<typeof setTimeout>;
 }
 
 interface ProjectRoutingInflightEntry {
   generation: number;
   promise: Promise<ProjectRoutingLookupResult | null>;
+}
+
+interface RoutingRefreshIdentity {
+  scope: TokenScope;
+  projectSlug?: string;
+  customDomain?: string;
 }
 
 const DEFAULT_PROXY_ROUTING_CACHE_TTL_MS = 60_000;
@@ -296,9 +302,13 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
   );
   let routingLookupGeneration = 0;
   let closed = false;
+  const routingRefresh = new RoutingRefreshScheduler(
+    Math.min(4, Math.max(0, (options.metadataMaxInflight ?? 200) - 1)),
+    Math.min(64, routingCacheMaxEntries),
+  );
 
   function deleteCachedRoutingLookup(cacheKey: string): void {
-    clearTimeout(routingLookupCache.get(cacheKey)?.refreshTimer);
+    routingRefresh.cancel(cacheKey);
     routingLookupCache.delete(cacheKey);
   }
 
@@ -339,7 +349,7 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
     cacheKey: string,
     value: ProjectRoutingLookupResult,
     lookupKey: string,
-    token: string,
+    identity?: RoutingRefreshIdentity,
   ): void {
     if (closed || routingCacheTtlMs <= 0 || routingCacheMaxEntries <= 0) {
       return;
@@ -359,29 +369,53 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
       expiresAt: Date.now() + routingCacheTtlMs,
     };
     routingLookupCache.set(cacheKey, entry);
-    entry.refreshTimer = setTimeout(() => {
-      if (closed || routingLookupCache.get(cacheKey) !== entry) return;
-      // Access remains authoritative per request. This read only keeps its
-      // transport and repository path warm during idle periods.
-      void (async () => {
+    if (!identity) return;
+    const delayMs = Math.max(1, Math.floor(routingCacheTtlMs * (0.65 + Math.random() * 0.1)));
+    routingRefresh.schedule(cacheKey, delayMs, async (signal) => {
+      const isCurrent = () =>
+        !closed && !signal.aborted &&
+        routingLookupCache.get(cacheKey) === entry && entry.expiresAt > Date.now();
+      if (!isCurrent()) return;
+      try {
+        let token = await tokenManager.getToken(
+          identity.scope,
+          identity.projectSlug,
+          identity.customDomain,
+          { signal },
+        );
+        // Access stays authoritative per request. This read only keeps its
+        // transport and repository path warm during idle periods.
         try {
-          await metadataClient.lookupAccess(lookupKey, token, false);
-          if (closed || routingLookupCache.get(cacheKey) !== entry) return;
-          await resolveProjectRoutingLookup(
-            lookupKey,
-            token,
-            undefined,
-            undefined,
-            undefined,
-            true,
+          await metadataClient.lookupAccess(lookupKey, token, false, { signal });
+        } catch (error) {
+          if (!isProxyLookupAuthError(error)) throw error;
+          await tokenManager.invalidateToken(
+            identity.scope,
+            identity.projectSlug,
+            identity.customDomain,
           );
-        } catch {
-          // Keep the original expiry on failure; never extend stale routing.
-          logger?.warn("Background proxy routing refresh failed", { lookupKey });
+          token = await tokenManager.getToken(
+            identity.scope,
+            identity.projectSlug,
+            identity.customDomain,
+            { signal },
+          );
+          await metadataClient.lookupAccess(lookupKey, token, false, { signal });
         }
-      })();
-    }, Math.max(1, Math.floor(routingCacheTtlMs * 0.75)));
-    unrefTimer(entry.refreshTimer);
+        if (!isCurrent()) return;
+        await resolveProjectRoutingLookup(
+          lookupKey,
+          token,
+          undefined,
+          signal,
+          undefined,
+          { refresh: true, identity },
+        );
+      } catch {
+        // Keep the original expiry on failure; never extend stale routing.
+        if (!signal.aborted) logger?.warn("Background proxy routing refresh failed", { lookupKey });
+      }
+    });
   }
 
   function hasActiveReleaseForMatchedEnvironment(
@@ -485,7 +519,7 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
     timing?: ProxyServerTiming,
     signal?: AbortSignal,
     isResultUsable?: (result: ProjectRoutingLookupResult) => boolean,
-    refresh = false,
+    refreshOptions: { refresh?: boolean; identity?: RoutingRefreshIdentity } = {},
   ): Promise<ProjectRoutingLookupResult | null> {
     const cacheKey = normalizeProjectLookupKey(lookupKey);
     const canUseResult = (result: ProjectRoutingLookupResult | null): boolean =>
@@ -500,7 +534,7 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
       timing ?? { enabled: false, startedAt: 0, phases: new Map() },
       "proxy.routing_lookup",
       async () => {
-        const cached = refresh ? null : getCachedRoutingLookup(cacheKey);
+        const cached = refreshOptions.refresh ? null : getCachedRoutingLookup(cacheKey);
         if (cached && canUseResult(cached)) {
           logger?.debug("Proxy routing metadata cache hit", { lookupKey });
           return cached;
@@ -533,7 +567,9 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
               const result = await metadataClient.lookupRouting(lookupKey, token);
 
               if (!wasRoutingLookupInvalidated(cacheKey, result, startedAtGeneration)) {
-                if (result) setCachedRoutingLookup(cacheKey, result, lookupKey, token);
+                if (result) {
+                  setCachedRoutingLookup(cacheKey, result, lookupKey, refreshOptions.identity);
+                }
                 return result;
               }
 
@@ -604,7 +640,16 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
 
     const scope = getScope(input.environmentName.toLowerCase());
     const resolveWithToken = async (token: string) => {
-      const result = await resolveProjectRoutingLookup(input.projectSlug, token);
+      const result = await resolveProjectRoutingLookup(
+        input.projectSlug,
+        token,
+        undefined,
+        undefined,
+        undefined,
+        {
+          identity: { scope, projectSlug: input.projectSlug },
+        },
+      );
       const environment = result?.environments?.find((candidate) =>
         candidate.id === input.environmentId
       );
@@ -711,6 +756,7 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
     signedInternalControlPlaneCandidate: boolean,
     verifySignedInternalControlPlaneBinding: VerifySignedInternalControlPlaneBinding,
     requireActiveRelease: boolean,
+    refreshIdentity: RoutingRefreshIdentity,
   ): Promise<ResolvedProjectMetadata> {
     return await profileProxyServerTimingPhase(
       timing ?? { enabled: false, startedAt: 0, phases: new Map() },
@@ -724,6 +770,7 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
           requireActiveRelease
             ? (result) => hasActiveReleaseForMatchedEnvironment(result, envMatcher)
             : undefined,
+          { identity: refreshIdentity },
         );
         if (!routingResult) {
           return await resolveFullProjectLookupAndProtection(
@@ -967,6 +1014,7 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
           signedInternalControlPlaneCandidate,
           verifySignedInternalControlPlaneBinding,
           scope === "production",
+          { scope, ...tokenIdentity },
         );
 
       try {
@@ -1410,6 +1458,7 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
 
   async function close() {
     closed = true;
+    routingRefresh.close();
     for (const cacheKey of routingLookupCache.keys()) deleteCachedRoutingLookup(cacheKey);
     localProjectResolver.clear();
     await tokenManager.close();
