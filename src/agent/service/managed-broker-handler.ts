@@ -551,10 +551,14 @@ async function runDetached(
       let streamCompleted = false;
       let failure: unknown;
       let terminalMetadata: HostedLifecycleTerminalState["metadata"];
+      let terminalOutput: unknown;
       try {
         const result = await runtime.agent.stream({ messages, abortSignal: signal });
         for await (
           const chunk of result.toUIMessageStream({
+            onFinish: ({ responseMessage }) => {
+              terminalOutput = responseMessage;
+            },
             messageMetadata({ part }) {
               const metadata = buildManagedBrokerMessageMetadata(runtime, part);
               terminalMetadata = {
@@ -589,6 +593,7 @@ async function runDetached(
       } finally {
         await output.finish({
           completed: streamCompleted,
+          ...(terminalOutput !== undefined ? { output: terminalOutput } : {}),
           ...(failure === undefined || signal.aborted ? {} : { error: failure }),
           ...(terminalMetadata ? { metadata: terminalMetadata } : {}),
         });

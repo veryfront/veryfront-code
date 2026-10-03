@@ -317,6 +317,7 @@ export interface BootstrapConversationAgentRunResult {
 
 /** Bootstrap conversation agent run helper. */
 export async function bootstrapConversationAgentRun(input: {
+  admitRun?: typeof createConversationAgentRun;
   authToken: string;
   apiUrl: string;
   parentConversationId?: string;
@@ -353,7 +354,7 @@ export async function bootstrapConversationAgentRun(input: {
     conversationId: conversation.id,
     body: input.handoffMessageBody,
   });
-  const run = await createConversationAgentRun({
+  const run = await (input.admitRun ?? createConversationAgentRun)({
     authToken: input.authToken,
     apiUrl: input.apiUrl,
     conversationId: conversation.id,

@@ -1,3 +1,4 @@
+import { computeHash } from "#veryfront/utils/hash-utils.ts";
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
@@ -7,7 +8,7 @@ import {
   createInputRequest,
   getCreateInputRequestResponseSchema,
   getInputRequest,
-} from "../index.ts";
+} from "./request-protocol.ts";
 import {
   createAgUiEncoderState,
   mapRuntimeStreamEventToAgUiEvents,
@@ -17,13 +18,29 @@ import { ConversationRunEventEncoder } from "#veryfront/agent/conversation/run-e
 const API_URL = "https://api.example.com";
 const AUTH_TOKEN = "token-123";
 const CONVERSATION_ID = "22222222-2222-4222-a222-222222222222";
-const RUN_ID = "run_1";
+const RUN_ID = "44444444-4444-4444-a444-444444444444";
 const TOOL_CALL_ID = "tool-call-1";
 const INPUT_REQUEST_ID = "11111111-1111-4111-a111-111111111111";
 const CREATED_AT = "2026-04-04T00:00:00.000Z";
 const EXPIRES_AT = "2026-04-04T00:05:00.000Z";
 
 function jsonResponse(body: unknown, status: number): Response {
+  const record = body as Record<string, unknown>;
+  if (record?.fields) {
+    const response = record.latest_response as Record<string, unknown> | null;
+    body = {
+      ...record,
+      input_request_id: record.id,
+      resolved_at: record.submitted_at ?? record.cancelled_at ?? record.expired_at,
+      response: response
+        ? {
+          ...response,
+          response_id: response.id,
+          actor: { type: response.actor_type, id: response.actor_id },
+        }
+        : null,
+    };
+  }
   return new Response(JSON.stringify(body), {
     status,
     headers: { "Content-Type": "application/json" },
@@ -117,16 +134,15 @@ describe("agent/input-request-protocol", () => {
 
     assertEquals(result.id, INPUT_REQUEST_ID);
     assertEquals(result.toolCallId, TOOL_CALL_ID);
-    assertEquals(capturedUrl, `${API_URL}/conversations/${CONVERSATION_ID}/input-requests`);
+    assertEquals(capturedUrl, `${API_URL}/runs/${RUN_ID}/input-requests`);
     assertEquals(capturedInit?.method, "POST");
     assertEquals(capturedInit?.headers, {
       Authorization: `Bearer ${AUTH_TOKEN}`,
       "Content-Type": "application/json",
+      "Idempotency-Key": `runtime-input:${await computeHash(`${RUN_ID}:${TOOL_CALL_ID}`)}`,
     });
     assertEquals(JSON.parse(String(capturedInit?.body)), {
-      run_id: RUN_ID,
       tool_call_id: TOOL_CALL_ID,
-      kind: "form",
       requested_responder_type: "human",
       title: "Choose one",
       description: "Pick",
@@ -136,9 +152,6 @@ describe("agent/input-request-protocol", () => {
           name: "confirmed",
           label: "Confirm?",
           required: false,
-          secret: false,
-          confirmLabel: "Yes",
-          denyLabel: "No",
         },
       ],
       expires_at: EXPIRES_AT,
@@ -150,7 +163,7 @@ describe("agent/input-request-protocol", () => {
     stubFetchWithRecorder((input, init) => {
       assertEquals(
         String(input),
-        `${API_URL}/conversations/${CONVERSATION_ID}/input-requests/${INPUT_REQUEST_ID}`,
+        `${API_URL}/input-requests/${INPUT_REQUEST_ID}`,
       );
       assertEquals(init?.method, "GET");
       return jsonResponse(
@@ -204,6 +217,7 @@ describe("agent/input-request-protocol", () => {
         runId: RUN_ID,
         actorType: "human",
         actorId: "user-1",
+        redactedFields: undefined,
         values: { confirmed: true },
         createdAt: CREATED_AT,
       },

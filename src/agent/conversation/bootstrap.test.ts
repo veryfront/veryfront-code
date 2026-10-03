@@ -32,23 +32,6 @@ function jsonResponse(body: unknown, status: number): Response {
   });
 }
 
-function acceptedRunResponse(run: unknown): Response {
-  return jsonResponse({ accepted: true, run }, 202);
-}
-
-function camelCaseDurableRunProjection(overrides: Record<string, unknown> = {}) {
-  return {
-    runId: "run_child_2",
-    conversationId: CONVERSATION_ID,
-    messageId: MESSAGE_ID,
-    latestEventId: 0,
-    latestExternalEventSequence: 0,
-    status: "running",
-    projectId: null,
-    ...overrides,
-  };
-}
-
 function stubFetchSequence(...steps: Response[]) {
   const queue = [...steps];
   globalThis.fetch = (async () => {
@@ -181,7 +164,7 @@ describe("agent/conversation-bootstrap", () => {
         id: USER_MESSAGE_ID,
         role: "user",
         parts: [{ type: "text", text: "Hello" }],
-        metadata: { source: "test" },
+        metadata: { agentId: "test-agent" },
       },
     });
 
@@ -197,7 +180,7 @@ describe("agent/conversation-bootstrap", () => {
       parts: [{ type: "text", text: "Hello" }],
       idempotency_key: USER_MESSAGE_ID,
       parent_id: PARENT_MESSAGE_ID,
-      metadata: { source: "test" },
+      metadata: { agentId: "test-agent" },
     });
   });
 
@@ -396,26 +379,29 @@ describe("agent/conversation-bootstrap", () => {
     );
   });
 
-  it("bootstraps a conversation-backed agent run", async () => {
+  it("bootstraps a conversation-backed run through its bound admission capability", async () => {
+    const requests: unknown[] = [];
+    const projection = {
+      runId: "run_child_1",
+      conversationId: CHILD_CONVERSATION_ID,
+      messageId: MESSAGE_ID,
+      latestEventId: 1,
+      latestExternalEventSequence: 1,
+      waitingToolCallId: null,
+      waitingToolName: null,
+      streamProtocolVersion: 1 as const,
+      status: "running" as const,
+    };
     stubFetchSequence(
       jsonResponse({ id: CONVERSATION_ID, project_id: PROJECT_ID }, 200),
-      jsonResponse({ id: CHILD_CONVERSATION_ID, project_id: PROJECT_ID }, 200),
-      jsonResponse({ id: MESSAGE_ID }, 200),
-      acceptedRunResponse({ run_id: "run_child_1" }),
-      jsonResponse(
-        {
-          run_id: "run_child_1",
-          conversation_id: CHILD_CONVERSATION_ID,
-          message_id: MESSAGE_ID,
-          latest_event_id: 1,
-          latest_external_event_sequence: 1,
-          status: "running",
-        },
-        200,
-      ),
+      jsonResponse({ id: CHILD_CONVERSATION_ID, project_id: PROJECT_ID }, 201),
+      jsonResponse({ id: MESSAGE_ID }, 201),
     );
-
     const result = await bootstrapConversationAgentRun({
+      admitRun: async (input) => {
+        requests.push(input);
+        return projection;
+      },
       authToken: AUTH_TOKEN,
       apiUrl: API_URL,
       parentConversationId: CONVERSATION_ID,
@@ -423,68 +409,71 @@ describe("agent/conversation-bootstrap", () => {
       conversationBody: { project_id: PROJECT_ID, title: "Child task" },
       handoffMessageBody: { role: "user", parts: [{ type: "text", text: "Do the task" }] },
       runId: "run_child_1",
+      parentRunId: "run_parent",
       agentId: "invoke-agent-child",
       projectId: PROJECT_ID,
       branchId: BRANCH_ID,
     });
-
     assertEquals(result.conversation, { id: CHILD_CONVERSATION_ID, projectId: PROJECT_ID });
     assertEquals(result.message, { id: MESSAGE_ID });
-    assertEquals(result.run.runId, "run_child_1");
-    assertEquals(result.run.conversationId, CHILD_CONVERSATION_ID);
-  });
-
-  it("accepts camelCase durable run responses for backward compatibility", async () => {
-    stubFetchSequence(
-      jsonResponse({ id: CHILD_CONVERSATION_ID, project_id: null }, 200),
-      jsonResponse({ id: MESSAGE_ID }, 200),
-      acceptedRunResponse({ runId: "run_child_2" }),
-      jsonResponse(camelCaseDurableRunProjection(), 200),
-    );
-    const result = await bootstrapConversationAgentRun({
+    assertEquals(result.run, projection);
+    assertEquals(requests, [{
       authToken: AUTH_TOKEN,
       apiUrl: API_URL,
-      conversationBody: { title: "Child task" },
-      handoffMessageBody: { role: "user", parts: [{ type: "text", text: "Do the task" }] },
-      runId: "run_child_2",
+      conversationId: CHILD_CONVERSATION_ID,
+      runId: "run_child_1",
+      parentRunId: "run_parent",
       agentId: "invoke-agent-child",
-    });
-    assertEquals(result.run.runId, "run_child_2");
+      implementationKind: undefined,
+      projectId: PROJECT_ID,
+      runtimeTargetKind: undefined,
+      runtimeTargetEnvironmentId: undefined,
+      branchId: BRANCH_ID,
+    }]);
   });
 
-  it("propagates project targeting from the created conversation when callers only pass branchId", async () => {
+  it("preserves the bound admission result and propagates its failures", async () => {
+    stubFetchSequence(
+      jsonResponse({ id: CHILD_CONVERSATION_ID, project_id: null }, 201),
+      jsonResponse({ id: MESSAGE_ID }, 201),
+    );
+    await assertRejects(
+      () =>
+        bootstrapConversationAgentRun({
+          admitRun: () => Promise.reject(new Error("Parent execution was fenced")),
+          authToken: AUTH_TOKEN,
+          apiUrl: API_URL,
+          conversationBody: { title: "Child task" },
+          handoffMessageBody: { role: "user", parts: [{ type: "text", text: "Do the task" }] },
+          runId: "run_child_2",
+          agentId: "invoke-agent-child",
+        }),
+      Error,
+      "Parent execution was fenced",
+    );
+  });
+
+  it("propagates the created conversation project and branch to the admission capability", async () => {
     const requests: unknown[] = [];
-    stubFetchWithRecorder(async (_input, init) => {
-      requests.push(init?.body ? JSON.parse(String(init.body)) : null);
-
-      const requestCount = requests.length;
-      if (requestCount === 1) {
-        return jsonResponse({ id: CHILD_CONVERSATION_ID, project_id: PROJECT_ID }, 200);
-      }
-      if (requestCount === 2) {
-        return jsonResponse({ id: MESSAGE_ID }, 200);
-      }
-      if (requestCount === 3) {
-        return acceptedRunResponse({ run_id: "run_child_targeted" });
-      }
-      if (requestCount === 4) {
-        return jsonResponse(
-          {
-            run_id: "run_child_targeted",
-            conversation_id: CHILD_CONVERSATION_ID,
-            message_id: MESSAGE_ID,
-            latest_event_id: 1,
-            latest_external_event_sequence: 1,
-            status: "running",
-          },
-          200,
-        );
-      }
-
-      throw new Error("Unexpected fetch call");
-    });
-
+    stubFetchSequence(
+      jsonResponse({ id: CHILD_CONVERSATION_ID, project_id: PROJECT_ID }, 201),
+      jsonResponse({ id: MESSAGE_ID }, 201),
+    );
     await bootstrapConversationAgentRun({
+      admitRun: async (input) => {
+        requests.push(input);
+        return {
+          runId: "run_child_targeted",
+          conversationId: CHILD_CONVERSATION_ID,
+          messageId: MESSAGE_ID,
+          latestEventId: 1,
+          latestExternalEventSequence: 1,
+          waitingToolCallId: null,
+          waitingToolName: null,
+          streamProtocolVersion: 1,
+          status: "running",
+        };
+      },
       authToken: AUTH_TOKEN,
       apiUrl: API_URL,
       conversationBody: { project_id: PROJECT_ID, title: "Child task" },
@@ -493,23 +482,18 @@ describe("agent/conversation-bootstrap", () => {
       agentId: "invoke-agent-child",
       branchId: BRANCH_ID,
     });
-
-    assertEquals(requests[2], {
-      kind: "agent",
-      owner: {
-        kind: "conversation",
-        id: CHILD_CONVERSATION_ID,
-      },
-      public_id: "run_child_targeted",
-      request: {
-        mode: "agent",
-        agent_id: "invoke-agent-child",
-        initial_status: "running",
-        source_target_kind: "preview_branch",
-        runtime_target_kind: "preview_branch",
-        source_target_branch_id: BRANCH_ID,
-        runtime_target_branch_id: BRANCH_ID,
-      },
-    });
+    assertEquals(requests, [{
+      authToken: AUTH_TOKEN,
+      apiUrl: API_URL,
+      conversationId: CHILD_CONVERSATION_ID,
+      runId: "run_child_targeted",
+      parentRunId: undefined,
+      agentId: "invoke-agent-child",
+      implementationKind: undefined,
+      projectId: PROJECT_ID,
+      runtimeTargetKind: undefined,
+      runtimeTargetEnvironmentId: undefined,
+      branchId: BRANCH_ID,
+    }]);
   });
 });

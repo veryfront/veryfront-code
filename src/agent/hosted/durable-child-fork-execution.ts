@@ -1,3 +1,10 @@
+import { createPrivateWeakStore } from "#veryfront/security/private-weak-store.ts";
+import {
+  hostedInheritedEventWriter,
+  hostedTerminalRunFinalizer,
+  transferHostedTerminalAuthority,
+  withHostedInheritedLease,
+} from "./terminal-credential.ts";
 import type {
   ChildRunExecutionResult,
   ChildRunExecutionSnapshot,
@@ -57,6 +64,7 @@ export class HostedChildRunFinalizationError extends Error {
 
 /** Options accepted by hosted durable child execution. */
 export type HostedDurableChildExecutionOptions = {
+  abortSignal?: AbortSignal;
   durableChildRun?: HostedChildRunIdentifiers;
 };
 
@@ -649,6 +657,7 @@ async function bootstrapHostedDurableChildFork<
 
     const bootstrapChildRun = input.runtime?.bootstrapChildRun ?? bootstrapHostedChildRun;
     const run = await bootstrapChildRun({
+      runEventWriterCapability: input.runEventWriterCapability,
       authToken: input.authToken,
       apiUrl: input.apiUrl,
       ensureProjectId: input.getProjectId() ?? undefined,
@@ -674,6 +683,10 @@ async function bootstrapHostedDurableChildFork<
       branchId: getBranchId(input),
     });
     const identifiers: HostedChildRunIdentifiers = {
+      ...(run.childCanonicalRunId ? { childCanonicalRunId: run.childCanonicalRunId } : {}),
+      ...(run.status === "completed" || run.status === "failed" || run.status === "cancelled"
+        ? { status: run.status }
+        : {}),
       childConversationId: run.childConversationId,
       childRunId: run.childRunId,
       childMessageId: run.childMessageId,
@@ -681,6 +694,7 @@ async function bootstrapHostedDurableChildFork<
       latestExternalEventSequence: run.latestExternalEventSequence,
     };
 
+    transferHostedTerminalAuthority(run, identifiers);
     await input.bootstrap?.onBootstrapComplete?.({
       ...input.bootstrapContext,
       identifiers,
@@ -714,7 +728,12 @@ async function executeHostedDurableChildLifecycle<
     execute: () =>
       runWithHostedRunEventWriterCapability(
         input.childRunEventWriterCapability,
-        () => input.executeLocal({ durableChildRun: identifiers }),
+        () =>
+          withHostedInheritedLease(
+            identifiers,
+            (abortSignal) => input.executeLocal({ durableChildRun: identifiers, abortSignal }),
+            input.executionOptions.abortSignal,
+          ),
       ),
     getExecutionSnapshot: input.getExecutionSnapshot,
     onLifecycleError: input.onLifecycleError,
@@ -766,7 +785,10 @@ function createDurableChildLifecycleAdapter<
   const createLifecycleAdapter = input.runtime?.createLifecycleAdapter ??
     createConversationChildLifecycleAdapter;
 
+  const terminalDescriptor = { runId: identifiers.childRunId };
+  transferHostedTerminalAuthority(identifiers, terminalDescriptor);
   return createLifecycleAdapter({
+    finalize: hostedTerminalRunFinalizer(terminalDescriptor),
     authToken: input.authToken,
     apiUrl: input.apiUrl,
     parentConversationId: bootstrapContext.parentConversationId,
@@ -809,6 +831,8 @@ async function notifyBootstrapError(
   }
 }
 
+const inheritedExecutions = createPrivateWeakStore<object, Map<string, Promise<unknown>>>();
+
 /** Execute hosted durable child fork. */
 export async function executeHostedDurableChildFork<
   TResult,
@@ -818,10 +842,29 @@ export async function executeHostedDurableChildFork<
 ): Promise<TResult> {
   const runEventWriterCapability = input.runEventWriterCapability ??
     getActiveHostedRunEventWriterCapability();
-  return await runWithHostedRunEventWriterCapability(
-    undefined,
-    () => executeHostedDurableChildForkWithCapability(input, runEventWriterCapability),
-  );
+  let admitted = false;
+  const execute = () =>
+    runWithHostedRunEventWriterCapability(
+      undefined,
+      () =>
+        executeHostedDurableChildForkWithCapability(input, runEventWriterCapability, () => {
+          admitted = true;
+        }),
+    );
+  if (!runEventWriterCapability) return await execute();
+  let executions = inheritedExecutions.get(runEventWriterCapability);
+  if (!executions) {
+    executions = new Map();
+    inheritedExecutions.set(runEventWriterCapability, executions);
+  }
+  const key = `${input.parentRunId}:${input.executionOptions.toolCallId}`;
+  const existing = executions.get(key);
+  if (existing) return await existing as TResult;
+  const execution = Promise.resolve().then(execute).finally(() => {
+    if (!admitted) executions!.delete(key);
+  });
+  executions.set(key, execution);
+  return await execution;
 }
 
 async function executeHostedDurableChildForkWithCapability<
@@ -830,6 +873,7 @@ async function executeHostedDurableChildForkWithCapability<
 >(
   input: ExecuteHostedDurableChildForkInput<TResult, TLocalResult>,
   runEventWriterCapability: HostedRunEventWriterCapability | undefined,
+  onAdmitted: () => void,
 ): Promise<TResult> {
   throwIfChildRunAborted(input.executionOptions.abortSignal);
 
@@ -849,8 +893,10 @@ async function executeHostedDurableChildForkWithCapability<
   try {
     identifiers = await bootstrapHostedDurableChildFork({
       ...input,
+      runEventWriterCapability,
       bootstrapContext,
     });
+    onAdmitted();
   } catch (error) {
     await notifyBootstrapError(
       {
@@ -874,16 +920,32 @@ async function executeHostedDurableChildForkWithCapability<
     });
   }
 
+  if (
+    identifiers.status === "completed" || identifiers.status === "failed" ||
+    identifiers.status === "cancelled"
+  ) {
+    return input.buildTerminalFailureResult({
+      status: identifiers.status === "completed" ? "failed" : identifiers.status,
+      identifiers,
+      targets,
+      terminalErrorCode: "DURABLE_CHILD_ALREADY_TERMINAL",
+      terminalErrorMessage:
+        "The admitted child is already terminal; local execution was not repeated",
+    });
+  }
+
   let childRunEventWriterCapability: HostedRunEventWriterCapability;
   try {
     if (!runEventWriterCapability) {
       throw new HostedChildRunEventWriterTokenExchangeError();
     }
-    childRunEventWriterCapability = await runEventWriterCapability
-      .mintChildRunEventWriterCapability(
-        identifiers.childRunId,
-        input.executionOptions.abortSignal,
-      );
+    childRunEventWriterCapability = hostedInheritedEventWriter(identifiers) ??
+      await runEventWriterCapability
+        .mintChildRunEventWriterCapability(
+          identifiers.childRunId,
+          input.executionOptions.abortSignal,
+          identifiers.childCanonicalRunId,
+        );
   } catch (error) {
     const setupError = new HostedChildRunEventWriterTokenExchangeError(
       error instanceof HostedChildRunEventWriterTokenExchangeError

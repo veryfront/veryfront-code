@@ -56,6 +56,7 @@ type HostedResponseFinalizationState = {
 };
 
 type HostedDetachedFinalizationState = {
+  finalizedMessage: ChatUiMessage;
   hasContent: boolean;
   fallbackChunks: readonly ChatUiMessageChunk<MessageMetadata>[];
   hasIncompleteToolParts: boolean;
@@ -143,6 +144,7 @@ function createHostedChatFinalizeDetachedBuildState(
       : [];
 
     return {
+      finalizedMessage: finalizedFallbackMessage,
       hasContent: fallbackParts.length > 0,
       fallbackChunks,
       hasIncompleteToolParts: hasIncompleteFallbackToolParts,
@@ -341,10 +343,12 @@ export async function finalizeHostedChatRun(
   let metadata: HostedLifecycleTerminalState["metadata"] | undefined;
   let emptyFailure: boolean;
   let hasOutput: boolean;
+  let output: ChatUiMessage;
 
   if (input.kind === "response") {
     const state = createHostedChatFinalizeResponseBuildState(input)(finalStep);
 
+    output = state.finalizedMessage;
     fallbackChunks = state.fallbackChunks;
     hasIncompleteToolParts = state.hasIncompleteToolParts;
     metadata = state.metadata;
@@ -356,6 +360,7 @@ export async function finalizeHostedChatRun(
   } else {
     const state = createHostedChatFinalizeDetachedBuildState(input)(finalStep);
 
+    output = state.finalizedMessage;
     fallbackChunks = state.fallbackChunks;
     hasIncompleteToolParts = state.hasIncompleteToolParts;
     metadata = undefined;
@@ -407,6 +412,7 @@ export async function finalizeHostedChatRun(
     lifecycleAdapter: input.lifecycleAdapter,
     terminalState: {
       ...terminalState,
+      ...(terminalState.status === "completed" ? { output } : {}),
       ...(metadata !== undefined ? { metadata } : {}),
     },
   });

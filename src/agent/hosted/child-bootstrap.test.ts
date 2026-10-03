@@ -1,5 +1,11 @@
+import { createHostedRunEventWriterCapability } from "./child-run-event-writer-token.ts";
+import {
+  hostedInheritedRunAdmitter,
+  registerHostedTerminalCredential,
+} from "./terminal-credential.ts";
+import type { ParsedHostedChatRequest } from "./chat-request-parser.ts";
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import { assertEquals } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { bootstrapHostedChildRun, buildHostedChildConversationBody } from "./child-bootstrap.ts";
 
@@ -19,16 +25,6 @@ function jsonResponse(body: unknown, status: number): Response {
     status,
     headers: { "Content-Type": "application/json" },
   });
-}
-
-function acceptedRunResponse(run: unknown): Response {
-  return jsonResponse({ accepted: true, run }, 202);
-}
-
-function stubFetchWithRecorder(
-  handler: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response> | Response,
-) {
-  globalThis.fetch = (async (input, init) => handler(input, init)) as typeof fetch;
 }
 
 describe("agent/hosted-child-bootstrap", () => {
@@ -64,266 +60,142 @@ describe("agent/hosted-child-bootstrap", () => {
     );
   });
 
-  it("bootstraps a hosted child conversation, handoff message, and run", async () => {
-    const requests: { url: string; body: unknown }[] = [];
-    stubFetchWithRecorder(async (input, init) => {
-      requests.push({
-        url: String(input),
-        body: init?.body ? JSON.parse(String(init.body)) : null,
-      });
-
-      const requestCount = requests.length;
-      if (requestCount === 1) {
-        return jsonResponse({ id: PARENT_CONVERSATION_ID, project_id: PROJECT_ID }, 200);
-      }
-      if (requestCount === 2) {
-        return jsonResponse({ id: CHILD_CONVERSATION_ID, project_id: PROJECT_ID }, 200);
-      }
-      if (requestCount === 3) {
-        return jsonResponse({ id: CHILD_MESSAGE_ID }, 200);
-      }
-      if (requestCount === 4) {
-        return acceptedRunResponse({ run_id: "run_child_1" });
-      }
-      if (requestCount === 5) {
-        return jsonResponse(
-          {
-            run_id: "run_child_1",
-            conversation_id: CHILD_CONVERSATION_ID,
-            message_id: CHILD_MESSAGE_ID,
-            latest_event_id: 7,
-            latest_external_event_sequence: 3,
-            status: "running",
-          },
-          200,
+  for (
+    const selection of [
+      { branchId: BRANCH_ID },
+      { runtimeTargetKind: "environment" as const, runtimeTargetEnvironmentId: ENVIRONMENT_ID },
+    ]
+  ) {
+    it(`bootstraps one inherited child while preserving parent runtime ownership (${JSON.stringify(selection)})`, async () => {
+      const parentId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+      const childId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+      const token = (runId: string, canonicalRunId: string) =>
+        `header.${
+          btoa(
+            JSON.stringify({
+              runId,
+              canonicalRunId,
+              tokenUse: "run_event_writer",
+              writerPurpose: "current_run_terminal",
+              dispatchNonce: "generation",
+            }),
+          )
+        }.signature`;
+      const parent = {
+        projectId: PROJECT_ID,
+        authToken: AUTH_TOKEN,
+        durableRootRun: { runId: "parent-run-1" },
+      } as ParsedHostedChatRequest;
+      registerHostedTerminalCredential(parent, token("parent-run-1", parentId));
+      const requests: Request[] = [];
+      const send: typeof fetch = (input, init) => {
+        const request = new Request(input, init);
+        requests.push(request);
+        if (request.url === `${API_URL}/runs`) {
+          return Promise.resolve(
+            Response.json({
+              id: childId,
+              conversation_id: CHILD_CONVERSATION_ID,
+              output_message_id: CHILD_MESSAGE_ID,
+              status: "running",
+            }, {
+              status: 202,
+              headers: {
+                "Cache-Control": "no-store",
+                "X-Veryfront-Run-Invocation-Token": "child-invocation",
+                "X-Veryfront-Run-Terminal-Token": token("run_child_1", childId),
+                "X-Veryfront-Run-Renewal-Token": "child-renewal",
+                "X-Veryfront-Run-Event-Token": "child-event",
+                "X-Veryfront-Run-Event-Sequence": "7",
+                "X-Veryfront-Run-External-Event-Sequence": "3",
+              },
+            }),
+          );
+        }
+        if (request.method === "GET") {
+          return Promise.resolve(
+            jsonResponse({ id: PARENT_CONVERSATION_ID, project_id: PROJECT_ID }, 200),
+          );
+        }
+        if (request.url.endsWith("/messages")) {
+          return Promise.resolve(jsonResponse({ id: CHILD_MESSAGE_ID }, 200));
+        }
+        return Promise.resolve(
+          jsonResponse({ id: CHILD_CONVERSATION_ID, project_id: PROJECT_ID }, 200),
         );
-      }
-
-      throw new Error("Unexpected fetch call");
-    });
-
-    const result = await bootstrapHostedChildRun({
-      authToken: AUTH_TOKEN,
-      apiUrl: API_URL,
-      ensureProjectId: PROJECT_ID,
-      runProjectId: PROJECT_ID,
-      parentConversationId: PARENT_CONVERSATION_ID,
-      parentRunId: "parent-run-1",
-      parentMessageId: PARENT_MESSAGE_ID,
-      spawnedFromToolCallId: "tool-call-1",
-      description: "Inspect logs",
-      prompt: "Find the latest logs.",
-      runId: "run_child_1",
-      agentId: "invoke-agent-child",
-      branchId: BRANCH_ID,
-    });
-
-    assertEquals(result, {
-      childConversationId: CHILD_CONVERSATION_ID,
-      childRunId: "run_child_1",
-      childMessageId: CHILD_MESSAGE_ID,
-      latestEventId: 7,
-      latestExternalEventSequence: 3,
-      status: "running",
-    });
-    const childConversationRequest = requests[1];
-    const handoffMessageRequest = requests[2];
-    const childRunRequest = requests[3];
-    assertExists(childConversationRequest);
-    assertExists(handoffMessageRequest);
-    assertExists(childRunRequest);
-
-    assertEquals(childConversationRequest.body, {
-      project_id: PROJECT_ID,
-      type: "project_agent",
-      title: "Inspect logs",
-      metadata: {
-        hiddenFromChatList: true,
-        projectAgentChildRun: {
-          parentConversationId: PARENT_CONVERSATION_ID,
-          parentRunId: "parent-run-1",
-          spawnedFromMessageId: PARENT_MESSAGE_ID,
-          spawnedFromToolCallId: "tool-call-1",
-          description: "Inspect logs",
-        },
-      },
-    });
-    assertEquals(handoffMessageRequest.body, {
-      role: "user",
-      parts: [{ type: "text", text: "Find the latest logs." }],
-    });
-    assertEquals(childRunRequest.body, {
-      kind: "agent",
-      owner: {
-        kind: "conversation",
-        id: CHILD_CONVERSATION_ID,
-      },
-      public_id: "run_child_1",
-      parent_run_id: "parent-run-1",
-      request: {
-        mode: "agent",
-        agent_id: "invoke-agent-child",
-        initial_status: "running",
-        source_target_kind: "preview_branch",
-        runtime_target_kind: "preview_branch",
-        source_target_branch_id: BRANCH_ID,
-        runtime_target_branch_id: BRANCH_ID,
-      },
-    });
-  });
-
-  it("bootstraps child runs with environment source and runtime targets", async () => {
-    const requests: { url: string; body: unknown }[] = [];
-    stubFetchWithRecorder(async (input, init) => {
-      requests.push({
-        url: String(input),
-        body: init?.body ? JSON.parse(String(init.body)) : null,
+      };
+      globalThis.fetch = send;
+      const capability = createHostedRunEventWriterCapability({
+        apiUrl: API_URL,
+        runId: "parent-run-1",
+        canonicalRunId: parentId,
+        runEventAppendToken: "parent-event",
+        inheritedAdmitter: hostedInheritedRunAdmitter(parent, { apiUrl: API_URL, fetch: send }),
+        fetch: send,
       });
-
-      const requestCount = requests.length;
-      if (requestCount === 1) {
-        return jsonResponse({ id: PARENT_CONVERSATION_ID, project_id: PROJECT_ID }, 200);
-      }
-      if (requestCount === 2) {
-        return jsonResponse({ id: CHILD_CONVERSATION_ID, project_id: PROJECT_ID }, 200);
-      }
-      if (requestCount === 3) {
-        return jsonResponse({ id: CHILD_MESSAGE_ID }, 200);
-      }
-      if (requestCount === 4) {
-        return acceptedRunResponse({ run_id: "run_child_env_1" });
-      }
-      if (requestCount === 5) {
-        return jsonResponse(
-          {
-            run_id: "run_child_env_1",
-            conversation_id: CHILD_CONVERSATION_ID,
-            message_id: CHILD_MESSAGE_ID,
-            latest_event_id: 7,
-            latest_external_event_sequence: 3,
-            status: "running",
-          },
-          200,
-        );
-      }
-
-      throw new Error("Unexpected fetch call");
-    });
-
-    await bootstrapHostedChildRun({
-      authToken: AUTH_TOKEN,
-      apiUrl: API_URL,
-      ensureProjectId: PROJECT_ID,
-      runProjectId: PROJECT_ID,
-      parentConversationId: PARENT_CONVERSATION_ID,
-      parentRunId: "parent-run-1",
-      parentMessageId: PARENT_MESSAGE_ID,
-      spawnedFromToolCallId: "tool-call-1",
-      description: "Inspect logs",
-      prompt: "Find the latest logs.",
-      runId: "run_child_env_1",
-      agentId: "invoke-agent-child",
-      runtimeTargetKind: "environment",
-      runtimeTargetEnvironmentId: ENVIRONMENT_ID,
-    });
-
-    assertEquals(requests[3]?.body, {
-      kind: "agent",
-      owner: {
-        kind: "conversation",
-        id: CHILD_CONVERSATION_ID,
-      },
-      public_id: "run_child_env_1",
-      parent_run_id: "parent-run-1",
-      request: {
-        mode: "agent",
-        agent_id: "invoke-agent-child",
-        initial_status: "running",
-        source_target_kind: "environment",
-        runtime_target_kind: "environment",
-        source_target_environment_id: ENVIRONMENT_ID,
-        runtime_target_environment_id: ENVIRONMENT_ID,
-      },
-    });
-  });
-
-  it("returns the queued child run status for external agent implementations", async () => {
-    const requests: { url: string; body: unknown }[] = [];
-    stubFetchWithRecorder(async (input, init) => {
-      requests.push({
-        url: String(input),
-        body: init?.body ? JSON.parse(String(init.body)) : null,
+      const result = await bootstrapHostedChildRun({
+        runEventWriterCapability: capability,
+        authToken: AUTH_TOKEN,
+        apiUrl: API_URL,
+        ensureProjectId: PROJECT_ID,
+        runProjectId: PROJECT_ID,
+        parentConversationId: PARENT_CONVERSATION_ID,
+        parentRunId: "parent-run-1",
+        parentMessageId: PARENT_MESSAGE_ID,
+        spawnedFromToolCallId: "tool-call-1",
+        description: "Inspect logs",
+        prompt: "Find the latest logs.",
+        agentId: "invoke-agent-child",
+        ...selection,
       });
-
-      const requestCount = requests.length;
-      if (requestCount === 1) {
-        return jsonResponse({ id: PARENT_CONVERSATION_ID, project_id: PROJECT_ID }, 200);
-      }
-      if (requestCount === 2) {
-        return jsonResponse({ id: CHILD_CONVERSATION_ID, project_id: PROJECT_ID }, 200);
-      }
-      if (requestCount === 3) {
-        return jsonResponse({ id: CHILD_MESSAGE_ID }, 200);
-      }
-      if (requestCount === 4) {
-        return acceptedRunResponse({ run_id: "run_child_queued" });
-      }
-      if (requestCount === 5) {
-        return jsonResponse(
-          {
-            run_id: "run_child_queued",
-            conversation_id: CHILD_CONVERSATION_ID,
-            message_id: CHILD_MESSAGE_ID,
-            latest_event_id: 0,
-            latest_external_event_sequence: 0,
-            status: "pending",
-          },
-          200,
-        );
-      }
-
-      throw new Error("Unexpected fetch call");
+      assertEquals(result, {
+        childCanonicalRunId: childId,
+        childConversationId: CHILD_CONVERSATION_ID,
+        childRunId: "run_child_1",
+        childMessageId: CHILD_MESSAGE_ID,
+        latestEventId: 7,
+        latestExternalEventSequence: 3,
+        status: "running",
+      });
+      const admission = requests.filter((request) => request.url === `${API_URL}/runs`);
+      assertEquals(admission.length, 1);
+      assertEquals(admission[0]!.headers.get("X-Veryfront-Run-Execution-Mode"), "inherited");
+      assertEquals(await admission[0]!.json(), {
+        project_id: PROJECT_ID,
+        target: { type: "agent", id: "invoke-agent-child" },
+        parent_run_id: parentId,
+        tool_call_id: "tool-call-1",
+        input: { prompt: "Find the latest logs." },
+      });
+      assertEquals(requests.length, 1, "admission owns conversation and handoff creation");
+      const replay = await bootstrapHostedChildRun({
+        runEventWriterCapability: capability,
+        authToken: AUTH_TOKEN,
+        apiUrl: API_URL,
+        ensureProjectId: PROJECT_ID,
+        runProjectId: PROJECT_ID,
+        parentConversationId: PARENT_CONVERSATION_ID,
+        parentRunId: "parent-run-1",
+        parentMessageId: PARENT_MESSAGE_ID,
+        spawnedFromToolCallId: "tool-call-1",
+        description: "Inspect logs",
+        prompt: "Find the latest logs.",
+        agentId: "invoke-agent-child",
+        ...selection,
+      });
+      assertEquals(replay, result);
+      assertEquals(requests.length, 2);
+      assertEquals(
+        requests[1]!.headers.get("Idempotency-Key"),
+        requests[0]!.headers.get("Idempotency-Key"),
+      );
+      assertEquals(await requests[1]!.json(), {
+        project_id: PROJECT_ID,
+        target: { type: "agent", id: "invoke-agent-child" },
+        parent_run_id: parentId,
+        tool_call_id: "tool-call-1",
+        input: { prompt: "Find the latest logs." },
+      });
     });
-
-    const result = await bootstrapHostedChildRun({
-      authToken: AUTH_TOKEN,
-      apiUrl: API_URL,
-      ensureProjectId: PROJECT_ID,
-      runProjectId: PROJECT_ID,
-      parentConversationId: PARENT_CONVERSATION_ID,
-      parentRunId: "parent-run-1",
-      parentMessageId: PARENT_MESSAGE_ID,
-      spawnedFromToolCallId: "tool-call-1",
-      description: "Inspect logs",
-      prompt: "Find the latest logs.",
-      runId: "run_child_queued",
-      agentId: "invoke-agent-child",
-      implementationKind: "codex",
-      branchId: BRANCH_ID,
-    });
-
-    assertEquals(result.status, "pending");
-    const childRunRequest = requests[3];
-    assertExists(childRunRequest);
-
-    assertEquals(childRunRequest.body, {
-      kind: "agent",
-      owner: {
-        kind: "conversation",
-        id: CHILD_CONVERSATION_ID,
-      },
-      public_id: "run_child_queued",
-      parent_run_id: "parent-run-1",
-      request: {
-        mode: "agent",
-        agent_id: "invoke-agent-child",
-        implementation_kind: "codex",
-        initial_status: "pending",
-        source_target_kind: "preview_branch",
-        runtime_target_kind: "preview_branch",
-        source_target_branch_id: BRANCH_ID,
-        runtime_target_branch_id: BRANCH_ID,
-      },
-    });
-  });
+  }
 });

@@ -107,7 +107,7 @@ function createLifecycleAdapter(input?: {
   const terminalStates = input?.terminalStates ?? [];
   return {
     durableRootRun: {
-      runId: "root-run-1",
+      runId: "10000000-0000-4000-8000-000000000006",
       messageId: input && "messageId" in input ? input.messageId : "stream-message-1",
     },
     durableRunMirror: input?.durableRunMirror ?? null,
@@ -658,7 +658,7 @@ describe("agent/hosted-chat-execution-runtime", () => {
       userId: "user-1",
       rootRunContext: {
         durableRootRun: {
-          runId: "root-run-1",
+          runId: "10000000-0000-4000-8000-000000000006",
           conversationId: "conversation-1",
           messageId: "stream-message-1",
           latestEventId: 0,
@@ -694,7 +694,7 @@ describe("agent/hosted-chat-execution-runtime", () => {
       "project.id": "project-1",
       "user.id": "user-1",
       "agent.id": "agent-1",
-      "run.id": "root-run-1",
+      "run.id": "10000000-0000-4000-8000-000000000006",
       "message.id": "stream-message-1",
       "gen_ai.operation.name": "invoke_agent",
       "gen_ai.conversation.id": "conversation-1",
@@ -1000,7 +1000,7 @@ describe("agent/hosted-chat-execution-runtime", () => {
           userId: "user-1",
           rootRunContext: {
             durableRootRun: {
-              runId: "root-run-1",
+              runId: "10000000-0000-4000-8000-000000000006",
               conversationId: "conversation-1",
               messageId: "stream-message-1",
               latestEventId: 0,
@@ -1092,7 +1092,7 @@ describe("agent/hosted-chat-execution-runtime", () => {
           userId: "user-1",
           rootRunContext: {
             durableRootRun: {
-              runId: "root-run-1",
+              runId: "10000000-0000-4000-8000-000000000006",
               conversationId: "conversation-1",
               messageId: "stream-message-1",
               latestEventId: 0,
@@ -1321,7 +1321,7 @@ describe("agent/hosted-chat-execution-runtime", () => {
       {
         agentId: "agent-1",
         modelId: "openai/gpt-5.4",
-        runId: "root-run-1",
+        runId: "10000000-0000-4000-8000-000000000006",
         streamingMessageId: "stream-message-1",
         usage: {
           inputTokens: 5,
@@ -1537,7 +1537,7 @@ describe("agent/hosted-chat-execution-runtime", () => {
         message: "Failed to mark durable chat root run as failed",
         metadata: {
           conversationId: "conversation-1",
-          runId: "root-run-1",
+          runId: "10000000-0000-4000-8000-000000000006",
           error: "finalize rejected",
         },
       },
@@ -1559,7 +1559,7 @@ describe("agent/hosted-chat-execution-runtime", () => {
       authToken: "token",
       apiUrl: "https://api.example.test",
       conversationId: "conversation-1",
-      runId: "root-run-1",
+      runId: "10000000-0000-4000-8000-000000000006",
       latestEventId: 0,
       batchSize: 1,
       fetch: resourceNotFoundFetch,

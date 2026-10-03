@@ -46,14 +46,20 @@ async function bounded(promise, label, ms = 25_000) {
 }
 
 async function scenario(kind, trusted = false) {
-  const privateRuntimeMarker = `synthetic-broker-private-runtime-${randomUUID()}`;
+  const privateRuntimeMarker =
+    `synthetic-broker-private-runtime-${randomUUID()}`;
   const steering = kind === "steering";
   const directAgUi = kind === "direct-ag-ui";
   const directDurable = kind === "direct-durable";
   const direct = directAgUi || directDurable;
   const providerToolNames = steering ? ["web_search"] : [];
-  const mode = kind === "sse" || kind === "disconnect" || directAgUi ? "sse" : "detached";
-  const project = new URL(`./project-${kind}-${trusted ? "trusted" : "remote"}/`, import.meta.url);
+  const mode = kind === "sse" || kind === "disconnect" || directAgUi
+    ? "sse"
+    : "detached";
+  const project = new URL(
+    `./project-${kind}-${trusted ? "trusted" : "remote"}/`,
+    import.meta.url,
+  );
   await mkdir(new URL("agents/", project), { recursive: true });
   await copyFile(
     new URL("./project-hooks.mjs", import.meta.url),
@@ -100,11 +106,26 @@ export default tool({ id: "project_probe", description: "Inspect approved data",
     );
   }
 
-  const secrets = Object.fromEntries(["authorization", "api", "inference", "events"].map(
-    (name) => [name, `synthetic-broker-private-${name}-${randomUUID()}`],
-  ));
+  const secrets = Object.fromEntries(
+    ["authorization", "api", "inference", "events"].map(
+      (name) => [name, `synthetic-broker-private-${name}-${randomUUID()}`],
+    ),
+  );
   const canaries = Object.values(secrets);
   const runId = `run-${kind}`;
+  const canonicalRunId = randomUUID();
+  const terminalToken = `header.${
+    Buffer.from(
+      JSON.stringify({
+        runId,
+        canonicalRunId,
+        tokenUse: "run_event_writer",
+        writerPurpose: "current_run_terminal",
+        dispatchNonce: "test-generation",
+      }),
+    ).toString("base64url")
+  }.signature`;
+  canaries.push(terminalToken);
   const path = directAgUi
     ? "/api/ag-ui"
     : directDurable
@@ -174,7 +195,8 @@ export default tool({ id: "project_probe", description: "Inspect approved data",
         },
       },
   );
-  const encode = (value) => Buffer.from(JSON.stringify(value)).toString("base64url");
+  const encode = (value) =>
+    Buffer.from(JSON.stringify(value)).toString("base64url");
   const nowSeconds = Math.floor(Date.now() / 1000);
   const signed = `${encode({ alg: "EdDSA", typ: "JWT" })}.${
     encode({
@@ -232,7 +254,11 @@ export default tool({ id: "project_probe", description: "Inspect approved data",
     try {
       assertEquals(
         request.headers.authorization,
-        `Bearer ${request.url.endsWith("/complete") ? secrets.api : secrets.events}`,
+        `Bearer ${
+          (request.url.endsWith("/finalize") || request.url.endsWith("/cancel"))
+            ? secrets.api
+            : secrets.events
+        }`,
       );
       let raw = "";
       for await (const chunk of request) raw += chunk;
@@ -244,11 +270,12 @@ export default tool({ id: "project_probe", description: "Inspect approved data",
       if (Array.isArray(data.events)) {
         assertEquals(
           request.url,
-          `/conversations/${conversationId}/runs/${runId}/events`,
+          `/runs/${canonicalRunId}/events`,
         );
         persisted.push(...data.events);
         cursor += data.events.length;
         response.end(JSON.stringify({
+          run_id: canonicalRunId,
           latest_event_id: cursor,
           latest_external_event_sequence: cursor,
           appended_count: data.events.length,
@@ -260,14 +287,24 @@ export default tool({ id: "project_probe", description: "Inspect approved data",
           },
         }));
       } else {
-        assertEquals(request.url, `/runs/${runId}/complete`);
-        completions.push(data);
+        assert(
+          [`/runs/${canonicalRunId}/finalize`, `/runs/${canonicalRunId}/cancel`]
+            .includes(request.url),
+        );
+        assertEquals(
+          request.headers["x-veryfront-run-terminal-token"],
+          terminalToken,
+        );
+        const terminalStatus = request.url.endsWith("/cancel")
+          ? "cancelled"
+          : data.status;
+        completions.push({ ...data, status: terminalStatus });
         terminalEntered.resolve();
         if (kind === "delayed-persistence") await terminalRelease.promise;
         response.end(
           JSON.stringify({
-            completed: true,
-            run: { runId, status: data.status },
+            id: canonicalRunId,
+            status: terminalStatus,
           }),
         );
       }
@@ -338,7 +375,8 @@ export default tool({ id: "project_probe", description: "Inspect approved data",
               });
               secondModelCall.resolve();
               if (kind === "kill" || kind === "disconnect") {
-                const abort = () => controller.error(new Error("Synthetic provider cancelled"));
+                const abort = () =>
+                  controller.error(new Error("Synthetic provider cancelled"));
                 if (options.abortSignal.aborted) abort();
                 else {options.abortSignal.addEventListener("abort", abort, {
                     once: true,
@@ -371,7 +409,10 @@ export default tool({ id: "project_probe", description: "Inspect approved data",
         authenticate: (request) => {
           assertEquals(allocations.length, 0);
           ingressControls.push("authenticate");
-          assertEquals(request.headers.get("authorization"), headers.authorization);
+          assertEquals(
+            request.headers.get("authorization"),
+            headers.authorization,
+          );
           return Promise.resolve({
             userId: "00000000-0000-4000-8000-000000000006",
             authToken: secrets.api,
@@ -425,8 +466,11 @@ export default tool({ id: "project_probe", description: "Inspect approved data",
           );
         }
         const persistence = createManagedBrokerPersistence({
+          terminalAuthToken: terminalToken,
           apiUrl,
-          runEventToken: direct ? secrets.events : ingress.privateAuthority.runEventToken,
+          runEventToken: direct
+            ? secrets.events
+            : ingress.privateAuthority.runEventToken,
           completionAuthToken: direct
             ? ingress.broker.getParsedRequest().authToken
             : ingress.privateAuthority.apiAuthToken,
@@ -541,7 +585,10 @@ export default tool({ id: "project_probe", description: "Inspect approved data",
               ? {
                 trustedRuntime: {
                   projectToolNames: ["project_probe"],
-                  sourceIntegrationPolicy: { schemaVersion: 1, mode: "unrestricted" },
+                  sourceIntegrationPolicy: {
+                    schemaVersion: 1,
+                    mode: "unrestricted",
+                  },
                 },
               }
               : {}),
@@ -573,14 +620,22 @@ export default tool({ id: "project_probe", description: "Inspect approved data",
                 agentId: "probe",
                 defaultModelId: modelId,
                 maxSteps: 4,
-                models: [{ id: modelId, maxOutputTokens: 100, providerToolNames }],
+                models: [{
+                  id: modelId,
+                  maxOutputTokens: 100,
+                  providerToolNames,
+                }],
                 allowedToolNames: trusted
                   ? ["host_probe", "project_probe"]
                   : steering
                   ? ["host_probe", "update_file"]
                   : ["host_probe"],
                 hostToolFacadeIds: ["host"],
-                remoteToolSourceIds: trusted ? ["project"] : steering ? ["state-tools"] : [],
+                remoteToolSourceIds: trusted
+                  ? ["project"]
+                  : steering
+                  ? ["state-tools"]
+                  : [],
                 execution: {
                   kind: "canonical",
                   projectId: steering || trusted ? projectId : null,
@@ -591,7 +646,10 @@ export default tool({ id: "project_probe", description: "Inspect approved data",
                 },
               },
               capabilities: {
-                persistence: { publishParentRunEvents: "parent", toolExposureCheckpoint: "tools" },
+                persistence: {
+                  publishParentRunEvents: "parent",
+                  toolExposureCheckpoint: "tools",
+                },
                 ...(steering || trusted ? { projectSteering: "steering" } : {}),
               },
             },
@@ -641,7 +699,9 @@ export default tool({ id: "project_probe", description: "Inspect approved data",
                       tools.push(name);
                       return Promise.resolve({
                         text: "host-ok",
-                        ...(trusted ? { privateValue: privateRuntimeMarker } : {}),
+                        ...(trusted
+                          ? { privateValue: privateRuntimeMarker }
+                          : {}),
                       });
                     },
                   },
@@ -676,7 +736,8 @@ export default tool({ id: "project_probe", description: "Inspect approved data",
             },
             persistence: {
               publishParentRunEvents: persistence.publishParentRunEvents,
-              persistToolExposureCheckpoint: persistence.persistToolExposureCheckpoint,
+              persistToolExposureCheckpoint:
+                persistence.persistToolExposureCheckpoint,
               initialProviderReplayCheckpoints: [],
             },
             state: trusted
@@ -686,11 +747,13 @@ export default tool({ id: "project_probe", description: "Inspect approved data",
                     agent: definition,
                     initialProjectInstructions: privateRuntimeMarker,
                   }),
-                refreshProjectSteering: () => Promise.resolve(privateRuntimeMarker),
+                refreshProjectSteering: () =>
+                  Promise.resolve(privateRuntimeMarker),
               }
               : steering
               ? {
-                prepareProjectSteering: ({ definition }) => Promise.resolve({ agent: definition }),
+                prepareProjectSteering: ({ definition }) =>
+                  Promise.resolve({ agent: definition }),
                 refreshProjectSteering(_signal, names) {
                   steeringRefreshes.push(
                     [...names].sort((left, right) => left.localeCompare(right)),
@@ -701,7 +764,10 @@ export default tool({ id: "project_probe", description: "Inspect approved data",
               : {},
           },
           messages: direct
-            ? ingress.broker.getParsedRequest().messages.map((message, timestamp) => ({
+            ? ingress.broker.getParsedRequest().messages.map((
+              message,
+              timestamp,
+            ) => ({
               ...message,
               timestamp,
             }))
@@ -829,7 +895,10 @@ export default tool({ id: "project_probe", description: "Inspect approved data",
       // A grant alone cannot expose a provider tool, including after steering refresh.
       assertEquals(steeringRefreshes, [["host_probe", "update_file"]]);
       for (const call of modelCalls) {
-        assertEquals(call.tools.some((tool) => tool.name === "web_search"), false);
+        assertEquals(
+          call.tools.some((tool) => tool.name === "web_search"),
+          false,
+        );
       }
       assert(
         JSON.stringify(modelCalls[1].prompt).includes(
@@ -884,14 +953,30 @@ export default tool({ id: "project_probe", description: "Inspect approved data",
       headers: true,
       tee: true,
     });
-    assertEquals(observation.observations, 0, "Project hooks observed a broker canary");
+    assertEquals(
+      observation.observations,
+      0,
+      "Project hooks observed a broker canary",
+    );
     if (trusted) {
-      assertEquals(JSON.parse(await readFile(new URL("project-tool.json", project), "utf8")), {
-        pid: child.pid,
-        input: { query: "approved" },
-        context: { agentId: "probe", projectId, runId, toolCallId: "project-call" },
-      });
-      assert(JSON.stringify(modelCalls[0].prompt).includes(privateRuntimeMarker));
+      assertEquals(
+        JSON.parse(
+          await readFile(new URL("project-tool.json", project), "utf8"),
+        ),
+        {
+          pid: child.pid,
+          input: { query: "approved" },
+          context: {
+            agentId: "probe",
+            projectId,
+            runId,
+            toolCallId: "project-call",
+          },
+        },
+      );
+      assert(
+        JSON.stringify(modelCalls[0].prompt).includes(privateRuntimeMarker),
+      );
       assert(wire.includes(privateRuntimeMarker));
     }
     for (const canary of canaries) {

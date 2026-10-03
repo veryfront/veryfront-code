@@ -98,6 +98,7 @@ export interface ConversationRunChunkMirrorApiOptions
   apiUrl: string;
   conversationId: string;
   runId: string;
+  canonicalRunId?: string;
   latestEventId: number;
   latestExternalEventSequence?: number;
   maxEventsPerBatch?: number;
@@ -132,6 +133,7 @@ export interface HostedConversationRunChunkMirrorOptions {
   apiUrl: string;
   conversationId: string;
   runId: string;
+  canonicalRunId?: string;
   latestEventId: number;
   latestExternalEventSequence?: number;
   batchSize?: number;
@@ -155,6 +157,7 @@ function resolveQueueController(
     apiUrl: input.apiUrl,
     conversationId: input.conversationId,
     runId: input.runId,
+    canonicalRunId: input.canonicalRunId,
     latestEventId: input.latestEventId,
     latestExternalEventSequence: input.latestExternalEventSequence ?? 0,
     maxEventsPerBatch,
@@ -415,6 +418,7 @@ export function createHostedConversationRunChunkMirror(
     apiUrl: input.apiUrl,
     conversationId: input.conversationId,
     runId: input.runId,
+    canonicalRunId: input.canonicalRunId,
     latestEventId: input.latestEventId,
     latestExternalEventSequence: input.latestExternalEventSequence,
     maxEventsPerBatch: batchSize,

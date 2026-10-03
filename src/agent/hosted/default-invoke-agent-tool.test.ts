@@ -671,6 +671,14 @@ it("createDefaultHostedInvokeAgentTool treats omitted context as empty structure
 
 it("created invoke tools preserve distinct writer capabilities across concurrent execution", async () => {
   const originalFetch = globalThis.fetch;
+  const childIds = {
+    a: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    b: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+  };
+  const grandchildIds = {
+    a: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+    b: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+  };
   const tokenRequests: Array<{ authorization: string | null; url: string }> = [];
   const mirrorRequests: Array<{ authorization: string | null; url: string }> = [];
   const createBarrier = () => {
@@ -710,18 +718,12 @@ it("created invoke tools preserve distinct writer capabilities across concurrent
             });
             const url = new URL(request.url);
             const pathParts = url.pathname.split("/");
-            const conversationId = pathParts[pathParts.indexOf("conversations") + 1];
             const runId = pathParts[pathParts.indexOf("runs") + 1];
             return Response.json({
-              latestEventId: 1,
-              latestExternalEventSequence: 1,
-              appendedCount: 1,
-              run: {
-                runId,
-                conversationId,
-                latestEventId: 1,
-                latestExternalEventSequence: 1,
-              },
+              run_id: runId,
+              latest_event_id: 1,
+              latest_external_event_sequence: 1,
+              appended_count: 1,
             });
           }
           tokenRequests.push({
@@ -735,7 +737,11 @@ it("created invoke tools preserve distinct writer capabilities across concurrent
             : waitForSiblingGrandchildExchange());
           return Response.json(
             {
-              run_event_token: isChildExchange
+              run_id: isChildExchange ? childIds[label] : grandchildIds[label],
+              token_type: "Bearer",
+              expires_at: "2026-10-04T12:00:00Z",
+              permissions: ["run.events.append"],
+              token: isChildExchange
                 ? `child-${label}-writer-token`
                 : `grandchild-${label}-writer-token`,
             },
@@ -773,7 +779,11 @@ it("created invoke tools preserve distinct writer capabilities across concurrent
                   };
                   executeNestedDelegation = async () => {
                     const childCapability = await assembledCapability
-                      .mintChildRunEventWriterCapability(`run_child_${label}`);
+                      .mintChildRunEventWriterCapability(
+                        `run_child_${label}`,
+                        undefined,
+                        childIds[label],
+                      );
                     await runWithHostedRunEventWriterCapability(childCapability, async () => {
                       const activeChildCapability = getActiveHostedRunEventWriterCapability();
                       const mirror = createHostedConversationRunChunkMirrorFromCapability(
@@ -795,6 +805,8 @@ it("created invoke tools preserve distinct writer capabilities across concurrent
                       mirror.dispose();
                       await activeChildCapability.mintChildRunEventWriterCapability(
                         `run_grandchild_${label}`,
+                        undefined,
+                        grandchildIds[label],
                       );
                     });
                   };
@@ -864,37 +876,35 @@ it("created invoke tools preserve distinct writer capabilities across concurrent
         {
           authorization: "Bearer child-a-writer-token",
           url:
-            "https://writer-a.example.test/runs/run_child_a/children/run_grandchild_a/event-writer-token",
+            "https://writer-a.example.test/runs/cccccccc-cccc-4ccc-8ccc-cccccccccccc/event-tokens",
         },
         {
           authorization: "Bearer root-a-writer-token",
           url:
-            "https://writer-a.example.test/runs/run_root_a/children/run_child_a/event-writer-token",
+            "https://writer-a.example.test/runs/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa/event-tokens",
         },
         {
           authorization: "Bearer child-b-writer-token",
           url:
-            "https://writer-b.example.test/runs/run_child_b/children/run_grandchild_b/event-writer-token",
+            "https://writer-b.example.test/runs/dddddddd-dddd-4ddd-8ddd-dddddddddddd/event-tokens",
         },
         {
           authorization: "Bearer root-b-writer-token",
           url:
-            "https://writer-b.example.test/runs/run_root_b/children/run_child_b/event-writer-token",
+            "https://writer-b.example.test/runs/bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb/event-tokens",
         },
-      ],
+      ].toSorted((left, right) => left.url.localeCompare(right.url)),
     );
     assertEquals(
       mirrorRequests.toSorted((left, right) => left.url.localeCompare(right.url)),
       [
         {
           authorization: "Bearer child-a-writer-token",
-          url:
-            "https://writer-a.example.test/conversations/11111111-1111-4111-8111-111111111111/runs/run_child_a/events",
+          url: "https://writer-a.example.test/runs/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa/events",
         },
         {
           authorization: "Bearer child-b-writer-token",
-          url:
-            "https://writer-b.example.test/conversations/22222222-2222-4222-8222-222222222222/runs/run_child_b/events",
+          url: "https://writer-b.example.test/runs/bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb/events",
         },
       ],
     );

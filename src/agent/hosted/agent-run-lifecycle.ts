@@ -1,3 +1,4 @@
+import { hostedTerminalRunFinalizer } from "./terminal-credential.ts";
 import type { ConversationRunChunkMirror } from "../conversation/run-chunk-mirror.ts";
 import {
   type ConversationHostedTerminalAdapter,
@@ -226,6 +227,7 @@ export function createHostedRootRunLifecycleRuntimeAdapter(
     durableRootRun: input.durableRootRun,
     durableRunMirror: input.durableRunMirror,
     terminal: createTerminal({
+      finalize: hostedTerminalRunFinalizer(input.durableRootRun),
       authToken: input.authToken,
       apiUrl: input.apiUrl,
       run: input.durableRootRun

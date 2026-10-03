@@ -1,3 +1,4 @@
+import { bindHostedTerminalRun } from "./terminal-credential.ts";
 import type {
   ChatRequestContext,
   ChatSystemMessage,
@@ -622,6 +623,9 @@ export async function prepareHostedChatExecution<
 ): Promise<
   HostedChatExecutionPreparationResult<TRuntimeAgentDefinition, TRuntimeResult>
 > {
+  if (input.request.conversationId && !input.request.durableRootRun) {
+    throw new Error("Hosted conversation execution requires an API-admitted durable root run");
+  }
   const normalized = normalizeParsedHostedChatRequest(input.request);
   const rootRunEventWriterCapability = input.request.durableRootRun
     ? createHostedRunEventWriterCapabilityForRequest(input.request, {
@@ -647,6 +651,9 @@ export async function prepareHostedChatExecution<
         ...input.rootRun,
       }, { abortSignal: input.abortSignal }),
   );
+  bindHostedTerminalRun(input.request, rootRunContext.durableRootRun, {
+    apiUrl: input.apiUrl.toString(),
+  });
   const runtimePreparation = await prepareHostedChatRuntimeCreationOptions({
     request: input.request,
     agentConfig: input.agentConfig,

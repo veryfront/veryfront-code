@@ -1,13 +1,12 @@
+import { computeHash } from "#veryfront/utils/hash-utils.ts";
+import { terminalRoute } from "./terminal-route.ts";
 import type { Schema } from "#veryfront/extensions/schema/index.ts";
 import { createInstrumentedFetch } from "#veryfront/observability/auto-instrument/http-instrumentation.ts";
 import { isGlobalTracerProviderInstalled } from "#veryfront/observability/tracing/api-shim.ts";
 import { isVeryfrontError, NETWORK_ERROR, TIMEOUT_ERROR } from "#veryfront/errors";
 import {
   AppendConversationRunEventsResponseSchema,
-  CompleteConversationRunResponseSchema,
-  ConversationRunProjectionSchema,
-  CreateConversationRunAcceptedSchema,
-  resolveConversationRunTargets,
+  FinalizedCanonicalRunSchema,
 } from "./durable-contracts.ts";
 import type {
   ActiveConversationRunStatus,
@@ -29,6 +28,7 @@ import {
   isPermanentAuthConversationRunAppendError,
   isTerminalRunConversationRunAppendError,
   parseAppendConversationRunEventsError,
+  readAppendCursorHeaders,
 } from "./durable-append-errors.ts";
 
 export {
@@ -183,9 +183,12 @@ function backfillPurePrivateEventResponseCursor(
 /** Error shape for conversation run terminal state. */
 export class ConversationRunTerminalStateError extends Error {
   readonly status: TerminalConversationRunStatus;
-  readonly run: ConversationRunProjection;
+  readonly run: Pick<ConversationRunProjection, "runId" | "status">;
 
-  constructor(run: ConversationRunProjection, status: TerminalConversationRunStatus) {
+  constructor(
+    run: Pick<ConversationRunProjection, "runId" | "status">,
+    status: TerminalConversationRunStatus,
+  ) {
     super(`Conversation run ${run.runId} became ${status} before host execution finished`);
     this.name = "ConversationRunTerminalStateError";
     this.status = status;
@@ -226,7 +229,7 @@ export function isTerminalConversationRunProjection(run: ConversationRunProjecti
   );
 }
 
-/** Resync conversation run append cursor helper. */
+/** @deprecated Use authenticated append receipts and cursor mismatch headers. */
 export async function resyncConversationRunAppendCursor(input: {
   authToken: string;
   apiUrl: string;
@@ -325,46 +328,20 @@ export async function recoverConversationRunCursorMismatch(input: {
     };
   }
 
-  const resynced = await resyncConversationRunAppendCursor({
-    authToken: input.authToken,
-    apiUrl: input.apiUrl,
-    conversationId: input.conversationId,
-    runId: input.runId,
-    previousLatestExternalEventSequence: input.latestExternalEventSequence,
-    abortSignal: input.abortSignal,
-    fetch: input.fetch,
-  });
-
-  if (resynced.result === "advanced") {
-    return {
-      outcome: "resumed",
-      latestEventId: resynced.run.latestEventId,
-      latestExternalEventSequence: resynced.run.latestExternalEventSequence,
-      run: resynced.run,
-    };
+  const cursor = input.error.cursor;
+  if (
+    cursor && cursor.latestEventId >= input.latestEventId &&
+    cursor.latestExternalEventSequence > input.latestExternalEventSequence
+  ) {
+    return { outcome: "resumed", ...cursor };
   }
-
-  if (resynced.result === "non_appendable") {
-    return {
-      outcome: "stopped",
-      latestEventId: resynced.run.latestEventId,
-      latestExternalEventSequence: resynced.run.latestExternalEventSequence,
-      // A cursor mismatch can resolve to a run that is already finished. That is
-      // the same clean stop as the terminal-run append rejection and must not be
-      // lumped in with `waiting_for_tool`, which is non-appendable but still alive
-      // and still has to be completed (veryfront-issue-inbox#743).
-      disableReason: isTerminalConversationRunProjection(resynced.run)
-        ? "run_terminal"
-        : "non_appendable",
-      run: resynced.run,
-    };
-  }
-
+  // A missing or stale hint is not permission to read through an append-only token,
+  // nor evidence that an ambiguous batch can be safely replayed.
   return {
-    outcome: "bubbled",
-    latestEventId: resynced.run.latestEventId,
-    latestExternalEventSequence: resynced.run.latestExternalEventSequence,
-    run: resynced.run,
+    outcome: "stopped",
+    latestEventId: input.latestEventId,
+    latestExternalEventSequence: input.latestExternalEventSequence,
+    disableReason: "cursor_mismatch_ambiguous",
   };
 }
 
@@ -632,6 +609,7 @@ export async function flushConversationRunEventBatches(input: {
   apiUrl: string;
   conversationId: string;
   runId: string;
+  canonicalRunId?: string;
   latestEventId: number;
   latestExternalEventSequence: number;
   events: unknown[];
@@ -699,6 +677,7 @@ export async function flushConversationRunEventBatches(input: {
         apiUrl: input.apiUrl,
         conversationId: input.conversationId,
         runId: input.runId,
+        canonicalRunId: input.canonicalRunId,
         ...(cursorMode === "durable_event_id" ? { expectedPreviousEventId: latestEventId } : {}),
         expectedPreviousExternalEventSequence: latestExternalEventSequence,
         events: batch,
@@ -765,6 +744,7 @@ export async function flushConversationRunEventQueue(input: {
   apiUrl: string;
   conversationId: string;
   runId: string;
+  canonicalRunId?: string;
   latestEventId: number;
   latestExternalEventSequence: number;
   events: unknown[];
@@ -820,6 +800,7 @@ export async function flushConversationRunEventQueue(input: {
       apiUrl: input.apiUrl,
       conversationId: input.conversationId,
       runId: input.runId,
+      canonicalRunId: input.canonicalRunId,
       latestEventId,
       latestExternalEventSequence,
       events,
@@ -882,6 +863,7 @@ export function createConversationRunEventQueueController(input: {
   apiUrl: string;
   conversationId: string;
   runId: string;
+  canonicalRunId?: string;
   latestEventId: number;
   latestExternalEventSequence: number;
   maxEventsPerBatch: number;
@@ -936,6 +918,7 @@ export function createConversationRunEventQueueController(input: {
         apiUrl: input.apiUrl,
         conversationId: input.conversationId,
         runId: input.runId,
+        canonicalRunId: input.canonicalRunId,
         latestEventId,
         latestExternalEventSequence,
         events: queuedEvents,
@@ -1085,6 +1068,7 @@ async function controlPlaneJson<T>(input: {
   url: string;
   method?: "GET" | "POST";
   body?: unknown;
+  headers?: Record<string, string>;
   responseSchema: Schema<T>;
   operation: string;
   abortSignal?: AbortSignal;
@@ -1104,6 +1088,7 @@ async function controlPlaneJson<T>(input: {
       headers: {
         Authorization: `Bearer ${input.authToken}`,
         "Content-Type": "application/json",
+        ...input.headers,
       },
       ...(input.body !== undefined ? { body: JSON.stringify(input.body) } : {}),
       signal: timedAbort.signal,
@@ -1132,7 +1117,7 @@ async function controlPlaneJson<T>(input: {
   }
 }
 
-/** Return conversation run. */
+/** @deprecated Use getCanonicalRunStatus with the canonical UUID. Legacy projection reads are removed. */
 export async function getConversationRun(input: {
   authToken: string;
   apiUrl: string;
@@ -1142,14 +1127,35 @@ export async function getConversationRun(input: {
   /** Host-owned transport used by trusted capability-backed callers. */
   fetch?: ConversationRunApiFetch;
 }): Promise<ConversationRunProjection> {
-  return controlPlaneJson({
+  void input;
+  throw new Error(
+    "Legacy durable projection reads were removed. Use getCanonicalRunStatus with the canonical UUID; append cursors are supplied by admission and authenticated append receipts.",
+  );
+}
+
+/** Read lifecycle state without inventing durable append cursors absent from the public resource. */
+export async function getCanonicalRunStatus(input: {
+  authToken: string;
+  apiUrl: string;
+  runId: string;
+  canonicalRunId?: string;
+  abortSignal?: AbortSignal;
+  fetch?: ConversationRunApiFetch;
+}): Promise<Pick<ConversationRunProjection, "runId" | "status">> {
+  const canonicalRunId = input.canonicalRunId ?? input.runId;
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(canonicalRunId)) {
+    throw new Error("Canonical run identity is required for status polling");
+  }
+  const run = await controlPlaneJson({
     authToken: input.authToken,
-    url: `${input.apiUrl}/conversations/${input.conversationId}/runs/${input.runId}`,
-    responseSchema: ConversationRunProjectionSchema,
-    operation: "Read conversation durable run projection",
+    url: `${input.apiUrl}/runs/${canonicalRunId}`,
+    responseSchema: FinalizedCanonicalRunSchema,
+    operation: "Read run lifecycle state",
     abortSignal: input.abortSignal,
     fetch: input.fetch,
   });
+  if (run.id !== canonicalRunId) throw new Error("Run response identity mismatch");
+  return { runId: input.runId, status: run.status === "waiting" ? "waiting_for_tool" : run.status };
 }
 
 /** Monitor conversation run status helper. */
@@ -1158,6 +1164,7 @@ export async function monitorConversationRunStatus(input: {
   apiUrl: string;
   conversationId: string;
   runId: string;
+  canonicalRunId?: string;
   abortSignal?: AbortSignal;
   pollIntervalMs: number;
   onTerminal: (error: ConversationRunTerminalStateError) => void | Promise<void>;
@@ -1169,12 +1176,12 @@ export async function monitorConversationRunStatus(input: {
       return;
     }
 
-    let run: ConversationRunProjection;
+    let run: Pick<ConversationRunProjection, "runId" | "status">;
     try {
-      run = await getConversationRun({
+      run = await getCanonicalRunStatus({
         authToken: input.authToken,
         apiUrl: input.apiUrl,
-        conversationId: input.conversationId,
+        canonicalRunId: input.canonicalRunId,
         runId: input.runId,
         abortSignal: input.abortSignal,
       });
@@ -1217,6 +1224,7 @@ export async function appendConversationRunEvents(input: {
   apiUrl: string;
   conversationId: string;
   runId: string;
+  canonicalRunId?: string;
   expectedPreviousEventId?: number;
   expectedPreviousExternalEventSequence?: number;
   events: unknown[];
@@ -1226,6 +1234,13 @@ export async function appendConversationRunEvents(input: {
 }): Promise<AppendConversationRunEventsResponse> {
   if (input.abortSignal?.aborted) {
     throw new DOMException("This operation was aborted", "AbortError");
+  }
+
+  const canonicalRunId = input.canonicalRunId ?? input.runId;
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(canonicalRunId)) {
+    throw new DurableRunEventPersistenceError(
+      "Canonical run identity is required for event append",
+    );
   }
 
   const normalizedEvents = normalizeConversationRunEvents(
@@ -1265,7 +1280,7 @@ export async function appendConversationRunEvents(input: {
       );
     }
     const response = await resolveConversationRunFetch(input.fetch)(
-      `${input.apiUrl}/conversations/${input.conversationId}/runs/${input.runId}/events`,
+      `${input.apiUrl}/runs/${canonicalRunId}/events`,
       {
         method: "POST",
         headers: {
@@ -1282,6 +1297,7 @@ export async function appendConversationRunEvents(input: {
       const parsedError = parseAppendConversationRunEventsError(body);
       throw new AppendConversationRunEventsError({
         status: response.status,
+        cursor: readAppendCursorHeaders(response.headers),
         detail: parsedError.detail,
         slug: parsedError.slug,
         statusText: response.statusText,
@@ -1289,6 +1305,26 @@ export async function appendConversationRunEvents(input: {
     }
 
     let responseBody = await response.json();
+    if (typeof responseBody === "object" && responseBody !== null && "run_id" in responseBody) {
+      if (responseBody.run_id !== canonicalRunId) {
+        throw new DurableRunEventPersistenceError(
+          "Append receipt identifies a different canonical run",
+        );
+      }
+      responseBody = {
+        latestEventId: responseBody.latest_event_id,
+        latestExternalEventSequence: responseBody.latest_external_event_sequence ??
+          input.expectedPreviousExternalEventSequence,
+        appendedCount: responseBody.appended_count,
+        run: {
+          runId: input.runId,
+          conversationId: input.conversationId,
+          latestEventId: responseBody.latest_event_id,
+          latestExternalEventSequence: responseBody.latest_external_event_sequence ??
+            input.expectedPreviousExternalEventSequence,
+        },
+      };
+    }
     // Pure private-event appends do not advance the external cursor and the API
     // intentionally omits it. Preserve the caller's known cursor so the shared
     // queue result remains total; mixed batches return the advanced API value.
@@ -1314,116 +1350,45 @@ export async function appendConversationRunEvents(input: {
   }
 }
 
-/** Create conversation agent run. */
+/** @deprecated Use canonical POST /runs admission and its API-issued runtime descriptor. */
 export async function createConversationAgentRun(
   input: CreateConversationAgentRunInput,
 ): Promise<ConversationRunProjection> {
-  const targets = resolveConversationRunTargets({
-    projectId: input.projectId ?? null,
-    runtimeTargetKind: input.runtimeTargetKind ?? null,
-    environmentId: input.runtimeTargetEnvironmentId ?? null,
-    branchId: input.branchId ?? null,
-  });
-  const runId = input.runId ?? `run_${crypto.randomUUID()}`;
-
-  const request = input.implementationKind
-    ? {
-      mode: "agent" as const,
-      agent_id: input.agentId,
-      implementation_kind: input.implementationKind,
-      initial_status: "pending" as const,
-      ...(targets.sourceTargetKind ? { source_target_kind: targets.sourceTargetKind } : {}),
-      ...(targets.runtimeTargetKind ? { runtime_target_kind: targets.runtimeTargetKind } : {}),
-      ...(targets.targetBranchId
-        ? {
-          source_target_branch_id: targets.targetBranchId,
-          runtime_target_branch_id: targets.targetBranchId,
-        }
-        : {}),
-      ...(targets.targetEnvironmentId
-        ? {
-          source_target_environment_id: targets.targetEnvironmentId,
-          runtime_target_environment_id: targets.targetEnvironmentId,
-        }
-        : {}),
-    }
-    : {
-      mode: "agent" as const,
-      agent_id: input.agentId,
-      initial_status: "running" as const,
-      ...(targets.sourceTargetKind ? { source_target_kind: targets.sourceTargetKind } : {}),
-      ...(targets.runtimeTargetKind ? { runtime_target_kind: targets.runtimeTargetKind } : {}),
-      ...(targets.targetBranchId
-        ? {
-          source_target_branch_id: targets.targetBranchId,
-          runtime_target_branch_id: targets.targetBranchId,
-        }
-        : {}),
-      ...(targets.targetEnvironmentId
-        ? {
-          source_target_environment_id: targets.targetEnvironmentId,
-          runtime_target_environment_id: targets.targetEnvironmentId,
-        }
-        : {}),
-    };
-
-  await controlPlaneJson({
-    authToken: input.authToken,
-    url: `${input.apiUrl}/runs`,
-    method: "POST",
-    body: {
-      kind: "agent",
-      owner: {
-        kind: "conversation",
-        id: input.conversationId,
-      },
-      public_id: runId,
-      ...(input.parentRunId ? { parent_run_id: input.parentRunId } : {}),
-      request,
-    },
-    responseSchema: CreateConversationRunAcceptedSchema,
-    operation: "Create canonical durable run",
-    abortSignal: input.abortSignal,
-  });
-
-  return getConversationRun({
-    authToken: input.authToken,
-    apiUrl: input.apiUrl,
-    conversationId: input.conversationId,
-    runId,
-    abortSignal: input.abortSignal,
-  });
+  void input;
+  throw new Error(
+    "Standalone durable self-admission was removed. Create a canonical run through POST /runs and execute only the API-issued durable_root_run descriptor; local inherited children require the bound admission capability.",
+  );
 }
 
 /** Finalize conversation agent run helper. */
 export async function finalizeConversationAgentRun(
   input: FinalizeConversationAgentRunInput,
 ): Promise<void> {
-  const metadata = input.status === "completed"
-    ? {
-      provider: input.provider,
-      model: input.model,
-      inputTokens: input.usage?.inputTokens ?? 0,
-      outputTokens: input.usage?.outputTokens ?? 0,
-      ...(input.usage?.usageCaptureStatus !== undefined
-        ? { usageCaptureStatus: input.usage.usageCaptureStatus }
-        : {}),
-      finishReason: input.finishReason ?? "stop",
-    }
-    : null;
-
+  const route = terminalRoute(input.terminalAuthToken, input.runId);
+  const cancelled = input.status === "cancelled";
   await controlPlaneJson({
     authToken: input.authToken,
-    url: `${input.apiUrl}/runs/${input.runId}/complete`,
+    url: `${input.apiUrl}/runs/${route.id}/${cancelled ? "cancel" : "finalize"}`,
     method: "POST",
-    body: {
-      status: input.status,
-      metadata,
-      terminal_error_code: input.terminalErrorCode ?? null,
-      terminal_error_message: input.terminalErrorMessage ?? null,
+    headers: {
+      "X-Veryfront-Run-Terminal-Token": input.terminalAuthToken!,
+      "Idempotency-Key": `runtime-terminal:${await computeHash(
+        `${route.id}:${route.generation}:${input.status}`,
+      )}`,
     },
-    responseSchema: CompleteConversationRunResponseSchema,
-    operation: "Complete canonical durable run",
+    body: cancelled
+      ? {}
+      : input.status === "completed"
+      ? { status: "completed", output: input.output ?? null }
+      : {
+        status: "failed",
+        error: {
+          code: input.terminalErrorCode ?? "RUNTIME_FAILED",
+          message: input.terminalErrorMessage ?? "Runtime execution failed",
+        },
+      },
+    responseSchema: FinalizedCanonicalRunSchema,
+    operation: "Finalize canonical durable run",
     fetch: input.fetch,
   });
 }

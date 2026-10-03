@@ -828,12 +828,22 @@ it("agent service routes remove verified writer credentials before detached call
         fetch: async (_input, init) => {
           childAuthorizations.push(getAuthorizationFromFetchInit(init));
           return Response.json(
-            { run_event_token: "child-writer-token" },
+            {
+              token: "child-writer-token",
+              run_id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+              token_type: "Bearer",
+              expires_at: "2026-10-04T12:00:00Z",
+              permissions: ["run.events.append"],
+            },
             { headers: { "Cache-Control": "no-store" } },
           );
         },
       });
-      await capability?.mintChildRunEventWriterCapability("child-run-1");
+      await capability?.mintChildRunEventWriterCapability(
+        "child-run-1",
+        undefined,
+        "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      );
       return { executionId: "exec-sanitized" };
     },
     startDetachedExecution: async ({ rawRequest }) => {
@@ -871,12 +881,22 @@ it("agent service routes preserve verified writer authority across request cloni
         fetch: async (_input, init) => {
           childAuthorizations.push(getAuthorizationFromFetchInit(init));
           return Response.json(
-            { run_event_token: "child-writer-token" },
+            {
+              token: "child-writer-token",
+              run_id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+              token_type: "Bearer",
+              expires_at: "2026-10-04T12:00:00Z",
+              permissions: ["run.events.append"],
+            },
             { headers: { "Cache-Control": "no-store" } },
           );
         },
       });
-      await capability?.mintChildRunEventWriterCapability("child-run-1");
+      await capability?.mintChildRunEventWriterCapability(
+        "child-run-1",
+        undefined,
+        "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      );
       return { executionId: "exec-cloned" };
     },
     startDetachedExecution: () => {

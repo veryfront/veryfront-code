@@ -99,6 +99,7 @@ function resolveStreamProtocolVersion(metadata: unknown): StreamProtocolVersion 
 
 /** Public API contract for conversation run projection. */
 export interface ConversationRunProjection {
+  canonicalRunId?: string;
   runId: string;
   conversationId: string;
   messageId: string;
@@ -442,6 +443,10 @@ export interface CreateConversationAgentRunInput {
 /** Input payload for finalize conversation agent run. */
 export interface FinalizeConversationAgentRunInput {
   authToken: string;
+  /** Private API-issued current generation authority, never model-visible context. */
+  terminalAuthToken?: string;
+  /** Final execution output persisted by the target finalize operation. */
+  output?: unknown;
   apiUrl: string;
   conversationId: string;
   runId: string;
@@ -455,3 +460,14 @@ export interface FinalizeConversationAgentRunInput {
   /** Explicit trusted-host transport for broker-owned finalization. */
   fetch?: typeof globalThis.fetch;
 }
+
+/** Minimal receipt fields required by the runtime from the canonical Run response. */
+export const FinalizedCanonicalRunSchema = lazySchema(
+  defineSchema((v) =>
+    v.object({
+      id: v.string().uuid(),
+      status: v.enum(["pending", "running", "waiting", "completed", "failed", "cancelled"]),
+    })
+      .passthrough()
+  ),
+);

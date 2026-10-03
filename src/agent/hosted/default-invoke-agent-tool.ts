@@ -746,7 +746,7 @@ async function executeDefaultHostedInvokeAgentToolWithCapability<
             forkInput,
             {
               toolCallId,
-              abortSignal,
+              abortSignal: runtimeOptions.abortSignal ?? abortSignal,
               sourceIntegrationPolicy,
             },
             {

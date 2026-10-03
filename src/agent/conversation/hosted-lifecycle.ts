@@ -31,6 +31,7 @@ export interface ConversationHostedLifecycleFinalizeInput {
 
 /** Options accepted by create conversation hosted lifecycle adapter. */
 export interface CreateConversationHostedLifecycleAdapterOptions<TChunk> {
+  finalize?: typeof finalizeConversationAgentRun;
   authToken: string;
   apiUrl: string;
   startRun: (
@@ -103,12 +104,13 @@ export function createConversationHostedLifecycleAdapter<TChunk>(
       : undefined,
     finalizeRun: async (run, terminalState) => {
       const finalizeInput = await options.resolveFinalizeInput({ run, terminalState });
-      await finalizeConversationAgentRun({
+      await (options.finalize ?? finalizeConversationAgentRun)({
         authToken: options.authToken,
         apiUrl: options.apiUrl,
         conversationId: run.conversationId,
         runId: run.runId,
         status: terminalState.status,
+        output: terminalState.output,
         model: finalizeInput.model,
         provider: finalizeInput.provider,
         usage: finalizeInput.usage,
@@ -118,7 +120,7 @@ export function createConversationHostedLifecycleAdapter<TChunk>(
     },
     cancelRun: async (run, terminalState) => {
       const finalizeInput = await options.resolveFinalizeInput({ run, terminalState });
-      await finalizeConversationAgentRun({
+      await (options.finalize ?? finalizeConversationAgentRun)({
         authToken: options.authToken,
         apiUrl: options.apiUrl,
         conversationId: run.conversationId,
@@ -162,6 +164,7 @@ export function createConversationHostedStreamLifecycleAdapter(
 
 /** Context for conversation child lifecycle. */
 export interface ConversationChildLifecycleContext {
+  finalize?: typeof finalizeConversationAgentRun;
   authToken: string;
   apiUrl: string;
   parentConversationId: string;
@@ -235,46 +238,59 @@ export function createConversationChildLifecycleAdapter(
     pending: () => publishConversationChildProgress(ctx, "pending"),
     running: () => publishConversationChildProgress(ctx, "running"),
     completed: (terminalState) =>
-      finalizeChildRunThenPublish(ctx, "completed", () =>
-        finalizeConversationAgentRun({
-          authToken: ctx.authToken,
-          apiUrl: ctx.apiUrl,
-          conversationId: ctx.progress.childConversationId,
-          runId: ctx.progress.childRunId,
-          status: "completed",
-          model: ctx.model,
-          provider: ctx.provider,
-          usage: toConversationChildUsage(terminalState.usage),
-          terminalErrorCode: null,
-          terminalErrorMessage: null,
-        })),
+      finalizeChildRunThenPublish(
+        ctx,
+        "completed",
+        () =>
+          (ctx.finalize ?? finalizeConversationAgentRun)({
+            authToken: ctx.authToken,
+            apiUrl: ctx.apiUrl,
+            conversationId: ctx.progress.childConversationId,
+            runId: ctx.progress.childRunId,
+            status: "completed",
+            output: terminalState.output,
+            model: ctx.model,
+            provider: ctx.provider,
+            usage: toConversationChildUsage(terminalState.usage),
+            terminalErrorCode: null,
+            terminalErrorMessage: null,
+          }),
+      ),
     failed: (terminalState) =>
-      finalizeChildRunThenPublish(ctx, "failed", () =>
-        finalizeConversationAgentRun({
-          authToken: ctx.authToken,
-          apiUrl: ctx.apiUrl,
-          conversationId: ctx.progress.childConversationId,
-          runId: ctx.progress.childRunId,
-          status: "failed",
-          model: ctx.model,
-          provider: ctx.provider,
-          usage: toConversationChildUsage(terminalState.usage),
-          terminalErrorCode: terminalState.terminalErrorCode ?? "FAILED",
-          terminalErrorMessage: terminalState.terminalErrorMessage ?? "Unknown error",
-        })),
+      finalizeChildRunThenPublish(
+        ctx,
+        "failed",
+        () =>
+          (ctx.finalize ?? finalizeConversationAgentRun)({
+            authToken: ctx.authToken,
+            apiUrl: ctx.apiUrl,
+            conversationId: ctx.progress.childConversationId,
+            runId: ctx.progress.childRunId,
+            status: "failed",
+            model: ctx.model,
+            provider: ctx.provider,
+            usage: toConversationChildUsage(terminalState.usage),
+            terminalErrorCode: terminalState.terminalErrorCode ?? "FAILED",
+            terminalErrorMessage: terminalState.terminalErrorMessage ?? "Unknown error",
+          }),
+      ),
     cancelled: (terminalState) =>
-      finalizeChildRunThenPublish(ctx, "cancelled", () =>
-        finalizeConversationAgentRun({
-          authToken: ctx.authToken,
-          apiUrl: ctx.apiUrl,
-          conversationId: ctx.progress.childConversationId,
-          runId: ctx.progress.childRunId,
-          status: "cancelled",
-          model: ctx.model,
-          provider: ctx.provider,
-          usage: toConversationChildUsage(terminalState.usage),
-          terminalErrorCode: terminalState.terminalErrorCode ?? "CANCELLED",
-          terminalErrorMessage: terminalState.terminalErrorMessage ?? "Child run cancelled",
-        })),
+      finalizeChildRunThenPublish(
+        ctx,
+        "cancelled",
+        () =>
+          (ctx.finalize ?? finalizeConversationAgentRun)({
+            authToken: ctx.authToken,
+            apiUrl: ctx.apiUrl,
+            conversationId: ctx.progress.childConversationId,
+            runId: ctx.progress.childRunId,
+            status: "cancelled",
+            model: ctx.model,
+            provider: ctx.provider,
+            usage: toConversationChildUsage(terminalState.usage),
+            terminalErrorCode: terminalState.terminalErrorCode ?? "CANCELLED",
+            terminalErrorMessage: terminalState.terminalErrorMessage ?? "Child run cancelled",
+          }),
+      ),
   };
 }

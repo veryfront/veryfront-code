@@ -167,7 +167,7 @@ function createParsedHostedChatRequest(
       {
         token: runEventAppendToken,
         projectId: request.projectId ?? "project-from-context",
-        runId: request.durableRootRun?.runId ?? "run-1",
+        runId: request.durableRootRun?.runId ?? "10000000-0000-4000-8000-000000000005",
         fetch: globalThis.fetch,
       },
     );
@@ -243,7 +243,7 @@ describe("provider replay checkpoint emission", () => {
     const operations: string[] = [];
     const rootRunContext = {
       durableRootRun: {
-        runId: "run-1",
+        runId: "10000000-0000-4000-8000-000000000005",
         conversationId: "conversation-1",
         messageId: "message-1",
         latestEventId: 1,
@@ -273,7 +273,7 @@ describe("provider replay checkpoint emission", () => {
   it("fails closed without a private mirror", async () => {
     const options = createProviderReplayCheckpointCreationOptions({
       durableRootRun: {
-        runId: "run-1",
+        runId: "10000000-0000-4000-8000-000000000005",
         conversationId: "conversation-1",
         messageId: "message-1",
         latestEventId: 1,
@@ -337,13 +337,13 @@ Deno.test("prepareHostedChatRuntimeCreationOptions builds runtime options from r
     environmentContext: "Browser workspace",
     rootRunContext: {
       durableRootRun: {
-        runId: "run-1",
+        runId: "10000000-0000-4000-8000-000000000005",
         conversationId: "conversation-1",
         messageId: "message-1",
         latestEventId: 1,
         latestExternalEventSequence: 1,
       },
-      effectiveParentRunId: "run-1",
+      effectiveParentRunId: "10000000-0000-4000-8000-000000000005",
       effectiveParentMessageId: "message-1",
       publishParentRunEvents: (events) => {
         parentEvents.push(...events);
@@ -481,9 +481,9 @@ Deno.test("prepareHostedChatRuntimeCreationOptions builds runtime options from r
     includeRuntimeEssentialToolsWhenEmpty: false,
     allowDelegation: false,
     conversationId: "conversation-1",
-    runId: "run-1",
+    runId: "10000000-0000-4000-8000-000000000005",
     agentId: "agent-1",
-    parentRunId: "run-1",
+    parentRunId: "10000000-0000-4000-8000-000000000005",
     parentMessageId: "message-1",
     availableSkillIds: ["debug"],
     skillSelectorPolicy: {
@@ -675,7 +675,7 @@ it("private checkpoints fail closed without a trusted run-event append token", a
     authToken: "user-api-token",
     rootRunContext: {
       durableRootRun: {
-        runId: "run-1",
+        runId: "10000000-0000-4000-8000-000000000005",
         conversationId: "conversation-1",
         messageId: "message-1",
         latestEventId: 1,
@@ -751,7 +751,7 @@ it("resolves private checkpoint persistence only after the durable flush complet
     authToken: "user-api-token",
     rootRunContext: {
       durableRootRun: {
-        runId: "run-1",
+        runId: "10000000-0000-4000-8000-000000000005",
         conversationId: "conversation-1",
         messageId: "message-1",
         latestEventId: 1,
@@ -828,7 +828,7 @@ Deno.test("prepareHostedChatExecution prepares root run, runtime, and final mess
       conversationId: "conversation-1",
       projectId: "project-1",
       durableRootRun: {
-        runId: "run-1",
+        runId: "10000000-0000-4000-8000-000000000005",
         messageId: "message-1",
         latestEventId: 3,
         latestExternalEventSequence: 2,
@@ -871,13 +871,13 @@ Deno.test("prepareHostedChatExecution prepares root run, runtime, and final mess
 
   assertEquals(result.parentMessageId, "user-message-1");
   assertEquals(result.rootRunContext.durableRootRun, {
-    runId: "run-1",
+    runId: "10000000-0000-4000-8000-000000000005",
     conversationId: "conversation-1",
     messageId: "message-1",
     latestEventId: 3,
     latestExternalEventSequence: 2,
   });
-  assertEquals(result.rootRunContext.effectiveParentRunId, "run-1");
+  assertEquals(result.rootRunContext.effectiveParentRunId, "10000000-0000-4000-8000-000000000005");
   assertEquals(result.rootRunContext.effectiveParentMessageId, "message-1");
   assertEquals(result.runtime.runtimeKind, "framework");
   assertEquals(result.runtime.modelId, "resolved:configured-model");
@@ -902,7 +902,7 @@ describe("provider replay bootstrap", () => {
         conversationId: "conversation-1",
         projectId: "project-1",
         durableRootRun: {
-          runId: "run-1",
+          runId: "10000000-0000-4000-8000-000000000005",
           messageId: "message-1",
           latestEventId: 3,
           latestExternalEventSequence: 2,
@@ -998,7 +998,7 @@ Deno.test("prepareHostedChatExecution forwards the verified integration tool gra
       conversationId: "conversation-1",
       projectId: "project-1",
       durableRootRun: {
-        runId: "run-1",
+        runId: "10000000-0000-4000-8000-000000000005",
         messageId: "message-1",
         latestEventId: 3,
         latestExternalEventSequence: 2,
@@ -1087,7 +1087,7 @@ Deno.test("prepareHostedChatExecution strips configured provider history selecte
       model: "anthropic/claude-sonnet-4-6",
       runtimeOverrides: { allowedTools: ["web_search"] },
       durableRootRun: {
-        runId: "run-1",
+        runId: "10000000-0000-4000-8000-000000000005",
         messageId: "message-1",
         latestEventId: 3,
         latestExternalEventSequence: 2,
@@ -1167,7 +1167,7 @@ Deno.test(
         model: "anthropic/claude-sonnet-4-6",
         runtimeOverrides: { allowedTools: ["web_search"] },
         durableRootRun: {
-          runId: "run-1",
+          runId: "10000000-0000-4000-8000-000000000005",
           messageId: "message-1",
           latestEventId: 3,
           latestExternalEventSequence: 2,
@@ -1366,7 +1366,7 @@ Deno.test("prepareHostedChatExecution preserves allowed remote tool history", as
       conversationId: "conversation-1",
       projectId: "project-1",
       durableRootRun: {
-        runId: "run-1",
+        runId: "10000000-0000-4000-8000-000000000005",
         messageId: "message-1",
         latestEventId: 3,
         latestExternalEventSequence: 2,
@@ -1434,7 +1434,7 @@ Deno.test("prepareHostedChatExecution compacts oversized context and appends a d
             latest_external_event_sequence: 3,
             appended_count: 1,
             run: {
-              run_id: "run-1",
+              run_id: "10000000-0000-4000-8000-000000000005",
               conversation_id: "11111111-1111-4111-a111-111111111111",
               latest_event_id: 4,
               latest_external_event_sequence: 3,
@@ -1477,7 +1477,7 @@ Deno.test("prepareHostedChatExecution compacts oversized context and appends a d
           },
         ],
         durableRootRun: {
-          runId: "run-1",
+          runId: "10000000-0000-4000-8000-000000000005",
           messageId: "message-1",
           latestEventId: 3,
           latestExternalEventSequence: 2,
@@ -1590,7 +1590,7 @@ Deno.test("prepareHostedChatExecution rejects compacted context when durable eve
               },
             ],
             durableRootRun: {
-              runId: "run-1",
+              runId: "10000000-0000-4000-8000-000000000005",
               messageId: "message-1",
               latestEventId: 3,
               latestExternalEventSequence: 2,
@@ -1744,7 +1744,7 @@ Deno.test("prepareHostedChatExecution aborts stalled signed attachment fetch bef
         conversationId: "conversation-1",
         projectId: "project-1",
         durableRootRun: {
-          runId: "run-1",
+          runId: "10000000-0000-4000-8000-000000000005",
           messageId: "message-1",
           latestEventId: 3,
           latestExternalEventSequence: 2,
@@ -2378,7 +2378,7 @@ Deno.test("prepareHostedChatExecution keeps customer data out of the unreadable-
     await prepareHostedChatExecution({
       request: createParsedHostedChatRequest({
         durableRootRun: {
-          runId: "run-1",
+          runId: "10000000-0000-4000-8000-000000000005",
           messageId: "message-1",
           latestEventId: 3,
           latestExternalEventSequence: 2,

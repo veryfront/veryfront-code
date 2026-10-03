@@ -16,6 +16,7 @@ import {
 /** State for hosted child lifecycle terminal. */
 export interface HostedChildLifecycleTerminalState {
   status: "completed" | "failed" | "cancelled";
+  output?: unknown;
   usage?: {
     inputTokens?: number;
     outputTokens?: number;
@@ -426,6 +427,7 @@ export async function runHostedChildExecutionLifecycle<
       },
       resolveCompletedState: ({ snapshot }) => ({
         status: "completed",
+        output: snapshot.fullResultText,
         usage: toHostedChildLifecycleUsage(snapshot.usage),
       }),
       resolveErrorState: (error) =>

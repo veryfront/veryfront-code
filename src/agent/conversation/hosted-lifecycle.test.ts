@@ -1,3 +1,4 @@
+import { finalizeConversationAgentRun } from "./durable.ts";
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
@@ -50,7 +51,7 @@ describe("agent/conversation-hosted-lifecycle", () => {
       authToken: AUTH_TOKEN,
       apiUrl: API_URL,
       startRun: async () => ({
-        runId: "run_root_1",
+        runId: "10000000-0000-4000-8000-000000000001",
         conversationId: CONVERSATION_ID,
         messageId: MESSAGE_ID,
         latestEventId: 1,
@@ -66,7 +67,7 @@ describe("agent/conversation-hosted-lifecycle", () => {
         latest_external_event_sequence: 4,
         appended_count: 1,
         run: {
-          run_id: "run_root_1",
+          run_id: "10000000-0000-4000-8000-000000000001",
           conversation_id: CONVERSATION_ID,
           latest_event_id: 3,
           latest_external_event_sequence: 4,
@@ -93,7 +94,7 @@ describe("agent/conversation-hosted-lifecycle", () => {
       authToken: AUTH_TOKEN,
       apiUrl: API_URL,
       startRun: async () => ({
-        runId: "run_root_stream_1",
+        runId: "10000000-0000-4000-8000-000000000002",
         conversationId: CONVERSATION_ID,
         messageId: MESSAGE_ID,
         latestEventId: 1,
@@ -108,7 +109,7 @@ describe("agent/conversation-hosted-lifecycle", () => {
         latest_external_event_sequence: 4,
         appended_count: 2,
         run: {
-          run_id: "run_root_stream_1",
+          run_id: "10000000-0000-4000-8000-000000000002",
           conversation_id: CONVERSATION_ID,
           latest_event_id: 3,
           latest_external_event_sequence: 4,
@@ -153,7 +154,7 @@ describe("agent/conversation-hosted-lifecycle", () => {
       authToken: AUTH_TOKEN,
       apiUrl: API_URL,
       startRun: async () => ({
-        runId: "run_root_stream_2",
+        runId: "10000000-0000-4000-8000-000000000003",
         conversationId: CONVERSATION_ID,
         messageId: MESSAGE_ID,
         latestEventId: 1,
@@ -168,7 +169,7 @@ describe("agent/conversation-hosted-lifecycle", () => {
         latest_external_event_sequence: 4,
         appended_count: 1,
         run: {
-          run_id: "run_root_stream_2",
+          run_id: "10000000-0000-4000-8000-000000000003",
           conversation_id: CONVERSATION_ID,
           latest_event_id: 3,
           latest_external_event_sequence: 4,
@@ -179,7 +180,7 @@ describe("agent/conversation-hosted-lifecycle", () => {
         latest_external_event_sequence: 6,
         appended_count: 1,
         run: {
-          run_id: "run_root_stream_2",
+          run_id: "10000000-0000-4000-8000-000000000003",
           conversation_id: CONVERSATION_ID,
           latest_event_id: 5,
           latest_external_event_sequence: 6,
@@ -222,7 +223,7 @@ describe("agent/conversation-hosted-lifecycle", () => {
       authToken: AUTH_TOKEN,
       apiUrl: API_URL,
       startRun: async () => ({
-        runId: "run_root_stream_3",
+        runId: "10000000-0000-4000-8000-000000000004",
         conversationId: CONVERSATION_ID,
         messageId: MESSAGE_ID,
         latestEventId: 1,
@@ -237,7 +238,7 @@ describe("agent/conversation-hosted-lifecycle", () => {
         latest_external_event_sequence: 4,
         appended_count: 1,
         run: {
-          run_id: "run_root_stream_3",
+          run_id: "10000000-0000-4000-8000-000000000004",
           conversation_id: CONVERSATION_ID,
           latest_event_id: 3,
           latest_external_event_sequence: 4,
@@ -248,7 +249,7 @@ describe("agent/conversation-hosted-lifecycle", () => {
         latest_external_event_sequence: 6,
         appended_count: 1,
         run: {
-          run_id: "run_root_stream_3",
+          run_id: "10000000-0000-4000-8000-000000000004",
           conversation_id: CONVERSATION_ID,
           latest_event_id: 5,
           latest_external_event_sequence: 6,
@@ -276,7 +277,7 @@ describe("agent/conversation-hosted-lifecycle", () => {
 
   it("finalizes and cancels conversation-backed root runs with host-supplied model metadata", async () => {
     const run = {
-      runId: "run_root_2",
+      runId: "11111111-1111-4111-8111-111111111111",
       conversationId: CONVERSATION_ID,
       messageId: MESSAGE_ID,
       latestEventId: 0,
@@ -284,6 +285,7 @@ describe("agent/conversation-hosted-lifecycle", () => {
       status: "running" as const,
     };
     const adapter = createConversationHostedLifecycleAdapter<unknown>({
+      finalize: canonicalFinalize,
       authToken: AUTH_TOKEN,
       apiUrl: API_URL,
       startRun: async () => run,
@@ -303,9 +305,9 @@ describe("agent/conversation-hosted-lifecycle", () => {
       }),
     });
     const fetchCalls = stubFetchSequence(
-      jsonResponse({ completed: true, run: { run_id: "run_root_2", status: "completed" } }),
-      jsonResponse({ completed: true, run: { run_id: "run_root_2", status: "cancelled" } }),
-      jsonResponse({ completed: true, run: { run_id: "run_root_2", status: "failed" } }),
+      jsonResponse({ id: "11111111-1111-4111-8111-111111111111", status: "completed" }),
+      jsonResponse({ id: "11111111-1111-4111-8111-111111111111", status: "cancelled" }),
+      jsonResponse({ id: "11111111-1111-4111-8111-111111111111", status: "failed" }),
     );
 
     await adapter.finalizeRun?.(run, {
@@ -323,22 +325,9 @@ describe("agent/conversation-hosted-lifecycle", () => {
 
     assertEquals(JSON.parse(String(fetchCalls[0]?.[1]?.body)), {
       status: "completed",
-      metadata: {
-        provider: "openai",
-        model: "gpt-5.4",
-        inputTokens: 2,
-        outputTokens: 3,
-        finishReason: "stop",
-      },
-      terminal_error_code: null,
-      terminal_error_message: null,
+      output: null,
     });
-    assertEquals(JSON.parse(String(fetchCalls[1]?.[1]?.body)), {
-      status: "cancelled",
-      metadata: null,
-      terminal_error_code: "ABORTED",
-      terminal_error_message: "Stopped",
-    });
+    assertEquals(JSON.parse(String(fetchCalls[1]?.[1]?.body)), {});
 
     await adapter.finalizeRun?.(run, {
       status: "failed",
@@ -351,9 +340,7 @@ describe("agent/conversation-hosted-lifecycle", () => {
       JSON.parse(String(fetchCalls[2]?.[1]?.body)),
       {
         status: "failed",
-        metadata: null,
-        terminal_error_code: "FAILED",
-        terminal_error_message: "boom",
+        error: { code: "FAILED", message: "boom" },
       },
       "finalizeRun must forward the terminal status rather than always completing the run",
     );
@@ -362,6 +349,7 @@ describe("agent/conversation-hosted-lifecycle", () => {
   it("publishes shared-parent child progress without falling back to HTTP append and finalizes child runs", async () => {
     const published: unknown[][] = [];
     const adapter = createConversationChildLifecycleAdapter({
+      finalize: canonicalFinalize,
       authToken: AUTH_TOKEN,
       apiUrl: API_URL,
       parentConversationId: CONVERSATION_ID,
@@ -374,7 +362,7 @@ describe("agent/conversation-hosted-lifecycle", () => {
         toolCallId: "tool-1",
         childAgentId: "researcher",
         childConversationId: CHILD_CONVERSATION_ID,
-        childRunId: "run_child_1",
+        childRunId: "22222222-2222-4222-8222-222222222222",
         childMessageId: CHILD_MESSAGE_ID,
         description: "Inspect logs",
         sourceTargetKind: "project",
@@ -385,7 +373,7 @@ describe("agent/conversation-hosted-lifecycle", () => {
       provider: "openai",
     });
     const fetchCalls = stubFetchSequence(
-      jsonResponse({ completed: true, run: { run_id: "run_child_1", status: "completed" } }),
+      jsonResponse({ id: "22222222-2222-4222-8222-222222222222", status: "completed" }),
     );
 
     await adapter.pending?.();
@@ -405,7 +393,7 @@ describe("agent/conversation-hosted-lifecycle", () => {
           value: {
             toolCallId: "tool-1",
             childConversationId: CHILD_CONVERSATION_ID,
-            childRunId: "run_child_1",
+            childRunId: "22222222-2222-4222-8222-222222222222",
             childMessageId: CHILD_MESSAGE_ID,
             childAgentId: "researcher",
             description: "Inspect logs",
@@ -417,12 +405,16 @@ describe("agent/conversation-hosted-lifecycle", () => {
         },
       ],
     });
-    assertEquals(String(fetchCalls[0]?.[0]), `${API_URL}/runs/run_child_1/complete`);
+    assertEquals(
+      String(fetchCalls[0]?.[0]),
+      `${API_URL}/runs/22222222-2222-4222-8222-222222222222/finalize`,
+    );
   });
 
   it("publishes the terminal child status even when finalization fails", async () => {
     const published: unknown[][] = [];
     const adapter = createConversationChildLifecycleAdapter({
+      finalize: canonicalFinalize,
       authToken: AUTH_TOKEN,
       apiUrl: API_URL,
       parentConversationId: CONVERSATION_ID,
@@ -435,7 +427,7 @@ describe("agent/conversation-hosted-lifecycle", () => {
         toolCallId: "tool-1",
         childAgentId: "researcher",
         childConversationId: CHILD_CONVERSATION_ID,
-        childRunId: "run_child_1",
+        childRunId: "22222222-2222-4222-8222-222222222222",
         childMessageId: CHILD_MESSAGE_ID,
         description: "Inspect logs",
         sourceTargetKind: "project",
@@ -470,7 +462,7 @@ describe("agent/conversation-hosted-lifecycle", () => {
             value: {
               toolCallId: "tool-1",
               childConversationId: CHILD_CONVERSATION_ID,
-              childRunId: "run_child_1",
+              childRunId: "22222222-2222-4222-8222-222222222222",
               childMessageId: CHILD_MESSAGE_ID,
               childAgentId: "researcher",
               description: "Inspect logs",
@@ -488,16 +480,17 @@ describe("agent/conversation-hosted-lifecycle", () => {
 
   it("falls back to canonical conversation-run event publishing when no shared parent publisher exists", async () => {
     const adapter = createConversationChildLifecycleAdapter({
+      finalize: canonicalFinalize,
       authToken: AUTH_TOKEN,
       apiUrl: API_URL,
       parentConversationId: CONVERSATION_ID,
-      parentRunId: "run_parent_2",
+      parentRunId: "44444444-4444-4444-8444-444444444444",
       projectId: "project-1",
       progress: {
         toolCallId: "tool-2",
         childAgentId: "researcher",
         childConversationId: CHILD_CONVERSATION_ID,
-        childRunId: "run_child_2",
+        childRunId: "33333333-3333-4333-8333-333333333333",
         childMessageId: CHILD_MESSAGE_ID,
         description: "Inspect logs",
         sourceTargetKind: "preview_branch",
@@ -509,23 +502,25 @@ describe("agent/conversation-hosted-lifecycle", () => {
     });
     const fetchCalls = stubFetchSequence(
       jsonResponse({
+        run_id: "44444444-4444-4444-8444-444444444444",
         latest_event_id: 7,
         latest_external_event_sequence: 8,
         appended_count: 2,
         run: {
-          run_id: "run_parent_2",
+          run_id: "44444444-4444-4444-8444-444444444444",
           conversation_id: CONVERSATION_ID,
           latest_event_id: 7,
           latest_external_event_sequence: 8,
         },
       }),
-      jsonResponse({ completed: true, run: { run_id: "run_child_2", status: "failed" } }),
+      jsonResponse({ id: "33333333-3333-4333-8333-333333333333", status: "failed" }),
       jsonResponse({
+        run_id: "44444444-4444-4444-8444-444444444444",
         latest_event_id: 9,
         latest_external_event_sequence: 10,
         appended_count: 2,
         run: {
-          run_id: "run_parent_2",
+          run_id: "44444444-4444-4444-8444-444444444444",
           conversation_id: CONVERSATION_ID,
           latest_event_id: 9,
           latest_external_event_sequence: 10,
@@ -542,12 +537,31 @@ describe("agent/conversation-hosted-lifecycle", () => {
 
     assertEquals(
       String(fetchCalls[0]?.[0]),
-      `${API_URL}/conversations/${CONVERSATION_ID}/runs/run_parent_2/events`,
+      `${API_URL}/runs/44444444-4444-4444-8444-444444444444/events`,
     );
-    assertEquals(String(fetchCalls[1]?.[0]), `${API_URL}/runs/run_child_2/complete`);
+    assertEquals(
+      String(fetchCalls[1]?.[0]),
+      `${API_URL}/runs/33333333-3333-4333-8333-333333333333/finalize`,
+    );
     assertEquals(
       String(fetchCalls[2]?.[0]),
-      `${API_URL}/conversations/${CONVERSATION_ID}/runs/run_parent_2/events`,
+      `${API_URL}/runs/44444444-4444-4444-8444-444444444444/events`,
     );
   });
 });
+
+const canonicalFinalize: typeof finalizeConversationAgentRun = (input) =>
+  finalizeConversationAgentRun({
+    ...input,
+    terminalAuthToken: `header.${
+      btoa(
+        JSON.stringify({
+          runId: input.runId,
+          canonicalRunId: input.runId,
+          tokenUse: "run_event_writer",
+          writerPurpose: "current_run_terminal",
+          dispatchNonce: "generation",
+        }),
+      )
+    }.signature`,
+  });
