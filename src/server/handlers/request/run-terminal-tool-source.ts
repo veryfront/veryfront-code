@@ -1,4 +1,5 @@
 import {
+  hasCurrentTerminalRunCredentialAuthority,
   isTerminalRunToolName,
   RUN_TERMINAL_TOOL_CALL_ID_HEADER,
   terminalToolCallIdHeaderValue,
@@ -9,9 +10,9 @@ import { INGRESS_RUN_TERMINAL_TOKEN_HEADER } from "#veryfront/security/http/ingr
 
 /**
  * Builds the platform MCP source for one control-plane run. The API-minted
- * terminal credential is attached only to finalize calls whose context names
- * the dispatched run; discovery and every other tool use the ordinary source.
- * Inherited delegate contexts are rebound to that run (inbox#2496).
+ * terminal credential is attached only to finalize calls from the dispatched
+ * run's own terminal control. Delegates retain ordinary run-bound authorization
+ * without inheriting terminal authority.
  */
 export function createRunPlatformToolSource(
   config: RemoteMCPToolSourceConfig & { headers: Record<string, string> },
@@ -38,7 +39,8 @@ export function createRunPlatformToolSource(
     id: ordinary.id,
     listTools: (context) => ordinary.listTools(context),
     executeTool: (name, args, context) =>
-      isTerminalRunToolName(name) && context?.runId === terminal.runId
+      isTerminalRunToolName(name) && context?.runId === terminal.runId &&
+        hasCurrentTerminalRunCredentialAuthority(context)
         ? terminalSource.executeTool(name, args, context)
         : ordinary.executeTool(name, args, context),
   };
