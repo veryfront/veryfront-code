@@ -227,6 +227,8 @@ describe("reserved data pokes", () => {
       await waitForPatch(harness, created, "new");
       assertEquals(snapshotPaths(harness), [AGENT_SOURCE.path, created, NOTE_PATH].sort());
       assertEquals(await harness.adapter.exists(created), true);
+      const createdStat = await harness.adapter.stat(created);
+      assertEquals(Number.isNaN(createdStat.mtime?.getTime()), false);
 
       harness.setRemoteFile(NOTE_PATH, null);
       harness.poke([NOTE_PATH]);

@@ -2162,6 +2162,9 @@ export class VeryfrontFSAdapter implements FSAdapter {
       if (file.version_id !== undefined) entry.version_id = file.version_id;
       if (file.type !== undefined) entry.type = file.type;
       if (file.size !== undefined) entry.size = file.size;
+      // `stat()` derives mtime from this; without it the patched file reads
+      // back with an invalid modification time.
+      entry.updated_at = file.updated_at ?? new Date().toISOString();
       return { projectPath, entry };
     } catch (error) {
       if (isNotFoundLikeError(error)) return { projectPath, entry: null };
