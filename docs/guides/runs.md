@@ -262,7 +262,7 @@ describe the run.
 
 ## Runs target CLI reference
 
-Use `veryfront project runs <command>` with an API that serves the Runs 0.8.0
+Use `veryfront project runs <command>` with an API that serves the Runs 0.8.1
 contract. The CLI calls the typed Runs SDK. Target deployment and live parity
 are tracked separately from the fixture tests for these commands.
 
@@ -349,4 +349,4 @@ schedule creation both use `create`. Existing local `task`, `workflow`, `eval`,
 and `schedule` execution commands retain their local behavior. The existing
 `schedule run --remote` legacy source-name resolver stays until the coordinated
 consumer cutover; use the target `create` invocation with a saved schedule UUID
-for the 0.8.0 contract. These tests do not prove deployed parity.
+for the 0.8.1 contract. These tests do not prove deployed parity.
