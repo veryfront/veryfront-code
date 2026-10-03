@@ -108,8 +108,8 @@ the same contract.
 
 ### Sandbox
 
-| Package                                                           | Contract                    | Description                                 |
-| ----------------------------------------------------------------- | --------------------------- | ------------------------------------------- |
+| Package                                                           | Contract                    | Description                            |
+| ----------------------------------------------------------------- | --------------------------- | -------------------------------------- |
 | [`@veryfront/ext-sandbox-shell-tools`](./ext-sandbox-shell-tools) | `SandboxShellToolsProvider` | Sandbox shell tools via AI SDK and Zod |
 
 ## Built-in first-party selection
