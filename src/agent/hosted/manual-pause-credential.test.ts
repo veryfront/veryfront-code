@@ -1,8 +1,9 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   activateHostedAgentPauseCapability,
+  bindHostedAgentPauseLifetime,
   createRunBoundAgentManualPause,
   hasHostedAgentPauseStopped,
   inheritHostedAgentPauseCapability,
@@ -21,6 +22,39 @@ const checkpoint = {
   recoveredEmptyResponse: false,
   recoveredInterruptedLocalToolBatch: false,
 };
+
+it("binds a deferred pause transport once to the detached execution lifetime", async () => {
+  const execution = new AbortController();
+  let requests = 0;
+  const capability = createRunBoundAgentManualPause({
+    apiUrl: "https://api.example.com",
+    runId: "run_pause_test",
+    token: "pause-test-token",
+    signal: undefined,
+    fetch: (_url, init) => {
+      requests++;
+      assertEquals(init?.signal?.aborted, false);
+      if (requests === 2) {
+        execution.abort();
+        return Promise.resolve(new Response(null, { status: 503 }));
+      }
+      return Promise.resolve(Response.json({ stop: false, checkpoint: null }));
+    },
+  });
+  await assertRejects(() => capability.load(), Error, "manual pause boundary");
+  assertEquals(requests, 0);
+  const lifecycle = {};
+  inheritHostedAgentPauseCapability(lifecycle, capability);
+  bindHostedAgentPauseLifetime(lifecycle, execution.signal);
+  assertThrows(
+    () => bindHostedAgentPauseLifetime(lifecycle, new AbortController().signal),
+    TypeError,
+    "already bound",
+  );
+  assertEquals(await capability.load(), null);
+  await assertRejects(() => capability.load(), Error, "manual pause boundary");
+  assertEquals(requests, 2);
+});
 
 describe("hosted agent pause capability", () => {
   it("replays identical checkpoint bytes after a lost acknowledgement", async () => {

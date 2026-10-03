@@ -24,6 +24,7 @@ describe("agent manual pause", () => {
       let finishes = 0;
       let saved: unknown = null;
       let resumedTokens = 0;
+      let resumedCost = 0;
       const model: ModelRuntime = {
         provider: "test",
         modelId: "test/manual-pause",
@@ -47,7 +48,7 @@ describe("agent manual pause", () => {
                 controller.enqueue({
                   type: "finish",
                   finishReason: modelCalls === 1 || exhaustBudget ? "tool-calls" : "stop",
-                  totalUsage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+                  totalUsage: { inputTokens: 1, outputTokens: 1, totalTokens: 2, costUsd: 0.25 },
                 });
                 controller.close();
               },
@@ -110,6 +111,7 @@ describe("agent manual pause", () => {
           onFinish: (response) => {
             finishes++;
             resumedTokens = response.usage?.totalTokens ?? 0;
+            resumedCost = response.usage?.costUsd ?? 0;
           },
         }),
       ).text();
@@ -120,6 +122,7 @@ describe("agent manual pause", () => {
       assertEquals(memory.filter((message) => message.id === "request-1").length, 1);
       assertEquals(finishes, 1);
       assertEquals(resumedTokens, 4);
+      assertEquals(resumedCost, 0.5);
       assertEquals(resumedBody.includes("Done"), !exhaustBudget);
     });
   }

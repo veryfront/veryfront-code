@@ -1,4 +1,5 @@
 import {
+  bindHostedAgentPauseLifetime,
   hasHostedAgentPauseStopped,
   inheritHostedAgentPauseCapability,
 } from "./manual-pause-credential.ts";
@@ -347,6 +348,7 @@ export async function createHostedChatExecutionRuntimeBootstrap(
 
   let streamResult: HostedChatRuntimeStreamResult;
   try {
+    bindHostedAgentPauseLifetime(input.lifecycleAdapter, streamAbortSignal);
     const startStream = () =>
       input.agent.stream({
         messages: input.finalMessages,

@@ -749,7 +749,6 @@ export async function prepareHostedChatExecution<
   registerHostedAgentPauseCreationOptions(
     creationOptions,
     input.request,
-    input.abortSignal,
     rootRunContext,
   );
   const runtime = await runWithHostedRunEventWriterCapability(

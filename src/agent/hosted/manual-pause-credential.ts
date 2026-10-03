@@ -32,6 +32,7 @@ const getLoadSchema = defineSchema((v) =>
 );
 const credentials = createPrivateWeakStore<object, { token: string; runId: string }>();
 const creationCapabilities = createPrivateWeakStore<object, AgentManualPause>();
+const lifetimeBindings = createPrivateWeakStore<object, (signal: AbortSignal) => void>();
 const capabilityFactories = createPrivateWeakStore<
   object,
   (signal: AbortSignal) => AgentManualPause | undefined
@@ -87,7 +88,7 @@ export function createRunBoundAgentManualPause(input: {
   apiUrl: string;
   runId: string;
   token: string;
-  signal: AbortSignal;
+  signal: AbortSignal | undefined;
   fetch?: typeof fetch;
 }): AgentManualPause {
   const endpoint = requireHostPrivateApiHttps(input.apiUrl);
@@ -96,7 +97,11 @@ export function createRunBoundAgentManualPause(input: {
   const apiUrl = privateTextSlice(endpoint, 0, end);
   const transport = input.fetch ?? createVeryfrontApiOriginBoundOutboundFetch(apiUrl);
   const token = input.token;
-  const signal = input.signal;
+  let signal = input.signal;
+  const lifetime = (): AbortSignal => {
+    if (!signal) throw agentManualPauseBoundary();
+    return signal;
+  };
   const path = `${apiUrl}/runs/${encode(input.runId)}`;
   const send = async (suffix: string, body: string | undefined) => {
     try {
@@ -105,7 +110,7 @@ export function createRunBoundAgentManualPause(input: {
         redirect: "error",
         headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
         body,
-        signal: requestSignal(signal),
+        signal: requestSignal(lifetime()),
       });
     } catch {
       // An unknown write stays at this boundary; the retry sends identical bytes.
@@ -121,7 +126,7 @@ export function createRunBoundAgentManualPause(input: {
     const status = apply(responseStatus, response, []) as number;
     if (status >= 200 && status < 300) {
       try {
-        return { value: parse(await readReply(response, signal)) };
+        return { value: parse(await readReply(response, lifetime())) };
       } catch {
         // Malformed or lost replies never become permission to continue.
         return undefined;
@@ -137,10 +142,10 @@ export function createRunBoundAgentManualPause(input: {
     parse: (value: unknown) => T,
   ): Promise<T> => {
     for (let attempt = 0;; attempt++) {
-      if (signal.aborted) throw agentManualPauseBoundary();
+      if (lifetime().aborted) throw agentManualPauseBoundary();
       const settled = await settle(await send(suffix, body), parse);
       if (settled) return settled.value;
-      if (signal.aborted) throw agentManualPauseBoundary();
+      if (lifetime().aborted) throw agentManualPauseBoundary();
       if (attempt === 2) {
         logger.warn(
           "Agent is held at a safe boundary because its pause acknowledgement is unavailable",
@@ -217,6 +222,14 @@ export function createRunBoundAgentManualPause(input: {
     },
   });
   stoppedCapabilities.set(capability, state);
+  if (!signal) {
+    lifetimeBindings.set(capability, (executionSignal) => {
+      if (signal && signal !== executionSignal) {
+        throw new TypeError("Agent pause lifetime already bound");
+      }
+      signal = executionSignal;
+    });
+  }
   creationCapabilities.set(capability, capability);
   return capability;
 }
@@ -234,7 +247,7 @@ export function registerHostedAgentPauseCredential(
 
 export function createHostedAgentManualPause(
   request: ParsedHostedChatRequest,
-  signal: AbortSignal,
+  signal: AbortSignal | undefined,
 ): AgentManualPause | undefined {
   const credential = credentials.get(request);
   if (!credential) return undefined;
@@ -249,14 +262,19 @@ export function createHostedAgentManualPause(
 export function registerHostedAgentPauseCreationOptions(
   options: unknown,
   request: ParsedHostedChatRequest,
-  signal: AbortSignal,
   rootContext?: unknown,
 ): void {
-  const capability = createHostedAgentManualPause(request, signal);
+  const capability = createHostedAgentManualPause(request, undefined);
   if (capability) {
     creationCapabilities.set(requirePauseCarrier(options), capability);
     if (rootContext) creationCapabilities.set(requirePauseCarrier(rootContext), capability);
   }
+}
+
+/** Bind a prepared credential to execution, after its admission request has ended. */
+export function bindHostedAgentPauseLifetime(target: unknown, signal: AbortSignal): void {
+  const capability = creationCapabilities.get(requirePauseCarrier(target));
+  if (capability) lifetimeBindings.get(capability)?.(signal);
 }
 
 export function getHostedAgentPauseCreationOptions(options: unknown): AgentManualPause | undefined {

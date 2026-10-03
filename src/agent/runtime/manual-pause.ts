@@ -11,6 +11,7 @@ import { privateJsonParse, privateJsonStringify } from "#veryfront/security/priv
 import { utf8ByteLength } from "#veryfront/utils/utf8-byte-length.ts";
 import { getToolCallSchema } from "../schemas/index.ts";
 import type { Message, ToolCall } from "../types.ts";
+import type { RuntimeGenerateUsage } from "./runtime-tool-types.ts";
 
 /** Private continuation at a settled model/tool boundary, never agent configuration. */
 export interface AgentPauseCheckpoint {
@@ -18,7 +19,11 @@ export interface AgentPauseCheckpoint {
   nextStep: number;
   messages: Message[];
   toolCalls: ToolCall[];
-  usage: { promptTokens: number; completionTokens: number; totalTokens: number };
+  usage: RuntimeGenerateUsage & {
+    promptTokens: number;
+    completionTokens: number;
+    totalTokens: number;
+  };
   latestAssistantText: string;
   completed: boolean;
   finishReason?: string;
@@ -61,6 +66,27 @@ export const getAgentPauseCheckpointSchema = defineSchema((v) =>
       promptTokens: v.number().nonnegative().refine(Number.isFinite),
       completionTokens: v.number().nonnegative().refine(Number.isFinite),
       totalTokens: v.number().nonnegative().refine(Number.isFinite),
+      inputTokens: v.number().nonnegative().refine(Number.isFinite).optional(),
+      outputTokens: v.number().nonnegative().refine(Number.isFinite).optional(),
+      reasoningTokens: v.number().nonnegative().refine(Number.isFinite).optional(),
+      cachedInputTokens: v.number().nonnegative().refine(Number.isFinite).optional(),
+      cacheReadInputTokens: v.number().nonnegative().refine(Number.isFinite).optional(),
+      cacheCreationInputTokens: v.number().nonnegative().refine(Number.isFinite).optional(),
+      cacheCreation1hInputTokens: v.number().nonnegative().refine(Number.isFinite).optional(),
+      billableInputTokens: v.number().nonnegative().refine(Number.isFinite).optional(),
+      billableOutputTokens: v.number().nonnegative().refine(Number.isFinite).optional(),
+      costUsd: v.number().nonnegative().refine(Number.isFinite).optional(),
+      providerInputCostUsd: v.number().nonnegative().refine(Number.isFinite).optional(),
+      providerOutputCostUsd: v.number().nonnegative().refine(Number.isFinite).optional(),
+      providerCostUsd: v.number().nonnegative().refine(Number.isFinite).optional(),
+      veryfrontInputChargeUsd: v.number().nonnegative().refine(Number.isFinite).optional(),
+      veryfrontOutputChargeUsd: v.number().nonnegative().refine(Number.isFinite).optional(),
+      veryfrontChargeUsd: v.number().nonnegative().refine(Number.isFinite).optional(),
+      veryfrontBilledUsd: v.number().nonnegative().refine(Number.isFinite).optional(),
+      costCredits: v.number().nonnegative().refine(Number.isFinite).optional(),
+      costSource: v.enum(["gateway", "missing", "partial"] as const).optional(),
+      billingMode: v.enum(["direct", "deferred"] as const).optional(),
+      usageCaptureStatus: v.enum(["complete", "partial", "missing"] as const).optional(),
     }).strict(),
     latestAssistantText: v.string(),
     completed: v.boolean(),
