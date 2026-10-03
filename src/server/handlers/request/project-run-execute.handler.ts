@@ -1,3 +1,5 @@
+import { RunStopRegistry } from "#veryfront/internal-agents/run-stop-registry.ts";
+import { agentRunSessionManager } from "#veryfront/internal-agents/session-manager.ts";
 import {
   API_CLIENT_ERROR,
   INPUT_VALIDATION_FAILED,
@@ -2112,7 +2114,7 @@ const NativeHeaders = Headers;
  * request it can reach must no longer carry the credential. The body was read
  * and verified before this point and is not needed again.
  */
-function withoutProjectRunInferenceToken(req: Request): Request {
+function withoutProjectRunInferenceToken(req: Request, signal?: AbortSignal): Request {
   // Copied entry by entry with iteration primitives captured at load, and the
   // credential is skipped rather than deleted afterwards: handing the original
   // Headers to a constructor would run a patchable `Symbol.iterator` over it.
@@ -2136,7 +2138,7 @@ function withoutProjectRunInferenceToken(req: Request): Request {
     method: IntrinsicReflectApply(RequestMethodGetter, req, []) as string,
     headers,
     // The run is cancelled through this signal; the copy must keep it.
-    signal: IntrinsicReflectApply(RequestSignalGetter, req, []) as AbortSignal,
+    signal: signal ?? IntrinsicReflectApply(RequestSignalGetter, req, []) as AbortSignal,
   });
   // The run still reads its `x-token` from the ingress credentials.
   return inheritIngressCredentials(req, copy);
@@ -2159,7 +2161,11 @@ function readProjectRunInferenceToken(req: Request): string | undefined {
 }
 
 /** Independent evidence of a settled execution, never evidence from abort alone. */
-function createRunStopAcknowledger(req: Request, runId: string): (() => Promise<void>) | undefined {
+function createRunStopAcknowledger(
+  req: Request,
+  runId: string,
+  executionSignal?: AbortSignal,
+): (() => Promise<void>) | undefined {
   const rawToken = readIngressCredential(req, INGRESS_RUN_STOP_TOKEN_HEADER);
   if (rawToken === null) return undefined;
   const token = requireInferenceProviderCredential(rawToken, "Run stop token header");
@@ -2176,7 +2182,7 @@ function createRunStopAcknowledger(req: Request, runId: string): (() => Promise<
     return undefined;
   }
   const lifetime = getRequestTransportLifetime(req);
-  const signal = lifetime?.signal ??
+  const signal = executionSignal ?? lifetime?.signal ??
     IntrinsicReflectApply(RequestSignalGetter, req, []) as AbortSignal;
   let stopped = false;
   let cancellationObserved = isAbortSignalAborted(signal);
@@ -3927,7 +3933,10 @@ export class ProjectRunExecuteHandler extends BaseHandler {
     ],
   };
 
-  constructor(private readonly deps: ProjectRunExecuteHandlerDeps = defaultDeps) {
+  constructor(
+    private readonly deps: ProjectRunExecuteHandlerDeps = defaultDeps,
+    private readonly stopRegistry: RunStopRegistry = agentRunSessionManager.stopRegistry,
+  ) {
     super();
   }
 
@@ -3964,15 +3973,23 @@ export class ProjectRunExecuteHandler extends BaseHandler {
           return this.respond(builder.json({ error: "Invalid control-plane signature" }, 401));
         }
         const inferenceToken = readProjectRunInferenceToken(req);
-        const acknowledgeStop = createRunStopAcknowledger(req, request.runId);
+        const stopController = new TaskAbortController();
+        const settledStop = this.stopRegistry.register(request.runId, () => {
+          ReflectApply(TaskAbort, stopController, [new Error("Run cancelled")]);
+        });
+        const executionSignal = ReflectApply(TaskAbortSignalAny, AbortSignal, [[
+          IntrinsicReflectApply(RequestSignalGetter, req, []) as AbortSignal,
+          stopController.signal,
+        ]]) as AbortSignal;
+        const callback = createRunStopAcknowledger(req, request.runId, executionSignal);
+        const acknowledgeStop = async () => {
+          settledStop();
+          await callback?.();
+        };
         const acknowledgePause = request.kind === "workflow"
           ? createRunPauseAcknowledger(req, request.runId, this.deps.sleep)
           : undefined;
-        const stopCredentialPresent = readIngressCredential(req, INGRESS_RUN_STOP_TOKEN_HEADER) !==
-          null;
-        const executionRequest = inferenceToken === undefined && !stopCredentialPresent
-          ? req
-          : withoutProjectRunInferenceToken(req);
+        const executionRequest = withoutProjectRunInferenceToken(req, executionSignal);
 
         return await withSpan(
           "project_run.execute",

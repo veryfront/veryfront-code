@@ -1,3 +1,4 @@
+import { RunStopRegistry } from "#veryfront/internal-agents/run-stop-registry.ts";
 import { toolRegistryInternal } from "#veryfront/tool/registry.ts";
 import "#veryfront/schemas/_test-setup.ts";
 import "#veryfront/html/styles-builder/__tests__/css-processor-setup.ts";
@@ -7910,6 +7911,47 @@ describe("project run inference credential header", () => {
 // veryfront-issue-inbox#2086: a cancelled project run must reach the running
 // task or workflow, not only the control-plane row.
 describe("server/handlers/request/project-run-execute.handler cancellation", () => {
+  it("delivers a durable stop independently of the original transport and confirms only settled task work", async () => {
+    const registry = new RunStopRegistry();
+    let begin!: () => void;
+    let release!: () => void;
+    let taskSignal: AbortSignal | undefined;
+    const started = new Promise<void>((resolve) => {
+      begin = resolve;
+    });
+    const work = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const handler = new ProjectRunExecuteHandler(
+      createDeps({
+        runTask: async (options) => {
+          taskSignal = options.signal;
+          begin();
+          await work;
+          return { success: true, result: "settled", durationMs: 1 };
+        },
+      }),
+      registry,
+    );
+    const runId = "run_independent_stop_delivery";
+    const signed = await signedRequest(`/api/control-plane/runs/${runId}/execute`, {
+      runId,
+      kind: "task",
+      target: "task:sync-calendar-events",
+      projectId: "proj-1",
+    });
+    const operation = handler.handle(signed.request, createCtx(signed.publicKeyPem));
+    await started;
+    try {
+      assertEquals(registry.requestStop(runId), { accepted: true, stopped: false });
+      assertEquals(taskSignal?.aborted, true);
+    } finally {
+      release();
+    }
+    await operation;
+    assertEquals(registry.requestStop(runId), { accepted: true, stopped: true });
+  });
+
   afterAll(async () => {
     await stopEsbuild();
   });

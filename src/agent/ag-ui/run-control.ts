@@ -74,6 +74,7 @@ export interface AgUiResumeHandlerOptions extends AgUiRunControlHandlerOptions {
 /** Options accepted by AG-UI cancel handler. */
 export interface AgUiCancelHandlerOptions<T = unknown> extends AgUiRunControlHandlerOptions {
   sessionManager: RunResumeSessionManager<T>;
+  hasSettledExecution?: (runId: string) => boolean;
 }
 
 async function resolveRunId(
@@ -235,6 +236,12 @@ export function createAgUiCancelHandler<T = unknown>(
         ? { onlyIfStartedBeforeEventId: parkedAfterEventId }
         : {}),
     });
+    if (!parkCancellation && new URL(request.url).searchParams.get("confirm_stopped") === "true") {
+      const stopped = options.hasSettledExecution?.(runId) === true;
+      return Response.json({ accepted: accepted || stopped, stopped }, {
+        status: stopped ? 200 : 202,
+      });
+    }
     if (accepted) {
       return Response.json({ accepted: true }, { status: 202 });
     }

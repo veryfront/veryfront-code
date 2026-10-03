@@ -71,7 +71,19 @@ export class AgentRunCancelHandler extends BaseHandler {
         setActiveSpanAttributes(
           this.sessionManager.getServingSpanAttributes(runId, ctx.projectId) ?? {},
         );
+        const confirmStopped = JSON.parse(rawBody)?.confirmStopped === true;
+        const stop = confirmStopped
+          ? this.sessionManager.stopRegistry.requestStop(runId)
+          : undefined;
         const accepted = this.sessionManager.cancelRun(runId);
+        if (stop) {
+          return this.respond(
+            builder.json(
+              { accepted: accepted || stop.accepted, stopped: stop.stopped },
+              stop.stopped ? 200 : 202,
+            ),
+          );
+        }
         if (accepted) {
           return this.respond(builder.json({ accepted: true }, 202));
         }

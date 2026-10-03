@@ -20,6 +20,8 @@ export interface DetachedRunTracker<TResumeValue> {
   trackRun(runId: string): void;
   untrackRun(runId: string): void;
   cancelRun(runId: string): boolean;
+  /** Positive receipt after every producer for this run has settled. */
+  hasSettledExecution?(runId: string): boolean;
   registerExecution(runId: string, execution: Promise<void>): void;
   cancelAllRuns(): string[];
   waitForDrain(
@@ -58,6 +60,7 @@ export function createDetachedRunTracker<TResumeValue = unknown>(
 ): DetachedRunTracker<TResumeValue> {
   const sessionManager = options.sessionManager ?? new RunResumeSessionManager<TResumeValue>();
   const activeRunIds = new Set<string>();
+  const settledRunIds = new Set<string>();
   // Every outstanding execution per run id: a park-cancelled execution can
   // outlive the resumed execution that reused its run id.
   const activeExecutions = new Map<string, Set<Promise<void>>>();
@@ -84,7 +87,11 @@ export function createDetachedRunTracker<TResumeValue = unknown>(
       }
       return cancelled;
     },
+    hasSettledExecution(runId) {
+      return settledRunIds.has(runId) && !activeExecutions.has(runId) && !activeRunIds.has(runId);
+    },
     registerExecution(runId, execution) {
+      settledRunIds.delete(runId);
       activeRunIds.add(runId);
 
       const trackedExecution = execution.finally(() => {
@@ -93,6 +100,8 @@ export function createDetachedRunTracker<TResumeValue = unknown>(
           return;
         }
 
+        settledRunIds.add(runId);
+        if (settledRunIds.size > 10_000) settledRunIds.delete(settledRunIds.values().next().value!);
         activeExecutions.delete(runId);
         untrackRun(runId);
       });
@@ -138,6 +147,7 @@ export function createDetachedRunTracker<TResumeValue = unknown>(
       sessionManager.reset();
       activeRunIds.clear();
       activeExecutions.clear();
+      settledRunIds.clear();
     },
   };
 }
