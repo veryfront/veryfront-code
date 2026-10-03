@@ -103,7 +103,10 @@ export function extractRunsFixtures(
             encodeURIComponent(String(parameter.example)),
           );
         } else if (parameter.in === "query") {
-          query.set(parameter.name, String(parameter.example));
+          const items = Array.isArray(parameter.example)
+            ? parameter.example
+            : [parameter.example];
+          for (const item of items) query.append(parameter.name, String(item));
         }
       }
       if (query.size) url += `?${query}`;

@@ -96,6 +96,21 @@ describe("Runs fixture generation", () => {
     });
   });
 
+  it("serializes compatible array query examples the same way as the SDK", () => {
+    const changed: RunsExampleDocument = structuredClone(document);
+    changed.paths["/runs/{run_id}"]!.get!.parameters!.push({
+      name: "status",
+      in: "query",
+      example: ["running", "pending"],
+    });
+    const fixture = extractRunsFixtures(changed).getRun!;
+    assertEquals(fixture.input.query, { status: ["running", "pending"] });
+    assertEquals(
+      fixture.url,
+      "/runs/run-example?status=running&status=pending",
+    );
+  });
+
   it("fails rather than inventing missing success examples", () => {
     const changed: RunsExampleDocument = structuredClone(document);
     changed.paths["/runs/{run_id}"]!.get!.responses["200"]!
