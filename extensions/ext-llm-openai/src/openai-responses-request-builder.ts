@@ -545,9 +545,10 @@ export function buildOpenAIResponsesRequest(
               ? { description: options.responseFormat.description }
               : {}),
             schema: unwrapToolInputSchema(options.responseFormat.schema),
-            ...(options.responseFormat.strict !== undefined
-              ? { strict: options.responseFormat.strict }
-              : {}),
+            // Agent schemas allow optional fields and open objects. Responses
+            // defaults omitted strictness to strict validation, so opt out unless
+            // the caller explicitly requests the strict JSON Schema subset.
+            strict: options.responseFormat.strict ?? false,
           },
         },
       }

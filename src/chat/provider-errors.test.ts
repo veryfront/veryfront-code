@@ -7,6 +7,10 @@ import {
   parseProviderError,
 } from "./provider-errors.ts";
 import {
+  createExecutorModelFailure,
+  executorModelFailure,
+} from "#veryfront/agent/hosted/executor-model-errors.ts";
+import {
   buildProviderError,
   markVeryfrontGatewayResponse,
 } from "#veryfront/provider/runtime-loader/provider-http.ts";
@@ -692,6 +696,47 @@ describe("chat/provider-errors", () => {
   });
 
   describe("structured-output schema rejections", () => {
+    it("preserves actionable OpenAI schema errors through HTTP and hosted runtime boundaries", async () => {
+      const error = await buildProviderError(
+        "openai",
+        new Response(
+          JSON.stringify({
+            error: {
+              type: "invalid_request_error",
+              code: "invalid_json_schema",
+              param: "text.format.schema",
+              message: "Unsupported schema keyword containing <REDACTED>",
+            },
+          }),
+          { status: 400 },
+        ),
+      );
+      const expected = {
+        code: "OUTPUT_SCHEMA_INVALID",
+        message:
+          "The model provider rejected the outputSchema. Use a root object with supported JSON Schema keywords. " +
+          "For strict output, set additionalProperties: false on every object and include every property in required.",
+      };
+      assertEquals(parseProviderError(error), expected);
+      assertEquals(parseProviderError({ lastError: error }), expected);
+      assertEquals(executorModelFailure(error), { type: "failure", code: "OUTPUT_SCHEMA_INVALID" });
+      assertEquals(parseProviderError(createExecutorModelFailure("OUTPUT_SCHEMA_INVALID")), {
+        ...expected,
+        status: 400,
+      });
+    });
+
+    it("keeps invalid function parameters and unknown schema errors generic", () => {
+      for (const code of ["invalid_function_parameters", "unknown_schema_error"]) {
+        assertEquals(
+          parseProviderError({
+            error: { type: "invalid_request_error", code, message: "Unsupported schema keyword" },
+          }),
+          { code: "EXTERNAL_SERVICE_ERROR", message: "LLM provider service error" },
+        );
+      }
+    });
+
     /** An error carrying `body` the way buildProviderError attaches it. */
     function providerError(body: unknown): Error {
       const error = new Error("Provider request failed with status 400");
