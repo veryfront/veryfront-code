@@ -67,6 +67,33 @@ describe("server/handlers/request/agent-run-cancel.handler", () => {
     assertEquals(await acknowledgement.response.json(), { accepted: true, stopped: true });
   });
 
+  it("treats a signed empty or non-JSON body as a plain cancel", async () => {
+    for (const [runId, body] of [["run_empty", ""], ["run_text", "stop"]] as const) {
+      const sessionManager = new AgentRunSessionManager();
+      sessionManager.startRun({ runId, threadId: crypto.randomUUID() });
+      const handler = new AgentRunCancelHandler(sessionManager);
+      const { jws, publicKeyPem } = await createControlPlaneSignature(body, {
+        requestId: runId,
+        requestMethod: "DELETE",
+        requestPath: `/api/control-plane/runs/${runId}`,
+      });
+
+      const result = await handler.handle(
+        new Request(`https://example.com/api/control-plane/runs/${runId}`, {
+          method: "DELETE",
+          headers: { "x-veryfront-control-plane-jws": jws },
+          body,
+        }),
+        createCtx(publicKeyPem),
+      );
+
+      assertExists(result.response);
+      assertEquals(result.response.status, 202);
+      assertEquals(await result.response.json(), { accepted: true });
+      assertEquals(sessionManager.getRunStatus(runId), null);
+    }
+  });
+
   it("cancels an active run with a valid control-plane signature", async () => {
     const sessionManager = new AgentRunSessionManager();
     sessionManager.startRun({ runId: "run_1", threadId: crypto.randomUUID() });

@@ -1,3 +1,4 @@
+import type { RunStopSettlement } from "./run-stop-registry.ts";
 import { privateJsonStringify } from "#veryfront/security/private-json.ts";
 import {
   appendPrivateArray,
@@ -240,6 +241,8 @@ export interface RuntimeAgentStreamExecutionDeps {
       callbacks?: {
         onFinish?: (response: AgentResponse) => void;
         onUsage?: (usage: RuntimeUsageTraceInput) => void;
+        /** Reports the producer's own settlement, including its cleanup, as stop evidence. */
+        onStreamCompletion?: (completion: Promise<void>) => void;
       },
       modelOverride?: string,
       maxOutputTokensOverride?: number,
@@ -1174,7 +1177,7 @@ export async function createRuntimeAgentStreamResponse(
     threadId: input.threadId,
     servingIdentity: deps.servingIdentity,
   });
-  let settledStop: () => void;
+  let settledStop: (outcome?: RunStopSettlement) => void;
   try {
     settledStop = deps.sessionManager.stopRegistry.register(input.runId, () => {
       deps.sessionManager.cancelRun(input.runId);
@@ -1469,7 +1472,12 @@ export async function createRuntimeAgentStreamResponse(
           ? runtimeDispatch.runtime.stream(
             runtimeMessages,
             runtimeContext,
-            runtimeStreamCallbacks,
+            {
+              ...runtimeStreamCallbacks,
+              onStreamCompletion: (completion) => {
+                producerCompletion = completion;
+              },
+            },
             undefined,
             maxOutputTokens,
             abortSignal,
@@ -1496,8 +1504,9 @@ export async function createRuntimeAgentStreamResponse(
   } catch (error) {
     deps.sessionManager.failRun(input.runId);
     await closeSandbox().then(() => {
-      if (producerCompletion) void producerCompletion.then(settledStop, settledStop);
-      else settledStop();
+      if (producerCompletion) {
+        void producerCompletion.then(() => settledStop(), () => settledStop());
+      } else settledStop();
     }).catch((cleanupError) => {
       logger.warn("Internal agent runtime sandbox cleanup failed after setup error", {
         runId: input.runId,
@@ -1935,7 +1944,11 @@ export async function createRuntimeAgentStreamResponse(
             // Reader cancellation may detach from a producer still running a tool.
             // Only the original producer's completion plus successful cleanup is positive evidence.
             if (sandboxClosed && producerCompletion) {
-              void producerCompletion.then(settledStop, settledStop);
+              void producerCompletion.then(() => settledStop(), () => settledStop());
+            } else if (sandboxClosed) {
+              // A runtime override that never reported its producer gives no settlement
+              // evidence; retire the registration so it cannot answer stops forever.
+              settledStop("abandoned");
             }
           }
         },

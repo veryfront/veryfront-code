@@ -68,4 +68,18 @@ describe("runtime cancellation settlement", () => {
     second();
     assertEquals(registry.requestStop("active"), { accepted: true, stopped: true });
   });
+
+  it("retires an abandoned registration without recording settlement evidence", () => {
+    const registry = new RunStopRegistry();
+    const orphan = registry.register("resume", () => {});
+    orphan("abandoned");
+    assertEquals(registry.requestStop("resume"), { accepted: false, stopped: false });
+
+    const retry = new RunStopRegistry();
+    const abandoned = retry.register("resume", () => {});
+    const owner = retry.register("resume", () => {});
+    abandoned("abandoned");
+    owner();
+    assertEquals(retry.requestStop("resume"), { accepted: true, stopped: true });
+  });
 });

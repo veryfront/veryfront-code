@@ -7936,6 +7936,65 @@ describe("server/handlers/request/project-run-execute.handler cancellation", () 
     assertEquals(registry.requestStop(runId), { accepted: true, stopped: true });
   });
 
+  it("retires a workflow resume registration that never admitted local execution", async () => {
+    const resume = { type: "approval", node_id: "review", approved: true, approver: "user:u1" };
+    const cases: Array<[string, string, Partial<ProjectRunExecuteHandlerDeps>]> = [
+      ["run_resume_missing_workflow", "workflow:missing", {}],
+      ["run_resume_client_failure", "workflow:publish", {
+        createWorkflowClient: () => {
+          throw new Error("workflow backend unavailable");
+        },
+      }],
+    ];
+    for (const [runId, target, overrides] of cases) {
+      const registry = new RunStopRegistry();
+      const handler = new ProjectRunExecuteHandler(createDeps(overrides), registry);
+      const signed = await signedRequest(`/api/control-plane/runs/${runId}/execute`, {
+        runId,
+        kind: "workflow",
+        target,
+        projectId: "proj-1",
+        resume,
+      });
+      await handler.handle(signed.request, createCtx(signed.publicKeyPem));
+      // No positive settlement, and no lingering registration that would mask the owner.
+      assertEquals(registry.requestStop(runId), { accepted: false, stopped: false });
+    }
+  });
+
+  it("retires a finished workflow registration by its stop evidence", async () => {
+    for (
+      const [runId, evidence] of [["run_workflow_unowned", false], [
+        "run_workflow_owned",
+        true,
+      ]] as const
+    ) {
+      const registry = new RunStopRegistry();
+      const base = createDeps();
+      const handler = new ProjectRunExecuteHandler(
+        createDeps({
+          createWorkflowClient: async (...args) => ({
+            ...(await base.createWorkflowClient(...args)),
+            waitForExecutionStopped: async () => evidence,
+          }),
+        }),
+        registry,
+      );
+      const signed = await signedRequest(`/api/control-plane/runs/${runId}/execute`, {
+        runId,
+        kind: "workflow",
+        target: "workflow:publish",
+        projectId: "proj-1",
+      });
+      await handler.handle(signed.request, createCtx(signed.publicKeyPem));
+      for (let tick = 0; tick < 5; tick++) await new Promise((resolve) => setTimeout(resolve, 0));
+      assertEquals(
+        registry.requestStop(runId),
+        evidence ? { accepted: true, stopped: true } : { accepted: false, stopped: false },
+      );
+    }
+  });
+
   it("delivers a durable stop independently of the original transport and confirms only settled task work", async () => {
     const registry = new RunStopRegistry();
     let begin!: () => void;

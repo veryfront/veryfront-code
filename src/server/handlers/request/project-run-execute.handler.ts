@@ -1629,6 +1629,7 @@ async function executeWorkflowRun(
   deps: ProjectRunExecuteHandlerDeps,
   acknowledgeStop?: () => Promise<void>,
   acknowledgePause?: () => Promise<boolean | undefined>,
+  releaseStop?: () => void,
 ): Promise<ProjectRunExecuteResponse> {
   let executionEntered = false;
   try {
@@ -1671,6 +1672,7 @@ async function executeWorkflowRun(
         startedAt,
         acknowledgeStop,
         acknowledgePause,
+        releaseStop,
       );
     } catch (error) {
       // A failure after discovery still ran against the declared schemas; keep their identity.
@@ -1683,8 +1685,12 @@ async function executeWorkflowRun(
       ...(outputSchemaSha256 ? { output_schema_sha256: outputSchemaSha256 } : {}),
     };
   } finally {
-    // Discovery/schema preparation never admitted execution; resumes may still run elsewhere.
-    if (!executionEntered && !request.resume) await acknowledgeStop?.();
+    // Discovery/schema preparation never admitted execution. A resume may still run
+    // elsewhere, so it drops its local registration without claiming settlement.
+    if (!executionEntered) {
+      if (request.resume) releaseStop?.();
+      else await acknowledgeStop?.();
+    }
   }
 }
 
@@ -1697,6 +1703,7 @@ async function runDiscoveredWorkflow(
   startedAt: number,
   acknowledgeStop?: () => Promise<void>,
   acknowledgePause?: () => Promise<boolean | undefined>,
+  releaseStop?: () => void,
 ): Promise<ProjectRunExecuteResponse> {
   // Only a durable run can pause: an ephemeral one has nothing to resume from.
   let pauseChecksEnabled = false;
@@ -1738,6 +1745,7 @@ async function runDiscoveredWorkflow(
     );
   } catch (error) {
     if (!request.resume) await acknowledgeStop?.();
+    else releaseStop?.();
     throw error;
   }
   pauseChecksEnabled = client.statePersistence === "durable";
@@ -1748,7 +1756,9 @@ async function runDiscoveredWorkflow(
   const acknowledgeSettledStop = () => {
     if (!stopped || stopAcknowledgement) return;
     stopAcknowledgement = primordialPromiseThen(stopped, async (confirmed) => {
+      // Without ownership evidence this pod never ran the execution: retire, never acknowledge.
       if (confirmed) await acknowledgeStop?.();
+      else releaseStop?.();
     });
   };
   try {
@@ -3886,6 +3896,7 @@ function executeProjectRun(
   deps: ProjectRunExecuteHandlerDeps,
   acknowledgeStop?: () => Promise<void>,
   acknowledgePause?: () => Promise<boolean | undefined>,
+  releaseStop?: () => void,
 ): Promise<ProjectRunExecuteResponse> {
   if (request.kind === "task") {
     const clockDescriptor = ObjectGetOwnPropertyDescriptor(deps, "taskDeadlineClock");
@@ -3921,7 +3932,15 @@ function executeProjectRun(
       clock,
     );
   }
-  return executeWorkflowRun(request, ctx, req.signal, deps, acknowledgeStop, acknowledgePause);
+  return executeWorkflowRun(
+    request,
+    ctx,
+    req.signal,
+    deps,
+    acknowledgeStop,
+    acknowledgePause,
+    releaseStop,
+  );
 }
 
 export class ProjectRunExecuteHandler extends BaseHandler {
@@ -3990,6 +4009,7 @@ export class ProjectRunExecuteHandler extends BaseHandler {
           settledStop();
           await callback?.();
         };
+        const releaseStop = () => settledStop("abandoned");
 
         return await withSpan(
           "project_run.execute",
@@ -4005,6 +4025,7 @@ export class ProjectRunExecuteHandler extends BaseHandler {
                     this.deps,
                     acknowledgeStop,
                     acknowledgePause,
+                    releaseStop,
                   )
                   : await runWithProjectRunInferenceCredential(
                     inferenceToken,
@@ -4016,6 +4037,7 @@ export class ProjectRunExecuteHandler extends BaseHandler {
                         this.deps,
                         acknowledgeStop,
                         acknowledgePause,
+                        releaseStop,
                       ),
                   ),
               );

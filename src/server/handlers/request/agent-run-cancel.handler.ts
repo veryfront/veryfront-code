@@ -27,6 +27,20 @@ function getRunId(pathname: string): string | null {
   return CANCEL_PATH_REGEX.exec(pathname)?.[1] ?? null;
 }
 
+const JsonParse = JSON.parse;
+
+/** A plain cancel may carry no body or a non-JSON one; only an explicit flag opts in. */
+function readConfirmStopped(rawBody: string): boolean {
+  if (rawBody.trim() === "") return false;
+  try {
+    const body: unknown = JsonParse(rawBody);
+    return typeof body === "object" && body !== null &&
+      (body as { confirmStopped?: unknown }).confirmStopped === true;
+  } catch {
+    return false;
+  }
+}
+
 export class AgentRunCancelHandler extends BaseHandler {
   metadata: HandlerMetadata = {
     name: "AgentRunCancelHandler",
@@ -71,7 +85,7 @@ export class AgentRunCancelHandler extends BaseHandler {
         setActiveSpanAttributes(
           this.sessionManager.getServingSpanAttributes(runId, ctx.projectId) ?? {},
         );
-        const confirmStopped = JSON.parse(rawBody)?.confirmStopped === true;
+        const confirmStopped = readConfirmStopped(rawBody);
         const stop = confirmStopped
           ? this.sessionManager.stopRegistry.requestStop(runId)
           : undefined;

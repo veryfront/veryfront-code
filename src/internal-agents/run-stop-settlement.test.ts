@@ -116,4 +116,78 @@ describe("agent stop acknowledgement", () => {
     }
     assertEquals(sessions.stopRegistry.requestStop(runId).stopped, true);
   });
+
+  it("settles a runtime override only through the producer completion it reports", async () => {
+    const sessions = new AgentRunSessionManager();
+    const runtimeAgent = agent({
+      id: "override-stop",
+      system: "Test override settlement",
+      model: "anthropic/override-stop",
+      skills: false,
+    });
+    let finish!: () => void;
+    const producer = new Promise<void>((resolve) => {
+      finish = resolve;
+    });
+    const emptyStream = () =>
+      new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.close();
+        },
+      });
+    const input = (runId: string) => ({
+      runId,
+      threadId: crypto.randomUUID(),
+      messages: [],
+      tools: [],
+      context: [],
+    });
+    const settle = async (runId: string, stopped: boolean) => {
+      for (
+        let attempt = 0;
+        attempt < 100 && sessions.stopRegistry.requestStop(runId).stopped !== stopped;
+        attempt++
+      ) {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      }
+    };
+
+    const reported = await createRuntimeAgentStreamResponse(
+      input("run_override_reported"),
+      runtimeAgent,
+      {
+        sessionManager: sessions,
+        createRuntime: () => ({
+          stream: (_messages, _context, callbacks) => {
+            callbacks?.onStreamCompletion?.(producer);
+            return Promise.resolve(emptyStream());
+          },
+        }),
+      },
+    );
+    await reported.text();
+    assertEquals(sessions.stopRegistry.requestStop("run_override_reported"), {
+      accepted: true,
+      stopped: false,
+    });
+    finish();
+    await settle("run_override_reported", true);
+    assertEquals(sessions.stopRegistry.requestStop("run_override_reported").stopped, true);
+
+    const silent = await createRuntimeAgentStreamResponse(
+      input("run_override_silent"),
+      runtimeAgent,
+      {
+        sessionManager: sessions,
+        createRuntime: () => ({ stream: () => Promise.resolve(emptyStream()) }),
+      },
+    );
+    await silent.text();
+    // Sandbox cleanup settles on later ticks; no stop request may race it.
+    for (let tick = 0; tick < 20; tick++) await new Promise((resolve) => setTimeout(resolve, 0));
+    assertEquals(sessions.stopRegistry.requestStop("run_override_silent"), {
+      accepted: false,
+      stopped: false,
+    });
+  });
 });

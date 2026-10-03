@@ -1,3 +1,5 @@
+export type RunStopSettlement = "stopped" | "abandoned";
+
 /** Positive local settlement evidence, kept separately from cancellation signals. */
 export class RunStopRegistry {
   private readonly runs = new Map<string, Set<() => void>>();
@@ -20,7 +22,11 @@ export class RunStopRegistry {
     return count;
   }
 
-  register(runId: string, abort: () => void): () => void {
+  /**
+   * Admit a local execution. The returned callback retires it: `"stopped"` records positive
+   * settlement evidence, `"abandoned"` drops a registration that never owned the execution.
+   */
+  register(runId: string, abort: () => void): (outcome?: RunStopSettlement) => void {
     this.prune();
     if (this.cancelled.has(runId)) throw new Error("Run cancelled");
     let executions = this.runs.get(runId);
@@ -32,12 +38,13 @@ export class RunStopRegistry {
     this.stopped.delete(runId);
     executions.add(abort);
     let settled = false;
-    return () => {
+    return (outcome = "stopped") => {
       if (settled) return;
       settled = true;
       executions.delete(abort);
       if (executions.size > 0) return;
       this.runs.delete(runId);
+      if (outcome === "abandoned") return;
       this.stopped.add(runId);
       // Evict only settlement receipts; active executions always remain tracked.
       if (this.stopped.size > 10_000) this.stopped.delete(this.stopped.values().next().value!);
