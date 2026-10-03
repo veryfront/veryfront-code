@@ -18,10 +18,7 @@ import {
   createNativeRequest,
   createNativeRequestInit,
 } from "#veryfront/platform/compat/http/native-request-init.ts";
-import {
-  getCurrentVeryfrontCloudContext,
-  markCurrentVeryfrontCloudBillingGroupUsed,
-} from "./context.ts";
+import { getCurrentVeryfrontCloudContext } from "./context.ts";
 import {
   canVeryfrontCloudCatalogRefuse,
   createRetiredVeryfrontCloudModelError,
@@ -791,8 +788,10 @@ export function createVeryfrontCloudFetch(
     // The billing group counts as used only once the outbound request is
     // built, past every refusal check: a refused call sends nothing, and an
     // eval must not finalize a group no request reached.
+    // Marked on the context read before the bearer joined the headers, not
+    // through another live store lookup that project code could hook.
     const built = (outbound: Request): Request => {
-      if (billingGroupId) markCurrentVeryfrontCloudBillingGroupUsed();
+      if (billingGroupId && cloudContext) cloudContext.billingGroupUsed = true;
       return outbound;
     };
     const responsePromise = IntrinsicReflectApply(
