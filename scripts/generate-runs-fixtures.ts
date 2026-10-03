@@ -106,7 +106,9 @@ export function extractRunsFixtures(
           const items = Array.isArray(parameter.example)
             ? parameter.example
             : [parameter.example];
-          for (const item of items) query.append(parameter.name, String(item));
+          for (const item of items) {
+            if (item != null) query.append(parameter.name, String(item));
+          }
         }
       }
       if (query.size) url += `?${query}`;

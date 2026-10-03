@@ -111,6 +111,25 @@ describe("Runs fixture generation", () => {
     );
   });
 
+  it("omits null query examples from the URL the same way as the SDK", () => {
+    const changed: RunsExampleDocument = structuredClone(document);
+    changed.paths["/runs/{run_id}"]!.get!.parameters!.push({
+      name: "label",
+      in: "query",
+      example: null,
+    }, {
+      name: "status",
+      in: "query",
+      example: ["running", null],
+    });
+    const fixture = extractRunsFixtures(changed).getRun!;
+    assertEquals(fixture.input.query, {
+      label: null,
+      status: ["running", null],
+    });
+    assertEquals(fixture.url, "/runs/run-example?status=running");
+  });
+
   it("fails rather than inventing missing success examples", () => {
     const changed: RunsExampleDocument = structuredClone(document);
     changed.paths["/runs/{run_id}"]!.get!.responses["200"]!
