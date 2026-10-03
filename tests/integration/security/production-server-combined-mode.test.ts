@@ -108,7 +108,11 @@ describe("production server combined mode with a signed control-plane request", 
             headers: { "x-project-slug": "demo", "x-veryfront-control-plane-jws": jws },
           });
         },
-      }, { bootstrap: () => Promise.reject(new Error("unexpected bootstrap")) });
+      }, {
+      bootstrap: () => Promise.reject(new Error("unexpected bootstrap")),
+      // The CLI's local combined mode, the one setup the interceptor is for.
+      isLocalCliProxyMode: () => true,
+    });
       try {
         const response = await served()(
           new Request(`http://localhost${path}`, {

@@ -764,7 +764,6 @@ export function createVeryfrontCloudFetch(
     const billingGroupId = billingGroup === undefined
       ? undefined
       : IntrinsicReflectApply(StringPrototypeTrim, billingGroup, []) as string;
-    if (billingGroupId) markCurrentVeryfrontCloudBillingGroupUsed();
     const initBody = init && IntrinsicReflectApply(ObjectHasOwn, undefined, [init, "body"])
       ? init.body
       : undefined;
@@ -773,8 +772,14 @@ export function createVeryfrontCloudFetch(
     const wireModelProvider = options?.wireModelProvider;
     const neutralRoute = options?.neutralRoute;
 
-    // Setting the bearer pushes it onto the header list's internal array.
+    // Refuse before the billing group counts as used: a refused call sends nothing.
     assertNativeRequestProcessing();
+    if (billingGroupId) {
+      markCurrentVeryfrontCloudBillingGroupUsed();
+      // Marking touches the context store again, so check once more.
+      assertNativeRequestProcessing();
+    }
+    // Setting the bearer pushes it onto the header list's internal array.
     IntrinsicReflectApply(HeadersSet, headers, ["Authorization", `Bearer ${trustedApiToken}`]);
     if (projectSlug) {
       IntrinsicReflectApply(HeadersSet, headers, ["x-veryfront-project-slug", projectSlug]);

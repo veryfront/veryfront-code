@@ -216,6 +216,8 @@ interface DirectProductionServerDependencies {
 
 interface StartProductionServerDependencies {
   bootstrap: typeof bootstrapProd;
+  /** Whether the CLI's local `start` command set this process up; defaults to the env marker. */
+  isLocalCliProxyMode?: () => boolean;
 }
 
 /** Starts production server. */
@@ -268,8 +270,11 @@ export function startProductionServerWithDependencies(
       // local CLI marker) gets its credentials from a separate proxy hop.
       // Checked again after bootstrap, which can load PROXY_MODE from the
       // project environment.
-      const refuseHostedInterceptor = () => {
-        if (requestInterceptor && getEnv("PROXY_MODE") === "1" && !isLocalCliProxyMode()) {
+      const refuseHostedInterceptor = (hostedProxyConfig = false) => {
+        if (
+          requestInterceptor && (hostedProxyConfig || getEnv("PROXY_MODE") === "1") &&
+          !(dependencies.isLocalCliProxyMode ?? isLocalCliProxyMode)()
+        ) {
           throw new TypeError(
             "requestInterceptor (combined mode) is for local development only and is refused " +
               "in hosted proxy mode",
@@ -306,7 +311,6 @@ export function startProductionServerWithDependencies(
         // Use pre-computed bootstrap result if provided, otherwise bootstrap here
         const bootstrap = suppliedBootstrap ??
           await dependencies.bootstrap(projectDir, baseAdapter);
-        refuseHostedInterceptor();
         if (!suppliedBootstrap) {
           ownedBootstrap = bootstrap;
           // Bootstrap loads the project's .env. Keep parent-env monitoring active
@@ -317,6 +321,8 @@ export function startProductionServerWithDependencies(
           if (ownsMemoryMonitoring && !config.enabled) stopMemoryMonitoring();
           ownsMemoryMonitoring = config.enabled;
         }
+        // After ownership is recorded, so a refusal still disposes the bootstrap.
+        refuseHostedInterceptor(bootstrap.config.fs?.veryfront?.proxyMode === true);
         const adapter = bootstrap.adapter;
         const nodeWebSocketServerProvider = suppliedBootstrap === undefined
           ? bootstrap.nodeWebSocketServerProvider
