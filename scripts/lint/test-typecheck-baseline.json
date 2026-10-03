@@ -10,7 +10,6 @@
   "cli/mcp/tools/project-tools.test.ts",
   "cli/mcp/tools/run-lint-tool.test.ts",
   "cli/mcp/tools/run-tests-tool.test.ts",
-  "src/agent/conversation/hosted-lifecycle.test.ts",
   "src/agent/conversation/run-context.test.ts",
   "src/agent/hosted/child-stream-watchdog.test.ts",
   "src/agent/memory/memory.test.ts",
