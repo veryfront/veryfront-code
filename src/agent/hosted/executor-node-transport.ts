@@ -204,7 +204,9 @@ export async function listenExecutorTransport(
   try {
     server = createServer({
       ...TLS_OPTIONS,
-      handshakeTimeout: HANDSHAKE_TIMEOUT_MS,
+      // Node defaults zero to 120s. A negative value disables its raw timer;
+      // the guarded pending-socket deadline below still enforces the five-second cap.
+      handshakeTimeout: -1,
       pskCallback(socket, presentedIdentity) {
         if (stopped || attached || presentedIdentity !== identity) return null;
         identified.add(socket);

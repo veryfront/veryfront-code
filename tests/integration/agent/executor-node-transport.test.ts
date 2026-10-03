@@ -1,4 +1,5 @@
 import { mock } from "node:test";
+import tls from "node:tls";
 import {
   createExecutorNodeClock,
   executorNodeClock,
@@ -270,6 +271,44 @@ if (typeof Deno !== "undefined") {
         raw.destroy();
         await closed;
         assertEquals(scheduled.size, 0);
+      }
+    });
+
+    it("uses the guarded deadline as the only listener handshake timer", async () => {
+      const { syncBuiltinESMExports } = await import("node:module");
+      let nativeTimeout: number | undefined;
+      let observed = false;
+      const original = tls.createServer;
+      const factory = mock.method(
+        tls,
+        "createServer",
+        (options: import("node:tls").TlsOptions) =>
+          original({
+            ...options,
+            pskCallback(socket, identity) {
+              nativeTimeout = socket.timeout;
+              observed = true;
+              return options.pskCallback!(socket, identity);
+            },
+          }),
+      );
+      syncBuiltinESMExports();
+      try {
+        const { listener, client } = await pair();
+        try {
+          assert(observed);
+          assertEquals(
+            nativeTimeout,
+            undefined,
+            "native TLS timer must not bypass the guarded deadline",
+          );
+        } finally {
+          listener.close();
+          client.close();
+        }
+      } finally {
+        factory.mock.restore();
+        syncBuiltinESMExports();
       }
     });
 
