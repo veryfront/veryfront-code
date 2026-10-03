@@ -472,36 +472,63 @@ export class WebSocketManager {
    * Requests carrying a current credential get a fresh adapter.
    */
   private retireForCredential(reason: "expired" | "rejected"): void {
-    if (this.credentialRetired) return;
+    if (this.credentialRetired || this.disposed) return;
     this.credentialRetired = true;
-    logger.info("Retiring adapter whose API credential is no longer accepted", {
-      projectSlug: this.deps.projectSlug,
-      reason,
-    });
+    logger.info(
+      reason === "expired"
+        ? "Retiring adapter whose API credential expired"
+        : "Retiring adapter whose API credential was rejected",
+      { projectSlug: this.deps.projectSlug },
+    );
     this.deps.invalidationCallbacks.evictCurrentAdapter?.();
   }
 
-  private handleQueuedInvalidationFailure(
-    message: "Queued full invalidation failed" | "Queued selective invalidation failed",
-    error: unknown,
-  ): void {
-    if (isCacheCredentialRejection(error)) {
-      this.retireForCredential("rejected");
-      return;
+  /** Whether this adapter's credential can no longer invalidate caches. */
+  private retireIfCredentialUnusable(): boolean {
+    if (this.credentialRetired) return true;
+    if (!this.deps.invalidationCallbacks.isCredentialExpired?.()) return false;
+    this.retireForCredential("expired");
+    return true;
+  }
+
+  /**
+   * Run debounced invalidations in order. The credential is checked before
+   * each one, because it can expire or be refused between the poke and the
+   * batch. Batches skipped that way release their preview markers, as
+   * `dispose()` does for batches that never ran.
+   */
+  private async runQueuedInvalidations<T extends { token: PreviewInvalidationToken }>(
+    queued: T[],
+    perform: (invalidation: T) => Promise<void>,
+    failureMessage: "Queued full invalidation failed" | "Queued selective invalidation failed",
+  ): Promise<void> {
+    for (const [index, invalidation] of queued.entries()) {
+      if (this.retireIfCredentialUnusable()) {
+        for (const skipped of queued.slice(index)) this.completePreviewInvalidation(skipped.token);
+        return;
+      }
+      try {
+        await perform(invalidation);
+      } catch (error) {
+        if (isCacheCredentialRejection(error)) {
+          this.retireForCredential("rejected");
+          continue;
+        }
+        logger.error(failureMessage, {
+          projectSlug: this.deps.projectSlug,
+          error,
+        });
+      }
     }
-    logger.error(message, {
-      projectSlug: this.deps.projectSlug,
-      error,
-    });
   }
 
   private handlePokeMessage(event: MessageEvent): void {
     try {
       const message = parsePokeWebSocketMessage(event.data as string);
       if (!message) return;
-      if (this.credentialRetired) return;
-      if (this.deps.invalidationCallbacks.isCredentialExpired?.()) {
-        this.retireForCredential("expired");
+      if (this.retireIfCredentialUnusable()) {
+        // The domain cache is process-wide and needs no API credential.
+        this.deps.invalidationCallbacks.clearDomainCache?.();
         return;
       }
       const payload = message.payload;
@@ -813,15 +840,11 @@ export class WebSocketManager {
       this.invalidationTimer = null;
       const pending = [...this.pendingFullInvalidations.values()];
       this.pendingFullInvalidations.clear();
-      void (async () => {
-        for (const invalidation of pending) {
-          try {
-            await this.performInvalidation(invalidation.contentContext, invalidation.token);
-          } catch (error) {
-            this.handleQueuedInvalidationFailure("Queued full invalidation failed", error);
-          }
-        }
-      })();
+      void this.runQueuedInvalidations(
+        pending,
+        (invalidation) => this.performInvalidation(invalidation.contentContext, invalidation.token),
+        "Queued full invalidation failed",
+      );
     }, INVALIDATION_DEBOUNCE_MS);
   }
 
@@ -858,20 +881,17 @@ export class WebSocketManager {
       this.selectiveInvalidationTimer = null;
       const scheduled = [...this.pendingSelectiveInvalidations.values()];
       this.pendingSelectiveInvalidations.clear();
-      void (async () => {
-        for (const invalidation of scheduled) {
-          try {
-            await this.performSelectiveInvalidation(
-              [...invalidation.changedPaths],
-              invalidation.contentContext,
-              invalidation.token,
-              invalidation.reservedDataOnly,
-            );
-          } catch (error) {
-            this.handleQueuedInvalidationFailure("Queued selective invalidation failed", error);
-          }
-        }
-      })();
+      void this.runQueuedInvalidations(
+        scheduled,
+        (invalidation) =>
+          this.performSelectiveInvalidation(
+            [...invalidation.changedPaths],
+            invalidation.contentContext,
+            invalidation.token,
+            invalidation.reservedDataOnly,
+          ),
+        "Queued selective invalidation failed",
+      );
     }, INVALIDATION_DEBOUNCE_MS);
   }
 

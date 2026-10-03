@@ -2203,6 +2203,7 @@ describe("WebSocketManager", () => {
     it("retires an adapter whose credential expired instead of invalidating under it", async () => {
       const cacheCalls: string[] = [];
       const evictions = { count: 0 };
+      const domainCacheClears = { count: 0 };
       const manager = createWebSocketManager({
         cache: {
           deleteByPrefixAsync: (prefix: string) => {
@@ -2216,6 +2217,9 @@ describe("WebSocketManager", () => {
         },
         invalidationCallbacks: {
           isCredentialExpired: () => true,
+          clearDomainCache: () => {
+            domainCacheClears.count++;
+          },
           evictCurrentAdapter: () => {
             evictions.count++;
           },
@@ -2232,6 +2236,78 @@ describe("WebSocketManager", () => {
 
       assertEquals(cacheCalls, [], "an expired credential must not reach the cache API");
       assertEquals(evictions.count, 1, "the adapter retires on the first poke after expiry");
+      assertEquals(domainCacheClears.count, 2, "the process-wide domain cache is still cleared");
+      manager.dispose();
+    });
+
+    it("retires an adapter whose credential expired between the poke and its batch", async () => {
+      let expired = false;
+      const cacheCalls: string[] = [];
+      const evictions = { count: 0 };
+      const manager = createWebSocketManager({
+        cache: {
+          deleteByPrefixAsync: (prefix: string) => {
+            cacheCalls.push(prefix);
+            return Promise.resolve(0);
+          },
+          deleteByPrefixAndSuffixAsync: (prefix: string, suffix: string) => {
+            cacheCalls.push(`${prefix}*:${suffix}`);
+            return Promise.resolve(0);
+          },
+        },
+        invalidationCallbacks: {
+          isCredentialExpired: () => expired,
+          evictCurrentAdapter: () => {
+            evictions.count++;
+          },
+        },
+      });
+      manager.connect("project-1");
+      const socket = MockWebSocket.instances[0];
+      assertExists(socket);
+
+      deliverPoke(socket, { changedPaths: ["data/rows.json"], branchName: "main" });
+      deliverPoke(socket, { branchName: "main" });
+      expired = true;
+      runScheduledTimers();
+      await flushMicrotasks();
+
+      assertEquals(cacheCalls, [], "a batch that runs after expiry must not reach the cache API");
+      assertEquals(evictions.count, 1);
+      manager.dispose();
+    });
+
+    it("ignores later pokes once the API rejected the adapter's credential", async () => {
+      let deleteCalls = 0;
+      const evictions = { count: 0 };
+      const manager = createWebSocketManager({
+        cache: {
+          deleteByPrefixAndSuffixAsync: () => {
+            deleteCalls++;
+            return Promise.reject(rejectedCredential(401));
+          },
+        },
+        invalidationCallbacks: {
+          evictCurrentAdapter: () => {
+            evictions.count++;
+          },
+        },
+      });
+      manager.connect("project-1");
+      const socket = MockWebSocket.instances[0];
+      assertExists(socket);
+
+      deliverPoke(socket, { changedPaths: ["data/rows.json"], branchName: "main" });
+      runScheduledTimers();
+      await flushMicrotasks();
+      const rejectedCalls = deleteCalls;
+
+      deliverPoke(socket, { changedPaths: ["data/other.json"], branchName: "main" });
+      runScheduledTimers();
+      await flushMicrotasks();
+
+      assertEquals(deleteCalls, rejectedCalls, "a refused credential is not tried again");
+      assertEquals(evictions.count, 1);
       manager.dispose();
     });
 
