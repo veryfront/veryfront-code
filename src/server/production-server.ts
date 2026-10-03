@@ -270,8 +270,13 @@ export function startProductionServerWithDependencies(
       // local CLI marker) gets its credentials from a separate proxy hop.
       // Checked again after bootstrap, which can load PROXY_MODE from the
       // project environment.
-      // Read once, before bootstrap loads project code that could set the marker.
-      const localCliProxyMode = (dependencies.isLocalCliProxyMode ?? isLocalCliProxyMode)();
+      // Read once, before bootstrap loads project code that could set the
+      // marker. A supplied bootstrap has already evaluated project code, so
+      // the environment marker proves nothing then; only an explicit
+      // attestation from the caller counts.
+      const localCliProxyMode = dependencies.isLocalCliProxyMode
+        ? dependencies.isLocalCliProxyMode()
+        : suppliedBootstrap === undefined && isLocalCliProxyMode();
       const refuseHostedInterceptor = (hostedProxyConfig = false) => {
         if (
           requestInterceptor && (hostedProxyConfig || getEnv("PROXY_MODE") === "1") &&

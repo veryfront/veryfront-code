@@ -5,10 +5,11 @@
  */
 
 import type { ClientRequest, IncomingMessage, RequestOptions } from "node:http";
+import * as nodeHttp from "node:http";
+import * as nodeHttps from "node:https";
 import type { Readable } from "node:stream";
 import { VERSION } from "#veryfront/utils/version-constant.ts";
 import { isErrorAcrossRealms } from "../error-introspection.ts";
-import { isBun, isNode } from "../runtime.ts";
 import {
   assertNativeRequestProcessing,
   assertObjectPrototypeUnchanged,
@@ -39,31 +40,17 @@ const BlobTypeGetter = Object.getOwnPropertyDescriptor(Blob.prototype, "type")!.
 type NodeRequestFunction = typeof import("node:http").request;
 
 /**
- * `node:http` and `node:https` `request`, captured as this module loads on
- * Node and Bun, before project code could replace them (or update the
- * built-in exports through `syncBuiltinESMExports`): the function receives
- * the options and their credential-bearing headers. Elsewhere this transport
- * only runs in tests, which import the modules when they first send.
+ * `node:http` and `node:https` `request`, copied into constants while this
+ * module evaluates. Static imports evaluate before any module that imports
+ * this one, project code included, and the copies do not follow later
+ * changes to the live bindings (`syncBuiltinESMExports`): the function
+ * receives the options and their credential-bearing headers.
  */
-const capturedNodeRequests:
-  | Promise<{ http: NodeRequestFunction; https: NodeRequestFunction }>
-  | undefined = isNode || isBun
-    ? Promise.all([import("node:http"), import("node:https")]).then(([http, https]) => ({
-      http: http.request,
-      https: https.request,
-    }))
-    : undefined;
+const capturedHttpRequest: NodeRequestFunction = nodeHttp.request;
+const capturedHttpsRequest: NodeRequestFunction = nodeHttps.request;
 
-// Surfaced on first send instead, should a built-in ever fail to load.
-capturedNodeRequests?.catch(() => undefined);
-
-async function loadNodeRequest(protocol: string): Promise<NodeRequestFunction> {
-  const requests = await (capturedNodeRequests ??
-    Promise.all([import("node:http"), import("node:https")]).then(([http, https]) => ({
-      http: http.request,
-      https: https.request,
-    })));
-  return protocol === "https:" ? requests.https : requests.http;
+function nodeRequestFor(protocol: string): NodeRequestFunction {
+  return protocol === "https:" ? capturedHttpsRequest : capturedHttpRequest;
 }
 
 function isInstance(value: unknown, constructor: unknown): boolean {
@@ -372,7 +359,7 @@ export async function fetchWithPinnedAddresses(
   const setCookies = readSeparateSetCookies(requestHeaders);
   const signal = readOwnInitField(init, "signal") ?? undefined;
 
-  const sendRequest = await loadNodeRequest(url.protocol);
+  const sendRequest = nodeRequestFor(url.protocol);
   const attempts = planPinnedConnectAttempts(addresses);
   const bodyIsReplayable = isReplayableRequestBody(body);
   let lastConnectError: unknown;

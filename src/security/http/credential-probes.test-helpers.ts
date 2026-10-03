@@ -334,3 +334,31 @@ export function installArrayWriteProbe(route: ArrayWriteRoute): ArrayWriteProbe 
   }
   return { saw: (secret) => seen.includes(secret), restore };
 }
+
+/**
+ * Stand in for project code that hooks JSON serialisation: an
+ * `Object.prototype.toJSON` that runs `onCall` once and then serialises the
+ * object unchanged. Returns the restore function.
+ */
+export function installObjectToJsonHook(onCall: () => void): () => void {
+  const original = Object.getOwnPropertyDescriptor(Object.prototype, "toJSON");
+  let called = false;
+  Object.defineProperty(Object.prototype, "toJSON", {
+    configurable: true,
+    writable: true,
+    value(this: Record<string, unknown>) {
+      if (!called) {
+        called = true;
+        onCall();
+      }
+      const copy: Record<string, unknown> = {};
+      for (const key of Object.keys(this)) copy[key] = this[key];
+      Object.defineProperty(copy, "toJSON", { value: undefined });
+      return copy;
+    },
+  });
+  return () => {
+    if (original) Object.defineProperty(Object.prototype, "toJSON", original);
+    else Reflect.deleteProperty(Object.prototype, "toJSON");
+  };
+}

@@ -186,4 +186,24 @@ describe("production server combined-mode interceptor in hosted proxy mode", () 
       else setEnv("PROXY_MODE", previous);
     }
   });
+
+  it("refuses it for a supplied hosted bootstrap even when the marker is set", async () => {
+    // A supplied bootstrap already ran project code, which could have set this.
+    await withEnv({ VERYFRONT_CLI_LOCAL_PROXY_MODE: "1" }, async () => {
+      const adapter = createMockAdapter();
+      await assertRejects(
+        () =>
+          startProductionServerWithDependencies({
+            projectDir: "/combined-mode",
+            port: 0,
+            adapter,
+            bootstrapResult: createBootstrap(adapter),
+            unhandledRejectionGuard: false,
+            requestInterceptor: (request) => request,
+          }, { bootstrap: () => Promise.reject(new Error("unexpected bootstrap")) }),
+        TypeError,
+        "local development only",
+      );
+    });
+  });
 });

@@ -9,6 +9,7 @@ import {
   HEADER_METHODS,
   installArrayWriteProbe,
   installCredentialProbes,
+  installObjectToJsonHook,
 } from "#veryfront/security/http/credential-probes.test-helpers.ts";
 import { isVeryfrontGatewayResponse } from "#veryfront/provider/runtime-loader/provider-http.ts";
 import {
@@ -414,6 +415,49 @@ describe("provider/veryfront-cloud/shared", () => {
 
     assertEquals(transportCalls, 0);
     assertEquals(probe?.saw(bearer), false);
+  });
+
+  it("leaves the billing group unused when a neutral-route call is refused", async () => {
+    const bearer = "vf_model_call_neutral_bearer_7c20";
+    const wrappedFetch = createVeryfrontCloudFetch(
+      bearer,
+      "https://93.184.216.34/ai/v1",
+      undefined,
+      { wireModelProvider: "openai" },
+    );
+    const context: VeryfrontCloudContext = { billingGroupId: "evalrun_neutral_refused" };
+    let transportCalls = 0;
+    let probe: ReturnType<typeof installArrayWriteProbe> | undefined;
+    // Project code hooks the body rewrite and installs an array species probe.
+    const restoreHook = installObjectToJsonHook(() => {
+      probe = installArrayWriteProbe("Array[Symbol.species]");
+    });
+    try {
+      await withMockFetch(
+        () => {
+          transportCalls++;
+          return Promise.resolve(new Response(null, { status: 204 }));
+        },
+        () =>
+          assertRejects(
+            async () =>
+              await runWithVeryfrontCloudContext(context, () =>
+                wrappedFetch("https://93.184.216.34/ai/v1/chat/completions", {
+                  method: "POST",
+                  body: '{"model":"gpt-test"}',
+                })),
+            TypeError,
+            "Refused a credential-bearing request",
+          ),
+      );
+    } finally {
+      restoreHook();
+      probe?.restore();
+    }
+
+    assertEquals(transportCalls, 0);
+    assertEquals(probe?.saw(bearer), false);
+    assertEquals(context.billingGroupUsed, undefined);
   });
 
   it("aborts an in-flight gateway request when the caller signal aborts (#1815)", async () => {
