@@ -2,7 +2,7 @@ import {
   snapshotTaskDeadlineClock,
   systemTaskDeadlineClock,
   type TaskDeadlineClock,
-} from "./task-deadline-clock.ts";
+} from "#veryfront/server/handlers/request/task-deadline-clock.ts";
 import {
   API_CLIENT_ERROR,
   INPUT_VALIDATION_FAILED,
