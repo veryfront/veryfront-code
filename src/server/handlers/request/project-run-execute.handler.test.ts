@@ -2902,6 +2902,67 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     });
   }
 
+  const cyclicEvalInput: Record<string, unknown> = {};
+  cyclicEvalInput.self = cyclicEvalInput;
+  for (
+    const invalidInput of [{ name: "bigint", input: 1n }, { name: "cycle", input: cyclicEvalInput }]
+  ) {
+    it(`preserves the completed eval summary when ${invalidInput.name} prevents report serialization`, async () => {
+      let uploads = 0;
+      const report: EvalReport = {
+        kind: "eval-report",
+        runId: "run_eval_unserializable",
+        definitionId: "eval:deep-research",
+        targetKind: "agent",
+        target: "agent:researcher",
+        startedAt: "2026-09-30T10:00:00.000Z",
+        endedAt: "2026-09-30T10:00:01.000Z",
+        summary: { records: 1, passed: 1, failed: 0, passRate: 1, metrics: [] },
+        records: [{
+          id: "q1:1",
+          evalId: "eval:deep-research",
+          exampleId: "q1",
+          repetition: 1,
+          input: invalidInput.input,
+          output: "Paris",
+          metadata: {},
+          trace: { events: [], toolCalls: [] },
+          usage: {},
+          durationMs: 10,
+          completed: true,
+        }],
+      };
+      const handler = new ProjectRunExecuteHandler(createDeps({
+        runTask: runTaskDefinition,
+        runEval: async () => report,
+        uploadEvalReport: async () => {
+          uploads++;
+          return "evals/report.json";
+        },
+      }));
+      const signed = await signedRequest(
+        "/api/control-plane/runs/run_eval_unserializable/execute",
+        {
+          runId: "run_eval_unserializable",
+          kind: "task",
+          target: "task:eval",
+          projectId: "proj-1",
+          config: { eval_id: "eval:deep-research" },
+        },
+        { "x-token": "runtime-token" },
+      );
+      const result = await handler.handle(signed.request, createCtx(signed.publicKeyPem));
+      assertExists(result.response);
+      const payload = await result.response.json();
+      assertEquals(payload.success, false);
+      assertEquals(payload.result, report.summary);
+      assertStringIncludes(payload.error, "Eval report upload failed:");
+      assertStringIncludes(payload.logs, "Eval report upload failed:");
+      assertEquals(payload.artifacts, undefined);
+      assertEquals(uploads, 0);
+    });
+  }
+
   for (const cancelled of [true, false]) {
     it(`eval report upload ${cancelled ? "aborts while pending" : "succeeds exactly once"}`, async () => {
       const uploadStarted = Promise.withResolvers<void>();

@@ -29,6 +29,7 @@ import {
   primordialPromiseResolve,
   primordialPromiseThen,
 } from "#veryfront/platform/compat/primordials/promise.ts";
+import { primordialArrayMap } from "#veryfront/platform/compat/primordials/array.ts";
 import { getRequestTransportLifetime } from "#veryfront/platform/adapters/runtime/shared/request-peer.ts";
 import { createVeryfrontApiOriginBoundOutboundFetch } from "#veryfront/security/http/outbound-fetch.ts";
 import {
@@ -156,6 +157,7 @@ const NumberIsFinite = Number.isFinite;
 const NumberParseInt = Number.parseInt;
 const MathTrunc = Math.trunc;
 const ObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const ObjectSetPrototypeOf = Object.setPrototypeOf;
 const NumberPrototypeToString = Number.prototype.toString;
 const StringPrototypeCharCodeAt = String.prototype.charCodeAt;
 const StringPrototypeTrim = String.prototype.trim;
@@ -679,8 +681,9 @@ function serializeEvalReportFile(report: EvalReport, reportPath: string): string
 async function createEvalReportArtifact(
   path: string,
   content: string,
-): Promise<Record<string, string | number>> {
+): Promise<Record<string, unknown>> {
   return {
+    __proto__: null,
     kind: "eval-report",
     path,
     contentType: "application/json",
@@ -728,6 +731,24 @@ function createInputValidationFailure(
   };
 }
 
+/** Keep artifact identity outside the shared prototype graph during wire serialization. */
+function serializeRunResponseEnvelope(response: ProjectRunExecuteResponse): string {
+  const envelope = { __proto__: null, ...response };
+  if (ArrayIsArray(envelope.artifacts)) {
+    envelope.artifacts = ObjectSetPrototypeOf(
+      primordialArrayMap(
+        envelope.artifacts!,
+        (artifact) =>
+          typeof artifact === "object" && artifact !== null && !ArrayIsArray(artifact)
+            ? { __proto__: null, ...artifact }
+            : artifact,
+      ),
+      null,
+    );
+  }
+  return serializeRunOutput(envelope) ?? "null";
+}
+
 /**
  * Applies the run output limit before a response is sent (veryfront/veryfront-issue-inbox#2113).
  * A successful result over the limit becomes an OUTPUT_TOO_LARGE failure without the result; a
@@ -738,7 +759,7 @@ function enforceRunOutputLimit(response: ProjectRunExecuteResponse): {
   wireJson: string;
 } {
   if (!("result" in response)) {
-    return { response, wireJson: serializeRunOutput(response) ?? "null" };
+    return { response, wireJson: serializeRunResponseEnvelope(response) };
   }
   // Serialize once: the checked serialization is the one sent, so a result whose `toJSON`
   // or getters change between serializations cannot slip past the limit.
@@ -754,7 +775,7 @@ function enforceRunOutputLimit(response: ProjectRunExecuteResponse): {
     const { result: _checked, ...envelope } = response;
     return {
       response: safeResponse,
-      wireJson: withSerializedResult(serializeRunOutput(envelope) ?? "{}", serialized),
+      wireJson: withSerializedResult(serializeRunResponseEnvelope(envelope), serialized),
     };
   }
 
@@ -768,7 +789,7 @@ function enforceRunOutputLimit(response: ProjectRunExecuteResponse): {
       error_detail: tooLarge.detail,
     }
     : withoutResult;
-  return { response: safeResponse, wireJson: serializeRunOutput(safeResponse) ?? "null" };
+  return { response: safeResponse, wireJson: serializeRunResponseEnvelope(safeResponse) };
 }
 
 /** Appends an already serialized `result` member to a serialized response envelope. */
@@ -2972,23 +2993,26 @@ async function executeEvalRun(
   const failed = Math.max(report.summary.failed, countFailedEvalRecords(report));
   const projectReference = ctx.projectSlug ?? request.projectId;
   const requestedReportPath = buildEvalReportPath(report, request);
-  const reportContent = serializeEvalReportFile(report, requestedReportPath);
-  const artifact = await createEvalReportArtifact(requestedReportPath, reportContent);
-  options.signal?.throwIfAborted();
+  let artifact: Record<string, unknown> | null = null;
+  let reportPath: string | null = null;
   let uploadError: string | null = null;
-  const reportPath = await deps.uploadEvalReport({
-    request,
-    ctx,
-    req,
-    report,
-    projectReference,
-    reportPath: requestedReportPath,
-    content: reportContent,
-    signal: options.signal,
-  }).catch((error) => {
+  try {
+    const reportContent = serializeEvalReportFile(report, requestedReportPath);
+    artifact = await createEvalReportArtifact(requestedReportPath, reportContent);
+    options.signal?.throwIfAborted();
+    reportPath = await deps.uploadEvalReport({
+      request,
+      ctx,
+      req,
+      report,
+      projectReference,
+      reportPath: requestedReportPath,
+      content: reportContent,
+      signal: options.signal,
+    });
+  } catch (error) {
     uploadError = `Eval report upload failed: ${errorMessage(error)}`;
-    return null;
-  });
+  }
   options.signal?.throwIfAborted();
   const result = options.summaryOnly
     ? report.summary
@@ -3007,7 +3031,7 @@ async function executeEvalRun(
   return {
     success: failureMessages.length === 0,
     result,
-    ...(reportPath ? { artifacts: [{ ...artifact, path: reportPath }] } : {}),
+    ...(reportPath ? { artifacts: [{ __proto__: null, ...artifact, path: reportPath }] } : {}),
     ...(failureMessages.length > 0 ? { error: failureMessages.join("; ") } : {}),
     logs,
     duration_ms: Math.max(0, deps.now() - startedAt),
