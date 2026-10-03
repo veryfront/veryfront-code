@@ -40,32 +40,6 @@ describe("fetchWithPinnedAddresses", () => {
     assertEquals(probe.saw(BEARER), false);
   });
 
-  it("refuses the node:http call once Object.prototype gained a member", async () => {
-    // node:http copies its options into an ordinary object and reads `agent`
-    // and others from it, so a getter here would run with the headers in reach.
-    let sawBearer = false;
-    Object.defineProperty(Object.prototype, "agent", {
-      configurable: true,
-      get(this: { headers?: Record<string, unknown> }) {
-        if (this?.headers && Object.values(this.headers).includes(BEARER)) sawBearer = true;
-        return undefined;
-      },
-    });
-    try {
-      await assertRejects(
-        () =>
-          fetchWithPinnedAddresses(new URL("http://pinned.example.test/"), ["127.0.0.1"], {
-            headers: { authorization: BEARER },
-          }),
-        TypeError,
-        "Object.prototype",
-      );
-    } finally {
-      delete (Object.prototype as Record<string, unknown>).agent;
-    }
-    assertEquals(sawBearer, false);
-  });
-
   it("preserves Fetch null-body semantics for 204, 205, and 304", async () => {
     for (const status of [204, 205, 304]) {
       const response = createPinnedFetchResponse(

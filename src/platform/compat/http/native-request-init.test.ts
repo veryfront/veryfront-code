@@ -14,7 +14,6 @@ import {
 import {
   assertArrayWritesUnobserved,
   assertNativeRequestProcessing,
-  assertObjectPrototypeUnchanged,
   copyNativeHeaders,
   createNativeRequest,
   createNativeRequestInit,
@@ -54,24 +53,6 @@ describe("platform/compat/http/native-request-init", () => {
       assertNativeRequestProcessing();
     });
   }
-
-  it("refuses node:http options once Object.prototype gained or replaced a member", () => {
-    assertObjectPrototypeUnchanged();
-    const original = Object.getOwnPropertyDescriptor(Object.prototype, "toString")!;
-    Object.defineProperty(Object.prototype, "lookup", { configurable: true, get: () => undefined });
-    try {
-      assertThrows(() => assertObjectPrototypeUnchanged(), TypeError, "Object.prototype");
-    } finally {
-      delete (Object.prototype as Record<string, unknown>).lookup;
-    }
-    Object.defineProperty(Object.prototype, "toString", { ...original, value: () => "" });
-    try {
-      assertThrows(() => assertObjectPrototypeUnchanged(), TypeError, "Object.prototype");
-    } finally {
-      Object.defineProperty(Object.prototype, "toString", original);
-    }
-    assertObjectPrototypeUnchanged();
-  });
 
   it(
     "builds the headers and init without a patched intrinsic seeing the bearer",

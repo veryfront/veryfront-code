@@ -1,5 +1,4 @@
-import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
-import { deleteEnv, getEnv, setEnv } from "#veryfront/testing/deno-compat.ts";
+import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { isDeno } from "#veryfront/platform/compat/runtime.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
@@ -73,58 +72,5 @@ describe("production server ingress", () => {
     assertEquals(seenByInterceptor, [null]);
     assertEquals(probes.saw(API_TOKEN), false);
     assertEquals(probes.saw(INFERENCE_TOKEN), false);
-  });
-
-  it("refuses the combined-mode interceptor in hosted proxy mode", async () => {
-    const previous = getEnv("PROXY_MODE");
-    setEnv("PROXY_MODE", "1");
-    try {
-      const adapter = createMockAdapter();
-      await assertRejects(
-        () =>
-          startProductionServerWithDependencies({
-            projectDir: "/combined-mode",
-            port: 0,
-            adapter,
-            bootstrapResult: createBootstrap(adapter),
-            unhandledRejectionGuard: false,
-            requestInterceptor: (request) => request,
-          }, { bootstrap: () => Promise.reject(new Error("unexpected bootstrap")) }),
-        TypeError,
-        "local development only",
-      );
-    } finally {
-      if (previous === undefined) deleteEnv("PROXY_MODE");
-      else setEnv("PROXY_MODE", previous);
-    }
-  });
-
-  it("refuses the interceptor when bootstrap loads hosted proxy mode", async () => {
-    const previous = getEnv("PROXY_MODE");
-    if (previous !== undefined) deleteEnv("PROXY_MODE");
-    try {
-      const adapter = createMockAdapter();
-      await assertRejects(
-        () =>
-          startProductionServerWithDependencies({
-            projectDir: "/combined-mode",
-            port: 0,
-            adapter,
-            unhandledRejectionGuard: false,
-            requestInterceptor: (request) => request,
-          }, {
-            // Stands in for bootstrap loading PROXY_MODE from the project env.
-            bootstrap: () => {
-              setEnv("PROXY_MODE", "1");
-              return Promise.resolve(createBootstrap(adapter));
-            },
-          }),
-        TypeError,
-        "local development only",
-      );
-    } finally {
-      if (previous === undefined) deleteEnv("PROXY_MODE");
-      else setEnv("PROXY_MODE", previous);
-    }
   });
 });

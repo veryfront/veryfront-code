@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   HEADER_METHODS,
@@ -10,9 +10,11 @@ import {
   recordNativePrototypeUse,
 } from "../../../src/platform/compat/http/native-request-use.test-helpers.ts";
 import {
+  assertObjectPrototypeUnchanged,
   copyNativeHeaders,
   createNativeRequestInit,
 } from "../../../src/platform/compat/http/native-request-init.ts";
+import { fetchWithPinnedAddresses } from "../../../src/platform/compat/http/pinned-fetch.ts";
 import { guardedEgressFetch } from "../../../src/security/sandbox/worker-egress-guard.ts";
 
 const BEARER = "Bearer vf-native-fetch-bearer-0a4d";
@@ -138,5 +140,55 @@ describe("native fetch with credential headers", () => {
       assertEquals(probes.saw(BEARER), false);
       assertEquals(received, []);
     });
+  });
+});
+
+// Object.prototype is shared by the whole isolate, so these run as integration tests.
+describe("node:http options and a modified Object.prototype", () => {
+  const PINNED_BEARER = "Bearer vf-pinned-bearer-41c9";
+
+  it("refuses node:http options once Object.prototype gained or replaced a member", () => {
+    assertObjectPrototypeUnchanged();
+    const original = Object.getOwnPropertyDescriptor(Object.prototype, "toString")!;
+    Object.defineProperty(Object.prototype, "lookup", { configurable: true, get: () => undefined });
+    try {
+      assertThrows(() => assertObjectPrototypeUnchanged(), TypeError, "Object.prototype");
+    } finally {
+      delete (Object.prototype as Record<string, unknown>).lookup;
+    }
+    Object.defineProperty(Object.prototype, "toString", { ...original, value: () => "" });
+    try {
+      assertThrows(() => assertObjectPrototypeUnchanged(), TypeError, "Object.prototype");
+    } finally {
+      Object.defineProperty(Object.prototype, "toString", original);
+    }
+    assertObjectPrototypeUnchanged();
+  });
+
+
+  it("refuses the node:http call once Object.prototype gained a member", async () => {
+    // node:http copies its options into an ordinary object and reads `agent`
+    // and others from it, so a getter here would run with the headers in reach.
+    let sawBearer = false;
+    Object.defineProperty(Object.prototype, "agent", {
+      configurable: true,
+      get(this: { headers?: Record<string, unknown> }) {
+        if (this?.headers && Object.values(this.headers).includes(PINNED_BEARER)) sawBearer = true;
+        return undefined;
+      },
+    });
+    try {
+      await assertRejects(
+        () =>
+          fetchWithPinnedAddresses(new URL("http://pinned.example.test/"), ["127.0.0.1"], {
+            headers: { authorization: PINNED_BEARER },
+          }),
+        TypeError,
+        "Object.prototype",
+      );
+    } finally {
+      delete (Object.prototype as Record<string, unknown>).agent;
+    }
+    assertEquals(sawBearer, false);
   });
 });

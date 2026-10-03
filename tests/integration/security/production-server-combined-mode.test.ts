@@ -1,8 +1,8 @@
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { createMockAdapter } from "#veryfront/platform/adapters/mock.ts";
-import { withEnv } from "#veryfront/testing/deno-compat.ts";
+import { deleteEnv, getEnv, setEnv, withEnv } from "#veryfront/testing/deno-compat.ts";
 import type { BootstrapResult } from "../../../src/server/bootstrap.ts";
 import { startProductionServerWithDependencies } from "../../../src/server/production-server.ts";
 import { isAuthenticInternalControlPlaneCandidate } from "../../../src/proxy/control-plane-signature.ts";
@@ -130,5 +130,56 @@ describe("production server combined mode with a signed control-plane request", 
       false,
       JSON.stringify(body),
     );
+  });
+});
+
+describe("production server combined-mode interceptor in hosted proxy mode", () => {
+  // The interceptor is the CLI's in-process proxy; a deployed runtime must not use it.
+  it("refuses it when PROXY_MODE is set without the local CLI marker", async () => {
+    await withEnv({ PROXY_MODE: "1" }, async () => {
+      const adapter = createMockAdapter();
+      await assertRejects(
+        () =>
+          startProductionServerWithDependencies({
+            projectDir: "/combined-mode",
+            port: 0,
+            adapter,
+            bootstrapResult: createBootstrap(adapter),
+            unhandledRejectionGuard: false,
+            requestInterceptor: (request) => request,
+          }, { bootstrap: () => Promise.reject(new Error("unexpected bootstrap")) }),
+        TypeError,
+        "local development only",
+      );
+    });
+  });
+
+  it("refuses it when bootstrap loads hosted proxy mode", async () => {
+    const previous = getEnv("PROXY_MODE");
+    if (previous !== undefined) deleteEnv("PROXY_MODE");
+    try {
+      const adapter = createMockAdapter();
+      await assertRejects(
+        () =>
+          startProductionServerWithDependencies({
+            projectDir: "/combined-mode",
+            port: 0,
+            adapter,
+            unhandledRejectionGuard: false,
+            requestInterceptor: (request) => request,
+          }, {
+            // Stands in for bootstrap loading PROXY_MODE from the project env.
+            bootstrap: () => {
+              setEnv("PROXY_MODE", "1");
+              return Promise.resolve(createBootstrap(adapter));
+            },
+          }),
+        TypeError,
+        "local development only",
+      );
+    } finally {
+      if (previous === undefined) deleteEnv("PROXY_MODE");
+      else setEnv("PROXY_MODE", previous);
+    }
   });
 });
