@@ -39,6 +39,31 @@ export const getCreateInputRequestRequestSchema = defineSchema((v) =>
   })
 );
 
+interface UnavailableInputResponseActor {
+  type: "unavailable";
+  reason: "not_recorded" | "identity_removed";
+  legacy_role?:
+    | "human"
+    | "agent"
+    | "integration"
+    | "system"
+    | "user"
+    | "api_key"
+    | "service_account";
+  legacy_id?: string;
+}
+
+const getUnavailableInputResponseActorSchema = defineSchema((v) =>
+  v.object({
+    type: v.literal("unavailable"),
+    reason: v.enum(["not_recorded", "identity_removed"] as const),
+    legacy_role: v.enum(
+      ["human", "agent", "integration", "system", "user", "api_key", "service_account"] as const,
+    ).optional(),
+    legacy_id: v.string().min(1).max(255).optional(),
+  }).strict()
+);
+
 // Hand-written transform output type. The contract DSL erases the parameter
 // type through `.transform()` (the adapter casts the callback parameter to
 // `never`), so we need an explicit annotation to keep the downstream type
@@ -49,7 +74,8 @@ export interface InputResponseRestOutput {
   conversationId: string;
   runId: string;
   actorType: string;
-  actorId: string;
+  actorId: string | null;
+  unavailableActor?: UnavailableInputResponseActor;
   values: Record<string, string | number | boolean | null>;
   redactedFields?: string[];
   createdAt: string;
@@ -64,12 +90,19 @@ export const getInputResponseRestSchema = defineSchema((v) =>
       conversation_id: v.string().uuid(),
       run_id: v.string().min(1),
       actor_type: v.string(),
-      actor_id: v.string(),
+      actor_id: v.string().nullable(),
+      unavailable_actor: getUnavailableInputResponseActorSchema().optional(),
       values: getInputResponseValuesSchema(),
       redacted_fields: v.array(v.string()).optional(),
       created_at: v.string(),
     })
     .passthrough()
+    .refine((value) => {
+      const response = value as Record<string, unknown>;
+      return response.actor_type === "unavailable"
+        ? response.actor_id === null && response.unavailable_actor !== undefined
+        : typeof response.actor_id === "string" && response.unavailable_actor === undefined;
+    }, "Recorded actors require an identity; unavailable actors require explicit provenance")
     .transform((value): InputResponseRestOutput => {
       const v2 = value as Record<string, unknown>;
       return {
@@ -78,7 +111,10 @@ export const getInputResponseRestSchema = defineSchema((v) =>
         conversationId: v2.conversation_id as string,
         runId: v2.run_id as string,
         actorType: v2.actor_type as string,
-        actorId: v2.actor_id as string,
+        actorId: v2.actor_id as string | null,
+        ...(v2.unavailable_actor
+          ? { unavailableActor: v2.unavailable_actor as UnavailableInputResponseActor }
+          : {}),
         values: v2.values as Record<string, string | number | boolean | null>,
         redactedFields: v2.redacted_fields as string[] | undefined,
         createdAt: v2.created_at as string,
@@ -371,7 +407,8 @@ function parseCanonicalInputRequest(value: unknown, conversationId: string): Inp
         conversation_id: row.conversation_id ?? conversationId,
         run_id: row.run_id,
         actor_type: actor?.type,
-        actor_id: actor?.id,
+        actor_id: actor?.type === "unavailable" ? null : actor?.id,
+        ...(actor?.type === "unavailable" ? { unavailable_actor: actor } : {}),
       }
       : null,
   }) as InputRequestOutput;

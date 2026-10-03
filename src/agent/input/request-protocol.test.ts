@@ -159,6 +159,74 @@ describe("agent/input-request-protocol", () => {
     });
   });
 
+  for (const reason of ["not_recorded", "identity_removed"] as const) {
+    it(`preserves unavailable input response provenance (${reason}) without inventing an actor`, async () => {
+      const actor = {
+        type: "unavailable",
+        reason,
+        ...(reason === "identity_removed"
+          ? { legacy_role: "human", legacy_id: "removed-user" }
+          : {}),
+      };
+      stubFetchWithRecorder(() =>
+        Response.json({
+          ...createInputRequestRecord({ status: "submitted" }),
+          input_request_id: INPUT_REQUEST_ID,
+          resolved_at: CREATED_AT,
+          response: {
+            response_id: "33333333-3333-4333-a333-333333333333",
+            actor,
+            values: { confirmed: true },
+            redacted_fields: ["password"],
+            created_at: CREATED_AT,
+          },
+        })
+      );
+      const result = await getInputRequest({
+        authToken: AUTH_TOKEN,
+        apiUrl: API_URL,
+        conversationId: CONVERSATION_ID,
+        inputRequestId: INPUT_REQUEST_ID,
+      });
+      assertEquals(result.latestResponse?.actorType, "unavailable");
+      assertEquals(result.latestResponse?.actorId, null);
+      assertEquals(result.latestResponse?.unavailableActor, actor);
+      assertEquals(result.latestResponse?.values, { confirmed: true });
+      assertEquals(result.latestResponse?.redactedFields, ["password"]);
+    });
+  }
+
+  for (
+    const actor of [{ type: "user", id: null }, { type: "unavailable" }, {
+      type: "unavailable",
+      reason: "unknown",
+    }]
+  ) {
+    it(`rejects invalid response actor provenance ${JSON.stringify(actor)}`, async () => {
+      stubFetchWithRecorder(() =>
+        Response.json({
+          ...createInputRequestRecord({ status: "submitted" }),
+          input_request_id: INPUT_REQUEST_ID,
+          resolved_at: CREATED_AT,
+          response: {
+            response_id: "33333333-3333-4333-a333-333333333333",
+            actor,
+            values: {},
+            created_at: CREATED_AT,
+          },
+        })
+      );
+      await assertRejects(() =>
+        getInputRequest({
+          authToken: AUTH_TOKEN,
+          apiUrl: API_URL,
+          conversationId: CONVERSATION_ID,
+          inputRequestId: INPUT_REQUEST_ID,
+        })
+      );
+    });
+  }
+
   it("fetches and normalizes durable input request snapshots", async () => {
     stubFetchWithRecorder((input, init) => {
       assertEquals(
