@@ -1,4 +1,5 @@
 import type { HostedLifecycleTerminalState } from "./lifecycle.ts";
+import { hasHostedAgentPauseStopped } from "./manual-pause-credential.ts";
 import { hasCompletedStepSignal, resolveStreamOutcome } from "../streaming/stream-outcome.ts";
 import type { StreamSnapshot } from "../streaming/lifecycle/types.ts";
 
@@ -150,6 +151,14 @@ function shouldFailStreamError(input: {
 export async function finalizeHostedResponse<TMessage, TChunk>(
   options: FinalizeHostedResponseOptions<TMessage, TChunk>,
 ): Promise<void> {
+  if (hasHostedAgentPauseStopped(options.dispatchTerminalState)) {
+    try {
+      await options.flushMirror();
+    } finally {
+      await cleanupAfterFinalization(options.cleanup);
+    }
+    return;
+  }
   const finalStep = await options.getFinalStep();
   const state = await options.buildState(finalStep);
 
@@ -215,6 +224,14 @@ export async function finalizeHostedResponse<TMessage, TChunk>(
 export async function finalizeHostedDetached<TChunk>(
   options: FinalizeHostedDetachedOptions<TChunk>,
 ): Promise<void> {
+  if (hasHostedAgentPauseStopped(options.dispatchTerminalState)) {
+    try {
+      await options.flushMirror();
+    } finally {
+      await cleanupAfterFinalization(options.cleanup);
+    }
+    return;
+  }
   const finalStep = await options.getFinalStep();
   const state = await options.buildState(finalStep);
 

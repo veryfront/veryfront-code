@@ -1,3 +1,9 @@
+import {
+  createRunBoundAgentManualPause,
+  registerHostedAgentPauseFactory,
+} from "../hosted/manual-pause-credential.ts";
+import { resolveHostOwnedSourceApiBaseUrl } from "#veryfront/config/host-api-base.ts";
+import { INGRESS_RUN_STOP_TOKEN_HEADER } from "#veryfront/security/http/ingress-credentials.ts";
 import { MAX_ROOT_RUN_EVENT_WRITER_TOKEN_BYTES } from "../conversation/run-event-limits.ts";
 import { parseBrokerSignedRunPath } from "./broker-run-route.ts";
 import { containsBrokerCredential } from "#veryfront/agent/service/broker-credentials.ts";
@@ -144,6 +150,10 @@ export async function parseBrokerRuntimeAgentIngress<TAuthorization>(
   const inboundAuthorization = request.headers.get("authorization");
   const signature = request.headers.get(CONTROL_PLANE_JWS_HEADER);
   const runEventToken = request.headers.get(RUN_EVENT_APPEND_TOKEN_HEADER);
+  const stopToken = request.headers.get(INGRESS_RUN_STOP_TOKEN_HEADER);
+  if (stopToken && stopToken.length > 16 * 1024) {
+    throw new BrokerIngressError(401, "BROKER_INGRESS_AUTH_REQUIRED");
+  }
   if (
     !inboundAuthorization || inboundAuthorization.length > 16 * 1024 || !signature ||
     !runEventToken || runEventToken.length > MAX_ROOT_RUN_EVENT_WRITER_TOKEN_BYTES
@@ -266,11 +276,12 @@ export async function parseBrokerRuntimeAgentIngress<TAuthorization>(
       apiAuthToken,
       runEventToken,
       invocation.credentials?.inferenceAuthToken,
+      stopToken,
     ])
   ) {
     throw new BrokerIngressError(403, "BROKER_INGRESS_SCOPE_DENIED");
   }
-  return {
+  const ingress: BrokerRuntimeAgentIngress<TAuthorization> = {
     privateAuthority: Object.freeze({
       owner,
       claims: Object.freeze({ ...claims }),
@@ -285,6 +296,16 @@ export async function parseBrokerRuntimeAgentIngress<TAuthorization>(
     }),
     executor: executorValue,
   };
+  if (stopToken) {
+    registerHostedAgentPauseFactory(ingress, (signal) =>
+      createRunBoundAgentManualPause({
+        apiUrl: resolveHostOwnedSourceApiBaseUrl(),
+        runId: expectedRunId,
+        token: stopToken,
+        signal,
+      }));
+  }
+  return ingress;
 }
 
 function snapshotExecutorValue<T>(value: T): T {

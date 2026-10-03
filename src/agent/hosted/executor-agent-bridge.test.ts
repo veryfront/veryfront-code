@@ -276,8 +276,39 @@ describe("executor hosted agent bridge", () => {
     });
   }
 
+  it("accepts a paused producer without a terminal event", async () => {
+    const channels = pair(
+      new Map([["agent.stream", {
+        mode: "stream",
+        async *handle(): AsyncIterable<JsonValue> {
+          yield { type: "ready" };
+          yield { type: "event", event: { type: "data-veryfront.manual_pause", data: {} } };
+          yield { type: "complete" };
+        },
+      }]]),
+    );
+    try {
+      const runtime = await createExecutorHostedChatRuntimeAgent({
+        channel: channels.broker,
+        preparedRuntimeHandle: handle,
+      }).stream({ messages, abortSignal: new AbortController().signal });
+      let finished = false;
+      const chunks = await collect(runtime.toUIMessageStream({
+        onFinish: () => {
+          finished = true;
+        },
+      }));
+      assertEquals(chunks.some((chunk) => chunk.type === "data-veryfront.manual_pause"), true);
+      assertEquals(finished, false);
+      assertEquals(chunks.some((chunk) => chunk.type === "finish"), false);
+    } finally {
+      await channels.close();
+    }
+  });
+
   const invalidFrames: JsonValue[][] = [
     [{ type: "ready" }],
+    [{ type: "ready" }, { type: "complete" }],
     [{ type: "ready" }, {
       type: "event",
       event: { type: "message-finish" },

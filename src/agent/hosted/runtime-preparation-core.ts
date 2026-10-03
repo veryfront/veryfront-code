@@ -1,3 +1,4 @@
+import { getHostedAgentPauseCreationOptions } from "./manual-pause-credential.ts";
 import { getPrivateAsyncIterator } from "#veryfront/security/private-iterator.ts";
 import { mapPrivateArray } from "#veryfront/security/private-array.ts";
 import { createPrivateSet } from "#veryfront/security/private-set.ts";
@@ -833,6 +834,7 @@ export function createRuntimePreparationCore(input: RuntimePreparationCoreOption
       };
       const runtimeOptions: NonNullable<Parameters<typeof createPreparedHostedRuntimeAgent>[1]> = {
         resolveModelRuntime,
+        manualPause: getHostedAgentPauseCreationOptions(input.project),
         preserveToolCatalog: true,
         onStreamCompletion: (completion) => {
           producerCompletion = completion;

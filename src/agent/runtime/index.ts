@@ -1,4 +1,10 @@
 import { forEachSequential } from "./sequential.ts";
+import {
+  type AgentManualPause,
+  agentManualPauseBoundary,
+  isAgentManualPauseBoundary,
+  parseAgentPauseCheckpoint,
+} from "./manual-pause.ts";
 import { getAgentRuntimeToolCallPart } from "./message-adapter.ts";
 import {
   admitTerminalDispatch,
@@ -126,7 +132,7 @@ import {
   type TurnProviderRequestValidator,
 } from "#veryfront/agent/middleware/turn-validation.ts";
 import { tryGetCacheKeyContext } from "#veryfront/cache/cache-key-builder.ts";
-import type { ToolExecutionContext } from "#veryfront/tool";
+import type { ToolDefinition, ToolExecutionContext } from "#veryfront/tool";
 import {
   isLocalModelRuntime,
   supportsModelRuntimeToolCalling,
@@ -1972,6 +1978,8 @@ type RuntimeStepState = {
 
 /** @internal Framework-only AgentRuntime construction options. */
 export type AgentRuntimeInternalOptions = {
+  /** Framework-owned continuation and pause capability for this exact dispatch. */
+  manualPause?: AgentManualPause;
   resolveModelRuntime?: AgentModelRuntimeResolver;
   /** Preserve the factory caller's prevalidated catalog without implicit tools or delegates. */
   preserveToolCatalog?: boolean;
@@ -2068,6 +2076,7 @@ export function streamWithAgentRuntimeDispatch(
 
 /** Implement agent runtime. */
 export class AgentRuntime {
+  #manualPause: AgentManualPause | undefined;
   #modelResolverState: AgentRuntimeModelResolverState;
   #modelCallThinking: AgentRuntimeInternalOptions["modelCallThinking"];
   #onStreamCompletion: AgentRuntimeInternalOptions["onStreamCompletion"];
@@ -2094,6 +2103,7 @@ export class AgentRuntime {
       ObjectDefineProperty(this, name, descriptor);
     }
     this.#modelCallThinking = internalOptions.modelCallThinking;
+    this.#manualPause = internalOptions.manualPause;
     this.#onStreamCompletion = internalOptions.onStreamCompletion;
     this.#resumeToolCall = internalOptions.resumeToolCall;
     this.#modelResolverState = internalOptions.resolveModelRuntime
@@ -3032,6 +3042,12 @@ export class AgentRuntime {
             });
             closeSSEStream(controller);
           } catch (streamError) {
+            if (isAgentManualPauseBoundary(streamError)) {
+              await turnPersistence.commit();
+              sendSSE(controller, encoder, { type: "data-veryfront.manual_pause", data: {} });
+              closeSSEStream(controller);
+              return;
+            }
             let error = streamError;
             try {
               await turnPersistence.finalize();
@@ -3908,14 +3924,23 @@ export class AgentRuntime {
     const effectiveModel = resolveRuntimeModel(modelString || this.config.model);
     const languageModel = resolvedModel ?? resolveModel(effectiveModel);
 
-    const toolCalls: ToolCall[] = [];
-    const currentMessages = mapPrivateArray(messages, (message) => message);
+    const continuation = await this.#manualPause?.load();
+    const checkpoint = continuation == null ? undefined : parseAgentPauseCheckpoint(continuation);
+    const toolCalls: ToolCall[] = checkpoint?.toolCalls ?? [];
+    const currentMessages = mapPrivateArray(checkpoint?.messages ?? messages, (message) => message);
+    const runtimeGeneratedMessageIds = createPrivateSet(
+      checkpoint?.runtimeGeneratedMessageIds ?? [],
+    );
+    for (const message of currentMessages) {
+      if (runtimeGeneratedMessageIds.has(message.id)) markRuntimeGeneratedUserMessage(message);
+    }
     applyProviderReplayCheckpointsToMessages(
       currentMessages,
       getRuntimeProviderReplayCheckpoints(this.config),
       { activeProvider: resolveActiveProviderReplayProvider(languageModel) },
     );
-    const totalUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
+    const totalUsage = checkpoint?.usage ??
+      { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
 
     if (!supportsToolCalling && this.config.tools) {
       warnUnsupportedToolCalling(this.id, effectiveModel);
@@ -3923,10 +3948,16 @@ export class AgentRuntime {
 
     // Request-scoped skill policy (not class-level mutable state)
     const skillState = AgentLoopSkillState.hydrate(currentMessages, runtimeContext);
-    let finalFinishReason: string | undefined;
-    let latestAssistantText = "";
-    let completedWithinStepBudget = false;
-    const initialToolExposureCheckpoint = getRuntimeToolExposureCheckpoint(this.config);
+    if (checkpoint) {
+      skillState.activeSkillDelegationOverrides = checkpoint.activeSkillDelegationOverrides;
+      skillState.markFormInputSubmitted(checkpoint.hasSubmittedFormInput === true);
+    }
+    let finalFinishReason: string | undefined = checkpoint?.finishReason;
+    let latestAssistantText = checkpoint?.latestAssistantText ?? "";
+    let completedWithinStepBudget = checkpoint?.completed ?? false;
+    const initialToolExposureCheckpoint = checkpoint?.toolExposureCheckpoint ??
+      getRuntimeToolExposureCheckpoint(this.config);
+    let pauseToolExposureAuthorized: readonly ToolDefinition[] | undefined;
     const toolExposureState = createToolExposureState();
     const persistToolExposureCheckpoint = getRuntimeToolExposureCheckpointPersister(this.config);
     const requireToolExposureCheckpointPersistence =
@@ -3947,16 +3978,52 @@ export class AgentRuntime {
       : configuredProviderTools;
     let currentSystemPrompt = systemPrompt;
     let currentRuntimeContext = runtimeContext;
-    let agentWriteFinalResponseToolGuardEnabled = false;
-    let recoveredEmptyResponse = false;
+    let agentWriteFinalResponseToolGuardEnabled =
+      checkpoint?.agentWriteFinalResponseToolGuardEnabled ?? false;
+    let recoveredEmptyResponse = checkpoint?.recoveredEmptyResponse ?? false;
     // One retry gives the model a chance to reconstruct a transport-truncated
     // batch without allowing a repeatedly broken provider stream to loop.
-    let recoveredInterruptedLocalToolBatch = false;
-    let interruptedLocalToolBatchRecoveryStep: number | undefined;
-    let interruptedLocalToolBatchRecoveryText: string | undefined;
-    let resumeToolCallExecuted = false;
+    let recoveredInterruptedLocalToolBatch = checkpoint?.recoveredInterruptedLocalToolBatch ??
+      false;
+    let interruptedLocalToolBatchRecoveryStep = checkpoint?.interruptedLocalToolBatchRecoveryStep;
+    let interruptedLocalToolBatchRecoveryText = checkpoint?.interruptedLocalToolBatchRecoveryText;
+    let resumeToolCallExecuted = checkpoint?.resumeToolCallExecuted ?? false;
 
-    for (let step = 0; step < maxSteps; step++) {
+    const pauseAtBoundary = async (nextStep: number) => {
+      if (!this.#manualPause) return;
+      const saved = parseAgentPauseCheckpoint({
+        version: 1,
+        nextStep,
+        messages: currentMessages,
+        toolCalls,
+        usage: totalUsage,
+        latestAssistantText,
+        completed: completedWithinStepBudget,
+        ...(finalFinishReason ? { finishReason: finalFinishReason } : {}),
+        recoveredEmptyResponse,
+        recoveredInterruptedLocalToolBatch,
+        hasSubmittedFormInput: skillState.hasSubmittedFormInput,
+        activeSkillDelegationOverrides: skillState.activeSkillDelegationOverrides,
+        resumeToolCallExecuted,
+        agentWriteFinalResponseToolGuardEnabled,
+        interruptedLocalToolBatchRecoveryStep,
+        interruptedLocalToolBatchRecoveryText,
+        runtimeGeneratedMessageIds: mapPrivateArray(
+          filterPrivateArray(currentMessages, isRuntimeGeneratedUserMessage),
+          (message) => message.id,
+        ),
+        toolExposureCheckpoint: pauseToolExposureAuthorized
+          ? createToolExposureCheckpoint(pauseToolExposureAuthorized, toolExposureState)
+          : initialToolExposureCheckpoint,
+      });
+      if (await this.#manualPause.acknowledge(saved)) throw agentManualPauseBoundary();
+    };
+    await pauseAtBoundary(checkpoint?.nextStep ?? 0);
+    for (
+      let step = checkpoint?.nextStep ?? 0;
+      !completedWithinStepBudget && step < maxSteps;
+      step++
+    ) {
       throwIfAborted(abortSignal);
       sendSSE(controller, encoder, { type: "step-start" });
       const currentStepToolResults = createPrivateMap<string, ToolResultPart>();
@@ -3993,8 +4060,11 @@ export class AgentRuntime {
         systemPrompt: currentSystemPrompt,
         toolContextBase,
         toolExposureState,
-        toolExposureCheckpoint: step === 0 ? initialToolExposureCheckpoint : undefined,
+        toolExposureCheckpoint: step === (checkpoint?.nextStep ?? 0)
+          ? initialToolExposureCheckpoint
+          : undefined,
       });
+      pauseToolExposureAuthorized = preparedStep.toolExposurePlan.authorized;
       currentSystemPrompt = preparedStep.systemPrompt;
       currentRuntimeContext = preparedStep.runtimeContext;
       const toolContext = preparedStep.toolContext;
@@ -4684,6 +4754,7 @@ export class AgentRuntime {
             timestamp: Date.now(),
           }),
         );
+        await pauseAtBoundary(step + 1);
         this.status = "thinking";
         continue;
       }
@@ -4781,6 +4852,7 @@ export class AgentRuntime {
         }
         sendSSE(controller, encoder, { type: "step-end" });
         completedWithinStepBudget = !exhaustedStepBudgetDuringInterruptedLocalToolRecovery;
+        await pauseAtBoundary(step + 1);
         break;
       }
 
@@ -5178,6 +5250,7 @@ export class AgentRuntime {
 
       throwIfAborted(abortSignal);
       sendSSE(controller, encoder, { type: "step-end" });
+      await pauseAtBoundary(step + 1);
       this.status = "thinking";
     }
 

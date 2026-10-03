@@ -117,10 +117,12 @@ import { createVeryfrontCloudInferenceModelResolver } from "#veryfront/agent/hos
 import { resolveVeryfrontInferenceApiBaseUrlFromHostEnv } from "#veryfront/platform/cloud/resolver.ts";
 import { streamWithAgentRuntimeDispatch } from "#veryfront/agent/runtime/index.ts";
 import { createPrivateWeakStore } from "#veryfront/security/private-weak-store.ts";
+import type { AgentManualPause } from "#veryfront/agent/runtime/manual-pause.ts";
 
 const getAnyObjectSchema = defineSchema((v) => v.record(v.string(), v.unknown()));
 const anyObjectSchema = lazySchema(getAnyObjectSchema) as Schema<Record<string, unknown>>;
 const runtimeInferenceCredentials = createPrivateWeakStore<object, string>();
+const runtimeManualPauseCapabilities = createPrivateWeakStore<object, AgentManualPause>();
 const IntrinsicReflectApply = Reflect.apply;
 const IntrinsicSetHas = Set.prototype.has;
 const _Set = Set;
@@ -257,6 +259,14 @@ export function registerRuntimeInferenceCredential(
   credential: string,
 ): void {
   runtimeInferenceCredentials.set(input, credential);
+}
+
+/** @internal Install exact-dispatch pause authority after the server verifies the envelope. */
+export function registerRuntimeManualPause(
+  input: RuntimeRunAgentInput,
+  capability: AgentManualPause,
+): void {
+  runtimeManualPauseCapabilities.set(input, capability);
 }
 
 function getRuntimeInferenceCredential(input: RuntimeRunAgentInput): string | undefined {
@@ -1430,6 +1440,7 @@ export async function createRuntimeAgentStreamResponse(
       : {
         kind: "framework" as const,
         runtime: new AgentRuntime(runtimeAgent.id, runtimeAgent.config, {
+          manualPause: runtimeManualPauseCapabilities.get(input),
           ...(input.resumeToolCall ? { resumeToolCall: input.resumeToolCall } : {}),
           ...(inferenceAuthToken
             ? {

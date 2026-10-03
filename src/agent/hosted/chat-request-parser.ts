@@ -2,6 +2,8 @@ import {
   registerHostedTerminalCredential,
   RUN_TERMINAL_TOKEN_HEADER,
 } from "./terminal-credential.ts";
+import { registerHostedAgentPauseCredential } from "./manual-pause-credential.ts";
+import { INGRESS_RUN_STOP_TOKEN_HEADER } from "#veryfront/security/http/ingress-credentials.ts";
 import { readOwnDataProperty } from "#veryfront/agent/runtime/data-property-descriptor.ts";
 import { computeHash } from "#veryfront/utils/hash-utils.ts";
 import { privateJsonStringify } from "#veryfront/security/private-json.ts";
@@ -382,6 +384,10 @@ async function withVerifiedRunEventAppendToken(
   registerHostedTerminalCredential(
     verifiedRequest,
     readRequestHeader(request, RUN_TERMINAL_TOKEN_HEADER),
+  );
+  registerHostedAgentPauseCredential(
+    verifiedRequest,
+    readIngressCredential(request, INGRESS_RUN_STOP_TOKEN_HEADER) ?? undefined,
   );
   return verifiedRequest;
 }

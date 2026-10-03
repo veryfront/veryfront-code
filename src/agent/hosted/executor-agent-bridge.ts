@@ -179,6 +179,7 @@ export function createExecutorHostedChatRuntimeAgent(options: {
           if (consumed) throw new ExecutorAgentError("EXECUTOR_AGENT_ALREADY_STARTED");
           consumed = true;
           let terminal = false;
+          let paused = false;
           const stream = createPrivateReadableStream<Uint8Array>({
             async pull(controller) {
               try {
@@ -186,14 +187,17 @@ export function createExecutorHostedChatRuntimeAgent(options: {
                 if (next.done) throw new ExecutorAgentError("EXECUTOR_AGENT_INVALID_STREAM");
                 const frame = parseFrame(next.value);
                 if (frame.type === "event") {
-                  if (terminal) throw new ExecutorAgentError("EXECUTOR_AGENT_INVALID_STREAM");
+                  if (terminal || paused) {
+                    throw new ExecutorAgentError("EXECUTOR_AGENT_INVALID_STREAM");
+                  }
                   const event = parseExecutorDataEvent(frame.event);
+                  paused ||= event.type === "data-veryfront.manual_pause";
                   terminal ||= event.type === "message-finish" || event.type === "error";
                   controller.enqueue(
                     encodePrivateText(`data: ${privateJsonStringify(event)}\n\n`),
                   );
                 } else if (frame.type === "complete") {
-                  if (!terminal || !(await iterator.next()).done) {
+                  if ((!terminal && !paused) || !(await iterator.next()).done) {
                     throw new ExecutorAgentError("EXECUTOR_AGENT_INVALID_STREAM");
                   }
                   controller.close();

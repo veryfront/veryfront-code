@@ -1,3 +1,9 @@
+import {
+  createHostedAgentManualPause,
+  hasHostedAgentPauseStopped,
+  inheritHostedAgentPauseCapability,
+  registerHostedAgentPauseFactory,
+} from "../hosted/manual-pause-credential.ts";
 import { isResponseLike } from "./response-like.ts";
 import type {
   HostedChatRuntimeFinishPart,
@@ -197,21 +203,29 @@ export function createManagedDurableBrokerHandler(options: {
         input.ingress.executor.serverResolvedResumeToolCall,
       );
       const prepared = await options.prepare(input);
+      const parsedRequest = input.ingress.broker.getParsedRequest();
+      registerHostedAgentPauseFactory(
+        prepared.start,
+        (signal) =>
+          createHostedAgentManualPause(
+            parsedRequest,
+            AbortSignal.any([signal, prepared.executionSignal]),
+          ),
+      );
       if (!prepared.start.prepare) return prepared;
       const {
         serverResolvedResumeToolCall: _untrustedAdapterResumeToolCall,
         ...basePrepare
       } = prepared.start.prepare;
-      return {
-        ...prepared,
-        start: {
-          ...prepared.start,
-          prepare: {
-            ...basePrepare,
-            ...(resumeToolCall ? { serverResolvedResumeToolCall: resumeToolCall } : {}),
-          },
+      const start = {
+        ...prepared.start,
+        prepare: {
+          ...basePrepare,
+          ...(resumeToolCall ? { serverResolvedResumeToolCall: resumeToolCall } : {}),
         },
       };
+      inheritHostedAgentPauseCapability(start, prepared.start);
+      return { ...prepared, start };
     },
     async parse(request, signal) {
       if (request.method !== "POST" || new URL(request.url).pathname !== "/api/runs") {
@@ -317,10 +331,17 @@ function createManagedBrokerIngressHandler<TIngress>(options: {
         ) {
           throw new Error("Detached broker output persistence is required");
         }
-        const runtime = await options.broker.start({
+        inheritHostedAgentPauseCapability(
+          prepared.start,
+          ingress as object,
+          prepared.executionSignal,
+        );
+        const start = {
           ...prepared.start,
           session: { ...prepared.start.session, preparationSignal: signal },
-        }, {
+        };
+        inheritHostedAgentPauseCapability(start, prepared.start);
+        const runtime = await options.broker.start(start, {
           onAdmitted(settled) {
             admissionSettled = settled;
           },
@@ -587,9 +608,11 @@ async function runDetached(
         failure ??= error;
         throw error;
       } finally {
+        const paused = hasHostedAgentPauseStopped(runtime);
         await output.finish({
-          completed: streamCompleted,
-          ...(failure === undefined || signal.aborted ? {} : { error: failure }),
+          completed: paused ? false : streamCompleted,
+          ...(paused ? { paused: true as const } : {}),
+          ...(paused || failure === undefined || signal.aborted ? {} : { error: failure }),
           ...(terminalMetadata ? { metadata: terminalMetadata } : {}),
         });
       }

@@ -225,6 +225,26 @@ describe("managed persistence trace propagation", () => {
     _resetShimForTests();
   });
 
+  it("flushes paused output without dispatching a terminal outcome", async () => {
+    const requests: string[] = [];
+    const persistence = createManagedBrokerPersistence({
+      apiUrl: "https://api.example.test",
+      runEventToken: "synthetic-event-token",
+      completionAuthToken: "synthetic-completion-token",
+      run,
+      modelId: "model",
+      resolveProvider: () => "provider",
+      fetch: ((input: RequestInfo | URL) => {
+        requests.push(String(input));
+        return Promise.resolve(Response.json({}));
+      }) as typeof globalThis.fetch,
+    });
+    persistence.bindSessionOwnedWork((operation) => operation());
+    await persistence.output.finish({ completed: false, paused: true });
+    await persistence.cleanup();
+    assertEquals(requests, []);
+  });
+
   it("keeps the trusted completion transport in the active execution trace", async () => {
     const span: Span = {
       setAttribute: () => span,

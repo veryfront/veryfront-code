@@ -1,3 +1,7 @@
+import {
+  createRunBoundAgentManualPause,
+  inheritHostedAgentPauseCapability,
+} from "../hosted/manual-pause-credential.ts";
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertStrictEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
@@ -824,6 +828,7 @@ async function handler(
   let cleanupCalls = 0;
   const outputChunks: string[] = [];
   const outputFinishes: boolean[] = [];
+  const outputPauses: (true | undefined)[] = [];
   const outputFinishErrors: unknown[] = [];
   const outputFinishMetadata: unknown[] = [];
   const outputRelease = Promise.withResolvers<void>();
@@ -879,8 +884,11 @@ async function handler(
           async write(chunk: { type: string }) {
             outputChunks.push(chunk.type);
           },
-          async finish(outcome: { completed: boolean; error?: unknown; metadata?: unknown }) {
+          async finish(
+            outcome: { completed: boolean; paused?: true; error?: unknown; metadata?: unknown },
+          ) {
             outputFinishes.push(outcome.completed);
+            outputPauses.push(outcome.paused);
             outputFinishErrors.push(outcome.error);
             outputFinishMetadata.push(outcome.metadata);
             if (options.waitForOutput) await outputRelease.promise;
@@ -908,6 +916,7 @@ async function handler(
     releaseAuthorization: authorizationRelease.resolve,
     outputChunks,
     outputFinishes,
+    outputPauses,
     outputFinishErrors,
     outputFinishMetadata,
     releaseOutput: outputRelease.resolve,
@@ -1078,6 +1087,42 @@ describe("managed broker handler", () => {
       terminalErrorCode: "EMPTY_RESPONSE",
       terminalErrorMessage: "Assistant completed without producing a response",
     });
+  });
+
+  it("keeps a committed pause nonterminal when stream cleanup fails", async () => {
+    const f = await handler("detached", { streamFailure: true });
+    const capability = createRunBoundAgentManualPause({
+      apiUrl: "https://api.example.test",
+      runId: "run-1",
+      token: "synthetic-pause-token",
+      signal: new AbortController().signal,
+      fetch: () => Promise.resolve(Response.json({ stop: true })),
+    });
+    await capability.acknowledge({
+      version: 1,
+      nextStep: 1,
+      messages: [],
+      toolCalls: [],
+      usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
+      latestAssistantText: "",
+      completed: false,
+      recoveredEmptyResponse: false,
+      recoveredInterruptedLocalToolBatch: false,
+    });
+    inheritHostedAgentPauseCapability(f.fixture.runtime, capability);
+    try {
+      const response = await f.managed.handle(f.first.request);
+      assertEquals(response.status, 202);
+      f.fixture.release();
+      await f.managed.close();
+      assertEquals(f.outputFinishes, [false]);
+      assertEquals(f.outputPauses, [true]);
+      assertEquals(f.outputFinishErrors, [undefined]);
+      assertEquals(f.cleanupCalls, 1);
+    } finally {
+      f.fixture.release();
+      await f.managed.close();
+    }
   });
 
   it("finalizes an aborted detached execution as cancelled instead of failed", async () => {
