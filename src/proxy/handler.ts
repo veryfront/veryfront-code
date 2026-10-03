@@ -69,6 +69,8 @@ export const INTERNAL_PROXY_HEADERS = [
 interface ProjectRoutingCacheEntry {
   value: ProjectRoutingLookupResult;
   expiresAt: number;
+  /** Last foreground use. Background refreshes carry it forward unchanged. */
+  lastUsedAt: number;
 }
 
 interface ProjectRoutingInflightEntry {
@@ -93,6 +95,12 @@ const DEFAULT_PROXY_ROUTING_CACHE_MAX_ENTRIES = 1_000;
 const MAX_PROXY_ROUTING_CACHE_TTL_MS = 24 * 60 * 60 * 1_000;
 const MAX_PROXY_ROUTING_CACHE_ENTRIES = 10_000;
 const MAX_ROUTING_LOOKUP_INVALIDATION_RETRIES = 2;
+/**
+ * Idle routing refresh stops once no foreground request has used an entry for
+ * this long (or three TTLs, if longer), so unread entries cannot keep
+ * generating background lookups until eviction.
+ */
+const ROUTING_REFRESH_IDLE_CUTOFF_MS = 15 * 60 * 1_000;
 
 function readBoundedNonNegativeIntegerEnv(
   name: string,
@@ -322,6 +330,10 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
     timeoutMs: options.metadataTimeoutMs,
   };
   const metadataClient = createProjectMetadataClient(metadataClientOptions);
+  const routingRefreshIdleCutoffMs = Math.max(
+    ROUTING_REFRESH_IDLE_CUTOFF_MS,
+    3 * routingCacheTtlMs,
+  );
   const routingRefreshDelay = routingRefreshDelayRange(
     routingCacheTtlMs,
     resolveProjectMetadataTimeoutMs(options.metadataTimeoutMs),
@@ -391,6 +403,7 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
       return null;
     }
 
+    cached.lastUsedAt = Date.now();
     routingLookupCache.delete(cacheKey);
     routingLookupCache.set(cacheKey, cached);
     return cached.value;
@@ -401,6 +414,7 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
     value: ProjectRoutingLookupResult,
     lookupKey: string,
     identity?: RoutingRefreshIdentity,
+    lastUsedAt = Date.now(),
   ): void {
     if (closed || routingCacheTtlMs <= 0 || routingCacheMaxEntries <= 0) {
       return;
@@ -418,9 +432,10 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
     const entry: ProjectRoutingCacheEntry = {
       value,
       expiresAt: Date.now() + routingCacheTtlMs,
+      lastUsedAt,
     };
     routingLookupCache.set(cacheKey, entry);
-    if (!identity) return;
+    if (!identity || Date.now() - lastUsedAt >= routingRefreshIdleCutoffMs) return;
     const delayMs = routingRefreshDelay.minMs +
       uniformRandomIntInclusive(routingRefreshDelay.maxMs - routingRefreshDelay.minMs);
     routingRefresh.schedule(cacheKey, delayMs, async (signal) => {
@@ -464,7 +479,7 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
           const result = await refreshMetadataClient.lookupRouting(lookupKey, token, { signal });
           // A cancelled or expired refresh must never restore an evicted key.
           if (result && isCurrent() && !wasRoutingLookupInvalidated(cacheKey, result, generation)) {
-            setCachedRoutingLookup(cacheKey, result, lookupKey, identity);
+            setCachedRoutingLookup(cacheKey, result, lookupKey, identity, entry.lastUsedAt);
           }
         } finally {
           endRoutingLookup(generation);

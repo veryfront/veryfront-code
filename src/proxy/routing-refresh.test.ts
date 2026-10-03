@@ -189,6 +189,37 @@ describe("idle proxy routing refresh", () => {
     }
   });
 
+  it("stops refreshing an entry that no request has used for the idle cutoff", async () => {
+    using time = new FakeTime();
+    const { calls, fakeFetch } = createMetadataFetch();
+    const handler = createProxyHandler({
+      metadataFetch: fakeFetch,
+      config: {
+        apiBaseUrl: "https://api.example.test",
+        apiClientId: "",
+        apiClientSecret: "",
+        previewApiClientId: "",
+        previewApiClientSecret: "",
+        apiToken: "static-token",
+      },
+    });
+    const request = () => new Request("https://example.com/page");
+    try {
+      assertEquals((await handler.processRequest(request())).error, undefined);
+      for (let elapsed = 0; elapsed < 16 * 60_000; elapsed += 1_000) await time.tickAsync(1_000);
+      const refreshedLookups = calls.routing;
+      assertEquals(refreshedLookups > 2, true, "routing must refresh while recently used");
+      for (let elapsed = 0; elapsed < 5 * 60_000; elapsed += 1_000) await time.tickAsync(1_000);
+      assertEquals(calls.routing, refreshedLookups, "an unused entry must stop refreshing");
+      assertEquals((await handler.processRequest(request())).error, undefined);
+      assertEquals(calls.routing, refreshedLookups + 1, "the next request looks routing up");
+      for (let elapsed = 0; elapsed < 60_000; elapsed += 1_000) await time.tickAsync(1_000);
+      assertEquals(calls.routing > refreshedLookups + 1, true, "use restarts the refresh");
+    } finally {
+      await handler.close();
+    }
+  });
+
   it("rejects an unbounded routing cache size", () => {
     for (const routingCacheMaxEntries of [-1, 1.5, 10_001]) {
       assertThrows(
