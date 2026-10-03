@@ -111,6 +111,29 @@ class ProxyRoutingInvalidationRaceError extends Error {
   }
 }
 
+/**
+ * Uniform integer in [0, max] from the CSPRNG. Masking to the smallest
+ * covering power of two and rejecting out-of-range draws avoids the bias of
+ * modulo or scaled-and-rounded reductions. The jitter it feeds is not
+ * security-sensitive; the CSPRNG keeps it off the shared Math.random sequence.
+ */
+function uniformRandomIntInclusive(max: number): number {
+  const bound = Math.min(Math.max(0, Math.floor(max)), 0x7fff_ffff);
+  if (bound === 0) return 0;
+  let mask = bound;
+  mask |= mask >>> 1;
+  mask |= mask >>> 2;
+  mask |= mask >>> 4;
+  mask |= mask >>> 8;
+  mask |= mask >>> 16;
+  const draw = new Uint32Array(1);
+  for (;;) {
+    crypto.getRandomValues(draw);
+    const candidate = draw[0]! & mask;
+    if (candidate <= bound) return candidate;
+  }
+}
+
 function isProxyLookupAuthError(error: unknown): error is ProxyLookupAuthError {
   return error instanceof ProxyLookupAuthError;
 }
@@ -387,10 +410,9 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
     };
     routingLookupCache.set(cacheKey, entry);
     if (!identity) return;
-    // Spread refreshes across replicas; the jitter is not security-sensitive,
-    // but the CSPRNG keeps the draw out of the shared Math.random sequence.
-    const jitter = crypto.getRandomValues(new Uint32Array(1))[0]! / 0x1_0000_0000;
-    const delayMs = Math.max(1, Math.floor(routingCacheTtlMs * (0.65 + jitter * 0.1)));
+    // Spread refreshes across replicas over 65-75% of the TTL.
+    const delayMs = Math.max(1, Math.floor(routingCacheTtlMs * 0.65)) +
+      uniformRandomIntInclusive(Math.floor(routingCacheTtlMs * 0.1));
     routingRefresh.schedule(cacheKey, delayMs, async (signal) => {
       const isCurrent = () =>
         !closed && !signal.aborted &&
