@@ -5,114 +5,15 @@ import { createControlPlaneSignature } from "#veryfront/server/handlers/request/
 import { BrokerIngressError, parseBrokerRuntimeAgentIngress } from "./broker-ingress.ts";
 
 import {
-  activateHostedAgentPauseCapability,
-  getHostedAgentPauseCreationOptions,
-  inheritHostedAgentPauseCapability,
-} from "../hosted/manual-pause-credential.ts";
-import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
-
-const projectId = "00000000-0000-4000-8000-000000000005";
-const userId = "00000000-0000-4000-8000-000000000006";
-const conversationId = "00000000-0000-4000-8000-000000000001";
-const messageId = "00000000-0000-4000-8000-000000000002";
-const inputAnchorMessageId = "00000000-0000-4000-8000-000000000003";
-const path = "/api/control-plane/runs/run-1/stream";
-
-function invocation(overrides: Record<string, unknown> = {}) {
-  return {
-    run: {
-      agentServiceId: "service-1",
-      agentId: "builder",
-      conversationId,
-      runId: "run-1",
-      messageId,
-      inputAnchorMessageId,
-      requestedByUserId: userId,
-      project: { projectId, projectSlug: "demo-project", runtimeTargetKind: "main_branch" },
-    },
-    messages: [],
-    tools: [],
-    context: [],
-    agentSource: { type: "release", releaseId: "release-1" },
-    credentials: { authToken: "api-auth-token", inferenceAuthToken: "inference-token" },
-    ...overrides,
-  };
-}
-
-async function signedRequest(
-  bodyValue = invocation(),
-  overrides: Parameters<typeof createControlPlaneSignature>[1] = {},
-) {
-  const rawBody = JSON.stringify(bodyValue);
-  const signature = await createControlPlaneSignature(rawBody, {
-    audience: "demo-project",
-    projectId,
-    requestId: "run-1",
-    requestPath: path,
-    ...overrides,
-  });
-  return {
-    publicKeyPem: signature.publicKeyPem,
-    request: new Request(`https://broker.test${path}`, {
-      method: "POST",
-      headers: {
-        authorization: "Bearer broker-token",
-        "content-type": "application/json",
-        "x-veryfront-control-plane-jws": signature.jws,
-        "x-veryfront-run-event-token": "run-event-token",
-      },
-      body: rawBody,
-    }),
-  };
-}
-
-function options(publicKeyPem: string) {
-  return {
-    publicKeyPem,
-    audience: "demo-project",
-    projectId,
-    expectedRunId: "run-1",
-    expectedSurface: "studio" as const,
-    boundSource: { type: "release" as const, releaseId: "release-1" },
-    expectedOwner: { scopeKind: "project" as const, projectId },
-    authorizeScope: (input: {
-      authorization: string;
-      apiAuthToken: string;
-      runEventToken: string;
-    }) => {
-      assertEquals(input.authorization, "Bearer broker-token");
-      assertEquals(input.apiAuthToken, "api-auth-token");
-      assertEquals(input.runEventToken, "run-event-token");
-      return Promise.resolve({ principal: { userId }, runEventWriter: { id: "writer-1" } });
-    },
-  };
-}
+  invocation,
+  options,
+  path,
+  projectId,
+  signedRequest,
+  userId,
+} from "./broker-ingress.test-helpers.ts";
 
 describe("managed broker ingress", () => {
-  it("carries the signed ingress stop token privately into runtime creation", async () => {
-    const signed = await signedRequest();
-    signed.request.headers.set("x-veryfront-run-stop-token", "synthetic-stop-token");
-    const ingress = await parseBrokerRuntimeAgentIngress(
-      signed.request,
-      options(signed.publicKeyPem),
-    );
-    const prepared = {};
-    const runtimeOptions = {};
-    inheritHostedAgentPauseCapability(prepared, ingress);
-    inheritHostedAgentPauseCapability(runtimeOptions, prepared);
-    assertEquals(JSON.stringify(ingress).includes("synthetic-stop-token"), false);
-    await withMockFetch((url, init) => {
-      assertEquals(new URL(String(url)).pathname, "/runs/run-1/pause-checkpoint");
-      assertEquals(new Headers(init?.headers).get("Authorization"), "Bearer synthetic-stop-token");
-      return Promise.resolve(Response.json({ stop: false, checkpoint: null }));
-    }, async () => {
-      const pause = activateHostedAgentPauseCapability(runtimeOptions, AbortSignal.timeout(3000));
-      assertEquals(pause !== undefined, true);
-      assertEquals(getHostedAgentPauseCreationOptions(runtimeOptions), pause);
-      assertEquals(await pause!.load(), null);
-    });
-  });
-
   it("accepts root writer grants through the shared 32 KiB boundary", async () => {
     for (const length of [16 * 1024 + 1, 32 * 1024]) {
       const signed = await signedRequest();
