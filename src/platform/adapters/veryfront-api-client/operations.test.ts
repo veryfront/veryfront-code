@@ -267,6 +267,19 @@ describe("VeryfrontAPIOperations", () => {
       assertEquals(result.files[0]?.content, undefined);
     });
 
+    it("lists branch metadata in 1000-file pages and contents in 100-file pages", async () => {
+      const limits: Array<string | null> = [];
+      stubJsonFetch((url) => {
+        limits.push(new URL(url).searchParams.get("limit"));
+        return { data: [], page_info: { self: null, first: null, next: null, prev: null } };
+      });
+
+      await createOps().listAllBranchFiles("project-slug", "main", { withoutContent: true });
+      await createOps().listAllBranchFiles("project-slug", "main");
+
+      assertEquals(limits, ["1000", "100"]);
+    });
+
     it("selects metadata only on branch listings", async () => {
       const requestedUrls: string[] = [];
       stubJsonFetch((url) => {
