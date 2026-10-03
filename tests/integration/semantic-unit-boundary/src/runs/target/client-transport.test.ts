@@ -396,4 +396,58 @@ describe("Runs SDK canonical transport", () => {
     });
     assertEquals(calls, 2);
   });
+
+  it("does not retain a stale Problem when a later tracing wrapper rejects before fetch", async () => {
+    let fetches = 0;
+    await withMockFetch(() => {
+      fetches++;
+      return Promise.resolve(Response.json({
+        type: "about:blank",
+        title: "Unavailable",
+        status: 503,
+        code: "UNAVAILABLE",
+      }, { status: 503 }));
+    }, async () => {
+      const sdk = createRunsSdk({
+        transport: createVeryfrontApiTransport({
+          baseUrl: "https://api.example.test",
+          getToken: () => "test-token",
+          retry: { maxRetries: 1, initialDelay: 0, maxDelay: 0 },
+          wrapFetch: (callback, _url, _method, attempt) =>
+            attempt === 0 ? callback() : Promise.reject(new Error("circuit breaker is open")),
+        }),
+      });
+      const error = await assertRejects(
+        () => sdk.getRun({ path: { run_id: "run-1" } }),
+        VeryfrontError,
+      );
+      assertEquals(runsProblemOf(error), undefined);
+    });
+    assertEquals(fetches, 1);
+  });
+
+  it("supports API-key-only authentication in the host canonical transport", async () => {
+    await withMockFetch((_url, init) => {
+      const headers = new Headers(init?.headers);
+      assertEquals(headers.get("Authorization"), null);
+      assertEquals(headers.get("X-API-Key"), "test-api-key");
+      assertEquals(init?.redirect, "error");
+      return Promise.resolve(Response.json({ id: "run-1" }, { status: 201 }));
+    }, async () => {
+      const sdk = createRunsSdk({
+        transport: createCanonicalVeryfrontApiTransport(
+          "https://api.example.test",
+          () => "test-api-key",
+          { maxRetries: 0, initialDelay: 0, maxDelay: 0 },
+          undefined,
+          "api-key",
+        ),
+      });
+      const created = await sdk.createRun({
+        headers: { "Idempotency-Key": "test-api-key-root-run" },
+        body: { project_id: "project-1", target: { type: "task", id: "test-task" } },
+      });
+      assertEquals(created.id, "run-1");
+    });
+  });
 });

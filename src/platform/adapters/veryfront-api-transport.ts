@@ -41,6 +41,7 @@ const NativeHeaders = Headers;
 const IntrinsicReflectApply = Reflect.apply;
 const HeadersPrototypeHas = NativeHeaders.prototype.has;
 const HeadersPrototypeSet = NativeHeaders.prototype.set;
+const HeadersPrototypeDelete = NativeHeaders.prototype.delete;
 
 function hasHeader(headers: Headers, name: string): boolean {
   return IntrinsicReflectApply(HeadersPrototypeHas, headers, [name]) as boolean;
@@ -48,6 +49,10 @@ function hasHeader(headers: Headers, name: string): boolean {
 
 function setHeader(headers: Headers, name: string, value: string): void {
   IntrinsicReflectApply(HeadersPrototypeSet, headers, [name, value]);
+}
+
+function deleteHeader(headers: Headers, name: string): void {
+  IntrinsicReflectApply(HeadersPrototypeDelete, headers, [name]);
 }
 
 export type TransportRetryConfig = BoundedRetryConfig;
@@ -79,6 +84,8 @@ export interface TransportRequestInit {
 export interface VeryfrontApiTransportConfig<T> {
   baseUrl: string;
   getToken: () => string;
+  /** Host credential mode. getToken supplies the bearer token or API key; none never reads it. */
+  authMode?: "bearer" | "api-key" | "none";
   retry: TransportRetryConfig;
   timeoutMs?: number;
   defaultHeaders?: Record<string, string>;
@@ -132,7 +139,11 @@ function createValidatedVeryfrontApiTransport<T>(
     defaultHeaders = {},
     afterFetch,
     wrapFetch,
+    authMode = "bearer",
   } = config;
+  if (authMode !== "bearer" && authMode !== "api-key" && authMode !== "none") {
+    throw new TypeError("Veryfront API authMode must be bearer, api-key or none");
+  }
   const defaultHeaderSnapshot = new NativeHeaders(defaultHeaders);
   const onRetry = config.onRetry;
   const { maxRetries, initialDelay, maxDelay } = retry;
@@ -185,12 +196,12 @@ function createValidatedVeryfrontApiTransport<T>(
       // Capture the token once per request: retries of this request must not
       // pick up mid-flight token mutations (setRequestToken/clearRequestToken),
       // matching the pre-transport requestWithRetry semantics.
-      const token = getToken();
+      const token = authMode === "none" ? "" : getToken();
       let responseError: unknown;
       return await retryWithBackoff(
         async (signal, attempt) => {
+          responseError = undefined;
           const doFetch = async (): Promise<T> => {
-            responseError = undefined;
             const headers = new NativeHeaders(requestHeaders);
             for (const [k, v] of defaultHeaderSnapshot) {
               if (!hasHeader(headers, k)) setHeader(headers, k, v);
@@ -199,7 +210,13 @@ function createValidatedVeryfrontApiTransport<T>(
             // Attach the credential last: tracing may use the public Headers
             // prototype, and a replaced method must never receive a container
             // that already holds the host-private token.
-            setHeader(headers, "Authorization", `Bearer ${token}`);
+            if (authMode === "bearer") {
+              setHeader(headers, "Authorization", `Bearer ${token}`);
+            } else {
+              deleteHeader(headers, "Authorization");
+              if (authMode === "api-key") setHeader(headers, "X-API-Key", token);
+              else deleteHeader(headers, "X-API-Key");
+            }
             const start = performance.now();
             const requestInit: RequestInit = {
               method,
@@ -274,12 +291,14 @@ export function createCanonicalVeryfrontApiTransport(
   getToken: () => string,
   retry: TransportRetryConfig,
   outboundPolicy?: VeryfrontApiTransportConfig<unknown>["outboundPolicy"],
+  authMode?: VeryfrontApiTransportConfig<unknown>["authMode"],
 ): VeryfrontApiTransport<unknown> {
   const normalizedRetry = requireVeryfrontApiRetryConfig(retry);
   return createValidatedVeryfrontApiTransport(
     {
       baseUrl,
       getToken,
+      authMode,
       retry: normalizedRetry,
       outboundPolicy,
       defaultHeaders: { "Content-Type": "application/json" },

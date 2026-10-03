@@ -27,8 +27,8 @@ describe("runs SDK redirect boundary", () => {
       const sdk = createRunsSdk({
         transport: createVeryfrontApiTransport({
           baseUrl: `http://127.0.0.1:${api.addr.port}`,
-          getToken: () => "test-token",
-          defaultHeaders: { "X-API-Key": "<API_KEY>" },
+          getToken: () => "<API_KEY>",
+          authMode: "api-key",
           retry: { maxRetries: 0, initialDelay: 0, maxDelay: 0 },
         }),
       });

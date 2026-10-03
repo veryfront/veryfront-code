@@ -23,8 +23,12 @@ const runs = await sdk.listProjectRuns({
 
 Replace the former `baseUrl`, `transport: fetch` and `credential` SDK options with
 one canonical transport object. For execution-token requests, use a transport
-whose `getToken` supplies that execution token. API-key headers, when needed, are
-host transport configuration, not SDK-owned credential selection.
+whose `getToken` supplies that execution token. For project API keys, pass
+`"api-key"` as the canonical factory's fifth argument (after outbound policy),
+and return the API key from `getToken`. The host then sends only `X-API-Key`, not
+a bearer header. Use `"none"` for public anonymous operations. Direct transport
+configuration accepts the same `authMode` values. Credential selection stays in
+the host transport rather than the SDK.
 
 `onHeaders` receives captured success headers after the transport attempt ends,
 so a caller callback failure cannot retry an already successful mutation.
