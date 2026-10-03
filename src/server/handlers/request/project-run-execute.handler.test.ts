@@ -9993,6 +9993,52 @@ describe("server/handlers/request/project-run-execute.handler manual pause (#258
     assertEquals((await backend.getRun(runId))?.status, "completed");
   });
 
+  it("continues a pause an older attempt makes while a repeated decision waits for the run", async () => {
+    const backend = new SharedMemoryBackend();
+    const calls: string[] = [];
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    const definition = workflow({
+      id: "publish",
+      steps: [
+        step("first", {
+          tool: tool({
+            id: "first-tool",
+            description: "Record first once released",
+            inputSchema: defineSchema((v) => v.object({}).passthrough())(),
+            execute: async () => {
+              await gate;
+              calls.push("first");
+              return { first: true };
+            },
+          }),
+        }),
+        dependsOn(countingStep("second", calls), "first"),
+      ],
+    }).definition as unknown as WorkflowDefinition;
+    let acknowledgements = 0;
+
+    await withMockFetch(async () => Response.json({ stop: ++acknowledgements === 1 }), async () => {
+      // The older attempt is still running when the control plane re-sends a decision; the
+      // control plane then tells the older attempt to stop at its boundary.
+      const older = dispatch(createHandler(backend, definition));
+      while (!(await backend.getRun(runId))) await delay(1);
+      const repeated = dispatch(createHandler(backend, definition), {
+        type: "deadline",
+        wait_id: "w",
+      });
+      await delay(20);
+      release();
+      assertEquals((await older).waiting_reason, "manual_pause");
+      const continued = await repeated;
+      assertEquals(continued.success, true);
+      assertEquals(continued.status, undefined);
+    });
+
+    assertEquals(calls, ["first", "second"]);
+    assertEquals((await backend.getRun(runId))?.status, "completed");
+  });
+
   it("checks for a pause at most once per second", async () => {
     const backend = new SharedMemoryBackend();
     const calls: string[] = [];

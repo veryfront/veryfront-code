@@ -1444,19 +1444,19 @@ async function resumeWaitingWorkflowRun(
   if (!current) return { failure: `Workflow run not found: ${runId}` };
 
   // A re-dispatch that repeats a decision already applied (the previous
-  // attempt died after applying it) just reports where the run is now.
+  // attempt died after applying it) just reports where the run is now. An
+  // older attempt the control plane told to stop may park it meanwhile; that
+  // pause continues like a manual resume, which asks the control plane first.
   if (current.status !== "waiting") {
-    return {
-      run: await waitForWorkflowResult(
-        client,
-        runId,
-        signal,
-        deps,
-        undefined,
-        pollingStopped,
-        cancelRun,
-      ),
-    };
+    return await resumeManuallyPausedRun(
+      client,
+      runId,
+      signal,
+      deps,
+      pollingStopped,
+      cancelRun,
+      acknowledgePause,
+    );
   }
 
   const parked = await readPendingWaits(client, runId, current);
@@ -1474,17 +1474,15 @@ async function resumeWaitingWorkflowRun(
     );
   }
   if (await isStaleDecision(resume, parked)) {
-    return {
-      run: await waitForWorkflowResult(
-        client,
-        runId,
-        signal,
-        deps,
-        undefined,
-        pollingStopped,
-        cancelRun,
-      ),
-    };
+    return await resumeManuallyPausedRun(
+      client,
+      runId,
+      signal,
+      deps,
+      pollingStopped,
+      cancelRun,
+      acknowledgePause,
+    );
   }
   // A timed-out request still applies its decision: the timeout reports the
   // run waiting and the recheck dispatch names no decision to apply again.
@@ -1534,7 +1532,6 @@ async function resumeManuallyPausedRun(
   cancelRun: () => Promise<void>,
   acknowledgePause?: () => Promise<boolean | undefined>,
 ): Promise<{ run: WorkflowRunView } | { failure: string }> {
-  if (!client.resume) return { failure: "Workflow client cannot resume paused runs" };
   const settle = () =>
     waitForWorkflowResult(client, runId, signal, deps, undefined, pollingStopped, cancelRun);
   let current = await settle();
@@ -1547,6 +1544,7 @@ async function resumeManuallyPausedRun(
       await cancelRun();
       return { run: { status: "cancelled", error: { message: "Workflow run cancelled" } } };
     }
+    if (!client.resume) return { failure: "Workflow client cannot resume paused runs" };
     try {
       await client.resume(runId);
       break;
@@ -1645,7 +1643,7 @@ async function runDiscoveredWorkflow(
   let pauseCheckWindowMs = WORKFLOW_PAUSE_CHECK_INTERVAL_MS;
   const shouldPause = async (runId: string): Promise<boolean> => {
     if (!acknowledgePause || !pauseChecksEnabled || runId !== request.runId) return false;
-    if (signal.aborted) return false;
+    if (isAbortSignalAborted(signal)) return false;
     const now = deps.now();
     if (
       lastPauseCheckAt !== undefined && now - lastPauseCheckAt < pauseCheckWindowMs
