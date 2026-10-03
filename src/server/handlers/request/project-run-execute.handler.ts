@@ -1,4 +1,9 @@
 import {
+  snapshotTaskDeadlineClock,
+  systemTaskDeadlineClock,
+  type TaskDeadlineClock,
+} from "#veryfront/server/handlers/request/task-deadline-clock.ts";
+import {
   API_CLIENT_ERROR,
   INPUT_VALIDATION_FAILED,
   INVALID_ARGUMENT,
@@ -21,10 +26,12 @@ import {
   resolveHostOwnedSourceApiBaseUrl,
 } from "#veryfront/config/host-api-base.ts";
 import {
+  addAbortSignalListenerOnce,
   isAbortSignalAborted,
   removeAbortSignalListener,
 } from "#veryfront/platform/compat/abort-signal.ts";
 import {
+  IntrinsicPromise,
   primordialPromiseCatch,
   primordialPromiseResolve,
   primordialPromiseThen,
@@ -117,7 +124,6 @@ import { parseProjectDomain } from "#veryfront/server/utils/domain-parser.ts";
 const TaskDate = Date;
 /** Captured before project code runs, which may replace the global. */
 const TaskError = Error;
-const TaskDateNow = Date.now;
 const TaskDateParse = Date.parse;
 const TaskSetTimeout = globalThis.setTimeout;
 const TaskClearTimeout = globalThis.clearTimeout;
@@ -146,7 +152,7 @@ const WORKFLOW_PAUSE_ACK_ATTEMPTS = 3;
 const WORKFLOW_PAUSE_ACK_RETRY_MS = 100;
 /** One pause-ack request; the run waits for the answer at its boundary. */
 const WORKFLOW_PAUSE_ACK_TIMEOUT_MS = 2_000;
-/** After a check the control plane did not answer, boundaries skip asking for this long. */
+/** Backoff between unknown decision rounds while retaining the safe boundary. */
 const WORKFLOW_PAUSE_CHECK_BACKOFF_MS = 30_000;
 /**
  * How often a manual resume retries, 100ms apart, while the paused execution still holds the
@@ -172,6 +178,8 @@ const NumberParseInt = Number.parseInt;
 const MathTrunc = Math.trunc;
 const ObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 const ObjectHasOwn = Object.hasOwn;
+const ObjectValues = Object.values;
+const ArraySome = Array.prototype.some;
 const ObjectSetPrototypeOf = Object.setPrototypeOf;
 const NumberPrototypeToString = Number.prototype.toString;
 const StringPrototypeCharCodeAt = String.prototype.charCodeAt;
@@ -375,21 +383,13 @@ interface WorkflowClientView {
   destroy(): Promise<void>;
 }
 
-interface TaskDeadlineClock {
-  now: () => number;
-  setTimeout: typeof globalThis.setTimeout;
-  clearTimeout: typeof globalThis.clearTimeout;
-}
-
-const defaultTaskDeadlineClock: TaskDeadlineClock = Object.freeze({
-  now: TaskDateNow,
-  setTimeout: TaskSetTimeout,
-  clearTimeout: TaskClearTimeout,
-});
-
 export interface ProjectRunExecuteHandlerDeps {
   /** Host-owned clock; defaults to intrinsics captured before project code runs. */
-  taskDeadlineClock?: TaskDeadlineClock;
+  taskDeadlineClock?: {
+    now(): number;
+    setTimeout: typeof globalThis.setTimeout;
+    clearTimeout: typeof globalThis.clearTimeout;
+  };
   runTask(options: RunTaskOptions): Promise<TaskRunResult>;
   findWorkflowById(
     workflowId: string,
@@ -993,11 +993,10 @@ async function runWhileActive<T>(signal: AbortSignal, operation: () => Promise<T
 async function executeTaskRun(
   request: ProjectRunExecuteRequest,
   execute: (control?: TaskDeadlineControl) => Promise<ProjectRunExecuteResponse>,
+  clock: TaskDeadlineClock,
   acknowledgeNotStarted?: () => Promise<void>,
-  clock: TaskDeadlineClock = defaultTaskDeadlineClock,
 ): Promise<ProjectRunExecuteResponse> {
   if (!request.deadlineAt) return execute();
-  const { now, setTimeout: schedule, clearTimeout: clear } = clock;
   const deadline = TaskDateParse(request.deadlineAt);
   const controller = new TaskAbortController();
   let expired = false;
@@ -1018,18 +1017,18 @@ async function executeTaskRun(
   const control: TaskDeadlineControl = {
     signal,
     throwIfExpired() {
-      if (now() >= deadline) throw expire();
+      if (clock.now() >= deadline) throw expire();
     },
   };
   try {
     control.throwIfExpired();
     const expiration = new Promise<never>((_resolve, reject) => {
       const arm = () => {
-        const remaining = deadline - now();
+        const remaining = deadline - clock.now();
         if (remaining <= 0) {
           reject(expire());
         } else {
-          timer = schedule(arm, Math.min(remaining, MAX_TIMER_DELAY_MS));
+          timer = clock.setTimer(arm, Math.min(remaining, MAX_TIMER_DELAY_MS));
         }
       };
       arm();
@@ -1042,11 +1041,11 @@ async function executeTaskRun(
     control.throwIfExpired();
     return result;
   } catch (failure) {
-    if (!expired && now() >= deadline) expire();
+    if (!expired && clock.now() >= deadline) expire();
     if (!expired) throw failure;
     return { success: false, error: error.message, error_code: "RUN_TIMEOUT" };
   } finally {
-    clear(timer);
+    clock.clearTimer(timer);
     if (!executionStarted) await acknowledgeNotStarted?.();
   }
 }
@@ -1582,6 +1581,83 @@ async function resumeWaitingWorkflowRun(
  * attempt whose run was paused again meanwhile, is told to stop and reports
  * the pause instead of releasing it.
  */
+async function awaitRunPauseDecision(
+  acknowledge: () => Promise<boolean | undefined>,
+  signal: AbortSignal,
+  deps: Pick<ProjectRunExecuteHandlerDeps, "sleep">,
+  runId: string,
+  pollingStopped?: AbortSignal,
+): Promise<boolean> {
+  // A stopped poll (the resume request already answered) ends the wait like a
+  // cancellation: the run holds its boundary and a later dispatch decides.
+  const ended = () =>
+    isAbortSignalAborted(signal) ||
+    (pollingStopped !== undefined && isAbortSignalAborted(pollingStopped));
+  for (let round = 1; !ended(); round++) {
+    const decision = await acknowledge();
+    // A decision that arrives after the wait ended answers nobody: the request
+    // already reported the hold, so even a continue must not release the run.
+    if (ended()) break;
+    if (decision !== undefined) return decision;
+    // An unknown reply may hide a committed stop. Hold the durable boundary until
+    // the current authority explicitly permits continuation or cancellation ends it.
+    serverLogger.warn("[project-run-execute] Pause decision unknown; holding the boundary", {
+      runId,
+      round,
+    });
+    await sleepUntilAborted(
+      (ms) => deps.sleep(ms),
+      WORKFLOW_PAUSE_CHECK_BACKOFF_MS,
+      pollingStopped === undefined ? [signal] : [signal, pollingStopped],
+    );
+  }
+  return true;
+}
+
+/**
+ * Sleep that ends early once any of the signals aborts. Project code may have
+ * replaced the global Promise by the time a pause boundary waits, so the race
+ * is built from host-captured Promise operations.
+ */
+async function sleepUntilAborted(
+  sleep: (ms: number) => Promise<void>,
+  ms: number,
+  signals: readonly AbortSignal[],
+): Promise<void> {
+  for (const signal of signals) {
+    if (isAbortSignalAborted(signal)) return;
+  }
+  let wake: (() => void) | undefined;
+  let fail: ((error: unknown) => void) | undefined;
+  const woken = new IntrinsicPromise<void>((resolve, reject) => {
+    wake = () => resolve();
+    fail = reject;
+  });
+  const onAbort = () => wake?.();
+  for (const signal of signals) {
+    addAbortSignalListenerOnce(signal, onAbort);
+  }
+  try {
+    // Listeners are in place first: the sleep itself may observe the abort.
+    void primordialPromiseThen(sleep(ms), () => wake?.(), (error) => fail?.(error));
+    await woken;
+  } finally {
+    for (const signal of signals) removeAbortSignalListener(signal, onAbort);
+  }
+}
+
+function isRecoverableManualPauseBoundary(
+  run: WorkflowRunView,
+  parked: PendingWorkflowWaits,
+): boolean {
+  return run.status === "running" && run.currentNodes?.length === 0 &&
+    isParkedOnNothing(parked) &&
+    IntrinsicReflectApply(ArraySome, ObjectValues(run.nodeStates ?? {}), [
+        (state: NonNullable<WorkflowRunView["nodeStates"]>[string]) =>
+          state?.status === "completed" || state?.status === "skipped",
+      ]) === true;
+}
+
 async function resumeManuallyPausedRun(
   client: WorkflowClientView,
   runId: string,
@@ -1593,16 +1669,30 @@ async function resumeManuallyPausedRun(
 ): Promise<{ run: WorkflowRunView } | { failure: string }> {
   const settle = () =>
     waitForWorkflowResult(client, runId, signal, deps, undefined, pollingStopped, cancelRun);
-  let current = await settle();
+  let current = await client.getRun(runId);
+  if (!current) return { failure: "Workflow run was not found" };
   for (let attempt = 1;; attempt++) {
-    if (!isManualPause(current, await readPendingWaits(client, runId, current))) {
-      return { run: current };
+    const parked = await readPendingWaits(client, runId, current);
+    if (!isManualPause(current, parked) && !isRecoverableManualPauseBoundary(current, parked)) {
+      current = await settle();
+      if (!isManualPause(current, await readPendingWaits(client, runId, current))) {
+        return { run: current };
+      }
+      continue;
     }
-    if (!signal.aborted && await acknowledgePause?.()) return { run: current };
-    if (signal.aborted) {
+    if (!acknowledgePause) return { failure: "Manual resume requires a run stop capability" };
+    const stop = await awaitRunPauseDecision(
+      acknowledgePause,
+      signal,
+      deps,
+      runId,
+      pollingStopped,
+    );
+    if (isAbortSignalAborted(signal)) {
       await cancelRun();
       return { run: { status: "cancelled", error: { message: "Workflow run cancelled" } } };
     }
+    if (stop) return { run: { ...current, status: "waiting", currentNodes: [] } };
     if (!client.resume) return { failure: "Workflow client cannot resume paused runs" };
     try {
       await client.resume(runId);
@@ -1610,7 +1700,8 @@ async function resumeManuallyPausedRun(
     } catch (error) {
       if (attempt >= WORKFLOW_MANUAL_RESUME_ATTEMPTS) throw error;
       await deps.sleep(DEFAULT_WORKFLOW_STATUS_POLL_INTERVAL_MS);
-      current = await settle();
+      current = await client.getRun(runId);
+      if (!current) return { failure: "Workflow run was not found" };
     }
   }
   return { run: await settle() };
@@ -1699,22 +1790,16 @@ async function runDiscoveredWorkflow(
   // Only a durable run can pause: an ephemeral one has nothing to resume from.
   let pauseChecksEnabled = false;
   let lastPauseCheckAt: number | undefined;
-  let pauseCheckWindowMs = WORKFLOW_PAUSE_CHECK_INTERVAL_MS;
   const shouldPause = async (runId: string): Promise<boolean> => {
     if (!acknowledgePause || !pauseChecksEnabled || runId !== request.runId) return false;
     if (isAbortSignalAborted(signal)) return false;
     const now = deps.now();
     if (
-      lastPauseCheckAt !== undefined && now - lastPauseCheckAt < pauseCheckWindowMs
+      lastPauseCheckAt !== undefined && now - lastPauseCheckAt < WORKFLOW_PAUSE_CHECK_INTERVAL_MS
     ) return false;
-    const answer = await acknowledgePause();
-    // The window starts when the answer arrives, so a slow reply cannot make every boundary
-    // ask, and an unanswered check backs off longer.
-    pauseCheckWindowMs = answer === undefined
-      ? WORKFLOW_PAUSE_CHECK_BACKOFF_MS
-      : WORKFLOW_PAUSE_CHECK_INTERVAL_MS;
+    const answer = await awaitRunPauseDecision(acknowledgePause, signal, deps, runId);
     lastPauseCheckAt = deps.now();
-    return answer === true;
+    return answer;
   };
   let client: WorkflowClientView;
   try {
@@ -2228,8 +2313,8 @@ function createRunStopAcknowledger(req: Request, runId: string): (() => Promise<
  * Ask the control plane whether this attempt should stop at a safe boundary.
  * A `{ "stop": true }` reply means the API confirmed a requested pause for this
  * attempt, or the attempt no longer holds the run. The call is idempotent, so a
- * transport error or 5xx is retried a few times and then answers `undefined`
- * (unknown, so continue); anything else, including 401, reads as continue.
+ * transport error or 5xx is retried a few times and then answers `undefined`.
+ * Unknown, rejected, and malformed replies never authorize continuation.
  */
 function createRunPauseAcknowledger(
   req: Request,
@@ -2277,10 +2362,12 @@ function createRunPauseAcknowledger(
               });
             }
             await response.body?.cancel();
-            return false;
+            return undefined;
           }
           const body: unknown = await ReflectApply(ResponsePrototypeJson, response, []);
-          return isRecord(body) && body.stop === true;
+          if (response.status === 200 && isRecord(body) && typeof body.stop === "boolean") {
+            return body.stop;
+          }
         }
         await response.body?.cancel();
       } catch {
@@ -3868,7 +3955,7 @@ const defaultDeps: ProjectRunExecuteHandlerDeps = {
   executeReleaseAssetBuild: executeReleaseAssetBuildRun,
   executeDependencyArtifactBuild: executeDependencyArtifactBuildRun,
   executeStyleArtifactBuild: executeStyleArtifactBuildRun,
-  sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+  sleep: (ms) => new IntrinsicPromise<void>((resolve) => TaskSetTimeout(resolve, ms)),
   now: () => Date.now(),
 };
 
@@ -3878,14 +3965,11 @@ function executeProjectRun(
   ctx: HandlerContext,
   req: Request,
   deps: ProjectRunExecuteHandlerDeps,
+  taskClock: TaskDeadlineClock,
   acknowledgeStop?: () => Promise<void>,
   acknowledgePause?: () => Promise<boolean | undefined>,
 ): Promise<ProjectRunExecuteResponse> {
   if (request.kind === "task") {
-    const clockDescriptor = ObjectGetOwnPropertyDescriptor(deps, "taskDeadlineClock");
-    const clock = clockDescriptor && ObjectHasOwn(clockDescriptor, "value")
-      ? clockDescriptor.value as TaskDeadlineClock | undefined
-      : undefined;
     return executeTaskRun(
       request,
       async (control) => {
@@ -3911,8 +3995,8 @@ function executeProjectRun(
           await acknowledgeStop?.();
         }
       },
+      taskClock,
       acknowledgeStop,
-      clock,
     );
   }
   return executeWorkflowRun(request, ctx, req.signal, deps, acknowledgeStop, acknowledgePause);
@@ -3927,8 +4011,30 @@ export class ProjectRunExecuteHandler extends BaseHandler {
     ],
   };
 
-  constructor(private readonly deps: ProjectRunExecuteHandlerDeps = defaultDeps) {
+  private readonly taskDeadlineClock: TaskDeadlineClock;
+
+  constructor(
+    private readonly deps: ProjectRunExecuteHandlerDeps = defaultDeps,
+    taskDeadlineClock?: TaskDeadlineClock,
+  ) {
     super();
+    const descriptor = ObjectGetOwnPropertyDescriptor(deps, "taskDeadlineClock");
+    const hostClock = descriptor && ObjectHasOwn(descriptor, "value")
+      ? descriptor.value as ProjectRunExecuteHandlerDeps["taskDeadlineClock"]
+      : undefined;
+    const hostNow = hostClock?.now;
+    const hostSchedule = hostClock?.setTimeout;
+    const hostClear = hostClock?.clearTimeout;
+    const clock = taskDeadlineClock ?? (hostClock
+      ? {
+        now: () => ReflectApply(hostNow!, hostClock, []),
+        setTimer: (callback: () => void, delayMs: number) =>
+          ReflectApply(hostSchedule!, hostClock, [callback, delayMs]),
+        clearTimer: (handle: ReturnType<typeof setTimeout> | undefined) =>
+          ReflectApply(hostClear!, hostClock, [handle]),
+      }
+      : systemTaskDeadlineClock);
+    this.taskDeadlineClock = snapshotTaskDeadlineClock(clock);
   }
 
   async handle(req: Request, ctx: HandlerContext): Promise<HandlerResult> {
@@ -3986,6 +4092,7 @@ export class ProjectRunExecuteHandler extends BaseHandler {
                     ctx,
                     executionRequest,
                     this.deps,
+                    this.taskDeadlineClock,
                     acknowledgeStop,
                     acknowledgePause,
                   )
@@ -3997,6 +4104,7 @@ export class ProjectRunExecuteHandler extends BaseHandler {
                         ctx,
                         executionRequest,
                         this.deps,
+                        this.taskDeadlineClock,
                         acknowledgeStop,
                         acknowledgePause,
                       ),

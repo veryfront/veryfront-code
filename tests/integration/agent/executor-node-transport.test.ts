@@ -171,6 +171,96 @@ if (typeof Deno !== "undefined") {
       }
     });
 
+    for (const ending of ["deadline", "abort", "close"] as const) {
+      it(`keeps caller I/O alive after an early lifetime wake and cancels on ${ending}`, async () => {
+        // The trusted clock seam uses a fixed UTC anchor plus monotonic elapsed time.
+        // Only the caller uses it; the authenticated peer retains its real clock.
+        const epochMs = 1_700_000_000_000;
+        let elapsedMs = 0;
+        const scheduled = new Map<object, { callback: () => void; delayMs: number }>();
+        const controller = new AbortController();
+        const key = randomBytes(32);
+        const listener = await listenExecutorTransport({ host, port: 0, binding, key, timeoutMs });
+        let client: ExecutorNodeTransport | undefined;
+        let server: ExecutorNodeTransport | undefined;
+        try {
+          client = await connectExecutorTransport({
+            podIp: host,
+            port: listener.address.port,
+            binding,
+            key,
+            signal: controller.signal,
+            timeoutMs: 1_000,
+            clock: {
+              now: () => epochMs + elapsedMs,
+              schedule(callback, delayMs) {
+                const handle = {};
+                scheduled.set(handle, { callback, delayMs });
+                return handle;
+              },
+              cancel: (handle) => {
+                scheduled.delete(handle as object);
+              },
+            },
+          });
+          server = await listener.connection;
+          assertEquals(scheduled.size, 1, "authentication must cancel the handshake timer");
+          const [handle, wake] = [...scheduled.entries()][0]!;
+          assertEquals(wake.delayMs, 1_000);
+          const reader = client.readable.getReader();
+          const pending = reader.read();
+          const outcome = pending.then(() => "read", (error: Error) => error.message);
+          scheduled.delete(handle);
+          elapsedMs = 999;
+          wake.callback();
+          assertEquals(await Promise.race([outcome, setImmediate("pending")]), "pending");
+          assertEquals(scheduled.size, 1);
+          const [replacement, next] = [...scheduled.entries()][0]!;
+          assertEquals(next.delayMs, 1, "early delivery must preserve the absolute deadline");
+
+          const serverWriter = server.writable.getWriter();
+          await serverWriter.write(new Uint8Array([42]));
+          assertEquals((await pending).value, new Uint8Array([42]));
+          reader.releaseLock();
+          const clientWriter = client.writable.getWriter();
+          await clientWriter.write(new Uint8Array([43]));
+          assertEquals(await readBytes(server, 1), new Uint8Array([43]));
+          const rejected = assertRejects(
+            () => client!.readable.getReader().read(),
+            Error,
+            `Executor transport ${
+              ending === "deadline"
+                ? "deadline exceeded"
+                : ending === "abort"
+                ? "aborted"
+                : "closed"
+            }`,
+          );
+          if (ending === "deadline") {
+            scheduled.delete(replacement);
+            elapsedMs = 1_000;
+            next.callback();
+          } else if (ending === "abort") {
+            controller.abort();
+          } else {
+            client.close();
+          }
+          await rejected;
+          assertEquals(scheduled.size, 0, "termination must cancel the replacement timer");
+          assertEquals(getEventListeners(controller.signal, "abort").length, 0);
+          next.callback();
+          assertEquals(scheduled.size, 0, "a canceled wake must not rearm");
+          await assertRejects(() => clientWriter.write(new Uint8Array([44])), Error);
+        } finally {
+          client?.close();
+          server?.close();
+          listener.close();
+          key.fill(0);
+          await setImmediate();
+        }
+      });
+    }
+
     it("keeps a client handshake pending after early delivery and expires at the five-second cap", async () => {
       let now = 0;
       const scheduled = new Map<object, { callback: () => void; delayMs: number }>();
