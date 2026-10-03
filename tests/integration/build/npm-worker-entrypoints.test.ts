@@ -26,6 +26,7 @@ Deno.test("npm worker stays compiled without a public export", async () => {
       "export {};",
     );
     const pkg = {
+      dependencies: { "@veryfront/ext-parser-babel": "unpublished-rc", zod: "4.3.6" },
       exports: {
         ".": { import: "./esm/src/index.js" },
         [NPM_WORKER_ENTRYPOINT.name]: {
@@ -35,6 +36,7 @@ Deno.test("npm worker stays compiled without a public export", async () => {
     };
     await finalizeNpmWorkerEntrypoints(root, pkg);
     assertEquals(Object.keys(pkg.exports), ["."]);
+    assertEquals(pkg.dependencies, { zod: "4.3.6" });
   } finally {
     await Deno.remove(root, { recursive: true });
   }

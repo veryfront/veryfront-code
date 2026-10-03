@@ -125,6 +125,10 @@ await build({
 	mappings: {
 		// esm.sh URLs - derived from deno.json imports
 		...esmShMappings,
+		// Keep the worker parser in its own npm package and dependency boundary.
+		"./extensions/ext-parser-babel/src/parser-only.ts": {
+			name: "@veryfront/ext-parser-babel", version, subPath: "parser-only",
+		},
 		// React must resolve to the CONSUMER's bare `react` / `react-dom` in the
 		// emitted package. The repo pins react through the local `./react/*.ts`
 		// deno shims (so Deno imports a stable esm.sh build); if dnt bundles those
