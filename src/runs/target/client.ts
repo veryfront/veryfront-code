@@ -258,7 +258,7 @@ async function* readFrames(
 }
 
 /** Split an event stream into raw frames, normalizing CRLF and CR line ends to LF. */
-async function* rawFrames(body: ReadableStream<Uint8Array>): AsyncGenerator<string> {
+async function* rawFrames(body: ReadableStream<BufferSource>): AsyncGenerator<string> {
   let buffer = "";
   function* complete(): Generator<string> {
     let boundary = buffer.indexOf("\n\n");
