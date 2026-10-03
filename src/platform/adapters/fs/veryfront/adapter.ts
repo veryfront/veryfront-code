@@ -2071,7 +2071,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
     const sourceKey = buildFileListCacheKey(effectiveContext);
     const isSourceListingKey = (key: string) =>
       key === sourceKey ||
-      IntrinsicReflectApply(StringPrototypeStartsWith, key, [`${sourceKey}|authority:`]) === true;
+      IntrinsicReflectApply(StringPrototypeStartsWith, key, [`${sourceKey}:authority:`]) === true;
 
     const projectPaths: string[] = [];
     for (let index = 0; index < changedPaths.length; index++) {
@@ -2160,7 +2160,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
       // costs no listing here and avoids uploading the project per write.
       await IntrinsicReflectApply(PromiseAll, IntrinsicPromise, [[
         this.cache.deleteAsync(sourceKey),
-        this.cache.deleteByPrefixAsync(`${sourceKey}|authority:`),
+        this.cache.deleteByPrefixAsync(`${sourceKey}:authority:`),
       ]]);
       return true;
     });

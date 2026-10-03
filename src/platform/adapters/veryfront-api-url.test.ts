@@ -5,8 +5,8 @@ Deno.test("Veryfront API URL resolver preserves configured base paths", () => {
   const resolveUrl = createVeryfrontApiRequestUrlResolver("https://api.example.test/v1");
 
   assertEquals(
-    resolveUrl("/runs/run_parent/children/run_child/event-writer-token"),
-    "https://api.example.test/v1/runs/run_parent/children/run_child/event-writer-token",
+    resolveUrl("/runs/run_child/event-tokens"),
+    "https://api.example.test/v1/runs/run_child/event-tokens",
   );
   assertEquals(
     resolveUrl("projects/project_1"),

@@ -33,6 +33,7 @@ import {
   runWithHostedRunEventWriterCapability,
 } from "./child-run-event-writer-token.ts";
 import type { AgentTraceAttributes } from "./trace-attributes.ts";
+import { runEventTokenResponse } from "./child-run-event-writer-token.test-helpers.ts";
 
 const API_URL = "https://api.example.com";
 const AUTH_TOKEN = "token-123";
@@ -150,11 +151,8 @@ function runForkWithInjectedLifecycle(input: {
     apiUrl: API_URL,
     runId: "run_parent_1",
     runEventAppendToken: PARENT_RUN_EVENT_TOKEN,
-    fetch: () =>
-      Promise.resolve(Response.json(
-        { run_event_token: CHILD_RUN_EVENT_TOKEN },
-        { headers: { "Cache-Control": "no-store" } },
-      )),
+    fetch: (input) =>
+      Promise.resolve(runEventTokenResponse(new Request(input), CHILD_RUN_EVENT_TOKEN)),
   });
 
   return runWithHostedRunEventWriterCapability(
@@ -878,13 +876,9 @@ describe("agent/hosted-durable-child-fork-execution", () => {
       fetch: (input, init) => {
         const request = new Request(input, init);
         exchangeRequests.push(request);
-        return Promise.resolve(Response.json(
-          {
-            run_event_token: exchangeRequests.length === 1
-              ? CHILD_RUN_EVENT_TOKEN
-              : "grandchild-run-event-token",
-          },
-          { headers: { "Cache-Control": "no-store" } },
+        return Promise.resolve(runEventTokenResponse(
+          request,
+          exchangeRequests.length === 1 ? CHILD_RUN_EVENT_TOKEN : "grandchild-run-event-token",
         ));
       },
     });
@@ -1047,8 +1041,8 @@ describe("agent/hosted-durable-child-fork-execution", () => {
       `Bearer ${CHILD_RUN_EVENT_TOKEN}`,
     ]);
     assertEquals(exchangeRequests.map((request) => request.url), [
-      `${API_URL}/runs/run_parent_1/children/run_child_1/event-writer-token`,
-      `${API_URL}/runs/run_child_1/children/run_grandchild_1/event-writer-token`,
+      `${API_URL}/runs/run_child_1/event-tokens`,
+      `${API_URL}/runs/run_grandchild_1/event-tokens`,
     ]);
     assertEquals(lifecycleStatuses, ["pending", "running", "completed"]);
     assertEquals(result.success.identifiers, {
