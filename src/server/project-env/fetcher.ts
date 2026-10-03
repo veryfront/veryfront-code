@@ -198,6 +198,12 @@ function projectAuthorizationError(status: number): Error {
   });
 }
 
+function stripTrailingSlashes(value: string): string {
+  let end = value.length;
+  while (end > 0 && value.charCodeAt(end - 1) === 47) end -= 1;
+  return value.slice(0, end);
+}
+
 /**
  * Fetch environment variables for a project from the Veryfront API.
  *
@@ -219,8 +225,8 @@ export async function fetchProjectEnvVars(
 ): Promise<Record<string, string>> {
   // The internal origin is host-owned. Project overlays and project env files
   // cannot redirect either the tenant credential or the host credential.
-  const origin = getHostEnvExcludingEnvFile("VERYFRONT_API_INTERNAL_URL")?.replace(/\/+$/u, "") ??
-    apiBaseUrl;
+  const internalOrigin = getHostEnvExcludingEnvFile("VERYFRONT_API_INTERNAL_URL");
+  const origin = internalOrigin === undefined ? apiBaseUrl : stripTrailingSlashes(internalOrigin);
   const managementUrl = `${origin}/projects/${
     encodeURIComponent(projectSlug)
   }/environment-variables?environment_id=${

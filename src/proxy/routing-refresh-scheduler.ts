@@ -4,9 +4,9 @@ type Refresh = (signal: AbortSignal) => Promise<void>;
 
 /** Bound background work independently of foreground metadata admission. */
 export class RoutingRefreshScheduler {
-  private timers = new Map<string, ReturnType<typeof setTimeout>>();
-  private pending = new Map<string, Refresh>();
-  private running = new Map<string, AbortController>();
+  private readonly timers = new Map<string, ReturnType<typeof setTimeout>>();
+  private readonly pending = new Map<string, Refresh>();
+  private readonly running = new Map<string, AbortController>();
   private closed = false;
 
   constructor(

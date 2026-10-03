@@ -3,9 +3,9 @@ import { assertEquals } from "#veryfront/testing/assert";
 import { describe, it } from "#veryfront/testing/bdd";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { FakeTime } from "#std/testing/time";
-import { createProxyHandler } from "./handler.ts";
-import { createProjectMetadataClient } from "./project-metadata-client.ts";
-import { RoutingRefreshScheduler } from "./routing-refresh-scheduler.ts";
+import { createProxyHandler } from "#veryfront/proxy/handler.ts";
+import { createProjectMetadataClient } from "#veryfront/proxy/project-metadata-client.ts";
+import { RoutingRefreshScheduler } from "#veryfront/proxy/routing-refresh-scheduler.ts";
 
 function metadata(key: string, routing: boolean): Response {
   return Response.json({

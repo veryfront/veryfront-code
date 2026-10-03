@@ -2,8 +2,8 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert";
 import { describe, it } from "#veryfront/testing/bdd";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
-import { fetchProjectEnvVars } from "./fetcher.ts";
-import { runWithProjectEnv } from "./storage.ts";
+import { fetchProjectEnvVars } from "#veryfront/server/project-env/fetcher.ts";
+import { runWithProjectEnv } from "#veryfront/server/project-env/storage.ts";
 
 describe("project environment internal origin", () => {
   it("uses the host internal origin for each fresh credential and ignores tenant overrides", async () => {

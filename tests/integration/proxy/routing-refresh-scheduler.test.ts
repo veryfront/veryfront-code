@@ -1,10 +1,10 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
-import { createProjectMetadataClient } from "./project-metadata-client.ts";
+import { createProjectMetadataClient } from "#veryfront/proxy/project-metadata-client.ts";
 import { assertEquals } from "#veryfront/testing/assert";
 import { describe, it } from "#veryfront/testing/bdd";
 import { FakeTime } from "#std/testing/time";
-import { RoutingRefreshScheduler } from "./routing-refresh-scheduler.ts";
+import { RoutingRefreshScheduler } from "#veryfront/proxy/routing-refresh-scheduler.ts";
 
 describe("routing refresh admission", () => {
   it("bounds a synchronized burst and cancels queued and running refreshes", async () => {

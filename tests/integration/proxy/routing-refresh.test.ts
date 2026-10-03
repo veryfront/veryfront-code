@@ -3,7 +3,7 @@ import { assertEquals } from "#veryfront/testing/assert";
 import { describe, it } from "#veryfront/testing/bdd";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { FakeTime } from "#std/testing/time";
-import { createProxyHandler } from "./handler.ts";
+import { createProxyHandler } from "#veryfront/proxy/handler.ts";
 
 describe("idle proxy routing refresh", () => {
   it("refreshes before expiry, warms access, and still checks access on the idle request", async () => {
