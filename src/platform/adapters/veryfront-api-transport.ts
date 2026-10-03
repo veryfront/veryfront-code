@@ -211,6 +211,7 @@ function createValidatedVeryfrontApiTransport<T>(
             // prototype, and a replaced method must never receive a container
             // that already holds the host-private token.
             if (authMode === "bearer") {
+              deleteHeader(headers, "X-API-Key");
               setHeader(headers, "Authorization", `Bearer ${token}`);
             } else {
               deleteHeader(headers, "Authorization");

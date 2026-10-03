@@ -10,8 +10,10 @@ import { createRunsSdk } from "#veryfront/runs/target/client.ts";
 
 const token = Deno.env.get("VERYFRONT_API_TOKEN");
 if (!token) throw new Error("Set VERYFRONT_API_TOKEN");
+const apiUrl = Deno.env.get("VERYFRONT_API_URL");
+if (!apiUrl) throw new Error("Set VERYFRONT_API_URL to your API origin");
 const transport = createCanonicalVeryfrontApiTransport(
-  "https://api.veryfront.org",
+  apiUrl,
   () => token,
   { maxRetries: 2, initialDelay: 100, maxDelay: 1000 },
 );

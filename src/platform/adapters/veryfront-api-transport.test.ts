@@ -21,6 +21,28 @@ const baseConfig = {
 };
 
 describe("Veryfront API transport retry boundaries", () => {
+  it("removes competing API keys when the host selects bearer authentication", async () => {
+    await withMockFetch((_url, init) => {
+      const headers = new Headers(init?.headers);
+      assertEquals(headers.get("Authorization"), "Bearer token");
+      assertEquals(headers.get("X-API-Key"), null);
+      return Promise.resolve(Response.json({ data: [] }));
+    }, async () => {
+      const transport = createVeryfrontApiTransport({
+        ...baseConfig,
+        authMode: "bearer",
+        defaultHeaders: { "X-API-Key": "default-key" },
+        retry: { maxRetries: 0, initialDelay: 0, maxDelay: 0 },
+      });
+      assertEquals(
+        await transport.request("/runs", {
+          headers: { "X-API-Key": "request-key" },
+        }),
+        { data: [] },
+      );
+    });
+  });
+
   it("rejects unsupported authentication modes before reading credentials", () => {
     let reads = 0;
     assertThrows(
