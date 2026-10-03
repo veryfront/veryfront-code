@@ -111,6 +111,7 @@ export function toPersistedNodeStates(
         ? { _stepInputRecorded: state._stepInputRecorded }
         : {}),
       ...(state._waitInstanceId !== undefined ? { _waitInstanceId: state._waitInstanceId } : {}),
+      ...(state._branchSelected !== undefined ? { _branchSelected: state._branchSelected } : {}),
       ...(state._subWorkflowOwnerPath !== undefined
         ? { _subWorkflowOwnerPath: state._subWorkflowOwnerPath }
         : {}),
