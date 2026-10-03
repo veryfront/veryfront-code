@@ -1,4 +1,5 @@
 /** Generate the SDK fixtures from the vendored, pinned Runs OpenAPI examples. */
+import { fromFileUrl } from "#std/path";
 interface Schema {
   $ref?: string;
   default?: unknown;
@@ -204,11 +205,14 @@ export async function generateRunsFixtures(directory: URL): Promise<void> {
     await Deno.readTextFile(source),
   );
   await Deno.writeTextFile(output, renderRunsFixtures(document));
-  const formatter = await new Deno.Command("deno", {
-    args: ["fmt", output.pathname],
-  }).output();
-  if (!formatter.success) {
-    throw new Error(new TextDecoder().decode(formatter.stderr));
+  // Format, then typecheck: a contract example that no longer satisfies the SDK types fails here.
+  for (const command of ["fmt", "check"]) {
+    const result = await new Deno.Command("deno", {
+      args: [command, fromFileUrl(output)],
+    }).output();
+    if (!result.success) {
+      throw new Error(new TextDecoder().decode(result.stderr));
+    }
   }
   const pinUrl = new URL("pin.json", directory);
   const pin = JSON.parse(await Deno.readTextFile(pinUrl));
