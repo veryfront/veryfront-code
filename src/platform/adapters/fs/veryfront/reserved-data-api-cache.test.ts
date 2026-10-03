@@ -106,9 +106,9 @@ it("reserved data writes remove every authority listing from the shared API cach
         assertExists(context);
         const sourceKey = buildFileListCacheKey(context);
         const writerKey = scopeFileListCacheKeyToRequestAuthority(sourceKey);
-        const readerKey = runWithRequestContext(
+        const readerKey = await runWithRequestContext(
           request("reader-token"),
-          () => scopeFileListCacheKeyToRequestAuthority(sourceKey),
+          () => Promise.resolve(scopeFileListCacheKeyToRequestAuthority(sourceKey)),
         );
         const otherBranchKey = scopeFileListCacheKeyToRequestAuthority(
           buildFileListCacheKey({ ...context, branch: "other" }),
