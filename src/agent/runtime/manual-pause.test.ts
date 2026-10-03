@@ -1,5 +1,6 @@
 import { registerTurnProviderRequestValidator } from "#veryfront/agent/middleware/turn-validation.ts";
 import { agentManualPauseBoundary } from "./manual-pause.ts";
+import { createRunBoundAgentManualPause } from "../hosted/manual-pause-credential.ts";
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
@@ -389,24 +390,62 @@ it("restores private signed provider metadata after manual pause", async () => {
   assertEquals(body.includes("test-signature"), false);
 });
 
-it("holds an oversized requested pause without terminalizing the run", async () => {
+it("holds an oversized pause until its dispatch stops without claiming confirmation", async () => {
   const model = scriptedModel([{ text: "unreachable" }]);
+  const cancellation = new AbortController();
+  let requested = false;
+  let cancelled = false;
+  let checkedHeldBoundary!: () => void;
+  const heldBoundary = new Promise<void>((resolve) => checkedHeldBoundary = resolve);
+  let releaseRequested = false;
+  const authority = createRunBoundAgentManualPause({
+    apiUrl: "https://api.example.com",
+    runId: "run_oversized_pause",
+    token: "pause-test-token",
+    signal: cancellation.signal,
+    fetch: (url, init) => {
+      if (init?.method === "POST") {
+        assertEquals(JSON.parse(String(init.body)), { checkpoint: null });
+        releaseRequested = true;
+        return Promise.resolve(Response.json({ stop: true }));
+      }
+      if (String(url).includes("?boundary=true")) {
+        requested = true;
+        if (releaseRequested) checkedHeldBoundary();
+        return Promise.resolve(
+          Response.json({ stop: cancelled, checkpoint: null, pauseRequested: requested }),
+        );
+      }
+      return Promise.resolve(Response.json({ stop: false, checkpoint: null }));
+    },
+  });
   const runtime = new AgentRuntime("large-pause", {
     model: "test/pause",
     system: "Hold",
     skills: false,
     resolveModelTransport: () => ({ model }),
-  }, {
-    manualPause: {
-      load: async () => null,
-      requested: async () => true,
-      acknowledge: async () => {
-        throw new Error("Oversized continuation must not be sent");
-      },
-    },
-  });
-  const body = await new Response(await runtime.stream("x".repeat(2 * 1024 * 1024))).text();
-  assertEquals(body.includes("data-veryfront.manual_pause"), true);
+  }, { manualPause: authority });
+  let settled = false;
+  const response = new Response(await runtime.stream("x".repeat(2 * 1024 * 1024))).text();
+  void response.then(() => settled = true);
+  let watchdog: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      heldBoundary,
+      new Promise<never>((_, reject) => {
+        watchdog = setTimeout(() => reject(new Error("Held boundary was not checked")), 2000);
+      }),
+    ]);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    assertEquals(settled, false);
+    assertEquals(requested, true);
+    assertEquals(model.callCount, 0);
+  } finally {
+    clearTimeout(watchdog);
+    cancelled = true;
+    cancellation.abort();
+  }
+  const body = await response;
   assertEquals(body.includes("message-finish"), false);
   assertEquals(body.includes('"type":"error"'), false);
   assertEquals(model.callCount, 0);

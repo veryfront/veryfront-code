@@ -175,20 +175,35 @@ export function createRunBoundAgentManualPause(input: {
     },
     async release() {
       state.stopped = true;
-      const stop =
-        (await request("pause-ack", privateJsonStringify({ checkpoint: null })!, (value) =>
-          getAckSchema().parse(value))).stop;
-      state.stopped = stop;
-      if (!stop) {
-        state.requiresCheckpoint = false;
+      for (;;) {
+        const stop =
+          (await request("pause-ack", privateJsonStringify({ checkpoint: null })!, (value) =>
+            getAckSchema().parse(value))).stop;
+        if (!stop) {
+          state.stopped = false;
+          state.requiresCheckpoint = false;
+          return false;
+        }
+        // A requested pause rejects retirement too. Keep the live invocation open
+        // until its dispatch stops; it has no durable checkpoint to resume yet.
+        const boundary = await request(
+          "pause-checkpoint?boundary=true",
+          undefined,
+          (value) =>
+            getLoadSchema().parse(value),
+        );
+        if (boundary.stop) {
+          return true;
+        }
+        await new NativePromise<void>((resolve) =>
+          schedule(resolve, 1000)
+        );
       }
-      return stop;
     },
     async acknowledge(checkpoint: AgentPauseCheckpoint) {
       const body = privateJsonStringify({ checkpoint: parseAgentPauseCheckpoint(checkpoint) })!;
       state.stopped = true;
-      const stop = (await request("pause-ack", body, (value) =>
-        getAckSchema().parse(value))).stop;
+      const stop = (await request("pause-ack", body, (value) => getAckSchema().parse(value))).stop;
       state.stopped = stop;
       return stop;
     },
