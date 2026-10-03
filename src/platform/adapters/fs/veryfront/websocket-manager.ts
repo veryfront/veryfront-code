@@ -1139,7 +1139,7 @@ export class WebSocketManager {
           preparedStyleArtifact,
         );
 
-        this.deps.invalidationCallbacks.triggerReload?.(changedPaths, projectContext);
+        await this.deps.invalidationCallbacks.triggerReload?.(changedPaths, projectContext);
       }
 
       logger.info("Selective invalidation complete", {
@@ -1304,7 +1304,7 @@ export class WebSocketManager {
           preparedStyleArtifact,
         );
 
-        this.deps.invalidationCallbacks.triggerReload?.(undefined, projectContext);
+        await this.deps.invalidationCallbacks.triggerReload?.(undefined, projectContext);
       }
 
       logger.debug("CACHE INVALIDATION COMPLETE", {
