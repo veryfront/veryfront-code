@@ -15,6 +15,8 @@ import {
   createNativeRequestInit,
 } from "../../../src/platform/compat/http/native-request-init.ts";
 import { fetchWithPinnedAddresses } from "../../../src/platform/compat/http/pinned-fetch.ts";
+import * as nodeHttp from "node:http";
+import { EventEmitter } from "node:events";
 import { guardedEgressFetch } from "../../../src/security/sandbox/worker-egress-guard.ts";
 
 const BEARER = "Bearer vf-native-fetch-bearer-0a4d";
@@ -191,4 +193,48 @@ describe("node:http options and a modified Object.prototype", () => {
     }
     assertEquals(sawBearer, false);
   });
+});
+
+// node:http's prototypes are shared by the whole process, so these run as integration tests.
+describe("node:http members the pinned transport depends on", () => {
+  const PINNED_BEARER = "Bearer vf-pinned-node-member-bearer-6e12";
+
+  const hooks: [string, () => object, string][] = [
+    ["OutgoingMessage.prototype.setHeader", () => nodeHttp.OutgoingMessage.prototype, "setHeader"],
+    ["OutgoingMessage.prototype.getHeader", () => nodeHttp.OutgoingMessage.prototype, "getHeader"],
+    ["ClientRequest.prototype.setHeader (own)", () => nodeHttp.ClientRequest.prototype, "setHeader"],
+    ["EventEmitter.prototype.emit", () => EventEmitter.prototype, "emit"],
+    ["Agent.prototype.addRequest", () => nodeHttp.Agent.prototype, "addRequest"],
+  ];
+
+  for (const [label, target, key] of hooks) {
+    it(`refuses the request once ${label} was replaced`, async () => {
+      const prototype = target() as Record<string, unknown>;
+      const original = Object.getOwnPropertyDescriptor(prototype, key);
+      let sawBearer = false;
+      const inherited = original?.value ?? (prototype[key] as unknown);
+      Object.defineProperty(prototype, key, {
+        configurable: true,
+        writable: true,
+        value: function (this: unknown, ...args: unknown[]) {
+          if (JSON.stringify(args).includes(PINNED_BEARER)) sawBearer = true;
+          return typeof inherited === "function" ? Reflect.apply(inherited, this, args) : undefined;
+        },
+      });
+      try {
+        await assertRejects(
+          () =>
+            fetchWithPinnedAddresses(new URL("http://pinned.example.test:9/"), ["127.0.0.1"], {
+              headers: { authorization: PINNED_BEARER },
+            }),
+          TypeError,
+          "node:http member",
+        );
+      } finally {
+        if (original) Object.defineProperty(prototype, key, original);
+        else Reflect.deleteProperty(prototype, key);
+      }
+      assertEquals(sawBearer, false);
+    });
+  }
 });

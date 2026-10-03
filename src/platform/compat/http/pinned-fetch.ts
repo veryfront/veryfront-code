@@ -30,6 +30,9 @@ const HeadersSet = Headers.prototype.set;
 const RequestHeadersGetter = Object.getOwnPropertyDescriptor(NativeRequest.prototype, "headers")!
   .get!;
 const RequestArrayBuffer = NativeRequest.prototype.arrayBuffer;
+const ReflectGetPrototypeOf = Reflect.getPrototypeOf;
+const ReflectOwnKeys = Reflect.ownKeys;
+const ObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 const URLHrefGetter = Object.getOwnPropertyDescriptor(URL.prototype, "href")!.get!;
 const FunctionHasInstance = Function.prototype[Symbol.hasInstance];
 const NativeURLSearchParams = URLSearchParams;
@@ -51,6 +54,128 @@ const capturedHttpsRequest: NodeRequestFunction = nodeHttps.request;
 
 function nodeRequestFor(protocol: string): NodeRequestFunction {
   return protocol === "https:" ? capturedHttpsRequest : capturedHttpRequest;
+}
+
+/**
+ * Module-private agents with the global agents' options, copied at load. The global agents
+ * are reachable as `http.globalAgent`, and node:http calls `addRequest` on
+ * the agent with the request, and its headers, as an argument; an own
+ * property added to a shared agent would get it.
+ */
+// `options` is a runtime field node:http's typings do not declare.
+function copyAgentOptions(agent: nodeHttp.Agent): nodeHttp.AgentOptions | undefined {
+  const options: unknown = Reflect.get(agent, "options");
+  if (typeof options !== "object" || options === null) return undefined;
+  return { ...options };
+}
+const privateHttpAgent = new nodeHttp.Agent(copyAgentOptions(nodeHttp.globalAgent));
+const privateHttpsAgent = new nodeHttps.Agent(copyAgentOptions(nodeHttps.globalAgent));
+
+interface MemberSnapshot {
+  readonly target: object;
+  readonly prototype: object | null;
+  readonly keys: readonly PropertyKey[];
+  readonly descriptors: readonly (PropertyDescriptor | undefined)[];
+}
+
+/**
+ * Every prototype node:http calls into while it builds and sends a request:
+ * `setHeader`, `getHeader`, `_storeHeader`, `_send`, `end`, `emit` and the
+ * rest run with the request as `this` or as an argument, and the request
+ * holds the credential-bearing headers. Snapshotted as this module loads,
+ * down to (not including) Object.prototype, which has its own check.
+ */
+const NODE_REQUEST_MEMBERS: readonly MemberSnapshot[] = (() => {
+  const snapshots: MemberSnapshot[] = [];
+  const seen: object[] = [];
+  const addChain = (start: ReturnType<typeof ReflectGetPrototypeOf>) => {
+    for (
+      let target = start;
+      target !== null && target !== Object.prototype && !seen.includes(target);
+      target = ReflectGetPrototypeOf(target)
+    ) {
+      seen.push(target);
+      const keys = ReflectOwnKeys(target);
+      snapshots.push({
+        target,
+        prototype: ReflectGetPrototypeOf(target),
+        keys,
+        descriptors: keys.map((key) => ObjectGetOwnPropertyDescriptor(target!, key)),
+      });
+    }
+  };
+  addChain(nodeHttp.ClientRequest.prototype);
+  addChain(nodeHttps.Agent.prototype);
+  addChain(nodeHttp.Agent.prototype);
+  addChain(privateHttpAgent);
+  addChain(privateHttpsAgent);
+  return Object.freeze(snapshots);
+})();
+
+function isSameMember(
+  current: PropertyDescriptor | undefined,
+  original: PropertyDescriptor | undefined,
+): boolean {
+  if (current === undefined || original === undefined) return current === original;
+  // Data members of the agents (socket maps, counters) change as they work;
+  // only functions and accessors are compared.
+  if (typeof original.value !== "function" && "value" in original) {
+    return "value" in current && typeof current.value !== "function";
+  }
+  return current.value === original.value && current.get === original.get &&
+    current.set === original.set;
+}
+
+/**
+ * Refuse a credential-bearing node:http request once project code replaced,
+ * added or removed a member on the request or agent prototypes, or spliced
+ * an object into their chains. node:http calls these live, so a replacement
+ * would receive the request and its headers.
+ */
+export function assertNodeRequestMembersUnchanged(): void {
+  for (let index = 0; index < NODE_REQUEST_MEMBERS.length; index++) {
+    const snapshot = NODE_REQUEST_MEMBERS[index]!;
+    let changed = ReflectGetPrototypeOf(snapshot.target) !== snapshot.prototype;
+    const keys = ReflectOwnKeys(snapshot.target);
+    let member = "its prototype";
+    for (let key = 0; !changed && key < keys.length; key++) {
+      // A loop, not indexOf: Array.prototype methods are project-replaceable.
+      let position = -1;
+      for (let known = 0; known < snapshot.keys.length; known++) {
+        if (snapshot.keys[known] === keys[key]) {
+          position = known;
+          break;
+        }
+      }
+      const original = position === -1 ? undefined : snapshot.descriptors[position];
+      const current = ObjectGetOwnPropertyDescriptor(snapshot.target, keys[key]!);
+      if (
+        position === -1
+          ? typeof current?.value === "function" || current?.get !== undefined ||
+            current?.set !== undefined
+          : !isSameMember(current, original)
+      ) {
+        changed = true;
+        member = String(keys[key]);
+      }
+    }
+    for (let key = 0; !changed && key < snapshot.keys.length; key++) {
+      if (
+        typeof snapshot.descriptors[key]?.value === "function" &&
+        ObjectGetOwnPropertyDescriptor(snapshot.target, snapshot.keys[key]!) === undefined
+      ) {
+        changed = true;
+        member = String(snapshot.keys[key]);
+      }
+    }
+    if (changed) {
+      throw new TypeError(
+        `Refused a credential-bearing request to protect its token: the node:http member ${member} ` +
+          "was replaced, added or removed after load, and node:http calls it with the request " +
+          "headers in reach. Do not patch node:http, its agents or EventEmitter.",
+      );
+    }
+  }
 }
 
 function isInstance(value: unknown, constructor: unknown): boolean {
@@ -390,6 +515,7 @@ export async function fetchWithPinnedAddresses(
       path: `${url.pathname}${url.search}`,
       method,
       headers: outgoingHeaders,
+      agent: url.protocol === "https:" ? privateHttpsAgent : privateHttpAgent,
 
       ...(url.protocol === "https:"
         ? {
@@ -412,6 +538,7 @@ export async function fetchWithPinnedAddresses(
         // Same turn as the call: node:http processes the headers synchronously.
         assertNativeRequestProcessing();
         assertObjectPrototypeUnchanged();
+        assertNodeRequestMembersUnchanged();
         const request = sendRequest(requestOptions, async (message) => {
           responseMessage = message;
           try {
