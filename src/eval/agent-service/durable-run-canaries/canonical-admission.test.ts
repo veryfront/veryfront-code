@@ -40,6 +40,7 @@ Deno.test("durable canary admits once and reads canonical identity with the real
   });
   const summary = await client.getRunSummary({ conversationId: conversation, runId: "canary-key" });
   assertEquals(calls.map((x) => x.path), ["/runs", `/runs/${id}`, `/runs/${id}/snapshot`]);
+  assert(calls[0]);
   assertEquals(calls[0].body?.target, { type: "agent", id: "agent" });
   assertEquals(calls[0].body?.config, {
     agent_admission: { mode: "hosted", input_message_id: message, client_run_id: "canary-key" },

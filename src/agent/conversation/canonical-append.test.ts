@@ -71,12 +71,14 @@ it("recovers authenticated cursor mismatch by append hints without any event rea
   assertEquals(result, { outcome: "flushed", latestEventId: 6, latestExternalEventSequence: 4 });
 });
 
-for (
-  const headers of [{}, { "X-Run-Latest-Event-Id": "0", "X-Run-Latest-External-Sequence": "0" }, {
-    "X-Run-Latest-Event-Id": "5",
-    "X-Run-Latest-External-Sequence": "invalid",
-  }]
-) {
+const ambiguousCursorHeaders: Record<string, string>[] = [{}, {
+  "X-Run-Latest-Event-Id": "0",
+  "X-Run-Latest-External-Sequence": "0",
+}, {
+  "X-Run-Latest-Event-Id": "5",
+  "X-Run-Latest-External-Sequence": "invalid",
+}];
+for (const headers of ambiguousCursorHeaders) {
   it(`stops ambiguous append recovery without reading events: ${JSON.stringify(headers)}`, async () => {
     let calls = 0;
     const result = await flushConversationRunEventQueue({

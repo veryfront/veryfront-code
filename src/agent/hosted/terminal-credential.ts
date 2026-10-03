@@ -28,6 +28,10 @@ const hostFetch = globalThis.fetch;
 const NativeHeaders = Headers;
 const headersSet = Headers.prototype.set;
 const apply = Reflect.apply;
+type HostedTerminalDescriptor =
+  | Pick<ConversationRunProjection, "runId">
+  | { readonly childRunId: string };
+
 const credentials = createPrivateWeakStore<
   object,
   {
@@ -60,7 +64,7 @@ export function registerHostedTerminalCredential(
 }
 
 /** Canonical routing identity from the existing private terminal capability. */
-export function hostedTerminalCanonicalRunId(request: object): string | undefined {
+export function hostedTerminalCanonicalRunId(request: ParsedHostedChatRequest): string | undefined {
   const authority = credentials.get(request);
   if (!authority) return undefined;
   try {
@@ -152,7 +156,7 @@ export function hostedTerminalToolSourceFactory(
 
 /** Build an inherited admission transport bound to an authentic parent capability. */
 export function hostedInheritedRunAdmitter(
-  request: object,
+  request: ParsedHostedChatRequest | HostedTerminalDescriptor,
   transport: { apiUrl: string; fetch?: typeof globalThis.fetch },
 ):
   | ((
@@ -248,14 +252,17 @@ export function hostedInheritedRunAdmitter(
 }
 
 /** Preserve exact private authority when a trusted adapter projects its descriptor. */
-export function transferHostedTerminalAuthority(source: object, target: object): void {
+export function transferHostedTerminalAuthority(
+  source: HostedTerminalDescriptor,
+  target: HostedTerminalDescriptor,
+): void {
   const authority = credentials.get(source);
   if (authority) credentials.set(target, authority);
 }
 
 /** Keep an inherited local execution leased while its callback is running. */
 export async function withHostedInheritedLease<T>(
-  descriptor: object,
+  descriptor: HostedTerminalDescriptor,
   operation: (abortSignal?: AbortSignal) => Promise<T> | T,
   parentSignal?: AbortSignal,
 ): Promise<T> {
@@ -355,7 +362,7 @@ export async function withHostedInheritedLease<T>(
 }
 
 /** Read only the run bound to the privately issued child invocation credential. */
-export function hostedBoundRunStatus(descriptor: object, expectedRunId: string) {
+export function hostedBoundRunStatus(descriptor: HostedTerminalDescriptor, expectedRunId: string) {
   const authority = credentials.get(descriptor);
   if (!authority?.apiUrl || authority.runId !== expectedRunId || !authority.authToken) {
     return undefined;
@@ -374,7 +381,7 @@ export function hostedBoundRunStatus(descriptor: object, expectedRunId: string) 
 }
 
 /** Reconstitute only the exact child writer issued by inherited admission. */
-export function hostedInheritedEventWriter(descriptor: object) {
+export function hostedInheritedEventWriter(descriptor: HostedTerminalDescriptor) {
   const authority = credentials.get(descriptor);
   if (!authority?.eventToken || !authority.apiUrl) return undefined;
   return createHostedRunEventWriterCapability({

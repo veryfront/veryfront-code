@@ -33,5 +33,7 @@ Deno.test("live eval responses use the global input resource and a mutation idem
     "/input-requests/request-id/cancel",
   ]);
   for (const call of calls) assert(call.headers.get("Idempotency-Key"));
-  assertEquals(JSON.parse(calls[0].body!), { values: { answer: "yes" } });
+  assert(calls[0]);
+  assert(calls[0].body);
+  assertEquals(JSON.parse(calls[0].body), { values: { answer: "yes" } });
 });

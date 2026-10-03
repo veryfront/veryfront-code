@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { finalizeConversationAgentRun } from "./durable.ts";
 
@@ -39,6 +39,7 @@ describe("canonical runtime finalization", () => {
       output: { result: "done" },
       fetch,
     });
+    assert(calls[0]);
     assertEquals(calls[0].url, `https://api.example.test/runs/${canonical}/finalize`);
     assertEquals(calls[0].headers.get("X-Veryfront-Run-Terminal-Token"), token);
     assertEquals(calls[0].headers.get("Authorization"), "Bearer run-invocation");

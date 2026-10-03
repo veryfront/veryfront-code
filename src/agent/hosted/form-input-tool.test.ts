@@ -1,3 +1,4 @@
+import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { getFormInputToolInputSchema } from "../input/request-protocol.ts";
 import {
   createHostedRunEventWriterCapability,
@@ -456,13 +457,11 @@ describe("agent/hosted-form-input-tool", () => {
 });
 
 it("hosted form hands off to durable replay without reading or publishing secret values", async () => {
-  const originalFetch = globalThis.fetch;
   let calls = 0;
-  globalThis.fetch = () => {
+  await withMockFetch(() => {
     calls++;
     throw new Error("Public polling must not resolve private form results");
-  };
-  try {
+  }, async () => {
     const controller = new AbortController();
     const form = createHostedFormInputTool(createContext(), API_URL, { controlPlaneReplay: true });
     const waiting = form.execute({
@@ -508,19 +507,15 @@ it("hosted form hands off to durable replay without reading or publishing secret
     controller.abort(suspended);
     assertEquals(await result, suspended);
     assertEquals(calls, 0);
-  } finally {
-    globalThis.fetch = originalFetch;
-  }
+  });
 });
 
 it("rejects secret polling forms before creating an input request", async () => {
-  const originalFetch = globalThis.fetch;
   let calls = 0;
-  globalThis.fetch = () => {
+  await withMockFetch(() => {
     calls++;
     throw new Error("No request expected");
-  };
-  try {
+  }, async () => {
     const form = createHostedFormInputTool(createContext(), API_URL);
     await assertRejects(
       () =>
@@ -541,9 +536,7 @@ it("rejects secret polling forms before creating an input request", async () => 
       "Secret forms require hosted durable replay",
     );
     assertEquals(calls, 0);
-  } finally {
-    globalThis.fetch = originalFetch;
-  }
+  });
 });
 
 it("rejects attached child forms before allocating or waiting for an input request", async () => {

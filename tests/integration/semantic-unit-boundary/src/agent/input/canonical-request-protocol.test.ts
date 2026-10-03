@@ -1,3 +1,4 @@
+import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { computeHash } from "#veryfront/utils/hash-utils.ts";
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
@@ -6,14 +7,13 @@ import {
   createInputRequest,
   getFormInputToolInputSchema,
   getInputRequest,
-} from "./request-protocol.ts";
+} from "#veryfront/agent/input/request-protocol.ts";
 
 it("creates and reads canonical input resources with stable mutation identity", async () => {
   const id = "11111111-1111-4111-8111-111111111111";
   const toolCallId = "tool-" + "x".repeat(123);
   const requests: Request[] = [];
-  const originalFetch = globalThis.fetch;
-  globalThis.fetch = (input, init) => {
+  await withMockFetch((input, init) => {
     requests.push(new Request(input, init));
     return Promise.resolve(
       Response.json({
@@ -34,8 +34,7 @@ it("creates and reads canonical input resources with stable mutation identity", 
         created_at: "2026-10-03T12:00:00Z",
       }),
     );
-  };
-  try {
+  }, async () => {
     const created = await createInputRequest({
       authToken: "invocation",
       apiUrl: "https://api.example.test",
@@ -85,7 +84,5 @@ it("creates and reads canonical input resources with stable mutation identity", 
       inputRequestId: id,
     });
     assertEquals(requests[1]!.url, `https://api.example.test/input-requests/${id}`);
-  } finally {
-    globalThis.fetch = originalFetch;
-  }
+  });
 });
