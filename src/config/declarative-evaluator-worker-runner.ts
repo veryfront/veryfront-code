@@ -448,7 +448,9 @@ function workerEntryUrl(): URL {
   );
 }
 
-function createDenoWorkerEndpoint(): DeclarativeConfigWorkerEndpoint {
+function createDenoWorkerEndpoint(
+  WorkerConstructor: typeof Worker = Worker,
+): DeclarativeConfigWorkerEndpoint {
   type PermissionlessWorkerOptions = WorkerOptions & {
     deno: { permissions: "none" };
   };
@@ -457,7 +459,7 @@ function createDenoWorkerEndpoint(): DeclarativeConfigWorkerEndpoint {
     type: "module",
     deno: { permissions: "none" },
   };
-  const worker = new Worker(workerEntryUrl(), options);
+  const worker = new WorkerConstructor(workerEntryUrl(), options);
   let onWorkerError: (() => void) | undefined;
   // A worker failure already queued by Deno can arrive after evaluation
   // cleanup. Keep the host error boundary for the worker's entire lifetime.
@@ -874,6 +876,7 @@ export const declarativeConfigWorkerRunnerInternals = freezeObject({
       startup: workerStartupController.snapshot(),
     });
   },
+  createDenoWorkerEndpoint,
   evaluateWithAdmissionController,
   evaluateWithEndpointFactory,
 });

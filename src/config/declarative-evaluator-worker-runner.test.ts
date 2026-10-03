@@ -7,7 +7,10 @@ import {
   prepareDeclarativeConfigContext,
 } from "./declarative-evaluator.ts";
 import { __subscribeLogRecordEmitter } from "#veryfront/utils/logger/logger.ts";
-import { evaluatePreparedDeclarativeConfigInWorker } from "./declarative-evaluator-worker-runner.ts";
+import {
+  declarativeConfigWorkerRunnerInternals,
+  evaluatePreparedDeclarativeConfigInWorker,
+} from "./declarative-evaluator-worker-runner.ts";
 
 describe("declarative config runtime worker", () => {
   it("rejects Bun when bounded worker memory limits are unavailable", async () => {
@@ -78,7 +81,6 @@ describe("Deno configuration worker error isolation", () => {
       const unsubscribe = __subscribeLogRecordEmitter((record) => {
         if (record.message === "Hosted configuration worker failed") logs.push(record);
       });
-      const originalWorker = globalThis.Worker;
       class TestWorker extends EventTarget {
         postMessage() {
           if (outcome === "abort") controller.abort();
@@ -108,12 +110,16 @@ describe("Deno configuration worker error isolation", () => {
           this.dispatchEvent(event);
         }
       }
-      globalThis.Worker = TestWorker as unknown as typeof Worker;
       try {
         const evaluate = () =>
-          evaluatePreparedDeclarativeConfigInWorker(payload, {
-            signal: controller.signal,
-          });
+          declarativeConfigWorkerRunnerInternals.evaluateWithEndpointFactory(
+            payload,
+            { signal: controller.signal },
+            async () =>
+              declarativeConfigWorkerRunnerInternals.createDenoWorkerEndpoint(
+                TestWorker as unknown as typeof Worker,
+              ),
+          );
         if (outcome === "success") {
           assertEquals(await evaluate(), { title: "test" });
         } else {
@@ -136,7 +142,6 @@ describe("Deno configuration worker error isolation", () => {
           assertEquals(logs[0]?.context?.evaluationActive, true);
         }
       } finally {
-        globalThis.Worker = originalWorker;
         unsubscribe();
       }
     });

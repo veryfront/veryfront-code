@@ -11,7 +11,7 @@ import {
   createPreparedDeclarativeConfigWorkerPayload,
   prepareDeclarativeConfigContext,
 } from "#veryfront/config/declarative-evaluator.ts";
-import { evaluatePreparedDeclarativeConfigInWorker } from "#veryfront/config/declarative-evaluator-worker-runner.ts";
+import { declarativeConfigWorkerRunnerInternals } from "#veryfront/config/declarative-evaluator-worker-runner.ts";
 import {
   buildReloadProjectContext,
   getReconnectDelay,
@@ -380,7 +380,6 @@ describe("WebSocketManager", () => {
     );
     const controller = new AbortController();
     const failures: ErrorEvent[] = [];
-    const originalWorker = globalThis.Worker;
     class AbortingWorker extends EventTarget {
       postMessage() {
         controller.abort();
@@ -395,13 +394,19 @@ describe("WebSocketManager", () => {
         this.dispatchEvent(event);
       }
     }
-    globalThis.Worker = AbortingWorker as unknown as typeof Worker;
     let refreshCalls = 0;
     let reloadCalls = 0;
     const manager = createWebSocketManager({
       pregenerateStyles: async () => {
         if (++refreshCalls === 1) {
-          await evaluatePreparedDeclarativeConfigInWorker(payload, { signal: controller.signal });
+          await declarativeConfigWorkerRunnerInternals.evaluateWithEndpointFactory(
+            payload,
+            { signal: controller.signal },
+            async () =>
+              declarativeConfigWorkerRunnerInternals.createDenoWorkerEndpoint(
+                AbortingWorker as unknown as typeof Worker,
+              ),
+          );
         }
         return undefined;
       },
@@ -434,7 +439,6 @@ describe("WebSocketManager", () => {
       assertEquals(isPrefixBeingInvalidated("file:branch:test-project:main:"), false);
     } finally {
       manager.dispose();
-      globalThis.Worker = originalWorker;
     }
   });
 
