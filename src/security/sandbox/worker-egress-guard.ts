@@ -1166,9 +1166,20 @@ const CROSS_ORIGIN_CREDENTIAL_HEADERS = [
   "x-goog-api-key",
 ] as const;
 
+/** Headers that describe a request body, dropped when a redirect drops the body. */
+const BODY_HEADERS = [
+  "content-encoding",
+  "content-language",
+  "content-length",
+  "content-location",
+  "content-type",
+] as const;
+
 function stripHopByHopHeaders(headers: Headers): void {
-  for (const name of HOP_BY_HOP_HEADERS) {
-    IntrinsicReflectApply(HeadersDelete, headers, [name]);
+  // Indexed: a for-of would run a patchable array iterator while the headers
+  // hold credentials.
+  for (let index = 0; index < HOP_BY_HOP_HEADERS.length; index++) {
+    IntrinsicReflectApply(HeadersDelete, headers, [HOP_BY_HOP_HEADERS[index]]);
   }
 }
 
@@ -1533,11 +1544,14 @@ export async function guardedEgressFetch(
     // Cross-origin redirect: strip credential-bearing headers, matching the
     // platform fetch this guard replaces, so a redirect target cannot receive
     // the caller's Authorization/Cookie. Deleting a header splices the native
-    // list, which hands the removed entry to the array species: check first.
+    // list, which hands the removed entry to the array species, so the check
+    // runs after the URL getters (which project code can replace) and the
+    // deletes use an indexed loop rather than a patchable array iterator.
+    const crossOrigin = nextUrl.origin !== new NativeURL(url).origin;
     assertNativeRequestProcessing();
-    if (nextUrl.origin !== new NativeURL(url).origin) {
-      for (const header of CROSS_ORIGIN_CREDENTIAL_HEADERS) {
-        IntrinsicReflectApply(HeadersDelete, headers, [header]);
+    if (crossOrigin) {
+      for (let index = 0; index < CROSS_ORIGIN_CREDENTIAL_HEADERS.length; index++) {
+        IntrinsicReflectApply(HeadersDelete, headers, [CROSS_ORIGIN_CREDENTIAL_HEADERS[index]]);
       }
     }
     url = nextUrl.href;
@@ -1551,16 +1565,9 @@ export async function guardedEgressFetch(
     if (downgrades) {
       method = "GET";
       body = undefined;
-      for (
-        const header of [
-          "content-encoding",
-          "content-language",
-          "content-length",
-          "content-location",
-          "content-type",
-        ]
-      ) {
-        IntrinsicReflectApply(HeadersDelete, headers, [header]);
+      // Indexed, as above: the headers still hold the caller's credentials.
+      for (let index = 0; index < BODY_HEADERS.length; index++) {
+        IntrinsicReflectApply(HeadersDelete, headers, [BODY_HEADERS[index]]);
       }
     } else if (!isReplayableBody(body)) {
       throw new WorkerEgressBlockedError(
