@@ -1,4 +1,4 @@
-import { useLayoutEffect } from "react";
+import { useLayoutEffect, useState } from "react";
 import { flushSync } from "react-dom";
 import { createRoot } from "react-dom/client";
 import { JSDOM } from "npm:jsdom@28.0.0";
@@ -711,6 +711,8 @@ describe("useWorkflowStart", () => {
     const replacementResponse = Promise.withResolvers<Response>();
     const initialCommitted = Promise.withResolvers<void>();
     const replacementCommitted = Promise.withResolvers<void>();
+    const obsoleteCommitted = Promise.withResolvers<void>();
+    let commitObsoleteResponse: (() => void) | null = null;
     let replacementResolved = false;
     let oldRequestCount = 0;
     let hook: UseWorkflowListResult | null = null;
@@ -729,11 +731,14 @@ describe("useWorkflowStart", () => {
     );
 
     function Capture({ token }: { token: string }): null {
+      const [checkpoint, setCheckpoint] = useState(0);
+      commitObsoleteResponse = () => setCheckpoint(1);
       hook = useWorkflowList({
         autoRefresh: false,
         headers: { Authorization: `Bearer ${token}` },
       });
       useLayoutEffect(() => {
+        if (checkpoint === 1) obsoleteCommitted.resolve();
         if (hook!.isLoading) return;
         if (token === "old") initialCommitted.resolve();
         else if (replacementResolved) replacementCommitted.resolve();
@@ -753,7 +758,8 @@ describe("useWorkflowStart", () => {
 
       oldRefreshResponse.resolve(Response.json({ runs: [] }));
       await obsoleteRefresh;
-      flushSync(() => {});
+      commitObsoleteResponse!();
+      await obsoleteCommitted.promise;
       assertEquals(
         hook!.isLoading,
         true,
