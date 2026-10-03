@@ -134,32 +134,6 @@ function createEvalTransportModel(input: {
   };
 }
 
-function manualTaskDeadlineClock() {
-  let now = Date.UTC(2026, 9, 3);
-  let nextId = 0;
-  const timers = new Map<number, { callback: () => void; at: number }>();
-  return {
-    now: () => now,
-    setTimer: (callback: () => void, delayMs: number) => {
-      const id = ++nextId;
-      timers.set(id, { callback, at: now + delayMs });
-      return id;
-    },
-    clearTimer: (id: number | undefined) => {
-      if (id !== undefined) timers.delete(id);
-    },
-    advance: (milliseconds: number) => {
-      now += milliseconds;
-      for (const [id, timer] of timers) {
-        if (timer.at <= now) {
-          timers.delete(id);
-          timer.callback();
-        }
-      }
-    },
-  };
-}
-
 describe("createKnowledgeEventLogger", () => {
   it("caps the number of accumulated knowledge ingest events", () => {
     const lines: string[] = [];
@@ -951,6 +925,46 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     }
   });
 
+  for (const scope of ["inherited", "accessor"] as const) {
+    it(`ignores ${scope} task deadline clocks in host dependencies`, async () => {
+      let clockReads = 0;
+      const unexpectedClock = {
+        now: () => {
+          clockReads++;
+          throw new Error("untrusted deadline clock");
+        },
+        setTimeout: globalThis.setTimeout,
+        clearTimeout: globalThis.clearTimeout,
+      };
+      const deps = createDeps({});
+      if (scope === "inherited") {
+        Object.setPrototypeOf(deps, { taskDeadlineClock: unexpectedClock });
+      } else {
+        Object.defineProperty(deps, "taskDeadlineClock", {
+          get() {
+            clockReads++;
+            return unexpectedClock;
+          },
+        });
+      }
+      const handler = new ProjectRunExecuteHandler(deps);
+      const { request, publicKeyPem } = await signedRequest(
+        "/api/control-plane/runs/run_deadline/execute",
+        {
+          runId: "run_deadline",
+          kind: "task",
+          target: "task:sync-calendar-events",
+          projectId: "proj-1",
+          deadlineAt: new Date(Date.now() - 1).toISOString(),
+        },
+      );
+      const result = await handler.handle(request, createCtx(publicKeyPem));
+      assertExists(result.response);
+      assertEquals((await result.response.json()).error_code, "RUN_TIMEOUT");
+      assertEquals(clockReads, 0);
+    });
+  }
+
   it("preserves the result when task code replaces timer cleanup", async () => {
     const originalClearTimeout = globalThis.clearTimeout;
     const handler = new ProjectRunExecuteHandler(createDeps({
@@ -1037,7 +1051,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     });
 
     it(`stops reserved task side effects when its deadline expires: ${target}`, async () => {
-      const clock = manualTaskDeadlineClock();
+      using time = new FakeTime(Date.now());
       const started = Promise.withResolvers<void>();
       let receivedSignal: AbortSignal | undefined;
       let sideEffects = 0;
@@ -1054,12 +1068,16 @@ describe("server/handlers/request/project-run-execute.handler", () => {
       };
       const handler = new ProjectRunExecuteHandler(
         createDeps({
+          taskDeadlineClock: {
+            now: Date.now,
+            setTimeout: globalThis.setTimeout,
+            clearTimeout: globalThis.clearTimeout,
+          },
           executeKnowledgeIngest: execute,
           executeReleaseAssetBuild: execute,
           executeDependencyArtifactBuild: execute,
           executeStyleArtifactBuild: execute,
         }),
-        clock,
       );
       const { request, publicKeyPem } = await signedRequest(
         "/api/control-plane/runs/run_deadline/execute",
@@ -1068,18 +1086,13 @@ describe("server/handlers/request/project-run-execute.handler", () => {
           kind: "task",
           target: `task:${target}`,
           projectId: "proj-1",
-          deadlineAt: new Date(clock.now() + 25).toISOString(),
+          deadlineAt: new Date(Date.now() + 25).toISOString(),
         },
       );
 
       const pending = handler.handle(request, createCtx(publicKeyPem));
-      await Promise.race([
-        started.promise,
-        pending.then(() => {
-          throw new Error("Deadline test completed before executor admission");
-        }),
-      ]);
-      clock.advance(25);
+      await started.promise;
+      await time.tickAsync(25);
       const result = await pending;
 
       assertExists(result.response);
@@ -8967,12 +8980,19 @@ describe("server/handlers/request/project-run-execute.handler cancellation", () 
   });
 
   it("does not acknowledge a timed-out task until its callback actually settles", async () => {
+    const realSetTimeout = globalThis.setTimeout;
+    using time = new FakeTime(Date.now());
     const controller = new AbortController();
     const started = Promise.withResolvers<void>();
     const settle = Promise.withResolvers<void>();
     const acknowledged = Promise.withResolvers<void>();
     const callbacks: Array<{ url: string; init: ReturnType<typeof observeFetchRequestInit> }> = [];
     const handler = new ProjectRunExecuteHandler(createDeps({
+      taskDeadlineClock: {
+        now: Date.now,
+        setTimeout: globalThis.setTimeout,
+        clearTimeout: globalThis.clearTimeout,
+      },
       runTask: async () => {
         started.resolve();
         await settle.promise;
@@ -8991,6 +9011,10 @@ describe("server/handlers/request/project-run-execute.handler cancellation", () 
       { "x-veryfront-run-stop-token": "opaque-stop-capability" },
     );
 
+    // Signing and dispatch can outlast the deadline on a busy host.
+    // The deadline clock starts advancing only after task admission.
+    await new Promise((resolve) => realSetTimeout(resolve, 50));
+
     await withMockFetch(async (input, init) => {
       callbacks.push({ url: String(input), init: observeFetchRequestInit(init) });
       acknowledged.resolve();
@@ -9001,6 +9025,7 @@ describe("server/handlers/request/project-run-execute.handler cancellation", () 
         createCtx(signed.publicKeyPem),
       );
       await started.promise;
+      await time.tickAsync(25);
       const result = await waitForBarrier(
         pending,
         "deadline response remained blocked by the task callback",

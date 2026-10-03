@@ -1,9 +1,4 @@
 import {
-  snapshotTaskDeadlineClock,
-  systemTaskDeadlineClock,
-  type TaskDeadlineClock,
-} from "#veryfront/server/handlers/request/task-deadline-clock.ts";
-import {
   API_CLIENT_ERROR,
   INPUT_VALIDATION_FAILED,
   INVALID_ARGUMENT,
@@ -122,6 +117,7 @@ import { parseProjectDomain } from "#veryfront/server/utils/domain-parser.ts";
 const TaskDate = Date;
 /** Captured before project code runs, which may replace the global. */
 const TaskError = Error;
+const TaskDateNow = Date.now;
 const TaskDateParse = Date.parse;
 const TaskSetTimeout = globalThis.setTimeout;
 const TaskClearTimeout = globalThis.clearTimeout;
@@ -175,6 +171,7 @@ const NumberIsFinite = Number.isFinite;
 const NumberParseInt = Number.parseInt;
 const MathTrunc = Math.trunc;
 const ObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const ObjectHasOwn = Object.hasOwn;
 const ObjectSetPrototypeOf = Object.setPrototypeOf;
 const NumberPrototypeToString = Number.prototype.toString;
 const StringPrototypeCharCodeAt = String.prototype.charCodeAt;
@@ -378,7 +375,21 @@ interface WorkflowClientView {
   destroy(): Promise<void>;
 }
 
+interface TaskDeadlineClock {
+  now: () => number;
+  setTimeout: typeof globalThis.setTimeout;
+  clearTimeout: typeof globalThis.clearTimeout;
+}
+
+const defaultTaskDeadlineClock: TaskDeadlineClock = Object.freeze({
+  now: TaskDateNow,
+  setTimeout: TaskSetTimeout,
+  clearTimeout: TaskClearTimeout,
+});
+
 export interface ProjectRunExecuteHandlerDeps {
+  /** Host-owned clock; defaults to intrinsics captured before project code runs. */
+  taskDeadlineClock?: TaskDeadlineClock;
   runTask(options: RunTaskOptions): Promise<TaskRunResult>;
   findWorkflowById(
     workflowId: string,
@@ -982,10 +993,11 @@ async function runWhileActive<T>(signal: AbortSignal, operation: () => Promise<T
 async function executeTaskRun(
   request: ProjectRunExecuteRequest,
   execute: (control?: TaskDeadlineControl) => Promise<ProjectRunExecuteResponse>,
-  clock: TaskDeadlineClock,
   acknowledgeNotStarted?: () => Promise<void>,
+  clock: TaskDeadlineClock = defaultTaskDeadlineClock,
 ): Promise<ProjectRunExecuteResponse> {
   if (!request.deadlineAt) return execute();
+  const { now, setTimeout: schedule, clearTimeout: clear } = clock;
   const deadline = TaskDateParse(request.deadlineAt);
   const controller = new TaskAbortController();
   let expired = false;
@@ -1006,18 +1018,18 @@ async function executeTaskRun(
   const control: TaskDeadlineControl = {
     signal,
     throwIfExpired() {
-      if (clock.now() >= deadline) throw expire();
+      if (now() >= deadline) throw expire();
     },
   };
   try {
     control.throwIfExpired();
     const expiration = new Promise<never>((_resolve, reject) => {
       const arm = () => {
-        const remaining = deadline - clock.now();
+        const remaining = deadline - now();
         if (remaining <= 0) {
           reject(expire());
         } else {
-          timer = clock.setTimer(arm, Math.min(remaining, MAX_TIMER_DELAY_MS));
+          timer = schedule(arm, Math.min(remaining, MAX_TIMER_DELAY_MS));
         }
       };
       arm();
@@ -1030,11 +1042,11 @@ async function executeTaskRun(
     control.throwIfExpired();
     return result;
   } catch (failure) {
-    if (!expired && clock.now() >= deadline) expire();
+    if (!expired && now() >= deadline) expire();
     if (!expired) throw failure;
     return { success: false, error: error.message, error_code: "RUN_TIMEOUT" };
   } finally {
-    clock.clearTimer(timer);
+    clear(timer);
     if (!executionStarted) await acknowledgeNotStarted?.();
   }
 }
@@ -3866,11 +3878,14 @@ function executeProjectRun(
   ctx: HandlerContext,
   req: Request,
   deps: ProjectRunExecuteHandlerDeps,
-  taskClock: TaskDeadlineClock,
   acknowledgeStop?: () => Promise<void>,
   acknowledgePause?: () => Promise<boolean | undefined>,
 ): Promise<ProjectRunExecuteResponse> {
   if (request.kind === "task") {
+    const clockDescriptor = ObjectGetOwnPropertyDescriptor(deps, "taskDeadlineClock");
+    const clock = clockDescriptor && ObjectHasOwn(clockDescriptor, "value")
+      ? clockDescriptor.value as TaskDeadlineClock | undefined
+      : undefined;
     return executeTaskRun(
       request,
       async (control) => {
@@ -3896,8 +3911,8 @@ function executeProjectRun(
           await acknowledgeStop?.();
         }
       },
-      taskClock,
       acknowledgeStop,
+      clock,
     );
   }
   return executeWorkflowRun(request, ctx, req.signal, deps, acknowledgeStop, acknowledgePause);
@@ -3912,14 +3927,8 @@ export class ProjectRunExecuteHandler extends BaseHandler {
     ],
   };
 
-  private readonly taskDeadlineClock: TaskDeadlineClock;
-
-  constructor(
-    private readonly deps: ProjectRunExecuteHandlerDeps = defaultDeps,
-    taskDeadlineClock: TaskDeadlineClock = systemTaskDeadlineClock,
-  ) {
+  constructor(private readonly deps: ProjectRunExecuteHandlerDeps = defaultDeps) {
     super();
-    this.taskDeadlineClock = snapshotTaskDeadlineClock(taskDeadlineClock);
   }
 
   async handle(req: Request, ctx: HandlerContext): Promise<HandlerResult> {
@@ -3977,7 +3986,6 @@ export class ProjectRunExecuteHandler extends BaseHandler {
                     ctx,
                     executionRequest,
                     this.deps,
-                    this.taskDeadlineClock,
                     acknowledgeStop,
                     acknowledgePause,
                   )
@@ -3989,7 +3997,6 @@ export class ProjectRunExecuteHandler extends BaseHandler {
                         ctx,
                         executionRequest,
                         this.deps,
-                        this.taskDeadlineClock,
                         acknowledgeStop,
                         acknowledgePause,
                       ),

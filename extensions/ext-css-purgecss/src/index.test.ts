@@ -36,7 +36,10 @@ describe("ext-css-purgecss", () => {
     assertEquals(extension.version, extensionPackage.version);
     assertEquals(extension.contracts?.provides, [CSSPurgingEngineName]);
     assertEquals(extensionPackage.veryfront.capabilities, [
-      { type: "env:read", keys: ["__MINIMATCH_TESTING_PLATFORM__"] },
+      {
+        type: "env:read",
+        keys: ["__MINIMATCH_TESTING_PLATFORM__", "NO_COLOR", "FORCE_COLOR", "TERM", "CI"],
+      },
     ]);
     assertEquals(
       extension.capabilities,
@@ -44,7 +47,7 @@ describe("ext-css-purgecss", () => {
     );
     assertEquals(
       extensionPackage.tasks.test,
-      "deno test --frozen --no-check --allow-env=__MINIMATCH_TESTING_PLATFORM__ src/",
+      "deno test --frozen --no-check --allow-env=__MINIMATCH_TESTING_PLATFORM__,NO_COLOR,FORCE_COLOR,TERM,CI src/",
     );
 
     await extension.setup?.({
