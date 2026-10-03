@@ -1308,7 +1308,10 @@ function corroboratesLegacyCompositePublication(
   let result = output as Record<string, unknown>;
   if (node.config.type === "branch") {
     if (children.length === 0) {
-      return isDeepStrictEqual(result, { branch: result.branch, skipped: true });
+      // An empty arm has no child execution evidence. Require the branch's
+      // own durable selection, since loop callbacks can mimic its output.
+      return state._branchSelected === result.branch &&
+        isDeepStrictEqual(result, { branch: result.branch, skipped: true });
     }
     if (
       typeof result.result !== "object" || result.result === null || Array.isArray(result.result)
@@ -2633,6 +2636,7 @@ export class DAGExecutor {
         nodeId: node.id,
         status: "completed",
         output: { branch: conditionResult ? "then" : "else", skipped: true },
+        _branchSelected: conditionResult ? "then" : "else",
         attempt: 1,
         startedAt: new Date(startTime),
         completedAt: new Date(),

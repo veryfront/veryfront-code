@@ -6307,6 +6307,11 @@ export interface components {
             reason: "child_run";
             /** Format: date-time */
             resume_at?: string;
+        } | {
+            /** @enum {string} */
+            reason: "timer";
+            /** Format: date-time */
+            resume_at: string;
         };
         ScheduleRunRequest: {
             labels?: components["schemas"]["RunLabels"];

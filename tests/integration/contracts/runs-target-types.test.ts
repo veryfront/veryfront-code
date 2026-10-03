@@ -76,12 +76,12 @@ describe("Runs target contract types", () => {
     });
   });
 
-  it("are the pinned 0.8.0 artifacts, byte for byte", async () => {
+  it("are the pinned 0.8.1 artifacts, byte for byte", async () => {
     const pin = JSON.parse(await Deno.readTextFile(new URL("pin.json", contractDir))) as {
       contract: string;
       files: Record<string, string>;
     };
-    assertEquals(pin.contract, "0.8.0");
+    assertEquals(pin.contract, "0.8.1");
     assertEquals(Object.keys(pin.files), [
       "runs-api.generated.ts",
       "openapi.target.json",

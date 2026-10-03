@@ -26,6 +26,7 @@ import {
   resolveHostOwnedSourceApiBaseUrl,
 } from "#veryfront/config/host-api-base.ts";
 import {
+  addAbortSignalListenerOnce,
   isAbortSignalAborted,
   removeAbortSignalListener,
 } from "#veryfront/platform/compat/abort-signal.ts";
@@ -130,7 +131,6 @@ const TaskAbort = AbortController.prototype.abort;
 const TaskAbortSignalAny = AbortSignal.any;
 const RunStopTimeout = AbortSignal.timeout;
 const RunStopAddListener = EventTarget.prototype.addEventListener;
-const RunStopRemoveListener = EventTarget.prototype.removeEventListener;
 const ResponsePrototypeJson = Response.prototype.json;
 
 const EXECUTE_PATH_REGEX = /^\/api\/control-plane\/runs\/([^/]+)\/execute$/;
@@ -1594,6 +1594,8 @@ async function awaitRunPauseDecision(
     (pollingStopped !== undefined && isAbortSignalAborted(pollingStopped));
   for (let round = 1; !ended(); round++) {
     const decision = await acknowledge();
+    // A decision that arrives after the wait ended answers nobody: the request
+    // already reported the hold, so even a continue must not release the run.
     if (ended()) break;
     if (decision !== undefined) return decision;
     // An unknown reply may hide a committed stop. Hold the durable boundary until
@@ -1602,24 +1604,37 @@ async function awaitRunPauseDecision(
       runId,
       round,
     });
-    const signals = pollingStopped ? [signal, pollingStopped] : [signal];
-    let interrupt!: () => void;
-    const interrupted = new Promise<void>((resolve) => {
-      interrupt = resolve;
-      for (const current of signals) {
-        ReflectApply(RunStopAddListener, current, ["abort", interrupt, { once: true }]);
-      }
-    });
-    try {
-      if (ended()) break;
-      await Promise.race([deps.sleep(WORKFLOW_PAUSE_CHECK_BACKOFF_MS), interrupted]);
-    } finally {
-      for (const current of signals) {
-        ReflectApply(RunStopRemoveListener, current, ["abort", interrupt]);
-      }
-    }
+    await sleepUntilAborted(
+      (ms) => deps.sleep(ms),
+      WORKFLOW_PAUSE_CHECK_BACKOFF_MS,
+      pollingStopped === undefined ? [signal] : [signal, pollingStopped],
+    );
   }
   return true;
+}
+
+/** Sleep that ends early once any of the signals aborts. */
+async function sleepUntilAborted(
+  sleep: (ms: number) => Promise<void>,
+  ms: number,
+  signals: readonly AbortSignal[],
+): Promise<void> {
+  let wake: (() => void) | undefined;
+  const aborted = new Promise<void>((resolve) => {
+    wake = () => resolve();
+  });
+  const onAbort = () => wake?.();
+  for (const signal of signals) {
+    if (isAbortSignalAborted(signal)) return;
+  }
+  for (const signal of signals) {
+    addAbortSignalListenerOnce(signal, onAbort);
+  }
+  try {
+    await Promise.race([sleep(ms), aborted]);
+  } finally {
+    for (const signal of signals) removeAbortSignalListener(signal, onAbort);
+  }
 }
 
 function isRecoverableManualPauseBoundary(

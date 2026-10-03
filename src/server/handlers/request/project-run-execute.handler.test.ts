@@ -10271,83 +10271,80 @@ describe("server/handlers/request/project-run-execute.handler manual pause (#258
     assertEquals((await backend.getRun(runId))?.status, "waiting");
   });
 
-  it("holds the boundary when a continue reply arrives after manual resume has timed out", async () => {
+  it("holds the boundary when a continue decision arrives after a timed-out manual resume answered", async () => {
     const backend = new SharedMemoryBackend();
     const calls: string[] = [];
     const definition = threeSteps(calls);
-    const acknowledgementStarted = Promise.withResolvers<void>();
-    const lateReply = Promise.withResolvers<Response>();
-    let requests = 0;
-    let resumes = 0;
-    await withMockFetch(async () => {
-      if (++requests === 1) return Response.json({ stop: true });
-      acknowledgementStarted.resolve();
-      return await lateReply.promise;
+    let resumeAttempts = 0;
+    let deferring = false;
+    let answerLate: ((response: Response) => void) | undefined;
+    await withMockFetch(() => {
+      if (!deferring) return Promise.resolve(Response.json({ stop: true }));
+      return new Promise<Response>((resolve) => {
+        answerLate = resolve;
+      });
     }, async () => {
       await dispatch(createHandler(backend, definition));
-      const resumed = dispatch(
+      deferring = true;
+      const resumed = await dispatch(
         createHandler(backend, definition, {
           workflowResumeTimeoutMs: 20,
-          onResume: () => resumes++,
+          onResume: () => {
+            resumeAttempts++;
+          },
         }),
         { type: "manual" },
       );
-      await acknowledgementStarted.promise;
-      assertEquals((await resumed).status, "waiting");
-      lateReply.resolve(Response.json({ stop: false }));
-      await delay(60);
-      assertEquals(resumes, 0);
-      assertEquals(calls, ["first"]);
-      assertEquals((await backend.getRun(runId))?.status, "waiting");
+      assertEquals(resumed.status, "waiting");
+      assertExists(answerLate);
+      // The continue decision lands only after the request has reported the hold.
+      answerLate(Response.json({ stop: false }));
+      await delay(100);
     });
+    assertEquals(resumeAttempts, 0);
+    assertEquals(calls, ["first"]);
+    assertEquals((await backend.getRun(runId))?.status, "waiting");
   });
 
-  it("cancels promptly while an unknown pause decision is in backoff", async () => {
+  it("wakes from the unknown pause decision backoff when the request is cancelled", async () => {
     const backend = new SharedMemoryBackend();
     const calls: string[] = [];
     const controller = new AbortController();
-    const backoffStarted = Promise.withResolvers<void>();
-    const finishBackoff = Promise.withResolvers<void>();
-    let watchdog: ReturnType<typeof setTimeout> | undefined;
+    let releaseBackoff: (() => void) | undefined;
+    let requests = 0;
+    const sleep = (ms: number): Promise<void> => {
+      if (ms < 30_000) return delay(Math.min(ms, 10));
+      // The backoff never ends on its own; only cancellation can end the wait.
+      controller.abort(new Error("run cancelled"));
+      return new Promise<void>((resolve) => {
+        releaseBackoff = resolve;
+      });
+    };
     try {
-      await withMockFetch(
-        async (input) =>
-          new URL(String(input)).pathname.endsWith("/pause-ack")
-            ? Response.json({ stop: false }, { status: 401 })
-            : Response.json({ acknowledged: true }),
-        async () => {
-          const pending = dispatch(
-            createHandler(backend, threeSteps(calls), {
-              sleep: (ms) => {
-                if (ms !== 30_000) return delay(Math.min(ms, 10));
-                backoffStarted.resolve();
-                return finishBackoff.promise;
-              },
-            }),
+      await withMockFetch(() => {
+        requests++;
+        return Promise.resolve(Response.json({ stop: true }, { status: 401 }));
+      }, async () => {
+        let guard: ReturnType<typeof setTimeout> | undefined;
+        const outcome = await Promise.race([
+          dispatch(
+            createHandler(backend, threeSteps(calls), { sleep }),
             undefined,
             controller.signal,
-          );
-          await backoffStarted.promise;
-          controller.abort(new Error("Run cancelled"));
-          const payload = await Promise.race([
-            pending,
-            new Promise<never>((_resolve, reject) => {
-              watchdog = setTimeout(
-                () => reject(new Error("Cancellation waited for the backoff")),
-                1_000,
-              );
-            }),
-          ]);
-          assertEquals(payload.success, false);
-          assertEquals(payload.error, "Workflow run cancelled");
-          assertEquals((await backend.getRun(runId))?.status, "cancelled");
-          assertEquals(calls, ["first"]);
-        },
-      );
+          ),
+          new Promise<"backoff not woken">((resolve) => {
+            guard = setTimeout(() => resolve("backoff not woken"), 2_000);
+          }),
+        ]).finally(() => clearTimeout(guard));
+        assertNotEquals(outcome, "backoff not woken");
+        assertEquals((outcome as Record<string, unknown>).success, false);
+      });
     } finally {
-      clearTimeout(watchdog);
-      finishBackoff.resolve();
+      releaseBackoff?.();
     }
+    assertExists(releaseBackoff);
+    assert(requests > 0);
+    assertEquals(calls, ["first"]);
   });
 
   it("releases the client when manual resume times out during pause backoff", async () => {

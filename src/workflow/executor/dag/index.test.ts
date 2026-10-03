@@ -1240,6 +1240,130 @@ describe("DAGExecutor", () => {
       });
     }
 
+    for (const snapshot of ["absent", "retained"] as const) {
+      it(`handles erased loop retyped as empty branch with ${snapshot} context`, async () => {
+        let completionCalls = 0;
+        let selectorCalls = 0;
+        let conditionCalls = 0;
+        let childCalls = 0;
+        const exec = new DAGExecutor({
+          stepExecutor: new MockStepExecutor(new Map(), () => {
+            childCalls++;
+            return { success: true, output: "read", executionTime: 0 };
+          }),
+        });
+        const makeNodes = (changed: boolean) => [subWorkflow("child", {
+          workflow: {
+            id: "erased-loop-empty-branch",
+            steps: [
+              changed
+                ? {
+                  id: "pick",
+                  config: {
+                    type: "branch" as const,
+                    condition: () => {
+                      conditionCalls++;
+                      return true;
+                    },
+                    then: [],
+                    else: [step("other", { tool: "read" })],
+                  },
+                }
+                : loop("pick", {
+                  steps: [step("read", { tool: "read" })],
+                  maxIterations: 2,
+                  while: (_context, loopContext) => loopContext.iteration === 0,
+                  onComplete: () => {
+                    completionCalls++;
+                    return {
+                      branch: "then",
+                      skipped: true,
+                      exitReason: undefined,
+                      iterations: undefined,
+                      previousResults: undefined,
+                    };
+                  },
+                }),
+            ],
+            output: (context) => {
+              if (++selectorCalls === 1) throw new Error("selector failed");
+              return context;
+            },
+          },
+        })];
+        const first = await exec.execute(makeNodes(false), createTestRun());
+        assertEquals(first.completed, false);
+        const states = structuredClone(first.nodeStates);
+        if (snapshot === "absent") delete states.child!._subWorkflowContext;
+        const persisted = JSON.parse(JSON.stringify(
+          prepareNodeStatesUserData(states, "erased-loop-empty-branch", {}),
+        )) as Record<string, NodeState>;
+        assertEquals(persisted.pick!.output, { branch: "then", skipped: true });
+        const retried = await exec.execute(
+          makeNodes(true),
+          createTestRun({ nodeStates: persisted, context: first.context }),
+        );
+        assertEquals(retried.completed, snapshot === "retained");
+        if (snapshot === "absent") {
+          assertStringIncludes(
+            retried.error ?? "",
+            'Legacy nested-loop context cannot be restored for "pick"',
+          );
+        } else {
+          assertEquals(retried.error, undefined);
+          assertEquals(retried.context.child, persisted.child!._subWorkflowContext);
+        }
+        assertEquals(selectorCalls, snapshot === "retained" ? 2 : 1);
+        assertEquals(completionCalls, 1);
+        assertEquals(conditionCalls, 0);
+        assertEquals(childCalls, 1);
+      });
+    }
+
+    for (const provenance of ["child context", "branch selection", "loop snapshot"] as const) {
+      it(`recovers a legitimate empty branch from durable ${provenance}`, async () => {
+        let conditionCalls = 0;
+        let selectorCalls = 0;
+        const nodes = [subWorkflow("child", {
+          workflow: {
+            id: "durable-empty-branch",
+            steps: [branch("pick", {
+              condition: () => {
+                conditionCalls++;
+                return false;
+              },
+              then: [step("other", { tool: "read" })],
+              else: [],
+            })],
+            output: (context) => {
+              if (++selectorCalls === 1) throw new Error("selector failed");
+              return context;
+            },
+          },
+        })];
+        const exec = new DAGExecutor({ stepExecutor: new MockStepExecutor() });
+        const first = await exec.execute(nodes, createTestRun());
+        assertEquals(first.completed, false);
+        const persisted = JSON.parse(JSON.stringify(
+          provenance === "loop snapshot"
+            ? toPersistedNodeStates(first.nodeStates)
+            : prepareNodeStatesUserData(first.nodeStates, "durable-empty-branch", {}),
+        )) as Record<string, NodeState>;
+        assertEquals(persisted.pick!._branchSelected, "else");
+        if (provenance === "child context") delete persisted.pick!._branchSelected;
+        else delete persisted.child!._subWorkflowContext;
+        const retried = await exec.execute(nodes, createTestRun({ nodeStates: persisted }));
+        assertEquals(retried.error, undefined);
+        assertEquals(retried.completed, true);
+        assertEquals(
+          retried.context.child,
+          JSON.parse(JSON.stringify(first.nodeStates.child!._subWorkflowContext)),
+        );
+        assertEquals(conditionCalls, 1);
+        assertEquals(selectorCalls, 2);
+      });
+    }
+
     for (
       const omittedKey of [
         "exitReason",
