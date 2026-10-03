@@ -1,4 +1,5 @@
 import { currentRequestContext } from "#veryfront/platform/request-context-access.ts";
+import { scopeFileOperationCacheKeyPrefix } from "#veryfront/cache/keys/builders/file.ts";
 
 const requestAuthoritySalt = crypto.randomUUID();
 const intrinsicApply = Reflect.apply;
@@ -34,6 +35,14 @@ export function getRequestAuthorityCacheVariant(): string | undefined {
 export function scopeToRequestAuthority(scope: string): string {
   const authority = getRequestAuthorityCacheVariant();
   return authority ? `${scope}|${authority.length}:${authority}` : scope;
+}
+
+/**
+ * Scope a file, stat or directory source prefix to the active request
+ * credential in a shape the API cache stores unchanged.
+ */
+export function scopeFileOperationToRequestAuthority(prefix: string): string {
+  return scopeFileOperationCacheKeyPrefix(prefix, getRequestAuthorityCacheVariant());
 }
 
 /**

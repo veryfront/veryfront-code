@@ -6,6 +6,7 @@ import { buildDirCacheKeyPrefix, buildFileListCacheKey } from "./cache-keys.ts";
 import { DirectoryOperations } from "./directory-operations.ts";
 import { PathNormalizer } from "./path-normalizer.ts";
 import { getCurrentRequestContext, runWithRequestContext } from "./request-context.ts";
+import { scopeFileOperationCacheKeyPrefix } from "#veryfront/cache/keys/builders/file.ts";
 
 describe("DirectoryOperations", () => {
   it("should export DirectoryOperations class", () => {
@@ -201,7 +202,9 @@ describe("DirectoryOperations", () => {
         ["fresh.ts"],
       );
       assertEquals(
-        cache.get<Array<{ name: string }>>(`${buildDirCacheKeyPrefix(contentContext)}:`)?.map(
+        cache.get<Array<{ name: string }>>(
+          `${scopeFileOperationCacheKeyPrefix(buildDirCacheKeyPrefix(contentContext))}:`,
+        )?.map(
           (entry) => entry.name,
         ),
         ["stale.ts"],
@@ -275,7 +278,10 @@ describe("DirectoryOperations", () => {
       listing.resolve([{ path: "stale.ts" }]);
 
       assertEquals((await pending).map((entry) => entry.name), ["stale.ts"]);
-      assertEquals(cache.get(`${buildDirCacheKeyPrefix(null)}:`), undefined);
+      assertEquals(
+        cache.get(`${scopeFileOperationCacheKeyPrefix(buildDirCacheKeyPrefix(null))}:`),
+        undefined,
+      );
     });
 
     it("rebuilds a same-scope waiter after an in-flight tree is cleared", async () => {
