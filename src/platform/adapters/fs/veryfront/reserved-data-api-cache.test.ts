@@ -59,83 +59,99 @@ it("reserved data writes remove every authority listing from the shared API cach
       }
       throw new Error(`Unexpected cache operation: ${url.pathname}`);
     }, async () => {
-      const request = (token: string) => ({
-        projectSlug: "test-project",
-        token,
-        productionMode: false,
-        branch: "main",
-      });
-      await runWithRequestContext(request("writer-token"), async () => {
-        const adapter = createAdapter({
-          veryfront: {
-            apiBaseUrl: "https://api.example.com",
-            apiToken: "test-token",
-            projectSlug: "test-project",
-            contentSource: { type: "branch", branch: "main" },
-            cache: { enabled: true },
-          },
-        });
-        const files = [{ path: "agents/support.ts", content: "export default 1;" }];
-        const created = { path: "knowledge/new.md", content: "new", type: "file", size: 3 };
-        adapter.setContentContext({
-          sourceType: "branch",
+      for (
+        const branch of [
+          "main",
+          "feature/foo",
+          "feature%2Ffoo",
+          "feature/東京",
+          "vf-sanitized",
+          "x".repeat(600),
+        ]
+      ) {
+        const patternCountBefore = patterns.length;
+        const request = (token: string) => ({
           projectSlug: "test-project",
-          branch: "main",
+          token,
+          productionMode: false,
+          branch,
         });
-        const client = adapter.getClient() as unknown as {
-          initialize: () => Promise<void>;
-          getProjectSlug: () => string;
-          getProjectId: () => string;
-          getCachedProject: () => { provider: string; layout: string };
-          listAllFiles: () => Promise<typeof files>;
-          getFile: () => Promise<typeof created>;
-        };
-        client.initialize = () => Promise.resolve();
-        client.getProjectSlug = () => "test-project";
-        client.getProjectId = () => "project-123";
-        client.getCachedProject = () => ({ provider: "veryfront", layout: "default" });
-        client.listAllFiles = () => Promise.resolve(files);
-        client.getFile = () => Promise.resolve(created);
-        const internals = adapter as unknown as {
-          wsManager: { connect: () => void };
-          cache: { setAsync: (key: string, value: unknown) => Promise<void> };
-        };
-        internals.wsManager.connect = () => {};
-        try {
-          await adapter.initialize();
-          const context = adapter.getContentContext();
-          assertExists(context);
-          const sourceKey = buildFileListCacheKey(context);
-          const writerKey = scopeFileListCacheKeyToRequestAuthority(sourceKey);
-          const readerKey = await runWithRequestContext(
-            request("reader-token"),
-            () => Promise.resolve(scopeFileListCacheKeyToRequestAuthority(sourceKey)),
-          );
-          const otherBranchKey = scopeFileListCacheKeyToRequestAuthority(
-            buildFileListCacheKey({ ...context, branch: "other" }),
-          );
-          for (const key of [sourceKey, writerKey, readerKey, otherBranchKey]) {
-            await internals.cache.setAsync(key, files);
-            assertExists(await backend.get(key), "the API backend must hold the stale listing");
-          }
+        await runWithRequestContext(request("writer-token"), async () => {
+          const adapter = createAdapter({
+            veryfront: {
+              apiBaseUrl: "https://api.example.com",
+              apiToken: "test-token",
+              projectSlug: "test-project",
+              contentSource: { type: "branch", branch: "main" },
+              cache: { enabled: true },
+            },
+          });
+          const files = [{ path: "agents/support.ts", content: "export default 1;" }];
+          const created = { path: "knowledge/new.md", content: "new", type: "file", size: 3 };
+          adapter.setContentContext({
+            sourceType: "branch",
+            projectSlug: "test-project",
+            branch,
+          });
+          const client = adapter.getClient() as unknown as {
+            initialize: () => Promise<void>;
+            getProjectSlug: () => string;
+            getProjectId: () => string;
+            getCachedProject: () => { provider: string; layout: string };
+            listAllFiles: () => Promise<typeof files>;
+            getFile: () => Promise<typeof created>;
+          };
+          client.initialize = () => Promise.resolve();
+          client.getProjectSlug = () => "test-project";
+          client.getProjectId = () => "project-123";
+          client.getCachedProject = () => ({ provider: "veryfront", layout: "default" });
+          client.listAllFiles = () => Promise.resolve(files);
+          client.getFile = () => Promise.resolve(created);
+          const internals = adapter as unknown as {
+            wsManager: { connect: () => void };
+            cache: { setAsync: (key: string, value: unknown) => Promise<void> };
+          };
+          internals.wsManager.connect = () => {};
+          try {
+            await adapter.initialize();
+            const context = adapter.getContentContext();
+            assertExists(context);
+            const sourceKey = buildFileListCacheKey(context);
+            const writerKey = scopeFileListCacheKeyToRequestAuthority(sourceKey);
+            const readerKey = await runWithRequestContext(
+              request("reader-token"),
+              () => Promise.resolve(scopeFileListCacheKeyToRequestAuthority(sourceKey)),
+            );
+            const otherBranchKey = scopeFileListCacheKeyToRequestAuthority(
+              buildFileListCacheKey({ ...context, branch: "other" }),
+            );
+            for (const key of [sourceKey, writerKey, readerKey, otherBranchKey]) {
+              await internals.cache.setAsync(key, files);
+              assertExists(await backend.get(key), "the API backend must hold the stale listing");
+            }
 
-          await adapter.refreshReservedDataPaths([created.path]);
+            await adapter.refreshReservedDataPaths([created.path]);
 
-          for (const key of [sourceKey, writerKey, readerKey]) {
-            assertEquals(await backend.get(key), null, "the stale shared listing must be gone");
+            for (const key of [sourceKey, writerKey, readerKey]) {
+              assertEquals(await backend.get(key), null, "the stale shared listing must be gone");
+            }
+            assertExists(await backend.get(otherBranchKey), "another branch must remain cached");
+            assertEquals(
+              patterns.length,
+              patternCountBefore + 1,
+              "authority invalidation must reach the shared API",
+            );
+            assertEquals(
+              warnings.filter((args) =>
+                args.some((arg) => String(arg).includes("Refusing unsafe del-pattern"))
+              ).length,
+              0,
+            );
+          } finally {
+            adapter.dispose();
           }
-          assertExists(await backend.get(otherBranchKey), "another branch must remain cached");
-          assertEquals(patterns.length, 1, "authority invalidation must reach the shared API");
-          assertEquals(
-            warnings.filter((args) =>
-              args.some((arg) => String(arg).includes("Refusing unsafe del-pattern"))
-            ).length,
-            0,
-          );
-        } finally {
-          adapter.dispose();
-        }
-      });
+        });
+      }
     });
   } finally {
     console.warn = originalWarn;

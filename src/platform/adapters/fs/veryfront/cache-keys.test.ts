@@ -1,5 +1,9 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertNotEquals } from "#veryfront/testing/assert.ts";
+import {
+  isCacheKeyPassThroughSafe,
+  isValidCachePattern,
+} from "#veryfront/cache/keys/api-policy.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   buildDirCacheKeyPrefix,
@@ -116,10 +120,27 @@ describe("cache-keys", () => {
     });
 
     it("should build branch-based key", () => {
-      assertEquals(
-        buildFileListCacheKey(branchCtx),
-        "files:branch:my-project:feature%2Fx",
-      );
+      const key = buildFileListCacheKey(branchCtx);
+      assertEquals(key.startsWith("files:branch:"), true);
+      assertEquals(isCacheKeyPassThroughSafe(`${key}:authority:credential`), true);
+      assertEquals(isValidCachePattern(`${key}:authority:*`), true);
+      assertNotEquals(key, buildFileListCacheKey({ ...branchCtx, branch: "feature%2Fx" }));
+    });
+
+    it("keeps encoded and bounded source identities distinct and API-safe", () => {
+      const contexts = [
+        { ...mainBranchCtx, branch: "vf-sanitized" },
+        { ...mainBranchCtx, branch: "x".repeat(600) },
+        { ...mainBranchCtx, branch: "y".repeat(600) },
+        { ...envCtx, environmentName: "Preview/test", releaseId: "release:1" },
+        { ...releaseCtx, projectSlug: "vf-sanitized" },
+      ];
+      const keys = contexts.map(buildFileListCacheKey);
+      assertEquals(new Set(keys).size, keys.length);
+      for (const key of keys) {
+        assertEquals(isCacheKeyPassThroughSafe(`${key}:authority:${"a".repeat(26)}`), true);
+        assertEquals(isValidCachePattern(`${key}:authority:*`), true);
+      }
     });
 
     it("should build environment-based key", () => {

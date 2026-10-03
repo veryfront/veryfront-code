@@ -10,8 +10,15 @@
 import { VERSION } from "#veryfront/utils/version.ts";
 import { CacheKeyPrefix, type FileOperationContext } from "../prefixes.ts";
 import { hashPathWithName } from "../utils.ts";
+import { hashString } from "../../hash.ts";
+import { API_CACHE_KEY_MAX_LENGTH, isCacheKeyPassThroughSafe } from "../api-policy.ts";
+import { encodeCacheKeySegment } from "../segment-codec.ts";
+
 import { CACHE_INVARIANT_VIOLATION } from "#veryfront/errors";
 import { encodeCacheSourceIdentity, type EncodedCacheSourceIdentity } from "../source-identity.ts";
+
+// Leave room for the request-authority suffix on a shared listing key.
+const MAX_FILE_LIST_SOURCE_KEY_LENGTH = API_CACHE_KEY_MAX_LENGTH - 64;
 
 function encodeFileSourceIdentity(ctx: FileOperationContext): EncodedCacheSourceIdentity {
   if (ctx.sourceType === "branch") {
@@ -59,7 +66,26 @@ export function buildDirCacheKeyPrefix(ctx: FileOperationContext | null | undefi
 }
 
 export function buildFileListCacheKey(ctx: FileOperationContext | null | undefined): string {
-  return buildFileOperationPrefix(CacheKeyPrefix.FILES, ctx, "files:unknown");
+  const sourceKey = buildFileOperationPrefix(CacheKeyPrefix.FILES, ctx, "files:unknown");
+  if (
+    !ctx ||
+    isCacheKeyPassThroughSafe(`${sourceKey}:authority:entry`) &&
+      sourceKey.length <= MAX_FILE_LIST_SOURCE_KEY_LENGTH
+  ) return sourceKey;
+
+  // Keep the source-type prefix used by broad invalidation, while encoding
+  // URI escapes and reserving extra segments so no ordinary source can alias it.
+  const sourceType = ctx.sourceType === "environment" ? "env" : ctx.sourceType;
+  const encoded = `${CacheKeyPrefix.FILES}:${sourceType}:encoded:${
+    encodeCacheKeySegment(sourceKey)
+  }:source:value`;
+  if (encoded.length <= MAX_FILE_LIST_SOURCE_KEY_LENGTH) return encoded;
+
+  // Match the bounded, domain-separated 128-bit source identities used by
+  // other synchronous cache-key builders for inputs too long to inline.
+  return `${CacheKeyPrefix.FILES}:${sourceType}:hashed:${
+    hashString(`file-list-source:a:${sourceKey}`)
+  }:${hashString(`file-list-source:b:${sourceKey}`)}:source:value`;
 }
 
 export function buildFileOperationCacheKey(prefix: string, path: string): string {
