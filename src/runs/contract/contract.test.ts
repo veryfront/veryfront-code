@@ -53,6 +53,10 @@ describe("Runs target contract types", () => {
     assertEquals(heartbeat, {});
     assertEquals(input.fields[0]?.default, "Yes");
   });
+  it("types a timer wait for a delayed workflow", () => {
+    const wait: Schemas["RunWait"] = { reason: "timer", resume_at: "2099-01-01T00:00:00Z" };
+    assertEquals(wait.reason, "timer");
+  });
   it("type a child run request by the contract", () => {
     const child = {
       project_id: "00000000-0000-4000-8000-000000000001",

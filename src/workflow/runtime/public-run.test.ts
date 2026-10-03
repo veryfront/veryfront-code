@@ -63,6 +63,7 @@ describe("workflow/runtime/public-run", () => {
         ...completedState("step", nestedUserOutput),
         _subWorkflowOwnerPath: "internal-owner",
         _stepInputRecorded: true,
+        _branchSelected: "then",
         _subWorkflowCompletedChildIds: ["child"],
         _loopOutputRetry: { context: leakedContext, iteration: 0 },
         _subWorkflowContext: { private: frameworkTenant },
@@ -203,6 +204,10 @@ describe("workflow/runtime/public-run", () => {
     assertEquals(projected.nodeStates.step?._stepInputRecorded, undefined);
     assertEquals(projected.checkpoints[0]?.nodeStates.step?._stepInputRecorded, undefined);
     assertEquals(run.nodeStates.step?._stepInputRecorded, true);
+    assertEquals(projected.nodeStates.step?._branchSelected, undefined);
+    assertEquals(projected.checkpoints[0]?.nodeStates.step?._branchSelected, undefined);
+    assertEquals(run.nodeStates.step?._branchSelected, "then");
+    assertEquals(run.checkpoints[0]?.nodeStates.step?._branchSelected, "then");
     assertEquals(projected.nodeStates.step?.output, nestedUserOutput);
     assertEquals(projected.nodeStates.parent?.output, contextShapedUserOutput);
     assertEquals(projected.nodeStates.mapLike?.output, [contextShapedUserOutput]);
