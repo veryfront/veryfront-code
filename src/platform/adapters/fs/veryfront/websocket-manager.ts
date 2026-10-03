@@ -1235,6 +1235,13 @@ export class WebSocketManager {
     let preparedStyleArtifact: PreviewStyleArtifactInfo | undefined;
     let reloadSuperseded = false;
     let cacheInvalidated = false;
+    const deleteOperationSourcePrefix = async (prefix: string): Promise<number> => {
+      const [legacy, encoded] = await Promise.all([
+        this.deps.cache.deleteByPrefixAsync(`${prefix}:`),
+        this.deps.cache.deleteByPrefixAsync(`${prefix}-v2:`),
+      ]);
+      return legacy + encoded;
+    };
 
     try {
       logger.debug("CACHE INVALIDATION STARTED - clearing all caches");
@@ -1253,15 +1260,15 @@ export class WebSocketManager {
         filesReleaseCount,
         filesEnvCount,
       ] = await Promise.all([
-        this.deps.cache.deleteByPrefixAsync("file:branch:"),
-        this.deps.cache.deleteByPrefixAsync("file:release:"),
-        this.deps.cache.deleteByPrefixAsync("file:env:"),
-        this.deps.cache.deleteByPrefixAsync("stat:branch:"),
-        this.deps.cache.deleteByPrefixAsync("stat:release:"),
-        this.deps.cache.deleteByPrefixAsync("stat:env:"),
-        this.deps.cache.deleteByPrefixAsync("dir:branch:"),
-        this.deps.cache.deleteByPrefixAsync("dir:release:"),
-        this.deps.cache.deleteByPrefixAsync("dir:env:"),
+        deleteOperationSourcePrefix("file:branch"),
+        deleteOperationSourcePrefix("file:release"),
+        deleteOperationSourcePrefix("file:env"),
+        deleteOperationSourcePrefix("stat:branch"),
+        deleteOperationSourcePrefix("stat:release"),
+        deleteOperationSourcePrefix("stat:env"),
+        deleteOperationSourcePrefix("dir:branch"),
+        deleteOperationSourcePrefix("dir:release"),
+        deleteOperationSourcePrefix("dir:env"),
         this.deps.cache.deleteByPrefixAsync("files:branch:"),
         this.deps.cache.deleteByPrefixAsync("files:release:"),
         this.deps.cache.deleteByPrefixAsync("files:env:"),

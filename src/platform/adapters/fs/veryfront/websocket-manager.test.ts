@@ -2237,7 +2237,13 @@ describe("WebSocketManager", () => {
     it("does not re-list the project for an unused adapter on a full invalidation", async () => {
       const listCalls = { count: 0 };
       const evictions = { count: 0 };
-      const manager = createRunAdapterManager({ inUse: false, listCalls, evictions });
+      const deletedPrefixes: string[] = [];
+      const manager = createRunAdapterManager({
+        inUse: false,
+        listCalls,
+        evictions,
+        deletedPrefixes,
+      });
       manager.connect("project-1");
       const socket = MockWebSocket.instances[0];
       assertExists(socket);
@@ -2248,6 +2254,12 @@ describe("WebSocketManager", () => {
 
       assertEquals(listCalls.count, 0);
       assertEquals(evictions.count, 1);
+      for (const operation of ["file", "stat", "dir"]) {
+        for (const sourceType of ["branch", "release", "env"]) {
+          assertEquals(deletedPrefixes.includes(`${operation}:${sourceType}:`), true);
+          assertEquals(deletedPrefixes.includes(`${operation}:${sourceType}-v2:`), true);
+        }
+      }
       manager.dispose();
     });
 

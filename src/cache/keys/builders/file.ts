@@ -9,6 +9,8 @@
 
 import { VERSION } from "#veryfront/utils/version.ts";
 import { CacheKeyPrefix, type FileOperationContext } from "../prefixes.ts";
+import { isCacheKeyPassThroughSafe } from "../api-policy.ts";
+import { encodeCacheKeySegment } from "../segment-codec.ts";
 import { hashPathWithName } from "../utils.ts";
 import { CACHE_INVARIANT_VIOLATION } from "#veryfront/errors";
 import { encodeCacheSourceIdentity, type EncodedCacheSourceIdentity } from "../source-identity.ts";
@@ -46,16 +48,38 @@ function buildFileOperationPrefix(
   return `${prefix}:${sourceTypeKey}:${ctx.projectSlug}:${source.qualifier}`;
 }
 
+// Keep ordinary prefixes stable. Version the source type when URI escaping
+// would make the API rewrite a concrete key or refuse its deletion glob.
+function buildApiFileOperationPrefix(
+  prefix: string,
+  ctx: FileOperationContext | null | undefined,
+  unknownKey: string,
+): string {
+  const legacy = buildFileOperationPrefix(prefix, ctx, unknownKey);
+  if (!ctx || isCacheKeyPassThroughSafe(`${legacy}:entry`) && !ctx.projectSlug.includes(":")) {
+    return legacy;
+  }
+  const sourceType = ctx.sourceType === "environment" ? "env" : ctx.sourceType;
+  const qualifier = ctx.sourceType === "branch"
+    ? encodeCacheKeySegment(ctx.branch ?? "main")
+    : ctx.sourceType === "release"
+    ? encodeCacheKeySegment(ctx.releaseId!)
+    : `${encodeCacheKeySegment(ctx.environmentName ?? "")}:${
+      encodeCacheKeySegment(ctx.releaseId!)
+    }`;
+  return `${prefix}:${sourceType}-v2:${encodeCacheKeySegment(ctx.projectSlug)}:${qualifier}`;
+}
+
 export function buildFileCacheKeyPrefix(ctx: FileOperationContext | null | undefined): string {
-  return buildFileOperationPrefix(CacheKeyPrefix.FILE, ctx, "file:unknown");
+  return buildApiFileOperationPrefix(CacheKeyPrefix.FILE, ctx, "file:unknown");
 }
 
 export function buildStatCacheKeyPrefix(ctx: FileOperationContext | null | undefined): string {
-  return buildFileOperationPrefix(CacheKeyPrefix.STAT, ctx, "stat:unknown");
+  return buildApiFileOperationPrefix(CacheKeyPrefix.STAT, ctx, "stat:unknown");
 }
 
 export function buildDirCacheKeyPrefix(ctx: FileOperationContext | null | undefined): string {
-  return buildFileOperationPrefix(CacheKeyPrefix.DIR, ctx, "dir:unknown");
+  return buildApiFileOperationPrefix(CacheKeyPrefix.DIR, ctx, "dir:unknown");
 }
 
 export function buildFileListCacheKey(ctx: FileOperationContext | null | undefined): string {
