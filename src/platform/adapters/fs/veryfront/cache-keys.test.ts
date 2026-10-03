@@ -143,6 +143,22 @@ describe("cache-keys", () => {
       }
     });
 
+    it("preserves project prefixes for publish invalidation of encoded and hashed listings", () => {
+      for (
+        const ctx of [
+          { ...envCtx, environmentName: "Preview/test" },
+          { ...envCtx, environmentName: "x".repeat(600) },
+          { ...releaseCtx, releaseId: "release/1" },
+          { ...releaseCtx, releaseId: "x".repeat(600) },
+        ]
+      ) {
+        const sourceType = ctx.sourceType === "environment" ? "env" : "release";
+        const key = buildFileListCacheKey(ctx);
+        assertEquals(key.startsWith(`files:${sourceType}:${ctx.projectSlug}:`), true);
+        assertEquals(isCacheKeyPassThroughSafe(`${key}:authority:credential`), true);
+      }
+    });
+
     it("should build environment-based key", () => {
       assertEquals(
         buildFileListCacheKey(envCtx),

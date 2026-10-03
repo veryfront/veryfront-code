@@ -73,19 +73,21 @@ export function buildFileListCacheKey(ctx: FileOperationContext | null | undefin
       sourceKey.length <= MAX_FILE_LIST_SOURCE_KEY_LENGTH
   ) return sourceKey;
 
-  // Keep the source-type prefix used by broad invalidation, while encoding
-  // URI escapes and reserving extra segments so no ordinary source can alias it.
+  // Keep the project prefix used by broad publish invalidation. Reserve extra
+  // segments so encoded identities cannot alias an ordinary source.
   const sourceType = ctx.sourceType === "environment" ? "env" : ctx.sourceType;
-  const encoded = `${CacheKeyPrefix.FILES}:${sourceType}:encoded:${
-    encodeCacheKeySegment(sourceKey)
-  }:source:value`;
+  const project = isCacheKeyPassThroughSafe(`${ctx.projectSlug}:`)
+    ? ctx.projectSlug
+    : encodeCacheKeySegment(ctx.projectSlug);
+  const prefix = `${CacheKeyPrefix.FILES}:${sourceType}:${project}`;
+  const encoded = `${prefix}:encoded:${encodeCacheKeySegment(sourceKey)}:source:value`;
   if (encoded.length <= MAX_FILE_LIST_SOURCE_KEY_LENGTH) return encoded;
 
   // Match the bounded, domain-separated 128-bit source identities used by
   // other synchronous cache-key builders for inputs too long to inline.
-  return `${CacheKeyPrefix.FILES}:${sourceType}:hashed:${
-    hashString(`file-list-source:a:${sourceKey}`)
-  }:${hashString(`file-list-source:b:${sourceKey}`)}:source:value`;
+  return `${prefix}:hashed:${hashString(`file-list-source:a:${sourceKey}`)}:${
+    hashString(`file-list-source:b:${sourceKey}`)
+  }:source:value`;
 }
 
 export function buildFileOperationCacheKey(prefix: string, path: string): string {

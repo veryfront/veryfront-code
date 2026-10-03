@@ -3,7 +3,6 @@ import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { it } from "#veryfront/testing/bdd.ts";
 import { ApiCacheBackend, CacheBackends } from "#veryfront/cache/backend.ts";
 import { initializeFileCacheBackend } from "../cache/file-cache.ts";
-import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { createAdapter } from "./adapter.test-helpers.ts";
 import { buildFileListCacheKey } from "./cache-keys.ts";
 import { scopeFileListCacheKeyToRequestAuthority } from "./request-authority.ts";
@@ -27,23 +26,31 @@ it("reserved data writes remove every authority listing from the shared API cach
   try {
     await initializeFileCacheBackend();
 
-    await withMockFetch((input, init) => {
-      const url = new URL(String(input));
-      const body = init?.body ? JSON.parse(String(init.body)) : {};
+    // Fake only the HTTP boundary. The real backend still sanitizes concrete
+    // keys and validates deletion patterns before they reach this fake.
+    const transport = backend as unknown as {
+      request: (method: string, path: string, body?: Record<string, string>) => Promise<unknown>;
+    };
+    transport.request = (_method, path, body = {}) => {
+      const url = new URL(path, "https://api.example.com");
       if (url.pathname.endsWith("/set")) {
+        assertExists(body.key);
+        assertExists(body.value);
         stored.set(body.key, body.value);
-        return Promise.resolve(Response.json({}));
+        return Promise.resolve({});
       }
       if (url.pathname.endsWith("/get")) {
         return Promise.resolve(
-          Response.json({ value: stored.get(url.searchParams.get("key")!) ?? null }),
+          { value: stored.get(url.searchParams.get("key")!) ?? null },
         );
       }
       if (url.pathname.endsWith("/del")) {
+        assertExists(body.key);
         stored.delete(body.key);
-        return Promise.resolve(Response.json({}));
+        return Promise.resolve({});
       }
       if (url.pathname.endsWith("/del-pattern")) {
+        assertExists(body.pattern);
         patterns.push(body.pattern);
         // This path only receives a source prefix followed by one wildcard.
         assertEquals(body.pattern.endsWith("*"), true);
@@ -55,10 +62,11 @@ it("reserved data writes remove every authority listing from the shared API cach
             deleted++;
           }
         }
-        return Promise.resolve(Response.json({ deleted }));
+        return Promise.resolve({ deleted });
       }
       throw new Error(`Unexpected cache operation: ${url.pathname}`);
-    }, async () => {
+    };
+    {
       for (
         const branch of [
           "main",
@@ -152,7 +160,7 @@ it("reserved data writes remove every authority listing from the shared API cach
           }
         });
       }
-    });
+    }
   } finally {
     console.warn = originalWarn;
     CacheBackends.file = originalFileBackend;
