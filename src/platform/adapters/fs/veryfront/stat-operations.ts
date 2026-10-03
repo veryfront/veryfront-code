@@ -19,7 +19,7 @@ import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { loadAllProjectFiles } from "./file-list-access.ts";
 import type { ResolvedContentContext } from "./types.ts";
 import { toClientContext } from "./adapter-content-context.ts";
-import { scopeToRequestAuthority } from "./request-authority.ts";
+import { scopeFileOperationToRequestAuthority } from "./request-authority.ts";
 import { getRequestScopedFile, setRequestScopedFile } from "./request-context.ts";
 
 const logger = baseLogger.component("stat-operations");
@@ -77,7 +77,7 @@ export class StatOperations extends VeryfrontOperationsBase {
     generation: number,
     scopeKey: string,
   ): void {
-    const currentScopeKey = scopeToRequestAuthority(
+    const currentScopeKey = scopeFileOperationToRequestAuthority(
       buildStatCacheKeyPrefix(this.contextProvider?.getContentContext()),
     );
     const scopeInvalidated = this.contextProvider?.isPersistentCacheInvalidated?.(scopeKey) ??
@@ -211,7 +211,7 @@ export class StatOperations extends VeryfrontOperationsBase {
     contentContext: ResolvedContentContext | null | undefined,
     rebuildsLeft = 1,
   ): Promise<StatIndexSnapshot> {
-    const scopeKey = scopeToRequestAuthority(buildStatCacheKeyPrefix(contentContext));
+    const scopeKey = scopeFileOperationToRequestAuthority(buildStatCacheKeyPrefix(contentContext));
     const isScopeInvalidated = () =>
       this.contextProvider?.isPersistentCacheInvalidated?.(scopeKey) ?? false;
     if (
@@ -310,7 +310,7 @@ export class StatOperations extends VeryfrontOperationsBase {
     }
 
     const builtAt = Date.now();
-    const currentScopeKey = scopeToRequestAuthority(
+    const currentScopeKey = scopeFileOperationToRequestAuthority(
       buildStatCacheKeyPrefix(this.contextProvider?.getContentContext()),
     );
     const scopeInvalidated = this.contextProvider?.isPersistentCacheInvalidated?.(scopeKey) ??
@@ -396,7 +396,7 @@ export class StatOperations extends VeryfrontOperationsBase {
   }
 
   getOriginalApiPath(normalizedPath: string): string {
-    const scopeKey = scopeToRequestAuthority(
+    const scopeKey = scopeFileOperationToRequestAuthority(
       buildStatCacheKeyPrefix(this.contextProvider?.getContentContext()),
     );
     return getRequestScopedFile(`${ORIGINAL_API_PATH_CACHE_PREFIX}${scopeKey}:${normalizedPath}`) ??
@@ -647,7 +647,7 @@ export class StatOperations extends VeryfrontOperationsBase {
     const resolveStart = performance.now();
     const normalizedPath = this.normalizer.normalize(basePath);
     const ctx = this.contextProvider?.getContentContext();
-    const scopeKey = scopeToRequestAuthority(buildStatCacheKeyPrefix(ctx));
+    const scopeKey = scopeFileOperationToRequestAuthority(buildStatCacheKeyPrefix(ctx));
     const cacheKey = `${scopeKey}:resolve:${normalizedPath}`;
     const generation = this.indexGeneration;
 

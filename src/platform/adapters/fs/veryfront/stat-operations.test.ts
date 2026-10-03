@@ -9,6 +9,7 @@ import { PathNormalizer } from "./path-normalizer.ts";
 import { StatOperations } from "./stat-operations.ts";
 import { buildStatCacheKeyPrefix } from "./cache-keys.ts";
 import { getCurrentRequestContext, runWithRequestContext } from "./request-context.ts";
+import { scopeFileOperationCacheKeyPrefix } from "#veryfront/cache/keys/builders/file.ts";
 
 function createMockClient(overrides: Record<string, unknown> = {}): VeryfrontApiClient {
   return {
@@ -657,7 +658,9 @@ describe("StatOperations", () => {
           isPersistentCacheInvalidated: () => invalidated,
         },
       );
-      const cacheKey = `${buildStatCacheKeyPrefix(contentContext)}:resolve:pages/about`;
+      const cacheKey = `${
+        scopeFileOperationCacheKeyPrefix(buildStatCacheKeyPrefix(contentContext))
+      }:resolve:pages/about`;
 
       assertEquals(await statOps.resolveFile("pages/about"), "pages/about.tsx");
       resolvedPath = "pages/about.mdx";

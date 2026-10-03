@@ -10,6 +10,12 @@ import { buildFileCacheKeyPrefix } from "./cache-keys.ts";
 import { PathNormalizer } from "./path-normalizer.ts";
 import { ReadOperations } from "./read-operations.ts";
 import type { ResolvedContentContext } from "./types.ts";
+import { scopeFileOperationCacheKeyPrefix } from "#veryfront/cache/keys/builders/file.ts";
+
+/** Concrete unscoped file key in the runtime shape. */
+function operationKey(prefix: string, path: string): string {
+  return `${scopeFileOperationCacheKeyPrefix(prefix)}:${path}`;
+}
 
 function createMockClient(
   overrides: Record<string, unknown> = {},
@@ -1588,7 +1594,10 @@ describe("ReadOperations", () => {
         getPublishedFileContent: () => Promise.resolve("fresh api content"),
       });
       const cache = new FileCache({ enabled: true, ttl: 60000, maxSize: 100 });
-      cache.set("file:release:test:release-123:pages/index.tsx", "stale persistent content");
+      cache.set(
+        operationKey("file:release:test:release-123", "pages/index.tsx"),
+        "stale persistent content",
+      );
 
       const readOps = new ReadOperations(client, cache, new PathNormalizer(), contextProvider);
 
@@ -1645,7 +1654,10 @@ describe("ReadOperations", () => {
       });
 
       const cache = new FileCache({ enabled: true, ttl: 60000, maxSize: 100 });
-      cache.set("file:release:test:rel-invalidation:pages/index.tsx", "stale persistent content");
+      cache.set(
+        operationKey("file:release:test:rel-invalidation", "pages/index.tsx"),
+        "stale persistent content",
+      );
 
       const contextProvider: ContentContextProvider = {
         isProductionMode: () => true,
@@ -1853,7 +1865,7 @@ describe("ReadOperations", () => {
       const warmed = await readOps.readTextFile("pages/home");
       assertEquals(warmed, "cached resolved content");
       assertEquals(
-        cache.get("file:release:test:rel-resolve-invalidation:pages/home"),
+        cache.get(operationKey("file:release:test:rel-resolve-invalidation", "pages/home")),
         "cached resolved content",
       );
 
@@ -1863,11 +1875,11 @@ describe("ReadOperations", () => {
       assertEquals(refreshed, "fresh resolved content");
       assertEquals(resolveCallCount, 2);
       assertEquals(
-        cache.get("file:release:test:rel-resolve-invalidation:pages/home"),
+        cache.get(operationKey("file:release:test:rel-resolve-invalidation", "pages/home")),
         "cached resolved content",
       );
       assertEquals(
-        cache.get("file:release:test:rel-resolve-invalidation:pages/home.tsx"),
+        cache.get(operationKey("file:release:test:rel-resolve-invalidation", "pages/home.tsx")),
         "cached resolved content",
       );
     });
@@ -1891,7 +1903,7 @@ describe("ReadOperations", () => {
         getPublishedFileContent: () => Promise.resolve("fresh api content"),
       });
       const cache = new FileCache({ enabled: true, ttl: 60000, maxSize: 100 });
-      const cacheKey = "file:release:test-project:release-456:pages/index.tsx";
+      const cacheKey = operationKey("file:release:test-project:release-456", "pages/index.tsx");
       cache.set(cacheKey, "stale persistent content");
 
       assertEquals(
@@ -1945,7 +1957,7 @@ describe("ReadOperations", () => {
         getPublishedFileContent: () => Promise.resolve("fresh api content"),
       });
       const cache = new FileCache({ enabled: true, ttl: 60000, maxSize: 100 });
-      const cacheKey = "file:release:my-project:release-abc:pages/index.tsx";
+      const cacheKey = operationKey("file:release:my-project:release-abc", "pages/index.tsx");
       cache.set(cacheKey, "stale persistent content");
 
       invalidatedPrefixes.add("file:release:my-project:release-xyz:");
@@ -1994,7 +2006,7 @@ describe("ReadOperations", () => {
         getPublishedFileContent: () => Promise.resolve("fresh api content"),
       });
       const cache = new FileCache({ enabled: true, ttl: 60000, maxSize: 100 });
-      const cacheKey = `${buildFileCacheKeyPrefix(environmentContext)}:pages/index.tsx`;
+      const cacheKey = operationKey(buildFileCacheKeyPrefix(environmentContext), "pages/index.tsx");
       cache.set(cacheKey, "stale persistent content");
 
       invalidatedPrefixes.add("file:env:env-project:staging:");

@@ -1,6 +1,7 @@
 import { isFrameworkSourcePath } from "#veryfront/utils/path-utils.ts";
 import { FILE_NOT_FOUND, INVALID_IMPORT } from "#veryfront/errors";
 import { buildFileCacheKeyPrefix } from "./cache-keys.ts";
+import { scopeFileOperationCacheKeyPrefix } from "#veryfront/cache/keys/builders/file.ts";
 import { READ_OPERATION_EXTENSION_PRIORITY } from "./extension-priority.ts";
 import type { ResolvedContentContext } from "./types.ts";
 
@@ -63,9 +64,7 @@ export function buildReadFetchState(options: BuildReadFetchStateOptions): ReadFe
     ? { ...contentContext, branch: requestBranch }
     : contentContext;
   const cacheKeyPrefix = buildFileCacheKeyPrefix(effectiveContentContext);
-  const scopedCacheKeyPrefix = cacheVariant
-    ? `${cacheKeyPrefix}|${cacheVariant.length}:${cacheVariant}`
-    : cacheKeyPrefix;
+  const scopedCacheKeyPrefix = scopeFileOperationCacheKeyPrefix(cacheKeyPrefix, cacheVariant);
   const cacheKey = `${scopedCacheKeyPrefix}:${normalizedPath}`;
   const isProduction = contextProvider?.isProductionMode() ?? false;
   const releaseId = effectiveContentContext?.releaseId;

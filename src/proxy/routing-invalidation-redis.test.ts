@@ -503,7 +503,7 @@ describe("proxy routing invalidation Redis bus", () => {
       redisUrl: "redis://example.test:6379",
       expectedReplicas: 2,
       replicaId: "replica-a",
-      acknowledgementTimeoutMs: 100,
+      acknowledgementTimeoutMs: TIMEOUT_NOT_UNDER_TEST_MS,
       createClient: redis.createClient,
       integritySecret,
       onInvalidate: (event) => {
@@ -514,7 +514,7 @@ describe("proxy routing invalidation Redis bus", () => {
       redisUrl: "redis://example.test:6379",
       expectedReplicas: 2,
       replicaId: "replica-b",
-      acknowledgementTimeoutMs: 100,
+      acknowledgementTimeoutMs: TIMEOUT_NOT_UNDER_TEST_MS,
       createClient: redis.createClient,
       integritySecret,
       onInvalidate: (event) => {
@@ -524,24 +524,28 @@ describe("proxy routing invalidation Redis bus", () => {
 
     assert(busA);
     assert(busB);
-    const result = await settleWithin(
-      busA.publish(createEvent()),
-      "fan-out acknowledgement",
-      () => time.runMicrotasks(),
-    );
-    const duplicateResult = await settleWithin(
-      busA.publish(createEvent()),
-      "duplicate acknowledgement",
-      () => time.runMicrotasks(),
-    );
+    const publish = busA.publish(createEvent());
+    try {
+      const result = await settleWithin(
+        publish,
+        "fan-out acknowledgement",
+        () => time.runMicrotasks(),
+      );
+      const duplicateResult = await settleWithin(
+        busA.publish(createEvent()),
+        "duplicate acknowledgement",
+        () => time.runMicrotasks(),
+      );
 
-    assertEquals(result, { acknowledged: 2, converged: true, recipients: 2 });
-    assertEquals(duplicateResult, { acknowledged: 2, converged: true, recipients: 2 });
-    assertEquals(replicaA, [createEvent()]);
-    assertEquals(replicaB, [createEvent()]);
-
-    await busA?.close();
-    await busB?.close();
+      assertEquals(result, { acknowledged: 2, converged: true, recipients: 2 });
+      assertEquals(duplicateResult, { acknowledged: 2, converged: true, recipients: 2 });
+      assertEquals(replicaA, [createEvent()]);
+      assertEquals(replicaB, [createEvent()]);
+    } finally {
+      await busA.close();
+      await busB.close();
+      await publish.catch(() => undefined);
+    }
     assertEquals(redis.clients.length, 4);
   });
 
@@ -709,7 +713,7 @@ describe("proxy routing invalidation Redis bus", () => {
       redisUrl: "redis://example.test:6379",
       expectedReplicas: 2,
       replicaId: "replica-a",
-      acknowledgementTimeoutMs: 100,
+      acknowledgementTimeoutMs: TIMEOUT_NOT_UNDER_TEST_MS,
       createClient: redis.createClient,
       integritySecret,
       onInvalidate: (event) => {
@@ -720,7 +724,7 @@ describe("proxy routing invalidation Redis bus", () => {
       redisUrl: "redis://example.test:6379",
       expectedReplicas: 2,
       replicaId: "replica-b",
-      acknowledgementTimeoutMs: 100,
+      acknowledgementTimeoutMs: TIMEOUT_NOT_UNDER_TEST_MS,
       createClient: redis.createClient,
       integritySecret,
       onInvalidate: (event) => {
@@ -730,22 +734,24 @@ describe("proxy routing invalidation Redis bus", () => {
 
     assert(busA);
     assert(busB);
-    const [firstResult, secondResult] = await settleWithin(
-      Promise.all([
-        busA.publish(createEvent("event-1")),
-        busA.publish(createEvent("event-2")),
-      ]),
-      "overlapping publish acknowledgements",
-      () => time.runMicrotasks(),
-    );
+    const firstPublish = busA.publish(createEvent("event-1"));
+    const secondPublish = busA.publish(createEvent("event-2"));
+    try {
+      const [firstResult, secondResult] = await settleWithin(
+        Promise.all([firstPublish, secondPublish]),
+        "overlapping publish acknowledgements",
+        () => time.runMicrotasks(),
+      );
 
-    assertEquals(firstResult, { acknowledged: 2, converged: true, recipients: 2 });
-    assertEquals(secondResult, { acknowledged: 2, converged: true, recipients: 2 });
-    assertEquals(replicaA.sort(), ["event-1", "event-2"]);
-    assertEquals(replicaB.sort(), ["event-1", "event-2"]);
-
-    await busA?.close();
-    await busB?.close();
+      assertEquals(firstResult, { acknowledged: 2, converged: true, recipients: 2 });
+      assertEquals(secondResult, { acknowledged: 2, converged: true, recipients: 2 });
+      assertEquals(replicaA.sort(), ["event-1", "event-2"]);
+      assertEquals(replicaB.sort(), ["event-1", "event-2"]);
+    } finally {
+      await busA.close();
+      await busB.close();
+      await Promise.allSettled([firstPublish, secondPublish]);
+    }
   });
 
   it("ignores forged Redis invalidation events", async () => {

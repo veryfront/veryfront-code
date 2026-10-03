@@ -5,6 +5,10 @@ import {
   PROJECT_CSS_CACHE_NAMESPACE,
 } from "../keys/project-css.ts";
 import { decodeCacheKeyPercentSegment, decodeCacheKeySegment } from "../keys/segment-codec.ts";
+import {
+  decodeFileOperationSource,
+  isVersionedFileOperationSource,
+} from "../keys/file-operation-source.ts";
 
 /**
  * Distributed namespaces owned by cache backends. Project invalidation is opt-in per
@@ -73,6 +77,15 @@ function matchFileCacheProjectOwnership(key: string): DistributedCacheKeyOwnersh
   const parts = key.split(":");
   if (!(["file", "stat", "dir", "files"] as string[]).includes(parts[0] ?? "")) {
     return null;
+  }
+  if (isVersionedFileOperationSource(parts)) {
+    // Versioned keys encode their segments; a malformed encoding is unowned.
+    const source = decodeFileOperationSource(parts);
+    if (!source || !source.projectSlug) return null;
+    return {
+      projectSlug: source.projectSlug,
+      environment: source.sourceType === "branch" ? "preview" : "production",
+    };
   }
   const sourceType = parts[1];
   const projectSlug = parts[2];
