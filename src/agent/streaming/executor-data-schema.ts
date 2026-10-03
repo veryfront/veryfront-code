@@ -1,3 +1,4 @@
+import { OUTPUT_SCHEMA_INVALID_ERROR } from "#veryfront/chat/provider-error-registry.ts";
 import { defineSchema, getJsonValueSchema, type JsonValue } from "#veryfront/schemas/index.ts";
 import {
   ExecutorAgentError,
@@ -164,7 +165,13 @@ export function parseExecutorDataEvent(input: unknown): JsonValue & { type: stri
         { code: "code" in result.data ? result.data.code : undefined },
         "EXECUTOR_AGENT_STREAM_FAILED",
       );
-      return { type: "error", code, error: code };
+      return {
+        type: "error",
+        code,
+        error: code === OUTPUT_SCHEMA_INVALID_ERROR.code
+          ? OUTPUT_SCHEMA_INVALID_ERROR.message
+          : code,
+      };
     })()
     : result.data;
   const value = executorAgentJson(data, "EXECUTOR_AGENT_INVALID_STREAM");

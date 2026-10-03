@@ -14,13 +14,10 @@ function sensitiveExtensionManifests() {
     {
       sourceLocation: "extensions/ext-sandbox-shell-tools/deno.json",
       group: "extension" as const,
-      componentCount: 2,
+      componentCount: 3,
       components: [
-        {
-          name: "bash-tool",
-          version: "1.3.16",
-          purl: "pkg:npm/bash-tool@1.3.16",
-        },
+        { name: "ai", version: "7.0.41", purl: "pkg:npm/ai@7.0.41" },
+        { name: "zod", version: "4.3.6", purl: "pkg:npm/zod@4.3.6" },
         {
           name: "just-bash",
           version: "2.14.5",
@@ -311,13 +308,10 @@ describe("auditDependencyBoundaries", () => {
         {
           sourceLocation: "extensions/ext-sandbox-shell-tools/deno.json",
           group: "extension",
-          componentCount: 1,
+          componentCount: 2,
           components: [
-            {
-              name: "bash-tool",
-              version: "1.3.16",
-              purl: "pkg:npm/bash-tool@1.3.16",
-            },
+            { name: "ai", version: "7.0.41", purl: "pkg:npm/ai@7.0.41" },
+            { name: "zod", version: "4.3.6", purl: "pkg:npm/zod@4.3.6" },
           ],
         },
         {

@@ -1246,84 +1246,106 @@ describe("DAGExecutor", () => {
         "iterations",
         "previousResults",
         "overwritten values",
+        "exitReason+iterations",
+        "exitReason+previousResults",
+        "iterations+previousResults",
+        "exitReason+iterations+previousResults",
+        "exitReason+iterations+previousResults+selected",
       ] as const
     ) {
-      for (const replacement of ["removed", "step", "parallel"] as const) {
-        it(`refuses durable omitted ${omittedKey} loop publication after ${replacement} drift`, async () => {
-          let completionCalls = 0;
-          let outputCalls = 0;
-          let childCalls = 0;
-          const exec = new DAGExecutor({
-            stepExecutor: new MockStepExecutor(new Map(), () => {
-              childCalls++;
-              return { success: true, output: "read", executionTime: 0 };
-            }),
-          });
-          const makeNodes = (changed: boolean) => [subWorkflow("child", {
-            workflow: {
-              id: "durable-omitted-loop",
-              steps: changed
-                ? replacement === "removed"
-                  ? []
-                  : replacement === "step"
-                  ? [step("repeat", { tool: "read" })]
-                  : [parallel("repeat", [step("inside", { tool: "read" })])]
-                : [loop("repeat", {
-                  steps: [step("read", { tool: "read" })],
-                  maxIterations: 2,
-                  while: (_context, loopContext) => loopContext.iteration === 0,
-                  onComplete: () => {
-                    completionCalls++;
-                    return omittedKey === "overwritten values"
-                      ? {
-                        selected: "callback",
-                        exitReason: "user",
-                        iterations: "user",
-                        previousResults: "user",
-                      }
-                      : { selected: "callback", [omittedKey]: undefined };
-                  },
-                })],
-              output: (context) => {
-                if (++outputCalls === 1) throw new Error("selector failed");
-                return context;
-              },
-            },
-          })];
-          const first = await exec.execute(makeNodes(false), createTestRun());
-          assertEquals(first.completed, false);
-          assertEquals(childCalls, 1);
-          const states = structuredClone(first.nodeStates);
-          delete states.child!._subWorkflowContext;
-          const persisted = JSON.parse(JSON.stringify(
-            prepareNodeStatesUserData(states, "durable-omitted-loop", {}),
-          )) as Record<string, NodeState>;
-          if (omittedKey === "overwritten values") {
-            assertEquals(persisted.repeat!.output, {
-              selected: "callback",
-              exitReason: "user",
-              iterations: "user",
-              previousResults: "user",
+      for (const callback of ["onComplete", "onMaxIterations"] as const) {
+        for (const replacement of ["removed", "step", "parallel", "empty parallel"] as const) {
+          it(`refuses durable omitted ${omittedKey} ${callback} loop publication after ${replacement} drift`, async () => {
+            let completionCalls = 0;
+            let outputCalls = 0;
+            let childCalls = 0;
+            const exec = new DAGExecutor({
+              stepExecutor: new MockStepExecutor(new Map(), () => {
+                childCalls++;
+                return { success: true, output: "read", executionTime: 0 };
+              }),
             });
-          } else {
-            assertEquals(Object.hasOwn(persisted.repeat!.output as object, omittedKey), false);
-          }
-          const retried = await exec.execute(
-            makeNodes(true),
-            createTestRun({
-              nodeStates: persisted,
-              context: JSON.parse(JSON.stringify(first.context)),
-            }),
-          );
-          assertEquals(retried.completed, false);
-          assertStringIncludes(
-            retried.error ?? "",
-            "Legacy nested-loop context cannot be restored",
-          );
-          assertEquals(completionCalls, 1);
-          assertEquals(outputCalls, 1);
-          assertEquals(childCalls, 1);
-        });
+            const makeNodes = (changed: boolean) => [subWorkflow("child", {
+              workflow: {
+                id: "durable-omitted-loop",
+                steps: changed
+                  ? replacement === "removed"
+                    ? []
+                    : replacement === "step"
+                    ? [step("repeat", { tool: "read" })]
+                    : replacement === "empty parallel"
+                    ? [{ id: "repeat", config: { type: "parallel" as const, nodes: [] } }]
+                    : [
+                      parallel(
+                        "repeat",
+                        [step("inside", { tool: "read" })],
+                      ),
+                    ]
+                  : [loop("repeat", {
+                    steps: [step("read", { tool: "read" })],
+                    maxIterations: 2,
+                    while: (_context, loopContext) =>
+                      callback === "onMaxIterations" || loopContext.iteration === 0,
+                    [callback]: () => {
+                      completionCalls++;
+                      return omittedKey === "overwritten values"
+                        ? {
+                          selected: "callback",
+                          exitReason: "user",
+                          iterations: "user",
+                          previousResults: "user",
+                        }
+                        : {
+                          selected: "callback",
+                          ...Object.fromEntries(
+                            omittedKey.split("+").map((key) => [key, undefined]),
+                          ),
+                        };
+                    },
+                  })],
+                output: (context) => {
+                  if (++outputCalls === 1) throw new Error("selector failed");
+                  return context;
+                },
+              },
+            })];
+            const first = await exec.execute(makeNodes(false), createTestRun());
+            assertEquals(first.completed, false);
+            assertEquals(childCalls, callback === "onComplete" ? 1 : 2);
+            const states = structuredClone(first.nodeStates);
+            delete states.child!._subWorkflowContext;
+            const persisted = JSON.parse(JSON.stringify(
+              prepareNodeStatesUserData(states, "durable-omitted-loop", {}),
+            )) as Record<string, NodeState>;
+            if (omittedKey === "overwritten values") {
+              assertEquals(persisted.repeat!.output, {
+                selected: "callback",
+                exitReason: "user",
+                iterations: "user",
+                previousResults: "user",
+              });
+            } else {
+              for (const key of omittedKey.split("+")) {
+                assertEquals(Object.hasOwn(persisted.repeat!.output as object, key), false);
+              }
+            }
+            const retried = await exec.execute(
+              makeNodes(true),
+              createTestRun({
+                nodeStates: persisted,
+                context: JSON.parse(JSON.stringify(first.context)),
+              }),
+            );
+            assertEquals(retried.completed, false);
+            assertStringIncludes(
+              retried.error ?? "",
+              "Legacy nested-loop context cannot be restored",
+            );
+            assertEquals(completionCalls, 1);
+            assertEquals(outputCalls, 1);
+            assertEquals(childCalls, callback === "onComplete" ? 1 : 2);
+          });
+        }
       }
     }
 
@@ -1375,7 +1397,7 @@ describe("DAGExecutor", () => {
       const exec = new DAGExecutor({
         stepExecutor: new MockStepExecutor(new Map(), () => {
           childCalls++;
-          return { success: true, output: "value", executionTime: 0 };
+          return { success: true, output: 1, executionTime: 0 };
         }),
       });
       const nodes = [subWorkflow("child", {
@@ -1400,7 +1422,7 @@ describe("DAGExecutor", () => {
       const retried = await exec.execute(nodes, createTestRun({ nodeStates: persisted }));
       assertEquals(retried.error, undefined);
       assertEquals(retried.completed, true);
-      assertEquals(retried.context.child, "value");
+      assertEquals(retried.context.child, 1);
       assertEquals(childCalls, 1);
       assertEquals(outputCalls, 2);
     });
@@ -8285,6 +8307,7 @@ describe("DAGExecutor", () => {
               status: "completed",
               attempt: 1,
               output: { approved: true },
+              _waitInstanceId: "legacy-approval",
             },
           },
         }),
@@ -8364,6 +8387,7 @@ describe("DAGExecutor", () => {
             nodeId: decisionId,
             status: "completed",
             output: { approved: true },
+            _waitInstanceId: "legacy-map-approval",
             attempt: 1,
           };
           const nodes = [subWorkflow("release", {

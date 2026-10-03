@@ -95,7 +95,7 @@ describe("manifestDependencies", () => {
     );
   });
 
-  it("pins bash-tool's required AI SDK peer in the sandbox extension", async () => {
+  it("pins the AI SDK used by sandbox tool schemas", async () => {
     const manifest = JSON.parse(
       await Deno.readTextFile(
         "extensions/ext-sandbox-shell-tools/deno.json",

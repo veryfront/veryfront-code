@@ -7,6 +7,7 @@
  * @module
  */
 
+import { getBaseLogger } from "#veryfront/utils/logger/logger.ts";
 import { isBun, isDeno, isNode } from "#veryfront/platform/compat/runtime.ts";
 import {
   DeclarativeConfigEvaluationError,
@@ -29,10 +30,14 @@ const ArrayPrototypeShift = Array.prototype.shift;
 const ArrayPrototypeSplice = Array.prototype.splice;
 const EventTargetPrototypeAddEventListener = EventTarget.prototype.addEventListener;
 const EventTargetPrototypeRemoveEventListener = EventTarget.prototype.removeEventListener;
+const EventPrototypePreventDefault = Event.prototype.preventDefault;
 const MathCeil = Math.ceil;
 const NumberIsSafeInteger = Number.isSafeInteger;
 const ObjectFreeze = Object.freeze;
 const ObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const ErrorEventErrorGetter = typeof ErrorEvent === "function"
+  ? ObjectGetOwnPropertyDescriptor(ErrorEvent.prototype, "error")?.get
+  : undefined;
 const PromisePrototypeThen = Promise.prototype.then;
 const PromiseReject = Promise.reject;
 const PromiseResolve = Promise.resolve;
@@ -446,7 +451,19 @@ function workerEntryUrl(): URL {
   );
 }
 
-function createDenoWorkerEndpoint(): DeclarativeConfigWorkerEndpoint {
+function classifyWorkerError(event: ErrorEvent): "null" | "Worker error" {
+  try {
+    return ErrorEventErrorGetter && ReflectApply(ErrorEventErrorGetter, event, []) === null
+      ? "null"
+      : "Worker error";
+  } catch {
+    return "Worker error";
+  }
+}
+
+function createDenoWorkerEndpoint(
+  WorkerConstructor: typeof Worker = Worker,
+): DeclarativeConfigWorkerEndpoint {
   type PermissionlessWorkerOptions = WorkerOptions & {
     deno: { permissions: "none" };
   };
@@ -455,7 +472,25 @@ function createDenoWorkerEndpoint(): DeclarativeConfigWorkerEndpoint {
     type: "module",
     deno: { permissions: "none" },
   };
-  const worker = new Worker(workerEntryUrl(), options);
+  const worker = new WorkerConstructor(workerEntryUrl(), options);
+  let onWorkerError: (() => void) | undefined;
+  // A worker failure already queued by Deno can arrive after evaluation
+  // cleanup. Keep the host error boundary for the worker's entire lifetime.
+  addEventTargetListener(
+    worker,
+    "error",
+    ((event: ErrorEvent) => {
+      ReflectApply(EventPrototypePreventDefault, event, []);
+      getBaseLogger("SERVER", { injectTraceContext: false }).component("config-worker").error(
+        "Hosted configuration worker failed",
+        {
+          error: classifyWorkerError(event),
+          evaluationActive: onWorkerError !== undefined,
+        },
+      );
+      onWorkerError?.();
+    }) as EventListener,
+  );
 
   return {
     postMessage(value) {
@@ -465,20 +500,16 @@ function createDenoWorkerEndpoint(): DeclarativeConfigWorkerEndpoint {
       const onMessage = (event: MessageEvent<unknown>) => {
         listeners.onMessage(event.data);
       };
-      const onError = (event: ErrorEvent) => {
-        event.preventDefault();
-        listeners.onError();
-      };
+      onWorkerError = listeners.onError;
       const onMessageError = () => {
         listeners.onMessageError();
       };
 
       addEventTargetListener(worker, "message", onMessage as EventListener);
-      addEventTargetListener(worker, "error", onError as EventListener);
       addEventTargetListener(worker, "messageerror", onMessageError);
       return () => {
         removeEventTargetListener(worker, "message", onMessage as EventListener);
-        removeEventTargetListener(worker, "error", onError as EventListener);
+        onWorkerError = undefined;
         removeEventTargetListener(worker, "messageerror", onMessageError);
       };
     },
@@ -858,6 +889,7 @@ export const declarativeConfigWorkerRunnerInternals = freezeObject({
       startup: workerStartupController.snapshot(),
     });
   },
+  createDenoWorkerEndpoint,
   evaluateWithAdmissionController,
   evaluateWithEndpointFactory,
 });

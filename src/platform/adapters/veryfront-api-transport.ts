@@ -46,6 +46,7 @@ const NativeHeaders = Headers;
 const IntrinsicReflectApply = Reflect.apply;
 const HeadersPrototypeHas = NativeHeaders.prototype.has;
 const HeadersPrototypeSet = NativeHeaders.prototype.set;
+const HeadersPrototypeDelete = NativeHeaders.prototype.delete;
 
 function hasHeader(headers: Headers, name: string): boolean {
   return IntrinsicReflectApply(HeadersPrototypeHas, headers, [name]) as boolean;
@@ -55,9 +56,15 @@ function setHeader(headers: Headers, name: string, value: string): void {
   IntrinsicReflectApply(HeadersPrototypeSet, headers, [name, value]);
 }
 
+function deleteHeader(headers: Headers, name: string): void {
+  IntrinsicReflectApply(HeadersPrototypeDelete, headers, [name]);
+}
+
 export type TransportRetryConfig = BoundedRetryConfig;
 
 export interface TransportRequestInit {
+  /** Decode a response within the transport attempt, including its deadline and tracing. */
+  onResponse?: VeryfrontApiTransportConfig<unknown>["onResponse"];
   method?: string;
   headers?: HeadersInit;
   body?: BodyInit | null;
@@ -82,6 +89,8 @@ export interface TransportRequestInit {
 export interface VeryfrontApiTransportConfig<T> {
   baseUrl: string;
   getToken: () => string;
+  /** Host credential mode. getToken supplies the bearer token or API key; none never reads it. */
+  authMode?: "bearer" | "api-key" | "none";
   retry: TransportRetryConfig;
   timeoutMs?: number;
   defaultHeaders?: Record<string, string>;
@@ -135,14 +144,19 @@ function createValidatedVeryfrontApiTransport<T>(
     defaultHeaders = {},
     afterFetch,
     wrapFetch,
+    authMode = "bearer",
   } = config;
+  if (authMode !== "bearer" && authMode !== "api-key" && authMode !== "none") {
+    throw new TypeError("Veryfront API authMode must be bearer, api-key or none");
+  }
   const defaultHeaderSnapshot = new NativeHeaders(defaultHeaders);
   const onRetry = config.onRetry;
   const { maxRetries, initialDelay, maxDelay } = retry;
   const onResponse = config.onResponse ??
-    (defaultOnResponse as (r: Response, i: TransportRequestInit, u: string) => Promise<T>);
+    (readVeryfrontApiResponse as (r: Response, i: TransportRequestInit, u: string) => Promise<T>);
   const shouldRetry = config.shouldRetry ?? defaultShouldRetry;
-  const wrapFinalError = config.wrapFinalError ??
+  const customWrapFinalError = config.wrapFinalError;
+  const wrapFinalError = customWrapFinalError ??
     ((err: Error) =>
       API_CLIENT_ERROR.create({
         detail: `API request failed after ${maxRetries} retries: ${err.message}`,
@@ -171,6 +185,7 @@ function createValidatedVeryfrontApiTransport<T>(
       const body = init.body;
       const redirect = requireRedirectPolicy(init.redirect);
       const responseInit: TransportRequestInit = Object.freeze({
+        onResponse: init.onResponse,
         method,
         headers: new NativeHeaders(requestHeaders),
         body,
@@ -186,9 +201,11 @@ function createValidatedVeryfrontApiTransport<T>(
       // Capture the token once per request: retries of this request must not
       // pick up mid-flight token mutations (setRequestToken/clearRequestToken),
       // matching the pre-transport requestWithRetry semantics.
-      const token = getToken();
+      const token = authMode === "none" ? "" : getToken();
+      let responseError: unknown;
       return await retryWithBackoff(
         async (signal, attempt) => {
+          responseError = undefined;
           const doFetch = async (): Promise<T> => {
             const headers = new NativeHeaders(requestHeaders);
             for (const [k, v] of defaultHeaderSnapshot) {
@@ -200,7 +217,14 @@ function createValidatedVeryfrontApiTransport<T>(
             // that already holds the host-private token. From here to the send
             // nothing yields, and the native header handling is checked first.
             assertNativeRequestProcessing();
-            setHeader(headers, "Authorization", `Bearer ${token}`);
+            if (authMode === "bearer") {
+              deleteHeader(headers, "X-API-Key");
+              setHeader(headers, "Authorization", `Bearer ${token}`);
+            } else {
+              deleteHeader(headers, "Authorization");
+              if (authMode === "api-key") setHeader(headers, "X-API-Key", token);
+              else deleteHeader(headers, "X-API-Key");
+            }
             const start = performance.now();
             // A null-prototype init and header record, sent through the host
             // transport captured at load rather than a global `fetch` project
@@ -226,7 +250,17 @@ function createValidatedVeryfrontApiTransport<T>(
               res = await trustedHostFetch(fetchArguments[0], fetchArguments[1]);
             }
             afterFetch?.(res.status, performance.now() - start);
-            return await onResponse(res, responseInit, url, signal);
+            try {
+              return await (responseInit.onResponse ?? onResponse)(
+                res,
+                responseInit,
+                url,
+                signal,
+              ) as T;
+            } catch (error) {
+              if (responseInit.onResponse) responseError = error;
+              throw error;
+            }
           };
           try {
             return await (wrapFetch ? wrapFetch(doFetch, url, method, attempt) : doFetch());
@@ -259,6 +293,9 @@ function createValidatedVeryfrontApiTransport<T>(
             },
           wrapFinalError(lastError, lastAttempt) {
             if (lastError.name === "AbortError") logTimeout(url, timeoutMs, lastAttempt);
+            if (!customWrapFinalError && responseError instanceof VeryfrontError) {
+              return responseError;
+            }
             return wrapFinalError(lastError, lastAttempt);
           },
         },
@@ -273,12 +310,14 @@ export function createCanonicalVeryfrontApiTransport(
   getToken: () => string,
   retry: TransportRetryConfig,
   outboundPolicy?: VeryfrontApiTransportConfig<unknown>["outboundPolicy"],
+  authMode?: VeryfrontApiTransportConfig<unknown>["authMode"],
 ): VeryfrontApiTransport<unknown> {
   const normalizedRetry = requireVeryfrontApiRetryConfig(retry);
   return createValidatedVeryfrontApiTransport(
     {
       baseUrl,
       getToken,
+      authMode,
       retry: normalizedRetry,
       outboundPolicy,
       defaultHeaders: { "Content-Type": "application/json" },
@@ -321,7 +360,8 @@ function logTimeout(url: string, timeoutMs: number, attempt: number): void {
   });
 }
 
-async function defaultOnResponse(
+/** Decode a canonical API response with bounded UTF-8 JSON/text and error bodies. */
+export async function readVeryfrontApiResponse(
   response: Response,
   init: TransportRequestInit,
   url: string,
@@ -358,6 +398,8 @@ async function defaultOnResponse(
       },
     });
   }
+
+  if (response.status === 204) return undefined;
 
   const maxResponseBytes = requireSuccessResponseByteLimit(init.maxResponseBytes);
   if (init.jsonStringFieldWithinLimit !== undefined) {

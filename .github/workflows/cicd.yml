@@ -36,7 +36,7 @@ jobs:
   # ============================================
   tested-run:
     if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
-    runs-on: ubuntu-latest
+    runs-on: ${{ (github.event_name == 'push' || github.event_name == 'merge_group') && 'ubuntu-latest-m' || 'ubuntu-latest' }}
     # On main it waits up to 30 minutes for a queue run that is still finishing
     # and up to 10 more for an earlier main run to choose its release number.
     timeout-minutes: 50
@@ -93,7 +93,7 @@ jobs:
   ci:
     needs: [tested-run]
     if: ${{ !cancelled() && needs.tested-run.outputs.reuse != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
-    runs-on: ubuntu-latest
+    runs-on: ${{ (github.event_name == 'push' || github.event_name == 'merge_group') && 'ubuntu-latest-m' || 'ubuntu-latest' }}
     timeout-minutes: 20
     strategy:
       fail-fast: ${{ github.event_name == 'merge_group' }}
@@ -180,7 +180,7 @@ jobs:
   tests-integration:
     needs: [tested-run]
     if: ${{ !cancelled() && needs.tested-run.outputs.reuse != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
-    runs-on: ubuntu-latest
+    runs-on: ${{ (github.event_name == 'push' || github.event_name == 'merge_group') && 'ubuntu-latest-m' || 'ubuntu-latest' }}
     timeout-minutes: 35
     name: "tests (integration shard ${{ matrix.shard }}/2)"
     strategy:
@@ -267,7 +267,7 @@ jobs:
     name: tests (integration)
     needs: [tested-run, tests-integration]
     if: ${{ always() }}
-    runs-on: ubuntu-latest
+    runs-on: ${{ (github.event_name == 'push' || github.event_name == 'merge_group') && 'ubuntu-latest-m' || 'ubuntu-latest' }}
     timeout-minutes: 2
     steps:
       - name: Require both integration shards
@@ -287,7 +287,7 @@ jobs:
   tests-node:
     if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
     needs: [npm-compatibility-artifact]
-    runs-on: ubuntu-latest
+    runs-on: ${{ (github.event_name == 'push' || github.event_name == 'merge_group') && 'ubuntu-latest-m' || 'ubuntu-latest' }}
     timeout-minutes: 20
     name: "tests (node shard ${{ matrix.shard }}/2)"
     strategy:
@@ -320,7 +320,7 @@ jobs:
   tests-node-sandbox:
     if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
     needs: [npm-compatibility-artifact]
-    runs-on: ubuntu-latest
+    runs-on: ${{ (github.event_name == 'push' || github.event_name == 'merge_group') && 'ubuntu-latest-m' || 'ubuntu-latest' }}
     timeout-minutes: 15
     name: tests (node sandbox, minimum Node)
     steps:
@@ -349,7 +349,7 @@ jobs:
   tests-bun:
     if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
     needs: [npm-compatibility-artifact]
-    runs-on: ubuntu-latest
+    runs-on: ${{ (github.event_name == 'push' || github.event_name == 'merge_group') && 'ubuntu-latest-m' || 'ubuntu-latest' }}
     timeout-minutes: 20
     name: tests (bun)
     steps:
@@ -374,7 +374,7 @@ jobs:
   npm-compatibility-artifact:
     needs: [tested-run]
     if: ${{ !cancelled() && needs.tested-run.outputs.reuse != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
-    runs-on: ubuntu-latest
+    runs-on: ${{ (github.event_name == 'push' || github.event_name == 'merge_group') && 'ubuntu-latest-m' || 'ubuntu-latest' }}
     timeout-minutes: 20
     name: npm compatibility artifact
     steps:
@@ -423,7 +423,7 @@ jobs:
   tests-runtime-critical-flow:
     if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
     needs: [npm-compatibility-artifact]
-    runs-on: ubuntu-latest
+    runs-on: ${{ (github.event_name == 'push' || github.event_name == 'merge_group') && 'ubuntu-latest-m' || 'ubuntu-latest' }}
     timeout-minutes: 20
     name: "tests (runtime critical flow: ${{ matrix.runtime }})"
     strategy:
@@ -496,7 +496,7 @@ jobs:
   coverage-shards:
     needs: [tested-run]
     if: ${{ !cancelled() && needs.tested-run.outputs.reuse != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
-    runs-on: ubuntu-latest
+    runs-on: ${{ (github.event_name == 'push' || github.event_name == 'merge_group') && 'ubuntu-latest-m' || 'ubuntu-latest' }}
     timeout-minutes: 20
     name: coverage shard ${{ matrix.shard }}/8
     strategy:
@@ -552,7 +552,7 @@ jobs:
   coverage-node-executor:
     needs: [tested-run]
     if: ${{ !cancelled() && needs.tested-run.outputs.reuse != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
-    runs-on: ubuntu-latest
+    runs-on: ${{ (github.event_name == 'push' || github.event_name == 'merge_group') && 'ubuntu-latest-m' || 'ubuntu-latest' }}
     timeout-minutes: 10
     name: native executor coverage
     steps:
@@ -583,7 +583,7 @@ jobs:
   coverage-integration-client:
     needs: [tested-run]
     if: ${{ !cancelled() && needs.tested-run.outputs.reuse != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
-    runs-on: ubuntu-latest
+    runs-on: ${{ (github.event_name == 'push' || github.event_name == 'merge_group') && 'ubuntu-latest-m' || 'ubuntu-latest' }}
     timeout-minutes: 20
     name: integration client coverage
     steps:
@@ -609,7 +609,7 @@ jobs:
           if-no-files-found: error
 
   coverage:
-    runs-on: ubuntu-latest
+    runs-on: ${{ (github.event_name == 'push' || github.event_name == 'merge_group') && 'ubuntu-latest-m' || 'ubuntu-latest' }}
     timeout-minutes: 10
     name: coverage gate
     needs: [coverage-shards, tested-run]
@@ -648,7 +648,7 @@ jobs:
   # repository OIDC token. This job runs no repository code: it downloads the
   # shard artifacts, rewrites paths with sed, and calls the upload action.
   codecov-upload:
-    runs-on: ubuntu-latest
+    runs-on: ${{ (github.event_name == 'push' || github.event_name == 'merge_group') && 'ubuntu-latest-m' || 'ubuntu-latest' }}
     timeout-minutes: 10
     name: codecov upload
     needs: [coverage-shards]
@@ -696,7 +696,7 @@ jobs:
   # runs repository code (`deno task coverage:ci:merge`), so it happens here,
   # in a job with no secrets, and hands the scan job only the finished report.
   sonar-coverage:
-    runs-on: ubuntu-latest
+    runs-on: ${{ (github.event_name == 'push' || github.event_name == 'merge_group') && 'ubuntu-latest-m' || 'ubuntu-latest' }}
     timeout-minutes: 10
     name: Sonar coverage report
     needs: [tested-run, coverage-shards, coverage-node-executor, coverage-integration-client]
@@ -762,7 +762,7 @@ jobs:
   # minutes today). 28 minutes keeps the coverage and Sonar path inside the
   # merge queue response budget now that `sonar-coverage` sits before it.
   sonar:
-    runs-on: ubuntu-latest
+    runs-on: ${{ (github.event_name == 'push' || github.event_name == 'merge_group') && 'ubuntu-latest-m' || 'ubuntu-latest' }}
     timeout-minutes: 28
     name: SonarQube Cloud scan
     needs: [sonar-coverage]
@@ -847,7 +847,7 @@ jobs:
 
   sonar-quality-gate:
     name: SonarQube Cloud quality gate
-    runs-on: ubuntu-latest
+    runs-on: ${{ (github.event_name == 'push' || github.event_name == 'merge_group') && 'ubuntu-latest-m' || 'ubuntu-latest' }}
     timeout-minutes: 2
     needs: [sonar]
     if: ${{ always() && github.event_name != 'push' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && (github.event_name != 'pull_request' || github.event.pull_request.user.login != 'dependabot[bot]') }}
@@ -864,7 +864,7 @@ jobs:
   tests-e2e-rsc-browser:
     needs: [tested-run]
     if: ${{ !cancelled() && needs.tested-run.outputs.reuse != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
-    runs-on: ubuntu-latest
+    runs-on: ${{ (github.event_name == 'push' || github.event_name == 'merge_group') && 'ubuntu-latest-m' || 'ubuntu-latest' }}
     timeout-minutes: 25
     name: tests (rsc browser e2e)
     steps:
@@ -890,7 +890,7 @@ jobs:
   tests-binary-e2e:
     needs: [tested-run]
     if: ${{ !cancelled() && needs.tested-run.outputs.reuse != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
-    runs-on: ubuntu-latest
+    runs-on: ${{ (github.event_name == 'push' || github.event_name == 'merge_group') && 'ubuntu-latest-m' || 'ubuntu-latest' }}
     timeout-minutes: 60
     name: tests (binary e2e)
     steps:
@@ -1056,7 +1056,7 @@ jobs:
 
   quality-gate-merge:
     name: quality gate (merge)
-    runs-on: ubuntu-latest
+    runs-on: ${{ (github.event_name == 'push' || github.event_name == 'merge_group') && 'ubuntu-latest-m' || 'ubuntu-latest' }}
     timeout-minutes: 2
     needs:
       - ci
@@ -1126,7 +1126,7 @@ jobs:
   npm-smoke-node-versions:
     needs: [tested-run]
     if: ${{ !cancelled() && needs.tested-run.outputs.reuse != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
-    runs-on: ubuntu-latest
+    runs-on: ${{ (github.event_name == 'push' || github.event_name == 'merge_group') && 'ubuntu-latest-m' || 'ubuntu-latest' }}
     timeout-minutes: 10
     name: npm smoke Node version contract
     outputs:
@@ -1148,7 +1148,7 @@ jobs:
   tests-npm-install-smoke:
     if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
     needs: [npm-smoke-node-versions, npm-compatibility-artifact]
-    runs-on: ubuntu-latest
+    runs-on: ${{ (github.event_name == 'push' || github.event_name == 'merge_group') && 'ubuntu-latest-m' || 'ubuntu-latest' }}
     timeout-minutes: 30
     name: "tests (npm install smoke: Node ${{ matrix.node-version }})"
     strategy:
@@ -1191,7 +1191,7 @@ jobs:
 
   quality-gate-artifact:
     name: quality gate (artifact)
-    runs-on: ubuntu-latest
+    runs-on: ${{ (github.event_name == 'push' || github.event_name == 'merge_group') && 'ubuntu-latest-m' || 'ubuntu-latest' }}
     timeout-minutes: 2
     needs:
       - npm-compatibility-artifact
@@ -1229,7 +1229,7 @@ jobs:
   # run that reuses its merge-queue run inherits them from that run.
   quality-gate-release:
     name: quality gate (release)
-    runs-on: ubuntu-latest
+    runs-on: ${{ (github.event_name == 'push' || github.event_name == 'merge_group') && 'ubuntu-latest-m' || 'ubuntu-latest' }}
     timeout-minutes: 2
     needs:
       - tested-run
@@ -1271,7 +1271,7 @@ jobs:
   tests-sentry-runtime-packages:
     needs: [tested-run]
     if: ${{ !cancelled() && needs.tested-run.outputs.reuse != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
-    runs-on: ubuntu-latest
+    runs-on: ${{ (github.event_name == 'push' || github.event_name == 'merge_group') && 'ubuntu-latest-m' || 'ubuntu-latest' }}
     # Cold-cache runs take ~12-15min; 15 was cutting it too close.
     timeout-minutes: 20
     name: tests (sentry runtime packages)
@@ -1297,7 +1297,7 @@ jobs:
   tests-split-mode:
     needs: [tested-run]
     if: ${{ !cancelled() && needs.tested-run.outputs.reuse != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && vars.RUN_SPLIT_MODE_TEST == 'true' }}
-    runs-on: ubuntu-latest
+    runs-on: ${{ (github.event_name == 'push' || github.event_name == 'merge_group') && 'ubuntu-latest-m' || 'ubuntu-latest' }}
     timeout-minutes: 10
     name: tests (split mode)
     continue-on-error: true
@@ -1357,7 +1357,7 @@ jobs:
 
   version-check:
     if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && github.ref == 'refs/heads/main' }}
-    runs-on: ubuntu-latest
+    runs-on: ${{ (github.event_name == 'push' || github.event_name == 'merge_group') && 'ubuntu-latest-m' || 'ubuntu-latest' }}
     outputs:
       version: ${{ steps.check.outputs.version }}
       is_stable: ${{ steps.check.outputs.is_stable }}
@@ -1402,7 +1402,7 @@ jobs:
 
   tests-proxy-binary:
     if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && github.event_name == 'pull_request' }}
-    runs-on: ubuntu-latest
+    runs-on: ${{ (github.event_name == 'push' || github.event_name == 'merge_group') && 'ubuntu-latest-m' || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -1448,22 +1448,22 @@ jobs:
             name: veryfront-macos-x64
             entrypoint: cli/main.ts
             profile: full
-          - os: ubuntu-latest
+          - os: ubuntu-latest-m
             target: x86_64-unknown-linux-gnu
             name: veryfront-linux-x64
             entrypoint: cli/main.ts
             profile: full
-          - os: ubuntu-latest
+          - os: ubuntu-latest-m
             target: aarch64-unknown-linux-gnu
             name: veryfront-linux-arm64
             entrypoint: cli/main.ts
             profile: full
-          - os: ubuntu-latest
+          - os: ubuntu-latest-m
             target: x86_64-unknown-linux-gnu
             name: veryfront-proxy-linux-x64
             entrypoint: cli/proxy-main.ts
             profile: proxy
-          - os: ubuntu-latest
+          - os: ubuntu-latest-m
             target: aarch64-unknown-linux-gnu
             name: veryfront-proxy-linux-arm64
             entrypoint: cli/proxy-main.ts
@@ -1560,7 +1560,7 @@ jobs:
       tested-run,
       version-check,
     ]
-    runs-on: ubuntu-latest
+    runs-on: ${{ (github.event_name == 'push' || github.event_name == 'merge_group') && 'ubuntu-latest-m' || 'ubuntu-latest' }}
     environment: production
     outputs:
       version: ${{ steps.version.outputs.version }}
@@ -1672,7 +1672,7 @@ jobs:
     name: GitHub prerelease
     if: ${{ !cancelled() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && needs.prerelease.result == 'success' }}
     needs: [prerelease]
-    runs-on: ubuntu-latest
+    runs-on: ${{ (github.event_name == 'push' || github.event_name == 'merge_group') && 'ubuntu-latest-m' || 'ubuntu-latest' }}
     environment: production
     permissions:
       actions: read
@@ -1744,7 +1744,7 @@ jobs:
       tested-run,
       version-check,
     ]
-    runs-on: ubuntu-latest
+    runs-on: ${{ (github.event_name == 'push' || github.event_name == 'merge_group') && 'ubuntu-latest-m' || 'ubuntu-latest' }}
     environment: production
     outputs:
       version: ${{ steps.version.outputs.version }}
@@ -1921,7 +1921,7 @@ jobs:
   publish-public-release:
     if: ${{ always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && ((needs.version-check.outputs.is_stable == 'false' && needs.prerelease.result == 'success' && needs.github-prerelease.result == 'success') || (needs.version-check.outputs.is_stable == 'true' && needs.release.result == 'success')) }}
     needs: [prerelease, github-prerelease, release, version-check]
-    runs-on: ubuntu-latest
+    runs-on: ${{ (github.event_name == 'push' || github.event_name == 'merge_group') && 'ubuntu-latest-m' || 'ubuntu-latest' }}
     environment: production
     permissions:
       contents: write
@@ -2149,11 +2149,29 @@ jobs:
               create_draft_release
             incomplete_draft_created=true
 
+            # Start long transfers first so metadata cannot delay their worker allocation.
+            asset_sizes=()
             for asset in "${assets[@]}"; do
-              run_with_retry \
-                "GitHub release asset $(basename "$asset") upload" \
-                gh release upload "$tag" "$asset" --repo "$repo" --clobber
+              asset_size=$(wc -c < "$asset")
+              asset_sizes+=("$asset_size")
             done
+            for ((asset_index = 1; asset_index < ${#assets[@]}; asset_index++)); do
+              asset="${assets[$asset_index]}"
+              asset_size="${asset_sizes[$asset_index]}"
+              position="$asset_index"
+              while ((position > 0)) && ((asset_size > asset_sizes[position - 1])); do
+                assets[$position]="${assets[$((position - 1))]}"
+                asset_sizes[$position]="${asset_sizes[$((position - 1))]}"
+                position=$((position - 1))
+              done
+              assets[$position]="$asset"
+              asset_sizes[$position]="$asset_size"
+            done
+
+            # GitHub CLI uploads the complete asset batch with five concurrent workers.
+            run_with_retry \
+              "GitHub release assets upload" \
+              gh release upload "$tag" "${assets[@]}" --repo "$repo" --clobber
             incomplete_draft_created=false
 
             publish_args=(release edit "$tag" --repo "$repo" --draft=false)
@@ -2204,7 +2222,7 @@ jobs:
     name: registry validation (RC)
     if: ${{ always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && needs.version-check.result == 'success' && needs.version-check.outputs.is_stable == 'false' }}
     needs: [prerelease, version-check]
-    runs-on: ubuntu-latest
+    runs-on: ${{ (github.event_name == 'push' || github.event_name == 'merge_group') && 'ubuntu-latest-m' || 'ubuntu-latest' }}
     permissions:
       contents: read
     timeout-minutes: 65
@@ -2311,7 +2329,7 @@ jobs:
       publish-public-release,
       version-check,
     ]
-    runs-on: ubuntu-latest
+    runs-on: ${{ (github.event_name == 'push' || github.event_name == 'merge_group') && 'ubuntu-latest-m' || 'ubuntu-latest' }}
     environment: production
     timeout-minutes: 65
     steps:
@@ -2558,7 +2576,7 @@ jobs:
   update-homebrew:
     if: ${{ !cancelled() && needs.release.result == 'success' && needs.publish-public-release.result == 'success' && needs.version-check.result == 'success' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
     needs: [release, publish-public-release, version-check]
-    runs-on: ubuntu-latest
+    runs-on: ${{ (github.event_name == 'push' || github.event_name == 'merge_group') && 'ubuntu-latest-m' || 'ubuntu-latest' }}
     environment: production
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

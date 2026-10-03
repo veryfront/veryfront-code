@@ -20,6 +20,7 @@ const DEFAULT_MAX_IDLE_MS = 30 * 60 * 1_000;
  */
 const ADAPTER_IN_USE_WINDOW_MS = 60 * 1_000;
 const SHA256_DIGEST_BYTES = 32;
+const MAX_CREDENTIAL_CLAIMS_LENGTH = 8_192;
 
 function requirePositiveSafeInteger(value: number, name: string): number {
   if (!Number.isSafeInteger(value) || value <= 0) {
@@ -83,6 +84,13 @@ const NumberPrototypeToFixed = Number.prototype.toFixed;
 const NumberPrototypeToString = Number.prototype.toString;
 const StringPrototypePadStart = String.prototype.padStart;
 const StringPrototypeTrim = String.prototype.trim;
+const StringPrototypeSplit = String.prototype.split;
+const StringPrototypeReplaceAll = String.prototype.replaceAll;
+const IntrinsicAtob = atob;
+const JsonParse = JSON.parse;
+const IntrinsicArrayIsArray = Array.isArray;
+const IntrinsicObjectHasOwn = Object.hasOwn;
+const NumberIsSafeInteger = Number.isSafeInteger;
 const VeryfrontFSAdapterPrototype = VeryfrontFSAdapter.prototype;
 const VeryfrontFSAdapterDispose = VeryfrontFSAdapterPrototype.dispose;
 const VeryfrontFSAdapterGetCacheStats = VeryfrontFSAdapterPrototype.getCacheStats;
@@ -236,6 +244,35 @@ async function hashCredentialPrincipal(token: string): Promise<string> {
     principal += IntrinsicReflectApply(StringPrototypePadStart, encoded, [2, "0"]) as string;
   }
   return principal;
+}
+
+/**
+ * When the credential an adapter is keyed on expires, read from the token's
+ * unverified JWT `exp` claim. It only decides when the adapter retires, never
+ * whether the credential is accepted, so an unreadable claim means no expiry.
+ */
+function readCredentialExpiresAt(token: string): number | undefined {
+  const segments = IntrinsicReflectApply(StringPrototypeSplit, token, ["."]) as string[];
+  const claimsSegment = segments.length === 3 ? segments[1]! : "";
+  if (claimsSegment.length === 0 || claimsSegment.length > MAX_CREDENTIAL_CLAIMS_LENGTH) {
+    return undefined;
+  }
+  let claims: unknown;
+  try {
+    const base64 = IntrinsicReflectApply(StringPrototypeReplaceAll, claimsSegment, ["-", "+"]);
+    claims = JsonParse(
+      IntrinsicAtob(IntrinsicReflectApply(StringPrototypeReplaceAll, base64, ["_", "/"])),
+    );
+  } catch {
+    return undefined;
+  }
+  if (claims === null || typeof claims !== "object" || IntrinsicArrayIsArray(claims)) {
+    return undefined;
+  }
+  const exp = IntrinsicObjectHasOwn(claims, "exp") ? (claims as { exp: unknown }).exp : undefined;
+  if (typeof exp !== "number") return undefined;
+  const expiresAt = exp * 1_000;
+  return NumberIsSafeInteger(expiresAt) ? expiresAt : undefined;
 }
 
 function buildDiagnosticCacheKey(identity: ProxyAdapterIdentity): string {
@@ -643,6 +680,7 @@ export class ProxyFSAdapterManager {
       totalCachedAdapters: mapSize(this.#adapters),
     });
 
+    const credentialExpiresAt = readCredentialExpiresAt(token);
     const config: FSAdapterConfig = {
       ...this.baseConfig,
       veryfront: {
@@ -655,6 +693,8 @@ export class ProxyFSAdapterManager {
         ...this.baseConfig.invalidationCallbacks,
         evictCurrentAdapter: () => this.#evictAdapterByCacheKey(cacheKey),
         isAdapterInUse: () => this.#now() - projectAdapter.lastAccessed <= ADAPTER_IN_USE_WINDOW_MS,
+        isCredentialExpired: () =>
+          credentialExpiresAt !== undefined && this.#now() >= credentialExpiresAt,
       }),
     };
 

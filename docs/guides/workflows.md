@@ -640,7 +640,10 @@ repeating completed steps or loop callbacks. Older nested runs with completed lo
 and no retained child context fail with an explicit legacy compatibility error when
 they are retried or resumed after a wait. Loop output mixes completion callback
 updates with framework metadata, and iteration history does not prove the original
-final publication. The current workflow definition cannot recover that provenance.
+final publication. The current workflow definition cannot recover that provenance, even when a
+completion callback erased all loop metadata keys. Object outputs without step,
+input, or wait identity are refused unless retained composite children corroborate
+the publication.
 Resume such a run from a checkpoint that retains the original child context.
 
 A run that pauses on an approval or an event has no output until it completes.

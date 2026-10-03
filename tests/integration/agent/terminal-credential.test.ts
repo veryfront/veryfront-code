@@ -1,3 +1,5 @@
+import { createTerminalRunControl } from "#veryfront/agent/runtime/terminal-run-control.ts";
+import { bindRuntimeRemoteToolSourcesToCredentialOwner } from "#veryfront/agent/runtime/mcp-server-tool-sources.ts";
 import { assert, assertEquals } from "#veryfront/testing/assert.ts";
 import { it } from "#veryfront/testing/bdd.ts";
 import { createRemoteMCPToolSource } from "#veryfront/tool/remote-mcp.ts";
@@ -17,6 +19,7 @@ it("keeps terminal credentials private and pins transport to the bound project e
   registerHostedTerminalCredential(request, "terminal-secret");
   assert(!JSON.stringify(request).includes("terminal-secret"));
   let fallbackCalls = 0;
+  let expectedTerminalToken: string | null = "terminal-secret";
   const factory = hostedTerminalToolSourceFactory(request, "https://api.example/mcp", (config) => {
     fallbackCalls++;
     return createRemoteMCPToolSource(config);
@@ -24,7 +27,7 @@ it("keeps terminal credentials private and pins transport to the bound project e
   await withMockFetch(async (url, init) => {
     assertEquals(String(url), "https://api.example/projects/project-1/mcp");
     const headers = new Headers(init?.headers);
-    assertEquals(headers.get(RUN_TERMINAL_TOKEN_HEADER), "terminal-secret");
+    assertEquals(headers.get(RUN_TERMINAL_TOKEN_HEADER), expectedTerminalToken);
     const body = JSON.parse(String(init?.body));
     return Response.json({ jsonrpc: "2.0", id: body.id, result: { tools: [] } });
   }, async () => {
@@ -32,9 +35,15 @@ it("keeps terminal credentials private and pins transport to the bound project e
       id: "custom-platform-name",
       endpoint: () => "https://untrusted.example/mcp",
     }, { kind: "veryfront-api", id: "custom-platform-name" });
-    await source.executeTool("finalize", { status: "completed", output: "done" }, {
-      runId: "run-1",
-    });
+    const root = createTerminalRunControl({ runId: "run-1" }).context;
+    await source.executeTool("finalize", { status: "completed", output: "done" }, root);
+    const inherited = bindRuntimeRemoteToolSourcesToCredentialOwner([source], root)![0]!;
+    expectedTerminalToken = null;
+    await inherited.executeTool(
+      "finalize",
+      { status: "completed", output: "done" },
+      createTerminalRunControl({ runId: "run-child" }).context,
+    );
   });
   assertEquals(fallbackCalls, 2);
 });
@@ -90,7 +99,7 @@ it("preserves the deployment transport for a pinned private terminal endpoint", 
   await factory({ endpoint: "http://api.internal/mcp" }, { kind: "veryfront-api" }).executeTool(
     "finalize",
     { status: "completed", output: "done" },
-    { runId: "run-1" },
+    createTerminalRunControl({ runId: "run-1" }).context,
   );
   assertEquals(dispatched, 1);
 });
