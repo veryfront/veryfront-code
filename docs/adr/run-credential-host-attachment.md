@@ -87,7 +87,8 @@ Each logical route is a host-owned, frozen entry with:
 - typed parameters for each template segment;
 - a query allowlist with typed values;
 - the credential class it attaches;
-- a request-body cap.
+- a request-body cap;
+- for JSON bodies, a strict body schema that names which fields carry authority.
 
 The host builds the path only from the template. It never appends a caller-supplied suffix.
 
@@ -99,6 +100,14 @@ The host builds the path only from the template. It never appends a caller-suppl
   another valid object. If the executor supplies a selector, the host rejects it unless it matches
   the vault value. Only parameters the configuration leaves open, such as an asset's content hash,
   come from the executor.
+- Authority can also travel in a JSON body. Examples are the owner, parent run ID, agent ID and
+  runtime target in the durable eval agent's run-creation request (`createDurableEvalAgentRunBody`
+  in `src/server/handlers/request/project-run-execute.handler.ts`). Actions whose bodies carry
+  authority, such as creating a run, are not `vf.egress` routes. They are semantic host operations
+  that build those fields from the vault's signed grant, as the host builds them today.
+- Every remaining JSON route validates its body against the route's strict schema before sending.
+  The host buffers the body up to the route cap to do this. Any authority-bearing field must equal
+  the vault value, and unknown fields are refused.
 - Executor-supplied parameters must match their type and a strict segment pattern. The host refuses
   a value that is `.` or `..`, or that contains `/`, `\`, `%` or control characters. It also
   refuses any query name or value outside the allowlist.
@@ -132,9 +141,14 @@ inside the `vf.egress` input:
   - The host therefore caps the streams open on a channel at 8. That count covers `vf.egress`
     calls and any other streaming operation on the same channel. Further calls wait for a free
     slot instead of overrunning the budget.
-  - Each encoded chunk is at most `EXECUTOR_MAX_RETAINED_BYTES / (8 * EXECUTOR_STREAM_WINDOW)`, so
-    every open stream's full window fits the budget together. With today's constants that is
-    128 KiB. Response chunks use the same size.
+  - Call inputs count against the same budget. The channel retains each incoming request value
+    until its handler settles (`#retainPayload` and the `finally` block of the incoming-call
+    handler in `src/agent/executor/channel.ts`). The host therefore caps each `vf.egress` head at
+    64 KiB and reserves `8 * 64 KiB` of the budget for call inputs.
+  - Each encoded chunk is at most
+    `(EXECUTOR_MAX_RETAINED_BYTES - 8 * 64 KiB) / (8 * EXECUTOR_STREAM_WINDOW)`, which is 120 KiB
+    with today's constants. Maximum-size heads and full windows on every open stream then fit the
+    budget together. Response chunks use the same size.
   - The host feeds the chunks to the upstream request through a pull-based stream, so a slow
     upstream stops the executor's producer.
 - **Size caps per route.** Each route's body cap comes from that route's own contract, not from one
@@ -266,6 +280,9 @@ Each step lands behind the flag, in pre-production first.
    - concurrent uploads, eight at once against slow consumers, each paired with its own body by
      request ID, and staying within the channel's shared retention budget;
    - a ninth concurrent call waits instead of overrunning the budget;
+   - eight maximum-size heads plus full chunk windows on every stream keep the channel open;
+   - JSON body schemas: a substituted authority-bearing field and an unknown field are both
+     refused, and run creation is reachable only through its semantic host operation;
    - response caps, including an oversized `Content-Length` and an oversized streamed response;
    - per-run route grants, and rejection of a release ID, release version, artifact ID or attempt
      that differs from the signed run configuration;
