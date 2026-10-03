@@ -1,4 +1,3 @@
-import { hostedInheritedRunAdmitter, hostedTerminalCanonicalRunId } from "./terminal-credential.ts";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { MAX_ROOT_RUN_EVENT_WRITER_TOKEN_BYTES } from "../conversation/run-event-limits.ts";
 import {
@@ -6,7 +5,11 @@ import {
   type VeryfrontApiRequestUrlResolver,
 } from "#veryfront/platform/adapters/veryfront-api-url.ts";
 import { readResponseTextPrefix } from "#veryfront/utils/response-body.ts";
-import { instrumentConversationRunFetch } from "../conversation/durable.ts";
+import {
+  type ConversationRunProjection,
+  type createConversationAgentRun,
+  instrumentConversationRunFetch,
+} from "../conversation/durable.ts";
 import {
   type ConversationRunChunkMirror,
   createHostedConversationRunChunkMirror,
@@ -18,6 +21,13 @@ const MAX_CHILD_RUN_EVENT_WRITER_TOKEN_BYTES = 4 * 1024;
 const MAX_CHILD_RUN_EVENT_WRITER_TOKEN_RESPONSE_BYTES = 16 * 1024;
 const CHILD_RUN_EVENT_WRITER_TOKEN_SETUP_ERROR =
   "Unable to initialize durable child event persistence";
+
+/** Private admission transport injected by the trusted hosted ingress. */
+type InheritedRunAdmitter = (toolCallId: string, prompt: string) => (
+  input: Omit<Parameters<typeof createConversationAgentRun>[0], "conversationId"> & {
+    conversationId?: string;
+  },
+) => Promise<ConversationRunProjection>;
 
 type Fetch = typeof globalThis.fetch;
 
@@ -116,7 +126,7 @@ export interface HostedRunEventWriterCapability {
 
 type CapabilityState = {
   inheritedExecution?: boolean;
-  inheritedAdmitter?: ReturnType<typeof hostedInheritedRunAdmitter>;
+  inheritedAdmitter?: InheritedRunAdmitter;
   apiUrl: string;
   resolveApiUrl: VeryfrontApiRequestUrlResolver;
   runId: string;
@@ -314,8 +324,6 @@ export function createHostedRunEventWriterCapabilityForRequest(
     ? createHostedRunEventWriterCapability({
       ...input,
       runEventAppendToken: token,
-      canonicalRunId: input.canonicalRunId ?? hostedTerminalCanonicalRunId(request),
-      inheritedAdmitter: hostedInheritedRunAdmitter(request, input),
       fetch: input.fetch ?? candidateState?.fetch,
     })
     : undefined;
@@ -352,7 +360,7 @@ export function createHostedRunEventWriterCapability(input: {
   runId: string;
   /** Canonical routing UUID supplied by trusted dispatch. */
   canonicalRunId?: string;
-  inheritedAdmitter?: ReturnType<typeof hostedInheritedRunAdmitter>;
+  inheritedAdmitter?: InheritedRunAdmitter;
   /** Exact-run append credential obtained from trusted ingress. */
   runEventAppendToken: string;
   /** Bounded child-capability exchange timeout. */

@@ -1,4 +1,8 @@
-import { bindHostedTerminalRun } from "./terminal-credential.ts";
+import {
+  bindHostedTerminalRun,
+  hostedInheritedRunAdmitter,
+  hostedTerminalCanonicalRunId,
+} from "./terminal-credential.ts";
 import type {
   ChatRequestContext,
   ChatSystemMessage,
@@ -631,6 +635,10 @@ export async function prepareHostedChatExecution<
     ? createHostedRunEventWriterCapabilityForRequest(input.request, {
       apiUrl: input.apiUrl.toString(),
       runId: input.request.durableRootRun.runId,
+      canonicalRunId: hostedTerminalCanonicalRunId(input.request),
+      inheritedAdmitter: hostedInheritedRunAdmitter(input.request, {
+        apiUrl: input.apiUrl.toString(),
+      }),
     })
     : undefined;
   const rootRunContext = await runWithHostedRunEventWriterCapability(

@@ -1,3 +1,7 @@
+import {
+  hostedInheritedRunAdmitter,
+  hostedTerminalCanonicalRunId,
+} from "../hosted/terminal-credential.ts";
 import { containsBrokerCredential } from "#veryfront/agent/service/broker-credentials.ts";
 import type { JsonValue } from "#veryfront/schemas/index.ts";
 import { snapshotBoundedJsonValue } from "#veryfront/schemas/json-value.ts";
@@ -177,6 +181,8 @@ function createBrokerAuthority<TRequest extends ParsedHostedChatRequest>(
           ? createHostedRunEventWriterCapabilityForRequest(parsedRequest, {
             ...options,
             runId,
+            canonicalRunId: hostedTerminalCanonicalRunId(parsedRequest),
+            inheritedAdmitter: hostedInheritedRunAdmitter(parsedRequest, options),
           })
           : undefined;
       },
