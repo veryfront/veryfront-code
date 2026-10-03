@@ -8266,6 +8266,66 @@ describe("server/handlers/request/project-run-execute.handler cancellation", () 
     }
   });
 
+  it("acknowledges a transport-late abort for a settled run on the real per-request client (#2365)", async () => {
+    const controller = new AbortController();
+    const completed = Promise.withResolvers<void>();
+    const acknowledged = Promise.withResolvers<void>();
+    let callbacks = 0;
+    const definition = workflow({
+      id: "publish",
+      steps: [step("finish", {
+        tool: tool({
+          id: "finish",
+          description: "Finish immediately",
+          inputSchema: defineSchema((v) => v.object({}).passthrough())(),
+          execute: () => Promise.resolve({ ok: true }),
+        }),
+      })],
+    }).definition as unknown as WorkflowDefinition;
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      findWorkflowById: async () => ({
+        id: "publish",
+        filePath: "workflows/publish.ts",
+        exportName: "default",
+        definition,
+      }),
+      createWorkflowClient: (config) => createWorkflowClient(config),
+    }));
+    const signed = await signedRequest(
+      "/api/control-plane/runs/run_settled_real_client_late_stop/execute",
+      {
+        runId: "run_settled_real_client_late_stop",
+        kind: "workflow",
+        target: "workflow:publish",
+        projectId: "proj-1",
+      },
+      { "x-veryfront-run-stop-token": "opaque-stop-capability" },
+    );
+    const request = new Request(signed.request, { signal: controller.signal });
+    recordRequestTransportLifetime(request, completed.promise);
+
+    try {
+      await withMockFetch(async () => {
+        callbacks++;
+        acknowledged.resolve();
+        return Response.json({ acknowledged: true });
+      }, async () => {
+        const result = await handler.handle(request, createCtx(signed.publicKeyPem));
+        assertExists(result.response);
+        assertEquals((await result.response.json()).success, true);
+        assertEquals(callbacks, 0);
+        controller.abort(new Error("Run cancelled during response delivery"));
+        await waitForBarrier(
+          acknowledged.promise,
+          "settled local workflow lost its stop evidence before the late abort",
+        );
+      });
+      assertEquals(callbacks, 1);
+    } finally {
+      completed.resolve();
+    }
+  });
+
   it("does not acknowledge a transport-late abort for an unknown resumed workflow", async () => {
     const controller = new AbortController();
     const completed = Promise.withResolvers<void>();

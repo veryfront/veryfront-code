@@ -145,12 +145,6 @@ export interface StepExecutorConfig {
   onStepStart?: (nodeId: string, input: unknown, runId?: string) => void;
   onStepComplete?: (nodeId: string, output: unknown, runId?: string) => void;
   onStepError?: (nodeId: string, error: Error, runId?: string) => void;
-  /**
-   * @internal Keep each run's stop evidence after its operations settle, until
-   * clearExecutionStopEvidence(). Only short-lived clients that acknowledge
-   * cancellation need it; long-lived clients would otherwise grow per run.
-   */
-  retainExecutionStopEvidence?: boolean;
 }
 
 export interface StepResult {
@@ -370,10 +364,8 @@ export class StepExecutor {
     operations.add(operation);
     const settle = () => {
       operations.delete(operation);
-      if (
-        !this.config.retainExecutionStopEvidence && operations.size === 0 &&
-        this.executionOperations.get(runId) === operations
-      ) {
+      // A missing entry means settled; run ownership is tracked by WorkflowExecutor.
+      if (operations.size === 0 && this.executionOperations.get(runId) === operations) {
         this.executionOperations.delete(runId);
       }
     };

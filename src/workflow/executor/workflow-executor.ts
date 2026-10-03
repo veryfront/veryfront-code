@@ -208,7 +208,6 @@ export class WorkflowExecutor {
 
     this.stepExecutor = new StepExecutor({
       cancellationGracePeriod: this.config.cancellationGracePeriod,
-      retainExecutionStopEvidence: this.config.retainExecutionStopEvidence,
       ...this.config.stepExecutor,
       blobStorage: this.config.blobStorage,
     });

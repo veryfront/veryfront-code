@@ -341,7 +341,10 @@ interface WorkflowClientView {
   getApprovalManager?(): { checkExpiredApprovals(runId?: string): Promise<void> };
   getEventWaitManager?(): { checkExpiredEventWaits(runId?: string): Promise<void> };
   cancel(runId: string): Promise<void>;
-  /** Positive only for locally owned execution whose underlying operation has stopped. */
+  /**
+   * Positive only for locally owned execution whose underlying operation has stopped.
+   * Settled runs keep this evidence only with `executor.retainExecutionStopEvidence`.
+   */
   waitForExecutionStopped?(runId: string): Promise<boolean>;
   destroy(): Promise<void>;
 }

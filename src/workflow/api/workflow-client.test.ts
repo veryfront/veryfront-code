@@ -272,6 +272,28 @@ describe("WorkflowClient", () => {
     for (const runId of runIds) {
       assertEquals(await client.waitForExecutionStopped(runId), false, runId);
     }
+
+    // A run still executing here keeps its evidence until it settles.
+    const started = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<unknown>();
+    client.register(workflow({
+      id: "ordinary-client-active",
+      steps: [step("hold", {
+        tool: {
+          ...createMockTool("hold", {}),
+          execute: () => {
+            started.resolve();
+            return release.promise;
+          },
+        },
+      })],
+    }));
+    const active = await client.start("ordinary-client-active", {});
+    await started.promise;
+    const stopped = client.waitForExecutionStopped(active.runId);
+    release.resolve({ ok: true });
+    assertEquals(await stopped, true);
+    await active.settled();
   });
 
   it("hands a parent the selected output of a nested workflow that declares one (#2107)", async () => {
