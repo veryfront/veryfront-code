@@ -4083,7 +4083,7 @@ describe("VeryfrontFSAdapter", () => {
       const statResolveKey = `${buildStatCacheKeyPrefix(context)}:resolve:pages/about`;
       const dirKey = `${buildDirCacheKeyPrefix(context)}:pages`;
       const fileKey = `${buildFileCacheKeyPrefix(context)}:pages/index.tsx`;
-      const siblingFileListKey = `${cacheKey}|authority:stale`;
+      const siblingFileListKey = `${cacheKey}:authority:stale`;
       const internals = adapter as unknown as {
         cache: {
           set: (key: string, value: unknown) => void;
