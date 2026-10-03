@@ -14,7 +14,7 @@ const runs = createRunsSdk({
   credential: { bearer: "<TOKEN>" },
 });
 
-const getRunInput: RunsInput<"getRun"> = { path: { run_id: "run_123" } };
+const getRunInput: RunsInput<"getRun"> = { path: { run_id: "11111111-1111-4111-8111-111111111111" } };
 
 export async function readRun(): Promise<Run> {
   const run: RunsOutput<"getRun"> = await runs.getRun(getRunInput);
@@ -23,7 +23,7 @@ export async function readRun(): Promise<Run> {
 
 export async function lastFrame(): Promise<RunStreamFrame | undefined> {
   let last: RunStreamFrame | undefined;
-  for await (const frame of runs.streamRunEvents({ path: { run_id: "run_123" } })) last = frame;
+  for await (const frame of runs.streamRunEvents({ path: { run_id: "11111111-1111-4111-8111-111111111111" } })) last = frame;
   return last;
 }
 

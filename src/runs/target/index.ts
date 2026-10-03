@@ -14,7 +14,7 @@
  *   credential: { bearer: process.env.VERYFRONT_API_TOKEN! },
  * });
  *
- * const run: RunsOutput<"getRun"> = await runs.getRun({ path: { run_id: "run_123" } });
+ * const run: RunsOutput<"getRun"> = await runs.getRun({ path: { run_id: "11111111-1111-4111-8111-111111111111" } });
  * for await (const frame of runs.streamRunEvents({ path: { run_id: run.id } })) {
  *   console.log(frame.id, frame.event);
  * }
