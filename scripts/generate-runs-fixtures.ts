@@ -197,6 +197,13 @@ export function renderRunsFixtures(document: RunsExampleDocument): string {
   }\n};\n`;
 }
 
+async function runDeno(args: string[]): Promise<void> {
+  const result = await new Deno.Command("deno", { args }).output();
+  if (!result.success) {
+    throw new Error(new TextDecoder().decode(result.stderr));
+  }
+}
+
 /** Write generated fixtures and refresh the pin for a contract directory. */
 export async function generateRunsFixtures(directory: URL): Promise<void> {
   const source = new URL("openapi.target.json", directory);
@@ -205,15 +212,7 @@ export async function generateRunsFixtures(directory: URL): Promise<void> {
     await Deno.readTextFile(source),
   );
   await Deno.writeTextFile(output, renderRunsFixtures(document));
-  // Format, then typecheck: a contract example that no longer satisfies the SDK types fails here.
-  for (const command of ["fmt", "check"]) {
-    const result = await new Deno.Command("deno", {
-      args: [command, fromFileUrl(output)],
-    }).output();
-    if (!result.success) {
-      throw new Error(new TextDecoder().decode(result.stderr));
-    }
-  }
+  await runDeno(["fmt", fromFileUrl(output)]);
   const pinUrl = new URL("pin.json", directory);
   const pin = JSON.parse(await Deno.readTextFile(pinUrl));
   for (
@@ -239,5 +238,11 @@ export async function generateRunsFixtures(directory: URL): Promise<void> {
 }
 
 if (import.meta.main) {
-  await generateRunsFixtures(new URL("../src/runs/contract/", import.meta.url));
+  const directory = new URL("../src/runs/contract/", import.meta.url);
+  await generateRunsFixtures(directory);
+  // A contract example that no longer satisfies the SDK types fails regeneration here.
+  await runDeno([
+    "check",
+    fromFileUrl(new URL("runs-fixtures.generated.ts", directory)),
+  ]);
 }
