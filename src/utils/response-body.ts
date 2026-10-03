@@ -1087,13 +1087,8 @@ async function readChunk(
 }
 
 /** Read at most maxBytes from a response body and cancel any unread remainder. */
-/** The only part of a response that prefix reads touch: a readable body. */
-export interface ResponseTextPrefixSource {
-  readonly body: { getReader(): ReadableStreamDefaultReader<Uint8Array> } | null;
-}
-
 export async function readResponseTextPrefix(
-  response: ResponseTextPrefixSource,
+  response: { body: { getReader(): ReadableStreamDefaultReader<Uint8Array> } | null },
   maxBytes: number,
   abortSignal?: AbortSignal,
   options: { fatalUtf8?: boolean } = {},

@@ -1,7 +1,10 @@
 import type { HostedLifecycleTerminalState } from "./lifecycle.ts";
+import { getBaseLogger } from "#veryfront/utils/logger/index.ts";
 import { hasHostedAgentPauseStopped } from "./manual-pause-credential.ts";
 import { hasCompletedStepSignal, resolveStreamOutcome } from "../streaming/stream-outcome.ts";
 import type { StreamSnapshot } from "../streaming/lifecycle/types.ts";
+
+const logger = getBaseLogger("Agent pause");
 
 /** Error shape for hosted terminal. */
 export interface HostedTerminalError {
@@ -154,6 +157,8 @@ export async function finalizeHostedResponse<TMessage, TChunk>(
   if (hasHostedAgentPauseStopped(options.dispatchTerminalState)) {
     try {
       await options.flushMirror();
+    } catch {
+      logger.warn("Paused agent output could not be flushed; its continuation remains nonterminal");
     } finally {
       await cleanupAfterFinalization(options.cleanup);
     }
@@ -227,6 +232,8 @@ export async function finalizeHostedDetached<TChunk>(
   if (hasHostedAgentPauseStopped(options.dispatchTerminalState)) {
     try {
       await options.flushMirror();
+    } catch {
+      logger.warn("Paused agent output could not be flushed; its continuation remains nonterminal");
     } finally {
       await cleanupAfterFinalization(options.cleanup);
     }

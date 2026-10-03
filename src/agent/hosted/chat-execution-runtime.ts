@@ -1,4 +1,7 @@
-import { inheritHostedAgentPauseCapability } from "./manual-pause-credential.ts";
+import {
+  hasHostedAgentPauseStopped,
+  inheritHostedAgentPauseCapability,
+} from "./manual-pause-credential.ts";
 import {
   buildChatStreamChunkMessageMetadata,
   extractChatMessageMetadata,
@@ -607,6 +610,7 @@ async function finalizeExecutionFailure(input: {
   logMessage: string;
   logger?: HostedChatExecutionRuntimeLogger;
 }): Promise<void> {
+  if (hasHostedAgentPauseStopped(input.lifecycleAdapter)) return;
   await dispatchConversationHostedStreamErrorState(input.lifecycleAdapter, input.error, {
     // The run is already terminal server-side; completing it here can only 400 and
     // would turn a clean stop back into a Sentry error (veryfront-issue-inbox#743).

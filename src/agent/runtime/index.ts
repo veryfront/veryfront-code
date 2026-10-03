@@ -2,6 +2,7 @@ import { forEachSequential } from "./sequential.ts";
 import {
   type AgentManualPause,
   agentManualPauseBoundary,
+  type AgentPauseCheckpoint,
   isAgentManualPauseBoundary,
   parseAgentPauseCheckpoint,
 } from "./manual-pause.ts";
@@ -3043,7 +3044,7 @@ export class AgentRuntime {
             closeSSEStream(controller);
           } catch (streamError) {
             if (isAgentManualPauseBoundary(streamError)) {
-              await turnPersistence.commit();
+              await turnPersistence.finalize();
               sendSSE(controller, encoder, { type: "data-veryfront.manual_pause", data: {} });
               closeSSEStream(controller);
               return;
@@ -3926,15 +3927,24 @@ export class AgentRuntime {
 
     const continuation = await this.#manualPause?.load();
     const checkpoint = continuation == null ? undefined : parseAgentPauseCheckpoint(continuation);
+    if (checkpoint?.providerMetadata) {
+      mapPrivateArray(checkpoint.messages, (message) => {
+        const saved = filterPrivateArray(checkpoint.providerMetadata!, (entry) =>
+          entry.messageId === message.id)[0];
+        if (saved) {
+          attachProviderMetadata(message, saved.metadata);
+        }
+      });
+    }
     const toolCalls: ToolCall[] = checkpoint?.toolCalls ?? [];
     const currentMessages = mapPrivateArray(checkpoint?.messages ?? messages, (message) => message);
     const runtimeGeneratedMessageIds = createPrivateSet(
       checkpoint?.runtimeGeneratedMessageIds ?? [],
     );
-    for (let index = 0; index < currentMessages.length; index++) {
-      const message = currentMessages[index]!;
+    mapPrivateArray(currentMessages, (message) => {
       if (runtimeGeneratedMessageIds.has(message.id)) markRuntimeGeneratedUserMessage(message);
-    }
+      return message;
+    });
     applyProviderReplayCheckpointsToMessages(
       currentMessages,
       getRuntimeProviderReplayCheckpoints(this.config),
@@ -3992,33 +4002,68 @@ export class AgentRuntime {
 
     const pauseAtBoundary = async (nextStep: number) => {
       if (!this.#manualPause) return;
-      const saved = parseAgentPauseCheckpoint({
-        version: 1,
-        nextStep,
-        messages: currentMessages,
-        toolCalls,
-        usage: totalUsage,
-        latestAssistantText,
-        completed: completedWithinStepBudget,
-        ...(finalFinishReason ? { finishReason: finalFinishReason } : {}),
-        recoveredEmptyResponse,
-        recoveredInterruptedLocalToolBatch,
-        hasSubmittedFormInput: skillState.hasSubmittedFormInput,
-        activeSkillDelegationOverrides: skillState.activeSkillDelegationOverrides,
-        resumeToolCallExecuted,
-        agentWriteFinalResponseToolGuardEnabled,
-        interruptedLocalToolBatchRecoveryStep,
-        interruptedLocalToolBatchRecoveryText,
-        runtimeGeneratedMessageIds: mapPrivateArray(
-          filterPrivateArray(currentMessages, isRuntimeGeneratedUserMessage),
-          (message) => message.id,
-        ),
-        toolExposureCheckpoint: pauseToolExposureAuthorized
-          ? createToolExposureCheckpoint(pauseToolExposureAuthorized, toolExposureState)
-          : initialToolExposureCheckpoint,
-      });
+      if (this.#manualPause.requested && !(await this.#manualPause.requested())) return;
+      let saved: AgentPauseCheckpoint;
+      try {
+        saved = parseAgentPauseCheckpoint({
+          version: 1,
+          nextStep,
+          messages: currentMessages,
+          toolCalls,
+          usage: totalUsage,
+          latestAssistantText,
+          completed: completedWithinStepBudget,
+          ...(finalFinishReason ? { finishReason: finalFinishReason } : {}),
+          recoveredEmptyResponse,
+          recoveredInterruptedLocalToolBatch,
+          hasSubmittedFormInput: skillState.hasSubmittedFormInput,
+          activeSkillDelegationOverrides: skillState.activeSkillDelegationOverrides,
+          resumeToolCallExecuted,
+          agentWriteFinalResponseToolGuardEnabled,
+          interruptedLocalToolBatchRecoveryStep,
+          interruptedLocalToolBatchRecoveryText,
+          providerMetadata: mapPrivateArray(
+            filterPrivateArray(
+              currentMessages,
+              (message) => readAttachedProviderMetadata(message) !== undefined,
+            ),
+            (message) => ({
+              messageId: message.id,
+              metadata: readAttachedProviderMetadata(message)!,
+            }),
+          ),
+          runtimeGeneratedMessageIds: mapPrivateArray(
+            filterPrivateArray(currentMessages, isRuntimeGeneratedUserMessage),
+            (message) => message.id,
+          ),
+          toolExposureCheckpoint: pauseToolExposureAuthorized
+            ? createToolExposureCheckpoint(pauseToolExposureAuthorized, toolExposureState)
+            : initialToolExposureCheckpoint,
+        });
+      } catch {
+        if (this.#manualPause.release && !(await this.#manualPause.release())) return;
+        logger.warn(
+          "Agent is held at a safe boundary because its pause continuation cannot be saved",
+        );
+        throw agentManualPauseBoundary();
+      }
       if (await this.#manualPause.acknowledge(saved)) throw agentManualPauseBoundary();
     };
+    if (this.#manualPause) {
+      await validateProviderRequest(
+        withAgentRunRuntimeContext(systemPrompt, runRuntimeContext),
+        currentMessages,
+      );
+      if (checkpoint) {
+        const persistedIds = createPrivateSet(mapPrivateArray(messages, (message) => message.id));
+        for (let index = 0; index < currentMessages.length; index++) {
+          const message = currentMessages[index]!;
+          if (persistedIds.has(message.id)) continue;
+          await persistMessage(message);
+          persistedIds.add(message.id);
+        }
+      }
+    }
     await pauseAtBoundary(checkpoint?.nextStep ?? 0);
     for (
       let step = checkpoint?.nextStep ?? 0;

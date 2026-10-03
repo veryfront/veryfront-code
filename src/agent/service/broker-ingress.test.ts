@@ -4,6 +4,13 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { createControlPlaneSignature } from "#veryfront/server/handlers/request/internal-agent-run.test-helpers.ts";
 import { BrokerIngressError, parseBrokerRuntimeAgentIngress } from "./broker-ingress.ts";
 
+import {
+  activateHostedAgentPauseCapability,
+  getHostedAgentPauseCreationOptions,
+  inheritHostedAgentPauseCapability,
+} from "../hosted/manual-pause-credential.ts";
+import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
+
 const projectId = "00000000-0000-4000-8000-000000000005";
 const userId = "00000000-0000-4000-8000-000000000006";
 const conversationId = "00000000-0000-4000-8000-000000000001";
@@ -82,6 +89,30 @@ function options(publicKeyPem: string) {
 }
 
 describe("managed broker ingress", () => {
+  it("carries the signed ingress stop token privately into runtime creation", async () => {
+    const signed = await signedRequest();
+    signed.request.headers.set("x-veryfront-run-stop-token", "synthetic-stop-token");
+    const ingress = await parseBrokerRuntimeAgentIngress(
+      signed.request,
+      options(signed.publicKeyPem),
+    );
+    const prepared = {};
+    const runtimeOptions = {};
+    inheritHostedAgentPauseCapability(prepared, ingress);
+    inheritHostedAgentPauseCapability(runtimeOptions, prepared);
+    assertEquals(JSON.stringify(ingress).includes("synthetic-stop-token"), false);
+    await withMockFetch((url, init) => {
+      assertEquals(new URL(String(url)).pathname, "/runs/run-1/pause-checkpoint");
+      assertEquals(new Headers(init?.headers).get("Authorization"), "Bearer synthetic-stop-token");
+      return Promise.resolve(Response.json({ stop: false, checkpoint: null }));
+    }, async () => {
+      const pause = activateHostedAgentPauseCapability(runtimeOptions, AbortSignal.timeout(3000));
+      assertEquals(pause !== undefined, true);
+      assertEquals(getHostedAgentPauseCreationOptions(runtimeOptions), pause);
+      assertEquals(await pause!.load(), null);
+    });
+  });
+
   it("accepts root writer grants through the shared 32 KiB boundary", async () => {
     for (const length of [16 * 1024 + 1, 32 * 1024]) {
       const signed = await signedRequest();

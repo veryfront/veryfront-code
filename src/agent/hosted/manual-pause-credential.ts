@@ -1,4 +1,5 @@
 import { defineSchema } from "#veryfront/schemas/index.ts";
+import { getBaseLogger } from "#veryfront/utils/logger/index.ts";
 import { privateJsonParse, privateJsonStringify } from "#veryfront/security/private-json.ts";
 import { createPrivateWeakStore } from "#veryfront/security/private-weak-store.ts";
 import { createPrivateSet } from "#veryfront/security/private-set.ts";
@@ -22,15 +23,13 @@ import type { ParsedHostedChatRequest } from "./chat-request-parser.ts";
 
 const getAckSchema = defineSchema((v) => v.object({ stop: v.boolean() }).strict());
 const getLoadSchema = defineSchema((v) =>
-  v.object({ stop: v.boolean(), checkpoint: v.union([v.null(), getAgentPauseCheckpointSchema()]) })
+  v.object({
+    stop: v.boolean(),
+    checkpoint: v.union([v.null(), getAgentPauseCheckpointSchema()]),
+    pauseRequested: v.boolean().optional(),
+  })
     .strict()
 );
-/**
- * A host lifecycle object (agent creation options, root context, broker
- * session) whose identity alone carries pause state; no fields are read.
- */
-export type HostedAgentPauseCarrier = object;
-
 const credentials = createPrivateWeakStore<object, { token: string; runId: string }>();
 const creationCapabilities = createPrivateWeakStore<object, AgentManualPause>();
 const capabilityFactories = createPrivateWeakStore<
@@ -49,6 +48,7 @@ const NativeTypeError = TypeError;
 const responseStatus = Object.getOwnPropertyDescriptor(Response.prototype, "status")!.get!;
 const responseBody = Object.getOwnPropertyDescriptor(Response.prototype, "body")!.get!;
 const minimum = Math.min;
+const logger = getBaseLogger("Agent pause");
 
 function bodyOf(response: Response): ReadableStream<Uint8Array> | null {
   return apply(responseBody, response, []);
@@ -61,12 +61,14 @@ async function cancelResponse(response: Response): Promise<void> {
 
 async function readReply(response: Response, signal: AbortSignal): Promise<unknown> {
   const body = bodyOf(response);
-  const safeBody = body === null ? null : {
+  const safeResponse = {
     __proto__: null,
-    getReader: () => getPrivateStreamReader(body),
+    body: body === null ? null : {
+      __proto__: null,
+      getReader: () => getPrivateStreamReader(body),
+    },
   };
-  const safeResponse = { __proto__: null, body: safeBody };
-  const reply = await readResponseTextPrefix(safeResponse, 2 * 1024 * 1024, signal, {
+  const reply = await readResponseTextPrefix(safeResponse, 2 * 1024 * 1024 + 4096, signal, {
     fatalUtf8: true,
   });
   if (reply.truncated) throw new NativeTypeError("Invalid agent pause acknowledgement");
@@ -131,12 +133,17 @@ export function createRunBoundAgentManualPause(input: {
         if (response) await cancelResponse(response);
       }
       if (signal.aborted) throw agentManualPauseBoundary();
+      if (attempt === 2) {
+        logger.warn(
+          "Agent is held at a safe boundary because its pause acknowledgement is unavailable",
+        );
+      }
       await new NativePromise<void>((resolve) =>
         schedule(resolve, minimum(1000, 100 * 2 ** minimum(attempt, 4)))
       );
     }
   };
-  const state = { stopped: false };
+  const state = { stopped: false, requiresCheckpoint: false };
   const capability = freeze({
     async load() {
       state.stopped = true;
@@ -150,12 +157,38 @@ export function createRunBoundAgentManualPause(input: {
         throw agentManualPauseBoundary();
       }
       state.stopped = false;
+      state.requiresCheckpoint = reply.checkpoint !== null;
       return reply.checkpoint == null ? null : parseAgentPauseCheckpoint(reply.checkpoint);
+    },
+    async requested() {
+      state.stopped = true;
+      const reply = await request(
+        "pause-checkpoint?boundary=true",
+        undefined,
+        (value) => getLoadSchema().parse(value),
+      );
+      if (reply.stop) throw agentManualPauseBoundary();
+      // Older control planes still receive the existing checkpoint acknowledgement.
+      const requested = state.requiresCheckpoint || (reply.pauseRequested ?? true);
+      state.stopped = requested;
+      return requested;
+    },
+    async release() {
+      state.stopped = true;
+      const stop =
+        (await request("pause-ack", privateJsonStringify({ checkpoint: null })!, (value) =>
+          getAckSchema().parse(value))).stop;
+      state.stopped = stop;
+      if (!stop) {
+        state.requiresCheckpoint = false;
+      }
+      return stop;
     },
     async acknowledge(checkpoint: AgentPauseCheckpoint) {
       const body = privateJsonStringify({ checkpoint: parseAgentPauseCheckpoint(checkpoint) })!;
       state.stopped = true;
-      const stop = (await request("pause-ack", body, (value) => getAckSchema().parse(value))).stop;
+      const stop = (await request("pause-ack", body, (value) =>
+        getAckSchema().parse(value))).stop;
       state.stopped = stop;
       return stop;
     },
@@ -191,34 +224,32 @@ export function createHostedAgentManualPause(
 }
 
 export function registerHostedAgentPauseCreationOptions(
-  options: HostedAgentPauseCarrier,
+  options: unknown,
   request: ParsedHostedChatRequest,
   signal: AbortSignal,
-  rootContext?: HostedAgentPauseCarrier,
+  rootContext?: unknown,
 ): void {
   const capability = createHostedAgentManualPause(request, signal);
   if (capability) {
-    creationCapabilities.set(options, capability);
-    if (rootContext) creationCapabilities.set(rootContext, capability);
+    creationCapabilities.set(requirePauseCarrier(options), capability);
+    if (rootContext) creationCapabilities.set(requirePauseCarrier(rootContext), capability);
   }
 }
 
-export function getHostedAgentPauseCreationOptions(
-  options: HostedAgentPauseCarrier,
-): AgentManualPause | undefined {
-  return creationCapabilities.get(options);
+export function getHostedAgentPauseCreationOptions(options: unknown): AgentManualPause | undefined {
+  return creationCapabilities.get(requirePauseCarrier(options));
 }
 
 /** Carry exact-dispatch stop state through host lifecycle objects without public fields. */
 export function inheritHostedAgentPauseCapability(
-  target: HostedAgentPauseCarrier,
-  source: HostedAgentPauseCarrier,
+  target: unknown,
+  source: unknown,
   lifetimeSignal?: AbortSignal,
 ): void {
-  const factory = capabilityFactories.get(source);
+  const factory = capabilityFactories.get(requirePauseCarrier(source));
   if (factory) {
     capabilityFactories.set(
-      target,
+      requirePauseCarrier(target),
       lifetimeSignal
         ? (signal) => {
           const signals = [signal, lifetimeSignal];
@@ -229,30 +260,36 @@ export function inheritHostedAgentPauseCapability(
         : factory,
     );
   }
-  const capability = creationCapabilities.get(source);
-  if (capability) creationCapabilities.set(target, capability);
+  const capability = creationCapabilities.get(requirePauseCarrier(source));
+  if (capability) creationCapabilities.set(requirePauseCarrier(target), capability);
 }
 
-export function hasHostedAgentPauseStopped(lifecycle: HostedAgentPauseCarrier): boolean {
-  const capability = creationCapabilities.get(lifecycle);
+export function hasHostedAgentPauseStopped(lifecycle: unknown): boolean {
+  const capability = creationCapabilities.get(requirePauseCarrier(lifecycle));
   return capability !== undefined && stoppedCapabilities.get(capability)?.stopped === true;
 }
 
 /** Broker-only lazy construction binds pause requests to the admitted session lifetime. */
 export function registerHostedAgentPauseFactory(
-  target: HostedAgentPauseCarrier,
+  target: unknown,
   factory: (signal: AbortSignal) => AgentManualPause | undefined,
 ): void {
-  capabilityFactories.set(target, factory);
+  capabilityFactories.set(requirePauseCarrier(target), factory);
 }
 
 export function activateHostedAgentPauseCapability(
-  target: HostedAgentPauseCarrier,
+  target: unknown,
   signal: AbortSignal,
 ): AgentManualPause | undefined {
-  const existing = creationCapabilities.get(target);
+  const existing = creationCapabilities.get(requirePauseCarrier(target));
   if (existing) return existing;
-  const capability = capabilityFactories.get(target)?.(signal);
-  if (capability) creationCapabilities.set(target, capability);
+  const capability = capabilityFactories.get(requirePauseCarrier(target))?.(signal);
+  if (capability) creationCapabilities.set(requirePauseCarrier(target), capability);
   return capability;
+}
+
+/** Weak capability carriers are identity-only values; inspect no project-controlled fields. */
+function requirePauseCarrier(value: unknown) {
+  if ((typeof value === "object" && value !== null) || typeof value === "function") return value;
+  throw new NativeTypeError("Invalid agent pause capability carrier");
 }

@@ -29,6 +29,7 @@ export interface AgentPauseCheckpoint {
   interruptedLocalToolBatchRecoveryStep?: number;
   interruptedLocalToolBatchRecoveryText?: string;
   runtimeGeneratedMessageIds?: string[];
+  providerMetadata?: { messageId: string; metadata: Record<string, unknown> }[];
   hasSubmittedFormInput?: boolean;
   activeSkillDelegationOverrides?: SkillDelegationOverrides;
   toolExposureCheckpoint?: { version: 1 | 2; loadedToolNames: string[] };
@@ -36,7 +37,11 @@ export interface AgentPauseCheckpoint {
 
 export interface AgentManualPause {
   load(): Promise<unknown>;
+  /** Check whether a pause is requested before snapshotting a bounded continuation. */
+  requested?(): Promise<boolean>;
   acknowledge(checkpoint: AgentPauseCheckpoint): Promise<boolean>;
+  /** Retire an oversized resumed continuation only when no pause is requested. */
+  release?(): Promise<boolean>;
 }
 
 export const getAgentPauseCheckpointSchema = defineSchema((v) =>
@@ -67,6 +72,12 @@ export const getAgentPauseCheckpointSchema = defineSchema((v) =>
     interruptedLocalToolBatchRecoveryStep: v.number().int().nonnegative().optional(),
     interruptedLocalToolBatchRecoveryText: v.string().optional(),
     runtimeGeneratedMessageIds: v.array(v.string().min(1)).optional(),
+    providerMetadata: v.array(
+      v.object({
+        messageId: v.string().min(1),
+        metadata: v.record(v.string(), getJsonValueSchema()),
+      }).strict(),
+    ).optional(),
     hasSubmittedFormInput: v.boolean().optional(),
     activeSkillDelegationOverrides: v.object({
       model: v.string().max(MAX_RUNTIME_SKILL_MODEL_LENGTH).refine(isValidRuntimeSkillModel)

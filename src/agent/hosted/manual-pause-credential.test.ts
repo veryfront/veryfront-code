@@ -109,3 +109,117 @@ for (const abortLifetime of ["execution", "session"] as const) {
     assertEquals(constructions, 1);
   });
 }
+
+it("checks pause intent without sending the continuation", async () => {
+  const authority = createRunBoundAgentManualPause({
+    apiUrl: "https://api.example.com",
+    runId: "run_pause_test",
+    token: "pause-test-token",
+    signal: new AbortController().signal,
+    fetch: (url, init) => {
+      assertEquals(
+        String(url),
+        "https://api.example.com/runs/run_pause_test/pause-checkpoint?boundary=true",
+      );
+      assertEquals(init?.body, undefined);
+      return Promise.resolve(
+        Response.json({ stop: false, checkpoint: null, pauseRequested: false }),
+      );
+    },
+  });
+  assertEquals(await authority.requested?.(), false);
+});
+
+it("retains checkpoint writes after resuming a durable continuation", async () => {
+  const authority = createRunBoundAgentManualPause({
+    apiUrl: "https://api.example.com",
+    runId: "run_pause_test",
+    token: "pause-test-token",
+    signal: new AbortController().signal,
+    fetch: (url) =>
+      Promise.resolve(
+        Response.json(
+          String(url).endsWith("?boundary=true")
+            ? { stop: false, checkpoint: null, pauseRequested: false }
+            : { stop: false, checkpoint },
+        ),
+      ),
+  });
+  assertEquals(await authority.load(), checkpoint);
+  assertEquals(await authority.requested?.(), true);
+});
+
+it("keeps acknowledgement checkpoints for a control plane without boundary probes", async () => {
+  const authority = createRunBoundAgentManualPause({
+    apiUrl: "https://api.example.com",
+    runId: "run_pause_test",
+    token: "pause-test-token",
+    signal: new AbortController().signal,
+    fetch: () => Promise.resolve(Response.json({ stop: false, checkpoint: null })),
+  });
+  assertEquals(await authority.requested?.(), true);
+});
+
+it("holds execution through a pause API outage until a valid reply arrives", async () => {
+  let attempts = 0;
+  const carrier = {};
+  const authority = createRunBoundAgentManualPause({
+    apiUrl: "https://api.example.com",
+    runId: "run_pause_test",
+    token: "pause-test-token",
+    signal: new AbortController().signal,
+    fetch: () => {
+      assertEquals(hasHostedAgentPauseStopped(carrier), true);
+      attempts++;
+      return Promise.resolve(
+        attempts <= 3
+          ? new Response(null, { status: 503 })
+          : Response.json({ stop: false, checkpoint: null, pauseRequested: false }),
+      );
+    },
+  });
+  inheritHostedAgentPauseCapability(carrier, authority);
+  assertEquals(await authority.requested?.(), false);
+  assertEquals(attempts, 4);
+  assertEquals(hasHostedAgentPauseStopped(carrier), false);
+});
+
+it("retires a resumed continuation only after the dispatch gate confirms no pause", async () => {
+  const authority = createRunBoundAgentManualPause({
+    apiUrl: "https://api.example.com",
+    runId: "run_pause_test",
+    token: "pause-test-token",
+    signal: AbortSignal.timeout(3000),
+    fetch: (url, init) => {
+      if (init?.method === "POST") {
+        assertEquals(JSON.parse(String(init.body)), { checkpoint: null });
+        return Promise.resolve(Response.json({ stop: false }));
+      }
+      return Promise.resolve(
+        Response.json(
+          String(url).includes("?boundary=true")
+            ? { stop: false, checkpoint: null, pauseRequested: false }
+            : { stop: false, checkpoint },
+        ),
+      );
+    },
+  });
+  await authority.load();
+  assertEquals(await authority.requested?.(), true);
+  assertEquals(await authority.release?.(), false);
+  assertEquals(await authority.requested?.(), false);
+});
+
+it("loads a checkpoint at its byte budget with response envelope overhead", async () => {
+  const nearLimit = { ...checkpoint, latestAssistantText: "" };
+  nearLimit.latestAssistantText = "x".repeat(2 * 1024 * 1024 - JSON.stringify(nearLimit).length);
+  const authority = createRunBoundAgentManualPause({
+    apiUrl: "https://api.example.com",
+    runId: "run_pause_test",
+    token: "pause-test-token",
+    signal: AbortSignal.timeout(3000),
+    fetch: () => Promise.resolve(Response.json({ stop: false, checkpoint: nearLimit })),
+  });
+  const loaded = await authority.load() as typeof nearLimit;
+  assertEquals(loaded.latestAssistantText.length, nearLimit.latestAssistantText.length);
+});

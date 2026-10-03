@@ -1,3 +1,5 @@
+import { registerTurnProviderRequestValidator } from "#veryfront/agent/middleware/turn-validation.ts";
+import { agentManualPauseBoundary } from "./manual-pause.ts";
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
@@ -49,6 +51,7 @@ describe("agent manual pause", () => {
         },
       };
       const config = {
+        memory: { type: "conversation" as const },
         model: "test/manual-pause",
         system: "Charge once and finish.",
         maxSteps: exhaustBudget ? 2 : 3,
@@ -107,6 +110,9 @@ describe("agent manual pause", () => {
       ).text();
       assertEquals(modelCalls, 2);
       assertEquals(toolCalls, exhaustBudget ? 2 : 1);
+      const memory = await resumed.getMemory().getMessages();
+      assertEquals(memory.some((message) => message.role === "tool"), true);
+      assertEquals(memory.filter((message) => message.id === "request-1").length, 1);
       assertEquals(finishes, 1);
       assertEquals(resumedTokens, 4);
       assertEquals(resumedBody.includes("Done"), !exhaustBudget);
@@ -266,4 +272,201 @@ it("retains a trusted skill's delegation defaults across pause", async () => {
     max_steps: 160,
   });
   assertEquals(model.callCount, 3);
+});
+
+it("continues an unpaused run whose transcript exceeds the checkpoint budget", async () => {
+  let finishes = 0;
+  let acknowledgements = 0;
+  const runtime = new AgentRuntime("large-unpaused", {
+    model: "test/large-unpaused",
+    system: "Reply Done.",
+    maxSteps: 1,
+    resolveModelTransport: () => ({
+      model: scriptedModel([{ text: "Done" }], { only: "stream" }),
+    }),
+  }, {
+    manualPause: {
+      load: async () => null,
+      requested: async () => false,
+      acknowledge: async () => {
+        acknowledgements++;
+        return false;
+      },
+    },
+  });
+  const stream = await runtime.stream(
+    [{
+      id: "large-request",
+      role: "user",
+      parts: [{ type: "text", text: "x".repeat(3 * 1024 * 1024) }],
+    }],
+    undefined,
+    {
+      onFinish: () => {
+        finishes++;
+      },
+    },
+  );
+  await new Response(stream).text();
+  assertEquals(finishes, 1);
+  assertEquals(acknowledgements, 0);
+});
+
+it("keeps an early pause from committing input before provider validation", async () => {
+  const model = scriptedModel([{ text: "unreachable" }]);
+  const runtime = new AgentRuntime("early-pause", {
+    model: "test/pause",
+    system: "Validate first",
+    skills: false,
+    memory: { type: "conversation" },
+    middleware: [(context, next) => {
+      registerTurnProviderRequestValidator(context, async () => {
+        throw new Error("Rejected input");
+      });
+      return next();
+    }],
+    resolveModelTransport: () => ({ model }),
+  }, {
+    manualPause: {
+      load: async () => {
+        throw agentManualPauseBoundary();
+      },
+      acknowledge: async () => true,
+    },
+  });
+  const body = await new Response(await runtime.stream("Private unvalidated input")).text();
+  assertEquals(body.includes("data-veryfront.manual_pause"), true);
+  assertEquals(await runtime.getMemory().getMessages(), []);
+  assertEquals(model.callCount, 0);
+});
+
+it("restores private signed provider metadata after manual pause", async () => {
+  const providerMetadata = {
+    anthropic: {
+      rawAssistantContent: [{ type: "thinking", thinking: "private", signature: "test-signature" }],
+    },
+  };
+  const model = scriptedModel([
+    { toolCalls: [{ id: "lookup-1", name: "lookup", input: {} }], providerMetadata },
+    { text: "Done" },
+  ], { provider: "anthropic", modelId: "claude-test", only: "stream" });
+  const config = {
+    model: "anthropic/claude-test",
+    system: "Lookup once",
+    skills: false,
+    maxSteps: 2,
+    tools: {
+      lookup: tool({
+        id: "lookup",
+        description: "Lookup",
+        inputSchema: defineSchema((v) => v.object({}))(),
+        execute: () => ({ done: true }),
+      }),
+    },
+    resolveModelTransport: () => ({ model }),
+  };
+  let saved: unknown;
+  const paused = new AgentRuntime("provider-pause", config, {
+    manualPause: {
+      load: async () => null,
+      acknowledge: async (checkpoint) => {
+        if (checkpoint.nextStep !== 1) return false;
+        saved = structuredClone(checkpoint);
+        return true;
+      },
+    },
+  });
+  await new Response(await paused.stream("Lookup")).text();
+  const resumed = new AgentRuntime("provider-pause", config, {
+    manualPause: { load: async () => saved, acknowledge: async () => false },
+  });
+  const body = await new Response(await resumed.stream("Lookup")).text();
+  const prompt = model.calls[1]?.prompt as Array<{ role: string; providerMetadata?: unknown }>;
+  assertEquals(
+    prompt.find((message) => message.role === "assistant")?.providerMetadata,
+    providerMetadata,
+  );
+  assertEquals(body.includes("test-signature"), false);
+});
+
+it("holds an oversized requested pause without terminalizing the run", async () => {
+  const model = scriptedModel([{ text: "unreachable" }]);
+  const runtime = new AgentRuntime("large-pause", {
+    model: "test/pause",
+    system: "Hold",
+    skills: false,
+    resolveModelTransport: () => ({ model }),
+  }, {
+    manualPause: {
+      load: async () => null,
+      requested: async () => true,
+      acknowledge: async () => {
+        throw new Error("Oversized continuation must not be sent");
+      },
+    },
+  });
+  const body = await new Response(await runtime.stream("x".repeat(2 * 1024 * 1024))).text();
+  assertEquals(body.includes("data-veryfront.manual_pause"), true);
+  assertEquals(body.includes("message-finish"), false);
+  assertEquals(body.includes('"type":"error"'), false);
+  assertEquals(model.callCount, 0);
+});
+
+it("continues oversized resumed progress after retiring the stale checkpoint", async () => {
+  const model = scriptedModel([{ text: "Done" }]);
+  let releases = 0;
+  const runtime = new AgentRuntime("oversized-resume", {
+    model: "test/pause",
+    system: "Continue",
+    skills: false,
+    maxSteps: 1,
+    resolveModelTransport: () => ({ model }),
+  }, {
+    manualPause: {
+      load: async () => null,
+      requested: async () => releases === 0,
+      acknowledge: async () => {
+        throw new Error("Oversized continuation must not be sent");
+      },
+      release: async () => {
+        releases++;
+        return false;
+      },
+    },
+  });
+  const body = await new Response(await runtime.stream("x".repeat(2 * 1024 * 1024))).text();
+  assertEquals(releases, 1);
+  assertEquals(model.callCount, 1);
+  assertEquals(body.includes("message-finish"), true);
+});
+
+it("validates staged input before acknowledging an initial pause", async () => {
+  const model = scriptedModel([{ text: "unreachable" }]);
+  let acknowledgements = 0;
+  const runtime = new AgentRuntime("validate-pause", {
+    model: "test/pause",
+    system: "Validate",
+    skills: false,
+    memory: { type: "conversation" },
+    middleware: [(context, next) => {
+      registerTurnProviderRequestValidator(context, async () => {
+        throw new Error("Rejected input");
+      });
+      return next();
+    }],
+    resolveModelTransport: () => ({ model }),
+  }, {
+    manualPause: {
+      load: async () => null,
+      requested: async () => true,
+      acknowledge: async () => {
+        acknowledgements++;
+        return true;
+      },
+    },
+  });
+  await new Response(await runtime.stream("Unvalidated input")).text();
+  assertEquals(acknowledgements, 0);
+  assertEquals(await runtime.getMemory().getMessages(), []);
+  assertEquals(model.callCount, 0);
 });

@@ -9,8 +9,10 @@ import { isAgentManualPauseBoundary } from "../runtime/manual-pause.ts";
 import { finalizeHostedResponse } from "./stream-finalization.ts";
 
 describe("hosted manual pause finalization", () => {
-  for (const lostReply of [false, true]) {
-    it(`flushes and cleans up without synthesizing a terminal outcome (lost=${lostReply})`, async () => {
+  for (
+    const [lostReply, flushFails] of [[false, false], [true, false], [false, true], [true, true]]
+  ) {
+    it(`flushes and cleans up without synthesizing a terminal outcome (lost=${lostReply}, flushFails=${flushFails})`, async () => {
       const controller = new AbortController();
       const capability = createRunBoundAgentManualPause({
         apiUrl: "https://api.example.com",
@@ -60,6 +62,7 @@ describe("hosted manual pause finalization", () => {
         appendFallbackChunk: unavailable,
         flushMirror: () => {
           flushes++;
+          if (flushFails) throw new Error("Mirror storage unavailable");
         },
         dispatchTerminalState,
         resolveTerminalState: () => ({ status: "completed" }),
