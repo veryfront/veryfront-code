@@ -8,6 +8,7 @@ import type { ClientRequest, IncomingMessage, RequestOptions } from "node:http";
 import type { Readable } from "node:stream";
 import { VERSION } from "#veryfront/utils/version-constant.ts";
 import { isErrorAcrossRealms } from "../error-introspection.ts";
+import { isBun, isNode } from "../runtime.ts";
 import {
   assertNativeRequestProcessing,
   assertObjectPrototypeUnchanged,
@@ -29,6 +30,45 @@ const RequestHeadersGetter = Object.getOwnPropertyDescriptor(NativeRequest.proto
   .get!;
 const RequestArrayBuffer = NativeRequest.prototype.arrayBuffer;
 const URLHrefGetter = Object.getOwnPropertyDescriptor(URL.prototype, "href")!.get!;
+const FunctionHasInstance = Function.prototype[Symbol.hasInstance];
+const NativeURLSearchParams = URLSearchParams;
+const NativeBlob = Blob;
+const NativeFormData = typeof FormData === "undefined" ? undefined : FormData;
+const BlobTypeGetter = Object.getOwnPropertyDescriptor(Blob.prototype, "type")!.get!;
+
+type NodeRequestFunction = typeof import("node:http").request;
+
+/**
+ * `node:http` and `node:https` `request`, captured as this module loads on
+ * Node and Bun, before project code could replace them (or update the
+ * built-in exports through `syncBuiltinESMExports`): the function receives
+ * the options and their credential-bearing headers. Elsewhere this transport
+ * only runs in tests, which import the modules when they first send.
+ */
+const capturedNodeRequests:
+  | Promise<{ http: NodeRequestFunction; https: NodeRequestFunction }>
+  | undefined = isNode || isBun
+    ? Promise.all([import("node:http"), import("node:https")]).then(([http, https]) => ({
+      http: http.request,
+      https: https.request,
+    }))
+    : undefined;
+
+// Surfaced on first send instead, should a built-in ever fail to load.
+capturedNodeRequests?.catch(() => undefined);
+
+async function loadNodeRequest(protocol: string): Promise<NodeRequestFunction> {
+  const requests = await (capturedNodeRequests ??
+    Promise.all([import("node:http"), import("node:https")]).then(([http, https]) => ({
+      http: http.request,
+      https: https.request,
+    })));
+  return protocol === "https:" ? requests.https : requests.http;
+}
+
+function isInstance(value: unknown, constructor: unknown): boolean {
+  return IntrinsicReflectApply(FunctionHasInstance, constructor, [value]) as boolean;
+}
 const ObjectAssign = Object.assign;
 const ObjectCreate = Object.create;
 
@@ -208,12 +248,22 @@ async function normalizeRequestBody(
   init: RequestInit,
   headers: Headers,
 ): Promise<BodyInit | null> {
+  // The body's kind and type are read first, through captured primitives
+  // (a constructor's own Symbol.hasInstance is never consulted); a proxy body
+  // can still run code here, so the headers are checked after these reads and
+  // before the first header operation.
   const body = readOwnInitField(init, "body") ?? null;
-  if (body instanceof URLSearchParams && !hasHeader(headers, "content-type")) {
+  const isSearchParams = isInstance(body, NativeURLSearchParams);
+  const isBlob = !isSearchParams && isInstance(body, NativeBlob);
+  const blobType = isBlob ? IntrinsicReflectApply(BlobTypeGetter, body, []) as string : "";
+  const isFormData = !isSearchParams && !isBlob && NativeFormData !== undefined &&
+    isInstance(body, NativeFormData);
+  assertNativeRequestProcessing();
+  if (isSearchParams && !hasHeader(headers, "content-type")) {
     setHeader(headers, "content-type", "application/x-www-form-urlencoded;charset=UTF-8");
-  } else if (body instanceof Blob && body.type && !hasHeader(headers, "content-type")) {
-    setHeader(headers, "content-type", body.type);
-  } else if (typeof FormData !== "undefined" && body instanceof FormData) {
+  } else if (isBlob && blobType && !hasHeader(headers, "content-type")) {
+    setHeader(headers, "content-type", blobType);
+  } else if (isFormData) {
     // A string, read with the captured getter: converting a URL object would
     // call a patchable toString inside the constructor.
     const href = IntrinsicReflectApply(URLHrefGetter, url, []) as string;
@@ -322,9 +372,7 @@ export async function fetchWithPinnedAddresses(
   const setCookies = readSeparateSetCookies(requestHeaders);
   const signal = readOwnInitField(init, "signal") ?? undefined;
 
-  const transport = url.protocol === "https:"
-    ? await import("node:https")
-    : await import("node:http");
+  const sendRequest = await loadNodeRequest(url.protocol);
   const attempts = planPinnedConnectAttempts(addresses);
   const bodyIsReplayable = isReplayableRequestBody(body);
   let lastConnectError: unknown;
@@ -377,7 +425,7 @@ export async function fetchWithPinnedAddresses(
         // Same turn as the call: node:http processes the headers synchronously.
         assertNativeRequestProcessing();
         assertObjectPrototypeUnchanged();
-        const request = transport.request(requestOptions, async (message) => {
+        const request = sendRequest(requestOptions, async (message) => {
           responseMessage = message;
           try {
             const responseHeaders = copyResponseHeaders(message);
