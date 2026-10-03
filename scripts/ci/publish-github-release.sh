@@ -182,11 +182,10 @@ run_with_retry \
   create_draft_release
 incomplete_draft_created=true
 
-for asset in "${assets[@]}"; do
-  run_with_retry \
-    "GitHub release asset $(basename "$asset") upload" \
-    gh release upload "$tag" "$asset" --repo "$repo" --clobber
-done
+# GitHub CLI uploads the complete asset batch with five concurrent workers.
+run_with_retry \
+  "GitHub release assets upload" \
+  gh release upload "$tag" "${assets[@]}" --repo "$repo" --clobber
 incomplete_draft_created=false
 
 publish_args=(release edit "$tag" --repo "$repo" --draft=false)

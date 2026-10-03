@@ -34,6 +34,11 @@ import {
   createEvalModelAccessDeniedError,
   isEvalModelAccessDeniedError,
 } from "./model-access.ts";
+import {
+  assertNativeRequestProcessing,
+  createNativeRequestInit,
+  nativeFetchArguments,
+} from "#veryfront/platform/compat/http/native-request-init.ts";
 
 export * from "./agent-service/live-evals/index.ts";
 export * from "./agent-service/durable-run-canaries/index.ts";
@@ -680,12 +685,14 @@ function createRequestInit(
   const requestSignal = signal && timeoutSignal
     ? AbortSignal.any([signal, timeoutSignal])
     : signal ?? timeoutSignal;
-  return {
+  // The headers carry the run's bearer: a null-prototype init with every field
+  // its own, so no inherited getter or iterator reaches them.
+  return createNativeRequestInit(undefined, {
     method: "POST",
     headers: createHeaders(config),
     body: IntrinsicJSONStringify(body),
-    ...(requestSignal ? { signal: requestSignal } : {}),
-  };
+    signal: requestSignal,
+  });
 }
 
 function assertOptionalAgentServiceConfigString(
@@ -895,10 +902,12 @@ export function createAgentServiceEvalAdapter(
           ? { onProgress: (snapshot) => config.onProgress?.(snapshot, context) }
           : {}),
       };
-      const response = await requestFetch(
-        endpoint,
-        createRequestInit(config, body, context.signal),
-      );
+      const init = createRequestInit(config, body, context.signal);
+      assertNativeRequestProcessing();
+      // Indexed, not spread: spreading runs Array.prototype's iterator over a
+      // tuple that holds the credential-bearing init.
+      const fetchArguments = nativeFetchArguments(endpoint, init);
+      const response = await requestFetch(fetchArguments[0], fetchArguments[1]);
       const run = await parseAgUiSseResponse(response, parseOptions);
       const completed = response.ok && run.runError === null &&
         run.eventTypes.includes(agUiSseEventTypes.runFinished);

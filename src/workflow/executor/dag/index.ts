@@ -1225,33 +1225,16 @@ function createSeededSubWorkflowNodeStates(
   return { seededNodeStates, ownedNodeIds };
 }
 
-const LOOP_EXIT_REASONS: ReadonlySet<unknown> = new Set(["condition", "maxIterations", "error"]);
-
 /**
- * Whether a persisted state may hold loop output, whatever node now uses its id.
- * Callback updates can overwrite result keys with undefined, which durable JSON
- * omits, or replace every metadata value with user data. Step and sub-workflow
- * states record input provenance; loop states do not. Legacy composite output
- * keys child results by bare id, so fewer than three keys count only when their
- * values have the loop result shape.
+ * A callback can erase every loop result key before JSON persistence. Without
+ * input provenance, any object publication may therefore be old loop output.
+ * Recovery must corroborate composite publications using their retained tree.
  */
 function mayHoldLoopPublication(state: NodeState): boolean {
-  const { output } = state;
-  if (
-    Object.hasOwn(state, "input") || state._stepInputRecorded === true ||
-    state._subWorkflowInputParsed === true ||
-    typeof output !== "object" || output === null || Array.isArray(output)
-  ) return false;
-  const result = output as Record<string, unknown>;
-  // Preserve refusal when callbacks replace all metadata values with user data.
-  if (["exitReason", "iterations", "previousResults"].every((key) => Object.hasOwn(result, key))) {
-    return true;
-  }
-  return [
-    Object.hasOwn(result, "exitReason") && LOOP_EXIT_REASONS.has(result.exitReason),
-    Object.hasOwn(result, "iterations") && Number.isInteger(result.iterations),
-    Object.hasOwn(result, "previousResults") && Array.isArray(result.previousResults),
-  ].filter(Boolean).length >= 2;
+  return !Object.hasOwn(state, "input") && state._stepInputRecorded !== true &&
+    state._subWorkflowInputParsed !== true && state._waitInstanceId === undefined &&
+    typeof state.output === "object" &&
+    state.output !== null && !Array.isArray(state.output);
 }
 
 /** Follow only completed, owned composite paths retained by the checkpoint. */
@@ -1307,26 +1290,45 @@ function hasRetainedPublicationTree(
 }
 
 /** Corroborate every surviving value against current or inherited publications. */
-function corroboratesLegacyParallelPublication(
+function corroboratesLegacyCompositePublication(
   node: WorkflowNode,
   nodeStates: Readonly<Record<string, NodeState>>,
   ownerPath: string,
   resumeContext: Readonly<WorkflowContext>,
   stateOwner: string | undefined,
 ): boolean {
-  if (node.config.type !== "parallel") return false;
+  if (node.config.type !== "parallel" && node.config.type !== "branch") return false;
   const output = nodeStates[node.id]?.output;
   if (typeof output !== "object" || output === null || Array.isArray(output)) return false;
-  if (!hasRetainedPublicationTree(node.config.nodes, nodeStates, stateOwner)) return false;
+  const state = nodeStates[node.id]!;
+  const children = retainedPublicationChildren(node, state);
+  if (children === undefined || !hasRetainedPublicationTree(children, nodeStates, stateOwner)) {
+    return false;
+  }
+  let result = output as Record<string, unknown>;
+  if (node.config.type === "branch") {
+    if (children.length === 0) {
+      return isDeepStrictEqual(result, { branch: result.branch, skipped: true });
+    }
+    if (
+      typeof result.result !== "object" || result.result === null || Array.isArray(result.result)
+    ) {
+      return false;
+    }
+    if (Object.keys(result).some((key) => key !== "branch" && key !== "result")) return false;
+    result = result.result as Record<string, unknown>;
+  }
+  // An empty parallel has no retained execution evidence to distinguish it
+  // from a loop callback that erased every result key.
+  if (node.config.type === "parallel" && children.length === 0) return false;
   const publications = Object.create(null) as WorkflowContext;
   restorePublishedChildOutputs(
-    node.config.nodes,
+    children,
     nodeStates,
     publications,
     ownerPath,
     resumeContext,
   );
-  const result = output as Record<string, unknown>;
   const matched = new Set<string>();
   for (const [key, value] of Object.entries(publications)) {
     const aliases = [key, key.startsWith(`${node.id}/`) ? key.slice(node.id.length + 1) : key];
@@ -1349,11 +1351,11 @@ function corroboratesLegacyParallelPublication(
 }
 
 /**
- * Whether `nodeId` is a parallel whose loop-shaped output is corroborated by its
+ * Whether `nodeId` is a composite whose ambiguous output is corroborated by its
  * retained children. `stateOwner` is the owner path the retained states record:
  * `ownerPath` for owned rows, `undefined` for a fully ownerless legacy tree.
  */
-function hasLegacyParallelPublication(
+function hasLegacyCompositePublication(
   nodes: readonly WorkflowNode[],
   nodeId: string,
   nodeStates: Readonly<Record<string, NodeState>>,
@@ -1365,7 +1367,7 @@ function hasLegacyParallelPublication(
     const state = nodeStates[node.id];
     if (state?.status !== "completed" || state._subWorkflowOwnerPath !== stateOwner) continue;
     if (node.id === nodeId) {
-      return corroboratesLegacyParallelPublication(
+      return corroboratesLegacyCompositePublication(
         node,
         nodeStates,
         ownerPath,
@@ -1376,7 +1378,7 @@ function hasLegacyParallelPublication(
     const children = retainedPublicationChildren(node, state);
     if (
       children &&
-      hasLegacyParallelPublication(
+      hasLegacyCompositePublication(
         children,
         nodeId,
         nodeStates,
@@ -1423,7 +1425,7 @@ function assertNoLegacyLoopPublication(
     if (state._subWorkflowOwnerPath !== undefined) {
       if (
         state._subWorkflowOwnerPath === ownerPath &&
-        !hasLegacyParallelPublication(
+        !hasLegacyCompositePublication(
           nodes,
           nodeId,
           nodeStates,
@@ -1437,11 +1439,11 @@ function assertNoLegacyLoopPublication(
     // Retained child IDs identify removed producers when owner metadata is absent.
     // Older rows without that evidence may only use unclaimed legacy states;
     // root declarations and already-produced sibling records stay outside.
-    // A fully ownerless parallel stays restorable when its children corroborate it.
+    // A fully ownerless composite stays restorable when its children corroborate it.
     if (
       !scope.declaredNodeIds.has(nodeId) && !previouslyProducedNodeIds.has(nodeId) &&
       (recordedChildIds === undefined || recordedChildIds.includes(nodeId)) &&
-      !hasLegacyParallelPublication(
+      !hasLegacyCompositePublication(
         nodes,
         nodeId,
         nodeStates,
@@ -1470,7 +1472,7 @@ function restorePublishedChildOutputs(
       requireExactPublication && state?.status === "completed" &&
       (node.config.type === "loop" ||
         mayHoldLoopPublication(state) &&
-          !hasLegacyParallelPublication(
+          !hasLegacyCompositePublication(
             [node],
             node.id,
             nodeStates,

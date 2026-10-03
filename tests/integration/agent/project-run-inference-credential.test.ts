@@ -694,9 +694,11 @@ describe("project-run inference credential catalog", () => {
     };
     const OriginalHeaders = globalThis.Headers;
     const prototype = OriginalHeaders.prototype as unknown as Record<string, unknown>;
+    // `append` is left alone: native fetch calls it with the headers as
+    // `this`, so replacing it makes the call refuse instead (see
+    // tests/integration/security/native-fetch-processing.test.ts).
     const originals = {
       set: prototype.set as (this: Headers, name: string, value: string) => void,
-      append: prototype.append as (this: Headers, name: string, value: string) => void,
     };
     // Installed by project code before the run.
     globalThis.Headers = class extends OriginalHeaders {
@@ -709,10 +711,6 @@ describe("project-run inference credential catalog", () => {
       record([name, value]);
       return originals.set.call(this, name, value);
     };
-    prototype.append = function (this: Headers, name: string, value: string) {
-      record([name, value]);
-      return originals.append.call(this, name, value);
-    };
     let text: string;
     try {
       text = (await runWithProjectRunInferenceCredential(
@@ -722,7 +720,6 @@ describe("project-run inference credential catalog", () => {
     } finally {
       globalThis.Headers = OriginalHeaders;
       prototype.set = originals.set;
-      prototype.append = originals.append;
     }
 
     assertEquals(text, "Hello");

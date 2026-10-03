@@ -24,6 +24,10 @@ import {
   WorkerEgressBlockedError,
 } from "./worker-egress-guard.ts";
 import type { WorkerEgressFetch } from "./worker-egress-guard.ts";
+import {
+  HEADER_METHODS,
+  installCredentialProbes,
+} from "#veryfront/security/http/credential-probes.test-helpers.ts";
 
 function closeTestConnection(connection: Deno.Conn): void {
   try {
@@ -1120,5 +1124,159 @@ describe("worker-egress-guard guardedEgressFetch redirect handling", () => {
     await guardedEgressFetch(request, undefined, { fetchImpl });
     assertEquals(seenSignal instanceof AbortSignal, true);
     assertEquals(seenSignal, request.signal);
+  });
+});
+
+describe("worker-egress-guard guardedEgressFetch credential headers", () => {
+  const BEARER = "Bearer vf-egress-bearer-6f19";
+  // Mocks stand in for native fetch, so they read with the originals.
+  const headersGet = Headers.prototype.get;
+  const readHeader = (request: Request, name: string) =>
+    Reflect.apply(headersGet, request.headers, [name]) as string | null;
+  // Everything but Headers has/append, which native fetch calls with the
+  // headers as `this`; replacing those makes the guard refuse instead.
+  const sendableProbes = () =>
+    installCredentialProbes({
+      headerMethods: HEADER_METHODS.filter((name) => name !== "has" && name !== "append"),
+    });
+
+  it("sends a Request input and an init without a patched intrinsic seeing the bearer", async () => {
+    const seen: { authorization: string | null; method: string; body: string }[] = [];
+    const fetchImpl: WorkerEgressFetch = async (input, init) => {
+      const request = new Request(input, init);
+      seen.push({
+        authorization: readHeader(request, "authorization"),
+        method: request.method,
+        body: await request.text(),
+      });
+      return new Response("ok");
+    };
+    const requestInput = new Request("http://93.184.216.34/v1/messages", {
+      method: "POST",
+      headers: { authorization: BEARER },
+      body: '{"a":1}',
+    });
+    const initHeaders = new Headers({ authorization: BEARER });
+    const probes = sendableProbes();
+    try {
+      await guardedEgressFetch(requestInput, { redirect: "error" }, { fetchImpl });
+      await guardedEgressFetch(
+        "http://93.184.216.34/v1/messages",
+        { method: "PUT", headers: initHeaders, body: '{"b":2}', redirect: "manual" },
+        { fetchImpl },
+      );
+    } finally {
+      probes.restore();
+    }
+
+    assertEquals(probes.saw(BEARER), false);
+    assertEquals(seen, [
+      { authorization: BEARER, method: "POST", body: '{"a":1}' },
+      { authorization: BEARER, method: "PUT", body: '{"b":2}' },
+    ]);
+  });
+
+  it("follows redirects without a patched intrinsic seeing the bearer", async () => {
+    const hops: { url: string; authorization: string | null }[] = [];
+    const fetchImpl: WorkerEgressFetch = (input, init) => {
+      const request = new Request(input, init);
+      hops.push({ url: request.url, authorization: readHeader(request, "authorization") });
+      if (request.url === "http://93.184.216.34/a") {
+        return Promise.resolve(
+          new Response(null, { status: 302, headers: { location: "/b" } }),
+        );
+      }
+      if (request.url === "http://93.184.216.34/b") {
+        return Promise.resolve(
+          new Response(null, { status: 307, headers: { location: "http://93.184.216.35/c" } }),
+        );
+      }
+      return Promise.resolve(new Response("done"));
+    };
+    const probes = sendableProbes();
+    let response: Response;
+    try {
+      response = await guardedEgressFetch(
+        "http://93.184.216.34/a",
+        { headers: { authorization: BEARER } },
+        { fetchImpl },
+      );
+    } finally {
+      probes.restore();
+    }
+
+    assertEquals(probes.saw(BEARER), false);
+    assertEquals(await response.text(), "done");
+    assertEquals(hops, [
+      { url: "http://93.184.216.34/a", authorization: BEARER },
+      { url: "http://93.184.216.34/b", authorization: BEARER },
+      // Cross-origin: the credential is dropped, as the platform fetch does.
+      { url: "http://93.184.216.35/c", authorization: null },
+    ]);
+  });
+
+  it("keeps each set-cookie field separate on the wire request", async () => {
+    const expiring = "a=1; Expires=Wed, 01 Oct 2026 07:28:00 GMT";
+    const headers = new Headers({ authorization: BEARER });
+    headers.append("set-cookie", expiring);
+    headers.append("set-cookie", "b=2; Path=/");
+    let sent: { cookies: string[]; authorization: string | null } | undefined;
+    const fetchImpl: WorkerEgressFetch = (input, init) => {
+      const request = new Request(input, init);
+      sent = {
+        cookies: request.headers.getSetCookie(),
+        authorization: request.headers.get("authorization"),
+      };
+      return Promise.resolve(new Response("ok"));
+    };
+
+    await guardedEgressFetch("http://93.184.216.34/v1", { headers }, { fetchImpl });
+
+    assertEquals(sent, { cookies: [expiring, "b=2; Path=/"], authorization: BEARER });
+  });
+
+  it("keeps the caller's cancel signal on the wire request", async () => {
+    const caller = new AbortController();
+    let wireSignal: AbortSignal | undefined;
+    const fetchImpl: WorkerEgressFetch = (input, init) => {
+      wireSignal = new Request(input, init).signal;
+      return Promise.resolve(new Response("ok"));
+    };
+
+    await guardedEgressFetch(
+      "http://93.184.216.34/v1",
+      { headers: { authorization: BEARER }, signal: caller.signal },
+      { fetchImpl },
+    );
+
+    assertEquals(wireSignal?.aborted, false);
+    caller.abort();
+    assertEquals(wireSignal?.aborted, true);
+  });
+
+  it("refuses to send once Headers has or append was replaced", async () => {
+    let transportCalls = 0;
+    const fetchImpl: WorkerEgressFetch = () => {
+      transportCalls++;
+      return Promise.resolve(new Response("ok"));
+    };
+    const probes = installCredentialProbes();
+    try {
+      await assertRejects(
+        () =>
+          guardedEgressFetch(
+            "http://93.184.216.34/v1",
+            { method: "POST", headers: { authorization: BEARER }, body: "{}" },
+            { fetchImpl },
+          ),
+        TypeError,
+        "Refused a credential-bearing request",
+      );
+    } finally {
+      probes.restore();
+    }
+
+    assertEquals(transportCalls, 0);
+    assertEquals(probes.saw(BEARER), false);
   });
 });

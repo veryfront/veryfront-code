@@ -8,8 +8,32 @@ import type { ClientRequest, IncomingMessage, RequestOptions } from "node:http";
 import type { Readable } from "node:stream";
 import { VERSION } from "#veryfront/utils/version-constant.ts";
 import { isErrorAcrossRealms } from "../error-introspection.ts";
+import {
+  copyNativeHeaders,
+  createNativeRequestInit,
+  readOwnInitField,
+  readSeparateSetCookies,
+  toNativeHeaderRecord,
+} from "./native-request-init.ts";
 
 const NULL_BODY_STATUSES = new Set([204, 205, 304]);
+// The outgoing headers carry the caller's credentials, so they are only ever
+// touched through methods captured before project code could replace them.
+const IntrinsicReflectApply = Reflect.apply;
+const NativeRequest = Request;
+const HeadersHas = Headers.prototype.has;
+const HeadersSet = Headers.prototype.set;
+const RequestHeadersGetter = Object.getOwnPropertyDescriptor(NativeRequest.prototype, "headers")!
+  .get!;
+const RequestArrayBuffer = NativeRequest.prototype.arrayBuffer;
+
+function hasHeader(headers: Headers, name: string): boolean {
+  return IntrinsicReflectApply(HeadersHas, headers, [name]) as boolean;
+}
+
+function setHeader(headers: Headers, name: string, value: string): void {
+  IntrinsicReflectApply(HeadersSet, headers, [name, value]);
+}
 
 /**
  * Client identity for guarded egress, standing in for the runtime-supplied
@@ -59,19 +83,22 @@ export function applyRuntimeDefaultRequestHeaders(
   headers: Headers,
   mode?: RequestMode,
 ): Headers {
-  if (!headers.has("accept")) headers.set("accept", "*/*");
-  if (!headers.has("accept-language")) headers.set("accept-language", "*");
-  if (!headers.has("accept-encoding")) {
+  if (!hasHeader(headers, "accept")) setHeader(headers, "accept", "*/*");
+  if (!hasHeader(headers, "accept-language")) setHeader(headers, "accept-language", "*");
+  if (!hasHeader(headers, "accept-encoding")) {
     // A compressed byte range is ambiguous to decode, so the runtime asks for
     // `identity` whenever the caller requested a range.
-    headers.set(
+    setHeader(
+      headers,
       "accept-encoding",
-      headers.has("range") ? "identity" : DEFAULT_ACCEPT_ENCODING,
+      hasHeader(headers, "range") ? "identity" : DEFAULT_ACCEPT_ENCODING,
     );
   }
   // Fetch metadata reports the request mode; it is not always `cors`.
-  if (!headers.has("sec-fetch-mode")) headers.set("sec-fetch-mode", mode ?? "cors");
-  if (!headers.has("user-agent")) headers.set("user-agent", DEFAULT_OUTBOUND_USER_AGENT);
+  if (!hasHeader(headers, "sec-fetch-mode")) setHeader(headers, "sec-fetch-mode", mode ?? "cors");
+  if (!hasHeader(headers, "user-agent")) {
+    setHeader(headers, "user-agent", DEFAULT_OUTBOUND_USER_AGENT);
+  }
   return headers;
 }
 
@@ -176,20 +203,29 @@ async function normalizeRequestBody(
   init: RequestInit,
   headers: Headers,
 ): Promise<BodyInit | null> {
-  const body = init.body ?? null;
-  if (body instanceof URLSearchParams && !headers.has("content-type")) {
-    headers.set("content-type", "application/x-www-form-urlencoded;charset=UTF-8");
-  } else if (body instanceof Blob && body.type && !headers.has("content-type")) {
-    headers.set("content-type", body.type);
+  const body = readOwnInitField(init, "body") ?? null;
+  if (body instanceof URLSearchParams && !hasHeader(headers, "content-type")) {
+    setHeader(headers, "content-type", "application/x-www-form-urlencoded;charset=UTF-8");
+  } else if (body instanceof Blob && body.type && !hasHeader(headers, "content-type")) {
+    setHeader(headers, "content-type", body.type);
   } else if (typeof FormData !== "undefined" && body instanceof FormData) {
-    const normalized = new Request(url, {
-      method: init.method ?? "POST",
-      headers,
-      body,
-    });
-    const normalizedHeaders = new Headers(normalized.headers);
-    for (const [name, value] of normalizedHeaders) headers.set(name, value);
-    return new Uint8Array(await normalized.arrayBuffer());
+    const normalized = new NativeRequest(
+      url,
+      createNativeRequestInit(undefined, {
+        method: readOwnInitField(init, "method") ?? "POST",
+        headers,
+        body,
+      }),
+    );
+    const normalizedHeaders = toNativeHeaderRecord(
+      IntrinsicReflectApply(RequestHeadersGetter, normalized, []) as Headers,
+    );
+    // The multipart encoder adds only the content type, with its boundary.
+    const contentType = normalizedHeaders["content-type"];
+    if (contentType !== undefined) setHeader(headers, "content-type", contentType);
+    return new Uint8Array(
+      await (IntrinsicReflectApply(RequestArrayBuffer, normalized, []) as Promise<ArrayBuffer>),
+    );
   }
   return body;
 }
@@ -261,11 +297,15 @@ export async function fetchWithPinnedAddresses(
   if (addresses.length === 0) {
     throw new Error(`No validated addresses are available for ${url.host}`);
   }
-  const headers = applyRuntimeDefaultRequestHeaders(new Headers(init.headers), init.mode);
+  const headers = applyRuntimeDefaultRequestHeaders(
+    copyNativeHeaders(readOwnInitField(init, "headers")),
+    readOwnInitField(init, "mode"),
+  );
   const body = await normalizeRequestBody(url, init, headers);
-  const method = (init.method ?? "GET").toUpperCase();
-  const requestHeaders: Record<string, string> = {};
-  for (const [name, value] of headers) requestHeaders[name] = value;
+  const method = (readOwnInitField(init, "method") ?? "GET").toUpperCase();
+  const requestHeaders = toNativeHeaderRecord(headers);
+  const setCookies = readSeparateSetCookies(requestHeaders);
+  const signal = readOwnInitField(init, "signal") ?? undefined;
 
   const transport = url.protocol === "https:"
     ? await import("node:https")
@@ -290,7 +330,12 @@ export async function fetchWithPinnedAddresses(
       port: url.port || (url.protocol === "https:" ? 443 : 80),
       path: `${url.pathname}${url.search}`,
       method,
-      headers: { ...requestHeaders, host: url.host },
+      headers: {
+        ...requestHeaders,
+        // node:http sends each element of an array value as its own field.
+        ...(setCookies === undefined ? {} : { "set-cookie": [...setCookies] }),
+        host: url.host,
+      },
 
       ...(url.protocol === "https:"
         ? {
@@ -305,7 +350,7 @@ export async function fetchWithPinnedAddresses(
       return await new Promise<Response>((resolve, reject) => {
         let settled = false;
         let responseMessage: IncomingMessage | undefined;
-        const cleanupAbortListener = () => init.signal?.removeEventListener("abort", abort);
+        const cleanupAbortListener = () => signal?.removeEventListener("abort", abort);
         const rejectBeforeResponse = (error: unknown) => {
           cleanupAbortListener();
           reject(error);
@@ -352,14 +397,14 @@ export async function fetchWithPinnedAddresses(
         });
 
         const abort = () => {
-          const reason = init.signal?.reason ??
+          const reason = signal?.reason ??
             new DOMException("The operation was aborted", "AbortError");
           responseMessage?.destroy(isErrorAcrossRealms(reason) ? reason : undefined);
           request.destroy(isErrorAcrossRealms(reason) ? reason : undefined);
           if (!settled) rejectBeforeResponse(reason);
         };
-        init.signal?.addEventListener("abort", abort, { once: true });
-        if (init.signal?.aborted) {
+        signal?.addEventListener("abort", abort, { once: true });
+        if (signal?.aborted) {
           abort();
           return;
         }
@@ -383,7 +428,7 @@ export async function fetchWithPinnedAddresses(
       lastConnectError = error;
       const hasAnotherAddress = attemptIndex < attempts.length - 1;
       if (
-        !hasAnotherAddress || !bodyIsReplayable || init.signal?.aborted ||
+        !hasAnotherAddress || !bodyIsReplayable || signal?.aborted ||
         !isRetriableConnectFailure(error)
       ) {
         throw error;

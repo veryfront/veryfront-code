@@ -14,6 +14,7 @@ import {
   INFERENCE_POLICY_DENIED_ERROR,
   MODEL_NOT_PERMITTED_ERROR,
   MODEL_UNSUPPORTED_ASSISTANT_PREFILL_ERROR,
+  OUTPUT_SCHEMA_INVALID_ERROR,
   OUTPUT_SCHEMA_NOT_CLOSED_ERROR,
   PROJECT_SCHEMA_ERROR,
   PROVIDER_OUTPUT_TRUNCATED_ERROR,
@@ -446,6 +447,11 @@ function parseKnownProviderBody(
     const classified = classifyInvalidRequestMessage(body.message);
     if (classified) {
       return classified;
+    }
+    // OpenAI uses invalid_json_schema for output formats, while invalid tool
+    // schemas use invalid_function_parameters. Keep the upstream text private.
+    if (body.code === "invalid_json_schema") {
+      return OUTPUT_SCHEMA_INVALID_ERROR;
     }
   }
 
