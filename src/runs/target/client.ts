@@ -235,6 +235,9 @@ function buildRequest(
     headers,
     body: input.body === undefined ? undefined : JSON.stringify(input.body),
     signal: options.signal,
+    // Fetch strips only `Authorization` on a cross-origin redirect, so following one
+    // could hand `X-API-Key` to another origin.
+    redirect: credential ? "error" : "follow",
   });
 }
 

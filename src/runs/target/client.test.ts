@@ -209,6 +209,29 @@ describe("Runs target SDK", () => {
     assertEquals(anonymous.requests[0]?.headers.get("X-API-Key"), null);
   });
 
+  it("refuses to follow a redirect that would carry an API key to another origin", async () => {
+    const leaked: (string | null)[] = [];
+    const target = Deno.serve({ port: 0, hostname: "127.0.0.1", onListen() {} }, (request) => {
+      leaked.push(request.headers.get("X-API-Key"));
+      return Response.json({});
+    });
+    const api = Deno.serve(
+      { port: 0, hostname: "127.0.0.1", onListen() {} },
+      () => Response.redirect(`http://127.0.0.1:${target.addr.port}/`, 307),
+    );
+    try {
+      const sdk = createRunsSdk({
+        baseUrl: `http://127.0.0.1:${api.addr.port}`,
+        transport: fetch,
+        credential: { apiKey: "<API_KEY>" },
+      });
+      await assertRejects(() => sdk.getRun({ path: { run_id: RUN_ID } }));
+      assertEquals(leaked, []);
+    } finally {
+      await Promise.all([api.shutdown(), target.shutdown()]);
+    }
+  });
+
   it("passes the abort signal to the transport", async () => {
     const { sdk, requests } = sdkWith([fixtureResponse("getRun")]);
     const controller = new AbortController();
