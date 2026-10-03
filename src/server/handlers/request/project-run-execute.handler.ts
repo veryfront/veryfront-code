@@ -26,6 +26,7 @@ import {
   resolveHostOwnedSourceApiBaseUrl,
 } from "#veryfront/config/host-api-base.ts";
 import {
+  addAbortSignalListenerOnce,
   isAbortSignalAborted,
   removeAbortSignalListener,
 } from "#veryfront/platform/compat/abort-signal.ts";
@@ -1586,17 +1587,47 @@ async function awaitRunPauseDecision(
     (pollingStopped !== undefined && isAbortSignalAborted(pollingStopped));
   for (let round = 1; !ended(); round++) {
     const decision = await acknowledge();
-    if (decision !== undefined) return decision;
+    // A decision that arrives after the wait ended answers nobody: the request
+    // already reported the hold, so even a continue must not release the run.
     if (ended()) break;
+    if (decision !== undefined) return decision;
     // An unknown reply may hide a committed stop. Hold the durable boundary until
     // the current authority explicitly permits continuation or cancellation ends it.
     serverLogger.warn("[project-run-execute] Pause decision unknown; holding the boundary", {
       runId,
       round,
     });
-    await deps.sleep(WORKFLOW_PAUSE_CHECK_BACKOFF_MS);
+    await sleepUntilAborted(
+      deps.sleep,
+      WORKFLOW_PAUSE_CHECK_BACKOFF_MS,
+      pollingStopped === undefined ? [signal] : [signal, pollingStopped],
+    );
   }
   return true;
+}
+
+/** Sleep that ends early once any of the signals aborts. */
+async function sleepUntilAborted(
+  sleep: (ms: number) => Promise<void>,
+  ms: number,
+  signals: readonly AbortSignal[],
+): Promise<void> {
+  let wake: (() => void) | undefined;
+  const aborted = new Promise<void>((resolve) => {
+    wake = () => resolve();
+  });
+  const onAbort = () => wake?.();
+  for (const signal of signals) {
+    if (isAbortSignalAborted(signal)) return;
+  }
+  for (const signal of signals) {
+    addAbortSignalListenerOnce(signal, onAbort);
+  }
+  try {
+    await Promise.race([sleep(ms), aborted]);
+  } finally {
+    for (const signal of signals) removeAbortSignalListener(signal, onAbort);
+  }
 }
 
 function isRecoverableManualPauseBoundary(

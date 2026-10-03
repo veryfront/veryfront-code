@@ -10265,6 +10265,82 @@ describe("server/handlers/request/project-run-execute.handler manual pause (#258
     assertEquals((await backend.getRun(runId))?.status, "waiting");
   });
 
+  it("holds the boundary when a continue decision arrives after a timed-out manual resume answered", async () => {
+    const backend = new SharedMemoryBackend();
+    const calls: string[] = [];
+    const definition = threeSteps(calls);
+    let resumeAttempts = 0;
+    let deferring = false;
+    let answerLate: ((response: Response) => void) | undefined;
+    await withMockFetch(() => {
+      if (!deferring) return Promise.resolve(Response.json({ stop: true }));
+      return new Promise<Response>((resolve) => {
+        answerLate = resolve;
+      });
+    }, async () => {
+      await dispatch(createHandler(backend, definition));
+      deferring = true;
+      const resumed = await dispatch(
+        createHandler(backend, definition, {
+          workflowResumeTimeoutMs: 20,
+          onResume: () => {
+            resumeAttempts++;
+          },
+        }),
+        { type: "manual" },
+      );
+      assertEquals(resumed.status, "waiting");
+      assertExists(answerLate);
+      // The continue decision lands only after the request has reported the hold.
+      answerLate(Response.json({ stop: false }));
+      await delay(100);
+    });
+    assertEquals(resumeAttempts, 0);
+    assertEquals(calls, ["first"]);
+    assertEquals((await backend.getRun(runId))?.status, "waiting");
+  });
+
+  it("wakes from the unknown pause decision backoff when the request is cancelled", async () => {
+    const backend = new SharedMemoryBackend();
+    const calls: string[] = [];
+    const controller = new AbortController();
+    let releaseBackoff: (() => void) | undefined;
+    let requests = 0;
+    const sleep = (ms: number): Promise<void> => {
+      if (ms < 30_000) return delay(Math.min(ms, 10));
+      // The backoff never ends on its own; only cancellation can end the wait.
+      controller.abort(new Error("run cancelled"));
+      return new Promise<void>((resolve) => {
+        releaseBackoff = resolve;
+      });
+    };
+    try {
+      await withMockFetch(() => {
+        requests++;
+        return Promise.resolve(Response.json({ stop: true }, { status: 401 }));
+      }, async () => {
+        let guard: ReturnType<typeof setTimeout> | undefined;
+        const outcome = await Promise.race([
+          dispatch(
+            createHandler(backend, threeSteps(calls), { sleep }),
+            undefined,
+            controller.signal,
+          ),
+          new Promise<"backoff not woken">((resolve) => {
+            guard = setTimeout(() => resolve("backoff not woken"), 2_000);
+          }),
+        ]).finally(() => clearTimeout(guard));
+        assertNotEquals(outcome, "backoff not woken");
+        assertEquals((outcome as Record<string, unknown>).success, false);
+      });
+    } finally {
+      releaseBackoff?.();
+    }
+    assertExists(releaseBackoff);
+    assert(requests > 0);
+    assertEquals(calls, ["first"]);
+  });
+
   it("refuses manual resume without a capability instead of releasing the boundary", async () => {
     const backend = new SharedMemoryBackend();
     const calls: string[] = [];
