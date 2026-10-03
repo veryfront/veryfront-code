@@ -11,7 +11,12 @@ import { createRuntimeAgentStreamResponse } from "./run-stream.ts";
 describe("agent stop acknowledgement", () => {
   it("retires failed setup without admitting a phantom producer", async () => {
     const sessions = new AgentRunSessionManager();
-    const runtimeAgent = agent({ id: "setup-stop", model: "anthropic/setup-stop", skills: false });
+    const runtimeAgent = agent({
+      id: "setup-stop",
+      system: "Test producer settlement",
+      model: "anthropic/setup-stop",
+      skills: false,
+    });
     const input = {
       runId: "run_setup_stop",
       threadId: crypto.randomUUID(),
