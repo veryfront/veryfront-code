@@ -460,7 +460,7 @@
         },
         "x-contract-status": "proposed",
         "x-source-operation": "GET /projects/{project_reference}/runs",
-        "x-current-description": "Lists project runs that your credentials permit you to read.\n\nFilter by `status`, `kind`, `trigger_kind`, `target`, or `workflow_id`. Each of these filters accepts comma-separated values, repeated parameters, or both. Values within a filter use OR; different filters use AND. Use `schedule_id` for the runs one schedule fired, of every kind. Pagination retains the selected filters.\n\nAn unknown filter value returns a `400` validation-failed error that identifies the value. Use `root_only=true` for top-level runs or `parent_run_id` for a run’s direct children. These two filters cannot be combined.",
+        "x-current-description": "Lists project runs that your credentials permit you to read.\n\nFilter by `status`, `kind`, `trigger_kind`, `target`, or `workflow_id`. Each of these filters accepts comma-separated values, repeated parameters, or both. Values within a filter use OR; different filters use AND. Use `schedule_id` for the runs one schedule fired, of every kind. Pagination retains the selected filters.\n\nAn unknown filter value returns a `400` validation-failed error that identifies the value. Use `root_only=true` for top-level runs or `parent_run_id` for a run\u2019s direct children. These two filters cannot be combined.",
         "x-change-refs": [
           "C01",
           "C72",
@@ -518,7 +518,7 @@
           "Run resource"
         ],
         "summary": "Create run",
-        "description": "Create run.\n\n- 202 means the run was accepted; it can remain pending until an executor is available.\n- Use a project API key or user token for a root run; child creation requires the parent’s execution credential and run.child_runs.create permission.\n- trigger identifies the authenticated user or credential for a direct run, or the parent execution definition for a child; parent_run_id identifies that exact execution.\n- source selects a saved definition in the create request only; the response returns the resolved target and server-derived trigger. Manual invocation records the authenticated user or credential as trigger.\n- Retry with the same Idempotency-Key and payload to receive the original response; a changed payload with the same key returns 409.\n- Create a child with parent_run_id and one verified invocation reference: node_id for a workflow node, or tool_call_id for an agent tool call; they are mutually exclusive and require parent_run_id. Verify correlation against the authenticated parent execution. Task parents use the existing durable invocation identity and Idempotency-Key. Derive trigger from the parent target; reject wrong parent-type correlation and cycles.",
+        "description": "Create run.\n\n- 202 means the run was accepted; it can remain pending until an executor is available.\n- Use a project API key or user token for a root run; child creation requires the parent\u2019s execution credential and run.child_runs.create permission.\n- trigger identifies the authenticated user or credential for a direct run, or the parent execution definition for a child; parent_run_id identifies that exact execution.\n- source selects a saved definition in the create request only; the response returns the resolved target and server-derived trigger. Manual invocation records the authenticated user or credential as trigger.\n- Retry with the same Idempotency-Key and payload to receive the original response; a changed payload with the same key returns 409.\n- Create a child with parent_run_id and one verified invocation reference: node_id for a workflow node, or tool_call_id for an agent tool call; they are mutually exclusive and require parent_run_id. Verify correlation against the authenticated parent execution. Task parents use the existing durable invocation identity and Idempotency-Key. Derive trigger from the parent target; reject wrong parent-type correlation and cycles.",
         "requestBody": {
           "required": true,
           "content": {
@@ -1189,7 +1189,7 @@
         },
         "x-behavior": [
           "202 means the run was accepted; it can remain pending until an executor is available.",
-          "Use a project API key or user token for a root run; child creation requires the parent’s execution credential and run.child_runs.create permission.",
+          "Use a project API key or user token for a root run; child creation requires the parent\u2019s execution credential and run.child_runs.create permission.",
           "trigger identifies the authenticated user or credential for a direct run, or the parent execution definition for a child; parent_run_id identifies that exact execution.",
           "source selects a saved definition in the create request only; the response returns the resolved target and server-derived trigger. Manual invocation records the authenticated user or credential as trigger.",
           "Retry with the same Idempotency-Key and payload to receive the original response; a changed payload with the same key returns 409.",
@@ -3218,7 +3218,7 @@
         },
         "x-contract-status": "proposed",
         "x-source-operation": "GET /projects/{project_reference}/runs",
-        "x-current-description": "Lists project runs that your credentials permit you to read.\n\nFilter by `status`, `kind`, `trigger_kind`, `target`, or `workflow_id`. Each of these filters accepts comma-separated values, repeated parameters, or both. Values within a filter use OR; different filters use AND. Use `schedule_id` for the runs one schedule fired, of every kind. Pagination retains the selected filters.\n\nAn unknown filter value returns a `400` validation-failed error that identifies the value. Use `root_only=true` for top-level runs or `parent_run_id` for a run’s direct children. These two filters cannot be combined.",
+        "x-current-description": "Lists project runs that your credentials permit you to read.\n\nFilter by `status`, `kind`, `trigger_kind`, `target`, or `workflow_id`. Each of these filters accepts comma-separated values, repeated parameters, or both. Values within a filter use OR; different filters use AND. Use `schedule_id` for the runs one schedule fired, of every kind. Pagination retains the selected filters.\n\nAn unknown filter value returns a `400` validation-failed error that identifies the value. Use `root_only=true` for top-level runs or `parent_run_id` for a run\u2019s direct children. These two filters cannot be combined.",
         "x-change-refs": [
           "C69",
           "C72",
@@ -3829,7 +3829,7 @@
           {
             "schema": {
               "type": "string",
-              "description": "The previous page’s `page_info.next` event ID, excluded from the next page. With `sort_order=asc`, returns larger IDs; with `sort_order=desc`, returns smaller IDs. If omitted, starts at the oldest event for ascending order or the newest for descending order."
+              "description": "The previous page\u2019s `page_info.next` event ID, excluded from the next page. With `sort_order=asc`, returns larger IDs; with `sort_order=desc`, returns smaller IDs. If omitted, starts at the oldest event for ascending order or the newest for descending order."
             },
             "required": false,
             "name": "cursor",
@@ -4153,7 +4153,7 @@
         },
         "x-contract-status": "proposed",
         "x-source-operation": "GET /runs/{run_id}/events",
-        "x-current-description": "Lists a run’s events in `event_id` order. Each event includes its typed span envelope.\n\n**Visibility:** Editors receive the full diagnostic payload. Viewers receive the sanitized public representation. Opaque provider replay blocks are always redacted.\n\n**Pagination:** Each page contains the first events in the requested order, up to `limit`, that fit within 10 MiB of serialized data. If the first event exceeds that size, the page returns it alone. Use `page_info.next` to retrieve the next page.\n\n**Filters:** All filters use AND. The `search`, `span_id`, and `turn_id` filters evaluate the payload and envelope visible to the caller. With `include_descendants=true`, the response interleaves events from descendant runs that you can read.\n\n**Task and workflow runs without stored events:** The response is a snapshot derived from the run’s current state, not a stored log. Stored and derived events are never mixed in one run. Each derived event has a fixed `event_id`: `RUN_STARTED` = 1, `STEP_STARTED` = 2, `RUN_LOG_CAPTURED` = 3, `STEP_FINISHED` = 4, and the terminal `RUN_FINISHED` or `RUN_ERROR` = 5. An event that does not apply leaves its id unused, so a cursor stays valid as the run progresses. The started events appear once `started_at` is set, with `status: running` and `created_at` equal to `started_at`. The log and step-end events appear only when the run is terminal. The step end is always `STEP_FINISHED`, and its `status` reports `completed`, `failed`, or `cancelled`, so a failed or cancelled run has exactly one `RUN_ERROR`. A pending run has no events. A run cancelled before it started has only its terminal event. These ids replaced position-based ids once, at deploy: a cursor saved into a derived lifecycle before then should restart from the beginning of that run.\n\nUse [`GET /runs/{run_id}/events/summary`](https://veryfront.com/docs/cloud/rest/api-reference/runs/summarize-run-events) to count the same events with the same filters. Responses are private and must not be cached (`no-store`).",
+        "x-current-description": "Lists a run\u2019s events in `event_id` order. Each event includes its typed span envelope.\n\n**Visibility:** Editors receive the full diagnostic payload. Viewers receive the sanitized public representation. Opaque provider replay blocks are always redacted.\n\n**Pagination:** Each page contains the first events in the requested order, up to `limit`, that fit within 10 MiB of serialized data. If the first event exceeds that size, the page returns it alone. Use `page_info.next` to retrieve the next page.\n\n**Filters:** All filters use AND. The `search`, `span_id`, and `turn_id` filters evaluate the payload and envelope visible to the caller. With `include_descendants=true`, the response interleaves events from descendant runs that you can read.\n\n**Task and workflow runs without stored events:** The response is a snapshot derived from the run\u2019s current state, not a stored log. Stored and derived events are never mixed in one run. Each derived event has a fixed `event_id`: `RUN_STARTED` = 1, `STEP_STARTED` = 2, `RUN_LOG_CAPTURED` = 3, `STEP_FINISHED` = 4, and the terminal `RUN_FINISHED` or `RUN_ERROR` = 5. An event that does not apply leaves its id unused, so a cursor stays valid as the run progresses. The started events appear once `started_at` is set, with `status: running` and `created_at` equal to `started_at`. The log and step-end events appear only when the run is terminal. The step end is always `STEP_FINISHED`, and its `status` reports `completed`, `failed`, or `cancelled`, so a failed or cancelled run has exactly one `RUN_ERROR`. A pending run has no events. A run cancelled before it started has only its terminal event. These ids replaced position-based ids once, at deploy: a cursor saved into a derived lifecycle before then should restart from the beginning of that run.\n\nUse [`GET /runs/{run_id}/events/summary`](https://veryfront.com/docs/cloud/rest/api-reference/runs/summarize-run-events) to count the same events with the same filters. Responses are private and must not be cached (`no-store`).",
         "x-change-refs": [
           "C72",
           "C73",
@@ -5072,7 +5072,7 @@
         },
         "x-contract-status": "proposed",
         "x-source-operation": "GET /runs/{run_id}/events/summary",
-        "x-current-description": "Counts events without returning their payloads. The response includes totals, error counts, first and last event IDs, timestamps, counts by event class and type, and a time histogram.\n\nEvent-type counts use canonical names, including normalized legacy names. Results are ordered by count descending, then by name. Timestamps use whole milliseconds.\n\n**Histogram:** `buckets` accepts 1 to 500 slices and defaults to 60. Slices cover `[first_event_at, last_event_at + 1 ms)`, use half-open `[start, end)` boundaries, and differ in width by at most 1 ms. Each event belongs to one slice. A slice’s boundaries can be passed directly to the event-list endpoint.\n\nThe slice count cannot exceed the time span in milliseconds. A 10 ms span therefore has at most 10 slices. When no events match, `buckets` is empty.\n\n**Filters:** `event_class`, `event_type`, `is_error`, `start`, `end`, `span_id`, `turn_id`, and `search` use the same values and semantics as [`GET /runs/{run_id}/events`](https://veryfront.com/docs/cloud/rest/api-reference/runs/list-run-events). Filters apply to every aggregate. With `include_descendants=true`, the summary counts the same runs as the event list.\n\nFiltering by `search`, `span_id`, or `turn_id` checks each candidate event’s caller-visible payload and envelope. These queries scan candidate rows rather than using database-only aggregation.\n\n**Limits:** This endpoint does not paginate. It rejects `cursor`, `sort_order`, `limit`, and the list-only `errors_only` parameter. Viewer access is sufficient. Responses are private and must not be cached (`no-store`).",
+        "x-current-description": "Counts events without returning their payloads. The response includes totals, error counts, first and last event IDs, timestamps, counts by event class and type, and a time histogram.\n\nEvent-type counts use canonical names, including normalized legacy names. Results are ordered by count descending, then by name. Timestamps use whole milliseconds.\n\n**Histogram:** `buckets` accepts 1\u2013500 slices and defaults to 60. Slices cover `[first_event_at, last_event_at + 1 ms)`, use half-open `[start, end)` boundaries, and differ in width by at most 1 ms. Each event belongs to one slice. A slice\u2019s boundaries can be passed directly to the event-list endpoint.\n\nThe slice count cannot exceed the time span in milliseconds. A 10 ms span therefore has at most 10 slices. When no events match, `buckets` is empty.\n\n**Filters:** `event_class`, `event_type`, `is_error`, `start`, `end`, `span_id`, `turn_id`, and `search` use the same values and semantics as [`GET /runs/{run_id}/events`](https://veryfront.com/docs/cloud/rest/api-reference/runs/list-run-events). Filters apply to every aggregate. With `include_descendants=true`, the summary counts the same runs as the event list.\n\nFiltering by `search`, `span_id`, or `turn_id` checks each candidate event\u2019s caller-visible payload and envelope. These queries scan candidate rows rather than using database-only aggregation.\n\n**Limits:** This endpoint does not paginate. It rejects `cursor`, `sort_order`, `limit`, and the list-only `errors_only` parameter. Viewer access is sufficient. Responses are private and must not be cached (`no-store`).",
         "x-change-refs": [
           "C72",
           "C73",
@@ -9087,7 +9087,7 @@
           }
         ],
         "summary": "Create run event token",
-        "description": "Create run event token.\n\n- The parent execution credential may mint append-only authority for the direct child identified by run_id.\n- The token cannot read events, finalize, heartbeat or create children.",
+        "description": "Create run event token.\n\n- The parent execution credential, or an event token delegated under its execution generation, may mint append-only authority for the direct child identified by run_id.\n- The token may mint event tokens for its own direct children while the root execution generation is current. It cannot read events, finalize, heartbeat or create children.",
         "parameters": [
           {
             "name": "run_id",
@@ -9282,7 +9282,7 @@
           "C90",
           "C91"
         ],
-        "x-runtime-authority": "Credential identifies the executing parent; path identifies the direct child. Check parent and child generations, project, expiry, and runtime permission. Mint event-append-only authority for the child.",
+        "x-runtime-authority": "Credential identifies the executing parent; path identifies the direct child. Check parent and child generations, project, expiry, and runtime permission; a delegated credential acts only while the root execution generation it carries is current. Mint event-append-only authority for the child under that root generation.",
         "x-implementation-status": "missing",
         "x-design-decisions": [
           "D07",
@@ -9301,11 +9301,11 @@
         "x-validation": {
           "request": "Validate path, query, headers and body against the operation schema before business processing.",
           "response": "Validate every active JSON response against its exported schema. Run.parse enforces lifecycle invariants and nested Usage.parse arithmetic. Apply response validation after visibility filtering; unknown amounts remain null. Invalid internal responses are server errors, never client 400.",
-          "authorization": "Credential identifies the executing parent; path identifies the direct child. Check parent and child generations, project, expiry, and runtime permission. Mint event-append-only authority for the child."
+          "authorization": "Credential identifies the executing parent; path identifies the direct child. Check parent and child generations, project, expiry, and runtime permission; a delegated credential acts only while the root execution generation it carries is current. Mint event-append-only authority for the child under that root generation."
         },
         "x-behavior": [
-          "The parent execution credential may mint append-only authority for the direct child identified by run_id.",
-          "The token cannot read events, finalize, heartbeat or create children."
+          "The parent execution credential, or an event token delegated under its execution generation, may mint append-only authority for the direct child identified by run_id.",
+          "The token may mint event tokens for its own direct children while the root execution generation is current. It cannot read events, finalize, heartbeat or create children."
         ],
         "x-example-origin": "Synthetic examples for target contract review; not deployed responses.",
         "x-delivery-issue": {
@@ -10992,7 +10992,7 @@
           "sha256",
           "href"
         ],
-        "description": "An immutable file reference authorized through the run’s project and conversation permissions."
+        "description": "An immutable file reference authorized through the run\u2019s project and conversation permissions."
       },
       "Run": {
         "type": "object",
@@ -16054,7 +16054,14 @@
                 ]
               },
               "payload": {
-                "$ref": "#/components/schemas/AgentRunAuthorizationSealedPayload"
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/AgentRunAuthorizationSealedPayload"
+                  },
+                  {
+                    "$ref": "#/components/schemas/AgentRunAuthorizationSealedPayloadRedacted"
+                  }
+                ]
               },
               "is_error": {
                 "type": "boolean"
@@ -16830,7 +16837,14 @@
                 ]
               },
               "payload": {
-                "$ref": "#/components/schemas/AgentRunContextCompactedPayload"
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/AgentRunContextCompactedPayload"
+                  },
+                  {
+                    "$ref": "#/components/schemas/AgentRunContextCompactedPayloadRedacted"
+                  }
+                ]
               },
               "is_error": {
                 "type": "boolean"
@@ -16927,7 +16941,14 @@
                 ]
               },
               "payload": {
-                "$ref": "#/components/schemas/AgentRunToolExposureCheckpointedPayload"
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/AgentRunToolExposureCheckpointedPayload"
+                  },
+                  {
+                    "$ref": "#/components/schemas/AgentRunToolExposureCheckpointedPayloadRedacted"
+                  }
+                ]
               },
               "is_error": {
                 "type": "boolean"
@@ -17024,7 +17045,14 @@
                 ]
               },
               "payload": {
-                "$ref": "#/components/schemas/AgentRunProviderReplayCheckpointedPayload"
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/AgentRunProviderReplayCheckpointedPayload"
+                  },
+                  {
+                    "$ref": "#/components/schemas/AgentRunProviderReplayCheckpointedPayloadRedacted"
+                  }
+                ]
               },
               "is_error": {
                 "type": "boolean"
@@ -17121,7 +17149,14 @@
                 ]
               },
               "payload": {
-                "$ref": "#/components/schemas/AgentRunProviderReplayTurnStartedPayload"
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/AgentRunProviderReplayTurnStartedPayload"
+                  },
+                  {
+                    "$ref": "#/components/schemas/AgentRunProviderReplayTurnStartedPayloadRedacted"
+                  }
+                ]
               },
               "is_error": {
                 "type": "boolean"
@@ -17218,7 +17253,14 @@
                 ]
               },
               "payload": {
-                "$ref": "#/components/schemas/AgentRunProviderReplayTurnFinishedPayload"
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/AgentRunProviderReplayTurnFinishedPayload"
+                  },
+                  {
+                    "$ref": "#/components/schemas/AgentRunProviderReplayTurnFinishedPayloadRedacted"
+                  }
+                ]
               },
               "is_error": {
                 "type": "boolean"
@@ -17315,7 +17357,14 @@
                 ]
               },
               "payload": {
-                "$ref": "#/components/schemas/AgentRunModelCallContextRecordedPayload"
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/AgentRunModelCallContextRecordedPayload"
+                  },
+                  {
+                    "$ref": "#/components/schemas/AgentRunModelCallContextRecordedPayloadRedacted"
+                  }
+                ]
               },
               "is_error": {
                 "type": "boolean"
@@ -17412,7 +17461,14 @@
                 ]
               },
               "payload": {
-                "$ref": "#/components/schemas/AgentRunControlPlaneDispatchAcceptedPayload"
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/AgentRunControlPlaneDispatchAcceptedPayload"
+                  },
+                  {
+                    "$ref": "#/components/schemas/AgentRunControlPlaneDispatchAcceptedPayloadRedacted"
+                  }
+                ]
               },
               "is_error": {
                 "type": "boolean"
@@ -17509,7 +17565,14 @@
                 ]
               },
               "payload": {
-                "$ref": "#/components/schemas/AgentRunDetachedAcceptedPayload"
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/AgentRunDetachedAcceptedPayload"
+                  },
+                  {
+                    "$ref": "#/components/schemas/AgentRunDetachedAcceptedPayloadRedacted"
+                  }
+                ]
               },
               "is_error": {
                 "type": "boolean"
@@ -17606,7 +17669,14 @@
                 ]
               },
               "payload": {
-                "$ref": "#/components/schemas/AgentRunInvokeAgentBillingModeRetainedPayload"
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/AgentRunInvokeAgentBillingModeRetainedPayload"
+                  },
+                  {
+                    "$ref": "#/components/schemas/AgentRunInvokeAgentBillingModeRetainedPayloadRedacted"
+                  }
+                ]
               },
               "is_error": {
                 "type": "boolean"
@@ -17703,7 +17773,14 @@
                 ]
               },
               "payload": {
-                "$ref": "#/components/schemas/AgentRunBillingUsageRetainedPayload"
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/AgentRunBillingUsageRetainedPayload"
+                  },
+                  {
+                    "$ref": "#/components/schemas/AgentRunBillingUsageRetainedPayloadRedacted"
+                  }
+                ]
               },
               "is_error": {
                 "type": "boolean"
@@ -17800,7 +17877,14 @@
                 ]
               },
               "payload": {
-                "$ref": "#/components/schemas/AgentRunReplayedUploadsSealedPayload"
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/AgentRunReplayedUploadsSealedPayload"
+                  },
+                  {
+                    "$ref": "#/components/schemas/AgentRunReplayedUploadsSealedPayloadRedacted"
+                  }
+                ]
               },
               "is_error": {
                 "type": "boolean"
@@ -19158,7 +19242,14 @@
                 ]
               },
               "payload": {
-                "$ref": "#/components/schemas/AgentRunControlPlaneDispatchReceiptPayload"
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/AgentRunControlPlaneDispatchReceiptPayload"
+                  },
+                  {
+                    "$ref": "#/components/schemas/AgentRunControlPlaneDispatchReceiptPayloadRedacted"
+                  }
+                ]
               },
               "is_error": {
                 "type": "boolean"
@@ -19255,7 +19346,14 @@
                 ]
               },
               "payload": {
-                "$ref": "#/components/schemas/AgentRunToolExposureCheckpointPayload"
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/AgentRunToolExposureCheckpointPayload"
+                  },
+                  {
+                    "$ref": "#/components/schemas/AgentRunToolExposureCheckpointPayloadRedacted"
+                  }
+                ]
               },
               "is_error": {
                 "type": "boolean"
@@ -19352,7 +19450,14 @@
                 ]
               },
               "payload": {
-                "$ref": "#/components/schemas/AgentRunProviderReplayCheckpointPayload"
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/AgentRunProviderReplayCheckpointPayload"
+                  },
+                  {
+                    "$ref": "#/components/schemas/AgentRunProviderReplayCheckpointPayloadRedacted"
+                  }
+                ]
               },
               "is_error": {
                 "type": "boolean"
@@ -19449,7 +19554,14 @@
                 ]
               },
               "payload": {
-                "$ref": "#/components/schemas/AgentRunModelCallContextPayload"
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/AgentRunModelCallContextPayload"
+                  },
+                  {
+                    "$ref": "#/components/schemas/AgentRunModelCallContextPayloadRedacted"
+                  }
+                ]
               },
               "is_error": {
                 "type": "boolean"
@@ -22769,7 +22881,14 @@
                 ]
               },
               "payload": {
-                "$ref": "#/components/schemas/AgentRunAuthorizationSealedPayload"
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/AgentRunAuthorizationSealedPayload"
+                  },
+                  {
+                    "$ref": "#/components/schemas/AgentRunAuthorizationSealedPayloadRedacted"
+                  }
+                ]
               },
               "is_error": {
                 "type": "boolean"
@@ -23593,7 +23712,14 @@
                 ]
               },
               "payload": {
-                "$ref": "#/components/schemas/AgentRunContextCompactedPayload"
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/AgentRunContextCompactedPayload"
+                  },
+                  {
+                    "$ref": "#/components/schemas/AgentRunContextCompactedPayloadRedacted"
+                  }
+                ]
               },
               "is_error": {
                 "type": "boolean"
@@ -23696,7 +23822,14 @@
                 ]
               },
               "payload": {
-                "$ref": "#/components/schemas/AgentRunToolExposureCheckpointedPayload"
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/AgentRunToolExposureCheckpointedPayload"
+                  },
+                  {
+                    "$ref": "#/components/schemas/AgentRunToolExposureCheckpointedPayloadRedacted"
+                  }
+                ]
               },
               "is_error": {
                 "type": "boolean"
@@ -23799,7 +23932,14 @@
                 ]
               },
               "payload": {
-                "$ref": "#/components/schemas/AgentRunProviderReplayCheckpointedPayload"
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/AgentRunProviderReplayCheckpointedPayload"
+                  },
+                  {
+                    "$ref": "#/components/schemas/AgentRunProviderReplayCheckpointedPayloadRedacted"
+                  }
+                ]
               },
               "is_error": {
                 "type": "boolean"
@@ -23902,7 +24042,14 @@
                 ]
               },
               "payload": {
-                "$ref": "#/components/schemas/AgentRunProviderReplayTurnStartedPayload"
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/AgentRunProviderReplayTurnStartedPayload"
+                  },
+                  {
+                    "$ref": "#/components/schemas/AgentRunProviderReplayTurnStartedPayloadRedacted"
+                  }
+                ]
               },
               "is_error": {
                 "type": "boolean"
@@ -24005,7 +24152,14 @@
                 ]
               },
               "payload": {
-                "$ref": "#/components/schemas/AgentRunProviderReplayTurnFinishedPayload"
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/AgentRunProviderReplayTurnFinishedPayload"
+                  },
+                  {
+                    "$ref": "#/components/schemas/AgentRunProviderReplayTurnFinishedPayloadRedacted"
+                  }
+                ]
               },
               "is_error": {
                 "type": "boolean"
@@ -24108,7 +24262,14 @@
                 ]
               },
               "payload": {
-                "$ref": "#/components/schemas/AgentRunModelCallContextRecordedPayload"
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/AgentRunModelCallContextRecordedPayload"
+                  },
+                  {
+                    "$ref": "#/components/schemas/AgentRunModelCallContextRecordedPayloadRedacted"
+                  }
+                ]
               },
               "is_error": {
                 "type": "boolean"
@@ -24211,7 +24372,14 @@
                 ]
               },
               "payload": {
-                "$ref": "#/components/schemas/AgentRunControlPlaneDispatchAcceptedPayload"
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/AgentRunControlPlaneDispatchAcceptedPayload"
+                  },
+                  {
+                    "$ref": "#/components/schemas/AgentRunControlPlaneDispatchAcceptedPayloadRedacted"
+                  }
+                ]
               },
               "is_error": {
                 "type": "boolean"
@@ -24314,7 +24482,14 @@
                 ]
               },
               "payload": {
-                "$ref": "#/components/schemas/AgentRunDetachedAcceptedPayload"
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/AgentRunDetachedAcceptedPayload"
+                  },
+                  {
+                    "$ref": "#/components/schemas/AgentRunDetachedAcceptedPayloadRedacted"
+                  }
+                ]
               },
               "is_error": {
                 "type": "boolean"
@@ -24417,7 +24592,14 @@
                 ]
               },
               "payload": {
-                "$ref": "#/components/schemas/AgentRunInvokeAgentBillingModeRetainedPayload"
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/AgentRunInvokeAgentBillingModeRetainedPayload"
+                  },
+                  {
+                    "$ref": "#/components/schemas/AgentRunInvokeAgentBillingModeRetainedPayloadRedacted"
+                  }
+                ]
               },
               "is_error": {
                 "type": "boolean"
@@ -24520,7 +24702,14 @@
                 ]
               },
               "payload": {
-                "$ref": "#/components/schemas/AgentRunBillingUsageRetainedPayload"
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/AgentRunBillingUsageRetainedPayload"
+                  },
+                  {
+                    "$ref": "#/components/schemas/AgentRunBillingUsageRetainedPayloadRedacted"
+                  }
+                ]
               },
               "is_error": {
                 "type": "boolean"
@@ -24623,7 +24812,14 @@
                 ]
               },
               "payload": {
-                "$ref": "#/components/schemas/AgentRunReplayedUploadsSealedPayload"
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/AgentRunReplayedUploadsSealedPayload"
+                  },
+                  {
+                    "$ref": "#/components/schemas/AgentRunReplayedUploadsSealedPayloadRedacted"
+                  }
+                ]
               },
               "is_error": {
                 "type": "boolean"
@@ -26065,7 +26261,14 @@
                 ]
               },
               "payload": {
-                "$ref": "#/components/schemas/AgentRunControlPlaneDispatchReceiptPayload"
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/AgentRunControlPlaneDispatchReceiptPayload"
+                  },
+                  {
+                    "$ref": "#/components/schemas/AgentRunControlPlaneDispatchReceiptPayloadRedacted"
+                  }
+                ]
               },
               "is_error": {
                 "type": "boolean"
@@ -26168,7 +26371,14 @@
                 ]
               },
               "payload": {
-                "$ref": "#/components/schemas/AgentRunToolExposureCheckpointPayload"
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/AgentRunToolExposureCheckpointPayload"
+                  },
+                  {
+                    "$ref": "#/components/schemas/AgentRunToolExposureCheckpointPayloadRedacted"
+                  }
+                ]
               },
               "is_error": {
                 "type": "boolean"
@@ -26271,7 +26481,14 @@
                 ]
               },
               "payload": {
-                "$ref": "#/components/schemas/AgentRunProviderReplayCheckpointPayload"
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/AgentRunProviderReplayCheckpointPayload"
+                  },
+                  {
+                    "$ref": "#/components/schemas/AgentRunProviderReplayCheckpointPayloadRedacted"
+                  }
+                ]
               },
               "is_error": {
                 "type": "boolean"
@@ -26374,7 +26591,14 @@
                 ]
               },
               "payload": {
-                "$ref": "#/components/schemas/AgentRunModelCallContextPayload"
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/AgentRunModelCallContextPayload"
+                  },
+                  {
+                    "$ref": "#/components/schemas/AgentRunModelCallContextPayloadRedacted"
+                  }
+                ]
               },
               "is_error": {
                 "type": "boolean"
@@ -30461,6 +30685,246 @@
             "additionalProperties": false
           }
         ]
+      },
+      "AgentRunAuthorizationSealedPayloadRedacted": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "AGENT_RUN_AUTHORIZATION_SEALED"
+            ]
+          }
+        },
+        "required": [
+          "type"
+        ],
+        "additionalProperties": false
+      },
+      "AgentRunContextCompactedPayloadRedacted": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "AGENT_RUN_CONTEXT_COMPACTED"
+            ]
+          }
+        },
+        "required": [
+          "type"
+        ],
+        "additionalProperties": false
+      },
+      "AgentRunToolExposureCheckpointedPayloadRedacted": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "AGENT_RUN_TOOL_EXPOSURE_CHECKPOINTED"
+            ]
+          }
+        },
+        "required": [
+          "type"
+        ],
+        "additionalProperties": false
+      },
+      "AgentRunProviderReplayCheckpointedPayloadRedacted": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "AGENT_RUN_PROVIDER_REPLAY_CHECKPOINTED"
+            ]
+          }
+        },
+        "required": [
+          "type"
+        ],
+        "additionalProperties": false
+      },
+      "AgentRunProviderReplayTurnStartedPayloadRedacted": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "AGENT_RUN_PROVIDER_REPLAY_TURN_STARTED"
+            ]
+          }
+        },
+        "required": [
+          "type"
+        ],
+        "additionalProperties": false
+      },
+      "AgentRunProviderReplayTurnFinishedPayloadRedacted": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "AGENT_RUN_PROVIDER_REPLAY_TURN_FINISHED"
+            ]
+          }
+        },
+        "required": [
+          "type"
+        ],
+        "additionalProperties": false
+      },
+      "AgentRunModelCallContextRecordedPayloadRedacted": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED"
+            ]
+          }
+        },
+        "required": [
+          "type"
+        ],
+        "additionalProperties": false
+      },
+      "AgentRunControlPlaneDispatchAcceptedPayloadRedacted": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "AGENT_RUN_CONTROL_PLANE_DISPATCH_ACCEPTED"
+            ]
+          }
+        },
+        "required": [
+          "type"
+        ],
+        "additionalProperties": false
+      },
+      "AgentRunDetachedAcceptedPayloadRedacted": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "AGENT_RUN_DETACHED_ACCEPTED"
+            ]
+          }
+        },
+        "required": [
+          "type"
+        ],
+        "additionalProperties": false
+      },
+      "AgentRunInvokeAgentBillingModeRetainedPayloadRedacted": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "AGENT_RUN_INVOKE_AGENT_BILLING_MODE_RETAINED"
+            ]
+          }
+        },
+        "required": [
+          "type"
+        ],
+        "additionalProperties": false
+      },
+      "AgentRunBillingUsageRetainedPayloadRedacted": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "AGENT_RUN_BILLING_USAGE_RETAINED"
+            ]
+          }
+        },
+        "required": [
+          "type"
+        ],
+        "additionalProperties": false
+      },
+      "AgentRunReplayedUploadsSealedPayloadRedacted": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "AGENT_RUN_REPLAYED_UPLOADS_SEALED"
+            ]
+          }
+        },
+        "required": [
+          "type"
+        ],
+        "additionalProperties": false
+      },
+      "AgentRunControlPlaneDispatchReceiptPayloadRedacted": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "AGENT_RUN_CONTROL_PLANE_DISPATCH_RECEIPT"
+            ]
+          }
+        },
+        "required": [
+          "type"
+        ],
+        "additionalProperties": false
+      },
+      "AgentRunToolExposureCheckpointPayloadRedacted": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "AGENT_RUN_TOOL_EXPOSURE_CHECKPOINT"
+            ]
+          }
+        },
+        "required": [
+          "type"
+        ],
+        "additionalProperties": false
+      },
+      "AgentRunProviderReplayCheckpointPayloadRedacted": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "AGENT_RUN_PROVIDER_REPLAY_CHECKPOINT"
+            ]
+          }
+        },
+        "required": [
+          "type"
+        ],
+        "additionalProperties": false
+      },
+      "AgentRunModelCallContextPayloadRedacted": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "AGENT_RUN_MODEL_CALL_CONTEXT"
+            ]
+          }
+        },
+        "required": [
+          "type"
+        ],
+        "additionalProperties": false
       }
     },
     "parameters": {
@@ -33118,7 +33582,7 @@
     "mode": "breaking",
     "compatibility_window_days": 0,
     "maintenance_window_minutes": 30,
-    "expected_write_downtime_minutes": "10 to 15, subject to staging rehearsal",
+    "expected_write_downtime_minutes": "10\u201315, subject to staging rehearsal",
     "rollback_decision_minutes": 10,
     "readiness": "No deployment scheduled; all 155 operation/surface proofs and migration rehearsal must pass first."
   },
@@ -33127,5 +33591,299 @@
     "stagingCheckedAt": "2026-10-02T18:37:15.831355+00:00",
     "source": "https://api.veryfront.org/openapi.json",
     "notice": "Path presence is verified against staging OpenAPI; target schema and behavior are not claimed deployed."
+  },
+  "x-event-read-payloads": {
+    "RUN_STARTED": {
+      "$ref": "#/components/schemas/RunStartedPayload"
+    },
+    "RUN_FINISHED": {
+      "$ref": "#/components/schemas/RunFinishedPayload"
+    },
+    "RUN_ERROR": {
+      "$ref": "#/components/schemas/RunErrorPayload"
+    },
+    "TEXT_MESSAGE_START": {
+      "$ref": "#/components/schemas/TextMessageStartPayload"
+    },
+    "TEXT_MESSAGE_CONTENT": {
+      "$ref": "#/components/schemas/TextMessageContentPayload"
+    },
+    "TEXT_MESSAGE_END": {
+      "$ref": "#/components/schemas/TextMessageEndPayload"
+    },
+    "TOOL_CALL_START": {
+      "$ref": "#/components/schemas/ToolCallStartPayload"
+    },
+    "TOOL_CALL_ARGS": {
+      "$ref": "#/components/schemas/ToolCallArgsPayload"
+    },
+    "TOOL_CALL_CHUNK": {
+      "$ref": "#/components/schemas/ToolCallChunkPayload"
+    },
+    "TOOL_CALL_END": {
+      "$ref": "#/components/schemas/ToolCallEndPayload"
+    },
+    "TOOL_CALL_RESULT": {
+      "$ref": "#/components/schemas/ToolCallResultPayload"
+    },
+    "STATE_SNAPSHOT": {
+      "$ref": "#/components/schemas/StateSnapshotPayload"
+    },
+    "STATE_DELTA": {
+      "$ref": "#/components/schemas/StateDeltaPayload"
+    },
+    "MESSAGES_SNAPSHOT": {
+      "$ref": "#/components/schemas/MessagesSnapshotPayload"
+    },
+    "STEP_STARTED": {
+      "$ref": "#/components/schemas/StepStartedPayload"
+    },
+    "STEP_FINISHED": {
+      "$ref": "#/components/schemas/StepFinishedPayload"
+    },
+    "REASONING_START": {
+      "$ref": "#/components/schemas/ReasoningStartPayload"
+    },
+    "REASONING_MESSAGE_START": {
+      "$ref": "#/components/schemas/ReasoningMessageStartPayload"
+    },
+    "REASONING_MESSAGE_CONTENT": {
+      "$ref": "#/components/schemas/ReasoningMessageContentPayload"
+    },
+    "REASONING_MESSAGE_END": {
+      "$ref": "#/components/schemas/ReasoningMessageEndPayload"
+    },
+    "REASONING_CONTENT": {
+      "$ref": "#/components/schemas/ReasoningContentPayload"
+    },
+    "REASONING_END": {
+      "$ref": "#/components/schemas/ReasoningEndPayload"
+    },
+    "ACTIVITY_SNAPSHOT": {
+      "$ref": "#/components/schemas/ActivitySnapshotPayload"
+    },
+    "ACTIVITY_DELTA": {
+      "$ref": "#/components/schemas/ActivityDeltaPayload"
+    },
+    "AGENT_RUN_AUTHORIZATION_SEALED": {
+      "anyOf": [
+        {
+          "$ref": "#/components/schemas/AgentRunAuthorizationSealedPayload"
+        },
+        {
+          "$ref": "#/components/schemas/AgentRunAuthorizationSealedPayloadRedacted"
+        }
+      ]
+    },
+    "AGENT_RUN_REQUEST_ENQUEUED": {
+      "$ref": "#/components/schemas/AgentRunRequestEnqueuedPayload"
+    },
+    "AGENT_RUN_DEFAULT_CHAT_START_ENQUEUED": {
+      "$ref": "#/components/schemas/AgentRunDefaultChatStartEnqueuedPayload"
+    },
+    "AGENT_RUN_TOOL_RESULT_SUBMITTED": {
+      "$ref": "#/components/schemas/AgentRunToolResultSubmittedPayload"
+    },
+    "AGENT_RUN_TOOL_RESULT_DELIVERY_FAILED": {
+      "$ref": "#/components/schemas/AgentRunToolResultDeliveryFailedPayload"
+    },
+    "AGENT_RUN_INTEGRATION_CONNECTION_REFUSED": {
+      "$ref": "#/components/schemas/AgentRunIntegrationConnectionRefusedPayload"
+    },
+    "AGENT_RUN_RUNTIME_OWNER_BOUND": {
+      "$ref": "#/components/schemas/AgentRunRuntimeOwnerBoundPayload"
+    },
+    "AGENT_RUN_RUNTIME_INVOKE_RETRIED": {
+      "$ref": "#/components/schemas/AgentRunRuntimeInvokeRetriedPayload"
+    },
+    "AGENT_RUN_CONTEXT_COMPACTED": {
+      "anyOf": [
+        {
+          "$ref": "#/components/schemas/AgentRunContextCompactedPayload"
+        },
+        {
+          "$ref": "#/components/schemas/AgentRunContextCompactedPayloadRedacted"
+        }
+      ]
+    },
+    "AGENT_RUN_TOOL_EXPOSURE_CHECKPOINTED": {
+      "anyOf": [
+        {
+          "$ref": "#/components/schemas/AgentRunToolExposureCheckpointedPayload"
+        },
+        {
+          "$ref": "#/components/schemas/AgentRunToolExposureCheckpointedPayloadRedacted"
+        }
+      ]
+    },
+    "AGENT_RUN_PROVIDER_REPLAY_CHECKPOINTED": {
+      "anyOf": [
+        {
+          "$ref": "#/components/schemas/AgentRunProviderReplayCheckpointedPayload"
+        },
+        {
+          "$ref": "#/components/schemas/AgentRunProviderReplayCheckpointedPayloadRedacted"
+        }
+      ]
+    },
+    "AGENT_RUN_PROVIDER_REPLAY_TURN_STARTED": {
+      "anyOf": [
+        {
+          "$ref": "#/components/schemas/AgentRunProviderReplayTurnStartedPayload"
+        },
+        {
+          "$ref": "#/components/schemas/AgentRunProviderReplayTurnStartedPayloadRedacted"
+        }
+      ]
+    },
+    "AGENT_RUN_PROVIDER_REPLAY_TURN_FINISHED": {
+      "anyOf": [
+        {
+          "$ref": "#/components/schemas/AgentRunProviderReplayTurnFinishedPayload"
+        },
+        {
+          "$ref": "#/components/schemas/AgentRunProviderReplayTurnFinishedPayloadRedacted"
+        }
+      ]
+    },
+    "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED": {
+      "anyOf": [
+        {
+          "$ref": "#/components/schemas/AgentRunModelCallContextRecordedPayload"
+        },
+        {
+          "$ref": "#/components/schemas/AgentRunModelCallContextRecordedPayloadRedacted"
+        }
+      ]
+    },
+    "AGENT_RUN_CONTROL_PLANE_DISPATCH_ACCEPTED": {
+      "anyOf": [
+        {
+          "$ref": "#/components/schemas/AgentRunControlPlaneDispatchAcceptedPayload"
+        },
+        {
+          "$ref": "#/components/schemas/AgentRunControlPlaneDispatchAcceptedPayloadRedacted"
+        }
+      ]
+    },
+    "AGENT_RUN_DETACHED_ACCEPTED": {
+      "anyOf": [
+        {
+          "$ref": "#/components/schemas/AgentRunDetachedAcceptedPayload"
+        },
+        {
+          "$ref": "#/components/schemas/AgentRunDetachedAcceptedPayloadRedacted"
+        }
+      ]
+    },
+    "AGENT_RUN_INVOKE_AGENT_BILLING_MODE_RETAINED": {
+      "anyOf": [
+        {
+          "$ref": "#/components/schemas/AgentRunInvokeAgentBillingModeRetainedPayload"
+        },
+        {
+          "$ref": "#/components/schemas/AgentRunInvokeAgentBillingModeRetainedPayloadRedacted"
+        }
+      ]
+    },
+    "AGENT_RUN_BILLING_USAGE_RETAINED": {
+      "anyOf": [
+        {
+          "$ref": "#/components/schemas/AgentRunBillingUsageRetainedPayload"
+        },
+        {
+          "$ref": "#/components/schemas/AgentRunBillingUsageRetainedPayloadRedacted"
+        }
+      ]
+    },
+    "AGENT_RUN_REPLAYED_UPLOADS_SEALED": {
+      "anyOf": [
+        {
+          "$ref": "#/components/schemas/AgentRunReplayedUploadsSealedPayload"
+        },
+        {
+          "$ref": "#/components/schemas/AgentRunReplayedUploadsSealedPayloadRedacted"
+        }
+      ]
+    },
+    "TOOL_CALL_STATUS_CHANGED": {
+      "$ref": "#/components/schemas/ToolCallStatusChangedPayload"
+    },
+    "INPUT_REQUEST_CREATED": {
+      "$ref": "#/components/schemas/InputRequestCreatedPayload"
+    },
+    "INPUT_REQUEST_UPDATED": {
+      "$ref": "#/components/schemas/InputRequestUpdatedPayload"
+    },
+    "CHILD_RUN_STATUS_CHANGED": {
+      "$ref": "#/components/schemas/ChildRunStatusChangedPayload"
+    },
+    "MODEL_CALL_COMPLETED": {
+      "$ref": "#/components/schemas/ModelCallCompletedPayload"
+    },
+    "RUN_PARKED": {
+      "$ref": "#/components/schemas/RunParkedPayload"
+    },
+    "RUN_LOG_CAPTURED": {
+      "$ref": "#/components/schemas/RunLogCapturedPayload"
+    },
+    "STREAM_HEARTBEAT_EMITTED": {
+      "$ref": "#/components/schemas/StreamHeartbeatEmittedPayload"
+    },
+    "URL_CITED": {
+      "$ref": "#/components/schemas/UrlCitedPayload"
+    },
+    "DOCUMENT_CITED": {
+      "$ref": "#/components/schemas/DocumentCitedPayload"
+    },
+    "FILE_ATTACHED": {
+      "$ref": "#/components/schemas/FileAttachedPayload"
+    },
+    "FILES_CHANGED": {
+      "$ref": "#/components/schemas/FilesChangedPayload"
+    },
+    "RUNTIME_EVENT_RECORDED": {
+      "$ref": "#/components/schemas/RuntimeEventRecordedPayload"
+    },
+    "AGENT_RUN_CONTROL_PLANE_DISPATCH_RECEIPT": {
+      "anyOf": [
+        {
+          "$ref": "#/components/schemas/AgentRunControlPlaneDispatchReceiptPayload"
+        },
+        {
+          "$ref": "#/components/schemas/AgentRunControlPlaneDispatchReceiptPayloadRedacted"
+        }
+      ]
+    },
+    "AGENT_RUN_TOOL_EXPOSURE_CHECKPOINT": {
+      "anyOf": [
+        {
+          "$ref": "#/components/schemas/AgentRunToolExposureCheckpointPayload"
+        },
+        {
+          "$ref": "#/components/schemas/AgentRunToolExposureCheckpointPayloadRedacted"
+        }
+      ]
+    },
+    "AGENT_RUN_PROVIDER_REPLAY_CHECKPOINT": {
+      "anyOf": [
+        {
+          "$ref": "#/components/schemas/AgentRunProviderReplayCheckpointPayload"
+        },
+        {
+          "$ref": "#/components/schemas/AgentRunProviderReplayCheckpointPayloadRedacted"
+        }
+      ]
+    },
+    "AGENT_RUN_MODEL_CALL_CONTEXT": {
+      "anyOf": [
+        {
+          "$ref": "#/components/schemas/AgentRunModelCallContextPayload"
+        },
+        {
+          "$ref": "#/components/schemas/AgentRunModelCallContextPayloadRedacted"
+        }
+      ]
+    }
   }
 }

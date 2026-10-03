@@ -1,11 +1,11 @@
 {
   "contract": "0.8.0",
-  "release": "https://github.com/veryfront/veryfront-issue-inbox/releases/tag/runs-target-0.8.0-806fa3bcbf98",
-  "archiveSha256": "806fa3bcbf986cef2037859b1c6e84f1daaf90d48b13c45c6812445b85342e96",
+  "release": "https://github.com/veryfront/veryfront-issue-inbox/releases/tag/runs-target-0.8.0-01f1deaab0cb",
+  "archiveSha256": "01f1deaab0cb8a486f4ac4e592882e093e5e4eb33c5591dbcce81b39fe8af10d",
   "generatedBy": "veryfront-api: pnpm contracts:runs:generate -- --out <dir> (the kit's runs-api.types.ts)",
   "files": {
-    "runs-api.generated.ts": "d3be5fb515b4e4c8bfd5bf58289ead53551b8953a5c1bd26818dd98ddf43081a",
-    "openapi.target.json": "4fa5538e9d6f7a1aceed3f5618bd4f6becc6372e732f52ca136dc8979caf4f1c",
+    "runs-api.generated.ts": "9d8be80d65d3145bb244b7f15d349af7083d0989e04d3260ee1401c9957e689f",
+    "openapi.target.json": "a63261aaa613d1de324ad8a178c4b8815c1626c2c8b7f9c06613c82d22459016",
     "runs-fixtures.generated.ts": "993bde1015dc6cc35ae763a813adff37d731687f56bbcd0cd5d967bc22d8b7e4"
   },
   "fixturesGeneratedBy": "deno task contracts:runs:fixtures"

@@ -50,6 +50,17 @@ import {
 import { observeFetchRequestInit, withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { __subscribeLogRecordEmitter } from "#veryfront/utils/logger/logger.ts";
 import { computeHash } from "#veryfront/utils/hash-utils.ts";
+
+async function expectedReportArtifact(report: EvalReport, sourcePath: string, path = sourcePath) {
+  const content = `${JSON.stringify({ ...report, reportPath: sourcePath }, null, 2)}\n`;
+  return {
+    kind: "eval-report",
+    path,
+    contentType: "application/json",
+    size_bytes: new TextEncoder().encode(content).byteLength,
+    sha256: await computeHash(content),
+  };
+}
 import {
   createKnowledgeEventLogger,
   ProjectRunExecuteHandler,
@@ -2821,11 +2832,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     const payload = await result.response.json();
     assertEquals(payload.success, true);
     assertEquals(payload.result, report.summary);
-    assertEquals(payload.artifacts, [{
-      kind: "eval-report",
-      path: reportPath,
-      contentType: "application/json",
-    }]);
+    assertEquals(payload.artifacts, [await expectedReportArtifact(report, reportPath)]);
     assertEquals(String(payload.logs).split("\n"), [
       '{"level":"info","message":"Eval case completed","case_index":1,"total_cases":2,"repetition":1}',
       '{"level":"info","message":"Eval case completed","case_index":2,"total_cases":2,"repetition":2}',
@@ -2892,6 +2899,67 @@ describe("server/handlers/request/project-run-execute.handler", () => {
       assertEquals(payload.error, uploadFailure.error);
       assertEquals(payload.result, report.summary);
       assertEquals(payload.artifacts, undefined);
+    });
+  }
+
+  const cyclicEvalInput: Record<string, unknown> = {};
+  cyclicEvalInput.self = cyclicEvalInput;
+  for (
+    const invalidInput of [{ name: "bigint", input: 1n }, { name: "cycle", input: cyclicEvalInput }]
+  ) {
+    it(`preserves the completed eval summary when ${invalidInput.name} prevents report serialization`, async () => {
+      let uploads = 0;
+      const report: EvalReport = {
+        kind: "eval-report",
+        runId: "run_eval_unserializable",
+        definitionId: "eval:deep-research",
+        targetKind: "agent",
+        target: "agent:researcher",
+        startedAt: "2026-09-30T10:00:00.000Z",
+        endedAt: "2026-09-30T10:00:01.000Z",
+        summary: { records: 1, passed: 1, failed: 0, passRate: 1, metrics: [] },
+        records: [{
+          id: "q1:1",
+          evalId: "eval:deep-research",
+          exampleId: "q1",
+          repetition: 1,
+          input: invalidInput.input,
+          output: "Paris",
+          metadata: {},
+          trace: { events: [], toolCalls: [] },
+          usage: {},
+          durationMs: 10,
+          completed: true,
+        }],
+      };
+      const handler = new ProjectRunExecuteHandler(createDeps({
+        runTask: runTaskDefinition,
+        runEval: async () => report,
+        uploadEvalReport: async () => {
+          uploads++;
+          return "evals/report.json";
+        },
+      }));
+      const signed = await signedRequest(
+        "/api/control-plane/runs/run_eval_unserializable/execute",
+        {
+          runId: "run_eval_unserializable",
+          kind: "task",
+          target: "task:eval",
+          projectId: "proj-1",
+          config: { eval_id: "eval:deep-research" },
+        },
+        { "x-token": "runtime-token" },
+      );
+      const result = await handler.handle(signed.request, createCtx(signed.publicKeyPem));
+      assertExists(result.response);
+      const payload = await result.response.json();
+      assertEquals(payload.success, false);
+      assertEquals(payload.result, report.summary);
+      assertStringIncludes(payload.error, "Eval report upload failed:");
+      assertStringIncludes(payload.logs, "Eval report upload failed:");
+      assertEquals(payload.artifacts, undefined);
+      assertEquals(uploads, 0);
     });
   }
 
@@ -2969,7 +3037,12 @@ describe("server/handlers/request/project-run-execute.handler", () => {
       const finishUpload = Promise.withResolvers<void>();
       const handler = new ProjectRunExecuteHandler(createDeps({
         runTask: runTaskDefinition,
-        uploadEvalReport: uploadEvalReportToProjectFiles,
+        uploadEvalReport: async (input) => {
+          uploadedContent = `${
+            JSON.stringify({ ...input.report, reportPath: input.reportPath }, null, 2)
+          }\n`;
+          return await uploadEvalReportToProjectFiles(input);
+        },
       }));
       const signed = await signedRequest(
         "/api/control-plane/runs/run_eval_report_http/execute",
@@ -2986,6 +3059,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
       const request = new Request(signed.request, { signal: controller.signal });
       let written = false;
       let uploads = 0;
+      let uploadedContent = "";
       let signal: AbortSignal | null | undefined;
       const result = await withMockFetch(async (url, init) => {
         const options = observeFetchRequestInit(init);
@@ -3016,6 +3090,11 @@ describe("server/handlers/request/project-run-execute.handler", () => {
         assertStringIncludes(payload.error, "cancelled");
         assertEquals(payload.artifacts, undefined);
       } else {
+        assertEquals(payload.artifacts[0].sha256, await computeHash(uploadedContent));
+        assertEquals(
+          payload.artifacts[0].size_bytes,
+          new TextEncoder().encode(uploadedContent).byteLength,
+        );
         assertEquals(
           payload.artifacts[0].path,
           "evals/reports/deep-research/run_eval_report_http.json",
@@ -3291,11 +3370,13 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     assertEquals(await result.response.json(), {
       success: true,
       result: report.summary,
-      artifacts: [{
-        kind: "eval-report",
-        path: "evals/reports/default.json",
-        contentType: "application/json",
-      }],
+      artifacts: [
+        await expectedReportArtifact(
+          report,
+          "evals/reports/deep-research/run_eval_1.json",
+          "evals/reports/default.json",
+        ),
+      ],
       duration_ms: 0,
       logs: null,
     });
@@ -3579,7 +3660,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     assertEquals(await result.response.json(), {
       success: true,
       result: report.summary,
-      artifacts: [{ kind: "eval-report", path: reportPath, contentType: "application/json" }],
+      artifacts: [await expectedReportArtifact(report, reportPath)],
       duration_ms: 0,
       logs: null,
     });
@@ -4354,11 +4435,13 @@ describe("server/handlers/request/project-run-execute.handler", () => {
       success: false,
       result: report.summary,
       error: "1 eval record failed",
-      artifacts: [{
-        kind: "eval-report",
-        path: "evals/reports/default.json",
-        contentType: "application/json",
-      }],
+      artifacts: [
+        await expectedReportArtifact(
+          report,
+          "evals/reports/deep-research/run_eval_failed_adapter.json",
+          "evals/reports/default.json",
+        ),
+      ],
       logs: null,
       duration_ms: 0,
     });

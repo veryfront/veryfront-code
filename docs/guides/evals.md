@@ -649,7 +649,9 @@ unless they are explicitly included in the `mockTools` result. Skills agents kee
 only the read-only skill loader tools, `load_skill` and
 `load_skill_reference`, so a skills agent can inspect skill instructions during a
 mocked eval; `execute_skill_script` is not retained unless `mockTools` supplies
-it explicitly. Loaded-skill allowed-tool policies and delegation overrides are
+it explicitly.
+
+Loaded-skill allowed-tool policies and delegation overrides are
 disabled while mock tools are active; the mock tool map is the complete tool
 allowlist for that `generate()` request. There is no `stream()` equivalent for
 request-scoped mock tools. Live AG-UI agent-service evals reject definitions
@@ -786,7 +788,9 @@ explicitly allows each field. Dataset kind and example count stay available so
 exporters can group runs without seeing source paths, and
 `includeDatasetHash: true` opts back into the deterministic content hash for
 destinations trusted to correlate dataset content. Use `metadataAllowlist`
-only for metadata keys the destination is allowed to receive. Runtime monitoring
+only for metadata keys the destination is allowed to receive.
+
+Runtime monitoring
 remains separate: use `veryfront/extensions/observability` and the OpenTelemetry
 extension for spans,
 traces, metrics, and service monitoring. When OpenTelemetry is active, `runEval`
@@ -946,7 +950,9 @@ normal local `mlflow server --serve-artifacts` setup needs only
 root, configure `MLFLOW_ARTIFACTS_URI`; `MLFLOW_ARTIFACTS_PORT` derives it from
 `MLFLOW_TRACKING_URI` for a local server on another port. v1 does not upload
 directly to local filesystem roots or backend-specific schemes such as `dbfs://`,
-`gs://`, `wasbs://`, or similar URIs. After upload, the exporter makes a
+`gs://`, `wasbs://`, or similar URIs.
+
+After upload, the exporter makes a
 best-effort retrieval check through
 MLflow `artifacts/list` for the `veryfront-eval` path and stores only the
 sanitized `verified`/`missing` paths in the export receipt. The check is

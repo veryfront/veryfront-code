@@ -96,7 +96,9 @@ Dynamic default callbacks are not executed during conversion and do not appear
 in the generated document. Runtime transforms, arbitrary refinements, and
 regular-expression flags have no exact JSON Schema equivalent and are omitted.
 Recursive lazy cycles are cut off with an unconstrained schema instead of
-emitting `$ref`. JavaScript-only values such as `bigint`, `Date`, functions,
+emitting `$ref`.
+
+JavaScript-only values such as `bigint`, `Date`, functions,
 and class instances also have no faithful JSON representation and should not
 be exposed as JSON tool inputs. Runtime validation remains authoritative for
 those constraints.

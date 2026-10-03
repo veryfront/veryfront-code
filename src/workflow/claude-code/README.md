@@ -1,6 +1,6 @@
 # Claude Code SDK Integration
 
-Integrate Anthropic's Claude Code SDK into Veryfront workflows for powerful agentic coding capabilities.
+Run Anthropic's Claude Code SDK within Veryfront workflows.
 
 ## Overview
 

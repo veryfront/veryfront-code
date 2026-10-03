@@ -62,11 +62,15 @@ Compare against the status the route normally returns. The probe does not
 follow redirects: a `302` means the gate refused the token, not that the app
 answered, and the comparison turns it into a failed job. The token lives five
 minutes and an expired token is refused the same way, so mint it immediately
-before the probe rather than once for a long suite. The token is bound to
+before the probe rather than once for a long suite.
+
+The token is bound to
 the project and environment named in the exchange. A key scoped to another
 project, or a key whose owner is not a member of the project gets a `403` at
 the exchange. Human output contains only the token so command substitution can
-capture it without placing the credential in shell history. With `--json`, read
+capture it without placing the credential in shell history.
+
+With `--json`, read
 the token from `.data.access_token` and its API-provided lifetime from
 `.data.expires_in`.
 
