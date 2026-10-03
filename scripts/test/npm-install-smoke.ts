@@ -970,52 +970,72 @@ const RUNS_SDK_CONSUMER_OPERATIONS = [
 
 const RUNS_SDK_SCRIPT = `
 const { readFile } = await import('node:fs/promises');
+const { createServer } = await import('node:http');
 const { deepStrictEqual, ok } = await import('node:assert/strict');
-const { createRunsSdk, RUNS_OPERATIONS } = await import('veryfront/runs/target');
+const { createCanonicalVeryfrontApiTransport, createRunsSdk, RUNS_OPERATIONS } = await import(
+  'veryfront/runs/target'
+);
 const fixtures = JSON.parse(await readFile('runs-operation-fixtures.json', 'utf8'));
-const baseUrl = 'https://api.example.test';
-for (const [operationId, fixture] of Object.entries(fixtures)) {
-  const requests = [];
-  const runs = createRunsSdk({
-    baseUrl,
-    credential: { bearer: 'consumer-token' },
-    transport: (request) => {
-      requests.push(request);
-      const { status, body } = fixture.response;
-      if (body === undefined) return Promise.resolve(new Response(null, { status }));
-      if (typeof body === 'string') {
-        return Promise.resolve(
-          new Response(body, { status, headers: { 'Content-Type': 'text/event-stream' } }),
-        );
-      }
-      return Promise.resolve(Response.json(body, { status }));
-    },
-  });
-  const result = runs[operationId](fixture.input);
-  if (RUNS_OPERATIONS[operationId].stream) {
-    const frames = [];
-    for await (const frame of result) frames.push(frame);
-    const expected = fixture.response.body.split('\\n\\n').filter(Boolean).map((block) => {
-      const lines = block.split('\\n');
-      const id = lines.find((line) => line.startsWith('id: '));
-      const data = lines.filter((line) => line.startsWith('data: ')).map((line) => line.slice(6));
-      return { id: id ? id.slice(4) : null, event: JSON.parse(data.join('\\n')) };
+let fixture;
+const requests = [];
+const server = createServer((request, response) => {
+  const chunks = [];
+  request.on('data', (chunk) => chunks.push(chunk));
+  request.on('end', () => {
+    requests.push({
+      method: request.method,
+      url: request.url,
+      headers: request.headers,
+      body: Buffer.concat(chunks).toString('utf8'),
     });
-    ok(expected.length > 0, operationId + ' fixture has no frames');
-    deepStrictEqual(frames, expected, operationId);
-  } else {
-    deepStrictEqual(await result, fixture.response.body, operationId);
+    const { status, body } = fixture.response;
+    if (body === undefined) return response.writeHead(status).end();
+    if (typeof body === 'string') {
+      return response.writeHead(status, { 'Content-Type': 'text/event-stream' }).end(body);
+    }
+    response.writeHead(status, { 'Content-Type': 'application/json' }).end(JSON.stringify(body));
+  });
+});
+await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+try {
+  const runs = createRunsSdk({
+    transport: createCanonicalVeryfrontApiTransport(
+      'http://127.0.0.1:' + server.address().port,
+      () => 'consumer-token',
+      { maxRetries: 0, initialDelay: 0, maxDelay: 0 },
+    ),
+  });
+  for (const [operationId, operationFixture] of Object.entries(fixtures)) {
+    fixture = operationFixture;
+    requests.length = 0;
+    const result = runs[operationId](fixture.input);
+    if (RUNS_OPERATIONS[operationId].stream) {
+      const frames = [];
+      for await (const frame of result) frames.push(frame);
+      const expected = fixture.response.body.split('\\n\\n').filter(Boolean).map((block) => {
+        const lines = block.split('\\n');
+        const id = lines.find((line) => line.startsWith('id: '));
+        const data = lines.filter((line) => line.startsWith('data: ')).map((line) => line.slice(6));
+        return { id: id ? id.slice(4) : null, event: JSON.parse(data.join('\\n')) };
+      });
+      ok(expected.length > 0, operationId + ' fixture has no frames');
+      deepStrictEqual(frames, expected, operationId);
+    } else {
+      deepStrictEqual(await result, fixture.response.body, operationId);
+    }
+    const [request] = requests;
+    deepStrictEqual(requests.map(({ url }) => url), [fixture.url], operationId);
+    deepStrictEqual(request.method, RUNS_OPERATIONS[operationId].method, operationId);
+    deepStrictEqual(request.headers.authorization, 'Bearer consumer-token', operationId);
+    for (const [name, value] of Object.entries(fixture.input.headers ?? {})) {
+      deepStrictEqual(request.headers[name.toLowerCase()], String(value), operationId + ' ' + name);
+    }
+    if (fixture.input.body !== undefined) {
+      deepStrictEqual(JSON.parse(request.body), fixture.input.body, operationId + ' body');
+    }
   }
-  const [request] = requests;
-  deepStrictEqual(requests.map(({ url }) => url), [baseUrl + fixture.url], operationId);
-  deepStrictEqual(request.method, RUNS_OPERATIONS[operationId].method, operationId);
-  deepStrictEqual(request.headers.get('authorization'), 'Bearer consumer-token');
-  for (const [name, value] of Object.entries(fixture.input.headers ?? {})) {
-    deepStrictEqual(request.headers.get(name), String(value), operationId + ' ' + name);
-  }
-  if (fixture.input.body !== undefined) {
-    deepStrictEqual(JSON.parse(await request.text()), fixture.input.body, operationId + ' body');
-  }
+} finally {
+  server.close();
 }
 `;
 

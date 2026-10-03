@@ -1,4 +1,5 @@
 import {
+  createCanonicalVeryfrontApiTransport,
   createRunsSdk,
   type RunsContractComponents,
   type RunsInput,
@@ -9,9 +10,11 @@ import {
 type Run = RunsContractComponents["schemas"]["Run"];
 
 const runs = createRunsSdk({
-  baseUrl: "https://api.veryfront.com",
-  transport: (request) => fetch(request),
-  credential: { bearer: "<TOKEN>" },
+  transport: createCanonicalVeryfrontApiTransport("https://api.veryfront.com", () => "<TOKEN>", {
+    maxRetries: 2,
+    initialDelay: 200,
+    maxDelay: 2_000,
+  }),
 });
 
 const getRunInput: RunsInput<"getRun"> = { path: { run_id: "11111111-1111-4111-8111-111111111111" } };
