@@ -22,6 +22,7 @@ export interface DetachedRunTracker<TResumeValue> {
   cancelRun(runId: string): boolean;
   /** Positive receipt after every producer for this run has settled. */
   hasSettledExecution?(runId: string): boolean;
+  hasPendingExecution?(runId: string): boolean;
   registerExecution(runId: string, execution: Promise<void>): void;
   cancelAllRuns(): string[];
   waitForDrain(
@@ -86,6 +87,9 @@ export function createDetachedRunTracker<TResumeValue = unknown>(
         untrackRun(runId);
       }
       return cancelled;
+    },
+    hasPendingExecution(runId) {
+      return activeExecutions.has(runId);
     },
     hasSettledExecution(runId) {
       return settledRunIds.has(runId) && !activeExecutions.has(runId) && !activeRunIds.has(runId);

@@ -573,6 +573,8 @@ export function createHostedAgentServiceRouteSet<TExecution extends object>(
           sessionManager: options.tracker.sessionManager,
           hasSettledExecution: (runId: string) =>
             options.tracker.hasSettledExecution?.(runId) === true,
+          hasPendingExecution: (runId: string) =>
+            options.tracker.hasPendingExecution?.(runId) === true,
           resolveRunId: () => runId,
           // The single verification for this request. Checking here as well
           // would spend a one-time grant before the effect handler asks for its
