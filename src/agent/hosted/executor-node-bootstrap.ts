@@ -5,6 +5,7 @@ import process from "node:process";
 import { isNodeRuntime } from "#veryfront/platform/compat/runtime.ts";
 import { tryResolve } from "#veryfront/extensions/contracts.ts";
 import type { HostedExecutorSessionClock } from "./executor-session.ts";
+import { executorNodeClock, scheduleExecutorNodeDeadline } from "./executor-node-deadline.ts";
 import {
   createExecutorChannel,
   type ExecutorChannel,
@@ -28,12 +29,6 @@ export interface ExecutorBootstrapEnvironment {
   get(name: BootstrapVariable): string | undefined;
 }
 
-const wallClock: HostedExecutorSessionClock = {
-  now: () => Date.now(),
-  schedule: (callback, delayMs) => setTimeout(callback, delayMs),
-  cancel: (handle) => clearTimeout(handle as ReturnType<typeof setTimeout>),
-};
-
 export interface ExecutorNodeBootstrapOptions {
   /** Register trusted handlers before any project imports. The map is snapshotted at startup. */
   operations: ReadonlyMap<string, ExecutorOperation>;
@@ -45,7 +40,7 @@ export interface ExecutorNodeBootstrapOptions {
    */
   readKey?: (signal: AbortSignal) => Promise<Uint8Array>;
   /**
-   * Trusted test boundary for the bootstrap deadline; defaults to the wall clock.
+   * Trusted test boundary for the bootstrap deadline; defaults to UTC anchored to monotonic elapsed time.
    * Scheduled callbacks must run asynchronously. Transport and channel timeouts
    * stay on real timers, sized from the remaining deadline.
    */
@@ -158,7 +153,7 @@ export async function startExecutorNodeBootstrap(
     !isNodeRuntime() || process.release.name !== "node" ||
     Number(process.versions.node.split(".")[0]) < 22
   ) throw new Error("Executor bootstrap requires Node.js 22 or newer");
-  const clock = options.clock ?? wallClock;
+  const clock = options.clock ?? executorNodeClock;
   const startedAt = clock.now();
   const { binding, lifetimeMs, hardDeadlineAt } = readExecutorBootstrapConfiguration(
     options.environment ?? { get: (name) => process.env[name] },
@@ -175,7 +170,7 @@ export async function startExecutorNodeBootstrap(
   }
   if (!options.operations) throw new TypeError("Executor bootstrap requires registered operations");
   const operations = new Map(options.operations);
-  const lifetimeRemaining = remaining();
+  remaining();
   const authority = new AbortController();
   const ready = Promise.withResolvers<ExecutorChannel>();
   const closed = Promise.withResolvers<never>();
@@ -188,8 +183,8 @@ export async function startExecutorNodeBootstrap(
   const stop = (error: Error) => {
     if (failure) return;
     failure = error;
-    clock.cancel(lifetimeTimer);
-    clock.cancel(keyTimer);
+    lifetimeTimer();
+    keyTimer();
     options.signal?.removeEventListener("abort", abort);
     authority.abort(error);
     key?.fill(0);
@@ -200,13 +195,23 @@ export async function startExecutorNodeBootstrap(
     closed.reject(error);
   };
   const abort = () => stop(new Error("Executor bootstrap aborted"));
-  const lifetimeTimer = clock.schedule(
+  const lifetimeTimer = scheduleExecutorNodeDeadline(
+    clock,
+    deadline,
     () => stop(new Error("Executor bootstrap deadline exceeded")),
-    lifetimeRemaining,
+    100, // Observe UTC corrections while idle; this authority closes listener and channel.
   );
-  const keyTimer = clock.schedule(
-    () => stop(new Error("Executor bootstrap key read deadline exceeded")),
-    Math.min(lifetimeRemaining, 5_000),
+  const keyTimer = scheduleExecutorNodeDeadline(
+    clock,
+    Math.min(deadline, startedAt + 5_000),
+    () =>
+      stop(
+        new Error(
+          clock.now() >= deadline
+            ? "Executor bootstrap deadline exceeded"
+            : "Executor bootstrap key read deadline exceeded",
+        ),
+      ),
   );
   options.signal?.addEventListener("abort", abort, { once: true });
   try {
@@ -235,7 +240,7 @@ export async function startExecutorNodeBootstrap(
       throw new Error("Executor bootstrap key read failed");
     });
     await Promise.race([reading, closed.promise]);
-    clock.cancel(keyTimer);
+    keyTimer();
     if (failure) throw failure;
     // The TLS listener synchronously snapshots its key before returning its promise.
     const listening = listenExecutorTransport({

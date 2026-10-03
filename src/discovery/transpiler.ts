@@ -2865,6 +2865,10 @@ export async function importModule(
   await localFs.writeTextFile(tempFile, transformedCode);
 
   try {
+    // Hash dependencies before project module initialization can replace shared built-ins.
+    const deps = await Promise.all(
+      bundledDeps.map(async ({ path, content }) => ({ path, hash: await computeHash(content) })),
+    );
     const moduleUrl = pathHelper.toFileUrl(tempFile);
     moduleUrl.searchParams.set("v", String(Date.now()));
     let module: unknown;
@@ -2891,9 +2895,6 @@ export async function importModule(
         cause: error,
       });
     }
-    const deps = await Promise.all(
-      bundledDeps.map(async ({ path, content }) => ({ path, hash: await computeHash(content) })),
-    );
     const entries = transpileCache.get(cacheKey) ?? [];
     entries.push({ deps, module });
     transpileCache.set(cacheKey, entries);

@@ -322,7 +322,7 @@ describe("canonical npm artifact workflow", () => {
     assertEquals(node["continue-on-error"], undefined);
     assertEquals(node.needs, ["npm-compatibility-artifact"]);
     assertEquals(node.name, "tests (node shard ${{ matrix.shard }}/2)");
-    assertEquals(strategy["fail-fast"], false);
+    assertEquals(strategy["fail-fast"], "${{ github.event_name == 'merge_group' }}");
     assertEquals(matrix.shard, [1, 2]);
     assert(
       jobSteps(node, "Node sharding job").some((step) => step.uses === RESTORE_ACTION),
@@ -396,14 +396,14 @@ describe("canonical npm artifact workflow", () => {
 
   it("prepares the numbered RC version before prerelease SBOM generation", async () => {
     const jobs = await readJobs();
-    const prerelease = asRecord(jobs.prerelease, "prerelease job");
+    const prerelease = asRecord(jobs["github-prerelease"], "GitHub prerelease job");
     const prereleaseSteps = jobSteps(prerelease, "prerelease job");
     const prepareSbom = namedStep(prerelease, "Prepare RC checkout for SBOM");
     const generateSbom = namedStep(prerelease, "Generate SBOM");
 
     assertEquals(
       asRecord(prepareSbom.env, "RC SBOM preparation environment").VERSION,
-      "${{ steps.version.outputs.version }}",
+      "${{ needs.prerelease.outputs.version }}",
     );
     assert(
       prereleaseSteps.indexOf(prepareSbom) <

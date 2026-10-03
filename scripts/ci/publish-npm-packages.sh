@@ -327,9 +327,36 @@ publish_npm_package_with_retry() {
 # One bounded gitHead lookup, charged to the shared budget whatever it returns:
 # a stalled registry read (npm's default fetch timeout is minutes, with
 # retries) is waiting too. Sets PUBLISHED_GIT_HEAD.
+lookup_npm_rc_git_head() {
+  local package_name="$1" registry path response status
+  registry="$(npm config get registry 2>/dev/null)" || return 1
+  [ -n "${registry}" ] || return 1
+  path="$(jq -nr --arg name "${package_name}" --arg version "${VERSION}" \
+    '($name | @uri) + "/" + ($version | @uri)')" || return 1
+  # A package document may remain cached for five minutes after publication.
+  # Read the immutable version endpoint instead of that pre-publication doc.
+  response="$(curl --silent --max-time "$(( (NPM_GIT_HEAD_LOOKUP_TIMEOUT_MS + 999) / 1000 ))" \
+    --header 'Cache-Control: no-cache' --write-out $'\n%{http_code}' \
+    "${registry%/}/${path}" 2>/dev/null)" || return 1
+  status="${response##*$'\n'}"
+  if [[ "${status}" == 404 ]]; then return 0; fi
+  if [[ "${status}" != 200 ]]; then return 1; fi
+  printf '%s' "${response%$'\n'*}" | jq -er \
+    --arg name "${package_name}" --arg version "${VERSION}" \
+    'if .name != $name or .version != $version then error("RC metadata identity mismatch")
+     elif .gitHead == null then ""
+     elif (.gitHead | type) == "string" then .gitHead
+     else error("Invalid RC gitHead metadata") end'
+}
+
 lookup_npm_git_head() {
   LOOKUP_STARTED_AT="$(date +%s)"
-  PUBLISHED_GIT_HEAD="$(npm view "$1@${VERSION}" gitHead --fetch-timeout="${NPM_GIT_HEAD_LOOKUP_TIMEOUT_MS}" --fetch-retries=1 2>/dev/null || true)"
+  PUBLISHED_GIT_HEAD=""
+  if [[ "${2:-}" == rc ]]; then
+    PUBLISHED_GIT_HEAD="$(lookup_npm_rc_git_head "$1")" || return 1
+  else
+    PUBLISHED_GIT_HEAD="$(npm view "$1@${VERSION}" gitHead --fetch-timeout="${NPM_GIT_HEAD_LOOKUP_TIMEOUT_MS}" --fetch-retries=1 2>/dev/null || true)"
+  fi
   if [[ "${2:-}" == rc && "${PUBLISHED_GIT_HEAD}" == "${GITHUB_SHA}" ]]; then
     local current_rc
     current_rc="$(lookup_npm_rc_tag "$1")" || return 1
@@ -354,7 +381,7 @@ wait_for_npm_git_head() {
   # Allow NPM_GIT_HEAD_WAIT_ATTEMPTS empty reads while preserving hash
   # mismatches as immediate failures.
   for attempt in $(seq 1 "${NPM_GIT_HEAD_WAIT_ATTEMPTS}"); do
-    lookup_npm_git_head "${PACKAGE_NAME}" "${2:-}"
+    lookup_npm_git_head "${PACKAGE_NAME}" "${2:-}" || return 1
     if [ "${PUBLISHED_GIT_HEAD}" = "${GITHUB_SHA}" ]; then
       return 0
     fi
@@ -370,7 +397,7 @@ wait_for_npm_git_head() {
     NPM_GIT_HEAD_WAIT_SPENT_SECONDS=$(( NPM_GIT_HEAD_WAIT_SPENT_SECONDS + NPM_GIT_HEAD_WAIT_DELAY_SECONDS ))
   done
 
-  lookup_npm_git_head "${PACKAGE_NAME}" "${2:-}"
+  lookup_npm_git_head "${PACKAGE_NAME}" "${2:-}" || return 1
   [ "${PUBLISHED_GIT_HEAD}" = "${GITHUB_SHA}" ]
 }
 
@@ -493,10 +520,9 @@ run_rc_publish() {
     PACKAGE_NAME="$(jq -r '.name' "${PACKAGE_DIR}/package.json")"
     RC_PUBLISH_TAG="$(rc_tag_for_package "${PACKAGE_NAME}")"
     rc_publish_package_dir "${PACKAGE_DIR}" "${PUBLISH_SPEC}" "${RC_PUBLISH_TAG}"
-    if [[ "${RC_PUBLISH_TAG}" == rc ]]; then
-      wait_for_npm_git_head "${PACKAGE_NAME}" rc
-    fi
   done
+  # The required read-only registry validator checks immutable identities and
+  # RC tags after propagation, before the locked dispatch gate can deploy.
 }
 
 is_npm_package_not_found() {

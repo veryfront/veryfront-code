@@ -1,3 +1,8 @@
+import { mock } from "node:test";
+import {
+  createExecutorNodeClock,
+  executorNodeClock,
+} from "#veryfront/agent/hosted/executor-node-deadline.ts";
 import { randomBytes } from "node:crypto";
 import { getEventListeners } from "node:events";
 import { connect as connectTcp, createServer as createTcpServer } from "node:net";
@@ -94,6 +99,77 @@ if (typeof Deno !== "undefined") {
   );
 } else {
   describe("Node executor TLS transport", () => {
+    it("keeps the production lifetime clock monotonic across wall-clock rollback", () => {
+      const before = executorNodeClock.now();
+      const wallTime = Date.now();
+      const wallNow = mock.method(Date, "now", () => wallTime - 10_000);
+      try {
+        assert(executorNodeClock.now() >= before);
+      } finally {
+        wallNow.mock.restore();
+      }
+    });
+
+    it("honors a forward UTC correction for the absolute allocation deadline", () => {
+      const clock = createExecutorNodeClock();
+      const corrected = Date.now() + 10_000;
+      const wallNow = mock.method(Date, "now", () => corrected);
+      try {
+        assert(clock.now() >= corrected);
+      } finally {
+        wallNow.mock.restore();
+      }
+    });
+
+    it("keeps listener attachment pending when the lifetime timer wakes early", async () => {
+      let now = 0;
+      const scheduled = new Map<object, { callback: () => void; delayMs: number }>();
+      const listener = await listenExecutorTransport({
+        host,
+        port: 0,
+        binding,
+        key: randomBytes(32),
+        timeoutMs: 1_000,
+        clock: {
+          now: () => now,
+          schedule(callback, delayMs) {
+            const handle = {};
+            scheduled.set(handle, { callback, delayMs });
+            return handle;
+          },
+          cancel: (handle) => {
+            scheduled.delete(handle as object);
+          },
+        },
+      });
+      try {
+        const [handle, wake] = [...scheduled.entries()][0]!;
+        assertEquals(wake.delayMs, 1_000);
+        scheduled.delete(handle);
+        now = 999;
+        wake.callback();
+        assertEquals(
+          await Promise.race([
+            listener.connection.then(() => "attached", (error) => error),
+            setImmediate("pending"),
+          ]),
+          "pending",
+        );
+        const next = [...scheduled.values()][0]!;
+        assertEquals(next.delayMs, 1);
+        now = 1_000;
+        next.callback();
+        await assertRejects(
+          () => listener.connection,
+          Error,
+          "Executor transport deadline exceeded",
+        );
+      } finally {
+        listener.close();
+        await setImmediate();
+      }
+    });
+
     it("exchanges bounded binary chunks in both directions", { timeout: 5_000 }, async () => {
       const { listener, client, server } = await pair();
       const bytes = randomBytes(1024 * 1024);
@@ -408,7 +484,7 @@ if (typeof Deno !== "undefined") {
         })
       );
       try {
-        await closed[4];
+        await Promise.race(closed);
         listener.close();
         await Promise.all(closed);
         await assertRejects(() => listener.connection, Error, "Executor transport closed");

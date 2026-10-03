@@ -31,6 +31,8 @@ async function cicdJobs(): Promise<Record<string, Record<string, unknown>>> {
 describe("cicd.yml runner pools", () => {
   it("runs Linux jobs on the larger pool for main and merge queue only", async () => {
     for (const [name, job] of Object.entries(await cicdJobs())) {
+      // Reusable-workflow calls pick their runner in the called workflow.
+      if ("uses" in job) continue;
       const runsOn = job["runs-on"];
       if (OTHER_RUNNERS.includes(String(runsOn))) continue;
       assertEquals(

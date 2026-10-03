@@ -1,4 +1,8 @@
-import { isTerminalRunToolName } from "#veryfront/agent/runtime/terminal-run-control.ts";
+import {
+  isTerminalRunToolName,
+  RUN_TERMINAL_TOOL_CALL_ID_HEADER,
+  terminalToolCallIdHeaderValue,
+} from "#veryfront/agent/runtime/terminal-run-control.ts";
 import { createRemoteMCPToolSource, type RemoteMCPToolSourceConfig } from "#veryfront/tool";
 import type { RemoteToolSource } from "#veryfront/tool";
 import { INGRESS_RUN_TERMINAL_TOKEN_HEADER } from "#veryfront/security/http/ingress-credentials.ts";
@@ -12,12 +16,23 @@ import { INGRESS_RUN_TERMINAL_TOKEN_HEADER } from "#veryfront/security/http/ingr
 export function createRunPlatformToolSource(
   config: RemoteMCPToolSourceConfig & { headers: Record<string, string> },
   terminal: { token: string; runId: string } | null,
+  createSource: (config: RemoteMCPToolSourceConfig) => RemoteToolSource = createRemoteMCPToolSource,
 ): RemoteToolSource {
-  const ordinary = createRemoteMCPToolSource(config);
+  const ordinary = createSource(config);
   if (!terminal) return ordinary;
-  const terminalSource = createRemoteMCPToolSource({
+  const terminalHeaders = {
+    ...config.headers,
+    [INGRESS_RUN_TERMINAL_TOKEN_HEADER]: terminal.token,
+  };
+  const terminalSource = createSource({
     ...config,
-    headers: { ...config.headers, [INGRESS_RUN_TERMINAL_TOKEN_HEADER]: terminal.token },
+    // The call id only names which call the API closes; the token is the authority.
+    headers: (context) => {
+      const toolCallId = terminalToolCallIdHeaderValue(context);
+      return toolCallId
+        ? { ...terminalHeaders, [RUN_TERMINAL_TOOL_CALL_ID_HEADER]: toolCallId }
+        : terminalHeaders;
+    },
   });
   return {
     id: ordinary.id,

@@ -975,3 +975,45 @@ describe("exact-version registry install propagation retry", () => {
     );
   });
 });
+
+describe("RC tag validation handoff", () => {
+  for (const stable of [false, true]) {
+    it(`requires every RC tag only when stable=${stable}`, async () => {
+      const tempDir = await makeTempDir({ prefix: "vf-rc-tag-handoff-" });
+      const binDir = `${tempDir}/bin`;
+      const invocationLog = `${tempDir}/integrity.log`;
+      await Deno.mkdir(binDir);
+      await writeExecutable(
+        `${binDir}/deno`,
+        `#!/bin/bash
+case "\$*" in
+  *registry-release-integrity.ts*) printf '%s\\n' "\$@" > "\$VF_INVOCATION_LOG" ;;
+esac
+exit 0
+`,
+      );
+      try {
+        const output = await new Deno.Command("/bin/bash", {
+          args: [wrapperPath],
+          env: {
+            GITHUB_SHA: "0123456789abcdef0123456789abcdef01234567",
+            IS_STABLE: String(stable),
+            RC_VERSION: "1.2.3-rc.45",
+            STABLE_VERSION: "1.2.3",
+            PATH: `${binDir}:${Deno.env.get("PATH") ?? ""}`,
+            VF_INVOCATION_LOG: invocationLog,
+          },
+          stdout: "piped",
+          stderr: "piped",
+        }).output();
+        assertEquals(output.code, 0, decoder.decode(output.stderr));
+        const args = (await Deno.readTextFile(invocationLog)).trim().split("\n");
+        assertEquals(args.includes("--require-rc-tag"), !stable);
+        const packages = args.flatMap((arg, i) => arg === "--package" ? [args[i + 1]] : []);
+        assertEquals(packages.sort(), (await workspacePackageNames()).sort());
+      } finally {
+        await Deno.remove(tempDir, { recursive: true });
+      }
+    });
+  }
+});

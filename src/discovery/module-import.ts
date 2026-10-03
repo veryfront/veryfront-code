@@ -2,6 +2,9 @@ import type { RuntimeAdapter } from "#veryfront/platform";
 import { detectPlatform } from "#veryfront/platform/core-platform.ts";
 import * as pathHelper from "#veryfront/compat/path";
 import { importModule } from "./transpiler.ts";
+// Loaded before any project module so its snapshot holds the built-ins project code cannot have
+// replaced yet (docs/adr/schema-validation-intrinsics.md).
+import "#veryfront/schemas/pristine-intrinsics.ts";
 
 interface ImportDiscoveryModuleOptions {
   adapter: RuntimeAdapter;

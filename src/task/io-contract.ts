@@ -10,8 +10,12 @@
  * @module task/io-contract
  */
 
-import type { JsonSchemaValidationIssue } from "#veryfront/extensions/schema/index.ts";
+import type {
+  JsonSchemaValidationIssue,
+  JsonSchemaValidationResult,
+} from "#veryfront/extensions/schema/index.ts";
 import { tryCompileJsonSchemaValidator } from "#veryfront/schemas/json-schema.ts";
+import { withPristineIntrinsics } from "#veryfront/schemas/pristine-intrinsics.ts";
 import {
   isCallableContractSchema,
   snapshotJsonSchemaObject,
@@ -75,10 +79,26 @@ const reflectApply = Reflect.apply;
 
 /** Validate a value against a declared contract schema or raw JSON Schema. */
 export async function checkDeclaredSchema(schema: unknown, value: unknown): Promise<SchemaCheck> {
+  // Validator adapters call mutable built-ins that a task module may have replaced, so their
+  // synchronous work runs against the built-ins captured before project code loaded.
+  const outcome = withPristineIntrinsics(() => startDeclaredSchemaCheck(schema, value));
+  if (outcome.kind === "settled") return outcome.check;
+  const result = await outcome.pending;
+  return withPristineIntrinsics(() => jsonSchemaCheck(result));
+}
+
+type StartedSchemaCheck =
+  | { kind: "settled"; check: SchemaCheck }
+  | { kind: "pending"; pending: PromiseLike<JsonSchemaValidationResult<unknown>> };
+
+function startDeclaredSchemaCheck(schema: unknown, value: unknown): StartedSchemaCheck {
   if (isCallableContractSchema(schema)) {
     const result = schema.safeParse(value);
-    if (result.success) return { outcome: "valid", value: result.data };
-    return { outcome: "invalid", errors: toSchemaValidationErrors(result.issues) };
+    if (result.success) return { kind: "settled", check: { outcome: "valid", value: result.data } };
+    return {
+      kind: "settled",
+      check: { outcome: "invalid", errors: toSchemaValidationErrors(result.issues) },
+    };
   }
 
   const jsonSchema = snapshotJsonSchemaObject(schema);
@@ -88,12 +108,22 @@ export async function checkDeclaredSchema(schema: unknown, value: unknown): Prom
   } catch {
     validate = undefined;
   }
-  if (!validate) return { outcome: "schema_uncompilable" };
+  if (!validate) return { kind: "settled", check: { outcome: "schema_uncompilable" } };
 
-  const result = await validate(value);
+  const result = validate(value);
+  return isPromiseLike(result)
+    ? { kind: "pending", pending: result }
+    : { kind: "settled", check: jsonSchemaCheck(result) };
+}
+
+function jsonSchemaCheck(result: JsonSchemaValidationResult<unknown>): SchemaCheck {
   return result.success
     ? { outcome: "valid", value: result.value }
     : { outcome: "invalid", errors: fromJsonSchemaIssues(result.errors) };
+}
+
+function isPromiseLike<T>(value: T | PromiseLike<T>): value is PromiseLike<T> {
+  return typeof (value as { then?: unknown } | null)?.then === "function";
 }
 
 export function createSchemaViolation(

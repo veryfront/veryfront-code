@@ -12,6 +12,13 @@ const logger = baseLogger.component("proxy-fs-adapter-manager");
 
 const DEFAULT_MAX_ADAPTERS = 100;
 const DEFAULT_MAX_IDLE_MS = 30 * 60 * 1_000;
+/**
+ * How long after its last request an adapter still counts as in use. A branch
+ * poke re-lists the project only for adapters in use; the rest skip the
+ * listing and are evicted, so adapters left behind by finished agent runs stop
+ * re-listing the project on every write.
+ */
+const ADAPTER_IN_USE_WINDOW_MS = 60 * 1_000;
 const SHA256_DIGEST_BYTES = 32;
 
 function requirePositiveSafeInteger(value: number, name: string): number {
@@ -647,6 +654,7 @@ export class ProxyFSAdapterManager {
       invalidationCallbacks: createDefaultInvalidationCallbacks({
         ...this.baseConfig.invalidationCallbacks,
         evictCurrentAdapter: () => this.#evictAdapterByCacheKey(cacheKey),
+        isAdapterInUse: () => this.#now() - projectAdapter.lastAccessed <= ADAPTER_IN_USE_WINDOW_MS,
       }),
     };
 
@@ -718,6 +726,9 @@ export class ProxyFSAdapterManager {
           duration: formatDuration(performanceNow() - initStartTime),
         });
 
+        // Initialization can outlast the usage window. The request that
+        // resolves the adapter is a use, so count from when it completes.
+        projectAdapter.lastAccessed = this.#now();
         mapSet(this.#adapters, cacheKey, projectAdapter);
         return projectAdapter;
       } catch (error) {

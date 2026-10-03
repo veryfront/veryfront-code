@@ -78,6 +78,7 @@ import { buildRuntimeUsageTraceAttributes } from "./trace-usage.ts";
 import {
   getToolResultError,
   isIntegrationAuthenticationActionResult,
+  isProviderToolResultError,
 } from "#veryfront/tool/result.ts";
 import { compareStrings } from "#veryfront/utils/compare.ts";
 import { isStatefulTurnCycleError } from "#veryfront/agent/runtime/stateful-turn-lineage.ts";
@@ -1582,7 +1583,8 @@ export function processStreamInternal(
             });
             const toolResultOutput = resolveToolResultOutput(typedPart);
             const inferredToolError = getToolResultError(toolResultOutput);
-            const isExplicitError = typedPart.isError === true &&
+            const isExplicitError = (typedPart.isError === true ||
+              isProviderToolResultError(toolResultOutput)) &&
               !isIntegrationAuthenticationActionResult(toolResultOutput);
             const isError = isExplicitError || inferredToolError !== undefined;
             const toolResultError = isExplicitError

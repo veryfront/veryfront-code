@@ -1,4 +1,5 @@
 import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
+import { parse } from "#std/yaml/parse";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { withTempDir } from "#veryfront/testing/deno-compat.ts";
 
@@ -201,8 +202,10 @@ describe("npm package publishing", () => {
           "verify_npm_compatibility_artifact() { :; }",
           'package_dirs() { echo "$PACKAGE_DIR"; }',
           'canonical_tarball_for_package_dir() { echo "candidate-$VERSION.tgz"; }',
+          'curl() { printf \'%s\\n\' "$(jq -n --arg version "$VERSION" --arg head "$GITHUB_SHA" \'{name:"veryfront",version:$version,gitHead:$head}\')" 200; }',
           "npm() {",
           LOG_NPM_CALL,
+          '  if [ "$1" = config ]; then echo https://registry.npmjs.org/; return; fi',
           '  if [ "$1" = dist-tag ]; then tag=$(cat "$TAG_STATE"); if [ -n "$tag" ]; then echo "rc: $tag"; fi; return 0; fi',
           '  if [ "$1" = view ]; then if [ "$3" = gitHead ]; then echo "$GITHUB_SHA"; return 0; fi; return 1; fi',
           '  if [ "${!#}" = rc ]; then echo "$VERSION" > "$TAG_STATE"; fi',
@@ -239,8 +242,9 @@ describe("npm package publishing", () => {
           "set -euo pipefail",
           'source "$SCRIPT_PATH"',
           "sleep() { :; }",
+          'curl() { printf \'%s\\n\' "$(jq -n --arg version "$VERSION" --arg head "$GITHUB_SHA" \'{name:"veryfront",version:$version,gitHead:$head}\')" 200; }',
           "npm() {",
-          '  if [ "$1" = view ]; then echo "$GITHUB_SHA"; return; fi',
+          '  if [ "$1" = config ]; then echo https://registry.npmjs.org/; return; fi',
           '  n=$(cat "$READ_COUNT"); n=$((n + 1)); echo "$n" > "$READ_COUNT"',
           `  if [ "$n" -eq 1 ]; then echo 'rc: 0.1.2-rc.200'; else echo 'rc: 0.1.2-rc.201'; fi`,
           "}",
@@ -2459,4 +2463,209 @@ describe("npm package publishing", () => {
       });
     }
   }
+});
+
+describe("RC publication deadline", () => {
+  for (const status of [0, 124, 137, 42]) {
+    it(`preserves publish status ${status} and diagnoses deadline failures`, async () => {
+      const workflow = parse(
+        await Deno.readTextFile(
+          new URL("../../.github/workflows/cicd.yml", import.meta.url),
+        ),
+      ) as {
+        jobs: { prerelease: { steps: { name?: string; run?: string }[] } };
+      };
+      const publish = workflow.jobs.prerelease.steps.find((step) =>
+        step.name === "Publish tested RC npm artifact"
+      )!;
+      await withTempDir(async (stateDir) => {
+        const output = await runBash(
+          [
+            "set -euo pipefail",
+            "deno() { :; }",
+            'timeout() { return "$PUBLISH_STATUS"; }',
+            publish.run!,
+          ].join("\n"),
+          {
+            PUBLISH_STATUS: String(status),
+            GITHUB_STEP_SUMMARY: `${stateDir}/summary`,
+          },
+        );
+        assertEquals(output.code, status, decoder.decode(output.stderr));
+        const stderr = decoder.decode(output.stderr);
+        if (status === 124 || status === 137) {
+          assertStringIncludes(
+            stderr,
+            "RC npm publication exceeded its eight-minute deadline",
+          );
+        } else {
+          assertEquals(stderr, "");
+        }
+      });
+    });
+  }
+
+  it("does not fail a successful publish while metadata is still propagating", async () => {
+    const output = await runBash(
+      [
+        "set -euo pipefail",
+        'source "$SCRIPT_PATH"',
+        "verify_npm_compatibility_artifact() { :; }",
+        "package_dirs() { echo npm; }",
+        "canonical_tarball_for_package_dir() { echo package.tgz; }",
+        "jq() { echo veryfront; }",
+        "rc_tag_for_package() { echo rc; }",
+        "rc_publish_package_dir() { :; }",
+        "wait_for_npm_git_head() { PUBLISHED_GIT_HEAD=''; return 1; }",
+        "run_rc_publish",
+      ].join("\n"),
+      {
+        VERSION: "0.1.0-rc.1",
+        GITHUB_SHA: "expected-head",
+        NPM_PACK_DIR: "artifact",
+      },
+    );
+    assertEquals(output.code, 0, decoder.decode(output.stderr));
+    assertEquals(decoder.decode(output.stderr), "");
+  });
+});
+
+describe("RC metadata verification order", () => {
+  for (
+    const [scenario, body, status, tag, transportStatus] of [
+      [
+        "wrong package",
+        { name: "other", version: "0.1.0-rc.1", gitHead: "expected-head" },
+        "200",
+        "0.1.0-rc.1",
+        "0",
+      ],
+      [
+        "wrong version",
+        { name: "veryfront", version: "0.1.0-rc.2", gitHead: "expected-head" },
+        "200",
+        "0.1.0-rc.1",
+        "0",
+      ],
+      [
+        "wrong hash",
+        { name: "veryfront", version: "0.1.0-rc.1", gitHead: "other-head" },
+        "200",
+        "0.1.0-rc.1",
+        "0",
+      ],
+      [
+        "invalid hash",
+        { name: "veryfront", version: "0.1.0-rc.1", gitHead: 123 },
+        "200",
+        "0.1.0-rc.1",
+        "0",
+      ],
+      [
+        "missing hash",
+        { name: "veryfront", version: "0.1.0-rc.1" },
+        "200",
+        "0.1.0-rc.1",
+        "0",
+      ],
+      [
+        "old tag",
+        { name: "veryfront", version: "0.1.0-rc.1", gitHead: "expected-head" },
+        "200",
+        "0.1.0-rc.0",
+        "0",
+      ],
+      ["server error", {}, "503", "0.1.0-rc.1", "0"],
+      ["transport error", {}, "000", "0.1.0-rc.1", "7"],
+      ["malformed JSON", "not-json", "200", "0.1.0-rc.1", "0"],
+    ] as const
+  ) {
+    it(`refuses exact-version RC metadata with ${scenario}`, async () => {
+      const output = await runBash(
+        [
+          "set -euo pipefail",
+          'source "$SCRIPT_PATH"',
+          'npm() { if [ "$1" = config ]; then echo https://registry.npmjs.org/; else echo "rc: $RC_TAG"; fi; }',
+          'curl() { printf \'%s\\n\' "$BODY" "$HTTP_STATUS"; return "$TRANSPORT_STATUS"; }',
+          "wait_for_npm_git_head veryfront rc",
+        ].join("\n"),
+        {
+          VERSION: "0.1.0-rc.1",
+          GITHUB_SHA: "expected-head",
+          BODY: typeof body === "string" ? body : JSON.stringify(body),
+          HTTP_STATUS: status,
+          RC_TAG: tag,
+          TRANSPORT_STATUS: transportStatus,
+          NPM_GIT_HEAD_WAIT_TOTAL_SECONDS: "0",
+        },
+      );
+      assertEquals(output.code === 0, false);
+    });
+  }
+
+  it("waits for an exact RC version that is not yet visible", async () => {
+    await withTempDir(async (stateDir) => {
+      const output = await runBash(
+        [
+          "set -euo pipefail",
+          'source "$SCRIPT_PATH"',
+          'npm() { if [ "$1" = config ]; then echo https://registry.npmjs.org/; else echo "rc: $VERSION"; fi; }',
+          'curl() { if [ ! -f "$READ_MARKER" ]; then : > "$READ_MARKER"; printf \'%s\\n\' "{}" 404; else printf \'%s\\n\' \'{"name":"veryfront","version":"0.1.0-rc.1","gitHead":"expected-head"}\' 200; fi; }',
+          "wait_for_npm_git_head veryfront rc",
+          'test "$PUBLISHED_GIT_HEAD" = "$GITHUB_SHA"',
+        ].join("\n"),
+        {
+          VERSION: "0.1.0-rc.1",
+          GITHUB_SHA: "expected-head",
+          READ_MARKER: `${stateDir}/read`,
+          NPM_GIT_HEAD_WAIT_ATTEMPTS: "2",
+          NPM_GIT_HEAD_WAIT_DELAY_SECONDS: "0",
+        },
+      );
+      assertEquals(output.code, 0, decoder.decode(output.stderr));
+    });
+  });
+
+  it("verifies the exact RC version when a cached package document omits it", async () => {
+    const output = await runBash(
+      [
+        "set -euo pipefail",
+        'source "$SCRIPT_PATH"',
+        'npm() { case "$1" in view) return 0 ;; config) echo https://registry.npmjs.org/ ;; dist-tag) echo "rc: $VERSION" ;; *) return 91 ;; esac; }',
+        'curl() { case "$*" in *https://registry.npmjs.org/%40veryfront%2Fexample/0.1.0-rc.1*) printf \'%s\\n\' \'{"name":"@veryfront/example","version":"0.1.0-rc.1","gitHead":"expected-head"}\' 200 ;; *) return 92 ;; esac; }',
+        "lookup_npm_git_head @veryfront/example rc",
+        'test "$PUBLISHED_GIT_HEAD" = "$GITHUB_SHA"',
+      ].join("\n"),
+      { VERSION: "0.1.0-rc.1", GITHUB_SHA: "expected-head" },
+    );
+    assertEquals(output.code, 0, decoder.decode(output.stderr));
+  });
+
+  it("publishes the batch without waiting for registry propagation", async () => {
+    const output = await runBash(
+      [
+        "set -euo pipefail",
+        'source "$SCRIPT_PATH"',
+        "verify_npm_compatibility_artifact() { :; }",
+        "package_dirs() { printf '%s\\n' extension history npm; }",
+        "canonical_tarball_for_package_dir() { echo package.tgz; }",
+        'jq() { echo "$PACKAGE_DIR"; }',
+        'rc_tag_for_package() { if [ "$1" = history ]; then echo rc-history; else echo rc; fi; }',
+        'rc_publish_package_dir() { echo "publish:$1:$3"; }',
+        'wait_for_npm_git_head() { echo "verify:$1:$2"; }',
+        "run_rc_publish",
+      ].join("\n"),
+      {
+        VERSION: "0.1.0-rc.1",
+        GITHUB_SHA: "expected-head",
+        NPM_PACK_DIR: "artifact",
+      },
+    );
+    assertEquals(output.code, 0, decoder.decode(output.stderr));
+    assertEquals(decoder.decode(output.stdout).trim().split("\n"), [
+      "publish:extension:rc",
+      "publish:history:rc-history",
+      "publish:npm:rc",
+    ]);
+  });
 });
