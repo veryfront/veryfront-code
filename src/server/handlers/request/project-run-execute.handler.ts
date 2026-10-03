@@ -130,6 +130,7 @@ const TaskAbort = AbortController.prototype.abort;
 const TaskAbortSignalAny = AbortSignal.any;
 const RunStopTimeout = AbortSignal.timeout;
 const RunStopAddListener = EventTarget.prototype.addEventListener;
+const RunStopRemoveListener = EventTarget.prototype.removeEventListener;
 const ResponsePrototypeJson = Response.prototype.json;
 
 const EXECUTE_PATH_REGEX = /^\/api\/control-plane\/runs\/([^/]+)\/execute$/;
@@ -1601,7 +1602,22 @@ async function awaitRunPauseDecision(
       runId,
       round,
     });
-    await deps.sleep(WORKFLOW_PAUSE_CHECK_BACKOFF_MS);
+    const signals = pollingStopped ? [signal, pollingStopped] : [signal];
+    let interrupt!: () => void;
+    const interrupted = new Promise<void>((resolve) => {
+      interrupt = resolve;
+      for (const current of signals) {
+        ReflectApply(RunStopAddListener, current, ["abort", interrupt, { once: true }]);
+      }
+    });
+    try {
+      if (ended()) break;
+      await Promise.race([deps.sleep(WORKFLOW_PAUSE_CHECK_BACKOFF_MS), interrupted]);
+    } finally {
+      for (const current of signals) {
+        ReflectApply(RunStopRemoveListener, current, ["abort", interrupt]);
+      }
+    }
   }
   return true;
 }

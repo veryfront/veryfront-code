@@ -9995,6 +9995,7 @@ describe("server/handlers/request/project-run-execute.handler manual pause (#258
       now?: () => number;
       onDiscover?: () => void;
       onResume?: () => void;
+      onDestroy?: () => void;
       sleep?: (ms: number) => Promise<void>;
       workflowResumeTimeoutMs?: number;
     } = {},
@@ -10012,11 +10013,16 @@ describe("server/handlers/request/project-run-execute.handler manual pause (#258
       createWorkflowClient: (config) => {
         const client = createWorkflowClient({ ...config, backend });
         const resume = client.resume.bind(client);
+        const destroy = client.destroy.bind(client);
         return Object.assign(client, {
           statePersistence: options.statePersistence ?? "durable" as const,
           resume: (...args: Parameters<typeof resume>) => {
             options.onResume?.();
             return resume(...args);
+          },
+          destroy: () => {
+            options.onDestroy?.();
+            return destroy();
           },
         });
       },
@@ -10303,6 +10309,107 @@ describe("server/handlers/request/project-run-execute.handler manual pause (#258
       assertEquals(calls, ["first"]);
       assertEquals((await backend.getRun(runId))?.status, "waiting");
     });
+  });
+
+  it("cancels promptly while an unknown pause decision is in backoff", async () => {
+    const backend = new SharedMemoryBackend();
+    const calls: string[] = [];
+    const controller = new AbortController();
+    const backoffStarted = Promise.withResolvers<void>();
+    const finishBackoff = Promise.withResolvers<void>();
+    let watchdog: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await withMockFetch(
+        async (input) =>
+          new URL(String(input)).pathname.endsWith("/pause-ack")
+            ? Response.json({ stop: false }, { status: 401 })
+            : Response.json({ acknowledged: true }),
+        async () => {
+          const pending = dispatch(
+            createHandler(backend, threeSteps(calls), {
+              sleep: (ms) => {
+                if (ms !== 30_000) return delay(Math.min(ms, 10));
+                backoffStarted.resolve();
+                return finishBackoff.promise;
+              },
+            }),
+            undefined,
+            controller.signal,
+          );
+          await backoffStarted.promise;
+          controller.abort(new Error("Run cancelled"));
+          const payload = await Promise.race([
+            pending,
+            new Promise<never>((_resolve, reject) => {
+              watchdog = setTimeout(
+                () => reject(new Error("Cancellation waited for the backoff")),
+                1_000,
+              );
+            }),
+          ]);
+          assertEquals(payload.success, false);
+          assertEquals(payload.error, "Workflow run cancelled");
+          assertEquals((await backend.getRun(runId))?.status, "cancelled");
+          assertEquals(calls, ["first"]);
+        },
+      );
+    } finally {
+      clearTimeout(watchdog);
+      finishBackoff.resolve();
+    }
+  });
+
+  it("releases the client when manual resume times out during pause backoff", async () => {
+    const backend = new SharedMemoryBackend();
+    const calls: string[] = [];
+    const definition = threeSteps(calls);
+    const backoffStarted = Promise.withResolvers<void>();
+    const finishBackoff = Promise.withResolvers<void>();
+    const destroyed = Promise.withResolvers<void>();
+    let requests = 0;
+    let resumes = 0;
+    let watchdog: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await withMockFetch(
+        async () =>
+          ++requests === 1
+            ? Response.json({ stop: true })
+            : Response.json({ stop: false }, { status: 401 }),
+        async () => {
+          await dispatch(createHandler(backend, definition));
+          const pending = dispatch(
+            createHandler(backend, definition, {
+              workflowResumeTimeoutMs: 20,
+              onResume: () => resumes++,
+              onDestroy: () => destroyed.resolve(),
+              sleep: (ms) => {
+                if (ms !== 30_000) return delay(Math.min(ms, 10));
+                backoffStarted.resolve();
+                return finishBackoff.promise;
+              },
+            }),
+            { type: "manual" },
+          );
+          await backoffStarted.promise;
+          assertEquals((await pending).status, "waiting");
+          await Promise.race([
+            destroyed.promise,
+            new Promise<never>((_resolve, reject) => {
+              watchdog = setTimeout(
+                () => reject(new Error("Client cleanup waited for the backoff")),
+                1_000,
+              );
+            }),
+          ]);
+          assertEquals(resumes, 0);
+          assertEquals(calls, ["first"]);
+          assertEquals((await backend.getRun(runId))?.status, "waiting");
+        },
+      );
+    } finally {
+      clearTimeout(watchdog);
+      finishBackoff.resolve();
+    }
   });
 
   it("refuses manual resume without a capability instead of releasing the boundary", async () => {
