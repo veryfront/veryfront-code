@@ -5,7 +5,7 @@ import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { runtime } from "#veryfront/platform/adapters/detect.ts";
 import { VeryfrontError } from "#veryfront/errors/types.ts";
 import { createVeryfrontHandler } from "./runtime-handler/index.ts";
-import { bootstrapProd, type BootstrapResult } from "./bootstrap.ts";
+import { bootstrapProd, type BootstrapResult, isLocalCliProxyMode } from "./bootstrap.ts";
 import { cwd, exit, getEnv, onGlobalError, onSignal } from "#veryfront/platform/compat/process.ts";
 import { isDebugEnabled } from "#veryfront/utils/constants/env.ts";
 import { initializeOTLPWithApis, withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
@@ -260,6 +260,18 @@ export function startProductionServerWithDependencies(
         discoveryConfig,
         localProjects,
       } = options;
+
+      // The interceptor is the CLI's in-process proxy (`veryfront start`),
+      // which writes the resolved x-token onto a request in the isolate
+      // project code shares. That is acceptable for a developer's own token on
+      // their machine only. A deployed runtime (hosted proxy mode without the
+      // local CLI marker) gets its credentials from a separate proxy hop.
+      if (requestInterceptor && getEnv("PROXY_MODE") === "1" && !isLocalCliProxyMode()) {
+        throw new TypeError(
+          "requestInterceptor (combined mode) is for local development only and is refused " +
+            "in hosted proxy mode",
+        );
+      }
 
       const baseAdapter = suppliedBootstrap?.adapter ?? options.adapter ?? (await runtime.get());
       let initialOnRecycle = options.onMemoryRecycle;

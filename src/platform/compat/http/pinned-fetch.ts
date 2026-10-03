@@ -9,6 +9,8 @@ import type { Readable } from "node:stream";
 import { VERSION } from "#veryfront/utils/version-constant.ts";
 import { isErrorAcrossRealms } from "../error-introspection.ts";
 import {
+  assertNativeRequestProcessing,
+  assertObjectPrototypeUnchanged,
   copyNativeHeaders,
   createNativeRequestInit,
   readOwnInitField,
@@ -26,6 +28,8 @@ const HeadersSet = Headers.prototype.set;
 const RequestHeadersGetter = Object.getOwnPropertyDescriptor(NativeRequest.prototype, "headers")!
   .get!;
 const RequestArrayBuffer = NativeRequest.prototype.arrayBuffer;
+const ObjectAssign = Object.assign;
+const ObjectCreate = Object.create;
 
 function hasHeader(headers: Headers, name: string): boolean {
   return IntrinsicReflectApply(HeadersHas, headers, [name]) as boolean;
@@ -297,12 +301,17 @@ export async function fetchWithPinnedAddresses(
   if (addresses.length === 0) {
     throw new Error(`No validated addresses are available for ${url.host}`);
   }
+  // Filling and reading a native Headers writes into arrays an index accessor
+  // or a replaced array species would observe; each turn that touches the
+  // credential-bearing headers is checked first.
+  assertNativeRequestProcessing();
   const headers = applyRuntimeDefaultRequestHeaders(
     copyNativeHeaders(readOwnInitField(init, "headers")),
     readOwnInitField(init, "mode"),
   );
   const body = await normalizeRequestBody(url, init, headers);
   const method = (readOwnInitField(init, "method") ?? "GET").toUpperCase();
+  assertNativeRequestProcessing();
   const requestHeaders = toNativeHeaderRecord(headers);
   const setCookies = readSeparateSetCookies(requestHeaders);
   const signal = readOwnInitField(init, "signal") ?? undefined;
@@ -315,10 +324,19 @@ export async function fetchWithPinnedAddresses(
   let lastConnectError: unknown;
 
   for (let attemptIndex = 0; attemptIndex < attempts.length; attemptIndex++) {
+    // Null-prototype options and headers: whatever node:http reads from them
+    // directly never falls through to Object.prototype. It reads most options
+    // from its own ordinary copy, though, which assertObjectPrototypeUnchanged
+    // covers before the call.
+    const outgoingHeaders = ObjectAssign(ObjectCreate(null), requestHeaders, {
+      // node:http sends each element of an array value as its own field.
+      ...(setCookies === undefined ? {} : { "set-cookie": [...setCookies] }),
+      host: url.host,
+    }) as Record<string, string | string[]>;
     const requestOptions: RequestOptions & {
       autoSelectFamily?: boolean;
       ca?: string[];
-    } = {
+    } = ObjectAssign(ObjectCreate(null), {
       protocol: url.protocol,
       // Connect straight to the validated address. Overriding DNS through a
       // custom `lookup` is the documented way to pin and Node honours it, but
@@ -330,12 +348,7 @@ export async function fetchWithPinnedAddresses(
       port: url.port || (url.protocol === "https:" ? 443 : 80),
       path: `${url.pathname}${url.search}`,
       method,
-      headers: {
-        ...requestHeaders,
-        // node:http sends each element of an array value as its own field.
-        ...(setCookies === undefined ? {} : { "set-cookie": [...setCookies] }),
-        host: url.host,
-      },
+      headers: outgoingHeaders,
 
       ...(url.protocol === "https:"
         ? {
@@ -343,7 +356,7 @@ export async function fetchWithPinnedAddresses(
           ...(tls.trustedCaCertificates?.length ? { ca: [...tls.trustedCaCertificates] } : {}),
         }
         : {}),
-    };
+    });
 
     let pendingRequest: ClientRequest | undefined;
     try {
@@ -355,6 +368,9 @@ export async function fetchWithPinnedAddresses(
           cleanupAbortListener();
           reject(error);
         };
+        // Same turn as the call: node:http processes the headers synchronously.
+        assertNativeRequestProcessing();
+        assertObjectPrototypeUnchanged();
         const request = transport.request(requestOptions, async (message) => {
           responseMessage = message;
           try {

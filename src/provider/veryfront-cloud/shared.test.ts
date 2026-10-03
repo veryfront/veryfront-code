@@ -7,6 +7,7 @@ import { __resetVeryfrontCloudCatalogForTests } from "./catalog-client.ts";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import {
   HEADER_METHODS,
+  installArrayWriteProbe,
   installCredentialProbes,
 } from "#veryfront/security/http/credential-probes.test-helpers.ts";
 import { isVeryfrontGatewayResponse } from "#veryfront/provider/runtime-loader/provider-http.ts";
@@ -345,6 +346,36 @@ describe("provider/veryfront-cloud/shared", () => {
 
     assertEquals(transportCalls, 0);
     assertEquals(probes.saw(bearer), false);
+  });
+
+  it("refuses a model call while an Array.prototype index accessor observes array writes", async () => {
+    const bearer = "vf_model_call_array_bearer_8e42";
+    const wrappedFetch = createVeryfrontCloudFetch(bearer, "https://93.184.216.34/ai/v1");
+    let transportCalls = 0;
+    const probe = installArrayWriteProbe("Array.prototype index");
+    try {
+      await withMockFetch(
+        () => {
+          transportCalls++;
+          return Promise.resolve(new Response(null, { status: 204 }));
+        },
+        () =>
+          assertRejects(
+            async () =>
+              await wrappedFetch("https://93.184.216.34/ai/v1/chat/completions", {
+                method: "POST",
+                body: '{"model":"gpt-test"}',
+              }),
+            TypeError,
+            "Refused a credential-bearing request",
+          ),
+      );
+    } finally {
+      probe.restore();
+    }
+
+    assertEquals(transportCalls, 0);
+    assertEquals(probe.saw(bearer), false);
   });
 
   it("aborts an in-flight gateway request when the caller signal aborts (#1815)", async () => {

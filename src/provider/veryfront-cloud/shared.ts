@@ -753,6 +753,8 @@ export function createVeryfrontCloudFetch(
     IntrinsicReflectApply(HeadersDelete, headers, ["x-goog-api-key"]);
     IntrinsicReflectApply(HeadersDelete, headers, ["x-veryfront-project-slug"]);
     IntrinsicReflectApply(HeadersDelete, headers, ["x-veryfront-billing-group-id"]);
+    // Setting the bearer pushes it onto the header list's internal array.
+    assertNativeRequestProcessing();
     IntrinsicReflectApply(HeadersSet, headers, ["Authorization", `Bearer ${trustedApiToken}`]);
 
     if (projectSlug) {

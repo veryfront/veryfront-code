@@ -164,6 +164,14 @@ function hasAnyCredential(credentials: IngressCredentials): boolean {
     credentials[INGRESS_RUN_TERMINAL_TOKEN_HEADER] !== null;
 }
 
+function deleteCredentialHeaders(headers: Headers): void {
+  IntrinsicReflectApply(HeadersDelete, headers, [INGRESS_API_TOKEN_HEADER]);
+  IntrinsicReflectApply(HeadersDelete, headers, [INGRESS_INFERENCE_TOKEN_HEADER]);
+  IntrinsicReflectApply(HeadersDelete, headers, [INGRESS_RUN_EVENT_TOKEN_HEADER]);
+  IntrinsicReflectApply(HeadersDelete, headers, [INGRESS_RUN_STOP_TOKEN_HEADER]);
+  IntrinsicReflectApply(HeadersDelete, headers, [INGRESS_RUN_TERMINAL_TOKEN_HEADER]);
+}
+
 /** A copy of `request` without the credential headers, holding `credentials`. */
 function sealWith(request: Request, credentials: IngressCredentials): Request {
   assertNativeHeaderProcessing();
@@ -177,11 +185,7 @@ function sealWith(request: Request, credentials: IngressCredentials): Request {
   // Bun can retain the source headers when the override record is empty.
   // Scrub only the private copy, through captured methods, before publishing it.
   const sealedHeaders = IntrinsicReflectApply(RequestHeadersGetter, sealed, []) as Headers;
-  IntrinsicReflectApply(HeadersDelete, sealedHeaders, [INGRESS_API_TOKEN_HEADER]);
-  IntrinsicReflectApply(HeadersDelete, sealedHeaders, [INGRESS_INFERENCE_TOKEN_HEADER]);
-  IntrinsicReflectApply(HeadersDelete, sealedHeaders, [INGRESS_RUN_EVENT_TOKEN_HEADER]);
-  IntrinsicReflectApply(HeadersDelete, sealedHeaders, [INGRESS_RUN_STOP_TOKEN_HEADER]);
-  IntrinsicReflectApply(HeadersDelete, sealedHeaders, [INGRESS_RUN_TERMINAL_TOKEN_HEADER]);
+  deleteCredentialHeaders(sealedHeaders);
   // Clear any cookies retained by the constructor before replaying each field.
   IntrinsicReflectApply(HeadersDelete, sealedHeaders, ["set-cookie"]);
   if (remaining.setCookies.length > 0) {
@@ -250,6 +254,17 @@ export function sealInterceptedRequest(source: Request, intercepted: Request): R
   if (hasAnyCredential(written)) {
     sealed = sealWith(intercepted, written);
     after = written;
+    // The interceptor's own request is not passed on, but it may be the
+    // sealed source it edited in place, which other framework code still
+    // holds: take the credentials it wrote off it too. Immutable headers (a
+    // runtime-created request) cannot have been written by the interceptor.
+    try {
+      deleteCredentialHeaders(
+        IntrinsicReflectApply(RequestHeadersGetter, intercepted, []) as Headers,
+      );
+    } catch {
+      // Left as the runtime created it; the sealed copy above is what goes on.
+    }
   } else if (registered !== undefined) {
     if (intercepted === source) return source;
     sealed = intercepted;

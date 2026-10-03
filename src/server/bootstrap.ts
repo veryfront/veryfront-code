@@ -598,8 +598,7 @@ export async function bootstrapProd(
 function validateProductionEnvironment(): void {
   const nodeEnv = getEnv("NODE_ENV") ?? getEnv("DENO_ENV");
   const proxyMode = getEnv("PROXY_MODE");
-  const localCliProxyMode = getHostEnv(LOCAL_CLI_PROXY_MODE_ENV) === "1" &&
-    getEnvSource(LOCAL_CLI_PROXY_MODE_ENV).source === "process";
+  const localCliProxyMode = isLocalCliProxyMode();
   const controlPlanePublicKey = getHostEnv("CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY");
 
   // In proxy mode (deployed pods), NODE_ENV must be explicitly set to production
@@ -668,6 +667,15 @@ function validateProductionEnvironment(): void {
     nodeEnv: nodeEnv ?? "(unset)",
     proxyMode: proxyMode ?? "0",
   });
+}
+
+/**
+ * True when the CLI's local `start` command put this process in proxy mode:
+ * the marker must come from the process environment, not a project env file.
+ */
+export function isLocalCliProxyMode(): boolean {
+  return getHostEnv(LOCAL_CLI_PROXY_MODE_ENV) === "1" &&
+    getEnvSource(LOCAL_CLI_PROXY_MODE_ENV).source === "process";
 }
 
 export function validateProductionEnvironmentForTests(): void {

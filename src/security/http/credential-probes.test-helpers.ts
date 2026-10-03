@@ -235,3 +235,99 @@ export function installCredentialProbes(options: CredentialProbeOptions = {}): C
     },
   };
 }
+
+/** Ways project code can observe the arrays a runtime fills with header entries. */
+export const ARRAY_WRITE_ROUTES = [
+  "Array.prototype index",
+  "Object.prototype index",
+  "Array.prototype's prototype",
+  "Array.prototype.constructor",
+  "Array[Symbol.species]",
+] as const;
+
+export type ArrayWriteRoute = typeof ARRAY_WRITE_ROUTES[number];
+
+export interface ArrayWriteProbe {
+  saw(secret: string): boolean;
+  restore(): void;
+}
+
+/**
+ * Install one {@link ArrayWriteRoute}. Index accessors catch an entry pushed
+ * onto a fresh array; a replaced species catches the entries `filter`, `map`
+ * and `splice` copy. Each probe keeps array behaviour intact.
+ */
+export function installArrayWriteProbe(route: ArrayWriteRoute): ArrayWriteProbe {
+  const defineProperty = Object.defineProperty;
+  const getOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+  const NativeArray = Array;
+  // A string, not an array: pushing onto an array would re-enter the probe.
+  let seen = "";
+  const record = (value: unknown) => {
+    try {
+      seen += `\n${NativeArray.isArray(value) ? value.join("=") : String(value)}`;
+    } catch {
+      // A value without a string form cannot carry the secret.
+    }
+  };
+  const indexAccessors = (target: object, keys: string[]) => {
+    for (const key of keys) {
+      defineProperty(target, key, {
+        configurable: true,
+        get: () => undefined,
+        set(this: object, value: unknown) {
+          record(value);
+          defineProperty(this, key, {
+            value,
+            writable: true,
+            enumerable: true,
+            configurable: true,
+          });
+        },
+      });
+    }
+  };
+  const indexKeys = ["0", "1", "2", "3", "4", "5", "6", "7"];
+  const species = function (length: number) {
+    return new Proxy(new NativeArray(length), {
+      defineProperty(target, key, descriptor) {
+        record(descriptor.value);
+        return Reflect.defineProperty(target, key, descriptor);
+      },
+    });
+  };
+  let restore: () => void;
+  switch (route) {
+    case "Array.prototype index":
+    case "Object.prototype index": {
+      const target = route === "Array.prototype index" ? NativeArray.prototype : Object.prototype;
+      indexAccessors(target, indexKeys);
+      restore = () => {
+        for (const key of indexKeys) Reflect.deleteProperty(target, key);
+      };
+      break;
+    }
+    case "Array.prototype's prototype": {
+      const inserted = Object.create(Object.prototype);
+      indexAccessors(inserted, indexKeys);
+      Object.setPrototypeOf(NativeArray.prototype, inserted);
+      restore = () => Object.setPrototypeOf(NativeArray.prototype, Object.prototype);
+      break;
+    }
+    case "Array.prototype.constructor": {
+      const original = getOwnPropertyDescriptor(NativeArray.prototype, "constructor")!;
+      const constructor = function () {};
+      defineProperty(constructor, Symbol.species, { value: species });
+      defineProperty(NativeArray.prototype, "constructor", { ...original, value: constructor });
+      restore = () => defineProperty(NativeArray.prototype, "constructor", original);
+      break;
+    }
+    case "Array[Symbol.species]": {
+      const original = getOwnPropertyDescriptor(NativeArray, Symbol.species)!;
+      defineProperty(NativeArray, Symbol.species, { configurable: true, get: () => species });
+      restore = () => defineProperty(NativeArray, Symbol.species, original);
+      break;
+    }
+  }
+  return { saw: (secret) => seen.includes(secret), restore };
+}

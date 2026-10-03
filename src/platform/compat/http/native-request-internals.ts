@@ -24,17 +24,28 @@ const WELL_KNOWN_SYMBOLS: readonly symbol[] = [Symbol.iterator, Symbol.toStringT
 
 let locked = false;
 
-function lockSymbolMembers(target: typeof Request.prototype | typeof Headers.prototype): void {
+/**
+ * Make every symbol-keyed member of `target` but the well-known ones
+ * non-configurable, and data members non-writable too.
+ *
+ * @internal Exported for tests.
+ */
+export function lockSymbolMembers(target: object): void {
   const keys = ObjectGetOwnPropertySymbols(target);
   for (let index = 0; index < keys.length; index++) {
     const key = keys[index]!;
     if (WELL_KNOWN_SYMBOLS.includes(key)) continue;
     const descriptor = ObjectGetOwnPropertyDescriptor(target, key);
-    if (!descriptor?.configurable) continue;
+    if (descriptor === undefined) continue;
+    const isData = "value" in descriptor;
+    // A non-configurable member can still be writable, and a writable one can
+    // still be replaced by assignment; turning `writable` off is the one
+    // change a non-configurable data member allows.
+    if (!descriptor.configurable && !(isData && descriptor.writable)) continue;
     ObjectDefineProperty(
       target,
       key,
-      "value" in descriptor ? { configurable: false, writable: false } : { configurable: false },
+      isData ? { configurable: false, writable: false } : { configurable: false },
     );
   }
 }

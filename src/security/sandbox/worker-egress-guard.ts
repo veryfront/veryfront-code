@@ -1191,6 +1191,9 @@ async function fetchThroughHttpBroker(
   targetUrl: string,
   init: RequestInit,
 ): Promise<Response> {
+  // Everything up to the send below runs in this turn, so one check covers the
+  // copy, the header edits and the native call that see the broker token.
+  assertNativeRequestProcessing();
   const headers = copyNativeHeaders(readOwnInitField(init, "headers"));
   stripHopByHopHeaders(headers);
   IntrinsicReflectApply(HeadersDelete, headers, ["content-length"]);
@@ -1202,7 +1205,6 @@ async function fetchThroughHttpBroker(
     redirect: "manual",
     client: undefined,
   });
-  assertNativeRequestProcessing();
   // Indexed, not destructured: see the per-hop send in guardedEgressFetch.
   const brokerArguments = nativeFetchArguments(broker.url, brokerInit);
   const brokerResponse = await fetchImpl(brokerArguments[0], brokerArguments[1]);
@@ -1337,6 +1339,8 @@ export async function guardedEgressFetch(
   let method = (readOwnInitField(init, "method") ??
     (requestInput ? getNativeRequestProperty(requestInput, "method") : "GET")).toUpperCase();
   // Copied with captured iteration, and handed to the native call as a record.
+  // Filling a native Headers writes into arrays, so that fill is checked too.
+  assertNativeRequestProcessing();
   const headers = copyNativeHeaders(
     readOwnInitField(init, "headers") ??
       (requestInput ? getNativeRequestProperty(requestInput, "headers") : undefined),
@@ -1387,6 +1391,9 @@ export async function guardedEgressFetch(
   for (let hop = 0;; hop++) {
     const parsedUrl = new NativeURL(url);
     await deps.authorizeUrl?.(parsedUrl);
+    // Building this hop's init iterates the credential-bearing headers, and the
+    // await above let project code run.
+    assertNativeRequestProcessing();
     const hostname = getUrlHostname(parsedUrl);
     let tunnel: PinnedSocksTunnel | undefined;
     let client: Deno.HttpClient | undefined;
@@ -1524,7 +1531,9 @@ export async function guardedEgressFetch(
     };
     // Cross-origin redirect: strip credential-bearing headers, matching the
     // platform fetch this guard replaces, so a redirect target cannot receive
-    // the caller's Authorization/Cookie.
+    // the caller's Authorization/Cookie. Deleting a header splices the native
+    // list, which hands the removed entry to the array species: check first.
+    assertNativeRequestProcessing();
     if (nextUrl.origin !== new NativeURL(url).origin) {
       for (const header of CROSS_ORIGIN_CREDENTIAL_HEADERS) {
         IntrinsicReflectApply(HeadersDelete, headers, [header]);
