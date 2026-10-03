@@ -214,15 +214,17 @@ async function normalizeRequestBody(
   } else if (body instanceof Blob && body.type && !hasHeader(headers, "content-type")) {
     setHeader(headers, "content-type", body.type);
   } else if (typeof FormData !== "undefined" && body instanceof FormData) {
+    // A string, read with the captured getter: converting a URL object would
+    // call a patchable toString inside the constructor.
+    const href = IntrinsicReflectApply(URLHrefGetter, url, []) as string;
+    const method = readOwnInitField(init, "method") ?? "POST";
+    // The instanceof checks above and the method read can run project code,
+    // and the constructor calls Headers members with these headers as `this`
+    // while it adds the multipart content type: check right before it.
+    assertNativeRequestProcessing();
     const normalized = new NativeRequest(
-      // A string, read with the captured getter: converting a URL object
-      // would call a patchable toString after the header record was checked.
-      IntrinsicReflectApply(URLHrefGetter, url, []) as string,
-      createNativeRequestInit(undefined, {
-        method: readOwnInitField(init, "method") ?? "POST",
-        headers,
-        body,
-      }),
+      href,
+      createNativeRequestInit(undefined, { method, headers, body }),
     );
     const normalizedHeaders = toNativeHeaderRecord(
       IntrinsicReflectApply(RequestHeadersGetter, normalized, []) as Headers,

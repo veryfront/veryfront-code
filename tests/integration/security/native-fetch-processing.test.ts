@@ -152,7 +152,7 @@ describe("node:http options and a modified Object.prototype", () => {
     const original = Object.getOwnPropertyDescriptor(Object.prototype, "toString")!;
     Object.defineProperty(Object.prototype, "lookup", { configurable: true, get: () => undefined });
     try {
-      assertThrows(() => assertObjectPrototypeUnchanged(), TypeError, "Object.prototype");
+      assertThrows(() => assertObjectPrototypeUnchanged(), TypeError, 'member "lookup"');
     } finally {
       delete (Object.prototype as Record<string, unknown>).lookup;
     }

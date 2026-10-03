@@ -97,4 +97,28 @@ describe("production server ingress", () => {
       "local development only",
     );
   });
+
+  it("reads the local CLI marker before bootstrap, so project code cannot forge it", async () => {
+    let forged = false;
+    const adapter = createMockAdapter();
+    await assertRejects(
+      () =>
+        startProductionServerWithDependencies({
+          projectDir: "/combined-mode",
+          port: 0,
+          adapter,
+          unhandledRejectionGuard: false,
+          requestInterceptor: (request) => request,
+        }, {
+          // Stands in for project code, loaded by bootstrap, setting the marker.
+          bootstrap: () => {
+            forged = true;
+            return Promise.resolve(createBootstrap(adapter));
+          },
+          isLocalCliProxyMode: () => forged,
+        }),
+      TypeError,
+      "local development only",
+    );
+  });
 });

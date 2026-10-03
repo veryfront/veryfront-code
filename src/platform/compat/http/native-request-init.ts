@@ -224,21 +224,43 @@ const OBJECT_PROTOTYPE_MEMBERS: readonly {
  * in ahead of time.
  */
 export function assertObjectPrototypeUnchanged(): void {
-  const keys = ReflectOwnKeys(ObjectPrototype);
-  let changed = keys.length !== OBJECT_PROTOTYPE_MEMBERS.length;
-  for (let index = 0; !changed && index < OBJECT_PROTOTYPE_MEMBERS.length; index++) {
-    const member = OBJECT_PROTOTYPE_MEMBERS[index]!;
-    changed = !isSameDescriptor(
-      GetOwnPropertyDescriptor(ObjectPrototype, member.key),
-      member.descriptor,
-    );
-  }
-  if (!changed) return;
+  const changed = findChangedObjectPrototypeMember();
+  if (changed === undefined) return;
   throw new NativeTypeError(
-    "Refused a credential-bearing request to protect its token: Object.prototype gained or " +
-      "replaced a member, and node:http reads its request options through it. " +
-      "Do not add members to Object.prototype.",
+    "Refused a credential-bearing request to protect its token: Object.prototype member " +
+      `${changed} was added or replaced after load, and node:http reads its request options ` +
+      "through Object.prototype. Do not add members to Object.prototype.",
   );
+}
+
+/** The first Object.prototype key added or replaced since load, as text. */
+function findChangedObjectPrototypeMember(): string | undefined {
+  for (let index = 0; index < OBJECT_PROTOTYPE_MEMBERS.length; index++) {
+    const member = OBJECT_PROTOTYPE_MEMBERS[index]!;
+    if (
+      !isSameDescriptor(GetOwnPropertyDescriptor(ObjectPrototype, member.key), member.descriptor)
+    ) {
+      return describeKey(member.key);
+    }
+  }
+  const keys = ReflectOwnKeys(ObjectPrototype);
+  if (keys.length === OBJECT_PROTOTYPE_MEMBERS.length) return undefined;
+  for (let index = 0; index < keys.length; index++) {
+    const key = keys[index]!;
+    let known = false;
+    for (let member = 0; member < OBJECT_PROTOTYPE_MEMBERS.length; member++) {
+      if (OBJECT_PROTOTYPE_MEMBERS[member]!.key === key) {
+        known = true;
+        break;
+      }
+    }
+    if (!known) return describeKey(key);
+  }
+  return "(unknown)";
+}
+
+function describeKey(key: PropertyKey): string {
+  return typeof key === "symbol" ? `[${NativeString(key)}]` : `"${NativeString(key)}"`;
 }
 
 function describeMember(snapshot: PropertySnapshot): string {

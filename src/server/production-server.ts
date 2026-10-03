@@ -270,10 +270,12 @@ export function startProductionServerWithDependencies(
       // local CLI marker) gets its credentials from a separate proxy hop.
       // Checked again after bootstrap, which can load PROXY_MODE from the
       // project environment.
+      // Read once, before bootstrap loads project code that could set the marker.
+      const localCliProxyMode = (dependencies.isLocalCliProxyMode ?? isLocalCliProxyMode)();
       const refuseHostedInterceptor = (hostedProxyConfig = false) => {
         if (
           requestInterceptor && (hostedProxyConfig || getEnv("PROXY_MODE") === "1") &&
-          !(dependencies.isLocalCliProxyMode ?? isLocalCliProxyMode)()
+          !localCliProxyMode
         ) {
           throw new TypeError(
             "requestInterceptor (combined mode) is for local development only and is refused " +

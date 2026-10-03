@@ -39,6 +39,8 @@ const WeakMapDelete = NativeWeakMap.prototype.delete;
 const WeakMapGet = NativeWeakMap.prototype.get;
 const WeakMapHas = NativeWeakMap.prototype.has;
 const WeakMapSet = NativeWeakMap.prototype.set;
+const NativeTypeError = TypeError;
+const FunctionHasInstance = Function.prototype[Symbol.hasInstance];
 
 /** The proxy-injected Veryfront API credential. */
 export const INGRESS_API_TOKEN_HEADER = "x-token";
@@ -262,8 +264,10 @@ export function sealInterceptedRequest(source: Request, intercepted: Request): R
       deleteCredentialHeaders(
         IntrinsicReflectApply(RequestHeadersGetter, intercepted, []) as Headers,
       );
-    } catch {
-      // Left as the runtime created it; the sealed copy above is what goes on.
+    } catch (error) {
+      // Only the immutable-headers refusal is expected; the sealed copy above
+      // is what goes on. Anything else is a real failure.
+      if (!IntrinsicReflectApply(FunctionHasInstance, NativeTypeError, [error])) throw error;
     }
   } else if (registered !== undefined) {
     if (intercepted === source) return source;
