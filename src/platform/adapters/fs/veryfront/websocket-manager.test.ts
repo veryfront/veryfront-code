@@ -40,6 +40,7 @@ class MockWebSocket {
   onerror: ((this: WebSocket, ev: Event) => unknown) | null = null;
 
   protocols: string | string[] | undefined;
+  sentMessages: string[] = [];
 
   constructor(readonly url: string, protocols?: string | string[]) {
     this.protocols = protocols;
@@ -50,8 +51,8 @@ class MockWebSocket {
     this.readyState = MockWebSocket.CLOSED;
   }
 
-  send(_data: string): void {
-    // no-op
+  send(data: string): void {
+    this.sentMessages.push(data);
   }
 
   emitClose(): void {
@@ -1236,12 +1237,16 @@ describe("WebSocketManager", () => {
         globalThis.addEventListener("unhandledrejection", onUnhandled);
         let failReload = true;
         let completedReloads = 0;
+        let evictions = 0;
         const manager = createWebSocketManager({
           invalidationCallbacks: {
             triggerReload: () => {
               if (failReload) return Promise.reject(rejection);
               completedReloads++;
               return Promise.resolve();
+            },
+            evictCurrentAdapter: () => {
+              evictions++;
             },
           },
         });
@@ -1264,6 +1269,12 @@ describe("WebSocketManager", () => {
           );
           assertExists(queuedError);
           assertEquals(queuedError.projectSlug, "test-project");
+          assertEquals(isPrefixBeingInvalidated("file:branch:test-project:main"), false);
+          assertEquals(evictions, 1, "completed cache invalidation must evict the adapter");
+          const acknowledgements = socket.sentMessages.map((message) => JSON.parse(message))
+            .filter((message) => message.type === "poke_ack");
+          assertEquals(acknowledgements.length, 1);
+          assertEquals(acknowledgements[0].data.invalidationType, mode);
 
           failReload = false;
           deliverPoke(socket, poke);

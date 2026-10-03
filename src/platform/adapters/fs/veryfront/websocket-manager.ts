@@ -1001,7 +1001,7 @@ export class WebSocketManager {
     const acceptedPokes = this.acceptedPokes;
     let preparedStyleArtifact: PreviewStyleArtifactInfo | undefined;
     let reloadSuperseded = false;
-    let succeeded = false;
+    let cacheInvalidated = false;
     let reservedDataKind: "data" | "definition" | undefined;
 
     try {
@@ -1115,6 +1115,7 @@ export class WebSocketManager {
       }
 
       this.pokeMetrics.invalidationsTriggered++;
+      cacheInvalidated = true;
 
       if (reloadSuperseded) {
         logger.debug("Skipping reload for superseded selective invalidation", {
@@ -1148,11 +1149,9 @@ export class WebSocketManager {
         totalInvalidations: this.pokeMetrics.invalidationsTriggered,
         reloadTriggered: !reloadSuperseded,
       });
-
-      this.sendPokeAck("selective", changedPaths);
-      succeeded = true;
     } finally {
-      if (succeeded) {
+      if (cacheInvalidated) {
+        this.sendPokeAck("selective", changedPaths);
         this.completePreviewInvalidation(previewInvalidationToken);
         // A patched adapter is current; evicting it would make the next
         // request list the whole project again.
@@ -1173,7 +1172,7 @@ export class WebSocketManager {
     const acceptedPokes = this.acceptedPokes;
     let preparedStyleArtifact: PreviewStyleArtifactInfo | undefined;
     let reloadSuperseded = false;
-    let succeeded = false;
+    let cacheInvalidated = false;
 
     try {
       logger.debug("CACHE INVALIDATION STARTED - clearing all caches");
@@ -1285,6 +1284,7 @@ export class WebSocketManager {
       }
 
       this.pokeMetrics.invalidationsTriggered++;
+      cacheInvalidated = true;
 
       if (reloadSuperseded) {
         logger.debug("Skipping reload for superseded full invalidation", {
@@ -1315,11 +1315,9 @@ export class WebSocketManager {
         durationMs: currentTime() - startTime,
         totalInvalidations: this.pokeMetrics.invalidationsTriggered,
       });
-
-      this.sendPokeAck("full");
-      succeeded = true;
     } finally {
-      if (succeeded) {
+      if (cacheInvalidated) {
+        this.sendPokeAck("full");
         this.completePreviewInvalidation(previewInvalidationToken);
         if (!reloadSuperseded) {
           this.deps.invalidationCallbacks.evictCurrentAdapter?.();
