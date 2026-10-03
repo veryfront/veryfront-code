@@ -1,4 +1,9 @@
 import {
+  snapshotTaskDeadlineClock,
+  systemTaskDeadlineClock,
+  type TaskDeadlineClock,
+} from "./task-deadline-clock.ts";
+import {
   API_CLIENT_ERROR,
   INPUT_VALIDATION_FAILED,
   INVALID_ARGUMENT,
@@ -117,7 +122,6 @@ import { parseProjectDomain } from "#veryfront/server/utils/domain-parser.ts";
 const TaskDate = Date;
 /** Captured before project code runs, which may replace the global. */
 const TaskError = Error;
-const TaskDateNow = Date.now;
 const TaskDateParse = Date.parse;
 const TaskSetTimeout = globalThis.setTimeout;
 const TaskClearTimeout = globalThis.clearTimeout;
@@ -980,6 +984,7 @@ async function runWhileActive<T>(signal: AbortSignal, operation: () => Promise<T
 async function executeTaskRun(
   request: ProjectRunExecuteRequest,
   execute: (control?: TaskDeadlineControl) => Promise<ProjectRunExecuteResponse>,
+  clock: TaskDeadlineClock,
   acknowledgeNotStarted?: () => Promise<void>,
 ): Promise<ProjectRunExecuteResponse> {
   if (!request.deadlineAt) return execute();
@@ -1003,18 +1008,18 @@ async function executeTaskRun(
   const control: TaskDeadlineControl = {
     signal,
     throwIfExpired() {
-      if (TaskDateNow() >= deadline) throw expire();
+      if (clock.now() >= deadline) throw expire();
     },
   };
   try {
     control.throwIfExpired();
     const expiration = new Promise<never>((_resolve, reject) => {
       const arm = () => {
-        const remaining = deadline - TaskDateNow();
+        const remaining = deadline - clock.now();
         if (remaining <= 0) {
           reject(expire());
         } else {
-          timer = TaskSetTimeout(arm, Math.min(remaining, MAX_TIMER_DELAY_MS));
+          timer = clock.setTimer(arm, Math.min(remaining, MAX_TIMER_DELAY_MS));
         }
       };
       arm();
@@ -1027,11 +1032,11 @@ async function executeTaskRun(
     control.throwIfExpired();
     return result;
   } catch (failure) {
-    if (!expired && TaskDateNow() >= deadline) expire();
+    if (!expired && clock.now() >= deadline) expire();
     if (!expired) throw failure;
     return { success: false, error: error.message, error_code: "RUN_TIMEOUT" };
   } finally {
-    TaskClearTimeout(timer);
+    clock.clearTimer(timer);
     if (!executionStarted) await acknowledgeNotStarted?.();
   }
 }
@@ -3895,33 +3900,39 @@ function executeProjectRun(
   ctx: HandlerContext,
   req: Request,
   deps: ProjectRunExecuteHandlerDeps,
+  taskClock: TaskDeadlineClock,
   acknowledgeStop?: () => Promise<void>,
   acknowledgePause?: () => Promise<boolean | undefined>,
 ): Promise<ProjectRunExecuteResponse> {
   if (request.kind === "task") {
-    return executeTaskRun(request, async (control) => {
-      try {
-        const signal = control
-          ? ReflectApply(TaskAbortSignalAny, AbortSignal, [[req.signal, control.signal]])
-          : req.signal;
-        switch (request.target) {
-          case "task:eval":
-            return await executeEvalTaskRun(request, ctx, req, req.signal, deps, control);
-          case "task:knowledge-ingest":
-            return await deps.executeKnowledgeIngest({ request, ctx, req, signal });
-          case "task:release-asset-build":
-            return await deps.executeReleaseAssetBuild({ request, ctx, req, signal });
-          case "task:dependency-artifact-build":
-            return await deps.executeDependencyArtifactBuild({ request, ctx, req, signal });
-          case "task:style-artifact-build":
-            return await deps.executeStyleArtifactBuild({ request, ctx, req, signal });
-          default:
-            return await executeDiscoveredTaskRun(request, ctx, req.signal, deps, control);
+    return executeTaskRun(
+      request,
+      async (control) => {
+        try {
+          const signal = control
+            ? ReflectApply(TaskAbortSignalAny, AbortSignal, [[req.signal, control.signal]])
+            : req.signal;
+          switch (request.target) {
+            case "task:eval":
+              return await executeEvalTaskRun(request, ctx, req, req.signal, deps, control);
+            case "task:knowledge-ingest":
+              return await deps.executeKnowledgeIngest({ request, ctx, req, signal });
+            case "task:release-asset-build":
+              return await deps.executeReleaseAssetBuild({ request, ctx, req, signal });
+            case "task:dependency-artifact-build":
+              return await deps.executeDependencyArtifactBuild({ request, ctx, req, signal });
+            case "task:style-artifact-build":
+              return await deps.executeStyleArtifactBuild({ request, ctx, req, signal });
+            default:
+              return await executeDiscoveredTaskRun(request, ctx, req.signal, deps, control);
+          }
+        } finally {
+          await acknowledgeStop?.();
         }
-      } finally {
-        await acknowledgeStop?.();
-      }
-    }, acknowledgeStop);
+      },
+      taskClock,
+      acknowledgeStop,
+    );
   }
   return executeWorkflowRun(request, ctx, req.signal, deps, acknowledgeStop, acknowledgePause);
 }
@@ -3935,8 +3946,14 @@ export class ProjectRunExecuteHandler extends BaseHandler {
     ],
   };
 
-  constructor(private readonly deps: ProjectRunExecuteHandlerDeps = defaultDeps) {
+  private readonly taskDeadlineClock: TaskDeadlineClock;
+
+  constructor(
+    private readonly deps: ProjectRunExecuteHandlerDeps = defaultDeps,
+    taskDeadlineClock: TaskDeadlineClock = systemTaskDeadlineClock,
+  ) {
     super();
+    this.taskDeadlineClock = snapshotTaskDeadlineClock(taskDeadlineClock);
   }
 
   async handle(req: Request, ctx: HandlerContext): Promise<HandlerResult> {
@@ -3994,6 +4011,7 @@ export class ProjectRunExecuteHandler extends BaseHandler {
                     ctx,
                     executionRequest,
                     this.deps,
+                    this.taskDeadlineClock,
                     acknowledgeStop,
                     acknowledgePause,
                   )
@@ -4005,6 +4023,7 @@ export class ProjectRunExecuteHandler extends BaseHandler {
                         ctx,
                         executionRequest,
                         this.deps,
+                        this.taskDeadlineClock,
                         acknowledgeStop,
                         acknowledgePause,
                       ),
