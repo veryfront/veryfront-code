@@ -47,9 +47,10 @@ anything is sent.
 
 A flag, `VERYFRONT_RUN_CREDENTIAL_ATTACHMENT=isolate|host`, controls rollout. With `host`, the
 shared host refuses credentialed runs instead of executing them in-process. An unset value means
-`isolate`. Any other value is a configuration error: the server refuses to start, so a misspelled
-`host` cannot silently keep credentials in-process, and the failure surfaces at deploy time rather
-than as refused runs.
+`isolate`. Any other value, including a misspelled or malformed one, is a configuration error and
+the server refuses to start. A typo then fails the rollout loudly: new instances never become ready
+and the previous release keeps serving. Falling back to `isolate` instead would leave credentials in
+the isolate while operators believe `host` is active.
 
 ## Facts established by the spike
 
