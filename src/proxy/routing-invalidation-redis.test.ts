@@ -700,6 +700,7 @@ describe("proxy routing invalidation Redis bus", () => {
   });
 
   it("keeps overlapping publish acknowledgement subscriptions isolated", async () => {
+    using time = new FakeTime();
     const redis = createFakeRedisServer();
     const integritySecret = createIntegritySecret();
     const replicaA: string[] = [];
@@ -727,10 +728,16 @@ describe("proxy routing invalidation Redis bus", () => {
       },
     });
 
-    const [firstResult, secondResult] = await Promise.all([
-      busA?.publish(createEvent("event-1")),
-      busA?.publish(createEvent("event-2")),
-    ]);
+    assert(busA);
+    assert(busB);
+    const [firstResult, secondResult] = await settleWithin(
+      Promise.all([
+        busA.publish(createEvent("event-1")),
+        busA.publish(createEvent("event-2")),
+      ]),
+      "overlapping publish acknowledgements",
+      () => time.runMicrotasks(),
+    );
 
     assertEquals(firstResult, { acknowledged: 2, converged: true, recipients: 2 });
     assertEquals(secondResult, { acknowledged: 2, converged: true, recipients: 2 });
