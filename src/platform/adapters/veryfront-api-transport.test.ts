@@ -21,6 +21,16 @@ const baseConfig = {
 };
 
 describe("Veryfront API transport retry boundaries", () => {
+  it("decodes a 204 response without trying to parse an empty JSON body", async () => {
+    await withMockFetch(() => Promise.resolve(new Response(null, { status: 204 })), async () => {
+      const transport = createVeryfrontApiTransport({
+        ...baseConfig,
+        retry: { maxRetries: 0, initialDelay: 0, maxDelay: 0 },
+      });
+      assertEquals(await transport.request("/runs/run-1", { method: "DELETE" }), undefined);
+    });
+  });
+
   it("rejects retry policies that exceed ten total attempts", () => {
     assertThrows(
       () =>

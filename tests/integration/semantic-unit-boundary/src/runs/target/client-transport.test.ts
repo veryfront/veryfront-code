@@ -339,4 +339,61 @@ describe("Runs SDK canonical transport", () => {
     });
     assertEquals(cancelled, true);
   });
+
+  it("aborts the actual in-flight fetch signal when the caller cancels", async () => {
+    const started = Promise.withResolvers<void>();
+    let requestSignal: AbortSignal | null | undefined;
+    const controller = new AbortController();
+    await withMockFetch((_url, init) => {
+      requestSignal = init?.signal;
+      started.resolve();
+      return new Promise((_resolve, reject) => {
+        requestSignal?.addEventListener("abort", () => reject(requestSignal?.reason), {
+          once: true,
+        });
+      });
+    }, async () => {
+      const sdk = createRunsSdk({
+        transport: createCanonicalVeryfrontApiTransport(
+          "https://api.example.test",
+          () => "test-token",
+          { maxRetries: 0, initialDelay: 0, maxDelay: 0 },
+        ),
+      });
+      const result = sdk.getRun({ path: { run_id: "run-1" } }, { signal: controller.signal });
+      await started.promise;
+      controller.abort();
+      await assertRejects(() => result);
+      assertEquals(requestSignal?.aborted, true);
+    });
+  });
+
+  it("inherits the host retry policy for a mutation without an idempotency key", async () => {
+    let calls = 0;
+    await withMockFetch(() => {
+      calls++;
+      return Promise.resolve(Response.json({
+        type: "about:blank",
+        title: "Unavailable",
+        status: 503,
+        code: "UNAVAILABLE",
+      }, { status: 503 }));
+    }, async () => {
+      const sdk = createRunsSdk({
+        transport: createCanonicalVeryfrontApiTransport(
+          "https://api.example.test",
+          () => "test-token",
+          { maxRetries: 1, initialDelay: 0, maxDelay: 0 },
+        ),
+      });
+      await assertRejects(() =>
+        sdk.updateRun({
+          path: { run_id: "run-1" },
+          headers: { "If-Match": '"version-1"' },
+          body: { title: "updated" },
+        })
+      );
+    });
+    assertEquals(calls, 2);
+  });
 });

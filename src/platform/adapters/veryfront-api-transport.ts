@@ -139,7 +139,8 @@ function createValidatedVeryfrontApiTransport<T>(
   const onResponse = config.onResponse ??
     (readVeryfrontApiResponse as (r: Response, i: TransportRequestInit, u: string) => Promise<T>);
   const shouldRetry = config.shouldRetry ?? defaultShouldRetry;
-  const wrapFinalError = config.wrapFinalError ??
+  const customWrapFinalError = config.wrapFinalError;
+  const wrapFinalError = customWrapFinalError ??
     ((err: Error) =>
       API_CLIENT_ERROR.create({
         detail: `API request failed after ${maxRetries} retries: ${err.message}`,
@@ -256,7 +257,7 @@ function createValidatedVeryfrontApiTransport<T>(
             },
           wrapFinalError(lastError, lastAttempt) {
             if (lastError.name === "AbortError") logTimeout(url, timeoutMs, lastAttempt);
-            if (!config.wrapFinalError && responseError instanceof VeryfrontError) {
+            if (!customWrapFinalError && responseError instanceof VeryfrontError) {
               return responseError;
             }
             return wrapFinalError(lastError, lastAttempt);

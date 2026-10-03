@@ -8,14 +8,16 @@ transport, rather than supplying a second fetch implementation to the SDK.
 import { createCanonicalVeryfrontApiTransport } from "#veryfront/platform/adapters/veryfront-api-transport.ts";
 import { createRunsSdk } from "#veryfront/runs/target/client.ts";
 
+const token = Deno.env.get("VERYFRONT_API_TOKEN");
+if (!token) throw new Error("Set VERYFRONT_API_TOKEN");
 const transport = createCanonicalVeryfrontApiTransport(
   "https://api.veryfront.org",
-  () => Deno.env.get("VERYFRONT_API_TOKEN") ?? "",
+  () => token,
   { maxRetries: 2, initialDelay: 100, maxDelay: 1000 },
 );
 const sdk = createRunsSdk({ transport });
 const runs = await sdk.listProjectRuns({
-  path: { project_id: "<PROJECT_ID>" },
+  path: { project_reference: "<PROJECT_ID>" },
 });
 ```
 

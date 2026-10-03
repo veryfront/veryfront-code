@@ -213,7 +213,7 @@ describe("Runs target SDK", () => {
     assertEquals(keyed.requests.map((request) => request.redirect), ["error", "error"]);
   });
 
-  it("passes the abort signal to the transport", async () => {
+  it("rejects an already-aborted request before transport I/O", async () => {
     const { sdk, requests } = sdkWith([fixtureResponse("getRun")]);
     const controller = new AbortController();
     await sdk.getRun({ path: { run_id: RUN_ID } }, { signal: controller.signal });
