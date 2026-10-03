@@ -336,7 +336,10 @@ export async function withHostedInheritedLease<T>(
         continue;
       }
       if (!response.ok) {
-        if (response.status === 429 || response.status >= 500) continue;
+        if (response.status === 408 || response.status === 429 || response.status >= 500) {
+          await response.body?.cancel().catch(() => {});
+          continue;
+        }
         throw new Error(`Inherited child lease renewal failed (${response.status})`);
       }
       const receipt = await response.json();

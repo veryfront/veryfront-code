@@ -36,6 +36,7 @@ import {
 import { streamText } from "../../runtime/runtime-bridge.ts";
 import { createStreamModel } from "../../runtime/runtime-bridge.test-helpers.ts";
 import { DurableRunEventPersistenceError } from "./durable-run-event-sink.ts";
+import { createConversationHostedTerminalAdapter } from "../conversation/hosted-terminal.ts";
 
 function createRootStreamWatchdog(input?: {
   disposed?: () => void;
@@ -616,6 +617,52 @@ describe("agent/hosted-chat-execution-runtime", () => {
     );
   });
 
+  it("rejects a durable root run without terminal authority before execution", async () => {
+    let streamCalls = 0;
+    const durableRunMirror = createDurableRunMirror({ chunks: [], flushes: [] });
+
+    await assertRejects(
+      () =>
+        createBootstrappedHostedChatExecutionRuntime({
+          authToken: "token",
+          apiUrl: "https://api.example.test",
+          agent: {
+            stream: async () => {
+              streamCalls += 1;
+              throw new Error("must not execute");
+            },
+          },
+          agentId: "agent-1",
+          modelId: "openai/gpt-5.4",
+          cleanup: async () => {},
+          messages: [],
+          finalMessages: [],
+          conversationId: "conversation-1",
+          projectId: "project-1",
+          userId: "user-1",
+          rootRunContext: {
+            durableRootRun: {
+              runId: "10000000-0000-4000-8000-000000000016",
+              conversationId: "conversation-1",
+              messageId: "stream-message-1",
+              latestEventId: 0,
+              latestExternalEventSequence: 0,
+            },
+            durableRunMirror,
+            privateDurableRunMirror: durableRunMirror,
+          },
+          abortSignal: new AbortController().signal,
+          tracer: createTracer().tracer,
+          resolveProvider: () => "openai",
+          createRootStreamWatchdog,
+        }),
+      Error,
+      "Current run terminal authority is required",
+    );
+
+    assertEquals(streamCalls, 0);
+  });
+
   it("creates a bootstrapped hosted chat execution runtime", async () => {
     const tracer = createTracer();
     const finalMessages: HostedChatRuntimeStreamInput["messages"] = [];
@@ -676,6 +723,7 @@ describe("agent/hosted-chat-execution-runtime", () => {
         return await operation();
       },
       createRootStreamWatchdog,
+      createTerminalAdapter: createConversationHostedTerminalAdapter,
     });
 
     assertEquals(traceStreamCount, 1);

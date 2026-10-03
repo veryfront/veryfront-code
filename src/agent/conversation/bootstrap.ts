@@ -333,9 +333,15 @@ export async function bootstrapConversationAgentRun(input: {
   runtimeTargetEnvironmentId?: string | null;
   branchId?: string | null;
 }): Promise<BootstrapConversationAgentRunResult> {
-  if (!input.admitRun) {
-    throw new Error("Conversation run bootstrap requires a bound admission capability");
+  // Standalone self-admission was removed. Fail before any conversation or
+  // message write so a missing capability cannot leave an orphaned handoff.
+  const admitRun = input.admitRun;
+  if (!admitRun) {
+    throw new Error(
+      "Conversation-backed run bootstrap requires the bound admission capability",
+    );
   }
+
   if (input.parentConversationId && input.ensureProjectId) {
     await ensureConversationProjectLink({
       authToken: input.authToken,
@@ -357,7 +363,7 @@ export async function bootstrapConversationAgentRun(input: {
     conversationId: conversation.id,
     body: input.handoffMessageBody,
   });
-  const run = await input.admitRun({
+  const run = await admitRun({
     authToken: input.authToken,
     apiUrl: input.apiUrl,
     conversationId: conversation.id,
