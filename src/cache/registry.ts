@@ -524,11 +524,9 @@ function getEnvironmentFromKey(key: string, projectId: string): CacheEnvironment
   if (isVersionedFileOperationSource(parts)) {
     const source = decodeFileOperationSource(parts);
     if (!source) return null;
-    if (source.sourceType === "branch") return "preview";
-    if (source.sourceType === "release") return "production";
-    return source.qualifier === "preview" || source.qualifier === "production"
-      ? source.qualifier
-      : null;
+    // Environment names are user-facing labels (for example `Staging`); every
+    // release-pinned source serves production, matching distributed ownership.
+    return source.sourceType === "branch" ? "preview" : "production";
   }
 
   // Render cache keys: {projectId}:{environment}:{releaseKey}:{version}:...

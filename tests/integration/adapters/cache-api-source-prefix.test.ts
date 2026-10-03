@@ -1,6 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { afterEach, it } from "#veryfront/testing/bdd.ts";
+import { waitFor } from "#veryfront/testing/deno-compat.ts";
 import { observeFetchRequestInit, withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { runWithRequestContext } from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
 import { ApiCacheBackend } from "#veryfront/cache/backends/api.ts";
@@ -154,14 +155,6 @@ function createManager(
   return { manager, socket: () => socket! };
 }
 
-async function waitFor(condition: () => boolean, label: string): Promise<void> {
-  const deadline = Date.now() + 5_000;
-  while (!condition()) {
-    if (Date.now() > deadline) throw new Error(`Timed out waiting for ${label}`);
-    await new Promise((resolve) => setTimeout(resolve, 10));
-  }
-}
-
 async function seed(
   backend: ApiCacheBackend,
   ctx: FileOperationContext,
@@ -221,7 +214,7 @@ it("selective slash-branch POKE clears the changed entries and keeps a sibling b
     const { manager, socket } = createManager(fileCacheOver(backend), context, () => reloads++);
     try {
       socket().poke({ changedPaths: ["app/page.tsx"], branchName: context.branch });
-      await waitFor(() => reloads > 0, "selective invalidation");
+      await waitFor(() => reloads > 0, { interval: 10, message: "selective invalidation" });
       for (const key of current) assertEquals(api.entries.has(key), false, key);
       for (const key of sibling) assertEquals(api.entries.get(key), "stale", key);
     } finally {
@@ -244,7 +237,7 @@ it("full slash-branch POKE clears the current source and keeps a sibling branch"
     const { manager, socket } = createManager(fileCacheOver(backend), context, () => reloads++);
     try {
       socket().poke({ branchName: context.branch });
-      await waitFor(() => reloads > 0, "full invalidation");
+      await waitFor(() => reloads > 0, { interval: 10, message: "full invalidation" });
       for (const key of current) assertEquals(api.entries.has(key), false, key);
       for (const key of sibling) assertEquals(api.entries.get(key), "stale", key);
     } finally {
@@ -291,7 +284,7 @@ it("deployment POKE without a release ID clears versioned project release entrie
       socket().poke({ entityType: "deployment", changedPaths: ["app/page.tsx"] });
       await waitFor(
         () => reloads > 0 && owned.every((key) => !api.entries.has(key)),
-        "publish invalidation",
+        { interval: 10, message: "publish invalidation" },
       );
       for (const key of otherProject) assertEquals(api.entries.get(key), "stale", key);
     } finally {

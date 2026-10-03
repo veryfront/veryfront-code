@@ -93,3 +93,25 @@ it("decodes encoded project, release and environment ownership without widening 
     assertEquals(extractProjectIdFromKey(key), null);
   }
 });
+
+it("classifies named versioned environment sources as production", () => {
+  const key = `${
+    buildFileCacheKeyPrefix({
+      sourceType: "environment",
+      projectSlug: "test-project",
+      environmentName: "Staging",
+      releaseId: "release/1",
+    })
+  }:app/page.tsx`;
+  assertEquals(key.startsWith("file:env-v2:"), true);
+  assertEquals(isKeyForProjectEnvironment(key, "test-project", "production"), true);
+  assertEquals(isKeyForProjectEnvironment(key, "test-project", "preview"), false);
+  const map = new Map([[key, 1]]);
+  cacheRegistry.register(new MapCacheStore("named-environment", map));
+  try {
+    cacheRegistry.deleteKeysForProjectEnvironment("test-project", "production");
+    assertEquals(map.size, 0);
+  } finally {
+    cacheRegistry.unregister("named-environment");
+  }
+});
