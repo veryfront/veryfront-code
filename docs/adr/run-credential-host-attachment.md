@@ -46,9 +46,56 @@ attaches the credential for the route's class, and sends through the origin-boun
 identifier crosses into the executor. A missing, expired or revoked vault entry fails closed before
 anything is sent.
 
+### Run binding and vault lifetime
+
+The vault key is the full channel binding: `allocationId`, `generation` and `invocationId`. The host
+creates the entry itself, when it allocates an executor for one authorized run, and records that
+run's identity (project, run and agent) with the credentials. The executor never supplies or chooses
+the key. `createExecutorChannel` only checks that every frame carries the channel's own binding
+(`src/agent/executor/channel.ts`, `#accept`). Binding a channel to a run, and every credential
+decision, belong to the host.
+
+- The transport is authenticated with a fresh per-allocation key and has no reconnect or replay
+  (`src/agent/hosted/executor-node-transport.ts`, `src/agent/executor/channel.ts`). A new
+  generation is a new allocation, with a new key and a new vault entry.
+- The entry is revoked when the invocation settles, when the allocation is revoked, or when the run
+  deadline passes, whichever comes first. After that, every lookup fails closed.
+- A lookup for a binding this host process did not issue, or one already revoked, returns
+  `CREDENTIAL_UNAVAILABLE`. Nothing is sent upstream. One run's binding can never resolve another
+  run's credentials.
+
+### `vf.egress` request and response streaming
+
+An executor operation takes one JSON input, and each protocol frame is at most 1 MiB
+(`EXECUTOR_MAX_FRAME_BYTES` in `src/agent/executor/protocol.ts`). Credit flow control
+(`EXECUTOR_STREAM_WINDOW`) applies to streamed results. API uploads can be up to 10 MiB
+(`RELEASE_ASSET_MAX_SIZE_BYTES` in `src/release-assets/constants.ts`, and the upload operations in
+`src/platform/adapters/veryfront-api-client/operations.ts`). Request bodies therefore never travel
+inside the `vf.egress` input:
+
+- **Head.** The `vf.egress` input carries only the request head: route, path suffix, query, method,
+  allowlisted headers, and whether a body follows. It is a stream operation, so the response comes
+  back as a head frame followed by body chunk frames under the credit window.
+- **Request body.** When a body follows, the executor installs a `vf.egress.body` stream operation
+  for that request, and the host pulls the body from it. This mirrors how `http.request-body` moves
+  request bodies in `src/server/isolated-http/executor-http.ts`. Each chunk frame stays below the
+  frame limit after encoding. Because the body is a streamed result, the same credit window bounds
+  it: the host holds at most one window of chunks per call. The host feeds the chunks to the
+  upstream request through a pull-based stream, so a slow upstream stops the executor's producer.
+- **Size caps per route class.** The host enforces a byte cap per route class while it counts the
+  streamed bytes: API JSON routes 1 MiB, asset-upload routes 10 MiB, and gateway model routes 16 MiB.
+  A body that exceeds its cap, or that does not match a declared length, aborts the upstream request.
+- **Abort.** Cancelling either stream, executor cancellation, vault revocation and the run deadline
+  all abort the upstream request through one combined signal. A request body that ends early or
+  fails never completes an upstream request. The upstream request is aborted, not sent truncated.
+- **HTTPS only.** The origin-bound transport also accepts `http:` origins, so it is not enough on
+  its own. Before attaching any credential, the host requires an `https:` origin
+  (`requireSecureInferenceApiBaseUrl` in `src/provider/veryfront-cloud/shared.ts` for the gateway,
+  and `requireHostPrivateApiHttps` in `src/config/host-api-base.ts` for the API). It refuses the
+  call otherwise.
+
 A planned flag, `VERYFRONT_RUN_CREDENTIAL_ATTACHMENT=isolate|host`, will control rollout. It is not
-implemented yet. With `host`, the
-shared host refuses credentialed runs instead of executing them in-process. An unset value means
+implemented yet. With `host`, the shared host refuses credentialed runs instead of executing them in-process. An unset value means
 `isolate`. Any other value, including a misspelled or malformed one, is a configuration error and
 the server refuses to start. A typo then fails the rollout loudly: new instances never become ready
 and the previous release keeps serving. Falling back to `isolate` instead would leave credentials in
@@ -133,6 +180,27 @@ model-call durations, the budget is well under 1% at both p50 and p95.
 Time to first token is not recorded today: model-call spans cover the full response. Before the
 comparison, the hop and the executor-side transport must record time to first chunk on the
 model-call span.
+
+## Implementation plan
+
+Each step lands behind the flag, in pre-production first.
+
+1. Interim shared-host fixes (#2188), including the `VeryfrontApiClient` transport.
+2. A host-only run-credential vault keyed by the run binding, with revocation and expiry.
+3. The `vf.egress` host operation. Its tests must cover:
+   - the route table, header allowlist and HTTPS-origin checks;
+   - credential class per route;
+   - request-body streaming: a 10 MiB upload streams through `vf.egress.body` while host memory
+     stays within one credit window of frames;
+   - per-route size caps;
+   - abort on executor cancel, revocation and deadline;
+   - fail-closed lookups for unknown or revoked bindings.
+4. The executor-side transport and a bootstrap guard that rejects `VERYFRONT_*TOKEN*` variables.
+5. A proof that no copy of the credential exists in the executor, including a memory scan, with a
+   negative control on the shared host.
+6. Wiring into the executor profiles.
+7. The flag and the shared-host refusal.
+8. Rollout and measurement against the latency budget.
 
 ## Consequences
 
