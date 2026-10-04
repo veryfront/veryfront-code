@@ -8,7 +8,13 @@ import {
   extractChatMessageMetadata,
 } from "../../chat/chat-ui-message-helpers.ts";
 import { INVALID_ARGUMENT } from "#veryfront/errors";
-import type { ChatUiMessage, ChatUiMessageChunk, MessageMetadata } from "../../chat/types.ts";
+import {
+  type ChatUiMessage,
+  type ChatUiMessageChunk,
+  getChatUiMessageSchema,
+  type MessageMetadata,
+} from "../../chat/types.ts";
+import { createChatStreamMessageProjection } from "../react/use-chat/streaming/handler.ts";
 import type { HostedConversationRootRunContext } from "../conversation/root-run-lifecycle.ts";
 import type { ConversationRunChunkMirror } from "../conversation/run-chunk-mirror.ts";
 import {
@@ -701,6 +707,7 @@ async function finalizeDetachedStreamEnd(input: {
   lifecycleAdapter: HostedChatExecutionLifecycleAdapter;
   mirroredToolChunkState: MirroredToolChunkState;
   mirroredDurableOutput: boolean;
+  mirroredMessage?: ChatUiMessage;
   incompleteToolCallsPartErrorText: string;
   cleanup: () => Promise<void>;
   logger?: HostedChatExecutionRuntimeLogger;
@@ -709,6 +716,7 @@ async function finalizeDetachedStreamEnd(input: {
     kind: "detached",
     isAborted: input.isAborted,
     mirroredDurableOutput: input.mirroredDurableOutput,
+    mirroredMessage: input.mirroredMessage,
     streamResult: input.streamResult,
     lifecycleAdapter: input.lifecycleAdapter,
     capturedMessageId: input.capturedMessageId,
@@ -754,6 +762,26 @@ export function createHostedChatExecutionRuntime(
     runContext: input.runContext,
   });
 
+  const messageProjection = createChatStreamMessageProjection(streamingMessageId ?? "");
+
+  const capturedMirroredMessage = (): ChatUiMessage | undefined => {
+    const snapshot = messageProjection.snapshot();
+    if (!snapshot.id || snapshot.parts.length === 0) return undefined;
+    const message = getChatUiMessageSchema().parse(snapshot);
+    type Part = (typeof message.parts)[number];
+    const isDataPart = (part: Part): part is Extract<Part, { type: `data-${string}` }> =>
+      part.type.startsWith("data-");
+    return {
+      ...message,
+      metadata: extractChatMessageMetadata(message.metadata),
+      parts: message.parts.map((part) => {
+        if ("toolCallId" in part) return { ...part, input: part.input ?? {} };
+        if (isDataPart(part)) return { ...part, data: part.data };
+        return part;
+      }),
+    };
+  };
+
   const finalizeDetachedStreamEndIfNeeded = async () => {
     if (finishHandlerStarted) {
       return;
@@ -768,6 +796,7 @@ export function createHostedChatExecutionRuntime(
       lifecycleAdapter: input.bootstrap.lifecycleAdapter,
       mirroredToolChunkState: input.bootstrap.mirroredToolChunkState,
       mirroredDurableOutput,
+      mirroredMessage: capturedMirroredMessage(),
       incompleteToolCallsPartErrorText,
       cleanup: input.bootstrap.cleanup,
       logger: input.logger,
@@ -856,7 +885,14 @@ export function createHostedChatExecutionRuntime(
       sourceStream: agentUIStream,
       rootStreamWatchdog: input.bootstrap.rootStreamWatchdog,
       mirroredToolChunkState: input.bootstrap.mirroredToolChunkState,
-      appendChunk: (chunk) => input.bootstrap.lifecycleAdapter.durableRunMirror?.handleChunk(chunk),
+      appendChunk: (chunk) => {
+        messageProjection.append(
+          chunk.type === "finish"
+            ? { type: "finish", messageMetadata: chunk.messageMetadata }
+            : { ...chunk },
+        );
+        return input.bootstrap.lifecycleAdapter.durableRunMirror?.handleChunk(chunk);
+      },
       setMirroredOutput: (value) => {
         mirroredDurableOutput = value;
       },

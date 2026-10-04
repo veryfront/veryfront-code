@@ -1,3 +1,8 @@
+import {
+  getActiveHostedRunEventWriterCapability,
+  hostedRunCanonicalId,
+  hostedRunIsInherited,
+} from "./child-run-event-writer-token.ts";
 import { tool, type ToolExecutionContext } from "#veryfront/tool";
 import { INVALID_ARGUMENT } from "#veryfront/errors";
 import { containsExactArtifactPathValue } from "../artifacts/slash-command-artifact-policy.ts";
@@ -24,6 +29,7 @@ type PersistedFormInputToolPart = ChatUiMessagePart & {
 /** Context for hosted form input tool. */
 export interface HostedFormInputToolContext {
   authToken: string;
+  canonicalRunId?: string;
   conversationId?: string;
   parentRunId?: string;
   slashCommandArtifactPathSeen?: boolean;
@@ -31,13 +37,60 @@ export interface HostedFormInputToolContext {
 }
 
 /** Create hosted form input tool. */
-export function createHostedFormInputTool(context: HostedFormInputToolContext, apiUrl: string) {
+export function createHostedFormInputTool(
+  context: HostedFormInputToolContext,
+  apiUrl: string,
+  options: { controlPlaneReplay?: boolean } = {},
+) {
+  const capability = getActiveHostedRunEventWriterCapability();
+  const inheritedExecution = hostedRunIsInherited(capability, context.parentRunId ?? "");
+  const canonicalRunId = context.canonicalRunId ??
+    hostedRunCanonicalId(capability, context.parentRunId ?? "");
+  const boundContext = Object.assign(context, { canonicalRunId });
+  let pendingControlPlaneForm = false;
   return tool<FormInputToolInput, unknown>({
     description:
       "Display a durable structured form to collect user input. Use this when you need a concrete choice or structured values before continuing. The request is persisted as an input_request and the tool waits until the user submits or the request expires.",
     inputSchema: getFormInputToolInputSchema(),
-    execute: async (input, execOptions) =>
-      executeDurableFormInputFlow(context, apiUrl, input, execOptions),
+    execute: async (input, execOptions) => {
+      if (inheritedExecution) {
+        throw INVALID_ARGUMENT.create({
+          detail: "Forms are not supported inside attached local child callbacks",
+        });
+      }
+      if (boundContext.submittedFormInputResult) {
+        return executeDurableFormInputFlow(boundContext, apiUrl, input, execOptions);
+      }
+      if (!options.controlPlaneReplay) {
+        if (input.fields.some((field) => field.type === "password" || field.secret)) {
+          throw INVALID_ARGUMENT.create({ detail: "Secret forms require hosted durable replay" });
+        }
+        return executeDurableFormInputFlow(boundContext, apiUrl, input, execOptions);
+      }
+      if (pendingControlPlaneForm) {
+        throw INVALID_ARGUMENT.create({
+          detail: "Only one form_input may wait per execution turn",
+        });
+      }
+      pendingControlPlaneForm = true;
+      return waitForControlPlaneFormReplay(execOptions?.abortSignal);
+    },
+  });
+}
+
+function waitForControlPlaneFormReplay(signal: AbortSignal | undefined): Promise<never> {
+  if (!signal) {
+    throw INVALID_ARGUMENT.create({
+      detail: "Durable form suspension requires execution cancellation",
+    });
+  }
+  // The owning API parks from the persisted tool call and cancels this turn.
+  // Its next dispatch contains the private tool result in replay messages.
+  return new Promise((_resolve, reject) => {
+    const abort = () =>
+      reject(signal.reason ?? new DOMException("Execution suspended", "AbortError"));
+    if (signal.aborted) abort();
+    else signal.addEventListener("abort", abort, { once: true });
   });
 }
 
@@ -95,6 +148,7 @@ async function executeDurableFormInputFlow(
         apiUrl,
         conversationId,
         runId: parentRunId,
+        canonicalRunId: context.canonicalRunId,
         toolCallId,
         form: pendingRequest.request,
         expiresAt: new Date(Date.now() + INPUT_REQUEST_TIMEOUT_MS).toISOString(),
@@ -126,6 +180,12 @@ function resolveDurableInputRequestResult(
   snapshot: InputRequestOutput,
 ): HumanInputResult | undefined {
   if (snapshot.status === "submitted") {
+    // Secret values arrive through the owning durable replay, never through public polling.
+    if (snapshot.latestResponse?.redactedFields?.length) {
+      throw INVALID_ARGUMENT.create({
+        detail: "Secret form submissions require hosted durable replay",
+      });
+    }
     const values = snapshot.latestResponse?.values ?? {};
 
     if (containsExactArtifactPathValue(values)) {

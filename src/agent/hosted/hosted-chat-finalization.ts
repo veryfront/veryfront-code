@@ -1,6 +1,6 @@
 import { extractChatMessageMetadata } from "../../chat/chat-ui-message-helpers.ts";
 import { isToolUiPart } from "../../chat/conversation.ts";
-import { getLastStreamStep } from "../../chat/final-step-fallback.ts";
+import { buildFallbackUiMessageParts, getLastStreamStep } from "../../chat/final-step-fallback.ts";
 import type { ChatUiMessage, ChatUiMessageChunk, MessageMetadata } from "../../chat/types.ts";
 import {
   type ConversationHostedTerminalStateInput,
@@ -45,7 +45,12 @@ export type FinalizeHostedChatRunInput =
   & HostedChatFinalizationCommon
   & (
     | { kind: "response"; responseMessage: ChatUiMessage; isAborted: boolean }
-    | { kind: "detached"; isAborted: boolean; mirroredDurableOutput: boolean }
+    | {
+      kind: "detached";
+      isAborted: boolean;
+      mirroredDurableOutput: boolean;
+      mirroredMessage?: ChatUiMessage;
+    }
   );
 
 type HostedResponseFinalizationState = {
@@ -57,6 +62,7 @@ type HostedResponseFinalizationState = {
 };
 
 type HostedDetachedFinalizationState = {
+  finalizedMessage: ChatUiMessage;
   hasContent: boolean;
   fallbackChunks: readonly ChatUiMessageChunk<MessageMetadata>[];
   hasIncompleteToolParts: boolean;
@@ -111,13 +117,61 @@ function createHostedChatFinalizeDetachedBuildState(
   input: Extract<FinalizeHostedChatRunInput, { kind: "detached" }>,
 ): (finalStep: unknown) => HostedDetachedFinalizationState {
   return (finalStep) => {
-    const { finalizedFallbackMessage, hasIncompleteFallbackToolParts } =
+    let { finalizedFallbackMessage, hasIncompleteFallbackToolParts } =
       buildDetachedFallbackMessageState({
         capturedMessageId: input.capturedMessageId,
         finalStep,
         isAborted: input.isAborted,
         incompleteToolCallsPartErrorText: input.incompleteToolCallsPartErrorText,
       });
+    if (input.mirroredMessage?.parts.length) {
+      const recoveredFallback = buildFallbackUiMessageParts(finalStep);
+      const fallbackTools = new Map(
+        recoveredFallback.filter(isToolUiPart).map(
+          (part) => [part.toolCallId, part],
+        ),
+      );
+      const recoveredParts = input.mirroredMessage.parts.map((part) => {
+        if (!isToolUiPart(part)) return part;
+        const fallback = fallbackTools.get(part.toolCallId);
+        fallbackTools.delete(part.toolCallId);
+        if (
+          part.state === "output-available" || part.state === "output-error" ||
+          part.state === "output-denied"
+        ) return part;
+        if (
+          !fallback ||
+          (fallback.state !== "output-available" && fallback.state !== "output-error" &&
+            fallback.state !== "output-denied")
+        ) return part;
+        return {
+          ...part,
+          state: fallback.state,
+          input: part.state === "input-streaming" || part.state === "pending"
+            ? fallback.input
+            : part.input,
+          output: fallback.output,
+          errorText: fallback.errorText,
+        };
+      });
+      const mirrored = buildFinalizedMessageState({
+        responseMessage: {
+          ...input.mirroredMessage,
+          parts: [
+            ...recoveredParts,
+            ...(recoveredParts.some((part) => part.type === "reasoning")
+              ? []
+              : recoveredFallback.filter((part) => part.type === "reasoning")),
+            ...fallbackTools.values(),
+          ],
+        },
+        isAborted: input.isAborted,
+        finalStep,
+        incompleteToolCallsPartErrorText: input.incompleteToolCallsPartErrorText,
+      });
+      finalizedFallbackMessage = mirrored.sanitizedFinalizedMessage;
+      hasIncompleteFallbackToolParts = mirrored.hasIncompleteFinalizedToolParts;
+    }
     const fallbackParts = finalizedFallbackMessage.parts;
 
     const fallbackChunks = fallbackParts.length > 0 && input.lifecycleAdapter.durableRunMirror &&
@@ -144,7 +198,8 @@ function createHostedChatFinalizeDetachedBuildState(
       : [];
 
     return {
-      hasContent: fallbackParts.length > 0,
+      finalizedMessage: finalizedFallbackMessage,
+      hasContent: fallbackParts.some((part) => part.type !== "step-start"),
       fallbackChunks,
       hasIncompleteToolParts: hasIncompleteFallbackToolParts,
     };
@@ -352,10 +407,12 @@ export async function finalizeHostedChatRun(
   let metadata: HostedLifecycleTerminalState["metadata"] | undefined;
   let emptyFailure: boolean;
   let hasOutput: boolean;
+  let output: ChatUiMessage | undefined;
 
   if (input.kind === "response") {
     const state = createHostedChatFinalizeResponseBuildState(input)(finalStep);
 
+    output = state.finalizedMessage;
     fallbackChunks = state.fallbackChunks;
     hasIncompleteToolParts = state.hasIncompleteToolParts;
     metadata = state.metadata;
@@ -367,6 +424,11 @@ export async function finalizeHostedChatRun(
   } else {
     const state = createHostedChatFinalizeDetachedBuildState(input)(finalStep);
 
+    // A detached run can complete on mirrored output alone (for example a late
+    // provider body-read failure leaves the final step empty). The empty
+    // fallback message is not the run's result, so omit it rather than
+    // persisting an empty business output over the mirrored response.
+    output = state.hasContent ? state.finalizedMessage : undefined;
     fallbackChunks = state.fallbackChunks;
     hasIncompleteToolParts = state.hasIncompleteToolParts;
     metadata = undefined;
@@ -418,6 +480,7 @@ export async function finalizeHostedChatRun(
     lifecycleAdapter: input.lifecycleAdapter,
     terminalState: {
       ...terminalState,
+      ...(terminalState.status === "completed" && output !== undefined ? { output } : {}),
       ...(metadata !== undefined ? { metadata } : {}),
     },
   });

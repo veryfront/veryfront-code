@@ -104,7 +104,9 @@ export function buildLocalTools(
   const tools: HostToolSet = {
     ...getDiscoveredHostTools({ agentId: taskContext.agentId }),
     ...markTrustedHostToolSet({
-      form_input: createHostedFormInputTool(taskContext, config.VERYFRONT_API_URL),
+      form_input: createHostedFormInputTool(taskContext, config.VERYFRONT_API_URL, {
+        controlPlaneReplay: Boolean(taskContext.parentRunId && taskContext.conversationId),
+      }),
       load_skill: createLoadSkillTool(context, taskContext),
       sleep: sleepTool,
       web_fetch: createHostedWebFetchTool(),

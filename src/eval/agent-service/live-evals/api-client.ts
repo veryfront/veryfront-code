@@ -756,22 +756,20 @@ export async function submitLiveEvalInputResponse(
   input: LiveEvalSubmitInputResponseInput,
 ): Promise<void> {
   assertLiveEvalInputResponseValues(input.values);
-  const conversationId = encodePathSegment(
-    input.conversationId,
-    "Live eval conversation id",
-  );
   const inputRequestId = encodePathSegment(
     input.inputRequestId,
     "Live eval input request id",
   );
+  const headers = createLiveEvalJsonHeaders(context);
+  headers.set("Idempotency-Key", crypto.randomUUID());
   const response = await createFetch(context)(
     createApiUrl(
       context,
-      `/conversations/${conversationId}/input-requests/${inputRequestId}/responses`,
+      `/input-requests/${inputRequestId}/responses`,
     ),
     {
       method: "POST",
-      headers: createLiveEvalJsonHeaders(context),
+      headers,
       body: JSON.stringify({ values: input.values }),
       signal: createRequestSignal(input.requestTimeoutMs),
     },
@@ -787,22 +785,21 @@ export async function cancelLiveEvalInputRequest(
   context: LiveEvalApiContext,
   input: LiveEvalInputRequestInput,
 ): Promise<void> {
-  const conversationId = encodePathSegment(
-    input.conversationId,
-    "Live eval conversation id",
-  );
   const inputRequestId = encodePathSegment(
     input.inputRequestId,
     "Live eval input request id",
   );
+  const headers = createLiveEvalJsonHeaders(context);
+  headers.set("Idempotency-Key", crypto.randomUUID());
   const response = await createFetch(context)(
     createApiUrl(
       context,
-      `/conversations/${conversationId}/input-requests/${inputRequestId}/cancel`,
+      `/input-requests/${inputRequestId}/cancel`,
     ),
     {
       method: "POST",
-      headers: createLiveEvalAuthHeaders(context),
+      headers,
+      body: JSON.stringify({}),
       signal: createRequestSignal(input.requestTimeoutMs),
     },
   );

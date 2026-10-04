@@ -86,7 +86,8 @@ function createCompletedDurableRunCanaryApiClient(
         role: "user",
         parts: [],
       }),
-      startDurableRun: async ({ prompt }) => {
+      startDurableRun: async ({ prompt, runId }) => {
+        createdRunIds.push(runId);
         if (prompt === options.failStartPrompt) {
           throw new Error(`failed to start ${prompt}`);
         }
@@ -1663,7 +1664,12 @@ describe("eval/agent-service", () => {
       requestTimeoutMs: 1_000,
       fetch: async (_input, init) => {
         requestBody = JSON.parse(String(init?.body));
-        return Response.json({});
+        return Response.json({
+          id: "44444444-4444-4444-8444-444444444444",
+          conversation_id: "11111111-1111-4111-8111-111111111111",
+          output_message_id: "22222222-2222-4222-8222-222222222222",
+          status: "running",
+        });
       },
     });
 
@@ -1675,45 +1681,23 @@ describe("eval/agent-service", () => {
       userMessageId: "33333333-3333-4333-8333-333333333333",
     });
 
-    assertEquals(requestBody, {
-      kind: "agent",
-      owner: {
-        kind: "conversation",
-        id: "11111111-1111-4111-8111-111111111111",
+    const body = requestBody as {
+      target: unknown;
+      config: unknown;
+      input: { forwarded_props: unknown; durable_root_run?: unknown; messages: unknown[] };
+    };
+    assertEquals(body.target, { type: "agent", id: "veryfront" });
+    assertEquals(body.config, {
+      agent_admission: {
+        mode: "hosted",
+        input_message_id: "33333333-3333-4333-8333-333333333333",
+        client_run_id: "run_studio_client",
       },
-      public_id: "run_studio_client",
-      request: {
-        mode: "agent",
-        agent_id: "veryfront",
-        input: {
-          messages: [
-            {
-              id: "33333333-3333-4333-8333-333333333333",
-              role: "user",
-              parts: [{ type: "text", text: "Exercise Studio-capable durable tools" }],
-            },
-          ],
-          context: {
-            conversation_id: "11111111-1111-4111-8111-111111111111",
-            project_id: "11111111-1111-4111-8111-111111111111",
-            branch_id: null,
-          },
-          durable_root_run: {
-            run_id: "run_studio_client",
-            message_id: "22222222-2222-4222-8222-222222222222",
-          },
-          forwarded_props: {
-            model: "anthropic/claude-sonnet-4-6",
-            veryfront: {
-              client: {
-                id: "veryfront-studio",
-                type: "web",
-                platform: "durable-canary",
-              },
-            },
-          },
-        },
-      },
+    });
+    assertEquals(body.input.durable_root_run, undefined);
+    assertEquals(body.input.forwarded_props, {
+      model: "anthropic/claude-sonnet-4-6",
+      veryfront: { client: { id: "veryfront-studio", type: "web", platform: "durable-canary" } },
     });
   });
 
@@ -1867,6 +1851,7 @@ describe("eval/agent-service", () => {
         parts: [],
       }),
       startDurableRun: async (input) => {
+        createdRunIds.push(input.runId);
         startRunInputs.push({ prompt: input.prompt, runId: input.runId });
       },
     };

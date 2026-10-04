@@ -1572,6 +1572,7 @@ export {
   finalizeConversationAgentRun,
   flushConversationRunEventBatches,
   flushConversationRunEventQueue,
+  getCanonicalRunStatus,
   getConversationRun,
   isActiveConversationRunStatus,
   isAppendableConversationRunProjection,

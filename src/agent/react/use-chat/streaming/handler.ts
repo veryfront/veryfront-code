@@ -68,6 +68,61 @@ function createStreamingState(): StreamingState {
   };
 }
 
+/** Reuse the transcript reducer when a stream must retain its message without a UI subscriber. */
+export function createChatStreamMessageProjection(messageId: string) {
+  const state = createStreamingState();
+  state.messageId = messageId;
+  const parts = () =>
+    buildCurrentParts(
+      state.textBlocks,
+      state.reasoningBlocks,
+      state.toolCalls,
+      state.steps,
+      state.dataParts,
+      state.closedReasoningBlocks,
+      state.closedTextBlocks,
+    );
+  const callbacks: StreamingCallbacks = { onMessage: () => {}, onData: () => {} };
+  const deniedToolCalls = new Set<string>();
+  return {
+    append: (chunk: ChatStreamEvent) => {
+      if (chunk.type === "error") return;
+      if (chunk.type === "tool-output-available" && chunk.preliminary) return;
+      if (chunk.type === "finish-step") {
+        state.currentStep++;
+        return;
+      }
+      if (chunk.type === "tool-input-error") {
+        processChatStreamEvent({ ...chunk, type: "tool-input-available" }, state, callbacks, parts);
+      }
+      if (chunk.type === "start") deniedToolCalls.clear();
+      if (chunk.type === "tool-input-start") deniedToolCalls.delete(chunk.toolCallId);
+      if (chunk.type === "tool-output-denied") deniedToolCalls.add(chunk.toolCallId);
+      if (chunk.type === "finish" && chunk.messageMetadata !== undefined) {
+        mergeMessageMetadata(state, chunk.messageMetadata);
+      }
+      processChatStreamEvent(
+        chunk.type === "start"
+          ? { ...chunk, messageId: chunk.messageId ?? state.messageId }
+          : chunk,
+        state,
+        callbacks,
+        parts,
+      );
+    },
+    snapshot: () => ({
+      id: state.messageId,
+      role: "assistant" as const,
+      parts: parts().map((part) => {
+        return "toolCallId" in part && deniedToolCalls.has(part.toolCallId)
+          ? { ...part, state: "output-denied" as const }
+          : part;
+      }),
+      ...(Object.keys(state.messageMetadata).length > 0 ? { metadata: state.messageMetadata } : {}),
+    }),
+  };
+}
+
 export async function handleStreamingResponse(
   body: ReadableStream,
   callbacks: StreamingCallbacks,

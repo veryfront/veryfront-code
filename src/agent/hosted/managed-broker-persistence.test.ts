@@ -26,6 +26,20 @@ const run = {
   streamProtocolVersion: 2 as const,
 };
 
+const canonicalId = "11111111-1111-4111-8111-111111111111";
+const token = (runId: string) =>
+  `header.${
+    btoa(
+      JSON.stringify({
+        runId,
+        canonicalRunId: canonicalId,
+        tokenUse: "run_event_writer",
+        writerPurpose: "current_run_terminal",
+        dispatchNonce: "generation",
+      }),
+    )
+  }.signature`;
+
 function authorities() {
   let effects = 0;
   const unexpected = () => {
@@ -44,6 +58,7 @@ function authorities() {
     terminal: createManagedBrokerTerminal({
       apiUrl: "https://api.example.test",
       completionAuthToken: "synthetic-completion-token",
+      terminalAuthToken: token(run.runId),
       run,
       modelId: "model",
       resolveProvider: unexpected,
@@ -84,6 +99,7 @@ describe("managed persistence authority validation", () => {
       ...fixture.raw,
       run: { ...run, runId: "foreign-run" },
       completionAuthToken: "synthetic-completion-token",
+      terminalAuthToken: token("foreign-run"),
     });
     for (
       const terminal of [
@@ -231,6 +247,7 @@ describe("managed persistence trace propagation", () => {
       apiUrl: "https://api.example.test",
       runEventToken: "synthetic-event-token",
       completionAuthToken: "synthetic-completion-token",
+      terminalAuthToken: token(run.runId),
       run,
       modelId: "model",
       resolveProvider: () => "provider",
@@ -272,14 +289,15 @@ describe("managed persistence trace propagation", () => {
     const fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
       requests.push(new Request(input, init));
       return Promise.resolve(Response.json({
-        completed: true,
-        run: { runId: run.runId, status: "completed" },
+        id: canonicalId,
+        status: "completed",
       }));
     }) as typeof globalThis.fetch;
     const persistence = createManagedBrokerPersistence({
       apiUrl: "https://api.example.test",
       runEventToken: "synthetic-event-token",
       completionAuthToken: "synthetic-completion-token",
+      terminalAuthToken: token(run.runId),
       run,
       modelId: "model",
       resolveProvider: () => "provider",
@@ -291,7 +309,7 @@ describe("managed persistence trace propagation", () => {
     await persistence.cleanup();
 
     assertEquals(requests.map((request) => `${request.method} ${request.url}`), [
-      `POST https://api.example.test/runs/${run.runId}/complete`,
+      `POST https://api.example.test/runs/${canonicalId}/finalize`,
     ]);
     assertEquals(requests[0]?.headers.get("Authorization"), "Bearer synthetic-completion-token");
     assertEquals(
