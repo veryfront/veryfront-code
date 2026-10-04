@@ -1,3 +1,4 @@
+import { systemTaskDeadlineClock } from "#veryfront/server/handlers/request/task-deadline-clock.ts";
 import { RunStopRegistry } from "#veryfront/internal-agents/run-stop-registry.ts";
 import { toolRegistryInternal } from "#veryfront/tool/registry.ts";
 import "#veryfront/schemas/_test-setup.ts";
@@ -1160,14 +1161,18 @@ describe("server/handlers/request/project-run-execute.handler", () => {
 
   it("preserves the result when task code replaces timer cleanup", async () => {
     const originalClearTimeout = globalThis.clearTimeout;
-    const handler = new ProjectRunExecuteHandler(createDeps({
-      runTask: async () => {
-        globalThis.clearTimeout = () => {
-          throw new Error("patched cleanup");
-        };
-        return { success: true, result: "finished", durationMs: 0 };
-      },
-    }));
+    const now = systemTaskDeadlineClock.now();
+    const handler = new ProjectRunExecuteHandler(
+      createDeps({
+        runTask: async () => {
+          globalThis.clearTimeout = () => {
+            throw new Error("patched cleanup");
+          };
+          return { success: true, result: "finished", durationMs: 0 };
+        },
+      }),
+      { ...systemTaskDeadlineClock, now: () => now },
+    );
     const { request, publicKeyPem } = await signedRequest(
       "/api/control-plane/runs/run_deadline/execute",
       {
@@ -1175,7 +1180,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
         kind: "task",
         target: "task:sync-calendar-events",
         projectId: "proj-1",
-        deadlineAt: new Date(Date.now() + 100).toISOString(),
+        deadlineAt: new Date(now + 100).toISOString(),
       },
     );
     try {
