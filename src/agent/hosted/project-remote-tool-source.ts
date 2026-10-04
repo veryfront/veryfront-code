@@ -448,7 +448,9 @@ function createHostedProjectRemoteToolSourceFromConfig(
             context,
           });
           return visible.filter(({ name }) =>
-            !allowedNames || allowedNames.has(name) || allowedNames.has(`veryfront__${name}`)
+            !allowedNames || allowedNames.has(name) ||
+            allowedNames.has(platformMcpLegacyName(name)) ||
+            allowedNames.has(`veryfront__${name}`)
           );
         },
       }
