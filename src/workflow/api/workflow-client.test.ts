@@ -6107,6 +6107,7 @@ describe("WorkflowClient durable event waits", () => {
   });
 
   it("does not deliver an event published after the declared deadline passed", async () => {
+    using time = new FakeTime();
     const sharedBackend = new MemoryBackend();
     const parked = createWorkflowClient({ backend: sharedBackend });
     // A publisher whose sweep is pinned far away, so only the drain-time
@@ -6127,11 +6128,11 @@ describe("WorkflowClient durable event waits", () => {
       await handle.settled();
       const [wait] = await parked.getPendingEventWaits(handle.runId);
       assertExists(wait?.expiresAt);
+      assertEquals(wait.expiresAt.getTime(), Date.now() + 30);
       // The process that parked the wait dies before its deadline timer fires.
       parked.getEventWaitManager().stop();
-      await waitFor(() => Date.now() > wait.expiresAt!.getTime(), {
-        message: "the deadline never passed",
-      });
+      await time.tickAsync(31);
+      assert(Date.now() > wait.expiresAt.getTime());
 
       const outcome = await publisher.publishEvent(handle.runId, "payment.confirmed", {
         amount: 9,
@@ -6159,6 +6160,7 @@ describe("WorkflowClient durable event waits", () => {
   });
 
   it("expires a live timed wait when resume observes it after restart", async () => {
+    using time = new FakeTime();
     const sharedBackend = new MemoryBackend();
     const parked = createWorkflowClient({
       backend: sharedBackend,
@@ -6182,11 +6184,11 @@ describe("WorkflowClient durable event waits", () => {
       await handle.settled();
       const [wait] = await parked.getPendingEventWaits(handle.runId);
       assertExists(wait?.expiresAt);
+      assertEquals(wait.expiresAt.getTime(), Date.now() + 30);
 
       parked.getEventWaitManager().stop();
-      await waitFor(() => Date.now() > wait.expiresAt!.getTime(), {
-        message: "the deadline never passed",
-      });
+      await time.tickAsync(31);
+      assert(Date.now() > wait.expiresAt.getTime());
 
       await recovering.resume(handle.runId);
 
