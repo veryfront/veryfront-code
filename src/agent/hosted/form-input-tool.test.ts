@@ -1,14 +1,24 @@
+import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
+import { getFormInputToolInputSchema } from "../input/request-protocol.ts";
+import {
+  createHostedRunEventWriterCapability,
+  runWithHostedRunEventWriterCapability,
+} from "./child-run-event-writer-token.ts";
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import type { ToolExecutionContext } from "#veryfront/tool";
-import { createHostedFormInputTool, findSubmittedFormInputResult } from "../index.ts";
+import {
+  createHostedFormInputTool,
+  findSubmittedFormInputResult,
+  type HostedFormInputToolContext,
+} from "./form-input-tool.ts";
 
 const API_URL = "https://api.example.com";
 const AUTH_TOKEN = "token-123";
 const INPUT_REQUEST_ID = "11111111-1111-4111-a111-111111111111";
 const CONVERSATION_ID = "22222222-2222-4222-a222-222222222222";
-const RUN_ID = "run_1";
+const RUN_ID = "44444444-4444-4444-a444-444444444444";
 const TOOL_CALL_ID = "tool-call-1";
 const CREATED_AT = "2026-04-04T00:00:00.000Z";
 const EXPIRES_AT = "2026-04-04T00:05:00.000Z";
@@ -28,7 +38,8 @@ function jsonResponse(body: unknown, status: number): Response {
 
 function createLatestResponse(values: Record<string, unknown>) {
   return {
-    id: "33333333-3333-4333-a333-333333333333",
+    response_id: "33333333-3333-4333-a333-333333333333",
+    actor: { type: "user", id: "user-1" },
     input_request_id: INPUT_REQUEST_ID,
     conversation_id: CONVERSATION_ID,
     run_id: RUN_ID,
@@ -41,7 +52,8 @@ function createLatestResponse(values: Record<string, unknown>) {
 
 function createInputRequestRecord(overrides: Record<string, unknown> = {}) {
   return {
-    id: INPUT_REQUEST_ID,
+    input_request_id: INPUT_REQUEST_ID,
+    project_id: CONVERSATION_ID,
     conversation_id: CONVERSATION_ID,
     run_id: RUN_ID,
     tool_call_id: TOOL_CALL_ID,
@@ -68,12 +80,14 @@ function createInputRequestRecord(overrides: Record<string, unknown> = {}) {
     submitted_at: null,
     cancelled_at: null,
     expired_at: null,
-    latest_response: null,
+    response: overrides.latest_response ?? null,
+    resolved_at: overrides.submitted_at ?? overrides.cancelled_at ?? overrides.expired_at ??
+      undefined,
     ...overrides,
   };
 }
 
-function createContext(overrides: Record<string, unknown> = {}) {
+function createContext(overrides: Record<string, unknown> = {}): HostedFormInputToolContext {
   return {
     authToken: AUTH_TOKEN,
     conversationId: CONVERSATION_ID,
@@ -83,11 +97,7 @@ function createContext(overrides: Record<string, unknown> = {}) {
 }
 
 function createExecuteInput(fields: Array<Record<string, unknown>>) {
-  return {
-    title: "Choose one",
-    description: "Pick",
-    fields,
-  };
+  return getFormInputToolInputSchema().parse({ title: "Choose one", description: "Pick", fields });
 }
 
 function stubFetchSequence(responses: Response[]) {
@@ -145,14 +155,14 @@ describe("agent/hosted-form-input-tool", () => {
     });
     assertEquals(
       String(calls[0]?.input),
-      `${API_URL}/conversations/${CONVERSATION_ID}/input-requests`,
+      `${API_URL}/runs/${RUN_ID}/input-requests`,
     );
     assertEquals(calls[0]?.init?.method, "POST");
-    assertEquals(JSON.parse(String(calls[0]?.init?.body)).run_id, RUN_ID);
+    assertEquals(JSON.parse(String(calls[0]?.init?.body)).run_id, undefined);
     assertEquals(JSON.parse(String(calls[0]?.init?.body)).tool_call_id, TOOL_CALL_ID);
     assertEquals(
       String(calls[1]?.input),
-      `${API_URL}/conversations/${CONVERSATION_ID}/input-requests/${INPUT_REQUEST_ID}`,
+      `${API_URL}/input-requests/${INPUT_REQUEST_ID}`,
     );
     assertEquals(calls[1]?.init?.method, "GET");
   });
@@ -444,4 +454,140 @@ describe("agent/hosted-form-input-tool", () => {
       "poll failed",
     );
   });
+});
+
+it("hosted form hands off to durable replay without reading or publishing secret values", async () => {
+  let calls = 0;
+  await withMockFetch(() => {
+    calls++;
+    throw new Error("Public polling must not resolve private form results");
+  }, async () => {
+    const controller = new AbortController();
+    const form = createHostedFormInputTool(createContext(), API_URL, { controlPlaneReplay: true });
+    const waiting = form.execute({
+      title: "Secret",
+      submitLabel: "Submit",
+      fields: [{
+        name: "password",
+        label: "Password",
+        type: "password",
+        required: false,
+        secret: true,
+      }],
+    }, { toolCallId: "secret-tool", abortSignal: controller.signal });
+    let settled = false;
+    const result = Promise.resolve(waiting).then(() => {
+      settled = true;
+      return "resolved";
+    }, (error) => {
+      settled = true;
+      return error;
+    });
+    await Promise.resolve();
+    assertEquals(settled, false);
+    await assertRejects(
+      () =>
+        Promise.resolve(
+          form.execute({
+            title: "Second",
+            submitLabel: "Submit",
+            fields: [{
+              name: "value",
+              label: "Value",
+              type: "text",
+              required: false,
+              secret: false,
+            }],
+          }, { toolCallId: "second-tool", abortSignal: controller.signal }),
+        ),
+      Error,
+      "Only one form_input",
+    );
+    const suspended = new DOMException("Owning run parked", "AbortError");
+    controller.abort(suspended);
+    assertEquals(await result, suspended);
+    assertEquals(calls, 0);
+  });
+});
+
+it("rejects secret polling forms before creating an input request", async () => {
+  let calls = 0;
+  await withMockFetch(() => {
+    calls++;
+    throw new Error("No request expected");
+  }, async () => {
+    const form = createHostedFormInputTool(createContext(), API_URL);
+    await assertRejects(
+      () =>
+        Promise.resolve(
+          form.execute({
+            title: "Secret",
+            submitLabel: "Submit",
+            fields: [{
+              name: "password",
+              label: "Password",
+              type: "password",
+              required: false,
+              secret: true,
+            }],
+          }, { toolCallId: "secret" }),
+        ),
+      Error,
+      "Secret forms require hosted durable replay",
+    );
+    assertEquals(calls, 0);
+  });
+});
+
+it("rejects attached child forms before allocating or waiting for an input request", async () => {
+  const capability = createHostedRunEventWriterCapability({
+    apiUrl: API_URL,
+    runId: RUN_ID,
+    runEventAppendToken: "child-writer",
+    inheritedExecution: true,
+  });
+  const form = await runWithHostedRunEventWriterCapability(
+    capability,
+    () => createHostedFormInputTool(createContext(), API_URL, { controlPlaneReplay: true }),
+  );
+  await assertRejects(
+    () =>
+      Promise.resolve(
+        form.execute(
+          {
+            title: "Input",
+            submitLabel: "Submit",
+            fields: [{
+              name: "value",
+              label: "Value",
+              type: "text",
+              required: false,
+              secret: false,
+            }],
+          },
+          { toolCallId: "child-form" },
+        ),
+      ),
+    Error,
+    "Forms are not supported inside attached local child callbacks",
+  );
+});
+
+it("reuses a privately replayed form result without parking the resumed turn again", async () => {
+  const context = createContext({
+    submittedFormInputResult: {
+      values: { password: "private-replayed" },
+      inputRequestId: INPUT_REQUEST_ID,
+    },
+  });
+  const form = createHostedFormInputTool(context, API_URL, { controlPlaneReplay: true });
+  const result = await form.execute(
+    getFormInputToolInputSchema().parse({
+      title: "Secret",
+      fields: [{ name: "password", label: "Password", type: "password" }],
+    }),
+    { toolCallId: "repeated-form" },
+  );
+  assertEquals((result as { reused: boolean }).reused, true);
+  assertEquals((result as { values: unknown }).values, { password: "private-replayed" });
 });

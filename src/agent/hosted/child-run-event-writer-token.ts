@@ -5,7 +5,11 @@ import {
   type VeryfrontApiRequestUrlResolver,
 } from "#veryfront/platform/adapters/veryfront-api-url.ts";
 import { readResponseTextPrefix } from "#veryfront/utils/response-body.ts";
-import { instrumentConversationRunFetch } from "../conversation/durable.ts";
+import {
+  type ConversationRunProjection,
+  type createConversationAgentRun,
+  instrumentConversationRunFetch,
+} from "../conversation/durable.ts";
 import {
   type ConversationRunChunkMirror,
   createHostedConversationRunChunkMirror,
@@ -17,6 +21,13 @@ const MAX_CHILD_RUN_EVENT_WRITER_TOKEN_BYTES = 4 * 1024;
 const MAX_CHILD_RUN_EVENT_WRITER_TOKEN_RESPONSE_BYTES = 16 * 1024;
 const CHILD_RUN_EVENT_WRITER_TOKEN_SETUP_ERROR =
   "Unable to initialize durable child event persistence";
+
+/** Private admission transport injected by the trusted hosted ingress. */
+type InheritedRunAdmitter = (toolCallId: string, prompt: string) => (
+  input: Omit<Parameters<typeof createConversationAgentRun>[0], "conversationId"> & {
+    conversationId?: string;
+  },
+) => Promise<ConversationRunProjection>;
 
 type Fetch = typeof globalThis.fetch;
 
@@ -109,13 +120,17 @@ export interface HostedRunEventWriterCapability {
   mintChildRunEventWriterCapability(
     childRunId: string,
     abortSignal?: AbortSignal,
+    canonicalChildRunId?: string,
   ): Promise<HostedRunEventWriterCapability>;
 }
 
 type CapabilityState = {
+  inheritedExecution?: boolean;
+  inheritedAdmitter?: InheritedRunAdmitter;
   apiUrl: string;
   resolveApiUrl: VeryfrontApiRequestUrlResolver;
   runId: string;
+  canonicalRunId?: string;
   runEventAppendToken: string;
   timeoutMs: number;
   fetch: Fetch;
@@ -170,6 +185,18 @@ function isPromiseLike(value: unknown): value is PromiseLike<unknown> {
     typeof (value as { then?: unknown }).then === "function";
 }
 
+function isRunUuid(value: unknown): value is string {
+  if (typeof value !== "string" || value.length !== 36) return false;
+  for (let index = 0; index < 36; index++) {
+    const code = apply(stringCharCodeAt, value, [index]) as number;
+    const hyphen = index === 8 || index === 13 || index === 18 || index === 23;
+    const hex = (code >= 48 && code <= 57) || (code >= 97 && code <= 102) ||
+      (code >= 65 && code <= 70);
+    if (hyphen ? code !== 45 : !hex) return false;
+  }
+  return true;
+}
+
 function ownValue(value: unknown, key: string): unknown {
   if (typeof value !== "object" || value === null) return undefined;
   return apply(objectHasOwnProperty, value, [key])
@@ -177,30 +204,7 @@ function ownValue(value: unknown, key: string): unknown {
     : undefined;
 }
 
-// Checked by character: RegExp methods reach `exec`, which tenant code can replace.
-function isRunUuid(value: unknown): value is string {
-  if (typeof value !== "string" || value.length !== 36) return false;
-  for (let index = 0; index < 36; index++) {
-    const code = apply(stringCharCodeAt, value, [index]) as number;
-    const isHyphenPosition = index === 8 || index === 13 || index === 18 || index === 23;
-    const isHexDigit = (code >= 48 && code <= 57) || (code >= 97 && code <= 102) ||
-      (code >= 65 && code <= 70);
-    if (isHyphenPosition ? code !== 45 : !isHexDigit) return false;
-  }
-  return true;
-}
-
-/**
- * The API names a run by its UUID and still resolves old `run_…` IDs (Runs API 5 ADR,
- * veryfront-issue-inbox#2254): a child addressed by UUID comes back unchanged, one addressed by an
- * old ID comes back as its UUID.
- */
-function namesChildRun(runId: unknown, childRunId: string): boolean {
-  return runId === childRunId || (!isRunUuid(childRunId) && isRunUuid(runId));
-}
-
-/** Reads the target `RunEventToken`: an append-only Bearer token bound to exactly this child run. */
-function parseRunEventToken(value: unknown, childRunId: string): string {
+function parseRunEventToken(value: unknown, canonicalChildRunId: string): string {
   if (typeof value !== "object" || value === null || arrayIsArray(value)) {
     throw new HostedChildRunEventWriterTokenExchangeError();
   }
@@ -209,20 +213,19 @@ function parseRunEventToken(value: unknown, childRunId: string): string {
   if (
     !isValidRunEventWriterToken(token) ||
     ownValue(value, "token_type") !== "Bearer" ||
-    !namesChildRun(ownValue(value, "run_id"), childRunId) ||
+    ownValue(value, "run_id") !== canonicalChildRunId ||
     typeof ownValue(value, "expires_at") !== "string" ||
     !arrayIsArray(permissions) || permissions.length !== 1 ||
     permissions[0] !== "run.events.append"
   ) {
     throw new HostedChildRunEventWriterTokenExchangeError();
   }
-
   return token;
 }
 
 async function exchangeChildRunEventWriterToken(
   state: CapabilityState,
-  childRunId: string,
+  canonicalChildRunId: string,
   abortSignal?: AbortSignal,
 ): Promise<string> {
   const controller = new AbortController();
@@ -239,8 +242,9 @@ async function exchangeChildRunEventWriterToken(
     abortSignal?.addEventListener("abort", onAbort, { once: true });
   }
   const timeoutId = setTimeout(() => cancel("timeout"), state.timeoutMs);
-  // The parent credential names its own run; the API binds the child through the recorded lineage.
-  const url = state.resolveApiUrl(`/runs/${encodeURIComponent(childRunId)}/event-tokens`);
+  const url = state.resolveApiUrl(
+    `/runs/${encodeURIComponent(canonicalChildRunId)}/event-tokens`,
+  );
 
   try {
     const response = await state.fetch(url, {
@@ -275,7 +279,7 @@ async function exchangeChildRunEventWriterToken(
     } catch {
       throw new HostedChildRunEventWriterTokenExchangeError();
     }
-    const token = parseRunEventToken(responseValue, childRunId);
+    const token = parseRunEventToken(responseValue, canonicalChildRunId);
     if (cancellation) {
       throw new HostedChildRunEventWriterTokenExchangeError(cancellation);
     }
@@ -348,10 +352,15 @@ export async function runWithVerifiedHostedRunEventWriterRequest<T>(
  * The returned frozen object does not expose or serialize the credential.
  */
 export function createHostedRunEventWriterCapability(input: {
+  /** Whether this generation executes an attached local callback. */
+  inheritedExecution?: boolean;
   /** Trusted Veryfront API base URL used for child-capability exchange. */
   apiUrl: string;
   /** Exact run authorized by `runEventAppendToken`. */
   runId: string;
+  /** Canonical routing UUID supplied by trusted dispatch. */
+  canonicalRunId?: string;
+  inheritedAdmitter?: InheritedRunAdmitter;
   /** Exact-run append credential obtained from trusted ingress. */
   runEventAppendToken: string;
   /** Bounded child-capability exchange timeout. */
@@ -365,9 +374,12 @@ export function createHostedRunEventWriterCapability(input: {
     throw new HostedChildRunEventWriterTokenExchangeError();
   }
   const state: CapabilityState = {
+    inheritedExecution: input.inheritedExecution,
     apiUrl: input.apiUrl,
     resolveApiUrl: createVeryfrontApiRequestUrlResolver(input.apiUrl),
     runId: input.runId,
+    canonicalRunId: input.canonicalRunId,
+    inheritedAdmitter: input.inheritedAdmitter,
     runEventAppendToken: input.runEventAppendToken,
     timeoutMs: input.timeoutMs ?? DEFAULT_CHILD_RUN_EVENT_WRITER_TOKEN_TIMEOUT_MS,
     fetch: input.fetch ? snapshotFetch(input.fetch) : capturedFetch,
@@ -375,11 +387,16 @@ export function createHostedRunEventWriterCapability(input: {
   const capability = objectCreate(null) as HostedRunEventWriterCapability;
   objectDefineProperty(capability, "mintChildRunEventWriterCapability", {
     enumerable: false,
-    value: async (childRunId: string, abortSignal?: AbortSignal) => {
-      const childToken = await exchangeChildRunEventWriterToken(state, childRunId, abortSignal);
+    value: async (childRunId: string, abortSignal?: AbortSignal, canonicalChildRunId?: string) => {
+      const canonical = canonicalChildRunId ?? childRunId;
+      if (!isRunUuid(canonical)) {
+        throw new HostedChildRunEventWriterTokenExchangeError();
+      }
+      const childToken = await exchangeChildRunEventWriterToken(state, canonical, abortSignal);
       return createHostedRunEventWriterCapability({
         apiUrl: state.apiUrl,
         runId: childRunId,
+        canonicalRunId: canonical,
         runEventAppendToken: childToken,
         timeoutMs: state.timeoutMs,
         fetch: state.fetch,
@@ -409,10 +426,21 @@ export function createHostedConversationRunChunkMirrorFromCapability(
     apiUrl: state.apiUrl,
     authToken: state.runEventAppendToken,
     runId: state.runId,
+    canonicalRunId: state.canonicalRunId,
     // Capability transports are host-owned, but durable persistence still
     // needs to stay in the active execution trace.
     fetch: instrumentConversationRunFetch(state.fetch),
   });
+}
+
+/** Return a routing identifier only for the exact run bound to this capability. */
+export function hostedRunCanonicalId(
+  capability: HostedRunEventWriterCapability | undefined,
+  expectedRunId: string,
+): string | undefined {
+  if (!capability) return undefined;
+  const state = getWeakMapValue(capabilityState, capability);
+  return state?.runId === expectedRunId ? state.canonicalRunId : undefined;
 }
 
 /** Return the capability installed only while internal tool closures are assembled. */
@@ -444,4 +472,27 @@ export function runWithHostedRunEventWriterCapability<T>(
     revoke();
     throw error;
   }
+}
+
+/** Obtain a parent-bound admission closure without disclosing its credential. */
+export function inheritedChildAdmitter(
+  capability: HostedRunEventWriterCapability | undefined,
+  parentRunId: string,
+  toolCallId: string,
+  prompt: string,
+) {
+  const state = capability ? getWeakMapValue(capabilityState, capability) : undefined;
+  if (!state || state.runId !== parentRunId || !state.inheritedAdmitter) {
+    throw new Error("Inherited child admission authority is required");
+  }
+  return state.inheritedAdmitter(toolCallId, prompt);
+}
+
+/** Check the private execution mode of the exact run preparing its tools. */
+export function hostedRunIsInherited(
+  capability: HostedRunEventWriterCapability | undefined,
+  runId: string,
+): boolean {
+  const state = capability ? getWeakMapValue(capabilityState, capability) : undefined;
+  return state?.runId === runId && state.inheritedExecution === true;
 }

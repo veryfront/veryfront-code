@@ -5,12 +5,14 @@ export class AppendConversationRunEventsError extends Error {
   readonly status: number;
   readonly detail: string | null;
   readonly slug: string | null;
+  readonly cursor?: { latestEventId: number; latestExternalEventSequence: number };
 
   constructor(input: {
     status: number;
     detail?: string | null;
     slug?: string | null;
     statusText?: string;
+    cursor?: { latestEventId: number; latestExternalEventSequence: number };
   }) {
     const detail = input.detail?.trim() || input.statusText || `HTTP ${input.status}`;
     super(`Append conversation run events failed (${input.status}): ${detail}`);
@@ -18,6 +20,7 @@ export class AppendConversationRunEventsError extends Error {
     this.status = input.status;
     this.detail = input.detail?.trim() || null;
     this.slug = input.slug?.trim() || null;
+    this.cursor = input.cursor;
   }
 }
 
@@ -146,4 +149,19 @@ export function isCursorMismatchConversationRunAppendError(
     error.status === 400 &&
     error.detail === "External run event cursor mismatch"
   );
+}
+
+/** Cursor hints reveal only authenticated writer state, never event payloads. */
+export function readAppendCursorHeaders(headers: Headers) {
+  const event = headers.get("X-Run-Latest-Event-Id");
+  const external = headers.get("X-Run-Latest-External-Sequence");
+  if (event === null || external === null || !/^\d+$/.test(event) || !/^\d+$/.test(external)) {
+    return undefined;
+  }
+  const latestEventId = Number(event);
+  const latestExternalEventSequence = Number(external);
+  if (!Number.isSafeInteger(latestEventId) || !Number.isSafeInteger(latestExternalEventSequence)) {
+    return undefined;
+  }
+  return { latestEventId, latestExternalEventSequence };
 }

@@ -226,8 +226,9 @@ export function createAgUiCancelHandler<T = unknown>(
     // start as a delayed start of a cancelled run, so a park cancellation only
     // refuses delayed starts dispatched from before the parked event.
     // The authority check above already limits this to a verified caller.
-    const parkCancellation =
-      new URL(request.url).searchParams.get("reason") === INTEGRATION_AUTH_PARK_CANCEL_REASON;
+    const parkCancellation = [INTEGRATION_AUTH_PARK_CANCEL_REASON, "form_input_park"].includes(
+      new URL(request.url).searchParams.get("reason") ?? "",
+    );
     const parkedAfterEventId = parkCancellation
       ? parsePositiveEventId(new URL(request.url).searchParams.get("parked_after_event_id"))
       : undefined;

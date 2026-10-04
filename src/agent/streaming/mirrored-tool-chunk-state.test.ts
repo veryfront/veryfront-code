@@ -51,6 +51,24 @@ async function collectChunks(stream: AsyncIterable<Chunk>): Promise<Chunk[]> {
 }
 
 describe("mirrored-tool-chunk-state", () => {
+  it("keeps preliminary tool output open for final durable recovery", () => {
+    const state = createMirroredToolChunkState();
+    const progress: Chunk = {
+      type: "tool-output-available",
+      toolCallId: "tc-1",
+      output: { progress: true },
+      preliminary: true,
+    };
+    recordMirroredToolChunkState(state, progress);
+    assertEquals(state.outputAvailableToolCallIds.has("tc-1"), false);
+    expectNotMirrored(progress);
+    recordMirroredToolChunkState(state, {
+      type: "tool-output-available",
+      toolCallId: "tc-1",
+      output: { complete: true },
+    });
+    assertEquals(state.outputAvailableToolCallIds.has("tc-1"), true);
+  });
   it("identifies durable mirrored output chunk types", () => {
     expectMirrored({ type: "text-start", id: "msg-1" });
     expectMirrored({ type: "text-delta", id: "msg-1", delta: "" });

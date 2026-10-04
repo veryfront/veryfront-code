@@ -2,7 +2,7 @@ import { defineSchema, lazySchema } from "#veryfront/schemas/index.ts";
 import type { InferSchema, Schema } from "#veryfront/extensions/schema/index.ts";
 import { isUuid, toConversationPartsFromUiMessage } from "#veryfront/chat/conversation.ts";
 import type { ChatUiMessage } from "#veryfront/chat/types.ts";
-import { type ConversationRunProjection, createConversationAgentRun } from "./durable.ts";
+import type { ConversationRunProjection, createConversationAgentRun } from "./durable.ts";
 import {
   INPUT_VALIDATION_FAILED,
   INVALID_ARGUMENT,
@@ -317,6 +317,7 @@ export interface BootstrapConversationAgentRunResult {
 
 /** Bootstrap conversation agent run helper. */
 export async function bootstrapConversationAgentRun(input: {
+  admitRun?: typeof createConversationAgentRun;
   authToken: string;
   apiUrl: string;
   parentConversationId?: string;
@@ -332,6 +333,15 @@ export async function bootstrapConversationAgentRun(input: {
   runtimeTargetEnvironmentId?: string | null;
   branchId?: string | null;
 }): Promise<BootstrapConversationAgentRunResult> {
+  // Standalone self-admission was removed. Fail before any conversation or
+  // message write so a missing capability cannot leave an orphaned handoff.
+  const admitRun = input.admitRun;
+  if (!admitRun) {
+    throw new Error(
+      "Conversation-backed run bootstrap requires the bound admission capability",
+    );
+  }
+
   if (input.parentConversationId && input.ensureProjectId) {
     await ensureConversationProjectLink({
       authToken: input.authToken,
@@ -353,7 +363,7 @@ export async function bootstrapConversationAgentRun(input: {
     conversationId: conversation.id,
     body: input.handoffMessageBody,
   });
-  const run = await createConversationAgentRun({
+  const run = await admitRun({
     authToken: input.authToken,
     apiUrl: input.apiUrl,
     conversationId: conversation.id,
