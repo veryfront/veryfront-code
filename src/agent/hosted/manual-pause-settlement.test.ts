@@ -77,7 +77,7 @@ describe("hosted pause settlement transport", () => {
       await settleHostedAgentPause(capability);
       assertEquals(confirmations, replies.length);
       assertEquals(bodies, [
-        { checkpoint, settlementRequired: true },
+        { checkpoint, settlement_required: true },
         ...replies.map(() => ({ settled: true })),
       ]);
     });

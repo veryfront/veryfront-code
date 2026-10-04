@@ -26,7 +26,7 @@ it("settles the managed durable factory capability after normal session closure"
       assertEquals(execution.signal.aborted, false);
       assertEquals(flushed && cleaned, true);
     } else {
-      assertEquals(body.settlementRequired, true);
+      assertEquals(body.settlement_required, true);
     }
     return Response.json({ stop: true });
   }, async () => {
