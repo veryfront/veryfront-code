@@ -112,6 +112,8 @@ describe("useWorkflowStart", () => {
   it("keeps a start launched from a layout effect current on mount", async () => {
     const restoreDom = installDom();
     const response = Promise.withResolvers<Response>();
+    const completedRender = Promise.withResolvers<void>();
+    let commitTimeout: ReturnType<typeof setTimeout> | undefined;
     const startedRunIds: string[] = [];
     const onStart = (runId: string): void => {
       startedRunIds.push(runId);
@@ -130,6 +132,9 @@ describe("useWorkflowStart", () => {
       useLayoutEffect(() => {
         startPromise = start({});
       }, [start]);
+      useLayoutEffect(() => {
+        if (!hook!.isStarting && hook!.lastRunId !== null) completedRender.resolve();
+      }, [hook.isStarting, hook.lastRunId]);
       return null;
     }
 
@@ -138,13 +143,17 @@ describe("useWorkflowStart", () => {
       flushSync(() => root.render(<Capture />));
       assertEquals(hook!.isStarting, true);
 
+      commitTimeout = setTimeout(() => {
+        completedRender.reject(new Error("Workflow start did not commit its completed state"));
+      }, 5_000);
       response.resolve(Response.json({ runId: "layout-run" }));
       assertEquals(await startPromise, "layout-run");
-      await new Promise((resolve) => setTimeout(resolve, 20));
+      await completedRender.promise;
       assertEquals(hook!.isStarting, false);
       assertEquals(hook!.lastRunId, "layout-run");
       assertEquals(startedRunIds, ["layout-run"]);
     } finally {
+      clearTimeout(commitTimeout);
       flushSync(() => root.unmount());
       restoreDom();
     }
