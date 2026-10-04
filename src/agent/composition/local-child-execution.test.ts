@@ -1,3 +1,4 @@
+import { AgentRuntime } from "#veryfront/agent/runtime/index.ts";
 import { it } from "#veryfront/testing/bdd.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import {
@@ -47,8 +48,8 @@ it("local child host scopes remain isolated across concurrent executions and clo
 });
 
 it("unrelated nested runtimes cannot observe or delegate through another agent's child scope", async () => {
-  const owner = {};
-  const unrelated = {};
+  const owner = new AgentRuntime("owner", { model: "test/model", system: "Owner" });
+  const unrelated = new AgentRuntime("unrelated", { model: "test/model", system: "Unrelated" });
   const seen: string[] = [];
   const observed: string[] = [];
   const invoke = (id: string) =>

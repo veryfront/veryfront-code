@@ -1,4 +1,5 @@
 import { AsyncLocalStorage } from "node:async_hooks";
+import type { AgentRuntime } from "#veryfront/agent/runtime/index.ts";
 import type { ToolExecutionContext } from "#veryfront/tool/types.ts";
 import type { Message } from "../types.ts";
 import type { RuntimeGenerateTextResult } from "../runtime/runtime-tool-types.ts";
@@ -25,7 +26,7 @@ export interface LocalChildInvocation {
 
 type Scope = {
   active: boolean;
-  runtime?: object;
+  runtime?: AgentRuntime;
   execute: (input: LocalChildInvocation) => Promise<LocalChildResult>;
   observe?: (event: AgUiRuntimeStreamEvent) => Promise<void>;
   admitTool?: (id: string, name: string, input: unknown) => Promise<void>;
@@ -51,7 +52,7 @@ export async function withLocalChildExecution<T>(
 }
 
 /** Only the first owning runtime may use a host scope; unrelated nested agents keep local semantics. */
-export function withLocalChildRuntime<T>(runtime: object, operation: () => T): T {
+export function withLocalChildRuntime<T>(runtime: AgentRuntime, operation: () => T): T {
   const scope: Scope | undefined = apply(getStore, scopes, []);
   if (!scope?.active) return operation();
   if (scope.runtime === undefined) scope.runtime = runtime;

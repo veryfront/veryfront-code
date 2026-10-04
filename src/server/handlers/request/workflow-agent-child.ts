@@ -3,6 +3,7 @@ import type { StepExecutorConfig } from "#veryfront/workflow/executor/step-execu
 import { acceptInheritedRunAdmission } from "#veryfront/agent/hosted/terminal-credential.ts";
 import { runInheritedLocalAgent } from "./inherited-local-agent.ts";
 import { computeHash } from "#veryfront/utils/hash-utils.ts";
+import { UUID_PATTERN } from "#veryfront/chat/conversation.ts";
 import { ORCHESTRATION_ERROR } from "#veryfront/errors";
 
 const hostFetch = globalThis.fetch;
@@ -12,7 +13,7 @@ const decode = atob;
 const split = String.prototype.split;
 const replaceAll = String.prototype.replaceAll;
 const apply = Reflect.apply;
-const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const uuid = new RegExp(`^(?:${UUID_PATTERN.source})$`, UUID_PATTERN.flags);
 
 /** Routing hints only: the API validates the unchanged issuer token and its current execution lease. */
 function parentIdentity(token: string, runId: string, projectId: string): string {

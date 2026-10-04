@@ -771,6 +771,59 @@ describe("workflow agent child protocol", () => {
     assertEquals(calls, 2);
   });
 
+  for (const version of [6, 7, 8]) {
+    it(`accepts UUIDv${version} canonical parent routing hints`, async () => {
+      const id = `11111111-1111-${version}111-8111-111111111111`;
+      const token = encode({
+        tokenUse: "run_event_writer",
+        runId: "run_parent",
+        projectId: "project",
+        projectExecutionAttempt: { canonicalRunId: id, workerId: "worker", attemptId: "attempt" },
+      });
+      let requests = 0;
+      const send: typeof fetch = (url, init) => {
+        requests++;
+        if (String(url).endsWith("/events")) {
+          assertEquals(new URL(String(url)).pathname, `/runs/${id}/events`);
+          return Promise.resolve(json({}));
+        }
+        assertEquals(JSON.parse(String(init?.body)).parent_run_id, id);
+        return Promise.resolve(admission("completed", "stored"));
+      };
+      const result = await runner(send, token)({
+        ...invocation,
+        execute: () => {
+          throw new Error("Must replay");
+        },
+      });
+      assertEquals(result.output, "stored");
+      assertEquals(requests, 2);
+    });
+  }
+
+  it("rejects embedded UUIDs rather than routing a partial match", async () => {
+    const token = encode({
+      tokenUse: "run_event_writer",
+      runId: "run_parent",
+      projectId: "project",
+      projectExecutionAttempt: {
+        canonicalRunId: `prefix-${parentId}`,
+        workerId: "worker",
+        attemptId: "attempt",
+      },
+    });
+    await assertRejects(() =>
+      runner(() => {
+        throw new Error("Must not send");
+      }, token)({
+        ...invocation,
+        execute: () => {
+          throw new Error("Must not execute");
+        },
+      })
+    );
+  });
+
   it("rejects mismatched or missing parent routing authority before HTTP", async () => {
     for (
       const token of [
