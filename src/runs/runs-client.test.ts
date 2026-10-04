@@ -101,6 +101,22 @@ function makeRun(overrides: Record<string, unknown> = {}) {
 }
 
 describe("VeryfrontRunsClient", () => {
+  it("preserves canonical credential provenance and historical missing triggers", async () => {
+    for (
+      const [trigger, expected] of [
+        [{ type: "api_key", id: "key-example" }, "api"],
+        [{ type: "service_account", id: "service-example" }, "api"],
+        [{ type: "user", id: "user-example" }, "manual"],
+        [null, null],
+      ] as const
+    ) {
+      mockFetch([jsonResponse({ ...makeRun(), trigger })]);
+      const run = await createTestClient().get("11111111-1111-4111-8111-111111111111");
+      assertEquals(run.trigger_kind, expected);
+      assertEquals(run.trigger_id, trigger?.id ?? null);
+    }
+  });
+
   it("preserves metadata and nullable historical targets", async () => {
     mockFetch([
       jsonResponse({

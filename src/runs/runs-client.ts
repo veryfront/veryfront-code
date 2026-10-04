@@ -236,7 +236,11 @@ function compatibilityRun(run: RunsOutput<"getRun">): Run {
     start_mode: run.execution?.start_mode ?? null,
     timeout_seconds: run.execution?.timeout_seconds ?? null,
     backoff_limit: run.execution?.retry_limit ?? null,
-    trigger_kind: run.trigger?.type === "schedule" || run.trigger?.type === "webhook"
+    trigger_kind: !run.trigger
+      ? null
+      : run.trigger.type === "api_key" || run.trigger.type === "service_account"
+      ? "api"
+      : run.trigger.type === "schedule" || run.trigger.type === "webhook"
       ? run.trigger.type
       : "manual",
     trigger_id: run.trigger?.id ?? null,
