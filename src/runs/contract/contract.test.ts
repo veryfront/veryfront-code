@@ -30,6 +30,10 @@ export type RunsContractTypeChecks = [
   // A missing event would make the payload `never`, which every type extends.
   Expect<NotNever<PayloadOf<"MODEL_CALL_COMPLETED">>>,
   Expect<Equal<PayloadOf<"MODEL_CALL_COMPLETED">, Schemas["ModelCallCompletedPayload"]>>,
+  // An unavailable response actor must carry its reason.
+  Expect<
+    Equal<{ type: "unavailable" } extends Schemas["InputResponse"]["actor"] ? true : false, false>
+  >,
 ];
 
 describe("Runs target contract types", () => {
@@ -65,5 +69,12 @@ describe("Runs target contract types", () => {
       node_id: "research",
     } satisfies Schemas["CreateRunRequest"];
     assertEquals(child.target.type, "agent");
+  });
+  it("accepts an unavailable actor on a historical input response", () => {
+    const actor = {
+      type: "unavailable",
+      reason: "identity_removed",
+    } satisfies Schemas["InputResponse"]["actor"];
+    assertEquals(actor.reason, "identity_removed");
   });
 });
