@@ -1,3 +1,5 @@
+import { RunStopRegistry } from "#veryfront/internal-agents/run-stop-registry.ts";
+import { agentRunSessionManager } from "#veryfront/internal-agents/session-manager.ts";
 import {
   snapshotTaskDeadlineClock,
   systemTaskDeadlineClock,
@@ -1718,6 +1720,7 @@ async function executeWorkflowRun(
   deps: ProjectRunExecuteHandlerDeps,
   acknowledgeStop?: () => Promise<void>,
   acknowledgePause?: () => Promise<boolean | undefined>,
+  releaseStop?: () => void,
 ): Promise<ProjectRunExecuteResponse> {
   let executionEntered = false;
   try {
@@ -1760,6 +1763,7 @@ async function executeWorkflowRun(
         startedAt,
         acknowledgeStop,
         acknowledgePause,
+        releaseStop,
       );
     } catch (error) {
       // A failure after discovery still ran against the declared schemas; keep their identity.
@@ -1772,8 +1776,12 @@ async function executeWorkflowRun(
       ...(outputSchemaSha256 ? { output_schema_sha256: outputSchemaSha256 } : {}),
     };
   } finally {
-    // Discovery/schema preparation never admitted execution; resumes may still run elsewhere.
-    if (!executionEntered && !request.resume) await acknowledgeStop?.();
+    // Discovery/schema preparation never admitted execution. A resume may still run
+    // elsewhere, so it drops its local registration without claiming settlement.
+    if (!executionEntered) {
+      if (request.resume) releaseStop?.();
+      else await acknowledgeStop?.();
+    }
   }
 }
 
@@ -1786,6 +1794,7 @@ async function runDiscoveredWorkflow(
   startedAt: number,
   acknowledgeStop?: () => Promise<void>,
   acknowledgePause?: () => Promise<boolean | undefined>,
+  releaseStop?: () => void,
 ): Promise<ProjectRunExecuteResponse> {
   // Only a durable run can pause: an ephemeral one has nothing to resume from.
   let pauseChecksEnabled = false;
@@ -1821,6 +1830,7 @@ async function runDiscoveredWorkflow(
     );
   } catch (error) {
     if (!request.resume) await acknowledgeStop?.();
+    else releaseStop?.();
     throw error;
   }
   pauseChecksEnabled = client.statePersistence === "durable";
@@ -1831,7 +1841,9 @@ async function runDiscoveredWorkflow(
   const acknowledgeSettledStop = () => {
     if (!stopped || stopAcknowledgement) return;
     stopAcknowledgement = primordialPromiseThen(stopped, async (confirmed) => {
+      // Without ownership evidence this pod never ran the execution: retire, never acknowledge.
       if (confirmed) await acknowledgeStop?.();
+      else releaseStop?.();
     });
   };
   try {
@@ -2197,7 +2209,7 @@ const NativeHeaders = Headers;
  * request it can reach must no longer carry the credential. The body was read
  * and verified before this point and is not needed again.
  */
-function withoutProjectRunInferenceToken(req: Request): Request {
+function withoutProjectRunInferenceToken(req: Request, signal?: AbortSignal): Request {
   // Copied entry by entry with iteration primitives captured at load, and the
   // credential is skipped rather than deleted afterwards: handing the original
   // Headers to a constructor would run a patchable `Symbol.iterator` over it.
@@ -2221,7 +2233,7 @@ function withoutProjectRunInferenceToken(req: Request): Request {
     method: IntrinsicReflectApply(RequestMethodGetter, req, []) as string,
     headers,
     // The run is cancelled through this signal; the copy must keep it.
-    signal: IntrinsicReflectApply(RequestSignalGetter, req, []) as AbortSignal,
+    signal: signal ?? IntrinsicReflectApply(RequestSignalGetter, req, []) as AbortSignal,
   });
   // The run still reads its `x-token` from the ingress credentials.
   return inheritIngressCredentials(req, copy);
@@ -2244,7 +2256,11 @@ function readProjectRunInferenceToken(req: Request): string | undefined {
 }
 
 /** Independent evidence of a settled execution, never evidence from abort alone. */
-function createRunStopAcknowledger(req: Request, runId: string): (() => Promise<void>) | undefined {
+function createRunStopAcknowledger(
+  req: Request,
+  runId: string,
+  executionSignal?: AbortSignal,
+): (() => Promise<void>) | undefined {
   const rawToken = readIngressCredential(req, INGRESS_RUN_STOP_TOKEN_HEADER);
   if (rawToken === null) return undefined;
   const token = requireInferenceProviderCredential(rawToken, "Run stop token header");
@@ -2261,7 +2277,7 @@ function createRunStopAcknowledger(req: Request, runId: string): (() => Promise<
     return undefined;
   }
   const lifetime = getRequestTransportLifetime(req);
-  const signal = lifetime?.signal ??
+  const signal = executionSignal ?? lifetime?.signal ??
     IntrinsicReflectApply(RequestSignalGetter, req, []) as AbortSignal;
   let stopped = false;
   let cancellationObserved = isAbortSignalAborted(signal);
@@ -3968,6 +3984,7 @@ function executeProjectRun(
   taskClock: TaskDeadlineClock,
   acknowledgeStop?: () => Promise<void>,
   acknowledgePause?: () => Promise<boolean | undefined>,
+  releaseStop?: () => void,
 ): Promise<ProjectRunExecuteResponse> {
   if (request.kind === "task") {
     return executeTaskRun(
@@ -3999,7 +4016,15 @@ function executeProjectRun(
       acknowledgeStop,
     );
   }
-  return executeWorkflowRun(request, ctx, req.signal, deps, acknowledgeStop, acknowledgePause);
+  return executeWorkflowRun(
+    request,
+    ctx,
+    req.signal,
+    deps,
+    acknowledgeStop,
+    acknowledgePause,
+    releaseStop,
+  );
 }
 
 export class ProjectRunExecuteHandler extends BaseHandler {
@@ -4016,6 +4041,7 @@ export class ProjectRunExecuteHandler extends BaseHandler {
   constructor(
     private readonly deps: ProjectRunExecuteHandlerDeps = defaultDeps,
     taskDeadlineClock?: TaskDeadlineClock,
+    private readonly stopRegistry: RunStopRegistry = agentRunSessionManager.stopRegistry,
   ) {
     super();
     const descriptor = ObjectGetOwnPropertyDescriptor(deps, "taskDeadlineClock");
@@ -4070,15 +4096,24 @@ export class ProjectRunExecuteHandler extends BaseHandler {
           return this.respond(builder.json({ error: "Invalid control-plane signature" }, 401));
         }
         const inferenceToken = readProjectRunInferenceToken(req);
-        const acknowledgeStop = createRunStopAcknowledger(req, request.runId);
+        const stopController = new TaskAbortController();
+        const executionSignal = ReflectApply(TaskAbortSignalAny, AbortSignal, [[
+          IntrinsicReflectApply(RequestSignalGetter, req, []) as AbortSignal,
+          stopController.signal,
+        ]]) as AbortSignal;
+        const callback = createRunStopAcknowledger(req, request.runId, executionSignal);
         const acknowledgePause = request.kind === "workflow"
           ? createRunPauseAcknowledger(req, request.runId, this.deps.sleep)
           : undefined;
-        const stopCredentialPresent = readIngressCredential(req, INGRESS_RUN_STOP_TOKEN_HEADER) !==
-          null;
-        const executionRequest = inferenceToken === undefined && !stopCredentialPresent
-          ? req
-          : withoutProjectRunInferenceToken(req);
+        const executionRequest = withoutProjectRunInferenceToken(req, executionSignal);
+        const settledStop = this.stopRegistry.register(request.runId, () => {
+          ReflectApply(TaskAbort, stopController, [new Error("Run cancelled")]);
+        });
+        const acknowledgeStop = async () => {
+          settledStop();
+          await callback?.();
+        };
+        const releaseStop = () => settledStop("abandoned");
 
         return await withSpan(
           "project_run.execute",
@@ -4095,6 +4130,7 @@ export class ProjectRunExecuteHandler extends BaseHandler {
                     this.taskDeadlineClock,
                     acknowledgeStop,
                     acknowledgePause,
+                    releaseStop,
                   )
                   : await runWithProjectRunInferenceCredential(
                     inferenceToken,
@@ -4107,6 +4143,7 @@ export class ProjectRunExecuteHandler extends BaseHandler {
                         this.taskDeadlineClock,
                         acknowledgeStop,
                         acknowledgePause,
+                        releaseStop,
                       ),
                   ),
               );

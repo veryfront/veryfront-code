@@ -74,6 +74,8 @@ export interface AgUiResumeHandlerOptions extends AgUiRunControlHandlerOptions {
 /** Options accepted by AG-UI cancel handler. */
 export interface AgUiCancelHandlerOptions<T = unknown> extends AgUiRunControlHandlerOptions {
   sessionManager: RunResumeSessionManager<T>;
+  hasSettledExecution?: (runId: string) => boolean;
+  hasPendingExecution?: (runId: string) => boolean;
 }
 
 async function resolveRunId(
@@ -236,6 +238,15 @@ export function createAgUiCancelHandler<T = unknown>(
         ? { onlyIfStartedBeforeEventId: parkedAfterEventId }
         : {}),
     });
+    if (!parkCancellation && new URL(request.url).searchParams.get("confirm_stopped") === "true") {
+      const stopped = options.hasSettledExecution?.(runId) === true;
+      const owned = accepted || options.hasPendingExecution?.(runId) === true || stopped;
+      if (owned) {
+        return Response.json({ accepted: true, stopped }, { status: stopped ? 200 : 202 });
+      }
+      // A stale owner stays distinguishable so the caller can try the Service.
+      return new Response(null, { status: 204 });
+    }
     if (accepted) {
       return Response.json({ accepted: true }, { status: 202 });
     }
