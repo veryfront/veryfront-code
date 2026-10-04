@@ -1375,6 +1375,8 @@ describe("runtime-bridge", () => {
           }]);
           return {
             stream: readableStreamFrom([
+              { type: "reasoning-delta", id: "reason", delta: "Consider " },
+              { type: "reasoning-delta", id: "reason", delta: "facts" },
               { type: "text-delta", delta: "Hel" },
               { type: "text-delta", delta: "lo" },
               {
@@ -1401,6 +1403,7 @@ describe("runtime-bridge", () => {
 
     assertEquals(called, true);
     assertEquals(result.text, "Hello");
+    assertEquals(result.reasoning, "Consider facts");
     assertEquals(result.finishReason, "stop");
     assertEquals(result.usage, {
       inputTokens: 2,
