@@ -338,6 +338,33 @@ veryfront project runs finalize --run-id <RUN_ID> --idempotency-key <REQUEST_KEY
   --body '{"status":"completed","output":null}'
 ```
 
+Use `--ndjson` on a paginated list command to receive items as they arrive:
+
+```bash
+veryfront project runs list --query '{"limit":20}' --ndjson
+veryfront project runs events --run-id <RUN_ID> --ndjson
+```
+
+`--ndjson` follows the same SDK iterator as `--all`. Each stdout line is a
+success envelope with one item in `data`, regardless of `--json`:
+
+```json
+{ "success": true, "command": "project runs", "data": { "id": "<RUN_ID>" } }
+```
+
+The mode retains one SDK page and one encoded output line, and awaits stdout
+writes before consuming another item. Cursor cycle detection uses constant
+memory. `--output` is not supported. An empty collection emits no lines.
+Without `--ndjson`, a list returns its single-page envelope; `--all --json`
+continues to return one envelope with the complete item array.
+
+A request or iterator failure after partial output emits a final error envelope
+and exits with code 1 (code 2 for validation Problems). Earlier lines remain
+valid but the collection is incomplete. Output failures terminate consumption;
+a closed stdout cannot receive a final error envelope. Ctrl+C aborts the active
+request, closes the iterator, and exits with code 130 without a completion line.
+There is no completion envelope; consumers must check the exit code.
+
 Validation Problems (HTTP 400 or 422) exit with code 2. Other Problems exit with
 code 1. JSON errors retain the server's Problem code. Local syntax errors use
 the CLI's normal usage-error envelope.

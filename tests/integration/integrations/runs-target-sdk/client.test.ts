@@ -296,6 +296,18 @@ describe("Runs target SDK", () => {
     assertEquals(requests.length, 2);
   });
 
+  it("detects cursor cycles after a non-cyclic prefix with bounded cursor state", async () => {
+    const cursors = ["prefix", "a", "b", "c", "a", "b", "c", "a", "b", "c", "a"];
+    const { sdk, requests } = sdkWith(
+      cursors.map((next) => Response.json({ data: [], page_info: { next } })),
+    );
+    const error = await rejection(() =>
+      collect(sdk.paginate("listRunChildRuns", { path: { run_id: RUN_ID } }))
+    );
+    assertEquals(error.status, 502);
+    assert(requests.length < cursors.length);
+  });
+
   it("parses event-stream frames split across chunks, CRLF line ends and keep-alive comments", async () => {
     const first = JSON.stringify({ type: "RUN_STARTED", threadId: "t", runId: RUN_ID });
     const second = JSON.stringify({ type: "STEP_STARTED", stepName: "plan" });

@@ -9,6 +9,10 @@ export const projectHelp: CommandHelp = {
   usage: "veryfront project <command> [options]",
   options: [
     {
+      flag: "--ndjson",
+      description: "Stream paginated runs items as NDJSON envelopes on stdout",
+    },
+    {
       flag: "--project, -p <slug>",
       description: "Project slug override (otherwise inferred from env/config)",
     },
@@ -27,6 +31,7 @@ export const projectHelp: CommandHelp = {
   ],
   examples: [
     "veryfront project runs list --json",
+    "veryfront project runs list --ndjson",
     "veryfront project runs get --run-id <RUN_ID> --json",
     "veryfront project runs stream --run-id <RUN_ID> --json",
     "veryfront project delete",
@@ -38,6 +43,7 @@ export const projectHelp: CommandHelp = {
     `Runs commands: ${Object.values(RUNS_COMMANDS).join(", ")}`,
     "Runs: supply route identifiers with --run-id, --event-id, --project-reference, --conversation-id, --webhook-definition-id, --eval-id, or --input-request-id.",
     "Runs: --body and --query accept contract JSON; --idempotency-key, --if-match and --last-event-id map to request headers.",
+    "Runs: --ndjson follows SDK pagination and writes one success envelope per item to stdout with bounded memory; --output is not supported.",
     "Runs: --all follows SDK pagination; get/create --follow streams events. JSON streams use NDJSON on stdout.",
     "Runs: --credential-file supplies a scoped execution/event-writer token; --credential-mode api-key uses X-API-Key. The configured trusted API endpoint still applies.",
     "Deleting a project also removes its environments, releases, files, and uploads",
