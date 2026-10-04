@@ -324,7 +324,9 @@ function loadNativeBrandCheckModule(): unknown {
  * and use the conservative callers in error-introspection.ts.
  */
 export const nativeBrandChecks = snapshotNativeBrandChecks(
-  loadNativeBrandCheckModule(),
+  // Deno exposes process.getBuiltinModule through an accessor. Import the
+  // builtin directly rather than reading that ambient getter at the boundary.
+  isDeno ? await import("node:util/types") : loadNativeBrandCheckModule(),
 );
 
 if ((isBun || isDeno || isNode) && !nativeBrandChecks) {
