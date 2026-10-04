@@ -2053,6 +2053,35 @@ import {
 | `ManagedNodeBrokerHandler`           | Trusted broker route handler and optional retirement hook.                                                                                                                                                                                | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/service/managed-node-broker.ts)       |
 | `ManagedNodeBrokerPool`              | Broker admission and settlement lifecycle retained by the HTTP server.                                                                                                                                                                    | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/service/managed-node-broker.ts)       |
 
+### `veryfront/agent/pause-checkpoint`
+
+Native completed-step checkpoints for control-plane consumers. Configure a SchemaValidator before parsing, as for other Veryfront schemas.
+
+```ts
+import {
+  getAgentPauseCheckpointSchema,
+  parseAgentPauseCheckpoint,
+} from "veryfront/agent/pause-checkpoint";
+```
+
+#### Functions
+
+| Name                        | Description | Source                                                                                            |
+| --------------------------- | ----------- | ------------------------------------------------------------------------------------------------- |
+| `parseAgentPauseCheckpoint` |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/runtime/manual-pause.ts) |
+
+#### Types
+
+| Name                   | Description                                                                       | Source                                                                                            |
+| ---------------------- | --------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| `AgentPauseCheckpoint` | Private continuation at a settled model/tool boundary, never agent configuration. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/runtime/manual-pause.ts) |
+
+#### Constants
+
+| Name                            | Description | Source                                                                                            |
+| ------------------------------- | ----------- | ------------------------------------------------------------------------------------------------- |
+| `getAgentPauseCheckpointSchema` |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/runtime/manual-pause.ts) |
+
 ### `veryfront/agent/trusted-broker`
 
 ```ts
