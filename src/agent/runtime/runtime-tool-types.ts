@@ -50,6 +50,7 @@ export interface RuntimeGenerateUsage {
 
 export interface RuntimeGenerateTextResult {
   text: string;
+  reasoning?: string;
   toolCalls?: RuntimeGenerateToolCall[];
   toolResults?: RuntimeGenerateToolResult[];
   usage?: RuntimeGenerateUsage;

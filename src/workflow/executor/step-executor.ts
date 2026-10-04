@@ -136,11 +136,22 @@ export interface StepExecutorConfig {
   /** Max milliseconds to wait for an aborted step to settle before detaching it (default: 1000) */
   cancellationGracePeriod?: number;
   blobStorage?: BlobStorage;
+  /** Wrap one agent node including all retries; the continuation executes locally once. */
+  runAgentNode?: (invocation: {
+    nodeId: string;
+    executionPath?: readonly string[];
+    runId?: string;
+    agentId: string;
+    input: unknown;
+    signal?: AbortSignal;
+    execute: (signal?: AbortSignal) => Promise<StepResult>;
+  }) => Promise<StepResult>;
   /**
    * Step lifecycle hooks. `runId` scopes the event to one run: without it a
    * progress channel built on these hooks is process-global and two concurrent
    * runs interleave with no way to tell them apart. It is optional because a
    * StepExecutor can be driven outside a run (tests, ad-hoc execution).
+   * A promise returned by onStepStart is acknowledged before execution begins.
    */
   onStepStart?: (nodeId: string, input: unknown, runId?: string) => void;
   onStepComplete?: (nodeId: string, output: unknown, runId?: string) => void;
@@ -192,8 +203,28 @@ export class StepExecutor {
     context: WorkflowContext,
     abortSignal?: AbortSignal,
     runId?: string,
+    executionPath: readonly string[] = [],
   ): Promise<StepResult> {
-    const startTime = Date.now();
+    return this.executeAttempts(
+      node,
+      context,
+      abortSignal,
+      runId,
+      Date.now(),
+      undefined,
+      executionPath,
+    );
+  }
+
+  private async executeAttempts(
+    node: WorkflowNode,
+    context: WorkflowContext,
+    abortSignal: AbortSignal | undefined,
+    runId: string | undefined,
+    startTime: number,
+    prepared?: { attempt: number; input: unknown; operations: Set<Promise<unknown>> },
+    executionPath: readonly string[] = [],
+  ): Promise<StepResult> {
     const config = node.config as StepNodeConfig;
 
     if (config.type !== "step") {
@@ -229,24 +260,72 @@ export class StepExecutor {
     let lastError: Error | undefined;
     const tenant = context._tenant;
 
-    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    for (let attempt = prepared?.attempt ?? 1; attempt <= maxAttempts; attempt++) {
       abortSignal?.throwIfAborted();
       let operationCompleted = false;
+      let delegatedRetryLoop = false;
 
       try {
-        const output = await runWithWorkflowTenant(tenant, async () => {
-          const resolvedInput = await this.resolveInput(config.input, context);
+        const outcome = await runWithWorkflowTenant(tenant, async () => {
+          const resolvedInput = prepared?.attempt === attempt
+            ? prepared.input
+            : await this.resolveInput(config.input, context);
           abortSignal?.throwIfAborted();
-          this.config.onStepStart?.(node.id, resolvedInput, runId);
+          if (!prepared && config.agent && this.config.runAgentNode) {
+            delegatedRetryLoop = true;
+            let entered = false;
+            const result = await this.config.runAgentNode({
+              nodeId: node.id,
+              executionPath,
+              runId,
+              agentId: typeof config.agent === "string" ? config.agent : config.agent.id,
+              input: resolvedInput,
+              signal: abortSignal,
+              execute: async (signal) => {
+                if (entered) {
+                  throw ORCHESTRATION_ERROR.create({
+                    detail: "Agent node continuation already executed",
+                  });
+                }
+                entered = true;
+                const operations = new Set<Promise<unknown>>();
+                try {
+                  return await this.executeAttempts(
+                    node,
+                    context,
+                    signal && abortSignal
+                      ? AbortSignal.any([signal, abortSignal])
+                      : signal ?? abortSignal,
+                    runId,
+                    startTime,
+                    {
+                      attempt,
+                      input: resolvedInput,
+                      operations,
+                    },
+                    executionPath,
+                  );
+                } finally {
+                  await Promise.allSettled([...operations]);
+                }
+              },
+            });
+            return { kind: "wrapped" as const, result };
+          }
+          await this.config.onStepStart?.(node.id, resolvedInput, runId);
 
-          return this.executeWithTimeout(
+          const output = await this.executeWithTimeout(
             (attemptSignal) => this.executeStep(config, resolvedInput, context, attemptSignal),
             timeout,
             node.id,
             abortSignal,
             runId,
+            prepared?.operations,
           );
+          return { kind: "completed" as const, output };
         });
+        if (outcome.kind === "wrapped") return outcome.result;
+        const output = outcome.output;
         abortSignal?.throwIfAborted();
         operationCompleted = true;
         setActiveSpanAttributes({ "workflow.node.attempts": attempt });
@@ -262,7 +341,7 @@ export class StepExecutor {
         lastError = ensureError(error);
 
         if (
-          !operationCompleted && attempt < maxAttempts &&
+          !operationCompleted && !delegatedRetryLoop && attempt < maxAttempts &&
           this.isRetryableError(lastError, retryConfig)
         ) {
           const delay = calculateRetryDelay(attempt, retryConfig);
@@ -316,6 +395,7 @@ export class StepExecutor {
     nodeId: string,
     parentSignal?: AbortSignal,
     runId?: string,
+    nodeOperations?: Set<Promise<unknown>>,
   ): Promise<T> {
     const attemptController = new AbortController();
     const forwardAbort = () => attemptController.abort(parentSignal?.reason);
@@ -324,6 +404,11 @@ export class StepExecutor {
 
     const operation = Promise.resolve().then(() => fn(attemptController.signal));
     if (runId !== undefined) this.trackExecutionOperation(runId, operation);
+    nodeOperations?.add(operation);
+    void operation.then(
+      () => nodeOperations?.delete(operation),
+      () => nodeOperations?.delete(operation),
+    );
     const fencedOperation = operation.then((value) => {
       attemptController.signal.throwIfAborted();
       return value;

@@ -7,6 +7,7 @@
  * @module
  */
 
+import { executeLocalChild, type LocalChildInvocation } from "./local-child-execution.ts";
 import type { Agent, AgentResponse } from "../types.ts";
 import type { Tool, ToolExecutionContext } from "#veryfront/tool";
 import { AGENT_ERROR } from "#veryfront/errors";
@@ -31,6 +32,7 @@ async function runAgentAsStreamingTool(
   sourceIntegrationPolicy: SourceIntegrationPolicyManifest | undefined,
   context?: ToolExecutionContext,
   publishChildStream = false,
+  control?: Parameters<LocalChildInvocation["execute"]>[0],
 ): Promise<AgentResponse> {
   // Resolved once: the identity rides along with every published event, so
   // recomputing it per chunk would repeat the work on the stream's hot path.
@@ -44,7 +46,7 @@ async function runAgentAsStreamingTool(
     let finalResponse: AgentResponse | undefined;
     const stream = await agent.stream({
       input,
-      abortSignal: context?.abortSignal,
+      abortSignal: control?.signal ?? context?.abortSignal,
       onFinish: (response) => {
         finalResponse = response;
       },
@@ -53,6 +55,7 @@ async function runAgentAsStreamingTool(
     const response = stream.toDataStreamResponse();
     if (response.body) {
       for await (const event of streamDataStreamEvents(response.body)) {
+        await control?.onEvent?.(event);
         if (publishChildStream && context?.toolCallId && context.publishDataEvent) {
           await context.publishDataEvent(buildInvokeAgentStreamDataEvent({
             toolCallId: context.toolCallId,
@@ -89,7 +92,7 @@ const objectHasOwn = Object.hasOwn;
 export function agentAsTool(
   agent: Agent,
   description: string,
-  options: { publishChildStream?: boolean } = {},
+  options: { publishChildStream?: boolean; toolName?: string; toolInput?: unknown } = {},
 ): Tool {
   return {
     id: `agent_${agent.id}`,
@@ -99,31 +102,40 @@ export function agentAsTool(
     execute({ input }, context) {
       return withSpan(
         "agent.composition.agentAsTool.execute",
-        async () => {
-          const response = await runAgentAsStreamingTool(
-            agent,
+        () =>
+          executeLocalChild({
+            agentId: agent.id,
             input,
-            getRuntimeSourceIntegrationPolicyFromContext(context),
             context,
-            options.publishChildStream,
-          );
+            toolName: options.toolName ?? `agent_${agent.id}`,
+            toolInput: options.toolInput ?? { input },
+            execute: async (control) => {
+              const response = await runAgentAsStreamingTool(
+                agent,
+                input,
+                getRuntimeSourceIntegrationPolicyFromContext(context),
+                context,
+                options.publishChildStream,
+                control,
+              );
 
-          setActiveSpanAttributes({
-            "agent.tool_calls": response.toolCalls.length,
-            "agent.status": response.status,
-          });
+              setActiveSpanAttributes({
+                "agent.tool_calls": response.toolCalls.length,
+                "agent.status": response.status,
+              });
 
-          // The child's accepted value: its parsed object when it declares an
-          // outputSchema and parsing succeeded, next to the text. Any own `object`
-          // (including null or a transform's undefined) is passed through; an
-          // inherited `object` is never forwarded.
-          return {
-            text: response.text,
-            ...(objectHasOwn(response, "object") ? { object: response.object } : {}),
-            toolCalls: response.toolCalls.length,
-            status: response.status,
-          };
-        },
+              // The child's accepted value: its parsed object when it declares an
+              // outputSchema and parsing succeeded, next to the text. Any own `object`
+              // (including null or a transform's undefined) is passed through; an
+              // inherited `object` is never forwarded.
+              return {
+                text: response.text,
+                ...(objectHasOwn(response, "object") ? { object: response.object } : {}),
+                toolCalls: response.toolCalls.length,
+                status: response.status,
+              };
+            },
+          }),
         { "agent.id": agent.id },
       );
     },

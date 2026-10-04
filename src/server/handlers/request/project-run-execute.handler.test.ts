@@ -671,6 +671,134 @@ async function withEnvValue<T>(
   }
 }
 
+describe("workflow capability transport boundary", () => {
+  for (
+    const redirectTarget of [
+      "https://untrusted.example.test/collect",
+      "http://api.veryfront.com/collect",
+    ]
+  ) {
+    it(`keeps workflow capabilities on the host origin and refuses redirect to ${redirectTarget}`, async () => {
+      const calls: Array<
+        {
+          url: string;
+          redirect: RequestRedirect | undefined;
+          authorization: string | null;
+          writer: string | null;
+        }
+      > = [];
+      const runId = "run_workflow_transport";
+      const parentId = "11111111-1111-4111-8111-111111111111";
+      // Unit routing fixture only; the real API remains the signature/attempt authority.
+      const writer = `test.${
+        btoa(
+          JSON.stringify({
+            tokenUse: "run_event_writer",
+            runId,
+            projectId: "proj-1",
+            projectExecutionAttempt: {
+              canonicalRunId: parentId,
+              workerId: "worker",
+              attemptId: "attempt",
+            },
+          }),
+        )
+      }.signature`;
+      let localExecutions = 0;
+      const handler = new ProjectRunExecuteHandler(createDeps({
+        createWorkflowClient: (config) => ({
+          register: () => {},
+          start: async () => {
+            assertExists(config?.executor?.stepExecutor?.runAgentNode);
+            await config.executor.stepExecutor.runAgentNode({
+              runId,
+              nodeId: "research",
+              agentId: "coordinator",
+              input: "brief",
+              execute: async () => {
+                localExecutions++;
+                return { success: true, output: {}, executionTime: 0 };
+              },
+            });
+            return { runId };
+          },
+          getRun: async () => ({ status: "completed" }),
+          cancel: async () => {},
+          destroy: async () => {},
+        }),
+      }));
+      const signed = await signedRequest(`/api/control-plane/runs/${runId}/execute`, {
+        runId,
+        kind: "workflow",
+        target: "workflow:publish",
+        projectId: "proj-1",
+      }, { "x-veryfront-run-event-token": writer, "x-token": "unit-parent-invocation" });
+      await withEnv({
+        VERYFRONT_API_BASE_URL: "https://api.veryfront.com///",
+        VERYFRONT_API_URL: "",
+      }, () =>
+        withMockFetch(async (input, init) => {
+          const url = input instanceof Request ? input.url : String(input);
+          const headers = new Headers(
+            init?.headers ?? (input instanceof Request ? input.headers : undefined),
+          );
+          calls.push({
+            url,
+            redirect: init?.redirect,
+            authorization: headers.get("authorization"),
+            writer: headers.get("x-veryfront-run-event-token"),
+          });
+          if (url.endsWith("/events")) return Response.json({ latest_event_id: 1 });
+          return new Response(null, { status: 307, headers: { Location: redirectTarget } });
+        }, () =>
+          runWithProjectEnv({
+            VERYFRONT_API_BASE_URL: "https://tenant.example.test",
+            VERYFRONT_API_URL: "https://tenant.example.test",
+          }, async () => {
+            const result = await handler.handle(signed.request, createCtx(signed.publicKeyPem));
+            assertExists(result.response);
+            const response = await result.response.json();
+            assertEquals(response.success, false);
+            assertStringIncludes(response.error, "redirect");
+          })));
+      assertEquals(calls.map((call) => call.url), [
+        `https://api.veryfront.com/runs/${parentId}/events`,
+        "https://api.veryfront.com/runs",
+      ]);
+      assertEquals(calls.map((call) => call.redirect), ["manual", "manual"]);
+      assertEquals(calls[0]?.authorization, `Bearer ${writer}`);
+      assertEquals(calls[1]?.authorization, "Bearer unit-parent-invocation");
+      assertEquals(calls[1]?.writer, writer);
+      assertEquals(localExecutions, 0);
+    });
+  }
+
+  it("refuses plaintext workflow capability transport before local execution", async () => {
+    let created = false;
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      createWorkflowClient: () => {
+        created = true;
+        throw new Error("Must not execute");
+      },
+    }));
+    const signed = await signedRequest("/api/control-plane/runs/run_https_boundary/execute", {
+      runId: "run_https_boundary",
+      kind: "workflow",
+      target: "workflow:publish",
+      projectId: "proj-1",
+    });
+    await withEnv(
+      { VERYFRONT_API_BASE_URL: "http://api.example.test", VERYFRONT_API_URL: "" },
+      async () => {
+        const result = await handler.handle(signed.request, createCtx(signed.publicKeyPem));
+        assertExists(result.response);
+        assertEquals((await result.response.json()).success, false);
+        assertEquals(created, false, "reject plaintext before creating workflow execution");
+      },
+    );
+  });
+});
+
 describe("server/handlers/request/project-run-execute.handler", () => {
   afterAll(async () => {
     await stopEsbuild();
@@ -4530,6 +4658,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     const order: string[] = [];
     let hasAgentRegistry = false;
     let hasToolRegistry = false;
+    let hasOwnedAgentNode = false;
     let retainsStopEvidence = false;
     const handler = new ProjectRunExecuteHandler(createDeps({
       ensureProjectDiscovery: async () => {
@@ -4541,6 +4670,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
           "function";
         hasToolRegistry = typeof config?.executor?.stepExecutor?.toolRegistry?.get ===
           "function";
+        hasOwnedAgentNode = typeof config?.executor?.stepExecutor?.runAgentNode === "function";
         retainsStopEvidence = config?.executor?.retainExecutionStopEvidence === true;
         order.push("create-client");
         return {
@@ -4586,6 +4716,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     });
     assertEquals(hasAgentRegistry, true);
     assertEquals(hasToolRegistry, true);
+    assertEquals(hasOwnedAgentNode, true, "canonical child ownership wraps the local agent node");
     assertEquals(retainsStopEvidence, true, "the per-request client acknowledges stops (#2365)");
     assertEquals(order, ["discover", "create-client", "start"]);
   });
