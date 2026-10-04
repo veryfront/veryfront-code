@@ -72,7 +72,7 @@ Deno.test("createHostedDurableChildForkRunContext wires conversation mirror and 
   const context = runWithHostedRunEventWriterCapability(
     createHostedRunEventWriterCapability({
       apiUrl: "https://api.example.com",
-      runId: "child-run-1",
+      runId: "20000000-0000-4000-8000-000000000003",
       runEventAppendToken: "child-writer-token",
     }),
     () =>
@@ -80,7 +80,7 @@ Deno.test("createHostedDurableChildForkRunContext wires conversation mirror and 
         {
           durableChildRun: {
             childConversationId: "child-conversation-1",
-            childRunId: "child-run-1",
+            childRunId: "20000000-0000-4000-8000-000000000003",
             childMessageId: "child-message-1",
             latestEventId: 5,
             latestExternalEventSequence: 7,
@@ -131,7 +131,7 @@ Deno.test("createHostedDurableChildForkRunContext authorizes its mirror with onl
         latestExternalEventSequence: 1,
         appendedCount: 1,
         run: {
-          runId: "child-run-1",
+          runId: "20000000-0000-4000-8000-000000000003",
           conversationId: "11111111-1111-4111-a111-111111111111",
           latestEventId: 1,
           latestExternalEventSequence: 1,
@@ -141,7 +141,7 @@ Deno.test("createHostedDurableChildForkRunContext authorizes its mirror with onl
     const context = runWithHostedRunEventWriterCapability(
       createHostedRunEventWriterCapability({
         apiUrl: "https://api.example.com",
-        runId: "child-run-1",
+        runId: "20000000-0000-4000-8000-000000000003",
         runEventAppendToken: "child-writer-token",
         fetch: globalThis.fetch,
       }),
@@ -150,7 +150,7 @@ Deno.test("createHostedDurableChildForkRunContext authorizes its mirror with onl
           {
             durableChildRun: {
               childConversationId: "11111111-1111-4111-a111-111111111111",
-              childRunId: "child-run-1",
+              childRunId: "20000000-0000-4000-8000-000000000003",
               childMessageId: "child-message-1",
               latestEventId: 0,
               latestExternalEventSequence: 0,
@@ -235,7 +235,7 @@ Deno.test("createHostedChildForkRunContext closes pending tool calls with host l
     pendingToolLogContext: {
       conversationId: "conversation-1",
       parentRunId: "run-1",
-      childRunId: "child-run-1",
+      childRunId: "20000000-0000-4000-8000-000000000003",
       description: "Check the app",
     },
     pendingToolLogWriter: {
@@ -260,7 +260,7 @@ Deno.test("createHostedChildForkRunContext closes pending tool calls with host l
     conversationId: "conversation-1",
     runId: "run-1",
     parentRunId: "run-1",
-    childRunId: "child-run-1",
+    childRunId: "20000000-0000-4000-8000-000000000003",
     description: "Check the app",
     reason: "aborted",
     toolCallIds: ["tool-call-1"],
@@ -425,7 +425,7 @@ Deno.test("handleHostedChildForkRunContextError rethrows remote terminal state e
   });
   const terminal = new HostedChildTerminalStateError("cancelled", {
     childConversationId: "child-conversation-1",
-    childRunId: "child-run-1",
+    childRunId: "20000000-0000-4000-8000-000000000003",
     childMessageId: "child-message-1",
     latestEventId: 0,
     latestExternalEventSequence: 0,

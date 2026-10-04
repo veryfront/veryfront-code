@@ -1,4 +1,8 @@
-import { bootstrapConversationAgentRun } from "../conversation/bootstrap.ts";
+import {
+  type HostedRunEventWriterCapability,
+  inheritedChildAdmitter,
+} from "./child-run-event-writer-token.ts";
+import { transferHostedTerminalAuthority } from "./terminal-credential.ts";
 import { type ConversationRunProjection } from "../conversation/durable.ts";
 import { type HostedChildRunIdentifiers } from "./child-status.ts";
 
@@ -14,6 +18,7 @@ export interface HostedChildConversationBodyInput {
 
 /** Input payload for bootstrap hosted child run. */
 export interface BootstrapHostedChildRunInput extends HostedChildConversationBodyInput {
+  runEventWriterCapability?: HostedRunEventWriterCapability;
   authToken: string;
   apiUrl: string;
   runProjectId?: string | null;
@@ -54,32 +59,29 @@ export function buildHostedChildConversationBody(input: HostedChildConversationB
 export async function bootstrapHostedChildRun(
   input: BootstrapHostedChildRunInput,
 ): Promise<BootstrapHostedChildRunResult> {
-  const result = await bootstrapConversationAgentRun({
+  const admitRun = inheritedChildAdmitter(
+    input.runEventWriterCapability,
+    input.parentRunId,
+    input.spawnedFromToolCallId,
+    input.prompt,
+  );
+  const run = await admitRun({
     authToken: input.authToken,
     apiUrl: input.apiUrl,
-    parentConversationId: input.parentConversationId,
-    ensureProjectId: input.ensureProjectId ?? undefined,
-    conversationBody: buildHostedChildConversationBody(input),
-    handoffMessageBody: {
-      role: "user",
-      parts: [{ type: "text", text: input.prompt }],
-    },
-    runId: input.runId,
     parentRunId: input.parentRunId,
     agentId: input.agentId,
-    implementationKind: input.implementationKind,
-    projectId: input.runProjectId ?? null,
-    runtimeTargetKind: input.runtimeTargetKind,
-    runtimeTargetEnvironmentId: input.runtimeTargetEnvironmentId,
-    branchId: input.branchId,
+    projectId: input.runProjectId ?? input.ensureProjectId ?? null,
   });
 
-  return {
-    childConversationId: result.conversation.id,
-    childRunId: result.run.runId,
-    childMessageId: result.run.messageId,
-    latestEventId: result.run.latestEventId,
-    latestExternalEventSequence: result.run.latestExternalEventSequence,
-    status: result.run.status,
+  const identifiers = {
+    childCanonicalRunId: run.canonicalRunId,
+    childConversationId: run.conversationId,
+    childRunId: run.runId,
+    childMessageId: run.messageId,
+    latestEventId: run.latestEventId,
+    latestExternalEventSequence: run.latestExternalEventSequence,
+    status: run.status,
   };
+  transferHostedTerminalAuthority(run, identifiers);
+  return identifiers;
 }

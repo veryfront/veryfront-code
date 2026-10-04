@@ -318,7 +318,7 @@ describe("agent/conversation-run-chunk-mirror", () => {
       authToken: "token",
       apiUrl: "https://api.example.test",
       conversationId: "conversation-1",
-      runId: "run-1",
+      runId: "10000000-0000-4000-8000-000000000005",
       latestEventId: 10,
       latestExternalEventSequence: 20,
       instrumentation: {
@@ -343,13 +343,13 @@ describe("agent/conversation-run-chunk-mirror", () => {
     assertEquals(traceAttributes, [
       {
         "conversation.id": "conversation-1",
-        "run.id": "run-1",
+        "run.id": "10000000-0000-4000-8000-000000000005",
         "stream.ui_chunk.type": "text-delta",
         "durable.event_count": 1,
       },
       {
         "conversation.id": "conversation-1",
-        "run.id": "run-1",
+        "run.id": "10000000-0000-4000-8000-000000000005",
         "durable.event_count": 1,
       },
     ]);
@@ -358,7 +358,7 @@ describe("agent/conversation-run-chunk-mirror", () => {
         message: "Durable run mirror processed UI chunk",
         metadata: {
           conversationId: "conversation-1",
-          runId: "run-1",
+          runId: "10000000-0000-4000-8000-000000000005",
           chunkType: "text-delta",
           durableEventTypes: ["TEXT_MESSAGE_CONTENT"],
           durableEventCount: 1,
@@ -368,7 +368,7 @@ describe("agent/conversation-run-chunk-mirror", () => {
         message: "Durable run mirror queued external events",
         metadata: {
           conversationId: "conversation-1",
-          runId: "run-1",
+          runId: "10000000-0000-4000-8000-000000000005",
           durableEventTypes: ["TEXT_MESSAGE_CONTENT"],
           durableEventCount: 1,
         },
@@ -388,7 +388,7 @@ describe("agent/conversation-run-chunk-mirror", () => {
               latestExternalEventSequence: 3,
               appendedCount: 3,
               run: {
-                runId: "run-1",
+                runId: "10000000-0000-4000-8000-000000000005",
                 conversationId: "11111111-1111-4111-8111-111111111111",
                 latestEventId: 3,
                 latestExternalEventSequence: 3,
@@ -401,7 +401,7 @@ describe("agent/conversation-run-chunk-mirror", () => {
         authToken: "token",
         apiUrl: "https://api.example.test",
         conversationId: "11111111-1111-4111-8111-111111111111",
-        runId: "run-1",
+        runId: "10000000-0000-4000-8000-000000000005",
         latestEventId: 0,
         batchSize: 3,
         highBacklogEventCount: 2,
@@ -423,7 +423,7 @@ describe("agent/conversation-run-chunk-mirror", () => {
         message: "Durable run mirror backlog is high",
         metadata: {
           conversationId: "11111111-1111-4111-8111-111111111111",
-          runId: "run-1",
+          runId: "10000000-0000-4000-8000-000000000005",
           pendingEventCount: 3,
           consecutiveFailures: 0,
           threshold: 2,
@@ -440,7 +440,7 @@ describe("agent/conversation-run-chunk-mirror", () => {
       authToken: "token",
       apiUrl: "https://api.example.test",
       conversationId: "11111111-1111-4111-8111-111111111111",
-      runId: "run-1",
+      runId: "10000000-0000-4000-8000-000000000005",
       latestEventId: 0,
       batchSize: 1,
       runQueueFlush: async (operation) => {
@@ -454,7 +454,7 @@ describe("agent/conversation-run-chunk-mirror", () => {
           latest_external_event_sequence: 1,
           appended_count: 1,
           run: {
-            run_id: "run-1",
+            run_id: "10000000-0000-4000-8000-000000000005",
             conversation_id: "11111111-1111-4111-8111-111111111111",
             latest_event_id: 1,
             latest_external_event_sequence: 1,
@@ -488,7 +488,7 @@ describe("agent/conversation-run-chunk-mirror", () => {
       authToken: "token",
       apiUrl: "https://api.example.test",
       conversationId: "11111111-1111-4111-8111-111111111111",
-      runId: "run-1",
+      runId: "10000000-0000-4000-8000-000000000005",
       latestEventId: 0,
       fetch: failingFetch,
       instrumentation: {
@@ -531,7 +531,7 @@ describe("agent/conversation-run-chunk-mirror", () => {
         authToken: "expired-token",
         apiUrl: "https://api.example.test",
         conversationId: "11111111-1111-4111-8111-111111111111",
-        runId: "run-1",
+        runId: "10000000-0000-4000-8000-000000000005",
         latestEventId: 10,
         latestExternalEventSequence: 20,
         instrumentation: {
@@ -552,7 +552,7 @@ describe("agent/conversation-run-chunk-mirror", () => {
         message: "Disabling durable run mirroring after permanent append authentication rejection",
         metadata: {
           conversationId: "11111111-1111-4111-8111-111111111111",
-          runId: "run-1",
+          runId: "10000000-0000-4000-8000-000000000005",
           latestEventId: 10,
           latestExternalEventSequence: 20,
         },
@@ -578,7 +578,7 @@ describe("agent/conversation-run-chunk-mirror", () => {
       authToken: "token",
       apiUrl: "https://api.example.test",
       conversationId: "11111111-1111-4111-8111-111111111111",
-      runId: "run-1",
+      runId: "10000000-0000-4000-8000-000000000005",
       latestEventId: 0,
       fetch: terminalRunFetch,
       instrumentation: {
@@ -618,7 +618,7 @@ describe("agent/conversation-run-chunk-mirror", () => {
       authToken: "token",
       apiUrl: "https://api.example.test",
       conversationId: "11111111-1111-4111-8111-111111111111",
-      runId: "run-1",
+      runId: "10000000-0000-4000-8000-000000000005",
       latestEventId: 10,
       latestExternalEventSequence: 20,
       fetch: oversizedEventFetch,
@@ -648,7 +648,7 @@ describe("agent/conversation-run-chunk-mirror", () => {
           "an event exceeded the durable payload limit despite normalization",
         metadata: {
           conversationId: "11111111-1111-4111-8111-111111111111",
-          runId: "run-1",
+          runId: "10000000-0000-4000-8000-000000000005",
           latestEventId: 10,
           latestExternalEventSequence: 20,
         },
@@ -682,7 +682,7 @@ describe("agent/conversation-run-chunk-mirror", () => {
               latestExternalEventSequence: 1,
               appendedCount: 1,
               run: {
-                runId: "run-1",
+                runId: "10000000-0000-4000-8000-000000000005",
                 conversationId: "11111111-1111-4111-8111-111111111111",
                 latestEventId: 1,
                 latestExternalEventSequence: 1,
@@ -695,7 +695,7 @@ describe("agent/conversation-run-chunk-mirror", () => {
       authToken: "token",
       apiUrl: "https://api.example.test",
       conversationId: "11111111-1111-4111-8111-111111111111",
-      runId: "run-1",
+      runId: "10000000-0000-4000-8000-000000000005",
       latestEventId: 0,
       fetch: flakyFetch,
       instrumentation: {

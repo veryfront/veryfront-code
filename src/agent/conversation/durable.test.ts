@@ -12,6 +12,7 @@ import {
   finalizeConversationAgentRun,
   flushConversationRunEventBatches,
   flushConversationRunEventQueue,
+  getCanonicalRunStatus,
   getConversationRun,
   isActiveConversationRunStatus,
   isAppendableConversationRunProjection,
@@ -35,6 +36,7 @@ import {
   type Span,
 } from "#veryfront/observability/tracing/api-shim.ts";
 
+const CANONICAL_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const API_URL = "https://api.example.com";
 const AUTH_TOKEN = "token-123";
 const CONVERSATION_ID = "11111111-1111-4111-a111-111111111111";
@@ -57,14 +59,15 @@ function jsonResponse(body: unknown, status: number): Response {
   });
 }
 
-function acceptedRunResponse(run: unknown): Response {
-  return jsonResponse(
-    {
-      accepted: true,
-      run,
+function cursorMismatchResponse(sequence: number, eventId = 0): Response {
+  return new Response(JSON.stringify({ detail: "External run event cursor mismatch" }), {
+    status: 400,
+    headers: {
+      "Content-Type": "application/problem+json",
+      "X-Run-Latest-Event-Id": String(eventId),
+      "X-Run-Latest-External-Sequence": String(sequence),
     },
-    202,
-  );
+  });
 }
 
 function durableRunProjection(overrides: Record<string, unknown> = {}) {
@@ -169,19 +172,9 @@ describe("agent/durable", () => {
     });
 
     const fetchCalls = stubFetchSequence(
-      acceptedRunResponse({ run_id: "run_traceparent" }),
-      jsonResponse(durableRunProjection({ run_id: "run_traceparent" }), 200),
+      jsonResponse({ id: CANONICAL_ID, status: "running" }, 200),
     );
-
-    await createConversationAgentRun({
-      authToken: AUTH_TOKEN,
-      apiUrl: API_URL,
-      conversationId: CONVERSATION_ID,
-      runId: "run_traceparent",
-      agentId: "default-chat",
-      projectId: null,
-      branchId: null,
-    });
+    await getCanonicalRunStatus({ authToken: AUTH_TOKEN, apiUrl: API_URL, runId: CANONICAL_ID });
 
     const headers = new Headers(fetchCalls[0]?.[1]?.headers);
     assertEquals(headers.get("traceparent"), traceparent);
@@ -231,210 +224,104 @@ describe("agent/durable", () => {
     });
   });
 
-  it("creates a conversation-owned durable run without target metadata for non-project runs", async () => {
-    const fetchCalls = stubFetchSequence(
-      acceptedRunResponse({ run_id: "run_root_1" }),
-      jsonResponse(durableRunProjection(), 200),
-    );
-
-    await createConversationAgentRun({
-      authToken: AUTH_TOKEN,
-      apiUrl: API_URL,
-      conversationId: CONVERSATION_ID,
-      runId: "run_root_1",
-      agentId: "default-chat",
-      projectId: null,
-      branchId: null,
-    });
-
-    assertEquals(
-      JSON.parse(String(fetchCalls[0]?.[1]?.body)),
-      {
-        kind: "agent",
-        owner: {
-          kind: "conversation",
-          id: CONVERSATION_ID,
-        },
-        public_id: "run_root_1",
-        request: {
-          mode: "agent",
-          agent_id: "default-chat",
-          initial_status: "running",
-        },
-      },
-    );
-  });
-
-  it("preserves preview target metadata for project-backed runs", async () => {
-    const fetchCalls = stubFetchSequence(
-      acceptedRunResponse({ run_id: "run_child_1" }),
-      jsonResponse(
-        durableRunProjection({
-          run_id: "run_child_1",
-          project_id: PROJECT_ID,
-          source_target_kind: "preview_branch",
-        }),
-        200,
-      ),
-    );
-
-    await createConversationAgentRun({
-      authToken: AUTH_TOKEN,
-      apiUrl: API_URL,
-      conversationId: CONVERSATION_ID,
-      runId: "run_child_1",
-      agentId: "invoke-agent-child",
-      projectId: PROJECT_ID,
-      branchId: BRANCH_ID,
-    });
-
-    assertEquals(
-      JSON.parse(String(fetchCalls[0]?.[1]?.body)),
-      {
-        kind: "agent",
-        owner: {
-          kind: "conversation",
-          id: CONVERSATION_ID,
-        },
-        public_id: "run_child_1",
-        request: {
-          mode: "agent",
-          agent_id: "invoke-agent-child",
-          initial_status: "running",
-          source_target_kind: "preview_branch",
-          runtime_target_kind: "preview_branch",
-          source_target_branch_id: BRANCH_ID,
-          runtime_target_branch_id: BRANCH_ID,
-        },
-      },
-    );
-  });
-
-  it("preserves environment target metadata for project-backed runs", async () => {
-    const fetchCalls = stubFetchSequence(
-      acceptedRunResponse({ run_id: "run_child_env_1" }),
-      jsonResponse(
-        durableRunProjection({
-          run_id: "run_child_env_1",
-          project_id: PROJECT_ID,
-          source_target_kind: "environment",
-        }),
-        200,
-      ),
-    );
-
-    await createConversationAgentRun({
-      authToken: AUTH_TOKEN,
-      apiUrl: API_URL,
-      conversationId: CONVERSATION_ID,
-      runId: "run_child_env_1",
-      agentId: "invoke-agent-child",
-      projectId: PROJECT_ID,
-      runtimeTargetKind: "environment",
-      runtimeTargetEnvironmentId: ENVIRONMENT_ID,
-      branchId: null,
-    });
-
-    assertEquals(
-      JSON.parse(String(fetchCalls[0]?.[1]?.body)),
-      {
-        kind: "agent",
-        owner: {
-          kind: "conversation",
-          id: CONVERSATION_ID,
-        },
-        public_id: "run_child_env_1",
-        request: {
-          mode: "agent",
-          agent_id: "invoke-agent-child",
-          initial_status: "running",
-          source_target_kind: "environment",
-          runtime_target_kind: "environment",
-          source_target_environment_id: ENVIRONMENT_ID,
-          runtime_target_environment_id: ENVIRONMENT_ID,
-        },
-      },
-    );
-  });
-
-  it("creates queued generic agent runs when implementationKind is provided", async () => {
-    const fetchCalls = stubFetchSequence(
-      acceptedRunResponse({ run_id: "run_codex_1" }),
-      jsonResponse(durableRunProjection({ run_id: "run_codex_1" }), 200),
-    );
-
-    await createConversationAgentRun({
-      authToken: AUTH_TOKEN,
-      apiUrl: API_URL,
-      conversationId: CONVERSATION_ID,
-      runId: "run_codex_1",
-      agentId: "codex",
-      implementationKind: "codex",
-      projectId: null,
-      branchId: null,
-    });
-
-    assertEquals(
-      JSON.parse(String(fetchCalls[0]?.[1]?.body)),
-      {
-        kind: "agent",
-        owner: {
-          kind: "conversation",
-          id: CONVERSATION_ID,
-        },
-        public_id: "run_codex_1",
-        request: {
-          mode: "agent",
-          agent_id: "codex",
-          implementation_kind: "codex",
-          initial_status: "pending",
-        },
-      },
-    );
-  });
-
-  it("accepts camelCase durable run responses for backward compatibility", async () => {
-    stubFetchSequence(
-      acceptedRunResponse({ runId: "run_child_2" }),
-      jsonResponse(camelCaseDurableRunProjection(), 200),
-    );
-
-    const result = await createConversationAgentRun({
-      authToken: AUTH_TOKEN,
-      apiUrl: API_URL,
-      conversationId: CONVERSATION_ID,
-      runId: "run_child_2",
-      agentId: "invoke-agent-child",
-    });
-
-    assertEquals(result, {
-      runId: "run_child_2",
-      conversationId: CONVERSATION_ID,
-      messageId: MESSAGE_ID,
-      latestEventId: 0,
-      latestExternalEventSequence: 0,
-      waitingToolCallId: null,
-      waitingToolName: null,
-      status: "running",
-      streamProtocolVersion: 1,
-    });
-  });
-
-  it("rejects durable run projections that omit latestExternalEventSequence", async () => {
-    stubFetchSequence(
-      acceptedRunResponse({ runId: "run_child_3" }),
-      jsonResponse(
-        {
-          runId: "run_child_3",
+  it("rejects legacy self-admission: creates a conversation-owned durable run without target metadata for non-project runs", async () => {
+    const calls = stubFetchSequence();
+    await assertRejects(
+      () =>
+        createConversationAgentRun({
+          authToken: AUTH_TOKEN,
+          apiUrl: API_URL,
           conversationId: CONVERSATION_ID,
-          messageId: MESSAGE_ID,
-          latestEventId: 0,
-          status: "running",
-        },
-        200,
-      ),
+          runId: "run_root_1",
+          agentId: "default-chat",
+          projectId: null,
+          branchId: null,
+        }),
+      Error,
+      "Standalone durable self-admission was removed",
     );
+    assertEquals(calls, []);
+  });
 
+  it("rejects legacy self-admission: preserves preview target metadata for project-backed runs", async () => {
+    const calls = stubFetchSequence();
+    await assertRejects(
+      () =>
+        createConversationAgentRun({
+          authToken: AUTH_TOKEN,
+          apiUrl: API_URL,
+          conversationId: CONVERSATION_ID,
+          runId: "run_child_1",
+          agentId: "invoke-agent-child",
+          projectId: PROJECT_ID,
+          branchId: BRANCH_ID,
+        }),
+      Error,
+      "Standalone durable self-admission was removed",
+    );
+    assertEquals(calls, []);
+  });
+
+  it("rejects legacy self-admission: preserves environment target metadata for project-backed runs", async () => {
+    const calls = stubFetchSequence();
+    await assertRejects(
+      () =>
+        createConversationAgentRun({
+          authToken: AUTH_TOKEN,
+          apiUrl: API_URL,
+          conversationId: CONVERSATION_ID,
+          runId: "run_child_env_1",
+          agentId: "invoke-agent-child",
+          projectId: PROJECT_ID,
+          runtimeTargetKind: "environment",
+          runtimeTargetEnvironmentId: ENVIRONMENT_ID,
+          branchId: null,
+        }),
+      Error,
+      "Standalone durable self-admission was removed",
+    );
+    assertEquals(calls, []);
+  });
+
+  it("rejects legacy self-admission: creates queued generic agent runs when implementationKind is provided", async () => {
+    const calls = stubFetchSequence();
+    await assertRejects(
+      () =>
+        createConversationAgentRun({
+          authToken: AUTH_TOKEN,
+          apiUrl: API_URL,
+          conversationId: CONVERSATION_ID,
+          runId: "run_codex_1",
+          agentId: "codex",
+          implementationKind: "codex",
+          projectId: null,
+          branchId: null,
+        }),
+      Error,
+      "Standalone durable self-admission was removed",
+    );
+    assertEquals(calls, []);
+  });
+
+  it("rejects legacy self-admission: accepts camelCase durable run responses for backward compatibility", async () => {
+    const calls = stubFetchSequence();
+    await assertRejects(
+      () =>
+        createConversationAgentRun({
+          authToken: AUTH_TOKEN,
+          apiUrl: API_URL,
+          conversationId: CONVERSATION_ID,
+          runId: "run_child_2",
+          agentId: "invoke-agent-child",
+        }),
+      Error,
+      "Standalone durable self-admission was removed",
+    );
+    assertEquals(calls, []);
+  });
+
+  it("rejects legacy admission before accepting an incomplete projection", async () => {
+    const calls = stubFetchSequence();
     await assertRejects(
       () =>
         createConversationAgentRun({
@@ -445,79 +332,57 @@ describe("agent/durable", () => {
           agentId: "invoke-agent-child",
         }),
       Error,
-      "Missing latestExternalEventSequence in durable run response",
+      "Standalone durable self-admission was removed",
     );
+    assertEquals(calls, []);
   });
 
-  it("finalizes durable runs through the canonical complete route", async () => {
-    const fetchCalls = stubFetchSequence(
-      jsonResponse(
-        {
-          completed: true,
-          run: {
-            runId: "run_root_1",
-            status: "completed",
-          },
-        },
-        200,
-      ),
-    );
-
+  it("finalizes with the exact terminal capability and preserves business output", async () => {
+    const terminalAuthToken = `header.${
+      btoa(
+        JSON.stringify({
+          runId: "run_root_1",
+          canonicalRunId: CANONICAL_ID,
+          tokenUse: "run_event_writer",
+          writerPurpose: "current_run_terminal",
+          dispatchNonce: "generation-one",
+        }),
+      )
+    }.signature`;
+    const calls = stubFetchSequence(jsonResponse({ id: CANONICAL_ID, status: "completed" }, 200));
     await finalizeConversationAgentRun({
       authToken: AUTH_TOKEN,
+      terminalAuthToken,
       apiUrl: API_URL,
       conversationId: CONVERSATION_ID,
       runId: "run_root_1",
       status: "completed",
-      model: "gpt-5.4",
-      provider: "openai",
-      usage: {
-        inputTokens: 10,
-        outputTokens: 20,
-        totalTokens: 30,
-      },
-      terminalErrorCode: null,
-      terminalErrorMessage: null,
+      output: { answer: "done" },
+      model: "example-model",
+      provider: "example-provider",
+      usage: { inputTokens: 10, outputTokens: 20, totalTokens: 30 },
     });
-
+    assertEquals(String(calls[0]?.[0]), `${API_URL}/runs/${CANONICAL_ID}/finalize`);
     assertEquals(
-      JSON.parse(String(fetchCalls[0]?.[1]?.body)),
-      {
-        status: "completed",
-        metadata: {
-          provider: "openai",
-          model: "gpt-5.4",
-          inputTokens: 10,
-          outputTokens: 20,
-          finishReason: "stop",
-        },
-        terminal_error_code: null,
-        terminal_error_message: null,
-      },
+      new Headers(calls[0]?.[1]?.headers).get("X-Veryfront-Run-Terminal-Token"),
+      terminalAuthToken,
     );
+    assertEquals(JSON.parse(String(calls[0]?.[1]?.body)), {
+      status: "completed",
+      output: { answer: "done" },
+    });
   });
 
-  it("reads a conversation durable run projection directly", async () => {
-    stubFetchSequence(jsonResponse(camelCaseDurableRunProjection({ runId: "run_lookup_1" }), 200));
-
-    const result = await getConversationRun({
+  it("reads canonical lifecycle state without inventing append cursors", async () => {
+    const calls = stubFetchSequence(jsonResponse({ id: CANONICAL_ID, status: "waiting" }, 200));
+    const result = await getCanonicalRunStatus({
       authToken: AUTH_TOKEN,
       apiUrl: API_URL,
-      conversationId: CONVERSATION_ID,
       runId: "run_lookup_1",
+      canonicalRunId: CANONICAL_ID,
     });
-
-    assertEquals(result, {
-      runId: "run_lookup_1",
-      conversationId: CONVERSATION_ID,
-      messageId: MESSAGE_ID,
-      latestEventId: 0,
-      latestExternalEventSequence: 0,
-      waitingToolCallId: null,
-      waitingToolName: null,
-      status: "running",
-      streamProtocolVersion: 1,
-    });
+    assertEquals(result, { runId: "run_lookup_1", status: "waiting_for_tool" });
+    assertEquals(String(calls[0]?.[0]), `${API_URL}/runs/${CANONICAL_ID}`);
   });
 
   it("preserves waiting-tool fields on conversation run projections", () => {
@@ -565,6 +430,7 @@ describe("agent/durable", () => {
     // that skipped normalization. The chokepoint must clamp it so the API (256 KB
     // per-event limit) never sees an oversized event.
     await appendConversationRunEvents({
+      canonicalRunId: CANONICAL_ID,
       authToken: AUTH_TOKEN,
       apiUrl: API_URL,
       conversationId: CONVERSATION_ID,
@@ -604,6 +470,7 @@ describe("agent/durable", () => {
     );
 
     const result = await appendConversationRunEvents({
+      canonicalRunId: CANONICAL_ID,
       authToken: AUTH_TOKEN,
       apiUrl: API_URL,
       conversationId: CONVERSATION_ID,
@@ -615,7 +482,7 @@ describe("agent/durable", () => {
 
     assertEquals(
       String(fetchCalls[0]?.[0]),
-      `${API_URL}/conversations/${CONVERSATION_ID}/runs/run_root_1/events`,
+      `${API_URL}/runs/${CANONICAL_ID}/events`,
     );
     assertEquals(
       JSON.parse(String(fetchCalls[0]?.[1]?.body)),
@@ -646,6 +513,7 @@ describe("agent/durable", () => {
     const error = await assertRejects(
       () =>
         appendConversationRunEvents({
+          canonicalRunId: CANONICAL_ID,
           authToken: AUTH_TOKEN,
           apiUrl: API_URL,
           conversationId: CONVERSATION_ID,
@@ -701,6 +569,7 @@ describe("agent/durable", () => {
     }, 200));
 
     await appendConversationRunEvents({
+      canonicalRunId: CANONICAL_ID,
       authToken: AUTH_TOKEN,
       apiUrl: API_URL,
       conversationId: CONVERSATION_ID,
@@ -734,6 +603,7 @@ describe("agent/durable", () => {
     await assertRejects(
       () =>
         appendConversationRunEvents({
+          canonicalRunId: CANONICAL_ID,
           authToken: AUTH_TOKEN,
           apiUrl: API_URL,
           conversationId: CONVERSATION_ID,
@@ -772,6 +642,7 @@ describe("agent/durable", () => {
     await assertRejects(
       () =>
         appendConversationRunEvents({
+          canonicalRunId: CANONICAL_ID,
           authToken: AUTH_TOKEN,
           apiUrl: API_URL,
           conversationId: CONVERSATION_ID,
@@ -807,6 +678,7 @@ describe("agent/durable", () => {
     await assertRejects(
       () =>
         appendConversationRunEvents({
+          canonicalRunId: CANONICAL_ID,
           authToken: AUTH_TOKEN,
           apiUrl: API_URL,
           conversationId: CONVERSATION_ID,
@@ -826,6 +698,7 @@ describe("agent/durable", () => {
     const assertion = assertRejects(
       () =>
         appendConversationRunEvents({
+          canonicalRunId: CANONICAL_ID,
           authToken: AUTH_TOKEN,
           apiUrl: API_URL,
           conversationId: CONVERSATION_ID,
@@ -848,14 +721,14 @@ describe("agent/durable", () => {
 
     const assertion = assertRejects(
       () =>
-        getConversationRun({
+        getCanonicalRunStatus({
           authToken: AUTH_TOKEN,
           apiUrl: API_URL,
-          conversationId: CONVERSATION_ID,
+          canonicalRunId: CANONICAL_ID,
           runId: "run_lookup_timeout",
         }),
       Error,
-      "Read conversation durable run projection timed out after 15000ms",
+      "Read run lifecycle state timed out after 15000ms",
     );
 
     await time.tickAsync(15_000);
@@ -877,15 +750,15 @@ describe("agent/durable", () => {
 
     const assertion = assertRejects(
       () =>
-        getConversationRun({
+        getCanonicalRunStatus({
           authToken: AUTH_TOKEN,
           apiUrl: API_URL,
-          conversationId: CONVERSATION_ID,
+          canonicalRunId: CANONICAL_ID,
           runId: "run_lookup_timeout_race",
           abortSignal: caller.signal,
         }),
       Error,
-      "Read conversation durable run projection timed out after 15000ms",
+      "Read run lifecycle state timed out after 15000ms",
     );
 
     await time.tickAsync(15_000);
@@ -905,6 +778,7 @@ describe("agent/durable", () => {
     );
 
     const result = await flushConversationRunEventBatches({
+      canonicalRunId: CANONICAL_ID,
       authToken: AUTH_TOKEN,
       apiUrl: API_URL,
       conversationId: CONVERSATION_ID,
@@ -939,6 +813,7 @@ describe("agent/durable", () => {
 
     assertEquals(
       await flushConversationRunEventBatches({
+        canonicalRunId: CANONICAL_ID,
         authToken: AUTH_TOKEN,
         apiUrl: API_URL,
         conversationId: CONVERSATION_ID,
@@ -955,6 +830,35 @@ describe("agent/durable", () => {
         latestExternalEventSequence: 4,
       },
     );
+  });
+
+  it("rejects a pure-private append without the external cursor before fetch", async () => {
+    let fetchCalls = 0;
+
+    await assertRejects(
+      () =>
+        appendConversationRunEvents({
+          canonicalRunId: CANONICAL_ID,
+          authToken: AUTH_TOKEN,
+          apiUrl: API_URL,
+          conversationId: CONVERSATION_ID,
+          runId: "run_mcc_missing_external_cursor",
+          expectedPreviousEventId: 6,
+          events: [modelCallContextEvent("missing-external-cursor")],
+          fetch: async () => {
+            fetchCalls += 1;
+            return jsonResponse({
+              run_id: CANONICAL_ID,
+              latest_event_id: 7,
+              appended_count: 1,
+            }, 200);
+          },
+        }),
+      DurableRunEventPersistenceError,
+      "requires the caller's external event sequence",
+    );
+
+    assertEquals(fetchCalls, 0);
   });
 
   it("backfills pure-private cursors without mutating camel or snake response bodies", async () => {
@@ -987,6 +891,7 @@ describe("agent/durable", () => {
       });
 
       const result = await appendConversationRunEvents({
+        canonicalRunId: CANONICAL_ID,
         authToken: AUTH_TOKEN,
         apiUrl: API_URL,
         conversationId: CONVERSATION_ID,
@@ -1031,6 +936,7 @@ describe("agent/durable", () => {
       }) as typeof fetch,
     );
     const controller = createConversationRunEventQueueController({
+      canonicalRunId: CANONICAL_ID,
       authToken: AUTH_TOKEN,
       apiUrl: API_URL,
       conversationId: CONVERSATION_ID,
@@ -1091,6 +997,7 @@ describe("agent/durable", () => {
     );
 
     const result = await flushConversationRunEventBatches({
+      canonicalRunId: CANONICAL_ID,
       authToken: AUTH_TOKEN,
       apiUrl: API_URL,
       conversationId: CONVERSATION_ID,
@@ -1138,6 +1045,7 @@ describe("agent/durable", () => {
     );
 
     const result = await flushConversationRunEventBatches({
+      canonicalRunId: CANONICAL_ID,
       authToken: AUTH_TOKEN,
       apiUrl: API_URL,
       conversationId: CONVERSATION_ID,
@@ -1173,7 +1081,7 @@ describe("agent/durable", () => {
     installMockFetch(
       (async (input: RequestInfo | URL, _init?: RequestInit) => {
         if (String(input).endsWith("/events")) {
-          return jsonResponse({ detail: "External run event cursor mismatch" }, 400);
+          return cursorMismatchResponse(4);
         }
 
         return jsonResponse(
@@ -1187,6 +1095,7 @@ describe("agent/durable", () => {
     );
 
     const result = await flushConversationRunEventBatches({
+      canonicalRunId: CANONICAL_ID,
       authToken: AUTH_TOKEN,
       apiUrl: API_URL,
       conversationId: CONVERSATION_ID,
@@ -1248,7 +1157,7 @@ describe("agent/durable", () => {
 
         eventsRequestCount += 1;
         if (eventsRequestCount === 1) {
-          return jsonResponse({ detail: "External run event cursor mismatch" }, 400);
+          return cursorMismatchResponse(6);
         }
 
         const bodyText = typeof init?.body === "string" ? init.body : "";
@@ -1278,6 +1187,7 @@ describe("agent/durable", () => {
     );
 
     const result = await flushConversationRunEventQueue({
+      canonicalRunId: CANONICAL_ID,
       authToken: AUTH_TOKEN,
       apiUrl: API_URL,
       conversationId: CONVERSATION_ID,
@@ -1302,6 +1212,7 @@ describe("agent/durable", () => {
     );
 
     const result = await flushConversationRunEventQueue({
+      canonicalRunId: CANONICAL_ID,
       authToken: AUTH_TOKEN,
       apiUrl: API_URL,
       conversationId: CONVERSATION_ID,
@@ -1335,6 +1246,7 @@ describe("agent/durable", () => {
     );
 
     const result = await flushConversationRunEventQueue({
+      canonicalRunId: CANONICAL_ID,
       authToken: AUTH_TOKEN,
       apiUrl: API_URL,
       conversationId: CONVERSATION_ID,
@@ -1371,7 +1283,7 @@ describe("agent/durable", () => {
 
         eventsRequestCount += 1;
         if (eventsRequestCount === 1) {
-          return jsonResponse({ detail: "External run event cursor mismatch" }, 400);
+          return cursorMismatchResponse(6);
         }
 
         const bodyText = typeof init?.body === "string" ? init.body : "";
@@ -1401,6 +1313,7 @@ describe("agent/durable", () => {
     );
 
     const controller = createConversationRunEventQueueController({
+      canonicalRunId: CANONICAL_ID,
       authToken: AUTH_TOKEN,
       apiUrl: API_URL,
       conversationId: CONVERSATION_ID,
@@ -1458,6 +1371,7 @@ describe("agent/durable", () => {
     );
 
     const controller = createConversationRunEventQueueController({
+      canonicalRunId: CANONICAL_ID,
       authToken: AUTH_TOKEN,
       apiUrl: API_URL,
       conversationId: CONVERSATION_ID,
@@ -1501,6 +1415,7 @@ describe("agent/durable", () => {
 
   it("keeps failed queue state for host retry scheduling and disables on stopped outcomes", async () => {
     const retryController = createConversationRunEventQueueController({
+      canonicalRunId: CANONICAL_ID,
       authToken: AUTH_TOKEN,
       apiUrl: API_URL,
       conversationId: CONVERSATION_ID,
@@ -1526,6 +1441,7 @@ describe("agent/durable", () => {
     });
 
     const authStopController = createConversationRunEventQueueController({
+      canonicalRunId: CANONICAL_ID,
       authToken: AUTH_TOKEN,
       apiUrl: API_URL,
       conversationId: CONVERSATION_ID,
@@ -1560,6 +1476,7 @@ describe("agent/durable", () => {
     });
 
     const stopController = createConversationRunEventQueueController({
+      canonicalRunId: CANONICAL_ID,
       authToken: AUTH_TOKEN,
       apiUrl: API_URL,
       conversationId: CONVERSATION_ID,
@@ -1573,7 +1490,9 @@ describe("agent/durable", () => {
     installMockFetch(
       (async (input: RequestInfo | URL) => {
         if (String(input).endsWith("/events")) {
-          return jsonResponse({ detail: "External run event cursor mismatch" }, 400);
+          return jsonResponse({
+            detail: "Cannot append external events while the run is waiting for a tool result",
+          }, 400);
         }
 
         return jsonResponse(
@@ -1591,27 +1510,28 @@ describe("agent/durable", () => {
 
     assertEquals(await stopController.flush(), {
       outcome: "stopped",
-      latestEventId: 0,
+      latestEventId: 2,
       latestExternalEventSequence: 4,
       pendingEventCount: 0,
       consecutiveFailures: 0,
       disabled: true,
-      disableReason: "non_appendable",
+      disableReason: "ignorable_append_rejection",
     });
     assertEquals(stopController.getSnapshot(), {
-      latestEventId: 0,
+      latestEventId: 2,
       latestExternalEventSequence: 4,
       pendingEventCount: 0,
       consecutiveFailures: 0,
       disabled: true,
       appendRequestCount: 1,
-      disableReason: "non_appendable",
+      disableReason: "ignorable_append_rejection",
     });
   });
 
-  it("stops with run_terminal when a cursor resync resolves to a terminal run", async () => {
+  it("stops with run_terminal on an authenticated terminal append refusal", async () => {
     for (const status of ["completed", "failed", "cancelled"] as const) {
       const terminalController = createConversationRunEventQueueController({
+        canonicalRunId: CANONICAL_ID,
         authToken: AUTH_TOKEN,
         apiUrl: API_URL,
         conversationId: CONVERSATION_ID,
@@ -1625,7 +1545,10 @@ describe("agent/durable", () => {
       installMockFetch(
         (async (input: RequestInfo | URL) => {
           if (String(input).endsWith("/events")) {
-            return jsonResponse({ detail: "External run event cursor mismatch" }, 400);
+            return jsonResponse({
+              slug: "terminal-run-append-rejected",
+              detail: "Cannot append external events to a terminal run",
+            }, 400);
           }
 
           return jsonResponse(
@@ -1672,6 +1595,7 @@ describe("agent/durable", () => {
     );
 
     const controller = createConversationRunEventQueueController({
+      canonicalRunId: CANONICAL_ID,
       authToken: AUTH_TOKEN,
       apiUrl: API_URL,
       conversationId: CONVERSATION_ID,
@@ -1708,20 +1632,19 @@ describe("agent/durable", () => {
 
   it("requeues buffered events when queue flushing throws before classification completes", async () => {
     let appendRequestCount = 0;
-    installMockFetch(
-      ((input: RequestInfo | URL) => {
-        if (String(input).endsWith("/events")) {
-          appendRequestCount += 1;
-          return Promise.resolve(
-            jsonResponse({ detail: "External run event cursor mismatch" }, 400),
-          );
-        }
-
-        return Promise.reject(new Error("run lookup failed"));
-      }) as typeof fetch,
-    );
+    const unclassifiable = new Error("transport failed");
+    Object.defineProperty(unclassifiable, "message", {
+      get() {
+        throw new Error("failure classification threw");
+      },
+    });
+    installMockFetch(() => {
+      appendRequestCount += 1;
+      return Promise.reject(unclassifiable);
+    });
 
     const controller = createConversationRunEventQueueController({
+      canonicalRunId: CANONICAL_ID,
       authToken: AUTH_TOKEN,
       apiUrl: API_URL,
       conversationId: CONVERSATION_ID,
@@ -1736,7 +1659,7 @@ describe("agent/durable", () => {
     await assertRejects(
       () => controller.flush(),
       Error,
-      "run lookup failed",
+      "failure classification threw",
     );
 
     assertEquals(appendRequestCount, 1);
@@ -1798,243 +1721,86 @@ describe("agent/durable", () => {
     );
   });
 
-  it("classifies append cursor resync results from the canonical run projection", async () => {
-    stubFetchSequence(
-      jsonResponse(
-        camelCaseDurableRunProjection({
-          runId: "run_resync_1",
-          latestExternalEventSequence: 5,
-        }),
-        200,
-      ),
-      jsonResponse(
-        camelCaseDurableRunProjection({
-          runId: "run_resync_2",
-          latestExternalEventSequence: 4,
-        }),
-        200,
-      ),
-      jsonResponse(
-        camelCaseDurableRunProjection({
-          runId: "run_resync_3",
-          latestExternalEventSequence: 4,
-          status: "waiting_for_tool",
-          waitingToolCallId: "tool-call-1",
-          waitingToolName: "form_input",
-        }),
-        200,
-      ),
-      jsonResponse(
-        camelCaseDurableRunProjection({
-          runId: "run_resync_4",
-          latestExternalEventSequence: 6,
-          status: "waiting_for_tool",
-          waitingToolCallId: "tool-call-2",
-          waitingToolName: "form_input",
-        }),
-        200,
-      ),
-    );
-
-    assertEquals(
-      await resyncConversationRunAppendCursor({
-        authToken: AUTH_TOKEN,
-        apiUrl: API_URL,
-        conversationId: CONVERSATION_ID,
-        runId: "run_resync_1",
-        previousLatestExternalEventSequence: 4,
-      }),
-      {
-        result: "advanced",
-        run: {
-          runId: "run_resync_1",
+  it("rejects legacy cursor projection reads without issuing a request", async () => {
+    const calls = stubFetchSequence();
+    for (const previousLatestExternalEventSequence of [0, 4, 6]) {
+      await assertRejects(
+        () =>
+          resyncConversationRunAppendCursor({
+            authToken: AUTH_TOKEN,
+            apiUrl: API_URL,
+            conversationId: CONVERSATION_ID,
+            runId: "run_resync",
+            previousLatestExternalEventSequence,
+          }),
+        Error,
+        "Legacy durable projection reads were removed",
+      );
+    }
+    await assertRejects(
+      () =>
+        getConversationRun({
+          authToken: AUTH_TOKEN,
+          apiUrl: API_URL,
           conversationId: CONVERSATION_ID,
-          messageId: MESSAGE_ID,
-          latestEventId: 0,
-          latestExternalEventSequence: 5,
-          waitingToolCallId: null,
-          waitingToolName: null,
-          status: "running",
-          streamProtocolVersion: 1,
-        },
-      },
+          runId: "run_legacy",
+        }),
+      Error,
+      "Legacy durable projection reads were removed",
     );
-
-    assertEquals(
-      await resyncConversationRunAppendCursor({
-        authToken: AUTH_TOKEN,
-        apiUrl: API_URL,
-        conversationId: CONVERSATION_ID,
-        runId: "run_resync_2",
-        previousLatestExternalEventSequence: 4,
-      }),
-      {
-        result: "unchanged",
-        run: {
-          runId: "run_resync_2",
-          conversationId: CONVERSATION_ID,
-          messageId: MESSAGE_ID,
-          latestEventId: 0,
-          latestExternalEventSequence: 4,
-          waitingToolCallId: null,
-          waitingToolName: null,
-          status: "running",
-          streamProtocolVersion: 1,
-        },
-      },
-    );
-
-    assertEquals(
-      await resyncConversationRunAppendCursor({
-        authToken: AUTH_TOKEN,
-        apiUrl: API_URL,
-        conversationId: CONVERSATION_ID,
-        runId: "run_resync_3",
-        previousLatestExternalEventSequence: 4,
-      }),
-      {
-        result: "non_appendable",
-        run: {
-          runId: "run_resync_3",
-          conversationId: CONVERSATION_ID,
-          messageId: MESSAGE_ID,
-          latestEventId: 0,
-          latestExternalEventSequence: 4,
-          waitingToolCallId: "tool-call-1",
-          waitingToolName: "form_input",
-          status: "waiting_for_tool",
-          streamProtocolVersion: 1,
-        },
-      },
-    );
-
-    assertEquals(
-      await resyncConversationRunAppendCursor({
-        authToken: AUTH_TOKEN,
-        apiUrl: API_URL,
-        conversationId: CONVERSATION_ID,
-        runId: "run_resync_4",
-        previousLatestExternalEventSequence: 4,
-      }),
-      {
-        result: "non_appendable",
-        run: {
-          runId: "run_resync_4",
-          conversationId: CONVERSATION_ID,
-          messageId: MESSAGE_ID,
-          latestEventId: 0,
-          latestExternalEventSequence: 6,
-          waitingToolCallId: "tool-call-2",
-          waitingToolName: "form_input",
-          status: "waiting_for_tool",
-          streamProtocolVersion: 1,
-        },
-      },
-    );
+    assertEquals(calls, []);
   });
 
-  it("recovers cursor mismatch outcomes with retry-limit gating", async () => {
-    stubFetchSequence(
-      jsonResponse(
-        camelCaseDurableRunProjection({
-          runId: "run_recover_1",
-          latestExternalEventSequence: 6,
+  it("recovers authenticated cursor hints with retry-limit and ambiguity gating", async () => {
+    const calls = stubFetchSequence();
+    const base = {
+      authToken: AUTH_TOKEN,
+      apiUrl: API_URL,
+      conversationId: CONVERSATION_ID,
+      runId: "run_recover",
+      latestEventId: 2,
+      latestExternalEventSequence: 4,
+      cursorResyncsThisFlush: 0,
+      maxCursorResyncsPerFlush: 3,
+    };
+    const advanced = new AppendConversationRunEventsError({
+      status: 400,
+      detail: "External run event cursor mismatch",
+      cursor: { latestEventId: 7, latestExternalEventSequence: 6 },
+    });
+    assertEquals(await recoverConversationRunCursorMismatch({ ...base, error: advanced }), {
+      outcome: "resumed",
+      latestEventId: 7,
+      latestExternalEventSequence: 6,
+    });
+    for (
+      const cursor of [undefined, { latestEventId: 1, latestExternalEventSequence: 6 }, {
+        latestEventId: 7,
+        latestExternalEventSequence: 4,
+      }]
+    ) {
+      assertEquals(
+        await recoverConversationRunCursorMismatch({
+          ...base,
+          error: new AppendConversationRunEventsError({
+            status: 400,
+            detail: "External run event cursor mismatch",
+            cursor,
+          }),
         }),
-        200,
-      ),
-      jsonResponse(
-        camelCaseDurableRunProjection({
-          runId: "run_recover_2",
+        {
+          outcome: "stopped",
+          latestEventId: 2,
           latestExternalEventSequence: 4,
-          status: "waiting_for_tool",
-          waitingToolCallId: "tool-call-2",
-          waitingToolName: "form_input",
-        }),
-        200,
-      ),
-    );
-
-    assertEquals(
-      await recoverConversationRunCursorMismatch({
-        error: new AppendConversationRunEventsError({
-          status: 400,
-          detail: "External run event cursor mismatch",
-        }),
-        authToken: AUTH_TOKEN,
-        apiUrl: API_URL,
-        conversationId: CONVERSATION_ID,
-        runId: "run_recover_1",
-        latestEventId: 0,
-        latestExternalEventSequence: 4,
-        cursorResyncsThisFlush: 0,
-        maxCursorResyncsPerFlush: 3,
-      }),
-      {
-        outcome: "resumed",
-        latestEventId: 0,
-        latestExternalEventSequence: 6,
-        run: {
-          runId: "run_recover_1",
-          conversationId: CONVERSATION_ID,
-          messageId: MESSAGE_ID,
-          latestEventId: 0,
-          latestExternalEventSequence: 6,
-          waitingToolCallId: null,
-          waitingToolName: null,
-          status: "running",
-          streamProtocolVersion: 1,
+          disableReason: "cursor_mismatch_ambiguous",
         },
-      },
-    );
-
+      );
+    }
     assertEquals(
       await recoverConversationRunCursorMismatch({
-        error: new AppendConversationRunEventsError({
-          status: 400,
-          detail: "External run event cursor mismatch",
-        }),
-        authToken: AUTH_TOKEN,
-        apiUrl: API_URL,
-        conversationId: CONVERSATION_ID,
-        runId: "run_recover_2",
-        latestEventId: 0,
-        latestExternalEventSequence: 4,
-        cursorResyncsThisFlush: 0,
-        maxCursorResyncsPerFlush: 3,
-      }),
-      {
-        outcome: "stopped",
-        latestEventId: 0,
-        latestExternalEventSequence: 4,
-        disableReason: "non_appendable",
-        run: {
-          runId: "run_recover_2",
-          conversationId: CONVERSATION_ID,
-          messageId: MESSAGE_ID,
-          latestEventId: 0,
-          latestExternalEventSequence: 4,
-          waitingToolCallId: "tool-call-2",
-          waitingToolName: "form_input",
-          status: "waiting_for_tool",
-          streamProtocolVersion: 1,
-        },
-      },
-    );
-
-    assertEquals(
-      await recoverConversationRunCursorMismatch({
-        error: new AppendConversationRunEventsError({
-          status: 400,
-          detail: "External run event cursor mismatch",
-        }),
-        authToken: AUTH_TOKEN,
-        apiUrl: API_URL,
-        conversationId: CONVERSATION_ID,
-        runId: "run_recover_3",
-        latestEventId: 2,
-        latestExternalEventSequence: 4,
+        ...base,
+        error: advanced,
         cursorResyncsThisFlush: 3,
-        maxCursorResyncsPerFlush: 3,
       }),
       {
         outcome: "stopped",
@@ -2043,28 +1809,14 @@ describe("agent/durable", () => {
         disableReason: "cursor_resyncs_exhausted",
       },
     );
-
     assertEquals(
       await recoverConversationRunCursorMismatch({
-        error: new AppendConversationRunEventsError({
-          status: 500,
-          detail: "internal failure",
-        }),
-        authToken: AUTH_TOKEN,
-        apiUrl: API_URL,
-        conversationId: CONVERSATION_ID,
-        runId: "run_recover_4",
-        latestEventId: 2,
-        latestExternalEventSequence: 4,
-        cursorResyncsThisFlush: 0,
-        maxCursorResyncsPerFlush: 3,
+        ...base,
+        error: new AppendConversationRunEventsError({ status: 500, detail: "internal failure" }),
       }),
-      {
-        outcome: "bubbled",
-        latestEventId: 2,
-        latestExternalEventSequence: 4,
-      },
+      { outcome: "bubbled", latestEventId: 2, latestExternalEventSequence: 4 },
     );
+    assertEquals(calls, [], "append authority must not make projection reads");
   });
 
   it("classifies append failures into resume, stop, and retry outcomes", async () => {
@@ -2093,6 +1845,7 @@ describe("agent/durable", () => {
         error: new AppendConversationRunEventsError({
           status: 400,
           detail: "External run event cursor mismatch",
+          cursor: { latestEventId: 0, latestExternalEventSequence: 6 },
         }),
         authToken: AUTH_TOKEN,
         apiUrl: API_URL,
@@ -2107,17 +1860,6 @@ describe("agent/durable", () => {
         outcome: "resumed",
         latestEventId: 0,
         latestExternalEventSequence: 6,
-        run: {
-          runId: "run_append_failure_1",
-          conversationId: CONVERSATION_ID,
-          messageId: MESSAGE_ID,
-          latestEventId: 0,
-          latestExternalEventSequence: 6,
-          waitingToolCallId: null,
-          waitingToolName: null,
-          status: "running",
-          streamProtocolVersion: 1,
-        },
       },
     );
 
@@ -2323,18 +2065,7 @@ describe("agent/durable", () => {
         outcome: "stopped",
         latestEventId: 0,
         latestExternalEventSequence: 4,
-        disableReason: "non_appendable",
-        run: {
-          runId: "run_append_failure_2",
-          conversationId: CONVERSATION_ID,
-          messageId: MESSAGE_ID,
-          latestEventId: 0,
-          latestExternalEventSequence: 4,
-          waitingToolCallId: "tool-call-3",
-          waitingToolName: "form_input",
-          status: "waiting_for_tool",
-          streamProtocolVersion: 1,
-        },
+        disableReason: "cursor_mismatch_ambiguous",
       },
     );
 
@@ -2378,6 +2109,7 @@ describe("agent/durable", () => {
         error: new AppendConversationRunEventsError({
           status: 400,
           detail: "External run event cursor mismatch",
+          cursor: { latestEventId: 0, latestExternalEventSequence: 6 },
         }),
         authToken: AUTH_TOKEN,
         apiUrl: API_URL,
@@ -2495,10 +2227,10 @@ describe("agent/durable", () => {
 
     await assertRejects(
       () =>
-        getConversationRun({
+        getCanonicalRunStatus({
           authToken: AUTH_TOKEN,
           apiUrl: API_URL,
-          conversationId: CONVERSATION_ID,
+          canonicalRunId: CANONICAL_ID,
           runId: "run_lookup_abort",
           abortSignal: abortController.signal,
         }),
@@ -2514,6 +2246,7 @@ describe("agent/durable", () => {
     stubFetchSequence(
       jsonResponse(
         {
+          id: CANONICAL_ID,
           run_id: "run_terminal_1",
           conversation_id: CONVERSATION_ID,
           message_id: MESSAGE_ID,
@@ -2526,6 +2259,7 @@ describe("agent/durable", () => {
     );
 
     await monitorConversationRunStatus({
+      canonicalRunId: CANONICAL_ID,
       authToken: AUTH_TOKEN,
       apiUrl: API_URL,
       conversationId: CONVERSATION_ID,
@@ -2547,6 +2281,7 @@ describe("agent/durable", () => {
       Promise.resolve(
         jsonResponse(
           {
+            id: CANONICAL_ID,
             run_id: "run_poll_interval",
             conversation_id: CONVERSATION_ID,
             message_id: MESSAGE_ID,
@@ -2561,6 +2296,7 @@ describe("agent/durable", () => {
     const seen: string[] = [];
 
     const monitored = monitorConversationRunStatus({
+      canonicalRunId: CANONICAL_ID,
       authToken: AUTH_TOKEN,
       apiUrl: API_URL,
       conversationId: CONVERSATION_ID,
@@ -2588,6 +2324,7 @@ describe("agent/durable", () => {
       Promise.resolve(
         jsonResponse(
           {
+            id: CANONICAL_ID,
             run_id: "run_poll_abort",
             conversation_id: CONVERSATION_ID,
             message_id: MESSAGE_ID,
@@ -2602,6 +2339,7 @@ describe("agent/durable", () => {
     const pollErrors: unknown[] = [];
 
     const monitored = monitorConversationRunStatus({
+      canonicalRunId: CANONICAL_ID,
       authToken: AUTH_TOKEN,
       apiUrl: API_URL,
       conversationId: CONVERSATION_ID,
@@ -2632,6 +2370,7 @@ describe("agent/durable", () => {
 
       return jsonResponse(
         {
+          id: CANONICAL_ID,
           run_id: "run_terminal_2",
           conversation_id: CONVERSATION_ID,
           message_id: MESSAGE_ID,
@@ -2646,6 +2385,7 @@ describe("agent/durable", () => {
     const seen: string[] = [];
 
     await monitorConversationRunStatus({
+      canonicalRunId: CANONICAL_ID,
       authToken: AUTH_TOKEN,
       apiUrl: API_URL,
       conversationId: CONVERSATION_ID,
@@ -2669,6 +2409,7 @@ describe("agent/durable", () => {
       callCount += 1;
       return jsonResponse(
         {
+          id: CANONICAL_ID,
           run_id: "run_terminal_3",
           conversation_id: CONVERSATION_ID,
           message_id: MESSAGE_ID,
@@ -2684,6 +2425,7 @@ describe("agent/durable", () => {
     await assertRejects(
       () =>
         monitorConversationRunStatus({
+          canonicalRunId: CANONICAL_ID,
           authToken: AUTH_TOKEN,
           apiUrl: API_URL,
           conversationId: CONVERSATION_ID,

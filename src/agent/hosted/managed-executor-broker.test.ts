@@ -9,6 +9,18 @@ import {
   parseExecutorInstallation,
 } from "#veryfront/agent/hosted/executor-runtime-install-schema.ts";
 import "#veryfront/schemas/_test-setup.ts";
+const canonicalTestRunId = "11111111-1111-4111-8111-111111111111";
+const terminalTestToken = `header.${
+  btoa(
+    JSON.stringify({
+      runId: "run-1",
+      canonicalRunId: canonicalTestRunId,
+      tokenUse: "run_event_writer",
+      writerPurpose: "current_run_terminal",
+      dispatchNonce: "test-generation",
+    }),
+  )
+}.signature`;
 import { assert, assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { createExecutorChannel, type ExecutorOperation } from "../executor/channel.ts";
@@ -1006,14 +1018,15 @@ describe("managed executor broker", () => {
       }
       terminalCalls.push(body);
       return Response.json({
-        completed: true,
-        run: { runId: "run-1", status: body.status },
+        id: canonicalTestRunId,
+        status: body.status,
       });
     };
     const persistence = createManagedBrokerPersistence({
       apiUrl: "https://api.example.test",
       runEventToken: "run-event-token",
       completionAuthToken: "completion-token",
+      terminalAuthToken: terminalTestToken,
       run: {
         runId: "run-1",
         conversationId,
