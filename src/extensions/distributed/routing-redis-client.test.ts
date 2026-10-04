@@ -7,19 +7,38 @@ import {
 } from "./routing-redis-client.ts";
 
 function fixture() {
-  let options!: RoutingRedisClientOptions;
-  const listeners = new Map<string, Array<() => void>>();
+  type Instance = {
+    ready: boolean;
+    options: RoutingRedisClientOptions;
+    listeners: Map<string, Array<(error?: unknown) => void>>;
+    active: Set<string>;
+    deliveries: Map<string, (message: string, channel: string) => void>;
+    retirements: Array<() => void>;
+    pendingSubscriptions: Array<() => void>;
+  };
+  const instances: Instance[] = [];
   const calls: string[] = [];
-  const active = new Set<string>();
-  const retirements: Array<() => void> = [];
   let deferred = false;
   let deferredChannel: string | undefined;
+  let deferredSubscribe: string | undefined;
   let failSubscribe = false;
   let failUnsubscribe = false;
   let failDestroy = false;
-  const owned = createRoutingRedisClient((configured) => {
-    options = configured;
+  const owned = createRoutingRedisClient((options) => {
+    const instance: Instance = {
+      ready: false,
+      options,
+      listeners: new Map(),
+      active: new Set(),
+      deliveries: new Map(),
+      retirements: [],
+      pendingSubscriptions: [],
+    };
+    instances.push(instance);
     return {
+      get isReady() {
+        return instance.ready;
+      },
       connect: () => {
         calls.push("connect");
         return Promise.resolve();
@@ -28,10 +47,14 @@ function fixture() {
         calls.push("publish");
         return Promise.resolve(2);
       },
-      subscribe: (channel) => {
-        active.add(channel);
+      subscribe: (channel, listener) => {
+        instance.active.add(channel);
+        instance.deliveries.set(channel, listener);
         calls.push("subscribe");
         if (failSubscribe) return Promise.reject(new Error("Uncertain subscribe result"));
+        if (deferredSubscribe === channel) {
+          return new Promise<void>((resolve) => instance.pendingSubscriptions.push(resolve));
+        }
         return Promise.resolve();
       },
       unsubscribe: (channel) => {
@@ -39,34 +62,44 @@ function fixture() {
         if (failUnsubscribe) return Promise.reject(new Error("Unsubscribe refused"));
         if (deferred && (deferredChannel === undefined || deferredChannel === channel)) {
           return new Promise<void>((resolve) =>
-            retirements.push(() => {
-              active.delete(channel);
+            instance.retirements.push(() => {
+              instance.active.delete(channel);
               resolve();
             })
           );
         }
-        active.delete(channel);
+        instance.active.delete(channel);
         return Promise.resolve();
       },
       close: () => {
         calls.push("close");
+        instance.ready = false;
+        instance.active.clear();
       },
       destroy: () => {
         calls.push("destroy");
         if (failDestroy) throw new Error("Disposal refused");
+        instance.ready = false;
+        instance.active.clear();
       },
       on(event, listener) {
-        const registered = listeners.get(event) ?? [];
-        registered.push(listener as () => void);
-        listeners.set(event, registered);
+        const listeners = instance.listeners.get(event) ?? [];
+        listeners.push(listener);
+        instance.listeners.set(event, listeners);
       },
     };
   }, "redis://127.0.0.1:1");
+  const current = () => instances.at(-1)!;
   return {
     owned,
-    options,
     calls,
-    active,
+    instances,
+    get active() {
+      return current().active;
+    },
+    get options() {
+      return current().options;
+    },
     failDisposal() {
       failUnsubscribe = true;
       failDestroy = true;
@@ -74,20 +107,48 @@ function fixture() {
     failSubscribe() {
       failSubscribe = true;
     },
+    refuseRetirement() {
+      failUnsubscribe = true;
+    },
+    allowRetirement() {
+      failUnsubscribe = false;
+      deferred = false;
+    },
+    deferSubscription(channel: string) {
+      deferredSubscribe = channel;
+    },
+    finishSubscription(index = instances.length - 1) {
+      const finish = instances[index]!.pendingSubscriptions.shift();
+      assert(finish);
+      finish();
+    },
     deferRetirement(channel?: string) {
       deferred = true;
       deferredChannel = channel;
     },
-    finishRetirement() {
-      const complete = retirements.shift();
-      assert(complete);
-      complete();
+    finishRetirement(index = instances.length - 1) {
+      const finish = instances[index]!.retirements.shift();
+      assert(finish);
+      finish();
     },
-    emit(event: string) {
-      for (const fn of listeners.get(event) ?? []) fn();
+    emit(event: string, index = instances.length - 1, preserveReady = false) {
+      const instance = instances[index]!;
+      if (event === "ready") instance.ready = true;
+      else if (
+        (event === "error" && !preserveReady) || event === "reconnecting" || event === "end"
+      ) instance.ready = false;
+      for (const listener of instance.listeners.get(event) ?? []) {
+        listener(
+          new Error("Synthetic Redis event"),
+        );
+      }
+    },
+    deliver(index: number, channel: string) {
+      instances[index]!.deliveries.get(channel)?.("synthetic", channel);
     },
   };
 }
+
 it("bounds initial connection attempts but keeps one capped recovery owner after readiness", () => {
   const f = fixture();
   assert(f.options.socket.reconnectStrategy(5) instanceof Error);
@@ -171,23 +232,39 @@ it("shares retirement across callers and serializes a new ready epoch behind the
   await f.owned.publish("event", "synthetic");
   await f.owned.close();
 });
-it("destroys once when retirement cannot settle within its deadline and ignores late completion", async () => {
+it("resets a timed-out retirement and restores only acknowledged live subscriptions", async () => {
   const time = new FakeTime();
   try {
     const f = fixture();
+    let delivered = 0;
     f.emit("ready");
+    await f.owned.subscribe("main", () => delivered++);
     await f.owned.subscribe("ack", () => {});
-    f.deferRetirement();
+    f.deferRetirement("ack");
     const retiring = f.owned.unsubscribe("ack").catch(() => {});
     time.tick(3_000);
     await settle();
     await retiring;
-    assertEquals(f.calls, ["subscribe", "unsubscribe", "destroy"]);
-    f.finishRetirement();
+    assertEquals(f.instances.length, 1);
+    assert(!f.instances[0]!.ready);
+    time.tick(999);
+    assertEquals(f.instances.length, 1);
+    time.tick(1);
+    await settle();
+    assertEquals(f.instances.length, 2);
     f.emit("ready");
     await settle();
-    await assertRejects(() => f.owned.publish("event", "synthetic"), Error, "not ready");
-    assert(f.options.socket.reconnectStrategy(0) instanceof Error);
+    assertEquals([...f.active], ["main"]);
+    assertEquals(await f.owned.publish("event", "synthetic"), 2);
+    f.deliver(0, "main");
+    assertEquals(delivered, 0);
+    f.deliver(1, "main");
+    assertEquals(delivered, 1);
+    f.finishRetirement(0);
+    f.emit("ready", 0);
+    await settle();
+    assertEquals(f.instances.length, 2);
+    await f.owned.close();
   } finally {
     time.restore();
   }
@@ -324,5 +401,142 @@ it("confirms the original retirement when a ready observer immediately reuses it
     assert(f.active.has("a"));
   } finally {
     await f.owned.close();
+  }
+});
+
+it("does not poison a usable transport for a decoder error", async () => {
+  const f = fixture();
+  f.emit("ready");
+  f.emit("error", 0, true);
+  assertEquals(await f.owned.publish("event", "synthetic"), 2);
+  await f.owned.subscribe("main", () => {});
+  await f.owned.close();
+});
+it("resets a retirement protocol refusal at a capped cadence and fences old callbacks", async () => {
+  const time = new FakeTime();
+  try {
+    const f = fixture();
+    f.emit("ready");
+    await f.owned.subscribe("main", () => {});
+    await f.owned.subscribe("ack", () => {});
+    f.refuseRetirement();
+    await f.owned.unsubscribe("ack");
+    await settle();
+    assertEquals(f.instances.length, 1);
+    await assertRejects(() => f.owned.publish("event", "synthetic"), Error, "not ready");
+    f.allowRetirement();
+    time.tick(1_000);
+    await settle();
+    f.emit("ready");
+    await settle();
+    assertEquals([...f.active], ["main"]);
+    assertEquals(await f.owned.publish("event", "synthetic"), 2);
+    f.emit("error", 0);
+    assertEquals(await f.owned.publish("event", "synthetic"), 2);
+    await f.owned.close();
+  } finally {
+    time.restore();
+  }
+});
+it("does not restore an unacknowledged subscription or admit its stale completion", async () => {
+  const time = new FakeTime();
+  try {
+    const f = fixture();
+    f.emit("ready");
+    await f.owned.subscribe("main", () => {});
+    await f.owned.subscribe("ack", () => {});
+    f.deferSubscription("uncertain");
+    const pending = f.owned.subscribe("uncertain", () => {}).catch((e) => e);
+    f.deferRetirement("ack");
+    const retiring = f.owned.unsubscribe("ack").catch(() => {});
+    time.tick(3_000);
+    await settle();
+    await retiring;
+    time.tick(1_000);
+    await settle();
+    f.emit("ready");
+    await settle();
+    assertEquals([...f.active], ["main"]);
+    f.finishSubscription(0);
+    assert((await pending) instanceof Error);
+    assertEquals([...f.active], ["main"]);
+    await f.owned.close();
+  } finally {
+    time.restore();
+  }
+});
+it("shutdown during reset prevents the replacement constructor and late ready work", async () => {
+  const time = new FakeTime();
+  try {
+    const f = fixture();
+    f.emit("ready");
+    await f.owned.subscribe("ack", () => {});
+    f.refuseRetirement();
+    await f.owned.unsubscribe("ack");
+    await f.owned.close();
+    time.tick(5_000);
+    await settle();
+    f.emit("ready", 0);
+    assertEquals(f.instances.length, 1);
+    await assertRejects(() => f.owned.publish("event", "synthetic"), Error, "not ready");
+  } finally {
+    time.restore();
+  }
+});
+
+it("never expands finite initial startup into a generation restart loop", async () => {
+  const time = new FakeTime();
+  try {
+    const f = fixture();
+    f.emit("end");
+    time.tick(10_000);
+    await settle();
+    assertEquals(f.instances.length, 1);
+    await assertRejects(() => f.owned.connect(), Error, "stopped");
+  } finally {
+    time.restore();
+  }
+});
+
+it("delivers owned current-generation messages during native resubscription without admitting commands", async () => {
+  const f = fixture();
+  let delivered = 0;
+  f.emit("ready");
+  await f.owned.subscribe("main", () => delivered++);
+  f.emit("reconnecting");
+  f.deliver(0, "main");
+  assertEquals(delivered, 1);
+  await assertRejects(() => f.owned.publish("event", "synthetic"), Error, "not ready");
+  f.emit("ready");
+  await f.owned.close();
+});
+it("delivers known-live replacement messages before restore completion but fences the old generation", async () => {
+  const time = new FakeTime();
+  try {
+    const f = fixture();
+    let delivered = 0;
+    f.emit("ready");
+    await f.owned.subscribe("main", () => delivered++);
+    await f.owned.subscribe("ack", () => {});
+    f.deferSubscription("main");
+    f.deferRetirement("ack");
+    const retiring = f.owned.unsubscribe("ack").catch(() => {});
+    time.tick(3_000);
+    await settle();
+    await retiring;
+    time.tick(1_000);
+    await settle();
+    f.emit("ready");
+    f.deliver(1, "main");
+    assertEquals(delivered, 1);
+    f.deliver(0, "main");
+    assertEquals(delivered, 1);
+    await assertRejects(() => f.owned.publish("event", "synthetic"), Error, "not ready");
+    f.finishSubscription(1);
+    await settle();
+    assertEquals(await f.owned.publish("event", "synthetic"), 2);
+    await f.owned.close();
+  } finally {
+    time.restore();
   }
 });

@@ -4,7 +4,6 @@
     "extensions/ext-redis/src/rate-limit-store.ts": 1,
     "extensions/ext-redis/src/redis-client-manager.ts": 1,
     "extensions/ext-redis/src/redis-runtime-provider.ts": 1,
-    "extensions/ext-redis/src/routing-invalidation-bus.ts": 1,
     "extensions/ext-schema-zod/src/adapter.ts": 1,
     "extensions/ext-schema-zod/src/json-schema.ts": 1,
     "src/extensions/distributed/redis-runtime-provider.ts": 1,

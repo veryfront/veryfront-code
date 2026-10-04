@@ -356,6 +356,13 @@ export async function startProxyRoutingInvalidationBus(
         acknowledgementListeners.delete(channel);
         throw error;
       }
+      if (closed) {
+        acknowledgementListeners.delete(channel);
+        try {
+          await subscribeClient.unsubscribe(channel);
+        } catch { /* The close path owns the transport. */ }
+        throw new Error("Proxy routing invalidation bus is closed");
+      }
     }
     listeners.add(listener);
     activeAcknowledgementChannels.add(channel);

@@ -385,6 +385,47 @@ function answerEventWithRejectedAcknowledgement(
 }
 
 describe("proxy routing invalidation Redis bus", () => {
+  it("refuses a late acknowledgement subscription after bus shutdown", async () => {
+    const redis = createFakeRedisServer();
+    let clients = 0;
+    let finishSubscription: (() => void) | undefined;
+    let rawPublishes = 0;
+    const bus = await startProxyRoutingInvalidationBus({
+      redisUrl: "redis://example.test:6379",
+      integritySecret: createIntegritySecret(),
+      onInvalidate: () => {},
+      createClient: () => {
+        const client = redis.createClient();
+        const subscriber = clients++ === 1;
+        return {
+          ...client,
+          publish: async (channel, message) => {
+            rawPublishes++;
+            return await client.publish(channel, message);
+          },
+          subscribe: async (channel, listener) => {
+            if (subscriber && channel.startsWith(ROUTING_INVALIDATION_ACK_PREFIX)) {
+              await new Promise<void>((resolve) => {
+                finishSubscription = resolve;
+              });
+            }
+            return await client.subscribe(channel, listener);
+          },
+        };
+      },
+    });
+    assert(bus);
+    const publishing = bus.publish(createEvent()).catch((error) => error);
+    assert(finishSubscription);
+    await bus.close();
+    finishSubscription();
+    const error = await publishing;
+    assert(error instanceof Error);
+    assertEquals(error.message, "Proxy routing invalidation bus is closed");
+    assertEquals(rawPublishes, 0);
+    await assertRejects(() => bus.publish(createEvent()), Error, "closed");
+  });
+
   it("retries an acknowledgement subscription after an offline refusal without retaining a stale channel", async () => {
     const redis = createFakeRedisServer();
     let clients = 0;

@@ -35,6 +35,7 @@ export interface NodeRedisModule {
 
 /** Structural node-redis client surface used by the platform adapter. */
 export interface NodeRedisClient {
+  readonly isReady?: boolean;
   connect(): Promise<void>;
   hSet(key: string, fields: Record<string, string>): Promise<number | string>;
   hGetAll(key: string): Promise<Record<string, string>>;
@@ -349,6 +350,9 @@ function captureNodeRedisClient(value: unknown): NodeRedisClient {
   const on = readDataMethod(value, "on", "Redis module client on")!;
   return Object.freeze({
     ...methods,
+    get isReady() {
+      return Reflect.get(value, "isReady") === true;
+    },
     scan(
       cursor: number,
       options?: { MATCH?: string; COUNT?: number },
