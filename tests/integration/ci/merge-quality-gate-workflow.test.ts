@@ -39,9 +39,9 @@ const SONAR_REQUIRED_CONDITION =
   "(github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && (github.event_name != 'pull_request' || github.event.pull_request.user.login != 'dependabot[bot]')";
 const SONAR_REQUIRED_EXPRESSION = `\${{ ${SONAR_REQUIRED_CONDITION} }}`;
 const SONAR_COVERAGE_JOB_EXPRESSION =
-  `\${{ !cancelled() && (needs.tested-run.outputs.reuse == 'true' || (needs.coverage-shards.result == 'success' && needs.coverage-node-executor.result == 'success' && needs.coverage-integration-client.result == 'success')) && (${SONAR_REQUIRED_CONDITION}) }}`;
+  `\${{ !cancelled() && needs.tested-run.outputs.reuse != 'true' && (needs.coverage-shards.result == 'success' && needs.coverage-node-executor.result == 'success' && needs.coverage-integration-client.result == 'success') && (${SONAR_REQUIRED_CONDITION}) }}`;
 const SONAR_JOB_EXPRESSION =
-  `\${{ !cancelled() && needs.sonar-coverage.result == 'success' && (${SONAR_REQUIRED_CONDITION}) }}`;
+  `\${{ !cancelled() && needs.tested-run.outputs.reuse != 'true' && needs.sonar-coverage.result == 'success' && (${SONAR_REQUIRED_CONDITION}) }}`;
 const REUSED_RUN_ID_EXPRESSION =
   "${{ needs.tested-run.outputs.reuse == 'true' && needs.tested-run.outputs.run_id || '' }}";
 const TESTED_RUN_ID_EXPRESSION = "${{ needs.tested-run.outputs.run_id || github.run_id }}";
@@ -49,8 +49,7 @@ const TESTED_RUN_DOWNLOAD = {
   "run-id": TESTED_RUN_ID_EXPRESSION,
   "github-token": "${{ github.token }}",
 };
-const SONAR_GATE_JOB_EXPRESSION =
-  `\${{ always() && github.event_name != 'push' && ${SONAR_REQUIRED_CONDITION} }}`;
+const SONAR_GATE_JOB_EXPRESSION = `\${{ always() && ${SONAR_REQUIRED_CONDITION} }}`;
 const SONAR_JOB_TIMEOUT_MINUTES = 28;
 const SONAR_QUALITY_GATE_TIMEOUT_SECONDS = 1200;
 const SONAR_CHECK_NAME = "SonarQube Cloud quality gate";
@@ -290,7 +289,10 @@ describe("merge quality gate workflow", () => {
       SONAR_COVERAGE_JOB_EXPRESSION,
     );
     assertEquals(sonarGate.if, SONAR_GATE_JOB_EXPRESSION);
-    assertEquals(sonarGateEnv.SONAR_RESULT, "${{ needs.sonar.result }}");
+    assertEquals(
+      sonarGateEnv.SONAR_RESULT,
+      "${{ needs.tested-run.outputs.reuse == 'true' && needs.sonar-main.result || needs.sonar.result }}",
+    );
     assertEquals(gateEnv.SONAR_REQUIRED, SONAR_REQUIRED_EXPRESSION);
   });
 
@@ -304,7 +306,7 @@ describe("merge quality gate workflow", () => {
     );
     assertEquals(sonar.name, SONAR_SCAN_CHECK_NAME);
     assertEquals(sonarGate.name, SONAR_CHECK_NAME);
-    assertEquals(sonarGate.needs, ["sonar"]);
+    assertEquals(sonarGate.needs, ["sonar", "sonar-main", "tested-run"]);
     assertEquals(sonarGate.if, SONAR_GATE_JOB_EXPRESSION);
     const sonarProperties = parseProperties(
       await readRepoFile("sonar-project.properties"),
@@ -465,7 +467,7 @@ describe("merge quality gate workflow", () => {
     const sonar = asRecord(jobs.sonar, "sonar job");
     assert(Array.isArray(sonar.steps), "sonar steps must be an array");
     const steps = sonar.steps.map((step) => asRecord(step, "sonar step"));
-    assertEquals(sonar.needs, ["sonar-coverage"]);
+    assertEquals(sonar.needs, ["sonar-coverage", "tested-run"]);
     const sonarDownloadIndex = steps.findIndex((step) =>
       step.name === "Download merged Sonar coverage"
     );
@@ -725,7 +727,7 @@ done
       const job = asRecord(jobs[jobName], `${jobName} job`);
       assert(Array.isArray(job.needs), `${jobName} needs must be an array`);
       assert(
-        job.needs.includes("sonar") && gateStep(job).run === gateStep(await readMergeGate()).run,
+        job.needs.includes(jobName === "prerelease" ? "sonar" : "sonar-quality-gate"),
         `${jobName} must wait for Sonar and evaluate the complete merge correctness gate`,
       );
     }
@@ -910,9 +912,9 @@ done
 });
 
 describe("main release gate folding", () => {
-  it("removes standalone Sonar and merge runners from the main push path", async () => {
+  it("runs the main Sonar gate before dispatch and preserves publisher correctness", async () => {
     const jobs = asRecord((await readWorkflow()).jobs, "jobs");
-    for (const name of ["sonar-quality-gate", "quality-gate-merge"]) {
+    for (const name of ["quality-gate-merge"]) {
       assertStringIncludes(String(asRecord(jobs[name], name).if), "github.event_name != 'push'");
     }
     const scan = asRecord(jobs.sonar, "sonar");
@@ -927,15 +929,27 @@ describe("main release gate folding", () => {
       assertEquals(jobNeeds(publisher, name).includes("quality-gate-merge"), false);
       const aggregate = gateStep(publisher);
       const original = gateStep(await readMergeGate());
-      assertEquals(aggregate.run, original.run);
+      if (name === "release") {
+        assertEquals(aggregate.run, original.run);
+      } else {
+        assertEquals(
+          aggregate.run,
+          String(original.run).replace(
+            '[ "$result_name" != "SONAR_RESULT" ] && ',
+            "",
+          ),
+        );
+      }
       assertEquals(asRecord(aggregate.env, "publisher env"), {
         ...asRecord(original.env, "original env"),
-        SONAR_RESULT: "${{ needs.sonar.result }}",
+        SONAR_RESULT: name === "prerelease"
+          ? "${{ needs.sonar.result }}"
+          : "${{ needs.sonar-quality-gate.result }}",
       });
       for (const dependency of REQUIRED_DEPENDENCIES) {
         assert(
           jobNeeds(publisher, name).includes(
-            dependency === "sonar-quality-gate" ? "sonar" : dependency,
+            dependency === "sonar-quality-gate" && name === "prerelease" ? "sonar" : dependency,
           ),
         );
       }
@@ -965,7 +979,7 @@ describe("main release gate folding", () => {
       for (const key of Object.keys(RESULT_ENV)) {
         for (const result of ["failure", "cancelled", "skipped"]) {
           assertEquals((await run({ [key]: result })).code, 1, `${name} ${key}=${result}`);
-          if (result !== "skipped" || key === "SONAR_RESULT") {
+          if (result !== "skipped" || (key === "SONAR_RESULT" && name === "release")) {
             assertEquals((await run({ [key]: result }, "12345")).code, 1);
           }
         }
@@ -976,6 +990,10 @@ describe("main release gate folding", () => {
         ) => [key, "skipped"]),
       );
       assertEquals((await run(reused, "12345")).code, 0);
+      assertEquals(
+        (await run({ ...reused, SONAR_RESULT: "skipped" }, "12345")).code,
+        name === "prerelease" ? 0 : 1,
+      );
       assertEquals((await run(reused)).code, 1);
     }
   });
@@ -997,6 +1015,13 @@ describe("trusted merge-group cancellation workflow", () => {
       assert(ancestors.has(name), `${name} must be observed`);
     }
     for (const name of ancestors) {
+      if (name === "sonar-main" || name === "sonar-coverage-main") {
+        assertStringIncludes(
+          String(asRecord(jobs[name], name).if),
+          "needs.tested-run.outputs.reuse == 'true'",
+        );
+        continue; // These jobs cannot run on merge_group, where reuse is false.
+      }
       const observer = asRecord(jobs[`cancel-after-${name}`], `${name} failure observer`);
       assertEquals(observer.needs, [name]);
       assertEquals(observer.if, "${{ failure() && github.event_name == 'merge_group' }}");
