@@ -1,3 +1,6 @@
+import integrationDurations from "./integration-durations.json" with {
+  type: "json",
+};
 import { parseArgs } from "#std/flags";
 import { relative, resolve } from "node:path";
 import {
@@ -252,6 +255,58 @@ export function selectOrdinalShard(
   return sortedUnique(files).filter(
     (_, index) => index % shard.total === shard.index - 1,
   );
+}
+
+/** Longest-first allocation; unknown files retain coverage with a one-second estimate. */
+export function selectDurationShard(
+  files: readonly string[],
+  shard: SuiteShard,
+  durations: Readonly<Record<string, number>>,
+): string[] {
+  // Reuse the planner's fail-closed shard validation.
+  selectOrdinalShard([], shard);
+  const ordered = sortedUnique(files);
+  const weight = (path: string) => durations[path] ?? 1;
+  ordered.sort((a, b) => weight(b) - weight(a));
+  const shards = Array.from(
+    { length: shard.total },
+    () => ({ files: [] as string[], load: 0 }),
+  );
+  for (const path of ordered) {
+    const target = shards.reduce(
+      (best, candidate) => candidate.load < best.load ? candidate : best,
+      shards[0]!,
+    );
+    target.files.push(path);
+    target.load += weight(path);
+  }
+  return sortedUnique(shards[shard.index - 1]!.files);
+}
+
+/**
+ * Allocate both integration profiles together, preserving their execution flags.
+ * Estimates are the longest reported test group per file in merge-queue run
+ * 37187330681 (2026-10-04), rounded to seconds; sub-second/new files use one.
+ */
+export async function planIntegrationShard(
+  shard: SuiteShard,
+): Promise<SuiteFilePlan[]> {
+  const plans = await Promise.all(
+    (["integration:legacy-tests-root", "integration:cli"] as const).map((
+      suite,
+    ) => planSuiteFiles({ suite })),
+  );
+  const selected = new Set(
+    selectDurationShard(
+      plans.flatMap((plan) => plan.files),
+      shard,
+      integrationDurations,
+    ),
+  );
+  return plans.map((plan) => ({
+    ...plan,
+    files: plan.files.filter((path) => selected.has(path)),
+  }));
 }
 
 export function formatSuitePlan(

@@ -221,6 +221,27 @@ async function runSonarGate(
 }
 
 describe("merge quality gate workflow", () => {
+  it("runs all integration and CLI files across three duration-balanced shards", async () => {
+    const workflow = await readWorkflow();
+    const jobs = asRecord(workflow.jobs, "jobs");
+    const integration = asRecord(jobs["tests-integration"], "integration");
+    const strategy = asRecord(integration.strategy, "strategy");
+    const matrix = asRecord(strategy.matrix, "matrix");
+    assertEquals(matrix.shard, [1, 2, 3]);
+    assertEquals(integration.name, "tests (integration shard ${{ matrix.shard }}/3)");
+    const steps = integration.steps as YamlRecord[];
+    const run = steps.find((step) => step.name === "Run integration shard")!;
+    assertEquals(run.if, undefined);
+    assertStringIncludes(String(run.run), "planIntegrationShard({ index, total: 3 })");
+    assertStringIncludes(String(run.run), "DENO_SUITE_PROFILES[suite]");
+    assertStringIncludes(String(run.run), "buildDenoSuiteCommandArgs(suite, files");
+    assertStringIncludes(String(run.run), "buildTestProcessEnv(Deno.env.toObject(), profile.env)");
+    assertStringIncludes(String(run.run), "if (!status.success) Deno.exit(status.code)");
+    const aggregate = asRecord(jobs.tests, "integration aggregate");
+    assertEquals(aggregate.name, "tests (integration)");
+    assertEquals(aggregate.needs, ["tested-run", "tests-integration"]);
+  });
+
   it("scans queue commits as PRs and rejects invalid queue refs", async () => {
     const workflow = await readWorkflow();
     const jobs = asRecord(workflow.jobs, "jobs");

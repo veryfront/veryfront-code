@@ -182,11 +182,11 @@ jobs:
     if: ${{ !cancelled() && needs.tested-run.outputs.reuse != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
     runs-on: ${{ (github.event_name == 'push' || github.event_name == 'merge_group') && 'ubuntu-latest-m' || 'ubuntu-latest' }}
     timeout-minutes: 35
-    name: "tests (integration shard ${{ matrix.shard }}/2)"
+    name: "tests (integration shard ${{ matrix.shard }}/3)"
     strategy:
       fail-fast: ${{ github.event_name == 'merge_group' }}
       matrix:
-        shard: [1, 2]
+        shard: [1, 2, 3]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -225,7 +225,7 @@ jobs:
           INTEGRATION_SHARD: ${{ matrix.shard }}
         run: |
           deno eval --config=scripts/test.deno.json '
-            import { planSuiteFiles } from "./scripts/test/run-suite.ts";
+            import { planIntegrationShard } from "./scripts/test/run-suite.ts";
             import {
               buildDenoSuiteCommandArgs, DENO_SUITE_PROFILES,
             } from "./scripts/test/run-deno-suite.ts";
@@ -234,32 +234,29 @@ jobs:
               shouldRunDenoBatchInParallel,
             } from "./scripts/test/suites.ts";
             const index = Number(Deno.env.get("INTEGRATION_SHARD"));
-            const suite = "integration:legacy-tests-root";
-            const profile = DENO_SUITE_PROFILES[suite];
-            const plan = await planSuiteFiles({
-              suite, shard: { index, total: 2 },
-            });
-            if (!plan.files.length) throw new Error("empty integration shard");
-            console.log(`Integration shard ${index}/2: ${plan.files.length} files`);
-            const batches = partitionDenoSuiteFiles(plan.files, profile.maxFilesPerProcess);
-            for (const files of batches) {
-              const status = await new Deno.Command("deno", {
-                args: buildDenoSuiteCommandArgs(suite, files, {
-                  parallel: shouldRunDenoBatchInParallel(profile.parallel, files),
-                  passthroughArgs: ["--no-lock"],
-                }),
-                clearEnv: true,
-                env: buildTestProcessEnv(Deno.env.toObject(), profile.env),
-                stdin: "inherit", stdout: "inherit", stderr: "inherit",
-              }).spawn().status;
-              if (!status.success) Deno.exit(status.code);
+            const plans = await planIntegrationShard({ index, total: 3 });
+            if (!plans.some((plan) => plan.files.length)) throw new Error("empty integration shard");
+            for (const { suite, files: selected } of plans) {
+              if (selected.length === 0) continue;
+              const profile = DENO_SUITE_PROFILES[suite];
+              console.log(`Integration shard ${index}/3 (${suite}): ${selected.length} files`);
+              const batches = partitionDenoSuiteFiles(selected, profile.maxFilesPerProcess);
+              for (const files of batches) {
+                const status = await new Deno.Command("deno", {
+                  args: buildDenoSuiteCommandArgs(suite, files, {
+                    parallel: shouldRunDenoBatchInParallel(profile.parallel, files),
+                    passthroughArgs: ["--no-lock"],
+                  }),
+                  clearEnv: true,
+                  env: buildTestProcessEnv(Deno.env.toObject(), profile.env),
+                  stdin: "inherit", stdout: "inherit", stderr: "inherit",
+                }).spawn().status;
+                if (!status.success) Deno.exit(status.code);
+              }
             }
           '
-      - name: Run CLI integration tests
-        if: ${{ matrix.shard == 2 }}
-        run: deno task test:integration:cli --no-lock
 
-  # Preserve the required check name. Matrix results fail if either shard fails,
+  # Preserve the required check name. Matrix results fail if any shard fails,
   # is cancelled or is skipped; the merge gate also requires this aggregate.
   # A main run that reuses its merge-queue run skips the shards; that run
   # already passed them on this commit.
@@ -270,7 +267,7 @@ jobs:
     runs-on: ${{ (github.event_name == 'push' || github.event_name == 'merge_group') && 'ubuntu-latest-m' || 'ubuntu-latest' }}
     timeout-minutes: 2
     steps:
-      - name: Require both integration shards
+      - name: Require all integration shards
         env:
           REUSED_RUN_ID: ${{ needs.tested-run.outputs.reuse == 'true' && needs.tested-run.outputs.run_id || '' }}
           INTEGRATION_RESULT: ${{ needs.tests-integration.result }}
