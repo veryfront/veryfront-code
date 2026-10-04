@@ -20,7 +20,7 @@ async function cli(scenario: string, config?: unknown) {
     );
     if (config) await Deno.writeTextFile(`${dir}/veryfront.json`, JSON.stringify(config));
     const coverageDir = Deno.env.get("VF_RUNS_CLI_COVERAGE_DIR");
-    const result = await new Deno.Command(Deno.execPath(), {
+    const command = new Deno.Command(Deno.execPath(), {
       args: [
         "run",
         ...(coverageDir ? [`--coverage=${coverageDir}`] : []),
@@ -44,7 +44,75 @@ async function cli(scenario: string, config?: unknown) {
       },
       stdout: "piped",
       stderr: "piped",
-    }).output();
+    });
+    if (scenario === "ndjson-error-blocked") {
+      const child = command.spawn();
+      const reader = child.stdout.getReader({ mode: "byob" });
+      const stderrReader = child.stderr.getReader();
+      let ready = false;
+      const readiness = (async () => {
+        let text = "";
+        while (!text.includes("ndjson-error-ready")) {
+          const { value, done } = await stderrReader.read();
+          assert(!done, "Expected the iterator failure marker.");
+          text += new TextDecoder().decode(value);
+        }
+        ready = true;
+      })();
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      let stopped = false;
+      try {
+        let prefix = "";
+        // Small reads leave less than one error envelope of free pipe space
+        // while the stderr marker travels, including under coverage instrumentation.
+        while (!ready) {
+          const { value, done } = await reader.read(new Uint8Array(256));
+          assert(!done, "Expected partial error output before interruption.");
+          prefix = new TextDecoder().decode(value);
+          await new Promise((resolve) => setTimeout(resolve, 1));
+        }
+        await readiness;
+        // Let the handler reach its final error write, leaving stdout under backpressure.
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        child.kill("SIGINT");
+        const status = await Promise.race([
+          child.status,
+          new Promise<never>((_resolve, reject) => {
+            timer = setTimeout(() => reject(new Error("Cancellation did not terminate")), 3000);
+          }),
+        ]);
+        stopped = true;
+        let stderr = "";
+        while (true) {
+          const { value, done } = await stderrReader.read();
+          if (done) break;
+          stderr += new TextDecoder().decode(value);
+        }
+        return { code: status.code, stdout: prefix, stderr };
+      } finally {
+        if (timer !== undefined) clearTimeout(timer);
+        if (!stopped) child.kill("SIGKILL");
+        await child.status;
+        await reader.cancel();
+        reader.releaseLock();
+        await stderrReader.cancel();
+        stderrReader.releaseLock();
+      }
+    }
+    if (scenario === "ndjson-output-closed") {
+      const child = command.spawn();
+      const reader = child.stdout.getReader();
+      try {
+        await reader.read();
+        await reader.cancel();
+        const status = await child.status;
+        const stderr = await new Response(child.stderr).text();
+        return { code: status.code, stdout: "", stderr };
+      } finally {
+        reader.releaseLock();
+      }
+    }
+    const result = await command.output();
     return {
       code: result.code,
       stdout: new TextDecoder().decode(result.stdout),
@@ -90,6 +158,41 @@ describe("project runs CLI output and host credentials", () => {
       if (scenario === "stream-malformed") assertEquals(lines[0].success, true);
       assertEquals(lines.filter((line) => line.success === false).length, 1);
     }
+  });
+
+  it("emits per-item NDJSON envelopes without --json and preserves partial output on errors", async () => {
+    for (const scenario of ["ndjson", "ndjson-all", "ndjson-json"]) {
+      const success = await cli(scenario);
+      assertEquals(success.code, 0, success.stderr);
+      const lines = success.stdout.trim().split("\n").map((line) => JSON.parse(line));
+      assert(lines.length >= 2);
+      assert(lines.every((line) => line.success && !Array.isArray(line.data)));
+    }
+    const failure = await cli("ndjson-error");
+    assertEquals(failure.code, 1, failure.stderr);
+    const partial = failure.stdout.trim().split("\n").map((line) => JSON.parse(line));
+    assertEquals(partial[0].success, true);
+    assertEquals(partial.at(-1).success, false);
+    assertEquals(partial.at(-1).error.code, "FORBIDDEN");
+  });
+
+  it("interrupts a blocked final NDJSON error envelope with exit 130", async () => {
+    const result = await cli("ndjson-error-blocked");
+    assertEquals(result.code, 130, result.stderr);
+  });
+
+  it("emits an NDJSON usage error without --json when invocation parsing fails", async () => {
+    const result = await cli("ndjson-invalid");
+    assertEquals(result.code, 2, result.stderr);
+    const envelope = JSON.parse(result.stdout);
+    assertEquals(envelope.success, false);
+    assertEquals(envelope.error.slug, "invalid-arguments");
+  });
+
+  it("terminates with exit 1 when the stdout consumer closes", async () => {
+    const result = await cli("ndjson-output-closed");
+    assertEquals(result.code, 1);
+    assert(result.stderr.includes("Could not write NDJSON output."));
   });
 
   it("uses the stored login for account-scoped operations without a local project reference", async () => {
