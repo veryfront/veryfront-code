@@ -283,6 +283,45 @@ describe("Runs target SDK", () => {
     assertEquals(frameError.status, 502);
   });
 
+  it("rejects malformed canonical envelopes and contradictory SSE metadata", async () => {
+    const valid = canonicalFrame({ type: "TEXT_MESSAGE_CONTENT", delta: "x" }, 7);
+    const invalid: unknown[] = [
+      {},
+      { ...valid, event_id: -1 },
+      { ...valid, event_id: 1.5 },
+      { ...valid, event_type: "" },
+      { ...valid, payload: null },
+      { ...valid, payload: { type: "WRONG" } },
+      { ...valid, is_error: "false" },
+      { ...valid, created_at: 123 },
+    ];
+    const wires = invalid.map((event) => `data: ${JSON.stringify(event)}\n\n`);
+    wires.push(`id: 999\nevent: ${valid.event_type}\ndata: ${JSON.stringify(valid)}\n\n`);
+    wires.push(`id: 7\nevent: WRONG\ndata: ${JSON.stringify(valid)}\n\n`);
+    for (const wire of wires) {
+      const { sdk } = sdkWith([streamResponse([wire])]);
+      const error = await rejection(() =>
+        collect(sdk.streamRunEvents({ path: { run_id: RUN_ID } }))
+      );
+      assertEquals(error.status, 502);
+    }
+  });
+
+  it("preserves canonical transient frames and opaque payload extensions without SSE metadata", async () => {
+    const frame = {
+      ...canonicalFrame({ type: "CUSTOM", value: { nested: null }, future: [1, 2] }, 7),
+      event_id: null,
+      created_at: null,
+    };
+    const { sdk } = sdkWith([
+      streamResponse([`event: CUSTOM\ndata: ${JSON.stringify(frame)}\n\n`]),
+    ]);
+    assertEquals(await collect(sdk.streamRunEvents({ path: { run_id: RUN_ID } })), [{
+      id: null,
+      event: frame,
+    }]);
+  });
+
   it("follows page_info.next with unchanged filters until it is null", async () => {
     const run = FIXTURE_RUN;
     const { sdk, requests } = sdkWith([

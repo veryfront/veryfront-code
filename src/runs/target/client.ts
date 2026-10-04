@@ -318,6 +318,7 @@ async function* readFrames(
 /** Parse one SSE frame; a frame without data yields nothing. */
 function parseFrame(operationId: RunsOperationId, raw: string): RunStreamFrame | null {
   let id: string | null = null;
+  let eventType: string | undefined;
   const data: string[] = [];
   for (const line of raw.split("\n")) {
     if (line === "" || line.startsWith(":")) continue;
@@ -325,10 +326,38 @@ function parseFrame(operationId: RunsOperationId, raw: string): RunStreamFrame |
     const field = colon < 0 ? line : line.slice(0, colon);
     const value = colon < 0 ? "" : line.slice(colon + 1).replace(/^ /, "");
     if (field === "id") id = value;
+    else if (field === "event") eventType = value;
     else if (field === "data") data.push(value);
   }
   if (data.length === 0) return null;
-  return { id, event: parseJson(operationId, data.join("\n")) as RunStreamFrame["event"] };
+  const event = parseJson(operationId, data.join("\n"));
+  if (
+    !isCanonicalFrame(event) || event.payload.type !== event.event_type ||
+    (eventType !== undefined && eventType !== event.event_type) ||
+    (id !== null && (event.event_id === null || id !== String(event.event_id)))
+  ) {
+    throw API_CLIENT_ERROR.create({
+      detail: `${operationId} returned an invalid canonical event-stream frame`,
+      status: 502,
+      context: { operationId },
+    });
+  }
+  return { id, event };
+}
+
+function isCanonicalFrame(value: unknown): value is CanonicalRunStreamFrame {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  const frame = value as Record<string, unknown>;
+  const payload = frame.payload;
+  return (frame.event_id === null ||
+    (typeof frame.event_id === "number" && Number.isInteger(frame.event_id) &&
+      frame.event_id >= 0)) &&
+    typeof frame.event_type === "string" && frame.event_type.length > 0 &&
+    typeof payload === "object" && payload !== null && !Array.isArray(payload) &&
+    typeof (payload as Record<string, unknown>).type === "string" &&
+    (payload as Record<string, unknown>).type !== "" &&
+    typeof frame.is_error === "boolean" &&
+    (frame.created_at === null || typeof frame.created_at === "string");
 }
 
 /** Parse a success body; malformed JSON becomes an API client error, not a `SyntaxError`. */
