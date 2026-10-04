@@ -1228,6 +1228,11 @@ Deno.test("createHostedProjectRemoteToolSources applies project wrapper policy t
       context: { projectId: "project-1" },
     },
     {
+      toolName: "get_tool_access_profile",
+      args: { project_reference: "project-1" },
+      context: { projectId: "project-1" },
+    },
+    {
       toolName: "update_file",
       args: { path: "AGENTS.md", prepared: true, project_reference: "project-1" },
       context: { projectId: "project-1" },
@@ -1269,6 +1274,11 @@ Deno.test("createHostedProjectRemoteToolSources composes API input preparation f
   await sources[0]?.executeTool("github__list_issues", { owner: "veryfront" });
 
   assertEquals(executed, [
+    {
+      toolName: "get_tool_access_profile",
+      args: { project_reference: "project-1" },
+      context: { projectId: "project-1" },
+    },
     {
       toolName: "get_tool_access_profile",
       args: { project_reference: "project-1" },
@@ -1367,7 +1377,7 @@ Deno.test("authenticated hosted API catalogs retain platform tools under connect
       sourceIntegrationPolicy: { schemaVersion: 1, mode: "allowlist", integrations: {} },
       context: { authToken: "token-1" },
     }),
-    ["veryfront__get_file"],
+    ["get_file", "veryfront__get_file"],
   );
   assertEquals(
     await sources[0]!.executeTool("veryfront__get_file", {}, { projectId: "project-1" }),

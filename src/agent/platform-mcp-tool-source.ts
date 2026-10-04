@@ -4,7 +4,7 @@ import type { RemoteToolSource, ToolDefinition, ToolExecutionContext } from "#ve
 import { markTrustedPlatformSource } from "#veryfront/tool/platform-source-provenance.ts";
 import type { AgentMcpToolPolicy } from "./types.ts";
 
-/** Adapt an authenticated, access-filtered legacy platform catalog. */
+/** Adapt an authenticated, access-filtered platform catalog. */
 export function createPlatformMcpCatalogSource(
   source: RemoteToolSource,
   definitions: readonly ToolDefinition[],
@@ -17,11 +17,12 @@ export function createPlatformMcpCatalogSource(
   const catalog = [...definitions];
   const names = createPrivateSet(definitions.map((definition) => definition.name));
   for (const definition of definitions) {
-    if (definition.name.includes("__")) continue;
-    const canonicalName = `veryfront__${definition.name}`;
-    if (names.has(canonicalName)) continue;
-    aliases.set(canonicalName, definition.name);
-    catalog.push({ ...definition, name: canonicalName });
+    const legacyName = platformMcpLegacyName(definition.name);
+    if (legacyName.includes("__")) continue;
+    const alias = definition.name === legacyName ? `veryfront__${legacyName}` : legacyName;
+    if (names.has(alias)) continue;
+    aliases.set(alias, definition.name);
+    catalog.push({ ...definition, name: alias });
   }
   return {
     definitions: catalog,
@@ -62,14 +63,14 @@ export function withPlatformMcpPolicyAliases(
   };
 }
 
-/** Translate a platform selector at the authenticated legacy API boundary. */
+/** Translate a platform selector at the authenticated API boundary. */
 export function platformMcpLegacyName(name: string): string {
   if (!name.startsWith("veryfront__")) return name;
   const legacyName = name.slice("veryfront__".length);
   return legacyName && !legacyName.includes("__") ? legacyName : name;
 }
 
-/** Adapt a live legacy catalog without retaining project or credential state. */
+/** Adapt a live platform catalog without retaining project or credential state. */
 export function createLivePlatformMcpSource(source: RemoteToolSource): RemoteToolSource {
   // Keep only wire-name translations. The wrapped source still checks the
   // current project, credentials, access profile, and policy during execution.
@@ -78,7 +79,7 @@ export function createLivePlatformMcpSource(source: RemoteToolSource): RemoteToo
     const catalog = createPlatformMcpCatalogSource(source, await source.listTools(context));
     wireNames = createPrivateMap<string, string>();
     for (const { name } of catalog.definitions) {
-      if (name.startsWith("veryfront__")) wireNames.set(name, catalog.aliases.get(name) ?? name);
+      wireNames.set(name, catalog.aliases.get(name) ?? name);
     }
     return catalog.definitions;
   };
@@ -86,7 +87,7 @@ export function createLivePlatformMcpSource(source: RemoteToolSource): RemoteToo
     id: source.id,
     listTools,
     executeTool: async (name, args, context) => {
-      if (name.startsWith("veryfront__") && !wireNames.has(name)) await listTools(context);
+      if (!wireNames.has(name)) await listTools(context);
       return source.executeTool(wireNames.get(name) ?? name, args, context);
     },
   });

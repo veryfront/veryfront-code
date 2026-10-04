@@ -88,9 +88,13 @@ it("live platform catalogs preserve existing canonical dispatch", async () => {
       return {};
     },
   });
-  assertEquals((await source.listTools()).map(({ name }) => name), ["veryfront__get_file"]);
+  assertEquals((await source.listTools()).map(({ name }) => name), [
+    "veryfront__get_file",
+    "get_file",
+  ]);
   await source.executeTool("veryfront__get_file", {});
-  assertEquals(calls, ["veryfront__get_file"]);
+  await source.executeTool("get_file", {});
+  assertEquals(calls, ["veryfront__get_file", "veryfront__get_file"]);
 });
 
 it("live platform execution resolves undiscovered aliases without repeating known discovery", async () => {

@@ -1327,9 +1327,7 @@ it("preserves trusted bootstrap platform sources through nested credential and t
         projectId: "project-1",
         sourceIntegrationPolicy: policy,
       }),
-      [
-        "veryfront__get_file",
-      ],
+      selected === constrained ? ["veryfront__get_file"] : ["get_file", "veryfront__get_file"],
     );
   }
   assertEquals(
