@@ -21,7 +21,7 @@ setLoggerPreset("cli");
 // Establish machine-output mode before startup modules can emit diagnostics.
 const { parseCliArgs } = await import("./shared/args.ts");
 const args = parseCliArgs(Deno.args);
-if (args.json || args.j) {
+if (args.json || args.j || args.ndjson === true) {
   const { setJsonMode } = await import("./shared/json-output.ts");
   setJsonMode(true);
 }
