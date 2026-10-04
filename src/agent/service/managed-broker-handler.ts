@@ -376,7 +376,19 @@ function createManagedBrokerIngressHandler<TIngress>(options: {
               requestSignal: request.signal,
               runId,
               ...parsed.stream,
-              onSettled: () => retire(runtime.settled),
+              onSettled: async () => {
+                try {
+                  await retire(runtime.settled);
+                  await settleHostedAgentPause(runtime);
+                } catch (error) {
+                  invalidateHostedAgentPauseSettlement(runtime, error);
+                  throw error;
+                }
+              },
+              trackExecution: (execution) => {
+                executions.add(execution);
+                void execution.finally(() => executions.delete(execution)).catch(() => {});
+              },
             });
           } catch (error) {
             await runtime.close("canceled").catch(() => {});
@@ -495,6 +507,7 @@ async function createSseResponse(input: {
   agentId: string;
   agUiInput: AgUiRuntimeRequest;
   onSettled(): Promise<void>;
+  trackExecution(execution: Promise<void>): void;
 }): Promise<Response> {
   const result = await input.runtime.agent.stream({
     messages: input.messages,
@@ -506,18 +519,57 @@ async function createSseResponse(input: {
   const completion = Promise.withResolvers<void>();
   let natural = false;
   let cleanup: Promise<void> | undefined;
+  const settlement = Promise.withResolvers<void>();
+  const invalidateRequestAbort = () =>
+    invalidateHostedAgentPauseSettlement(input.runtime, new Error("SSE request aborted"));
+  input.requestSignal.addEventListener("abort", invalidateRequestAbort, { once: true });
+  if (input.requestSignal.aborted) invalidateRequestAbort();
+  input.trackExecution(
+    settlement.promise.finally(() =>
+      input.requestSignal.removeEventListener("abort", invalidateRequestAbort)
+    ),
+  );
   const finish = (reason: "completed" | "canceled") => {
-    cleanup ??= Promise.resolve().then(async () => {
-      await input.runtime.close(reason).catch(() => {});
-      await input.runtime.settled;
-      await input.onSettled();
-    });
+    if (reason === "canceled") {
+      invalidateHostedAgentPauseSettlement(input.runtime, new Error("SSE execution canceled"));
+    }
+    if (!cleanup) {
+      cleanup = Promise.resolve().then(async () => {
+        recordHostedAgentPauseFlush(
+          input.runtime,
+          natural && reason === "completed" && !input.requestSignal.aborted,
+        );
+        const closure = await input.runtime.close(reason).catch((error) => {
+          invalidateHostedAgentPauseSettlement(input.runtime, error);
+          return undefined;
+        });
+        await input.runtime.settled;
+        recordHostedAgentPauseCleanup(
+          input.runtime,
+          reason === "completed" && closure?.reason === "completed" &&
+            closure.release !== "reaper-required",
+        );
+        await input.onSettled();
+      });
+      void cleanup.then(settlement.resolve, settlement.reject);
+    }
     return cleanup;
   };
   const agentUIStream = (async function* () {
     try {
-      for await (const chunk of source) yield chunk;
+      for await (const chunk of source) {
+        if (chunk.type === "error" || (chunk.type === "finish" && chunk.finishReason === "error")) {
+          invalidateHostedAgentPauseSettlement(
+            input.runtime,
+            new Error("Agent stream failed after pause acknowledgement"),
+          );
+        }
+        yield chunk;
+      }
       natural = true;
+    } catch (error) {
+      invalidateHostedAgentPauseSettlement(input.runtime, error);
+      throw error;
     } finally {
       completion.resolve();
     }

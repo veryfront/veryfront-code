@@ -20,7 +20,7 @@ import {
   signedRequest,
 } from "#veryfront/agent/service/broker-ingress.test-helpers.ts";
 
-for (const mode of ["durable", "signed"] as const) {
+for (const mode of ["durable", "signed", "signed-sse"] as const) {
   it(`settles the managed ${mode} factory capability after normal session closure`, async () => {
     const session = new AbortController();
     const execution = new AbortController();
@@ -74,6 +74,12 @@ for (const mode of ["durable", "signed"] as const) {
               toUIMessageStream: () =>
                 (async function* () {
                   yield { type: "start", messageId: "assistant-message" } as const;
+                  yield {
+                    type: "data-veryfront.manual_pause",
+                    data: { paused: true },
+                    transient: true,
+                  } as const;
+                  flushed = true;
                 })(),
             };
           },
@@ -104,10 +110,10 @@ for (const mode of ["durable", "signed"] as const) {
       };
       const signed = await signedRequest();
       signed.request.headers.set("x-veryfront-run-stop-token", "test-stop");
-      const managed = mode === "signed"
+      const managed = mode !== "durable"
         ? createManagedBrokerHandler({
           ...common,
-          responseMode: "detached",
+          responseMode: mode === "signed-sse" ? "sse" : "detached",
           resolveIngressOptions: () => signedOptions(signed.publicKeyPem),
         })
         : createManagedDurableBrokerHandler({
@@ -124,7 +130,7 @@ for (const mode of ["durable", "signed"] as const) {
         });
       try {
         const response = await managed.handle(
-          mode === "signed" ? signed.request : new Request("https://broker.test/api/runs", {
+          mode !== "durable" ? signed.request : new Request("https://broker.test/api/runs", {
             method: "POST",
             headers: {
               "content-type": "application/json",
@@ -142,7 +148,8 @@ for (const mode of ["durable", "signed"] as const) {
             }),
           }),
         );
-        assertEquals(response.status, 202);
+        assertEquals(response.status, mode === "signed-sse" ? 200 : 202);
+        if (mode === "signed-sse") await response.text();
         await managed.close();
         assertEquals(receipts, 1);
         assertEquals(managed.active, 0);

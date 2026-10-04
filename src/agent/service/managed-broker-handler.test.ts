@@ -1034,46 +1034,115 @@ describe("managed broker handler", () => {
     });
   });
 
-  for (
-    const failure of [
-      "none",
-      "native-pending",
-      "stream",
-      "flush",
-      "cleanup",
-      "reaper",
-      "cancel",
-    ] as const
-  ) {
-    it(`settles managed pause after retirement only with successful producer work (${failure})`, async () => {
-      const f = await handler("detached", {
-        streamFailure: failure === "stream",
-        outputFailure: failure === "flush",
-        cleanupFailure: failure === "cleanup",
+  for (const mode of ["detached", "sse"] as const) {
+    for (
+      const failure of [
+        "none",
+        "native-pending",
+        "stream",
+        "flush",
+        "cleanup",
+        "reaper",
+        "cancel",
+        "terminal-error",
+        "terminal-finish-error",
+      ] as const
+    ) {
+      if (mode === "sse" && failure === "flush") continue;
+      it(`settles managed ${mode} pause after retirement only with successful producer work (${failure})`, async () => {
+        const f = await handler(mode, {
+          streamFailure: failure === "stream",
+          outputFailure: failure === "flush",
+          cleanupFailure: failure === "cleanup",
+          terminalChunk: failure === "terminal-error"
+            ? "error"
+            : failure === "terminal-finish-error"
+            ? "finish-error"
+            : undefined,
+        });
+        const controller = new AbortController();
+        const sessionController = new AbortController();
+        const originalClose = f.fixture.runtime.close.bind(f.fixture.runtime);
+        f.fixture.runtime.close = (reason) => {
+          sessionController.abort();
+          return originalClose(reason);
+        };
+        let receipts = 0;
+        const capability = createRunBoundAgentManualPause({
+          apiUrl: "https://api.example.test",
+          runId: "run-1",
+          token: "synthetic-pause-token",
+          signal: sessionController.signal,
+          settlementSignal: controller.signal,
+          fetch: (_url, init) => {
+            if (JSON.parse(String(init?.body)).settled) {
+              receipts++;
+              assertEquals(sessionController.signal.aborted, true);
+              assertEquals(controller.signal.aborted, false);
+              assertEquals(f.managed.active, 0);
+              assertEquals(f.cleanupCalls, 1);
+              assertEquals(f.fixture.closeReasons, ["completed"]);
+            }
+            return Promise.resolve(Response.json({ stop: true }));
+          },
+        });
+        await capability.acknowledge({
+          version: 1,
+          nextStep: 1,
+          messages: [],
+          toolCalls: [],
+          usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
+          latestAssistantText: "",
+          completed: false,
+          recoveredEmptyResponse: false,
+          recoveredInterruptedLocalToolBatch: false,
+        });
+        if (failure !== "native-pending") capability.persisted?.(true);
+        inheritHostedAgentPauseCapability(f.fixture.runtime, capability);
+        if (failure === "reaper") {
+          const close = f.fixture.runtime.close.bind(f.fixture.runtime);
+          f.fixture.runtime.close = async (reason) => ({
+            ...await close(reason),
+            release: "reaper-required",
+          });
+        }
+        const response = await f.managed.handle(f.first.request);
+        assertEquals(response.status, mode === "sse" ? 200 : 202);
+        if (failure === "cancel") {
+          controller.abort();
+          f.abortExecution();
+        }
+        f.fixture.release();
+        if (mode === "sse") {
+          await response.text().catch(() => {
+            assertEquals(failure, "cleanup");
+          });
+        }
+        await f.managed.close();
+        assertEquals(receipts, failure === "none" ? 1 : 0);
       });
-      const controller = new AbortController();
-      const sessionController = new AbortController();
-      const originalClose = f.fixture.runtime.close.bind(f.fixture.runtime);
-      f.fixture.runtime.close = (reason) => {
-        sessionController.abort();
-        return originalClose(reason);
+    }
+  }
+  for (const cancellationKind of ["body", "request"] as const) {
+    it(`invalidates an SSE pause when ${cancellationKind} cancellation races completed cleanup`, async () => {
+      const requestAbort = new AbortController();
+      const f = await handler("sse", { signal: requestAbort.signal });
+      const entered = Promise.withResolvers<void>();
+      const release = Promise.withResolvers<void>();
+      const close = f.fixture.runtime.close.bind(f.fixture.runtime);
+      f.fixture.runtime.close = async (reason) => {
+        entered.resolve();
+        await release.promise;
+        return close(reason);
       };
       let receipts = 0;
       const capability = createRunBoundAgentManualPause({
         apiUrl: "https://api.example.test",
         runId: "run-1",
         token: "synthetic-pause-token",
-        signal: sessionController.signal,
-        settlementSignal: controller.signal,
+        signal: new AbortController().signal,
         fetch: (_url, init) => {
-          if (JSON.parse(String(init?.body)).settled) {
-            receipts++;
-            assertEquals(sessionController.signal.aborted, true);
-            assertEquals(controller.signal.aborted, false);
-            assertEquals(f.managed.active, 0);
-            assertEquals(f.cleanupCalls, 1);
-            assertEquals(f.fixture.closeReasons, ["completed"]);
-          }
+          if (JSON.parse(String(init?.body)).settled) receipts++;
           return Promise.resolve(Response.json({ stop: true }));
         },
       });
@@ -1088,71 +1157,74 @@ describe("managed broker handler", () => {
         recoveredEmptyResponse: false,
         recoveredInterruptedLocalToolBatch: false,
       });
-      if (failure !== "native-pending") capability.persisted?.(true);
+      capability.persisted?.(true);
       inheritHostedAgentPauseCapability(f.fixture.runtime, capability);
-      if (failure === "reaper") {
-        const close = f.fixture.runtime.close.bind(f.fixture.runtime);
-        f.fixture.runtime.close = async (reason) => ({
-          ...await close(reason),
-          release: "reaper-required",
-        });
-      }
-      assertEquals((await f.managed.handle(f.first.request)).status, 202);
-      if (failure === "cancel") {
-        controller.abort();
-        f.abortExecution();
-      }
+      const response = await f.managed.handle(f.first.request);
+      const reader = response.body!.getReader();
+      const reading = (async () => {
+        while (!(await reader.read()).done) { /* Drain to the held cleanup. */ }
+      })();
       f.fixture.release();
+      await entered.promise;
+      const cancellation = cancellationKind === "body"
+        ? reader.cancel("client stopped reading")
+        : Promise.resolve(requestAbort.abort());
+      release.resolve();
+      await Promise.all([reading, cancellation]);
       await f.managed.close();
-      assertEquals(receipts, failure === "none" ? 1 : 0);
+      assertEquals(f.fixture.closeReasons, ["completed"]);
+      assertEquals(f.cleanupCalls, 1);
+      assertEquals(receipts, 0);
     });
   }
-
-  it("keeps shutdown waiting for a post-retirement settlement receipt", async () => {
-    const f = await handler("detached");
-    const entered = Promise.withResolvers<void>();
-    const reply = Promise.withResolvers<Response>();
-    const capability = createRunBoundAgentManualPause({
-      apiUrl: "https://api.example.test",
-      runId: "run-1",
-      token: "synthetic-pause-token",
-      signal: new AbortController().signal,
-      fetch: (_url, init) => {
-        if (!JSON.parse(String(init?.body)).settled) {
-          return Promise.resolve(Response.json({ stop: true }));
-        }
-        assertEquals(f.managed.active, 0);
-        assertEquals(f.cleanupCalls, 1);
-        entered.resolve();
-        return reply.promise;
-      },
+  for (const mode of ["detached", "sse"] as const) {
+    it(`keeps ${mode} shutdown waiting for a post-retirement settlement receipt`, async () => {
+      const f = await handler(mode);
+      const entered = Promise.withResolvers<void>();
+      const reply = Promise.withResolvers<Response>();
+      const capability = createRunBoundAgentManualPause({
+        apiUrl: "https://api.example.test",
+        runId: "run-1",
+        token: "synthetic-pause-token",
+        signal: new AbortController().signal,
+        fetch: (_url, init) => {
+          if (!JSON.parse(String(init?.body)).settled) {
+            return Promise.resolve(Response.json({ stop: true }));
+          }
+          assertEquals(f.managed.active, 0);
+          assertEquals(f.cleanupCalls, 1);
+          entered.resolve();
+          return reply.promise;
+        },
+      });
+      await capability.acknowledge({
+        version: 1,
+        nextStep: 1,
+        messages: [],
+        toolCalls: [],
+        usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
+        latestAssistantText: "",
+        completed: false,
+        recoveredEmptyResponse: false,
+        recoveredInterruptedLocalToolBatch: false,
+      });
+      capability.persisted?.(true);
+      inheritHostedAgentPauseCapability(f.fixture.runtime, capability);
+      const response = await f.managed.handle(f.first.request);
+      assertEquals(response.status, mode === "sse" ? 200 : 202);
+      const reading = mode === "sse" ? response.text() : Promise.resolve();
+      f.fixture.release();
+      let closed = false;
+      const closing = f.managed.close().then(() => {
+        closed = true;
+      });
+      await entered.promise;
+      assertEquals(closed, false);
+      reply.resolve(Response.json({ stop: true }));
+      await Promise.all([closing, reading]);
+      assertEquals(closed, true);
     });
-    await capability.acknowledge({
-      version: 1,
-      nextStep: 1,
-      messages: [],
-      toolCalls: [],
-      usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
-      latestAssistantText: "",
-      completed: false,
-      recoveredEmptyResponse: false,
-      recoveredInterruptedLocalToolBatch: false,
-    });
-    capability.persisted?.(true);
-    inheritHostedAgentPauseCapability(f.fixture.runtime, capability);
-    assertEquals((await f.managed.handle(f.first.request)).status, 202);
-    f.fixture.release();
-    let closed = false;
-    const closing = f.managed.close().then(() => {
-      closed = true;
-    });
-    await entered.promise;
-    assertEquals(closed, false);
-    reply.resolve(Response.json({ stop: true }));
-    await closing;
-    assertEquals(closed, true);
-  });
-
+  }
   it("keeps a committed pause nonterminal when stream cleanup fails", async () => {
     const f = await handler("detached", { streamFailure: true });
     const capability = createRunBoundAgentManualPause({
