@@ -846,25 +846,38 @@ export async function executeHostedDurableChildFork<
 ): Promise<TResult> {
   const runEventWriterCapability = input.runEventWriterCapability ??
     getActiveHostedRunEventWriterCapability();
+  return runInheritedChildExecutionOnce(
+    runEventWriterCapability,
+    `${input.parentRunId}:${input.executionOptions.toolCallId}`,
+    (onAdmitted) =>
+      runWithHostedRunEventWriterCapability(
+        undefined,
+        () =>
+          executeHostedDurableChildForkWithCapability(input, runEventWriterCapability, onAdmitted),
+      ),
+  );
+}
+
+/** Share the existing exact-parent single-flight owner across local inherited adapters. */
+export async function runInheritedChildExecutionOnce<TResult>(
+  capability: HostedRunEventWriterCapability | undefined,
+  key: string,
+  execute: (onAdmitted: () => void) => Promise<TResult>,
+): Promise<TResult> {
   let admitted = false;
-  const execute = () =>
-    runWithHostedRunEventWriterCapability(
-      undefined,
-      () =>
-        executeHostedDurableChildForkWithCapability(input, runEventWriterCapability, () => {
-          admitted = true;
-        }),
-    );
-  if (!runEventWriterCapability) return await execute();
-  let executions = inheritedExecutions.get(runEventWriterCapability);
+  const operation = () =>
+    execute(() => {
+      admitted = true;
+    });
+  if (!capability) return await operation();
+  let executions = inheritedExecutions.get(capability);
   if (!executions) {
     executions = new Map();
-    inheritedExecutions.set(runEventWriterCapability, executions);
+    inheritedExecutions.set(capability, executions);
   }
-  const key = `${input.parentRunId}:${input.executionOptions.toolCallId}`;
   const existing = executions.get(key);
   if (existing) return await existing as TResult;
-  const execution = Promise.resolve().then(execute).finally(() => {
+  const execution = Promise.resolve().then(operation).finally(() => {
     if (!admitted) executions!.delete(key);
   });
   executions.set(key, execution);

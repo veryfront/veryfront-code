@@ -483,7 +483,271 @@ describe("StepExecutor timeout isolation", () => {
   });
 });
 
+describe("StepExecutor agent node ownership", () => {
+  it("wraps the whole retry loop with the actual first resolved input", async () => {
+    let resolutions = 0;
+    let executions = 0;
+    let admissions = 0;
+    const order: string[] = [];
+    const executor = new StepExecutor({
+      agentRegistry: {
+        get: () => ({
+          id: "research-agent",
+          generate: () => {
+            executions++;
+            order.push("execute");
+            if (executions === 1) throw TIMEOUT_ERROR.create({ detail: "retry" });
+            return { text: "done" };
+          },
+        }),
+      } as never,
+      runAgentNode: async (invocation) => {
+        admissions++;
+        assertEquals([invocation.nodeId, invocation.runId, invocation.agentId, invocation.input], [
+          "research",
+          "root",
+          "research-agent",
+          "input-1",
+        ]);
+        order.push("admit");
+        const result = await invocation.execute();
+        order.push("finalize");
+        return result;
+      },
+    });
+    const node = step("research", {
+      agent: "research-agent",
+      input: () => `input-${++resolutions}`,
+      retry: { maxAttempts: 2, backoff: "fixed", initialDelay: 1, maxDelay: 1 },
+    });
+    const result = await executor.execute(node, makeContext(), undefined, "root");
+    assertEquals(result.success, true);
+    assertEquals([admissions, executions, resolutions], [1, 2, 2]);
+    assertEquals(order, ["admit", "execute", "execute", "finalize"]);
+  });
+
+  it("does not restart local execution when the owning finalization transport fails", async () => {
+    let executions = 0;
+    let admissions = 0;
+    const executor = new StepExecutor({
+      agentRegistry: {
+        get: () => ({
+          id: "research-agent",
+          generate: () => {
+            executions++;
+            return { text: "done" };
+          },
+        }),
+      } as never,
+      runAgentNode: async (invocation) => {
+        admissions++;
+        await invocation.execute();
+        throw TIMEOUT_ERROR.create({ detail: "finalization acknowledgement lost" });
+      },
+    });
+    const result = await executor.execute(
+      step("research", {
+        agent: "research-agent",
+        retry: { maxAttempts: 2, backoff: "fixed", initialDelay: 1, maxDelay: 1 },
+      }),
+      makeContext(),
+      undefined,
+      "root",
+    );
+    assertEquals(result.success, false);
+    assertEquals([admissions, executions], [1, 1]);
+  });
+
+  it("returns a durable node replay without executing the local agent", async () => {
+    let executions = 0;
+    const receipt = { success: true, output: { text: "persisted" }, executionTime: 0 };
+    const executor = new StepExecutor({
+      agentRegistry: {
+        get: () => ({
+          id: "research-agent",
+          generate: () => {
+            executions++;
+            return { text: "wrong" };
+          },
+        }),
+      } as never,
+      runAgentNode: () => Promise.resolve(receipt),
+    });
+    assertEquals(
+      await executor.execute(
+        step("research", { agent: "research-agent" }),
+        makeContext(),
+        undefined,
+        "root",
+      ),
+      receipt,
+    );
+    assertEquals(executions, 0);
+  });
+
+  it("does not report a timed-out child terminal until the local operation settles", async () => {
+    using time = new FakeTime();
+    const started = Promise.withResolvers<void>();
+    const settle = Promise.withResolvers<{ text: string }>();
+    let terminal = false;
+    const executor = new StepExecutor({
+      cancellationGracePeriod: 1,
+      agentRegistry: {
+        get: () => ({
+          id: "research-agent",
+          generate: () => {
+            started.resolve();
+            return settle.promise;
+          },
+        }),
+      } as never,
+      runAgentNode: async (invocation) => {
+        const result = await invocation.execute();
+        terminal = true;
+        return result;
+      },
+    });
+    const pending = executor.execute(
+      step("research", { agent: "research-agent", timeout: 5 }),
+      makeContext(),
+      undefined,
+      "root",
+    );
+    await started.promise;
+    await time.tickAsync(6);
+    assertEquals(terminal, false);
+    settle.resolve({ text: "late" });
+    assertEquals((await pending).success, false);
+    assertEquals(terminal, true);
+  });
+
+  it("settles a failed node independently of a blocked sibling in the same workflow", async () => {
+    using time = new FakeTime();
+    const failedStarted = Promise.withResolvers<void>();
+    const siblingStarted = Promise.withResolvers<void>();
+    const failedSettle = Promise.withResolvers<{ text: string }>();
+    const siblingSettle = Promise.withResolvers<{ text: string }>();
+    const terminal: string[] = [];
+    const executor = new StepExecutor({
+      cancellationGracePeriod: 1,
+      agentRegistry: {
+        get: (id: string) => ({
+          id,
+          generate: () => {
+            (id === "failed" ? failedStarted : siblingStarted).resolve();
+            return id === "failed" ? failedSettle.promise : siblingSettle.promise;
+          },
+        }),
+      } as never,
+      runAgentNode: async (invocation) => {
+        const result = await invocation.execute();
+        terminal.push(invocation.nodeId);
+        return result;
+      },
+    });
+    const sibling = executor.execute(
+      step("sibling", { agent: "sibling", timeout: 10000 }),
+      makeContext(),
+      undefined,
+      "shared",
+    );
+    const failed = executor.execute(
+      step("failed", { agent: "failed", timeout: 5 }),
+      makeContext(),
+      undefined,
+      "shared",
+    );
+    await Promise.all([failedStarted.promise, siblingStarted.promise]);
+    try {
+      await time.tickAsync(6);
+      failedSettle.resolve({ text: "late" });
+      for (let i = 0; i < 20; i++) await Promise.resolve();
+      assertEquals(terminal, ["failed"]);
+      assertEquals((await failed).success, false);
+    } finally {
+      siblingSettle.resolve({ text: "done" });
+      await Promise.all([failed, sibling]);
+    }
+    assertEquals(terminal, ["failed", "sibling"]);
+  });
+
+  it("does not wrap ordinary tool nodes", async () => {
+    let admissions = 0;
+    const executor = new StepExecutor({
+      toolRegistry: { get: () => ({ id: "echo", execute: () => "ok" }) } as never,
+      runAgentNode: (invocation) => {
+        admissions++;
+        return invocation.execute();
+      },
+    });
+    assertEquals(
+      (await executor.execute(step("echo", { tool: "echo" }), makeContext())).success,
+      true,
+    );
+    assertEquals(admissions, 0);
+  });
+});
+
 describe("StepExecutor run scoping", () => {
+  it("awaits the node-start acknowledgement before executing the step", async () => {
+    const started = Promise.withResolvers<void>();
+    const acknowledged = Promise.withResolvers<void>();
+    const order: string[] = [];
+    const executor = new StepExecutor({
+      toolRegistry: {
+        get: () => ({
+          id: "echo",
+          execute: () => {
+            order.push("execute");
+            return "done";
+          },
+        }),
+      } as never,
+      onStepStart: async (nodeId, _input, runId) => {
+        assertEquals([nodeId, runId], ["research", "run-workflow"]);
+        order.push("start");
+        started.resolve();
+        await acknowledged.promise;
+        order.push("acknowledged");
+      },
+    });
+    const pending = executor.execute(
+      { id: "research", config: { type: "step", tool: "echo" } } as never,
+      makeContext(),
+      undefined,
+      "run-workflow",
+    );
+    await started.promise;
+    assertEquals(order, ["start"]);
+    acknowledged.resolve();
+    assertEquals((await pending).success, true);
+    assertEquals(order, ["start", "acknowledged", "execute"]);
+  });
+
+  it("does not execute when the node-start acknowledgement fails", async () => {
+    let executions = 0;
+    const executor = new StepExecutor({
+      toolRegistry: {
+        get: () => ({
+          id: "echo",
+          execute: () => {
+            executions++;
+          },
+        }),
+      } as never,
+      onStepStart: () => Promise.reject(new Error("Node start was not committed")),
+    });
+    const result = await executor.execute(
+      { id: "research", config: { type: "step", tool: "echo" } } as never,
+      makeContext(),
+      undefined,
+      "run-workflow",
+    );
+    assertEquals(result.success, false);
+    assertEquals(result.error, "Node start was not committed");
+    assertEquals(executions, 0);
+  });
+
   it("passes the run id to every step lifecycle hook", async () => {
     const started: Array<[string, string | undefined]> = [];
     const completed: Array<[string, string | undefined]> = [];

@@ -1,0 +1,524 @@
+import "#veryfront/schemas/_test-setup.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { describe, it } from "#veryfront/testing/bdd.ts";
+import { agent } from "#veryfront/agent/factory.ts";
+import { tool } from "#veryfront/tool";
+import { defineSchema } from "#veryfront/schemas";
+import { scriptedModel } from "#veryfront/agent/runtime/model-runtime.test-helpers.ts";
+import { StepExecutor } from "#veryfront/workflow/executor/step-executor.ts";
+import { step } from "#veryfront/workflow/dsl/step.ts";
+import {
+  executeLocalChild,
+  observeGeneratedAgentTurn,
+} from "#veryfront/agent/composition/local-child-execution.ts";
+import { createWorkflowAgentNodeRunner } from "./workflow-agent-child.ts";
+import { getActiveHostedRunEventWriterCapability } from "#veryfront/agent/hosted/child-run-event-writer-token.ts";
+
+const parentId = "11111111-1111-4111-8111-111111111111";
+const childId = "22222222-2222-4222-8222-222222222222";
+const conversationId = "33333333-3333-4333-8333-333333333333";
+const encode = (value: unknown) => `test.${btoa(JSON.stringify(value))}.signature`;
+const eventToken = encode({
+  tokenUse: "run_event_writer",
+  runId: "run_parent",
+  projectId: "project",
+  projectExecutionAttempt: { canonicalRunId: parentId, workerId: "worker", attemptId: "attempt" },
+});
+const terminalToken = encode({
+  tokenUse: "run_event_writer",
+  writerPurpose: "current_run_terminal",
+  runId: "run_child",
+  projectId: "project",
+  canonicalRunId: childId,
+  dispatchNonce: "nonce",
+});
+const json = (value: unknown, status = 200, headers = {}) =>
+  new Response(JSON.stringify(value), {
+    status,
+    headers: { "Content-Type": "application/json", ...headers },
+  });
+function admission(
+  status = "running",
+  output: unknown = null,
+  id = childId,
+  publicId = "run_child",
+) {
+  return json(
+    { id, status, output, conversation_id: conversationId, output_message_id: "message" },
+    202,
+    {
+      "Cache-Control": "no-store",
+      "X-Veryfront-Run-Terminal-Token": id === childId ? terminalToken : encode({
+        tokenUse: "run_event_writer",
+        writerPurpose: "current_run_terminal",
+        runId: publicId,
+        projectId: "project",
+        canonicalRunId: id,
+        dispatchNonce: "nonce-child",
+      }),
+      "X-Veryfront-Run-Invocation-Token": "child-invocation",
+      "X-Veryfront-Run-Event-Token": "child-event",
+      "X-Veryfront-Run-Renewal-Token": "child-renewal",
+      "X-Veryfront-Run-Lease-Expires-At": new Date(Date.now() + 60000).toISOString(),
+      "X-Veryfront-Run-Event-Sequence": "0",
+      "X-Veryfront-Run-External-Event-Sequence": "0",
+    },
+  );
+}
+function runner(send: typeof fetch, token = eventToken) {
+  return createWorkflowAgentNodeRunner({
+    runId: "run_parent",
+    projectId: "project",
+    apiUrl: "https://api.example.test",
+    eventToken: token,
+    authToken: "parent-invocation",
+    fetch: send,
+  });
+}
+const invocation = {
+  nodeId: "research",
+  runId: "run_parent",
+  agentId: "coordinator",
+  input: { query: "brief" },
+};
+
+describe("workflow agent child protocol", () => {
+  it("acknowledges node start then admits, executes locally once and finalizes with exact child authority", async () => {
+    const order: string[] = [];
+    const send: typeof fetch = (_url, init) => {
+      const url = String(_url);
+      const headers = new Headers(init?.headers);
+      const body = JSON.parse(String(init?.body));
+      if (url.endsWith(`/runs/${parentId}/events`)) {
+        order.push("start");
+        assertEquals(headers.get("Authorization"), `Bearer ${eventToken}`);
+        assertEquals(body.events, [{ type: "STEP_STARTED", stepId: "research" }]);
+        return Promise.resolve(json({}));
+      }
+      if (url.endsWith("/runs")) {
+        order.push("admit");
+        assertEquals(headers.get("X-Veryfront-Run-Event-Token"), eventToken);
+        assertEquals(headers.get("Authorization"), "Bearer parent-invocation");
+        assertEquals(body.parent_run_id, parentId);
+        assertEquals(body.node_id, "research");
+        assertEquals(body.input, { prompt: JSON.stringify(invocation.input) });
+        return Promise.resolve(admission());
+      }
+      assertEquals(url, `https://api.example.test/runs/${childId}/finalize`);
+      order.push("finalize");
+      assertEquals(headers.get("Authorization"), "Bearer child-invocation");
+      assertEquals(headers.get("X-Veryfront-Run-Terminal-Token"), terminalToken);
+      assertEquals(body, { status: "completed", output: { text: "brief" } });
+      return Promise.resolve(json({ id: childId, status: "completed" }));
+    };
+    const result = await runner(send)({
+      ...invocation,
+      execute: () => {
+        order.push("execute");
+        assertEquals(typeof getActiveHostedRunEventWriterCapability(), "object");
+        return Promise.resolve({ success: true, output: { text: "brief" }, executionTime: 1 });
+      },
+    });
+    assertEquals(result.output, { text: "brief" });
+    assertEquals(order, ["start", "admit", "execute", "finalize"]);
+    assertEquals(getActiveHostedRunEventWriterCapability(), undefined);
+  });
+
+  it("mirrors the actual Agent.generate text, reasoning and ordinary tool turn without changing provider execution", async () => {
+    const events: Record<string, unknown>[] = [];
+    let cursor = 0;
+    let toolExecutions = 0;
+    const model = scriptedModel([
+      {
+        content: [{ type: "reasoning", text: "Inspect facts" }, {
+          type: "text",
+          text: "Looking up",
+        }, {
+          type: "tool-call",
+          toolCallId: "lookup-call",
+          toolName: "lookup",
+          input: '{"query":"brief"}',
+        }],
+        finishReason: "tool-calls",
+      },
+      { text: "Finished brief" },
+    ], { only: "generate" });
+    const actualAgent = agent({
+      id: "workflow-projection-agent",
+      model: "test/workflow",
+      system: "Use lookup",
+      skills: false,
+      maxSteps: 3,
+      resolveModelTransport: () => ({ model }),
+      tools: {
+        lookup: tool({
+          id: "lookup",
+          description: "Lookup",
+          inputSchema: defineSchema((v) => v.object({ query: v.string() }))(),
+          execute: () => {
+            toolExecutions++;
+            return { fact: "known" };
+          },
+        }),
+      },
+    });
+    const send: typeof fetch = (url, init) => {
+      const path = new URL(String(url)).pathname;
+      const body = JSON.parse(String(init?.body));
+      if (path === `/runs/${parentId}/events`) return Promise.resolve(json({}));
+      if (path === "/runs") return Promise.resolve(admission());
+      if (path.endsWith("/events")) {
+        events.push(...body.events);
+        cursor += body.events.length;
+        return Promise.resolve(
+          json({
+            run_id: childId,
+            latest_event_id: cursor,
+            latest_external_event_sequence: cursor,
+            appended_count: body.events.length,
+          }),
+        );
+      }
+      return Promise.resolve(json({ id: childId, status: body.status }));
+    };
+    const executor = new StepExecutor({ runAgentNode: runner(send) });
+    const result = await executor.execute(
+      step("research", { agent: actualAgent, input: "Produce brief" }),
+      { input: {} },
+      undefined,
+      "run_parent",
+    );
+    assertEquals(result.success, true);
+    assertEquals([model.callCount, toolExecutions], [2, 1]);
+    assertEquals(
+      events.filter((event) => event.type === "TEXT_MESSAGE_CONTENT").map((event) => event.delta),
+      ["Looking up", "Finished brief"],
+    );
+    assertEquals(
+      events.filter((event) => event.type === "REASONING_MESSAGE_CONTENT").map((event) =>
+        event.delta
+      ),
+      ["Inspect facts"],
+    );
+    assertEquals(
+      events.filter((event) => event.type === "TOOL_CALL_START").map((event) => event.toolCallId),
+      ["lookup-call"],
+    );
+    assertEquals(
+      events.filter((event) => event.type === "TOOL_CALL_RESULT").map((event) => event.toolCallId),
+      ["lookup-call"],
+    );
+  });
+
+  it("persists actual coordinator tool evidence before admitting and locally streaming its child", async () => {
+    const grandchildId = "44444444-4444-4444-8444-444444444444";
+    const order: string[] = [];
+    const counts = new Map<string, number>();
+    const send: typeof fetch = (url, init) => {
+      const path = new URL(String(url)).pathname;
+      const body = JSON.parse(String(init?.body));
+      if (path === `/runs/${parentId}/events`) return Promise.resolve(json({}));
+      if (path.endsWith("/events")) {
+        const id = path.split("/")[2]!;
+        const events = body.events;
+        for (const event of events) {
+          if (event.type === "TOOL_CALL_START") {
+            assertEquals(id, childId);
+            assertEquals(event.toolCallId, "call-research");
+            assertEquals(event.toolCallName, "invoke_agent");
+            order.push("tool-evidence");
+          }
+          if (event.type === "TEXT_MESSAGE_CONTENT") order.push("child-text");
+        }
+        const count = (counts.get(id) ?? 0) + events.length;
+        counts.set(id, count);
+        return Promise.resolve(
+          json({
+            run_id: id,
+            latest_event_id: count,
+            latest_external_event_sequence: count,
+            appended_count: events.length,
+          }),
+        );
+      }
+      if (path === "/runs") {
+        if (body.node_id) return Promise.resolve(admission());
+        assertEquals(order.includes("tool-evidence"), true);
+        assertEquals(body.parent_run_id, childId);
+        assertEquals(body.tool_call_id, "call-research");
+        assertEquals(body.target.id, "brief-research");
+        order.push("admit-research");
+        return Promise.resolve(admission("running", null, grandchildId, "run_research"));
+      }
+      order.push(path.includes(grandchildId) ? "finish-research" : "finish-coordinator");
+      return Promise.resolve(json({ id: path.split("/")[2], status: body.status }));
+    };
+    const result = await runner(send)({
+      ...invocation,
+      execute: async () => {
+        await observeGeneratedAgentTurn("coordinator-message", {
+          text: "",
+          toolCalls: [{
+            toolCallId: "call-research",
+            toolName: "invoke_agent",
+            input: { agent_id: "brief-research", prompt: "Research" },
+          }],
+        });
+        const output = await executeLocalChild({
+          agentId: "brief-research",
+          input: "Research",
+          toolName: "invoke_agent",
+          toolInput: { agent_id: "brief-research", prompt: "Research" },
+          context: { toolCallId: "call-research" },
+          execute: async (control) => {
+            order.push("local-research");
+            await control?.onEvent?.({ type: "text-start", id: "text" });
+            await control?.onEvent?.({ type: "text-delta", id: "text", delta: "Finding" });
+            await control?.onEvent?.({ type: "text-end", id: "text" });
+            return { text: "Finding", toolCalls: 0, status: "completed" };
+          },
+        });
+        return { success: true, output, executionTime: 0 };
+      },
+    });
+    assertEquals(result.success, true);
+    assertEquals(order, [
+      "tool-evidence",
+      "admit-research",
+      "local-research",
+      "child-text",
+      "finish-research",
+      "finish-coordinator",
+    ]);
+  });
+
+  it("keeps concurrent workflow children and their tool-call authority isolated", async () => {
+    const parentB = "55555555-5555-4555-8555-555555555555";
+    const childB = "66666666-6666-4666-8666-666666666666";
+    const leafA = "77777777-7777-4777-8777-777777777777";
+    const leafB = "88888888-8888-4888-8888-888888888888";
+    const seen: string[] = [];
+    const cursors = new Map<string, number>();
+    let entered = 0;
+    let release!: () => void;
+    const together = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const send: typeof fetch = (url, init) => {
+      const path = new URL(String(url)).pathname;
+      const body = JSON.parse(String(init?.body));
+      const headers = new Headers(init?.headers);
+      if (path.endsWith("/events")) {
+        const id = path.split("/")[2]!;
+        const cursor = (cursors.get(id) ?? 0) + body.events.length;
+        cursors.set(id, cursor);
+        return Promise.resolve(
+          json({
+            run_id: id,
+            latest_event_id: cursor,
+            latest_external_event_sequence: cursor,
+            appended_count: body.events.length,
+          }),
+        );
+      }
+      if (path === "/runs") {
+        if (body.node_id) {
+          const second = body.parent_run_id === parentB;
+          assertEquals(
+            headers.get("Authorization"),
+            second ? "Bearer parent-b" : "Bearer parent-invocation",
+          );
+          return Promise.resolve(
+            admission(
+              "running",
+              null,
+              second ? childB : childId,
+              second ? "run_child_b" : "run_child",
+            ),
+          );
+        }
+        seen.push(`${body.parent_run_id}:${body.tool_call_id}:${body.target.id}`);
+        const second = body.target.id === "leaf-b";
+        assertEquals(body.parent_run_id, second ? childB : childId);
+        const token = headers.get("X-Veryfront-Run-Terminal-Token")!;
+        assertEquals(JSON.parse(atob(token.split(".")[1]!)).canonicalRunId, body.parent_run_id);
+        return Promise.resolve(
+          admission("running", null, second ? leafB : leafA, second ? "run_leaf_b" : "run_leaf_a"),
+        );
+      }
+      return Promise.resolve(json({ id: path.split("/")[2], status: body.status }));
+    };
+    const execute = (target: string) => async () => {
+      if (++entered === 2) release();
+      await together;
+      await observeGeneratedAgentTurn(`message-${target}`, {
+        text: "",
+        toolCalls: [{
+          toolCallId: "same-tool-id",
+          toolName: "invoke_agent",
+          input: { agent_id: target },
+        }],
+      });
+      const output = await executeLocalChild({
+        agentId: target,
+        input: target,
+        toolName: "invoke_agent",
+        toolInput: { agent_id: target },
+        context: { toolCallId: "same-tool-id" },
+        execute: () => Promise.resolve({ text: target, status: "completed", toolCalls: 0 }),
+      });
+      return { success: true, output, executionTime: 0 };
+    };
+    const second = createWorkflowAgentNodeRunner({
+      runId: "run_parent_b",
+      projectId: "project",
+      apiUrl: "https://api.example.test",
+      fetch: send,
+      authToken: "parent-b",
+      eventToken: encode({
+        tokenUse: "run_event_writer",
+        runId: "run_parent_b",
+        projectId: "project",
+        projectExecutionAttempt: {
+          canonicalRunId: parentB,
+          workerId: "worker-b",
+          attemptId: "attempt-b",
+        },
+      }),
+    });
+    const results = await Promise.all([
+      runner(send)({ ...invocation, execute: execute("leaf-a") }),
+      second({ ...invocation, runId: "run_parent_b", execute: execute("leaf-b") }),
+    ]);
+    assertEquals(results.map((value) => value.success), [true, true]);
+    assertEquals(
+      seen.sort(),
+      [`${childId}:same-tool-id:leaf-a`, `${childB}:same-tool-id:leaf-b`].sort(),
+    );
+  });
+
+  it("refuses invented and mismatched tool invocations before child admission", async () => {
+    for (const declared of [undefined, "different-agent"]) {
+      let admissions = 0;
+      let localExecutions = 0;
+      let cursor = 0;
+      const send: typeof fetch = (url, init) => {
+        const path = new URL(String(url)).pathname;
+        const body = JSON.parse(String(init?.body));
+        if (path === `/runs/${parentId}/events`) return Promise.resolve(json({}));
+        if (path === "/runs") {
+          admissions++;
+          return Promise.resolve(admission());
+        }
+        if (path.endsWith("/events")) {
+          cursor += body.events.length;
+          return Promise.resolve(
+            json({
+              run_id: childId,
+              latest_event_id: cursor,
+              latest_external_event_sequence: cursor,
+              appended_count: body.events.length,
+            }),
+          );
+        }
+        return Promise.resolve(json({ id: childId, status: body.status }));
+      };
+      const result = await runner(send)({
+        ...invocation,
+        execute: async () => {
+          if (declared) {
+            await observeGeneratedAgentTurn("message", {
+              text: "",
+              toolCalls: [{
+                toolCallId: "invented",
+                toolName: "invoke_agent",
+                input: { agent_id: declared },
+              }],
+            });
+          }
+          await executeLocalChild({
+            agentId: "research",
+            input: "Do work",
+            toolName: "invoke_agent",
+            toolInput: {},
+            context: { toolCallId: "invented" },
+            execute: () => {
+              localExecutions++;
+              return Promise.resolve({ text: "wrong", status: "completed", toolCalls: 0 });
+            },
+          });
+          return { success: true, output: "wrong", executionTime: 0 };
+        },
+      });
+      assertEquals(result.success, false);
+      assertEquals(result.error?.includes("no matching admitted tool invocation"), true);
+      assertEquals([admissions, localExecutions], [1, 0]);
+    }
+  });
+
+  it("does not admit or execute when durable node start is refused", async () => {
+    let calls = 0;
+    await assertRejects(
+      () =>
+        runner(() => {
+          calls++;
+          return Promise.resolve(json({}, 403));
+        })({
+          ...invocation,
+          execute: () => {
+            throw new Error("must not execute");
+          },
+        }),
+      Error,
+      "Workflow node start failed",
+    );
+    assertEquals(calls, 1);
+  });
+
+  it("replays completed child output without local execution or finalization", async () => {
+    const output = { text: "durable", object: { answer: 42 } };
+    let calls = 0;
+    const result = await runner(() =>
+      Promise.resolve(++calls === 1 ? json({}) : admission("completed", output))
+    )({
+      ...invocation,
+      execute: () => {
+        throw new Error("must not execute");
+      },
+    });
+    assertEquals(result, { success: true, output, executionTime: 0 });
+    assertEquals(calls, 2);
+  });
+
+  it("rejects mismatched or missing parent routing authority before HTTP", async () => {
+    for (
+      const token of [
+        "",
+        encode({
+          tokenUse: "run_event_writer",
+          runId: "foreign",
+          projectId: "project",
+          projectExecutionAttempt: {
+            canonicalRunId: parentId,
+            workerId: "worker",
+            attemptId: "attempt",
+          },
+        }),
+      ]
+    ) {
+      await assertRejects(
+        () =>
+          runner(() => {
+            throw new Error("must not send");
+          }, token)({
+            ...invocation,
+            execute: () => {
+              throw new Error("must not execute");
+            },
+          }),
+        Error,
+        "current run authority",
+      );
+    }
+  });
+});

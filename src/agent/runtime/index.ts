@@ -1,3 +1,8 @@
+import {
+  observeAdmittedAgentToolCalls,
+  observeGeneratedAgentMessage,
+  observeGeneratedAgentTurn,
+} from "../composition/local-child-execution.ts";
 import { forEachSequential } from "./sequential.ts";
 import {
   type AgentManualPause,
@@ -2715,7 +2720,10 @@ export class AgentRuntime {
                     systemPrompt,
                     messages,
                     turnPersistence.validateProviderRequest,
-                    turnPersistence.addMessage,
+                    async (message) => {
+                      await turnPersistence.addMessage(message);
+                      await observeGeneratedAgentMessage(message);
+                    },
                     turnPersistence.prepareTerminalDispatch,
                     {
                       ...terminalControl.binding,
@@ -2969,7 +2977,10 @@ export class AgentRuntime {
                       systemPrompt,
                       memoryMessages,
                       turnPersistence.validateProviderRequest,
-                      turnPersistence.addMessage,
+                      async (message) => {
+                        await turnPersistence.addMessage(message);
+                        await observeAdmittedAgentToolCalls(message);
+                      },
                       turnPersistence.prepareTerminalDispatch,
                       controller,
                       encoder,
@@ -3415,6 +3426,7 @@ export class AgentRuntime {
         const admittedTurn = snapshotAdmittedToolTurn(assistantMessage, currentMessages.length);
         pushPrivateArray(currentMessages, assistantMessage);
         await persistMessage(assistantMessage);
+        await observeGeneratedAgentTurn(assistantMessage.id, response);
         await persistProviderReplayCheckpointAfterTurn({
           emission: providerReplayCheckpointEmission,
           providerMetadata: readAttachedProviderMetadata(assistantMessage),

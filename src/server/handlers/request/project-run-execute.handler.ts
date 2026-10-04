@@ -1,3 +1,4 @@
+import { createWorkflowAgentNodeRunner } from "./workflow-agent-child.ts";
 import { RunStopRegistry } from "#veryfront/internal-agents/run-stop-registry.ts";
 import { agentRunSessionManager } from "#veryfront/internal-agents/session-manager.ts";
 import {
@@ -48,6 +49,7 @@ import {
 import {
   INGRESS_API_TOKEN_HEADER,
   INGRESS_INFERENCE_TOKEN_HEADER,
+  INGRESS_RUN_EVENT_TOKEN_HEADER,
   INGRESS_RUN_STOP_TOKEN_HEADER,
   inheritIngressCredentials,
   readIngressCredential,
@@ -1721,6 +1723,7 @@ async function executeWorkflowRun(
   acknowledgeStop?: () => Promise<void>,
   acknowledgePause?: () => Promise<boolean | undefined>,
   releaseStop?: () => void,
+  runAgentNode?: ReturnType<typeof createWorkflowAgentNodeRunner>,
 ): Promise<ProjectRunExecuteResponse> {
   let executionEntered = false;
   try {
@@ -1764,6 +1767,7 @@ async function executeWorkflowRun(
         acknowledgeStop,
         acknowledgePause,
         releaseStop,
+        runAgentNode,
       );
     } catch (error) {
       // A failure after discovery still ran against the declared schemas; keep their identity.
@@ -1795,6 +1799,7 @@ async function runDiscoveredWorkflow(
   acknowledgeStop?: () => Promise<void>,
   acknowledgePause?: () => Promise<boolean | undefined>,
   releaseStop?: () => void,
+  runAgentNode?: ReturnType<typeof createWorkflowAgentNodeRunner>,
 ): Promise<ProjectRunExecuteResponse> {
   // Only a durable run can pause: an ephemeral one has nothing to resume from.
   let pauseChecksEnabled = false;
@@ -1818,6 +1823,7 @@ async function runDiscoveredWorkflow(
         debug: ctx.debug,
         executor: {
           retainExecutionStopEvidence: true,
+          stepExecutor: { runAgentNode },
           ...(acknowledgePause ? { shouldPause } : {}),
         },
       }),
@@ -4024,6 +4030,13 @@ function executeProjectRun(
     acknowledgeStop,
     acknowledgePause,
     releaseStop,
+    createWorkflowAgentNodeRunner({
+      runId: request.runId,
+      projectId: request.projectId,
+      apiUrl: getEnvironmentConfig().apiBaseUrl,
+      eventToken: readIngressCredential(req, INGRESS_RUN_EVENT_TOKEN_HEADER) ?? undefined,
+      authToken: getRuntimeApiToken(req, ctx),
+    }),
   );
 }
 

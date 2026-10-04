@@ -210,69 +210,87 @@ export function hostedInheritedRunAdmitter(
       }),
       signal: AbortSignal.timeout(15000),
     });
-    if (!response.ok) throw new Error(`Inherited child admission failed (${response.status})`);
-    if (!response.headers.get("Cache-Control")?.includes("no-store")) {
-      throw new Error("Inherited child credentials require no-store");
-    }
-    const row = await response.json();
-    const token = response.headers.get(RUN_TERMINAL_TOKEN_HEADER);
-    const authToken = response.headers.get("X-Veryfront-Run-Invocation-Token");
-    const renewalToken = response.headers.get("X-Veryfront-Run-Renewal-Token");
-    const eventToken = response.headers.get("X-Veryfront-Run-Event-Token");
-    if (!token || !authToken || !renewalToken || !eventToken) {
-      throw new Error("Inherited child authority is missing");
-    }
-    const runId = terminalRoutingRunId(token);
-    const canonical = terminalRoute(token, runId);
-    const eventCursor = Number(response.headers.get("X-Veryfront-Run-Event-Sequence"));
-    const externalCursor = Number(response.headers.get("X-Veryfront-Run-External-Event-Sequence"));
-    if (
-      canonical.id !== row.id ||
-      (input.conversationId !== undefined && row.conversation_id !== input.conversationId) ||
-      typeof row.conversation_id !== "string" ||
-      !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
-        row.conversation_id,
-      ) ||
-      typeof row.output_message_id !== "string" ||
-      !response.headers.has("X-Veryfront-Run-Event-Sequence") ||
-      !response.headers.has("X-Veryfront-Run-External-Event-Sequence") ||
-      !Number.isSafeInteger(eventCursor) || eventCursor < 0 ||
-      !Number.isSafeInteger(externalCursor) || externalCursor < 0
-    ) throw new Error("Inherited child resource binding mismatch");
-    const run = {
-      runId,
-      canonicalRunId: row.id as string,
-      conversationId: row.conversation_id as string,
-      messageId: row.output_message_id as string,
-      latestEventId: eventCursor,
-      latestExternalEventSequence: externalCursor,
-      waitingToolCallId: null,
-      waitingToolName: null,
-      status: row.status === "waiting" ? "waiting_for_tool" as const : row.status,
-      streamProtocolVersion: 2 as const,
-    };
-    if (row.status === "completed" || row.status === "failed" || row.status === "cancelled") {
-      terminalReceipts.set(run, {
-        status: row.status,
-        output: row.output ?? null,
-        ...(typeof row.error?.code === "string" && typeof row.error?.message === "string"
-          ? { error: { code: row.error.code, message: row.error.message } }
-          : {}),
-      });
-    }
-    credentials.set(run, {
-      token,
-      authToken,
-      renewalToken,
-      eventToken,
-      leaseExpiresAt: Date.parse(response.headers.get("X-Veryfront-Run-Lease-Expires-At") ?? ""),
-      runId: run.runId,
+    return acceptInheritedRunAdmission(response, {
       projectId: parent.projectId,
+      conversationId: input.conversationId,
       apiUrl: transport.apiUrl,
       fetch: send,
     });
-    return run;
   };
+}
+
+/** Bind an inherited admission response to private exact-child authority for trusted runtime adapters. */
+export async function acceptInheritedRunAdmission(
+  response: Response,
+  binding: {
+    projectId: string;
+    conversationId?: string;
+    apiUrl: string;
+    fetch: typeof globalThis.fetch;
+  },
+): Promise<ConversationRunProjection> {
+  if (!response.ok) throw new Error(`Inherited child admission failed (${response.status})`);
+  if (!response.headers.get("Cache-Control")?.includes("no-store")) {
+    throw new Error("Inherited child credentials require no-store");
+  }
+  const row = await response.json();
+  const token = response.headers.get(RUN_TERMINAL_TOKEN_HEADER);
+  const authToken = response.headers.get("X-Veryfront-Run-Invocation-Token");
+  const renewalToken = response.headers.get("X-Veryfront-Run-Renewal-Token");
+  const eventToken = response.headers.get("X-Veryfront-Run-Event-Token");
+  if (!token || !authToken || !renewalToken || !eventToken) {
+    throw new Error("Inherited child authority is missing");
+  }
+  const runId = terminalRoutingRunId(token);
+  const canonical = terminalRoute(token, runId);
+  const eventCursor = Number(response.headers.get("X-Veryfront-Run-Event-Sequence"));
+  const externalCursor = Number(response.headers.get("X-Veryfront-Run-External-Event-Sequence"));
+  if (
+    canonical.id !== row.id ||
+    (binding.conversationId !== undefined && row.conversation_id !== binding.conversationId) ||
+    typeof row.conversation_id !== "string" ||
+    !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+      row.conversation_id,
+    ) ||
+    typeof row.output_message_id !== "string" ||
+    !response.headers.has("X-Veryfront-Run-Event-Sequence") ||
+    !response.headers.has("X-Veryfront-Run-External-Event-Sequence") ||
+    !Number.isSafeInteger(eventCursor) || eventCursor < 0 ||
+    !Number.isSafeInteger(externalCursor) || externalCursor < 0
+  ) throw new Error("Inherited child resource binding mismatch");
+  const run = {
+    runId,
+    canonicalRunId: row.id as string,
+    conversationId: row.conversation_id as string,
+    messageId: row.output_message_id as string,
+    latestEventId: eventCursor,
+    latestExternalEventSequence: externalCursor,
+    waitingToolCallId: null,
+    waitingToolName: null,
+    status: row.status === "waiting" ? "waiting_for_tool" as const : row.status,
+    streamProtocolVersion: 2 as const,
+  };
+  if (row.status === "completed" || row.status === "failed" || row.status === "cancelled") {
+    terminalReceipts.set(run, {
+      status: row.status,
+      output: row.output ?? null,
+      ...(typeof row.error?.code === "string" && typeof row.error?.message === "string"
+        ? { error: { code: row.error.code, message: row.error.message } }
+        : {}),
+    });
+  }
+  credentials.set(run, {
+    token,
+    authToken,
+    renewalToken,
+    eventToken,
+    leaseExpiresAt: Date.parse(response.headers.get("X-Veryfront-Run-Lease-Expires-At") ?? ""),
+    runId: run.runId,
+    projectId: binding.projectId,
+    apiUrl: binding.apiUrl,
+    fetch: binding.fetch,
+  });
+  return run;
 }
 
 /** Preserve exact private authority when a trusted adapter projects its descriptor. */

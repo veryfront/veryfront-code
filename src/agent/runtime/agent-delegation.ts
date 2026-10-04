@@ -116,7 +116,10 @@ export function createInvokeAgentTool(input: CreateInvokeAgentToolInput = {}): T
         });
       }
 
-      return agentAsTool(target, toolInput.description).execute({
+      return agentAsTool(target, toolInput.description, {
+        toolName: INVOKE_AGENT_TOOL_ID,
+        toolInput,
+      }).execute({
         input: buildInvokeAgentPrompt(toolInput.prompt, toolInput.context),
       }, context);
     },
