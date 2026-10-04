@@ -3,6 +3,7 @@ import { createPrivateWeakStore } from "#veryfront/security/private-weak-store.t
 import { type AgentManualPause, isAgentManualPauseBoundary } from "../runtime/manual-pause.ts";
 
 type Settlement = {
+  nativePersisted: boolean;
   flushed: boolean;
   cleaned: boolean;
   failed: boolean;
@@ -11,16 +12,23 @@ type Settlement = {
 };
 export const hostedAgentPauseCapabilities = createPrivateWeakStore<object, AgentManualPause>();
 const NativeTypeError = TypeError;
-const settlements = createPrivateWeakStore<object, Settlement>();
+const settlements = createPrivateWeakStore<AgentManualPause, Settlement>();
 const schedule = setTimeout;
 const NativePromise = Promise;
 
 export function registerHostedAgentPauseSettlement(
-  capability: object,
+  capability: AgentManualPause,
   eligible: Settlement["eligible"],
   confirm: Settlement["confirm"],
 ): void {
-  settlements.set(capability, { flushed: false, cleaned: false, failed: false, eligible, confirm });
+  settlements.set(capability, {
+    nativePersisted: false,
+    flushed: false,
+    cleaned: false,
+    failed: false,
+    eligible,
+    confirm,
+  });
 }
 
 function stateFor(target: unknown): Settlement | undefined {
@@ -29,6 +37,13 @@ function stateFor(target: unknown): Settlement | undefined {
   }
   const capability = hostedAgentPauseCapabilities.get(target);
   return capability ? settlements.get(capability) : undefined;
+}
+
+export function recordHostedAgentPausePersistence(target: unknown, succeeded: boolean): void {
+  const state = stateFor(target);
+  if (!state) return;
+  state.nativePersisted ||= succeeded;
+  state.failed ||= !succeeded;
 }
 
 export function recordHostedAgentPauseFlush(target: unknown, succeeded: boolean): void {
@@ -62,9 +77,14 @@ export function invalidateHostedAgentPauseSettlement(target: unknown, error: unk
   if (state && !isAgentManualPauseBoundary(error)) state.failed = true;
 }
 
+export function isHostedAgentPauseAcknowledged(target: unknown): boolean {
+  return stateFor(target)?.eligible() === true;
+}
+
 export function canSettleHostedAgentPause(target: unknown): boolean {
   const state = stateFor(target);
-  return state !== undefined && !state.failed && state.flushed && state.cleaned && state.eligible();
+  return state !== undefined && !state.failed && state.nativePersisted && state.flushed &&
+    state.cleaned && state.eligible();
 }
 
 /** Called only after the original invocation and its owned session have ended. */

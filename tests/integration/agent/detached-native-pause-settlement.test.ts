@@ -70,6 +70,8 @@ describe("detached native pause settlement", () => {
       "cleanup-error",
       "flush-pending",
       "flush-disabled",
+      "native-persistence-error",
+      "native-persistence-missing",
     ] as const
   ) {
     it(`settles detached ${outcome} without confirming an active, cancelled or failed session`, async () => {
@@ -167,7 +169,8 @@ describe("detached native pause settlement", () => {
             if (
               outcome === "pause" || outcome === "swallowed-error" ||
               outcome === "swallowed-after-finish-error" || outcome === "cleanup-error" ||
-              outcome === "flush-pending" || outcome === "flush-disabled"
+              outcome === "flush-pending" || outcome === "flush-disabled" ||
+              outcome === "native-persistence-error" || outcome === "native-persistence-missing"
             ) {
               await runPreparedHostedChatExecutionDetached({
                 execution: {
@@ -185,6 +188,9 @@ describe("detached native pause settlement", () => {
                         recoveredEmptyResponse: false,
                         recoveredInterruptedLocalToolBatch: false,
                       });
+                      if (outcome !== "native-persistence-missing") {
+                        capability.persisted?.(outcome !== "native-persistence-error");
+                      }
                       return {
                         steps: Promise.resolve([]),
                         toUIMessageStream: (options) =>

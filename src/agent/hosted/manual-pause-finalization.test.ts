@@ -78,6 +78,8 @@ describe("hosted manual pause finalization", () => {
       assertEquals(terminals, 0);
       assertEquals(flushes, 1);
       assertEquals(cleanups, 1);
+      assertEquals(canSettleHostedAgentPause(capability), false);
+      capability.persisted?.(true);
       assertEquals(canSettleHostedAgentPause(capability), !lostReply && !flushFails);
     });
   }

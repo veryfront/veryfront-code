@@ -2755,7 +2755,13 @@ export class AgentRuntime {
             },
           );
         } catch (error) {
-          await turnPersistence.finalize();
+          try {
+            await turnPersistence.finalize();
+            if (isAgentManualPauseBoundary(error)) this.#manualPause?.persisted?.(true);
+          } catch (finalizationError) {
+            if (isAgentManualPauseBoundary(error)) this.#manualPause?.persisted?.(false);
+            throw finalizationError;
+          }
           throw error;
         }
 
@@ -2928,6 +2934,8 @@ export class AgentRuntime {
       let inFlight: Promise<AgentResponse> | undefined;
 
       const completion = createPrivateDeferred<void>();
+      // The observer is optional; retain cleanup failure without an unhandled rejection.
+      void chainPrivatePromise(completion.promise, () => {}, () => {});
       this.#onStreamCompletion?.(completion.promise);
       const runtimeStream = createPrivateReadableStream<Uint8Array>({
         start: async (controller) => {
@@ -3046,7 +3054,9 @@ export class AgentRuntime {
             if (isAgentManualPauseBoundary(streamError)) {
               try {
                 await turnPersistence.finalize();
+                this.#manualPause?.persisted?.(true);
               } catch (finalizationError) {
+                this.#manualPause?.persisted?.(false);
                 logger.debug("Manual pause memory finalization failed", {
                   errorCauses: summarizeErrorCausesForLog(finalizationError),
                 });
@@ -3101,10 +3111,15 @@ export class AgentRuntime {
             sendSSE(controller, encoder, errorEvent);
             closeSSEStream(controller);
           } finally {
+            let disposed = false;
             try {
               abortScope.dispose();
+              disposed = true;
+            } catch (cleanupError) {
+              this.#manualPause?.persisted?.(false);
+              completion.reject(cleanupError);
             } finally {
-              completion.resolve();
+              if (disposed) completion.resolve();
             }
           }
         },

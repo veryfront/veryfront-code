@@ -1,5 +1,6 @@
 import {
   hostedAgentPauseCapabilities as creationCapabilities,
+  recordHostedAgentPausePersistence,
   registerHostedAgentPauseSettlement,
 } from "./manual-pause-settlement.ts";
 import { defineSchema } from "#veryfront/schemas/index.ts";
@@ -243,6 +244,9 @@ export function createRunBoundAgentManualPause(input: {
           schedule(resolve, 1000)
         );
       }
+    },
+    persisted(succeeded: boolean) {
+      recordHostedAgentPausePersistence(capability, succeeded);
     },
     async acknowledge(checkpoint: AgentPauseCheckpoint) {
       const body = privateJsonStringify({ checkpoint: parseAgentPauseCheckpoint(checkpoint) })!;

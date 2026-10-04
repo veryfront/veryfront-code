@@ -1,3 +1,10 @@
+import {
+  invalidateHostedAgentPauseSettlement,
+  isHostedAgentPauseAcknowledged,
+  recordHostedAgentPauseCleanup,
+  recordHostedAgentPauseFlush,
+  settleHostedAgentPause,
+} from "#veryfront/agent/hosted/manual-pause-settlement.ts";
 import type { RunStopSettlement } from "./run-stop-registry.ts";
 import { privateJsonStringify } from "#veryfront/security/private-json.ts";
 import {
@@ -1197,6 +1204,7 @@ export async function createRuntimeAgentStreamResponse(
     throw error;
   }
   let producerCompletion: Promise<void> | undefined;
+  const manualPause = runtimeManualPauseCapabilities.get(input);
 
   let completedResponse: AgentResponse | null = null;
   // Running usage total, updated after every model call. A run that dies mid-stream
@@ -1453,7 +1461,7 @@ export async function createRuntimeAgentStreamResponse(
       : {
         kind: "framework" as const,
         runtime: new AgentRuntime(runtimeAgent.id, runtimeAgent.config, {
-          manualPause: runtimeManualPauseCapabilities.get(input),
+          manualPause,
           onStreamCompletion: (completion) => {
             producerCompletion = completion;
           },
@@ -1796,7 +1804,11 @@ export async function createRuntimeAgentStreamResponse(
               }
             }
 
-            for (const mappedEvent of finalizeRunEvents(state, completedResponse)) {
+            for (
+              const mappedEvent of manualPause && isHostedAgentPauseAcknowledged(manualPause)
+                ? []
+                : finalizeRunEvents(state, completedResponse)
+            ) {
               runOutcome.observe(mappedEvent.event, mappedEvent.payload);
               enqueueIfAttached(mappedEvent.event, mappedEvent.payload);
             }
@@ -1858,6 +1870,7 @@ export async function createRuntimeAgentStreamResponse(
               logger.info("Internal agent runtime stream finalized", finalizedLogContext);
             }
           } catch (error) {
+            if (manualPause) invalidateHostedAgentPauseSettlement(manualPause, error);
             readerExitReason = error;
             if (error instanceof AgentRunCancelledError) {
               deps.sessionManager.cancelRun(input.runId);
@@ -1954,8 +1967,34 @@ export async function createRuntimeAgentStreamResponse(
             });
             // Reader cancellation may detach from a producer still running a tool.
             // Only the original producer's completion plus successful cleanup is positive evidence.
+            if (manualPause) {
+              recordHostedAgentPauseCleanup(
+                manualPause,
+                sandboxClosed && readerReachedEof && !abortSignal.aborted,
+              );
+              if (state.sawTerminalError) {
+                invalidateHostedAgentPauseSettlement(
+                  manualPause,
+                  new Error("Internal agent output failed"),
+                );
+              }
+            }
             if (sandboxClosed && producerCompletion) {
-              void producerCompletion.then(() => settledStop(), () => settledStop());
+              void producerCompletion.then(async () => {
+                settledStop();
+                if (manualPause) {
+                  recordHostedAgentPauseFlush(manualPause, readerReachedEof);
+                  await settleHostedAgentPause(manualPause);
+                }
+              }, (error) => {
+                settledStop();
+                if (manualPause) invalidateHostedAgentPauseSettlement(manualPause, error);
+              }).catch((error) => {
+                logger.warn("Internal agent pause settlement failed", {
+                  runId: input.runId,
+                  error,
+                });
+              });
             } else if (sandboxClosed) {
               // A runtime override that never reported its producer gives no settlement
               // evidence; retire the registration so it cannot answer stops forever.
