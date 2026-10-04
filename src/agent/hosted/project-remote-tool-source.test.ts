@@ -1,6 +1,7 @@
 import { listProjectScopedRemoteToolNames } from "#veryfront/tool/project-scoped-remote-tools.ts";
 import {
   assertEquals,
+  assertExists,
   assertInstanceOf,
   assertRejects,
   assertThrows,
@@ -1228,11 +1229,6 @@ Deno.test("createHostedProjectRemoteToolSources applies project wrapper policy t
       context: { projectId: "project-1" },
     },
     {
-      toolName: "get_tool_access_profile",
-      args: { project_reference: "project-1" },
-      context: { projectId: "project-1" },
-    },
-    {
       toolName: "update_file",
       args: { path: "AGENTS.md", prepared: true, project_reference: "project-1" },
       context: { projectId: "project-1" },
@@ -1274,11 +1270,6 @@ Deno.test("createHostedProjectRemoteToolSources composes API input preparation f
   await sources[0]?.executeTool("github__list_issues", { owner: "veryfront" });
 
   assertEquals(executed, [
-    {
-      toolName: "get_tool_access_profile",
-      args: { project_reference: "project-1" },
-      context: { projectId: "project-1" },
-    },
     {
       toolName: "get_tool_access_profile",
       args: { project_reference: "project-1" },
@@ -1476,4 +1467,81 @@ for (const gate of ["allowance", "activation"] as const) {
       await source!.executeTool("get_file", {}, { projectId: "project-1" })
     );
   });
+}
+
+for (const canonicalCatalog of [false, true]) {
+  for (const canonicalSelector of [false, true]) {
+    for (const denial of ["none", "policy", "run"] as const) {
+      const deniedRetry = denial !== "none";
+      for (const returnedError of [false, true]) {
+        Deno.test(`hosted platform retries preserve wire identities and policy (catalog=${canonicalCatalog}, selector=${canonicalSelector}, denial=${denial}, returned=${returnedError})`, async () => {
+          const wire = (name: string) => canonicalCatalog ? `veryfront__${name}` : name;
+          const selector = (name: string) => canonicalSelector ? `veryfront__${name}` : name;
+          const calls: string[] = [];
+          const alreadyExists = { isError: true };
+          const [source] = createHostedProjectRemoteToolSources({
+            authToken: "test-token",
+            apiMcpUrl: "https://api.example.test/mcp",
+            getProjectId: () => "project-1",
+            defaultProjectId: "project-1",
+            allowedToolNames: new Set([
+              selector("create_file"),
+              ...(denial === "run" ? [] : [selector("update_file")]),
+            ]),
+            mcpServers: [{
+              kind: "veryfront-api",
+              toolPolicy: {
+                allow: [
+                  selector("create_file"),
+                  selector("update_file"),
+                  "get_tool_access_profile",
+                ],
+                ...(denial === "policy" ? { deny: ["update_file"] } : {}),
+              },
+            }],
+            createRemoteToolSource: () =>
+              createRemoteSource({
+                tools: [
+                  projectFileTool(wire("create_file")),
+                  projectFileTool(wire("update_file")),
+                  optionalProjectReferenceTool(wire("get_tool_access_profile")),
+                ],
+                execute: (name) => {
+                  if (name === wire("get_tool_access_profile")) return {};
+                  calls.push(name);
+                  if (name === wire("create_file")) {
+                    if (returnedError) return alreadyExists;
+                    throw new Error("file already exists");
+                  }
+                  assertEquals(name, wire("update_file"));
+                  return { ok: true };
+                },
+              }),
+            prepareToolInput: ({ toolName, toolInput }) => {
+              assertEquals(toolName, "create_file");
+              return toolInput;
+            },
+            shouldRetryWithTool: ({ toolName, error }) =>
+              toolName === "create_file" && (error === alreadyExists || (error instanceof Error &&
+                error.message === "file already exists")),
+          });
+          assertExists(source);
+          if (deniedRetry) {
+            await assertRejects(() =>
+              source.executeTool(selector("create_file"), { path: "report.md" })
+            );
+          } else {
+            assertEquals(
+              await source.executeTool(selector("create_file"), { path: "report.md" }),
+              { ok: true },
+            );
+          }
+          assertEquals(
+            calls,
+            deniedRetry ? [wire("create_file")] : [wire("create_file"), wire("update_file")],
+          );
+        });
+      }
+    }
+  }
 }

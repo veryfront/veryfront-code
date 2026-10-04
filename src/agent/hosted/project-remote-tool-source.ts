@@ -265,7 +265,9 @@ export function createHostedProjectRemoteToolSource(
     } catch (error) {
       if (
         input.shouldRetryWithTool?.({
-          toolName: inputExecution.toolName,
+          toolName: hasTrustedPlatformSource(input.source)
+            ? platformMcpLegacyName(inputExecution.toolName)
+            : inputExecution.toolName,
           toolInput: inputExecution.toolInput,
           activeProjectId: inputExecution.activeProjectId,
           activeBranchId: inputExecution.activeBranchId,
@@ -284,7 +286,9 @@ export function createHostedProjectRemoteToolSource(
     listTools: (context) => toolCatalog.listTools(context),
     async executeTool(toolName, args, context) {
       const normalizedToolInput = input.prepareToolInput?.({
-        toolName,
+        toolName: hasTrustedPlatformSource(input.source)
+          ? platformMcpLegacyName(toolName)
+          : toolName,
         toolInput: toChildRunToolInputRecord(args),
         context,
       }) ?? toChildRunToolInputRecord(args);
@@ -310,7 +314,9 @@ export function createHostedProjectRemoteToolSource(
 
       if (
         input.shouldRetryWithTool?.({
-          toolName,
+          toolName: hasTrustedPlatformSource(input.source)
+            ? platformMcpLegacyName(toolName)
+            : toolName,
           toolInput: hydratedToolInput,
           activeProjectId,
           activeBranchId,
@@ -416,8 +422,9 @@ function createHostedProjectRemoteToolSourceFromConfig(
 ): RemoteToolSource {
   if (server.kind === "veryfront-api") markTrustedPlatformSource(source);
   const isPlatform = server.kind === "veryfront-api";
+  const wireSource = isPlatform ? createLivePlatformMcpSource(source) : source;
   const policySource = createHostedMcpToolPolicySource(
-    source,
+    wireSource,
     isPlatform ? withPlatformMcpPolicyAliases(server.toolPolicy) : server.toolPolicy,
   );
   const allowedNames = input.activatedRemoteToolNames !== undefined
