@@ -8,6 +8,7 @@ import type {
   ChatSystemMessage,
   ChatUiMessage,
 } from "#veryfront/chat/types.ts";
+import { registerHostedAgentPauseCreationOptions } from "./manual-pause-credential.ts";
 import type { HistoricalToolInputCompactionDiagnostic } from "#veryfront/chat/message-prep.ts";
 import type { AgentRuntimeMessage } from "../runtime/message-adapter.ts";
 import type { ConversationRunEvent } from "../conversation/run-events.ts";
@@ -759,13 +760,18 @@ export async function prepareHostedChatExecution<
       ...budgetedContext.diagnostics,
     });
   }
+  const creationOptions = {
+    ...runtimePreparation.creationOptions,
+    ...(submittedFormInputResult ? { submittedFormInputResult } : {}),
+  };
+  registerHostedAgentPauseCreationOptions(
+    creationOptions,
+    input.request,
+    rootRunContext,
+  );
   const runtime = await runWithHostedRunEventWriterCapability(
     rootRunEventWriterCapability,
-    () =>
-      input.createRuntime({
-        ...runtimePreparation.creationOptions,
-        ...(submittedFormInputResult ? { submittedFormInputResult } : {}),
-      }),
+    () => input.createRuntime(creationOptions),
   );
 
   return {

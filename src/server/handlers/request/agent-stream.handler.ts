@@ -2,6 +2,7 @@ import {
   createPlatformMcpCatalogSource,
   withPlatformMcpPolicyAliases,
 } from "#veryfront/agent/platform-mcp-tool-source.ts";
+import { createHostOwnedAgentManualPause } from "#veryfront/agent/hosted/manual-pause-credential.ts";
 import { markTrustedPlatformSource } from "#veryfront/tool/platform-source-provenance.ts";
 import {
   runWithRegistryScopeNamespace,
@@ -31,6 +32,7 @@ import {
 import {
   createRuntimeAgentStreamResponse,
   registerRuntimeInferenceCredential,
+  registerRuntimeManualPause,
   type RuntimeAgentStreamExecutionDeps,
 } from "#veryfront/internal-agents/run-stream.ts";
 import {
@@ -128,6 +130,7 @@ import { isProviderReplayCheckpointEmissionEnabled } from "#veryfront/agent/host
 import { getServerResolvedProviderReplayCheckpoints } from "#veryfront/agent/hosted/runtime-request-config.ts";
 import {
   INGRESS_RUN_EVENT_TOKEN_HEADER,
+  INGRESS_RUN_STOP_TOKEN_HEADER,
   INGRESS_RUN_TERMINAL_TOKEN_HEADER,
   readIngressCredential,
 } from "#veryfront/security/http/ingress-credentials.ts";
@@ -1157,6 +1160,8 @@ export class AgentStreamHandler extends BaseHandler {
       });
       const runEventAppendToken = readIngressCredential(req, INGRESS_RUN_EVENT_TOKEN_HEADER);
       const terminalToken = readRunTerminalToken(req);
+      const pauseToken = readIngressCredential(req, INGRESS_RUN_STOP_TOKEN_HEADER);
+      const pauseSignal = req.signal;
       if (
         payload.sourceProject && (
           payload.sourceProject.projectId !== ctx.projectId ||
@@ -1411,6 +1416,16 @@ export class AgentStreamHandler extends BaseHandler {
                         const inferenceAuthToken = payload.credentials?.inferenceAuthToken;
                         if (verifiedClaims && inferenceAuthToken) {
                           registerRuntimeInferenceCredential(runtimeInput, inferenceAuthToken);
+                        }
+                        if (pauseToken) {
+                          registerRuntimeManualPause(
+                            runtimeInput,
+                            createHostOwnedAgentManualPause({
+                              runId: payload.runId,
+                              token: pauseToken,
+                              signal: pauseSignal,
+                            }),
+                          );
                         }
                         const runAgentStream = () =>
                           createRuntimeAgentStreamResponse(runtimeInput, runtimeAgent, {

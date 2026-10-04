@@ -1,4 +1,9 @@
 import {
+  bindHostedAgentPauseLifetime,
+  hasHostedAgentPauseStopped,
+  inheritHostedAgentPauseCapability,
+} from "./manual-pause-credential.ts";
+import {
   buildChatStreamChunkMessageMetadata,
   extractChatMessageMetadata,
 } from "../../chat/chat-ui-message-helpers.ts";
@@ -349,6 +354,7 @@ export async function createHostedChatExecutionRuntimeBootstrap(
 
   let streamResult: HostedChatRuntimeStreamResult;
   try {
+    bindHostedAgentPauseLifetime(input.lifecycleAdapter, streamAbortSignal);
     const startStream = () =>
       input.agent.stream({
         messages: input.finalMessages,
@@ -392,6 +398,7 @@ async function createBootstrappedHostedChatRuntime(
     resolveProvider: input.resolveProvider,
     ...(input.createTerminalAdapter ? { createTerminalAdapter: input.createTerminalAdapter } : {}),
   });
+  inheritHostedAgentPauseCapability(lifecycleAdapter, input.rootRunContext);
   let bootstrap: HostedChatExecutionRuntimeBootstrap;
   try {
     bootstrap = await createHostedChatExecutionRuntimeBootstrap({
@@ -489,6 +496,15 @@ export function createHostedChatStreamFinalizationHooks(input: {
   streamError: unknown;
   logger?: HostedChatExecutionRuntimeLogger;
 }): SharedFinalizationHooks {
+  const dispatchTerminalState: SharedFinalizationHooks["dispatchTerminalState"] = async (
+    terminalState,
+  ) => {
+    await dispatchConversationHostedTerminalState(input.lifecycleAdapter, terminalState, {
+      // The mirror flush can mark the run terminal before dispatch.
+      skipDurableRunFinalization: isDurableRunKnownTerminal(input.lifecycleAdapter),
+    });
+  };
+  inheritHostedAgentPauseCapability(dispatchTerminalState, input.lifecycleAdapter);
   return {
     resolveEmptyTerminalError: (
       { finalStep, streamError }: { finalStep: unknown; streamError?: unknown | null },
@@ -498,13 +514,7 @@ export function createHostedChatStreamFinalizationHooks(input: {
     flushMirror: async () => {
       await input.lifecycleAdapter.durableRunMirror?.flush();
     },
-    dispatchTerminalState: async (terminalState) => {
-      await dispatchConversationHostedTerminalState(input.lifecycleAdapter, terminalState, {
-        // Read at dispatch time, not when the hooks are built: flushMirror above is
-        // what can mark the run terminal (veryfront-issue-inbox#743).
-        skipDurableRunFinalization: isDurableRunKnownTerminal(input.lifecycleAdapter),
-      });
-    },
+    dispatchTerminalState,
     resolveTerminalState: ({ isAborted, hasIncompleteToolParts }: {
       isAborted: boolean;
       hasIncompleteToolParts: boolean;
@@ -608,6 +618,7 @@ async function finalizeExecutionFailure(input: {
   logMessage: string;
   logger?: HostedChatExecutionRuntimeLogger;
 }): Promise<void> {
+  if (hasHostedAgentPauseStopped(input.lifecycleAdapter)) return;
   await dispatchConversationHostedStreamErrorState(input.lifecycleAdapter, input.error, {
     // The run is already terminal server-side; completing it here can only 400 and
     // would turn a clean stop back into a Sentry error (veryfront-issue-inbox#743).

@@ -1,3 +1,4 @@
+import { inheritHostedAgentPauseCapability } from "./manual-pause-credential.ts";
 import { hostedTerminalToolSourceFactory } from "./terminal-credential.ts";
 /** Chat execution preparation and runtime wiring for the cloud agent service. */
 import { type HostToolSet, sleepTool } from "#veryfront/tool";
@@ -390,12 +391,11 @@ export async function prepareChatExecutionWithinProjectRuntime(
     ),
     createRuntime: (creationOptions) =>
       context.trace("chat.createRuntime", () => {
+        const options = { ...creationOptions, userId: req.userId };
+        inheritHostedAgentPauseCapability(options, creationOptions);
         return createAgentRuntime(
           context,
-          {
-            ...creationOptions,
-            userId: req.userId,
-          },
+          options,
           resolveModelRuntime ? { resolveModelRuntime } : undefined,
           req,
         );

@@ -11,6 +11,7 @@ import {
 import type { MirroredToolChunkState } from "../streaming/mirrored-tool-chunk-state.ts";
 import { hasCompletedStepSignal, isStreamTimeoutError } from "../streaming/stream-outcome.ts";
 import type { HostedChatExecutionLifecycleAdapter } from "./chat-execution-lifecycle-types.ts";
+import { hasHostedAgentPauseStopped } from "./manual-pause-credential.ts";
 import {
   buildDetachedFallbackChunks,
   buildDetachedFallbackMessageState,
@@ -389,6 +390,16 @@ function resolveTerminalState(input: {
 export async function finalizeHostedChatRun(
   input: FinalizeHostedChatRunInput,
 ): Promise<void> {
+  if (hasHostedAgentPauseStopped(input.lifecycleAdapter)) {
+    try {
+      await flushMirror(input.lifecycleAdapter);
+    } catch (error) {
+      input.logger?.error("Paused agent output could not be flushed", { error: String(error) });
+    } finally {
+      await cleanupAfterFinalization({ cleanup: input.cleanup, logger: input.logger });
+    }
+    return;
+  }
   const finalStep = await getLastStreamStep(input.streamResult);
 
   let fallbackChunks: readonly ChatUiMessageChunk<MessageMetadata>[];

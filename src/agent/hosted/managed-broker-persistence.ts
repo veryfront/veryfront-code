@@ -38,6 +38,7 @@ export interface ManagedBrokerOutput {
   write(chunk: ChatUiMessageChunk<ChatMessageMetadata>): Promise<void>;
   finish(input: {
     completed: boolean;
+    paused?: true;
     output?: unknown;
     error?: unknown;
     metadata?: HostedLifecycleTerminalState["metadata"];
@@ -227,6 +228,9 @@ export function createManagedBrokerPersistenceFromCapability(input: {
       if (!sessionOwnedWork) {
         return Promise.reject(new TypeError("Managed broker persistence is not session-bound"));
       }
+      if (result.paused && (result.completed || result.error !== undefined)) {
+        return Promise.reject(new TypeError("Paused managed output cannot be terminal"));
+      }
       if (result.completed && result.error !== undefined) {
         return Promise.reject(new TypeError("Completed managed output cannot carry an error"));
       }
@@ -242,6 +246,10 @@ export function createManagedBrokerPersistenceFromCapability(input: {
           } catch (error) {
             terminalFailure = { failed: true, error };
           }
+        }
+        if (result.paused) {
+          if (terminalFailure.failed) throw terminalFailure.error;
+          return;
         }
         try {
           if (terminalFailure.failed) {
