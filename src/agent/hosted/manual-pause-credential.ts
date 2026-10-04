@@ -40,7 +40,7 @@ const credentials = createPrivateWeakStore<object, { token: string; runId: strin
 const lifetimeBindings = createPrivateWeakStore<object, (signal: AbortSignal) => void>();
 const capabilityFactories = createPrivateWeakStore<
   object,
-  (signal: AbortSignal) => AgentManualPause | undefined
+  (signal: AbortSignal, settlementSignal?: AbortSignal) => AgentManualPause | undefined
 >();
 const stoppedCapabilities = createPrivateWeakStore<object, { stopped: boolean }>();
 const freeze = Object.freeze;
@@ -375,11 +375,11 @@ export function inheritHostedAgentPauseCapability(
     capabilityFactories.set(
       requirePauseCarrier(target),
       lifetimeSignal
-        ? (signal) => {
+        ? (signal, settlementSignal) => {
           const signals = [signal, lifetimeSignal];
           const privateSignals = createPrivateSet(signals);
           defineOwnDataProperty(signals, Symbol.iterator, () => privateSignals.values());
-          return factory(apply(any, AbortSignal, [signals]));
+          return factory(apply(any, AbortSignal, [signals]), lifetimeSignal ?? settlementSignal);
         }
         : factory,
     );
@@ -396,7 +396,7 @@ export function hasHostedAgentPauseStopped(lifecycle: unknown): boolean {
 /** Broker-only lazy construction binds pause requests to the admitted session lifetime. */
 export function registerHostedAgentPauseFactory(
   target: unknown,
-  factory: (signal: AbortSignal) => AgentManualPause | undefined,
+  factory: (signal: AbortSignal, settlementSignal?: AbortSignal) => AgentManualPause | undefined,
 ): void {
   capabilityFactories.set(requirePauseCarrier(target), factory);
 }
