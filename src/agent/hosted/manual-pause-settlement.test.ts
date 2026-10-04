@@ -6,11 +6,13 @@ import {
   inheritHostedAgentPauseCapability,
 } from "./manual-pause-credential.ts";
 import { agentManualPauseBoundary } from "../runtime/manual-pause.ts";
+import { createHostedConversationRunChunkMirror } from "../conversation/run-chunk-mirror.ts";
 import {
   canSettleHostedAgentPause,
   invalidateHostedAgentPauseSettlement,
   recordHostedAgentPauseCleanup,
   recordHostedAgentPauseFlush,
+  recordHostedAgentPauseMirrorSnapshot,
   settleHostedAgentPause,
 } from "./manual-pause-settlement.ts";
 
@@ -27,6 +29,80 @@ const checkpoint = {
 };
 
 describe("hosted pause settlement transport", () => {
+  for (const nativePersisted of [true, false]) {
+    it(`drains real mirror batches with unchanged zero-append cursors (native persisted=${nativePersisted})`, async () => {
+      let confirmations = 0;
+      let batches = 0;
+      const failures: unknown[] = [];
+      const runId = "run_pause_mirror";
+      const conversationId = "11111111-1111-4111-a111-111111111111";
+      const capability = createRunBoundAgentManualPause({
+        apiUrl: "https://api.example.com",
+        runId,
+        token: "pause-test-token",
+        signal: new AbortController().signal,
+        fetch: (_url, init) => {
+          if (JSON.parse(String(init?.body)).settled) confirmations++;
+          return Promise.resolve(Response.json({ stop: true }));
+        },
+      });
+      const mirror = createHostedConversationRunChunkMirror({
+        apiUrl: "https://api.example.com",
+        authToken: "mirror-test-token",
+        runId,
+        canonicalRunId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        conversationId,
+        latestEventId: 9,
+        latestExternalEventSequence: 5,
+        batchSize: 64,
+        instrumentation: {
+          warn: (message, metadata) => failures.push({ message, metadata }),
+          error: (message, metadata) => failures.push({ message, metadata }),
+        },
+        fetch: async (input, init) => {
+          const body = await new Request(input, init).json();
+          assertEquals(body.events.length, 1);
+          batches++;
+          return Response.json({
+            latest_event_id: 9,
+            latest_external_event_sequence: 5,
+            appended_count: 0,
+            run: {
+              run_id: runId,
+              conversation_id: conversationId,
+              latest_event_id: 9,
+              latest_external_event_sequence: 5,
+            },
+          });
+        },
+      });
+      try {
+        assertEquals(await capability.acknowledge(checkpoint), true);
+        capability.persisted?.(nativePersisted);
+        for (const delta of ["queued boundary output", "late output after ACK"]) {
+          await mirror.handleChunk({ type: "text-delta", id: "boundary-message", delta });
+          const snapshot = await mirror.flush();
+          assertEquals(snapshot.latestEventId, 9);
+          assertEquals(snapshot.latestExternalEventSequence, 5);
+          assertEquals(snapshot.pendingEventCount, 0, JSON.stringify(failures));
+          assertEquals(snapshot.disabled, false);
+          assertEquals(snapshot.inFlight, false);
+          assertEquals(snapshot.hasRetryTimer, false);
+          recordHostedAgentPauseMirrorSnapshot(capability, snapshot);
+        }
+        assertEquals(batches, 2);
+        await settleHostedAgentPause(capability);
+        assertEquals(confirmations, 0);
+        recordHostedAgentPauseCleanup(capability, true);
+        assertEquals(canSettleHostedAgentPause(capability), nativePersisted);
+        await settleHostedAgentPause(capability);
+        assertEquals(confirmations, nativePersisted ? 1 : 0);
+      } finally {
+        mirror.dispose();
+      }
+    });
+  }
+
   for (
     const replies of [
       ["confirmed"],
