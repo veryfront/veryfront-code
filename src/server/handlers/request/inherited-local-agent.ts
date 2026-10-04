@@ -22,6 +22,10 @@ import {
 } from "#veryfront/agent/ag-ui/encoder.ts";
 import { coerceWireEvent } from "#veryfront/agent/ag-ui/sse-parser.ts";
 import { runInheritedChildExecutionOnce } from "#veryfront/agent/hosted/durable-child-fork-execution.ts";
+import {
+  type HostedChildLifecycleTerminalState,
+  runHostedChildLifecycle,
+} from "#veryfront/agent/hosted/child-lifecycle.ts";
 import { ORCHESTRATION_ERROR } from "#veryfront/errors";
 
 function childResult(value: unknown): LocalChildResult {
@@ -113,99 +117,128 @@ export async function runInheritedLocalAgent(
       await onEvent({ type: "tool-input-start", toolCallId: id, toolName: name });
     }
   };
-  try {
-    return await withHostedInheritedLease(child, async (signal) => {
-      const result: StepResult = await runWithHostedRunEventWriterCapability(
-        writer,
-        () =>
-          withLocalChildExecution(
-            async (invocation) => {
-              const toolCallId = invocation.context?.toolCallId;
-              if (!toolCallId) {
-                throw ORCHESTRATION_ERROR.create({
-                  detail: "Durable delegation requires a tool call",
-                });
-              }
-              const attemptSignal = invocation.context?.abortSignal;
-              const delegationSignal = signal && attemptSignal
-                ? AbortSignal.any([signal, attemptSignal])
-                : attemptSignal ?? signal;
-              delegationSignal?.throwIfAborted();
-              return await runInheritedChildExecutionOnce(
-                writer,
-                `${child.runId}:${toolCallId}`,
-                async (onAdmitted) => {
-                  const name = startedTools.get(toolCallId);
-                  const input = toolInputs.get(toolCallId);
-                  const declaredTarget = name === "invoke_agent" && typeof input === "string"
-                    ? input
-                    : name?.startsWith("agent_")
-                    ? name.slice(6)
-                    : undefined;
-                  if (name !== invocation.toolName || declaredTarget !== invocation.agentId) {
-                    throw ORCHESTRATION_ERROR.create({
-                      detail: "Local child has no matching admitted tool invocation",
-                    });
-                  }
-                  await mirror.flush({ abortSignal: delegationSignal, throwOnTimeoutRetry: true });
-                  delegationSignal?.throwIfAborted();
-                  const delegated = await admit(toolCallId, invocation.input)({
-                    apiUrl: transport.apiUrl,
-                    authToken: "",
-                    parentRunId: child.runId,
-                    projectId: transport.projectId,
-                    agentId: invocation.agentId,
+  let pending: Promise<StepResult> | undefined;
+  const persistTerminal = async (state: HostedChildLifecycleTerminalState) => {
+    await finalize({
+      authToken: "",
+      apiUrl: transport.apiUrl,
+      conversationId: child.conversationId,
+      runId: child.runId,
+      status: state.status,
+      output: state.output ?? null,
+      model: "",
+      provider: "",
+      terminalErrorCode: state.terminalErrorCode ?? undefined,
+      terminalErrorMessage: state.terminalErrorMessage ?? undefined,
+    });
+  };
+  const executeUnderLease = async (signal?: AbortSignal): Promise<StepResult> => {
+    const result: StepResult = await runWithHostedRunEventWriterCapability(
+      writer,
+      () =>
+        withLocalChildExecution(
+          async (invocation) => {
+            const toolCallId = invocation.context?.toolCallId;
+            if (!toolCallId) {
+              throw ORCHESTRATION_ERROR.create({
+                detail: "Durable delegation requires a tool call",
+              });
+            }
+            const attemptSignal = invocation.context?.abortSignal;
+            const delegationSignal = signal && attemptSignal
+              ? AbortSignal.any([signal, attemptSignal])
+              : attemptSignal ?? signal;
+            delegationSignal?.throwIfAborted();
+            return await runInheritedChildExecutionOnce(
+              writer,
+              `${child.runId}:${toolCallId}`,
+              async (onAdmitted) => {
+                const name = startedTools.get(toolCallId);
+                const input = toolInputs.get(toolCallId);
+                const declaredTarget = name === "invoke_agent" && typeof input === "string"
+                  ? input
+                  : name?.startsWith("agent_")
+                  ? name.slice(6)
+                  : undefined;
+                if (name !== invocation.toolName || declaredTarget !== invocation.agentId) {
+                  throw ORCHESTRATION_ERROR.create({
+                    detail: "Local child has no matching admitted tool invocation",
                   });
-                  onAdmitted();
-                  const delegatedResult = await runInheritedLocalAgent(
-                    delegated,
-                    transport,
-                    async (childSignal, onEvent) => {
-                      const output = await invocation.execute({ signal: childSignal, onEvent });
-                      return { success: output.status !== "error", output, executionTime: 0 };
-                    },
-                    delegationSignal,
-                  );
-                  if (!delegatedResult.success) {
-                    throw new Error(delegatedResult.error ?? "Delegated agent failed");
-                  }
-                  const output = childResult(delegatedResult.output);
-                  if (!completedTools.has(toolCallId)) {
-                    completedTools.add(toolCallId);
-                    await mirror.handleChunk({ type: "tool-output-available", toolCallId, output });
-                  }
-                  await mirror.flush({ abortSignal: signal, throwOnTimeoutRetry: true });
-                  return output;
-                },
-              );
-            },
-            () => execute(signal, onEvent),
-            onEvent,
-            admitTool,
-          ),
-      ).catch((error: unknown): StepResult => ({
-        success: false,
-        error: error instanceof Error ? error.message : "Local agent execution failed",
-        executionTime: 0,
-      }));
-      signal?.throwIfAborted();
-      await mirror.flush({ abortSignal: signal, throwOnTimeoutRetry: true });
-      await finalize({
-        authToken: "",
-        apiUrl: transport.apiUrl,
-        conversationId: child.conversationId,
-        runId: child.runId,
-        status: result.success ? "completed" : "failed",
-        output: result.output ?? null,
-        model: "",
-        provider: "",
-        ...(result.success ? {} : {
-          terminalErrorCode: "WORKFLOW_AGENT_STEP_FAILED",
-          terminalErrorMessage: result.error ?? "Local agent failed",
-        }),
-      });
-      return result;
-    }, parentSignal);
+                }
+                await mirror.flush({ abortSignal: delegationSignal, throwOnTimeoutRetry: true });
+                delegationSignal?.throwIfAborted();
+                const delegated = await admit(toolCallId, invocation.input)({
+                  apiUrl: transport.apiUrl,
+                  authToken: "",
+                  parentRunId: child.runId,
+                  projectId: transport.projectId,
+                  agentId: invocation.agentId,
+                });
+                onAdmitted();
+                const delegatedResult = await runInheritedLocalAgent(
+                  delegated,
+                  transport,
+                  async (childSignal, onEvent) => {
+                    const output = await invocation.execute({ signal: childSignal, onEvent });
+                    return { success: output.status !== "error", output, executionTime: 0 };
+                  },
+                  delegationSignal,
+                );
+                if (!delegatedResult.success) {
+                  throw new Error(delegatedResult.error ?? "Delegated agent failed");
+                }
+                const output = childResult(delegatedResult.output);
+                if (!completedTools.has(toolCallId)) {
+                  completedTools.add(toolCallId);
+                  await mirror.handleChunk({ type: "tool-output-available", toolCallId, output });
+                }
+                await mirror.flush({ abortSignal: signal, throwOnTimeoutRetry: true });
+                return output;
+              },
+            );
+          },
+          () => execute(signal, onEvent),
+          onEvent,
+          admitTool,
+        ),
+    ).catch((error: unknown): StepResult => ({
+      success: false,
+      error: error instanceof Error ? error.message : "Local agent execution failed",
+      executionTime: 0,
+    }));
+    signal?.throwIfAborted();
+    await mirror.flush({ abortSignal: signal, throwOnTimeoutRetry: true });
+    if (!result.success) throw new Error(result.error ?? "Local agent failed");
+    return result;
+  };
+  try {
+    const outcome = await runHostedChildLifecycle({
+      adapter: { completed: persistTerminal, failed: persistTerminal, cancelled: persistTerminal },
+      execute: async () => {
+        try {
+          return await withHostedInheritedLease(child, (signal) => {
+            pending = executeUnderLease(signal);
+            return pending;
+          }, parentSignal);
+        } catch (error) {
+          // Lease races abort local work; terminal persistence must wait for its actual settlement.
+          await pending?.catch(() => undefined);
+          await mirror.flush({ throwOnTimeoutRetry: true }).catch(() => undefined);
+          throw error;
+        }
+      },
+      resolveCompletedState: (result) => ({ status: "completed", output: result.output ?? null }),
+      resolveErrorState: (error) => ({
+        status: parentSignal?.aborted ? "cancelled" : "failed",
+        terminalErrorCode: "WORKFLOW_AGENT_STEP_FAILED",
+        terminalErrorMessage: error instanceof Error ? error.message : "Local agent failed",
+      }),
+    });
+    return outcome.status === "completed" ? outcome.result : {
+      success: false,
+      error: outcome.terminalState.terminalErrorMessage ?? "Local agent failed",
+      executionTime: 0,
+    };
   } finally {
     mirror.dispose();
   }

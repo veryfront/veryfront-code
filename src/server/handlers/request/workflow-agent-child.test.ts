@@ -465,64 +465,113 @@ describe("workflow agent child protocol", () => {
     ]);
   });
 
-  it("propagates a tool attempt timeout into an already executing delegated child", async () => {
-    const attempt = new AbortController();
-    const grandchildId = "44444444-4444-4444-8444-444444444444";
-    const cursors = new Map<string, number>();
-    const send: typeof fetch = (url, init) => {
-      const path = new URL(String(url)).pathname;
-      const body = JSON.parse(String(init?.body));
-      if (path === "/runs") {
-        return Promise.resolve(
-          body.node_id ? admission() : admission("running", null, grandchildId, "run_research"),
-        );
-      }
-      if (path.endsWith("/events")) {
+  for (const staleAuthority of [false, true]) {
+    it(`settles timed-out delegated execution before terminal persistence (stale authority: ${staleAuthority})`, async () => {
+      const attempt = new AbortController();
+      const grandchildId = "44444444-4444-4444-8444-444444444444";
+      const cursors = new Map<string, number>();
+      const states = new Map<string, string>();
+      let started!: () => void;
+      const entered = new Promise<void>((resolve) => {
+        started = resolve;
+      });
+      let release!: () => void;
+      const settle = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      let stopped = false;
+      const send: typeof fetch = (url, init) => {
+        const path = new URL(String(url)).pathname;
+        const body = init?.body ? JSON.parse(String(init.body)) : {};
+        if (path === "/runs") {
+          states.set(body.node_id ? childId : grandchildId, "running");
+          return Promise.resolve(
+            body.node_id ? admission() : admission("running", null, grandchildId, "run_research"),
+          );
+        }
+        if (path.endsWith("/events")) {
+          const id = path.split("/")[2]!;
+          const cursor = (cursors.get(id) ?? 0) + body.events.length;
+          cursors.set(id, cursor);
+          return Promise.resolve(
+            json({
+              run_id: id,
+              latest_event_id: cursor,
+              latest_external_event_sequence: cursor,
+              appended_count: body.events.length,
+            }),
+          );
+        }
         const id = path.split("/")[2]!;
-        const cursor = (cursors.get(id) ?? 0) + body.events.length;
-        cursors.set(id, cursor);
-        return Promise.resolve(
-          json({
-            run_id: id,
-            latest_event_id: cursor,
-            latest_external_event_sequence: cursor,
-            appended_count: body.events.length,
-          }),
-        );
-      }
-      return Promise.resolve(json({ id: path.split("/")[2], status: body.status }));
-    };
-    let childSawAbort = false;
-    const result = await runner(send)({
-      ...invocation,
-      execute: async () => {
-        await observeGeneratedAgentTurn("attempt-message", {
-          text: "",
-          toolCalls: [{
-            toolCallId: "attempt-tool",
+        assertEquals(stopped, true, "terminal persistence follows actual local settlement");
+        if (id === childId && states.get(grandchildId) === "running") {
+          return Promise.resolve(json({ code: "RUN_DESCENDANTS_ACTIVE" }, 409));
+        }
+        if (path.endsWith("/cancel") && staleAuthority) {
+          return Promise.resolve(
+            json({ code: "PERMISSION_ERROR", message: "Generation replaced" }, 403),
+          );
+        }
+        const status = path.endsWith("/cancel") ? "cancelled" : body.status;
+        states.set(id, status);
+        return Promise.resolve(json({ id, status }));
+      };
+      let childSawAbort = false;
+      const running = runner(send)({
+        ...invocation,
+        execute: async () => {
+          await observeGeneratedAgentTurn("attempt-message", {
+            text: "",
+            toolCalls: [{
+              toolCallId: "attempt-tool",
+              toolName: "invoke_agent",
+              input: { agent_id: "brief-research" },
+            }],
+          });
+          const output = await executeLocalChild({
+            agentId: "brief-research",
+            input: "Research",
             toolName: "invoke_agent",
-            input: { agent_id: "brief-research" },
-          }],
-        });
-        const output = await executeLocalChild({
-          agentId: "brief-research",
-          input: "Research",
-          toolName: "invoke_agent",
-          toolInput: { agent_id: "brief-research" },
-          context: { toolCallId: "attempt-tool", abortSignal: attempt.signal },
-          execute: (control) => {
-            attempt.abort(new Error("Step timeout"));
-            childSawAbort = control?.signal?.aborted === true;
-            control?.signal?.throwIfAborted();
-            return Promise.resolve({ text: "Should stop", toolCalls: 0, status: "completed" });
-          },
-        });
-        return { success: true, output, executionTime: 0 };
-      },
+            toolInput: { agent_id: "brief-research" },
+            context: { toolCallId: "attempt-tool", abortSignal: attempt.signal },
+            execute: async (control) => {
+              attempt.abort(new Error("Step timeout"));
+              childSawAbort = control?.signal?.aborted === true;
+              started();
+              await settle;
+              stopped = true;
+              control?.signal?.throwIfAborted();
+              return { text: "Should stop", toolCalls: 0, status: "completed" };
+            },
+          });
+          return { success: true, output, executionTime: 0 };
+        },
+      });
+      await entered;
+      await Promise.resolve();
+      assertEquals(states.get(grandchildId), "running");
+      release();
+      if (staleAuthority) {
+        await assertRejects(() => running);
+        assertEquals(
+          states.get(grandchildId),
+          "running",
+          "a refused stale generation cannot overwrite durable state",
+        );
+        assertEquals(
+          states.get(childId),
+          "running",
+          "active descendant policy remains authoritative",
+        );
+      } else {
+        const result = await running;
+        assertEquals(states.get(grandchildId), "cancelled");
+        assertEquals(states.get(childId), "failed");
+        assertEquals(result.success, false);
+      }
+      assertEquals(childSawAbort, true);
     });
-    assertEquals(childSawAbort, true);
-    assertEquals(result.success, false);
-  });
+  }
 
   it("keeps concurrent workflow children and their tool-call authority isolated", async () => {
     const parentB = "55555555-5555-4555-8555-555555555555";
