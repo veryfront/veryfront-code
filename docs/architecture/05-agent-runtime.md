@@ -248,3 +248,9 @@ Through Gate 4, hosted durable and AG-UI production still consume
 compatibility UI chunks. The version 2 projection Adapters exist and are
 tested but have no production caller until the Phase 5 Stream Delivery design
 adds a mixed lifecycle/runtime object channel and backend idempotency.
+
+Control-plane checkpoint consumers import `AgentPauseCheckpoint`,
+`getAgentPauseCheckpointSchema` and `parseAgentPauseCheckpoint` from
+`veryfront/agent/pause-checkpoint`. Configure the schema validator before parsing,
+as with the other Veryfront schemas. This entrypoint exposes the native
+continuation parser and type; private host pause capabilities stay in the runtime.
