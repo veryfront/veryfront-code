@@ -180,6 +180,10 @@ const NumberParseInt = Number.parseInt;
 const MathTrunc = Math.trunc;
 const ObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 const ObjectHasOwn = Object.hasOwn;
+const ResponseStatusGetter = ObjectGetOwnPropertyDescriptor(Response.prototype, "status")!.get!;
+const ResponseOkGetter = ObjectGetOwnPropertyDescriptor(Response.prototype, "ok")!.get!;
+const ResponseBodyGetter = ObjectGetOwnPropertyDescriptor(Response.prototype, "body")!.get!;
+const ReadableStreamCancel = ReadableStream.prototype.cancel;
 const ObjectValues = Object.values;
 const ArraySome = Array.prototype.some;
 const ObjectSetPrototypeOf = Object.setPrototypeOf;
@@ -1143,7 +1147,7 @@ async function waitForWorkflowResult(
     if (!run) throw RESOURCE_NOT_FOUND.create({ detail: `Workflow run not found: ${runId}` });
 
     // A waiting run is resumable, so an aborted request cancels it too.
-    if (signal.aborted && !isTerminalWorkflowStatus(run.status)) {
+    if (isAbortSignalAborted(signal) && !isTerminalWorkflowStatus(run.status)) {
       await (cancelRun ? cancelRun() : client.cancel(runId));
       return {
         status: "cancelled",
@@ -1152,7 +1156,7 @@ async function waitForWorkflowResult(
       };
     }
 
-    if (pollingStopped?.aborted) {
+    if ((pollingStopped !== undefined && isAbortSignalAborted(pollingStopped))) {
       throw TIMEOUT_ERROR.create({ detail: `Workflow run timed out: ${runId}` });
     }
 
@@ -1546,7 +1550,7 @@ async function resumeWaitingWorkflowRun(
   }
   // A timed-out request still applies its decision: the timeout reports the
   // run waiting and the recheck dispatch names no decision to apply again.
-  if (signal.aborted) {
+  if (isAbortSignalAborted(signal)) {
     await cancelRun();
     return { run: { status: "cancelled", error: { message: "Workflow run cancelled" } } };
   }
@@ -1849,7 +1853,7 @@ async function runDiscoveredWorkflow(
   try {
     client.register(workflow.definition);
     // A first dispatch has no durable run yet. A resume must cancel its persisted run below.
-    if (signal.aborted && !request.resume) {
+    if (isAbortSignalAborted(signal) && !request.resume) {
       await acknowledgeStop?.();
       return {
         success: false,
@@ -1890,7 +1894,7 @@ async function runDiscoveredWorkflow(
         void cancelRun().catch(() => {});
       };
       signal.addEventListener("abort", forwardCancellation, { once: true });
-      if (signal.aborted) forwardCancellation();
+      if (isAbortSignalAborted(signal)) forwardCancellation();
       const operation = resumeWaitingWorkflowRun(
         client,
         request.runId,
@@ -1998,7 +2002,7 @@ async function runDiscoveredWorkflow(
     const durationMs = Math.max(0, deps.now() - startedAt);
 
     // The cancel can arrive after the last poll, while the pause is persisted.
-    if (run.status === "waiting" && signal.aborted) {
+    if (run.status === "waiting" && isAbortSignalAborted(signal)) {
       await client.cancel(request.runId);
       return {
         success: false,
@@ -2255,6 +2259,12 @@ function readProjectRunInferenceToken(req: Request): string | undefined {
   return requireInferenceProviderCredential(value, "Inference token header");
 }
 
+/** Release acknowledgement bodies through operations captured before project code runs. */
+async function cancelAcknowledgementBody(response: Response): Promise<void> {
+  const body = ReflectApply(ResponseBodyGetter, response, []) as ReadableStream | null;
+  if (body) await ReflectApply(ReadableStreamCancel, body, []);
+}
+
 /** Independent evidence of a settled execution, never evidence from abort alone. */
 function createRunStopAcknowledger(
   req: Request,
@@ -2312,8 +2322,10 @@ function createRunStopAcknowledger(
         // Execution's signal is already aborted; this request owns its deadline.
         signal: ReflectApply(RunStopTimeout, AbortSignal, [10_000]),
       });
-      await response.body?.cancel();
-      if (!response.ok) throw new TaskError("Run stop acknowledgement rejected");
+      await cancelAcknowledgementBody(response);
+      if (!ReflectApply(ResponseOkGetter, response, [])) {
+        throw new TaskError("Run stop acknowledgement rejected");
+      }
     } catch {
       // Best effort. Missing acknowledgement remains unconfirmed in the API.
       serverLogger.warn("[project-run-execute] Could not acknowledge stopped execution", { runId });
@@ -2369,23 +2381,27 @@ function createRunPauseAcknowledger(
             ReflectApply(RunStopTimeout, AbortSignal, [WORKFLOW_PAUSE_ACK_TIMEOUT_MS]),
           ]]),
         });
-        if (response.status < 500) {
-          if (!response.ok) {
-            if (response.status === 401 || response.status === 403) {
+        const status = ReflectApply(ResponseStatusGetter, response, []) as number;
+        if (status < 500) {
+          if (!ReflectApply(ResponseOkGetter, response, [])) {
+            if (status === 401 || status === 403) {
               serverLogger.warn("[project-run-execute] Pause acknowledgement was not authorized", {
                 runId,
-                status: response.status,
+                status,
               });
             }
-            await response.body?.cancel();
+            await cancelAcknowledgementBody(response);
             return undefined;
           }
           const body: unknown = await ReflectApply(ResponsePrototypeJson, response, []);
-          if (response.status === 200 && isRecord(body) && typeof body.stop === "boolean") {
+          if (
+            status === 200 && isRecord(body) && ObjectHasOwn(body, "stop") &&
+            typeof body.stop === "boolean"
+          ) {
             return body.stop;
           }
         }
-        await response.body?.cancel();
+        await cancelAcknowledgementBody(response);
       } catch {
         // A transport failure or unreadable reply is retried like a 5xx.
       }
