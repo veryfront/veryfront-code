@@ -273,8 +273,9 @@ export function selectDurationShard(
     () => ({ files: [] as string[], load: 0 }),
   );
   for (const path of ordered) {
-    const target = shards.reduce((best, candidate) =>
-      candidate.load < best.load ? candidate : best
+    const target = shards.reduce(
+      (best, candidate) => candidate.load < best.load ? candidate : best,
+      shards[0]!,
     );
     target.files.push(path);
     target.load += weight(path);
