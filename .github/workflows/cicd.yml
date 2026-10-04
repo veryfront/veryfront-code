@@ -700,11 +700,11 @@ jobs:
     timeout-minutes: 10
     name: Sonar coverage report
     needs: [tested-run, coverage-shards, coverage-node-executor, coverage-integration-client]
-    if: ${{ !cancelled() && (needs.tested-run.outputs.reuse == 'true' || (needs.coverage-shards.result == 'success' && needs.coverage-node-executor.result == 'success' && needs.coverage-integration-client.result == 'success')) && ((github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && (github.event_name != 'pull_request' || github.event.pull_request.user.login != 'dependabot[bot]')) }}
+    if: ${{ !cancelled() && needs.tested-run.outputs.reuse != 'true' && (needs.coverage-shards.result == 'success' && needs.coverage-node-executor.result == 'success' && needs.coverage-integration-client.result == 'success') && ((github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && (github.event_name != 'pull_request' || github.event.pull_request.user.login != 'dependabot[bot]')) }}
     permissions:
       actions: read
       contents: read
-    steps:
+    steps: &sonar-coverage-steps
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -748,6 +748,17 @@ jobs:
           path: coverage/lcov.info
           retention-days: 1
 
+  sonar-coverage-main:
+    runs-on: ${{ (github.event_name == 'push' || github.event_name == 'merge_group') && 'ubuntu-latest-m' || 'ubuntu-latest' }}
+    timeout-minutes: 10
+    name: Reused main Sonar coverage report
+    needs: [tested-run]
+    if: ${{ !cancelled() && needs.tested-run.result == 'success' && needs.tested-run.outputs.reuse == 'true' }}
+    permissions:
+      actions: read
+      contents: read
+    steps: *sonar-coverage-steps
+
   # Automatic Analysis runs on Sonar's servers and cannot see coverage, which is
   # only produced where the tests run. This job holds SONAR_TOKEN, so it runs no
   # repository code: it downloads the merged report from `sonar-coverage` and
@@ -765,11 +776,11 @@ jobs:
     runs-on: ${{ (github.event_name == 'push' || github.event_name == 'merge_group') && 'ubuntu-latest-m' || 'ubuntu-latest' }}
     timeout-minutes: 28
     name: SonarQube Cloud scan
-    needs: [sonar-coverage]
-    if: ${{ !cancelled() && needs.sonar-coverage.result == 'success' && ((github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && (github.event_name != 'pull_request' || github.event.pull_request.user.login != 'dependabot[bot]')) }}
+    needs: [sonar-coverage, tested-run]
+    if: ${{ !cancelled() && needs.tested-run.outputs.reuse != 'true' && needs.sonar-coverage.result == 'success' && ((github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && (github.event_name != 'pull_request' || github.event.pull_request.user.login != 'dependabot[bot]')) }}
     permissions:
       contents: read
-    steps:
+    steps: &sonar-scan-steps
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -845,16 +856,26 @@ jobs:
             exit 1
           fi
 
+  sonar-main:
+    runs-on: ${{ (github.event_name == 'push' || github.event_name == 'merge_group') && 'ubuntu-latest-m' || 'ubuntu-latest' }}
+    timeout-minutes: 28
+    name: Reused main SonarQube Cloud scan
+    needs: [sonar-coverage-main, tested-run]
+    if: ${{ !cancelled() && needs.tested-run.outputs.reuse == 'true' && needs.sonar-coverage-main.result == 'success' && ((github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && (github.event_name != 'pull_request' || github.event.pull_request.user.login != 'dependabot[bot]')) }}
+    permissions:
+      contents: read
+    steps: *sonar-scan-steps
+
   sonar-quality-gate:
     name: SonarQube Cloud quality gate
     runs-on: ${{ (github.event_name == 'push' || github.event_name == 'merge_group') && 'ubuntu-latest-m' || 'ubuntu-latest' }}
     timeout-minutes: 2
-    needs: [sonar]
-    if: ${{ always() && github.event_name != 'push' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && (github.event_name != 'pull_request' || github.event.pull_request.user.login != 'dependabot[bot]') }}
+    needs: [sonar, sonar-main, tested-run]
+    if: ${{ always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && (github.event_name != 'pull_request' || github.event.pull_request.user.login != 'dependabot[bot]') }}
     steps:
       - name: Require server-side quality gate
         env:
-          SONAR_RESULT: ${{ needs.sonar.result }}
+          SONAR_RESULT: ${{ needs.tested-run.outputs.reuse == 'true' && needs.sonar-main.result || needs.sonar.result }}
         run: |
           if [ "$SONAR_RESULT" != "success" ]; then
             echo "::error::Server-side SonarQube Cloud quality gate finished with $SONAR_RESULT"
@@ -1572,7 +1593,7 @@ jobs:
       - name: Require merge correctness dependencies
         env:
           # A main run that reuses its merge-queue run skips the tests that run
-          # already passed on this commit; Sonar still has to pass here.
+          # already passed on this commit; dispatch waits for the fresh main Sonar gate.
           REUSED_RUN_ID: ${{ needs.tested-run.outputs.reuse == 'true' && needs.tested-run.outputs.run_id || '' }}
           # Sonar needs SONAR_TOKEN, so fork and Dependabot PRs intentionally
           # skip it. Pushes, merge-group runs, and trusted PRs must block on it.
@@ -1603,7 +1624,7 @@ jobs:
             if [ "$result_name" = "SONAR_RESULT" ] && [ "$SONAR_REQUIRED" != "true" ]; then
               continue
             fi
-            if [ -n "$REUSED_RUN_ID" ] && [ "$result_name" != "SONAR_RESULT" ] && [ "$result" = "skipped" ]; then
+            if [ -n "$REUSED_RUN_ID" ] && [ "$result" = "skipped" ]; then
               echo "$result_name passed in merge-queue run $REUSED_RUN_ID"
               continue
             fi
@@ -1737,7 +1758,7 @@ jobs:
       tests-bun,
       tests-binary-e2e,
       tests-e2e-rsc-browser,
-      sonar,
+      sonar-quality-gate,
       quality-gate-artifact,
       quality-gate-release,
       build-binaries,
@@ -1763,7 +1784,7 @@ jobs:
           SONAR_REQUIRED: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && (github.event_name != 'pull_request' || github.event.pull_request.user.login != 'dependabot[bot]') }}
           SOURCE_CHECKS_RESULT: ${{ needs.ci.result }}
           COVERAGE_RESULT: ${{ needs.coverage.result }}
-          SONAR_RESULT: ${{ needs.sonar.result }}
+          SONAR_RESULT: ${{ needs.sonar-quality-gate.result }}
           INTEGRATION_TESTS_RESULT: ${{ needs.tests.result }}
           NODE_RUNTIME_TESTS_RESULT: ${{ needs.tests-node.result }}
           NODE_SANDBOX_TESTS_RESULT: ${{ needs.tests-node-sandbox.result }}
@@ -2322,6 +2343,7 @@ jobs:
     name: quality gate (registry)
     if: ${{ always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && needs.version-check.result == 'success' && (needs.version-check.outputs.is_stable == 'false' || needs.version-check.outputs.stable_release_requested == 'true') }}
     needs: [
+      sonar-quality-gate,
       prerelease,
       github-prerelease,
       registry-validation-rc,
@@ -2333,6 +2355,14 @@ jobs:
     environment: production
     timeout-minutes: 65
     steps:
+      - name: Require fresh Sonar quality gate
+        env:
+          SONAR_RESULT: ${{ needs.sonar-quality-gate.result }}
+        run: |
+          if [ "$SONAR_RESULT" != "success" ]; then
+            echo "::error::Fresh SonarQube Cloud quality gate finished with $SONAR_RESULT"
+            exit 1
+          fi
       - name: Report selected release result
         env:
           IS_STABLE: ${{ needs.version-check.outputs.is_stable }}

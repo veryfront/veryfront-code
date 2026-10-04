@@ -47,7 +47,9 @@ const KEPT = [
   // Required integration check; it accepts skipped shards on a reused run.
   "tests",
   "sonar-coverage",
+  "sonar-coverage-main",
   "sonar",
+  "sonar-main",
   "sonar-quality-gate",
   "quality-gate-merge",
   "quality-gate-artifact",

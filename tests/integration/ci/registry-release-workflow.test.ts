@@ -870,7 +870,7 @@ printf '%064d  %s\n' 0 "$1"
         `${jobName} must require the canonical artifact quality gate`,
       );
       assert(
-        job.needs.includes("sonar") &&
+        job.needs.includes(jobName === "prerelease" ? "sonar" : "sonar-quality-gate") &&
           namedStep(job, "Require merge correctness dependencies") !== undefined,
         `${jobName} must evaluate the complete merge correctness gate after Sonar`,
       );
@@ -1194,6 +1194,7 @@ printf '%064d  %s\n' 0 "$1"
     assertEquals(
       gate.needs,
       [
+        "sonar-quality-gate",
         "prerelease",
         "github-prerelease",
         "registry-validation-rc",
@@ -1205,8 +1206,8 @@ printf '%064d  %s\n' 0 "$1"
     );
     assertEquals(
       gateSteps[0]?.name,
-      "Report selected release result",
-      "selected release result must be reported before checkout",
+      "Require fresh Sonar quality gate",
+      "Sonar must pass before registry or dispatch code runs",
     );
     assert(
       gateSteps.findIndex((step) => String(step.uses).startsWith("actions/checkout@")) > 0,
@@ -1390,6 +1391,7 @@ printf '%064d  %s\n' 0 "$1"
     assertEquals(
       registrySteps.map((step) => String(step.name ?? step.uses).split(" #")[0]),
       [
+        "Require fresh Sonar quality gate",
         "Report selected release result",
         "Require RC release dependencies",
         "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
@@ -1791,6 +1793,7 @@ fi
     const tokenStep = namedStep(dispatch, "Create release GitHub App token");
 
     assertEquals(dispatch.needs, [
+      "sonar-quality-gate",
       "prerelease",
       "github-prerelease",
       "registry-validation-rc",
@@ -2007,6 +2010,7 @@ describe("parallel RC registry validation with folded stable dispatch", () => {
     const jobs = await readJobs();
     const join = asRecord(jobs["quality-gate-registry"], "registry and publication join");
     assertEquals(join.needs, [
+      "sonar-quality-gate",
       "prerelease",
       "github-prerelease",
       "registry-validation-rc",
@@ -2123,6 +2127,7 @@ describe("bounded RC publication and deferred metadata verification", () => {
     assertEquals(
       asRecord(jobs["quality-gate-registry"], "required registry join").needs,
       [
+        "sonar-quality-gate",
         "prerelease",
         "github-prerelease",
         "registry-validation-rc",
@@ -2131,5 +2136,50 @@ describe("bounded RC publication and deferred metadata verification", () => {
         "version-check",
       ],
     );
+  });
+});
+
+type ParallelJob = { needs: string[]; if: string; steps: Record<string, unknown>[] };
+async function parallelJobs(): Promise<Record<string, ParallelJob>> {
+  const workflow = parse(
+    await Deno.readTextFile(
+      new URL("../../../.github/workflows/cicd.yml", import.meta.url),
+    ),
+  ) as { jobs: Record<string, ParallelJob> };
+  return workflow.jobs;
+}
+
+describe("RC publication alongside the reused main Sonar scan", () => {
+  it("keeps the reused scan out of publication ancestors and retains fallback scanning", async () => {
+    const graph = await parallelJobs();
+    assert(graph["sonar-main"], "reuse must have its own parallel scan");
+    assertEquals(graph["sonar-coverage-main"].needs, ["tested-run"]);
+    assertStringIncludes(graph["sonar-coverage"].if, "needs.tested-run.outputs.reuse != 'true'");
+    assertStringIncludes(graph["sonar-main"].if, "needs.tested-run.outputs.reuse == 'true'");
+    const visit = (name: string): string[] => [name, ...(graph[name].needs ?? []).flatMap(visit)];
+    for (const name of ["prerelease", "registry-validation-rc", "github-prerelease"]) {
+      assertEquals(visit(name).includes("sonar-main"), false);
+    }
+    assert(graph.prerelease.needs.includes("sonar"));
+    assertEquals(graph["sonar-main"].steps, graph.sonar.steps);
+    assertEquals(graph["sonar-coverage-main"].steps, graph["sonar-coverage"].steps);
+  });
+
+  it("blocks dispatch for every unsuccessful fresh Sonar result", async () => {
+    const graph = await parallelJobs();
+    const dispatch = graph["quality-gate-registry"];
+    assert(dispatch.needs.includes("sonar-quality-gate"));
+    const guard = dispatch.steps[0];
+    assertEquals(guard.name, "Require fresh Sonar quality gate");
+    assertEquals(guard.env, { SONAR_RESULT: "${{ needs.sonar-quality-gate.result }}" });
+    for (const result of ["success", "failure", "cancelled", "skipped", ""]) {
+      const output = await new Deno.Command("bash", {
+        args: ["-c", String(guard.run)],
+        env: { SONAR_RESULT: result },
+        stdout: "piped",
+        stderr: "piped",
+      }).output();
+      assertEquals(output.code, result === "success" ? 0 : 1);
+    }
   });
 });
