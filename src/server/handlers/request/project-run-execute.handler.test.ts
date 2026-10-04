@@ -4221,9 +4221,13 @@ describe("server/handlers/request/project-run-execute.handler", () => {
 
   it("runs managed eval targets as durable child agent runs", async () => {
     const requests: Array<
-      { method: string; pathname: string; body: Record<string, unknown> | null }
+      {
+        method: string;
+        pathname: string;
+        body: Record<string, unknown> | null;
+        idempotencyKey: string | null;
+      }
     > = [];
-    const conversationId = "11111111-1111-4111-8111-111111111111";
     const handler = new ProjectRunExecuteHandler(createDeps({
       runTask: runTaskDefinition,
       findEvalById: async (target) =>
@@ -4246,15 +4250,15 @@ describe("server/handlers/request/project-run-execute.handler", () => {
         createAgentServiceEvalAdapter({ ...config, requestTimeoutMs: 250 }),
     }));
     const body = {
-      runId: "run_eval_durable_agent",
+      runId: "66666666-6666-4666-8666-666666666666",
       kind: "task",
       target: "task:eval",
-      projectId: "proj-1",
+      projectId: "55555555-5555-4555-8555-555555555555",
       runtimeAgUiEndpoint: "https://demo-project.preview.veryfront.org/api/ag-ui",
       config: { eval_id: "eval:deep-research" },
     };
     const { request, publicKeyPem } = await signedRequest(
-      "/api/control-plane/runs/run_eval_durable_agent/execute",
+      "/api/control-plane/runs/66666666-6666-4666-8666-666666666666/execute",
       body,
       { "x-token": "runtime-token" },
       "https://veryfront.org",
@@ -4269,14 +4273,17 @@ describe("server/handlers/request/project-run-execute.handler", () => {
             const url = new URL(String(input));
             const method = observeFetchRequestInit(init).method ?? "GET";
             const requestBody = requestJsonBody(init);
-            requests.push({ method, pathname: url.pathname, body: requestBody });
+            requests.push({
+              method,
+              pathname: url.pathname,
+              body: requestBody,
+              idempotencyKey: new Headers(init?.headers).get("Idempotency-Key"),
+            });
 
             if (method === "POST" && url.pathname.endsWith("/runs")) {
-              const runId = String(requestBody?.public_id);
+              const runId = "77777777-7777-4777-8777-777777777777";
               return Response.json({
-                accepted: true,
-                run: { run_id: runId },
-                conversation_id: conversationId,
+                id: runId,
               }, { status: 202 });
             }
 
@@ -4293,7 +4300,11 @@ describe("server/handlers/request/project-run-execute.handler", () => {
 
             return new Response("not found", { status: 404 });
           },
-          () => handler.handle(request, createCtx(publicKeyPem)),
+          () =>
+            handler.handle(request, {
+              ...createCtx(publicKeyPem),
+              projectId: "55555555-5555-4555-8555-555555555555",
+            }),
         ),
     );
 
@@ -4306,19 +4317,21 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     assertEquals(requests.length, 2);
     const createRequest = requests[0];
     assertEquals(createRequest?.method, "POST");
-    assertEquals(createRequest?.body?.kind, "agent");
-    assertEquals(createRequest?.body?.owner, { kind: "project", id: "proj-1" });
-    assertEquals(createRequest?.body?.parent_run_id, "run_eval_durable_agent");
-    assertEquals(createRequest?.body?.conversation_mode, "create_new");
-    assertStringIncludes(String(createRequest?.body?.public_id), "eval-run-");
-    const createRunRequest = createRequest?.body?.request as Record<string, unknown>;
-    const agentInput = createRunRequest.input as Record<string, unknown>;
-    assertEquals(agentInput.agent_id, "researcher");
-    assertEquals(agentInput.messages, []);
-    assertEquals(agentInput.source_target_kind, "project");
-    assertEquals(agentInput.runtime_target_kind, "main_branch");
-    assertEquals(agentInput.target_environment_id, undefined);
-    assertEquals(agentInput.target_branch_id, undefined);
+    assertStringIncludes(
+      createRequest?.idempotencyKey ?? "",
+      "eval:66666666-6666-4666-8666-666666666666:eval-run-",
+    );
+    assertEquals(createRequest?.body?.project_id, "55555555-5555-4555-8555-555555555555");
+    assertEquals(createRequest?.body?.target, { type: "agent", id: "researcher" });
+    assertEquals(createRequest?.body?.parent_run_id, "66666666-6666-4666-8666-666666666666");
+    assertEquals(createRequest?.body?.input, "France capital?");
+    assertEquals(createRequest?.body?.execution, { runtime: { type: "main_branch" } });
+    assertEquals(createRequest?.body?.request, undefined);
+    assertEquals(
+      (createRequest?.body?.config as Record<string, unknown>).conversation_mode,
+      "create_new",
+    );
+    const agentInput = createRequest?.body?.config as Record<string, unknown>;
     assertEquals(agentInput.forwarded_props, {
       prompt: "France capital?",
       runtimeOverrides: {
@@ -4326,7 +4339,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
       },
       veryfront: {
         agentId: "researcher",
-        projectId: "proj-1",
+        projectId: "55555555-5555-4555-8555-555555555555",
         runtimeOverrides: {
           allowedTools: [],
         },
@@ -4334,15 +4347,19 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     });
     assertEquals(requests[0]?.pathname, "/runs");
     assertEquals(requests[1]?.method, "GET");
-    assertStringIncludes(requests[1]?.pathname ?? "", `/conversations/${conversationId}/runs/`);
+    assertEquals(requests[1]?.pathname, "/runs/77777777-7777-4777-8777-777777777777/stream");
     assertStringIncludes(requests[1]?.pathname ?? "", "/stream");
   });
 
   it("preserves environment and preview targets for durable eval runs", async () => {
     const requests: Array<
-      { method: string; pathname: string; body: Record<string, unknown> | null }
+      {
+        method: string;
+        pathname: string;
+        body: Record<string, unknown> | null;
+        idempotencyKey: string | null;
+      }
     > = [];
-    const conversationId = "22222222-2222-4222-8222-222222222222";
     const environmentId = "33333333-3333-4333-8333-333333333333";
     const handler = new ProjectRunExecuteHandler(createDeps({
       runTask: runTaskDefinition,
@@ -4383,14 +4400,17 @@ describe("server/handlers/request/project-run-execute.handler", () => {
               const url = new URL(String(input));
               const method = observeFetchRequestInit(init).method ?? "GET";
               const requestBody = requestJsonBody(init);
-              requests.push({ method, pathname: url.pathname, body: requestBody });
+              requests.push({
+                method,
+                pathname: url.pathname,
+                body: requestBody,
+                idempotencyKey: new Headers(init?.headers).get("Idempotency-Key"),
+              });
 
               if (method === "POST" && url.pathname.endsWith("/runs")) {
-                const publicId = String(requestBody?.public_id);
+                const publicId = "77777777-7777-4777-8777-777777777777";
                 return Response.json({
-                  accepted: true,
-                  run: { run_id: publicId },
-                  conversation_id: conversationId,
+                  id: publicId,
                 }, { status: 202 });
               }
 
@@ -4407,7 +4427,11 @@ describe("server/handlers/request/project-run-execute.handler", () => {
 
               return new Response("not found", { status: 404 });
             },
-            () => handler.handle(request, createCtx(publicKeyPem)),
+            () =>
+              handler.handle(request, {
+                ...createCtx(publicKeyPem),
+                projectId: "55555555-5555-4555-8555-555555555555",
+              }),
           ),
       );
     };
@@ -4415,7 +4439,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
       runId: "run_eval_durable_env_agent",
       kind: "task",
       target: "task:eval",
-      projectId: "proj-1",
+      projectId: "55555555-5555-4555-8555-555555555555",
       runtimeAgUiEndpoint: "https://demo-project.preview.veryfront.org/api/ag-ui",
       runtimeTargetKind: "environment",
       runtimeTargetEnvironmentId: environmentId,
@@ -4429,14 +4453,10 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     assertEquals(payload.success, true);
 
     assertEquals(requests.length, 2);
-    const createRunRequest = requests[0]?.body?.request as Record<string, unknown>;
-    const agentInput = createRunRequest.input as Record<string, unknown>;
-    assertEquals(agentInput.agent_id, "researcher");
-    assertEquals(agentInput.messages, []);
-    assertEquals(agentInput.source_target_kind, "environment");
-    assertEquals(agentInput.runtime_target_kind, "environment");
-    assertEquals(agentInput.target_environment_id, environmentId);
-    assertEquals(agentInput.target_branch_id, undefined);
+    const agentInput = requests[0]?.body?.config as Record<string, unknown>;
+    assertEquals(requests[0]?.body?.execution, {
+      runtime: { type: "environment", id: environmentId },
+    });
     assertEquals(agentInput.forwarded_props, {
       prompt: "France capital?",
       model: "model-override-1",
@@ -4446,7 +4466,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
       },
       veryfront: {
         agentId: "researcher",
-        projectId: "proj-1",
+        projectId: "55555555-5555-4555-8555-555555555555",
         model: "model-override-1",
         runtimeOverrides: {
           allowedTools: [],
@@ -4459,7 +4479,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     const branchId = "44444444-4444-4444-8444-444444444444";
     const previewResult = await execute({
       ...body,
-      runId: "run_eval_durable_preview_agent",
+      runId: "66666666-6666-4666-8666-666666666668",
       runtimeTargetKind: "preview_branch",
       runtimeTargetEnvironmentId: undefined,
       runtimeTargetBranchId: branchId,
@@ -4467,13 +4487,10 @@ describe("server/handlers/request/project-run-execute.handler", () => {
 
     assertExists(previewResult.response);
     assertEquals(previewResult.response.status, 200);
-    const previewRequest = requests[0]?.body?.request as Record<string, unknown>;
-    const previewInput = previewRequest.input as Record<string, unknown>;
-    assertEquals(previewInput.source_target_kind, "preview_branch");
-    assertEquals(previewInput.runtime_target_kind, "preview_branch");
-    assertEquals(previewInput.target_environment_id, undefined);
-    assertEquals(previewInput.target_branch_id, branchId);
-    assertEquals(previewInput.messages, []);
+    const previewInput = requests[0]?.body?.config as Record<string, unknown>;
+    assertEquals(requests[0]?.body?.execution, {
+      runtime: { type: "preview_branch", id: branchId },
+    });
     assertEquals(previewInput.forwarded_props, agentInput.forwarded_props);
   });
 
