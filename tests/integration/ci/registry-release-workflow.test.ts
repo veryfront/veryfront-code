@@ -870,7 +870,7 @@ printf '%064d  %s\n' 0 "$1"
         `${jobName} must require the canonical artifact quality gate`,
       );
       assert(
-        job.needs.includes(jobName === "prerelease" ? "sonar" : "sonar-quality-gate") &&
+        job.needs.includes("sonar") &&
           namedStep(job, "Require merge correctness dependencies") !== undefined,
         `${jobName} must evaluate the complete merge correctness gate after Sonar`,
       );
@@ -892,10 +892,10 @@ printf '%064d  %s\n' 0 "$1"
     assertEquals(npmSteps.some((step) => step.id === "release-app-token"), false);
 
     const github = asRecord(jobs["github-prerelease"], "GitHub prerelease job");
-    assertEquals(github.needs, ["prerelease"]);
+    assertEquals(github.needs, ["prerelease", "build-binaries"]);
     assertEquals(
       github.if,
-      "${{ !cancelled() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && needs.prerelease.result == 'success' }}",
+      "${{ !cancelled() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && needs.prerelease.result == 'success' && needs.build-binaries.result == 'success' }}",
     );
     assertEquals(github.environment, npm.environment);
     assertEquals(github["runs-on"], npm["runs-on"]);
@@ -2153,16 +2153,48 @@ describe("RC publication alongside the reused main Sonar scan", () => {
   it("keeps the reused scan out of publication ancestors and retains fallback scanning", async () => {
     const graph = await parallelJobs();
     assert(graph["sonar-main"], "reuse must have its own parallel scan");
-    assertEquals(graph["sonar-coverage-main"].needs, ["tested-run"]);
+    assertEquals(graph["sonar-coverage-main"].needs, ["tested-run", "version-check"]);
     assertStringIncludes(graph["sonar-coverage"].if, "needs.tested-run.outputs.reuse != 'true'");
     assertStringIncludes(graph["sonar-main"].if, "needs.tested-run.outputs.reuse == 'true'");
     const visit = (name: string): string[] => [name, ...(graph[name].needs ?? []).flatMap(visit)];
-    for (const name of ["prerelease", "registry-validation-rc", "github-prerelease"]) {
+    for (
+      const name of [
+        "prerelease",
+        "registry-validation-rc",
+        "github-prerelease",
+        "publish-public-release",
+      ]
+    ) {
       assertEquals(visit(name).includes("sonar-main"), false);
     }
     assert(graph.prerelease.needs.includes("sonar"));
+    assertEquals(graph.prerelease.needs.includes("build-binaries"), false);
+    assert(graph["github-prerelease"].needs.includes("build-binaries"));
+    assertStringIncludes(graph["github-prerelease"].if, "needs.build-binaries.result == 'success'");
+    assert(graph.release.needs.includes("sonar"));
     assertEquals(graph["sonar-main"].steps, graph.sonar.steps);
     assertEquals(graph["sonar-coverage-main"].steps, graph["sonar-coverage"].steps);
+  });
+
+  it("selects the parallel scan only for RC reuse and preserves stable reused coverage", async () => {
+    const graph = await parallelJobs();
+    const parallel =
+      "needs.tested-run.outputs.reuse == 'true' && needs.version-check.outputs.is_stable == 'false'";
+    const original =
+      "(needs.tested-run.outputs.reuse != 'true' || needs.version-check.outputs.is_stable != 'false')";
+    for (const name of ["sonar-main", "sonar-coverage-main"]) {
+      assertStringIncludes(graph[name].if, parallel);
+      assert(graph[name].needs.includes("version-check"));
+    }
+    for (const name of ["sonar", "sonar-coverage"]) {
+      assertStringIncludes(graph[name].if, original);
+      assert(graph[name].needs.includes("version-check"));
+    }
+    assertStringIncludes(graph["sonar-coverage"].if, "needs.tested-run.outputs.reuse == 'true' ||");
+    const gate = graph["sonar-quality-gate"].steps[0];
+    assertEquals(gate.env, {
+      SONAR_RESULT: "${{ " + parallel + " && needs.sonar-main.result || needs.sonar.result }}",
+    });
   });
 
   it("blocks dispatch for every unsuccessful fresh Sonar result", async () => {
