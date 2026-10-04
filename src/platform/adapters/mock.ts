@@ -12,6 +12,8 @@ export interface MockRuntimeAdapter extends RuntimeAdapter {
     files: Map<string, string>;
     byteFiles: Map<string, Uint8Array>;
     directories: Set<string>;
+    /** Number of retained binary content copies used to detect fixture mutations. */
+    readonly retainedBinarySnapshotCount: number;
   };
 }
 
@@ -139,6 +141,15 @@ export function createMockAdapter(): MockRuntimeAdapter {
     lastModification = Math.max(Date.now(), lastModification + 1);
     modificationTimes.set(path, { mtime: lastModification, bytes: bytes?.slice() });
   }
+  function releaseRemovedSnapshot(path: string): void {
+    if (byteFiles.has(path)) return;
+    const metadata = modificationTimes.get(path);
+    if (files.has(path) && metadata) {
+      delete metadata.bytes;
+    } else {
+      modificationTimes.delete(path);
+    }
+  }
   class GenerationMap<T> extends Map<string, T> {
     override set(key: string, value: T): this {
       recordModification(key, value instanceof Uint8Array ? value : undefined);
@@ -147,13 +158,18 @@ export function createMockAdapter(): MockRuntimeAdapter {
 
     override delete(key: string): boolean {
       const deleted = super.delete(key);
-      if (deleted) fileGeneration++;
+      if (deleted) {
+        fileGeneration++;
+        releaseRemovedSnapshot(key);
+      }
       return deleted;
     }
 
     override clear(): void {
+      const removedPaths = [...this.keys()];
       if (this.size > 0) fileGeneration++;
       super.clear();
+      for (const path of removedPaths) releaseRemovedSnapshot(path);
     }
   }
   const files = new GenerationMap<string>();
@@ -259,6 +275,9 @@ export function createMockAdapter(): MockRuntimeAdapter {
       files,
       byteFiles,
       directories,
+      get retainedBinarySnapshotCount() {
+        return [...modificationTimes.values()].filter((entry) => entry.bytes != null).length;
+      },
       readFile: (path: string) => {
         const normalizedPath = normalizeMockPath(path);
         const content = files.get(normalizedPath);
