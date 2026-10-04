@@ -32,13 +32,20 @@ and publishes the tested npm artifact. Without such a run, main runs the full pi
 
 The scanner emits the diagnostic `SonarQube Cloud scan` check.
 `SonarQube Cloud quality gate` is the only Sonar check required by the ruleset
-and depends on that scanner result. Merge queue scans explicitly analyze their
-`gh-readonly-queue` ref plus generated commit SHA with `main` as the target
-branch. Including the SHA isolates rebuilt groups even when GitHub reuses a
-queue ref. Sonar does
-not auto-detect `merge_group` events; leaving the branch unset publishes queue
-analyses into `main`, where concurrent groups compete with each other and main
-pushes. Pull requests and main pushes retain Sonar's automatic detection.
+and depends on that scanner result. Merge queue scans analyze the exact
+generated commit as a pull-request analysis: `sonar.pullrequest.key` is the PR
+number parsed from `gh-readonly-queue/main/pr-N-<sha>`,
+`sonar.pullrequest.branch` is that queue ref, and `sonar.pullrequest.base` is
+`main`. Unexpected queue refs fail before the scanner runs. PR mode reuses the
+JS/TS analysis cache and evaluates new-code gate conditions. The current gate
+contains only new-code conditions; main still runs its full branch analysis.
+
+Queue scans share the originating PR's Sonar analysis identity. A queue rebuild
+replaces that PR's earlier decoration instead of creating a SHA-isolated
+branch. Each scan still waits for its server-side quality gate, and queue
+analyses never target main's analysis. Sonar does not auto-detect `merge_group`
+events, so the explicit PR properties are required. Ordinary pull requests and
+main pushes retain Sonar's automatic detection.
 The 28-minute scan budget, 20-minute server wait, required quality gate, and
 single infrastructure-error retry remain unchanged.
 
