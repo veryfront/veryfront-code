@@ -15,9 +15,15 @@ import { finalizeHostedDetached, finalizeHostedResponse } from "./stream-finaliz
 describe("hosted manual pause finalization", () => {
   for (const mode of ["response", "detached"] as const) {
     for (
-      const [lostReply, flushFails] of [[false, false], [true, false], [false, true], [true, true]]
+      const [lostReply, flushFails, streamFails] of [
+        [false, false, false],
+        [true, false, false],
+        [false, true, false],
+        [true, true, false],
+        [false, false, true],
+      ]
     ) {
-      it(`${mode} flushes and cleans up without synthesizing a terminal outcome (lost=${lostReply}, flushFails=${flushFails})`, async () => {
+      it(`${mode} flushes and cleans up without synthesizing a terminal outcome (lost=${lostReply}, flushFails=${flushFails}, streamFails=${streamFails})`, async () => {
         const controller = new AbortController();
         const capability = createRunBoundAgentManualPause({
           apiUrl: "https://api.example.com",
@@ -60,6 +66,7 @@ describe("hosted manual pause finalization", () => {
         };
         const options = {
           isAborted: false,
+          streamError: streamFails ? new Error("Producer stream failed before cleanup") : undefined,
           getFinalStep: unavailable,
           buildState: unavailable,
           shouldFailEmptyMessage: () => false,
@@ -83,7 +90,10 @@ describe("hosted manual pause finalization", () => {
         assertEquals(cleanups, 1);
         assertEquals(canSettleHostedAgentPause(capability), false);
         capability.persisted?.(true);
-        assertEquals(canSettleHostedAgentPause(capability), !lostReply && !flushFails);
+        assertEquals(
+          canSettleHostedAgentPause(capability),
+          !lostReply && !flushFails && !streamFails,
+        );
       });
     }
   }
