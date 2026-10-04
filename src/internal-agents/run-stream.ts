@@ -1194,9 +1194,16 @@ export async function createRuntimeAgentStreamResponse(
     threadId: input.threadId,
     servingIdentity: deps.servingIdentity,
   });
+  const manualPause = runtimeManualPauseCapabilities.get(input);
   let settledStop: (outcome?: RunStopSettlement) => void;
   try {
     settledStop = deps.sessionManager.stopRegistry.register(input.runId, () => {
+      if (manualPause) {
+        invalidateHostedAgentPauseSettlement(
+          manualPause,
+          new Error("Internal agent stop requested"),
+        );
+      }
       deps.sessionManager.cancelRun(input.runId);
     });
   } catch (error) {
@@ -1204,7 +1211,6 @@ export async function createRuntimeAgentStreamResponse(
     throw error;
   }
   let producerCompletion: Promise<void> | undefined;
-  const manualPause = runtimeManualPauseCapabilities.get(input);
 
   let completedResponse: AgentResponse | null = null;
   // Running usage total, updated after every model call. A run that dies mid-stream
@@ -2026,6 +2032,12 @@ export async function createRuntimeAgentStreamResponse(
       });
     },
     cancel() {
+      if (manualPause) {
+        invalidateHostedAgentPauseSettlement(
+          manualPause,
+          new Error("Internal agent response canceled"),
+        );
+      }
       clientAttached = false;
       stopHeartbeat?.();
       stopHeartbeat = undefined;
