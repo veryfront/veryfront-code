@@ -6,6 +6,9 @@ import { tool } from "#veryfront/tool";
 import { defineSchema } from "#veryfront/schemas";
 import { scriptedModel } from "#veryfront/agent/runtime/model-runtime.test-helpers.ts";
 import { StepExecutor } from "#veryfront/workflow/executor/step-executor.ts";
+import { DAGExecutor } from "#veryfront/workflow/executor/dag/index.ts";
+import { normalizeSourceIntegrationPolicy } from "#veryfront/integrations/source-policy.ts";
+import type { WorkflowNode, WorkflowRun } from "#veryfront/workflow/types.ts";
 import { step } from "#veryfront/workflow/dsl/step.ts";
 import {
   executeLocalChild,
@@ -124,6 +127,167 @@ describe("workflow agent child protocol", () => {
     assertEquals(getActiveHostedRunEventWriterCapability(), undefined);
   });
 
+  it("keeps repeated local agent nodes distinct across composite owners and loop iterations with stable replay", async () => {
+    const model = scriptedModel([
+      { text: "first" },
+      { text: "second" },
+      { text: "iteration-zero" },
+      { text: "iteration-one" },
+    ], { only: "generate" });
+    const actualAgent = agent({
+      id: "coordinator",
+      model: "test/workflow",
+      system: "Execute this step",
+      skills: false,
+      resolveModelTransport: () => ({ model }),
+    });
+    const child = (input: string) => step("research", { agent: actualAgent, input });
+    const composite = (id: string, input: string): WorkflowNode => ({
+      id,
+      config: { type: "subWorkflow", workflow: { id: "nested", steps: [child(input)] } },
+    });
+    const nodes: WorkflowNode[] = [
+      composite("first", "first-input"),
+      { ...composite("second", "second-input"), dependsOn: ["first"] },
+      {
+        id: "repeat",
+        dependsOn: ["second"],
+        config: {
+          type: "loop",
+          maxIterations: 2,
+          checkpoint: false,
+          while: (_context, loop) => loop.iteration < 2,
+          steps: (_context, loop) => [child(`iteration-${loop.iteration}`)],
+        },
+      },
+    ];
+    const records = new Map<
+      string,
+      { id: string; publicId: string; input: unknown; output: unknown; status: string }
+    >();
+    const starts = new Set<string>();
+    const cursors = new Map<string, number>();
+    const send: typeof fetch = (url, init) => {
+      const path = new URL(String(url)).pathname;
+      const body = JSON.parse(String(init?.body));
+      if (path === `/runs/${parentId}/events`) {
+        starts.add(body.events[0].stepId);
+        return Promise.resolve(json({}));
+      }
+      if (path === "/runs") {
+        assertEquals(starts.has(body.node_id), true);
+        const key = new Headers(init?.headers).get("Idempotency-Key")!;
+        let record = records.get(key);
+        if (!record) {
+          const suffix = String(records.size + 1).padStart(12, "0");
+          record = {
+            id: `aaaaaaaa-aaaa-4aaa-8aaa-${suffix}`,
+            publicId: `run_node_${suffix}`,
+            input: body.input,
+            output: null,
+            status: "running",
+          };
+          records.set(key, record);
+        }
+        return Promise.resolve(admission(record.status, record.output, record.id, record.publicId));
+      }
+      const id = path.split("/")[2]!;
+      if (path.endsWith("/events")) {
+        const cursor = (cursors.get(id) ?? 0) + body.events.length;
+        cursors.set(id, cursor);
+        return Promise.resolve(
+          json({
+            run_id: id,
+            latest_event_id: cursor,
+            latest_external_event_sequence: cursor,
+            appended_count: body.events.length,
+          }),
+        );
+      }
+      const record = [...records.values()].find((value) => value.id === id)!;
+      record.status = body.status;
+      record.output = body.output;
+      return Promise.resolve(json({ id, status: body.status }));
+    };
+    const freshRun = (): WorkflowRun => ({
+      id: "run_parent",
+      workflowId: "workflow",
+      status: "running",
+      input: {},
+      context: { input: {} },
+      nodeStates: {},
+      currentNodes: [],
+      checkpoints: [],
+      pendingApprovals: [],
+      createdAt: new Date(),
+      sourceIntegrationPolicy: normalizeSourceIntegrationPolicy(undefined),
+    });
+    const run = () =>
+      new DAGExecutor({ stepExecutor: new StepExecutor({ runAgentNode: runner(send) }) }).execute(
+        nodes,
+        freshRun(),
+      );
+    assertEquals((await run()).completed, true);
+    assertEquals(model.callCount, 4);
+    assertEquals(records.size, 4);
+    assertEquals([...records.values()].map((record) => record.input), [
+      { prompt: "first-input" },
+      { prompt: "second-input" },
+      { prompt: "iteration-0" },
+      { prompt: "iteration-1" },
+    ]);
+    assertEquals((await run()).completed, true);
+    assertEquals(model.callCount, 4);
+    assertEquals(records.size, 4);
+  });
+
+  it("keeps root IDs readable and reserves nested IDs without collisions or unstable replay", async () => {
+    const identities: string[] = [];
+    const keys: string[] = [];
+    let started = "";
+    const send: typeof fetch = (url, init) => {
+      const body = JSON.parse(String(init?.body));
+      if (String(url).endsWith("/events")) {
+        started = body.events[0].stepId;
+        return Promise.resolve(json({}));
+      }
+      assertEquals(body.node_id, started);
+      identities.push(body.node_id);
+      keys.push(new Headers(init?.headers).get("Idempotency-Key")!);
+      return Promise.resolve(admission("completed", "stored"));
+    };
+    const execute = () => {
+      throw new Error("Terminal replay must not execute");
+    };
+    const run = runner(send);
+    await run({ ...invocation, execute });
+    const nested = {
+      ...invocation,
+      executionPath: [
+        JSON.stringify(["subWorkflow", "a/b"]),
+        JSON.stringify(["iteration", "repeat_iter_0"]),
+      ],
+      execute,
+    };
+    await run(nested);
+    await run(nested);
+    await run({ ...invocation, nodeId: identities[1]!, execute });
+    await run({
+      ...nested,
+      executionPath: [
+        JSON.stringify(["subWorkflow", "a"]),
+        JSON.stringify(["subWorkflow", "b"]),
+        JSON.stringify(["iteration", "repeat_iter_0"]),
+      ],
+    });
+    assertEquals(identities[0], "research");
+    assertEquals(identities[1], identities[2]);
+    assertEquals(keys[1], keys[2]);
+    assertEquals(new Set(identities).size, 4);
+    assertEquals(identities.every((id) => id.length <= 128), true);
+    assertEquals(keys.every((key) => key.length <= 128), true);
+  });
+
   it("mirrors the actual Agent.generate text, reasoning and ordinary tool turn without changing provider execution", async () => {
     const events: Record<string, unknown>[] = [];
     let cursor = 0;
@@ -143,6 +307,14 @@ describe("workflow agent child protocol", () => {
       },
       { text: "Finished brief" },
     ], { only: "generate" });
+    const nestedModel = scriptedModel([{ text: "Private nested output" }], { only: "generate" });
+    const nestedAgent = agent({
+      id: "nested-helper",
+      model: "test/nested",
+      system: "Internal helper",
+      skills: false,
+      resolveModelTransport: () => ({ model: nestedModel }),
+    });
     const actualAgent = agent({
       id: "workflow-projection-agent",
       model: "test/workflow",
@@ -155,8 +327,9 @@ describe("workflow agent child protocol", () => {
           id: "lookup",
           description: "Lookup",
           inputSchema: defineSchema((v) => v.object({ query: v.string() }))(),
-          execute: () => {
+          execute: async () => {
             toolExecutions++;
+            await nestedAgent.generate({ input: "Internal work" });
             return { fact: "known" };
           },
         }),

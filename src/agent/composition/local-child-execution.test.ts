@@ -1,6 +1,11 @@
 import { it } from "#veryfront/testing/bdd.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
-import { executeLocalChild, withLocalChildExecution } from "./local-child-execution.ts";
+import {
+  executeLocalChild,
+  observeGeneratedAgentTurn,
+  withLocalChildExecution,
+  withLocalChildRuntime,
+} from "./local-child-execution.ts";
 
 it("local child host scopes remain isolated across concurrent executions and close afterwards", async () => {
   let release!: () => void;
@@ -39,4 +44,36 @@ it("local child host scopes remain isolated across concurrent executions and clo
     execute: () => Promise.resolve({ text: "outside", status: "completed", toolCalls: 0 }),
   });
   assertEquals(seen.length, 2);
+});
+
+it("unrelated nested runtimes cannot observe or delegate through another agent's child scope", async () => {
+  const owner = {};
+  const unrelated = {};
+  const seen: string[] = [];
+  const observed: string[] = [];
+  const invoke = (id: string) =>
+    executeLocalChild({
+      agentId: id,
+      toolName: "invoke_agent",
+      toolInput: {},
+      input: id,
+      execute: () => Promise.resolve({ text: id, status: "completed", toolCalls: 0 }),
+    });
+  await withLocalChildExecution(async (input) => {
+    seen.push(input.agentId);
+    return input.execute();
+  }, () =>
+    withLocalChildRuntime(owner, async () => {
+      await observeGeneratedAgentTurn("outer", { text: "visible" });
+      await invoke("owned-before");
+      await withLocalChildRuntime(unrelated, async () => {
+        await observeGeneratedAgentTurn("inner", { text: "private" });
+        await invoke("unrelated-local");
+      });
+      await invoke("owned-after");
+    }), async (event) => {
+    if (event.type === "text-delta") observed.push(String(event.delta));
+  });
+  assertEquals(observed, ["visible"]);
+  assertEquals(seen, ["owned-before", "owned-after"]);
 });

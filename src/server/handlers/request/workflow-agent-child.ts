@@ -56,7 +56,12 @@ export function createWorkflowAgentNodeRunner(binding: {
     if (invocation.runId !== binding.runId || !invocation.nodeId || !binding.authToken) {
       throw ORCHESTRATION_ERROR.create({ detail: "Workflow child invocation binding mismatch" });
     }
-    const key = await computeHash(`${parentId}:${invocation.nodeId}`);
+    const path = invocation.executionPath ?? [];
+    const nodeId = path.length > 0 || invocation.nodeId.startsWith("workflow-node:") ||
+        invocation.nodeId.length > 128
+      ? `workflow-node:${await computeHash(stringify([path, invocation.nodeId]))}`
+      : invocation.nodeId;
+    const key = await computeHash(`${parentId}:${nodeId}`);
     const signal = invocation.signal
       ? AbortSignal.any([invocation.signal, AbortSignal.timeout(15000)])
       : AbortSignal.timeout(15000);
@@ -67,7 +72,7 @@ export function createWorkflowAgentNodeRunner(binding: {
         "Content-Type": "application/json",
         "Idempotency-Key": `workflow-node-start:${key}`,
       },
-      body: stringify({ events: [{ type: "STEP_STARTED", stepId: invocation.nodeId }] }),
+      body: stringify({ events: [{ type: "STEP_STARTED", stepId: nodeId }] }),
       signal,
     });
     if (!started.ok) {
@@ -92,7 +97,7 @@ export function createWorkflowAgentNodeRunner(binding: {
         project_id: binding.projectId,
         target: { type: "agent", id: invocation.agentId },
         parent_run_id: parentId,
-        node_id: invocation.nodeId,
+        node_id: nodeId,
         input: { prompt },
       }),
       signal,

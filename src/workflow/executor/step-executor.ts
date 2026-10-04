@@ -139,6 +139,7 @@ export interface StepExecutorConfig {
   /** Wrap one agent node including all retries; the continuation executes locally once. */
   runAgentNode?: (invocation: {
     nodeId: string;
+    executionPath?: readonly string[];
     runId?: string;
     agentId: string;
     input: unknown;
@@ -202,8 +203,17 @@ export class StepExecutor {
     context: WorkflowContext,
     abortSignal?: AbortSignal,
     runId?: string,
+    executionPath: readonly string[] = [],
   ): Promise<StepResult> {
-    return this.executeAttempts(node, context, abortSignal, runId, Date.now());
+    return this.executeAttempts(
+      node,
+      context,
+      abortSignal,
+      runId,
+      Date.now(),
+      undefined,
+      executionPath,
+    );
   }
 
   private async executeAttempts(
@@ -213,6 +223,7 @@ export class StepExecutor {
     runId: string | undefined,
     startTime: number,
     prepared?: { attempt: number; input: unknown; operations: Set<Promise<unknown>> },
+    executionPath: readonly string[] = [],
   ): Promise<StepResult> {
     const config = node.config as StepNodeConfig;
 
@@ -265,6 +276,7 @@ export class StepExecutor {
             let entered = false;
             const result = await this.config.runAgentNode({
               nodeId: node.id,
+              executionPath,
               runId,
               agentId: typeof config.agent === "string" ? config.agent : config.agent.id,
               input: resolvedInput,
@@ -290,6 +302,7 @@ export class StepExecutor {
                     input: resolvedInput,
                     operations,
                   },
+                  executionPath,
                 );
                 if (!result.success) await Promise.allSettled([...operations]);
                 return result;

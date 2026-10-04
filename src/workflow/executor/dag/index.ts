@@ -1614,6 +1614,7 @@ export class DAGExecutor {
     const scope: ExecutionScope = {
       rootRunId: run.id,
       executionRunId: run.id,
+      executionPath: [],
       // Read the reason execution stopped once, here, from the only run record
       // that carries it. Every child graph below runs against a synthetic run
       // whose status is always "running" and would otherwise read a crash.
@@ -2360,10 +2361,22 @@ export class DAGExecutor {
     }
 
     const config = node.config;
+    if (config.type !== "step") {
+      scope = {
+        ...scope,
+        executionPath: [...scope.executionPath, JSON.stringify([config.type, node.id])],
+      };
+    }
 
     switch (config.type) {
       case "step":
-        return this.executeStepNode(node, context, scope.executionRunId, abortSignal);
+        return this.executeStepNode(
+          node,
+          context,
+          scope.executionRunId,
+          abortSignal,
+          scope.executionPath,
+        );
       case "parallel":
         return executeCompositeNodeWithPolicy({
           node,
@@ -2474,7 +2487,14 @@ export class DAGExecutor {
                   this.executeChildGraph(
                     nodes,
                     run,
-                    { ...scope, rootKeyspace: false },
+                    {
+                      ...scope,
+                      rootKeyspace: false,
+                      executionPath: [
+                        ...scope.executionPath,
+                        JSON.stringify(["iteration", run.id]),
+                      ],
+                    },
                     options,
                     attemptSignal,
                   ),
@@ -2497,12 +2517,14 @@ export class DAGExecutor {
     context: WorkflowContext,
     runId: string,
     abortSignal?: AbortSignal,
+    executionPath: readonly string[] = [],
   ): Promise<NodeExecutionResult> {
     const result = await this.config.stepExecutor.execute(
       node,
       context,
       abortSignal,
       runId,
+      executionPath,
     );
     abortSignal?.throwIfAborted();
 

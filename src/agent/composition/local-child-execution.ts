@@ -25,6 +25,7 @@ export interface LocalChildInvocation {
 
 type Scope = {
   active: boolean;
+  runtime?: object;
   execute: (input: LocalChildInvocation) => Promise<LocalChildResult>;
   observe?: (event: AgUiRuntimeStreamEvent) => Promise<void>;
   admitTool?: (id: string, name: string, input: unknown) => Promise<void>;
@@ -47,6 +48,15 @@ export async function withLocalChildExecution<T>(
   } finally {
     scope.active = false;
   }
+}
+
+/** Only the first owning runtime may use a host scope; unrelated nested agents keep local semantics. */
+export function withLocalChildRuntime<T>(runtime: object, operation: () => T): T {
+  const scope: Scope | undefined = apply(getStore, scopes, []);
+  if (!scope?.active) return operation();
+  if (scope.runtime === undefined) scope.runtime = runtime;
+  if (scope.runtime === runtime) return operation();
+  return apply(run, scopes, [undefined, operation]) as T;
 }
 
 export function executeLocalChild(input: LocalChildInvocation): Promise<LocalChildResult> {

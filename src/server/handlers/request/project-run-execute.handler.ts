@@ -4022,6 +4022,8 @@ function executeProjectRun(
       acknowledgeStop,
     );
   }
+  const hostPrivateApiUrl = requireHostPrivateApiHttps(resolveHostOwnedSourceApiBaseUrl());
+  const hostPrivateApiFetch = createVeryfrontApiOriginBoundOutboundFetch(hostPrivateApiUrl);
   return executeWorkflowRun(
     request,
     ctx,
@@ -4033,7 +4035,8 @@ function executeProjectRun(
     createWorkflowAgentNodeRunner({
       runId: request.runId,
       projectId: request.projectId,
-      apiUrl: getEnvironmentConfig().apiBaseUrl,
+      apiUrl: hostPrivateApiUrl,
+      fetch: hostPrivateApiFetch,
       eventToken: readIngressCredential(req, INGRESS_RUN_EVENT_TOKEN_HEADER) ?? undefined,
       authToken: getRuntimeApiToken(req, ctx),
     }),

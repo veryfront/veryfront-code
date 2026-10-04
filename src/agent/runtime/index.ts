@@ -2,6 +2,7 @@ import {
   observeAdmittedAgentToolCalls,
   observeGeneratedAgentMessage,
   observeGeneratedAgentTurn,
+  withLocalChildRuntime,
 } from "../composition/local-child-execution.ts";
 import { forEachSequential } from "./sequential.ts";
 import {
@@ -2634,7 +2635,10 @@ export class AgentRuntime {
   }
 
   #generate(...args: AgentRuntimeGenerateArgs): Promise<AgentResponse> {
-    return withRuntimeTurnLineage(this, () => this.#generateWithinTurn(...args));
+    return withRuntimeTurnLineage(
+      this,
+      () => withLocalChildRuntime(this, () => this.#generateWithinTurn(...args)),
+    );
   }
 
   async #generateWithinTurn(
@@ -2818,7 +2822,10 @@ export class AgentRuntime {
   }
 
   #stream(...args: AgentRuntimeStreamArgs): Promise<ReadableStream<Uint8Array>> {
-    return withRuntimeTurnLineage(this, () => this.#streamWithinTurn(...args));
+    return withRuntimeTurnLineage(
+      this,
+      () => withLocalChildRuntime(this, () => this.#streamWithinTurn(...args)),
+    );
   }
 
   async #streamWithinTurn(
