@@ -1,6 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { it } from "#veryfront/testing/bdd.ts";
+import { FakeTime } from "#std/testing/time";
 import {
   hostedInheritedRunAdmitter,
   hostedTerminalRunFinalizer,
@@ -97,6 +98,7 @@ for (
 ) {
   const hangs = mode === "hung";
   it(`aborts local work when renewal ${mode}`, async () => {
+    using time = new FakeTime();
     const request = {
       projectId: parentId,
       authToken: "parent-invocation",
@@ -153,7 +155,7 @@ for (
     const cancelTimer = mode === "parent-during"
       ? setTimeout(() => parentController.abort(parentCancellation), 1)
       : undefined;
-    await assertRejects(
+    const rejection = assertRejects(
       () =>
         withHostedInheritedLease(
           run,
@@ -173,6 +175,10 @@ for (
         ? "lease expired"
         : "lease renewal failed",
     );
+    await time.tickAsync(mode === "parent-during" ? 1 : 10);
+    await time.tickAsync(0);
+    if (hangs || mode === "retry-expired") await time.tickAsync(10);
+    await rejection;
     clearTimeout(cancelTimer);
     assertEquals(aborted, mode !== "expired" && mode !== "parent-before");
     if (mode === "retry-expired") assertEquals(calls > 1, true);
@@ -182,6 +188,7 @@ for (
 
 for (const failure of ["network", 503, 429] as const) {
   it(`retries transient renewal ${failure} while the current lease remains valid`, async () => {
+    using time = new FakeTime();
     const request = {
       projectId: parentId,
       authToken: "parent-invocation",
@@ -237,7 +244,7 @@ for (const failure of ["network", 503, 429] as const) {
       agentId: "agent",
       projectId: parentId,
     });
-    const result = await withHostedInheritedLease(run, (signal) => {
+    const result = withHostedInheritedLease(run, (signal) => {
       signal!.addEventListener(
         "abort",
         () => completed.reject(new Error("aborted before completion")),
@@ -245,12 +252,16 @@ for (const failure of ["network", 503, 429] as const) {
       );
       return completed.promise;
     });
-    assertEquals(result, "completed");
+    await time.tickAsync(100);
+    await time.tickAsync(50);
+    await time.tickAsync(1);
+    assertEquals(await result, "completed");
     assertEquals(renewals, 2);
   });
 }
 
 it("keeps local work running across transient renewal failures while the lease is valid", async () => {
+  using time = new FakeTime();
   const request = {
     projectId: parentId,
     authToken: "parent-invocation",
@@ -316,13 +327,16 @@ it("keeps local work running across transient renewal failures while the lease i
   });
   let abortedBeforeRenewal: boolean | undefined;
 
-  const result = await withHostedInheritedLease(run, async (signal) => {
+  const result = withHostedInheritedLease(run, async (signal) => {
     await renewedOnce;
     abortedBeforeRenewal = signal!.aborted;
     return "completed";
   });
 
-  assertEquals(result, "completed");
+  await time.tickAsync(200);
+  await time.tickAsync(100);
+  await time.tickAsync(50);
+  assertEquals(await result, "completed");
   assertEquals(heartbeatOutcomes, ["network", "503", "renewed"]);
   assertEquals(abortedBeforeRenewal, false);
 });
