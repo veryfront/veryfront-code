@@ -1,4 +1,7 @@
-import { createCompletedStepPauseAcknowledger } from "./completed-step-pause.ts";
+import {
+  createCompletedStepPauseAcknowledger,
+  createCompletedStepPauseConfirmer,
+} from "./completed-step-pause.ts";
 import { createPrivateWeakStore } from "#veryfront/security/private-weak-store.ts";
 import {
   hasCurrentTerminalRunCredentialAuthority,
@@ -95,6 +98,22 @@ export function createHostedCompletedStepAcknowledger(
   const authority = credentials.get(request);
   if (!authority || !hasHostedTerminalCredential(request)) return undefined;
   return createCompletedStepPauseAcknowledger({
+    apiUrl,
+    runId: authority.runId,
+    authToken,
+    terminalToken: authority.token,
+  });
+}
+
+/** Retain the issued authority in the same private transport after execution settles. */
+export function createHostedCompletedStepPauseConfirmer(
+  request: ParsedHostedChatRequest,
+  apiUrl: string,
+  authToken: string,
+): ReturnType<typeof createCompletedStepPauseConfirmer> | undefined {
+  const authority = credentials.get(request);
+  if (!authority || !hasHostedTerminalCredential(request)) return undefined;
+  return createCompletedStepPauseConfirmer({
     apiUrl,
     runId: authority.runId,
     authToken,

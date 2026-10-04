@@ -82,6 +82,8 @@ export type HostedChatRuntimeStreamResult<TMessageMetadata = MessageMetadata> = 
   steps: PromiseLike<readonly unknown[]>;
   /** Host-owned neutral EOF after a completed-step acknowledgement. */
   isStoppedAtCompletedStep?: () => boolean;
+  /** Record host cleanup, or invalidate it after a later execution failure. */
+  markCompletedStepSettled?: (settled?: boolean) => void;
   toUIMessageStream: (
     options?: HostedChatRuntimeToUiMessageStreamOptions<TMessageMetadata>,
   ) => AsyncIterable<ChatUiMessageChunk<TMessageMetadata>>;

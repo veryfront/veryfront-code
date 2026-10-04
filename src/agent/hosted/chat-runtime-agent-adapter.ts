@@ -65,6 +65,7 @@ export function createHostedChatRuntimeAgentAdapter(
       return {
         steps: Promise.resolve([]),
         isStoppedAtCompletedStep: input.completedStepExecution?.isStopped,
+        markCompletedStepSettled: input.completedStepExecution?.markSettled,
         toUIMessageStream(options = {}) {
           return createChatUiMessageStreamFromDataStream(
             { stream },

@@ -18,6 +18,7 @@ import {
 import type { AgUiResumeValue } from "../ag-ui/tool-shared.ts";
 import type { DetachedRunTracker } from "../service/detached-run-tracker.ts";
 import type { ParsedHostedChatRequest } from "./chat-request-parser.ts";
+import { confirmHostedCompletedStepRun } from "./completed-step-run.ts";
 
 /** Public API contract for hosted durable run setup error status code. */
 export type HostedDurableRunSetupErrorStatusCode =
@@ -258,6 +259,12 @@ async function executeHostedDurableChatRunStart<TExecution>(
         onAccepted: async () => {
           executionDisposition = "transferred";
           input.tracker.trackRun(durableRootRun.runId);
+        },
+        onFinish: async () => {
+          input.tracker.untrackRun(durableRootRun.runId);
+          const settlement = confirmHostedCompletedStepRun(input.req);
+          input.tracker.registerExecution(durableRootRun.runId, settlement);
+          await settlement;
         },
         onError: async ({ error }) => {
           input.tracker.untrackRun(durableRootRun.runId);

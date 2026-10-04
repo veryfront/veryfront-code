@@ -734,6 +734,7 @@ export function createHostedChatExecutionRuntime(
 ): HostedChatExecutionRuntime {
   let finishPromise: Promise<void> = Promise.resolve();
   let lastStreamError: unknown = null;
+  let executionFailed = false;
   let finishHandlerStarted = false;
   let mirroredDurableOutput = false;
   let flushPendingDerivedSource = async (): Promise<void> => {};
@@ -745,6 +746,23 @@ export function createHostedChatExecutionRuntime(
     runContext: input.runContext,
   });
 
+  const settleCompletedStep = async () => {
+    await flushPendingDerivedSource();
+    await input.bootstrap.lifecycleAdapter.durableRunMirror?.flush();
+    let cleanupSucceeded = false;
+    await cleanupAfterHostedChatExecutionFinalization({
+      cleanup: async () => {
+        await input.bootstrap.cleanup();
+        cleanupSucceeded = true;
+      },
+      logger: input.logger,
+    });
+    input.runContext.stopAtCompletedStep?.();
+    if (cleanupSucceeded && !executionFailed) {
+      input.bootstrap.streamResult.markCompletedStepSettled?.();
+    }
+  };
+
   const finalizeDetachedStreamEndIfNeeded = async () => {
     if (finishHandlerStarted) {
       return;
@@ -753,15 +771,9 @@ export function createHostedChatExecutionRuntime(
     finishHandlerStarted = true;
     if (
       input.bootstrap.streamResult.isStoppedAtCompletedStep?.() &&
-      !input.abortSignal.aborted && !lastStreamError
+      !input.abortSignal.aborted && !lastStreamError && !executionFailed
     ) {
-      await flushPendingDerivedSource();
-      await input.bootstrap.lifecycleAdapter.durableRunMirror?.flush();
-      await cleanupAfterHostedChatExecutionFinalization({
-        cleanup: input.bootstrap.cleanup,
-        logger: input.logger,
-      });
-      input.runContext.stopAtCompletedStep?.();
+      await settleCompletedStep();
       return;
     }
     await finalizeDetachedStreamEnd({
@@ -779,6 +791,8 @@ export function createHostedChatExecutionRuntime(
   };
 
   const fail = async (error: unknown) => {
+    executionFailed = true;
+    input.bootstrap.streamResult.markCompletedStepSettled?.(false);
     await input.runContext.withContext(async () => {
       input.bootstrap.rootStreamWatchdog.dispose();
       await input.bootstrap.cleanup().catch((cleanupError: unknown) => {
@@ -806,17 +820,9 @@ export function createHostedChatExecutionRuntime(
       finishHandlerStarted = true;
       if (
         input.bootstrap.streamResult.isStoppedAtCompletedStep?.() &&
-        !isAborted && !input.abortSignal.aborted && !lastStreamError
+        !isAborted && !input.abortSignal.aborted && !lastStreamError && !executionFailed
       ) {
-        finishPromise = input.runContext.withContext(async () => {
-          await flushPendingDerivedSource();
-          await input.bootstrap.lifecycleAdapter.durableRunMirror?.flush();
-          await cleanupAfterHostedChatExecutionFinalization({
-            cleanup: input.bootstrap.cleanup,
-            logger: input.logger,
-          });
-          input.runContext.stopAtCompletedStep?.();
-        });
+        finishPromise = input.runContext.withContext(settleCompletedStep);
         return finishPromise;
       }
       finishPromise = input.runContext.withContext(() =>
@@ -873,7 +879,7 @@ export function createHostedChatExecutionRuntime(
   return {
     isStoppedAtCompletedStep: () =>
       input.bootstrap.streamResult.isStoppedAtCompletedStep?.() === true &&
-      !input.abortSignal.aborted && !lastStreamError,
+      !input.abortSignal.aborted && !lastStreamError && !executionFailed,
     agentUIStream: createHostedMirroredUiStream({
       sourceStream: agentUIStream,
       rootStreamWatchdog: input.bootstrap.rootStreamWatchdog,

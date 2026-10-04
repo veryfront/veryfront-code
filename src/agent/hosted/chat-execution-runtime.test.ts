@@ -2045,6 +2045,7 @@ describe("agent/hosted-chat-execution-runtime", () => {
       let options: HostedChatRuntimeToUiMessageStreamOptions | undefined;
       let cleanups = 0;
       let stoppedSpans = 0;
+      let settledSteps = 0;
       const terminalStates: HostedLifecycleTerminalState[] = [];
       const runtime = createHostedChatExecutionRuntime({
         agentId: "agent-1",
@@ -2072,6 +2073,9 @@ describe("agent/hosted-chat-execution-runtime", () => {
               },
             }),
             isStoppedAtCompletedStep: () => true,
+            markCompletedStepSettled: () => {
+              settledSteps++;
+            },
           },
           streamingMessageId: "parked-message",
           capturedMessageId: "parked-message",
@@ -2092,6 +2096,7 @@ describe("agent/hosted-chat-execution-runtime", () => {
       assertEquals(terminalStates, []);
       assertEquals(cleanups, 1);
       assertEquals(stoppedSpans, 1);
+      assertEquals(settledSteps, cleanupFails ? 0 : 1);
       assertEquals(runtime.isStoppedAtCompletedStep?.(), true);
     });
   }

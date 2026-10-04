@@ -287,3 +287,13 @@ the span as `stopped_at_boundary` after an acknowledged retained step. They writ
 no terminal outcome; the private boundary frame follows cleanup. API public agent
 pause remains disabled until every required adapter and the API resume dispatch
 consume this protocol on staging.
+
+The detached host releases its owned resume session before confirming an
+acknowledged pause. It sends `{ "settled": true }` to the same private pause gate
+with the captured ordinary and terminal credentials. The API can then confirm
+that exact acknowledged generation; a detached acceptance response alone cannot
+confirm it. Lost replies replay the same signal for a bounded interval, after
+which the existing fenced recovery owns confirmation. Invalid credentials also
+leave confirmation to recovery. Continuing, cancelled and failed executions send
+no settlement signal. The API settlement consumer must reach staging before
+this callback producer.

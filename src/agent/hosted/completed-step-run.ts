@@ -3,6 +3,7 @@ import { buildCompletedStepPauseCheckpoint } from "./completed-step-pause.ts";
 import { observePrivatePromise } from "#veryfront/security/private-promise.ts";
 import { createPrivateWeakStore } from "#veryfront/security/private-weak-store.ts";
 import { mapPrivateArray } from "#veryfront/security/private-array.ts";
+import { isAbortSignalAborted } from "#veryfront/platform/compat/abort-signal.ts";
 import { getMessageSchema } from "../schemas/agent.schema.ts";
 import {
   restoreCompletedAgentStepReplay,
@@ -17,6 +18,7 @@ import type { Message } from "../types.ts";
 import type { ParsedHostedChatRequest } from "./chat-request-parser.ts";
 import {
   createHostedCompletedStepAcknowledger,
+  createHostedCompletedStepPauseConfirmer,
   hasHostedTerminalCredential,
 } from "./terminal-credential.ts";
 
@@ -25,6 +27,19 @@ const runs = createPrivateWeakStore<ParsedHostedChatRequest, {
   replayMessages?: Message[];
   loopState?: CompletedAgentStepLoopState;
 }>();
+const settlements = createPrivateWeakStore<
+  ParsedHostedChatRequest,
+  (() => Promise<void>) | undefined
+>();
+
+/** The detached host calls this after releasing local session ownership. */
+export async function confirmHostedCompletedStepRun(
+  request: ParsedHostedChatRequest,
+): Promise<void> {
+  const settle = settlements.get(request);
+  settlements.set(request, undefined);
+  if (settle) await observePrivatePromise(settle());
+}
 
 /** Bind only the verified canonical invocation; legacy chat bodies remain untrusted. */
 export function registerHostedCompletedStepRun(
@@ -86,6 +101,7 @@ export type HostedCompletedStepExecution = {
   replayMessages?: Message[];
   isStopped: () => boolean;
   bindAbortSignal: (signal: AbortSignal) => void;
+  markSettled?: (settled?: boolean) => void;
 };
 
 export function createHostedCompletedStepExecution(
@@ -100,9 +116,21 @@ export function createHostedCompletedStepExecution(
     run.invocation.credentials!.authToken!,
   );
   if (!acknowledge) return undefined;
+  const confirm = createHostedCompletedStepPauseConfirmer(
+    request,
+    apiUrl,
+    run.invocation.credentials!.authToken!,
+  );
+  if (!confirm) return undefined;
   const input = buildRuntimeAgentControlPlaneStreamRequestFromInvocation(run.invocation);
   let stopped = false;
+  let settled = false;
   let signal: AbortSignal | undefined;
+  settlements.set(request, async () => {
+    if (!settled || !stopped || !signal || isAbortSignalAborted(signal)) return;
+    // Unknown replies leave the captured generation to existing fenced recovery.
+    await observePrivatePromise(confirm());
+  });
   return {
     config: {
       ...getHostedCompletedStepRuntimeState(request),
@@ -124,6 +152,9 @@ export function createHostedCompletedStepExecution(
     isStopped: () => stopped,
     bindAbortSignal: (value) => {
       signal = value;
+    },
+    markSettled: (value = true) => {
+      settled = value;
     },
   };
 }

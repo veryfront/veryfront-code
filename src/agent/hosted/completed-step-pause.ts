@@ -58,6 +58,31 @@ function waitForRetry(signal: AbortSignal): Promise<void> {
   });
 }
 
+function createCompletedStepPauseTransport(
+  input: { apiUrl: string; runId: string; authToken: string; terminalToken: string },
+  transportOverride?: typeof fetch,
+): (body: string, signal: AbortSignal) => Promise<Response> {
+  const apiUrl = requireHostPrivateApiHttps(input.apiUrl);
+  const url = `${apiUrl}/runs/${encode(input.runId)}/pause-ack`;
+  const transport = transportOverride ?? createVeryfrontApiOriginBoundOutboundFetch(apiUrl);
+  const headers = {
+    Authorization: `Bearer ${input.authToken}`,
+    "X-Veryfront-Run-Terminal-Token": input.terminalToken,
+    "Content-Type": "application/json",
+  };
+  return (body, signal) =>
+    observePrivatePromise(transport(url, {
+      method: "POST",
+      redirect: "error",
+      headers,
+      body,
+      signal: apply(anySignal, NativeAbortSignal, [[
+        signal,
+        apply(timeout, NativeAbortSignal, [10_000]),
+      ]]),
+    }));
+}
+
 /** The verified host binds both credentials before authored project code runs. */
 export function createCompletedStepPauseAcknowledger(
   input: { apiUrl: string; runId: string; authToken: string; terminalToken: string },
@@ -66,15 +91,8 @@ export function createCompletedStepPauseAcknowledger(
   checkpoint: Record<string, unknown> | (() => Record<string, unknown>),
   signal: AbortSignal,
 ) => Promise<boolean> {
-  const apiUrl = requireHostPrivateApiHttps(input.apiUrl);
-  const url = `${apiUrl}/runs/${encode(input.runId)}/pause-ack`;
-  const transport = deps?.transport ?? createVeryfrontApiOriginBoundOutboundFetch(apiUrl);
+  const post = createCompletedStepPauseTransport(input, deps?.transport);
   const sleep = deps?.sleep ?? waitForRetry;
-  const headers = {
-    Authorization: `Bearer ${input.authToken}`,
-    "X-Veryfront-Run-Terminal-Token": input.terminalToken,
-    "Content-Type": "application/json",
-  };
   return async (checkpoint, signal) => {
     // One immutable payload is replayed after a lost response; it never reruns a tool.
     let body = "{}";
@@ -82,16 +100,7 @@ export function createCompletedStepPauseAcknowledger(
     while (!isAbortSignalAborted(signal)) {
       let buildCheckpoint = false;
       try {
-        const response = await observePrivatePromise(transport(url, {
-          method: "POST",
-          redirect: "error",
-          headers,
-          body,
-          signal: apply(anySignal, NativeAbortSignal, [[
-            signal,
-            apply(timeout, NativeAbortSignal, [10_000]),
-          ]]),
-        }));
+        const response = await post(body, signal);
         const status = apply(responseStatus, response, []) as number;
         if (status === 200) {
           const result: unknown = await observePrivatePromise(
@@ -133,6 +142,40 @@ export function createCompletedStepPauseAcknowledger(
       if (!isAbortSignalAborted(signal)) await observePrivatePromise(sleep(signal));
     }
     return true;
+  };
+}
+
+/** Called only after the acknowledged execution and its local ownership have settled. */
+export function createCompletedStepPauseConfirmer(
+  input: { apiUrl: string; runId: string; authToken: string; terminalToken: string },
+  deps?: { transport: typeof fetch; sleep: (signal: AbortSignal) => Promise<void> },
+): (signal?: AbortSignal) => Promise<boolean> {
+  const post = createCompletedStepPauseTransport(input, deps?.transport);
+  const sleep = deps?.sleep ?? waitForRetry;
+  return async (signal = apply(timeout, NativeAbortSignal, [10_000])) => {
+    while (!isAbortSignalAborted(signal)) {
+      try {
+        const response = await post('{"settled":true}', signal);
+        const status = apply(responseStatus, response, []) as number;
+        if (status === 200) {
+          const result: unknown = await observePrivatePromise(
+            apply(responseJson, response, []) as Promise<unknown>,
+          );
+          if (
+            result !== null && typeof result === "object" &&
+            ownProperty(result, "stop")?.value === true &&
+            ownProperty(result, "checkpoint_required") === undefined
+          ) return true;
+        }
+        if (response.body) await observePrivatePromise(response.body.cancel());
+        // Invalid or expired authority cannot become valid by replaying this generation.
+        if (status === 400 || status === 401 || status === 403) return false;
+      } catch {
+        // An unknown reply leaves the same generation fenced for replay or recovery.
+      }
+      if (!isAbortSignalAborted(signal)) await observePrivatePromise(sleep(signal));
+    }
+    return false;
   };
 }
 
