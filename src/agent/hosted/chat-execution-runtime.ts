@@ -79,6 +79,7 @@ export interface HostedChatExecutionRuntime {
   agentUIStream: AsyncIterable<ChatUiMessageChunk<MessageMetadata>>;
   fail: (error: unknown) => Promise<void>;
   waitForFinish: () => Promise<void>;
+  isStoppedAtCompletedStep?: () => boolean;
 }
 
 /** Public API contract for hosted chat execution runtime logger. */
@@ -91,6 +92,7 @@ export interface HostedChatExecutionRuntimeLogger {
 export interface HostedChatExecutionRunContext {
   withContext: <T>(fn: () => T) => T;
   setMessageId?: (messageId: string) => void;
+  stopAtCompletedStep?: () => void;
 }
 
 /** Public API contract for hosted chat execution root stream watchdog. */
@@ -749,6 +751,19 @@ export function createHostedChatExecutionRuntime(
     }
 
     finishHandlerStarted = true;
+    if (
+      input.bootstrap.streamResult.isStoppedAtCompletedStep?.() &&
+      !input.abortSignal.aborted && !lastStreamError
+    ) {
+      await flushPendingDerivedSource();
+      await input.bootstrap.lifecycleAdapter.durableRunMirror?.flush();
+      await cleanupAfterHostedChatExecutionFinalization({
+        cleanup: input.bootstrap.cleanup,
+        logger: input.logger,
+      });
+      input.runContext.stopAtCompletedStep?.();
+      return;
+    }
     await finalizeDetachedStreamEnd({
       capturedMessageId: input.bootstrap.capturedMessageId,
       streamResult: input.bootstrap.streamResult,
@@ -789,6 +804,21 @@ export function createHostedChatExecutionRuntime(
     },
     onFinish: ({ responseMessage, isAborted }) => {
       finishHandlerStarted = true;
+      if (
+        input.bootstrap.streamResult.isStoppedAtCompletedStep?.() &&
+        !isAborted && !input.abortSignal.aborted && !lastStreamError
+      ) {
+        finishPromise = input.runContext.withContext(async () => {
+          await flushPendingDerivedSource();
+          await input.bootstrap.lifecycleAdapter.durableRunMirror?.flush();
+          await cleanupAfterHostedChatExecutionFinalization({
+            cleanup: input.bootstrap.cleanup,
+            logger: input.logger,
+          });
+          input.runContext.stopAtCompletedStep?.();
+        });
+        return finishPromise;
+      }
       finishPromise = input.runContext.withContext(() =>
         finalizeResponseFinish({
           responseMessage,
@@ -841,6 +871,9 @@ export function createHostedChatExecutionRuntime(
     : unscopedAgentUIStream;
 
   return {
+    isStoppedAtCompletedStep: () =>
+      input.bootstrap.streamResult.isStoppedAtCompletedStep?.() === true &&
+      !input.abortSignal.aborted && !lastStreamError,
     agentUIStream: createHostedMirroredUiStream({
       sourceStream: agentUIStream,
       rootStreamWatchdog: input.bootstrap.rootStreamWatchdog,

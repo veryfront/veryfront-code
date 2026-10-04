@@ -2035,4 +2035,128 @@ describe("agent/hosted-chat-execution-runtime", () => {
       }]);
     }
   });
+  for (
+    const [responseFinish, cleanupFails] of [[true, false], [false, false], [true, true], [
+      false,
+      true,
+    ]] as const
+  ) {
+    it(`cleans up a retained step without terminalizing the ${responseFinish ? "response" : "detached"} run with ${cleanupFails ? "failing" : "successful"} cleanup`, async () => {
+      let options: HostedChatRuntimeToUiMessageStreamOptions | undefined;
+      let cleanups = 0;
+      let stoppedSpans = 0;
+      const terminalStates: HostedLifecycleTerminalState[] = [];
+      const runtime = createHostedChatExecutionRuntime({
+        agentId: "agent-1",
+        modelId: "openai/gpt-5.4",
+        originalMessages: [],
+        runContext: {
+          withContext: (fn) => fn(),
+          stopAtCompletedStep: () => {
+            stoppedSpans++;
+          },
+        },
+        abortSignal: new AbortController().signal,
+        bootstrap: {
+          cleanup: async () => {
+            cleanups++;
+            if (cleanupFails) throw new Error("Resource teardown failed");
+          },
+          lifecycleAdapter: createLifecycleAdapter({ terminalStates }),
+          rootStreamWatchdog: createRootStreamWatchdog(),
+          streamResult: {
+            ...createStreamResult({
+              finalStep: {},
+              captureOptions: (value) => {
+                options = value;
+              },
+            }),
+            isStoppedAtCompletedStep: () => true,
+          },
+          streamingMessageId: "parked-message",
+          capturedMessageId: "parked-message",
+          mirroredToolChunkState: createMirroredToolChunkState(),
+        },
+      });
+      if (responseFinish) {
+        await options?.onFinish?.({
+          messages: [],
+          isContinuation: false,
+          responseMessage: createResponseMessage({ parts: [] }),
+          isAborted: false,
+          finishReason: "stop",
+        });
+      }
+      await runtime.waitForFinish();
+      await runtime.waitForFinish();
+      assertEquals(terminalStates, []);
+      assertEquals(cleanups, 1);
+      assertEquals(stoppedSpans, 1);
+      assertEquals(runtime.isStoppedAtCompletedStep?.(), true);
+    });
+  }
+  it("flushes a pending knowledge source before detached completed-step cleanup", async () => {
+    const chunks: ChatUiMessageChunk<MessageMetadata>[] = [];
+    const terminalStates: HostedLifecycleTerminalState[] = [];
+    const order: string[] = [];
+    const durableRunMirror = createDurableRunMirror({ chunks, flushes: [] });
+    const handleChunk = durableRunMirror.handleChunk;
+    const flush = durableRunMirror.flush;
+    durableRunMirror.flush = async () => {
+      order.push("drain");
+      return await flush();
+    };
+    durableRunMirror.handleChunk = async (chunk) => {
+      order.push(chunk.type);
+      await handleChunk(chunk);
+    };
+    const runtime = createHostedChatExecutionRuntime({
+      agentId: "agent-1",
+      modelId: "openai/gpt-5.4",
+      originalMessages: [],
+      runContext: { withContext: (fn) => fn() },
+      abortSignal: new AbortController().signal,
+      bootstrap: {
+        cleanup: async () => {
+          order.push("cleanup");
+        },
+        lifecycleAdapter: createLifecycleAdapter({ durableRunMirror, terminalStates }),
+        rootStreamWatchdog: createRootStreamWatchdog(),
+        streamResult: {
+          steps: Promise.resolve([]),
+          isStoppedAtCompletedStep: () => true,
+          toUIMessageStream: () =>
+            (async function* () {
+              yield {
+                type: "tool-input-available" as const,
+                toolCallId: "knowledge",
+                toolName: "get_file",
+                input: { path: "knowledge/limits.md" },
+              };
+              yield {
+                type: "tool-output-available" as const,
+                toolCallId: "knowledge",
+                output: { path: "knowledge/limits.md", content: "Limits" },
+              };
+            })(),
+        },
+        streamingMessageId: "message",
+        capturedMessageId: "message",
+        mirroredToolChunkState: createMirroredToolChunkState(),
+      },
+    });
+    const iterator = runtime.agentUIStream[Symbol.asyncIterator]();
+    await iterator.next();
+    await iterator.next();
+    await runtime.waitForFinish();
+    assertEquals(chunks.filter((chunk) => chunk.type === "source-document").length, 1);
+    assertEquals(order.indexOf("source-document") < order.indexOf("drain"), true);
+    assertEquals(order.indexOf("drain") < order.indexOf("cleanup"), true);
+    while (
+      !(await iterator.next()).done
+    ) { /* Drain the retained output without duplicate mirroring. */ }
+    await runtime.waitForFinish();
+    assertEquals(chunks.filter((chunk) => chunk.type === "source-document").length, 1);
+    assertEquals(terminalStates, []);
+  });
 });

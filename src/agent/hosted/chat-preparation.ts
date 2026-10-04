@@ -1,3 +1,4 @@
+import { getHostedCompletedStepReplay } from "./completed-step-run.ts";
 import type {
   ChatRequestContext,
   ChatSystemMessage,
@@ -673,37 +674,41 @@ export async function prepareHostedChatExecution<
   const providerReplayCheckpointMessageIds = input.serverResolvedProviderReplayCheckpoints?.map(
     (checkpoint) => checkpoint.messageId,
   );
-  const preparedMessages = await prepareHostedChatRuntimeMessages(
-    normalized.effectiveMessages,
-    {
-      authToken: input.request.authToken,
-      apiUrl: input.apiUrl,
-      projectId: input.request.projectId,
-      providerOwnedToolNames: getProviderOwnedToolNames({
-        agentConfig: input.agentConfig,
-        runtimeConfig: runtimePreparation.runtimeConfig,
-      }),
-      abortSignal: input.abortSignal,
-      providerReplayCheckpointMessageIds,
-      historicalToolInputRetention: {
-        diagnostics: historicalToolInputCompactions,
+  const completedStepReplay = getHostedCompletedStepReplay(input.request);
+  // The adapter supplies private SDK replay directly; the public-message preparation path is unused.
+  const preparedMessages: AgentRuntimeMessage[] = completedStepReplay
+    ? []
+    : await prepareHostedChatRuntimeMessages(
+      normalized.effectiveMessages,
+      {
+        authToken: input.request.authToken,
+        apiUrl: input.apiUrl,
+        projectId: input.request.projectId,
+        providerOwnedToolNames: getProviderOwnedToolNames({
+          agentConfig: input.agentConfig,
+          runtimeConfig: runtimePreparation.runtimeConfig,
+        }),
+        abortSignal: input.abortSignal,
+        providerReplayCheckpointMessageIds,
+        historicalToolInputRetention: {
+          diagnostics: historicalToolInputCompactions,
+        },
+        onUnresolvableAttachment: ({ uploadId, error }) => {
+          // Deliberately narrow: the filename is user-controlled, and a provider
+          // error message can carry the response body, so neither is logged. The
+          // uploadId identifies the file for anyone investigating, and the error
+          // class separates a permission failure from a network one.
+          input.contextBudget?.logger?.warn?.(
+            "Hosted chat attachment unreadable; continuing without it",
+            {
+              uploadId,
+              projectId: input.request.projectId,
+              errorKind: error instanceof Error ? error.name : typeof error,
+            },
+          );
+        },
       },
-      onUnresolvableAttachment: ({ uploadId, error }) => {
-        // Deliberately narrow: the filename is user-controlled, and a provider
-        // error message can carry the response body, so neither is logged. The
-        // uploadId identifies the file for anyone investigating, and the error
-        // class separates a permission failure from a network one.
-        input.contextBudget?.logger?.warn?.(
-          "Hosted chat attachment unreadable; continuing without it",
-          {
-            uploadId,
-            projectId: input.request.projectId,
-            errorKind: error instanceof Error ? error.name : typeof error,
-          },
-        );
-      },
-    },
-  );
+    );
   const finalMessages = preparedMessages;
   if (historicalToolInputCompactions.length > 0) {
     input.contextBudget?.logger?.debug?.("Hosted chat historical tool inputs compacted", {
@@ -711,7 +716,7 @@ export async function prepareHostedChatExecution<
     });
   }
   let budgetedContext: Awaited<ReturnType<typeof applyContextBudget>> | undefined;
-  if (input.contextBudget) {
+  if (input.contextBudget && !completedStepReplay) {
     try {
       budgetedContext = await applyContextBudget(finalMessages, {
         ...input.contextBudget,

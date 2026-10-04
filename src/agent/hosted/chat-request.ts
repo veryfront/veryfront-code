@@ -1,3 +1,10 @@
+import { mapPrivateArray } from "#veryfront/security/private-array.ts";
+import { getMessageSchema } from "../schemas/agent.schema.ts";
+import {
+  getAgentRuntimeToolCallPart,
+  getAgentRuntimeToolResultPart,
+} from "../runtime/message-adapter.ts";
+import { MAX_COMPLETED_STEP_CHECKPOINT_BYTES } from "../runtime/runtime-tool-config.ts";
 import type { ChatRuntimeOverrides, DurableRootRunDescriptor } from "#veryfront/chat/types.ts";
 import {
   getChatRequestContextSchema,
@@ -5,7 +12,7 @@ import {
   getChatUiMessageRoleSchema,
 } from "#veryfront/chat/types.ts";
 import { defineSchema, lazySchema } from "#veryfront/schemas/index.ts";
-import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
+import type { InferSchema, SchemaValidator } from "#veryfront/extensions/schema/index.ts";
 import {
   getRuntimeAgentResumeToolCallSchema,
   type RuntimeAgentRunInvocation,
@@ -147,15 +154,15 @@ export const MAX_HOSTED_CHAT_REQUEST_MESSAGES = 1000;
 /** Upper bound on parts accepted per replayed hosted chat message (DoS guard). */
 export const MAX_HOSTED_CHAT_REQUEST_MESSAGE_PARTS = 1000;
 
-const getHostedChatRequestMessageSchema = defineSchema((v) =>
-  v.object({
+function createHostedChatRequestMessageSchema(v: SchemaValidator, maxParts: number) {
+  return v.object({
     id: v.string().min(1),
     role: getChatUiMessageRoleSchema(),
     parts: v.array(getHostedChatRequestMessagePartSchema())
-      .max(MAX_HOSTED_CHAT_REQUEST_MESSAGE_PARTS),
+      .max(maxParts),
     metadata: v.record(v.string(), v.unknown()).optional(),
-  }).strip()
-);
+  }).strip();
+}
 
 type OpenHostedToolCall = {
   toolName: string;
@@ -165,15 +172,19 @@ type OpenHostedToolCall = {
   sawLaterNonResultContent: boolean;
 };
 
-const getHostedChatRequestMessagesSchema = defineSchema((v) =>
-  v.array(getHostedChatRequestMessageSchema()).max(MAX_HOSTED_CHAT_REQUEST_MESSAGES)
+function createHostedChatRequestMessagesSchema(
+  v: SchemaValidator,
+  maxMessages: number,
+  maxParts: number,
+) {
+  return v.array(createHostedChatRequestMessageSchema(v, maxParts)).max(maxMessages)
     .superRefine((messages, ctx) => {
       // Zod records .max() as a nonfatal issue and still invokes refinements.
       // Do not traverse or correlate an oversized replay after its bounds have
       // already rejected it.
-      if (messages.length > MAX_HOSTED_CHAT_REQUEST_MESSAGES) return;
+      if (messages.length > maxMessages) return;
       for (let messageIndex = 0; messageIndex < messages.length; messageIndex += 1) {
-        if (messages[messageIndex]!.parts.length > MAX_HOSTED_CHAT_REQUEST_MESSAGE_PARTS) return;
+        if (messages[messageIndex]!.parts.length > maxParts) return;
       }
 
       const knownToolNames = new Map<string, string>();
@@ -496,7 +507,15 @@ const getHostedChatRequestMessagesSchema = defineSchema((v) =>
       }
 
       rejectUnresolvedTerminalToolCalls("terminal tool_call requires a matching tool_result");
-    })
+    });
+}
+
+const getHostedChatRequestMessagesSchema = defineSchema((v) =>
+  createHostedChatRequestMessagesSchema(
+    v,
+    MAX_HOSTED_CHAT_REQUEST_MESSAGES,
+    MAX_HOSTED_CHAT_REQUEST_MESSAGE_PARTS,
+  )
 );
 
 export const getHostedChatRequestSchema = defineSchema((v) =>
@@ -552,7 +571,35 @@ function getNonEmptyStringField(
   return typeof value === "string" && value.length > 0 ? value : undefined;
 }
 
-function normalizeHostedRuntimeInvocationMessagePart(part: unknown): unknown {
+function normalizeHostedRuntimeInvocationMessagePart(
+  part: unknown,
+  completedStepReplay = false,
+): unknown {
+  if (completedStepReplay) {
+    // This is the public presentation only. The verified private SDK replay stays unchanged.
+    const result = getAgentRuntimeToolResultPart(part);
+    if (result) {
+      return {
+        type: "tool_result",
+        tool_call_id: result.toolCallId,
+        tool_name: result.toolName,
+        output: result.output,
+      };
+    }
+    const call = getAgentRuntimeToolCallPart(part);
+    if (call) {
+      return {
+        type: "tool_call",
+        id: call.toolCallId,
+        name: call.toolName,
+        input: call.input,
+        state: isRecord(part) && part.providerExecuted === true ? "pending" : "completed",
+        ...(isRecord(part) && typeof part.providerExecuted === "boolean"
+          ? { providerExecuted: part.providerExecuted }
+          : {}),
+      };
+    }
+  }
   if (!isRecord(part) || (part.type !== "file" && part.type !== "image")) {
     return part;
   }
@@ -582,15 +629,20 @@ function normalizeHostedRuntimeInvocationMessagePart(part: unknown): unknown {
 
 function normalizeHostedRuntimeInvocationMessages(
   messages: RuntimeAgentRunInvocation["messages"],
+  completedStepReplay = false,
 ): RuntimeAgentRunInvocation["messages"] {
-  return messages.map((message) => {
+  return mapPrivateArray(messages, (rawMessage) => {
+    const message = completedStepReplay ? getMessageSchema().parse(rawMessage) : rawMessage;
     if (!isRecord(message) || !Array.isArray(message.parts)) {
       return message;
     }
 
     return {
       ...message,
-      parts: message.parts.map(normalizeHostedRuntimeInvocationMessagePart),
+      parts: mapPrivateArray(
+        message.parts,
+        (part) => normalizeHostedRuntimeInvocationMessagePart(part, completedStepReplay),
+      ),
     };
   });
 }
@@ -643,7 +695,10 @@ export function buildHostedChatRequestInputFromRuntimeAgentInvocation(
   const runtimeTargetKind = getRuntimeTargetKind(input.run.project.runtimeTargetKind);
 
   return {
-    messages: normalizeHostedRuntimeInvocationMessages(input.messages),
+    messages: normalizeHostedRuntimeInvocationMessages(
+      input.messages,
+      input.completedAgentSteps !== undefined,
+    ),
     ...(input.allowDelegation !== undefined ? { allowDelegation: input.allowDelegation } : {}),
     context: {
       conversationId: input.run.conversationId,
@@ -678,3 +733,14 @@ export function buildHostedChatRequestFromRuntimeAgentInvocation(
     buildHostedChatRequestInputFromRuntimeAgentInvocation(input),
   );
 }
+
+/** Private replay is independently byte-bounded before this schema is used. */
+export const getHostedCompletedStepChatRequestSchema = defineSchema((v) =>
+  getHostedChatRequestSchema().extend({
+    messages: createHostedChatRequestMessagesSchema(
+      v,
+      MAX_COMPLETED_STEP_CHECKPOINT_BYTES,
+      MAX_COMPLETED_STEP_CHECKPOINT_BYTES,
+    ),
+  })
+);

@@ -1,3 +1,4 @@
+import { createHostedCompletedStepExecution } from "./completed-step-run.ts";
 import { hostedTerminalToolSourceFactory } from "./terminal-credential.ts";
 /** Chat execution preparation and runtime wiring for the cloud agent service. */
 import { type HostToolSet, sleepTool } from "#veryfront/tool";
@@ -163,6 +164,9 @@ export function createAgentRuntime(
   });
 
   return createDefaultHostedChatRuntime({
+    completedStepExecution: terminalRequest
+      ? createHostedCompletedStepExecution(terminalRequest, config.VERYFRONT_API_URL)
+      : undefined,
     options,
     hostToolPolicy: context.options.hostToolPolicy,
     sourceIntegrationPolicy: projectRuntime.sourceIntegrationPolicy,

@@ -1,3 +1,4 @@
+import type { CompletedAgentStep } from "../runtime/runtime-tool-config.ts";
 import { toolRegistryInternal } from "#veryfront/tool/registry.ts";
 import "#veryfront/schemas/_test-setup.ts";
 import {
@@ -1244,4 +1245,134 @@ Deno.test("createDefaultHostedChatRuntime preserves setup errors when cleanup al
     Error,
     "sandbox tool setup failed",
   );
+});
+
+Deno.test("hosted SDK stops after a settled tool step and retains the full replay for resume", async () => {
+  clearModelProviders();
+  let modelCalls = 0;
+  let writes = 0;
+  let retained: CompletedAgentStep | undefined;
+  let boundSignal: AbortSignal | undefined;
+  registerModelProvider("test", () => ({
+    provider: "test",
+    modelId: "test/hosted-pause",
+    doGenerate: () => Promise.reject(new Error("unused")),
+    doStream() {
+      modelCalls++;
+      return Promise.resolve({
+        stream: new ReadableStream<unknown>({
+          start(controller) {
+            if (modelCalls === 1) {
+              controller.enqueue({
+                type: "tool-call",
+                toolCallId: "write-once",
+                toolName: "write",
+                input: {},
+              });
+              controller.enqueue({
+                type: "finish",
+                finishReason: "tool-calls",
+                usage: { inputTokens: 1, outputTokens: 1 },
+              });
+            } else {
+              controller.enqueue({ type: "text-delta", text: "done" });
+              controller.enqueue({
+                type: "finish",
+                finishReason: "stop",
+                usage: { inputTokens: 1, outputTokens: 1 },
+              });
+            }
+            controller.close();
+          },
+        }),
+      });
+    },
+  }));
+  try {
+    const runtime = await createDefaultHostedChatRuntime({
+      sourceIntegrationPolicy: denyAllSourceIntegrationPolicy,
+      options: {
+        projectId: "project-1",
+        authToken: "ordinary-secret",
+        instructions: "Write once",
+        model: "test/hosted-pause",
+        maxSteps: 3,
+        runId: "parked-run",
+        allowedTools: ["write"],
+      },
+      config: { apiUrl: "https://api.example.com", apiMcpUrl: "https://api.example.com/mcp" },
+      buildLocalTools: () => ({
+        write: { ...localTool("Write once"), execute: () => ({ writes: ++writes }) },
+      }),
+      createRemoteToolSource: emptyRemoteSource,
+      preloadLatestConversationUserText: false,
+      completedStepExecution: {
+        config: {
+          __vfCompletedSteps: 0,
+          __vfCompletedStepBoundary: (step) => {
+            retained = step;
+            return Promise.resolve(true);
+          },
+        },
+        isStopped: () => retained !== undefined,
+        bindAbortSignal: (value) => {
+          boundSignal = value;
+        },
+      },
+    });
+    await withMockFetch(() => Promise.resolve(Response.json({ tools: [] })), async () => {
+      const signal = new AbortController().signal;
+      const result = await runtime.agent.stream({ messages: [], abortSignal: signal });
+      for await (const _chunk of result.toUIMessageStream()) { /* Drain the actual hosted SDK. */ }
+      assertStrictEquals(boundSignal, signal);
+      assertEquals(result.isStoppedAtCompletedStep?.(), true);
+    });
+    assertEquals(modelCalls, 1);
+    assertEquals(writes, 1);
+    assertEquals(retained?.completedSteps, 1);
+    assertStringIncludes(JSON.stringify(retained?.messages), '"writes":1');
+    assertEquals(JSON.stringify(retained?.messages).includes("ordinary-secret"), false);
+    await runtime.cleanup();
+    const resumed = await createDefaultHostedChatRuntime({
+      sourceIntegrationPolicy: denyAllSourceIntegrationPolicy,
+      options: {
+        projectId: "project-1",
+        authToken: "ordinary-secret",
+        instructions: "Write once",
+        model: "test/hosted-pause",
+        maxSteps: 3,
+        runId: "parked-run",
+        allowedTools: ["write"],
+      },
+      config: { apiUrl: "https://api.example.com", apiMcpUrl: "https://api.example.com/mcp" },
+      buildLocalTools: () => ({
+        write: { ...localTool("Write once"), execute: () => ({ writes: ++writes }) },
+      }),
+      createRemoteToolSource: emptyRemoteSource,
+      preloadLatestConversationUserText: false,
+      completedStepExecution: {
+        config: {
+          __vfCompletedSteps: retained!.completedSteps,
+          __vfCompletedStepState: retained!.loopState,
+        },
+        replayMessages: retained!.messages,
+        isStopped: () => false,
+        bindAbortSignal: () => {},
+      },
+    });
+    await withMockFetch(() => Promise.resolve(Response.json({ tools: [] })), async () => {
+      const result = await resumed.agent.stream({
+        messages: [],
+        abortSignal: new AbortController().signal,
+      });
+      for await (const _chunk of result.toUIMessageStream()) {
+        /* Complete the resumed SDK loop. */
+      }
+    });
+    assertEquals(modelCalls, 2);
+    assertEquals(writes, 1);
+    await resumed.cleanup();
+  } finally {
+    clearModelProviders();
+  }
 });

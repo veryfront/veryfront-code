@@ -1,12 +1,8 @@
 import {
-  attachProviderMetadata,
-  markProviderReplayDelivered,
-} from "#veryfront/agent/runtime/provider-metadata.ts";
-import { extractSkillDelegationOverrides } from "#veryfront/agent/runtime/skill-delegation-overrides.ts";
-import { markRuntimeGeneratedUserMessage } from "#veryfront/agent/runtime/runtime-message-origin.ts";
+  restoreCompletedAgentStepReplay,
+  stripCompletedStepMarkers,
+} from "#veryfront/agent/runtime/completed-step-replay.ts";
 import type { CompletedAgentStepLoopState } from "#veryfront/agent/runtime/runtime-tool-config.ts";
-import { filterPrivateArray } from "#veryfront/security/private-array.ts";
-import { COMPLETED_AGENT_STEP_STATE_KEY } from "#veryfront/agent/runtime/runtime-tool-config.ts";
 import { getMessageSchema } from "#veryfront/agent/schemas/agent.schema.ts";
 import { getExecutorToolExposureCheckpointSchema } from "#veryfront/agent/runtime/tool-exposure.ts";
 import type { Message } from "#veryfront/agent/types.ts";
@@ -38,11 +34,6 @@ import {
   validateRuntimeAgentSourceTargetBinding,
   validateRuntimeAgentTargetSelection,
 } from "#veryfront/agent/runtime/agent-invocation-contract.ts";
-
-const ownProperty = Object.getOwnPropertyDescriptor;
-const deleteOwnProperty = Reflect.deleteProperty;
-const arrayIsArray = Array.isArray;
-const numberIsSafeInteger = Number.isSafeInteger;
 
 const AGENT_ID_PATTERN = /^[a-zA-Z0-9_-]+$/;
 const MAX_AGENT_CONFIG_BYTES = 65_536;
@@ -501,84 +492,10 @@ export function getCompletedStepLoopState(
   input: RuntimeRunAgentInput,
   completedSteps: number,
 ): CompletedAgentStepLoopState | undefined {
+  stripCompletedStepMarkers(input.messages);
   const messages = completedStepReplay.get(input);
-  const last = messages?.[messages.length - 1];
-  const metadata = last ? ownProperty(last, "metadata")?.value : undefined;
-  const state = metadata && typeof metadata === "object"
-    ? ownProperty(metadata, COMPLETED_AGENT_STEP_STATE_KEY)?.value
-    : undefined;
-  // Strip transport-only markers even when their binding is invalid.
-  const scrubMarkers = (collection: readonly { metadata?: unknown }[]) => {
-    for (let index = 0; index < collection.length; index++) {
-      const markerMetadata = ownProperty(collection[index]!, "metadata")?.value;
-      if (markerMetadata && typeof markerMetadata === "object") {
-        deleteOwnProperty(markerMetadata, COMPLETED_AGENT_STEP_STATE_KEY);
-      }
-    }
-  };
-  if (messages) scrubMarkers(messages);
-  scrubMarkers(input.messages);
-  if (
-    !state || typeof state !== "object" || !messages ||
-    ownProperty(state, "runId")?.value !== input.runId ||
-    ownProperty(state, "completedSteps")?.value !== completedSteps
-  ) throw new Error("Retained completed-step checkpoint binding is invalid");
-  // Rebind provider-private state only from this verified checkpoint. It must
-  // remain in the private message store, never in messages exposed to callers.
-  const providerReplayMetadata = ownProperty(state, "providerReplayMetadata")?.value;
-  if (arrayIsArray(providerReplayMetadata)) {
-    for (let index = 0; index < providerReplayMetadata.length; index++) {
-      const entry = providerReplayMetadata[index];
-      if (!entry || typeof entry !== "object") continue;
-      const messageIndex = ownProperty(entry, "messageIndex")?.value;
-      const providerMetadata = ownProperty(entry, "providerMetadata")?.value;
-      if (
-        typeof messageIndex !== "number" || !numberIsSafeInteger(messageIndex) ||
-        messageIndex < 0 || messageIndex >= messages.length || !providerMetadata ||
-        typeof providerMetadata !== "object" || arrayIsArray(providerMetadata)
-      ) continue;
-      const message = messages[messageIndex]!;
-      attachProviderMetadata(message, providerMetadata);
-      if (ownProperty(entry, "replayDelivered")?.value === true) {
-        markProviderReplayDelivered(message);
-      }
-    }
-  }
-  const rawIndexes = ownProperty(state, "runtimeGeneratedMessageIndexes")?.value;
-  const indexes = arrayIsArray(rawIndexes)
-    ? filterPrivateArray(
-      rawIndexes,
-      (index: unknown): index is number =>
-        typeof index === "number" && numberIsSafeInteger(index) && index >= 0 &&
-        index < messages.length,
-    )
-    : [];
-  for (let index = 0; index < indexes.length; index++) {
-    const message = messages[indexes[index]!]!;
-    if (message.role === "user") markRuntimeGeneratedUserMessage(message);
-  }
-  const overrides = ownProperty(state, "activeSkillDelegationOverrides")?.value;
-  const recoveryStep = ownProperty(state, "interruptedLocalToolBatchRecoveryStep")?.value;
-  const recoveryText = ownProperty(state, "interruptedLocalToolBatchRecoveryText")?.value;
-  return {
-    agentWriteFinalResponseGuard:
-      ownProperty(state, "agentWriteFinalResponseGuard")?.value === true,
-    hasCompletedTool: ownProperty(state, "hasCompletedTool")?.value === true,
-    recoveredEmptyResponse: ownProperty(state, "recoveredEmptyResponse")?.value === true,
-    recoveredInterruptedLocalToolBatch:
-      ownProperty(state, "recoveredInterruptedLocalToolBatch")?.value === true,
-    ...(recoveryStep === completedSteps && typeof recoveryText === "string"
-      ? {
-        interruptedLocalToolBatchRecoveryStep: completedSteps,
-        interruptedLocalToolBatchRecoveryText: recoveryText,
-      }
-      : {}),
-    hasSubmittedFormInput: ownProperty(state, "hasSubmittedFormInput")?.value === true,
-    ...(overrides !== undefined
-      ? { activeSkillDelegationOverrides: extractSkillDelegationOverrides(overrides) }
-      : {}),
-    runtimeGeneratedMessageIndexes: indexes,
-  };
+  if (!messages) throw new Error("Retained completed-step checkpoint binding is invalid");
+  return restoreCompletedAgentStepReplay(messages, input.runId, completedSteps);
 }
 
 export function toRuntimeRunAgentInput(

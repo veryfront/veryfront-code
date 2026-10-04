@@ -102,6 +102,8 @@ export type CompletedAgentStepLoopState = {
   runtimeGeneratedMessageIndexes: number[];
 };
 
+export const MAX_COMPLETED_STEP_CHECKPOINT_BYTES = 512 * 1024;
+
 export type CompletedAgentStep = {
   messages: Message[];
   completedSteps: number;

@@ -1,3 +1,14 @@
+import { createHostedCompletedStepExecution } from "./completed-step-run.ts";
+import { createHostedChatRuntimeAgentAdapter } from "./chat-runtime-agent-adapter.ts";
+import {
+  getHostedCompletedStepReplay,
+  getHostedCompletedStepRuntimeState,
+} from "./completed-step-run.ts";
+import {
+  attachProviderMetadata,
+  readAttachedProviderMetadata,
+} from "../runtime/provider-metadata.ts";
+import { buildCompletedStepPauseCheckpoint } from "./completed-step-pause.ts";
 import { createTerminalRunControl } from "#veryfront/agent/runtime/terminal-run-control.ts";
 import resumeDigestContract from "../../../tests/fixtures/contracts/api-auth-resume-call-digest.json" with {
   type: "json",
@@ -262,6 +273,450 @@ function createRuntimeInvocation(): ReturnType<typeof RuntimeAgentRunInvocationS
 }
 
 describe("agent/hosted-chat-request", () => {
+  it("retains a verified completed-step replay outside parsed hosted request fields", async () => {
+    const base = createRuntimeInvocation();
+    const providerMetadata = {
+      google: { rawAssistantParts: [{ thoughtSignature: "private-hosted-signature" }] },
+    };
+    const original = attachProviderMetadata({
+      id: "retained",
+      role: "assistant" as const,
+      parts: [{ type: "text", text: "Retained" }],
+    }, providerMetadata);
+    const exposure = { version: 1 as const, loadedToolNames: ["write"] };
+    const checkpoint = buildCompletedStepPauseCheckpoint({
+      runId: base.run.runId,
+      threadId: base.run.conversationId,
+      messages: [],
+      tools: [],
+      context: [],
+    }, {
+      messages: [original],
+      completedSteps: 1,
+      toolExposureCheckpoint: exposure,
+      usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 },
+    });
+    const parsed = await parseRuntimeAgentRunInvocationHostedChatRequestFromRequest(
+      new Request("https://agent.example.com/api/control-plane/runs/run_root_1/stream", {
+        method: "POST",
+        headers: {
+          "X-Veryfront-Run-Event-Token": "writer-token",
+          "X-Veryfront-Run-Terminal-Token": "terminal-token",
+        },
+        body: JSON.stringify({
+          ...base,
+          completedAgentSteps: 1,
+          messages: checkpoint.replayMessages,
+          serverResolvedToolExposureCheckpoint: exposure,
+          credentials: { authToken: "run-bound-token" },
+        }),
+      }),
+      {
+        authenticate: () => Promise.resolve({ userId, authToken: "service-token" }),
+        verifyProjectAccess: () => Promise.resolve({ success: true }),
+        verifyRunEventAppendToken: () => Promise.resolve(true),
+        runtimeSource,
+      },
+    );
+    if (parsed instanceof Response) {
+      throw new Error(`Expected verified replay, got ${parsed.status}`);
+    }
+    const replay = getHostedCompletedStepReplay(parsed);
+    assertEquals(replay?.[0]?.parts, [{ type: "text", text: "Retained" }]);
+    assertEquals(readAttachedProviderMetadata(replay![0]!), providerMetadata);
+    const state = getHostedCompletedStepRuntimeState(parsed);
+    assertEquals(state?.__vfCompletedSteps, 1);
+    assertEquals(state?.__vfToolExposureCheckpoint, exposure);
+    assertEquals(JSON.stringify(parsed).includes("private-hosted-signature"), false);
+    assertEquals(JSON.stringify(parsed).includes("run-bound-token"), false);
+    assertEquals(JSON.stringify(parsed).includes("terminal-token"), false);
+    assertEquals(JSON.stringify(replay).includes("private-hosted-signature"), false);
+    assertEquals(getHostedCompletedStepReplay({ ...parsed }), undefined);
+    let receivedReplay: unknown;
+    const adapter = createHostedChatRuntimeAgentAdapter({
+      sourceIntegrationPolicy: { schemaVersion: 1, mode: "unrestricted" },
+      completedStepExecution: createHostedCompletedStepExecution(parsed, "https://api.example.com"),
+      runtimeAgent: {
+        stream(input) {
+          receivedReplay = input.messages;
+          if (!input.messages?.[0]) throw new Error("Expected retained SDK replay");
+          assertEquals(readAttachedProviderMetadata(input.messages[0]), providerMetadata);
+          return Promise.resolve({ toDataStreamResponse: () => new Response("data: {}\n\n") });
+        },
+      },
+    });
+    await adapter.stream({ messages: [], abortSignal: new AbortController().signal });
+    assertEquals(receivedReplay, replay);
+  });
+
+  it("accepts byte-bounded private replay beyond the public message limit", async () => {
+    const base = createRuntimeInvocation();
+    const checkpoint = buildCompletedStepPauseCheckpoint({ runId: base.run.runId, context: [] }, {
+      messages: Array.from({ length: 1001 }, (_, index) => ({
+        id: `retained-${index}`,
+        role: "assistant" as const,
+        parts: [{ type: "text" as const, text: "ok" }],
+      })),
+      completedSteps: 1,
+      usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 },
+    });
+    const parsed = await parseRuntimeAgentRunInvocationHostedChatRequestFromRequest(
+      new Request(
+        "https://agent.example.com/api/control-plane/runs/run_root_1/stream",
+        {
+          method: "POST",
+          headers: {
+            "X-Veryfront-Run-Event-Token": "writer-token",
+            "X-Veryfront-Run-Terminal-Token": "terminal-token",
+          },
+          body: JSON.stringify({
+            ...base,
+            completedAgentSteps: 1,
+            messages: checkpoint.replayMessages,
+            credentials: { authToken: "run-bound-token" },
+          }),
+        },
+      ),
+      {
+        authenticate: () => Promise.resolve({ userId, authToken: "service-token" }),
+        verifyProjectAccess: () => Promise.resolve({ success: true }),
+        verifyRunEventAppendToken: () => Promise.resolve(true),
+        runtimeSource,
+      },
+    );
+    if (parsed instanceof Response) {
+      throw new Error(`Expected private replay, got ${parsed.status}`);
+    }
+    assertEquals(getHostedCompletedStepReplay(parsed)?.length, 1001);
+    assertEquals(
+      hostedChatRequestSchema.safeParse(createHostedChatRequestBody(
+        Array.from({ length: 1001 }, () => assistantMessage([{ type: "text", text: "ok" }])),
+      )).success,
+      false,
+    );
+  });
+
+  it("rejects an oversized UTF-8 private checkpoint before execution", async () => {
+    const base = createRuntimeInvocation();
+    const checkpoint = buildCompletedStepPauseCheckpoint({ runId: base.run.runId, context: [] }, {
+      messages: [{
+        id: "large",
+        role: "assistant",
+        parts: [{ type: "text", text: "界".repeat(180_000) }],
+      }],
+      completedSteps: 1,
+      usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 },
+    });
+    const parsed = await parseRuntimeAgentRunInvocationHostedChatRequestFromRequest(
+      new Request(
+        "https://agent.example.com/api/control-plane/runs/run_root_1/stream",
+        {
+          method: "POST",
+          headers: {
+            "X-Veryfront-Run-Event-Token": "writer-token",
+            "X-Veryfront-Run-Terminal-Token": "terminal-token",
+          },
+          body: JSON.stringify({
+            ...base,
+            completedAgentSteps: 1,
+            messages: checkpoint.replayMessages,
+            credentials: { authToken: "run-bound-token" },
+          }),
+        },
+      ),
+      {
+        authenticate: () => Promise.resolve({ userId, authToken: "service-token" }),
+        verifyProjectAccess: () => Promise.resolve({ success: true }),
+        verifyRunEventAppendToken: () => Promise.resolve(true),
+        runtimeSource,
+      },
+    );
+    assertEquals(parsed instanceof Response, true);
+    if (parsed instanceof Response) {
+      assertEquals(parsed.status, 400);
+      assertEquals((await parsed.json()).errorCode, "COMPLETED_STEP_CHECKPOINT_TOO_LARGE");
+    }
+  });
+
+  for (
+    const [shape, size, rejected] of [
+      ["depth", 120, false],
+      ["depth", 129, true],
+      ["nodes", 99_900, false],
+      ["nodes", 100_100, true],
+    ] as const
+  ) {
+    it(`validates completed-step ${shape} bound at ${size} as a request outcome`, async () => {
+      const base = createRuntimeInvocation();
+      let retainedData: unknown = shape === "nodes" ? Array(size).fill(0) : "leaf";
+      if (shape === "depth") {
+        for (let index = 0; index < size; index++) retainedData = { child: retainedData };
+      }
+      const checkpoint = buildCompletedStepPauseCheckpoint({ runId: base.run.runId, context: [] }, {
+        messages: [{
+          id: "retained",
+          role: "assistant",
+          parts: [{ type: "text", text: "ok" }],
+          metadata: { retainedData },
+        }],
+        completedSteps: 1,
+        usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 },
+      });
+      const parsed = await parseRuntimeAgentRunInvocationHostedChatRequestFromRequest(
+        new Request(
+          "https://agent.example.com/api/control-plane/runs/run_root_1/stream",
+          {
+            method: "POST",
+            headers: {
+              "X-Veryfront-Run-Event-Token": "writer-token",
+              "X-Veryfront-Run-Terminal-Token": "terminal-token",
+            },
+            body: JSON.stringify({
+              ...base,
+              completedAgentSteps: 1,
+              messages: checkpoint.replayMessages,
+              credentials: { authToken: "run-bound-token" },
+            }),
+          },
+        ),
+        {
+          authenticate: () => Promise.resolve({ userId, authToken: "service-token" }),
+          verifyProjectAccess: () => Promise.resolve({ success: true }),
+          verifyRunEventAppendToken: () => Promise.resolve(true),
+          runtimeSource,
+        },
+      );
+      if (parsed instanceof Response && !rejected) {
+        throw new Error(`Unexpected ${parsed.status}: ${await parsed.text()}`);
+      }
+      assertEquals(parsed instanceof Response, rejected);
+      if (parsed instanceof Response) {
+        assertEquals(parsed.status, 400);
+        assertEquals((await parsed.json()).errorCode, "INVALID_COMPLETED_STEP_CHECKPOINT");
+      }
+    });
+  }
+
+  it("accepts actual settled SDK tool parts without converting the private replay", async () => {
+    const base = createRuntimeInvocation();
+    const messages = [{
+      id: "settled-sdk",
+      role: "assistant" as const,
+      parts: [
+        {
+          type: "tool-write" as const,
+          toolCallId: "settled-write",
+          toolName: "write",
+          args: { value: 1 },
+        },
+        {
+          type: "tool-result" as const,
+          toolCallId: "settled-write",
+          toolName: "write",
+          result: { writes: 1, nested: [true] },
+        },
+      ],
+    }];
+    const checkpoint = buildCompletedStepPauseCheckpoint({ runId: base.run.runId, context: [] }, {
+      messages,
+      completedSteps: 1,
+      usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 },
+    });
+    const parsed = await parseRuntimeAgentRunInvocationHostedChatRequestFromRequest(
+      new Request(
+        "https://agent.example.com/api/control-plane/runs/run_root_1/stream",
+        {
+          method: "POST",
+          headers: {
+            "X-Veryfront-Run-Event-Token": "writer-token",
+            "X-Veryfront-Run-Terminal-Token": "terminal-token",
+          },
+          body: JSON.stringify({
+            ...base,
+            completedAgentSteps: 1,
+            messages: checkpoint.replayMessages,
+            credentials: { authToken: "run-bound-token" },
+          }),
+        },
+      ),
+      {
+        authenticate: () => Promise.resolve({ userId, authToken: "service-token" }),
+        verifyProjectAccess: () => Promise.resolve({ success: true }),
+        verifyRunEventAppendToken: () => Promise.resolve(true),
+        runtimeSource,
+      },
+    );
+    if (parsed instanceof Response) {
+      throw new Error(`Expected SDK replay, got ${parsed.status}: ${await parsed.text()}`);
+    }
+    assertEquals(getHostedCompletedStepReplay(parsed)?.[0]?.parts, messages[0]!.parts);
+  });
+
+  it("does not overwrite tool exposure supplied by existing verified forwarded state", async () => {
+    const base = createRuntimeInvocation();
+    const exposure = { version: 1, loadedToolNames: ["write"] };
+    const parsed = await parseRuntimeAgentRunInvocationHostedChatRequestFromRequest(
+      new Request(
+        "https://agent.example.com/api/control-plane/runs/run_root_1/stream",
+        {
+          method: "POST",
+          headers: {
+            "X-Veryfront-Run-Event-Token": "writer-token",
+            "X-Veryfront-Run-Terminal-Token": "terminal-token",
+          },
+          body: JSON.stringify({
+            ...base,
+            forwardedProps: { serverResolvedToolExposureCheckpoint: exposure },
+            credentials: { authToken: "run-bound-token" },
+          }),
+        },
+      ),
+      {
+        authenticate: () => Promise.resolve({ userId, authToken: "service-token" }),
+        verifyProjectAccess: () => Promise.resolve({ success: true }),
+        verifyRunEventAppendToken: () => Promise.resolve(true),
+        runtimeSource,
+      },
+    );
+    if (parsed instanceof Response) {
+      throw new Error(`Expected verified initial invocation, got ${parsed.status}`);
+    }
+    const config = createHostedCompletedStepExecution(parsed, "https://api.example.com")!.config;
+    assertEquals(Object.hasOwn(config, "__vfToolExposureCheckpoint"), false);
+  });
+
+  it("retains a provider-executed SDK call whose result is deferred", async () => {
+    const base = createRuntimeInvocation();
+    const parts = [{
+      type: "tool-web_search" as const,
+      toolCallId: "provider-search",
+      toolName: "web_search",
+      args: { query: "limits" },
+      providerExecuted: true,
+    }];
+    const checkpoint = buildCompletedStepPauseCheckpoint({ runId: base.run.runId, context: [] }, {
+      messages: [{ id: "provider-deferred", role: "assistant", parts }],
+      completedSteps: 1,
+      usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 },
+    });
+    const parsed = await parseRuntimeAgentRunInvocationHostedChatRequestFromRequest(
+      new Request(
+        "https://agent.example.com/api/control-plane/runs/run_root_1/stream",
+        {
+          method: "POST",
+          headers: {
+            "X-Veryfront-Run-Event-Token": "writer-token",
+            "X-Veryfront-Run-Terminal-Token": "terminal-token",
+          },
+          body: JSON.stringify({
+            ...base,
+            completedAgentSteps: 1,
+            messages: checkpoint.replayMessages,
+            credentials: { authToken: "run-bound-token" },
+          }),
+        },
+      ),
+      {
+        authenticate: () => Promise.resolve({ userId, authToken: "service-token" }),
+        verifyProjectAccess: () => Promise.resolve({ success: true }),
+        verifyRunEventAppendToken: () => Promise.resolve(true),
+        runtimeSource,
+      },
+    );
+    if (parsed instanceof Response) {
+      throw new Error(
+        `Expected deferred provider replay, got ${parsed.status}: ${await parsed.text()}`,
+      );
+    }
+    assertEquals(getHostedCompletedStepReplay(parsed)?.[0]?.parts, parts);
+  });
+
+  for (
+    const retainedField of [
+      "serverResolvedPreParkUsage",
+      "serverResolvedToolExposureCheckpoint",
+    ] as const
+  ) {
+    it(`rejects orphaned ${retainedField} without a completed-step replay`, async () => {
+      const base = createRuntimeInvocation();
+      const parsed = await parseRuntimeAgentRunInvocationHostedChatRequestFromRequest(
+        new Request(
+          "https://agent.example.com/api/control-plane/runs/run_root_1/stream",
+          {
+            method: "POST",
+            headers: {
+              "X-Veryfront-Run-Event-Token": "writer-token",
+              "X-Veryfront-Run-Terminal-Token": "terminal-token",
+            },
+            body: JSON.stringify({
+              ...base,
+              credentials: { authToken: "run-bound-token" },
+              [retainedField]: retainedField === "serverResolvedPreParkUsage"
+                ? [{ totalTokens: 10 }]
+                : { version: 1, loadedToolNames: ["write"] },
+            }),
+          },
+        ),
+        {
+          authenticate: () => Promise.resolve({ userId, authToken: "service-token" }),
+          verifyProjectAccess: () => Promise.resolve({ success: true }),
+          verifyRunEventAppendToken: () => Promise.resolve(true),
+          runtimeSource,
+        },
+      );
+      assertEquals(parsed instanceof Response, true);
+      if (parsed instanceof Response) {
+        assertEquals(parsed.status, 400);
+        assertEquals((await parsed.json()).errorCode, "INVALID_COMPLETED_STEP_CHECKPOINT");
+      }
+    });
+  }
+  for (const missing of ["writer", "terminal", "ordinary"] as const) {
+    it(`rejects a completed-step resume without its ${missing} credential`, async () => {
+      const base = createRuntimeInvocation();
+      const checkpoint = buildCompletedStepPauseCheckpoint({
+        runId: base.run.runId,
+        threadId: base.run.conversationId,
+        messages: [],
+        tools: [],
+        context: [],
+      }, {
+        messages: [{
+          id: "retained",
+          role: "assistant",
+          parts: [{ type: "text", text: "Retained" }],
+        }],
+        completedSteps: 1,
+        usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 },
+      });
+      const parsed = await parseRuntimeAgentRunInvocationHostedChatRequestFromRequest(
+        new Request("https://agent.example.com/api/control-plane/runs/run_root_1/stream", {
+          method: "POST",
+          headers: {
+            ...(missing === "writer" ? {} : { "X-Veryfront-Run-Event-Token": "writer-token" }),
+            ...(missing === "terminal"
+              ? {}
+              : { "X-Veryfront-Run-Terminal-Token": "terminal-token" }),
+          },
+          body: JSON.stringify({
+            ...base,
+            completedAgentSteps: 1,
+            messages: checkpoint.replayMessages,
+            ...(missing === "ordinary" ? {} : { credentials: { authToken: "run-bound-token" } }),
+          }),
+        }),
+        {
+          authenticate: () => Promise.resolve({ userId, authToken: "service-token" }),
+          verifyProjectAccess: () => Promise.resolve({ success: true }),
+          verifyRunEventAppendToken: () => Promise.resolve(true),
+          runtimeSource,
+        },
+      );
+      assertEquals(parsed instanceof Response, true);
+      if (parsed instanceof Response) assertEquals(parsed.status, 403);
+    });
+  }
+
   it("rejects client-supplied provider replay blocks", () => {
     const result = hostedChatRequestSchema.safeParse(createHostedChatRequestBody([
       assistantMessage([{

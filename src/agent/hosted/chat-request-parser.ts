@@ -1,3 +1,6 @@
+import { MAX_COMPLETED_STEP_CHECKPOINT_BYTES } from "../runtime/runtime-tool-config.ts";
+import { getHostedCompletedStepChatRequestSchema } from "./chat-request.ts";
+import { registerHostedCompletedStepRun } from "./completed-step-run.ts";
 import {
   registerHostedTerminalCredential,
   RUN_TERMINAL_TOKEN_HEADER,
@@ -784,9 +787,45 @@ export async function parseRuntimeAgentRunInvocationHostedChatRequestFromRequest
     });
   }
 
-  const chatRequest = hostedChatRequestSchema.safeParse(
-    buildHostedChatRequestInputFromRuntimeAgentInvocation(invocation.data),
-  );
+  const isCompletedStepReplay = invocation.data.completedAgentSteps !== undefined;
+  if (
+    !isCompletedStepReplay && (
+      invocation.data.serverResolvedPreParkUsage !== undefined ||
+      invocation.data.serverResolvedToolExposureCheckpoint !== undefined
+    )
+  ) {
+    return Response.json({ errorCode: "INVALID_COMPLETED_STEP_CHECKPOINT" }, { status: 400 });
+  }
+
+  if (isCompletedStepReplay) {
+    try {
+      const bytes = IntrinsicReflectApply(encodePrivateCheckpoint, privateCheckpointEncoder, [
+        privateJsonStringify({
+          messages: invocation.data.messages,
+          context: invocation.data.context,
+          forwardedProps: invocation.data.forwardedProps,
+          preParkUsage: invocation.data.serverResolvedPreParkUsage,
+          toolExposureCheckpoint: invocation.data.serverResolvedToolExposureCheckpoint,
+        }),
+      ]);
+      if (bytes.byteLength > MAX_COMPLETED_STEP_CHECKPOINT_BYTES) {
+        return Response.json({ errorCode: "COMPLETED_STEP_CHECKPOINT_TOO_LARGE" }, { status: 400 });
+      }
+    } catch {
+      return Response.json({ errorCode: "INVALID_COMPLETED_STEP_CHECKPOINT" }, { status: 400 });
+    }
+  }
+  const chatRequest = (() => {
+    try {
+      return (isCompletedStepReplay
+        ? getHostedCompletedStepChatRequestSchema()
+        : hostedChatRequestSchema)
+        .safeParse(buildHostedChatRequestInputFromRuntimeAgentInvocation(invocation.data));
+    } catch {
+      return Response.json({ errorCode: "INVALID_COMPLETED_STEP_CHECKPOINT" }, { status: 400 });
+    }
+  })();
+  if (chatRequest instanceof Response) return chatRequest;
   if (!chatRequest.success) {
     return createValidationErrorResponse({
       messagePrefix: "Invalid runtime agent invocation",
@@ -843,6 +882,14 @@ export async function parseRuntimeAgentRunInvocationHostedChatRequestFromRequest
   if (verifiedRequest.serverEnvelopeVerified === true && invocation.data.resumeToolCall) {
     verifiedRequest.serverResolvedResumeToolCall = invocation.data.resumeToolCall;
   }
+  const retainedStep = isCompletedStepReplay;
+  try {
+    if (!registerHostedCompletedStepRun(verifiedRequest, invocation.data) && retainedStep) {
+      return Response.json({ errorCode: "COMPLETED_STEP_AUTH_REQUIRED" }, { status: 403 });
+    }
+  } catch {
+    return Response.json({ errorCode: "INVALID_COMPLETED_STEP_CHECKPOINT" }, { status: 400 });
+  }
   registerHostedInferenceCredential(
     verifiedRequest,
     verifiedRequest.serverEnvelopeVerified === true
@@ -851,3 +898,6 @@ export async function parseRuntimeAgentRunInvocationHostedChatRequestFromRequest
   );
   return verifiedRequest;
 }
+
+const privateCheckpointEncoder = new TextEncoder();
+const encodePrivateCheckpoint = TextEncoder.prototype.encode;

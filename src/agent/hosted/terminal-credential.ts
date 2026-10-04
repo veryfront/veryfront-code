@@ -1,3 +1,4 @@
+import { createCompletedStepPauseAcknowledger } from "./completed-step-pause.ts";
 import { createPrivateWeakStore } from "#veryfront/security/private-weak-store.ts";
 import {
   hasCurrentTerminalRunCredentialAuthority,
@@ -33,6 +34,13 @@ export function registerHostedTerminalCredential(
     projectId: request.projectId,
     runId: request.durableRootRun.runId,
   });
+}
+
+/** Inspect the bound authority without exposing its credential to another module. */
+export function hasHostedTerminalCredential(request: ParsedHostedChatRequest): boolean {
+  const authority = credentials.get(request);
+  return authority !== undefined && authority.projectId === request.projectId &&
+    authority.runId === request.durableRootRun?.runId;
 }
 
 /** The credential only reaches the bound platform endpoint through the trusted deployment transport. */
@@ -76,4 +84,20 @@ export function hostedTerminalToolSourceFactory(
           : ordinary.executeTool(name, args, context),
     };
   };
+}
+
+/** Construct the host transport without returning the terminal credential. */
+export function createHostedCompletedStepAcknowledger(
+  request: ParsedHostedChatRequest,
+  apiUrl: string,
+  authToken: string,
+): ReturnType<typeof createCompletedStepPauseAcknowledger> | undefined {
+  const authority = credentials.get(request);
+  if (!authority || !hasHostedTerminalCredential(request)) return undefined;
+  return createCompletedStepPauseAcknowledger({
+    apiUrl,
+    runId: authority.runId,
+    authToken,
+    terminalToken: authority.token,
+  });
 }

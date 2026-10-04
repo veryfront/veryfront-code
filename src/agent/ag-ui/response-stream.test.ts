@@ -314,4 +314,42 @@ describe("agent/ag-ui-response-stream", () => {
     assertEquals(seenChunks, 1);
     assertEquals(waitForFinishCalls, 0);
   });
+  it("writes a private completed-step boundary only after cleanup, without RunFinished", async () => {
+    let cleaned = false;
+    let terminalEncodes = 0;
+    const stream = createAgUiResponseStream({
+      agUiInput: { runId: "parked-run", threadId: "parked-thread", messages: [] },
+      agentId: "agent",
+      execution: {
+        agentUIStream: { async *[Symbol.asyncIterator]() {} },
+        fail: async () => {
+          throw new Error("unexpected failure");
+        },
+        waitForFinish: async () => {
+          cleaned = true;
+        },
+        isStoppedAtCompletedStep: () => {
+          assertEquals(cleaned, true);
+          return true;
+        },
+      },
+      encoder: {
+        encode: (): AgUiSseEvent[] => [],
+        finalize: () => {
+          terminalEncodes++;
+          return [{ event: "RunFinished", payload: {} }];
+        },
+      },
+      initialState: null,
+    });
+    const frames = parseSseFrames(await collectStreamText(stream));
+    assertEquals(terminalEncodes, 0);
+    assertEquals(frames.map((frame) => frame.event), [
+      "RunStarted",
+      "StateSnapshot",
+      "MessagesSnapshot",
+      "AgentRunCompletedStepBoundary",
+    ]);
+    assertEquals(frames.at(-1)?.data.runId, "parked-run");
+  });
 });

@@ -272,3 +272,18 @@ Through Gate 4, hosted durable and AG-UI production still consume
 compatibility UI chunks. The version 2 projection Adapters exist and are
 tested but have no production caller until the Phase 5 Stream Delivery design
 adds a mixed lifecycle/runtime object channel and backend idempotency.
+
+Verified hosted/default-chat invocations use the same completed-step checkpoint
+transport and replay restoration as internal agents. Private replay remains bound
+to the original verified request, its canonical project/run, its ordinary run
+credential, and its terminal credential. Legacy chat bodies cannot install it.
+Hosted execution restores SDK messages directly, bypassing public-message
+conversion and compaction; public chat retains its message and part limits.
+Private checkpoints are independently bounded to 512 KB of UTF-8 data and the
+private serializer's structural limits, with invalid input rejected as HTTP 400.
+
+Response and detached execution flush pending derived sources, clean up, and end
+the span as `stopped_at_boundary` after an acknowledged retained step. They write
+no terminal outcome; the private boundary frame follows cleanup. API public agent
+pause remains disabled until every required adapter and the API resume dispatch
+consume this protocol on staging.

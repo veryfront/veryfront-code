@@ -31,6 +31,8 @@ export interface AgUiResponseExecution<TChunk> {
   agentUIStream: AsyncIterable<TChunk>;
   fail: (error: unknown) => Promise<void>;
   waitForFinish: () => Promise<void>;
+  /** Verified host stopped without a terminal outcome at a retained step. */
+  isStoppedAtCompletedStep?: () => boolean;
 }
 
 /** Public API contract for AG-UI response encoder. */
@@ -157,6 +159,13 @@ export function createAgUiResponseStream<TChunk, TState>(
           await input.execution.waitForFinish();
 
           if (streamClosed) {
+            return;
+          }
+          if (input.execution.isStoppedAtCompletedStep?.()) {
+            writeEvent({
+              event: "AgentRunCompletedStepBoundary",
+              payload: { runId: input.agUiInput.runId },
+            });
             return;
           }
           for (const event of input.encoder.finalize(input.getFinalResponse?.(state) ?? null)) {

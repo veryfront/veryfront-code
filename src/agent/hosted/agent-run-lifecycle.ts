@@ -56,6 +56,7 @@ export interface HostedAgentRunSpanController {
   setAttributes: (attributes: AgentTraceAttributes) => void;
   setMessageId: (messageId: string) => void;
   finalize: (finalState: HostedAgentRunSpanFinalState) => void;
+  stopAtCompletedStep: () => void;
 }
 
 /** Input payload for create hosted agent run span controller. */
@@ -120,6 +121,12 @@ export function createHostedAgentRunSpanController(
     },
     setMessageId: (messageId) => {
       span.setAttributes({ "message.id": messageId });
+    },
+    stopAtCompletedStep: () => {
+      if (finalized) return;
+      finalized = true;
+      span.setAttributes({ "agent.run.final_status": "stopped_at_boundary" });
+      span.finish();
     },
     finalize: (finalState) => {
       if (finalized) {

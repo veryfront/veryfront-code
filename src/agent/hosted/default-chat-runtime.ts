@@ -1,3 +1,4 @@
+import type { HostedCompletedStepExecution } from "./completed-step-run.ts";
 import {
   type HostToolSet,
   type RemoteMCPToolSourceConfig,
@@ -168,6 +169,7 @@ export type DefaultHostedChatRuntimeProjectSwitchInput = {
 
 /** Options accepted by create default hosted chat runtime. */
 export type CreateDefaultHostedChatRuntimeOptions = {
+  completedStepExecution?: HostedCompletedStepExecution;
   options: DefaultHostedChatRuntimeCreationOptions;
   /** Service-owned authorization ceiling applied to Framework host tools. */
   hostToolPolicy?: HostedHostToolPolicy;
@@ -319,6 +321,7 @@ async function buildToolAssembly(
 
 /** @internal Shared runtime construction after transport-free tool assembly. */
 export type PreparedHostedRuntimeAgentOptions = {
+  completedStepExecution?: HostedCompletedStepExecution;
   /** Internal caller identity for a separately prepared trusted project runtime. */
   runtimeAgentId?: string;
   options: Omit<DefaultHostedChatRuntimeCreationOptions, "authToken">;
@@ -356,6 +359,7 @@ function createRuntimeAgentConfig(input: PreparedHostedRuntimeAgentOptions): Age
     __vfAllowedRemoteTools: input.toolAssembly.compatibleRemoteToolNames,
     __vfSourceIntegrationPolicy: input.sourceIntegrationPolicy,
     __vfToolExposureCheckpoint: input.options.serverResolvedToolExposureCheckpoint,
+    ...(input.completedStepExecution?.config ?? {}),
     __vfProviderReplayCheckpoints: input.options.serverResolvedProviderReplayCheckpoints,
     __vfProviderReplayCheckpointMessageId: input.options.providerReplayCheckpointMessageId,
     __vfPersistProviderReplayCheckpoint: input.options.persistProviderReplayCheckpoint,
@@ -590,6 +594,7 @@ export async function createDefaultHostedChatRuntime(
           cloudContext,
           () =>
             createPreparedHostedRuntimeAgent({
+              completedStepExecution: input.completedStepExecution,
               runtimeAgentId: resolveRuntimeAgentId(taskContext.agentId),
               options: input.options,
               taskContext,
@@ -610,6 +615,7 @@ export async function createDefaultHostedChatRuntime(
           modelId,
           cleanup,
           agent: createHostedChatRuntimeAgentAdapter({
+            completedStepExecution: input.completedStepExecution,
             runtimeAgent,
             sourceIntegrationPolicy: input.sourceIntegrationPolicy,
             runId: taskContext.runId,

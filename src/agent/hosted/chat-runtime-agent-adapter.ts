@@ -1,3 +1,4 @@
+import type { HostedCompletedStepExecution } from "./completed-step-run.ts";
 import type { ToolExecutionDataEvent } from "#veryfront/tool/types.ts";
 import { AGENT_ERROR } from "#veryfront/errors";
 import { createChatUiMessageStreamFromDataStream } from "../streaming/chat-ui-message-stream.ts";
@@ -23,6 +24,7 @@ export type HostedChatRuntimeAgentAdapterWarning = {
 
 /** Input payload for hosted chat runtime agent adapter. */
 export type HostedChatRuntimeAgentAdapterInput = {
+  completedStepExecution?: HostedCompletedStepExecution;
   runtimeAgent: Pick<Agent, "stream">;
   sourceIntegrationPolicy: SourceIntegrationPolicyManifest;
   runId?: string;
@@ -62,6 +64,7 @@ export function createHostedChatRuntimeAgentAdapter(
 
       return {
         steps: Promise.resolve([]),
+        isStoppedAtCompletedStep: input.completedStepExecution?.isStopped,
         toUIMessageStream(options = {}) {
           return createChatUiMessageStreamFromDataStream(
             { stream },
@@ -94,6 +97,7 @@ export async function createHostedChatRuntimeDataStream(
   streamInput: Parameters<HostedChatRuntimeAgent["stream"]>[0],
   runStream: HostedChatRuntimeAgentAdapterRunner = input.runStream ?? ((operation) => operation()),
 ): Promise<ReadableStream<Uint8Array>> {
+  input.completedStepExecution?.bindAbortSignal(streamInput.abortSignal);
   let publishDataEvent = (_event: ToolExecutionDataEvent) => {};
   const streamResponse = await runStream(() =>
     runWithEffectiveSourceIntegrationPolicy(
@@ -104,7 +108,7 @@ export async function createHostedChatRuntimeDataStream(
           projectSlug: input.projectSlug,
         };
         const response = await input.runtimeAgent.stream({
-          messages: streamInput.messages,
+          messages: input.completedStepExecution?.replayMessages ?? streamInput.messages,
           ...(input.maxOutputTokens !== undefined
             ? { maxOutputTokens: input.maxOutputTokens }
             : {}),

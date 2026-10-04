@@ -80,6 +80,8 @@ export type HostedChatRuntimeStreamInput = {
 /** Result returned from hosted chat runtime stream. */
 export type HostedChatRuntimeStreamResult<TMessageMetadata = MessageMetadata> = {
   steps: PromiseLike<readonly unknown[]>;
+  /** Host-owned neutral EOF after a completed-step acknowledgement. */
+  isStoppedAtCompletedStep?: () => boolean;
   toUIMessageStream: (
     options?: HostedChatRuntimeToUiMessageStreamOptions<TMessageMetadata>,
   ) => AsyncIterable<ChatUiMessageChunk<TMessageMetadata>>;
