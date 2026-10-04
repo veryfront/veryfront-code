@@ -222,6 +222,62 @@ async function runSonarGate(
 }
 
 describe("merge quality gate workflow", () => {
+  it("scans queue commits as PRs and rejects invalid queue refs", async () => {
+    const workflow = await readWorkflow();
+    const jobs = asRecord(workflow.jobs, "jobs");
+    const scan = asRecord(jobs.sonar, "Sonar job");
+    const steps = scan.steps as YamlRecord[];
+    const step = steps.find((step) => step.id === "sonar-scan")!;
+    const dir = await makeTempDir();
+    try {
+      await Deno.writeTextFile(`${dir}/node`, '#!/bin/sh\nprintf "%s" "$INPUT_ARGS"\n');
+      await Deno.chmod(`${dir}/node`, 0o755);
+      const ref = "gh-readonly-queue/main/pr-4910-abcdef012345";
+      for (
+        const [event, branch, expected, code] of [
+          [
+            "merge_group",
+            ref,
+            `-Dsonar.pullrequest.key=4910 -Dsonar.pullrequest.branch=${ref} -Dsonar.pullrequest.base=main`,
+            0,
+          ],
+          ["pull_request", "feature/test", "", 0],
+          ["push", "main", "", 0],
+          ["merge_group", "main", "Invalid merge queue ref", 1],
+          [
+            "merge_group",
+            "gh-readonly-queue/main/pr-4910-bad;echo unsafe",
+            "Invalid merge queue ref",
+            1,
+          ],
+        ] as const
+      ) {
+        const output = await new Deno.Command("bash", {
+          args: ["-c", String(step.run)],
+          env: {
+            PATH: `${dir}:${Deno.env.get("PATH")}`,
+            RUNNER_TEMP: dir,
+            SONAR_EVENT_NAME: event,
+            SONAR_REF_NAME: branch,
+            INPUT_ARGS: "",
+          },
+          stdout: "piped",
+          stderr: "piped",
+        }).output();
+        assertEquals(output.code, code);
+        const log = new TextDecoder().decode(output.stdout);
+        assertEquals(
+          log,
+          code === 0
+            ? `Sonar scan attempt 1 of 2\n${expected}`
+            : "::error::Invalid merge queue ref for Sonar PR analysis\n",
+        );
+      }
+    } finally {
+      await Deno.remove(dir, { recursive: true });
+    }
+  });
+
   it("exposes one stable check name for branch protection", async () => {
     const gate = await readMergeGate();
 
@@ -527,6 +583,14 @@ git -C "$action_dir" checkout --detach FETCH_HEAD
     assertEquals(
       scanStep.run,
       `set -euo pipefail
+# Queue scans use PR mode for the analysis cache without touching main.
+if [ "$SONAR_EVENT_NAME" = "merge_group" ]; then
+  if [[ ! "$SONAR_REF_NAME" =~ ^gh-readonly-queue/main/pr-([0-9]+)-[0-9a-f]+$ ]]; then
+    echo "::error::Invalid merge queue ref for Sonar PR analysis"
+    exit 1
+  fi
+  export INPUT_ARGS="-Dsonar.pullrequest.key=\${BASH_REMATCH[1]} -Dsonar.pullrequest.branch=$SONAR_REF_NAME -Dsonar.pullrequest.base=main"
+fi
 # Preserve the official action and its signature verification. Only a
 # failed Compute Engine task may retry; a red quality gate never does.
 for attempt in 1 2; do
@@ -553,8 +617,9 @@ done
     );
     assertEquals(asRecord(scanStep.env, "Sonar scan environment"), {
       SONAR_TOKEN: "\${{ secrets.SONAR_TOKEN }}",
-      INPUT_ARGS:
-        "${{ github.event_name == 'merge_group' && format('-Dsonar.branch.name={0}/{1} -Dsonar.branch.target=main', github.ref_name, github.sha) || '' }}",
+      SONAR_EVENT_NAME: "${{ github.event_name }}",
+      SONAR_REF_NAME: "${{ github.ref_name }}",
+      INPUT_ARGS: "",
       INPUT_PROJECTBASEDIR: ".",
       INPUT_SCANNERVERSION: "8.1.0.6389",
       INPUT_SCANNERBINARIESURL: "https://binaries.sonarsource.com/Distribution/sonar-scanner-cli",
