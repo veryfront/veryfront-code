@@ -92,7 +92,7 @@ it("binds a deferred cloud pause before streaming and stops it with the watchdog
     assertEquals(requests, 1);
     assertEquals(await pause.load(), null);
     watchdog.abort();
-    await assertRejects(() => pause.load(), Error, "manual pause boundary");
+    await assertRejects(() => pause.load(), DOMException, "aborted");
     assertEquals(requests, 2);
   } finally {
     await bootstrap.cleanup();
@@ -100,82 +100,106 @@ it("binds a deferred cloud pause before streaming and stops it with the watchdog
   }
 });
 
-it("keeps an acknowledged broker pause nonterminal through waitForFinish", async () => {
-  const signed = await signedRequest();
-  signed.request.headers.set("x-veryfront-run-stop-token", "synthetic-stop-token");
-  const ingress = await parseBrokerRuntimeAgentIngress(
-    signed.request,
-    options(signed.publicKeyPem),
-  );
-  const terminalStates: unknown[] = [];
-  const lifecycle: HostedChatExecutionLifecycleAdapter = {
-    durableRootRun: { runId: "run-1", messageId: "message-1" },
-    durableRunMirror: null,
-    terminal: {
-      toTerminalState: (state) => state,
-      finalizeRun: async (state) => {
-        terminalStates.push(state);
-      },
-      cancelRun: async (state) => {
-        terminalStates.push(state);
-      },
-      onTerminalState: async () => {},
+for (const cancelledProbe of [false, true]) {
+  it(
+    cancelledProbe
+      ? "finalizes an aborted pause probe as cancelled through waitForFinish"
+      : "keeps an acknowledged broker pause nonterminal through waitForFinish",
+    async () => {
+      const signed = await signedRequest();
+      signed.request.headers.set("x-veryfront-run-stop-token", "synthetic-stop-token");
+      const ingress = await parseBrokerRuntimeAgentIngress(
+        signed.request,
+        options(signed.publicKeyPem),
+      );
+      const terminalStates: unknown[] = [];
+      const lifecycle: HostedChatExecutionLifecycleAdapter = {
+        durableRootRun: { runId: "run-1", messageId: "message-1" },
+        durableRunMirror: null,
+        terminal: {
+          toTerminalState: (state) => state,
+          finalizeRun: async (state) => {
+            terminalStates.push(state);
+          },
+          cancelRun: async (state) => {
+            terminalStates.push(state);
+          },
+          onTerminalState: async () => {},
+        },
+      };
+      inheritHostedAgentPauseCapability(lifecycle, ingress);
+      const execution = new AbortController();
+      const signal = execution.signal;
+      const checkpoint: AgentPauseCheckpoint = {
+        version: 1,
+        nextStep: 1,
+        messages: [],
+        toolCalls: [],
+        usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 },
+        latestAssistantText: "",
+        completed: false,
+        recoveredEmptyResponse: false,
+        recoveredInterruptedLocalToolBatch: false,
+      };
+      let cleaned = 0;
+      let disposed = 0;
+      await withMockFetch(() => {
+        if (cancelledProbe) {
+          execution.abort();
+          return Promise.reject(new TypeError("Read probe cancelled"));
+        }
+        return Promise.resolve(Response.json({ stop: true }));
+      }, async () => {
+        const pause = activateHostedAgentPauseCapability(lifecycle, signal)!;
+        const runtime = createHostedChatExecutionRuntime({
+          agentId: "agent-1",
+          modelId: "test/pause",
+          originalMessages: [],
+          runContext: { withContext: (operation) => operation() },
+          abortSignal: signal,
+          bootstrap: {
+            cleanup: async () => {
+              cleaned++;
+            },
+            lifecycleAdapter: lifecycle,
+            rootStreamWatchdog: {
+              signal,
+              lastTimeoutState: null,
+              keepAlive: () => {},
+              observe: () => {},
+              dispose: () => {
+                disposed++;
+              },
+            },
+            streamResult: {
+              steps: Promise.resolve([]),
+              toUIMessageStream: async function* () {
+                yield { type: "text-delta" as const, id: "message-1", delta: "Settled output" };
+                if (cancelledProbe) await pause.requested!();
+                else assertEquals(await pause.acknowledge(checkpoint), true);
+              },
+            },
+            streamingMessageId: "message-1",
+            capturedMessageId: "message-1",
+            capturedConversationId: "conversation-1",
+            mirroredToolChunkState: createMirroredToolChunkState(),
+          },
+        });
+        const consume = async () => {
+          for await (const chunk of runtime.agentUIStream) {
+            assertEquals(String(chunk.type).includes("manual_pause"), false);
+          }
+        };
+        if (cancelledProbe) await assertRejects(consume, DOMException, "aborted");
+        else await consume();
+        await runtime.waitForFinish();
+      });
+      if (cancelledProbe) {
+        assertEquals(terminalStates.length, 1);
+        assertEquals((terminalStates[0] as { status: string }).status, "cancelled");
+      } else assertEquals(terminalStates, []);
+      assertEquals(cleaned, 1);
+      assertEquals(disposed, 2);
     },
-  };
-  inheritHostedAgentPauseCapability(lifecycle, ingress);
-  const signal = new AbortController().signal;
-  const checkpoint: AgentPauseCheckpoint = {
-    version: 1,
-    nextStep: 1,
-    messages: [],
-    toolCalls: [],
-    usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 },
-    latestAssistantText: "",
-    completed: false,
-    recoveredEmptyResponse: false,
-    recoveredInterruptedLocalToolBatch: false,
-  };
-  let cleaned = 0;
-  let disposed = 0;
-  await withMockFetch(() => Promise.resolve(Response.json({ stop: true })), async () => {
-    const pause = activateHostedAgentPauseCapability(lifecycle, signal)!;
-    const runtime = createHostedChatExecutionRuntime({
-      agentId: "agent-1",
-      modelId: "test/pause",
-      originalMessages: [],
-      runContext: { withContext: (operation) => operation() },
-      abortSignal: signal,
-      bootstrap: {
-        cleanup: async () => {
-          cleaned++;
-        },
-        lifecycleAdapter: lifecycle,
-        rootStreamWatchdog: {
-          signal,
-          lastTimeoutState: null,
-          keepAlive: () => {},
-          observe: () => {},
-          dispose: () => {
-            disposed++;
-          },
-        },
-        streamResult: {
-          steps: Promise.resolve([]),
-          toUIMessageStream: async function* () {
-            yield { type: "text-delta" as const, id: "message-1", delta: "Settled output" };
-            assertEquals(await pause.acknowledge(checkpoint), true);
-          },
-        },
-        streamingMessageId: "message-1",
-        capturedMessageId: "message-1",
-        capturedConversationId: "conversation-1",
-        mirroredToolChunkState: createMirroredToolChunkState(),
-      },
-    });
-    for await (const _chunk of runtime.agentUIStream) { /* paused stream has no terminal chunk */ }
-    await runtime.waitForFinish();
-  });
-  assertEquals(terminalStates, []);
-  assertEquals(cleaned, 1);
-  assertEquals(disposed, 2);
-});
+  );
+}

@@ -52,7 +52,7 @@ export interface AgentManualPause {
 export const getAgentPauseCheckpointSchema = defineSchema((v) =>
   v.object({
     version: v.literal(1),
-    nextStep: v.number().int().nonnegative().max(10_000),
+    nextStep: v.number().int().nonnegative().max(9_007_199_254_740_991),
     // Provider blocks and runtime-generated message metadata must survive unchanged.
     messages: v.array(
       v.object({

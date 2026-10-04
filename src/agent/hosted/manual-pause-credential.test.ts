@@ -52,7 +52,9 @@ it("binds a deferred pause transport once to the detached execution lifetime", a
     "already bound",
   );
   assertEquals(await capability.load(), null);
-  await assertRejects(() => capability.load(), Error, "manual pause boundary");
+  const error = await assertRejects(() => capability.load());
+  assertEquals(isAgentManualPauseBoundary(error), false);
+  assertEquals(hasHostedAgentPauseStopped(capability), false);
   assertEquals(requests, 2);
 });
 
@@ -147,10 +149,10 @@ describe("hosted agent pause capability", () => {
       },
     });
     const error = await assertRejects(() => authority.acknowledge(checkpoint));
-    assertEquals(isAgentManualPauseBoundary(error), true);
+    assertEquals(isAgentManualPauseBoundary(error), false);
     assertEquals(attempts, 1);
     assertEquals(cancelled, 1);
-    assertEquals(hasHostedAgentPauseStopped(authority), true);
+    assertEquals(hasHostedAgentPauseStopped(authority), false);
   });
 
   it("stays stopped when the checkpoint load reports the run was stopped", async () => {
@@ -181,9 +183,166 @@ describe("hosted agent pause capability", () => {
       },
     });
     const error = await assertRejects(() => authority.load());
-    assertEquals(isAgentManualPauseBoundary(error), true);
+    assertEquals(isAgentManualPauseBoundary(error), false);
+    assertEquals(attempts, 0);
+    assertEquals(hasHostedAgentPauseStopped(authority), false);
+  });
+});
+
+for (const operation of ["requested", "acknowledge", "release"] as const) {
+  it(`does not publish an unconfirmed pause when ${operation} starts after cancellation`, async () => {
+    const lifetime = new AbortController();
+    lifetime.abort();
+    let attempts = 0;
+    const authority = createRunBoundAgentManualPause({
+      apiUrl: "https://api.example.com",
+      runId: "run_pause_test",
+      token: "pause-test-token",
+      signal: lifetime.signal,
+      fetch: () => {
+        attempts++;
+        return Promise.resolve(Response.json({ stop: false, checkpoint: null }));
+      },
+    });
+    const error = await assertRejects(() =>
+      operation === "acknowledge" ? authority.acknowledge(checkpoint) : authority[operation]!()
+    );
+    assertEquals(isAgentManualPauseBoundary(error), false);
+    assertEquals(hasHostedAgentPauseStopped(authority), false);
     assertEquals(attempts, 0);
   });
+}
+
+it("cancels a lost read probe without marking the run paused", async () => {
+  const lifetime = new AbortController();
+  const authority = createRunBoundAgentManualPause({
+    apiUrl: "https://api.example.com",
+    runId: "run_pause_test",
+    token: "pause-test-token",
+    signal: lifetime.signal,
+    fetch: () => {
+      lifetime.abort();
+      return Promise.reject(new TypeError("Probe cancelled"));
+    },
+  });
+  const error = await assertRejects(() => authority.requested!());
+  assertEquals(isAgentManualPauseBoundary(error), false);
+  assertEquals(hasHostedAgentPauseStopped(authority), false);
+});
+
+for (const nextStep of [-1, 0.5, Number.MAX_SAFE_INTEGER + 1]) {
+  it(`rejects an unsupported continuation step ${nextStep} before transport`, async () => {
+    let attempts = 0;
+    const authority = createRunBoundAgentManualPause({
+      apiUrl: "https://api.example.com",
+      runId: "run_pause_test",
+      token: "pause-test-token",
+      signal: new AbortController().signal,
+      fetch: () => {
+        attempts++;
+        return Promise.resolve(Response.json({ stop: true }));
+      },
+    });
+    await assertRejects(() => authority.acknowledge({ ...checkpoint, nextStep }));
+    assertEquals(attempts, 0);
+    assertEquals(hasHostedAgentPauseStopped(authority), false);
+  });
+}
+
+for (const nextStep of [10_001, Number.MAX_SAFE_INTEGER]) {
+  it(`acknowledges a supported continuation at step ${nextStep}`, async () => {
+    let sent: unknown;
+    const authority = createRunBoundAgentManualPause({
+      apiUrl: "https://api.example.com",
+      runId: "run_pause_test",
+      token: "pause-test-token",
+      signal: new AbortController().signal,
+      fetch: (_url, init) => {
+        sent = JSON.parse(init!.body as string);
+        return Promise.resolve(Response.json({ stop: true }));
+      },
+    });
+    const saved = { ...checkpoint, nextStep };
+    assertEquals(await authority.acknowledge(saved), true);
+    assertEquals(sent, { checkpoint: saved });
+  });
+}
+
+for (const stop of [false, true]) {
+  it(`publishes a stopped flag only for an authoritative boundary stop (${stop})`, async () => {
+    const authority = createRunBoundAgentManualPause({
+      apiUrl: "https://api.example.com",
+      runId: "run_pause_test",
+      token: "pause-test-token",
+      signal: new AbortController().signal,
+      fetch: () => Promise.resolve(Response.json({ stop, checkpoint: null, pauseRequested: true })),
+    });
+    if (stop) {
+      const error = await assertRejects(() => authority.requested!());
+      assertEquals(isAgentManualPauseBoundary(error), true);
+    } else assertEquals(await authority.requested!(), true);
+    assertEquals(hasHostedAgentPauseStopped(authority), stop);
+  });
+}
+
+for (const reply of ["lost", "server-error", "malformed"] as const) {
+  it(`keeps an uncertain acknowledgement held after ${reply} and cancellation`, async () => {
+    const lifetime = new AbortController();
+    const authority = createRunBoundAgentManualPause({
+      apiUrl: "https://api.example.com",
+      runId: "run_pause_test",
+      token: "pause-test-token",
+      signal: lifetime.signal,
+      fetch: () => {
+        lifetime.abort();
+        if (reply === "lost") return Promise.reject(new TypeError("Reply lost after commit"));
+        return Promise.resolve(
+          reply === "server-error"
+            ? new Response(null, { status: 503 })
+            : Response.json({ unexpected: true }),
+        );
+      },
+    });
+    const error = await assertRejects(() => authority.acknowledge(checkpoint));
+    assertEquals(isAgentManualPauseBoundary(error), true);
+    assertEquals(hasHostedAgentPauseStopped(authority), true);
+  });
+}
+
+it("does not erase an unknown acknowledgement when a later retry is rejected", async () => {
+  let attempts = 0;
+  const authority = createRunBoundAgentManualPause({
+    apiUrl: "https://api.example.com",
+    runId: "run_pause_test",
+    token: "pause-test-token",
+    signal: new AbortController().signal,
+    fetch: () => {
+      if (++attempts === 1) return Promise.reject(new TypeError("Reply lost after commit"));
+      return Promise.resolve(new Response(null, { status: 409 }));
+    },
+  });
+  const error = await assertRejects(() => authority.acknowledge(checkpoint));
+  assertEquals(isAgentManualPauseBoundary(error), true);
+  assertEquals(hasHostedAgentPauseStopped(authority), true);
+  assertEquals(attempts, 2);
+});
+
+it("cancels an unconfirmed retirement hold without claiming a durable pause", async () => {
+  const lifetime = new AbortController();
+  const authority = createRunBoundAgentManualPause({
+    apiUrl: "https://api.example.com",
+    runId: "run_pause_test",
+    token: "pause-test-token",
+    signal: lifetime.signal,
+    fetch: (_url, init) => {
+      if (init?.method === "POST") return Promise.resolve(Response.json({ stop: true }));
+      lifetime.abort();
+      return Promise.reject(new TypeError("Retirement probe cancelled"));
+    },
+  });
+  const error = await assertRejects(() => authority.release!());
+  assertEquals(isAgentManualPauseBoundary(error), false);
+  assertEquals(hasHostedAgentPauseStopped(authority), false);
 });
 
 for (const abortLifetime of ["execution", "session"] as const) {
@@ -287,7 +446,7 @@ it("holds execution through a pause API outage until a valid reply arrives", asy
     token: "pause-test-token",
     signal: new AbortController().signal,
     fetch: () => {
-      assertEquals(hasHostedAgentPauseStopped(carrier), true);
+      assertEquals(hasHostedAgentPauseStopped(carrier), false);
       attempts++;
       return Promise.resolve(
         attempts <= 3

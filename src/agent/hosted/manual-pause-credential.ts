@@ -10,6 +10,7 @@ import {
   resolveHostOwnedSourceApiBaseUrl,
 } from "#veryfront/config/host-api-base.ts";
 import { readResponseTextPrefix } from "#veryfront/utils/response-body.ts";
+import { throwIfAborted } from "#veryfront/utils/abort.ts";
 import { cancelPrivateStream, getPrivateStreamReader } from "#veryfront/security/private-stream.ts";
 import { privateTextCharCodeAt, privateTextSlice } from "#veryfront/security/private-text.ts";
 import {
@@ -103,14 +104,18 @@ export function createRunBoundAgentManualPause(input: {
     return signal;
   };
   const path = `${apiUrl}/runs/${encode(input.runId)}`;
-  const send = async (suffix: string, body: string | undefined) => {
+  const state = { stopped: false, requiresCheckpoint: false };
+  const send = async (suffix: string, body: string | undefined, onSend?: () => void) => {
     try {
+      const outboundSignal = requestSignal(lifetime());
+      throwIfAborted(lifetime());
+      onSend?.();
       return await transport(`${path}/${suffix}`, {
         method: body === undefined ? "GET" : "POST",
         redirect: "error",
         headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
         body,
-        signal: requestSignal(lifetime()),
+        signal: outboundSignal,
       });
     } catch {
       // An unknown write stays at this boundary; the retry sends identical bytes.
@@ -133,19 +138,43 @@ export function createRunBoundAgentManualPause(input: {
       }
     }
     await cancelResponse(response);
-    if (status < 500) throw agentManualPauseBoundary();
+    if (status < 500) {
+      if (state.stopped) throw agentManualPauseBoundary();
+      throw new NativeTypeError("Agent pause control request rejected");
+    }
     return undefined;
   };
   const request = async <T>(
     suffix: string,
     body: string | undefined,
     parse: (value: unknown) => T,
+    mayCommitPause = false,
   ): Promise<T> => {
+    const checkLifetime = () => {
+      if (!lifetime().aborted) return;
+      if (state.stopped) throw agentManualPauseBoundary();
+      throwIfAborted(lifetime());
+    };
     for (let attempt = 0;; attempt++) {
-      if (lifetime().aborted) throw agentManualPauseBoundary();
-      const settled = await settle(await send(suffix, body), parse);
+      checkLifetime();
+      const previouslyStopped = state.stopped;
+      const response = await send(
+        suffix,
+        body,
+        mayCommitPause
+          ? () => {
+            // Once dispatched, a lost reply may hide a committed checkpoint.
+            state.stopped = true;
+          }
+          : undefined,
+      );
+      if (mayCommitPause && response) {
+        const status = apply(responseStatus, response, []) as number;
+        if (status >= 400 && status < 500) state.stopped = previouslyStopped;
+      }
+      const settled = await settle(response, parse);
       if (settled) return settled.value;
-      if (lifetime().aborted) throw agentManualPauseBoundary();
+      checkLifetime();
       if (attempt === 2) {
         logger.warn(
           "Agent is held at a safe boundary because its pause acknowledgement is unavailable",
@@ -156,10 +185,8 @@ export function createRunBoundAgentManualPause(input: {
       );
     }
   };
-  const state = { stopped: false, requiresCheckpoint: false };
   const capability = freeze({
     async load() {
-      state.stopped = true;
       const reply = await request(
         "pause-checkpoint",
         undefined,
@@ -174,20 +201,20 @@ export function createRunBoundAgentManualPause(input: {
       return reply.checkpoint == null ? null : parseAgentPauseCheckpoint(reply.checkpoint);
     },
     async requested() {
-      state.stopped = true;
       const reply = await request(
         "pause-checkpoint?boundary=true",
         undefined,
         (value) => getLoadSchema().parse(value),
       );
-      if (reply.stop) throw agentManualPauseBoundary();
+      if (reply.stop) {
+        state.stopped = true;
+        throw agentManualPauseBoundary();
+      }
       // Older control planes still receive the existing checkpoint acknowledgement.
       const requested = state.requiresCheckpoint || (reply.pauseRequested ?? true);
-      state.stopped = requested;
       return requested;
     },
     async release() {
-      state.stopped = true;
       for (;;) {
         const stop =
           (await request("pause-ack", privateJsonStringify({ checkpoint: null })!, (value) =>
@@ -206,6 +233,7 @@ export function createRunBoundAgentManualPause(input: {
             getLoadSchema().parse(value),
         );
         if (boundary.stop) {
+          state.stopped = true;
           return true;
         }
         await new NativePromise<void>((resolve) =>
@@ -215,8 +243,8 @@ export function createRunBoundAgentManualPause(input: {
     },
     async acknowledge(checkpoint: AgentPauseCheckpoint) {
       const body = privateJsonStringify({ checkpoint: parseAgentPauseCheckpoint(checkpoint) })!;
-      state.stopped = true;
-      const stop = (await request("pause-ack", body, (value) => getAckSchema().parse(value))).stop;
+      const stop = (await request("pause-ack", body, (value) =>
+        getAckSchema().parse(value), true)).stop;
       state.stopped = stop;
       return stop;
     },
