@@ -699,8 +699,8 @@ jobs:
     runs-on: ${{ (github.event_name == 'push' || github.event_name == 'merge_group') && 'ubuntu-latest-m' || 'ubuntu-latest' }}
     timeout-minutes: 10
     name: Sonar coverage report
-    needs: [tested-run, coverage-shards, coverage-node-executor, coverage-integration-client]
-    if: ${{ !cancelled() && needs.tested-run.outputs.reuse != 'true' && (needs.coverage-shards.result == 'success' && needs.coverage-node-executor.result == 'success' && needs.coverage-integration-client.result == 'success') && ((github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && (github.event_name != 'pull_request' || github.event.pull_request.user.login != 'dependabot[bot]')) }}
+    needs: [tested-run, version-check, coverage-shards, coverage-node-executor, coverage-integration-client]
+    if: ${{ !cancelled() && (needs.tested-run.outputs.reuse != 'true' || needs.version-check.outputs.is_stable != 'false') && (needs.tested-run.outputs.reuse == 'true' || (needs.coverage-shards.result == 'success' && needs.coverage-node-executor.result == 'success' && needs.coverage-integration-client.result == 'success')) && ((github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && (github.event_name != 'pull_request' || github.event.pull_request.user.login != 'dependabot[bot]')) }}
     permissions:
       actions: read
       contents: read
@@ -752,8 +752,8 @@ jobs:
     runs-on: ${{ (github.event_name == 'push' || github.event_name == 'merge_group') && 'ubuntu-latest-m' || 'ubuntu-latest' }}
     timeout-minutes: 10
     name: Reused main Sonar coverage report
-    needs: [tested-run]
-    if: ${{ !cancelled() && needs.tested-run.result == 'success' && needs.tested-run.outputs.reuse == 'true' && ((github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && (github.event_name != 'pull_request' || github.event.pull_request.user.login != 'dependabot[bot]')) }}
+    needs: [tested-run, version-check]
+    if: ${{ !cancelled() && needs.tested-run.result == 'success' && needs.tested-run.outputs.reuse == 'true' && needs.version-check.outputs.is_stable == 'false' && ((github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && (github.event_name != 'pull_request' || github.event.pull_request.user.login != 'dependabot[bot]')) }}
     permissions:
       actions: read
       contents: read
@@ -776,8 +776,8 @@ jobs:
     runs-on: ${{ (github.event_name == 'push' || github.event_name == 'merge_group') && 'ubuntu-latest-m' || 'ubuntu-latest' }}
     timeout-minutes: 28
     name: SonarQube Cloud scan
-    needs: [sonar-coverage, tested-run]
-    if: ${{ !cancelled() && needs.tested-run.outputs.reuse != 'true' && needs.sonar-coverage.result == 'success' && ((github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && (github.event_name != 'pull_request' || github.event.pull_request.user.login != 'dependabot[bot]')) }}
+    needs: [sonar-coverage, tested-run, version-check]
+    if: ${{ !cancelled() && (needs.tested-run.outputs.reuse != 'true' || needs.version-check.outputs.is_stable != 'false') && needs.sonar-coverage.result == 'success' && ((github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && (github.event_name != 'pull_request' || github.event.pull_request.user.login != 'dependabot[bot]')) }}
     permissions:
       contents: read
     steps: &sonar-scan-steps
@@ -860,8 +860,8 @@ jobs:
     runs-on: ${{ (github.event_name == 'push' || github.event_name == 'merge_group') && 'ubuntu-latest-m' || 'ubuntu-latest' }}
     timeout-minutes: 28
     name: Reused main SonarQube Cloud scan
-    needs: [sonar-coverage-main, tested-run]
-    if: ${{ !cancelled() && needs.tested-run.outputs.reuse == 'true' && needs.sonar-coverage-main.result == 'success' && ((github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && (github.event_name != 'pull_request' || github.event.pull_request.user.login != 'dependabot[bot]')) }}
+    needs: [sonar-coverage-main, tested-run, version-check]
+    if: ${{ !cancelled() && needs.tested-run.outputs.reuse == 'true' && needs.version-check.outputs.is_stable == 'false' && needs.sonar-coverage-main.result == 'success' && ((github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && (github.event_name != 'pull_request' || github.event.pull_request.user.login != 'dependabot[bot]')) }}
     permissions:
       contents: read
     steps: *sonar-scan-steps
@@ -870,12 +870,12 @@ jobs:
     name: SonarQube Cloud quality gate
     runs-on: ${{ (github.event_name == 'push' || github.event_name == 'merge_group') && 'ubuntu-latest-m' || 'ubuntu-latest' }}
     timeout-minutes: 2
-    needs: [sonar, sonar-main, tested-run]
+    needs: [sonar, sonar-main, tested-run, version-check]
     if: ${{ always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && (github.event_name != 'pull_request' || github.event.pull_request.user.login != 'dependabot[bot]') }}
     steps:
       - name: Require server-side quality gate
         env:
-          SONAR_RESULT: ${{ needs.tested-run.outputs.reuse == 'true' && needs.sonar-main.result || needs.sonar.result }}
+          SONAR_RESULT: ${{ needs.tested-run.outputs.reuse == 'true' && needs.version-check.outputs.is_stable == 'false' && needs.sonar-main.result || needs.sonar.result }}
         run: |
           if [ "$SONAR_RESULT" != "success" ]; then
             echo "::error::Server-side SonarQube Cloud quality gate finished with $SONAR_RESULT"
@@ -1377,6 +1377,7 @@ jobs:
   # ============================================
 
   version-check:
+    timeout-minutes: 5
     if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && github.ref == 'refs/heads/main' }}
     runs-on: ${{ (github.event_name == 'push' || github.event_name == 'merge_group') && 'ubuntu-latest-m' || 'ubuntu-latest' }}
     outputs:
@@ -1564,7 +1565,7 @@ jobs:
     concurrency:
       group: veryfront-rc-publication
       queue: max
-    if: ${{ !cancelled() && needs.tested-run.result == 'success' && needs.version-check.result == 'success' && needs.quality-gate-artifact.result == 'success' && needs.quality-gate-release.result == 'success' && needs.build-binaries.result == 'success' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && needs.version-check.outputs.is_stable == 'false' }}
+    if: ${{ !cancelled() && needs.tested-run.result == 'success' && needs.version-check.result == 'success' && needs.quality-gate-artifact.result == 'success' && needs.quality-gate-release.result == 'success' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && needs.version-check.outputs.is_stable == 'false' }}
     needs: [
       ci,
       coverage,
@@ -1577,7 +1578,6 @@ jobs:
       sonar,
       quality-gate-artifact,
       quality-gate-release,
-      build-binaries,
       tested-run,
       version-check,
     ]
@@ -1691,8 +1691,8 @@ jobs:
 
   github-prerelease:
     name: GitHub prerelease
-    if: ${{ !cancelled() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && needs.prerelease.result == 'success' }}
-    needs: [prerelease]
+    if: ${{ !cancelled() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && needs.prerelease.result == 'success' && needs.build-binaries.result == 'success' }}
+    needs: [prerelease, build-binaries]
     runs-on: ${{ (github.event_name == 'push' || github.event_name == 'merge_group') && 'ubuntu-latest-m' || 'ubuntu-latest' }}
     environment: production
     permissions:
@@ -1758,7 +1758,7 @@ jobs:
       tests-bun,
       tests-binary-e2e,
       tests-e2e-rsc-browser,
-      sonar-quality-gate,
+      sonar,
       quality-gate-artifact,
       quality-gate-release,
       build-binaries,
@@ -1784,7 +1784,7 @@ jobs:
           SONAR_REQUIRED: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && (github.event_name != 'pull_request' || github.event.pull_request.user.login != 'dependabot[bot]') }}
           SOURCE_CHECKS_RESULT: ${{ needs.ci.result }}
           COVERAGE_RESULT: ${{ needs.coverage.result }}
-          SONAR_RESULT: ${{ needs.sonar-quality-gate.result }}
+          SONAR_RESULT: ${{ needs.sonar.result }}
           INTEGRATION_TESTS_RESULT: ${{ needs.tests.result }}
           NODE_RUNTIME_TESTS_RESULT: ${{ needs.tests-node.result }}
           NODE_SANDBOX_TESTS_RESULT: ${{ needs.tests-node-sandbox.result }}

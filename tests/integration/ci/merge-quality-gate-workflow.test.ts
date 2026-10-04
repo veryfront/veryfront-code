@@ -39,9 +39,9 @@ const SONAR_REQUIRED_CONDITION =
   "(github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && (github.event_name != 'pull_request' || github.event.pull_request.user.login != 'dependabot[bot]')";
 const SONAR_REQUIRED_EXPRESSION = `\${{ ${SONAR_REQUIRED_CONDITION} }}`;
 const SONAR_COVERAGE_JOB_EXPRESSION =
-  `\${{ !cancelled() && needs.tested-run.outputs.reuse != 'true' && (needs.coverage-shards.result == 'success' && needs.coverage-node-executor.result == 'success' && needs.coverage-integration-client.result == 'success') && (${SONAR_REQUIRED_CONDITION}) }}`;
+  `\${{ !cancelled() && (needs.tested-run.outputs.reuse != 'true' || needs.version-check.outputs.is_stable != 'false') && (needs.tested-run.outputs.reuse == 'true' || (needs.coverage-shards.result == 'success' && needs.coverage-node-executor.result == 'success' && needs.coverage-integration-client.result == 'success')) && (${SONAR_REQUIRED_CONDITION}) }}`;
 const SONAR_JOB_EXPRESSION =
-  `\${{ !cancelled() && needs.tested-run.outputs.reuse != 'true' && needs.sonar-coverage.result == 'success' && (${SONAR_REQUIRED_CONDITION}) }}`;
+  `\${{ !cancelled() && (needs.tested-run.outputs.reuse != 'true' || needs.version-check.outputs.is_stable != 'false') && needs.sonar-coverage.result == 'success' && (${SONAR_REQUIRED_CONDITION}) }}`;
 const REUSED_RUN_ID_EXPRESSION =
   "${{ needs.tested-run.outputs.reuse == 'true' && needs.tested-run.outputs.run_id || '' }}";
 const TESTED_RUN_ID_EXPRESSION = "${{ needs.tested-run.outputs.run_id || github.run_id }}";
@@ -291,7 +291,7 @@ describe("merge quality gate workflow", () => {
     assertEquals(sonarGate.if, SONAR_GATE_JOB_EXPRESSION);
     assertEquals(
       sonarGateEnv.SONAR_RESULT,
-      "${{ needs.tested-run.outputs.reuse == 'true' && needs.sonar-main.result || needs.sonar.result }}",
+      "${{ needs.tested-run.outputs.reuse == 'true' && needs.version-check.outputs.is_stable == 'false' && needs.sonar-main.result || needs.sonar.result }}",
     );
     assertEquals(gateEnv.SONAR_REQUIRED, SONAR_REQUIRED_EXPRESSION);
   });
@@ -306,7 +306,7 @@ describe("merge quality gate workflow", () => {
     );
     assertEquals(sonar.name, SONAR_SCAN_CHECK_NAME);
     assertEquals(sonarGate.name, SONAR_CHECK_NAME);
-    assertEquals(sonarGate.needs, ["sonar", "sonar-main", "tested-run"]);
+    assertEquals(sonarGate.needs, ["sonar", "sonar-main", "tested-run", "version-check"]);
     assertEquals(sonarGate.if, SONAR_GATE_JOB_EXPRESSION);
     const sonarProperties = parseProperties(
       await readRepoFile("sonar-project.properties"),
@@ -374,6 +374,7 @@ describe("merge quality gate workflow", () => {
     });
     assertEquals(producer.needs, [
       "tested-run",
+      "version-check",
       "coverage-shards",
       "coverage-node-executor",
       "coverage-integration-client",
@@ -467,7 +468,7 @@ describe("merge quality gate workflow", () => {
     const sonar = asRecord(jobs.sonar, "sonar job");
     assert(Array.isArray(sonar.steps), "sonar steps must be an array");
     const steps = sonar.steps.map((step) => asRecord(step, "sonar step"));
-    assertEquals(sonar.needs, ["sonar-coverage", "tested-run"]);
+    assertEquals(sonar.needs, ["sonar-coverage", "tested-run", "version-check"]);
     const sonarDownloadIndex = steps.findIndex((step) =>
       step.name === "Download merged Sonar coverage"
     );
@@ -727,7 +728,7 @@ done
       const job = asRecord(jobs[jobName], `${jobName} job`);
       assert(Array.isArray(job.needs), `${jobName} needs must be an array`);
       assert(
-        job.needs.includes(jobName === "prerelease" ? "sonar" : "sonar-quality-gate"),
+        job.needs.includes("sonar"),
         `${jobName} must wait for Sonar and evaluate the complete merge correctness gate`,
       );
     }
@@ -942,14 +943,12 @@ describe("main release gate folding", () => {
       }
       assertEquals(asRecord(aggregate.env, "publisher env"), {
         ...asRecord(original.env, "original env"),
-        SONAR_RESULT: name === "prerelease"
-          ? "${{ needs.sonar.result }}"
-          : "${{ needs.sonar-quality-gate.result }}",
+        SONAR_RESULT: "${{ needs.sonar.result }}",
       });
       for (const dependency of REQUIRED_DEPENDENCIES) {
         assert(
           jobNeeds(publisher, name).includes(
-            dependency === "sonar-quality-gate" && name === "prerelease" ? "sonar" : dependency,
+            dependency === "sonar-quality-gate" ? "sonar" : dependency,
           ),
         );
       }
@@ -1015,6 +1014,13 @@ describe("trusted merge-group cancellation workflow", () => {
       assert(ancestors.has(name), `${name} must be observed`);
     }
     for (const name of ancestors) {
+      if (name === "version-check") {
+        assertEquals(
+          asRecord(jobs[name], name).if,
+          "${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && github.ref == 'refs/heads/main' }}",
+        );
+        continue; // The merge queue ref is never refs/heads/main.
+      }
       if (name === "sonar-main" || name === "sonar-coverage-main") {
         assertStringIncludes(
           String(asRecord(jobs[name], name).if),

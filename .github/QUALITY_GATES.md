@@ -125,17 +125,23 @@ pins the single-build invariant and the download ordering in each consumer.
 ## Main release runner budget
 
 Main pushes reuse the authoritative tested merge-queue run only for the same
-commit and available artifacts. On reuse, RC publication accepts the skipped
+commit and available artifacts. On RC reuse, npm publication accepts the skipped
 local correctness jobs and starts alongside the fresh main Sonar analysis.
 Separate reuse coverage and scan jobs keep that analysis outside the publisher's
-dependency path. Both scan paths share the same steps. Fallback runs still wait
+dependency path. The parallel path requires both reuse and an RC version.
+Stable reuse keeps the original fresh scan, with coverage from the tested queue
+run. Both scan paths share the same steps. Fallback runs still wait
 for every correctness dependency and the Sonar scan before publishing.
 
 The `SonarQube Cloud quality gate` job checks the selected fresh scan on every
-trusted run, including main pushes. Stable publication still waits for this
-gate. The canonical registry gate requires it before any downstream dispatch
+trusted run, including main pushes. Stable publication still waits for the original fresh scan. The canonical registry gate requires it before any downstream dispatch
 step can run. An RC published before a failed main gate remains published but
 never dispatches to staging.
+
+npm publication does not consume binary assets. Binary builds gate GitHub asset
+preparation and public upload, so they still block staging dispatch without
+delaying npm publication. The actual public RC upload has no dependency on the
+parallel main scan through the skipped stable publisher.
 
 Stable registry validation and downstream dispatch share one runner. RC registry
 validation starts after npm publication on a read-only runner, in parallel with
