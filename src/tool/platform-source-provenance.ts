@@ -23,7 +23,7 @@ export function markAdaptedPlatformSource<T extends object>(source: T): T {
   return markTrustedPlatformSource(source);
 }
 
-export function hasAdaptedPlatformSource(source: object): boolean {
+export function hasAdaptedPlatformSource(source: RemoteToolSource): boolean {
   return adaptedPlatformSources.get(source) === true;
 }
 
