@@ -40,6 +40,15 @@ Primary source areas:
 - Agent runtime may use MCP tools, but MCP does not own agent message execution.
 - Control-plane signed channel handling belongs in [control-plane channels](./11-control-plane-channels.md).
 
+## Platform discovery and saved selectors
+
+The Veryfront API MCP endpoint advertises canonical platform names such as
+`veryfront__get_file` without naming selectors or request negotiation. Agent
+sources adapt either API catalog generation locally: legacy saved selectors and
+canonical names dispatch to the advertised wire name. Integration names remain
+exact. Platform policies cover both spellings, and trusted run ceilings and live
+activation still filter exact allowed names after catalog adaptation.
+
 ## Change checks
 
 - Keep JSON-RPC responses schema-valid.

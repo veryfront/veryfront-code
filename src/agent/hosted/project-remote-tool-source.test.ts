@@ -1,6 +1,7 @@
 import { listProjectScopedRemoteToolNames } from "#veryfront/tool/project-scoped-remote-tools.ts";
 import {
   assertEquals,
+  assertExists,
   assertInstanceOf,
   assertRejects,
   assertThrows,
@@ -1367,7 +1368,7 @@ Deno.test("authenticated hosted API catalogs retain platform tools under connect
       sourceIntegrationPolicy: { schemaVersion: 1, mode: "allowlist", integrations: {} },
       context: { authToken: "token-1" },
     }),
-    ["veryfront__get_file"],
+    ["get_file", "veryfront__get_file"],
   );
   assertEquals(
     await sources[0]!.executeTool("veryfront__get_file", {}, { projectId: "project-1" }),
@@ -1426,3 +1427,121 @@ Deno.test("hosted platform aliases preserve exact ceilings, live activation, and
   }
   assertEquals(executions.filter((name) => name !== "get_tool_access_profile"), ["get_file"]);
 });
+
+for (const gate of ["allowance", "activation"] as const) {
+  it(`canonical platform catalogs honor saved legacy ${gate} without expanding exact ceilings`, async () => {
+    const names = new Set(["get_file"]);
+    const executions: string[] = [];
+    const [source] = createHostedProjectRemoteToolSources({
+      authToken: "token-1",
+      apiMcpUrl: "https://api.example/mcp",
+      mcpServers: [{ kind: "veryfront-api" }],
+      getProjectId: () => "project-1",
+      ...(gate === "allowance" ? { allowedToolNames: names } : { activatedRemoteToolNames: names }),
+      createRemoteToolSource: (config) =>
+        createRemoteSource({
+          id: config.id,
+          tools: [simpleTool("veryfront__get_file"), simpleTool("veryfront__delete_file")],
+          execute: (name) => {
+            executions.push(name);
+            if (name === "get_tool_access_profile") throw new Error("Unavailable");
+            return { name };
+          },
+        }),
+    });
+    assertEquals((await source!.listTools({ projectId: "project-1" })).map(({ name }) => name), [
+      "get_file",
+    ]);
+    assertEquals(await source!.executeTool("get_file", {}, { projectId: "project-1" }), {
+      name: "veryfront__get_file",
+    });
+    assertEquals(executions.includes("veryfront__get_file"), true);
+    for (const denied of ["veryfront__get_file", "delete_file", "veryfront__delete_file"]) {
+      await assertRejects(async () =>
+        await source!.executeTool(denied, {}, { projectId: "project-1" })
+      );
+    }
+    names.clear();
+    assertEquals(await source!.listTools({ projectId: "project-1" }), []);
+    await assertRejects(async () =>
+      await source!.executeTool("get_file", {}, { projectId: "project-1" })
+    );
+  });
+}
+
+for (const canonicalCatalog of [false, true]) {
+  for (const canonicalSelector of [false, true]) {
+    for (const denial of ["none", "policy", "run"] as const) {
+      const deniedRetry = denial !== "none";
+      for (const returnedError of [false, true]) {
+        Deno.test(`hosted platform retries preserve wire identities and policy (catalog=${canonicalCatalog}, selector=${canonicalSelector}, denial=${denial}, returned=${returnedError})`, async () => {
+          const wire = (name: string) => canonicalCatalog ? `veryfront__${name}` : name;
+          const selector = (name: string) => canonicalSelector ? `veryfront__${name}` : name;
+          const calls: string[] = [];
+          const alreadyExists = { isError: true };
+          const [source] = createHostedProjectRemoteToolSources({
+            authToken: "test-token",
+            apiMcpUrl: "https://api.example.test/mcp",
+            getProjectId: () => "project-1",
+            defaultProjectId: "project-1",
+            allowedToolNames: new Set([
+              selector("create_file"),
+              ...(denial === "run" ? [] : [selector("update_file")]),
+            ]),
+            mcpServers: [{
+              kind: "veryfront-api",
+              toolPolicy: {
+                allow: [
+                  selector("create_file"),
+                  selector("update_file"),
+                  "get_tool_access_profile",
+                ],
+                ...(denial === "policy" ? { deny: ["update_file"] } : {}),
+              },
+            }],
+            createRemoteToolSource: () =>
+              createRemoteSource({
+                tools: [
+                  projectFileTool(wire("create_file")),
+                  projectFileTool(wire("update_file")),
+                  optionalProjectReferenceTool(wire("get_tool_access_profile")),
+                ],
+                execute: (name) => {
+                  if (name === wire("get_tool_access_profile")) return {};
+                  calls.push(name);
+                  if (name === wire("create_file")) {
+                    if (returnedError) return alreadyExists;
+                    throw new Error("file already exists");
+                  }
+                  assertEquals(name, wire("update_file"));
+                  return { ok: true };
+                },
+              }),
+            prepareToolInput: ({ toolName, toolInput }) => {
+              assertEquals(toolName, "create_file");
+              return toolInput;
+            },
+            shouldRetryWithTool: ({ toolName, error }) =>
+              toolName === "create_file" && (error === alreadyExists || (error instanceof Error &&
+                error.message === "file already exists")),
+          });
+          assertExists(source);
+          if (deniedRetry) {
+            await assertRejects(() =>
+              source.executeTool(selector("create_file"), { path: "report.md" })
+            );
+          } else {
+            assertEquals(
+              await source.executeTool(selector("create_file"), { path: "report.md" }),
+              { ok: true },
+            );
+          }
+          assertEquals(
+            calls,
+            deniedRetry ? [wire("create_file")] : [wire("create_file"), wire("update_file")],
+          );
+        });
+      }
+    }
+  }
+}
