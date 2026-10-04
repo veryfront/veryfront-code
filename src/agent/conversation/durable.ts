@@ -197,7 +197,8 @@ export class ConversationRunTerminalStateError extends Error {
 export function isActiveConversationRunStatus(
   status: ConversationRunProjection["status"],
 ): status is ActiveConversationRunStatus {
-  return status === "pending" || status === "running" || status === "waiting_for_tool";
+  return status === "pending" || status === "running" || status === "waiting" ||
+    status === "waiting_for_tool";
 }
 
 /** Check whether a conversation run projection can accept more events. */
@@ -207,6 +208,7 @@ export function isAppendableConversationRunProjection(run: ConversationRunProjec
     run.status !== "failed" &&
     run.status !== "cancelled" &&
     run.status !== "waiting_for_tool" &&
+    run.status !== "waiting" &&
     run.waitingToolCallId === null &&
     run.waitingToolName === null
   );

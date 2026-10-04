@@ -54,6 +54,55 @@ describe("internal-agents/schema", () => {
     ) assertThrows(() => getInternalAgentStreamRequestSchema().parse({ ...base, ...malformed }));
   });
 
+  it("accepts retained completed-step history only in the signed resume envelope", () => {
+    const messages = Array.from(
+      { length: 101 },
+      (_, index) => ({
+        id: `message-${index}`,
+        role: "assistant",
+        parts: [{ type: "text", text: "retained" }],
+      }),
+    );
+    const input = {
+      agentId: "agent_1",
+      threadId: "10000000-1000-4000-8000-100000000001",
+      runId: "run_1",
+      ...MAIN_BRANCH_TARGET,
+      agentSource: { type: "branch", branch: "main" },
+      messages,
+    };
+    assertThrows(() => getInternalAgentStreamRequestSchema().parse(input));
+    const parsed = getInternalAgentStreamRequestSchema().parse({
+      ...input,
+      completedAgentSteps: 2,
+      serverResolvedPreParkUsage: [{
+        provider: "test",
+        model: "test/model",
+        inputTokens: 1,
+        outputTokens: 1,
+        finishReason: "manual_pause",
+        veryfrontChargeUsd: 0.25,
+      }],
+    });
+    assertEquals(parsed.messages.length, 101);
+    assertEquals(parsed.completedAgentSteps, 2);
+    assertEquals(parsed.serverResolvedPreParkUsage?.[0]?.veryfrontChargeUsd, 0.25);
+    assertThrows(() =>
+      getInternalAgentStreamRequestSchema().parse({ ...input, completedAgentSteps: 0 })
+    );
+    assertThrows(() =>
+      getInternalAgentStreamRequestSchema().parse({
+        ...input,
+        completedAgentSteps: 2,
+        messages: [{
+          id: "large",
+          role: "assistant",
+          parts: [{ type: "text", text: "x".repeat(512 * 1024) }],
+        }],
+      })
+    );
+  });
+
   it("applies defaults for optional runtime collections", () => {
     const parsed = getRuntimeRunAgentInputSchema().parse({
       threadId: crypto.randomUUID(),

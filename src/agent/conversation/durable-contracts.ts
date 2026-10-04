@@ -74,7 +74,7 @@ export function resolveConversationRunTargets(input: {
 
 /** Zod schema for get conversation run status. */
 export const getConversationRunStatusSchema = defineSchema((v) =>
-  v.enum(["pending", "running", "waiting_for_tool", "completed", "failed", "cancelled"])
+  v.enum(["pending", "running", "waiting", "waiting_for_tool", "completed", "failed", "cancelled"])
 );
 
 /** Schema for conversation run status.
@@ -106,7 +106,14 @@ export interface ConversationRunProjection {
   latestExternalEventSequence: number;
   waitingToolCallId: string | null;
   waitingToolName: string | null;
-  status: "pending" | "running" | "waiting_for_tool" | "completed" | "failed" | "cancelled";
+  status:
+    | "pending"
+    | "running"
+    | "waiting"
+    | "waiting_for_tool"
+    | "completed"
+    | "failed"
+    | "cancelled";
   streamProtocolVersion: StreamProtocolVersion;
 }
 
@@ -180,7 +187,7 @@ export const ConversationRunProjectionSchema = lazySchema(getConversationRunProj
 /** Public API contract for a conversation run status is active. */
 export type ActiveConversationRunStatus = Extract<
   ConversationRunProjection["status"],
-  "pending" | "running" | "waiting_for_tool"
+  "pending" | "running" | "waiting" | "waiting_for_tool"
 >;
 
 /** Public API contract for terminal conversation run status. */

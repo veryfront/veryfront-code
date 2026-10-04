@@ -1,3 +1,17 @@
+import {
+  attachProviderMetadata,
+  markProviderReplayDelivered,
+} from "#veryfront/agent/runtime/provider-metadata.ts";
+import { extractSkillDelegationOverrides } from "#veryfront/agent/runtime/skill-delegation-overrides.ts";
+import { markRuntimeGeneratedUserMessage } from "#veryfront/agent/runtime/runtime-message-origin.ts";
+import type { CompletedAgentStepLoopState } from "#veryfront/agent/runtime/runtime-tool-config.ts";
+import { filterPrivateArray } from "#veryfront/security/private-array.ts";
+import { COMPLETED_AGENT_STEP_STATE_KEY } from "#veryfront/agent/runtime/runtime-tool-config.ts";
+import { getMessageSchema } from "#veryfront/agent/schemas/agent.schema.ts";
+import { getExecutorToolExposureCheckpointSchema } from "#veryfront/agent/runtime/tool-exposure.ts";
+import type { Message } from "#veryfront/agent/types.ts";
+import { normalizeAgUiRuntimeMessages } from "#veryfront/agent/ag-ui/runtime-support.ts";
+import { createPrivateWeakStore } from "#veryfront/security/private-weak-store.ts";
 import { defineSchema } from "#veryfront/schemas/index.ts";
 import type { InferSchema, Schema } from "#veryfront/extensions/schema/index.ts";
 import {
@@ -24,6 +38,11 @@ import {
   validateRuntimeAgentSourceTargetBinding,
   validateRuntimeAgentTargetSelection,
 } from "#veryfront/agent/runtime/agent-invocation-contract.ts";
+
+const ownProperty = Object.getOwnPropertyDescriptor;
+const deleteOwnProperty = Reflect.deleteProperty;
+const arrayIsArray = Array.isArray;
+const numberIsSafeInteger = Number.isSafeInteger;
 
 const AGENT_ID_PATTERN = /^[a-zA-Z0-9_-]+$/;
 const MAX_AGENT_CONFIG_BYTES = 65_536;
@@ -86,7 +105,11 @@ export const getInternalAgentControlPlaneStreamRequestSchema = defineSchema((v) 
     state: v.unknown().optional(),
     messages: v.array(
       v.union([getRuntimeMessageSchema(), getInternalAgentCompatibilityMessageSchema()]),
-    ).max(MAX_RUNTIME_MESSAGES),
+    ),
+    completedAgentSteps: v.number().int().positive().optional(),
+    serverResolvedToolExposureCheckpoint: getExecutorToolExposureCheckpointSchema().optional(),
+    serverResolvedPreParkUsage: v.array(v.record(v.string(), v.unknown()))
+      .optional(),
     tools: v.array(getRuntimeInjectedToolSchema()).max(50).default([]),
     context: v.array(getRuntimeContextSchema()).max(10).default([]).refine(
       (value) => isWithinJsonSizeLimit(value, 65_536),
@@ -112,6 +135,42 @@ export const getInternalAgentControlPlaneStreamRequestSchema = defineSchema((v) 
     serverResolvedProviderReplayCheckpoints: v.unknown().optional(),
     resumeToolCall: getRuntimeResumeToolCallSchema().optional(),
   }).strict().superRefine((input, ctx) => {
+    if (input.completedAgentSteps === undefined) {
+      if (input.messages.length > MAX_RUNTIME_MESSAGES) {
+        const bounded = v.array(v.unknown()).max(MAX_RUNTIME_MESSAGES).safeParse(input.messages);
+        if (!bounded.success) {
+          for (const issue of bounded.issues) {
+            ctx.addIssue({ ...issue, path: ["messages", ...issue.path] });
+          }
+        }
+      }
+      if (
+        input.serverResolvedPreParkUsage !== undefined ||
+        input.serverResolvedToolExposureCheckpoint !== undefined
+      ) {
+        ctx.addIssue({
+          code: "custom",
+          message: "Retained usage requires a completed-step resume",
+          path: ["serverResolvedPreParkUsage"],
+        });
+      }
+    } else if (
+      !isWithinJsonSizeLimit({
+        messages: input.messages,
+        context: input.context,
+        forwardedProps: input.forwardedProps,
+        completedAgentSteps: input.completedAgentSteps,
+        preParkUsage: input.serverResolvedPreParkUsage,
+        toolExposureCheckpoint: input.serverResolvedToolExposureCheckpoint,
+      }, 512 * 1024)
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        message: "Retained manual resume must be less than 512 KB",
+        path: ["messages"],
+      });
+    }
+
     if (input.sourceProject || input.executionProject) {
       if (!input.sourceProject || !input.executionProject || !input.credentials?.sourceAuthToken) {
         ctx.addIssue({
@@ -430,10 +489,102 @@ function toRuntimeMessage(
   }
 }
 
+const completedStepReplay = createPrivateWeakStore<object, Message[]>();
+
+/** Host-only replay, retaining structured settled results outside the public input shape. */
+export function getCompletedStepReplayMessages(input: RuntimeRunAgentInput): Message[] | undefined {
+  return completedStepReplay.get(input);
+}
+
+/** This loop state is read only after the host verifies and binds the resume envelope. */
+export function getCompletedStepLoopState(
+  input: RuntimeRunAgentInput,
+  completedSteps: number,
+): CompletedAgentStepLoopState | undefined {
+  const messages = completedStepReplay.get(input);
+  const last = messages?.[messages.length - 1];
+  const metadata = last ? ownProperty(last, "metadata")?.value : undefined;
+  const state = metadata && typeof metadata === "object"
+    ? ownProperty(metadata, COMPLETED_AGENT_STEP_STATE_KEY)?.value
+    : undefined;
+  // Strip transport-only markers even when their binding is invalid.
+  const scrubMarkers = (collection: readonly { metadata?: unknown }[]) => {
+    for (let index = 0; index < collection.length; index++) {
+      const markerMetadata = ownProperty(collection[index]!, "metadata")?.value;
+      if (markerMetadata && typeof markerMetadata === "object") {
+        deleteOwnProperty(markerMetadata, COMPLETED_AGENT_STEP_STATE_KEY);
+      }
+    }
+  };
+  if (messages) scrubMarkers(messages);
+  scrubMarkers(input.messages);
+  if (
+    !state || typeof state !== "object" || !messages ||
+    ownProperty(state, "runId")?.value !== input.runId ||
+    ownProperty(state, "completedSteps")?.value !== completedSteps
+  ) throw new Error("Retained completed-step checkpoint binding is invalid");
+  // Rebind provider-private state only from this verified checkpoint. It must
+  // remain in the private message store, never in messages exposed to callers.
+  const providerReplayMetadata = ownProperty(state, "providerReplayMetadata")?.value;
+  if (arrayIsArray(providerReplayMetadata)) {
+    for (let index = 0; index < providerReplayMetadata.length; index++) {
+      const entry = providerReplayMetadata[index];
+      if (!entry || typeof entry !== "object") continue;
+      const messageIndex = ownProperty(entry, "messageIndex")?.value;
+      const providerMetadata = ownProperty(entry, "providerMetadata")?.value;
+      if (
+        typeof messageIndex !== "number" || !numberIsSafeInteger(messageIndex) ||
+        messageIndex < 0 || messageIndex >= messages.length || !providerMetadata ||
+        typeof providerMetadata !== "object" || arrayIsArray(providerMetadata)
+      ) continue;
+      const message = messages[messageIndex]!;
+      attachProviderMetadata(message, providerMetadata);
+      if (ownProperty(entry, "replayDelivered")?.value === true) {
+        markProviderReplayDelivered(message);
+      }
+    }
+  }
+  const rawIndexes = ownProperty(state, "runtimeGeneratedMessageIndexes")?.value;
+  const indexes = arrayIsArray(rawIndexes)
+    ? filterPrivateArray(
+      rawIndexes,
+      (index: unknown): index is number =>
+        typeof index === "number" && numberIsSafeInteger(index) && index >= 0 &&
+        index < messages.length,
+    )
+    : [];
+  for (let index = 0; index < indexes.length; index++) {
+    const message = messages[indexes[index]!]!;
+    if (message.role === "user") markRuntimeGeneratedUserMessage(message);
+  }
+  const overrides = ownProperty(state, "activeSkillDelegationOverrides")?.value;
+  const recoveryStep = ownProperty(state, "interruptedLocalToolBatchRecoveryStep")?.value;
+  const recoveryText = ownProperty(state, "interruptedLocalToolBatchRecoveryText")?.value;
+  return {
+    agentWriteFinalResponseGuard:
+      ownProperty(state, "agentWriteFinalResponseGuard")?.value === true,
+    hasCompletedTool: ownProperty(state, "hasCompletedTool")?.value === true,
+    recoveredEmptyResponse: ownProperty(state, "recoveredEmptyResponse")?.value === true,
+    recoveredInterruptedLocalToolBatch:
+      ownProperty(state, "recoveredInterruptedLocalToolBatch")?.value === true,
+    ...(recoveryStep === completedSteps && typeof recoveryText === "string"
+      ? {
+        interruptedLocalToolBatchRecoveryStep: completedSteps,
+        interruptedLocalToolBatchRecoveryText: recoveryText,
+      }
+      : {}),
+    hasSubmittedFormInput: ownProperty(state, "hasSubmittedFormInput")?.value === true,
+    ...(overrides !== undefined
+      ? { activeSkillDelegationOverrides: extractSkillDelegationOverrides(overrides) }
+      : {}),
+    runtimeGeneratedMessageIndexes: indexes,
+  };
+}
+
 export function toRuntimeRunAgentInput(
   input: InferSchema<ReturnType<typeof getInternalAgentStreamRequestSchema>>,
 ): RuntimeRunAgentInput {
-  return {
+  const runtimeInput = {
     threadId: input.threadId,
     runId: input.runId,
     ...(input.messageId ? { messageId: input.messageId } : {}),
@@ -452,6 +603,14 @@ export function toRuntimeRunAgentInput(
       : {}),
     ...(input.resumeToolCall ? { resumeToolCall: input.resumeToolCall } : {}),
   } as RuntimeRunAgentInput;
+  if (input.completedAgentSteps !== undefined) {
+    const normalized = normalizeAgUiRuntimeMessages(runtimeInput.messages);
+    const replay = input.messages.map((message, index) =>
+      "parts" in message ? getMessageSchema().parse(message) : normalized[index]!
+    );
+    completedStepReplay.set(runtimeInput, replay);
+  }
+  return runtimeInput;
 }
 
 export const getResumeSignalSchema = defineSchema((v) =>

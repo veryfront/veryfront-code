@@ -1,3 +1,4 @@
+import { defineSchema } from "#veryfront/schemas/index.ts";
 import {
   encodePrivateText,
   privateTextCharCodeAt,
@@ -798,3 +799,10 @@ export function restoreToolExposureState(
   if (checkpoint.version === 1) sortSearchItems(loadedToolNames, compareAscii);
   return createToolExposureState(loadedToolNames);
 }
+
+export const getExecutorToolExposureCheckpointSchema = defineSchema((v) =>
+  v.object({
+    version: v.union([v.literal(1), v.literal(2)]),
+    loadedToolNames: v.array(v.string().min(1).max(256)).max(4_096),
+  }).strict()
+);

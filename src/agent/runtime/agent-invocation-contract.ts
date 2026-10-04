@@ -1,3 +1,4 @@
+import { getExecutorToolExposureCheckpointSchema } from "#veryfront/agent/runtime/tool-exposure.ts";
 import { encodePrivateText, PrivateTextEncoder } from "#veryfront/security/private-text.ts";
 import { privateByteLength } from "#veryfront/security/private-bytes.ts";
 import { privateJsonStringify } from "#veryfront/security/private-json.ts";
@@ -423,6 +424,9 @@ export const getRuntimeAgentRunInvocationSchema = defineSchema((v) =>
       { message: "forwardedProps must be less than 192 KB" },
     ),
     serverResolvedProviderReplayCheckpoints: v.unknown().optional(),
+    completedAgentSteps: v.number().int().positive().optional(),
+    serverResolvedToolExposureCheckpoint: getExecutorToolExposureCheckpointSchema().optional(),
+    serverResolvedPreParkUsage: v.array(v.record(v.string(), v.unknown())).optional(),
     resumeToolCall: getRuntimeAgentResumeToolCallSchema().optional(),
   }).superRefine((input, ctx) => {
     if (input.sourceProject) {
@@ -568,6 +572,10 @@ export type RuntimeAgentControlPlaneStreamRequest = {
     "serverResolvedProviderReplayCheckpoints"
   ];
   resumeToolCall?: RuntimeAgentRunInvocation["resumeToolCall"];
+  completedAgentSteps?: RuntimeAgentRunInvocation["completedAgentSteps"];
+  serverResolvedToolExposureCheckpoint?:
+    RuntimeAgentRunInvocation["serverResolvedToolExposureCheckpoint"];
+  serverResolvedPreParkUsage?: RuntimeAgentRunInvocation["serverResolvedPreParkUsage"];
 };
 
 /** Builds runtime agent control plane stream request from invocation. */
@@ -601,6 +609,15 @@ export function buildRuntimeAgentControlPlaneStreamRequestFromInvocation(
     ...(input.forwardedProps ? { forwardedProps: input.forwardedProps } : {}),
     ...(input.serverResolvedProviderReplayCheckpoints !== undefined
       ? { serverResolvedProviderReplayCheckpoints: input.serverResolvedProviderReplayCheckpoints }
+      : {}),
+    ...(input.serverResolvedToolExposureCheckpoint !== undefined
+      ? { serverResolvedToolExposureCheckpoint: input.serverResolvedToolExposureCheckpoint }
+      : {}),
+    ...(input.completedAgentSteps !== undefined
+      ? { completedAgentSteps: input.completedAgentSteps }
+      : {}),
+    ...(input.serverResolvedPreParkUsage !== undefined
+      ? { serverResolvedPreParkUsage: input.serverResolvedPreParkUsage }
       : {}),
     ...(input.resumeToolCall ? { resumeToolCall: input.resumeToolCall } : {}),
   };

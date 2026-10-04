@@ -1,6 +1,8 @@
+import type { SkillDelegationOverrides } from "./skill-delegation-overrides.ts";
+import type { AgUiRunFinishedMetadata } from "#veryfront/agent/ag-ui/encoder.ts";
 import { appendPrivateArray } from "#veryfront/security/private-array.ts";
 import type { ToolDefinition } from "#veryfront/tool";
-import type { AgentConfig } from "../types.ts";
+import type { AgentConfig, Message } from "../types.ts";
 import { defineSchema } from "#veryfront/schemas";
 import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
 import type { RuntimeRemoteToolConfig } from "./mcp-server-tool-sources.ts";
@@ -14,6 +16,7 @@ import {
 import { type ProviderReplayCheckpoint } from "./provider-replay.ts";
 
 const ArrayIsArray = Array.isArray;
+const NumberIsSafeInteger = Number.isSafeInteger;
 const NativeSet = Set;
 const SetAdd = Set.prototype.add;
 const SetHas = Set.prototype.has;
@@ -84,7 +87,35 @@ export type ProviderReplayInvokeAgentToolCall = InferSchema<
 >[number];
 export type ProviderReplayInvokeAgentToolName = ProviderReplayInvokeAgentToolCall["toolName"];
 
+/** A trusted host observes this boundary only after all tools in the step settled. */
+export const COMPLETED_AGENT_STEP_STATE_KEY = "veryfront_completed_agent_step_state";
+
+export type CompletedAgentStepLoopState = {
+  agentWriteFinalResponseGuard: boolean;
+  hasCompletedTool: boolean;
+  recoveredEmptyResponse: boolean;
+  recoveredInterruptedLocalToolBatch: boolean;
+  interruptedLocalToolBatchRecoveryStep?: number;
+  interruptedLocalToolBatchRecoveryText?: string;
+  hasSubmittedFormInput: boolean;
+  activeSkillDelegationOverrides?: SkillDelegationOverrides;
+  runtimeGeneratedMessageIndexes: number[];
+};
+
+export type CompletedAgentStep = {
+  messages: Message[];
+  completedSteps: number;
+  context?: Record<string, unknown>;
+  usage: { promptTokens: number; completionTokens: number; totalTokens: number };
+  usageMetadata?: AgUiRunFinishedMetadata;
+  toolExposureCheckpoint?: ToolExposureCheckpoint;
+  loopState?: CompletedAgentStepLoopState;
+};
+
 export type RuntimeToolFilterConfig = AgentConfig & {
+  __vfCompletedStepBoundary?: (step: CompletedAgentStep) => Promise<boolean>;
+  __vfCompletedSteps?: number;
+  __vfCompletedStepState?: CompletedAgentStepLoopState;
   __vfForwardedIntegrationToolDefs?: Array<
     { name: string; description: string; parameters: Record<string, unknown> }
   >;
@@ -307,4 +338,18 @@ export function getRuntimeForwardedIntegrationToolDefs(
         ? def.parameters
         : { type: "object", properties: {} },
     }));
+}
+
+/** The authenticated host decides whether to stop before the next model call. */
+export function getRuntimeCompletedStepBoundary(
+  config: AgentConfig,
+): RuntimeToolFilterConfig["__vfCompletedStepBoundary"] {
+  const hook = (config as RuntimeToolFilterConfig).__vfCompletedStepBoundary;
+  return typeof hook === "function" ? hook : undefined;
+}
+
+/** Retained completed steps count against the same authored run budget on resume. */
+export function getRuntimeCompletedSteps(config: AgentConfig): number {
+  const steps = (config as RuntimeToolFilterConfig).__vfCompletedSteps;
+  return typeof steps === "number" && NumberIsSafeInteger(steps) && steps >= 0 ? steps : 0;
 }

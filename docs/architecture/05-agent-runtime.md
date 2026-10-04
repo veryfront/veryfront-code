@@ -29,6 +29,30 @@ Primary source areas:
 - [`src/resource/`](../../src/resource/)
 - [`src/skill/`](../../src/skill/)
 
+## Private completed-step pause
+
+The verified streaming host asks the API whether a pause was requested after all
+results in a model step have settled, before invoking the model again. An empty
+probe constructs no replay checkpoint. A request for a checkpoint holds that step
+until the API answers authoritatively; unknown replies do not authorize another
+model call. The checkpoint retains messages, structured tool results, cumulative
+step count, usage and the existing deferred-tool exposure state. Execution-owned
+message provenance, skill delegation settings, and bounded recovery flags travel
+in message metadata bound to the run and completed step. Provider replay metadata
+travels in that same private marker and returns to the provider store on resume;
+the marker is removed before messages reach callers. It excludes host execution
+credentials.
+
+Manual resume accepts these fields only in a signed control-plane envelope with
+both invocation credentials. It restores structured results and tool exposure on
+the first invocation-local iteration, while retaining the authored step budget.
+A stopped invocation emits its private completed-step boundary after clean EOF
+and cleanup. It emits no public successful finish. The API confirms the owning
+generation's pause after that invocation returns.
+
+The API checkpoint consumer must reach staging before this runtime producer. The
+public agent pause producer follows the runtime resume consumer deployment.
+
 ## Runtime flow
 
 ```mermaid

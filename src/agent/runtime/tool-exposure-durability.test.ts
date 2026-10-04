@@ -140,32 +140,35 @@ it("a new runtime restores a persisted checkpoint and calls the target without a
   assertEquals(response.toolCalls.some((call) => call.name === "tool_search"), false);
 });
 
-it("stream exposes a restored tool on step zero without another search", async () => {
-  let targetExecutions = 0;
-  const model = scriptedModel([
-    { toolCalls: [{ id: "release-1", name: "get_release", input: {} }] },
-    { text: "done" },
-  ], { modelId: "hosted/stream-restored-checkpoint", only: "stream" });
+for (const completedSteps of [0, 1]) {
+  it(`stream exposes a restored tool at completed step ${completedSteps} without another search`, async () => {
+    let targetExecutions = 0;
+    const model = scriptedModel([
+      { toolCalls: [{ id: "release-1", name: "get_release", input: {} }] },
+      { text: "done" },
+    ], { modelId: "hosted/stream-restored-checkpoint", only: "stream" });
 
-  await runRuntime(
-    "stream",
-    {
-      id: "stream-restored-checkpoint",
-      model: "hosted/stream-restored-checkpoint",
-      system: "Use tools.",
-      skills: false,
-      tools: { get_release: releaseTool(() => targetExecutions++) },
-      maxSteps: 2,
-      resolveModelTransport: () => ({ model }),
-      __vfToolLoadingMode: "deferred",
-      __vfToolExposureCheckpoint: checkpoint("get_release"),
-    } as AgentConfig & RuntimeToolFilterConfig,
-    "Continue",
-  );
+    await runRuntime(
+      "stream",
+      {
+        id: "stream-restored-checkpoint",
+        model: "hosted/stream-restored-checkpoint",
+        system: "Use tools.",
+        skills: false,
+        tools: { get_release: releaseTool(() => targetExecutions++) },
+        maxSteps: 3,
+        resolveModelTransport: () => ({ model }),
+        __vfCompletedSteps: completedSteps,
+        __vfToolLoadingMode: "deferred",
+        __vfToolExposureCheckpoint: checkpoint("get_release"),
+      } as AgentConfig & RuntimeToolFilterConfig,
+      "Continue",
+    );
 
-  assertEquals(model.toolNames(0), ["get_release"]);
-  assertEquals(targetExecutions, 1);
-});
+    assertEquals(model.toolNames(0), ["get_release"]);
+    assertEquals(targetExecutions, 1);
+  });
+}
 
 for (const mode of ["generate", "stream"] as const) {
   it(`${mode} drops restored tools removed from the authorized catalog`, async () => {

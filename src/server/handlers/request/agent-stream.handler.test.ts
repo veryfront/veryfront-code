@@ -1,3 +1,5 @@
+import { buildCompletedStepPauseCheckpoint } from "#veryfront/internal-agents/completed-step-pause.ts";
+import { hydrateActiveSkillStateFromMessages } from "#veryfront/agent/runtime/skill-policy-enforcement.ts";
 import { createTerminalRunControl } from "#veryfront/agent/runtime/terminal-run-control.ts";
 import { bindRuntimeRemoteToolSourcesToCredentialOwner } from "#veryfront/agent/runtime/mcp-server-tool-sources.ts";
 import { executeConfiguredTool, getAvailableTools } from "#veryfront/agent/runtime/tool-helpers.ts";
@@ -18,7 +20,7 @@ import {
 } from "#veryfront/utils/logger/logger.ts";
 import { createEmptyDiscoveryResult } from "#veryfront/discovery";
 import type { Agent, AgentMessage } from "#veryfront/agent";
-import type { AgentSystem } from "#veryfront/agent/types.ts";
+import type { AgentSystem, Message } from "#veryfront/agent/types.ts";
 import type { ChatSystemMessage } from "#veryfront/chat/types.ts";
 import { AgentRunSessionManager } from "#veryfront/internal-agents/session-manager.ts";
 import {
@@ -150,6 +152,133 @@ function createRuntimeAgentRunInvocationBody() {
 }
 
 describe("server/handlers/request/agent-stream.handler", () => {
+  it("rejects retained steps without both invocation credentials before discovery", async () => {
+    let discoveryCalls = 0;
+    const handler = createTestAgentStreamHandler({
+      ensureProjectDiscovery: async () => {
+        discoveryCalls++;
+        return createEmptyDiscoveryResult();
+      },
+      getAgent: () => undefined,
+      getAllAgentIds: () => [],
+      sessionManager: new AgentRunSessionManager(),
+    });
+    for (const missing of ["terminal", "ordinary"] as const) {
+      const body = createAgentStreamRequestBody({
+        completedAgentSteps: 1,
+        ...(missing === "ordinary" ? {} : { credentials: { authToken: "run-bound-token" } }),
+      });
+      const { jws, publicKeyPem } = await createControlPlaneSignature(body, { requestId: "run_1" });
+      const result = await handler.handle(
+        new Request(
+          "https://example.com/api/control-plane/runs/run_1/stream",
+          {
+            method: "POST",
+            headers: {
+              "x-veryfront-control-plane-jws": jws,
+              ...(missing === "terminal"
+                ? {}
+                : { [INGRESS_RUN_TERMINAL_TOKEN_HEADER]: "generation-token" }),
+            },
+            body,
+          },
+        ),
+        createCtx(publicKeyPem),
+      );
+      assertExists(result.response);
+      assertEquals(result.response.status, 403);
+    }
+    assertEquals(discoveryCalls, 0);
+  });
+
+  it("preserves structured results and signed reasoning through the resumed handler", async () => {
+    const result = {
+      skillId: "retained",
+      instructions: "Retained",
+      references: ["references/guide.md"],
+      scripts: ["scripts/run.sh"],
+    };
+    const reasoning = {
+      type: "reasoning" as const,
+      text: "Retained reasoning",
+      signature: "retained-provider-signature",
+    };
+    const messages: Message[] = [
+      {
+        id: "assistant-1",
+        role: "assistant",
+        parts: [reasoning, {
+          type: "tool-call",
+          toolCallId: "skill-1",
+          toolName: "load_skill",
+          args: {},
+        }],
+      },
+      {
+        id: "tool-1",
+        role: "tool",
+        parts: [{ type: "tool-result", toolCallId: "skill-1", toolName: "load_skill", result }],
+      },
+    ];
+    let checked = false;
+    const handler = createTestAgentStreamHandler({
+      ensureProjectDiscovery: () => Promise.resolve(createEmptyDiscoveryResult()),
+      getAgent: () => createAgent("assistant-1"),
+      getAllAgentIds: () => ["assistant-1"],
+      sessionManager: new AgentRunSessionManager(),
+      createRuntime: () => ({
+        stream: (replay) => {
+          assertExists(replay[0]);
+          assertEquals(replay[0].parts[0], reasoning);
+          assertEquals(hydrateActiveSkillStateFromMessages(replay).activeSkillId, "retained");
+          assertExists(replay[1]);
+          assertExists(messages[1]);
+          assertEquals<unknown>(replay[1].parts[0], messages[1].parts[0]);
+          checked = true;
+          return Promise.resolve(
+            new ReadableStream<Uint8Array>({
+              start(controller) {
+                controller.close();
+              },
+            }),
+          );
+        },
+      }),
+    });
+    const checkpoint = buildCompletedStepPauseCheckpoint({
+      threadId: "10000000-1000-4000-8000-100000000001",
+      runId: "run_1",
+      messages: [],
+      tools: [],
+      context: [],
+    }, {
+      messages,
+      completedSteps: 1,
+      usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 },
+    });
+    const body = createAgentStreamRequestBody({
+      completedAgentSteps: 1,
+      messages: checkpoint.replayMessages,
+      credentials: { authToken: "run-bound-token" },
+    });
+    const { jws, publicKeyPem } = await createControlPlaneSignature(body, { requestId: "run_1" });
+    const response = await handler.handle(
+      new Request("https://example.com/api/control-plane/runs/run_1/stream", {
+        method: "POST",
+        headers: {
+          "x-veryfront-control-plane-jws": jws,
+          [INGRESS_RUN_TERMINAL_TOKEN_HEADER]: "generation-token",
+        },
+        body,
+      }),
+      createCtx(publicKeyPem),
+    );
+    assertExists(response.response);
+    assertEquals(response.response.status, 200);
+    await response.response.text();
+    assertEquals(checked, true);
+  });
+
   it("rejects shared source identity mismatches before discovery", async () => {
     const sourceId = "20000000-1000-4000-8000-100000000005";
     let discoveryCalls = 0;

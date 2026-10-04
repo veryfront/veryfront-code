@@ -119,7 +119,10 @@ export function createManagedBrokerPersistenceFromCapability(input: {
   terminal: ManagedBrokerTerminal;
 }) {
   const run = getConversationRunProjectionSchema().parse(input.run);
-  if (run.status !== "pending" && run.status !== "running" && run.status !== "waiting_for_tool") {
+  if (
+    run.status !== "pending" && run.status !== "running" && run.status !== "waiting" &&
+    run.status !== "waiting_for_tool"
+  ) {
     throw new TypeError("Managed broker persistence requires an active run");
   }
   const terminalState = terminalStates.get(input.terminal);

@@ -1,3 +1,9 @@
+import {
+  attachProviderMetadata,
+  isProviderReplayDelivered,
+  markProviderReplayDelivered,
+  readAttachedProviderMetadata,
+} from "./provider-metadata.ts";
 import { mapPrivateArray } from "#veryfront/security/private-array.ts";
 import { createPrivateWeakStore } from "#veryfront/security/private-weak-store.ts";
 import { privateTextTrim } from "#veryfront/security/private-text.ts";
@@ -100,6 +106,8 @@ export function normalizeInput(input: string | Message[]): Message[] {
           : syntheticMessageTimestampValues.get(msg) ?? normalized.timestamp!,
       );
     }
+    attachProviderMetadata(normalized, readAttachedProviderMetadata(msg));
+    if (isProviderReplayDelivered(msg)) markProviderReplayDelivered(normalized);
     return isRuntimeGeneratedUserMessage(msg)
       ? markRuntimeGeneratedUserMessage(normalized)
       : normalized;

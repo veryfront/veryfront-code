@@ -36,7 +36,8 @@ export class AgentLoopSkillState {
    *
    * Replayed messages are caller-supplied, so hydration never carries
    * delegation overrides; those require a load_skill result this runtime
-   * produced via `applySuccessfulResult`.
+   * produced via `applySuccessfulResult` or a host-verified completed-step
+   * checkpoint restored via `restoreVerifiedCompletedStepState`.
    */
   static hydrate(
     messages: readonly Message[],
@@ -48,11 +49,21 @@ export class AgentLoopSkillState {
     return new AgentLoopSkillState(hydrated, hasSubmittedFormInput);
   }
 
+  /** Restore execution-owned settings only from the host-verified completed-step checkpoint. */
+  restoreVerifiedCompletedStepState(
+    overrides: ActiveSkillState["activeSkillDelegationOverrides"],
+    hasSubmittedFormInput: boolean,
+  ): void {
+    this.activeSkillDelegationOverrides = overrides;
+    this.hasSubmittedFormInput = hasSubmittedFormInput;
+  }
+
   /**
    * Fold a successful skill-activation tool result into the active skill state.
    *
    * Callers pass only the output of a load_skill call this runtime executed, so
-   * this is the one path allowed to seed delegation overrides.
+   * this path can seed delegation overrides during an active attempt. A
+   * resumed attempt restores them from its host-verified checkpoint.
    */
   applySuccessfulResult(result: unknown): void {
     const next = applySkillActivationResult(

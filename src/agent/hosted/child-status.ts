@@ -83,8 +83,9 @@ export class HostedChildTerminalStateError extends Error {
 
 function isActiveHostedChildStatus(
   status: HostedConversationRunStatus,
-): status is "pending" | "running" | "waiting_for_tool" {
-  return status === "pending" || status === "running" || status === "waiting_for_tool";
+): status is "pending" | "running" | "waiting" | "waiting_for_tool" {
+  return status === "pending" || status === "running" || status === "waiting" ||
+    status === "waiting_for_tool";
 }
 
 /** Resolves a code is a hosted child terminal error. */

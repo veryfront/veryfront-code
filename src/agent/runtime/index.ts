@@ -47,7 +47,11 @@ import {
   enqueuePrivateStream,
 } from "#veryfront/security/private-stream.ts";
 
-import { chainPrivatePromise, createPrivateDeferred } from "#veryfront/security/private-promise.ts";
+import {
+  chainPrivatePromise,
+  createPrivateDeferred,
+  observePrivatePromise,
+} from "#veryfront/security/private-promise.ts";
 import { createPrivateSet } from "#veryfront/security/private-set.ts";
 import { createPrivateMap } from "#veryfront/security/private-map.ts";
 import {
@@ -176,6 +180,8 @@ import {
 import {
   getProviderReplayInvokeAgentToolCallsSchema,
   getRuntimeAllowedRemoteTools,
+  getRuntimeCompletedStepBoundary,
+  getRuntimeCompletedSteps,
   getRuntimeForwardedIntegrationToolDefs,
   getRuntimeProviderReplayCheckpointMessageId,
   getRuntimeProviderReplayCheckpointPersister,
@@ -674,6 +680,11 @@ function cloneMessageForCommit(message: Message): Message {
       ? {}
       : { metadata: cloneStructuredValuePreservingOpaque(metadata, true) }),
   };
+  attachProviderMetadata(
+    snapshot,
+    cloneStructuredValuePreservingOpaque(readAttachedProviderMetadata(message)),
+  );
+  if (isProviderReplayDelivered(message)) markProviderReplayDelivered(snapshot);
   return snapshot;
 }
 
@@ -2401,11 +2412,6 @@ export class AgentRuntime {
           const snapshot = cloneMessageForCommit(message);
           propagateSyntheticMessageMarks(message, snapshot);
           if (isRuntimeGeneratedUserMessage(message)) markRuntimeGeneratedUserMessage(snapshot);
-          attachProviderMetadata(
-            snapshot,
-            cloneStructuredValuePreservingOpaque(readAttachedProviderMetadata(message)),
-          );
-          if (isProviderReplayDelivered(message)) markProviderReplayDelivered(snapshot);
           return snapshot;
         });
       }
@@ -3923,6 +3929,15 @@ export class AgentRuntime {
 
     // Request-scoped skill policy (not class-level mutable state)
     const skillState = AgentLoopSkillState.hydrate(currentMessages, runtimeContext);
+    const resumedLoopState = getRuntimeCompletedSteps(this.config) > 0
+      ? (this.config as RuntimeToolFilterConfig).__vfCompletedStepState
+      : undefined;
+    if (resumedLoopState) {
+      skillState.restoreVerifiedCompletedStepState(
+        resumedLoopState.activeSkillDelegationOverrides,
+        resumedLoopState.hasSubmittedFormInput,
+      );
+    }
     let finalFinishReason: string | undefined;
     let latestAssistantText = "";
     let completedWithinStepBudget = false;
@@ -3947,16 +3962,77 @@ export class AgentRuntime {
       : configuredProviderTools;
     let currentSystemPrompt = systemPrompt;
     let currentRuntimeContext = runtimeContext;
-    let agentWriteFinalResponseToolGuardEnabled = false;
-    let recoveredEmptyResponse = false;
+    let agentWriteFinalResponseToolGuardEnabled =
+      resumedLoopState?.agentWriteFinalResponseGuard === true;
+    let recoveredEmptyResponse = resumedLoopState?.recoveredEmptyResponse === true;
     // One retry gives the model a chance to reconstruct a transport-truncated
     // batch without allowing a repeatedly broken provider stream to loop.
-    let recoveredInterruptedLocalToolBatch = false;
-    let interruptedLocalToolBatchRecoveryStep: number | undefined;
-    let interruptedLocalToolBatchRecoveryText: string | undefined;
+    let recoveredInterruptedLocalToolBatch =
+      resumedLoopState?.recoveredInterruptedLocalToolBatch === true;
+    let interruptedLocalToolBatchRecoveryStep = resumedLoopState
+      ?.interruptedLocalToolBatchRecoveryStep;
+    let interruptedLocalToolBatchRecoveryText = resumedLoopState
+      ?.interruptedLocalToolBatchRecoveryText;
     let resumeToolCallExecuted = false;
 
-    for (let step = 0; step < maxSteps; step++) {
+    const completedStepBoundary = getRuntimeCompletedStepBoundary(this.config);
+    const initialCompletedSteps = getRuntimeCompletedSteps(this.config);
+    const acknowledgeCompletedStep = async (
+      step: number,
+      effectiveToolExposurePlan: ToolExposurePlan,
+      genAiProviderName: string | undefined,
+    ): Promise<AgentResponse | undefined> => {
+      if (step + 1 >= maxSteps || !completedStepBoundary) return undefined;
+      const runtimeGeneratedMessageIndexes: number[] = [];
+      for (let index = 0; index < currentMessages.length; index++) {
+        const message = currentMessages[index];
+        if (message && isRuntimeGeneratedUserMessage(message)) {
+          pushPrivateArray(runtimeGeneratedMessageIndexes, index);
+        }
+      }
+      if (
+        !await observePrivatePromise(completedStepBoundary({
+          messages: currentMessages,
+          completedSteps: step + 1,
+          loopState: {
+            agentWriteFinalResponseGuard: agentWriteFinalResponseToolGuardEnabled,
+            hasCompletedTool: resumedLoopState?.hasCompletedTool === true ||
+              somePrivateArray(toolCalls, (call) => call.status === "completed"),
+            recoveredEmptyResponse,
+            recoveredInterruptedLocalToolBatch,
+            ...(interruptedLocalToolBatchRecoveryStep === step + 1 &&
+                interruptedLocalToolBatchRecoveryText !== undefined
+              ? { interruptedLocalToolBatchRecoveryStep, interruptedLocalToolBatchRecoveryText }
+              : {}),
+            hasSubmittedFormInput: skillState.hasSubmittedFormInput,
+            activeSkillDelegationOverrides: skillState.activeSkillDelegationOverrides,
+            runtimeGeneratedMessageIndexes,
+          },
+          toolExposureCheckpoint: createToolExposureCheckpoint(
+            effectiveToolExposurePlan.authorized,
+            toolExposureState,
+          ),
+          context: currentRuntimeContext,
+          usage: totalUsage,
+          usageMetadata: {
+            ...totalUsage,
+            provider: genAiProviderName ?? "unknown",
+            model: effectiveModel,
+            inputTokens: totalUsage.promptTokens,
+            outputTokens: totalUsage.completionTokens,
+            finishReason: "manual_pause",
+          },
+        }))
+      ) return undefined;
+      return attachOutputSchemaParser({
+        text: latestAssistantText,
+        messages: currentMessages,
+        toolCalls,
+        status: "completed" as const,
+        usage: totalUsage,
+      }, outputSchema);
+    };
+    for (let step = initialCompletedSteps; step < maxSteps; step++) {
       throwIfAborted(abortSignal);
       sendSSE(controller, encoder, { type: "step-start" });
       const currentStepToolResults = createPrivateMap<string, ToolResultPart>();
@@ -3993,7 +4069,9 @@ export class AgentRuntime {
         systemPrompt: currentSystemPrompt,
         toolContextBase,
         toolExposureState,
-        toolExposureCheckpoint: step === 0 ? initialToolExposureCheckpoint : undefined,
+        toolExposureCheckpoint: step === initialCompletedSteps
+          ? initialToolExposureCheckpoint
+          : undefined,
       });
       currentSystemPrompt = preparedStep.systemPrompt;
       currentRuntimeContext = preparedStep.runtimeContext;
@@ -4522,7 +4600,8 @@ export class AgentRuntime {
         state.toolCalls.size === 0 &&
         finalToolResults.size === 0 &&
         (state.suppressedToolCalls?.length ?? 0) === 0 &&
-        somePrivateArray(toolCalls, (toolCall) => toolCall.status === "completed");
+        (resumedLoopState?.hasCompletedTool === true ||
+          somePrivateArray(toolCalls, (toolCall) => toolCall.status === "completed"));
       const shouldRecoverInterruptedLocalToolBatch = canRecoverInterruptedLocalToolBatch &&
         shouldContinue &&
         somePrivateArray(streamedToolCalls, isInterruptedClientToolCall);
@@ -4684,6 +4763,12 @@ export class AgentRuntime {
             timestamp: Date.now(),
           }),
         );
+        const paused = await acknowledgeCompletedStep(
+          step,
+          effectiveToolExposurePlan,
+          genAiProviderName,
+        );
+        if (paused) return paused;
         this.status = "thinking";
         continue;
       }
@@ -5178,6 +5263,12 @@ export class AgentRuntime {
 
       throwIfAborted(abortSignal);
       sendSSE(controller, encoder, { type: "step-end" });
+      const paused = await acknowledgeCompletedStep(
+        step,
+        effectiveToolExposurePlan,
+        genAiProviderName,
+      );
+      if (paused) return paused;
       this.status = "thinking";
     }
 

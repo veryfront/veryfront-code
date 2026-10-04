@@ -4,6 +4,7 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   AppendConversationRunEventsResponseSchema,
   ConversationRunProjectionSchema,
+  getConversationRunStatusSchema,
   resolveConversationRunTargets,
 } from "./durable-contracts.ts";
 
@@ -14,6 +15,9 @@ const ENVIRONMENT_ID = "55555555-5555-4555-8555-555555555555";
 const BRANCH_ID = "44444444-4444-4444-8444-444444444444";
 
 describe("agent/durable-contracts", () => {
+  it("accepts an agent parked for manual resume", () => {
+    assertEquals(getConversationRunStatusSchema().parse("waiting"), "waiting");
+  });
   it("resolves conversation run target metadata", () => {
     assertEquals(resolveConversationRunTargets({ projectId: null, branchId: null }), {
       sourceTargetKind: null,

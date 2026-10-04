@@ -16,7 +16,15 @@ export const getInvokeAgentChildRunLifecycleValueSchema = defineSchema((v) =>
     childMessageId: v.string().uuid(),
     childAgentId: v.string().min(1),
     description: v.string().min(1).optional(),
-    status: v.enum(["pending", "running", "waiting_for_tool", "completed", "failed", "cancelled"]),
+    status: v.enum([
+      "pending",
+      "running",
+      "waiting",
+      "waiting_for_tool",
+      "completed",
+      "failed",
+      "cancelled",
+    ]),
     sourceTargetKind: v.enum(["project", "main_branch", "environment", "preview_branch"]).nullable()
       .optional(),
     runtimeTargetKind: v.enum(["main_branch", "environment", "preview_branch"]).nullable()
@@ -93,7 +101,14 @@ export type InvokeAgentChildRunProgressInput = {
   childMessageId: string;
   childAgentId: string;
   description?: string;
-  status: "pending" | "running" | "waiting_for_tool" | "completed" | "failed" | "cancelled";
+  status:
+    | "pending"
+    | "running"
+    | "waiting"
+    | "waiting_for_tool"
+    | "completed"
+    | "failed"
+    | "cancelled";
   sourceTargetKind?: string | null;
   runtimeTargetKind?: string | null;
   targetEnvironmentId?: string | null;

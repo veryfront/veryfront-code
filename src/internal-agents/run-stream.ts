@@ -1,3 +1,5 @@
+import type { ToolExposureCheckpoint } from "#veryfront/agent/runtime/tool-exposure.ts";
+import { observePrivatePromise } from "#veryfront/security/private-promise.ts";
 import { privateJsonStringify } from "#veryfront/security/private-json.ts";
 import {
   appendPrivateArray,
@@ -101,15 +103,21 @@ import {
   type RunServingIdentity,
 } from "./session-manager.ts";
 import { composeInternalAgentRunSystemPrompt } from "./run-system-prompt.ts";
-import type { RuntimeRunAgentInput } from "./schema.ts";
+import {
+  getCompletedStepLoopState,
+  getCompletedStepReplayMessages,
+  type RuntimeRunAgentInput,
+} from "./schema.ts";
 import { serverLogger } from "#veryfront/utils";
 import { compareStrings } from "#veryfront/utils/compare.ts";
 import { type ProviderReplayCheckpoint } from "#veryfront/agent/runtime/provider-replay.ts";
 import {
+  type CompletedAgentStep,
   getProviderReplayInvokeAgentToolCallsSchema,
   type ProviderReplayInvokeAgentToolCall,
   type ProviderReplayInvokeAgentToolName,
   type ProviderReplayTurnFailure,
+  type RuntimeToolFilterConfig,
 } from "#veryfront/agent/runtime/runtime-tool-config.ts";
 import { DURABLE_RUN_EVENT_PERSISTENCE_FAILED } from "#veryfront/errors";
 import type { ProviderReplayCheckpointPersister } from "./provider-replay-checkpoint-persister.ts";
@@ -121,6 +129,11 @@ import { createPrivateWeakStore } from "#veryfront/security/private-weak-store.t
 const getAnyObjectSchema = defineSchema((v) => v.record(v.string(), v.unknown()));
 const anyObjectSchema = lazySchema(getAnyObjectSchema) as Schema<Record<string, unknown>>;
 const runtimeInferenceCredentials = createPrivateWeakStore<object, string>();
+const completedStepBoundaries = createPrivateWeakStore<object, {
+  callback: (step: CompletedAgentStep, signal: AbortSignal) => Promise<boolean>;
+  completedSteps: number;
+  toolExposureCheckpoint?: ToolExposureCheckpoint;
+}>();
 const IntrinsicReflectApply = Reflect.apply;
 const IntrinsicSetHas = Set.prototype.has;
 const _Set = Set;
@@ -155,7 +168,11 @@ type RuntimeFilteredAgent = Agent & {
       __vfForwardedIntegrationToolDefs?: ForwardedToolDef[];
       __vfProviderReplayInvokeAgentToolNames?: ProviderReplayInvokeAgentToolName[];
     }
-    & RuntimeRemoteToolConfig;
+    & RuntimeRemoteToolConfig
+    & Pick<
+      RuntimeToolFilterConfig,
+      "__vfCompletedSteps" | "__vfCompletedStepBoundary" | "__vfCompletedStepState"
+    >;
 };
 
 type SandboxShellToolsExtensionModule = {
@@ -257,6 +274,16 @@ export function registerRuntimeInferenceCredential(
   credential: string,
 ): void {
   runtimeInferenceCredentials.set(input, credential);
+}
+
+/** @internal Only the verified control-plane handler binds this private host boundary. */
+export function registerRuntimeCompletedStepBoundary(
+  input: RuntimeRunAgentInput,
+  callback: (step: CompletedAgentStep, signal: AbortSignal) => Promise<boolean>,
+  completedSteps = 0,
+  toolExposureCheckpoint?: ToolExposureCheckpoint,
+): void {
+  completedStepBoundaries.set(input, { callback, completedSteps, toolExposureCheckpoint });
 }
 
 function getRuntimeInferenceCredential(input: RuntimeRunAgentInput): string | undefined {
@@ -1176,6 +1203,9 @@ export async function createRuntimeAgentStreamResponse(
   });
 
   let completedResponse: AgentResponse | null = null;
+  let pausedAtCompletedStep: number | undefined;
+  let pausedInvocationReturned = false;
+  const completedStepBoundary = completedStepBoundaries.get(input);
   // Running usage total, updated after every model call. A run that dies mid-stream
   // never delivers a final response, so this is the only spend figure it can report.
   let accumulatedUsage: RuntimeUsageTraceInput | null = null;
@@ -1391,6 +1421,22 @@ export async function createRuntimeAgentStreamResponse(
       ...agent,
       config: {
         ...agent.config,
+        __vfCompletedSteps: completedStepBoundary?.completedSteps ?? 0,
+        __vfCompletedStepState: completedStepBoundary && completedStepBoundary.completedSteps > 0
+          ? getCompletedStepLoopState(input, completedStepBoundary.completedSteps)
+          : undefined,
+        ...(completedStepBoundary && completedStepBoundary.completedSteps > 0
+          ? { __vfToolExposureCheckpoint: completedStepBoundary.toolExposureCheckpoint }
+          : {}),
+        __vfCompletedStepBoundary: completedStepBoundary
+          ? async (step: CompletedAgentStep) => {
+            const stop = await observePrivatePromise(
+              completedStepBoundary.callback(step, abortSignal),
+            );
+            if (stop) pausedAtCompletedStep = step.completedSteps;
+            return stop;
+          }
+          : undefined,
         model: executionModel,
         system: createProviderAwareAgentSystemResolver(resolveSystemPrompt),
         tools: mergedTools,
@@ -1443,11 +1489,12 @@ export async function createRuntimeAgentStreamResponse(
             : {}),
         }),
       };
-    const runtimeMessages = compactRuntimeMessagesForStream(
-      normalizeAgUiRuntimeMessages(input.messages),
-      systemPrompt,
-      runtimeToolNames.length,
-    );
+    const normalizedMessages = completedStepBoundary && completedStepBoundary.completedSteps > 0
+      ? getCompletedStepReplayMessages(input) ?? normalizeAgUiRuntimeMessages(input.messages)
+      : normalizeAgUiRuntimeMessages(input.messages);
+    const runtimeMessages = completedStepBoundary && completedStepBoundary.completedSteps > 0
+      ? normalizedMessages
+      : compactRuntimeMessagesForStream(normalizedMessages, systemPrompt, runtimeToolNames.length);
     const maxOutputTokens = getForwardedMaxOutputTokens(input.forwardedProps);
     const candidateRuntimeStream = await runWithMandatoryRunEventSink(
       modelCallContextRelay.sink,
@@ -1716,7 +1763,7 @@ export async function createRuntimeAgentStreamResponse(
               // scope on the read that triggers the pull.
               const { done, value } = await runWithMandatoryRunEventSink(
                 modelCallContextRelay.sink,
-                () => reader.read(),
+                () => observePrivatePromise(reader.read()),
               );
               throwIfAborted();
 
@@ -1760,6 +1807,17 @@ export async function createRuntimeAgentStreamResponse(
               }
             }
 
+            // The invocation ended at a retained step, while the canonical run remains nonterminal.
+            if (pausedAtCompletedStep !== undefined && !state.sawTerminalError) {
+              pausedInvocationReturned = true;
+              deps.sessionManager.completeRun(input.runId);
+              setSpanAttributes(runSpan, {
+                "agent.run.invocation_stopped_at_boundary": true,
+                ...resolveRunUsageAttributes(),
+              });
+              addSpanEvent(runSpan, "agent.run.stopped_at_boundary");
+              return;
+            }
             for (const mappedEvent of finalizeRunEvents(state, completedResponse)) {
               runOutcome.observe(mappedEvent.event, mappedEvent.payload);
               enqueueIfAttached(mappedEvent.event, mappedEvent.payload);
@@ -1929,6 +1987,12 @@ export async function createRuntimeAgentStreamResponse(
       // marks the client detached, in which case the stream is already closed
       // by its consumer and must not be closed a second time here.
       if (clientAttached) {
+        if (pausedInvocationReturned && !abortSignal.aborted) {
+          controller.enqueue(formatAgUiEvent("AgentRunCompletedStepBoundary", {
+            runId: input.runId,
+            completedSteps: pausedAtCompletedStep,
+          }));
+        }
         controller.close();
       }
       logger.debug("Internal agent runtime stream response closed", {

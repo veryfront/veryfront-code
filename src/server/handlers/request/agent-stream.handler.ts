@@ -1,4 +1,12 @@
 import {
+  buildCompletedStepPauseCheckpoint,
+  createCompletedStepPauseAcknowledger,
+} from "#veryfront/internal-agents/completed-step-pause.ts";
+import {
+  requireHostPrivateApiHttps,
+  resolveHostOwnedSourceApiBaseUrl,
+} from "#veryfront/config/host-api-base.ts";
+import {
   createPlatformMcpCatalogSource,
   withPlatformMcpPolicyAliases,
 } from "#veryfront/agent/platform-mcp-tool-source.ts";
@@ -30,6 +38,7 @@ import {
 } from "#veryfront/cache/verified-api-credential-context.ts";
 import {
   createRuntimeAgentStreamResponse,
+  registerRuntimeCompletedStepBoundary,
   registerRuntimeInferenceCredential,
   type RuntimeAgentStreamExecutionDeps,
 } from "#veryfront/internal-agents/run-stream.ts";
@@ -375,19 +384,17 @@ function sanitizeRuntimeRunAgentInput(
   const clientProfile = resolveRuntimeClientProfile(input.forwardedProps);
   const { declaredToolNames, aliasedCanonicalToolNames } = getAgentDeclaredToolNames(agent);
 
-  return {
-    ...input,
-    forwardedProps: sanitizeForwardedRuntimeAllowedTools({
-      forwardedProps: input.forwardedProps,
-      availableToolNames: input.tools.map((tool) => tool.name),
-      sourceAuthorizesAllTools: agent.config.tools === true,
-      sourceAuthorizedToolNames: declaredToolNames,
-      aliasedCanonicalToolNames,
-      allowedStudioRuntimeToolNames: clientAllowsStudioMcp(clientProfile)
-        ? declaredToolNames
-        : new Set(),
-    }),
-  };
+  input.forwardedProps = sanitizeForwardedRuntimeAllowedTools({
+    forwardedProps: input.forwardedProps,
+    availableToolNames: input.tools.map((tool) => tool.name),
+    sourceAuthorizesAllTools: agent.config.tools === true,
+    sourceAuthorizedToolNames: declaredToolNames,
+    aliasedCanonicalToolNames,
+    allowedStudioRuntimeToolNames: clientAllowsStudioMcp(clientProfile)
+      ? declaredToolNames
+      : new Set(),
+  });
+  return input;
 }
 
 function getVeryfrontApiMcpPolicy(agent: Agent): {
@@ -1158,6 +1165,16 @@ export class AgentStreamHandler extends BaseHandler {
       const runEventAppendToken = readIngressCredential(req, INGRESS_RUN_EVENT_TOKEN_HEADER);
       const terminalToken = readRunTerminalToken(req);
       if (
+        (payload.completedAgentSteps !== undefined ||
+          payload.serverResolvedPreParkUsage !== undefined ||
+          payload.serverResolvedToolExposureCheckpoint !== undefined) &&
+        (!verifiedClaims || !terminalToken || !payload.credentials?.authToken)
+      ) {
+        throw PERMISSION_DENIED.create({
+          detail: "Retained agent steps require a signed envelope and both invocation credentials",
+        });
+      }
+      if (
         payload.sourceProject && (
           payload.sourceProject.projectId !== ctx.projectId ||
           payload.sourceProject.projectSlug !== ctx.projectSlug
@@ -1411,6 +1428,29 @@ export class AgentStreamHandler extends BaseHandler {
                         const inferenceAuthToken = payload.credentials?.inferenceAuthToken;
                         if (verifiedClaims && inferenceAuthToken) {
                           registerRuntimeInferenceCredential(runtimeInput, inferenceAuthToken);
+                        }
+                        if (verifiedClaims && terminalToken && payload.credentials?.authToken) {
+                          const acknowledge = createCompletedStepPauseAcknowledger({
+                            apiUrl: requireHostPrivateApiHttps(resolveHostOwnedSourceApiBaseUrl()),
+                            runId: payload.runId,
+                            authToken: payload.credentials.authToken,
+                            terminalToken,
+                          });
+                          registerRuntimeCompletedStepBoundary(
+                            runtimeInput,
+                            (step, signal) =>
+                              acknowledge(
+                                () =>
+                                  buildCompletedStepPauseCheckpoint(
+                                    runtimeInput,
+                                    step,
+                                    payload.serverResolvedPreParkUsage,
+                                  ),
+                                signal,
+                              ),
+                            payload.completedAgentSteps ?? 0,
+                            payload.serverResolvedToolExposureCheckpoint,
+                          );
                         }
                         const runAgentStream = () =>
                           createRuntimeAgentStreamResponse(runtimeInput, runtimeAgent, {

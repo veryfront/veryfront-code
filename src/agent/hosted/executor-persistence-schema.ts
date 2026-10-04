@@ -1,3 +1,4 @@
+import { getExecutorToolExposureCheckpointSchema } from "../runtime/tool-exposure.ts";
 import type { InferSchema, Schema } from "#veryfront/extensions/schema/index.ts";
 import { defineSchema, getJsonValueSchema, type JsonValue } from "#veryfront/schemas/index.ts";
 import { snapshotBoundedJsonValue } from "#veryfront/schemas/json-value.ts";
@@ -10,7 +11,6 @@ import { getExecutorDiscoveryIdSchema } from "./executor-discovery-schema.ts";
 import { EXECUTOR_MAX_FRAME_BYTES } from "../executor/protocol.ts";
 
 const MAX_PERSISTENCE_ITEMS = 1_000;
-const MAX_TOOL_NAMES = 4_096;
 const MAX_PROVIDER_BLOCKS = 100;
 const MAX_PROVIDER_PARTS = 10_000;
 const MAX_PERSISTENCE_PAYLOAD_BYTES = EXECUTOR_MAX_FRAME_BYTES - 2_048;
@@ -66,12 +66,7 @@ export const getExecutorParentRunEventsRequestSchema = defineSchema((v) =>
   }).strict()
 );
 
-export const getExecutorToolExposureCheckpointSchema = defineSchema((v) =>
-  v.object({
-    version: v.union([v.literal(1), v.literal(2)]),
-    loadedToolNames: v.array(v.string().min(1).max(256)).max(MAX_TOOL_NAMES),
-  }).strict()
-);
+export { getExecutorToolExposureCheckpointSchema } from "../runtime/tool-exposure.ts";
 
 export const getExecutorToolExposureCheckpointRequestSchema = defineSchema((_v) =>
   getCapabilityRequestSchema().extend({

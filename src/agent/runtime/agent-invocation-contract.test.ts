@@ -72,6 +72,25 @@ function createInvocation(overrides: Record<string, unknown> = {}) {
   };
 }
 
+describe("manual agent resume invocation adapter", () => {
+  it("preserves private step count and usage through both invocation readers", () => {
+    const usage = {
+      provider: "test",
+      model: "test/model",
+      inputTokens: -1,
+      outputTokens: 1,
+      finishReason: "manual_pause",
+      veryfrontChargeUsd: 0.25,
+    };
+    const parsed = RuntimeAgentRunInvocationSchema.parse(
+      createInvocation({ completedAgentSteps: 2, serverResolvedPreParkUsage: [usage] }),
+    );
+    const request = buildRuntimeAgentControlPlaneStreamRequestFromInvocation(parsed);
+    assertEquals(request.completedAgentSteps, 2);
+    assertEquals(request.serverResolvedPreParkUsage, [usage]);
+  });
+});
+
 describe("agent/runtime-agent-invocation-contract", () => {
   it("keeps an exact pending tool invocation in the trusted envelope", () => {
     const parsed = RuntimeAgentRunInvocationSchema.parse(createInvocation({
