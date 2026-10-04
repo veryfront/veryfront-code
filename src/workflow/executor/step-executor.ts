@@ -289,23 +289,25 @@ export class StepExecutor {
                 }
                 entered = true;
                 const operations = new Set<Promise<unknown>>();
-                const result = await this.executeAttempts(
-                  node,
-                  context,
-                  signal && abortSignal
-                    ? AbortSignal.any([signal, abortSignal])
-                    : signal ?? abortSignal,
-                  runId,
-                  startTime,
-                  {
-                    attempt,
-                    input: resolvedInput,
-                    operations,
-                  },
-                  executionPath,
-                );
-                if (!result.success) await Promise.allSettled([...operations]);
-                return result;
+                try {
+                  return await this.executeAttempts(
+                    node,
+                    context,
+                    signal && abortSignal
+                      ? AbortSignal.any([signal, abortSignal])
+                      : signal ?? abortSignal,
+                    runId,
+                    startTime,
+                    {
+                      attempt,
+                      input: resolvedInput,
+                      operations,
+                    },
+                    executionPath,
+                  );
+                } finally {
+                  await Promise.allSettled([...operations]);
+                }
               },
             });
             return { kind: "wrapped" as const, result };

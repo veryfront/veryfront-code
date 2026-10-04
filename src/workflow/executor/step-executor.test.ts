@@ -621,6 +621,51 @@ describe("StepExecutor agent node ownership", () => {
     assertEquals(terminal, true);
   });
 
+  it("drains an aborted agent operation before its exceptional continuation settles", async () => {
+    using time = new FakeTime();
+    const controller = new AbortController();
+    const started = Promise.withResolvers<void>();
+    const settle = Promise.withResolvers<{ text: string }>();
+    let terminal = false;
+    const executor = new StepExecutor({
+      cancellationGracePeriod: 1,
+      agentRegistry: {
+        get: () => ({
+          id: "research-agent",
+          generate: () => {
+            started.resolve();
+            return settle.promise;
+          },
+        }),
+      } as never,
+      runAgentNode: async (invocation) => {
+        try {
+          return await invocation.execute(controller.signal);
+        } finally {
+          terminal = true;
+        }
+      },
+    });
+    const pending = executor.execute(
+      step("research", { agent: "research-agent", timeout: 10000 }),
+      makeContext(),
+      undefined,
+      "root",
+    );
+    const observed = pending.catch(() => undefined);
+    await started.promise;
+    controller.abort(new Error("Lease lost"));
+    try {
+      await time.tickAsync(2);
+      await time.tickAsync(2);
+      assertEquals(terminal, false, "an abort exception must not detach unfinished local effects");
+    } finally {
+      settle.resolve({ text: "late" });
+      await observed;
+    }
+    assertEquals(terminal, true);
+  });
+
   it("settles a failed node independently of a blocked sibling in the same workflow", async () => {
     using time = new FakeTime();
     const failedStarted = Promise.withResolvers<void>();
