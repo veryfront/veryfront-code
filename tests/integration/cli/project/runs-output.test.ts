@@ -113,6 +113,11 @@ describe("project runs CLI output and host credentials", () => {
     assert(lines.length > 0);
     assert(lines.every((line) => line.success === true && line.command === "project runs"));
     assertEquals(lines[0].data.id, "42");
+    assertEquals(lines[0].data.event.event_id, 42);
+    assertEquals(lines[0].data.event.event_type, "MODEL_CALL_COMPLETED");
+    assertEquals(lines[0].data.event.payload.type, "MODEL_CALL_COMPLETED");
+    assertEquals(lines[0].data.event.is_error, false);
+    assertEquals(lines[0].data.event.created_at, "2026-10-04T20:00:00.000Z");
   });
 
   it("preserves Problem codes and maps validation and authorization failures to actual process exits", async () => {

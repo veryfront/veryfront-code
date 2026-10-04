@@ -5,7 +5,7 @@
  * and CLI (#2240) lanes reuse them. A fixture response is never evidence of deployed parity.
  */
 import type { RunsInput, RunsOperationId, RunsOutput } from "./client.ts";
-import { RUNS_OPERATION_FIXTURES } from "../contract/runs-fixtures.generated.ts";
+import { RUNS_OPERATION_FIXTURES as PINNED_RUNS_OPERATION_FIXTURES } from "../contract/runs-fixtures.generated.ts";
 import {
   createCanonicalVeryfrontApiTransport,
   type VeryfrontApiTransport,
@@ -24,7 +24,46 @@ export interface RunsOperationFixture<K extends RunsOperationId> {
   };
 }
 
-export { RUNS_OPERATION_FIXTURES } from "../contract/runs-fixtures.generated.ts";
+/** Current stream wire example; the immutable contract pin keeps its historical bare payload. */
+export const CURRENT_RUN_STREAM_FRAME = {
+  event_id: 42,
+  event_type: "MODEL_CALL_COMPLETED",
+  payload: {
+    type: "MODEL_CALL_COMPLETED",
+    provider: "example-provider",
+    model: "example-model",
+    inputTokens: 120,
+    outputTokens: 30,
+    cacheCreationTokens: 0,
+    cacheReadTokens: 0,
+    totalTokens: 150,
+    costCredits: "0.001",
+    latencyMs: 800,
+    usageCaptureStatus: "complete",
+    providerRequestId: "request_example",
+    modelCallContextEventId: null,
+  },
+  is_error: false,
+  created_at: "2026-10-04T20:00:00.000Z",
+};
+
+/** Operation fixtures projected onto the current canonical stream wire contract. */
+export const RUNS_OPERATION_FIXTURES = {
+  ...PINNED_RUNS_OPERATION_FIXTURES,
+  streamRunEvents: {
+    ...PINNED_RUNS_OPERATION_FIXTURES.streamRunEvents,
+    input: {
+      ...PINNED_RUNS_OPERATION_FIXTURES.streamRunEvents.input,
+      headers: { "Last-Event-ID": "0" },
+    },
+    response: {
+      status: 200,
+      body: `id: 42\nevent: MODEL_CALL_COMPLETED\ndata: ${
+        JSON.stringify(CURRENT_RUN_STREAM_FRAME)
+      }\n\n`,
+    },
+  },
+};
 
 /** Requests the SDK sent, in order, and a transport that answers with queued responses. */
 export interface FixtureTransport {
