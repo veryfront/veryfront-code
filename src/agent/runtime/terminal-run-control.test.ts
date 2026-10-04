@@ -4,6 +4,7 @@ import type { ToolExecutionContext } from "#veryfront/tool/types.ts";
 import {
   admitTerminalDispatch,
   awaitTerminalRunControl,
+  bindTerminalRunResponseIdentity,
   createTerminalRunControl,
   dispatchWithTerminalRunControl,
   executeTerminalRunTool,
@@ -107,9 +108,9 @@ it("invalid terminal requests leave the dispatch gate usable", async () => {
       { status: "failed" },
       { status: "failed", error: [] },
       { status: "failed", error: { code: "ERR", message: "bad" }, output: null },
-      { status: "failed", error: { code: "lowercase", message: "bad" } },
-      { status: "failed", error: { code: "ERR", message: "  " } },
-      { status: "failed", error: { code: "ERR", message: "x".repeat(2001) } },
+      { status: "failed", error: { code: "x".repeat(129), message: "bad" } },
+      { status: "failed", error: { code: "ERR", message: "" } },
+      { status: "failed", error: { code: "ERR", message: "x".repeat(4001) } },
       { status: "failed", error: { code: "ERR", message: "bad", extra: true } },
       { status: "cancelled", output: null },
     ]
@@ -402,4 +403,51 @@ it("overlapping invocations retain separate terminal ownership and scheduling ga
   assertEquals(terminalDispatchRecord(firstError, first.owner)?.turn, first.turn);
   assertEquals(terminalCompletionResponse(firstError)?.object, "first");
   assertEquals(terminalCompletionResponse(secondError)?.object, "second");
+});
+
+Deno.test("canonical terminal resources stop execution only for the credential-bound UUID", async () => {
+  const canonicalRunId = "11111111-1111-4111-8111-111111111111";
+  for (const id of [canonicalRunId, "22222222-2222-4222-8222-222222222222"]) {
+    const control = createAdmittedControl({ runId: "run-current" });
+    bindTerminalRunResponseIdentity(control.context, canonicalRunId);
+    const error = await assertRejects(() =>
+      executeTerminalRunTool(
+        "finalize",
+        { status: "completed", output: { count: 3 } },
+        control.context,
+        async () => ({ id, status: "completed", output: { count: 3 } }),
+      )
+    );
+    assert(error instanceof TerminalRunControlError);
+    assertEquals(error.status, id === canonicalRunId ? "completed" : "unknown");
+    assertEquals(error.output, id === canonicalRunId ? { count: 3 } : undefined);
+  }
+});
+
+Deno.test("failure finalization preserves the canonical code, message and JSON details", async () => {
+  const control = createAdmittedControl({ runId: "run-current" });
+  const canonicalRunId = "11111111-1111-4111-8111-111111111111";
+  bindTerminalRunResponseIdentity(control.context, canonicalRunId);
+  const failure = {
+    code: "ingest.failed",
+    message: "x".repeat(3000),
+    details: { attempt: 2, context: { camelKey: true } },
+  };
+  const error = await assertRejects(() =>
+    executeTerminalRunTool(
+      "finalize",
+      { status: "failed", error: failure },
+      control.context,
+      async () => ({ id: canonicalRunId, status: "failed", output: null, error: failure }),
+    )
+  );
+  assert(error instanceof TerminalRunControlError);
+  assertEquals(error.status, "failed");
+  assertEquals(error.code, failure.code);
+  assertEquals(error.acknowledgedResult, {
+    id: canonicalRunId,
+    status: "failed",
+    output: null,
+    error: failure,
+  });
 });

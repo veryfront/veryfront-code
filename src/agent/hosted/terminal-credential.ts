@@ -13,6 +13,7 @@ import {
 } from "../conversation/durable.ts";
 import { createPrivateWeakStore } from "#veryfront/security/private-weak-store.ts";
 import {
+  bindTerminalRunResponseIdentity,
   hasCurrentTerminalRunCredentialAuthority,
   RUN_TERMINAL_TOOL_CALL_ID_HEADER,
   terminalToolCallIdHeaderValue,
@@ -151,6 +152,17 @@ export function hostedTerminalToolSourceFactory(
         ) {
           apply(headersSet, headers, [RUN_TERMINAL_TOKEN_HEADER, authority.token]);
           const toolCallId = terminalToolCallIdHeaderValue(context);
+          apply(headersSet, headers, [
+            "Idempotency-Key",
+            await computeHash(`${authority.token}:${toolCallId ?? "finalize"}`),
+          ]);
+          let canonicalRunId: string | undefined;
+          try {
+            canonicalRunId = terminalRoute(authority.token, authority.runId).id;
+          } catch {
+            // Invalid capability hints never establish a canonical response identity.
+          }
+          if (canonicalRunId) bindTerminalRunResponseIdentity(context, canonicalRunId);
           if (toolCallId) {
             apply(headersSet, headers, [RUN_TERMINAL_TOOL_CALL_ID_HEADER, toolCallId]);
           }

@@ -137,6 +137,18 @@ describe("schedule command", () => {
   });
 
   it("runs a pushed schedule without importing local runtime source", async () => {
+    const canonicalId = "11111111-1111-4111-8111-111111111111";
+    const resource = {
+      id: canonicalId,
+      project_id: "22222222-2222-4222-8222-222222222222",
+      target: { type: "agent", id: "job-submission-orchestrator" },
+      status: "completed",
+      input: null,
+      output: { scanned: 1, succeeded: 1, failed: 0 },
+      execution: { duration_ms: 12_345 },
+      created_at: "2026-07-26T12:00:00.000Z",
+      updated_at: "2026-07-26T12:00:01.000Z",
+    };
     const projectDir = await Deno.makeTempDir({ prefix: "vf-schedule-remote-" });
     const configHome = await Deno.makeTempDir({ prefix: "vf-schedule-remote-config-home-" });
     const requests: Array<{ url: string; init?: RequestInit }> = [];
@@ -156,12 +168,9 @@ describe("schedule command", () => {
         }],
         source_schedules: [],
       }),
-      jsonResponse({
-        run_id: runId,
-        run_execution_id: runId,
-        schedule_id: scheduleId,
-      }, 201),
-      jsonResponse(makeRun({ target: null })),
+      jsonResponse({ id: resource.project_id, name: "Project", slug: "json-only-project" }),
+      jsonResponse(resource, 202),
+      jsonResponse(resource),
     ];
     const output: string[] = [];
 
@@ -240,8 +249,9 @@ describe("schedule command", () => {
       );
       assertEquals(requests.map((request) => request.url), [
         `${TEST_PUBLIC_API_ORIGIN}/projects/json-only-project/schedules?status=active&source_trigger_id=process-job-submissions`,
-        `${TEST_PUBLIC_API_ORIGIN}/projects/json-only-project/schedules/${scheduleId}/runs`,
-        `${TEST_PUBLIC_API_ORIGIN}/runs/${encodeURIComponent(runId)}`,
+        `${TEST_PUBLIC_API_ORIGIN}/projects/json-only-project`,
+        `${TEST_PUBLIC_API_ORIGIN}/runs`,
+        `${TEST_PUBLIC_API_ORIGIN}/runs/${canonicalId}`,
       ]);
       assertEquals(
         requests.map((request) => new Headers(request.init?.headers).get("Authorization")),
@@ -249,11 +259,16 @@ describe("schedule command", () => {
           "Bearer config-token",
           "Bearer config-token",
           "Bearer config-token",
+          "Bearer config-token",
         ],
       );
-      const createRunBody = JSON.parse(String(requests[1]?.init?.body));
-      assertEquals(createRunBody.run_name, "Process job submissions");
-      assertEquals(typeof createRunBody.idempotency_key, "string");
+      const createRunBody = JSON.parse(String(requests[2]?.init?.body));
+      assertEquals(createRunBody, {
+        project_id: resource.project_id,
+        source: { type: "schedule", id: scheduleId },
+        title: "Process job submissions",
+      });
+      assertEquals(typeof new Headers(requests[2]?.init?.headers).get("Idempotency-Key"), "string");
       assertEquals(JSON.parse(output.at(-1) ?? "{}"), {
         success: true,
         command: "schedule",
@@ -262,7 +277,7 @@ describe("schedule command", () => {
           triggerId: "process-job-submissions",
           target: { kind: "agent", id: "job-submission-orchestrator" },
           output: {
-            runId,
+            runId: canonicalId,
             status: "completed",
             result: {
               scanned: 1,

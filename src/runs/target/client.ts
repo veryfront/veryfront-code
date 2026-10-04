@@ -133,6 +133,8 @@ interface Page {
 }
 
 const PATH_PARAMETER = /\{(\w+)\}/g;
+const replacePath = String.prototype.replace;
+const applyPath = Reflect.apply;
 const FALLBACK_PROBLEM_CODE = "UNEXPECTED_RESPONSE";
 
 /** Create a typed Runs SDK over the given transport. */
@@ -229,13 +231,16 @@ function buildRequest(
   options: RunsCallOptions,
 ): { path: string; init: TransportRequestInit } {
   const route = RUNS_OPERATIONS[operationId];
-  const path = route.path.replace(PATH_PARAMETER, (_match, name: string) => {
-    const value = input.path?.[name];
-    if (value === undefined) {
-      throw new TypeError(`${operationId} requires the path parameter ${name}`);
-    }
-    return encodeURIComponent(String(value));
-  });
+  const path = applyPath(replacePath, route.path, [
+    PATH_PARAMETER,
+    (_match: string, name: string) => {
+      const value = input.path?.[name];
+      if (value === undefined) {
+        throw new TypeError(`${operationId} requires the path parameter ${name}`);
+      }
+      return encodeURIComponent(String(value));
+    },
+  ]) as string;
   const query = new URLSearchParams();
   for (const [name, value] of Object.entries(input.query ?? {})) {
     for (const item of [value].flat()) {

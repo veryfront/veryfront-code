@@ -83,45 +83,66 @@ function jsonBody(index: number): unknown {
 }
 
 function makeRun(overrides: Record<string, unknown> = {}) {
+  const kind = overrides.kind === "eval" ? "task" : overrides.kind ?? "task";
+  const target = typeof overrides.target === "string"
+    ? overrides.target.split(":").slice(1).join(":")
+    : "sync-data";
   return {
-    run_id: "run_11111111-1111-4111-8111-111111111111",
-    kind: "task",
-    status: "pending",
-    owner: { kind: "project", id: projectId },
-    parent_run_id: null,
-    root_run_id: "run_11111111-1111-4111-8111-111111111111",
-    waiting_reason: null,
-    metadata: null,
-    target: "task:sync-data",
-    workflow_id: null,
-    schedule_id: null,
-    batch_id: null,
-    runtime_target_kind: null,
-    runtime_target_environment_id: null,
-    runtime_target_branch_id: null,
-    input: null,
-    config: null,
-    output: null,
-    error: null,
-    logs: null,
-    artifacts: [],
-    duration_ms: null,
-    exit_code: null,
-    start_mode: null,
-    timeout_seconds: null,
-    backoff_limit: null,
-    trigger_kind: null,
-    trigger_id: null,
-    created_by: null,
-    updated_at: "2026-03-20T12:00:00.000Z",
-    created_at: "2026-03-20T12:00:00.000Z",
-    started_at: null,
-    completed_at: null,
-    ...overrides,
+    id: "11111111-1111-4111-8111-111111111111",
+    project_id: projectId,
+    target: { type: kind, id: overrides.kind === "eval" ? "eval" : target },
+    status: overrides.status ?? "pending",
+    input: overrides.input ?? null,
+    output: overrides.output ?? null,
+    config: overrides.config,
+    created_at: "2026-07-26T12:00:00.000Z",
+    updated_at: "2026-07-26T12:00:00.000Z",
   };
 }
 
 describe("VeryfrontRunsClient", () => {
+  it("preserves metadata and nullable historical targets", async () => {
+    mockFetch([
+      jsonResponse({
+        ...makeRun(),
+        metadata: { source_key: "archive" },
+        target: { type: "task", id: null },
+      }),
+    ]);
+    const run = await createTestClient().get("11111111-1111-4111-8111-111111111111");
+    assertEquals(run.metadata, { source_key: "archive" });
+    assertEquals(run.target, null);
+  });
+  it("preserves canonical failure details in compatibility reads", async () => {
+    mockFetch([
+      jsonResponse({
+        ...makeRun({ status: "failed" }),
+        error: {
+          code: "FAILED",
+          message: "Failure",
+          details: { step: "ingest", retryable: false },
+        },
+      }),
+    ]);
+    const run = await createTestClient().get("11111111-1111-4111-8111-111111111111");
+    assertEquals(run.error?.detail, { step: "ingest", retryable: false });
+  });
+
+  it("acknowledges a pending cancellation without inventing terminal completion", async () => {
+    mockFetch([
+      jsonResponse({
+        ...makeRun({ status: "running" }),
+        control: { cancellation: { requested_at: "2026-10-04T12:00:00.000Z" } },
+      }, 202),
+    ]);
+    const reply = await createTestClient().cancel(
+      "11111111-1111-4111-8111-111111111111",
+      "cancel-one",
+    );
+    assertEquals(reply.cancelled, true);
+    assertEquals(reply.run.status, "running");
+    assertEquals(headerValue(0, "Idempotency-Key"), "cancel-one");
+  });
   beforeEach(() => {
     fetchCalls = [];
     fetchResponses = [];
@@ -151,7 +172,7 @@ describe("VeryfrontRunsClient", () => {
   });
 
   it("creates task runs through canonical /runs", async () => {
-    mockFetch([jsonResponse({ accepted: true, run: makeRun() }, 202)]);
+    mockFetch([jsonResponse(makeRun(), 202)]);
 
     const client = createTestClient();
 
@@ -172,17 +193,15 @@ describe("VeryfrontRunsClient", () => {
     assertEquals(call(0).init?.method, "POST");
     assertEquals(headerValue(0, "Authorization"), "Bearer test-token");
     assertEquals(jsonBody(0), {
-      kind: "task",
-      owner: { kind: "project", id: projectId },
-      request: {
-        name: "Sync data",
-        target: "task:sync-data",
-        batch_id: "66666666-6666-4666-8666-666666666666",
-        runtime_target_kind: "preview_branch",
-        runtime_target_branch_id: "55555555-5555-4555-8555-555555555555",
-        config: { batchSize: 100 },
+      project_id: projectId,
+      title: "Sync data",
+      target: { type: "task", id: "sync-data" },
+      batch_id: "66666666-6666-4666-8666-666666666666",
+      config: { batchSize: 100 },
+      execution: {
+        runtime: { type: "preview_branch", id: "55555555-5555-4555-8555-555555555555" },
         timeout_seconds: 900,
-        backoff_limit: 0,
+        retry_limit: 0,
       },
     });
   });
@@ -191,20 +210,48 @@ describe("VeryfrontRunsClient", () => {
     mockFetch([jsonResponse(makeRun())]);
     const client = createTestClient({ apiUrl: "https://93.184.216.34/" });
 
-    await client.get("run_11111111-1111-4111-8111-111111111111");
+    await client.get("11111111-1111-4111-8111-111111111111");
 
     assertEquals(
       call(0).url,
-      "https://93.184.216.34/runs/run_11111111-1111-4111-8111-111111111111",
+      "https://93.184.216.34/runs/11111111-1111-4111-8111-111111111111",
     );
+  });
+
+  it("reads a canonical UUID resource and exposes its update precondition", async () => {
+    const id = "11111111-1111-4111-8111-111111111111";
+    const resource = {
+      id,
+      project_id: projectId,
+      target: { type: "task", id: "sync-data" },
+      status: "completed",
+      input: { source: "manual" },
+      output: { synced: 3 },
+      labels: { team: "research" },
+      created_at: "2026-10-04T08:00:00.000Z",
+      updated_at: "2026-10-04T08:00:01.000Z",
+    };
+    mockFetch([
+      new Response(JSON.stringify(resource), {
+        headers: { "Content-Type": "application/json", ETag: '"version-1"' },
+      }),
+    ]);
+    let etag: string | null = null;
+
+    const result = await createTestClient().getRun(id, {
+      onHeaders: (headers) => {
+        etag = headers.get("etag");
+      },
+    });
+
+    assertEquals(result, resource);
+    assertEquals(etag, '"version-1"');
+    assertEquals(call(0).url, `https://93.184.216.34/runs/${id}`);
   });
 
   it("creates workflow runs through canonical /runs", async () => {
     mockFetch([
-      jsonResponse({
-        accepted: true,
-        run: makeRun({ kind: "workflow" }),
-      }, 202),
+      jsonResponse(makeRun({ kind: "workflow" }), 202),
     ]);
 
     const client = createTestClient();
@@ -214,32 +261,27 @@ describe("VeryfrontRunsClient", () => {
       workflowId: "content-pipeline",
       target: "workflow:content-pipeline",
       input: { topic: "AI agents" },
-      startMode: "manual",
     });
 
     assertEquals(jsonBody(0), {
-      kind: "workflow",
-      owner: { kind: "project", id: projectId },
-      request: {
-        workflow_id: "content-pipeline",
-        target: "workflow:content-pipeline",
-        input: { topic: "AI agents" },
-        start_mode: "manual",
-      },
+      project_id: projectId,
+      target: { type: "workflow", id: "content-pipeline" },
+      input: { topic: "AI agents" },
+      execution: {},
     });
   });
 
   it("creates eval runs as task:eval through canonical /runs", async () => {
     mockFetch([
-      jsonResponse({
-        accepted: true,
-        run: makeRun({
+      jsonResponse(
+        makeRun({
           kind: "task",
           target: "task:eval",
           input: { dataset: "smoke" },
           config: { repetitions: 2, eval_id: "eval:capital-basic-eval" },
         }),
-      }, 202),
+        202,
+      ),
     ]);
 
     const client = createTestClient();
@@ -249,21 +291,16 @@ describe("VeryfrontRunsClient", () => {
       target: "eval:capital-basic-eval",
       input: { dataset: "smoke" },
       config: { repetitions: 2 },
-      startMode: "manual",
       runtimeTargetKind: "environment",
       runtimeTargetEnvironmentId: "44444444-4444-4444-8444-444444444444",
     });
 
     assertEquals(jsonBody(0), {
-      kind: "task",
-      owner: { kind: "project", id: projectId },
-      request: {
-        target: "task:eval",
-        runtime_target_kind: "environment",
-        runtime_target_environment_id: "44444444-4444-4444-8444-444444444444",
-        input: { dataset: "smoke" },
-        config: { repetitions: 2, eval_id: "eval:capital-basic-eval" },
-      },
+      project_id: projectId,
+      target: { type: "task", id: "eval" },
+      input: { dataset: "smoke" },
+      config: { repetitions: 2, eval_id: "eval:capital-basic-eval" },
+      execution: { runtime: { type: "environment", id: "44444444-4444-4444-8444-444444444444" } },
     });
   });
 
@@ -287,7 +324,7 @@ describe("VeryfrontRunsClient", () => {
     assertEquals((error as { status?: number }).status, 404);
   });
 
-  it("continues reading legacy eval-kind runs", async () => {
+  it("reads historical evaluations as canonical task targets", async () => {
     mockFetch([
       jsonResponse(makeRun({
         kind: "eval",
@@ -295,18 +332,18 @@ describe("VeryfrontRunsClient", () => {
       })),
     ]);
 
-    const run = await createTestClient().get("run_11111111-1111-4111-8111-111111111111");
+    const run = await createTestClient().get("11111111-1111-4111-8111-111111111111");
 
-    assertEquals(run.kind, "eval");
-    assertEquals(run.target, "eval:capital-basic-eval");
+    assertEquals(run.kind, "task");
+    assertEquals(run.target, "task:eval");
   });
 
   it("sends any JSON value as task, workflow and eval run input (#2109)", async () => {
     const input = ["INV-7731", "Harbor Office"];
     mockFetch([
-      jsonResponse({ accepted: true, run: makeRun({ input }) }, 202),
-      jsonResponse({ accepted: true, run: makeRun({ kind: "workflow", input }) }, 202),
-      jsonResponse({ accepted: true, run: makeRun({ kind: "eval", input }) }, 202),
+      jsonResponse(makeRun({ input }), 202),
+      jsonResponse(makeRun({ kind: "workflow", input }), 202),
+      jsonResponse(makeRun({ kind: "eval", input }), 202),
     ]);
     const client = createTestClient();
 
@@ -326,16 +363,18 @@ describe("VeryfrontRunsClient", () => {
 
     assertEquals(task.run.input, input);
     assertEquals(jsonBody(0), {
-      kind: "task",
-      owner: { kind: "project", id: projectId },
-      request: { target: "task:classify-ticket", input, config: { urgent: true } },
+      project_id: projectId,
+      target: { type: "task", id: "classify-ticket" },
+      input,
+      config: { urgent: true },
+      execution: {},
     });
-    assertEquals((jsonBody(1) as { request: { input: unknown } }).request.input, input);
-    assertEquals((jsonBody(2) as { request: { input: unknown } }).request.input, input);
+    assertEquals((jsonBody(1) as { input: unknown }).input, input);
+    assertEquals((jsonBody(2) as { input: unknown }).input, input);
   });
 
   it("omits task input when none is given, so config-only callers are unchanged", async () => {
-    mockFetch([jsonResponse({ accepted: true, run: makeRun() }, 202)]);
+    mockFetch([jsonResponse(makeRun(), 202)]);
 
     await createTestClient().createTaskRun({
       projectId,
@@ -344,7 +383,7 @@ describe("VeryfrontRunsClient", () => {
     });
 
     assertEquals(
-      Object.hasOwn((jsonBody(0) as { request: Record<string, unknown> }).request, "input"),
+      Object.hasOwn(jsonBody(0) as Record<string, unknown>, "input"),
       false,
     );
   });
@@ -396,11 +435,8 @@ describe("VeryfrontRunsClient", () => {
         }],
         source_schedules: [],
       }),
-      jsonResponse({
-        run_id: "run_11111111-1111-4111-8111-111111111111",
-        run_execution_id: "run_11111111-1111-4111-8111-111111111111",
-        schedule_id: scheduleId,
-      }, 201),
+      jsonResponse({ id: projectId, slug: "dreamy-haven", name: "Project" }),
+      jsonResponse(makeRun(), 202),
     ]);
 
     const client = createTestClient();
@@ -413,8 +449,8 @@ describe("VeryfrontRunsClient", () => {
 
     assertEquals(response, {
       scheduleRun: {
-        run_id: "run_11111111-1111-4111-8111-111111111111",
-        run_execution_id: "run_11111111-1111-4111-8111-111111111111",
+        run_id: "11111111-1111-4111-8111-111111111111",
+        run_execution_id: "11111111-1111-4111-8111-111111111111",
         schedule_id: scheduleId,
       },
       timeoutSeconds: 1800,
@@ -430,24 +466,24 @@ describe("VeryfrontRunsClient", () => {
     );
     assertEquals(
       call(1).url,
-      `https://93.184.216.34/projects/dreamy-haven/schedules/${scheduleId}/runs`,
+      "https://93.184.216.34/projects/dreamy-haven",
     );
-    assertEquals(call(1).init?.method, "POST");
-    assertEquals(headerValue(1, "Authorization"), "Bearer test-token");
-    assertEquals(jsonBody(1), {
-      run_name: "Local CLI verification",
-      idempotency_key: "schedule-cli-test",
+    assertEquals(call(2).url, "https://93.184.216.34/runs");
+    assertEquals(call(2).init?.method, "POST");
+    assertEquals(headerValue(2, "Authorization"), "Bearer test-token");
+    assertEquals(headerValue(2, "Idempotency-Key"), "schedule-cli-test");
+    assertEquals(jsonBody(2), {
+      project_id: projectId,
+      source: { type: "schedule", id: scheduleId },
+      title: "Local CLI verification",
     });
   });
 
   it("reuses a generated idempotency key when direct schedule creation retries", async () => {
     mockFetch([
+      jsonResponse({ id: projectId, slug: "dreamy-haven", name: "Project" }),
       jsonResponse({ error: "temporary upstream failure" }, 500),
-      jsonResponse({
-        run_id: "run_11111111-1111-4111-8111-111111111111",
-        run_execution_id: "run_11111111-1111-4111-8111-111111111111",
-        schedule_id: scheduleId,
-      }, 201),
+      jsonResponse(makeRun(), 202),
     ]);
     const client = createTestClient({
       retry: {
@@ -462,17 +498,17 @@ describe("VeryfrontRunsClient", () => {
       runName: "Manual schedule retry guard",
     });
 
-    const firstBody = jsonBody(0) as { run_name: string; idempotency_key: string };
-    const retryBody = jsonBody(1) as { run_name: string; idempotency_key: string };
-    assertEquals(fetchCalls.length, 2);
-    assertEquals(call(0).init?.method, "POST");
+    assertEquals(fetchCalls.length, 3);
     assertEquals(call(1).init?.method, "POST");
-    assertEquals(firstBody, {
-      run_name: "Manual schedule retry guard",
-      idempotency_key: firstBody.idempotency_key,
+    assertEquals(call(2).init?.method, "POST");
+    assertEquals(jsonBody(1), {
+      project_id: projectId,
+      source: { type: "schedule", id: scheduleId },
+      title: "Manual schedule retry guard",
     });
-    assertStringIncludes(firstBody.idempotency_key, "schedule-run:");
-    assertEquals(retryBody, firstBody);
+    assertEquals(jsonBody(2), jsonBody(1));
+    assertStringIncludes(headerValue(1, "Idempotency-Key") ?? "", "schedule-run:");
+    assertEquals(headerValue(2, "Idempotency-Key"), headerValue(1, "Idempotency-Key"));
   });
 
   it("does not create a run when the pushed source schedule is missing", async () => {
@@ -531,11 +567,8 @@ describe("VeryfrontRunsClient", () => {
           },
         ],
       }),
-      jsonResponse({
-        run_id: "run_11111111-1111-4111-8111-111111111111",
-        run_execution_id: "run_11111111-1111-4111-8111-111111111111",
-        schedule_id: matchingScheduleId,
-      }, 201),
+      jsonResponse({ id: projectId, slug: "dreamy-haven", name: "Project" }),
+      jsonResponse(makeRun(), 202),
     ]);
     const client = createTestClient();
 
@@ -546,7 +579,7 @@ describe("VeryfrontRunsClient", () => {
     assertEquals(response.scheduleRun.schedule_id, matchingScheduleId);
     assertEquals(
       call(1).url,
-      `https://93.184.216.34/projects/dreamy-haven/schedules/${matchingScheduleId}/runs`,
+      "https://93.184.216.34/projects/dreamy-haven",
     );
   });
 
@@ -622,9 +655,9 @@ describe("VeryfrontRunsClient", () => {
 
   it("creates every knowledge ingest task-run variant", async () => {
     mockFetch([
-      jsonResponse({ accepted: true, run: makeRun() }, 202),
-      jsonResponse({ accepted: true, run: makeRun() }, 202),
-      jsonResponse({ accepted: true, run: makeRun() }, 202),
+      jsonResponse(makeRun(), 202),
+      jsonResponse(makeRun(), 202),
+      jsonResponse(makeRun(), 202),
     ]);
 
     const client = createTestClient();
@@ -645,42 +678,36 @@ describe("VeryfrontRunsClient", () => {
     });
 
     assertEquals(jsonBody(0), {
-      kind: "task",
-      owner: { kind: "project", id: projectId },
-      request: {
-        name: "Ingest knowledge",
-        target: "task:knowledge-ingest",
-        batch_id: "66666666-6666-4666-8666-666666666666",
-        config: {
-          upload_ids: ["33333333-3333-4333-8333-333333333333"],
-        },
+      project_id: projectId,
+      title: "Ingest knowledge",
+      target: { type: "task", id: "knowledge-ingest" },
+      batch_id: "66666666-6666-4666-8666-666666666666",
+      config: {
+        upload_ids: ["33333333-3333-4333-8333-333333333333"],
       },
+      execution: {},
     });
     assertEquals(jsonBody(1), {
-      kind: "task",
-      owner: { kind: "project", id: projectId },
-      request: {
-        name: "Ingest selected guides",
-        target: "task:knowledge-ingest",
-        config: { paths: ["guides/getting-started.md"] },
-      },
+      project_id: projectId,
+      title: "Ingest selected guides",
+      target: { type: "task", id: "knowledge-ingest" },
+      config: { paths: ["guides/getting-started.md"] },
+      execution: {},
     });
     assertEquals(jsonBody(2), {
-      kind: "task",
-      owner: { kind: "project", id: projectId },
-      request: {
-        name: "Ingest knowledge",
-        target: "task:knowledge-ingest",
-        config: { path_prefix: "handbook/" },
-      },
+      project_id: projectId,
+      title: "Ingest knowledge",
+      target: { type: "task", id: "knowledge-ingest" },
+      config: { path_prefix: "handbook/" },
+      execution: {},
     });
   });
 
   it("never sends a stray input from a knowledge ingest call (#2109)", async () => {
     mockFetch([
-      jsonResponse({ accepted: true, run: makeRun() }, 202),
-      jsonResponse({ accepted: true, run: makeRun() }, 202),
-      jsonResponse({ accepted: true, run: makeRun() }, 202),
+      jsonResponse(makeRun(), 202),
+      jsonResponse(makeRun(), 202),
+      jsonResponse(makeRun(), 202),
     ]);
     const client = createTestClient();
     // Structural typing lets a wider object through the `Omit<..., "input">` input types.
@@ -695,14 +722,14 @@ describe("VeryfrontRunsClient", () => {
 
     for (const index of [0, 1, 2]) {
       assertEquals(
-        Object.hasOwn((jsonBody(index) as { request: Record<string, unknown> }).request, "input"),
+        Object.hasOwn(jsonBody(index) as Record<string, unknown>, "input"),
         false,
       );
     }
   });
 
   it("creates knowledge ingest task runs from upload paths", async () => {
-    mockFetch([jsonResponse({ accepted: true, run: makeRun() }, 202)]);
+    mockFetch([jsonResponse(makeRun(), 202)]);
 
     const client = new VeryfrontRunsClient({
       apiUrl: "https://93.184.216.34",
@@ -718,22 +745,20 @@ describe("VeryfrontRunsClient", () => {
     assertEquals(
       jsonBody(0),
       {
-        kind: "task",
-        owner: { kind: "project", id: projectId },
-        request: {
-          name: "Ingest knowledge",
-          target: "task:knowledge-ingest",
-          config: {
-            paths: ["docs/a.md", "docs/b.md"],
-          },
+        project_id: projectId,
+        title: "Ingest knowledge",
+        target: { type: "task", id: "knowledge-ingest" },
+        config: {
+          paths: ["docs/a.md", "docs/b.md"],
         },
+        execution: {},
       },
       "ingestByUploadPaths sends the paths config with the default run name",
     );
   });
 
   it("creates knowledge ingest task runs from an upload prefix", async () => {
-    mockFetch([jsonResponse({ accepted: true, run: makeRun() }, 202)]);
+    mockFetch([jsonResponse(makeRun(), 202)]);
 
     const client = new VeryfrontRunsClient({
       apiUrl: "https://93.184.216.34",
@@ -749,15 +774,13 @@ describe("VeryfrontRunsClient", () => {
     assertEquals(
       jsonBody(0),
       {
-        kind: "task",
-        owner: { kind: "project", id: projectId },
-        request: {
-          name: "Ingest knowledge",
-          target: "task:knowledge-ingest",
-          config: {
-            path_prefix: "docs/",
-          },
+        project_id: projectId,
+        title: "Ingest knowledge",
+        target: { type: "task", id: "knowledge-ingest" },
+        config: {
+          path_prefix: "docs/",
         },
+        execution: {},
       },
       "ingestByUploadPrefix sends the path_prefix config with the default run name",
     );
@@ -784,13 +807,13 @@ describe("VeryfrontRunsClient", () => {
     mockFetch([jsonResponse(makeRun())]);
     const client = createTestClient();
 
-    const run = await client.get("run_11111111-1111-4111-8111-111111111111");
+    const run = await client.get("11111111-1111-4111-8111-111111111111");
 
     assertEquals(run.output, null);
     assertEquals(run.artifacts, []);
     assertEquals(
       call(0).url,
-      "https://93.184.216.34/runs/run_11111111-1111-4111-8111-111111111111",
+      "https://93.184.216.34/runs/11111111-1111-4111-8111-111111111111",
     );
     assertEquals(call(0).init?.method, "GET");
   });
@@ -808,30 +831,30 @@ describe("VeryfrontRunsClient", () => {
     const client = createTestClient();
 
     const events = await client.events(
-      "run_11111111-1111-4111-8111-111111111111",
+      "11111111-1111-4111-8111-111111111111",
       { afterEventId: 1, limit: 10 },
     );
 
     assertEquals(events.data[0]?.event_type, "RUN_STARTED");
     assertEquals(
       call(0).url,
-      "https://93.184.216.34/runs/run_11111111-1111-4111-8111-111111111111/events?after_event_id=1&limit=10",
+      "https://93.184.216.34/runs/11111111-1111-4111-8111-111111111111/events?after_event_id=1&limit=10",
     );
     assertEquals(call(0).init?.method, "GET");
   });
 
   it("cancels a run through the canonical action route", async () => {
     mockFetch([
-      jsonResponse({ cancelled: true, run: makeRun({ status: "cancelled" }) }),
+      jsonResponse(makeRun({ status: "cancelled" }), 202),
     ]);
     const client = createTestClient();
 
-    const cancelled = await client.cancel("run_11111111-1111-4111-8111-111111111111");
+    const cancelled = await client.cancel("11111111-1111-4111-8111-111111111111");
 
     assertEquals(cancelled.cancelled, true);
     assertEquals(
       call(0).url,
-      "https://93.184.216.34/runs/run_11111111-1111-4111-8111-111111111111/cancel",
+      "https://93.184.216.34/runs/11111111-1111-4111-8111-111111111111/cancel",
     );
     assertEquals(call(0).init?.method, "POST");
   });
@@ -847,7 +870,7 @@ describe("VeryfrontRunsClient", () => {
       },
       async () => {
         const client = new VeryfrontRunsClient();
-        await client.get("run_11111111-1111-4111-8111-111111111111");
+        await client.get("11111111-1111-4111-8111-111111111111");
       },
     );
 
@@ -872,14 +895,14 @@ describe("VeryfrontRunsClient", () => {
           async () => {
             const unpaired = new VeryfrontRunsClient();
             await assertRejects(
-              () => unpaired.get("run_11111111-1111-4111-8111-111111111111"),
+              () => unpaired.get("11111111-1111-4111-8111-111111111111"),
               Error,
               "Runs auth not configured",
             );
 
             const requestScoped = new VeryfrontRunsClient();
             requestScoped.setRequestToken("request-token");
-            await requestScoped.get("run_11111111-1111-4111-8111-111111111111");
+            await requestScoped.get("11111111-1111-4111-8111-111111111111");
           },
         );
       },
@@ -901,7 +924,7 @@ describe("VeryfrontRunsClient", () => {
     });
 
     await assertRejects(
-      () => client.get("run_11111111-1111-4111-8111-111111111111"),
+      () => client.get("11111111-1111-4111-8111-111111111111"),
       Error,
       "Outbound network egress blocked for internal host",
     );
@@ -920,7 +943,7 @@ describe("VeryfrontRunsClient", () => {
       return "https://project-controlled.example";
     };
     try {
-      await createTestClient().get("run_11111111-1111-4111-8111-111111111111");
+      await createTestClient().get("11111111-1111-4111-8111-111111111111");
     } finally {
       String.prototype.replace = originalReplace;
     }
