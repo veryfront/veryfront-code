@@ -5926,6 +5926,40 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     assertEquals(payload, { success: true, result: { stage: "paid" }, logs: null, duration_ms: 0 });
   });
 
+  for (const cancelled of [false, true]) {
+    it(`reads the actual abort state when resuming after project discovery replaces the getter (#2608, cancelled: ${cancelled})`, async () => {
+      const { client, calls, settle } = resumableClient(waitingOnReview);
+      client.cancel = () => {
+        calls.push(["cancel"]);
+        settle({ status: "cancelled" });
+        return Promise.resolve();
+      };
+      const controller = new AbortController();
+      const original = Object.getOwnPropertyDescriptor(AbortSignal.prototype, "aborted")!;
+      try {
+        const { payload } = await executeResume(client, {
+          type: "approval",
+          node_id: "manager-review",
+          approved: true,
+          approver: "user:u1",
+        }, {
+          ensureProjectDiscovery: async () => {
+            Object.defineProperty(AbortSignal.prototype, "aborted", {
+              ...original,
+              get: () => !cancelled,
+            });
+            if (cancelled) controller.abort(new Error("Run cancelled"));
+            return createEmptyDiscoveryResult();
+          },
+        }, controller.signal);
+        assertEquals(payload.success, !cancelled);
+        assertEquals(calls.map(([name]) => name), cancelled ? ["cancel"] : ["approve"]);
+      } finally {
+        Object.defineProperty(AbortSignal.prototype, "aborted", original);
+      }
+    });
+  }
+
   it("forwards the structured response of an approval decision", async () => {
     const { client, calls } = resumableClient(waitingOnReview);
 
@@ -10307,8 +10341,10 @@ describe("server/handlers/request/project-run-execute.handler manual pause (#258
       createCtx(publicKeyPem),
     );
     assertExists(result.response);
-    return await result.response.json();
+    return await Reflect.apply(responseJson, result.response, []);
   }
+
+  const responseJson = Response.prototype.json;
 
   function pauseAckCalls(urls: string[]): string[] {
     return urls.filter((url) => new URL(url).pathname === `/runs/${runId}/pause-ack`);
@@ -10422,6 +10458,160 @@ describe("server/handlers/request/project-run-execute.handler manual pause (#258
       Object.defineProperty(Request.prototype, "signal", original);
     }
     assertEquals(calls, []);
+  });
+
+  for (
+    const [cancelled, acknowledgementStatus] of [[false, 200], [true, 200], [true, 403]] as const
+  ) {
+    it(`reads acknowledgement replies after a workflow replaces Response accessors (#2608, cancelled: ${cancelled}, status: ${acknowledgementStatus})`, async () => {
+      const backend = new SharedMemoryBackend();
+      const calls: string[] = [];
+      const controller = new AbortController();
+      const urls: string[] = [];
+      const messages: string[] = [];
+      const unsubscribe = __subscribeLogRecordEmitter((entry) => messages.push(entry.message));
+      const keys = ["status", "ok", "body", "json"] as const;
+      const originals = keys.map((key) =>
+        [key, Object.getOwnPropertyDescriptor(Response.prototype, key)!] as const
+      );
+      let replacedReads = 0;
+      let cancelledBodies = 0;
+      const definition = workflow({
+        id: "publish",
+        steps: [
+          step("replace-response", {
+            tool: tool({
+              id: "replace-response-tool",
+              description: "Replace response accessors",
+              inputSchema: defineSchema((v) => v.object({}).passthrough())(),
+              execute: () => {
+                for (const key of keys) {
+                  Object.defineProperty(Response.prototype, key, {
+                    configurable: true,
+                    get() {
+                      if (key === "status") return 503;
+                      if (key === "body") return null;
+                      replacedReads++;
+                      if (key === "ok") return acknowledgementStatus !== 200;
+                      throw new Error(`Project replaced Response.${key}`);
+                    },
+                  });
+                }
+                return Promise.resolve({ replaced: true });
+              },
+            }),
+          }),
+          dependsOn(countingStep("after", calls), "replace-response"),
+        ],
+      }).definition as unknown as WorkflowDefinition;
+
+      try {
+        await withMockFetch(async (input) => {
+          const url = String(input);
+          urls.push(url);
+          if (new URL(url).pathname.endsWith("/pause-ack")) {
+            if (cancelled) controller.abort(new Error("Run cancelled"));
+            return Response.json({ stop: true });
+          }
+          return new Response(
+            new ReadableStream({
+              cancel() {
+                cancelledBodies++;
+              },
+            }),
+            { status: acknowledgementStatus },
+          );
+        }, async () => {
+          const payload = await dispatch(
+            createHandler(backend, definition, {
+              sleep: async (ms) => {
+                if (urls.length > 0) controller.abort(new Error("Run cancelled"));
+                else await delay(Math.min(ms, 10));
+              },
+            }),
+            undefined,
+            controller.signal,
+          );
+          if (cancelled) {
+            assertEquals(payload.success, false, JSON.stringify({ payload, urls }));
+            assertEquals(payload.error, "Workflow run cancelled");
+          } else {
+            assertEquals(payload.status, "waiting");
+            assertEquals(payload.waiting_reason, "manual_pause");
+          }
+        });
+        assertEquals(replacedReads, 0);
+        assertEquals(calls, []);
+        assertEquals(pauseAckCalls(urls).length, 1);
+        assertEquals(
+          urls.filter((url) => url.endsWith("/cancellation-ack")).length,
+          cancelled ? 1 : 0,
+        );
+        assertEquals(cancelledBodies, cancelled ? 1 : 0);
+        assertEquals(
+          messages.filter((message) => message.includes("Could not acknowledge stopped execution")),
+          acknowledgementStatus === 200
+            ? []
+            : ["[project-run-execute] Could not acknowledge stopped execution"],
+        );
+        assertEquals((await backend.getRun(runId))?.status, cancelled ? "cancelled" : "waiting");
+      } finally {
+        for (const [key, descriptor] of originals) {
+          Object.defineProperty(Response.prototype, key, descriptor);
+        }
+        unsubscribe();
+      }
+    });
+  }
+
+  it("holds the boundary when the pause reply inherits stop (#2608)", async () => {
+    const backend = new SharedMemoryBackend();
+    const calls: string[] = [];
+    const controller = new AbortController();
+    const original = Object.getOwnPropertyDescriptor(Object.prototype, "stop");
+    let replies = 0;
+    const definition = workflow({
+      id: "publish",
+      steps: [
+        step("replace-stop", {
+          tool: tool({
+            id: "replace-stop-tool",
+            description: "Add an inherited pause decision",
+            inputSchema: defineSchema((v) => v.object({}).passthrough())(),
+            execute: () => {
+              Object.defineProperty(Object.prototype, "stop", { configurable: true, value: true });
+              return Promise.resolve({ replaced: true });
+            },
+          }),
+        }),
+        dependsOn(countingStep("after", calls), "replace-stop"),
+      ],
+    }).definition as unknown as WorkflowDefinition;
+    try {
+      await withMockFetch(async (input) => {
+        if (String(input).endsWith("/pause-ack")) replies++;
+        return Response.json({});
+      }, async () => {
+        const payload = await dispatch(
+          createHandler(backend, definition, {
+            sleep: async (ms) => {
+              if (replies > 0) controller.abort(new Error("Run cancelled"));
+              else await delay(Math.min(ms, 10));
+            },
+          }),
+          undefined,
+          controller.signal,
+        );
+        assertEquals(payload.success, false);
+        assertEquals(payload.error, "Workflow run cancelled");
+      });
+      assertEquals(replies, 1);
+      assertEquals(calls, []);
+      assertEquals((await backend.getRun(runId))?.status, "cancelled");
+    } finally {
+      if (original) Object.defineProperty(Object.prototype, "stop", original);
+      else Reflect.deleteProperty(Object.prototype, "stop");
+    }
   });
 
   it("continues when the pause acknowledgement reports no pause", async () => {
