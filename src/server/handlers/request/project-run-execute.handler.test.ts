@@ -4251,197 +4251,206 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     }
   });
 
-  it("runs managed eval targets as durable child agent runs", async () => {
-    const requests: Array<
-      {
-        method: string;
-        pathname: string;
-        body: Record<string, unknown> | null;
-        idempotencyKey: string | null;
-      }
-    > = [];
-    const handler = new ProjectRunExecuteHandler(createDeps({
-      runTask: runTaskDefinition,
-      findEvalById: async (target) =>
-        target === "eval:deep-research"
-          ? {
-            id: "eval:deep-research",
-            name: "Deep research quality",
-            filePath: "evals/deep-research.eval.ts",
-            exportName: "default",
-            definition: evalAgent({
+  for (
+    const publicParentId of [
+      "run_66666666-6666-4666-8666-666666666666",
+      "66666666-6666-4666-8666-666666666666",
+    ]
+  ) {
+    it(`runs managed eval children using signed canonical identity (${publicParentId})`, async () => {
+      const requests: Array<
+        {
+          method: string;
+          pathname: string;
+          body: Record<string, unknown> | null;
+          idempotencyKey: string | null;
+        }
+      > = [];
+      const handler = new ProjectRunExecuteHandler(createDeps({
+        runTask: runTaskDefinition,
+        findEvalById: async (target) =>
+          target === "eval:deep-research"
+            ? {
               id: "eval:deep-research",
-              target: "agent:researcher",
-              dataset: datasets.inline([{ id: "q1", input: "France capital?" }]),
-              metrics: [metrics.answer.contains({ text: "Paris" }).gate()],
-            }),
-          }
-          : null,
-      runEval: runEvalDefinition,
-      createEvalAgentAdapter: (config) =>
-        createAgentServiceEvalAdapter({ ...config, requestTimeoutMs: 250 }),
-    }));
-    const body = {
-      runId: "run_66666666-6666-4666-8666-666666666666",
-      canonicalRunId: "88888888-8888-4888-8888-888888888888",
-      kind: "task",
-      target: "task:eval",
-      projectId: "55555555-5555-4555-8555-555555555555",
-      runtimeAgUiEndpoint: "https://demo-project.preview.veryfront.org/api/ag-ui",
-      config: { eval_id: "eval:deep-research" },
-    };
-    const { request, publicKeyPem } = await signedRequest(
-      "/api/control-plane/runs/run_66666666-6666-4666-8666-666666666666/execute",
-      body,
-      { "x-token": "runtime-token" },
-      "https://veryfront.org",
-    );
-
-    const result = await withEnvValue(
-      "VERYFRONT_API_BASE_URL",
-      "https://api.example.test/",
-      () =>
-        withMockFetch(
-          async (input, init) => {
-            const url = new URL(String(input));
-            const method = observeFetchRequestInit(init).method ?? "GET";
-            const requestBody = requestJsonBody(init);
-            requests.push({
-              method,
-              pathname: url.pathname,
-              body: requestBody,
-              idempotencyKey: new Headers(init?.headers).get("Idempotency-Key"),
-            });
-
-            if (method === "POST" && url.pathname.endsWith("/runs")) {
-              const runId = "77777777-7777-4777-8777-777777777777";
-              return Response.json({
-                id: runId,
-              }, { status: 202 });
+              name: "Deep research quality",
+              filePath: "evals/deep-research.eval.ts",
+              exportName: "default",
+              definition: evalAgent({
+                id: "eval:deep-research",
+                target: "agent:researcher",
+                dataset: datasets.inline([{ id: "q1", input: "France capital?" }]),
+                metrics: [metrics.answer.contains({ text: "Paris" }).gate()],
+              }),
             }
-
-            if (method === "GET" && url.pathname.endsWith("/stream")) {
-              return new Response(
-                [
-                  ...[
-                    { type: "RUN_STARTED", runId: "eval-child-run" },
-                    { type: "TEXT_MESSAGE_CONTENT", messageId: "answer", delta: "Paris" },
-                    { type: "RUN_FINISHED", runId: "eval-child-run" },
-                  ].map((payload, index) =>
-                    `id: ${index + 1}\nevent: ${payload.type}\ndata: ${
-                      JSON.stringify({
-                        event_id: index + 1,
-                        event_type: payload.type,
-                        payload,
-                        is_error: false,
-                        created_at: "2026-10-04T20:00:00.000Z",
-                      })
-                    }\n\n`
-                  ),
-                ].join(""),
-                { headers: { "content-type": "text/event-stream" } },
-              );
-            }
-
-            return new Response("not found", { status: 404 });
-          },
-          () =>
-            handler.handle(request, {
-              ...createCtx(publicKeyPem),
-              projectId: "55555555-5555-4555-8555-555555555555",
-            }),
-        ),
-    );
-
-    assertExists(result.response);
-    assertEquals(result.response.status, 200);
-    const payload = await result.response.json();
-    assertEquals(payload.success, true);
-    assertEquals(payload.result.failed, 0);
-
-    assertEquals(requests.length, 2);
-    const createRequest = requests[0];
-    assertEquals(createRequest?.method, "POST");
-    assertStringIncludes(
-      createRequest?.idempotencyKey ?? "",
-      "eval:88888888-8888-4888-8888-888888888888:eval-run-",
-    );
-    assertEquals(createRequest?.body?.project_id, "55555555-5555-4555-8555-555555555555");
-    assertEquals(createRequest?.body?.target, { type: "agent", id: "researcher" });
-    assertEquals(createRequest?.body?.parent_run_id, "88888888-8888-4888-8888-888888888888");
-    assertEquals(createRequest?.body?.input, "France capital?");
-    assertEquals(createRequest?.body?.execution, { runtime: { type: "main_branch" } });
-    assertEquals(createRequest?.body?.request, undefined);
-    assertEquals(
-      (createRequest?.body?.config as Record<string, unknown>).conversation_mode,
-      "create_new",
-    );
-    const agentInput = createRequest?.body?.config as Record<string, unknown>;
-    assertEquals(agentInput.forwarded_props, {
-      prompt: "France capital?",
-      runtimeOverrides: {
-        allowedTools: [],
-      },
-      veryfront: {
-        agentId: "researcher",
-        projectId: "55555555-5555-4555-8555-555555555555",
-        runtimeOverrides: {
-          allowedTools: [],
-        },
-      },
-    });
-    assertEquals(requests[0]?.pathname, "/runs");
-    assertEquals(requests[1]?.method, "GET");
-    assertEquals(requests[1]?.pathname, "/runs/77777777-7777-4777-8777-777777777777/stream");
-    assertStringIncludes(requests[1]?.pathname ?? "", "/stream");
-  });
-
-  it("refuses managed child admission without an authenticated canonical parent UUID", async () => {
-    let requests = 0;
-    const handler = new ProjectRunExecuteHandler(createDeps({
-      runTask: runTaskDefinition,
-      findEvalById: async () => ({
-        id: "eval:parent-required",
-        name: "Parent identity",
-        filePath: "evals/parent.eval.ts",
-        exportName: "default",
-        definition: evalAgent({
-          id: "eval:parent-required",
-          target: "agent:researcher",
-          dataset: datasets.inline([{ id: "q1", input: "Question" }]),
-          metrics: [metrics.answer.contains({ text: "Answer" }).gate()],
-        }),
-      }),
-      runEval: runEvalDefinition,
-      createEvalAgentAdapter: (config) =>
-        createAgentServiceEvalAdapter({ ...config, requestTimeoutMs: 250 }),
-    }));
-    const signed = await signedRequest(
-      "/api/control-plane/runs/run_unresolved_parent/execute",
-      {
-        runId: "run_unresolved_parent",
+            : null,
+        runEval: runEvalDefinition,
+        createEvalAgentAdapter: (config) =>
+          createAgentServiceEvalAdapter({ ...config, requestTimeoutMs: 250 }),
+      }));
+      const body = {
+        runId: publicParentId,
+        canonicalRunId: "88888888-8888-4888-8888-888888888888",
         kind: "task",
         target: "task:eval",
         projectId: "55555555-5555-4555-8555-555555555555",
         runtimeAgUiEndpoint: "https://demo-project.preview.veryfront.org/api/ag-ui",
-        config: { eval_id: "eval:parent-required" },
-      },
-      { "x-token": "runtime-token" },
-      "https://veryfront.org",
-    );
-    const result = await withMockFetch(async () => {
-      requests++;
-      return Response.json({ id: "77777777-7777-4777-8777-777777777777" }, { status: 202 });
-    }, () =>
-      handler.handle(signed.request, {
-        ...createCtx(signed.publicKeyPem),
-        projectId: "55555555-5555-4555-8555-555555555555",
+        config: { eval_id: "eval:deep-research" },
+      };
+      const { request, publicKeyPem } = await signedRequest(
+        `/api/control-plane/runs/${publicParentId}/execute`,
+        body,
+        { "x-token": "runtime-token" },
+        "https://veryfront.org",
+      );
+
+      const result = await withEnvValue(
+        "VERYFRONT_API_BASE_URL",
+        "https://api.example.test/",
+        () =>
+          withMockFetch(
+            async (input, init) => {
+              const url = new URL(String(input));
+              const method = observeFetchRequestInit(init).method ?? "GET";
+              const requestBody = requestJsonBody(init);
+              requests.push({
+                method,
+                pathname: url.pathname,
+                body: requestBody,
+                idempotencyKey: new Headers(init?.headers).get("Idempotency-Key"),
+              });
+
+              if (method === "POST" && url.pathname.endsWith("/runs")) {
+                const runId = "77777777-7777-4777-8777-777777777777";
+                return Response.json({
+                  id: runId,
+                }, { status: 202 });
+              }
+
+              if (method === "GET" && url.pathname.endsWith("/stream")) {
+                return new Response(
+                  [
+                    ...[
+                      { type: "RUN_STARTED", runId: "eval-child-run" },
+                      { type: "TEXT_MESSAGE_CONTENT", messageId: "answer", delta: "Paris" },
+                      { type: "RUN_FINISHED", runId: "eval-child-run" },
+                    ].map((payload, index) =>
+                      `id: ${index + 1}\nevent: ${payload.type}\ndata: ${
+                        JSON.stringify({
+                          event_id: index + 1,
+                          event_type: payload.type,
+                          payload,
+                          is_error: false,
+                          created_at: "2026-10-04T20:00:00.000Z",
+                        })
+                      }\n\n`
+                    ),
+                  ].join(""),
+                  { headers: { "content-type": "text/event-stream" } },
+                );
+              }
+
+              return new Response("not found", { status: 404 });
+            },
+            () =>
+              handler.handle(request, {
+                ...createCtx(publicKeyPem),
+                projectId: "55555555-5555-4555-8555-555555555555",
+              }),
+          ),
+      );
+
+      assertExists(result.response);
+      assertEquals(result.response.status, 200);
+      const payload = await result.response.json();
+      assertEquals(payload.success, true);
+      assertEquals(payload.result.failed, 0);
+
+      assertEquals(requests.length, 2);
+      const createRequest = requests[0];
+      assertEquals(createRequest?.method, "POST");
+      assertStringIncludes(
+        createRequest?.idempotencyKey ?? "",
+        "eval:88888888-8888-4888-8888-888888888888:eval-run-",
+      );
+      assertEquals(createRequest?.body?.project_id, "55555555-5555-4555-8555-555555555555");
+      assertEquals(createRequest?.body?.target, { type: "agent", id: "researcher" });
+      assertEquals(createRequest?.body?.parent_run_id, "88888888-8888-4888-8888-888888888888");
+      assertEquals(createRequest?.body?.input, "France capital?");
+      assertEquals(createRequest?.body?.execution, { runtime: { type: "main_branch" } });
+      assertEquals(createRequest?.body?.request, undefined);
+      assertEquals(
+        (createRequest?.body?.config as Record<string, unknown>).conversation_mode,
+        "create_new",
+      );
+      const agentInput = createRequest?.body?.config as Record<string, unknown>;
+      assertEquals(agentInput.forwarded_props, {
+        prompt: "France capital?",
+        runtimeOverrides: {
+          allowedTools: [],
+        },
+        veryfront: {
+          agentId: "researcher",
+          projectId: "55555555-5555-4555-8555-555555555555",
+          runtimeOverrides: {
+            allowedTools: [],
+          },
+        },
+      });
+      assertEquals(requests[0]?.pathname, "/runs");
+      assertEquals(requests[1]?.method, "GET");
+      assertEquals(requests[1]?.pathname, "/runs/77777777-7777-4777-8777-777777777777/stream");
+      assertStringIncludes(requests[1]?.pathname ?? "", "/stream");
+    });
+  }
+
+  for (const publicParentId of ["run_unresolved_parent", "66666666-6666-4666-8666-666666666666"]) {
+    it(`refuses managed child admission without canonical identity (${publicParentId})`, async () => {
+      let requests = 0;
+      const handler = new ProjectRunExecuteHandler(createDeps({
+        runTask: runTaskDefinition,
+        findEvalById: async () => ({
+          id: "eval:parent-required",
+          name: "Parent identity",
+          filePath: "evals/parent.eval.ts",
+          exportName: "default",
+          definition: evalAgent({
+            id: "eval:parent-required",
+            target: "agent:researcher",
+            dataset: datasets.inline([{ id: "q1", input: "Question" }]),
+            metrics: [metrics.answer.contains({ text: "Answer" }).gate()],
+          }),
+        }),
+        runEval: runEvalDefinition,
+        createEvalAgentAdapter: (config) =>
+          createAgentServiceEvalAdapter({ ...config, requestTimeoutMs: 250 }),
       }));
-    assertExists(result.response);
-    const payload = await result.response.json();
-    assertEquals(payload.success, false);
-    assertEquals(requests, 0);
-  });
+      const signed = await signedRequest(
+        `/api/control-plane/runs/${publicParentId}/execute`,
+        {
+          runId: publicParentId,
+          kind: "task",
+          target: "task:eval",
+          projectId: "55555555-5555-4555-8555-555555555555",
+          runtimeAgUiEndpoint: "https://demo-project.preview.veryfront.org/api/ag-ui",
+          config: { eval_id: "eval:parent-required" },
+        },
+        { "x-token": "runtime-token" },
+        "https://veryfront.org",
+      );
+      const result = await withMockFetch(async () => {
+        requests++;
+        return Response.json({ id: "77777777-7777-4777-8777-777777777777" }, { status: 202 });
+      }, () =>
+        handler.handle(signed.request, {
+          ...createCtx(signed.publicKeyPem),
+          projectId: "55555555-5555-4555-8555-555555555555",
+        }));
+      assertExists(result.response);
+      const payload = await result.response.json();
+      assertEquals(payload.success, false);
+      assertEquals(requests, 0);
+    });
+  }
 
   it("preserves environment and preview targets for durable eval runs", async () => {
     const requests: Array<

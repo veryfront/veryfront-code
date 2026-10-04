@@ -2716,8 +2716,10 @@ function createDurableEvalAgentRunBody(
 }
 
 function resolveCanonicalEvalParentRunId(request: ProjectRunExecuteRequest): string {
-  const id = request.canonicalRunId ?? request.runId;
-  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)) {
+  const id = request.canonicalRunId;
+  if (
+    id === undefined || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)
+  ) {
     throw INPUT_VALIDATION_FAILED.create({
       detail: "Managed eval requires the authenticated canonical parent run UUID",
     });
