@@ -5818,6 +5818,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
               get: () => !cancelled,
             });
             if (cancelled) controller.abort(new Error("Run cancelled"));
+            return createEmptyDiscoveryResult();
           },
         }, controller.signal);
         assertEquals(payload.success, !cancelled);
@@ -10340,7 +10341,7 @@ describe("server/handlers/request/project-run-execute.handler manual pause (#258
       const unsubscribe = __subscribeLogRecordEmitter((entry) => messages.push(entry.message));
       const keys = ["status", "ok", "body", "json"] as const;
       const originals = keys.map((key) =>
-        Object.getOwnPropertyDescriptor(Response.prototype, key)!
+        [key, Object.getOwnPropertyDescriptor(Response.prototype, key)!] as const
       );
       let replacedReads = 0;
       let cancelledBodies = 0;
@@ -10424,8 +10425,8 @@ describe("server/handlers/request/project-run-execute.handler manual pause (#258
         );
         assertEquals((await backend.getRun(runId))?.status, cancelled ? "cancelled" : "waiting");
       } finally {
-        for (let i = 0; i < keys.length; i++) {
-          Object.defineProperty(Response.prototype, keys[i], originals[i]);
+        for (const [key, descriptor] of originals) {
+          Object.defineProperty(Response.prototype, key, descriptor);
         }
         unsubscribe();
       }
