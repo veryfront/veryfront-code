@@ -175,7 +175,9 @@ for (
         ? "lease expired"
         : "lease renewal failed",
     );
-    await time.runAllAsync();
+    await time.tickAsync(mode === "parent-during" ? 1 : 10);
+    await time.tickAsync(0);
+    if (hangs || mode === "retry-expired") await time.tickAsync(10);
     await rejection;
     clearTimeout(cancelTimer);
     assertEquals(aborted, mode !== "expired" && mode !== "parent-before");
@@ -250,7 +252,9 @@ for (const failure of ["network", 503, 429] as const) {
       );
       return completed.promise;
     });
-    await time.runAllAsync();
+    await time.tickAsync(100);
+    await time.tickAsync(50);
+    await time.tickAsync(1);
     assertEquals(await result, "completed");
     assertEquals(renewals, 2);
   });
@@ -329,7 +333,9 @@ it("keeps local work running across transient renewal failures while the lease i
     return "completed";
   });
 
-  await time.runAllAsync();
+  await time.tickAsync(200);
+  await time.tickAsync(100);
+  await time.tickAsync(50);
   assertEquals(await result, "completed");
   assertEquals(heartbeatOutcomes, ["network", "503", "renewed"]);
   assertEquals(abortedBeforeRenewal, false);
