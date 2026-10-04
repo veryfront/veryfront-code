@@ -1,6 +1,6 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { FakeTime } from "#std/testing/time";
-import { assert, assertEquals } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   type RoutingInvalidationRedisClient,
@@ -385,6 +385,44 @@ function answerEventWithRejectedAcknowledgement(
 }
 
 describe("proxy routing invalidation Redis bus", () => {
+  it("retries an acknowledgement subscription after an offline refusal without retaining a stale channel", async () => {
+    const redis = createFakeRedisServer();
+    let clients = 0;
+    let acknowledgementSubscriptions = 0;
+    const bus = await startProxyRoutingInvalidationBus({
+      redisUrl: "redis://example.test:6379",
+      integritySecret: createIntegritySecret(),
+      onInvalidate: () => {},
+      createClient: () => {
+        const client = redis.createClient();
+        if (clients++ !== 1) return client;
+        return {
+          ...client,
+          async subscribe(channel, listener) {
+            if (channel.startsWith(ROUTING_INVALIDATION_ACK_PREFIX)) {
+              if (++acknowledgementSubscriptions === 1) {
+                throw new Error("Routing Redis connection is not ready");
+              }
+            }
+            return await client.subscribe(channel, listener);
+          },
+        };
+      },
+    });
+    assert(bus);
+    try {
+      await assertRejects(() => bus.publish(createEvent()), Error, "not ready");
+      assertEquals(await bus.publish(createEvent()), {
+        acknowledged: 1,
+        converged: true,
+        recipients: 1,
+      });
+      assertEquals(acknowledgementSubscriptions, 2);
+    } finally {
+      await bus.close();
+    }
+  });
+
   it("warns for a managed socket recycle and reports successful resubscription", async () => {
     const redis = createFakeRedisServer();
     const info: Array<{ message: string; extra?: Record<string, unknown> }> = [];

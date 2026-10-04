@@ -22,6 +22,7 @@ export interface NodeRedisModule {
   createClient(
     options: {
       url?: string;
+      disableOfflineQueue?: boolean;
       socket?: {
         host?: string;
         port?: number;
