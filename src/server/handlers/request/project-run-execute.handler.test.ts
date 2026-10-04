@@ -6298,11 +6298,17 @@ describe("server/handlers/request/project-run-execute.handler", () => {
   it("applies a decision whose discovery outlasts the resume timeout", async () => {
     const { client, calls } = resumableClient(waitingOnReview);
     const getRun = client.getRun;
+    const discovery = Promise.withResolvers<{ status: string }>();
+    const destroyed = Promise.withResolvers<void>();
+    client.destroy = () => {
+      destroyed.resolve();
+      return Promise.resolve();
+    };
     let reads = 0;
     client.getRun = () => {
       reads++;
       if (reads > 1) return getRun();
-      return new Promise((resolve) => setTimeout(() => resolve(getRun()), 20));
+      return discovery.promise;
     };
     const { payload } = await executeResume(client, {
       type: "approval",
@@ -6311,7 +6317,9 @@ describe("server/handlers/request/project-run-execute.handler", () => {
       approver: "user:u1",
     }, { workflowResumeTimeoutMs: 5 });
     assertEquals(payload.status, "waiting");
-    await new Promise((resolve) => setTimeout(resolve, 40));
+    assertEquals(calls, []);
+    discovery.resolve(await getRun());
+    await destroyed.promise;
     assertEquals(calls.map(([name]) => name), ["approve"]);
   });
 
