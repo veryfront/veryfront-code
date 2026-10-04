@@ -1,7 +1,6 @@
 import type { ConversationRunMirrorSnapshot } from "../conversation/run-mirror.ts";
 import { createPrivateWeakStore } from "#veryfront/security/private-weak-store.ts";
-import { getHostedAgentPauseCreationOptions } from "./manual-pause-credential.ts";
-import { isAgentManualPauseBoundary } from "../runtime/manual-pause.ts";
+import { type AgentManualPause, isAgentManualPauseBoundary } from "../runtime/manual-pause.ts";
 
 type Settlement = {
   flushed: boolean;
@@ -10,6 +9,8 @@ type Settlement = {
   eligible: () => boolean;
   confirm: () => Promise<"confirmed" | "retry" | "rejected">;
 };
+export const hostedAgentPauseCapabilities = createPrivateWeakStore<object, AgentManualPause>();
+const NativeTypeError = TypeError;
 const settlements = createPrivateWeakStore<object, Settlement>();
 const schedule = setTimeout;
 const NativePromise = Promise;
@@ -23,7 +24,10 @@ export function registerHostedAgentPauseSettlement(
 }
 
 function stateFor(target: unknown): Settlement | undefined {
-  const capability = getHostedAgentPauseCreationOptions(target);
+  if ((typeof target !== "object" || target === null) && typeof target !== "function") {
+    throw new NativeTypeError("Invalid agent pause capability carrier");
+  }
+  const capability = hostedAgentPauseCapabilities.get(target);
   return capability ? settlements.get(capability) : undefined;
 }
 

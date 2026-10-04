@@ -1,4 +1,7 @@
-import { registerHostedAgentPauseSettlement } from "./manual-pause-settlement.ts";
+import {
+  hostedAgentPauseCapabilities as creationCapabilities,
+  registerHostedAgentPauseSettlement,
+} from "./manual-pause-settlement.ts";
 import { defineSchema } from "#veryfront/schemas/index.ts";
 import { getBaseLogger } from "#veryfront/utils/logger/index.ts";
 import { privateJsonParse, privateJsonStringify } from "#veryfront/security/private-json.ts";
@@ -33,7 +36,6 @@ const getLoadSchema = defineSchema((v) =>
     .strict()
 );
 const credentials = createPrivateWeakStore<object, { token: string; runId: string }>();
-const creationCapabilities = createPrivateWeakStore<object, AgentManualPause>();
 const lifetimeBindings = createPrivateWeakStore<object, (signal: AbortSignal) => void>();
 const capabilityFactories = createPrivateWeakStore<
   object,
