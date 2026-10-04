@@ -3296,7 +3296,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
           };
           if (request.method === "tools/call") {
             assertEquals(request.params?._meta, undefined);
-            assertEquals(request.params?.name, "list_uploads");
+            assertEquals(request.params?.name, "veryfront__list_uploads");
             capturedToolArguments = request.params?.arguments;
             return Promise.resolve(
               new Response(
@@ -3305,6 +3305,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
               ),
             );
           }
+          assertEquals(request.params?._meta, undefined);
           return Promise.resolve(
             new Response(
               JSON.stringify({
@@ -3313,9 +3314,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
                 result: {
                   tools: [
                     {
-                      name: request.params?._meta?.["veryfront/tool-names"] === "legacy"
-                        ? "list_uploads"
-                        : "veryfront__list_uploads",
+                      name: "veryfront__list_uploads",
                       description: "List uploads",
                       inputSchema: {
                         type: "object",
@@ -3327,9 +3326,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
                       },
                     },
                     {
-                      name: request.params?._meta?.["veryfront/tool-names"] === "legacy"
-                        ? "delete_upload"
-                        : "veryfront__delete_upload",
+                      name: "veryfront__delete_upload",
                       description: "Delete upload",
                       inputSchema: { type: "object", properties: {} },
                     },
@@ -3480,7 +3477,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
         if (result.response.status !== 200) throw new Error(await result.response.text());
         assertEquals(result.response.status, 200);
         assertEquals(
-          capturedAllowedRemoteTools,
+          capturedAllowedRemoteTools?.slice().sort(),
           denied
             ? []
             : ownedProjectDenial
@@ -3488,7 +3485,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
             : ["list_uploads", "veryfront__list_uploads"],
         );
         assertEquals(
-          capturedRemoteToolNames,
+          capturedRemoteToolNames.slice().sort(),
           denied
             ? []
             : ownedProjectDenial

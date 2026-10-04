@@ -1,3 +1,4 @@
+import { inheritTrustedPlatformSource } from "#veryfront/tool/platform-source-provenance.ts";
 import { createMcpToolPolicyGate } from "./mcp-tool-policy.ts";
 import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
@@ -125,4 +126,35 @@ it("live platform execution resolves undiscovered aliases without repeating know
   await source.executeTool("veryfront__update_file", {});
   assertEquals(calls, ["get_file", "get_file", "update_file"]);
   assertEquals(listings, 2);
+});
+
+it("does not restore aliases removed by an outer policy when adapted again", async () => {
+  const calls: string[] = [];
+  const adapted = createLivePlatformMcpSource({
+    id: "platform",
+    listTools: async () => [{
+      name: "veryfront__get_file",
+      description: "Read",
+      parameters: { type: "object" as const, properties: {} },
+    }],
+    executeTool: async (name) => {
+      calls.push(name);
+      return {};
+    },
+  });
+  const filtered = inheritTrustedPlatformSource(adapted, {
+    id: adapted.id,
+    listTools: async () =>
+      (await adapted.listTools()).filter(({ name }) => name === "veryfront__get_file"),
+    executeTool: (name: string, args: Record<string, unknown>) => {
+      if (name !== "veryfront__get_file") throw new Error("Denied");
+      return adapted.executeTool(name, args);
+    },
+  });
+  const runtime = createLivePlatformMcpSource(filtered);
+  assertEquals(runtime, filtered);
+  assertEquals((await runtime.listTools()).map(({ name }) => name), ["veryfront__get_file"]);
+  assertThrows(() => runtime.executeTool("get_file", {}));
+  await runtime.executeTool("veryfront__get_file", {});
+  assertEquals(calls, ["veryfront__get_file"]);
 });

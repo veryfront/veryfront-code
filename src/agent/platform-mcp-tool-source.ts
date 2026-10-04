@@ -1,7 +1,10 @@
 import { createPrivateMap } from "#veryfront/security/private-map.ts";
 import { createPrivateSet } from "#veryfront/security/private-set.ts";
 import type { RemoteToolSource, ToolDefinition, ToolExecutionContext } from "#veryfront/tool";
-import { markTrustedPlatformSource } from "#veryfront/tool/platform-source-provenance.ts";
+import {
+  hasAdaptedPlatformSource,
+  markAdaptedPlatformSource,
+} from "#veryfront/tool/platform-source-provenance.ts";
 import type { AgentMcpToolPolicy } from "./types.ts";
 
 /** Adapt an authenticated, access-filtered platform catalog. */
@@ -27,7 +30,7 @@ export function createPlatformMcpCatalogSource(
   return {
     definitions: catalog,
     aliases,
-    source: markTrustedPlatformSource({
+    source: markAdaptedPlatformSource({
       id: source.id,
       listTools: async () => [...catalog],
       executeTool: (name, args, context) =>
@@ -72,6 +75,7 @@ export function platformMcpLegacyName(name: string): string {
 
 /** Adapt a live platform catalog without retaining project or credential state. */
 export function createLivePlatformMcpSource(source: RemoteToolSource): RemoteToolSource {
+  if (hasAdaptedPlatformSource(source)) return source;
   // Keep only wire-name translations. The wrapped source still checks the
   // current project, credentials, access profile, and policy during execution.
   let wireNames = createPrivateMap<string, string>();
@@ -83,7 +87,7 @@ export function createLivePlatformMcpSource(source: RemoteToolSource): RemoteToo
     }
     return catalog.definitions;
   };
-  return markTrustedPlatformSource({
+  return markAdaptedPlatformSource({
     id: source.id,
     listTools,
     executeTool: async (name, args, context) => {
