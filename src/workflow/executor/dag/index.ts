@@ -2368,6 +2368,12 @@ export class DAGExecutor {
       };
     }
 
+    const scopeForAttempt = (attempt: number): ExecutionScope =>
+      attempt === 1 ? scope : {
+        ...scope,
+        executionPath: [...scope.executionPath, JSON.stringify(["retry", attempt])],
+      };
+
     switch (config.type) {
       case "step":
         return this.executeStepNode(
@@ -2382,15 +2388,22 @@ export class DAGExecutor {
           node,
           parentSignal: abortSignal,
           cancellationGracePeriod: this.config.cancellationGracePeriod,
-          execute: (attemptSignal) =>
-            this.executeParallelNode(node, config, context, nodeStates, scope, attemptSignal),
+          execute: (attemptSignal, attempt) =>
+            this.executeParallelNode(
+              node,
+              config,
+              context,
+              nodeStates,
+              scopeForAttempt(attempt),
+              attemptSignal,
+            ),
         });
       case "map":
         return executeCompositeNodeWithPolicy({
           node,
           parentSignal: abortSignal,
           cancellationGracePeriod: this.config.cancellationGracePeriod,
-          execute: (attemptSignal) =>
+          execute: (attemptSignal, attempt) =>
             executeMapNodeStrategy({
               node,
               config,
@@ -2401,7 +2414,13 @@ export class DAGExecutor {
                 // Map children ride the parent node-state map like parallel
                 // children, so the root-keyspace flag is inherited unchanged.
                 executeChildGraph: (nodes, run, options) =>
-                  this.executeChildGraph(nodes, run, scope, options, attemptSignal),
+                  this.executeChildGraph(
+                    nodes,
+                    run,
+                    scopeForAttempt(attempt),
+                    options,
+                    attemptSignal,
+                  ),
                 selectChildNodeStates: (nodes, states) =>
                   createCompositeNodeStateView(
                     nodes,
@@ -2427,7 +2446,7 @@ export class DAGExecutor {
           node,
           parentSignal: abortSignal,
           cancellationGracePeriod: this.config.cancellationGracePeriod,
-          execute: async (attemptSignal) => {
+          execute: async (attemptSignal, attempt) => {
             if (!hasSelectedBranch) {
               selectedBranch = await config.condition(context);
               attemptSignal.throwIfAborted();
@@ -2439,7 +2458,7 @@ export class DAGExecutor {
               selectedBranch,
               context,
               nodeStates,
-              scope,
+              scopeForAttempt(attempt),
               attemptSignal,
             );
           },
@@ -2452,8 +2471,15 @@ export class DAGExecutor {
           node,
           parentSignal: abortSignal,
           cancellationGracePeriod: this.config.cancellationGracePeriod,
-          execute: (attemptSignal) =>
-            this.executeSubWorkflowNode(node, config, context, nodeStates, scope, attemptSignal),
+          execute: (attemptSignal, attempt) =>
+            this.executeSubWorkflowNode(
+              node,
+              config,
+              context,
+              nodeStates,
+              scopeForAttempt(attempt),
+              attemptSignal,
+            ),
         });
         const parsedState = nodeStates[nodeId];
         if (result.state.status !== "failed" || !parsedState?._subWorkflowInputParsed) {
@@ -2475,7 +2501,7 @@ export class DAGExecutor {
           node,
           parentSignal: abortSignal,
           cancellationGracePeriod: this.config.cancellationGracePeriod,
-          execute: (attemptSignal) =>
+          execute: (attemptSignal, attempt) =>
             executeLoopNodeStrategy({
               node,
               config,
@@ -2491,7 +2517,7 @@ export class DAGExecutor {
                       ...scope,
                       rootKeyspace: false,
                       executionPath: [
-                        ...scope.executionPath,
+                        ...scopeForAttempt(attempt).executionPath,
                         JSON.stringify(["iteration", run.id]),
                       ],
                     },

@@ -27,6 +27,7 @@ import {
   runHostedChildLifecycle,
 } from "#veryfront/agent/hosted/child-lifecycle.ts";
 import { ORCHESTRATION_ERROR } from "#veryfront/errors";
+import { sanitizeBoundedDiagnosticText } from "#veryfront/errors/diagnostic-policy.ts";
 
 function childResult(value: unknown): LocalChildResult {
   if (
@@ -231,7 +232,9 @@ export async function runInheritedLocalAgent(
       resolveErrorState: (error) => ({
         status: parentSignal?.aborted ? "cancelled" : "failed",
         terminalErrorCode: "WORKFLOW_AGENT_STEP_FAILED",
-        terminalErrorMessage: error instanceof Error ? error.message : "Local agent failed",
+        terminalErrorMessage: sanitizeBoundedDiagnosticText(
+          error instanceof Error ? error.message : "Local agent failed",
+        ),
       }),
     });
     return outcome.status === "completed" ? outcome.result : {

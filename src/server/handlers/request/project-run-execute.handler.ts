@@ -4038,8 +4038,10 @@ function executeProjectRun(
       acknowledgeStop,
     );
   }
-  const hostPrivateApiUrl = requireHostPrivateApiHttps(resolveHostOwnedSourceApiBaseUrl());
-  const hostPrivateApiFetch = createVeryfrontApiOriginBoundOutboundFetch(hostPrivateApiUrl);
+  const hostApiUrl = resolveHostOwnedSourceApiBaseUrl();
+  const eventToken = readIngressCredential(req, INGRESS_RUN_EVENT_TOKEN_HEADER) ?? undefined;
+  const authToken = getRuntimeApiToken(req, ctx);
+  let runAgentNode: ReturnType<typeof createWorkflowAgentNodeRunner> | undefined;
   return executeWorkflowRun(
     request,
     ctx,
@@ -4048,14 +4050,20 @@ function executeProjectRun(
     acknowledgeStop,
     acknowledgePause,
     releaseStop,
-    createWorkflowAgentNodeRunner({
-      runId: request.runId,
-      projectId: request.projectId,
-      apiUrl: hostPrivateApiUrl,
-      fetch: hostPrivateApiFetch,
-      eventToken: readIngressCredential(req, INGRESS_RUN_EVENT_TOKEN_HEADER) ?? undefined,
-      authToken: getRuntimeApiToken(req, ctx),
-    }),
+    async (invocation) => {
+      if (!runAgentNode) {
+        const apiUrl = requireHostPrivateApiHttps(hostApiUrl);
+        runAgentNode = createWorkflowAgentNodeRunner({
+          runId: request.runId,
+          projectId: request.projectId,
+          apiUrl,
+          fetch: createVeryfrontApiOriginBoundOutboundFetch(apiUrl),
+          eventToken,
+          authToken,
+        });
+      }
+      return await runAgentNode(invocation);
+    },
   );
 }
 
