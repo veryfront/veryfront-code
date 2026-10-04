@@ -773,30 +773,68 @@ describe("workflow capability transport boundary", () => {
     });
   }
 
-  it("refuses plaintext workflow capability transport before local execution", async () => {
-    let created = false;
-    const handler = new ProjectRunExecuteHandler(createDeps({
-      createWorkflowClient: () => {
-        created = true;
-        throw new Error("Must not execute");
-      },
-    }));
-    const signed = await signedRequest("/api/control-plane/runs/run_https_boundary/execute", {
-      runId: "run_https_boundary",
-      kind: "workflow",
-      target: "workflow:publish",
-      projectId: "proj-1",
+  for (const hasAgentNode of [false, true]) {
+    it(`settles workflow lifecycle with plaintext host transport and agent node ${hasAgentNode}`, async () => {
+      let localExecutions = 0;
+      let created = false;
+      const runId = `run_https_boundary_${hasAgentNode}`;
+      const registry = new RunStopRegistry();
+      const handler = new ProjectRunExecuteHandler(
+        createDeps({
+          createWorkflowClient: (config) => {
+            created = true;
+            return {
+              register: () => {},
+              start: async () => {
+                if (hasAgentNode) {
+                  assertExists(config?.executor?.stepExecutor?.runAgentNode);
+                  await config.executor.stepExecutor.runAgentNode({
+                    runId,
+                    nodeId: "research",
+                    agentId: "coordinator",
+                    input: "brief",
+                    execute: async () => {
+                      localExecutions++;
+                      return { success: true, output: {}, executionTime: 0 };
+                    },
+                  });
+                }
+                return { runId };
+              },
+              getRun: async () => ({ status: "completed", output: "done" }),
+              waitForExecutionStopped: async () => true,
+              cancel: async () => {},
+              destroy: async () => {},
+            };
+          },
+        }),
+        undefined,
+        registry,
+      );
+      const signed = await signedRequest(`/api/control-plane/runs/${runId}/execute`, {
+        runId,
+        kind: "workflow",
+        target: "workflow:publish",
+        projectId: "proj-1",
+      });
+      await withEnv(
+        { VERYFRONT_API_BASE_URL: "http://api.example.test", VERYFRONT_API_URL: "" },
+        () =>
+          withMockFetch(() => {
+            throw new Error("Plaintext transport must never send credentials");
+          }, async () => {
+            const result = await handler.handle(signed.request, createCtx(signed.publicKeyPem));
+            assertExists(result.response);
+            const response = await result.response.json();
+            assertEquals(registry.requestStop(runId), { accepted: true, stopped: true });
+            assertEquals(created, true, "workflow lifecycle must own transport failure cleanup");
+            assertEquals(response.success, !hasAgentNode);
+            if (hasAgentNode) assertStringIncludes(response.error, "HTTPS");
+            assertEquals(localExecutions, 0, "reject plaintext before executing an agent");
+          }),
+      );
     });
-    await withEnv(
-      { VERYFRONT_API_BASE_URL: "http://api.example.test", VERYFRONT_API_URL: "" },
-      async () => {
-        const result = await handler.handle(signed.request, createCtx(signed.publicKeyPem));
-        assertExists(result.response);
-        assertEquals((await result.response.json()).success, false);
-        assertEquals(created, false, "reject plaintext before creating workflow execution");
-      },
-    );
-  });
+  }
 });
 
 describe("server/handlers/request/project-run-execute.handler", () => {

@@ -241,6 +241,201 @@ describe("workflow agent child protocol", () => {
     assertEquals(records.size, 4);
   });
 
+  it("distinguishes a deliberate composite retry from terminal child recovery replay", async () => {
+    const model = scriptedModel([
+      () => {
+        throw new Error("Transient provider failure");
+      },
+      { text: "recovered" },
+    ], { only: "generate" });
+    const actualAgent = agent({
+      id: "coordinator",
+      model: "test/workflow",
+      system: "Execute this step",
+      skills: false,
+      resolveModelTransport: () => ({ model }),
+    });
+    const child = (input: string) => step("research", { agent: actualAgent, input });
+    const composite = (id: string, input: string): WorkflowNode => ({
+      id,
+      config: { type: "subWorkflow", workflow: { id: "nested", steps: [child(input)] } },
+    });
+    const nodes: WorkflowNode[] = [{
+      ...composite("retrying", "input"),
+      config: {
+        type: "subWorkflow",
+        workflow: { id: "nested", steps: [child("input")] },
+        retry: { maxAttempts: 2, initialDelay: 1, maxDelay: 1, retryIf: () => true },
+      },
+    }];
+    const records = new Map<
+      string,
+      { id: string; publicId: string; input: unknown; output: unknown; status: string }
+    >();
+    const starts = new Set<string>();
+    const cursors = new Map<string, number>();
+    const send: typeof fetch = (url, init) => {
+      const path = new URL(String(url)).pathname;
+      const body = JSON.parse(String(init?.body));
+      if (path === `/runs/${parentId}/events`) {
+        starts.add(body.events[0].stepId);
+        return Promise.resolve(json({}));
+      }
+      if (path === "/runs") {
+        assertEquals(starts.has(body.node_id), true);
+        const key = new Headers(init?.headers).get("Idempotency-Key")!;
+        let record = records.get(key);
+        if (!record) {
+          const suffix = String(records.size + 1).padStart(12, "0");
+          record = {
+            id: `aaaaaaaa-aaaa-4aaa-8aaa-${suffix}`,
+            publicId: `run_node_${suffix}`,
+            input: body.input,
+            output: null,
+            status: "running",
+          };
+          records.set(key, record);
+        }
+        return Promise.resolve(admission(record.status, record.output, record.id, record.publicId));
+      }
+      const id = path.split("/")[2]!;
+      if (path.endsWith("/events")) {
+        const cursor = (cursors.get(id) ?? 0) + body.events.length;
+        cursors.set(id, cursor);
+        return Promise.resolve(
+          json({
+            run_id: id,
+            latest_event_id: cursor,
+            latest_external_event_sequence: cursor,
+            appended_count: body.events.length,
+          }),
+        );
+      }
+      const record = [...records.values()].find((value) => value.id === id)!;
+      record.status = body.status;
+      record.output = body.output;
+      return Promise.resolve(json({ id, status: body.status }));
+    };
+    const freshRun = (): WorkflowRun => ({
+      id: "run_parent",
+      workflowId: "workflow",
+      status: "running",
+      input: {},
+      context: { input: {} },
+      nodeStates: {},
+      currentNodes: [],
+      checkpoints: [],
+      pendingApprovals: [],
+      createdAt: new Date(),
+      sourceIntegrationPolicy: normalizeSourceIntegrationPolicy(undefined),
+    });
+    const run = () =>
+      new DAGExecutor({ stepExecutor: new StepExecutor({ runAgentNode: runner(send) }) }).execute(
+        nodes,
+        freshRun(),
+      );
+    assertEquals((await run()).completed, true);
+    assertEquals(model.callCount, 2);
+    assertEquals(records.size, 2);
+    assertEquals([...records.values()].map((record) => record.status), ["failed", "completed"]);
+    const completedOutput = [...records.values()][1]!.output;
+    assertEquals(
+      completedOutput && typeof completedOutput === "object" && "text" in completedOutput
+        ? completedOutput.text
+        : undefined,
+      "recovered",
+    );
+    const admittedKeys = [...records.keys()];
+    assertEquals((await run()).completed, true);
+    assertEquals(
+      model.callCount,
+      2,
+      "recovery must replay both terminal attempts without execution",
+    );
+    assertEquals([...records.keys()], admittedKeys);
+  });
+
+  it("redacts and bounds provider errors before durable failure persistence", async () => {
+    let persisted: { code: string; message: string } | undefined;
+    const send: typeof fetch = (url, init) => {
+      const path = new URL(String(url)).pathname;
+      if (path === `/runs/${parentId}/events`) return Promise.resolve(json({}));
+      if (path === "/runs") return Promise.resolve(admission());
+      assertEquals(path, `/runs/${childId}/finalize`);
+      const body = JSON.parse(String(init?.body));
+      assertEquals(body.status, "failed");
+      persisted = body.error;
+      return Promise.resolve(json({ id: childId, status: "failed" }));
+    };
+    const result = await runner(send)({
+      ...invocation,
+      execute: () =>
+        Promise.reject(
+          new Error(
+            `Provider request https://placeholder-user:placeholder-password@example.test failed ${
+              "x".repeat(6000)
+            }`,
+          ),
+        ),
+    });
+    assertEquals(result.success, false);
+    assertEquals(persisted?.code, "WORKFLOW_AGENT_STEP_FAILED");
+    assertEquals(typeof persisted?.message, "string");
+    assertEquals(persisted!.message.includes("placeholder-password"), false);
+    assertEquals(persisted!.message.includes("[REDACTED]"), true);
+    assertEquals(persisted!.message.length <= 2048, true);
+    assertEquals(result.error, persisted!.message);
+  });
+
+  for (const staleAuthority of [false, true]) {
+    it(`settles admitted local work before cancellation and preserves stale authority refusal (${staleAuthority})`, async () => {
+      const controller = new AbortController();
+      const entered = Promise.withResolvers<void>();
+      const release = Promise.withResolvers<void>();
+      let stopped = false;
+      let status = "running";
+      let terminals = 0;
+      const send: typeof fetch = (url, init) => {
+        const path = new URL(String(url)).pathname;
+        if (path === `/runs/${parentId}/events`) return Promise.resolve(json({}));
+        if (path === "/runs") return Promise.resolve(admission());
+        assertEquals(path, `/runs/${childId}/cancel`);
+        assertEquals(stopped, true, "terminal write must follow actual local settlement");
+        const headers = new Headers(init?.headers);
+        assertEquals(headers.get("Authorization"), "Bearer child-invocation");
+        assertEquals(headers.get("X-Veryfront-Run-Terminal-Token"), terminalToken);
+        terminals++;
+        if (staleAuthority) return Promise.resolve(json({ code: "AUTHORIZATION_DENIED" }, 403));
+        status = "cancelled";
+        return Promise.resolve(json({ id: childId, status }));
+      };
+      const execution = runner(send)({
+        ...invocation,
+        signal: controller.signal,
+        execute: async () => {
+          entered.resolve();
+          await release.promise;
+          stopped = true;
+          return { success: true, output: "late output", executionTime: 0 };
+        },
+      });
+      await entered.promise;
+      controller.abort(new Error("Workflow cancelled"));
+      await Promise.resolve();
+      await Promise.resolve();
+      assertEquals([status, terminals], ["running", 0]);
+      release.resolve();
+      if (staleAuthority) {
+        await assertRejects(() => execution, Error, "403");
+        assertEquals(status, "running");
+      } else {
+        assertEquals((await execution).success, false);
+        assertEquals(status, "cancelled");
+      }
+      assertEquals(terminals, 1);
+    });
+  }
+
   it("keeps root IDs readable and reserves nested IDs without collisions or unstable replay", async () => {
     const identities: string[] = [];
     const keys: string[] = [];
