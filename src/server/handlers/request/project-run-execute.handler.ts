@@ -207,6 +207,8 @@ function getOwnDataProperty(value: Record<string, unknown>, key: string): unknow
 
 export interface ProjectRunExecuteRequest {
   runId: string;
+  /** Persisted Run UUID authenticated by the control-plane request signature. */
+  canonicalRunId?: string;
   kind: "task" | "workflow";
   target: string;
   projectId: string;
@@ -557,6 +559,14 @@ function parseExecuteRequest(value: unknown, pathRunId: string): ProjectRunExecu
   if (!isRecord(value)) throw INPUT_VALIDATION_FAILED.create({ detail: "Expected object" });
 
   const runId = value.runId;
+  const canonicalRunId = value.canonicalRunId;
+  if (
+    canonicalRunId !== undefined &&
+    (typeof canonicalRunId !== "string" ||
+      !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(canonicalRunId))
+  ) {
+    throw INPUT_VALIDATION_FAILED.create({ detail: "Invalid canonicalRunId" });
+  }
   const kind = value.kind;
   const target = value.target;
   const projectId = value.projectId;
@@ -619,6 +629,7 @@ function parseExecuteRequest(value: unknown, pathRunId: string): ProjectRunExecu
 
   return {
     runId,
+    ...(canonicalRunId === undefined ? {} : { canonicalRunId }),
     kind,
     target,
     projectId,
@@ -2704,6 +2715,16 @@ function createDurableEvalAgentRunBody(
   };
 }
 
+function resolveCanonicalEvalParentRunId(request: ProjectRunExecuteRequest): string {
+  const id = request.canonicalRunId ?? request.runId;
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)) {
+    throw INPUT_VALIDATION_FAILED.create({
+      detail: "Managed eval requires the authenticated canonical parent run UUID",
+    });
+  }
+  return id;
+}
+
 function createDurableEvalAgentFetch(
   input: DurableEvalAgentFetchInput,
 ): NonNullable<AgentServiceEvalAdapterConfig["fetch"]> {
@@ -3259,7 +3280,7 @@ function createEvalAdapterConfig(input: {
           apiBaseUrl: getEnvironmentConfig().apiBaseUrl,
           authToken,
           projectId: input.request.projectId,
-          parentRunId: input.request.runId,
+          parentRunId: resolveCanonicalEvalParentRunId(input.request),
           agentId,
           runtimeTargetKind: input.request.runtimeTargetKind,
           runtimeTargetEnvironmentId: input.request.runtimeTargetEnvironmentId,
