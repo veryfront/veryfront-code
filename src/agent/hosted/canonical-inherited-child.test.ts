@@ -1,4 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
+import { FakeTime } from "#std/testing/time";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { it } from "#veryfront/testing/bdd.ts";
 import {
@@ -97,6 +98,7 @@ for (
 ) {
   const hangs = mode === "hung";
   it(`aborts local work when renewal ${mode}`, async () => {
+    using time = new FakeTime();
     const request = {
       projectId: parentId,
       authToken: "parent-invocation",
@@ -153,7 +155,7 @@ for (
     const cancelTimer = mode === "parent-during"
       ? setTimeout(() => parentController.abort(parentCancellation), 1)
       : undefined;
-    await assertRejects(
+    const rejected = assertRejects(
       () =>
         withHostedInheritedLease(
           run,
@@ -173,6 +175,8 @@ for (
         ? "lease expired"
         : "lease renewal failed",
     );
+    await time.tickAsync(mode === "fenced" ? 10 : 20);
+    await rejected;
     clearTimeout(cancelTimer);
     assertEquals(aborted, mode !== "expired" && mode !== "parent-before");
     if (mode === "retry-expired") assertEquals(calls > 1, true);
