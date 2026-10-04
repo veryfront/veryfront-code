@@ -13,16 +13,15 @@ Deno.test("NDJSON establishes machine output before full CLI startup diagnostics
   try {
     // Source runs do not extract a compiled VFS binary. Emit the same logger
     // diagnostic at the real initialization boundary to exercise entry ordering.
-    await Deno.writeTextFile(
-      copy,
-      source.replace(
-        startup,
-        `
+    const patched = source.replace(
+      startup,
+      `
 const { serverLogger } = await import("#veryfront/utils/logger/logger.ts");
 serverLogger.info("[esbuild] Extracted binary from VFS");
 ${startup}`,
-      ),
     );
+    assertEquals(patched !== source, true, "CLI startup diagnostic boundary must exist.");
+    await Deno.writeTextFile(copy, patched);
     const result = await new Deno.Command(Deno.execPath(), {
       args: [
         "run",
@@ -48,6 +47,17 @@ ${startup}`,
     assertEquals(envelope.success, false);
     assertEquals(envelope.command, "project runs");
     assertEquals(envelope.error.code, "USAGE_ERROR");
+    const otherCommand = await new Deno.Command(Deno.execPath(), {
+      args: ["run", "--frozen", "--allow-all", copy, "--version", "--ndjson"],
+      cwd: fileURLToPath(root),
+      env: { LOG_LEVEL: "INFO", VERYFRONT_NO_UPDATE_CHECK: "1", VF_DISABLE_LRU_INTERVAL: "1" },
+      stdout: "piped",
+      stderr: "piped",
+    }).output();
+    assertEquals(otherCommand.code, 0);
+    const human = new TextDecoder().decode(otherCommand.stdout);
+    assertEquals(human.includes("[esbuild] Extracted binary from VFS"), true);
+    assertEquals(human.includes("Veryfront CLI v"), true);
   } finally {
     await Deno.remove(copy);
   }

@@ -4,7 +4,13 @@ import { fileURLToPath } from "node:url";
 Deno.test("canonical CLI entry preserves machine and human usage errors", async () => {
   const root = new URL("../../../../", import.meta.url);
   const coverage = Deno.env.get("VF_RUNS_CLI_COVERAGE_DIR");
-  for (const flags of [["--ndjson"], []]) {
+  for (
+    const { command, flags } of [
+      { command: "project", flags: ["--ndjson"] },
+      { command: "projects", flags: ["--ndjson"] },
+      { command: "project", flags: [] },
+    ]
+  ) {
     const result = await new Deno.Command(Deno.execPath(), {
       args: [
         "run",
@@ -12,7 +18,7 @@ Deno.test("canonical CLI entry preserves machine and human usage errors", async 
         "--frozen",
         "--allow-all",
         fileURLToPath(new URL("cli/main.ts", root)),
-        "project",
+        command,
         "runs",
         "list",
         ...flags,
