@@ -1,5 +1,6 @@
+import { computeHash } from "#veryfront/utils/hash-utils.ts";
 import { defineSchema } from "#veryfront/schemas/index.ts";
-import { NETWORK_ERROR } from "#veryfront/errors";
+import { INVALID_ARGUMENT, NETWORK_ERROR } from "#veryfront/errors";
 import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
 import type { ToolExecutionDataEvent } from "#veryfront/tool/types.ts";
 import { getHumanInputFieldSchema, humanInputRequestBaseFields } from "./human-input.ts";
@@ -38,6 +39,31 @@ export const getCreateInputRequestRequestSchema = defineSchema((v) =>
   })
 );
 
+interface UnavailableInputResponseActor {
+  type: "unavailable";
+  reason: "not_recorded" | "identity_removed";
+  legacy_role?:
+    | "human"
+    | "agent"
+    | "integration"
+    | "system"
+    | "user"
+    | "api_key"
+    | "service_account";
+  legacy_id?: string;
+}
+
+const getUnavailableInputResponseActorSchema = defineSchema((v) =>
+  v.object({
+    type: v.literal("unavailable"),
+    reason: v.enum(["not_recorded", "identity_removed"] as const),
+    legacy_role: v.enum(
+      ["human", "agent", "integration", "system", "user", "api_key", "service_account"] as const,
+    ).optional(),
+    legacy_id: v.string().min(1).max(255).optional(),
+  }).strict()
+);
+
 // Hand-written transform output type. The contract DSL erases the parameter
 // type through `.transform()` (the adapter casts the callback parameter to
 // `never`), so we need an explicit annotation to keep the downstream type
@@ -48,8 +74,10 @@ export interface InputResponseRestOutput {
   conversationId: string;
   runId: string;
   actorType: string;
-  actorId: string;
+  actorId: string | null;
+  unavailableActor?: UnavailableInputResponseActor;
   values: Record<string, string | number | boolean | null>;
+  redactedFields?: string[];
   createdAt: string;
 }
 
@@ -62,11 +90,19 @@ export const getInputResponseRestSchema = defineSchema((v) =>
       conversation_id: v.string().uuid(),
       run_id: v.string().min(1),
       actor_type: v.string(),
-      actor_id: v.string(),
+      actor_id: v.string().nullable(),
+      unavailable_actor: getUnavailableInputResponseActorSchema().optional(),
       values: getInputResponseValuesSchema(),
+      redacted_fields: v.array(v.string()).optional(),
       created_at: v.string(),
     })
     .passthrough()
+    .refine((value) => {
+      const response = value as Record<string, unknown>;
+      return response.actor_type === "unavailable"
+        ? response.actor_id === null && response.unavailable_actor !== undefined
+        : typeof response.actor_id === "string" && response.unavailable_actor === undefined;
+    }, "Recorded actors require an identity; unavailable actors require explicit provenance")
     .transform((value): InputResponseRestOutput => {
       const v2 = value as Record<string, unknown>;
       return {
@@ -75,8 +111,12 @@ export const getInputResponseRestSchema = defineSchema((v) =>
         conversationId: v2.conversation_id as string,
         runId: v2.run_id as string,
         actorType: v2.actor_type as string,
-        actorId: v2.actor_id as string,
+        actorId: v2.actor_id as string | null,
+        ...(v2.unavailable_actor
+          ? { unavailableActor: v2.unavailable_actor as UnavailableInputResponseActor }
+          : {}),
         values: v2.values as Record<string, string | number | boolean | null>,
+        redactedFields: v2.redacted_fields as string[] | undefined,
         createdAt: v2.created_at as string,
       };
     })
@@ -87,7 +127,7 @@ export interface InputRequestRestOutput {
   id: string;
   conversationId: string;
   runId: string;
-  toolCallId: string;
+  toolCallId?: string;
   kind: "form";
   status: "open" | "submitted" | "cancelled" | "expired";
   requestedResponderType: "human" | "agent" | "system";
@@ -104,6 +144,61 @@ export interface InputRequestRestOutput {
   latestResponse: InputResponseRestOutput | null;
 }
 
+// Canonical reads accept wider field labels/descriptions than local form creation.
+// Keep this projection separate so reading a valid request never relaxes creation.
+const getInputRequestReadFieldSchema = defineSchema((v) => {
+  const base = {
+    name: v.string().min(1).max(128),
+    label: v.string().max(1000),
+    description: v.string().max(4000).optional(),
+    required: v.boolean().optional().default(false),
+    secret: v.boolean().optional().default(false),
+  };
+  const option = v.object({
+    value: v.string().min(1),
+    label: v.string().min(1),
+    description: v.string().optional(),
+    recommended: v.boolean().optional(),
+  });
+  return v.discriminatedUnion("type", [
+    v.object({
+      ...base,
+      type: v.enum(["text", "email", "url", "password", "number"] as const),
+      defaultValue: v.string().optional(),
+    }),
+    v.object({
+      ...base,
+      type: v.literal("textarea"),
+      defaultValue: v.string().optional(),
+      rows: v.number().int().positive().optional().default(3),
+    }),
+    v.object({
+      ...base,
+      type: v.literal("select"),
+      options: v.array(option).min(1).max(100),
+      defaultValue: v.string().optional(),
+    }),
+    v.object({
+      ...base,
+      type: v.literal("radio"),
+      options: v.array(option).min(1).max(100),
+      defaultValue: v.string().optional(),
+    }),
+    v.object({
+      ...base,
+      type: v.literal("checkbox"),
+      defaultValue: v.boolean().optional().default(false),
+    }),
+    v.object({
+      ...base,
+      type: v.literal("confirm"),
+      defaultValue: v.boolean().optional(),
+      confirmLabel: v.string().optional().default("Yes"),
+      denyLabel: v.string().optional().default("No"),
+    }),
+  ]);
+});
+
 /** Zod schema for get input request rest. */
 export const getInputRequestRestSchema = defineSchema((v) =>
   v
@@ -111,13 +206,13 @@ export const getInputRequestRestSchema = defineSchema((v) =>
       id: v.string().uuid(),
       conversation_id: v.string().uuid(),
       run_id: v.string().min(1),
-      tool_call_id: v.string().min(1),
+      tool_call_id: v.string().min(1).optional(),
       kind: v.literal("form"),
       status: v.enum(["open", "submitted", "cancelled", "expired"] as const),
       requested_responder_type: v.enum(["human", "agent", "system"] as const),
       title: v.string(),
       description: v.string().nullable(),
-      fields: v.array(getHumanInputFieldSchema()),
+      fields: v.array(getInputRequestReadFieldSchema()),
       recommendations: v.record(v.string(), v.unknown()).nullable().optional(),
       metadata: v.record(v.string(), v.unknown()).nullable().optional(),
       created_at: v.string(),
@@ -134,7 +229,7 @@ export const getInputRequestRestSchema = defineSchema((v) =>
         id: v2.id as string,
         conversationId: v2.conversation_id as string,
         runId: v2.run_id as string,
-        toolCallId: v2.tool_call_id as string,
+        ...(typeof v2.tool_call_id === "string" ? { toolCallId: v2.tool_call_id } : {}),
         kind: v2.kind as "form",
         status: v2.status as InputRequestRestOutput["status"],
         requestedResponderType: v2
@@ -165,13 +260,13 @@ export const getInputRequestOutputSchema = defineSchema((v) =>
     id: v.string().uuid(),
     conversationId: v.string().uuid(),
     runId: v.string().min(1),
-    toolCallId: v.string().min(1),
+    toolCallId: v.string().min(1).optional(),
     kind: v.literal("form"),
     status: v.enum(["open", "submitted", "cancelled", "expired"] as const),
     requestedResponderType: v.enum(["human", "agent", "system"] as const),
     title: v.string(),
     description: v.string().nullable(),
-    fields: v.array(getHumanInputFieldSchema()),
+    fields: v.array(getInputRequestReadFieldSchema()),
     recommendations: v.record(v.string(), v.unknown()).nullable(),
     metadata: v.record(v.string(), v.unknown()).nullable(),
     createdAt: v.string(),
@@ -206,36 +301,97 @@ export type FormInputToolInput = InferSchema<ReturnType<typeof getFormInputToolI
 /** Output from input request. */
 export type InputRequestOutput = InputRequestRestOutput;
 
+function toCanonicalInputRequestField(source: Record<string, unknown>) {
+  const unsupportedOptions = [
+    "placeholder",
+    "pattern",
+    "minLength",
+    "maxLength",
+    "min",
+    "max",
+    "rows",
+    "confirmLabel",
+    "denyLabel",
+  ];
+  for (const property of unsupportedOptions) {
+    const value = source[property];
+    if (value === undefined) continue;
+    // These values are injected by the form parser and match the default controls.
+    if (source.type === "textarea" && property === "rows" && value === 3) continue;
+    if (source.type === "confirm" && property === "confirmLabel" && value === "Yes") continue;
+    if (source.type === "confirm" && property === "denyLabel" && value === "No") continue;
+    throw INVALID_ARGUMENT.create({
+      detail: `Canonical input field "${source.name}" does not support "${property}"`,
+    });
+  }
+  const type = source.secret === true ? "password" : source.type;
+  let defaultValue = source.defaultValue;
+  if (type === "number" && typeof defaultValue === "string") {
+    if (defaultValue.trim() === "" || !Number.isFinite(Number(defaultValue))) {
+      throw INVALID_ARGUMENT.create({
+        detail:
+          `Canonical input field "${source.name}" requires a finite, non-empty numeric defaultValue`,
+      });
+    }
+    defaultValue = Number(defaultValue);
+  }
+  return Object.fromEntries(
+    Object.entries({
+      name: source.name,
+      label: source.label,
+      description: source.description,
+      required: source.required,
+      type,
+      ...(type !== "password" ? { default: defaultValue } : {}),
+      ...(source.options ? { options: source.options } : {}),
+    }).filter(([, value]) => value !== undefined),
+  );
+}
+
 /** Request payload for create input. */
 export async function createInputRequest(input: {
   authToken: string;
   apiUrl: string;
   conversationId: string;
   runId: string;
+  canonicalRunId?: string;
   toolCallId: string;
   form: FormInputToolInput;
   expiresAt: string;
 }): Promise<InputRequestOutput> {
-  const requestBody = getCreateInputRequestRequestSchema().parse({
-    run_id: input.runId,
-    tool_call_id: input.toolCallId,
-    kind: "form",
-    requested_responder_type: "human",
-    title: input.form.title,
-    ...(input.form.description ? { description: input.form.description } : {}),
-    fields: input.form.fields,
-    expires_at: input.expiresAt,
-    ...(input.form.submitLabel ? { metadata: { submitLabel: input.form.submitLabel } } : {}),
-  });
+  const canonicalRunId = input.canonicalRunId ?? input.runId;
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(canonicalRunId)) {
+    throw NETWORK_ERROR.create({ detail: "Canonical run identity is required for input requests" });
+  }
+  const { run_id: _runId, kind: _kind, ...requestBody } = getCreateInputRequestRequestSchema()
+    .parse({
+      run_id: input.runId,
+      tool_call_id: input.toolCallId,
+      kind: "form",
+      requested_responder_type: "human",
+      title: input.form.title,
+      ...(input.form.description ? { description: input.form.description } : {}),
+      fields: input.form.fields,
+      expires_at: input.expiresAt,
+      ...(input.form.submitLabel ? { metadata: { submitLabel: input.form.submitLabel } } : {}),
+    });
   const response = await fetch(
-    `${input.apiUrl}/conversations/${input.conversationId}/input-requests`,
+    `${input.apiUrl}/runs/${canonicalRunId}/input-requests`,
     {
       method: "POST",
       headers: {
         Authorization: `Bearer ${input.authToken}`,
         "Content-Type": "application/json",
+        "Idempotency-Key": `runtime-input:${await computeHash(
+          `${canonicalRunId}:${input.toolCallId}`,
+        )}`,
       },
-      body: JSON.stringify(requestBody),
+      body: JSON.stringify({
+        ...requestBody,
+        fields: requestBody.fields.map((field) =>
+          toCanonicalInputRequestField(field as Record<string, unknown>)
+        ),
+      }),
       signal: AbortSignal.timeout(15_000),
     },
   );
@@ -247,7 +403,7 @@ export async function createInputRequest(input: {
     });
   }
 
-  return getCreateInputRequestResponseSchema().parse(await response.json()) as InputRequestOutput;
+  return parseCanonicalInputRequest(await response.json(), input.conversationId);
 }
 
 /** Request payload for get input. */
@@ -258,7 +414,7 @@ export async function getInputRequest(input: {
   inputRequestId: string;
 }): Promise<InputRequestOutput> {
   const response = await fetch(
-    `${input.apiUrl}/conversations/${input.conversationId}/input-requests/${input.inputRequestId}`,
+    `${input.apiUrl}/input-requests/${input.inputRequestId}`,
     {
       method: "GET",
       headers: {
@@ -275,7 +431,7 @@ export async function getInputRequest(input: {
     });
   }
 
-  return getGetInputRequestResponseSchema().parse(await response.json()) as InputRequestOutput;
+  return parseCanonicalInputRequest(await response.json(), input.conversationId);
 }
 
 /** Event emitted for build input request lifecycle data. */
@@ -295,4 +451,49 @@ export function buildInputRequestLifecycleDataEvent(input: {
       inputRequest: input.inputRequest,
     },
   });
+}
+
+function parseCanonicalInputRequest(value: unknown, conversationId: string): InputRequestOutput {
+  const row = value as Record<string, unknown>;
+  const response = row.response as Record<string, unknown> | null;
+  const actor = response?.actor as Record<string, unknown> | undefined;
+  return getInputRequestRestSchema().parse({
+    ...row,
+    id: row.input_request_id,
+    conversation_id: row.conversation_id ?? conversationId,
+    kind: "form",
+    description: row.description ?? null,
+    expires_at: row.expires_at ?? null,
+    fields: Array.isArray(row.fields)
+      ? row.fields.map((field) => {
+        const definition = field as Record<string, unknown>;
+        return {
+          ...definition,
+          label: definition.label ?? definition.name,
+          ...(definition.default !== undefined
+            ? {
+              defaultValue: definition.type === "number"
+                ? String(definition.default)
+                : definition.default,
+            }
+            : {}),
+        };
+      })
+      : row.fields,
+    submitted_at: row.status === "submitted" ? row.resolved_at : null,
+    cancelled_at: row.status === "cancelled" ? row.resolved_at : null,
+    expired_at: row.status === "expired" ? row.resolved_at : null,
+    latest_response: response
+      ? {
+        ...response,
+        id: response.response_id,
+        input_request_id: row.input_request_id,
+        conversation_id: row.conversation_id ?? conversationId,
+        run_id: row.run_id,
+        actor_type: actor?.type,
+        actor_id: actor?.type === "unavailable" ? null : actor?.id,
+        ...(actor?.type === "unavailable" ? { unavailable_actor: actor } : {}),
+      }
+      : null,
+  }) as InputRequestOutput;
 }

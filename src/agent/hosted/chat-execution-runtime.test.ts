@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertObjectMatch, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { FakeTime } from "#std/testing/time";
 import type { ChatUiMessage, ChatUiMessageChunk, MessageMetadata } from "#veryfront/chat/types.ts";
@@ -36,6 +36,7 @@ import {
 import { streamText } from "../../runtime/runtime-bridge.ts";
 import { createStreamModel } from "../../runtime/runtime-bridge.test-helpers.ts";
 import { DurableRunEventPersistenceError } from "./durable-run-event-sink.ts";
+import { createConversationHostedTerminalAdapter } from "../conversation/hosted-terminal.ts";
 
 function createRootStreamWatchdog(input?: {
   disposed?: () => void;
@@ -107,7 +108,7 @@ function createLifecycleAdapter(input?: {
   const terminalStates = input?.terminalStates ?? [];
   return {
     durableRootRun: {
-      runId: "root-run-1",
+      runId: "10000000-0000-4000-8000-000000000006",
       messageId: input && "messageId" in input ? input.messageId : "stream-message-1",
     },
     durableRunMirror: input?.durableRunMirror ?? null,
@@ -616,6 +617,52 @@ describe("agent/hosted-chat-execution-runtime", () => {
     );
   });
 
+  it("rejects a durable root run without terminal authority before execution", async () => {
+    let streamCalls = 0;
+    const durableRunMirror = createDurableRunMirror({ chunks: [], flushes: [] });
+
+    await assertRejects(
+      () =>
+        createBootstrappedHostedChatExecutionRuntime({
+          authToken: "token",
+          apiUrl: "https://api.example.test",
+          agent: {
+            stream: async () => {
+              streamCalls += 1;
+              throw new Error("must not execute");
+            },
+          },
+          agentId: "agent-1",
+          modelId: "openai/gpt-5.4",
+          cleanup: async () => {},
+          messages: [],
+          finalMessages: [],
+          conversationId: "conversation-1",
+          projectId: "project-1",
+          userId: "user-1",
+          rootRunContext: {
+            durableRootRun: {
+              runId: "10000000-0000-4000-8000-000000000016",
+              conversationId: "conversation-1",
+              messageId: "stream-message-1",
+              latestEventId: 0,
+              latestExternalEventSequence: 0,
+            },
+            durableRunMirror,
+            privateDurableRunMirror: durableRunMirror,
+          },
+          abortSignal: new AbortController().signal,
+          tracer: createTracer().tracer,
+          resolveProvider: () => "openai",
+          createRootStreamWatchdog,
+        }),
+      Error,
+      "Current run terminal authority is required",
+    );
+
+    assertEquals(streamCalls, 0);
+  });
+
   it("creates a bootstrapped hosted chat execution runtime", async () => {
     const tracer = createTracer();
     const finalMessages: HostedChatRuntimeStreamInput["messages"] = [];
@@ -658,7 +705,7 @@ describe("agent/hosted-chat-execution-runtime", () => {
       userId: "user-1",
       rootRunContext: {
         durableRootRun: {
-          runId: "root-run-1",
+          runId: "10000000-0000-4000-8000-000000000006",
           conversationId: "conversation-1",
           messageId: "stream-message-1",
           latestEventId: 0,
@@ -676,6 +723,7 @@ describe("agent/hosted-chat-execution-runtime", () => {
         return await operation();
       },
       createRootStreamWatchdog,
+      createTerminalAdapter: createConversationHostedTerminalAdapter,
     });
 
     assertEquals(traceStreamCount, 1);
@@ -694,7 +742,7 @@ describe("agent/hosted-chat-execution-runtime", () => {
       "project.id": "project-1",
       "user.id": "user-1",
       "agent.id": "agent-1",
-      "run.id": "root-run-1",
+      "run.id": "10000000-0000-4000-8000-000000000006",
       "message.id": "stream-message-1",
       "gen_ai.operation.name": "invoke_agent",
       "gen_ai.conversation.id": "conversation-1",
@@ -1000,7 +1048,7 @@ describe("agent/hosted-chat-execution-runtime", () => {
           userId: "user-1",
           rootRunContext: {
             durableRootRun: {
-              runId: "root-run-1",
+              runId: "10000000-0000-4000-8000-000000000006",
               conversationId: "conversation-1",
               messageId: "stream-message-1",
               latestEventId: 0,
@@ -1092,7 +1140,7 @@ describe("agent/hosted-chat-execution-runtime", () => {
           userId: "user-1",
           rootRunContext: {
             durableRootRun: {
-              runId: "root-run-1",
+              runId: "10000000-0000-4000-8000-000000000006",
               conversationId: "conversation-1",
               messageId: "stream-message-1",
               latestEventId: 0,
@@ -1321,7 +1369,7 @@ describe("agent/hosted-chat-execution-runtime", () => {
       {
         agentId: "agent-1",
         modelId: "openai/gpt-5.4",
-        runId: "root-run-1",
+        runId: "10000000-0000-4000-8000-000000000006",
         streamingMessageId: "stream-message-1",
         usage: {
           inputTokens: 5,
@@ -1364,6 +1412,186 @@ describe("agent/hosted-chat-execution-runtime", () => {
     assertEquals(terminalStates, [{ status: "completed" }]);
     assertEquals(disposed, 1);
   });
+
+  for (
+    const mode of [
+      "missing-output",
+      "late-body-error",
+      "unfinished-tool",
+      "denied-tool",
+      "error-chunk",
+      "final-step-content",
+      "missing-tool-output",
+      "empty-steps",
+      "input-error",
+      "missing-tool-input",
+      "preliminary-only",
+      "preliminary-fallback",
+      "denied-reused-call",
+      "idless-start",
+      "fallback-reasoning",
+    ] as const
+  ) {
+    it(`preserves mirrored output and terminal semantics for detached ${mode}`, async () => {
+      const terminalStates: HostedLifecycleTerminalState[] = [];
+      const lifecycleAdapter = createLifecycleAdapter({ terminalStates });
+      lifecycleAdapter.terminal.toTerminalState = (state) => state;
+      const runtime = createHostedChatExecutionRuntime({
+        agentId: "agent-1",
+        modelId: "openai/gpt-5.4",
+        originalMessages: [],
+        runContext: { withContext: (fn) => fn() },
+        abortSignal: new AbortController().signal,
+        bootstrap: {
+          cleanup: async () => {},
+          lifecycleAdapter,
+          rootStreamWatchdog: createRootStreamWatchdog({ disposed: () => {} }),
+          streamResult: {
+            steps: Promise.resolve([{
+              finishReason: "stop",
+              ...(mode === "fallback-reasoning"
+                ? {
+                  response: {
+                    messages: [{
+                      role: "assistant",
+                      content: [{ type: "reasoning", text: "Recovered reasoning" }],
+                    }],
+                  },
+                }
+                : {}),
+              ...(mode === "final-step-content" ? { text: "Final step only" } : {}),
+              ...((mode === "missing-tool-output" || mode === "missing-tool-input" ||
+                  mode === "preliminary-fallback")
+                ? {
+                  toolResults: [{
+                    toolCallId: "call-1",
+                    toolName: "lookup",
+                    input: { key: "one" },
+                    output: { found: true },
+                  }],
+                }
+                : {}),
+            }]),
+            toUIMessageStream: async function* (options) {
+              yield {
+                type: "start",
+                ...(mode === "idless-start" ? {} : { messageId: "stream-message-1" }),
+              };
+              yield { type: "message-metadata", messageMetadata: { modelId: "openai/gpt-5.4" } };
+              yield { type: "start-step" };
+              if (mode === "empty-steps" || mode === "fallback-reasoning") {
+                yield { type: "finish-step" };
+                return;
+              }
+              yield { type: "text-start", id: "text-1" };
+              yield { type: "text-delta", id: "text-1", delta: "Preserved " };
+              yield { type: "text-delta", id: "text-1", delta: "answer" };
+              yield { type: "text-end", id: "text-1" };
+              if (mode === "missing-tool-input") {
+                yield { type: "tool-input-start", toolCallId: "call-1", toolName: "lookup" };
+              } else if (mode === "input-error") {
+                yield { type: "tool-input-start", toolCallId: "call-1", toolName: "lookup" };
+                yield {
+                  type: "tool-input-error",
+                  toolCallId: "call-1",
+                  toolName: "lookup",
+                  input: { key: "one" },
+                  errorText: "Invalid arguments",
+                };
+              } else {yield {
+                  type: "tool-input-available",
+                  toolCallId: "call-1",
+                  toolName: "lookup",
+                  input: { key: "one" },
+                };}
+              if (mode === "denied-reused-call") {
+                yield { type: "tool-output-denied", toolCallId: "call-1" };
+                yield { type: "tool-input-start", toolCallId: "call-1", toolName: "lookup" };
+                yield {
+                  type: "tool-input-available",
+                  toolCallId: "call-1",
+                  toolName: "lookup",
+                  input: { key: "one" },
+                };
+                yield {
+                  type: "tool-output-available",
+                  toolCallId: "call-1",
+                  output: { found: true },
+                };
+              } else if (mode === "preliminary-only" || mode === "preliminary-fallback") {
+                yield {
+                  type: "tool-output-available",
+                  toolCallId: "call-1",
+                  output: { progress: true },
+                  preliminary: true,
+                };
+              } else if (mode === "denied-tool") {
+                yield { type: "tool-output-denied", toolCallId: "call-1" };
+              } else if (
+                mode !== "unfinished-tool" && mode !== "missing-tool-output" &&
+                mode !== "input-error" && mode !== "missing-tool-input"
+              ) {
+                yield {
+                  type: "tool-output-available",
+                  toolCallId: "call-1",
+                  output: { found: true },
+                };
+              }
+              yield { type: "finish-step" };
+              if (mode === "error-chunk") {
+                yield { type: "error", errorText: "Provider stream failed" };
+              }
+              if (mode === "late-body-error") {
+                options?.onError?.(new Error("provider response body read failed"));
+              }
+            },
+          },
+          streamingMessageId: "stream-message-1",
+          capturedMessageId: "stream-message-1",
+          capturedConversationId: "conversation-1",
+          mirroredToolChunkState: createMirroredToolChunkState(),
+        },
+      });
+      for await (const _chunk of runtime.agentUIStream) { /* Drain the actual hosted mirror. */ }
+      await runtime.waitForFinish();
+      assertEquals(terminalStates.length, 1);
+      if (mode === "empty-steps") {
+        assertEquals(terminalStates[0]?.status, "failed");
+        return;
+      }
+      if (mode === "unfinished-tool" || mode === "preliminary-only") {
+        assertEquals(terminalStates[0]?.status, "failed");
+        assertEquals(terminalStates[0]?.terminalErrorCode, "INCOMPLETE_TOOL_CALLS");
+        return;
+      }
+      assertEquals(terminalStates[0]?.status, "completed");
+      const output = terminalStates[0]?.output as ChatUiMessage;
+      assertEquals(output.id, "stream-message-1");
+      assertEquals(output.metadata?.modelId, "openai/gpt-5.4");
+      assertEquals(output.parts[0]?.type, "step-start");
+      if (mode === "fallback-reasoning") {
+        assertObjectMatch(output.parts.find((part) => part.type === "reasoning")!, {
+          text: "Recovered reasoning",
+        });
+        return;
+      }
+      assertObjectMatch(output.parts.find((part) => part.type === "text")!, {
+        type: "text",
+        text: "Preserved answer",
+      });
+      assertObjectMatch(output.parts.find((part) => part.type === "tool-lookup")!, {
+        type: "tool-lookup",
+        toolCallId: "call-1",
+        state: mode === "denied-tool"
+          ? "output-denied"
+          : mode === "input-error"
+          ? "output-error"
+          : "output-available",
+        input: { key: "one" },
+        ...(mode === "denied-tool" || mode === "input-error" ? {} : { output: { found: true } }),
+      });
+    });
+  }
 
   it("uses response finish events instead of detached fallback when present", async () => {
     let streamOptions: HostedChatRuntimeToUiMessageStreamOptions | undefined;
@@ -1537,7 +1765,7 @@ describe("agent/hosted-chat-execution-runtime", () => {
         message: "Failed to mark durable chat root run as failed",
         metadata: {
           conversationId: "conversation-1",
-          runId: "root-run-1",
+          runId: "10000000-0000-4000-8000-000000000006",
           error: "finalize rejected",
         },
       },
@@ -1559,7 +1787,7 @@ describe("agent/hosted-chat-execution-runtime", () => {
       authToken: "token",
       apiUrl: "https://api.example.test",
       conversationId: "conversation-1",
-      runId: "root-run-1",
+      runId: "10000000-0000-4000-8000-000000000006",
       latestEventId: 0,
       batchSize: 1,
       fetch: resourceNotFoundFetch,

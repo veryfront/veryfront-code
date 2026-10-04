@@ -746,7 +746,7 @@ async function executeDefaultHostedInvokeAgentToolWithCapability<
             forkInput,
             {
               toolCallId,
-              abortSignal,
+              abortSignal: runtimeOptions.abortSignal ?? abortSignal,
               sourceIntegrationPolicy,
             },
             {
@@ -829,6 +829,8 @@ async function executeDefaultHostedInvokeAgentToolWithCapability<
         buildTerminalFailureResult: (failure) =>
           durableInvokeRecorder.recordTerminalFailure(failure),
         buildSuccessResult: (success) =>
+          durableInvokeRecorder.recordSuccess(success, { resultMode: input.result_mode }),
+        buildReplayedSuccessResult: (success) =>
           durableInvokeRecorder.recordSuccess(success, { resultMode: input.result_mode }),
         runtime: {
           bootstrapChildRun: bootstrapHostedChildRun,

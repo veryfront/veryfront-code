@@ -5,6 +5,7 @@ import { deriveKnowledgeSourceDocumentChunk } from "#veryfront/chat/knowledge-so
 export function isDurableMirroredOutputChunk(
   chunk: ChatUiMessageChunk<ChatMessageMetadata>,
 ): boolean {
+  if (chunk.type === "tool-output-available" && chunk.preliminary) return false;
   switch (chunk.type) {
     case "text-start":
     case "text-delta":
@@ -93,6 +94,7 @@ export function recordMirroredToolChunkState(
       break;
 
     case "tool-output-available":
+      if (chunk.preliminary) break;
       state.outputAvailableToolCallIds.add(chunk.toolCallId);
       break;
 

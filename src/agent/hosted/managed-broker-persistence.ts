@@ -1,3 +1,4 @@
+import { terminalRoute } from "../conversation/terminal-route.ts";
 import type { ChatMessageMetadata, ChatUiMessageChunk } from "#veryfront/chat/protocol.ts";
 import type { ConversationRunEvent } from "../conversation/run-events.ts";
 import {
@@ -9,7 +10,10 @@ import {
   createConversationHostedTerminalAdapter,
   resolveConversationHostedStreamErrorState,
 } from "../conversation/hosted-terminal.ts";
-import { instrumentConversationRunFetch } from "../conversation/durable.ts";
+import {
+  finalizeConversationAgentRun,
+  instrumentConversationRunFetch,
+} from "../conversation/durable.ts";
 import { createDurableRunEventSink } from "./durable-run-event-sink.ts";
 import {
   createHostedConversationRunChunkMirrorFromCapability,
@@ -34,6 +38,7 @@ export interface ManagedBrokerOutput {
   write(chunk: ChatUiMessageChunk<ChatMessageMetadata>): Promise<void>;
   finish(input: {
     completed: boolean;
+    output?: unknown;
     error?: unknown;
     metadata?: HostedLifecycleTerminalState["metadata"];
   }): Promise<void>;
@@ -54,6 +59,7 @@ const terminalStates = createPrivateWeakStore<ManagedBrokerTerminal, {
 export function createManagedBrokerTerminal(input: {
   apiUrl: string;
   completionAuthToken: string;
+  terminalAuthToken: string;
   run: ConversationRunProjection;
   modelId: string;
   resolveProvider(modelId: string): string;
@@ -63,12 +69,22 @@ export function createManagedBrokerTerminal(input: {
   if (typeof input.completionAuthToken !== "string" || !input.completionAuthToken.trim()) {
     throw new TypeError("Managed broker requires completion authorization");
   }
+  const { apiUrl, completionAuthToken, terminalAuthToken, fetch: transport } = input;
+  terminalRoute(terminalAuthToken, run.runId);
   const resolveProvider = input.resolveProvider;
   const adapter = createConversationHostedTerminalAdapter({
     apiUrl: input.apiUrl,
     authToken: input.completionAuthToken,
     run,
     fallbackModelId: input.modelId,
+    finalize: (value) =>
+      finalizeConversationAgentRun({
+        ...value,
+        apiUrl,
+        authToken: completionAuthToken,
+        terminalAuthToken,
+        fetch: transport ? instrumentConversationRunFetch(transport) : undefined,
+      }),
     // Do not expose secret-bearing adapter options as the caller's receiver.
     resolveProvider: (modelId) => resolveProvider(modelId),
     // A trusted completion transport joins the active execution trace like
@@ -87,6 +103,7 @@ export function createManagedBrokerPersistence(input: {
   runEventToken: string;
   /** Application authority accepted by the API completion route, never the append token. */
   completionAuthToken: string;
+  terminalAuthToken: string;
   run: ConversationRunProjection;
   modelId: string;
   resolveProvider(modelId: string): string;
@@ -104,6 +121,7 @@ export function createManagedBrokerPersistence(input: {
     capability: createHostedRunEventWriterCapability({
       apiUrl: input.apiUrl,
       runId: run.runId,
+      canonicalRunId: terminalRoute(input.terminalAuthToken, run.runId).id,
       runEventAppendToken: input.runEventToken,
       fetch: input.fetch,
     }),
@@ -234,7 +252,11 @@ export function createManagedBrokerPersistenceFromCapability(input: {
               },
             );
           } else if (result.completed) {
-            await dispatchTerminal({ status: "completed", metadata: result.metadata });
+            await dispatchTerminal({
+              status: "completed",
+              output: result.output,
+              metadata: result.metadata,
+            });
           } else if (result.error !== undefined) {
             await dispatchTerminal({
               ...resolveConversationHostedStreamErrorState(result.error),
