@@ -219,6 +219,44 @@ export function hostedInheritedRunAdmitter(
   };
 }
 
+export type InheritedRunResult = { readonly terminalReceipt: InheritedTerminalReceipt };
+
+/** Read a terminal workflow child without restoring an earlier execution capability. */
+export async function acceptWorkflowInheritedRunAdmission(
+  response: Response,
+  binding: {
+    projectId: string;
+    parentRunId: string;
+    agentId: string;
+    apiUrl: string;
+    fetch: typeof globalThis.fetch;
+  },
+): Promise<ConversationRunProjection | InheritedRunResult> {
+  const row = await response.clone().json();
+  if (row?.status !== "completed" && row?.status !== "failed" && row?.status !== "cancelled") {
+    return await acceptInheritedRunAdmission(response, binding);
+  }
+  const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  if (
+    !response.ok || !response.headers.get("Cache-Control")?.includes("no-store") ||
+    row.project_id !== binding.projectId || row.parent_run_id !== binding.parentRunId ||
+    row.target?.type !== "agent" || row.target.id !== binding.agentId ||
+    ![row.id, row.conversation_id, row.output_message_id].every((id) =>
+      typeof id === "string" && uuid.test(id)
+    ) ||
+    !Object.hasOwn(row, "output") ||
+    (row.error !== undefined &&
+      (typeof row.error?.code !== "string" || typeof row.error?.message !== "string"))
+  ) throw new Error("Inherited child resource binding mismatch");
+  return {
+    terminalReceipt: {
+      status: row.status,
+      output: row.output,
+      ...(row.error ? { error: { code: row.error.code, message: row.error.message } } : {}),
+    },
+  };
+}
+
 /** Bind an inherited admission response to private exact-child authority for trusted runtime adapters. */
 export async function acceptInheritedRunAdmission(
   response: Response,
