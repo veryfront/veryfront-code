@@ -358,7 +358,7 @@ export class VeryfrontRunsClient {
     }
     return this.createDefinitionRun(input, {
       project_id: input.projectId,
-      target: { type: "workflow", id: input.workflowId },
+      target: { type: "workflow", id: input.target.slice("workflow:".length) },
       parent_run_id: input.parentRunId,
       tool_call_id: input.toolCallId,
       node_id: input.nodeId,

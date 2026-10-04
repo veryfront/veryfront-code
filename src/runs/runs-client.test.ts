@@ -287,6 +287,34 @@ describe("VeryfrontRunsClient", () => {
     });
   });
 
+  it("preserves the supplied workflow target when its metadata workflow ID differs", async () => {
+    mockFetch([
+      jsonResponse(makeRun({ kind: "workflow", target: "workflow:requested-definition" }), 202),
+    ]);
+    const input = { request: { mode: "preview", optional: null }, values: ["opaque", 7] };
+    const result = await createTestClient().createWorkflowRun({
+      projectId,
+      workflowId: "metadata-definition",
+      target: "workflow:requested-definition",
+      input,
+      runtimeTargetKind: "environment",
+      runtimeTargetEnvironmentId: "44444444-4444-4444-8444-444444444444",
+      idempotencyKey: "workflow-target-preserved",
+    });
+    assertEquals(jsonBody(0), {
+      project_id: projectId,
+      target: { type: "workflow", id: "requested-definition" },
+      input,
+      execution: { runtime: { type: "environment", id: "44444444-4444-4444-8444-444444444444" } },
+    });
+    assertEquals(result.run.target, "workflow:requested-definition");
+    assertEquals(
+      new Headers(call(0).init?.headers).get("Idempotency-Key"),
+      "workflow-target-preserved",
+    );
+    assertEquals(fetchCalls.length, 1);
+  });
+
   it("creates eval runs as task:eval through canonical /runs", async () => {
     mockFetch([
       jsonResponse(
