@@ -1,3 +1,4 @@
+import { registerHostedAgentPauseSettlement } from "./manual-pause-settlement.ts";
 import { defineSchema } from "#veryfront/schemas/index.ts";
 import { getBaseLogger } from "#veryfront/utils/logger/index.ts";
 import { privateJsonParse, privateJsonStringify } from "#veryfront/security/private-json.ts";
@@ -259,6 +260,31 @@ export function createRunBoundAgentManualPause(input: {
     });
   }
   creationCapabilities.set(capability, capability);
+  const settlementBody = privateJsonStringify({ settled: true })!;
+  registerHostedAgentPauseSettlement(
+    capability,
+    () => state.stopped && !lifetime().aborted,
+    async () => {
+      const response = await send("pause-ack", settlementBody);
+      if (!response) return "retry";
+      const status = apply(responseStatus, response, []) as number;
+      if (status >= 400 && status < 500) {
+        await cancelResponse(response);
+        return "rejected";
+      }
+      if (status < 200 || status >= 300) {
+        await cancelResponse(response);
+        return "retry";
+      }
+      try {
+        return getAckSchema().parse(await readReply(response, lifetime())).stop
+          ? "confirmed"
+          : "rejected";
+      } catch {
+        return "retry";
+      }
+    },
+  );
   return capability;
 }
 
@@ -304,6 +330,7 @@ export function registerHostedAgentPauseCreationOptions(
   const capability = createHostedAgentManualPause(request, undefined);
   if (capability) {
     creationCapabilities.set(requirePauseCarrier(options), capability);
+    creationCapabilities.set(request, capability);
     if (rootContext) creationCapabilities.set(requirePauseCarrier(rootContext), capability);
   }
 }

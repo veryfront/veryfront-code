@@ -6,6 +6,10 @@ import {
   inheritHostedAgentPauseCapability,
 } from "./manual-pause-credential.ts";
 import { isAgentManualPauseBoundary } from "../runtime/manual-pause.ts";
+import {
+  canSettleHostedAgentPause,
+  recordHostedAgentPauseCleanup,
+} from "./manual-pause-settlement.ts";
 import { finalizeHostedResponse } from "./stream-finalization.ts";
 
 describe("hosted manual pause finalization", () => {
@@ -68,11 +72,13 @@ describe("hosted manual pause finalization", () => {
         resolveTerminalState: () => ({ status: "completed" }),
         cleanup: () => {
           cleanups++;
+          recordHostedAgentPauseCleanup(capability, true);
         },
       });
       assertEquals(terminals, 0);
       assertEquals(flushes, 1);
       assertEquals(cleanups, 1);
+      assertEquals(canSettleHostedAgentPause(capability), !lostReply && !flushFails);
     });
   }
 });
