@@ -4,6 +4,12 @@ import {
   inheritHostedAgentPauseCapability,
   registerHostedAgentPauseFactory,
 } from "../hosted/manual-pause-credential.ts";
+import {
+  invalidateHostedAgentPauseSettlement,
+  recordHostedAgentPauseCleanup,
+  recordHostedAgentPauseFlush,
+  settleHostedAgentPause,
+} from "../hosted/manual-pause-settlement.ts";
 import { isResponseLike } from "./response-like.ts";
 import type {
   HostedChatRuntimeFinishPart,
@@ -210,6 +216,7 @@ export function createManagedDurableBrokerHandler(options: {
           createHostedAgentManualPause(
             parsedRequest,
             AbortSignal.any([signal, prepared.executionSignal]),
+            prepared.executionSignal,
           ),
       );
       if (!prepared.start.prepare) return prepared;
@@ -278,6 +285,7 @@ function createManagedBrokerIngressHandler<TIngress>(options: {
 }) {
   const active = new Map<string, { accepted: boolean; settled: Promise<void> }>();
   const lifetime = new AbortController();
+  const executions = new Set<Promise<void>>();
   let closed = false;
 
   async function handle(request: Request): Promise<Response> {
@@ -382,14 +390,20 @@ function createManagedBrokerIngressHandler<TIngress>(options: {
           prepared.executionSignal,
           prepared.output!,
         )
+          .then(async () => {
+            await retire(runtime.settled);
+            await settleHostedAgentPause(runtime);
+          })
           .catch((error) => {
+            invalidateHostedAgentPauseSettlement(runtime, error);
             try {
               options.onExecutionError?.(error, runId);
             } catch { /* Observability cannot own execution settlement. */ }
           }).finally(() => {
+            executions.delete(execution);
             void retire(runtime.settled).catch(() => {});
           });
-        void execution;
+        executions.add(execution);
         return Response.json({ accepted: true, duplicate: false }, { status: 202 });
       } catch (error) {
         const retiring = retire(admissionSettled);
@@ -429,7 +443,9 @@ function createManagedBrokerIngressHandler<TIngress>(options: {
   async function close(): Promise<void> {
     closed = true;
     lifetime.abort();
-    await Promise.allSettled([...active.values()].map((run) => run.settled));
+    await Promise.allSettled(
+      [...active.values()].map((run) => run.settled).concat([...executions]),
+    );
   }
 
   return {
@@ -610,6 +626,7 @@ async function runDetached(
         streamCompleted = true;
       } catch (error) {
         failure ??= error;
+        invalidateHostedAgentPauseSettlement(runtime, error);
         throw error;
       } finally {
         const paused = hasHostedAgentPauseStopped(runtime);
@@ -620,11 +637,19 @@ async function runDetached(
           ...(paused || failure === undefined || signal.aborted ? {} : { error: failure }),
           ...(terminalMetadata ? { metadata: terminalMetadata } : {}),
         });
+        recordHostedAgentPauseFlush(runtime, streamCompleted && !signal.aborted);
       }
     });
     completed = true;
   } finally {
-    await runtime.close(completed ? "completed" : "canceled").catch(() => {});
+    const closure = await runtime.close(completed ? "completed" : "canceled").catch((error) => {
+      invalidateHostedAgentPauseSettlement(runtime, error);
+      return undefined;
+    });
     await runtime.settled;
+    recordHostedAgentPauseCleanup(
+      runtime,
+      completed && closure?.reason === "completed" && closure.release !== "reaper-required",
+    );
   }
 }

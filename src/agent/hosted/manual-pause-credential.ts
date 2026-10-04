@@ -94,6 +94,7 @@ export function createRunBoundAgentManualPause(input: {
   runId: string;
   token: string;
   signal: AbortSignal | undefined;
+  settlementSignal?: AbortSignal;
   fetch?: typeof fetch;
 }): AgentManualPause {
   const endpoint = requireHostPrivateApiHttps(input.apiUrl);
@@ -103,16 +104,23 @@ export function createRunBoundAgentManualPause(input: {
   const transport = input.fetch ?? createVeryfrontApiOriginBoundOutboundFetch(apiUrl);
   const token = input.token;
   let signal = input.signal;
+  const settlementSignal = input.settlementSignal;
   const lifetime = (): AbortSignal => {
     if (!signal) throw agentManualPauseBoundary();
     return signal;
   };
+  const settlementLifetime = () => settlementSignal ?? lifetime();
   const path = `${apiUrl}/runs/${encode(input.runId)}`;
   const state = { stopped: false, requiresCheckpoint: false };
-  const send = async (suffix: string, body: string | undefined, onSend?: () => void) => {
+  const send = async (
+    suffix: string,
+    body: string | undefined,
+    onSend?: () => void,
+    transportLifetime = lifetime,
+  ) => {
     try {
-      const outboundSignal = requestSignal(lifetime());
-      throwIfAborted(lifetime());
+      const outboundSignal = requestSignal(transportLifetime());
+      throwIfAborted(transportLifetime());
       onSend?.();
       return await transport(`${path}/${suffix}`, {
         method: body === undefined ? "GET" : "POST",
@@ -272,9 +280,9 @@ export function createRunBoundAgentManualPause(input: {
   const settlementBody = privateJsonStringify({ settled: true })!;
   registerHostedAgentPauseSettlement(
     capability,
-    () => state.stopped && !lifetime().aborted,
+    () => state.stopped && !settlementLifetime().aborted,
     async () => {
-      const response = await send("pause-ack", settlementBody);
+      const response = await send("pause-ack", settlementBody, undefined, settlementLifetime);
       if (!response) return "retry";
       const status = apply(responseStatus, response, []) as number;
       if (status >= 400 && status < 500) {
@@ -286,7 +294,7 @@ export function createRunBoundAgentManualPause(input: {
         return "retry";
       }
       try {
-        return getAckSchema().parse(await readReply(response, lifetime())).stop
+        return getAckSchema().parse(await readReply(response, settlementLifetime())).stop
           ? "confirmed"
           : "rejected";
       } catch {
@@ -311,6 +319,7 @@ export function registerHostedAgentPauseCredential(
 export function createHostedAgentManualPause(
   request: ParsedHostedChatRequest,
   signal: AbortSignal | undefined,
+  settlementSignal?: AbortSignal,
 ): AgentManualPause | undefined {
   const credential = credentials.get(request);
   if (!credential) return undefined;
@@ -319,6 +328,7 @@ export function createHostedAgentManualPause(
     runId: credential.runId,
     token: credential.token,
     signal,
+    settlementSignal,
   });
 }
 

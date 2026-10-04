@@ -116,6 +116,25 @@ describe("hosted pause settlement transport", () => {
     });
   }
 
+  it("interrupts unknown active ACK replies on session failure while settlement lifetime stays live", async () => {
+    const session = new AbortController();
+    const execution = new AbortController();
+    const capability = createRunBoundAgentManualPause({
+      apiUrl: "https://api.example.com",
+      runId: "run_pause_test",
+      token: "pause-test-token",
+      signal: session.signal,
+      settlementSignal: execution.signal,
+      fetch: () => {
+        session.abort();
+        throw new TypeError("Lost ACK reply");
+      },
+    });
+    await assertRejects(() => capability.acknowledge(checkpoint));
+    assertEquals(execution.signal.aborted, false);
+    assertEquals(canSettleHostedAgentPause(capability), false);
+  });
+
   it("ignores unregistered carriers and rejects invalid carriers", async () => {
     const carrier = {};
     recordHostedAgentPauseFlush(carrier, true);
