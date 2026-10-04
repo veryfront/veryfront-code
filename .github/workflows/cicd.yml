@@ -811,7 +811,8 @@ jobs:
           INPUT_SCANNERBINARIESAUTHHEADER: ""
         run: |
           set -euo pipefail
-          # Queue scans use PR mode for the analysis cache without touching main.
+          # Queue scans replace the originating PR decoration, never main.
+          # PR mode reuses the analysis cache for the exact queue checkout.
           if [ "$SONAR_EVENT_NAME" = "merge_group" ]; then
             if [[ ! "$SONAR_REF_NAME" =~ ^gh-readonly-queue/main/pr-([0-9]+)-[0-9a-f]+$ ]]; then
               echo "::error::Invalid merge queue ref for Sonar PR analysis"

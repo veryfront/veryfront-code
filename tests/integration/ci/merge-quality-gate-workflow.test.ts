@@ -253,9 +253,9 @@ describe("merge quality gate workflow", () => {
         ] as const
       ) {
         const output = await new Deno.Command("bash", {
-          args: ["-c", String(step.run)],
+          args: ["-c", 'PATH="$FIXTURE_BIN_DIR:$PATH"\n' + String(step.run)],
           env: {
-            PATH: `${dir}:${Deno.env.get("PATH")}`,
+            FIXTURE_BIN_DIR: dir,
             RUNNER_TEMP: dir,
             SONAR_EVENT_NAME: event,
             SONAR_REF_NAME: branch,
@@ -583,7 +583,8 @@ git -C "$action_dir" checkout --detach FETCH_HEAD
     assertEquals(
       scanStep.run,
       `set -euo pipefail
-# Queue scans use PR mode for the analysis cache without touching main.
+# Queue scans replace the originating PR decoration, never main.
+# PR mode reuses the analysis cache for the exact queue checkout.
 if [ "$SONAR_EVENT_NAME" = "merge_group" ]; then
   if [[ ! "$SONAR_REF_NAME" =~ ^gh-readonly-queue/main/pr-([0-9]+)-[0-9a-f]+$ ]]; then
     echo "::error::Invalid merge queue ref for Sonar PR analysis"
