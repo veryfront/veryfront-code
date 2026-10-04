@@ -3,7 +3,7 @@
  * bytes veryfront-api generates from its shared Zod schemas, pinned by the kit hash.
  */
 import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
-import { RUNS_OPERATION_FIXTURES } from "../../../src/runs/target/client.test-helpers.ts";
+import { RUNS_OPERATION_FIXTURES } from "../../../src/runs/contract/runs-fixtures.generated.ts";
 import {
   extractRunsFixtures,
   generateRunsFixtures,
