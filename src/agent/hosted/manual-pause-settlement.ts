@@ -16,7 +16,7 @@ const schedule = setTimeout;
 const NativePromise = Promise;
 
 export function registerHostedAgentPauseSettlement(
-  capability: object,
+  capability: AgentManualPause,
   eligible: Settlement["eligible"],
   confirm: Settlement["confirm"],
 ): void {
