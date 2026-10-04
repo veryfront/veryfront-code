@@ -12,6 +12,7 @@ import {
   InternalAgentRequestBodyTooLargeError,
   readInternalAgentRequestBody,
 } from "#veryfront/internal-agents/request-body.ts";
+import { privateTextTrim } from "#veryfront/security/private-text.ts";
 import { setActiveSpanAttributes } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { BaseHandler } from "../response/base.ts";
 import type { HandlerContext, HandlerMetadata, HandlerPriority, HandlerResult } from "../types.ts";
@@ -28,13 +29,17 @@ function getRunId(pathname: string): string | null {
 }
 
 const JsonParse = JSON.parse;
+const hasOwn = Object.hasOwn;
 
-/** A plain cancel may carry no body or a non-JSON one; only an explicit flag opts in. */
+/**
+ * A plain cancel may carry no body or a non-JSON one; only an explicit own flag opts in.
+ * Captured intrinsics keep project prototype mutations from steering this decision.
+ */
 function readConfirmStopped(rawBody: string): boolean {
-  if (rawBody.trim() === "") return false;
+  if (privateTextTrim(rawBody) === "") return false;
   try {
     const body: unknown = JsonParse(rawBody);
-    return typeof body === "object" && body !== null &&
+    return typeof body === "object" && body !== null && hasOwn(body, "confirmStopped") &&
       (body as { confirmStopped?: unknown }).confirmStopped === true;
   } catch {
     return false;

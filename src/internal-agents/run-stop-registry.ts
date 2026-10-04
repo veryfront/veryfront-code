@@ -1,20 +1,28 @@
+import { createPrivateMap } from "#veryfront/security/private-map.ts";
+import { createPrivateSet } from "#veryfront/security/private-set.ts";
+
+// Captured so project code that later replaces the clock cannot steer tombstone expiry.
+const now = Date.now;
+
 export type RunStopSettlement = "stopped" | "abandoned";
 
 /** Positive local settlement evidence, kept separately from cancellation signals. */
 export class RunStopRegistry {
-  private readonly runs = new Map<string, Set<() => void>>();
-  private readonly stopped = new Set<string>();
+  // Control-plane state: private collections use captured operations and iterator advancement,
+  // so prototype mutations by project code in this process cannot hide or skip an execution.
+  private readonly runs = createPrivateMap<string, Set<() => void>>();
+  private readonly stopped = createPrivateSet<string>();
   /** Runs where an earlier execution settled positively while others were still registered. */
-  private readonly settledWhileShared = new Set<string>();
-  private readonly cancelled = new Map<string, number>();
+  private readonly settledWhileShared = createPrivateSet<string>();
+  private readonly cancelled = createPrivateMap<string, number>();
 
+  /** Tombstones are kept in expiry order, so pruning stops at the first live one. */
   private prune(): void {
-    const now = Date.now();
-    for (const [runId, expiresAt] of this.cancelled) {
-      if (expiresAt <= now) {
-        this.cancelled.delete(runId);
-        this.stopped.delete(runId);
-      }
+    const current = now();
+    for (const runId of this.cancelled.keys()) {
+      if (this.cancelled.get(runId)! > current) return;
+      this.cancelled.delete(runId);
+      this.stopped.delete(runId);
     }
   }
 
@@ -35,7 +43,7 @@ export class RunStopRegistry {
     if (!executions) {
       // Reserve its future tombstone before admitting a producer, so stop delivery cannot fail at capacity.
       if (this.capacityUsed() >= 10_000) throw new Error("Cancellation registry capacity reached");
-      this.runs.set(runId, executions = new Set());
+      this.runs.set(runId, executions = createPrivateSet());
       this.settledWhileShared.delete(runId);
     }
     this.stopped.delete(runId);
@@ -65,7 +73,8 @@ export class RunStopRegistry {
       throw new Error("Cancellation registry capacity reached");
     }
     // Beyond the maximum lifetime of a signed dispatch credential. Refuse delayed starts.
-    this.cancelled.set(runId, Date.now() + 24 * 60 * 60 * 1_000);
+    this.cancelled.delete(runId);
+    this.cancelled.set(runId, now() + 24 * 60 * 60 * 1_000);
     const executions = this.runs.get(runId);
     if (executions) {
       for (const abort of executions) abort();
