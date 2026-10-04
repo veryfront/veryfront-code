@@ -3044,7 +3044,13 @@ export class AgentRuntime {
             closeSSEStream(controller);
           } catch (streamError) {
             if (isAgentManualPauseBoundary(streamError)) {
-              await turnPersistence.finalize();
+              try {
+                await turnPersistence.finalize();
+              } catch (finalizationError) {
+                logger.debug("Manual pause memory finalization failed", {
+                  errorCauses: summarizeErrorCausesForLog(finalizationError),
+                });
+              }
               sendSSE(controller, encoder, { type: "data-veryfront.manual_pause", data: {} });
               closeSSEStream(controller);
               return;

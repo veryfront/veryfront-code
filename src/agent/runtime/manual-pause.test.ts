@@ -507,6 +507,64 @@ it("continues oversized resumed progress after retiring the stale checkpoint", a
   assertEquals(body.includes("message-finish"), true);
 });
 
+it("emits an acknowledged pause even when local memory finalization fails", async () => {
+  const model = scriptedModel([{ text: "unreachable" }]);
+  let saved: unknown = null;
+  let commits = 0;
+  let rollbacks = 0;
+  let finishes = 0;
+  const runtime = new AgentRuntime("pause-memory-failure", {
+    model: "test/pause",
+    system: "Pause before generation",
+    skills: false,
+    memory: { type: "conversation" },
+    middleware: [(context, next) => {
+      registerTurnProviderRequestValidator(context, async () => {});
+      return next();
+    }],
+    resolveModelTransport: () => ({ model }),
+  }, {
+    manualPause: {
+      load: async () => null,
+      requested: async () => true,
+      acknowledge: async (checkpoint) => {
+        saved = structuredClone(checkpoint);
+        return true;
+      },
+    },
+  });
+  const memory = runtime.getMemory();
+  const begin = memory.beginTransaction!.bind(memory);
+  memory.beginTransaction = async () => {
+    const transaction = await begin();
+    return {
+      ...transaction,
+      commit: () => {
+        commits++;
+        return Promise.reject(new Error("Local memory commit failed"));
+      },
+      rollback: async () => {
+        rollbacks++;
+        await transaction.rollback();
+      },
+    };
+  };
+  const body = await new Response(
+    await runtime.stream(userMessage("Pause me"), undefined, {
+      onFinish: () => finishes++,
+    }),
+  ).text();
+  assertEquals(saved !== null, true);
+  assertEquals(commits, 1);
+  assertEquals(rollbacks, 1);
+  assertEquals(model.callCount, 0);
+  assertEquals(finishes, 0);
+  assertEquals(body.split("data-veryfront.manual_pause").length - 1, 1);
+  assertEquals(body.includes("message-finish"), false);
+  assertEquals(body.includes('"type":"error"'), false);
+  assertEquals(await memory.getMessages(), []);
+});
+
 it("validates staged input before acknowledging an initial pause", async () => {
   const model = scriptedModel([{ text: "unreachable" }]);
   let acknowledgements = 0;
