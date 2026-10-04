@@ -18,113 +18,131 @@ function userMessage(text: string): Message[] {
 
 describe("agent manual pause", () => {
   for (const [pauseStep, exhaustBudget] of [[1, false], [2, false], [1, true]] as const) {
-    it(`parks at settled step ${pauseStep} and resumes without repeating it (budget=${exhaustBudget})`, async () => {
-      let modelCalls = 0;
-      let toolCalls = 0;
-      let finishes = 0;
-      let saved: unknown = null;
-      let resumedTokens = 0;
-      let resumedCost = 0;
-      const model: ModelRuntime = {
-        provider: "test",
-        modelId: "test/manual-pause",
-        async doGenerate() {
-          throw new Error("Only streaming is used");
-        },
-        async doStream() {
-          modelCalls++;
-          const parts = modelCalls === 1 || exhaustBudget
-            ? [{
-              type: "tool-call",
-              toolCallId: `charge-${modelCalls}`,
-              toolName: "charge",
-              input: {},
-            }]
-            : [{ type: "text-delta", text: "Done" }];
-          return {
-            stream: new ReadableStream<unknown>({
-              start(controller) {
-                for (const part of parts) controller.enqueue(part);
-                controller.enqueue({
-                  type: "finish",
-                  finishReason: modelCalls === 1 || exhaustBudget ? "tool-calls" : "stop",
-                  totalUsage: { inputTokens: 1, outputTokens: 1, totalTokens: 2, costUsd: 0.25 },
-                });
-                controller.close();
+    const terminalWinner = pauseStep === 2 && !exhaustBudget;
+    it(
+      terminalWinner
+        ? "lets an already streamed terminal answer win a pending pause"
+        : `parks at settled step ${pauseStep} and resumes without repeating it (budget=${exhaustBudget})`,
+      async () => {
+        let modelCalls = 0;
+        let toolCalls = 0;
+        let finishes = 0;
+        let saved: unknown = null;
+        let resumedTokens = 0;
+        let resumedCost = 0;
+        const model: ModelRuntime = {
+          provider: "test",
+          modelId: "test/manual-pause",
+          async doGenerate() {
+            throw new Error("Only streaming is used");
+          },
+          async doStream() {
+            modelCalls++;
+            const parts = modelCalls === 1 || exhaustBudget
+              ? [{
+                type: "tool-call",
+                toolCallId: `charge-${modelCalls}`,
+                toolName: "charge",
+                input: {},
+              }]
+              : [{ type: "text-delta", text: "Done" }];
+            return {
+              stream: new ReadableStream<unknown>({
+                start(controller) {
+                  for (const part of parts) controller.enqueue(part);
+                  controller.enqueue({
+                    type: "finish",
+                    finishReason: modelCalls === 1 || exhaustBudget ? "tool-calls" : "stop",
+                    totalUsage: { inputTokens: 1, outputTokens: 1, totalTokens: 2, costUsd: 0.25 },
+                  });
+                  controller.close();
+                },
+              }),
+            };
+          },
+        };
+        const config = {
+          memory: { type: "conversation" as const },
+          model: "test/manual-pause",
+          system: "Charge once and finish.",
+          maxSteps: exhaustBudget ? 2 : 3,
+          tools: {
+            charge: tool({
+              id: "charge",
+              description: "Charge once",
+              inputSchema: defineSchema((v) => v.object({}))(),
+              execute: () => {
+                toolCalls++;
+                return { charged: true };
               },
             }),
-          };
-        },
-      };
-      const config = {
-        memory: { type: "conversation" as const },
-        model: "test/manual-pause",
-        system: "Charge once and finish.",
-        maxSteps: exhaustBudget ? 2 : 3,
-        tools: {
-          charge: tool({
-            id: "charge",
-            description: "Charge once",
-            inputSchema: defineSchema((v) => v.object({}))(),
-            execute: () => {
-              toolCalls++;
-              return { charged: true };
+          },
+          resolveModelTransport: () => ({ model }),
+        };
+        const messages: Message[] = [{
+          id: "request-1",
+          role: "user",
+          parts: [{ type: "text", text: "Go" }],
+        }];
+        const paused = new AgentRuntime("manual-pause", config, {
+          manualPause: {
+            load: async () => null,
+            requested: async () => modelCalls >= pauseStep,
+            acknowledge: async (checkpoint: { nextStep: number }) => {
+              if (checkpoint.nextStep !== pauseStep) return false;
+              saved = structuredClone(checkpoint);
+              return true;
+            },
+          },
+        });
+        const pausedBody = await new Response(
+          await paused.stream(messages, undefined, {
+            onFinish: () => finishes++,
+          }),
+        ).text();
+        if (terminalWinner) {
+          // The answer is already visible; completion wins before pause ACK.
+          assertEquals(modelCalls, 2);
+          assertEquals(toolCalls, 1);
+          assertEquals(finishes, 1);
+          assertEquals(saved, null);
+          assertEquals(pausedBody.includes("data-veryfront.manual_pause"), false);
+          assertEquals(pausedBody.includes('"type":"message-finish"'), true);
+          assertEquals(pausedBody.split('"delta":"Done"').length - 1, 1);
+          return;
+        }
+        assertEquals(modelCalls, pauseStep);
+        assertEquals(toolCalls, 1);
+        assertEquals(finishes, 0);
+        assertEquals(pausedBody.includes('"type":"message-finish"'), false);
+        assertEquals(saved !== null, true);
+
+        const resumed = new AgentRuntime("manual-pause", config, {
+          manualPause: {
+            load: async () => saved,
+            acknowledge: async () => false,
+          },
+        });
+        const resumedBody = await new Response(
+          await resumed.stream(messages, undefined, {
+            onFinish: (response) => {
+              finishes++;
+              resumedTokens = response.usage?.totalTokens ?? 0;
+              resumedCost = response.usage?.costUsd ?? 0;
             },
           }),
-        },
-        resolveModelTransport: () => ({ model }),
-      };
-      const messages: Message[] = [{
-        id: "request-1",
-        role: "user",
-        parts: [{ type: "text", text: "Go" }],
-      }];
-      const paused = new AgentRuntime("manual-pause", config, {
-        manualPause: {
-          load: async () => null,
-          acknowledge: async (checkpoint: { nextStep: number }) => {
-            if (checkpoint.nextStep !== pauseStep) return false;
-            saved = structuredClone(checkpoint);
-            return true;
-          },
-        },
-      });
-      const pausedBody = await new Response(
-        await paused.stream(messages, undefined, {
-          onFinish: () => finishes++,
-        }),
-      ).text();
-      assertEquals(modelCalls, pauseStep);
-      assertEquals(toolCalls, 1);
-      assertEquals(finishes, 0);
-      assertEquals(pausedBody.includes('"type":"message-finish"'), false);
-      assertEquals(saved !== null, true);
-
-      const resumed = new AgentRuntime("manual-pause", config, {
-        manualPause: {
-          load: async () => saved,
-          acknowledge: async () => false,
-        },
-      });
-      const resumedBody = await new Response(
-        await resumed.stream(messages, undefined, {
-          onFinish: (response) => {
-            finishes++;
-            resumedTokens = response.usage?.totalTokens ?? 0;
-            resumedCost = response.usage?.costUsd ?? 0;
-          },
-        }),
-      ).text();
-      assertEquals(modelCalls, 2);
-      assertEquals(toolCalls, exhaustBudget ? 2 : 1);
-      const memory = await resumed.getMemory().getMessages();
-      assertEquals(memory.some((message) => message.role === "tool"), true);
-      assertEquals(memory.filter((message) => message.id === "request-1").length, 1);
-      assertEquals(finishes, 1);
-      assertEquals(resumedTokens, 4);
-      assertEquals(resumedCost, 0.5);
-      assertEquals(resumedBody.includes("Done"), !exhaustBudget);
-    });
+        ).text();
+        assertEquals(modelCalls, 2);
+        assertEquals(toolCalls, exhaustBudget ? 2 : 1);
+        const memory = await resumed.getMemory().getMessages();
+        assertEquals(memory.some((message) => message.role === "tool"), true);
+        assertEquals(memory.filter((message) => message.id === "request-1").length, 1);
+        assertEquals(finishes, 1);
+        assertEquals(resumedTokens, 4);
+        assertEquals(resumedCost, 0.5);
+        assertEquals(resumedBody.includes("Done"), !exhaustBudget);
+      },
+    );
   }
 });
 

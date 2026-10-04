@@ -259,6 +259,15 @@ export function createHostedAgentManualPause(
   });
 }
 
+/** Construct host-private pause transport without a project-selected destination. */
+export function createHostOwnedAgentManualPause(input: {
+  runId: string;
+  token: string;
+  signal: AbortSignal | undefined;
+}): AgentManualPause {
+  return createRunBoundAgentManualPause({ ...input, apiUrl: resolveHostOwnedSourceApiBaseUrl() });
+}
+
 export function registerHostedAgentPauseCreationOptions(
   options: unknown,
   request: ParsedHostedChatRequest,

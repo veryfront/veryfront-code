@@ -2,7 +2,7 @@ import {
   createPlatformMcpCatalogSource,
   withPlatformMcpPolicyAliases,
 } from "#veryfront/agent/platform-mcp-tool-source.ts";
-import { createRunBoundAgentManualPause } from "#veryfront/agent/hosted/manual-pause-credential.ts";
+import { createHostOwnedAgentManualPause } from "#veryfront/agent/hosted/manual-pause-credential.ts";
 import { markTrustedPlatformSource } from "#veryfront/tool/platform-source-provenance.ts";
 import {
   runWithRegistryScopeNamespace,
@@ -1420,8 +1420,7 @@ export class AgentStreamHandler extends BaseHandler {
                         if (pauseToken) {
                           registerRuntimeManualPause(
                             runtimeInput,
-                            createRunBoundAgentManualPause({
-                              apiUrl: veryfrontApiUrl,
+                            createHostOwnedAgentManualPause({
                               runId: payload.runId,
                               token: pauseToken,
                               signal: pauseSignal,

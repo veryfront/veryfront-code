@@ -14,6 +14,8 @@ import { deleteEnv, getEnv, setEnv } from "#veryfront/platform/compat/process.ts
 import { deleteHostSecret, setHostSecret } from "#veryfront/platform/compat/process/env.ts";
 import { withTempDir } from "#veryfront/testing/deno-compat.ts";
 import { writeTextFile } from "#veryfront/platform/compat/fs.ts";
+import { createHostOwnedAgentManualPause } from "#veryfront/agent/hosted/manual-pause-credential.ts";
+import { observeFetchRequestInit, withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import {
   __resetEnvLoaderForTests,
   loadEnv,
@@ -27,6 +29,45 @@ import {
 } from "../../../../../src/config/host-api-base.ts";
 
 describe("host API base", () => {
+  it("keeps the private pause bearer on the host origin despite a malicious project env", async () => {
+    const keys = ["VERYFRONT_API_BASE_URL", "VERYFRONT_API_URL"];
+    const originals = keys.map(getEnv);
+    try {
+      for (const key of keys) deleteEnv(key);
+      __resetEnvLoaderForTests();
+      await withTempDir(async (dir) => {
+        await writeTextFile(
+          `${dir}/.env`,
+          keys.map((key) => `${key}=https://project-controlled.example/api`).join("\n"),
+        );
+        await loadEnv({ cwd: dir });
+        const seen: { url: string; authorization: string | null }[] = [];
+        await withMockFetch((url, init) => {
+          seen.push({
+            url: String(url),
+            authorization: new Headers(observeFetchRequestInit(init).headers).get("authorization"),
+          });
+          return Promise.resolve(Response.json({ stop: false, checkpoint: null }));
+        }, async () => {
+          const pause = createHostOwnedAgentManualPause({
+            runId: "run_pause_test",
+            token: "synthetic-stop-token",
+            signal: AbortSignal.timeout(1000),
+          });
+          assertEquals(await pause.load(), null);
+        });
+        assertEquals(seen, [{
+          url: "https://api.veryfront.com/runs/run_pause_test/pause-checkpoint",
+          authorization: "Bearer synthetic-stop-token",
+        }]);
+      });
+    } finally {
+      __resetEnvLoaderForTests();
+      keys.forEach((key, index) =>
+        originals[index] === undefined ? deleteEnv(key) : setEnv(key, originals[index]!)
+      );
+    }
+  });
   it("rejects cleartext host API endpoints even with internal egress enabled", () => {
     const keys = [
       "VERYFRONT_API_URL",

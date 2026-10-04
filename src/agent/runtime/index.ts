@@ -4898,7 +4898,7 @@ export class AgentRuntime {
         }
         sendSSE(controller, encoder, { type: "step-end" });
         completedWithinStepBudget = !exhaustedStepBudgetDuringInterruptedLocalToolRecovery;
-        await pauseAtBoundary(step + 1);
+        if (!completedWithinStepBudget) await pauseAtBoundary(step + 1);
         break;
       }
 

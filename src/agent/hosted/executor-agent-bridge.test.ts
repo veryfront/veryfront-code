@@ -278,14 +278,11 @@ describe("executor hosted agent bridge", () => {
 
   it("accepts a paused producer without a terminal event", async () => {
     const channels = pair(
-      new Map([["agent.stream", {
-        mode: "stream",
-        async *handle(): AsyncIterable<JsonValue> {
-          yield { type: "ready" };
-          yield { type: "event", event: { type: "data-veryfront.manual_pause", data: {} } };
-          yield { type: "complete" };
-        },
-      }]]),
+      createExecutorAgentOperations({
+        preparedRuntimeHandle: handle,
+        startStream: () =>
+          Promise.resolve(sse([{ type: "data-veryfront.manual_pause", data: {} }])),
+      }),
     );
     try {
       const runtime = await createExecutorHostedChatRuntimeAgent({

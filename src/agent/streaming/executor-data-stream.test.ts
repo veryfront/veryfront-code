@@ -23,6 +23,17 @@ async function collect(stream: ReadableStream<Uint8Array>) {
 }
 
 describe("executor runtime data stream validation", () => {
+  it("accepts a pause boundary at EOF and rejects output after it", async () => {
+    const pause = 'data: {"type":"data-veryfront.manual_pause","data":{}}\n\n';
+    assertEquals(await collect(new Response(pause).body!), [{
+      type: "data-veryfront.manual_pause",
+      data: {},
+    }]);
+    await assertRejects(
+      () => collect(new Response(pause + 'data: {"type":"text-delta","delta":"late"}\n\n').body!),
+      ExecutorAgentError,
+    );
+  });
   it("joins multiline data fields while retaining strict line prefixes", async () => {
     const body =
       'data: {\ndata:   "type": "text-delta",\ndata:   "delta": "Synthetic multiline"}\n\ndata: {"type":"message-finish"}\n\n';
