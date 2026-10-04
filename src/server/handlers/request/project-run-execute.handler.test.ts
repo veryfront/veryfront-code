@@ -1,3 +1,4 @@
+import { RunStopRegistry } from "#veryfront/internal-agents/run-stop-registry.ts";
 import { toolRegistryInternal } from "#veryfront/tool/registry.ts";
 import "#veryfront/schemas/_test-setup.ts";
 import "#veryfront/html/styles-builder/__tests__/css-processor-setup.ts";
@@ -7937,6 +7938,134 @@ describe("project run inference credential header", () => {
 // veryfront-issue-inbox#2086: a cancelled project run must reach the running
 // task or workflow, not only the control-plane row.
 describe("server/handlers/request/project-run-execute.handler cancellation", () => {
+  it("refuses invalid stop setup without retaining a phantom execution on retry", async () => {
+    const registry = new RunStopRegistry();
+    let calls = 0;
+    const handler = new ProjectRunExecuteHandler(
+      createDeps({
+        runTask: async () => {
+          calls++;
+          return { success: true, result: "settled", durationMs: 1 };
+        },
+      }),
+      undefined,
+      registry,
+    );
+    const runId = "run_invalid_stop_setup";
+    const body = { runId, kind: "task", target: "task:sync-calendar-events", projectId: "proj-1" };
+    const rejected = await signedRequest(`/api/control-plane/runs/${runId}/execute`, body, {
+      "x-veryfront-run-stop-token": " ",
+    });
+    await handler.handle(rejected.request, createCtx(rejected.publicKeyPem));
+    assertEquals(calls, 0);
+    const retry = await signedRequest(`/api/control-plane/runs/${runId}/execute`, body);
+    await handler.handle(retry.request, createCtx(retry.publicKeyPem));
+    assertEquals(calls, 1);
+    assertEquals(registry.requestStop(runId), { accepted: true, stopped: true });
+  });
+
+  it("retires a workflow resume registration that never admitted local execution", async () => {
+    const resume = { type: "approval", node_id: "review", approved: true, approver: "user:u1" };
+    const cases: Array<[string, string, Partial<ProjectRunExecuteHandlerDeps>]> = [
+      ["run_resume_missing_workflow", "workflow:missing", {}],
+      ["run_resume_client_failure", "workflow:publish", {
+        createWorkflowClient: () => {
+          throw new Error("workflow backend unavailable");
+        },
+      }],
+    ];
+    for (const [runId, target, overrides] of cases) {
+      const registry = new RunStopRegistry();
+      const handler = new ProjectRunExecuteHandler(createDeps(overrides), undefined, registry);
+      const signed = await signedRequest(`/api/control-plane/runs/${runId}/execute`, {
+        runId,
+        kind: "workflow",
+        target,
+        projectId: "proj-1",
+        resume,
+      });
+      await handler.handle(signed.request, createCtx(signed.publicKeyPem));
+      // No positive settlement, and no lingering registration that would mask the owner.
+      assertEquals(registry.requestStop(runId), { accepted: false, stopped: false });
+    }
+  });
+
+  it("retires a finished workflow registration by its stop evidence", async () => {
+    for (
+      const [runId, evidence] of [["run_workflow_unowned", false], [
+        "run_workflow_owned",
+        true,
+      ]] as const
+    ) {
+      const registry = new RunStopRegistry();
+      const base = createDeps();
+      const handler = new ProjectRunExecuteHandler(
+        createDeps({
+          createWorkflowClient: async (...args) => ({
+            ...(await base.createWorkflowClient(...args)),
+            waitForExecutionStopped: async () => evidence,
+          }),
+        }),
+        undefined,
+        registry,
+      );
+      const signed = await signedRequest(`/api/control-plane/runs/${runId}/execute`, {
+        runId,
+        kind: "workflow",
+        target: "workflow:publish",
+        projectId: "proj-1",
+      });
+      await handler.handle(signed.request, createCtx(signed.publicKeyPem));
+      for (let tick = 0; tick < 5; tick++) await new Promise((resolve) => setTimeout(resolve, 0));
+      assertEquals(
+        registry.requestStop(runId),
+        evidence ? { accepted: true, stopped: true } : { accepted: false, stopped: false },
+      );
+    }
+  });
+
+  it("delivers a durable stop independently of the original transport and confirms only settled task work", async () => {
+    const registry = new RunStopRegistry();
+    let begin!: () => void;
+    let release!: () => void;
+    let taskSignal: AbortSignal | undefined;
+    const started = new Promise<void>((resolve) => {
+      begin = resolve;
+    });
+    const work = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const handler = new ProjectRunExecuteHandler(
+      createDeps({
+        runTask: async (options) => {
+          taskSignal = options.signal;
+          begin();
+          await work;
+          return { success: true, result: "settled", durationMs: 1 };
+        },
+      }),
+      undefined,
+      registry,
+    );
+    const runId = "run_independent_stop_delivery";
+    const signed = await signedRequest(`/api/control-plane/runs/${runId}/execute`, {
+      runId,
+      kind: "task",
+      target: "task:sync-calendar-events",
+      projectId: "proj-1",
+    });
+    const operation = handler.handle(signed.request, createCtx(signed.publicKeyPem));
+    await started;
+    try {
+      assertEquals(registry.requestStop(runId), { accepted: true, stopped: false });
+      assertEquals(taskSignal?.aborted, true);
+    } finally {
+      release();
+    }
+    await operation;
+    assertEquals(registry.requestStop(runId), { accepted: true, stopped: true });
+  });
+
   afterAll(async () => {
     await stopEsbuild();
   });

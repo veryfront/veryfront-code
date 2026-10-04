@@ -2,7 +2,7 @@
   "openapi": "3.2.0",
   "info": {
     "title": "Runs API target",
-    "version": "0.8.1",
+    "version": "0.8.2",
     "description": "The proposed Runs API contract, grouped by resource and purpose.",
     "x-api-id": "5f1f0b8a-6b0e-4c1a-9b35-0f3a1e6d84c7",
     "x-audience": "external-public"
@@ -11669,8 +11669,15 @@
             "description": "Submitted values keyed by field name; password values are omitted from reads."
           },
           "actor": {
-            "$ref": "#/components/schemas/Actor",
-            "description": "Authenticated principal that submitted the response."
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Actor"
+              },
+              {
+                "$ref": "#/components/schemas/UnavailableActor"
+              }
+            ],
+            "description": "Authenticated principal that submitted the response, or `unavailable` for a historical response without authoritative provenance."
           },
           "redacted_fields": {
             "type": "array",
@@ -12110,6 +12117,50 @@
           "id"
         ],
         "description": "Immediate authenticated initiator, recorded by the server; execution credentials identify their issuing service account, not the original caller."
+      },
+      "UnavailableActor": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "unavailable"
+            ]
+          },
+          "reason": {
+            "type": "string",
+            "enum": [
+              "not_recorded",
+              "identity_removed"
+            ],
+            "description": "`not_recorded`: the server never stored the submitting credential. `identity_removed`: the recorded identity was later revoked or deleted."
+          },
+          "legacy_role": {
+            "type": "string",
+            "enum": [
+              "human",
+              "agent",
+              "integration",
+              "system",
+              "user",
+              "api_key",
+              "service_account"
+            ],
+            "description": "Role tag stored with the response. It is not an authenticated actor type."
+          },
+          "legacy_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 255,
+            "description": "Actor ID stored with the response. It is not promoted to an authenticated actor."
+          }
+        },
+        "required": [
+          "type",
+          "reason"
+        ],
+        "additionalProperties": false,
+        "description": "A historical response without authoritative submitting-credential provenance. The server never infers or looks up a replacement actor."
       },
       "RunTarget": {
         "type": "object",

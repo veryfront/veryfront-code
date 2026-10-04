@@ -1,3 +1,4 @@
+import type { RunStopSettlement } from "./run-stop-registry.ts";
 import { privateJsonStringify } from "#veryfront/security/private-json.ts";
 import {
   appendPrivateArray,
@@ -242,6 +243,8 @@ export interface RuntimeAgentStreamExecutionDeps {
       callbacks?: {
         onFinish?: (response: AgentResponse) => void;
         onUsage?: (usage: RuntimeUsageTraceInput) => void;
+        /** Reports the producer's own settlement, including its cleanup, as stop evidence. */
+        onStreamCompletion?: (completion: Promise<void>) => void;
       },
       modelOverride?: string,
       maxOutputTokensOverride?: number,
@@ -1184,6 +1187,16 @@ export async function createRuntimeAgentStreamResponse(
     threadId: input.threadId,
     servingIdentity: deps.servingIdentity,
   });
+  let settledStop: (outcome?: RunStopSettlement) => void;
+  try {
+    settledStop = deps.sessionManager.stopRegistry.register(input.runId, () => {
+      deps.sessionManager.cancelRun(input.runId);
+    });
+  } catch (error) {
+    deps.sessionManager.failRun(input.runId);
+    throw error;
+  }
+  let producerCompletion: Promise<void> | undefined;
 
   let completedResponse: AgentResponse | null = null;
   // Running usage total, updated after every model call. A run that dies mid-stream
@@ -1441,6 +1454,9 @@ export async function createRuntimeAgentStreamResponse(
         kind: "framework" as const,
         runtime: new AgentRuntime(runtimeAgent.id, runtimeAgent.config, {
           manualPause: runtimeManualPauseCapabilities.get(input),
+          onStreamCompletion: (completion) => {
+            producerCompletion = completion;
+          },
           ...(input.resumeToolCall ? { resumeToolCall: input.resumeToolCall } : {}),
           ...(inferenceAuthToken
             ? {
@@ -1467,7 +1483,12 @@ export async function createRuntimeAgentStreamResponse(
           ? runtimeDispatch.runtime.stream(
             runtimeMessages,
             runtimeContext,
-            runtimeStreamCallbacks,
+            {
+              ...runtimeStreamCallbacks,
+              onStreamCompletion: (completion) => {
+                producerCompletion = completion;
+              },
+            },
             undefined,
             maxOutputTokens,
             abortSignal,
@@ -1493,7 +1514,11 @@ export async function createRuntimeAgentStreamResponse(
     });
   } catch (error) {
     deps.sessionManager.failRun(input.runId);
-    await closeSandbox().catch((cleanupError) => {
+    await closeSandbox().then(() => {
+      if (producerCompletion) {
+        void producerCompletion.then(() => settledStop(), () => settledStop());
+      } else settledStop();
+    }).catch((cleanupError) => {
       logger.warn("Internal agent runtime sandbox cleanup failed after setup error", {
         runId: input.runId,
         agentId: agent.id,
@@ -1917,13 +1942,25 @@ export async function createRuntimeAgentStreamResponse(
                 error: releaseError instanceof Error ? releaseError.message : String(releaseError),
               });
             }
-            await closeSandbox().catch((cleanupError) => {
+            let sandboxClosed = false;
+            await closeSandbox().then(() => {
+              sandboxClosed = true;
+            }).catch((cleanupError) => {
               logger.warn("Internal agent runtime sandbox cleanup failed", {
                 runId: input.runId,
                 agentId: agent.id,
                 error: cleanupError instanceof Error ? cleanupError.message : String(cleanupError),
               });
             });
+            // Reader cancellation may detach from a producer still running a tool.
+            // Only the original producer's completion plus successful cleanup is positive evidence.
+            if (sandboxClosed && producerCompletion) {
+              void producerCompletion.then(() => settledStop(), () => settledStop());
+            } else if (sandboxClosed) {
+              // A runtime override that never reported its producer gives no settlement
+              // evidence; retire the registration so it cannot answer stops forever.
+              settledStop("abandoned");
+            }
           }
         },
         buildInternalAgentRunTraceAttributes({

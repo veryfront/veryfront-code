@@ -1,4 +1,4 @@
-import { useLayoutEffect } from "react";
+import { useLayoutEffect, useState } from "react";
 import { flushSync } from "react-dom";
 import { createRoot } from "react-dom/client";
 import { JSDOM } from "npm:jsdom@28.0.0";
@@ -709,6 +709,11 @@ describe("useWorkflowStart", () => {
     const restoreDom = installDom();
     const oldRefreshResponse = Promise.withResolvers<Response>();
     const replacementResponse = Promise.withResolvers<Response>();
+    const initialCommitted = Promise.withResolvers<void>();
+    const replacementCommitted = Promise.withResolvers<void>();
+    const obsoleteCommitted = Promise.withResolvers<void>();
+    let commitObsoleteResponse: (() => void) | null = null;
+    let replacementResolved = false;
     let oldRequestCount = 0;
     let hook: UseWorkflowListResult | null = null;
 
@@ -726,9 +731,17 @@ describe("useWorkflowStart", () => {
     );
 
     function Capture({ token }: { token: string }): null {
+      const [checkpoint, setCheckpoint] = useState(0);
+      commitObsoleteResponse = () => setCheckpoint(1);
       hook = useWorkflowList({
         autoRefresh: false,
         headers: { Authorization: `Bearer ${token}` },
+      });
+      useLayoutEffect(() => {
+        if (checkpoint === 1) obsoleteCommitted.resolve();
+        if (hook!.isLoading) return;
+        if (token === "old") initialCommitted.resolve();
+        else if (replacementResolved) replacementCommitted.resolve();
       });
       return null;
     }
@@ -736,7 +749,7 @@ describe("useWorkflowStart", () => {
     const root = createRoot(document.getElementById("root")!);
     try {
       flushSync(() => root.render(<Capture token="old" />));
-      await new Promise((resolve) => setTimeout(resolve, 20));
+      await initialCommitted.promise;
       assertEquals(hook!.isLoading, false);
 
       const obsoleteRefresh = hook!.refresh();
@@ -745,15 +758,17 @@ describe("useWorkflowStart", () => {
 
       oldRefreshResponse.resolve(Response.json({ runs: [] }));
       await obsoleteRefresh;
-      await new Promise((resolve) => setTimeout(resolve, 0));
+      commitObsoleteResponse!();
+      await obsoleteCommitted.promise;
       assertEquals(
         hook!.isLoading,
         true,
         "the obsolete refresh must not clear loading for the replacement request",
       );
 
+      replacementResolved = true;
       replacementResponse.resolve(Response.json({ runs: [] }));
-      await new Promise((resolve) => setTimeout(resolve, 20));
+      await replacementCommitted.promise;
       assertEquals(hook!.isLoading, false);
     } finally {
       flushSync(() => root.unmount());

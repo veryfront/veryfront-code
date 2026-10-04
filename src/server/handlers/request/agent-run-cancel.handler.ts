@@ -12,6 +12,7 @@ import {
   InternalAgentRequestBodyTooLargeError,
   readInternalAgentRequestBody,
 } from "#veryfront/internal-agents/request-body.ts";
+import { privateTextTrim } from "#veryfront/security/private-text.ts";
 import { setActiveSpanAttributes } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { BaseHandler } from "../response/base.ts";
 import type { HandlerContext, HandlerMetadata, HandlerPriority, HandlerResult } from "../types.ts";
@@ -25,6 +26,24 @@ const CANCEL_PATH_REGEX = /^\/api\/control-plane\/runs\/([^/]+)$/;
 
 function getRunId(pathname: string): string | null {
   return CANCEL_PATH_REGEX.exec(pathname)?.[1] ?? null;
+}
+
+const JsonParse = JSON.parse;
+const hasOwn = Object.hasOwn;
+
+/**
+ * A plain cancel may carry no body or a non-JSON one; only an explicit own flag opts in.
+ * Captured intrinsics keep project prototype mutations from steering this decision.
+ */
+function readConfirmStopped(rawBody: string): boolean {
+  if (privateTextTrim(rawBody) === "") return false;
+  try {
+    const body: unknown = JsonParse(rawBody);
+    return typeof body === "object" && body !== null && hasOwn(body, "confirmStopped") &&
+      (body as { confirmStopped?: unknown }).confirmStopped === true;
+  } catch {
+    return false;
+  }
 }
 
 export class AgentRunCancelHandler extends BaseHandler {
@@ -71,7 +90,20 @@ export class AgentRunCancelHandler extends BaseHandler {
         setActiveSpanAttributes(
           this.sessionManager.getServingSpanAttributes(runId, ctx.projectId) ?? {},
         );
+        const confirmStopped = readConfirmStopped(rawBody);
+        const stop = confirmStopped
+          ? this.sessionManager.stopRegistry.requestStop(runId)
+          : undefined;
         const accepted = this.sessionManager.cancelRun(runId);
+        if (stop) {
+          if (!accepted && !stop.accepted) return this.respond(builder.build(null, 204));
+          return this.respond(
+            builder.json(
+              { accepted: accepted || stop.accepted, stopped: stop.stopped },
+              stop.stopped ? 200 : 202,
+            ),
+          );
+        }
         if (accepted) {
           return this.respond(builder.json({ accepted: true }, 202));
         }
