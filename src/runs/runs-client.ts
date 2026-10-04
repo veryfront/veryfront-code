@@ -8,6 +8,7 @@ import {
 } from "#veryfront/platform/adapters/veryfront-api-client/retry-handler.ts";
 import { API_CLIENT_ERROR } from "#veryfront/platform/adapters/veryfront-api-client/types.ts";
 import type { Schema } from "#veryfront/extensions/schema/index.ts";
+import { INVALID_ARGUMENT } from "#veryfront/errors/index.ts";
 import { getProjectSchema } from "#veryfront/platform/adapters/veryfront-api-client/schemas/index.ts";
 import type { ResolvedTriggerTarget } from "#veryfront/trigger/target.ts";
 import {
@@ -20,6 +21,7 @@ import {
   type CancelRunResponse,
   type CreateRunResponse,
   type Run,
+  type RunEventList,
   type RunList,
   RunListSchema,
   RunSchema,
@@ -155,6 +157,9 @@ export interface ListRunsOptions extends ProjectScopedOptions {
 }
 
 export interface ListRunEventsOptions {
+  /** The previous page_info.next cursor. */
+  cursor?: string;
+  /** Deprecated ascending cursor. Use cursor; do not supply both. */
   afterEventId?: number;
   limit?: number;
 }
@@ -462,11 +467,26 @@ export class VeryfrontRunsClient {
     return this.sdk().getRun({ path: { run_id: runId } }, options);
   }
 
-  events(runId: string, options: ListRunEventsOptions = {}): Promise<RunsOutput<"listRunEvents">> {
-    return this.sdk().listRunEvents({
+  async events(
+    runId: string,
+    options: ListRunEventsOptions = {},
+  ): Promise<RunsOutput<"listRunEvents"> & { page_info: RunEventList["page_info"] }> {
+    if (options.cursor !== undefined && options.afterEventId !== undefined) {
+      throw INVALID_ARGUMENT.create({ detail: "Use cursor or afterEventId, not both." });
+    }
+    const page = await this.sdk().listRunEvents({
       path: { run_id: runId },
-      query: { after_event_id: options.afterEventId, limit: options.limit },
+      query: { cursor: options.cursor, after_event_id: options.afterEventId, limit: options.limit },
     });
+    return {
+      ...page,
+      page_info: {
+        self: options.cursor ?? null,
+        first: null,
+        prev: null,
+        next: page.page_info.next,
+      },
+    };
   }
 
   async cancel(

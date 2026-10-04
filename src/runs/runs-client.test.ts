@@ -850,7 +850,7 @@ describe("VeryfrontRunsClient", () => {
         payload: {},
         created_at: "2026-03-20T12:00:01.000Z",
       }],
-      page_info: { self: null, first: null, next: null, prev: null },
+      page_info: { next: "12" },
     })]);
     const client = createTestClient();
 
@@ -860,11 +860,69 @@ describe("VeryfrontRunsClient", () => {
     );
 
     assertEquals(events.data[0]?.event_type, "RUN_STARTED");
+    assertEquals(events.page_info, { self: null, first: null, prev: null, next: "12" });
     assertEquals(
       call(0).url,
       "https://93.184.216.34/runs/11111111-1111-4111-8111-111111111111/events?after_event_id=1&limit=10",
     );
     assertEquals(call(0).init?.method, "GET");
+  });
+
+  it("preserves canonical event metadata while adapting pagination", async () => {
+    const event = {
+      event_id: 12,
+      run_id: "11111111-1111-4111-8111-111111111111",
+      span_id: "span-1",
+      parent_span_id: "parent-span",
+      event_class: "fact" as const,
+      event_type: "RUN_STARTED",
+      is_error: false,
+      origin_event_type: "RUN_STARTED",
+      origin_custom_name: null,
+      turn_id: "turn-1",
+      unrecoverable_fields: [],
+      metadata: { nested: { business_key: true } },
+      payload: { message: "started" },
+      created_at: "2026-03-20T12:00:01.000Z",
+    };
+    mockFetch([jsonResponse({ data: [event], page_info: { next: null } })]);
+    const page = await createTestClient().events(event.run_id);
+    assertEquals(page.data, [event]);
+    assertEquals(page.data[0]?.run_id, event.run_id);
+    assertEquals(page.data[0]?.span_id, "span-1");
+    assertEquals(page.data[0]?.origin_event_type, "RUN_STARTED");
+    assertEquals(page.page_info, { self: null, first: null, prev: null, next: null });
+  });
+
+  it("retains an empty event page and its canonical continuation cursor", async () => {
+    mockFetch([jsonResponse({ data: [], page_info: { next: "12" } })]);
+    const events = await createTestClient().events(
+      "11111111-1111-4111-8111-111111111111",
+      { cursor: "7", limit: 10 },
+    );
+    assertEquals(events.data, []);
+    assertEquals(events.page_info, {
+      self: "7",
+      first: null,
+      prev: null,
+      next: "12",
+    });
+    const query = new URL(call(0).url).searchParams;
+    assertEquals(query.get("cursor"), "7");
+    assertEquals(query.get("after_event_id"), null);
+  });
+
+  it("rejects conflicting event cursor selections before fetching", async () => {
+    await assertRejects(
+      () =>
+        createTestClient().events(
+          "11111111-1111-4111-8111-111111111111",
+          { cursor: "7", afterEventId: 0 },
+        ),
+      Error,
+      "Use cursor or afterEventId, not both.",
+    );
+    assertEquals(fetchCalls.length, 0);
   });
 
   it("cancels a run through the canonical action route", async () => {
