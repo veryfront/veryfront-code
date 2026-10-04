@@ -5,6 +5,7 @@ import {
   hostedInheritedRunAdmitter,
   hostedInheritedTerminalReceipt,
   hostedTerminalRunFinalizer,
+  type InheritedRunResult,
   withHostedInheritedLease,
 } from "#veryfront/agent/hosted/terminal-credential.ts";
 import {
@@ -46,7 +47,7 @@ function childResult(value: unknown): LocalChildResult {
 
 /** Bind existing local execution and delegation to the authentic inherited child owners. */
 export async function runInheritedLocalAgent(
-  child: ConversationRunProjection,
+  child: ConversationRunProjection | InheritedRunResult,
   transport: { projectId: string; apiUrl: string; fetch: typeof globalThis.fetch },
   execute: (
     signal?: AbortSignal,
@@ -54,7 +55,9 @@ export async function runInheritedLocalAgent(
   ) => Promise<StepResult>,
   parentSignal?: AbortSignal,
 ): Promise<StepResult> {
-  const receipt = hostedInheritedTerminalReceipt(child);
+  const receipt = "terminalReceipt" in child
+    ? child.terminalReceipt
+    : hostedInheritedTerminalReceipt(child);
   if (receipt) {
     return receipt.status === "completed"
       ? { success: true, output: receipt.output, executionTime: 0 }
@@ -64,6 +67,7 @@ export async function runInheritedLocalAgent(
         executionTime: 0,
       };
   }
+  if ("terminalReceipt" in child) throw new Error("Inherited terminal receipt is missing");
   const writer = hostedInheritedEventWriter(child);
   const finalize = hostedTerminalRunFinalizer(child);
   const admit = hostedInheritedRunAdmitter(child, transport);

@@ -1,6 +1,6 @@
 import { instrumentConversationRunFetch } from "#veryfront/agent/conversation/durable.ts";
 import type { StepExecutorConfig } from "#veryfront/workflow/executor/step-executor.ts";
-import { acceptInheritedRunAdmission } from "#veryfront/agent/hosted/terminal-credential.ts";
+import { acceptWorkflowInheritedRunAdmission } from "#veryfront/agent/hosted/terminal-credential.ts";
 import { runInheritedLocalAgent } from "./inherited-local-agent.ts";
 import { computeHash } from "#veryfront/utils/hash-utils.ts";
 import { UUID_PATTERN } from "#veryfront/chat/conversation.ts";
@@ -103,7 +103,9 @@ export function createWorkflowAgentNodeRunner(binding: {
       }),
       signal,
     });
-    const child = await acceptInheritedRunAdmission(admitted, {
+    const child = await acceptWorkflowInheritedRunAdmission(admitted, {
+      parentRunId: parentId,
+      agentId: invocation.agentId,
       projectId: binding.projectId,
       apiUrl: binding.apiUrl,
       fetch: send,

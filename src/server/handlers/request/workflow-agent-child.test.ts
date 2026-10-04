@@ -1,3 +1,4 @@
+import { acceptWorkflowInheritedRunAdmission } from "#veryfront/agent/hosted/terminal-credential.ts";
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
@@ -45,9 +46,19 @@ function admission(
   output: unknown = null,
   id = childId,
   publicId = "run_child",
+  parent = parentId,
 ) {
   return json(
-    { id, status, output, conversation_id: conversationId, output_message_id: "message" },
+    {
+      id,
+      status,
+      output,
+      project_id: "project",
+      parent_run_id: parent,
+      target: { type: "agent", id: "coordinator" },
+      conversation_id: conversationId,
+      output_message_id: "44444444-4444-4444-8444-444444444444",
+    },
     202,
     {
       "Cache-Control": "no-store",
@@ -951,6 +962,36 @@ describe("workflow agent child protocol", () => {
     assertEquals(calls, 1);
   });
 
+  it("replays a bound terminal result without execution credentials", async () => {
+    const output = { text: "durable" };
+    let calls = 0;
+    const result = await runner(() =>
+      Promise.resolve(
+        ++calls === 1 ? json({}) : json(
+          {
+            id: childId,
+            project_id: "project",
+            parent_run_id: parentId,
+            target: { type: "agent", id: "coordinator" },
+            status: "completed",
+            output,
+            conversation_id: conversationId,
+            output_message_id: "44444444-4444-4444-8444-444444444444",
+          },
+          202,
+          { "Cache-Control": "no-store" },
+        ),
+      )
+    )({
+      ...invocation,
+      execute: () => {
+        throw new Error("must not execute");
+      },
+    });
+    assertEquals(result, { success: true, output, executionTime: 0 });
+    assertEquals(calls, 2);
+  });
+
   it("replays completed child output without local execution or finalization", async () => {
     const output = { text: "durable", object: { answer: 42 } };
     let calls = 0;
@@ -983,7 +1024,7 @@ describe("workflow agent child protocol", () => {
           return Promise.resolve(json({}));
         }
         assertEquals(JSON.parse(String(init?.body)).parent_run_id, id);
-        return Promise.resolve(admission("completed", "stored"));
+        return Promise.resolve(admission("completed", "stored", childId, "run_child", id));
       };
       const result = await runner(send, token)({
         ...invocation,
@@ -1050,4 +1091,75 @@ describe("workflow agent child protocol", () => {
       );
     }
   });
+});
+
+describe("workflow terminal admission result validation", () => {
+  const binding = {
+    projectId: "project",
+    parentRunId: parentId,
+    agentId: "coordinator",
+    apiUrl: "https://api.example.test",
+    fetch,
+  };
+  const row = {
+    id: childId,
+    project_id: "project",
+    parent_run_id: parentId,
+    target: { type: "agent", id: "coordinator" },
+    status: "completed",
+    output: null,
+    conversation_id: conversationId,
+    output_message_id: "44444444-4444-4444-8444-444444444444",
+  };
+  for (const status of ["completed", "failed", "cancelled"] as const) {
+    it(`retains ${status} without authority`, async () => {
+      const error = { code: "CHILD_FAILED", message: "Stored failure" };
+      const result = await acceptWorkflowInheritedRunAdmission(
+        json({ ...row, status, ...(status === "failed" ? { error } : {}) }, 202, {
+          "Cache-Control": "no-store",
+        }),
+        binding,
+      );
+      assertEquals(result, {
+        terminalReceipt: { status, output: null, ...(status === "failed" ? { error } : {}) },
+      });
+    });
+  }
+  for (
+    const change of [
+      { project_id: "foreign" },
+      { parent_run_id: childId },
+      { target: { type: "task", id: "coordinator" } },
+      { target: { type: "agent", id: "foreign" } },
+      { id: "bad" },
+      { conversation_id: "bad" },
+      { output_message_id: "bad" },
+      { error: { code: 1, message: "bad" } },
+    ]
+  ) {
+    it(`rejects terminal binding ${JSON.stringify(change)}`, async () => {
+      await assertRejects(
+        () =>
+          acceptWorkflowInheritedRunAdmission(
+            json({ ...row, ...change }, 202, { "Cache-Control": "no-store" }),
+            binding,
+          ),
+        Error,
+        "binding mismatch",
+      );
+    });
+  }
+  for (const status of ["pending", "running", "waiting"]) {
+    it(`still requires authority for ${status}`, async () => {
+      await assertRejects(
+        () =>
+          acceptWorkflowInheritedRunAdmission(
+            json({ ...row, status }, 202, { "Cache-Control": "no-store" }),
+            binding,
+          ),
+        Error,
+        "authority is missing",
+      );
+    });
+  }
 });
