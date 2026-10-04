@@ -1199,6 +1199,7 @@ describe("parallel integration workflow contract", () => {
         "planIntegrationShard({ index, total: 3 })",
         "for (const { suite, files: selected } of plans)",
         "DENO_SUITE_PROFILES[suite]",
+        "if (selected.length === 0) continue;",
         "partitionDenoSuiteFiles(selected, profile.maxFilesPerProcess)",
         "buildDenoSuiteCommandArgs(suite, files",
         "shouldRunDenoBatchInParallel(profile.parallel, files)",
@@ -1207,6 +1208,11 @@ describe("parallel integration workflow contract", () => {
         "if (!status.success) Deno.exit(status.code)",
       ]
     ) assertStringIncludes(String(runner.run), required);
+    assert(
+      String(runner.run).indexOf("if (selected.length === 0) continue;") <
+        String(runner.run).indexOf("partitionDenoSuiteFiles(selected"),
+      "empty profiles must not spawn Deno without positional test files",
+    );
     assert(steps.some((step) => step.run === "deno task generate"));
     const nodeDependencies = steps.find((step) =>
       step.name === "Install Node resolver test dependencies"

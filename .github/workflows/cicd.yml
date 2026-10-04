@@ -237,6 +237,7 @@ jobs:
             const plans = await planIntegrationShard({ index, total: 3 });
             if (!plans.some((plan) => plan.files.length)) throw new Error("empty integration shard");
             for (const { suite, files: selected } of plans) {
+              if (selected.length === 0) continue;
               const profile = DENO_SUITE_PROFILES[suite];
               console.log(`Integration shard ${index}/3 (${suite}): ${selected.length} files`);
               const batches = partitionDenoSuiteFiles(selected, profile.maxFilesPerProcess);
