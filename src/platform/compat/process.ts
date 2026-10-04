@@ -1,4 +1,5 @@
 export {
+  captureHostApiOrigin,
   deleteEnv,
   env,
   type EnvBooleanOptions,
@@ -7,6 +8,7 @@ export {
   getEnvNumber,
   getEnvOverlayStorage,
   getEnvString,
+  getHostApiOriginExcludingEnvFile,
   getHostEnv,
   getHostEnvExcludingEnvFile,
   setEnv,

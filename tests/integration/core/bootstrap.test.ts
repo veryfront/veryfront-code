@@ -15,7 +15,12 @@ import "../../_helpers/contract-init.ts";
 
 import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert";
 import { afterEach, describe, it } from "#veryfront/testing/bdd";
-import { bootstrap, bootstrapDev, bootstrapProd } from "../../../src/server/bootstrap.ts";
+import {
+  bootstrap,
+  bootstrapDev,
+  bootstrapProd,
+  type BootstrapResult,
+} from "../../../src/server/bootstrap.ts";
 import { tryResolve } from "#veryfront/extensions/contracts.ts";
 import { RedisRuntimeProviderName } from "#veryfront/extensions/distributed/index.ts";
 import { getRedisModule } from "#veryfront/platform/adapters/redis/modules.ts";
@@ -24,6 +29,10 @@ import { join } from "#veryfront/compat/path";
 import { mkdir } from "#veryfront/compat/fs.ts";
 import { getAdapter } from "#veryfront/platform/adapters/detect.ts";
 import { isBun, isDeno, isNode } from "../../../src/platform/compat/runtime.ts";
+import {
+  getHostApiOriginExcludingEnvFile,
+  resetHostApiOriginSnapshot,
+} from "#veryfront/platform/compat/process/env.ts";
 import { delay } from "#std/async";
 import {
   cleanupTempDir,
@@ -915,6 +924,72 @@ describe("bootstrap - Dev and Prod Modes", () => {
       assertExists(devResult);
       assertExists(prodResult);
       assertEquals(devResult.config.title, prodResult.config.title);
+    });
+  });
+
+  describe("host internal API origin", () => {
+    const hostOrigin = "http://api.internal.test";
+    // Project config runs during bootstrap and tries to redirect the
+    // host-credentialed environment-variable requests.
+    const redirectingConfig = `
+globalThis.Deno?.env.set("VERYFRONT_API_INTERNAL_URL", "https://attacker.example.test");
+export default { title: "Redirecting Config" };
+`;
+
+    async function assertOriginCapturedBeforeProjectCode(
+      prefix: string,
+      run: (projectDir: string) => Promise<BootstrapResult>,
+    ): Promise<void> {
+      await withTempProjectDir(prefix, async (projectDir) => {
+        await writeConfigFile(projectDir, "veryfront.config.js", redirectingConfig);
+
+        const result = await run(projectDir);
+        try {
+          assertEquals(result.config.title, "Redirecting Config");
+          assertEquals(
+            Deno.env.get("VERYFRONT_API_INTERNAL_URL"),
+            "https://attacker.example.test",
+          );
+          assertEquals(getHostApiOriginExcludingEnvFile("VERYFRONT_API_INTERNAL_URL"), hostOrigin);
+        } finally {
+          await result.dispose?.();
+        }
+      });
+    }
+
+    it("is captured by bootstrapDev before project config runs", async () => {
+      const adapter = await getAdapter();
+      const restore = withEnvOverrides({ VERYFRONT_API_INTERNAL_URL: hostOrigin });
+      resetHostApiOriginSnapshot();
+      try {
+        await assertOriginCapturedBeforeProjectCode(
+          "dev_internal_origin",
+          (projectDir) => bootstrapDev(projectDir, adapter),
+        );
+      } finally {
+        resetHostApiOriginSnapshot();
+        restore();
+      }
+    });
+
+    it("is captured by local CLI proxy mode before project config runs", async () => {
+      const adapter = await getAdapter();
+      const restore = withEnvOverrides({
+        VERYFRONT_API_INTERNAL_URL: hostOrigin,
+        PROXY_MODE: "1",
+        VERYFRONT_CLI_LOCAL_PROXY_MODE: "1",
+        VERYFRONT_API_BASE_URL: "http://api.public.test",
+      });
+      resetHostApiOriginSnapshot();
+      try {
+        await assertOriginCapturedBeforeProjectCode(
+          "local_proxy_internal_origin",
+          (projectDir) => bootstrapProd(projectDir, adapter),
+        );
+      } finally {
+        resetHostApiOriginSnapshot();
+        restore();
+      }
     });
   });
 });

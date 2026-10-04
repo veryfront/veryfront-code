@@ -4,16 +4,19 @@ import { isDeno } from "#veryfront/platform/compat/runtime.ts";
 import { fromFileUrl } from "#std/path";
 import {
   captureHostApiEnvironment,
+  captureHostApiOrigin,
   clearEnvFileValueSources,
   deleteEnv,
   deleteHostSecret,
   env,
   getEnv,
+  getHostApiOriginExcludingEnvFile,
   getHostEnv,
   getHostEnvExcludingEnvFile,
   hasEnvFileValueSource,
   markEnvFileValue,
   registerTrustedProjectEnvSnapshot,
+  resetHostApiOriginSnapshot,
   setEnv,
   setHostSecret,
 } from "./env.ts";
@@ -68,6 +71,45 @@ describe("host environment access", () => {
     } finally {
       deleteHostSecret("VERYFRONT_API_TOKEN");
       deleteEnv("VERYFRONT_API_URL");
+    }
+  });
+
+  it("keeps a captured API origin without a registered API token", () => {
+    const key = "VF_HOST_API_ORIGIN_CAPTURE_TEST";
+    resetHostApiOriginSnapshot();
+    setEnv(key, "https://trusted-internal.example");
+    try {
+      captureHostApiOrigin(key);
+      setEnv(key, "https://project-mutated.example");
+      assertEquals(getHostApiOriginExcludingEnvFile(key), "https://trusted-internal.example");
+      deleteEnv(key);
+      assertEquals(getHostApiOriginExcludingEnvFile(key), "https://trusted-internal.example");
+    } finally {
+      resetHostApiOriginSnapshot();
+      deleteEnv(key);
+    }
+  });
+
+  it("normalizes a host API origin and treats a blank value as unset", () => {
+    const key = "VF_HOST_API_ORIGIN_TEST";
+    try {
+      for (
+        const [value, expected] of [
+          ["  https://internal.example//  ", "https://internal.example"],
+          ["https://internal.example/base/", "https://internal.example/base"],
+          ["   ", undefined],
+          ["/", undefined],
+          [undefined, undefined],
+        ] as const
+      ) {
+        resetHostApiOriginSnapshot();
+        if (value === undefined) deleteEnv(key);
+        else setEnv(key, value);
+        assertEquals(getHostApiOriginExcludingEnvFile(key), expected, JSON.stringify(value));
+      }
+    } finally {
+      resetHostApiOriginSnapshot();
+      deleteEnv(key);
     }
   });
 

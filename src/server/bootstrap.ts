@@ -39,7 +39,7 @@ import {
 import { getErrorMessage, INVALID_ARGUMENT } from "#veryfront/errors";
 import { enhanceAdapterWithFS } from "#veryfront/platform/adapters/fs/integration.ts";
 import { isExtendedFSAdapter } from "#veryfront/platform/adapters/fs/wrapper.ts";
-import { getEnv, getHostEnv } from "#veryfront/platform/compat/process.ts";
+import { captureHostApiOrigin, getEnv, getHostEnv } from "#veryfront/platform/compat/process.ts";
 import { isProxyTopologyTrusted } from "#veryfront/platform/compat/proxy-topology.ts";
 import { initializeEsbuild } from "#veryfront/platform/compat/esbuild.ts";
 import { __registerLogRecordEmitter, logger } from "#veryfront/utils/logger/logger.ts";
@@ -299,6 +299,7 @@ let envLogged = false;
 
 async function ensureEnvLoaded(projectDir: string, adapter: RuntimeAdapter): Promise<void> {
   if (hasEnvLoaded()) {
+    captureHostApiOrigin("VERYFRONT_API_INTERNAL_URL");
     logEnvConfig();
     return;
   }
@@ -317,6 +318,9 @@ async function ensureEnvLoaded(projectDir: string, adapter: RuntimeAdapter): Pro
     }
   }
   markEnvLoaded();
+  // Fix the host-owned internal origin in every bootstrap mode, right after the
+  // environment loads and before project config or extension code can run.
+  captureHostApiOrigin("VERYFRONT_API_INTERNAL_URL");
   logEnvConfig();
 }
 
@@ -647,7 +651,6 @@ function validateProductionEnvironment(): void {
       );
       throw INVALID_ARGUMENT.create({ detail: missingInternalCredentials });
     }
-
     if (!isProxyTopologyTrusted()) {
       logger.error(
         "[Bootstrap:Prod] CRITICAL: proxy mode does not trust its upstream topology. " +

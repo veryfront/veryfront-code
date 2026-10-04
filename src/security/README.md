@@ -200,10 +200,14 @@ credential rejection, or explicit invalidation never returns stale or empty
 secret data.
 
 Hosted proxy mode requires both `VERYFRONT_API_INTERNAL_USER` and
-`VERYFRONT_API_INTERNAL_PASS`, and `VERYFRONT_API_BASE_URL` must provide the
-canonical `/internal/project-environment-variables` endpoint. Before using
-those host credentials, the runtime verifies the request bearer token against
-the project-scoped management endpoint. A missing credential, redirected
+`VERYFRONT_API_INTERNAL_PASS`. Both environment requests go to one origin:
+`VERYFRONT_API_INTERNAL_URL` when it is set to a non-blank value, otherwise
+`VERYFRONT_API_BASE_URL`. That origin must provide the canonical
+`/internal/project-environment-variables` endpoint and the project-scoped
+management endpoint. `VERYFRONT_API_INTERNAL_URL` is read from the host
+environment only; project overlays and project env files cannot set it.
+Before using those host credentials, the runtime verifies the request bearer
+token against the project-scoped management endpoint. A missing credential, redirected
 endpoint, or failed internal request is an error. There is no compatibility
 fallback to masked management values. Local CLI proxy mode and non-proxy
 runtimes do not require these host credentials.
@@ -234,9 +238,11 @@ derives from the signed control-plane body. Upgrading an existing deployment
 is safe in this order:
 
 1. Deploy and verify the canonical
-   `/internal/project-environment-variables` endpoint on
+   `/internal/project-environment-variables` endpoint on the origin the
+   runtime will use: `VERYFRONT_API_INTERNAL_URL` if you set it, otherwise
    `VERYFRONT_API_BASE_URL`. Provision the credential pair that the endpoint
-   accepts.
+   accepts. If you add `VERYFRONT_API_INTERNAL_URL` to a running deployment,
+   verify the endpoint on that origin before setting the variable.
 2. Set `VERYFRONT_API_INTERNAL_USER`, `VERYFRONT_API_INTERNAL_PASS`, and
    `VERYFRONT_TRUST_FORWARDED_HEADERS=1` (and ensure
    `CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY` is set) on the runtime environment

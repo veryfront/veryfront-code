@@ -30,6 +30,7 @@ const allowHostEnvTestOverlay = (() => {
   return hostProcessEnv?.DENO_TESTING === "1";
 })();
 const MapConstructor = Map;
+const mapClear = Map.prototype.clear;
 const mapDelete = Map.prototype.delete;
 const mapEntries = Map.prototype.entries;
 const mapGet = Map.prototype.get;
@@ -46,6 +47,8 @@ const setHas = Set.prototype.has;
 // influence — how a host value is classified as blank.
 const stringTrim = String.prototype.trim;
 const stringToLowerCase = String.prototype.toLowerCase;
+const stringCharCodeAt = String.prototype.charCodeAt;
+const stringSlice = String.prototype.slice;
 
 /**
  * Host-private credentials, deliberately kept out of the process environment.
@@ -73,7 +76,11 @@ const stringToLowerCase = String.prototype.toLowerCase;
 const hostSecrets: Map<string, string> = new MapConstructor();
 const envFileValueKeys: Set<string> = new SetConstructor();
 const hostApiEnvSnapshot: Map<string, string | undefined> = new MapConstructor();
-const HOST_API_ENV_KEYS = ["VERYFRONT_API_URL", "VERYFRONT_API_BASE_URL"] as const;
+const HOST_API_ENV_KEYS = [
+  "VERYFRONT_API_URL",
+  "VERYFRONT_API_BASE_URL",
+  "VERYFRONT_API_INTERNAL_URL",
+] as const;
 
 /** Capture operator-owned API routing before project modules can mutate the process. */
 export function captureHostApiEnvironment(): void {
@@ -253,6 +260,47 @@ export function getHostEnvExcludingEnvFile(key: string): string | undefined {
   }
   if (hasEnvFileValueSource(key)) return getHostSecret(key);
   return getHostEnv(key);
+}
+
+const hostApiOriginSnapshot: Map<string, string | undefined> = new MapConstructor();
+
+function readHostApiOrigin(key: string): string | undefined {
+  const value = getHostEnvExcludingEnvFile(key);
+  if (typeof value !== "string") return undefined;
+  const trimmed = apply(stringTrim, value, []) as string;
+  let end = trimmed.length;
+  while (end > 0 && (apply(stringCharCodeAt, trimmed, [end - 1]) as number) === 47) end -= 1;
+  return end === 0 ? undefined : apply(stringSlice, trimmed, [0, end]) as string;
+}
+
+/**
+ * Read a host-owned API origin outside the project snapshot, normalized with
+ * intrinsics captured before project code runs. Surrounding whitespace and
+ * trailing slashes are dropped, and a blank value counts as unset.
+ *
+ * The first read (or {@link captureHostApiOrigin} at boot) fixes the value for
+ * the life of the process, whether or not a host API token is registered, so
+ * project code that later mutates the process environment cannot redirect
+ * host-credentialed requests.
+ */
+export function getHostApiOriginExcludingEnvFile(key: string): string | undefined {
+  if (apply(mapHas, hostApiOriginSnapshot, [key])) {
+    return apply(mapGet, hostApiOriginSnapshot, [key]);
+  }
+  const origin = readHostApiOrigin(key);
+  apply(mapSet, hostApiOriginSnapshot, [key, origin]);
+  return origin;
+}
+
+/** Capture a host-owned API origin at boot, before project modules can run. */
+export function captureHostApiOrigin(key: string): void {
+  getHostApiOriginExcludingEnvFile(key);
+}
+
+/** @internal Forget captured API origins. Only effective in captured test processes. */
+export function resetHostApiOriginSnapshot(): void {
+  if (!allowHostEnvTestOverlay) return;
+  apply(mapClear, hostApiOriginSnapshot, []);
 }
 
 /** The host process environment alone, without host-private credentials. */
