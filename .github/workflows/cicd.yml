@@ -753,7 +753,7 @@ jobs:
     timeout-minutes: 10
     name: Reused main Sonar coverage report
     needs: [tested-run]
-    if: ${{ !cancelled() && needs.tested-run.result == 'success' && needs.tested-run.outputs.reuse == 'true' }}
+    if: ${{ !cancelled() && needs.tested-run.result == 'success' && needs.tested-run.outputs.reuse == 'true' && ((github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && (github.event_name != 'pull_request' || github.event.pull_request.user.login != 'dependabot[bot]')) }}
     permissions:
       actions: read
       contents: read
