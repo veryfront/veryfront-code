@@ -1,4 +1,5 @@
 import { createClient } from "redis";
+import { createRoutingRedisClient } from "veryfront/extensions/distributed/routing-invalidation-support";
 import { getEnv } from "veryfront/platform/env";
 import { getErrorMessage } from "veryfront/errors";
 import {
@@ -15,8 +16,6 @@ import { parseProxyRoutingInvalidationEvent } from "veryfront/extensions/distrib
 const ROUTING_INVALIDATION_CHANNEL = "vf-proxy-routing-invalidations-v1";
 const ROUTING_INVALIDATION_ACK_PREFIX = `${ROUTING_INVALIDATION_CHANNEL}:ack:`;
 const DEFAULT_ACKNOWLEDGEMENT_TIMEOUT_MS = 1_500;
-const DEFAULT_CONNECT_TIMEOUT_MS = 3_000;
-const MAX_RECONNECT_ATTEMPTS = 5;
 const MAX_RECENT_EVENT_IDS = 1_000;
 const MAX_ACTIVE_EVENT_PROCESSING = 100;
 const MAX_ACTIVE_PUBLISHES = 100;
@@ -553,24 +552,7 @@ function parseAcknowledgement(message: string): RoutingInvalidationAcknowledgeme
 }
 
 async function createDefaultClient(redisUrl: string): Promise<RoutingInvalidationRedisClient> {
-  const createRedisClient = createClient as unknown as (options: {
-    url: string;
-    socket: {
-      connectTimeout: number;
-      reconnectStrategy: (retries: number) => number | Error;
-    };
-  }) => RoutingInvalidationRedisClient;
-
-  return createRedisClient({
-    url: redisUrl,
-    socket: {
-      connectTimeout: DEFAULT_CONNECT_TIMEOUT_MS,
-      reconnectStrategy: (retries) =>
-        retries >= MAX_RECONNECT_ATTEMPTS
-          ? new Error("Routing invalidation Redis reconnect limit reached")
-          : Math.min(100 * 2 ** retries, 1_000),
-    },
-  });
+  return createRoutingRedisClient((options) => createClient(options), redisUrl);
 }
 
 function logInfo(

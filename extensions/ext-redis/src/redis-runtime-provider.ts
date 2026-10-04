@@ -142,6 +142,9 @@ function bindClientMethods<T>(
 export function withNumericScanCursor(client: NodeRedisClient): NodeRedisClient {
   return Object.freeze({
     ...client,
+    get isReady() {
+      return client.isReady;
+    },
     async scan(cursor: number, options?: { MATCH?: string; COUNT?: number }) {
       const page: { cursor: string | number; keys: string[] } = await Reflect.apply(
         client.scan,
@@ -179,7 +182,11 @@ export function createRedisRuntimeProvider(
     createClient(options: Parameters<NodeRedisModule["createClient"]>[0]) {
       requireOpen();
       const client = NodeRedis.createClient(options);
-      return withNumericScanCursor(bindClientMethods<NodeRedisClient>(client, NODE_CLIENT_METHODS));
+      return withNumericScanCursor(
+        bindClientMethods<NodeRedisClient>(client, NODE_CLIENT_METHODS, {
+          properties: ["isReady"],
+        }),
+      );
     },
   });
   let state: "open" | "closing" | "close-failed" | "closed" = "open";
