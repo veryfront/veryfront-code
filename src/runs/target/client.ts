@@ -195,19 +195,20 @@ export function createRunsSdk(config: RunsSdkConfig): RunsSdk {
         { ...input, query: { ...input.query, cursor } },
         options,
       ) as Page;
-      for (const item of page.data) {
-        options.signal?.throwIfAborted();
-        yield item;
-      }
       options.signal?.throwIfAborted();
       const next = page.page_info?.next ?? null;
-      if (next === null) return;
-      if (next === cursor || next === initialCursor || next === anchor) {
+      if (next !== null && (next === cursor || next === initialCursor || next === anchor)) {
         throw API_CLIENT_ERROR.create({
           detail: `${operationId} returned an already used cursor as page_info.next`,
           status: 502,
         });
       }
+      for (const item of page.data) {
+        options.signal?.throwIfAborted();
+        yield item;
+      }
+      options.signal?.throwIfAborted();
+      if (next === null) return;
       distance++;
       if (distance === power) {
         anchor = next;

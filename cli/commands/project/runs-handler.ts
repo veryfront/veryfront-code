@@ -25,13 +25,16 @@ const COMMAND = "project runs";
 
 /** Use the normal trusted endpoint resolver; explicit scoped credentials come from a file. */
 export async function handleProjectRuns(args: ParsedArgs): Promise<void> {
-  const invocation = parseRunsInvocation(args);
+  const ndjson = args.ndjson === true;
+  let stream = ndjson;
   const projectDir = typeof args["project-dir"] === "string" ? args["project-dir"] : Deno.cwd();
   const controller = new AbortController();
   const interrupt = () => controller.abort();
   let outputFailed = false;
-  if (invocation.ndjson) Deno.addSignalListener("SIGINT", interrupt);
+  if (ndjson) Deno.addSignalListener("SIGINT", interrupt);
   try {
+    const invocation = parseRunsInvocation(args);
+    stream = invocation.stream;
     const sdk = await createProjectRunsSdk(args, projectDir);
     await runProjectRuns(args, sdk, async (data) => {
       try {
@@ -45,14 +48,14 @@ export async function handleProjectRuns(args: ParsedArgs): Promise<void> {
     });
   } catch (error) {
     if (controller.signal.aborted) exitProcess(130);
-    if (invocation.ndjson && outputFailed) {
+    if (ndjson && outputFailed) {
       console.error("Could not write NDJSON output.");
       exitProcess(1);
       return;
     }
-    await reportRunsFailure(error, invocation.stream, invocation.ndjson);
+    await reportRunsFailure(error, stream, ndjson, controller.signal);
   } finally {
-    if (invocation.ndjson) Deno.removeSignalListener("SIGINT", interrupt);
+    if (ndjson) Deno.removeSignalListener("SIGINT", interrupt);
   }
 }
 
@@ -124,6 +127,7 @@ async function reportRunsFailure(
   error: unknown,
   stream: boolean,
   ndjson = false,
+  signal?: AbortSignal,
 ): Promise<void> {
   const problem = runsProblemOf(error);
   if (!problem && !(stream && (isJsonMode() || ndjson))) throw error;
@@ -138,7 +142,16 @@ async function reportRunsFailure(
     message,
   }) as ErrorEnvelope["error"];
   if (ndjson) {
-    await writeRunsJsonLine(createErrorEnvelope(COMMAND, safe));
+    try {
+      await writeRunsJsonLine(createErrorEnvelope(COMMAND, safe), Deno.stdout, signal);
+    } catch {
+      if (signal?.aborted) exitProcess(130);
+      else {
+        console.error("Could not write NDJSON output.");
+        exitProcess(1);
+      }
+      return;
+    }
   } else if (!isJsonMode()) {
     console.error(safe.message);
   } else if (stream) {

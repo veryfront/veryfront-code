@@ -1,6 +1,9 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
-import { fixtureResponse } from "#veryfront/runs/target/client.test-helpers.ts";
+import {
+  fixtureResponse,
+  RUNS_OPERATION_FIXTURES,
+} from "#veryfront/runs/target/client.test-helpers.ts";
 import { parseCliArgs } from "../../../../../cli/shared/args.ts";
 import { setJsonMode } from "../../../../../cli/shared/json-output.ts";
 import { handleProjectCommand } from "../../../../../cli/commands/project/handler.ts";
@@ -9,6 +12,17 @@ const [projectDir, scenario] = Deno.args;
 if (!projectDir) throw new Error("A project directory is required.");
 
 function commandFor(name: string | undefined): string[] {
+  if (name?.startsWith("ndjson")) {
+    return [
+      "project",
+      "runs",
+      "list",
+      "--ndjson",
+      ...(name === "ndjson-all" ? ["--all"] : []),
+      ...(name === "ndjson-json" ? ["--json"] : []),
+      ...(name === "ndjson-invalid" ? ["--query", "[]"] : []),
+    ];
+  }
   if (name?.startsWith("stream")) return ["project", "runs", "stream", "--run-id", "r1"];
   if (name === "login-list") return ["project", "runs", "list"];
   if (name === "login-analytics") return ["project", "runs", "analytics"];
@@ -28,12 +42,39 @@ function assertCredentialHeaders(init: RequestInit | undefined): void {
 }
 
 const argv = commandFor(scenario);
-argv.push("--json", "--project-dir", projectDir);
+argv.push("--project-dir", projectDir);
+if (!scenario?.startsWith("ndjson")) argv.push("--json");
 if (!scenario?.startsWith("login-")) argv.push("--credential-file", `${projectDir}/credential`);
 if (scenario === "api-key") argv.push("--credential-mode", "api-key");
-setJsonMode(true);
+setJsonMode(!scenario?.startsWith("ndjson"));
+let requests = 0;
 await withMockFetch((_url, init) => {
   assertCredentialHeaders(init);
+  requests++;
+  if (scenario?.startsWith("ndjson")) {
+    if (
+      requests === 1 ||
+      ["ndjson", "ndjson-all", "ndjson-json", "ndjson-output-closed"].includes(scenario ?? "")
+    ) {
+      return Promise.resolve(Response.json({
+        ...RUNS_OPERATION_FIXTURES.listRuns.response.body,
+        ...(["ndjson-error-blocked", "ndjson-output-closed"].includes(scenario ?? "")
+          ? { data: [{ id: "first", payload: "x".repeat(1024 * 1024) }] }
+          : {}),
+        page_info: { next: requests === 1 ? "second" : null },
+      }));
+    }
+    if (scenario === "ndjson-error-blocked") {
+      console.error("ndjson-error-ready");
+    }
+    return Promise.resolve(Response.json({
+      type: "about:blank",
+      status: 403,
+      title: "Rejected",
+      code: "FORBIDDEN",
+      detail: scenario === "ndjson-error-blocked" ? "Rejected. ".repeat(750) : "Rejected.",
+    }, { status: 403 }));
+  }
   if (scenario === "validation" || scenario === "forbidden") {
     const status = scenario === "validation" ? 422 : 403;
     return Promise.resolve(Response.json({
