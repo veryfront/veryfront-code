@@ -25,9 +25,9 @@ reporting remains advisory.
 A main push whose exact commit already passed a green merge queue run of this
 workflow, with that run's artifacts still available, inherits the test results
 from that run instead of re-running them. Both gates accept a skipped test
-dependency only in that case. The Sonar scan still runs and still blocks, using
-the merge queue run's coverage, and the release publishes that run's npm
-artifact. Without such a run, main runs the full pipeline. Evidence:
+dependency only in that case. The fresh Sonar scan uses the merge queue run's
+coverage and blocks staging dispatch. RC publication runs alongside that scan
+and publishes the tested npm artifact. Without such a run, main runs the full pipeline. Evidence:
 [tested merge-queue run contract](../tests/integration/ci/tested-merge-queue-run-workflow.test.ts).
 
 The scanner emits the diagnostic `SonarQube Cloud scan` check.
@@ -124,13 +124,18 @@ pins the single-build invariant and the download ordering in each consumer.
 
 ## Main release runner budget
 
-Main pushes enforce the server-side Sonar result in the scan job and evaluate
-all merge correctness results as the first publisher step. Standalone
-`SonarQube Cloud quality gate` and `quality gate (merge)` jobs still report on
-pull requests and merge-group events with unchanged required names. Publishers
-accept skipped correctness jobs only with the authoritative tested merge-queue
-run id, and always require the fresh main Sonar gate to succeed. Fallback runs
-require every correctness dependency to succeed.
+Main pushes reuse the authoritative tested merge-queue run only for the same
+commit and available artifacts. On reuse, RC publication accepts the skipped
+local correctness jobs and starts alongside the fresh main Sonar analysis.
+Separate reuse coverage and scan jobs keep that analysis outside the publisher's
+dependency path. Both scan paths share the same steps. Fallback runs still wait
+for every correctness dependency and the Sonar scan before publishing.
+
+The `SonarQube Cloud quality gate` job checks the selected fresh scan on every
+trusted run, including main pushes. Stable publication still waits for this
+gate. The canonical registry gate requires it before any downstream dispatch
+step can run. An RC published before a failed main gate remains published but
+never dispatches to staging.
 
 Stable registry validation and downstream dispatch share one runner. RC registry
 validation starts after npm publication on a read-only runner, in parallel with
@@ -141,5 +146,5 @@ Every dispatch step requires successful validation, the selected publication
 job, and public release upload, retains a five-minute timeout, and stays inside
 the existing `production` approval environment. The validation container
 terminates before token creation; no repository script or local action runs on
-the host after validation. The standalone main Sonar and merge gate runners
-remain folded without removing any gate.
+the host after validation. The standalone main merge gate runner
+remains folded without removing any gate.

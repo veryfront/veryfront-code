@@ -249,7 +249,10 @@ export function createRunBoundAgentManualPause(input: {
       recordHostedAgentPausePersistence(capability, succeeded);
     },
     async acknowledge(checkpoint: AgentPauseCheckpoint) {
-      const body = privateJsonStringify({ checkpoint: parseAgentPauseCheckpoint(checkpoint) })!;
+      const body = privateJsonStringify({
+        checkpoint: parseAgentPauseCheckpoint(checkpoint),
+        settlementRequired: true,
+      })!;
       const stop = (await request("pause-ack", body, (value) =>
         getAckSchema().parse(value), true)).stop;
       state.stopped = stop;
