@@ -465,7 +465,10 @@ export class VeryfrontRunsClient {
     });
   }
 
-  async cancel(runId: string, idempotencyKey = crypto.randomUUID()): Promise<CancelRunResponse> {
+  async cancel(
+    runId: string,
+    idempotencyKey: string = crypto.randomUUID(),
+  ): Promise<CancelRunResponse> {
     const run = await this.sdk().cancelRun({
       path: { run_id: runId },
       headers: { "Idempotency-Key": idempotencyKey },

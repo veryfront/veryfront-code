@@ -223,8 +223,8 @@ describe("VeryfrontRunsClient", () => {
     const resource = {
       id,
       project_id: projectId,
-      target: { type: "task", id: "sync-data" },
-      status: "completed",
+      target: { type: "task" as const, id: "sync-data" },
+      status: "completed" as const,
       input: { source: "manual" },
       output: { synced: 3 },
       labels: { team: "research" },
