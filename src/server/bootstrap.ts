@@ -299,6 +299,7 @@ let envLogged = false;
 
 async function ensureEnvLoaded(projectDir: string, adapter: RuntimeAdapter): Promise<void> {
   if (hasEnvLoaded()) {
+    captureHostApiOrigin("VERYFRONT_API_INTERNAL_URL");
     logEnvConfig();
     return;
   }
@@ -317,6 +318,9 @@ async function ensureEnvLoaded(projectDir: string, adapter: RuntimeAdapter): Pro
     }
   }
   markEnvLoaded();
+  // Fix the host-owned internal origin in every bootstrap mode, right after the
+  // environment loads and before project config or extension code can run.
+  captureHostApiOrigin("VERYFRONT_API_INTERNAL_URL");
   logEnvConfig();
 }
 
@@ -647,9 +651,6 @@ function validateProductionEnvironment(): void {
       );
       throw INVALID_ARGUMENT.create({ detail: missingInternalCredentials });
     }
-    // Fix the host-owned internal origin before any project module can run.
-    captureHostApiOrigin("VERYFRONT_API_INTERNAL_URL");
-
     if (!isProxyTopologyTrusted()) {
       logger.error(
         "[Bootstrap:Prod] CRITICAL: proxy mode does not trust its upstream topology. " +
