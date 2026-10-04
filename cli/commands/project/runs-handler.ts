@@ -1,7 +1,6 @@
 import { AUTHENTICATION_REQUIRED, INVALID_ARGUMENT, wrapUnknownError } from "veryfront/errors";
 import { redactForSerialization } from "veryfront/utils";
-import { createCanonicalVeryfrontApiTransport } from "#veryfront/platform/adapters/veryfront-api-transport.ts";
-import { createRunsSdk, runsProblemOf } from "#veryfront/runs/target/client.ts";
+import { createRunsApiTransport, createRunsSdk, runsProblemOf } from "veryfront/runs/target";
 import { getEnvironmentConfig } from "veryfront/config";
 import {
   readConfigJsonFile,
@@ -114,16 +113,11 @@ export async function createProjectRunsSdk(args: ParsedArgs, projectDir: string)
     token = candidate.apiToken;
   }
   return createRunsSdk({
-    transport: createCanonicalVeryfrontApiTransport(
-      apiUrl,
-      () => token,
-      {
-        maxRetries: 0,
-        initialDelay: 0,
-        maxDelay: 0,
-      },
-      undefined,
-      mode,
-    ),
+    transport: createRunsApiTransport({
+      baseUrl: apiUrl,
+      getToken: () => token,
+      retry: { maxRetries: 0, initialDelay: 0, maxDelay: 0 },
+      authMode: mode,
+    }),
   });
 }

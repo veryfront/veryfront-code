@@ -1,4 +1,5 @@
 import { createWorkflowAgentNodeRunner } from "./workflow-agent-child.ts";
+import { adaptManagedEvalRunStream } from "./managed-eval-run-stream.ts";
 import { RunStopRegistry } from "#veryfront/internal-agents/run-stop-registry.ts";
 import { agentRunSessionManager } from "#veryfront/internal-agents/session-manager.ts";
 import {
@@ -2758,7 +2759,7 @@ function createDurableEvalAgentFetch(
       });
     }
 
-    return streamResponse;
+    return adaptManagedEvalRunStream(streamResponse);
   };
 }
 

@@ -4290,9 +4290,21 @@ describe("server/handlers/request/project-run-execute.handler", () => {
             if (method === "GET" && url.pathname.endsWith("/stream")) {
               return new Response(
                 [
-                  `event: RunStarted\ndata: ${JSON.stringify({ runId: "eval-child-run" })}\n\n`,
-                  `event: TextMessageContent\ndata: ${JSON.stringify({ delta: "Paris" })}\n\n`,
-                  `event: RunFinished\ndata: ${JSON.stringify({})}\n\n`,
+                  ...[
+                    { type: "RUN_STARTED", runId: "eval-child-run" },
+                    { type: "TEXT_MESSAGE_CONTENT", messageId: "answer", delta: "Paris" },
+                    { type: "RUN_FINISHED", runId: "eval-child-run" },
+                  ].map((payload, index) =>
+                    `id: ${index + 1}\nevent: ${payload.type}\ndata: ${
+                      JSON.stringify({
+                        event_id: index + 1,
+                        event_type: payload.type,
+                        payload,
+                        is_error: false,
+                        created_at: "2026-10-04T20:00:00.000Z",
+                      })
+                    }\n\n`
+                  ),
                 ].join(""),
                 { headers: { "content-type": "text/event-stream" } },
               );
@@ -4417,9 +4429,21 @@ describe("server/handlers/request/project-run-execute.handler", () => {
               if (method === "GET" && url.pathname.endsWith("/stream")) {
                 return new Response(
                   [
-                    `event: RunStarted\ndata: ${JSON.stringify({ runId: "eval-child-run" })}\n\n`,
-                    `event: TextMessageContent\ndata: ${JSON.stringify({ delta: "Paris" })}\n\n`,
-                    `event: RunFinished\ndata: ${JSON.stringify({})}\n\n`,
+                    ...[
+                      { type: "RUN_STARTED", runId: "eval-child-run" },
+                      { type: "TEXT_MESSAGE_CONTENT", messageId: "answer", delta: "Paris" },
+                      { type: "RUN_FINISHED", runId: "eval-child-run" },
+                    ].map((payload, index) =>
+                      `id: ${index + 1}\nevent: ${payload.type}\ndata: ${
+                        JSON.stringify({
+                          event_id: index + 1,
+                          event_type: payload.type,
+                          payload,
+                          is_error: false,
+                          created_at: "2026-10-04T20:00:00.000Z",
+                        })
+                      }\n\n`
+                    ),
                   ].join(""),
                   { headers: { "content-type": "text/event-stream" } },
                 );

@@ -5,8 +5,8 @@ import type {
   RunsOperationId,
   RunsPaginatedOperationId,
   RunsSdk,
-} from "#veryfront/runs/target/client.ts";
-import { RUNS_OPERATIONS } from "#veryfront/runs/target/operations.ts";
+} from "veryfront/runs/target";
+import { RUNS_OPERATIONS } from "veryfront/runs/target";
 
 /** Public subcommands of the existing project family, one per target operation. */
 export const RUNS_COMMANDS = {

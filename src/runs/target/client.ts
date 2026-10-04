@@ -28,11 +28,26 @@ export type RunsOperationId = keyof operations;
 /** RFC 9457 problem body that every Runs error response carries. */
 export type RunsProblem = components["schemas"]["Problem"];
 
+/** Canonical JSON carried by the data field of the Runs event stream. */
+export interface CanonicalRunStreamFrame {
+  /** Durable reconnect cursor; null for transient frames. */
+  event_id: number | null;
+  /** Stored event type used as the SSE event name. */
+  event_type: string;
+  /** Authorized AG-UI event, including fields of future event types. */
+  payload: { type: string; [key: string]: unknown };
+  /** Error classification from the stored event. */
+  is_error: boolean;
+  /** Stored timestamp; null when the frame has no stored timestamp. */
+  created_at: string | null;
+}
+
 /** One server-sent frame of `streamRunEvents`. */
 export interface RunStreamFrame {
   /** Durable event ID; pass it as `Last-Event-ID` to resume after this frame. */
   id: string | null;
-  event: components["schemas"]["RunStreamEvent"];
+  /** Canonical metadata envelope and its authorized event payload. */
+  event: CanonicalRunStreamFrame;
 }
 
 /** Configuration for {@link createRunsSdk}. */
