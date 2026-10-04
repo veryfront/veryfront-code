@@ -353,8 +353,9 @@ success envelope with one item in `data`, regardless of `--json`:
 ```
 
 The mode retains one SDK page and one encoded output line, and awaits stdout
-writes before consuming another item. Cursor cycle detection uses constant
-memory; malformed cursor loops can require additional requests before detection. `--output` is not supported. An empty collection emits no lines.
+writes before consuming another item. Cursor cycle detection keeps only the
+visited cursors and stops before a repeated page is requested, so no item is
+emitted twice. `--output` is not supported. An empty collection emits no lines.
 Without `--ndjson`, a list returns its single-page envelope; `--all --json`
 continues to return one envelope with the complete item array.
 

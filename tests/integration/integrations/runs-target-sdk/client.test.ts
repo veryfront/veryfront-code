@@ -296,26 +296,24 @@ describe("Runs target SDK", () => {
     assertEquals(requests.length, 2);
   });
 
-  it("detects cursor cycles after a non-cyclic prefix with bounded cursor state", async () => {
-    const cursors = ["prefix", "a", "b", "c", "a", "b", "c", "a", "b", "c", "a"];
-    const { sdk, requests } = sdkWith(
-      cursors.map((next, index) =>
+  it("rejects a cursor cycle with a prefix or more than two members before repeating a page", async () => {
+    for (const cursors of [["prefix", "a", "b", "c", "a", "b"], ["a", "b", "c", "a", "b"]]) {
+      const { sdk, requests } = sdkWith(cursors.map((next, index) =>
         Response.json({
-          data: [{ id: index === 0 ? "initial" : cursors[index - 1] }],
+          data: [{ ...FIXTURE_RUN, id: `page-${cursors[index - 1] ?? "first"}` }],
           page_info: { next },
         })
-      ),
-    );
-    const output: unknown[] = [];
-    const error = await rejection(async () => {
-      for await (const item of sdk.paginate("listRunChildRuns", { path: { run_id: RUN_ID } })) {
-        output.push(item);
-      }
-    });
-    assertEquals(error.status, 502);
-    assert(requests.length < cursors.length);
-    assertEquals(output.length, requests.length - 1);
-    assertEquals(new Set(output.map((item) => (item as { id: string }).id)).size, output.length);
+      ));
+      const emitted: string[] = [];
+      const error = await rejection(async () => {
+        for await (const item of sdk.paginate("listRuns")) emitted.push(item.id);
+      });
+      assertEquals(error.status, 502);
+      // The page whose next cursor was already used is never emitted or followed.
+      assertEquals(requests.length, cursors.length - 1, cursors.join(","));
+      assertEquals(emitted.length, requests.length - 1, emitted.join(","));
+      assertEquals(new Set(emitted).size, emitted.length, emitted.join(","));
+    }
   });
 
   it("parses event-stream frames split across chunks, CRLF line ends and keep-alive comments", async () => {

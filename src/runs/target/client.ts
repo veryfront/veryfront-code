@@ -184,11 +184,9 @@ export function createRunsSdk(config: RunsSdkConfig): RunsSdk {
     options: RunsCallOptions = {},
   ): AsyncGenerator<unknown> {
     let cursor = input.query?.cursor;
-    const initialCursor = cursor;
-    // Brent cycle detection retains a fixed number of cursors across any number of pages.
-    let anchor = cursor;
-    let power = 1;
-    let distance = 0;
+    // Exact cursor history rejects a cycle before its first repeated page is requested.
+    // It retains cursor strings only; items are released once yielded.
+    const seen = new Set([cursor]);
     while (true) {
       const page = await call(
         operationId,
@@ -197,7 +195,7 @@ export function createRunsSdk(config: RunsSdkConfig): RunsSdk {
       ) as Page;
       options.signal?.throwIfAborted();
       const next = page.page_info?.next ?? null;
-      if (next !== null && (next === cursor || next === initialCursor || next === anchor)) {
+      if (next !== null && seen.has(next)) {
         throw API_CLIENT_ERROR.create({
           detail: `${operationId} returned an already used cursor as page_info.next`,
           status: 502,
@@ -209,12 +207,7 @@ export function createRunsSdk(config: RunsSdkConfig): RunsSdk {
       }
       options.signal?.throwIfAborted();
       if (next === null) return;
-      distance++;
-      if (distance === power) {
-        anchor = next;
-        power *= 2;
-        distance = 0;
-      }
+      seen.add(next);
       cursor = next;
     }
   }
