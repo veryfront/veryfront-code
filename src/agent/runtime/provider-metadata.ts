@@ -1,6 +1,7 @@
+import { createPrivateWeakStore } from "#veryfront/security/private-weak-store.ts";
 import type { Message } from "../types.ts";
 
-const providerMetadataByMessage = new WeakMap<Message, Record<string, unknown>>();
+const providerMetadataByMessage = createPrivateWeakStore<Message, Record<string, unknown>>();
 
 /** Keep provider replay metadata inside one runtime turn without exposing it on public messages. */
 export function attachProviderMetadata(
@@ -20,7 +21,7 @@ export function readAttachedProviderMetadata(
   return providerMetadataByMessage.get(message);
 }
 
-const providerReplayDeliveredValues = new WeakSet<object>();
+const providerReplayDeliveredValues = createPrivateWeakStore<object, true>();
 
 /**
  * Mark a message whose provider metadata came from a delivered replay
@@ -28,12 +29,12 @@ const providerReplayDeliveredValues = new WeakSet<object>();
  * decisions that must apply only to replayed state can tell the two apart.
  */
 export function markProviderReplayDelivered<T extends object>(value: T): T {
-  providerReplayDeliveredValues.add(value);
+  providerReplayDeliveredValues.set(value, true);
   return value;
 }
 
 /** True when the value was marked as carrying delivered replay-checkpoint metadata. */
 export function isProviderReplayDelivered(value: unknown): boolean {
   return typeof value === "object" && value !== null &&
-    providerReplayDeliveredValues.has(value);
+    providerReplayDeliveredValues.get(value) === true;
 }
