@@ -126,6 +126,11 @@ export async function runInheritedLocalAgent(
                   detail: "Durable delegation requires a tool call",
                 });
               }
+              const attemptSignal = invocation.context?.abortSignal;
+              const delegationSignal = signal && attemptSignal
+                ? AbortSignal.any([signal, attemptSignal])
+                : attemptSignal ?? signal;
+              delegationSignal?.throwIfAborted();
               return await runInheritedChildExecutionOnce(
                 writer,
                 `${child.runId}:${toolCallId}`,
@@ -142,7 +147,8 @@ export async function runInheritedLocalAgent(
                       detail: "Local child has no matching admitted tool invocation",
                     });
                   }
-                  await mirror.flush({ abortSignal: signal, throwOnTimeoutRetry: true });
+                  await mirror.flush({ abortSignal: delegationSignal, throwOnTimeoutRetry: true });
+                  delegationSignal?.throwIfAborted();
                   const delegated = await admit(toolCallId, invocation.input)({
                     apiUrl: transport.apiUrl,
                     authToken: "",
@@ -158,7 +164,7 @@ export async function runInheritedLocalAgent(
                       const output = await invocation.execute({ signal: childSignal, onEvent });
                       return { success: output.status !== "error", output, executionTime: 0 };
                     },
-                    signal,
+                    delegationSignal,
                   );
                   if (!delegatedResult.success) {
                     throw new Error(delegatedResult.error ?? "Delegated agent failed");

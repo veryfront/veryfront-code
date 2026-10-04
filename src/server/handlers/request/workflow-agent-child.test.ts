@@ -292,6 +292,65 @@ describe("workflow agent child protocol", () => {
     ]);
   });
 
+  it("propagates a tool attempt timeout into an already executing delegated child", async () => {
+    const attempt = new AbortController();
+    const grandchildId = "44444444-4444-4444-8444-444444444444";
+    const cursors = new Map<string, number>();
+    const send: typeof fetch = (url, init) => {
+      const path = new URL(String(url)).pathname;
+      const body = JSON.parse(String(init?.body));
+      if (path === "/runs") {
+        return Promise.resolve(
+          body.node_id ? admission() : admission("running", null, grandchildId, "run_research"),
+        );
+      }
+      if (path.endsWith("/events")) {
+        const id = path.split("/")[2]!;
+        const cursor = (cursors.get(id) ?? 0) + body.events.length;
+        cursors.set(id, cursor);
+        return Promise.resolve(
+          json({
+            run_id: id,
+            latest_event_id: cursor,
+            latest_external_event_sequence: cursor,
+            appended_count: body.events.length,
+          }),
+        );
+      }
+      return Promise.resolve(json({ id: path.split("/")[2], status: body.status }));
+    };
+    let childSawAbort = false;
+    const result = await runner(send)({
+      ...invocation,
+      execute: async () => {
+        await observeGeneratedAgentTurn("attempt-message", {
+          text: "",
+          toolCalls: [{
+            toolCallId: "attempt-tool",
+            toolName: "invoke_agent",
+            input: { agent_id: "brief-research" },
+          }],
+        });
+        const output = await executeLocalChild({
+          agentId: "brief-research",
+          input: "Research",
+          toolName: "invoke_agent",
+          toolInput: { agent_id: "brief-research" },
+          context: { toolCallId: "attempt-tool", abortSignal: attempt.signal },
+          execute: (control) => {
+            attempt.abort(new Error("Step timeout"));
+            childSawAbort = control?.signal?.aborted === true;
+            control?.signal?.throwIfAborted();
+            return Promise.resolve({ text: "Should stop", toolCalls: 0, status: "completed" });
+          },
+        });
+        return { success: true, output, executionTime: 0 };
+      },
+    });
+    assertEquals(childSawAbort, true);
+    assertEquals(result.success, false);
+  });
+
   it("keeps concurrent workflow children and their tool-call authority isolated", async () => {
     const parentB = "55555555-5555-4555-8555-555555555555";
     const childB = "66666666-6666-4666-8666-666666666666";
