@@ -790,7 +790,7 @@ describe("VeryfrontRunsClient", () => {
     mockFetch([
       jsonResponse({
         data: [makeRun()],
-        page_info: { self: null, first: null, next: null, prev: null },
+        page_info: { next: "next-page" },
       }),
     ]);
 
@@ -799,8 +799,16 @@ describe("VeryfrontRunsClient", () => {
     const response = await client.list({ limit: 50 });
 
     assertEquals(response.data.length, 1);
+    assertEquals(response.page_info, { self: null, first: null, prev: null, next: "next-page" });
     assertStringIncludes(call(0).url, "/projects/dreamy-haven/runs");
     assertStringIncludes(call(0).url, "limit=50");
+  });
+
+  it("accepts an empty canonical run page and retains the requested cursor", async () => {
+    mockFetch([jsonResponse({ data: [], page_info: { next: null } })]);
+    const response = await createTestClient().list({ cursor: "current-page" });
+    assertEquals(response.data, []);
+    assertEquals(response.page_info, { self: "current-page", first: null, prev: null, next: null });
   });
 
   it("reads run detail through the canonical route", async () => {

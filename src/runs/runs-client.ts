@@ -436,7 +436,16 @@ export class VeryfrontRunsClient {
       path: { project_reference: this.resolveProjectReference(options.projectReference) },
       query: { cursor: options.cursor, limit: options.limit },
     });
-    return RunListSchema.parse({ ...page, data: page.data.map(compatibilityRun) });
+    return RunListSchema.parse({
+      ...page,
+      page_info: {
+        self: options.cursor ?? null,
+        first: null,
+        prev: null,
+        next: page.page_info.next,
+      },
+      data: page.data.map(compatibilityRun),
+    });
   }
 
   /** Read a canonical UUID; adapts the grouped resource for existing framework callers. */
