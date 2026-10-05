@@ -26,7 +26,10 @@ import { RUNS_OPERATIONS } from "./operations.ts";
 export type RunsOperationId = keyof operations;
 
 /** RFC 9457 problem body that every Runs error response carries. */
-export type RunsProblem = components["schemas"]["Problem"];
+export type RunsProblem = components["schemas"]["Problem"] & {
+  /** Schedule admission refusal. */
+  cause?: "schedule_concurrency_forbidden" | "schedule_fire_in_progress";
+};
 
 /** Canonical JSON carried by the data field of the Runs event stream. */
 export interface CanonicalRunStreamFrame {
