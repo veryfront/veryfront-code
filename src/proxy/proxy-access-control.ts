@@ -250,6 +250,13 @@ function resolveSignInApex(hostname: string, isHostedProductionDeployment: boole
   return DEFAULT_SIGN_IN_APEX;
 }
 
+/**
+ * Build the Studio sign-in URL for a protected proxy request.
+ *
+ * Customer proxy deployments may configure a trusted Studio origin. Matching
+ * project hosts receive an absolute HTTPS return URL bound to that configured
+ * hostname; untrusted request hosts receive only a sanitized path and query.
+ */
 export function buildProxyAuthRedirectUrl(url: URL): string {
   const safePath = normalizeProxyOriginFormPath(url.pathname);
   const returnPath = safePath + url.search;

@@ -10,6 +10,7 @@ import {
 import { register, reset } from "../extensions/contracts.ts";
 import type { AuthProvider } from "../extensions/auth/index.ts";
 
+/** Create a deterministic auth provider for proxy access-control tests. */
 function createAuthProvider(userId: string): AuthProvider {
   const payload = { sub: userId, userId };
   return {
