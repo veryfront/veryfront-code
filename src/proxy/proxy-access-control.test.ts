@@ -62,6 +62,28 @@ describe("proxy/proxy-access-control", () => {
     }
   });
 
+  it("accepts canonical-equivalent configured HTTPS origins", () => {
+    const previous = Deno.env.get("VERYFRONT_PROXY_SIGN_IN_ORIGIN");
+    try {
+      for (
+        const origin of [
+          "https://PLATFORM.EXAMPLE.TEST",
+          "https://platform.example.test:443",
+          "https://PLATFORM.EXAMPLE.TEST:443/",
+        ]
+      ) {
+        Deno.env.set("VERYFRONT_PROXY_SIGN_IN_ORIGIN", origin);
+        assertEquals(
+          buildProxyAuthRedirectUrl(new URL("https://app.platform.example.test/")),
+          "https://platform.example.test/sign-in?from=https%3A%2F%2Fapp.platform.example.test%2F",
+        );
+      }
+    } finally {
+      if (previous === undefined) Deno.env.delete("VERYFRONT_PROXY_SIGN_IN_ORIGIN");
+      else Deno.env.set("VERYFRONT_PROXY_SIGN_IN_ORIGIN", previous);
+    }
+  });
+
   it("rejects unsafe configured sign-in origins", () => {
     const previous = Deno.env.get("VERYFRONT_PROXY_SIGN_IN_ORIGIN");
     try {

@@ -265,8 +265,7 @@ export function buildProxyAuthRedirectUrl(url: URL): string {
     }
     if (
       signInOrigin.protocol !== "https:" || signInOrigin.username || signInOrigin.password ||
-      signInOrigin.pathname !== "/" || signInOrigin.search || signInOrigin.hash ||
-      (configuredOrigin !== signInOrigin.origin && configuredOrigin !== signInOrigin.origin + "/")
+      signInOrigin.pathname !== "/" || signInOrigin.search || signInOrigin.hash
     ) {
       throw INITIALIZATION_ERROR.create({
         detail:
