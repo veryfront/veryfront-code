@@ -68,3 +68,14 @@ Attached local child callbacks cannot yet suspend and redispatch a form. They
 return an explicit tool error before creating an input request. Standalone polling
 helpers also reject secret forms before creation; use an API-dispatched hosted run
 for password input. These limits do not change public secret redaction.
+
+## Explicit agent outcomes
+
+A hosted agent can call `succeed_run` with final JSON `output`, or `fail_run` with
+an `error` containing `code`, `message`, and optional JSON `details`. Use `null`
+when success has no output. These platform tools infer the current run from
+private execution authority and do not accept a run ID or status.
+
+An accepted outcome stops further tool and model execution. Success records
+`completed`; failure records `failed`. A rejected terminal request leaves the
+agent able to continue. The existing `finalize` tool remains supported.

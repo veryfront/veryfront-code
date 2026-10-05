@@ -451,3 +451,53 @@ Deno.test("failure finalization preserves the canonical code, message and JSON d
     error: failure,
   });
 });
+
+for (const name of ["succeed_run", "veryfront__succeed_run", "fail_run", "veryfront__fail_run"]) {
+  it(`${name} commits the current run and prevents sibling dispatch`, async () => {
+    const success = name.endsWith("succeed_run");
+    const control = createAdmittedControl({ runId: "run-current" });
+    const input = success ? { output: { count: 2 }, idempotency_key: "outcome-key" } : {
+      error: { code: "TASK_FAILED", message: "Unable to finish" },
+      idempotency_key: "outcome-key",
+    };
+    const status = success ? "completed" : "failed";
+    const error = await assertRejects(() =>
+      executeTerminalRunTool(
+        name,
+        input,
+        control.context,
+        async () => ({ run: { run_id: "run-current", status, ...input } }),
+      )
+    );
+    assert(isTerminalRunControlError(error));
+    assertEquals(error.status, status);
+    assertEquals(control.signal.aborted, true);
+    let dispatched = false;
+    await assertRejects(() =>
+      dispatchWithTerminalRunControl(control.context, async () => {
+        dispatched = true;
+      })
+    );
+    assertEquals(dispatched, false);
+  });
+  it(`${name} rejects a run selector or outcome override before dispatch`, async () => {
+    for (
+      const extra of [{ run_id: "other" }, { status: "failed" }, { idempotency_key: "" }, {
+        idempotency_key: 1,
+      }]
+    ) {
+      const control = createAdmittedControl({ runId: "run-current" });
+      const input = name.endsWith("succeed_run")
+        ? { output: null, ...extra }
+        : { error: { code: "TASK_FAILED", message: "Unable to finish" }, ...extra };
+      let dispatched = false;
+      await assertRejects(() =>
+        executeTerminalRunTool(name, input, control.context, async () => {
+          dispatched = true;
+        })
+      );
+      assertEquals(dispatched, false);
+      assertEquals(control.signal.aborted, false);
+    }
+  });
+}
