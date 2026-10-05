@@ -11,7 +11,6 @@ import { getHostedRequestPreparationSignal } from "./request-preparation-context
 import { getServerResolvedToolExposureCheckpoint } from "../hosted/runtime-request-config.ts";
 import { createHostedRunEventWriterCapabilityForRequest } from "../hosted/child-run-event-writer-token.ts";
 import type { HostedAgentServiceDetachedExecutionInput } from "./routes.ts";
-import { runEventTokenResponse } from "../hosted/child-run-event-writer-token.test-helpers.ts";
 
 const runtimeSource = { type: "release", releaseId: "release-42" } as const;
 
@@ -826,12 +825,25 @@ it("agent service routes remove verified writer credentials before detached call
       const capability = createHostedRunEventWriterCapabilityForRequest(request, {
         apiUrl: "https://api.example.test",
         runId: "run-1",
-        fetch: async (input, init) => {
+        fetch: async (_input, init) => {
           childAuthorizations.push(getAuthorizationFromFetchInit(init));
-          return runEventTokenResponse(new Request(input), "child-writer-token");
+          return Response.json(
+            {
+              token: "child-writer-token",
+              run_id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+              token_type: "Bearer",
+              expires_at: "2026-10-04T12:00:00Z",
+              permissions: ["run.events.append"],
+            },
+            { headers: { "Cache-Control": "no-store" } },
+          );
         },
       });
-      await capability?.mintChildRunEventWriterCapability("child-run-1");
+      await capability?.mintChildRunEventWriterCapability(
+        "child-run-1",
+        undefined,
+        "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      );
       return { executionId: "exec-sanitized" };
     },
     startDetachedExecution: async ({ rawRequest }) => {
@@ -866,12 +878,25 @@ it("agent service routes preserve verified writer authority across request cloni
       const capability = createHostedRunEventWriterCapabilityForRequest(requestClone, {
         apiUrl: "https://api.example.test",
         runId: requestClone.durableRootRun?.runId ?? "missing-run",
-        fetch: async (input, init) => {
+        fetch: async (_input, init) => {
           childAuthorizations.push(getAuthorizationFromFetchInit(init));
-          return runEventTokenResponse(new Request(input), "child-writer-token");
+          return Response.json(
+            {
+              token: "child-writer-token",
+              run_id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+              token_type: "Bearer",
+              expires_at: "2026-10-04T12:00:00Z",
+              permissions: ["run.events.append"],
+            },
+            { headers: { "Cache-Control": "no-store" } },
+          );
         },
       });
-      await capability?.mintChildRunEventWriterCapability("child-run-1");
+      await capability?.mintChildRunEventWriterCapability(
+        "child-run-1",
+        undefined,
+        "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      );
       return { executionId: "exec-cloned" };
     },
     startDetachedExecution: () => {

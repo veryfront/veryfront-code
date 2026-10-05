@@ -26,6 +26,7 @@ import {
 } from "#veryfront/provider/veryfront-cloud/context.ts";
 import { createEphemeralAgentWithRuntimeOptions } from "../factory.ts";
 import type { AgentRuntimeInternalOptions } from "../runtime/index.ts";
+import { getHostedAgentPauseCreationOptions } from "./manual-pause-credential.ts";
 import { markRuntimeLocalTool } from "../runtime/local-tool.ts";
 import { isVeryfrontCloudRuntimeModel } from "../runtime/model-resolution.ts";
 import { getProviderNativeToolNames } from "../runtime/provider-native-tool-inventory.ts";
@@ -661,6 +662,7 @@ export function createPreparedHostedRuntimeAgent(
 ) {
   const resolvedRuntimeOptions = {
     ...runtimeOptions,
+    manualPause: runtimeOptions.manualPause ?? getHostedAgentPauseCreationOptions(input.options),
     modelCallThinking: runtimeOptions.modelCallThinking ?? input.options.thinking,
     ...(input.options.serverResolvedResumeToolCall
       ? { resumeToolCall: input.options.serverResolvedResumeToolCall }

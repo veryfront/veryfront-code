@@ -3,7 +3,7 @@
  * bytes veryfront-api generates from its shared Zod schemas, pinned by the kit hash.
  */
 import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
-import { RUNS_OPERATION_FIXTURES } from "../../../src/runs/target/client.test-helpers.ts";
+import { RUNS_OPERATION_FIXTURES } from "../../../src/runs/contract/runs-fixtures.generated.ts";
 import {
   extractRunsFixtures,
   generateRunsFixtures,
@@ -76,12 +76,12 @@ describe("Runs target contract types", () => {
     });
   });
 
-  it("are the pinned 0.8.1 artifacts, byte for byte", async () => {
+  it("are the pinned 0.8.2 artifacts, byte for byte", async () => {
     const pin = JSON.parse(await Deno.readTextFile(new URL("pin.json", contractDir))) as {
       contract: string;
       files: Record<string, string>;
     };
-    assertEquals(pin.contract, "0.8.1");
+    assertEquals(pin.contract, "0.8.2");
     assertEquals(Object.keys(pin.files), [
       "runs-api.generated.ts",
       "openapi.target.json",

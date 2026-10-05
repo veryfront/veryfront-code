@@ -8,6 +8,7 @@ const credentialOwnerKey = Symbol("terminal-credential-owner");
 const terminalErrors = new WeakSet<object>();
 const dispatches = new WeakMap<object, AdmittedDispatch>();
 const outcomes = new WeakMap<object, AdmittedDispatch>();
+const canonicalResponseIds = new WeakMap<object, string>();
 const weakMapGet = WeakMap.prototype.get;
 const weakMapSet = WeakMap.prototype.set;
 const freeze = Object.freeze;
@@ -235,13 +236,20 @@ class TerminalRunControl {
     }
     const failure = error as Record<string, unknown>;
     if (
-      typeof failure.code !== "string" || !/^[A-Z][A-Z0-9_]{0,63}$/.test(failure.code) ||
-      typeof failure.message !== "string" || !failure.message.trim() ||
-      failure.message.length > 2000 ||
-      Object.keys(failure).some((key) => key !== "code" && key !== "message")
+      typeof failure.code !== "string" || failure.code.length < 1 || failure.code.length > 128 ||
+      typeof failure.message !== "string" || failure.message.length < 1 ||
+      failure.message.length > 4000 ||
+      Object.keys(failure).some((key) =>
+        key !== "code" && key !== "message" && key !== "details"
+      ) ||
+      (failure.details !== undefined &&
+        (!failure.details || typeof failure.details !== "object" || Array.isArray(failure.details)))
     ) {
-      throw new Error("finalize requires a valid failure code and message");
+      throw new Error("finalize requires a valid failure code, message and optional JSON details");
     }
+    const snapshot = snapshotBoundedJsonValue(failure);
+    if (!snapshot.success) throw new Error("finalize failure must be JSON-compatible");
+    input.error = snapshot.value;
   }
 
   private async commit(
@@ -279,17 +287,27 @@ class TerminalRunControl {
           throw error;
         }
       }
-      const response = result as {
-        run?: {
-          run_id?: string;
-          status?: string;
-          output?: unknown;
-          error?: { code?: string; message?: string };
-        };
-      } | null;
-      const run = response?.run;
+      type TerminalResource = {
+        id?: string;
+        run_id?: string;
+        status?: string;
+        output?: unknown;
+        error?: { code?: string; message?: string };
+      };
+      const response = result as
+        | (TerminalResource & {
+          run?: TerminalResource;
+        })
+        | null;
+      const run = response?.run ?? response;
+      const canonicalResponseId = apply(weakMapGet, canonicalResponseIds, [this]) as
+        | string
+        | undefined;
+      const matchesRun = response?.run
+        ? run?.run_id === context.runId
+        : canonicalResponseId !== undefined && run?.id === canonicalResponseId;
       if (
-        run && run.run_id === context.runId &&
+        run && matchesRun &&
         (run.status === "failed" || run.status === "cancelled" ||
           (run.status === "completed" && Object.hasOwn(run, "output")))
       ) {
@@ -329,6 +347,21 @@ export function terminalReceiptPersistenceFailure(error: unknown, signal?: Abort
   return new Error(error instanceof Error ? error.message : "Terminal receipt persistence failed", {
     cause: freeze({ persistenceError: error, terminalOutcome }),
   });
+}
+
+/** Bind canonical response identity from the private platform credential, never from a tool argument. */
+export function bindTerminalRunResponseIdentity(
+  context: ToolExecutionContext | undefined,
+  canonicalRunId: string,
+): void {
+  if (!hasCurrentTerminalRunCredentialAuthority(context)) return;
+  const control = (context as ControlContext)[controlKey];
+  if (!control) return;
+  const existing = apply(weakMapGet, canonicalResponseIds, [control]);
+  if (existing && existing !== canonicalRunId) {
+    throw new Error("Terminal response identity cannot change during execution");
+  }
+  apply(weakMapSet, canonicalResponseIds, [control, canonicalRunId]);
 }
 
 /** Create a gate for one runtime invocation; child invocations receive their own gate. */
@@ -384,7 +417,14 @@ export function terminalToolCallIdHeaderValue(context?: ToolExecutionContext): s
 }
 
 export function isTerminalRunToolName(name: string): boolean {
-  return name === "veryfront__finalize" || name === "finalize";
+  return [
+    "finalize",
+    "veryfront__finalize",
+    "succeed_run",
+    "veryfront__succeed_run",
+    "fail_run",
+    "veryfront__fail_run",
+  ].includes(name);
 }
 
 /** Called only after selecting a trusted platform source and enforcing tool policy. */
@@ -399,6 +439,29 @@ export async function executeTerminalRunTool(
   }
   const control = (context as ControlContext | undefined)?.[controlKey];
   if (!control || !context) throw new Error("finalize requires an active runtime execution");
+  const action = name.replace(/^veryfront__/, "");
+  if (action === "succeed_run" || action === "fail_run") {
+    const field = action === "succeed_run" ? "output" : "error";
+    if (Object.keys(input).some((key) => key !== field && key !== "idempotency_key")) {
+      throw new Error(`${action} accepts only ${field}, without a run ID or status`);
+    }
+    if (
+      input.idempotency_key !== undefined &&
+      (typeof input.idempotency_key !== "string" || input.idempotency_key.length < 1 ||
+        input.idempotency_key.length > 128)
+    ) {
+      throw new Error(`${action} requires an idempotency key of 1 to 128 characters`);
+    }
+    const terminalInput: Record<string, unknown> = {
+      [field]: input[field],
+      status: action === "succeed_run" ? "completed" : "failed",
+    };
+    return control.fail(terminalInput, context, () => {
+      // Output schema validation and JSON snapshotting happen before transport.
+      input[field] = terminalInput[field];
+      return execute();
+    });
+  }
   return control.fail(input, context, execute);
 }
 

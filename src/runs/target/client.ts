@@ -25,14 +25,37 @@ import { RUNS_OPERATIONS } from "./operations.ts";
 /** Contract operation ID. */
 export type RunsOperationId = keyof operations;
 
-/** RFC 9457 problem body that every Runs error response carries. */
-export type RunsProblem = components["schemas"]["Problem"];
+/**
+ * RFC 9457 Runs error body. Optional `cause` identifies
+ * `schedule_concurrency_forbidden` (overlapping fires forbidden) or
+ * `schedule_fire_in_progress` (the same fire is being processed).
+ */
+// Public causes postdate the immutable pin; remove the extension when the pin includes them.
+export type RunsProblem = components["schemas"]["Problem"] & {
+  /** Schedule admission refusal. */
+  cause?: "schedule_concurrency_forbidden" | "schedule_fire_in_progress";
+};
+
+/** Canonical JSON carried by the data field of the Runs event stream. */
+export interface CanonicalRunStreamFrame {
+  /** Durable reconnect cursor; null for transient frames. */
+  event_id: number | null;
+  /** Stored event type used as the SSE event name. */
+  event_type: string;
+  /** Authorized AG-UI event, including fields of future event types. */
+  payload: { type: string; [key: string]: unknown };
+  /** Error classification from the stored event. */
+  is_error: boolean;
+  /** Stored timestamp; null when the frame has no stored timestamp. */
+  created_at: string | null;
+}
 
 /** One server-sent frame of `streamRunEvents`. */
 export interface RunStreamFrame {
   /** Durable event ID; pass it as `Last-Event-ID` to resume after this frame. */
   id: string | null;
-  event: components["schemas"]["RunStreamEvent"];
+  /** Canonical metadata envelope and its authorized event payload. */
+  event: CanonicalRunStreamFrame;
 }
 
 /** Configuration for {@link createRunsSdk}. */
@@ -133,6 +156,8 @@ interface Page {
 }
 
 const PATH_PARAMETER = /\{(\w+)\}/g;
+const replacePath = String.prototype.replace;
+const applyPath = Reflect.apply;
 const FALLBACK_PROBLEM_CODE = "UNEXPECTED_RESPONSE";
 
 /** Create a typed Runs SDK over the given transport. */
@@ -184,23 +209,37 @@ export function createRunsSdk(config: RunsSdkConfig): RunsSdk {
     options: RunsCallOptions = {},
   ): AsyncGenerator<unknown> {
     let cursor = input.query?.cursor;
-    const seen = new Set([cursor]);
+    const initialCursor = cursor;
+    // Brent cycle detection retains a fixed number of cursors across any number of pages.
+    let anchor = cursor;
+    let power = 1;
+    let distance = 0;
     while (true) {
       const page = await call(
         operationId,
         { ...input, query: { ...input.query, cursor } },
         options,
       ) as Page;
-      yield* page.data;
+      options.signal?.throwIfAborted();
       const next = page.page_info?.next ?? null;
-      if (next === null) return;
-      if (seen.has(next)) {
+      if (next !== null && (next === cursor || next === initialCursor || next === anchor)) {
         throw API_CLIENT_ERROR.create({
           detail: `${operationId} returned an already used cursor as page_info.next`,
           status: 502,
         });
       }
-      seen.add(next);
+      for (const item of page.data) {
+        options.signal?.throwIfAborted();
+        yield item;
+      }
+      options.signal?.throwIfAborted();
+      if (next === null) return;
+      distance++;
+      if (distance === power) {
+        anchor = next;
+        power *= 2;
+        distance = 0;
+      }
       cursor = next;
     }
   }
@@ -229,13 +268,16 @@ function buildRequest(
   options: RunsCallOptions,
 ): { path: string; init: TransportRequestInit } {
   const route = RUNS_OPERATIONS[operationId];
-  const path = route.path.replace(PATH_PARAMETER, (_match, name: string) => {
-    const value = input.path?.[name];
-    if (value === undefined) {
-      throw new TypeError(`${operationId} requires the path parameter ${name}`);
-    }
-    return encodeURIComponent(String(value));
-  });
+  const path = applyPath(replacePath, route.path, [
+    PATH_PARAMETER,
+    (_match: string, name: string) => {
+      const value = input.path?.[name];
+      if (value === undefined) {
+        throw new TypeError(`${operationId} requires the path parameter ${name}`);
+      }
+      return encodeURIComponent(String(value));
+    },
+  ]) as string;
   const query = new URLSearchParams();
   for (const [name, value] of Object.entries(input.query ?? {})) {
     for (const item of [value].flat()) {
@@ -298,6 +340,7 @@ async function* readFrames(
 /** Parse one SSE frame; a frame without data yields nothing. */
 function parseFrame(operationId: RunsOperationId, raw: string): RunStreamFrame | null {
   let id: string | null = null;
+  let eventType: string | undefined;
   const data: string[] = [];
   for (const line of raw.split("\n")) {
     if (line === "" || line.startsWith(":")) continue;
@@ -305,10 +348,38 @@ function parseFrame(operationId: RunsOperationId, raw: string): RunStreamFrame |
     const field = colon < 0 ? line : line.slice(0, colon);
     const value = colon < 0 ? "" : line.slice(colon + 1).replace(/^ /, "");
     if (field === "id") id = value;
+    else if (field === "event") eventType = value;
     else if (field === "data") data.push(value);
   }
   if (data.length === 0) return null;
-  return { id, event: parseJson(operationId, data.join("\n")) as RunStreamFrame["event"] };
+  const event = parseJson(operationId, data.join("\n"));
+  if (
+    !isCanonicalFrame(event) || event.payload.type !== event.event_type ||
+    (eventType !== undefined && eventType !== event.event_type) ||
+    (id !== null && (event.event_id === null || id !== String(event.event_id)))
+  ) {
+    throw API_CLIENT_ERROR.create({
+      detail: `${operationId} returned an invalid canonical event-stream frame`,
+      status: 502,
+      context: { operationId },
+    });
+  }
+  return { id, event };
+}
+
+function isCanonicalFrame(value: unknown): value is CanonicalRunStreamFrame {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  const frame = value as Record<string, unknown>;
+  const payload = frame.payload;
+  return (frame.event_id === null ||
+    (typeof frame.event_id === "number" && Number.isInteger(frame.event_id) &&
+      frame.event_id >= 0)) &&
+    typeof frame.event_type === "string" && frame.event_type.length > 0 &&
+    typeof payload === "object" && payload !== null && !Array.isArray(payload) &&
+    typeof (payload as Record<string, unknown>).type === "string" &&
+    (payload as Record<string, unknown>).type !== "" &&
+    typeof frame.is_error === "boolean" &&
+    (frame.created_at === null || typeof frame.created_at === "string");
 }
 
 /** Parse a success body; malformed JSON becomes an API client error, not a `SyntaxError`. */

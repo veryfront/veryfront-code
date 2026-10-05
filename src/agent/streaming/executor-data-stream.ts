@@ -93,7 +93,8 @@ export async function* readExecutorDataEvents(
             });
             pendingBytes = 0;
             const event = parseBlock(apply(slice, block, [0, -2]) as string);
-            terminal ||= event.type === "message-finish" || event.type === "error";
+            terminal ||= event.type === "message-finish" || event.type === "error" ||
+              event.type === "data-veryfront.manual_pause";
             yield event;
           } else if (pendingBytes > EXECUTOR_AGENT_MAX_PAYLOAD_BYTES + (byte === 10 ? 1 : 0)) {
             throw new ExecutorAgentError("EXECUTOR_AGENT_INVALID_STREAM");

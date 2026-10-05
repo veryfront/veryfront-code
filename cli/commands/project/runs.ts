@@ -1,12 +1,13 @@
 import { API_CLIENT_ERROR, INVALID_ARGUMENT } from "veryfront/errors";
 import type { ParsedArgs } from "#cli/shared/types";
 import type {
+  RunsCallOptions,
   RunsInput,
   RunsOperationId,
   RunsPaginatedOperationId,
   RunsSdk,
-} from "#veryfront/runs/target/client.ts";
-import { RUNS_OPERATIONS } from "#veryfront/runs/target/operations.ts";
+} from "veryfront/runs/target";
+import { RUNS_OPERATIONS } from "veryfront/runs/target";
 
 /** Public subcommands of the existing project family, one per target operation. */
 export const RUNS_COMMANDS = {
@@ -129,6 +130,7 @@ const GLOBAL_OPTIONS = [
   "credential-file",
   "credential-mode",
   "all",
+  "ndjson",
   "follow",
   "query",
   "body",
@@ -213,29 +215,32 @@ function parseStreamOptions(
   operationId: RunsOperationId,
   headers: Record<string, string>,
 ) {
-  for (const flag of ["all", "follow"]) {
+  for (const flag of ["all", "follow", "ndjson"]) {
     if (args[flag] !== undefined && typeof args[flag] !== "boolean") {
       usage(`--${flag} is a boolean flag.`);
     }
   }
-  const all = args.all === true;
+  const ndjson = args.ndjson === true;
+  const all = args.all === true || ndjson;
   const follow = args.follow === true;
   if (all && !PAGINATED.has(operationId as RunsPaginatedOperationId)) {
-    usage("--all requires a paginated list command.");
+    usage("--all and --ndjson require a paginated list command.");
   }
   if (follow && !["getRun", "createRun"].includes(operationId)) {
     usage("--follow requires get or create.");
   }
-  const stream = follow || operationId === "streamRunEvents";
+  const stream = ndjson || follow || operationId === "streamRunEvents";
   const lastEventId = stringOption(args, "last-event-id");
   if (lastEventId !== undefined) {
-    if (!stream) usage("--last-event-id requires stream or --follow.");
+    if (!(follow || operationId === "streamRunEvents")) {
+      usage("--last-event-id requires stream or --follow.");
+    }
     if (operationId === "streamRunEvents") headers["Last-Event-ID"] = lastEventId;
   }
   if (stream && (args.output !== undefined || args.o !== undefined)) {
     usage("Stream output uses stdout; --output is not supported.");
   }
-  return { all, follow, stream, lastEventId };
+  return { all, ndjson, follow, stream, lastEventId };
 }
 
 /** Decode CLI syntax only; the shared contract and service own request validation. */
@@ -281,8 +286,9 @@ export async function runProjectRuns(
   args: ParsedArgs,
   sdk: RunsSdk,
   emit: (data: unknown) => Promise<void>,
+  options: RunsCallOptions = {},
 ): Promise<void> {
-  const { operationId, input, all, follow, lastEventId } = parseRunsInvocation(args);
+  const { operationId, input, all, ndjson, follow, lastEventId } = parseRunsInvocation(args);
   if (operationId === "streamRunEvents") {
     for await (const frame of sdk.streamRunEvents(input as RunsInput<"streamRunEvents">)) {
       await emit(frame);
@@ -292,9 +298,14 @@ export async function runProjectRuns(
   if (all) {
     const items: unknown[] = [];
     for await (
-      const item of sdk.paginate(operationId as RunsPaginatedOperationId, input as never)
-    ) items.push(item);
-    await emit(items);
+      const item of sdk.paginate(operationId as RunsPaginatedOperationId, input as never, options)
+    ) {
+      options.signal?.throwIfAborted();
+      if (ndjson) await emit(item);
+      else items.push(item);
+      options.signal?.throwIfAborted();
+    }
+    if (!ndjson) await emit(items);
     return;
   }
   // The dynamic command is checked against the operation registry above. Request shapes

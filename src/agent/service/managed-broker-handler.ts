@@ -1,3 +1,15 @@
+import {
+  createHostedAgentManualPause,
+  hasHostedAgentPauseStopped,
+  inheritHostedAgentPauseCapability,
+  registerHostedAgentPauseFactory,
+} from "../hosted/manual-pause-credential.ts";
+import {
+  invalidateHostedAgentPauseSettlement,
+  recordHostedAgentPauseCleanup,
+  recordHostedAgentPauseFlush,
+  settleHostedAgentPause,
+} from "../hosted/manual-pause-settlement.ts";
 import { isResponseLike } from "./response-like.ts";
 import type {
   HostedChatRuntimeFinishPart,
@@ -197,21 +209,30 @@ export function createManagedDurableBrokerHandler(options: {
         input.ingress.executor.serverResolvedResumeToolCall,
       );
       const prepared = await options.prepare(input);
+      const parsedRequest = input.ingress.broker.getParsedRequest();
+      registerHostedAgentPauseFactory(
+        prepared.start,
+        (signal) =>
+          createHostedAgentManualPause(
+            parsedRequest,
+            AbortSignal.any([signal, prepared.executionSignal]),
+            prepared.executionSignal,
+          ),
+      );
       if (!prepared.start.prepare) return prepared;
       const {
         serverResolvedResumeToolCall: _untrustedAdapterResumeToolCall,
         ...basePrepare
       } = prepared.start.prepare;
-      return {
-        ...prepared,
-        start: {
-          ...prepared.start,
-          prepare: {
-            ...basePrepare,
-            ...(resumeToolCall ? { serverResolvedResumeToolCall: resumeToolCall } : {}),
-          },
+      const start = {
+        ...prepared.start,
+        prepare: {
+          ...basePrepare,
+          ...(resumeToolCall ? { serverResolvedResumeToolCall: resumeToolCall } : {}),
         },
       };
+      inheritHostedAgentPauseCapability(start, prepared.start);
+      return { ...prepared, start };
     },
     async parse(request, signal) {
       if (request.method !== "POST" || new URL(request.url).pathname !== "/api/runs") {
@@ -264,6 +285,7 @@ function createManagedBrokerIngressHandler<TIngress>(options: {
 }) {
   const active = new Map<string, { accepted: boolean; settled: Promise<void> }>();
   const lifetime = new AbortController();
+  const executions = new Set<Promise<void>>();
   let closed = false;
 
   async function handle(request: Request): Promise<Response> {
@@ -317,10 +339,17 @@ function createManagedBrokerIngressHandler<TIngress>(options: {
         ) {
           throw new Error("Detached broker output persistence is required");
         }
-        const runtime = await options.broker.start({
+        inheritHostedAgentPauseCapability(
+          prepared.start,
+          ingress as object,
+          prepared.executionSignal,
+        );
+        const start = {
           ...prepared.start,
           session: { ...prepared.start.session, preparationSignal: signal },
-        }, {
+        };
+        inheritHostedAgentPauseCapability(start, prepared.start);
+        const runtime = await options.broker.start(start, {
           onAdmitted(settled) {
             admissionSettled = settled;
           },
@@ -347,7 +376,19 @@ function createManagedBrokerIngressHandler<TIngress>(options: {
               requestSignal: request.signal,
               runId,
               ...parsed.stream,
-              onSettled: () => retire(runtime.settled),
+              onSettled: async () => {
+                try {
+                  await retire(runtime.settled);
+                  await settleHostedAgentPause(runtime);
+                } catch (error) {
+                  invalidateHostedAgentPauseSettlement(runtime, error);
+                  throw error;
+                }
+              },
+              trackExecution: (execution) => {
+                executions.add(execution);
+                void execution.finally(() => executions.delete(execution)).catch(() => {});
+              },
             });
           } catch (error) {
             await runtime.close("canceled").catch(() => {});
@@ -361,14 +402,20 @@ function createManagedBrokerIngressHandler<TIngress>(options: {
           prepared.executionSignal,
           prepared.output!,
         )
+          .then(async () => {
+            await retire(runtime.settled);
+            await settleHostedAgentPause(runtime);
+          })
           .catch((error) => {
+            invalidateHostedAgentPauseSettlement(runtime, error);
             try {
               options.onExecutionError?.(error, runId);
             } catch { /* Observability cannot own execution settlement. */ }
           }).finally(() => {
+            executions.delete(execution);
             void retire(runtime.settled).catch(() => {});
           });
-        void execution;
+        executions.add(execution);
         return Response.json({ accepted: true, duplicate: false }, { status: 202 });
       } catch (error) {
         const retiring = retire(admissionSettled);
@@ -408,7 +455,9 @@ function createManagedBrokerIngressHandler<TIngress>(options: {
   async function close(): Promise<void> {
     closed = true;
     lifetime.abort();
-    await Promise.allSettled([...active.values()].map((run) => run.settled));
+    await Promise.allSettled(
+      [...active.values()].map((run) => run.settled).concat([...executions]),
+    );
   }
 
   return {
@@ -458,6 +507,7 @@ async function createSseResponse(input: {
   agentId: string;
   agUiInput: AgUiRuntimeRequest;
   onSettled(): Promise<void>;
+  trackExecution(execution: Promise<void>): void;
 }): Promise<Response> {
   const result = await input.runtime.agent.stream({
     messages: input.messages,
@@ -469,18 +519,57 @@ async function createSseResponse(input: {
   const completion = Promise.withResolvers<void>();
   let natural = false;
   let cleanup: Promise<void> | undefined;
+  const settlement = Promise.withResolvers<void>();
+  const invalidateRequestAbort = () =>
+    invalidateHostedAgentPauseSettlement(input.runtime, new Error("SSE request aborted"));
+  input.requestSignal.addEventListener("abort", invalidateRequestAbort, { once: true });
+  if (input.requestSignal.aborted) invalidateRequestAbort();
+  input.trackExecution(
+    settlement.promise.finally(() =>
+      input.requestSignal.removeEventListener("abort", invalidateRequestAbort)
+    ),
+  );
   const finish = (reason: "completed" | "canceled") => {
-    cleanup ??= Promise.resolve().then(async () => {
-      await input.runtime.close(reason).catch(() => {});
-      await input.runtime.settled;
-      await input.onSettled();
-    });
+    if (reason === "canceled") {
+      invalidateHostedAgentPauseSettlement(input.runtime, new Error("SSE execution canceled"));
+    }
+    if (!cleanup) {
+      cleanup = Promise.resolve().then(async () => {
+        recordHostedAgentPauseFlush(
+          input.runtime,
+          natural && reason === "completed" && !input.requestSignal.aborted,
+        );
+        const closure = await input.runtime.close(reason).catch((error) => {
+          invalidateHostedAgentPauseSettlement(input.runtime, error);
+          return undefined;
+        });
+        await input.runtime.settled;
+        recordHostedAgentPauseCleanup(
+          input.runtime,
+          reason === "completed" && closure?.reason === "completed" &&
+            closure.release !== "reaper-required",
+        );
+        await input.onSettled();
+      });
+      void cleanup.then(settlement.resolve, settlement.reject);
+    }
     return cleanup;
   };
   const agentUIStream = (async function* () {
     try {
-      for await (const chunk of source) yield chunk;
+      for await (const chunk of source) {
+        if (chunk.type === "error" || (chunk.type === "finish" && chunk.finishReason === "error")) {
+          invalidateHostedAgentPauseSettlement(
+            input.runtime,
+            new Error("Agent stream failed after pause acknowledgement"),
+          );
+        }
+        yield chunk;
+      }
       natural = true;
+    } catch (error) {
+      invalidateHostedAgentPauseSettlement(input.runtime, error);
+      throw error;
     } finally {
       completion.resolve();
     }
@@ -551,10 +640,14 @@ async function runDetached(
       let streamCompleted = false;
       let failure: unknown;
       let terminalMetadata: HostedLifecycleTerminalState["metadata"];
+      let terminalOutput: unknown;
       try {
         const result = await runtime.agent.stream({ messages, abortSignal: signal });
         for await (
           const chunk of result.toUIMessageStream({
+            onFinish: ({ responseMessage }) => {
+              terminalOutput = responseMessage;
+            },
             messageMetadata({ part }) {
               const metadata = buildManagedBrokerMessageMetadata(runtime, part);
               terminalMetadata = {
@@ -585,18 +678,30 @@ async function runDetached(
         streamCompleted = true;
       } catch (error) {
         failure ??= error;
+        invalidateHostedAgentPauseSettlement(runtime, error);
         throw error;
       } finally {
+        const paused = hasHostedAgentPauseStopped(runtime);
         await output.finish({
-          completed: streamCompleted,
-          ...(failure === undefined || signal.aborted ? {} : { error: failure }),
+          completed: paused ? false : streamCompleted,
+          ...(paused ? { paused: true as const } : {}),
+          ...(!paused && terminalOutput !== undefined ? { output: terminalOutput } : {}),
+          ...(paused || failure === undefined || signal.aborted ? {} : { error: failure }),
           ...(terminalMetadata ? { metadata: terminalMetadata } : {}),
         });
+        recordHostedAgentPauseFlush(runtime, streamCompleted && !signal.aborted);
       }
     });
     completed = true;
   } finally {
-    await runtime.close(completed ? "completed" : "canceled").catch(() => {});
+    const closure = await runtime.close(completed ? "completed" : "canceled").catch((error) => {
+      invalidateHostedAgentPauseSettlement(runtime, error);
+      return undefined;
+    });
     await runtime.settled;
+    recordHostedAgentPauseCleanup(
+      runtime,
+      completed && closure?.reason === "completed" && closure.release !== "reaper-required",
+    );
   }
 }

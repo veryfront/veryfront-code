@@ -1,3 +1,4 @@
+import { hostedTerminalRunFinalizer } from "./terminal-credential.ts";
 import type { ConversationRunChunkMirror } from "../conversation/run-chunk-mirror.ts";
 import {
   type ConversationHostedTerminalAdapter,
@@ -221,11 +222,19 @@ export function createHostedRootRunLifecycleRuntimeAdapter(
   input: CreateHostedRootRunLifecycleRuntimeAdapterInput,
 ): HostedRootRunLifecycleRuntimeAdapter {
   const createTerminal = input.createTerminalAdapter ?? createConversationHostedTerminalAdapter;
+  const finalize = hostedTerminalRunFinalizer(input.durableRootRun);
+  // A durable root run can only be finalized with its bound terminal
+  // capability. Fail before execution rather than streaming output that the
+  // canonical run can never record.
+  if (input.durableRootRun && !finalize && !input.createTerminalAdapter) {
+    throw new Error("Current run terminal authority is required");
+  }
 
   return {
     durableRootRun: input.durableRootRun,
     durableRunMirror: input.durableRunMirror,
     terminal: createTerminal({
+      finalize,
       authToken: input.authToken,
       apiUrl: input.apiUrl,
       run: input.durableRootRun

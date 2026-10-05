@@ -45,7 +45,7 @@ function stubFetchSequence(...steps: Response[]) {
 const BASE_INPUT = {
   toolCallId: "tool/call~1",
   childConversationId: CHILD_CONVERSATION_ID,
-  childRunId: "run_child_1",
+  childRunId: "20000000-0000-4000-8000-000000000002",
   childMessageId: CHILD_MESSAGE_ID,
   childAgentId: "researcher",
   description: "Inspect logs",
@@ -70,7 +70,7 @@ describe("agent/invoke-agent-child-runs", () => {
           value: {
             toolCallId: "tool/call~1",
             childConversationId: CHILD_CONVERSATION_ID,
-            childRunId: "run_child_1",
+            childRunId: "20000000-0000-4000-8000-000000000002",
             childMessageId: CHILD_MESSAGE_ID,
             childAgentId: "researcher",
             description: "Inspect logs",
@@ -109,7 +109,7 @@ describe("agent/invoke-agent-child-runs", () => {
             value: {
               toolCallId: "tool/call~1",
               childConversationId: CHILD_CONVERSATION_ID,
-              childRunId: "run_child_1",
+              childRunId: "20000000-0000-4000-8000-000000000002",
               childMessageId: CHILD_MESSAGE_ID,
               childAgentId: "researcher",
               description: "Inspect logs",
@@ -179,7 +179,7 @@ describe("agent/invoke-agent-child-runs", () => {
       authToken: AUTH_TOKEN,
       apiUrl: API_URL,
       conversationId: CONVERSATION_ID,
-      runId: "run_parent_1",
+      runId: "20000000-0000-4000-8000-000000000001",
       ...BASE_INPUT,
       publishParentRunEvents: publisher,
     });
@@ -188,7 +188,7 @@ describe("agent/invoke-agent-child-runs", () => {
     assertEquals(calls[0], [...buildInvokeAgentChildRunProgressEvents(BASE_INPUT)]);
   });
 
-  it("falls back to appending run events through the canonical conversation route", async () => {
+  it("appends run events through the canonical run route", async () => {
     const calls = stubFetchSequence(
       jsonResponse(
         {
@@ -196,7 +196,7 @@ describe("agent/invoke-agent-child-runs", () => {
           latest_external_event_sequence: 9,
           appended_count: 2,
           run: {
-            run_id: "run_parent_1",
+            run_id: "20000000-0000-4000-8000-000000000001",
             conversation_id: CONVERSATION_ID,
             latest_event_id: 7,
             latest_external_event_sequence: 9,
@@ -210,7 +210,7 @@ describe("agent/invoke-agent-child-runs", () => {
       authToken: AUTH_TOKEN,
       apiUrl: API_URL,
       conversationId: CONVERSATION_ID,
-      runId: "run_parent_1",
+      runId: "20000000-0000-4000-8000-000000000001",
       expectedPreviousEventId: 3,
       expectedPreviousExternalEventSequence: 4,
       ...BASE_INPUT,
@@ -218,7 +218,7 @@ describe("agent/invoke-agent-child-runs", () => {
 
     assertEquals(
       String(calls[0]?.[0]),
-      `${API_URL}/conversations/${CONVERSATION_ID}/runs/run_parent_1/events`,
+      `${API_URL}/runs/20000000-0000-4000-8000-000000000001/events`,
     );
     assertEquals(JSON.parse(String(calls[0]?.[1]?.body)), {
       expected_previous_event_id: 3,
@@ -239,7 +239,7 @@ describe("agent/invoke-agent-child-runs", () => {
       authToken: AUTH_TOKEN,
       apiUrl: API_URL,
       conversationId: CONVERSATION_ID,
-      runId: "run_parent_1",
+      runId: "20000000-0000-4000-8000-000000000001",
       ...BASE_INPUT,
     });
   });
@@ -253,7 +253,7 @@ describe("agent/invoke-agent-child-runs", () => {
           authToken: AUTH_TOKEN,
           apiUrl: API_URL,
           conversationId: CONVERSATION_ID,
-          runId: "run_parent_1",
+          runId: "20000000-0000-4000-8000-000000000001",
           ...BASE_INPUT,
           status: "running",
           sourceTargetKind: "preview_branch",

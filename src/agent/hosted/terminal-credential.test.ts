@@ -86,7 +86,16 @@ describe("private terminal credential routing", () => {
       }, { kind: "veryfront-api" });
       assertEquals(source.id, "custom-platform");
       assertEquals((await source.listTools()).map((tool) => tool.name), ["ordinary"]);
-      for (const name of ["finalize", "veryfront__finalize"]) {
+      for (
+        const name of [
+          "finalize",
+          "veryfront__finalize",
+          "succeed_run",
+          "veryfront__succeed_run",
+          "fail_run",
+          "veryfront__fail_run",
+        ]
+      ) {
         await source.executeTool(name, {}, rootContext());
         const call = calls.at(-1)!;
         assertEquals(call.endpoint, "https://api.example/projects/project-1/mcp");
@@ -119,6 +128,13 @@ describe("private terminal credential routing", () => {
       toolCallId: "call_fin",
     });
     assertEquals(calls.at(-1)!.headers.get(RUN_TERMINAL_TOOL_CALL_ID_HEADER), "call_fin");
+    const key = calls.at(-1)!.headers.get("Idempotency-Key");
+    assertEquals(key!.length, 64);
+    await source.executeTool("veryfront__finalize", {}, {
+      ...rootContext(),
+      toolCallId: "call_fin",
+    });
+    assertEquals(calls.at(-1)!.headers.get("Idempotency-Key"), key);
     await source.executeTool("finalize", {}, { runId: "run-other", toolCallId: "call_fin" });
     assertEquals(calls.at(-1)!.headers.get(RUN_TERMINAL_TOOL_CALL_ID_HEADER), null);
     await source.executeTool("ordinary", {}, { runId: "run-1", toolCallId: "call_other" });
@@ -148,7 +164,16 @@ describe("private terminal credential routing", () => {
     assertEquals(calls.at(-1)!.headers.get(RUN_TERMINAL_TOKEN_HEADER), null);
     const grandchild = createTerminalRunControl({ runId: "run-grandchild" }).context;
     const deepInherited = bindRuntimeRemoteToolSourcesToCredentialOwner([inherited], child)![0]!;
-    for (const name of ["finalize", "veryfront__finalize"]) {
+    for (
+      const name of [
+        "finalize",
+        "veryfront__finalize",
+        "succeed_run",
+        "veryfront__succeed_run",
+        "fail_run",
+        "veryfront__fail_run",
+      ]
+    ) {
       await deepInherited.executeTool(name, {}, grandchild);
       assertEquals(calls.at(-1)!.headers.get(RUN_TERMINAL_TOKEN_HEADER), null);
       await inherited.executeTool(name, {

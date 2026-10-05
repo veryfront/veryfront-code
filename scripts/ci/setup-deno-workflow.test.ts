@@ -1,7 +1,7 @@
 import { assert, assertEquals, assertMatch, assertStringIncludes, assertThrows } from "#std/assert";
 import { describe, it } from "#std/testing/bdd";
 import { parse } from "#std/yaml/parse";
-import { planSuiteFiles } from "../test/run-suite.ts";
+import { planIntegrationShard, planSuiteFiles } from "../test/run-suite.ts";
 
 const ACTION_PATH = ".github/actions/setup-deno/action.yml";
 const WORKFLOWS_DIR = ".github/workflows";
@@ -846,7 +846,7 @@ jobs:
                 asRecord(job.strategy, "producer strategy").matrix,
                 "producer matrix",
               ).shard,
-              [1, 2],
+              [1, 2, 3],
               "only shard 1 may warm the complete cache",
             );
           }
@@ -1046,7 +1046,7 @@ jobs:
     assertStringIncludes(aptSetup, "mirror\\+file:");
     assertStringIncludes(
       aptSetup,
-      'for apt_file in ${apt_source_files} ${mirror_lists}; do',
+      "for apt_file in ${apt_source_files} ${mirror_lists}; do",
     );
     for (
       const expected of [
@@ -1149,29 +1149,32 @@ it("public release upload uses an isolated token after publisher artifacts are r
 });
 
 describe("parallel integration workflow contract", () => {
-  it("keeps the two-shard inventory complete and disjoint", async () => {
-    const suite = "integration:legacy-tests-root";
-    const full = await planSuiteFiles({ suite });
+  it("keeps the three-shard root and CLI inventories complete and disjoint", async () => {
+    const suites = ["integration:legacy-tests-root", "integration:cli"] as const;
+    const full = await Promise.all(suites.map((suite) => planSuiteFiles({ suite })));
     const shards = await Promise.all(
-      [1, 2].map((index) =>
-        planSuiteFiles({ suite, shard: { index, total: 2 } })
-      ),
+      [1, 2, 3].map((index) => planIntegrationShard({ index, total: 3 })),
     );
-    const files = shards.flatMap((shard) => shard.files);
-    assertEquals(
-      files.length,
-      new Set(files).size,
-      "shards must never overlap",
-    );
+    const files = shards.flatMap((plans) => plans.flatMap((plan) => plan.files));
+    assertEquals(files.length, new Set(files).size, "shards must never overlap");
     assertEquals(
       files.toSorted(),
-      full.files.toSorted(),
-      "shards must run every original test",
+      full.flatMap((plan) => plan.files).toSorted(),
+      "shards must run every original root and CLI test",
     );
-    assert(shards.every((shard) => shard.files.length > 0));
+    for (const suite of suites) {
+      assertEquals(
+        shards.flatMap((plans) =>
+          plans.filter((plan) => plan.suite === suite).flatMap((plan) => plan.files)
+        ).toSorted(),
+        full.find((plan) => plan.suite === suite)!.files.toSorted(),
+        `${suite} must retain its original execution profile`,
+      );
+    }
+    assert(shards.every((plans) => plans.some((plan) => plan.files.length > 0)));
   });
 
-  it("runs two complete shards through the existing suite profiles without retries", async () => {
+  it("runs three complete shards through the existing suite profiles without retries", async () => {
     const workflow = await parseYamlFile(`${WORKFLOWS_DIR}/cicd.yml`);
     const jobs = asRecord(workflow.jobs, "jobs");
     const job = asRecord(jobs["tests-integration"], "integration shards");
@@ -1180,8 +1183,8 @@ describe("parallel integration workflow contract", () => {
       strategy["fail-fast"],
       "${{ github.event_name == 'merge_group' }}",
     );
-    assertEquals(asRecord(strategy.matrix, "integration matrix").shard, [1, 2]);
-    assertEquals(job.name, "tests (integration shard ${{ matrix.shard }}/2)");
+    assertEquals(asRecord(strategy.matrix, "integration matrix").shard, [1, 2, 3]);
+    assertEquals(job.name, "tests (integration shard ${{ matrix.shard }}/3)");
     assertEquals(job.needs, ["tested-run"]);
     const steps = asSteps(job.steps, "integration steps");
     assert(!steps.some((step) => String(step.uses).includes("retry")));
@@ -1193,9 +1196,11 @@ describe("parallel integration workflow contract", () => {
     );
     for (
       const required of [
-        'const suite = "integration:legacy-tests-root";',
-        "suite, shard: { index, total: 2 }",
-        "partitionDenoSuiteFiles(plan.files, profile.maxFilesPerProcess)",
+        "planIntegrationShard({ index, total: 3 })",
+        "for (const { suite, files: selected } of plans)",
+        "DENO_SUITE_PROFILES[suite]",
+        "if (selected.length === 0) continue;",
+        "partitionDenoSuiteFiles(selected, profile.maxFilesPerProcess)",
         "buildDenoSuiteCommandArgs(suite, files",
         "shouldRunDenoBatchInParallel(profile.parallel, files)",
         "buildTestProcessEnv(Deno.env.toObject(), profile.env)",
@@ -1203,20 +1208,24 @@ describe("parallel integration workflow contract", () => {
         "if (!status.success) Deno.exit(status.code)",
       ]
     ) assertStringIncludes(String(runner.run), required);
+    assert(
+      String(runner.run).indexOf("if (selected.length === 0) continue;") <
+        String(runner.run).indexOf("partitionDenoSuiteFiles(selected"),
+      "empty profiles must not spawn Deno without positional test files",
+    );
     assert(steps.some((step) => step.run === "deno task generate"));
     const nodeDependencies = steps.find((step) =>
       step.name === "Install Node resolver test dependencies"
     );
     assert(
       nodeDependencies,
-      "both shards need dependencies for nested Node executor tests",
+      "all shards need dependencies for nested Node executor tests",
     );
     assertEquals(nodeDependencies.if, undefined);
     for (
       const name of [
         "Run Node cache-link compatibility tests",
         "Run Node egress transport tests",
-        "Run CLI integration tests",
       ]
     ) {
       const step = steps.find((step) => step.name === name);

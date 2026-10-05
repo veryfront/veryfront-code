@@ -16,6 +16,43 @@ const PROJECT_ID = "22222222-2222-4222-8222-222222222222";
 const RUN_ID = "run_123";
 const CONVERSATION_ID = "33333333-3333-4333-8333-333333333333";
 
+const CANONICAL_RUN_ID = "77777777-7777-4777-8777-777777777777";
+const TERMINAL_TOKEN = `header.${
+  btoa(
+    JSON.stringify({
+      runId: RUN_ID,
+      canonicalRunId: CANONICAL_RUN_ID,
+      tokenUse: "run_event_writer",
+      writerPurpose: "current_run_terminal",
+      dispatchNonce: "generation",
+    }),
+  )
+}.signature`;
+const credentials = {
+  auth_token: "invocation-token",
+  run_event_token: "event-token",
+  run_terminal_token: TERMINAL_TOKEN,
+};
+function claim() {
+  return {
+    credentials,
+    run: {
+      run_id: RUN_ID,
+      conversation_id: CONVERSATION_ID,
+      message_id: WORKER_ID,
+      project_id: PROJECT_ID,
+      agent_id: "worker",
+      status: "running",
+      request_snapshot: null,
+      latest_event_id: 0,
+      latest_external_event_sequence: 0,
+      lease_owner: WORKER_ID,
+      lease_expires_at: null,
+      worker_session: null,
+    },
+  };
+}
+
 type FetchCall = [RequestInfo | URL, RequestInit | undefined];
 
 function jsonResponse(body: unknown, status = 200): Response {
@@ -111,6 +148,7 @@ describe("external agent worker client", () => {
     const { calls, fetchImpl } = fetchSequence(
       jsonResponse({ worker: worker(), token: WORKER_TOKEN }, 201),
       jsonResponse({
+        credentials,
         run: {
           run_id: RUN_ID,
           conversation_id: CONVERSATION_ID,
@@ -144,7 +182,7 @@ describe("external agent worker client", () => {
         },
       }),
       jsonResponse({ appended: true, latest_external_event_sequence: 6 }),
-      jsonResponse({ completed: true }),
+      jsonResponse({ id: CANONICAL_RUN_ID, status: "completed" }),
     );
     const client = createExternalAgentWorkerClient({
       apiUrl: API_URL,
@@ -206,30 +244,54 @@ describe("external agent worker client", () => {
     });
     assertEquals(
       String(calls[3]?.[0]),
-      `${API_URL}/conversations/${CONVERSATION_ID}/runs/${RUN_ID}/events`,
+      `${API_URL}/runs/${CANONICAL_RUN_ID}/events`,
     );
     assertEquals(calls[3]?.[1]?.method, "POST", "appending run events must POST them");
     assertEquals(requestBody(calls[3]!), {
       events: [{ type: "TEXT_MESSAGE_CHUNK", payload: { delta: "hello" } }],
       expected_previous_external_event_sequence: 4,
     });
-    assertEquals(String(calls[4]?.[0]), `${API_URL}/runs/${RUN_ID}/complete`);
+    assertEquals(String(calls[4]?.[0]), `${API_URL}/runs/${CANONICAL_RUN_ID}/finalize`);
     assertEquals(calls[4]?.[1]?.method, "POST", "completing a run must POST the completion");
     assertEquals(
       requestBody(calls[4]!),
-      { status: "completed" },
+      { status: "completed", output: null },
       "completeRun must post the terminal status",
     );
   });
 
+  it("clears previous authority when renewal cannot issue current credentials", async () => {
+    const { calls, fetchImpl } = fetchSequence(
+      jsonResponse(claim()),
+      jsonResponse({ run: { ...claim().run, status: "completed" } }),
+    );
+    const client = createExternalAgentWorkerClient({
+      apiUrl: API_URL,
+      authToken: API_TOKEN,
+      fetch: fetchImpl,
+    });
+    await client.claimRun({ workerId: WORKER_ID, leaseDurationSeconds: 30 });
+    await client.renewLease({ workerId: WORKER_ID, runId: RUN_ID, leaseDurationSeconds: 30 });
+    await assertRejects(
+      () => client.completeRun({ runId: RUN_ID, status: "completed" }),
+      Error,
+      "Current worker claim authority is required",
+    );
+    assertEquals(calls.length, 2);
+  });
+
   it("forwards the terminal error of a failed completion", async () => {
-    const { calls, fetchImpl } = fetchSequence(jsonResponse({ completed: true }));
+    const { calls, fetchImpl } = fetchSequence(
+      jsonResponse(claim()),
+      jsonResponse({ id: CANONICAL_RUN_ID, status: "failed" }),
+    );
     const client = createExternalAgentWorkerClient({
       apiUrl: API_URL,
       authToken: API_TOKEN,
       fetch: fetchImpl,
     });
 
+    await client.claimRun({ workerId: WORKER_ID, leaseDurationSeconds: 30 });
     await client.completeRun({
       runId: RUN_ID,
       status: "failed",
@@ -238,24 +300,27 @@ describe("external agent worker client", () => {
     });
 
     assertEquals(
-      requestBody(calls[0]!),
+      requestBody(calls[1]!),
       {
         status: "failed",
-        terminal_error_code: "ABORTED",
-        terminal_error_message: "stopped",
+        error: { code: "ABORTED", message: "stopped" },
       },
       "a failed completion must forward the terminal error",
     );
   });
 
   it("raises a network error for non-2xx worker API responses", async () => {
-    const { fetchImpl } = fetchSequence(jsonResponse({ error: "boom" }, 500));
+    const { fetchImpl } = fetchSequence(
+      jsonResponse(claim()),
+      jsonResponse({ error: "boom" }, 500),
+    );
     const client = createExternalAgentWorkerClient({
       apiUrl: API_URL,
       authToken: API_TOKEN,
       fetch: fetchImpl,
     });
 
+    await client.claimRun({ workerId: WORKER_ID, leaseDurationSeconds: 30 });
     await assertRejects(
       () => client.completeRun({ runId: RUN_ID, status: "completed" }),
       VeryfrontError,

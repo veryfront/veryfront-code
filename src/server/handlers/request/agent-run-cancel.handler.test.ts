@@ -1,3 +1,4 @@
+import { RunStopRegistry } from "#veryfront/internal-agents/run-stop-registry.ts";
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
@@ -12,6 +13,87 @@ import {
 } from "./internal-agent-run.test-helpers.ts";
 
 describe("server/handlers/request/agent-run-cancel.handler", () => {
+  it("keeps an absent execution distinguishable when stop confirmation is requested", async () => {
+    const runId = "run_missing_stop";
+    const body = JSON.stringify({ runId, confirmStopped: true });
+    const { jws, publicKeyPem } = await createControlPlaneSignature(body, {
+      requestId: runId,
+      requestMethod: "DELETE",
+      requestPath: `/api/control-plane/runs/${runId}`,
+    });
+    const handler = new AgentRunCancelHandler(new AgentRunSessionManager());
+    const result = await handler.handle(
+      new Request(`https://example.com/api/control-plane/runs/${runId}`, {
+        method: "DELETE",
+        body,
+        headers: { "content-type": "application/json", "x-veryfront-control-plane-jws": jws },
+      }),
+      createCtx(publicKeyPem),
+    );
+    assertExists(result.response);
+    assertEquals(result.response.status, 204);
+  });
+
+  it("retries stop signalling until the owned execution positively settles", async () => {
+    const runId = "run_stop_delivery";
+    let signals = 0;
+    const sessionManager = new AgentRunSessionManager();
+    const settled = sessionManager.stopRegistry.register(runId, () => {
+      signals++;
+    });
+    const handler = new AgentRunCancelHandler(sessionManager);
+    const body = JSON.stringify({ runId, confirmStopped: true });
+    const { jws, publicKeyPem } = await createControlPlaneSignature(body, {
+      requestId: runId,
+      requestMethod: "DELETE",
+      requestPath: `/api/control-plane/runs/${runId}`,
+    });
+    const send = () =>
+      handler.handle(
+        new Request(`https://example.com/api/control-plane/runs/${runId}`, {
+          method: "DELETE",
+          body,
+          headers: { "content-type": "application/json", "x-veryfront-control-plane-jws": jws },
+        }),
+        createCtx(publicKeyPem),
+      );
+    const pending = await send();
+    assertExists(pending.response);
+    assertEquals(await pending.response.json(), { accepted: true, stopped: false });
+    assertEquals(signals, 1);
+    settled();
+    const acknowledgement = await send();
+    assertExists(acknowledgement.response);
+    assertEquals(await acknowledgement.response.json(), { accepted: true, stopped: true });
+  });
+
+  it("treats a signed empty or non-JSON body as a plain cancel", async () => {
+    for (const [runId, body] of [["run_empty", ""], ["run_text", "stop"]] as const) {
+      const sessionManager = new AgentRunSessionManager();
+      sessionManager.startRun({ runId, threadId: crypto.randomUUID() });
+      const handler = new AgentRunCancelHandler(sessionManager);
+      const { jws, publicKeyPem } = await createControlPlaneSignature(body, {
+        requestId: runId,
+        requestMethod: "DELETE",
+        requestPath: `/api/control-plane/runs/${runId}`,
+      });
+
+      const result = await handler.handle(
+        new Request(`https://example.com/api/control-plane/runs/${runId}`, {
+          method: "DELETE",
+          headers: { "x-veryfront-control-plane-jws": jws },
+          body,
+        }),
+        createCtx(publicKeyPem),
+      );
+
+      assertExists(result.response);
+      assertEquals(result.response.status, 202);
+      assertEquals(await result.response.json(), { accepted: true });
+      assertEquals(sessionManager.getRunStatus(runId), null);
+    }
+  });
+
   it("cancels an active run with a valid control-plane signature", async () => {
     const sessionManager = new AgentRunSessionManager();
     sessionManager.startRun({ runId: "run_1", threadId: crypto.randomUUID() });
@@ -40,6 +122,9 @@ describe("server/handlers/request/agent-run-cancel.handler", () => {
     assertEquals(result.response.status, 202);
     assertEquals(await result.response.json(), { accepted: true });
     assertEquals(sessionManager.getRunStatus("run_1"), null);
+    // Parking an agent must allow the same durable run to resume.
+    const settled = sessionManager.stopRegistry.register("run_1", () => {});
+    settled();
   });
 
   it("accepts the public control-plane cancel route", async () => {
@@ -134,6 +219,7 @@ describe("server/handlers/request/agent-run-cancel.handler", () => {
 
   it("returns 500 when cancel handling fails unexpectedly", async () => {
     const handler = new AgentRunCancelHandler({
+      stopRegistry: new RunStopRegistry(),
       getServingSpanAttributes: () => undefined,
       cancelRun() {
         throw new Error("cancel boom");
@@ -200,6 +286,7 @@ describe("server/handlers/request/agent-run-cancel.handler", () => {
 
     try {
       const handler = new AgentRunCancelHandler({
+        stopRegistry: new RunStopRegistry(),
         getServingSpanAttributes: () => undefined,
         cancelRun() {
           throw thrown;

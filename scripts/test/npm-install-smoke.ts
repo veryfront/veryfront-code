@@ -1020,6 +1020,9 @@ try {
       });
       ok(expected.length > 0, operationId + ' fixture has no frames');
       deepStrictEqual(frames, expected, operationId);
+      deepStrictEqual(Object.keys(frames[0].event).sort(), ['created_at', 'event_id', 'event_type', 'is_error', 'payload']);
+      deepStrictEqual(frames[0].id, String(frames[0].event.event_id));
+      deepStrictEqual(frames[0].event.payload.type, frames[0].event.event_type);
     } else {
       deepStrictEqual(await result, fixture.response.body, operationId);
     }

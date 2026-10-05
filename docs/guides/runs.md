@@ -110,10 +110,9 @@ await runs.createEvalRun({
 The deprecated `startMode` option remains accepted for source compatibility,
 but task-based eval runs ignore it.
 
-`createEvalRun()` sends a task run with target `task:eval` and places the
-provided eval target in `config.eval_id`. Direct `POST /runs` callers should use
-the same shape. New `kind: "eval"` requests are rejected. Runs created before
-this change with kind `eval` remain available through read and list APIs.
+`createEvalRun()` sends `target: { type: "task", id: "eval" }` and places the
+provided eval target in `config.eval_id`. Historical eval executions read back
+as task resources through the canonical API.
 
 ## Observe a run
 
@@ -134,6 +133,25 @@ const run = await runs.get(accepted.run.run_id);
 console.log(run.status);
 console.log(run.output);
 ```
+
+Both `get()` and `getRun()` require the canonical run UUID. `get()` adapts the
+resource for existing framework callers. `getRun()` exposes the full grouped
+response: its `id` is the UUID, `target` is
+an object, labels stay available, and execution diagnostics live in `execution`.
+Retain its ETag when preparing a metadata update:
+
+```ts
+let etag: string | null = null;
+const resource = await runs.getRun("11111111-1111-4111-8111-111111111111", {
+  onHeaders: (headers) => {
+    etag = headers.get("etag");
+  },
+});
+console.log(resource.id, resource.labels, etag);
+```
+
+This method requires an API version serving the canonical UUID resource. Use
+the full `veryfront/runs/target` SDK below for other canonical operations.
 
 Cancel a non-terminal run:
 
@@ -185,7 +203,10 @@ which owns the origin, credentials, retries, body limits and telemetry. Set
 `authMode: "api-key"` to send a project API key as `X-API-Key`. Until the
 hosted API switches to the target contract, set `baseUrl` to an origin that
 serves it. The legacy client at
-`veryfront/runs` stays available until consumers switch over.
+`veryfront/runs` uses the canonical wire contract and adapts the grouped Run
+resource for existing framework callers. Its `run_id` is the canonical UUID.
+Caller-selected aliases and workflow `startMode` are rejected; retries use
+`Idempotency-Key`. Use the target SDK for the complete grouped resource.
 
 ```ts
 import {
@@ -222,6 +243,11 @@ removes or retypes a field fails to compile. A new optional field still
 compiles, so update the validator when the pinned contract changes. Error
 responses reject with a `VeryfrontError`, and `runsProblemOf(error)` returns the
 RFC 9457 problem body.
+
+A `RUN_CONFLICT` may include an optional `cause`:
+`schedule_concurrency_forbidden` means the schedule forbids a new run while an
+earlier fire is active; `schedule_fire_in_progress` means the same fire is
+already being processed. Other conflicts may omit `cause`.
 
 ## Scheduling
 
@@ -262,7 +288,7 @@ describe the run.
 
 ## Runs target CLI reference
 
-Use `veryfront project runs <command>` with an API that serves the Runs 0.8.1
+Use `veryfront project runs <command>` with an API that serves the Runs 0.8.2
 contract. The CLI calls the typed Runs SDK. Target deployment and live parity
 are tracked separately from the fixture tests for these commands.
 
@@ -338,6 +364,34 @@ veryfront project runs finalize --run-id <RUN_ID> --idempotency-key <REQUEST_KEY
   --body '{"status":"completed","output":null}'
 ```
 
+Use `--ndjson` on a paginated list command to receive items as they arrive:
+
+```bash
+veryfront project runs list --query '{"limit":20}' --ndjson
+veryfront project runs events --run-id <RUN_ID> --ndjson
+```
+
+`--ndjson` follows the same SDK iterator as `--all`. Each stdout line is a
+success envelope with one item in `data`, regardless of `--json`:
+
+```json
+{ "success": true, "command": "project runs", "data": { "id": "<RUN_ID>" } }
+```
+
+The mode retains one SDK page and one encoded output line, and awaits stdout
+writes before consuming another item. Cursor cycle detection uses constant
+memory; malformed cursor loops can require additional requests before detection. `--output` is not supported. An empty collection emits no lines.
+Without `--ndjson`, a list returns its single-page envelope; `--all --json`
+continues to return one envelope with the complete item array.
+
+A request or iterator failure after partial output emits a final error envelope
+and exits with code 1 (code 2 for validation Problems). Earlier lines remain
+valid but the collection is incomplete. Output failures terminate consumption;
+a closed stdout cannot receive a final error envelope. Ctrl+C aborts the active
+request, closes the iterator, and exits with code 130 without a completion line.
+An interrupted or failed write can leave an incomplete final line; discard it.
+There is no completion envelope; consumers must check the exit code.
+
 Validation Problems (HTTP 400 or 422) exit with code 2. Other Problems exit with
 code 1. JSON errors retain the server's Problem code. Local syntax errors use
 the CLI's normal usage-error envelope.
@@ -349,4 +403,4 @@ schedule creation both use `create`. Existing local `task`, `workflow`, `eval`,
 and `schedule` execution commands retain their local behavior. The existing
 `schedule run --remote` legacy source-name resolver stays until the coordinated
 consumer cutover; use the target `create` invocation with a saved schedule UUID
-for the 0.8.1 contract. These tests do not prove deployed parity.
+for the 0.8.2 contract. These tests do not prove deployed parity.

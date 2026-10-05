@@ -1,7 +1,8 @@
 import {
+  type BoundConversationAgentRunFinalizer,
   type ConversationAgentRunUsage,
   type ConversationRunProjection,
-  finalizeConversationAgentRun,
+  requireBoundConversationAgentRunFinalizer,
 } from "./durable.ts";
 import type { HostedLifecycleTerminalState } from "../hosted/lifecycle.ts";
 import { resolveKnownProviderTerminalError } from "#veryfront/agent/streaming/stream-outcome.ts";
@@ -10,6 +11,7 @@ import { ExecutorAgentError } from "#veryfront/agent/hosted/executor-agent-schem
 /** Input payload for conversation hosted terminal state. */
 export interface ConversationHostedTerminalStateInput {
   status: HostedLifecycleTerminalState["status"];
+  output?: unknown;
   metadata?: HostedLifecycleTerminalState["metadata"];
   terminalErrorCode?: string | null;
   terminalErrorMessage?: string | null;
@@ -148,6 +150,8 @@ export async function dispatchConversationHostedStreamErrorState(
 
 /** Options accepted by create conversation hosted terminal adapter. */
 export interface CreateConversationHostedTerminalAdapterOptions {
+  /** Trusted exact-run finalizer that retains API terminal authority privately. */
+  finalize?: BoundConversationAgentRunFinalizer;
   authToken: string;
   apiUrl: string;
   run: ConversationRunProjection | null;
@@ -272,6 +276,7 @@ export function toConversationHostedTerminalState(input: {
 
   return {
     status: input.state.status,
+    ...(input.state.output !== undefined ? { output: input.state.output } : {}),
     ...(modelId || usage || usageCaptureStatus || hasBilling
       ? {
         metadata: {
@@ -309,12 +314,13 @@ export function createConversationHostedTerminalAdapter(
     const modelId = terminalState.metadata?.modelId ?? options.fallbackModelId;
 
     try {
-      await finalizeConversationAgentRun({
+      await requireBoundConversationAgentRunFinalizer(options.finalize)({
         authToken: options.authToken,
         apiUrl: options.apiUrl,
         conversationId: options.run.conversationId,
         runId: options.run.runId,
         status,
+        output: terminalState.output,
         model: modelId,
         provider: options.resolveProvider(modelId),
         usage: buildConversationAgentRunUsage(

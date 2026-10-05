@@ -359,3 +359,18 @@ describe("withNumericScanCursor (#2109)", () => {
     assertEquals(client.get, get);
   });
 });
+
+it("keeps the readiness projection live while adapting numeric scan cursors", () => {
+  let ready = false;
+  const original = {
+    get isReady() {
+      return ready;
+    },
+  };
+  const client = withNumericScanCursor(original as unknown as NodeRedisClient);
+  assertEquals(client.isReady, false);
+  ready = true;
+  assertEquals(client.isReady, true);
+  ready = false;
+  assertEquals(client.isReady, false);
+});

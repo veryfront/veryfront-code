@@ -25,16 +25,20 @@ import {
   type HostedDurableChildSuccess,
   type HostedDurableChildTerminalFailure,
 } from "./durable-child-fork-execution.ts";
-import type { InvokeAgentChildRunProgressEvent } from "../child-run/invoke-agent-child-runs.ts";
-import { bootstrapHostedChildRun, type BootstrapHostedChildRunInput } from "./child-bootstrap.ts";
+import { type BootstrapHostedChildRunInput } from "./child-bootstrap.ts";
 import {
   createHostedRunEventWriterCapability,
-  getActiveHostedRunEventWriterCapability,
   runWithHostedRunEventWriterCapability,
 } from "./child-run-event-writer-token.ts";
 import type { AgentTraceAttributes } from "./trace-attributes.ts";
-import { runEventTokenResponse } from "./child-run-event-writer-token.test-helpers.ts";
 
+import {
+  hostedInheritedRunAdmitter,
+  registerHostedTerminalCredential,
+  transferHostedTerminalAuthority,
+} from "./terminal-credential.ts";
+import type { ParsedHostedChatRequest } from "./chat-request-parser.ts";
+import type { BootstrapHostedChildRunResult } from "./child-bootstrap.ts";
 const API_URL = "https://api.example.com";
 const AUTH_TOKEN = "token-123";
 const PARENT_RUN_EVENT_TOKEN = "parent-run-event-token";
@@ -54,61 +58,6 @@ type DurableChildResult =
   | { status: "terminal_failed"; failure: HostedDurableChildTerminalFailure }
   | { status: "completed"; success: HostedDurableChildSuccess<ChildRunExecutionResult> };
 
-function jsonResponse(body: unknown, status: number): Response {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: { "Content-Type": "application/json" },
-  });
-}
-
-function acceptedRunResponse(run: unknown): Response {
-  return jsonResponse({ accepted: true, run }, 202);
-}
-
-function stubFetchWithRecorder(
-  handler: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response> | Response,
-): { requests: { url: string; body: unknown }[] } {
-  const requests: { url: string; body: unknown }[] = [];
-  globalThis.fetch = async (input, init) => {
-    requests.push({
-      url: String(input),
-      body: getRequestBody(init),
-    });
-    return handler(input, init);
-  };
-  return { requests };
-}
-
-function getRequestBody(init: RequestInit | undefined): unknown {
-  if (!init || !("body" in init) || !init.body) {
-    return null;
-  }
-
-  return JSON.parse(String(init.body));
-}
-
-function getRecordedRequest(
-  requests: { url: string; body: unknown }[],
-  index: number,
-): { url: string; body: unknown } {
-  const request = requests[index];
-  if (!request) {
-    throw new Error(`Missing request at index ${index}`);
-  }
-  return request;
-}
-
-function getPublicId(value: unknown): string {
-  if (
-    !value || typeof value !== "object" || !("public_id" in value) ||
-    typeof value.public_id !== "string"
-  ) {
-    throw new Error("Missing string property public_id");
-  }
-
-  return value.public_id;
-}
-
 function baseSuccessResult(): ChildRunExecutionResult & { success: true } {
   return {
     success: true,
@@ -124,7 +73,7 @@ function baseSuccessResult(): ChildRunExecutionResult & { success: true } {
 
 const INJECTED_CHILD_IDENTIFIERS = {
   childConversationId: CHILD_CONVERSATION_ID,
-  childRunId: "run_child_1",
+  childRunId: "88888888-8888-4888-8888-888888888888",
   childMessageId: CHILD_MESSAGE_ID,
   latestEventId: 7,
   latestExternalEventSequence: 3,
@@ -141,6 +90,7 @@ type InjectedRunLifecycle = NonNullable<
 >;
 
 function runForkWithInjectedLifecycle(input: {
+  replay?: BootstrapHostedChildRunResult;
   runLifecycle: () => ReturnType<InjectedRunLifecycle>;
   buildTerminalFailureResult: (failure: HostedDurableChildTerminalFailure) => DurableChildResult;
   onLifecycleFinalized?: Parameters<
@@ -151,8 +101,19 @@ function runForkWithInjectedLifecycle(input: {
     apiUrl: API_URL,
     runId: "run_parent_1",
     runEventAppendToken: PARENT_RUN_EVENT_TOKEN,
-    fetch: (input) =>
-      Promise.resolve(runEventTokenResponse(new Request(input), CHILD_RUN_EVENT_TOKEN)),
+    fetch: () => {
+      if (input.replay) throw new Error("Terminal replay must not exchange event credentials");
+      return Promise.resolve(Response.json(
+        {
+          token: CHILD_RUN_EVENT_TOKEN,
+          run_id: "88888888-8888-4888-8888-888888888888",
+          token_type: "Bearer",
+          expires_at: "2026-10-04T00:00:00Z",
+          permissions: ["run.events.append"],
+        },
+        { headers: { "Cache-Control": "no-store" } },
+      ));
+    },
   });
 
   return runWithHostedRunEventWriterCapability(
@@ -180,10 +141,11 @@ function runForkWithInjectedLifecycle(input: {
         buildSetupFailureResult: (failure) => ({ status: "setup_failed", failure }),
         buildTerminalFailureResult: input.buildTerminalFailureResult,
         buildSuccessResult: (success) => ({ status: "completed", success }),
+        buildReplayedSuccessResult: (success) => ({ status: "completed", success }),
         onLifecycleFinalized: input.onLifecycleFinalized,
         runtime: {
           bootstrapChildRun: () =>
-            Promise.resolve({ ...INJECTED_CHILD_IDENTIFIERS, status: "running" }),
+            Promise.resolve(input.replay ?? { ...INJECTED_CHILD_IDENTIFIERS, status: "running" }),
           createLifecycleAdapter: () => ({}),
           runLifecycle: input.runLifecycle as InjectedRunLifecycle,
         },
@@ -199,7 +161,7 @@ describe("agent/hosted-durable-child-fork-execution", () => {
   it("builds standard hosted invoke failure, terminal failure, and success results", () => {
     const identifiers = {
       childConversationId: CHILD_CONVERSATION_ID,
-      childRunId: "run_child_1",
+      childRunId: "88888888-8888-4888-8888-888888888888",
       childMessageId: CHILD_MESSAGE_ID,
       latestEventId: 7,
       latestExternalEventSequence: 3,
@@ -244,7 +206,7 @@ describe("agent/hosted-durable-child-fork-execution", () => {
         text: "invoke_agent failed: child failed",
         summary: buildChildRunResultSummary("invoke_agent failed: child failed"),
         childConversationId: CHILD_CONVERSATION_ID,
-        childRunId: "run_child_1",
+        childRunId: "88888888-8888-4888-8888-888888888888",
         childMessageId: CHILD_MESSAGE_ID,
         sourceTargetKind: "preview_branch",
         runtimeTargetKind: "preview_branch",
@@ -271,7 +233,7 @@ describe("agent/hosted-durable-child-fork-execution", () => {
         usage: { inputTokens: 3, outputTokens: 4, totalTokens: 7 },
         durationMs: 12,
         childConversationId: CHILD_CONVERSATION_ID,
-        childRunId: "run_child_1",
+        childRunId: "88888888-8888-4888-8888-888888888888",
         childMessageId: CHILD_MESSAGE_ID,
         sourceTargetKind: "preview_branch",
         runtimeTargetKind: "preview_branch",
@@ -284,7 +246,7 @@ describe("agent/hosted-durable-child-fork-execution", () => {
   it("maps known provider errors from failed snapshots into durable invoke terminal codes", () => {
     const identifiers = {
       childConversationId: CHILD_CONVERSATION_ID,
-      childRunId: "run_child_1",
+      childRunId: "88888888-8888-4888-8888-888888888888",
       childMessageId: CHILD_MESSAGE_ID,
       latestEventId: 7,
       latestExternalEventSequence: 3,
@@ -338,7 +300,7 @@ describe("agent/hosted-durable-child-fork-execution", () => {
       snapshot: buildChildRunExecutionSnapshot(result),
       identifiers: {
         childConversationId: CHILD_CONVERSATION_ID,
-        childRunId: "run_child_1",
+        childRunId: "88888888-8888-4888-8888-888888888888",
         childMessageId: CHILD_MESSAGE_ID,
         latestEventId: 7,
         latestExternalEventSequence: 3,
@@ -357,7 +319,7 @@ describe("agent/hosted-durable-child-fork-execution", () => {
   it("sanitizes malformed child transcript text in durable invoke success results", () => {
     const identifiers = {
       childConversationId: CHILD_CONVERSATION_ID,
-      childRunId: "run_child_1",
+      childRunId: "88888888-8888-4888-8888-888888888888",
       childMessageId: CHILD_MESSAGE_ID,
       latestEventId: 7,
       latestExternalEventSequence: 3,
@@ -393,7 +355,7 @@ describe("agent/hosted-durable-child-fork-execution", () => {
         usage: { inputTokens: 3, outputTokens: 4, totalTokens: 7 },
         durationMs: 12,
         childConversationId: CHILD_CONVERSATION_ID,
-        childRunId: "run_child_1",
+        childRunId: "88888888-8888-4888-8888-888888888888",
         childMessageId: CHILD_MESSAGE_ID,
         sourceTargetKind: "preview_branch",
         runtimeTargetKind: "preview_branch",
@@ -406,7 +368,7 @@ describe("agent/hosted-durable-child-fork-execution", () => {
   it("keeps durable invoke summaries bounded unless full result mode is requested", () => {
     const identifiers = {
       childConversationId: CHILD_CONVERSATION_ID,
-      childRunId: "run_child_1",
+      childRunId: "88888888-8888-4888-8888-888888888888",
       childMessageId: CHILD_MESSAGE_ID,
       latestEventId: 7,
       latestExternalEventSequence: 3,
@@ -452,7 +414,7 @@ describe("agent/hosted-durable-child-fork-execution", () => {
   it("rebuilds durable invoke structured facts from stored full child text", () => {
     const identifiers = {
       childConversationId: CHILD_CONVERSATION_ID,
-      childRunId: "run_child_1",
+      childRunId: "88888888-8888-4888-8888-888888888888",
       childMessageId: CHILD_MESSAGE_ID,
       latestEventId: 7,
       latestExternalEventSequence: 3,
@@ -494,7 +456,7 @@ describe("agent/hosted-durable-child-fork-execution", () => {
   it("preserves existing durable summary metadata when full snapshot text is unavailable", () => {
     const identifiers = {
       childConversationId: CHILD_CONVERSATION_ID,
-      childRunId: "run_child_1",
+      childRunId: "88888888-8888-4888-8888-888888888888",
       childMessageId: CHILD_MESSAGE_ID,
       latestEventId: 7,
       latestExternalEventSequence: 3,
@@ -536,7 +498,7 @@ describe("agent/hosted-durable-child-fork-execution", () => {
     const recordedAttributes: AgentTraceAttributes[] = [];
     const identifiers = {
       childConversationId: CHILD_CONVERSATION_ID,
-      childRunId: "run_child_1",
+      childRunId: "88888888-8888-4888-8888-888888888888",
       childMessageId: CHILD_MESSAGE_ID,
       latestEventId: 7,
       latestExternalEventSequence: 3,
@@ -623,7 +585,7 @@ describe("agent/hosted-durable-child-fork-execution", () => {
       recorder.recordSetupFailure({
         targets,
         childConversationId: CHILD_CONVERSATION_ID,
-        childRunId: "run_child_1",
+        childRunId: "88888888-8888-4888-8888-888888888888",
         childMessageId: CHILD_MESSAGE_ID,
         terminalErrorCode: "SETUP_FAILED",
         terminalErrorMessage: "setup failed",
@@ -634,7 +596,7 @@ describe("agent/hosted-durable-child-fork-execution", () => {
         text: "invoke_agent failed: setup failed",
         summary: buildChildRunResultSummary("invoke_agent failed: setup failed"),
         childConversationId: CHILD_CONVERSATION_ID,
-        childRunId: "run_child_1",
+        childRunId: "88888888-8888-4888-8888-888888888888",
         childMessageId: CHILD_MESSAGE_ID,
         sourceTargetKind: "preview_branch",
         runtimeTargetKind: "preview_branch",
@@ -648,7 +610,7 @@ describe("agent/hosted-durable-child-fork-execution", () => {
       "run.id": "run_parent_1",
       "child.agent.id": "invoke-agent-child",
       "child.conversation.id": CHILD_CONVERSATION_ID,
-      "child.run.id": "run_child_1",
+      "child.run.id": "88888888-8888-4888-8888-888888888888",
       "child.message.id": CHILD_MESSAGE_ID,
       "source.target.kind": "preview_branch",
       "runtime.target.kind": "preview_branch",
@@ -684,7 +646,7 @@ describe("agent/hosted-durable-child-fork-execution", () => {
       "run.id": "run_parent_1",
       "child.agent.id": "invoke-agent-child",
       "child.conversation.id": CHILD_CONVERSATION_ID,
-      "child.run.id": "run_child_1",
+      "child.run.id": "88888888-8888-4888-8888-888888888888",
       "child.message.id": CHILD_MESSAGE_ID,
       "source.target.kind": "preview_branch",
       "runtime.target.kind": "preview_branch",
@@ -863,249 +825,72 @@ describe("agent/hosted-durable-child-fork-execution", () => {
     assertEquals(result, { status: "missing_context", message: "missing context" });
   });
 
-  it("bootstraps environment-targeted child runs and returns host-shaped success", async () => {
-    let projectId = PROJECT_ID;
-    const lifecycleStatuses: string[] = [];
-    const bootstrapCalls: string[] = [];
-    const capturedBootstrapInputs: BootstrapHostedChildRunInput[] = [];
-    const exchangeRequests: Request[] = [];
-    const runEventWriterCapability = createHostedRunEventWriterCapability({
+  it("preserves environment selection and exact child identity through the owned admission adapter", async () => {
+    const captured: BootstrapHostedChildRunInput[] = [];
+    const capability = createHostedRunEventWriterCapability({
       apiUrl: API_URL,
       runId: "run_parent_1",
       runEventAppendToken: PARENT_RUN_EVENT_TOKEN,
-      fetch: (input, init) => {
-        const request = new Request(input, init);
-        exchangeRequests.push(request);
-        return Promise.resolve(runEventTokenResponse(
-          request,
-          exchangeRequests.length === 1 ? CHILD_RUN_EVENT_TOKEN : "grandchild-run-event-token",
-        ));
-      },
-    });
-    const { requests } = stubFetchWithRecorder((_input, _init) => {
-      const requestCount = requests.length;
-      if (requestCount === 1) {
-        return jsonResponse({ id: PARENT_CONVERSATION_ID, project_id: projectId }, 200);
-      }
-      if (requestCount === 2) {
-        return jsonResponse({ id: CHILD_CONVERSATION_ID, project_id: projectId }, 200);
-      }
-      if (requestCount === 3) {
-        return jsonResponse({ id: CHILD_MESSAGE_ID }, 200);
-      }
-      if (requestCount === 4) {
-        return acceptedRunResponse({ run_id: "run_child_1" });
-      }
-      if (requestCount === 5) {
-        return jsonResponse(
-          {
-            run_id: "run_child_1",
-            conversation_id: CHILD_CONVERSATION_ID,
-            message_id: CHILD_MESSAGE_ID,
-            latest_event_id: 7,
-            latest_external_event_sequence: 3,
-            status: "running",
-          },
-          200,
-        );
-      }
-      if (requestCount === 6) {
-        return jsonResponse(
-          {
-            completed: true,
-            run: { run_id: "run_child_1", status: "completed" },
-          },
-          200,
-        );
-      }
-
-      throw new Error("Unexpected fetch call");
-    });
-
-    const result = await runWithHostedRunEventWriterCapability(
-      runEventWriterCapability,
-      () =>
-        executeHostedDurableChildFork<DurableChildResult, ChildRunExecutionResult>(
-          {
-            authToken: AUTH_TOKEN,
-            apiUrl: API_URL,
-            forkInput: {
-              description: "Inspect logs",
-              prompt: "Find logs",
-              project_reference: "target-project",
-              context: {
-                veryfront_invocation_context: {
-                  root_conversation_id: "root-conversation-1",
-                  root_run_id: "run_root_1",
-                },
-              },
-            },
-            executionOptions: { toolCallId: "tool-call-1" },
-            childAgentId: "invoke-agent-child",
-            runProjectId: projectId,
-            parentConversationId: PARENT_CONVERSATION_ID,
-            parentRunId: "run_parent_1",
-            parentMessageId: PARENT_MESSAGE_ID,
-            trustedInvocationContext: {
-              root_conversation_id: "root-conversation-1",
-              root_run_id: "run_root_1",
-              delegation_depth: 0,
-            },
-            getProjectId: () => projectId,
-            getRuntimeTargetKind: () => "environment",
-            getRuntimeTargetEnvironmentId: () => ENVIRONMENT_ID,
-            getBranchId: () => null,
-            getContextModel: () => "sonnet",
-            defaultModel: "opus",
-            resolveModelId: (model) => `resolved-${model}`,
-            resolveProvider: (model) => `provider-${model}`,
-            resolveProjectReference: ({ projectReference }) => {
-              assertEquals(projectReference, "target-project");
-              return Promise.resolve({
-                projectId: "77777777-7777-4777-8777-777777777777",
-                slug: "target-project",
-              });
-            },
-            onRequestedProjectId: (requestedProjectId) => {
-              projectId = requestedProjectId;
-            },
-            publishParentRunEvents: (events: InvokeAgentChildRunProgressEvent[]) => {
-              for (const event of events) {
-                if (event.type === "CUSTOM") {
-                  lifecycleStatuses.push(event.value.status);
-                }
-              }
-            },
-            contextUnavailableMessage: "missing context",
-            setupFailedCode: "SETUP_FAILED",
-            executionFailedCode: "INVOKE_AGENT_FAILED",
-            executeLocal: async (options) => {
-              assertEquals(JSON.stringify(options).includes(CHILD_RUN_EVENT_TOKEN), false);
-              assertEquals("runEventWriterCapability" in (options ?? {}), false);
-              const grandchildCapability = await getActiveHostedRunEventWriterCapability()
-                ?.mintChildRunEventWriterCapability("run_grandchild_1");
-              assertEquals(JSON.stringify(grandchildCapability), "{}");
-              bootstrapCalls.push("execute");
-              return baseSuccessResult();
-            },
-            getExecutionSnapshot: () => null,
-            buildContextUnavailableResult: (message) => ({ status: "missing_context", message }),
-            buildSetupFailureResult: (failure) => ({ status: "setup_failed", failure }),
-            buildTerminalFailureResult: () => ({
-              status: "missing_context",
-              message: "unexpected",
-            }),
-            buildSuccessResult: (success) => ({ status: "completed", success }),
-            runtime: {
-              bootstrapChildRun: (input) => {
-                capturedBootstrapInputs.push(input);
-                return bootstrapHostedChildRun(input);
-              },
-            },
-            bootstrap: {
-              runBootstrap: async (operation) => {
-                bootstrapCalls.push("wrapped");
-                return operation();
-              },
-              onBootstrapStart: (bootstrapContext) => {
-                bootstrapCalls.push(`start:${bootstrapContext.resolvedModel}`);
-              },
-              onBootstrapComplete: (bootstrapContext) => {
-                bootstrapCalls.push(`complete:${bootstrapContext.identifiers.childRunId}`);
-              },
-            },
-          },
+      fetch: () =>
+        Promise.resolve(
+          Response.json({
+            token: CHILD_RUN_EVENT_TOKEN,
+            run_id: "88888888-8888-4888-8888-888888888888",
+            token_type: "Bearer",
+            expires_at: "2026-10-04T00:00:00Z",
+            permissions: ["run.events.append"],
+          }, { headers: { "Cache-Control": "no-store" } }),
         ),
-    );
-
-    if (result.status !== "completed") {
-      throw new Error("Expected completed result");
-    }
-
-    assertEquals(projectId, "77777777-7777-4777-8777-777777777777");
-    assertEquals(
-      capturedBootstrapInputs[0]?.ensureProjectId,
-      "77777777-7777-4777-8777-777777777777",
-    );
-    assertEquals(capturedBootstrapInputs[0]?.authToken, AUTH_TOKEN);
-    assertEquals(capturedBootstrapInputs[0]?.runProjectId, "77777777-7777-4777-8777-777777777777");
-    assertEquals(bootstrapCalls, [
-      "wrapped",
-      "start:resolved-sonnet",
-      "complete:run_child_1",
-      "execute",
-    ]);
-    assertEquals(exchangeRequests.length, 2);
-    assertEquals(exchangeRequests.map((request) => request.headers.get("Authorization")), [
-      `Bearer ${PARENT_RUN_EVENT_TOKEN}`,
-      `Bearer ${CHILD_RUN_EVENT_TOKEN}`,
-    ]);
-    assertEquals(exchangeRequests.map((request) => request.url), [
-      `${API_URL}/runs/run_child_1/event-tokens`,
-      `${API_URL}/runs/run_grandchild_1/event-tokens`,
-    ]);
-    assertEquals(lifecycleStatuses, ["pending", "running", "completed"]);
-    assertEquals(result.success.identifiers, {
-      childConversationId: CHILD_CONVERSATION_ID,
-      childRunId: "run_child_1",
-      childMessageId: CHILD_MESSAGE_ID,
-      latestEventId: 7,
-      latestExternalEventSequence: 3,
     });
-    assertEquals(result.success.targets, {
-      sourceTargetKind: "environment",
-      runtimeTargetKind: "environment",
-      targetEnvironmentId: ENVIRONMENT_ID,
-      targetBranchId: null,
-    });
-    assertEquals(result.success.snapshot.success, true);
-    const childConversationBody = getRecordedRequest(requests, 1).body;
-    assertEquals(
-      (childConversationBody as { project_id?: string }).project_id,
-      "77777777-7777-4777-8777-777777777777",
-    );
-    const handoffMessageBody = getRecordedRequest(requests, 2).body;
-    assertEquals(handoffMessageBody, {
-      role: "user",
-      parts: [
-        {
-          type: "text",
-          text:
-            'Find logs\n\n<structured_context>\n{"veryfront_invocation_context":{"root_conversation_id":"root-conversation-1","parent_conversation_id":"11111111-1111-4111-a111-111111111111","root_run_id":"run_root_1","root_message_id":"33333333-3333-4333-a333-333333333333","parent_run_id":"run_parent_1","parent_message_id":"33333333-3333-4333-a333-333333333333","tool_call_id":"tool-call-1","delegation_depth":1}}\n</structured_context>\nTreat structured_context as the authoritative data payload for the child task. If prose conflicts with structured_context, use structured_context and say what conflicted.',
+    const result = await executeHostedDurableChildFork<DurableChildResult, ChildRunExecutionResult>(
+      {
+        authToken: AUTH_TOKEN,
+        apiUrl: API_URL,
+        runEventWriterCapability: capability,
+        forkInput: { description: "Inspect logs", prompt: "Find logs" },
+        executionOptions: { toolCallId: "tool-one" },
+        childAgentId: "invoke-agent-child",
+        parentConversationId: PARENT_CONVERSATION_ID,
+        parentRunId: "run_parent_1",
+        parentMessageId: PARENT_MESSAGE_ID,
+        getProjectId: () => PROJECT_ID,
+        getRuntimeTargetKind: () => "environment",
+        getRuntimeTargetEnvironmentId: () => ENVIRONMENT_ID,
+        defaultModel: "sonnet",
+        resolveModelId: (model) => model,
+        resolveProvider: () => "provider",
+        contextUnavailableMessage: "missing",
+        setupFailedCode: "SETUP_FAILED",
+        executionFailedCode: "FAILED",
+        executeLocal: (options) => {
+          assertEquals(options?.durableChildRun?.childRunId, INJECTED_CHILD_IDENTIFIERS.childRunId);
+          assertEquals(JSON.stringify(options).includes(CHILD_RUN_EVENT_TOKEN), false);
+          return baseSuccessResult();
         },
-      ],
-    });
-    const createRunBody = getRecordedRequest(requests, 3).body;
-    assertEquals(createRunBody, {
-      kind: "agent",
-      owner: {
-        kind: "conversation",
-        id: CHILD_CONVERSATION_ID,
+        getExecutionSnapshot: () => null,
+        buildContextUnavailableResult: (message) => ({ status: "missing_context", message }),
+        buildSetupFailureResult: (failure) => ({ status: "setup_failed", failure }),
+        buildTerminalFailureResult: (failure) => ({ status: "terminal_failed", failure }),
+        buildSuccessResult: (success) => ({ status: "completed", success }),
+        runtime: {
+          bootstrapChildRun: (input) => {
+            captured.push(input);
+            return Promise.resolve({ ...INJECTED_CHILD_IDENTIFIERS, status: "running" });
+          },
+          createLifecycleAdapter: () => ({
+            pending: () => {},
+            running: () => {},
+            completed: () => {},
+            failed: () => {},
+            cancelled: () => {},
+          }),
+        },
       },
-      public_id: getPublicId(createRunBody),
-      parent_run_id: "run_parent_1",
-      request: {
-        mode: "agent",
-        agent_id: "invoke-agent-child",
-        initial_status: "running",
-        source_target_kind: "environment",
-        runtime_target_kind: "environment",
-        source_target_environment_id: ENVIRONMENT_ID,
-        runtime_target_environment_id: ENVIRONMENT_ID,
-      },
-    });
-    assertEquals(getRecordedRequest(requests, 5).body, {
-      status: "completed",
-      metadata: {
-        provider: "provider-resolved-sonnet",
-        model: "resolved-sonnet",
-        inputTokens: 3,
-        outputTokens: 4,
-        finishReason: "stop",
-      },
-      terminal_error_code: null,
-      terminal_error_message: null,
-    });
+    );
+    assertEquals(result.status, "completed");
+    assertEquals(captured[0]?.runtimeTargetKind, "environment");
+    assertEquals(captured[0]?.runtimeTargetEnvironmentId, ENVIRONMENT_ID);
+    assertEquals(captured[0]?.agentId, "invoke-agent-child");
   });
 
   it("fails and finalizes a created child before dispatch when writer-token exchange fails", async () => {
@@ -1155,7 +940,7 @@ describe("agent/hosted-durable-child-fork-execution", () => {
               bootstrapChildRun: () =>
                 Promise.resolve({
                   childConversationId: CHILD_CONVERSATION_ID,
-                  childRunId: "run_child_1",
+                  childRunId: "88888888-8888-4888-8888-888888888888",
                   childMessageId: CHILD_MESSAGE_ID,
                   latestEventId: 7,
                   latestExternalEventSequence: 3,
@@ -1200,7 +985,7 @@ describe("agent/hosted-durable-child-fork-execution", () => {
           targetBranchId: null,
         },
         childConversationId: CHILD_CONVERSATION_ID,
-        childRunId: "run_child_1",
+        childRunId: "88888888-8888-4888-8888-888888888888",
         childMessageId: CHILD_MESSAGE_ID,
         terminalErrorCode: "SETUP_FAILED",
         terminalErrorMessage: "Unable to initialize durable child event persistence",
@@ -1257,7 +1042,7 @@ describe("agent/hosted-durable-child-fork-execution", () => {
               bootstrapChildRun: () =>
                 Promise.resolve({
                   childConversationId: CHILD_CONVERSATION_ID,
-                  childRunId: "run_child_1",
+                  childRunId: "88888888-8888-4888-8888-888888888888",
                   childMessageId: CHILD_MESSAGE_ID,
                   latestEventId: 7,
                   latestExternalEventSequence: 3,
@@ -1355,7 +1140,7 @@ describe("agent/hosted-durable-child-fork-execution", () => {
               bootstrapChildRun: () =>
                 Promise.resolve({
                   childConversationId: CHILD_CONVERSATION_ID,
-                  childRunId: "run_child_1",
+                  childRunId: "88888888-8888-4888-8888-888888888888",
                   childMessageId: CHILD_MESSAGE_ID,
                   latestEventId: 7,
                   latestExternalEventSequence: 3,
@@ -1433,7 +1218,7 @@ describe("agent/hosted-durable-child-fork-execution", () => {
             bootstrapChildRun: () =>
               Promise.resolve({
                 childConversationId: CHILD_CONVERSATION_ID,
-                childRunId: "run_child_1",
+                childRunId: "88888888-8888-4888-8888-888888888888",
                 childMessageId: CHILD_MESSAGE_ID,
                 latestEventId: 7,
                 latestExternalEventSequence: 3,
@@ -1526,7 +1311,7 @@ describe("agent/hosted-durable-child-fork-execution", () => {
             bootstrapChildRun: () =>
               Promise.resolve({
                 childConversationId: CHILD_CONVERSATION_ID,
-                childRunId: "run_child_1",
+                childRunId: "88888888-8888-4888-8888-888888888888",
                 childMessageId: CHILD_MESSAGE_ID,
                 latestEventId: 7,
                 latestExternalEventSequence: 3,
@@ -1705,6 +1490,68 @@ describe("agent/hosted-durable-child-fork-execution", () => {
       assertEquals(result.failure.terminalErrorMessage, "bootstrap failed");
     }
   });
+  it("retries admission failures without caching them as completed child executions", async () => {
+    const callbackErrors: unknown[] = [];
+    const capability = createHostedRunEventWriterCapability({
+      apiUrl: API_URL,
+      runId: "run_parent_1",
+      runEventAppendToken: "parent",
+    });
+    let admissions = 0;
+    const input: Parameters<
+      typeof executeHostedDurableChildFork<DurableChildResult, ChildRunExecutionResult>
+    >[0] = {
+      runEventWriterCapability: capability,
+      authToken: AUTH_TOKEN,
+      apiUrl: API_URL,
+      forkInput: { description: "Inspect logs", prompt: "Find logs", context: {} },
+      executionOptions: { toolCallId: "tool-call-1" },
+      childAgentId: "invoke-agent-child",
+      parentConversationId: PARENT_CONVERSATION_ID,
+      parentRunId: "run_parent_1",
+      parentMessageId: PARENT_MESSAGE_ID,
+      getProjectId: () => PROJECT_ID,
+      defaultModel: "opus",
+      resolveModelId: (model) => `resolved-${model}`,
+      resolveProvider: () => "anthropic",
+      contextUnavailableMessage: "missing context",
+      setupFailedCode: "SETUP_FAILED",
+      executionFailedCode: "INVOKE_AGENT_FAILED",
+      executeLocal: () => baseSuccessResult(),
+      getExecutionSnapshot: () => null,
+      buildContextUnavailableResult: (message) => ({ status: "missing_context", message }),
+      buildSetupFailureResult: (failure) => ({ status: "setup_failed", failure }),
+      buildTerminalFailureResult: () => ({ status: "missing_context", message: "unexpected" }),
+      buildSuccessResult: (success) => ({ status: "completed", success }),
+      runtime: {
+        bootstrapChildRun: () => {
+          admissions++;
+          return Promise.reject(new Error("bootstrap failed"));
+        },
+      },
+      bootstrap: {
+        onBootstrapError: () => Promise.reject(new Error("observer failed")),
+      },
+      onLifecycleError: (error) => {
+        callbackErrors.push(error);
+      },
+    };
+    const [result, concurrent] = await Promise.all([
+      executeHostedDurableChildFork(input),
+      executeHostedDurableChildFork(input),
+    ]);
+    assertEquals(concurrent, result);
+    assertEquals(admissions, 1);
+    await executeHostedDurableChildFork(input);
+    assertEquals(admissions, 2);
+    assertEquals(callbackErrors.length, 2);
+    assertStringIncludes(String(callbackErrors[0]), "observer failed");
+    assertEquals(result.status, "setup_failed");
+    if (result.status === "setup_failed") {
+      assertEquals(result.failure.childRunId, null);
+      assertEquals(result.failure.terminalErrorMessage, "bootstrap failed");
+    }
+  });
 });
 
 describe("agent/hosted/durable-child-fork-execution result contract", () => {
@@ -1822,3 +1669,102 @@ describe("agent/hosted/durable-child-fork-execution result contract", () => {
     );
   });
 });
+
+for (
+  const terminal of [
+    { status: "completed", output: "Persisted child answer" },
+    { status: "completed", output: null },
+    { status: "completed" },
+    { status: "failed", error: { code: "ORIGINAL_FAILURE", message: "Original failure" } },
+    { status: "cancelled" },
+  ] as const
+) {
+  it(`replays canonical child ${JSON.stringify(terminal)} without execution or terminal writes`, async () => {
+    const canonicalId = INJECTED_CHILD_IDENTIFIERS.childRunId;
+    const token = (runId: string) =>
+      `header.${
+        btoa(
+          JSON.stringify({
+            runId,
+            canonicalRunId: canonicalId,
+            tokenUse: "run_event_writer",
+            writerPurpose: "current_run_terminal",
+            dispatchNonce: "generation",
+          }),
+        )
+      }.signature`;
+    const request = {
+      projectId: PROJECT_ID,
+      authToken: AUTH_TOKEN,
+      durableRootRun: { runId: "run_parent_1" },
+    } as ParsedHostedChatRequest;
+    registerHostedTerminalCredential(request, token("run_parent_1"));
+    let requests = 0;
+    const admit = hostedInheritedRunAdmitter(request, {
+      apiUrl: API_URL,
+      fetch: () => {
+        requests++;
+        return Promise.resolve(
+          Response.json({
+            id: canonicalId,
+            conversation_id: CHILD_CONVERSATION_ID,
+            output_message_id: CHILD_MESSAGE_ID,
+            ...terminal,
+          }, {
+            headers: {
+              "Cache-Control": "no-store",
+              "X-Veryfront-Run-Terminal-Token": token(canonicalId),
+              "X-Veryfront-Run-Invocation-Token": "invocation",
+              "X-Veryfront-Run-Renewal-Token": "renewal",
+              "X-Veryfront-Run-Event-Token": "event",
+              "X-Veryfront-Run-Event-Sequence": "7",
+              "X-Veryfront-Run-External-Event-Sequence": "3",
+            },
+          }),
+        );
+      },
+    })!;
+    const run = await admit("tool-call-1", "Find logs")({
+      authToken: AUTH_TOKEN,
+      apiUrl: API_URL,
+      parentRunId: "run_parent_1",
+      agentId: "child",
+      projectId: PROJECT_ID,
+    });
+    const replay = { ...INJECTED_CHILD_IDENTIFIERS, status: run.status };
+    transferHostedTerminalAuthority(run, replay);
+    let lifecycleCalls = 0;
+    const result = await runForkWithInjectedLifecycle({
+      replay,
+      runLifecycle: () => {
+        lifecycleCalls++;
+        throw new Error("Must not execute or finalize a completed child");
+      },
+      buildTerminalFailureResult: (failure) => ({ status: "terminal_failed", failure }),
+    });
+    assertEquals(lifecycleCalls, 0);
+    assertEquals(requests, 1);
+    if (terminal.status === "completed") {
+      assertEquals(result.status, "completed");
+      if (result.status !== "completed") throw new Error("Expected replayed success");
+      assertEquals(
+        result.success.snapshot.fullResultText,
+        "output" in terminal ? terminal.output : null,
+      );
+      assertEquals(result.success.snapshot.success, true);
+    } else {
+      assertEquals(result.status, "terminal_failed");
+      if (result.status !== "terminal_failed") {
+        throw new Error("Expected original terminal outcome");
+      }
+      assertEquals(result.failure.status, terminal.status);
+      assertEquals(
+        result.failure.terminalErrorCode,
+        terminal.status === "failed" ? "ORIGINAL_FAILURE" : "DURABLE_CHILD_CANCELLED",
+      );
+      if (terminal.status === "failed") {
+        assertEquals(result.failure.terminalErrorMessage, terminal.error.message);
+      }
+    }
+  });
+}

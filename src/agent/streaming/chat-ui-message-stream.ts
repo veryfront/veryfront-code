@@ -622,6 +622,7 @@ export function createChatUiMessageStreamFromDataStream<TMessageMetadata = Messa
   const materializedToolCallIds = new Set<string>();
   const derivedSourceDocumentIds = new Set<string>();
   let finishReason: ChatFinishReason = "stop";
+  let manuallyPaused = false;
 
   return normalizeChatUiMessageStream(
     (async function* () {
@@ -637,6 +638,7 @@ export function createChatUiMessageStreamFromDataStream<TMessageMetadata = Messa
       };
 
       for await (const event of streamDataStreamEvents(input.stream)) {
+        manuallyPaused ||= event.type === "data-veryfront.manual_pause";
         trackPendingFrameworkToolInput({
           state,
           materializedToolCallIds,
@@ -713,6 +715,7 @@ export function createChatUiMessageStreamFromDataStream<TMessageMetadata = Messa
       }
       state.pendingToolDeltas.clear();
 
+      if (manuallyPaused) return;
       const finishPart = buildFinishPart(finishReason, chatEventEncoder.state.totalUsage);
       const messageMetadata = options.messageMetadata?.({ part: finishPart });
       const responseMessage: ChatUiMessage<TMessageMetadata> = {

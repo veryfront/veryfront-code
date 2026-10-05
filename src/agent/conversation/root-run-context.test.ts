@@ -20,13 +20,6 @@ const MESSAGE_ID = "22222222-2222-4222-a222-222222222222";
 const BRANCH_ID = "33333333-3333-4333-a333-333333333333";
 const originalFetch = globalThis.fetch;
 
-function jsonResponse(body: unknown, status = 200): Response {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: { "Content-Type": "application/json" },
-  });
-}
-
 function stubFetchSequence(...steps: Response[]) {
   const queue = [...steps];
   const calls: [RequestInfo | URL, RequestInit | undefined][] = [];
@@ -46,73 +39,40 @@ describe("agent/conversation-root-run-context", () => {
     globalThis.fetch = originalFetch;
   });
 
-  it("starts a canonical conversation root run when a conversation exists", async () => {
-    const calls = stubFetchSequence(
-      jsonResponse({ accepted: true, run: { run_id: "run_root_1" } }, 202),
-      jsonResponse({
-        run_id: "run_root_1",
-        conversation_id: CONVERSATION_ID,
-        message_id: MESSAGE_ID,
-        latest_event_id: 3,
-        latest_external_event_sequence: 7,
-        status: "running",
-      }),
+  it("rejects unsupported root self-admission before transport", async () => {
+    const calls = stubFetchSequence();
+    await assertRejects(
+      () =>
+        startConversationRootRun({
+          authToken: AUTH_TOKEN,
+          apiUrl: API_URL,
+          conversationId: CONVERSATION_ID,
+          projectId: "project-1",
+          agentId: "veryfront",
+        }),
+      Error,
+      "Standalone durable self-admission was removed",
     );
-
-    const run = await startConversationRootRun({
-      authToken: AUTH_TOKEN,
-      apiUrl: API_URL,
-      conversationId: CONVERSATION_ID,
-      projectId: "project-1",
-      branchId: null,
-      agentId: "veryfront",
-    });
-
-    assertEquals(run?.runId, "run_root_1");
-    assertEquals(String(calls[0]?.[0]), `${API_URL}/runs`);
+    assertEquals(calls, []);
   });
 
-  it("forwards branch and implementation targeting into the run-create request", async () => {
-    const calls = stubFetchSequence(
-      jsonResponse({ accepted: true, run: { run_id: "run_root_targeted" } }, 202),
-      jsonResponse({
-        run_id: "run_root_targeted",
-        conversation_id: CONVERSATION_ID,
-        message_id: MESSAGE_ID,
-        latest_event_id: 0,
-        latest_external_event_sequence: 0,
-        status: "running",
-      }),
+  it("rejects unsupported root self-admission with branch targeting before transport", async () => {
+    const calls = stubFetchSequence();
+    await assertRejects(
+      () =>
+        startConversationRootRun({
+          authToken: AUTH_TOKEN,
+          apiUrl: API_URL,
+          conversationId: CONVERSATION_ID,
+          projectId: "project-1",
+          agentId: "veryfront",
+          branchId: BRANCH_ID,
+          implementationKind: "veryfront-codex",
+        }),
+      Error,
+      "Standalone durable self-admission was removed",
     );
-
-    await startConversationRootRun({
-      authToken: AUTH_TOKEN,
-      apiUrl: API_URL,
-      conversationId: CONVERSATION_ID,
-      projectId: "project-1",
-      branchId: BRANCH_ID,
-      implementationKind: "veryfront-codex",
-      agentId: "veryfront",
-    });
-
-    const body = JSON.parse(String(calls[0]?.[1]?.body)) as {
-      request: Record<string, unknown>;
-    };
-    assertEquals(
-      body.request.source_target_branch_id,
-      BRANCH_ID,
-      "branchId must reach the run-create request",
-    );
-    assertEquals(
-      body.request.runtime_target_kind,
-      "preview_branch",
-      "a branch target must select the preview-branch runtime",
-    );
-    assertEquals(
-      body.request.implementation_kind,
-      "veryfront-codex",
-      "implementationKind must reach the run-create request",
-    );
+    assertEquals(calls, []);
   });
 
   it("reuses a provided run descriptor without calling the API", async () => {
@@ -171,6 +131,9 @@ describe("agent/conversation-root-run-context", () => {
         messageId: MESSAGE_ID,
         latestEventId: 1,
         latestExternalEventSequence: 2,
+        waitingToolCallId: null,
+        waitingToolName: null,
+        streamProtocolVersion: 1,
         status: "running",
       },
       parentRunId: "parent-run",
@@ -184,6 +147,9 @@ describe("agent/conversation-root-run-context", () => {
       messageId: MESSAGE_ID,
       latestEventId: 1,
       latestExternalEventSequence: 2,
+      waitingToolCallId: null,
+      waitingToolName: null,
+      streamProtocolVersion: 1,
       status: "running",
     });
     assertEquals(context.effectiveParentRunId, "run_root_2");
@@ -213,28 +179,25 @@ describe("agent/conversation-root-run-context", () => {
   });
 
   it("creates a reusable root-run start adapter over the canonical start helper", async () => {
-    stubFetchSequence(
-      jsonResponse({ accepted: true, run: { run_id: "run_root_adapter" } }, 202),
-      jsonResponse({
-        run_id: "run_root_adapter",
-        conversation_id: CONVERSATION_ID,
-        message_id: MESSAGE_ID,
-        latest_event_id: 8,
-        latest_external_event_sequence: 9,
-        status: "running",
-      }),
-    );
+    const calls = stubFetchSequence();
 
     const startRun = createConversationRootRunStartAdapter({
       authToken: AUTH_TOKEN,
       apiUrl: API_URL,
       conversationId: CONVERSATION_ID,
+      providedRun: {
+        runId: "run_root_adapter",
+        messageId: MESSAGE_ID,
+        latestEventId: 8,
+        latestExternalEventSequence: 9,
+      },
       projectId: "project-1",
       agentId: "veryfront",
     });
 
     const result = await startRun({ abortSignal: new AbortController().signal });
 
+    assertEquals(calls, []);
     assertEquals(result.run?.runId, "run_root_adapter");
     assertEquals(result.run?.latestEventId, 8);
   });
@@ -244,22 +207,18 @@ describe("agent/conversation-root-run-context", () => {
     const appendParentRunEvents = (events: unknown[]) => {
       published.push(events);
     };
-    stubFetchSequence(
-      jsonResponse({ accepted: true, run: { run_id: "run_root_prepare" } }, 202),
-      jsonResponse({
-        run_id: "run_root_prepare",
-        conversation_id: CONVERSATION_ID,
-        message_id: MESSAGE_ID,
-        latest_event_id: 3,
-        latest_external_event_sequence: 7,
-        status: "running",
-      }),
-    );
+    const calls = stubFetchSequence();
 
     const context = await prepareConversationRootRunContext({
       authToken: AUTH_TOKEN,
       apiUrl: API_URL,
       conversationId: CONVERSATION_ID,
+      providedRun: {
+        runId: "run_root_prepare",
+        messageId: MESSAGE_ID,
+        latestEventId: 3,
+        latestExternalEventSequence: 9,
+      },
       projectId: "project-1",
       agentId: "veryfront",
       parentRunId: "parent-run",
@@ -267,6 +226,7 @@ describe("agent/conversation-root-run-context", () => {
       appendParentRunEvents,
     });
 
+    assertEquals(calls, []);
     assertEquals(context.run?.runId, "run_root_prepare");
     assertEquals(context.effectiveParentRunId, "run_root_prepare");
     assertEquals(context.effectiveParentMessageId, MESSAGE_ID);

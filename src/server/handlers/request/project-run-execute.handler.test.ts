@@ -1,3 +1,5 @@
+import { systemTaskDeadlineClock } from "#veryfront/server/handlers/request/task-deadline-clock.ts";
+import { RunStopRegistry } from "#veryfront/internal-agents/run-stop-registry.ts";
 import { toolRegistryInternal } from "#veryfront/tool/registry.ts";
 import "#veryfront/schemas/_test-setup.ts";
 import "#veryfront/html/styles-builder/__tests__/css-processor-setup.ts";
@@ -135,6 +137,32 @@ function createEvalTransportModel(input: {
           },
         }),
       });
+    },
+  };
+}
+
+function manualTaskDeadlineClock() {
+  let now = Date.UTC(2026, 9, 3);
+  let nextId = 0;
+  const timers = new Map<number, { callback: () => void; at: number }>();
+  return {
+    now: () => now,
+    setTimer: (callback: () => void, delayMs: number) => {
+      const id = ++nextId;
+      timers.set(id, { callback, at: now + delayMs });
+      return id;
+    },
+    clearTimer: (id: number | undefined) => {
+      if (id !== undefined) timers.delete(id);
+    },
+    advance: (milliseconds: number) => {
+      now += milliseconds;
+      for (const [id, timer] of timers) {
+        if (timer.at <= now) {
+          timers.delete(id);
+          timer.callback();
+        }
+      }
     },
   };
 }
@@ -649,6 +677,172 @@ async function withEnvValue<T>(
   }
 }
 
+describe("workflow capability transport boundary", () => {
+  for (
+    const redirectTarget of [
+      "https://untrusted.example.test/collect",
+      "http://api.veryfront.com/collect",
+    ]
+  ) {
+    it(`keeps workflow capabilities on the host origin and refuses redirect to ${redirectTarget}`, async () => {
+      const calls: Array<
+        {
+          url: string;
+          redirect: RequestRedirect | undefined;
+          authorization: string | null;
+          writer: string | null;
+        }
+      > = [];
+      const runId = "run_workflow_transport";
+      const parentId = "11111111-1111-4111-8111-111111111111";
+      // Unit routing fixture only; the real API remains the signature/attempt authority.
+      const writer = `test.${
+        btoa(
+          JSON.stringify({
+            tokenUse: "run_event_writer",
+            runId,
+            projectId: "proj-1",
+            projectExecutionAttempt: {
+              canonicalRunId: parentId,
+              workerId: "worker",
+              attemptId: "attempt",
+            },
+          }),
+        )
+      }.signature`;
+      let localExecutions = 0;
+      const handler = new ProjectRunExecuteHandler(createDeps({
+        createWorkflowClient: (config) => ({
+          register: () => {},
+          start: async () => {
+            assertExists(config?.executor?.stepExecutor?.runAgentNode);
+            await config.executor.stepExecutor.runAgentNode({
+              runId,
+              nodeId: "research",
+              agentId: "coordinator",
+              input: "brief",
+              execute: async () => {
+                localExecutions++;
+                return { success: true, output: {}, executionTime: 0 };
+              },
+            });
+            return { runId };
+          },
+          getRun: async () => ({ status: "completed" }),
+          cancel: async () => {},
+          destroy: async () => {},
+        }),
+      }));
+      const signed = await signedRequest(`/api/control-plane/runs/${runId}/execute`, {
+        runId,
+        kind: "workflow",
+        target: "workflow:publish",
+        projectId: "proj-1",
+      }, { "x-veryfront-run-event-token": writer, "x-token": "unit-parent-invocation" });
+      await withEnv({
+        VERYFRONT_API_BASE_URL: "https://api.veryfront.com///",
+        VERYFRONT_API_URL: "",
+      }, () =>
+        withMockFetch(async (input, init) => {
+          const url = input instanceof Request ? input.url : String(input);
+          const headers = new Headers(
+            init?.headers ?? (input instanceof Request ? input.headers : undefined),
+          );
+          calls.push({
+            url,
+            redirect: init?.redirect,
+            authorization: headers.get("authorization"),
+            writer: headers.get("x-veryfront-run-event-token"),
+          });
+          if (url.endsWith("/events")) return Response.json({ latest_event_id: 1 });
+          return new Response(null, { status: 307, headers: { Location: redirectTarget } });
+        }, () =>
+          runWithProjectEnv({
+            VERYFRONT_API_BASE_URL: "https://tenant.example.test",
+            VERYFRONT_API_URL: "https://tenant.example.test",
+          }, async () => {
+            const result = await handler.handle(signed.request, createCtx(signed.publicKeyPem));
+            assertExists(result.response);
+            const response = await result.response.json();
+            assertEquals(response.success, false);
+            assertStringIncludes(response.error, "redirect");
+          })));
+      assertEquals(calls.map((call) => call.url), [
+        `https://api.veryfront.com/runs/${parentId}/events`,
+        "https://api.veryfront.com/runs",
+      ]);
+      assertEquals(calls.map((call) => call.redirect), ["manual", "manual"]);
+      assertEquals(calls[0]?.authorization, `Bearer ${writer}`);
+      assertEquals(calls[1]?.authorization, "Bearer unit-parent-invocation");
+      assertEquals(calls[1]?.writer, writer);
+      assertEquals(localExecutions, 0);
+    });
+  }
+
+  for (const hasAgentNode of [false, true]) {
+    it(`settles workflow lifecycle with plaintext host transport and agent node ${hasAgentNode}`, async () => {
+      let localExecutions = 0;
+      let created = false;
+      const runId = `run_https_boundary_${hasAgentNode}`;
+      const registry = new RunStopRegistry();
+      const handler = new ProjectRunExecuteHandler(
+        createDeps({
+          createWorkflowClient: (config) => {
+            created = true;
+            return {
+              register: () => {},
+              start: async () => {
+                if (hasAgentNode) {
+                  assertExists(config?.executor?.stepExecutor?.runAgentNode);
+                  await config.executor.stepExecutor.runAgentNode({
+                    runId,
+                    nodeId: "research",
+                    agentId: "coordinator",
+                    input: "brief",
+                    execute: async () => {
+                      localExecutions++;
+                      return { success: true, output: {}, executionTime: 0 };
+                    },
+                  });
+                }
+                return { runId };
+              },
+              getRun: async () => ({ status: "completed", output: "done" }),
+              waitForExecutionStopped: async () => true,
+              cancel: async () => {},
+              destroy: async () => {},
+            };
+          },
+        }),
+        undefined,
+        registry,
+      );
+      const signed = await signedRequest(`/api/control-plane/runs/${runId}/execute`, {
+        runId,
+        kind: "workflow",
+        target: "workflow:publish",
+        projectId: "proj-1",
+      });
+      await withEnv(
+        { VERYFRONT_API_BASE_URL: "http://api.example.test", VERYFRONT_API_URL: "" },
+        () =>
+          withMockFetch(() => {
+            throw new Error("Plaintext transport must never send credentials");
+          }, async () => {
+            const result = await handler.handle(signed.request, createCtx(signed.publicKeyPem));
+            assertExists(result.response);
+            const response = await result.response.json();
+            assertEquals(registry.requestStop(runId), { accepted: true, stopped: true });
+            assertEquals(created, true, "workflow lifecycle must own transport failure cleanup");
+            assertEquals(response.success, !hasAgentNode);
+            if (hasAgentNode) assertStringIncludes(response.error, "HTTPS");
+            assertEquals(localExecutions, 0, "reject plaintext before executing an agent");
+          }),
+      );
+    });
+  }
+});
+
 describe("server/handlers/request/project-run-execute.handler", () => {
   afterAll(async () => {
     await stopEsbuild();
@@ -656,6 +850,10 @@ describe("server/handlers/request/project-run-execute.handler", () => {
 
   for (
     const refusal of [
+      {
+        body: { kind: "task", target: "task:echo-input", canonicalRunId: "run_not_uuid" },
+        error: "Invalid canonicalRunId",
+      },
       { body: { kind: "task", target: "echo-input" }, error: "Invalid task target" },
       { body: { kind: "workflow", target: "publish" }, error: "Invalid workflow target" },
       {
@@ -676,6 +874,33 @@ describe("server/handlers/request/project-run-execute.handler", () => {
       assertEquals(await result.response.json(), { error: refusal.error });
     });
   }
+
+  it("rejects a canonical parent identity changed after signing the public runtime request", async () => {
+    let executions = 0;
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      runTask: async () => {
+        executions++;
+        return { success: true, durationMs: 0 };
+      },
+    }));
+    const body = {
+      runId: "run_public_parent",
+      canonicalRunId: "88888888-8888-4888-8888-888888888888",
+      projectId: "proj-1",
+      kind: "task",
+      target: "task:echo-input",
+    };
+    const signed = await signedRequest("/api/control-plane/runs/run_public_parent/execute", body);
+    const altered = new Request(signed.request.url, {
+      method: "POST",
+      headers: signed.request.headers,
+      body: JSON.stringify({ ...body, canonicalRunId: "99999999-9999-4999-8999-999999999999" }),
+    });
+    const result = await handler.handle(altered, createCtx(signed.publicKeyPem));
+    assertExists(result.response);
+    assertEquals(result.response.status, 401);
+    assertEquals(executions, 0);
+  });
 
   it("keeps unexpected execute request errors generic", async () => {
     const handler = new ProjectRunExecuteHandler(createDeps());
@@ -972,14 +1197,18 @@ describe("server/handlers/request/project-run-execute.handler", () => {
 
   it("preserves the result when task code replaces timer cleanup", async () => {
     const originalClearTimeout = globalThis.clearTimeout;
-    const handler = new ProjectRunExecuteHandler(createDeps({
-      runTask: async () => {
-        globalThis.clearTimeout = () => {
-          throw new Error("patched cleanup");
-        };
-        return { success: true, result: "finished", durationMs: 0 };
-      },
-    }));
+    const now = systemTaskDeadlineClock.now();
+    const handler = new ProjectRunExecuteHandler(
+      createDeps({
+        runTask: async () => {
+          globalThis.clearTimeout = () => {
+            throw new Error("patched cleanup");
+          };
+          return { success: true, result: "finished", durationMs: 0 };
+        },
+      }),
+      { ...systemTaskDeadlineClock, now: () => now },
+    );
     const { request, publicKeyPem } = await signedRequest(
       "/api/control-plane/runs/run_deadline/execute",
       {
@@ -987,7 +1216,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
         kind: "task",
         target: "task:sync-calendar-events",
         projectId: "proj-1",
-        deadlineAt: new Date(Date.now() + 100).toISOString(),
+        deadlineAt: new Date(now + 100).toISOString(),
       },
     );
     try {
@@ -1056,7 +1285,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     });
 
     it(`stops reserved task side effects when its deadline expires: ${target}`, async () => {
-      using time = new FakeTime(Date.now());
+      const clock = manualTaskDeadlineClock();
       const started = Promise.withResolvers<void>();
       let receivedSignal: AbortSignal | undefined;
       let sideEffects = 0;
@@ -1073,16 +1302,12 @@ describe("server/handlers/request/project-run-execute.handler", () => {
       };
       const handler = new ProjectRunExecuteHandler(
         createDeps({
-          taskDeadlineClock: {
-            now: Date.now,
-            setTimeout: globalThis.setTimeout,
-            clearTimeout: globalThis.clearTimeout,
-          },
           executeKnowledgeIngest: execute,
           executeReleaseAssetBuild: execute,
           executeDependencyArtifactBuild: execute,
           executeStyleArtifactBuild: execute,
         }),
+        clock,
       );
       const { request, publicKeyPem } = await signedRequest(
         "/api/control-plane/runs/run_deadline/execute",
@@ -1091,13 +1316,18 @@ describe("server/handlers/request/project-run-execute.handler", () => {
           kind: "task",
           target: `task:${target}`,
           projectId: "proj-1",
-          deadlineAt: new Date(Date.now() + 25).toISOString(),
+          deadlineAt: new Date(clock.now() + 25).toISOString(),
         },
       );
 
       const pending = handler.handle(request, createCtx(publicKeyPem));
-      await started.promise;
-      await time.tickAsync(25);
+      await Promise.race([
+        started.promise,
+        pending.then(() => {
+          throw new Error("Deadline test completed before executor admission");
+        }),
+      ]);
+      clock.advance(25);
       const result = await pending;
 
       assertExists(result.response);
@@ -1187,25 +1417,31 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     ] as const
   ) {
     it(name, async () => {
+      const clock = manualTaskDeadlineClock();
+      const started = Promise.withResolvers<void>();
       let signal: AbortSignal | undefined;
       let settle: (() => void) | undefined;
-      const handler = new ProjectRunExecuteHandler(createDeps({
-        runTask: async (options) => {
-          signal = options.signal;
-          await new Promise<void>((resolve) => {
-            settle = resolve;
-            if (cooperative) {
-              signal?.addEventListener("abort", () => {
-                if (maskAborted) Object.defineProperty(signal, "aborted", { value: false });
-                resolve();
-              }, {
-                once: true,
-              });
-            }
-          });
-          return { success: true, result: "late", durationMs: 1 };
-        },
-      }));
+      const handler = new ProjectRunExecuteHandler(
+        createDeps({
+          runTask: async (options) => {
+            signal = options.signal;
+            started.resolve();
+            await new Promise<void>((resolve) => {
+              settle = resolve;
+              if (cooperative) {
+                signal?.addEventListener("abort", () => {
+                  if (maskAborted) Object.defineProperty(signal, "aborted", { value: false });
+                  resolve();
+                }, {
+                  once: true,
+                });
+              }
+            });
+            return { success: true, result: "late", durationMs: 1 };
+          },
+        }),
+        clock,
+      );
       const { request, publicKeyPem } = await signedRequest(
         "/api/control-plane/runs/run_deadline/execute",
         {
@@ -1213,13 +1449,21 @@ describe("server/handlers/request/project-run-execute.handler", () => {
           kind: "task",
           target: "task:sync-calendar-events",
           projectId: "proj-1",
-          deadlineAt: new Date(Date.now() + 100).toISOString(),
+          deadlineAt: new Date(clock.now() + 100).toISOString(),
         },
       );
       let guard: ReturnType<typeof setTimeout> | undefined;
       try {
+        const pending = handler.handle(request, createCtx(publicKeyPem));
+        await Promise.race([
+          started.promise,
+          pending.then(() => {
+            throw new Error("Deadline test completed before executor admission");
+          }),
+        ]);
+        clock.advance(100);
         const result = await Promise.race([
-          handler.handle(request, createCtx(publicKeyPem)),
+          pending,
           new Promise<never>((_resolve, reject) => {
             guard = setTimeout(
               () => reject(new Error("execution exceeded deadline grace")),
@@ -3395,6 +3639,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     }));
     const body = {
       runId: "run_eval_1",
+      canonicalRunId: "88888888-8888-4888-8888-888888888888",
       kind: "task",
       target: "task:eval",
       projectId: "proj-1",
@@ -4068,130 +4313,216 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     }
   });
 
-  it("runs managed eval targets as durable child agent runs", async () => {
-    const requests: Array<
-      { method: string; pathname: string; body: Record<string, unknown> | null }
-    > = [];
-    const conversationId = "11111111-1111-4111-8111-111111111111";
-    const handler = new ProjectRunExecuteHandler(createDeps({
-      runTask: runTaskDefinition,
-      findEvalById: async (target) =>
-        target === "eval:deep-research"
-          ? {
-            id: "eval:deep-research",
-            name: "Deep research quality",
-            filePath: "evals/deep-research.eval.ts",
-            exportName: "default",
-            definition: evalAgent({
+  for (
+    const publicParentId of [
+      "run_66666666-6666-4666-8666-666666666666",
+      "66666666-6666-4666-8666-666666666666",
+    ]
+  ) {
+    it(`runs managed eval children using signed canonical identity (${publicParentId})`, async () => {
+      const requests: Array<
+        {
+          method: string;
+          pathname: string;
+          body: Record<string, unknown> | null;
+          idempotencyKey: string | null;
+        }
+      > = [];
+      const handler = new ProjectRunExecuteHandler(createDeps({
+        runTask: runTaskDefinition,
+        findEvalById: async (target) =>
+          target === "eval:deep-research"
+            ? {
               id: "eval:deep-research",
-              target: "agent:researcher",
-              dataset: datasets.inline([{ id: "q1", input: "France capital?" }]),
-              metrics: [metrics.answer.contains({ text: "Paris" }).gate()],
-            }),
-          }
-          : null,
-      runEval: runEvalDefinition,
-      createEvalAgentAdapter: (config) =>
-        createAgentServiceEvalAdapter({ ...config, requestTimeoutMs: 250 }),
-    }));
-    const body = {
-      runId: "run_eval_durable_agent",
-      kind: "task",
-      target: "task:eval",
-      projectId: "proj-1",
-      runtimeAgUiEndpoint: "https://demo-project.preview.veryfront.org/api/ag-ui",
-      config: { eval_id: "eval:deep-research" },
-    };
-    const { request, publicKeyPem } = await signedRequest(
-      "/api/control-plane/runs/run_eval_durable_agent/execute",
-      body,
-      { "x-token": "runtime-token" },
-      "https://veryfront.org",
-    );
-
-    const result = await withEnvValue(
-      "VERYFRONT_API_BASE_URL",
-      "https://api.example.test/",
-      () =>
-        withMockFetch(
-          async (input, init) => {
-            const url = new URL(String(input));
-            const method = observeFetchRequestInit(init).method ?? "GET";
-            const requestBody = requestJsonBody(init);
-            requests.push({ method, pathname: url.pathname, body: requestBody });
-
-            if (method === "POST" && url.pathname.endsWith("/runs")) {
-              const runId = String(requestBody?.public_id);
-              return Response.json({
-                accepted: true,
-                run: { run_id: runId },
-                conversation_id: conversationId,
-              }, { status: 202 });
+              name: "Deep research quality",
+              filePath: "evals/deep-research.eval.ts",
+              exportName: "default",
+              definition: evalAgent({
+                id: "eval:deep-research",
+                target: "agent:researcher",
+                dataset: datasets.inline([{ id: "q1", input: "France capital?" }]),
+                metrics: [metrics.answer.contains({ text: "Paris" }).gate()],
+              }),
             }
+            : null,
+        runEval: runEvalDefinition,
+        createEvalAgentAdapter: (config) =>
+          createAgentServiceEvalAdapter({ ...config, requestTimeoutMs: 250 }),
+      }));
+      const body = {
+        runId: publicParentId,
+        canonicalRunId: "88888888-8888-4888-8888-888888888888",
+        kind: "task",
+        target: "task:eval",
+        projectId: "55555555-5555-4555-8555-555555555555",
+        runtimeAgUiEndpoint: "https://demo-project.preview.veryfront.org/api/ag-ui",
+        config: { eval_id: "eval:deep-research" },
+      };
+      const { request, publicKeyPem } = await signedRequest(
+        `/api/control-plane/runs/${publicParentId}/execute`,
+        body,
+        { "x-token": "runtime-token" },
+        "https://veryfront.org",
+      );
 
-            if (method === "GET" && url.pathname.endsWith("/stream")) {
-              return new Response(
-                [
-                  `event: RunStarted\ndata: ${JSON.stringify({ runId: "eval-child-run" })}\n\n`,
-                  `event: TextMessageContent\ndata: ${JSON.stringify({ delta: "Paris" })}\n\n`,
-                  `event: RunFinished\ndata: ${JSON.stringify({})}\n\n`,
-                ].join(""),
-                { headers: { "content-type": "text/event-stream" } },
-              );
-            }
+      const result = await withEnvValue(
+        "VERYFRONT_API_BASE_URL",
+        "https://api.example.test/",
+        () =>
+          withMockFetch(
+            async (input, init) => {
+              const url = new URL(String(input));
+              const method = observeFetchRequestInit(init).method ?? "GET";
+              const requestBody = requestJsonBody(init);
+              requests.push({
+                method,
+                pathname: url.pathname,
+                body: requestBody,
+                idempotencyKey: new Headers(init?.headers).get("Idempotency-Key"),
+              });
 
-            return new Response("not found", { status: 404 });
-          },
-          () => handler.handle(request, createCtx(publicKeyPem)),
-        ),
-    );
+              if (method === "POST" && url.pathname.endsWith("/runs")) {
+                const runId = "77777777-7777-4777-8777-777777777777";
+                return Response.json({
+                  id: runId,
+                }, { status: 202 });
+              }
 
-    assertExists(result.response);
-    assertEquals(result.response.status, 200);
-    const payload = await result.response.json();
-    assertEquals(payload.success, true);
-    assertEquals(payload.result.failed, 0);
+              if (method === "GET" && url.pathname.endsWith("/stream")) {
+                return new Response(
+                  [
+                    ...[
+                      { type: "RUN_STARTED", runId: "eval-child-run" },
+                      { type: "TEXT_MESSAGE_CONTENT", messageId: "answer", delta: "Paris" },
+                      { type: "RUN_FINISHED", runId: "eval-child-run" },
+                    ].map((payload, index) =>
+                      `id: ${index + 1}\nevent: ${payload.type}\ndata: ${
+                        JSON.stringify({
+                          event_id: index + 1,
+                          event_type: payload.type,
+                          payload,
+                          is_error: false,
+                          created_at: "2026-10-04T20:00:00.000Z",
+                        })
+                      }\n\n`
+                    ),
+                  ].join(""),
+                  { headers: { "content-type": "text/event-stream" } },
+                );
+              }
 
-    assertEquals(requests.length, 2);
-    const createRequest = requests[0];
-    assertEquals(createRequest?.method, "POST");
-    assertEquals(createRequest?.body?.kind, "agent");
-    assertEquals(createRequest?.body?.owner, { kind: "project", id: "proj-1" });
-    assertEquals(createRequest?.body?.parent_run_id, "run_eval_durable_agent");
-    assertEquals(createRequest?.body?.conversation_mode, "create_new");
-    assertStringIncludes(String(createRequest?.body?.public_id), "eval-run-");
-    const createRunRequest = createRequest?.body?.request as Record<string, unknown>;
-    const agentInput = createRunRequest.input as Record<string, unknown>;
-    assertEquals(agentInput.agent_id, "researcher");
-    assertEquals(agentInput.messages, []);
-    assertEquals(agentInput.source_target_kind, "project");
-    assertEquals(agentInput.runtime_target_kind, "main_branch");
-    assertEquals(agentInput.target_environment_id, undefined);
-    assertEquals(agentInput.target_branch_id, undefined);
-    assertEquals(agentInput.forwarded_props, {
-      prompt: "France capital?",
-      runtimeOverrides: {
-        allowedTools: [],
-      },
-      veryfront: {
-        agentId: "researcher",
-        projectId: "proj-1",
+              return new Response("not found", { status: 404 });
+            },
+            () =>
+              handler.handle(request, {
+                ...createCtx(publicKeyPem),
+                projectId: "55555555-5555-4555-8555-555555555555",
+              }),
+          ),
+      );
+
+      assertExists(result.response);
+      assertEquals(result.response.status, 200);
+      const payload = await result.response.json();
+      assertEquals(payload.success, true);
+      assertEquals(payload.result.failed, 0);
+
+      assertEquals(requests.length, 2);
+      const createRequest = requests[0];
+      assertEquals(createRequest?.method, "POST");
+      assertStringIncludes(
+        createRequest?.idempotencyKey ?? "",
+        "eval:88888888-8888-4888-8888-888888888888:eval-run-",
+      );
+      assertEquals(createRequest?.body?.project_id, "55555555-5555-4555-8555-555555555555");
+      assertEquals(createRequest?.body?.target, { type: "agent", id: "researcher" });
+      assertEquals(createRequest?.body?.parent_run_id, "88888888-8888-4888-8888-888888888888");
+      assertEquals(createRequest?.body?.input, "France capital?");
+      assertEquals(createRequest?.body?.execution, { runtime: { type: "main_branch" } });
+      assertEquals(createRequest?.body?.request, undefined);
+      assertEquals(
+        (createRequest?.body?.config as Record<string, unknown>).conversation_mode,
+        "create_new",
+      );
+      const agentInput = createRequest?.body?.config as Record<string, unknown>;
+      assertEquals(agentInput.forwarded_props, {
+        prompt: "France capital?",
         runtimeOverrides: {
           allowedTools: [],
         },
-      },
+        veryfront: {
+          agentId: "researcher",
+          projectId: "55555555-5555-4555-8555-555555555555",
+          runtimeOverrides: {
+            allowedTools: [],
+          },
+        },
+      });
+      assertEquals(requests[0]?.pathname, "/runs");
+      assertEquals(requests[1]?.method, "GET");
+      assertEquals(requests[1]?.pathname, "/runs/77777777-7777-4777-8777-777777777777/stream");
+      assertStringIncludes(requests[1]?.pathname ?? "", "/stream");
     });
-    assertEquals(requests[0]?.pathname, "/runs");
-    assertEquals(requests[1]?.method, "GET");
-    assertStringIncludes(requests[1]?.pathname ?? "", `/conversations/${conversationId}/runs/`);
-    assertStringIncludes(requests[1]?.pathname ?? "", "/stream");
-  });
+  }
+
+  for (const publicParentId of ["run_unresolved_parent", "66666666-6666-4666-8666-666666666666"]) {
+    it(`refuses managed child admission without canonical identity (${publicParentId})`, async () => {
+      let requests = 0;
+      const handler = new ProjectRunExecuteHandler(createDeps({
+        runTask: runTaskDefinition,
+        findEvalById: async () => ({
+          id: "eval:parent-required",
+          name: "Parent identity",
+          filePath: "evals/parent.eval.ts",
+          exportName: "default",
+          definition: evalAgent({
+            id: "eval:parent-required",
+            target: "agent:researcher",
+            dataset: datasets.inline([{ id: "q1", input: "Question" }]),
+            metrics: [metrics.answer.contains({ text: "Answer" }).gate()],
+          }),
+        }),
+        runEval: runEvalDefinition,
+        createEvalAgentAdapter: (config) =>
+          createAgentServiceEvalAdapter({ ...config, requestTimeoutMs: 250 }),
+      }));
+      const signed = await signedRequest(
+        `/api/control-plane/runs/${publicParentId}/execute`,
+        {
+          runId: publicParentId,
+          kind: "task",
+          target: "task:eval",
+          projectId: "55555555-5555-4555-8555-555555555555",
+          runtimeAgUiEndpoint: "https://demo-project.preview.veryfront.org/api/ag-ui",
+          config: { eval_id: "eval:parent-required" },
+        },
+        { "x-token": "runtime-token" },
+        "https://veryfront.org",
+      );
+      const result = await withMockFetch(async () => {
+        requests++;
+        return Response.json({ id: "77777777-7777-4777-8777-777777777777" }, { status: 202 });
+      }, () =>
+        handler.handle(signed.request, {
+          ...createCtx(signed.publicKeyPem),
+          projectId: "55555555-5555-4555-8555-555555555555",
+        }));
+      assertExists(result.response);
+      const payload = await result.response.json();
+      assertEquals(payload.success, false);
+      assertEquals(requests, 0);
+    });
+  }
 
   it("preserves environment and preview targets for durable eval runs", async () => {
     const requests: Array<
-      { method: string; pathname: string; body: Record<string, unknown> | null }
+      {
+        method: string;
+        pathname: string;
+        body: Record<string, unknown> | null;
+        idempotencyKey: string | null;
+      }
     > = [];
-    const conversationId = "22222222-2222-4222-8222-222222222222";
     const environmentId = "33333333-3333-4333-8333-333333333333";
     const handler = new ProjectRunExecuteHandler(createDeps({
       runTask: runTaskDefinition,
@@ -4232,23 +4563,38 @@ describe("server/handlers/request/project-run-execute.handler", () => {
               const url = new URL(String(input));
               const method = observeFetchRequestInit(init).method ?? "GET";
               const requestBody = requestJsonBody(init);
-              requests.push({ method, pathname: url.pathname, body: requestBody });
+              requests.push({
+                method,
+                pathname: url.pathname,
+                body: requestBody,
+                idempotencyKey: new Headers(init?.headers).get("Idempotency-Key"),
+              });
 
               if (method === "POST" && url.pathname.endsWith("/runs")) {
-                const publicId = String(requestBody?.public_id);
+                const publicId = "77777777-7777-4777-8777-777777777777";
                 return Response.json({
-                  accepted: true,
-                  run: { run_id: publicId },
-                  conversation_id: conversationId,
+                  id: publicId,
                 }, { status: 202 });
               }
 
               if (method === "GET" && url.pathname.endsWith("/stream")) {
                 return new Response(
                   [
-                    `event: RunStarted\ndata: ${JSON.stringify({ runId: "eval-child-run" })}\n\n`,
-                    `event: TextMessageContent\ndata: ${JSON.stringify({ delta: "Paris" })}\n\n`,
-                    `event: RunFinished\ndata: ${JSON.stringify({})}\n\n`,
+                    ...[
+                      { type: "RUN_STARTED", runId: "eval-child-run" },
+                      { type: "TEXT_MESSAGE_CONTENT", messageId: "answer", delta: "Paris" },
+                      { type: "RUN_FINISHED", runId: "eval-child-run" },
+                    ].map((payload, index) =>
+                      `id: ${index + 1}\nevent: ${payload.type}\ndata: ${
+                        JSON.stringify({
+                          event_id: index + 1,
+                          event_type: payload.type,
+                          payload,
+                          is_error: false,
+                          created_at: "2026-10-04T20:00:00.000Z",
+                        })
+                      }\n\n`
+                    ),
                   ].join(""),
                   { headers: { "content-type": "text/event-stream" } },
                 );
@@ -4256,15 +4602,20 @@ describe("server/handlers/request/project-run-execute.handler", () => {
 
               return new Response("not found", { status: 404 });
             },
-            () => handler.handle(request, createCtx(publicKeyPem)),
+            () =>
+              handler.handle(request, {
+                ...createCtx(publicKeyPem),
+                projectId: "55555555-5555-4555-8555-555555555555",
+              }),
           ),
       );
     };
     const body = {
       runId: "run_eval_durable_env_agent",
+      canonicalRunId: "88888888-8888-4888-8888-888888888888",
       kind: "task",
       target: "task:eval",
-      projectId: "proj-1",
+      projectId: "55555555-5555-4555-8555-555555555555",
       runtimeAgUiEndpoint: "https://demo-project.preview.veryfront.org/api/ag-ui",
       runtimeTargetKind: "environment",
       runtimeTargetEnvironmentId: environmentId,
@@ -4278,14 +4629,10 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     assertEquals(payload.success, true);
 
     assertEquals(requests.length, 2);
-    const createRunRequest = requests[0]?.body?.request as Record<string, unknown>;
-    const agentInput = createRunRequest.input as Record<string, unknown>;
-    assertEquals(agentInput.agent_id, "researcher");
-    assertEquals(agentInput.messages, []);
-    assertEquals(agentInput.source_target_kind, "environment");
-    assertEquals(agentInput.runtime_target_kind, "environment");
-    assertEquals(agentInput.target_environment_id, environmentId);
-    assertEquals(agentInput.target_branch_id, undefined);
+    const agentInput = requests[0]?.body?.config as Record<string, unknown>;
+    assertEquals(requests[0]?.body?.execution, {
+      runtime: { type: "environment", id: environmentId },
+    });
     assertEquals(agentInput.forwarded_props, {
       prompt: "France capital?",
       model: "model-override-1",
@@ -4295,7 +4642,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
       },
       veryfront: {
         agentId: "researcher",
-        projectId: "proj-1",
+        projectId: "55555555-5555-4555-8555-555555555555",
         model: "model-override-1",
         runtimeOverrides: {
           allowedTools: [],
@@ -4308,7 +4655,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     const branchId = "44444444-4444-4444-8444-444444444444";
     const previewResult = await execute({
       ...body,
-      runId: "run_eval_durable_preview_agent",
+      runId: "66666666-6666-4666-8666-666666666668",
       runtimeTargetKind: "preview_branch",
       runtimeTargetEnvironmentId: undefined,
       runtimeTargetBranchId: branchId,
@@ -4316,13 +4663,10 @@ describe("server/handlers/request/project-run-execute.handler", () => {
 
     assertExists(previewResult.response);
     assertEquals(previewResult.response.status, 200);
-    const previewRequest = requests[0]?.body?.request as Record<string, unknown>;
-    const previewInput = previewRequest.input as Record<string, unknown>;
-    assertEquals(previewInput.source_target_kind, "preview_branch");
-    assertEquals(previewInput.runtime_target_kind, "preview_branch");
-    assertEquals(previewInput.target_environment_id, undefined);
-    assertEquals(previewInput.target_branch_id, branchId);
-    assertEquals(previewInput.messages, []);
+    const previewInput = requests[0]?.body?.config as Record<string, unknown>;
+    assertEquals(requests[0]?.body?.execution, {
+      runtime: { type: "preview_branch", id: branchId },
+    });
     assertEquals(previewInput.forwarded_props, agentInput.forwarded_props);
   });
 
@@ -4343,6 +4687,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     }));
     const body = {
       runId: "run_eval_generic_control_host",
+      canonicalRunId: "88888888-8888-4888-8888-888888888888",
       kind: "task",
       target: "task:eval",
       projectId: "proj-1",
@@ -4415,6 +4760,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     }));
     const body = {
       runId: "run_eval_internal_host",
+      canonicalRunId: "88888888-8888-4888-8888-888888888888",
       kind: "task",
       target: "task:eval",
       projectId: "proj-1",
@@ -4507,6 +4853,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     const order: string[] = [];
     let hasAgentRegistry = false;
     let hasToolRegistry = false;
+    let hasOwnedAgentNode = false;
     let retainsStopEvidence = false;
     const handler = new ProjectRunExecuteHandler(createDeps({
       ensureProjectDiscovery: async () => {
@@ -4518,6 +4865,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
           "function";
         hasToolRegistry = typeof config?.executor?.stepExecutor?.toolRegistry?.get ===
           "function";
+        hasOwnedAgentNode = typeof config?.executor?.stepExecutor?.runAgentNode === "function";
         retainsStopEvidence = config?.executor?.retainExecutionStopEvidence === true;
         order.push("create-client");
         return {
@@ -4563,6 +4911,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     });
     assertEquals(hasAgentRegistry, true);
     assertEquals(hasToolRegistry, true);
+    assertEquals(hasOwnedAgentNode, true, "canonical child ownership wraps the local agent node");
     assertEquals(retainsStopEvidence, true, "the per-request client acknowledges stops (#2365)");
     assertEquals(order, ["discover", "create-client", "start"]);
   });
@@ -5772,6 +6121,40 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     assertEquals(payload, { success: true, result: { stage: "paid" }, logs: null, duration_ms: 0 });
   });
 
+  for (const cancelled of [false, true]) {
+    it(`reads the actual abort state when resuming after project discovery replaces the getter (#2608, cancelled: ${cancelled})`, async () => {
+      const { client, calls, settle } = resumableClient(waitingOnReview);
+      client.cancel = () => {
+        calls.push(["cancel"]);
+        settle({ status: "cancelled" });
+        return Promise.resolve();
+      };
+      const controller = new AbortController();
+      const original = Object.getOwnPropertyDescriptor(AbortSignal.prototype, "aborted")!;
+      try {
+        const { payload } = await executeResume(client, {
+          type: "approval",
+          node_id: "manager-review",
+          approved: true,
+          approver: "user:u1",
+        }, {
+          ensureProjectDiscovery: async () => {
+            Object.defineProperty(AbortSignal.prototype, "aborted", {
+              ...original,
+              get: () => !cancelled,
+            });
+            if (cancelled) controller.abort(new Error("Run cancelled"));
+            return createEmptyDiscoveryResult();
+          },
+        }, controller.signal);
+        assertEquals(payload.success, !cancelled);
+        assertEquals(calls.map(([name]) => name), cancelled ? ["cancel"] : ["approve"]);
+      } finally {
+        Object.defineProperty(AbortSignal.prototype, "aborted", original);
+      }
+    });
+  }
+
   it("forwards the structured response of an approval decision", async () => {
     const { client, calls } = resumableClient(waitingOnReview);
 
@@ -6275,11 +6658,17 @@ describe("server/handlers/request/project-run-execute.handler", () => {
   it("applies a decision whose discovery outlasts the resume timeout", async () => {
     const { client, calls } = resumableClient(waitingOnReview);
     const getRun = client.getRun;
+    const discovery = Promise.withResolvers<{ status: string }>();
+    const destroyed = Promise.withResolvers<void>();
+    client.destroy = () => {
+      destroyed.resolve();
+      return Promise.resolve();
+    };
     let reads = 0;
     client.getRun = () => {
       reads++;
       if (reads > 1) return getRun();
-      return new Promise((resolve) => setTimeout(() => resolve(getRun()), 20));
+      return discovery.promise;
     };
     const { payload } = await executeResume(client, {
       type: "approval",
@@ -6288,7 +6677,9 @@ describe("server/handlers/request/project-run-execute.handler", () => {
       approver: "user:u1",
     }, { workflowResumeTimeoutMs: 5 });
     assertEquals(payload.status, "waiting");
-    await new Promise((resolve) => setTimeout(resolve, 40));
+    assertEquals(calls, []);
+    discovery.resolve(await getRun());
+    await destroyed.promise;
     assertEquals(calls.map(([name]) => name), ["approve"]);
   });
 
@@ -7915,6 +8306,134 @@ describe("project run inference credential header", () => {
 // veryfront-issue-inbox#2086: a cancelled project run must reach the running
 // task or workflow, not only the control-plane row.
 describe("server/handlers/request/project-run-execute.handler cancellation", () => {
+  it("refuses invalid stop setup without retaining a phantom execution on retry", async () => {
+    const registry = new RunStopRegistry();
+    let calls = 0;
+    const handler = new ProjectRunExecuteHandler(
+      createDeps({
+        runTask: async () => {
+          calls++;
+          return { success: true, result: "settled", durationMs: 1 };
+        },
+      }),
+      undefined,
+      registry,
+    );
+    const runId = "run_invalid_stop_setup";
+    const body = { runId, kind: "task", target: "task:sync-calendar-events", projectId: "proj-1" };
+    const rejected = await signedRequest(`/api/control-plane/runs/${runId}/execute`, body, {
+      "x-veryfront-run-stop-token": " ",
+    });
+    await handler.handle(rejected.request, createCtx(rejected.publicKeyPem));
+    assertEquals(calls, 0);
+    const retry = await signedRequest(`/api/control-plane/runs/${runId}/execute`, body);
+    await handler.handle(retry.request, createCtx(retry.publicKeyPem));
+    assertEquals(calls, 1);
+    assertEquals(registry.requestStop(runId), { accepted: true, stopped: true });
+  });
+
+  it("retires a workflow resume registration that never admitted local execution", async () => {
+    const resume = { type: "approval", node_id: "review", approved: true, approver: "user:u1" };
+    const cases: Array<[string, string, Partial<ProjectRunExecuteHandlerDeps>]> = [
+      ["run_resume_missing_workflow", "workflow:missing", {}],
+      ["run_resume_client_failure", "workflow:publish", {
+        createWorkflowClient: () => {
+          throw new Error("workflow backend unavailable");
+        },
+      }],
+    ];
+    for (const [runId, target, overrides] of cases) {
+      const registry = new RunStopRegistry();
+      const handler = new ProjectRunExecuteHandler(createDeps(overrides), undefined, registry);
+      const signed = await signedRequest(`/api/control-plane/runs/${runId}/execute`, {
+        runId,
+        kind: "workflow",
+        target,
+        projectId: "proj-1",
+        resume,
+      });
+      await handler.handle(signed.request, createCtx(signed.publicKeyPem));
+      // No positive settlement, and no lingering registration that would mask the owner.
+      assertEquals(registry.requestStop(runId), { accepted: false, stopped: false });
+    }
+  });
+
+  it("retires a finished workflow registration by its stop evidence", async () => {
+    for (
+      const [runId, evidence] of [["run_workflow_unowned", false], [
+        "run_workflow_owned",
+        true,
+      ]] as const
+    ) {
+      const registry = new RunStopRegistry();
+      const base = createDeps();
+      const handler = new ProjectRunExecuteHandler(
+        createDeps({
+          createWorkflowClient: async (...args) => ({
+            ...(await base.createWorkflowClient(...args)),
+            waitForExecutionStopped: async () => evidence,
+          }),
+        }),
+        undefined,
+        registry,
+      );
+      const signed = await signedRequest(`/api/control-plane/runs/${runId}/execute`, {
+        runId,
+        kind: "workflow",
+        target: "workflow:publish",
+        projectId: "proj-1",
+      });
+      await handler.handle(signed.request, createCtx(signed.publicKeyPem));
+      for (let tick = 0; tick < 5; tick++) await new Promise((resolve) => setTimeout(resolve, 0));
+      assertEquals(
+        registry.requestStop(runId),
+        evidence ? { accepted: true, stopped: true } : { accepted: false, stopped: false },
+      );
+    }
+  });
+
+  it("delivers a durable stop independently of the original transport and confirms only settled task work", async () => {
+    const registry = new RunStopRegistry();
+    let begin!: () => void;
+    let release!: () => void;
+    let taskSignal: AbortSignal | undefined;
+    const started = new Promise<void>((resolve) => {
+      begin = resolve;
+    });
+    const work = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const handler = new ProjectRunExecuteHandler(
+      createDeps({
+        runTask: async (options) => {
+          taskSignal = options.signal;
+          begin();
+          await work;
+          return { success: true, result: "settled", durationMs: 1 };
+        },
+      }),
+      undefined,
+      registry,
+    );
+    const runId = "run_independent_stop_delivery";
+    const signed = await signedRequest(`/api/control-plane/runs/${runId}/execute`, {
+      runId,
+      kind: "task",
+      target: "task:sync-calendar-events",
+      projectId: "proj-1",
+    });
+    const operation = handler.handle(signed.request, createCtx(signed.publicKeyPem));
+    await started;
+    try {
+      assertEquals(registry.requestStop(runId), { accepted: true, stopped: false });
+      assertEquals(taskSignal?.aborted, true);
+    } finally {
+      release();
+    }
+    await operation;
+    assertEquals(registry.requestStop(runId), { accepted: true, stopped: true });
+  });
+
   afterAll(async () => {
     await stopEsbuild();
   });
@@ -8985,25 +9504,22 @@ describe("server/handlers/request/project-run-execute.handler cancellation", () 
   });
 
   it("does not acknowledge a timed-out task until its callback actually settles", async () => {
-    const realSetTimeout = globalThis.setTimeout;
-    using time = new FakeTime(Date.now());
+    const clock = manualTaskDeadlineClock();
     const controller = new AbortController();
     const started = Promise.withResolvers<void>();
     const settle = Promise.withResolvers<void>();
     const acknowledged = Promise.withResolvers<void>();
     const callbacks: Array<{ url: string; init: ReturnType<typeof observeFetchRequestInit> }> = [];
-    const handler = new ProjectRunExecuteHandler(createDeps({
-      taskDeadlineClock: {
-        now: Date.now,
-        setTimeout: globalThis.setTimeout,
-        clearTimeout: globalThis.clearTimeout,
-      },
-      runTask: async () => {
-        started.resolve();
-        await settle.promise;
-        return { success: true, result: "late", durationMs: 1 };
-      },
-    }));
+    const handler = new ProjectRunExecuteHandler(
+      createDeps({
+        runTask: async () => {
+          started.resolve();
+          await settle.promise;
+          return { success: true, result: "late", durationMs: 1 };
+        },
+      }),
+      clock,
+    );
     const signed = await signedRequest(
       "/api/control-plane/runs/run_deadline_late_stop/execute",
       {
@@ -9011,14 +9527,13 @@ describe("server/handlers/request/project-run-execute.handler cancellation", () 
         kind: "task",
         target: "task:sync-calendar-events",
         projectId: "proj-1",
-        deadlineAt: new Date(Date.now() + 25).toISOString(),
+        deadlineAt: new Date(clock.now() + 25).toISOString(),
       },
       { "x-veryfront-run-stop-token": "opaque-stop-capability" },
     );
 
     // Signing and dispatch can outlast the deadline on a busy host.
-    // The deadline clock starts advancing only after task admission.
-    await new Promise((resolve) => realSetTimeout(resolve, 50));
+    // The deadline clock advances only after task admission.
 
     await withMockFetch(async (input, init) => {
       callbacks.push({ url: String(input), init: observeFetchRequestInit(init) });
@@ -9030,7 +9545,7 @@ describe("server/handlers/request/project-run-execute.handler cancellation", () 
         createCtx(signed.publicKeyPem),
       );
       await started.promise;
-      await time.tickAsync(25);
+      clock.advance(25);
       const result = await waitForBarrier(
         pending,
         "deadline response remained blocked by the task callback",
@@ -9928,7 +10443,6 @@ describe("project run control-plane Authorization", () => {
   });
 
   const SERVICE_TOKEN = "project-run-service-account-canary-71d4";
-  const conversationId = "44444444-4444-4444-8444-444444444444";
   // Everything but Headers has/append, which native fetch calls with the
   // headers as `this`; replacing those makes the egress refuse instead.
   const projectCodeProbes = () =>
@@ -9996,6 +10510,7 @@ describe("project run control-plane Authorization", () => {
 
   it("authenticates a durable eval with the sealed Authorization, out of project code's reach", async () => {
     const authorizations: (string | null)[] = [];
+    const idempotencyKeys: (string | null)[] = [];
     const handler = new ProjectRunExecuteHandler(createDeps({
       runTask: runTaskDefinition,
       findEvalById: async (target) =>
@@ -10021,9 +10536,10 @@ describe("project run control-plane Authorization", () => {
       "/api/control-plane/runs/run_eval_authz/execute",
       {
         runId: "run_eval_authz",
+        canonicalRunId: "88888888-8888-4888-8888-888888888888",
         kind: "task",
         target: "task:eval",
-        projectId: "proj-1",
+        projectId: "55555555-5555-4555-8555-555555555555",
         runtimeAgUiEndpoint: "https://demo-project.preview.veryfront.org/api/ag-ui",
         config: { eval_id: "eval:deep-research" },
       },
@@ -10054,22 +10570,41 @@ describe("project run control-plane Authorization", () => {
                 headers && Object.hasOwn(headers, "authorization") ? headers.authorization! : null,
               );
               if ((observed.method ?? "GET") === "POST" && url.pathname.endsWith("/runs")) {
-                return Response.json({
-                  accepted: true,
-                  run: { run_id: "eval-child-run" },
-                  conversation_id: conversationId,
-                }, { status: 202 });
+                idempotencyKeys.push(
+                  headers && Object.hasOwn(headers, "idempotency-key")
+                    ? headers["idempotency-key"]!
+                    : null,
+                );
+                return Response.json({ id: "77777777-7777-4777-8777-777777777777" }, {
+                  status: 202,
+                });
               }
               return new Response(
                 [
-                  `event: RunStarted\ndata: ${JSON.stringify({ runId: "eval-child-run" })}\n\n`,
-                  `event: TextMessageContent\ndata: ${JSON.stringify({ delta: "Paris" })}\n\n`,
-                  `event: RunFinished\ndata: ${JSON.stringify({})}\n\n`,
+                  ...[
+                    { type: "RUN_STARTED", runId: "eval-child-run" },
+                    { type: "TEXT_MESSAGE_CONTENT", messageId: "answer", delta: "Paris" },
+                    { type: "RUN_FINISHED", runId: "eval-child-run" },
+                  ].map((payload, index) =>
+                    `id: ${index + 1}\nevent: ${payload.type}\ndata: ${
+                      JSON.stringify({
+                        event_id: index + 1,
+                        event_type: payload.type,
+                        payload,
+                        is_error: false,
+                        created_at: "2026-10-04T20:00:00.000Z",
+                      })
+                    }\n\n`
+                  ),
                 ].join(""),
                 { headers: { "content-type": "text/event-stream" } },
               );
             },
-            () => handler.handle(sealed, createCtx(publicKeyPem)),
+            () =>
+              handler.handle(sealed, {
+                ...createCtx(publicKeyPem),
+                projectId: "55555555-5555-4555-8555-555555555555",
+              }),
           ),
       );
     } finally {
@@ -10080,6 +10615,11 @@ describe("project run control-plane Authorization", () => {
     assertExists(result.response);
     assertEquals(result.response.status, 200);
     assertEquals((await result.response.json()).result.failed, 0);
+    assertEquals(idempotencyKeys.length, 1);
+    assertStringIncludes(
+      idempotencyKeys[0] ?? "",
+      "eval:88888888-8888-4888-8888-888888888888:eval-run-",
+    );
     assertEquals(authorizations, [`Bearer ${SERVICE_TOKEN}`, `Bearer ${SERVICE_TOKEN}`]);
     assertEquals(probes.observed.filter((text) => text.includes(SERVICE_TOKEN)), []);
     assertEquals(fetchProbe.saw(SERVICE_TOKEN), false);
@@ -10298,6 +10838,10 @@ describe("server/handlers/request/project-run-execute.handler manual pause (#258
       statePersistence?: "durable" | "ephemeral";
       now?: () => number;
       onDiscover?: () => void;
+      onResume?: () => void;
+      onDestroy?: () => void;
+      sleep?: (ms: number) => Promise<void>;
+      workflowResumeTimeoutMs?: number;
     } = {},
   ): ProjectRunExecuteHandler {
     return new ProjectRunExecuteHandler(createDeps({
@@ -10310,12 +10854,27 @@ describe("server/handlers/request/project-run-execute.handler manual pause (#258
           definition,
         };
       },
-      createWorkflowClient: (config) =>
-        Object.assign(createWorkflowClient({ ...config, backend }), {
+      createWorkflowClient: (config) => {
+        const client = createWorkflowClient({ ...config, backend });
+        const resume = client.resume.bind(client);
+        const destroy = client.destroy.bind(client);
+        return Object.assign(client, {
           statePersistence: options.statePersistence ?? "durable" as const,
-        }),
+          resume: (...args: Parameters<typeof resume>) => {
+            options.onResume?.();
+            return resume(...args);
+          },
+          destroy: () => {
+            options.onDestroy?.();
+            return destroy();
+          },
+        });
+      },
       now: options.now ?? (() => 0),
-      sleep: (ms: number) => delay(Math.min(ms, 10)),
+      sleep: options.sleep ?? ((ms: number) => delay(Math.min(ms, 10))),
+      ...(options.workflowResumeTimeoutMs === undefined
+        ? {}
+        : { workflowResumeTimeoutMs: options.workflowResumeTimeoutMs }),
     }));
   }
 
@@ -10323,6 +10882,7 @@ describe("server/handlers/request/project-run-execute.handler manual pause (#258
     handler: ProjectRunExecuteHandler,
     resume?: Record<string, unknown>,
     signal?: AbortSignal,
+    stopToken = "opaque-stop-capability",
   ): Promise<Record<string, unknown>> {
     const { request, publicKeyPem } = await signedRequest(
       `/api/control-plane/runs/${runId}/execute`,
@@ -10333,15 +10893,17 @@ describe("server/handlers/request/project-run-execute.handler manual pause (#258
         projectId: "proj-1",
         ...(resume ? { resume } : {}),
       },
-      { "x-veryfront-run-stop-token": "opaque-stop-capability" },
+      { "x-veryfront-run-stop-token": stopToken },
     );
     const result = await handler.handle(
       signal ? new Request(request, { signal }) : request,
       createCtx(publicKeyPem),
     );
     assertExists(result.response);
-    return await result.response.json();
+    return await Reflect.apply(responseJson, result.response, []);
   }
+
+  const responseJson = Response.prototype.json;
 
   function pauseAckCalls(urls: string[]): string[] {
     return urls.filter((url) => new URL(url).pathname === `/runs/${runId}/pause-ack`);
@@ -10407,9 +10969,10 @@ describe("server/handlers/request/project-run-execute.handler manual pause (#258
     assertEquals((await backend.getRun(runId))?.status, "waiting");
   });
 
-  it("neither fails nor forges a pause when project code replaces the request signal getter", async () => {
+  it("holds the boundary under request primitive tampering until cancellation", async () => {
     const backend = new SharedMemoryBackend();
     const calls: string[] = [];
+    const controller = new AbortController();
     const original = Object.getOwnPropertyDescriptor(Request.prototype, "signal")!;
     const definition = workflow({
       id: "publish",
@@ -10437,17 +11000,177 @@ describe("server/handlers/request/project-run-execute.handler manual pause (#258
 
     try {
       await withMockFetch(async () => Response.json({ stop: true }), async () => {
-        const payload = await dispatch(createHandler(backend, definition));
-        // The tampered request primitives keep the acknowledgement from being sent, so the
-        // pause stays unconfirmed and the run carries on instead of failing.
-        assertEquals(payload.success, true);
-        assertEquals(payload.status, undefined);
-        assertEquals(payload.error, undefined);
+        const payload = await dispatch(
+          createHandler(backend, definition, {
+            sleep: async () => {
+              controller.abort(new Error("Run cancelled"));
+            },
+          }),
+          undefined,
+          controller.signal,
+        );
+        // Tampered transport primitives cannot authorize execution beyond the boundary.
+        assertEquals(payload.success, false);
+        assertEquals(payload.error, "Workflow run cancelled");
       });
     } finally {
       Object.defineProperty(Request.prototype, "signal", original);
     }
-    assertEquals(calls, ["after"]);
+    assertEquals(calls, []);
+  });
+
+  for (
+    const [cancelled, acknowledgementStatus] of [[false, 200], [true, 200], [true, 403]] as const
+  ) {
+    it(`reads acknowledgement replies after a workflow replaces Response accessors (#2608, cancelled: ${cancelled}, status: ${acknowledgementStatus})`, async () => {
+      const backend = new SharedMemoryBackend();
+      const calls: string[] = [];
+      const controller = new AbortController();
+      const urls: string[] = [];
+      const messages: string[] = [];
+      const unsubscribe = __subscribeLogRecordEmitter((entry) => messages.push(entry.message));
+      const keys = ["status", "ok", "body", "json"] as const;
+      const originals = keys.map((key) =>
+        [key, Object.getOwnPropertyDescriptor(Response.prototype, key)!] as const
+      );
+      let replacedReads = 0;
+      let cancelledBodies = 0;
+      const definition = workflow({
+        id: "publish",
+        steps: [
+          step("replace-response", {
+            tool: tool({
+              id: "replace-response-tool",
+              description: "Replace response accessors",
+              inputSchema: defineSchema((v) => v.object({}).passthrough())(),
+              execute: () => {
+                for (const key of keys) {
+                  Object.defineProperty(Response.prototype, key, {
+                    configurable: true,
+                    get() {
+                      if (key === "status") return 503;
+                      if (key === "body") return null;
+                      replacedReads++;
+                      if (key === "ok") return acknowledgementStatus !== 200;
+                      throw new Error(`Project replaced Response.${key}`);
+                    },
+                  });
+                }
+                return Promise.resolve({ replaced: true });
+              },
+            }),
+          }),
+          dependsOn(countingStep("after", calls), "replace-response"),
+        ],
+      }).definition as unknown as WorkflowDefinition;
+
+      try {
+        await withMockFetch(async (input) => {
+          const url = String(input);
+          urls.push(url);
+          if (new URL(url).pathname.endsWith("/pause-ack")) {
+            if (cancelled) controller.abort(new Error("Run cancelled"));
+            return Response.json({ stop: true });
+          }
+          return new Response(
+            new ReadableStream({
+              cancel() {
+                cancelledBodies++;
+              },
+            }),
+            { status: acknowledgementStatus },
+          );
+        }, async () => {
+          const payload = await dispatch(
+            createHandler(backend, definition, {
+              sleep: async (ms) => {
+                if (urls.length > 0) controller.abort(new Error("Run cancelled"));
+                else await delay(Math.min(ms, 10));
+              },
+            }),
+            undefined,
+            controller.signal,
+          );
+          if (cancelled) {
+            assertEquals(payload.success, false, JSON.stringify({ payload, urls }));
+            assertEquals(payload.error, "Workflow run cancelled");
+          } else {
+            assertEquals(payload.status, "waiting");
+            assertEquals(payload.waiting_reason, "manual_pause");
+          }
+        });
+        assertEquals(replacedReads, 0);
+        assertEquals(calls, []);
+        assertEquals(pauseAckCalls(urls).length, 1);
+        assertEquals(
+          urls.filter((url) => url.endsWith("/cancellation-ack")).length,
+          cancelled ? 1 : 0,
+        );
+        assertEquals(cancelledBodies, cancelled ? 1 : 0);
+        assertEquals(
+          messages.filter((message) => message.includes("Could not acknowledge stopped execution")),
+          acknowledgementStatus === 200
+            ? []
+            : ["[project-run-execute] Could not acknowledge stopped execution"],
+        );
+        assertEquals((await backend.getRun(runId))?.status, cancelled ? "cancelled" : "waiting");
+      } finally {
+        for (const [key, descriptor] of originals) {
+          Object.defineProperty(Response.prototype, key, descriptor);
+        }
+        unsubscribe();
+      }
+    });
+  }
+
+  it("holds the boundary when the pause reply inherits stop (#2608)", async () => {
+    const backend = new SharedMemoryBackend();
+    const calls: string[] = [];
+    const controller = new AbortController();
+    const original = Object.getOwnPropertyDescriptor(Object.prototype, "stop");
+    let replies = 0;
+    const definition = workflow({
+      id: "publish",
+      steps: [
+        step("replace-stop", {
+          tool: tool({
+            id: "replace-stop-tool",
+            description: "Add an inherited pause decision",
+            inputSchema: defineSchema((v) => v.object({}).passthrough())(),
+            execute: () => {
+              Object.defineProperty(Object.prototype, "stop", { configurable: true, value: true });
+              return Promise.resolve({ replaced: true });
+            },
+          }),
+        }),
+        dependsOn(countingStep("after", calls), "replace-stop"),
+      ],
+    }).definition as unknown as WorkflowDefinition;
+    try {
+      await withMockFetch(async (input) => {
+        if (String(input).endsWith("/pause-ack")) replies++;
+        return Response.json({});
+      }, async () => {
+        const payload = await dispatch(
+          createHandler(backend, definition, {
+            sleep: async (ms) => {
+              if (replies > 0) controller.abort(new Error("Run cancelled"));
+              else await delay(Math.min(ms, 10));
+            },
+          }),
+          undefined,
+          controller.signal,
+        );
+        assertEquals(payload.success, false);
+        assertEquals(payload.error, "Workflow run cancelled");
+      });
+      assertEquals(replies, 1);
+      assertEquals(calls, []);
+      assertEquals((await backend.getRun(runId))?.status, "cancelled");
+    } finally {
+      if (original) Object.defineProperty(Object.prototype, "stop", original);
+      else Reflect.deleteProperty(Object.prototype, "stop");
+    }
   });
 
   it("continues when the pause acknowledgement reports no pause", async () => {
@@ -10490,30 +11213,326 @@ describe("server/handlers/request/project-run-execute.handler manual pause (#258
     assertEquals(pauseAckCalls(urls).length, 3);
   });
 
-  it("continues after the pause acknowledgement keeps failing or is rejected", async () => {
-    for (const reply of ["transport", "unauthorized"] as const) {
+  it("keeps a committed pause boundary while replies are lost, rejected, or malformed", async () => {
+    for (const reply of ["transport", "unauthorized", "malformed"] as const) {
       const backend = new SharedMemoryBackend();
       const calls: string[] = [];
-      const urls: string[] = [];
-      let now = 0;
-
-      await withMockFetch(async (input) => {
-        urls.push(String(input));
-        if (reply === "transport") throw new TypeError("connection reset");
-        return Response.json({ stop: true }, { status: 401 });
+      let requests = 0;
+      await withMockFetch(async () => {
+        if (++requests > 5) return Response.json({ stop: true });
+        if (reply === "transport") throw new TypeError("Committed acknowledgement reply lost");
+        if (reply === "unauthorized") return Response.json({ stop: true }, { status: 401 });
+        return Response.json({ stop: "false" });
       }, async () => {
         const payload = await dispatch(
-          createHandler(backend, threeSteps(calls), { now: () => (now += 1_000) }),
+          createHandler(backend, threeSteps(calls), { now: () => requests * 1_000 }),
         );
-        assertEquals(payload.success, true, reply);
-        assertEquals(payload.status, undefined, reply);
+        assertEquals(payload.waiting_reason, "manual_pause", reply);
       });
-
-      assertEquals(calls, ["first", "second", "third"], reply);
-      // A transport failure is retried three times, then the next boundary backs off for 30s;
-      // a rejection is an answer, so the next boundary (a second later) asks again.
-      assertEquals(pauseAckCalls(urls).length, reply === "transport" ? 3 : 2, reply);
+      assertEquals(calls, ["first"], reply);
+      assertEquals(requests, 6, reply);
     }
+  });
+
+  it("does not release a stale manual pause while acknowledgement replies are lost", async () => {
+    const backend = new SharedMemoryBackend();
+    const calls: string[] = [];
+    const definition = threeSteps(calls);
+    let requests = 0;
+    await withMockFetch(async () => {
+      if (++requests === 1 || requests > 6) return Response.json({ stop: true });
+      throw new TypeError("Stale generation stop reply lost");
+    }, async () => {
+      await dispatch(createHandler(backend, definition));
+      const resumed = await dispatch(createHandler(backend, definition), { type: "manual" });
+      assertEquals(resumed.waiting_reason, "manual_pause");
+    });
+    assertEquals(calls, ["first"]);
+    assertEquals(requests, 7);
+  });
+
+  it("stops asking for the pause decision once a timed-out manual resume has answered", async () => {
+    const backend = new SharedMemoryBackend();
+    const calls: string[] = [];
+    const definition = threeSteps(calls);
+    let authorized = true;
+    let requests = 0;
+    await withMockFetch(async () => {
+      requests++;
+      return authorized
+        ? Response.json({ stop: true })
+        : Response.json({ stop: false }, { status: 401 });
+    }, async () => {
+      await dispatch(createHandler(backend, definition));
+      authorized = false;
+      const resumed = await dispatch(
+        createHandler(backend, definition, { workflowResumeTimeoutMs: 20 }),
+        { type: "manual" },
+      );
+      assertEquals(resumed.status, "waiting");
+      // Let a round already in flight finish, then no further round may start.
+      await delay(60);
+      const settled = requests;
+      await delay(120);
+      assertEquals(requests, settled);
+    });
+    assertEquals(calls, ["first"]);
+    assertEquals((await backend.getRun(runId))?.status, "waiting");
+  });
+
+  it("holds the boundary when a continue decision arrives after a timed-out manual resume answered", async () => {
+    const backend = new SharedMemoryBackend();
+    const calls: string[] = [];
+    const definition = threeSteps(calls);
+    let resumeAttempts = 0;
+    let deferring = false;
+    let answerLate: ((response: Response) => void) | undefined;
+    await withMockFetch(() => {
+      if (!deferring) return Promise.resolve(Response.json({ stop: true }));
+      return new Promise<Response>((resolve) => {
+        answerLate = resolve;
+      });
+    }, async () => {
+      await dispatch(createHandler(backend, definition));
+      deferring = true;
+      const resumed = await dispatch(
+        createHandler(backend, definition, {
+          workflowResumeTimeoutMs: 20,
+          onResume: () => {
+            resumeAttempts++;
+          },
+        }),
+        { type: "manual" },
+      );
+      assertEquals(resumed.status, "waiting");
+      assertExists(answerLate);
+      // The continue decision lands only after the request has reported the hold.
+      answerLate(Response.json({ stop: false }));
+      await delay(100);
+    });
+    assertEquals(resumeAttempts, 0);
+    assertEquals(calls, ["first"]);
+    assertEquals((await backend.getRun(runId))?.status, "waiting");
+  });
+
+  it("wakes from the unknown pause decision backoff when the request is cancelled", async () => {
+    const backend = new SharedMemoryBackend();
+    const calls: string[] = [];
+    const controller = new AbortController();
+    let releaseBackoff: (() => void) | undefined;
+    let requests = 0;
+    const sleep = (ms: number): Promise<void> => {
+      if (ms < 30_000) return delay(Math.min(ms, 10));
+      // The backoff never ends on its own; only cancellation can end the wait.
+      controller.abort(new Error("run cancelled"));
+      return new Promise<void>((resolve) => {
+        releaseBackoff = resolve;
+      });
+    };
+    try {
+      await withMockFetch(() => {
+        requests++;
+        return Promise.resolve(Response.json({ stop: true }, { status: 401 }));
+      }, async () => {
+        let guard: ReturnType<typeof setTimeout> | undefined;
+        const outcome = await Promise.race([
+          dispatch(
+            createHandler(backend, threeSteps(calls), { sleep }),
+            undefined,
+            controller.signal,
+          ),
+          new Promise<"backoff not woken">((resolve) => {
+            guard = setTimeout(() => resolve("backoff not woken"), 2_000);
+          }),
+        ]).finally(() => clearTimeout(guard));
+        assertNotEquals(outcome, "backoff not woken");
+        assertEquals((outcome as Record<string, unknown>).success, false);
+      });
+    } finally {
+      releaseBackoff?.();
+    }
+    assertExists(releaseBackoff);
+    assert(requests > 0);
+    assertEquals(calls, ["first"]);
+  });
+
+  it("releases the client when manual resume times out during pause backoff", async () => {
+    const backend = new SharedMemoryBackend();
+    const calls: string[] = [];
+    const definition = threeSteps(calls);
+    const backoffStarted = Promise.withResolvers<void>();
+    const finishBackoff = Promise.withResolvers<void>();
+    const destroyed = Promise.withResolvers<void>();
+    let requests = 0;
+    let resumes = 0;
+    let watchdog: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await withMockFetch(
+        async () =>
+          ++requests === 1
+            ? Response.json({ stop: true })
+            : Response.json({ stop: false }, { status: 401 }),
+        async () => {
+          await dispatch(createHandler(backend, definition));
+          const pending = dispatch(
+            createHandler(backend, definition, {
+              workflowResumeTimeoutMs: 20,
+              onResume: () => resumes++,
+              onDestroy: () => destroyed.resolve(),
+              sleep: (ms) => {
+                if (ms !== 30_000) return delay(Math.min(ms, 10));
+                backoffStarted.resolve();
+                return finishBackoff.promise;
+              },
+            }),
+            { type: "manual" },
+          );
+          await backoffStarted.promise;
+          assertEquals((await pending).status, "waiting");
+          await Promise.race([
+            destroyed.promise,
+            new Promise<never>((_resolve, reject) => {
+              watchdog = setTimeout(
+                () => reject(new Error("Client cleanup waited for the backoff")),
+                1_000,
+              );
+            }),
+          ]);
+          assertEquals(resumes, 0);
+          assertEquals(calls, ["first"]);
+          assertEquals((await backend.getRun(runId))?.status, "waiting");
+        },
+      );
+    } finally {
+      clearTimeout(watchdog);
+      finishBackoff.resolve();
+    }
+  });
+
+  it("wakes the pause decision backoff on cancellation after project code replaced Promise.race", async () => {
+    const backend = new SharedMemoryBackend();
+    const calls: string[] = [];
+    const controller = new AbortController();
+    const hostRace = Promise.race;
+    const neverSettles = () => new Promise<never>(() => {});
+    let releaseBackoff: (() => void) | undefined;
+    const sleep = (ms: number): Promise<void> => {
+      if (ms < 30_000) return delay(Math.min(ms, 10));
+      // The backoff has been entered; later host code may use the real race again.
+      Promise.race = hostRace;
+      controller.abort(new Error("run cancelled"));
+      return new Promise<void>((resolve) => {
+        releaseBackoff = resolve;
+      });
+    };
+    try {
+      await withMockFetch(() => {
+        // Project code running before the boundary replaces the global race.
+        Promise.race = neverSettles as unknown as typeof Promise.race;
+        return Promise.resolve(Response.json({ stop: true }, { status: 401 }));
+      }, async () => {
+        let guard: ReturnType<typeof setTimeout> | undefined;
+        const outcome = await hostRace.call(Promise, [
+          dispatch(
+            createHandler(backend, threeSteps(calls), { sleep }),
+            undefined,
+            controller.signal,
+          ),
+          new Promise<"backoff not woken">((resolve) => {
+            guard = setTimeout(() => resolve("backoff not woken"), 2_000);
+          }),
+        ]).finally(() => clearTimeout(guard));
+        assertNotEquals(outcome, "backoff not woken");
+        assertEquals((outcome as Record<string, unknown>).success, false);
+      });
+    } finally {
+      Promise.race = hostRace;
+      releaseBackoff?.();
+    }
+    assertExists(releaseBackoff);
+    assertEquals(calls, ["first"]);
+  });
+
+  it("uses captured primitives for the default pause backoff after project globals change", async () => {
+    // Use the handler's actual default dependency while keeping the public dependency
+    // interface unchanged. This sleeper also serves the unknown acknowledgement path.
+    const { sleep } = Reflect.get(new ProjectRunExecuteHandler(), "deps") as Pick<
+      ProjectRunExecuteHandlerDeps,
+      "sleep"
+    >;
+    const hostPromise = globalThis.Promise;
+    const hostSetTimeout = globalThis.setTimeout;
+    try {
+      globalThis.Promise = function () {
+        throw new Error("Project Promise constructor used by host backoff");
+      } as unknown as typeof Promise;
+      globalThis.setTimeout = (() => {
+        throw new Error("Project timer used by host backoff");
+      }) as typeof setTimeout;
+      await sleep(0);
+    } finally {
+      globalThis.Promise = hostPromise;
+      globalThis.setTimeout = hostSetTimeout;
+    }
+  });
+
+  it("refuses manual resume without a capability instead of releasing the boundary", async () => {
+    const backend = new SharedMemoryBackend();
+    const calls: string[] = [];
+    const definition = threeSteps(calls);
+    await withMockFetch(async () => Response.json({ stop: true }), async () => {
+      await dispatch(createHandler(backend, definition));
+      const { request, publicKeyPem } = await signedRequest(
+        `/api/control-plane/runs/${runId}/execute`,
+        {
+          runId,
+          kind: "workflow",
+          target: "workflow:publish",
+          projectId: "proj-1",
+          resume: { type: "manual" },
+        },
+      );
+      const result = await createHandler(backend, definition).handle(
+        request,
+        createCtx(publicKeyPem),
+      );
+      assertExists(result.response);
+      const payload = await result.response.json();
+      assertEquals(payload.success, false);
+      assertEquals(payload.error, "Manual resume requires a run stop capability");
+    });
+    assertEquals(calls, ["first"]);
+    assertEquals((await backend.getRun(runId))?.status, "waiting");
+  });
+
+  it("recovers a post-ack crash record before settling and executes completed nodes once", async () => {
+    const backend = new SharedMemoryBackend();
+    const calls: string[] = [];
+    const definition = threeSteps(calls);
+    let stop = true;
+    let attemptedResume = false;
+    await withMockFetch(async () => Response.json({ stop }), async () => {
+      await dispatch(createHandler(backend, definition));
+      // The real crash window retains the durable batch, but loses the local waiting commit.
+      await backend.updateRun(runId, { status: "running" });
+      stop = false;
+      const resumed = await dispatch(
+        createHandler(backend, definition, {
+          onResume: () => {
+            attemptedResume = true;
+          },
+          sleep: async (ms) => {
+            if (!attemptedResume) throw new Error("Recovery settled before attempting resume");
+            await delay(Math.min(ms, 10));
+          },
+        }),
+        { type: "manual" },
+      );
+      assertEquals(resumed.success, true);
+      assertEquals((await backend.getRun(runId))?.status, "completed");
+    });
+    assertEquals(attemptedResume, true);
+    assertEquals(calls, ["first", "second", "third"]);
   });
 
   it("continues a pause the control plane did not keep when another resume arrives", async () => {
@@ -10564,21 +11583,32 @@ describe("server/handlers/request/project-run-execute.handler manual pause (#258
     let acknowledgements = 0;
     let older: ReturnType<typeof dispatch> | undefined;
 
-    await withMockFetch(async () => {
-      const stop = ++acknowledgements === 1;
-      // The control plane answers the repeated decision once the older attempt reported its
-      // pause; both attempts poll the run, so either may see the pause first.
-      if (!stop) await older;
-      return Response.json({ stop });
+    await withMockFetch(async (_input, init) => {
+      const authorization = new Headers(observeFetchRequestInit(init).headers).get("authorization");
+      if (authorization === "Bearer opaque-stop-capability") {
+        if (++acknowledgements === 1) {
+          throw new TypeError("Committed pause acknowledgement reply lost");
+        }
+        return Response.json({ stop: true });
+      }
+      // Only the repeated attempt waits for the older dispatch's pause. An older
+      // acknowledgement retry must replay its stop rather than await itself.
+      await older;
+      return Response.json({ stop: false });
     }, async () => {
       // The older attempt is still running when the control plane re-sends a decision; the
       // control plane then tells the older attempt to stop at its boundary.
       older = dispatch(createHandler(backend, definition));
       while (!(await backend.getRun(runId))) await delay(1);
-      const repeated = dispatch(createHandler(backend, definition), {
-        type: "deadline",
-        wait_id: "w",
-      });
+      const repeated = dispatch(
+        createHandler(backend, definition),
+        {
+          type: "deadline",
+          wait_id: "w",
+        },
+        undefined,
+        "repeated-stop-capability",
+      );
       await delay(20);
       release();
       assertEquals((await older).waiting_reason, "manual_pause");
@@ -10588,6 +11618,7 @@ describe("server/handlers/request/project-run-execute.handler manual pause (#258
     });
 
     assertEquals(calls, ["first", "second"]);
+    assertEquals(acknowledgements, 2);
     assertEquals((await backend.getRun(runId))?.status, "completed");
   });
 

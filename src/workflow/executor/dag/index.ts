@@ -1614,6 +1614,7 @@ export class DAGExecutor {
     const scope: ExecutionScope = {
       rootRunId: run.id,
       executionRunId: run.id,
+      executionPath: [],
       // Read the reason execution stopped once, here, from the only run record
       // that carries it. Every child graph below runs against a synthetic run
       // whose status is always "running" and would otherwise read a crash.
@@ -2360,24 +2361,49 @@ export class DAGExecutor {
     }
 
     const config = node.config;
+    if (config.type !== "step") {
+      scope = {
+        ...scope,
+        executionPath: [...scope.executionPath, JSON.stringify([config.type, node.id])],
+      };
+    }
+
+    const scopeForAttempt = (attempt: number): ExecutionScope =>
+      attempt === 1 ? scope : {
+        ...scope,
+        executionPath: [...scope.executionPath, JSON.stringify(["retry", attempt])],
+      };
 
     switch (config.type) {
       case "step":
-        return this.executeStepNode(node, context, scope.executionRunId, abortSignal);
+        return this.executeStepNode(
+          node,
+          context,
+          scope.executionRunId,
+          abortSignal,
+          scope.executionPath,
+        );
       case "parallel":
         return executeCompositeNodeWithPolicy({
           node,
           parentSignal: abortSignal,
           cancellationGracePeriod: this.config.cancellationGracePeriod,
-          execute: (attemptSignal) =>
-            this.executeParallelNode(node, config, context, nodeStates, scope, attemptSignal),
+          execute: (attemptSignal, attempt) =>
+            this.executeParallelNode(
+              node,
+              config,
+              context,
+              nodeStates,
+              scopeForAttempt(attempt),
+              attemptSignal,
+            ),
         });
       case "map":
         return executeCompositeNodeWithPolicy({
           node,
           parentSignal: abortSignal,
           cancellationGracePeriod: this.config.cancellationGracePeriod,
-          execute: (attemptSignal) =>
+          execute: (attemptSignal, attempt) =>
             executeMapNodeStrategy({
               node,
               config,
@@ -2388,7 +2414,13 @@ export class DAGExecutor {
                 // Map children ride the parent node-state map like parallel
                 // children, so the root-keyspace flag is inherited unchanged.
                 executeChildGraph: (nodes, run, options) =>
-                  this.executeChildGraph(nodes, run, scope, options, attemptSignal),
+                  this.executeChildGraph(
+                    nodes,
+                    run,
+                    scopeForAttempt(attempt),
+                    options,
+                    attemptSignal,
+                  ),
                 selectChildNodeStates: (nodes, states) =>
                   createCompositeNodeStateView(
                     nodes,
@@ -2414,7 +2446,7 @@ export class DAGExecutor {
           node,
           parentSignal: abortSignal,
           cancellationGracePeriod: this.config.cancellationGracePeriod,
-          execute: async (attemptSignal) => {
+          execute: async (attemptSignal, attempt) => {
             if (!hasSelectedBranch) {
               selectedBranch = await config.condition(context);
               attemptSignal.throwIfAborted();
@@ -2426,7 +2458,7 @@ export class DAGExecutor {
               selectedBranch,
               context,
               nodeStates,
-              scope,
+              scopeForAttempt(attempt),
               attemptSignal,
             );
           },
@@ -2439,8 +2471,15 @@ export class DAGExecutor {
           node,
           parentSignal: abortSignal,
           cancellationGracePeriod: this.config.cancellationGracePeriod,
-          execute: (attemptSignal) =>
-            this.executeSubWorkflowNode(node, config, context, nodeStates, scope, attemptSignal),
+          execute: (attemptSignal, attempt) =>
+            this.executeSubWorkflowNode(
+              node,
+              config,
+              context,
+              nodeStates,
+              scopeForAttempt(attempt),
+              attemptSignal,
+            ),
         });
         const parsedState = nodeStates[nodeId];
         if (result.state.status !== "failed" || !parsedState?._subWorkflowInputParsed) {
@@ -2462,7 +2501,7 @@ export class DAGExecutor {
           node,
           parentSignal: abortSignal,
           cancellationGracePeriod: this.config.cancellationGracePeriod,
-          execute: (attemptSignal) =>
+          execute: (attemptSignal, attempt) =>
             executeLoopNodeStrategy({
               node,
               config,
@@ -2474,7 +2513,14 @@ export class DAGExecutor {
                   this.executeChildGraph(
                     nodes,
                     run,
-                    { ...scope, rootKeyspace: false },
+                    {
+                      ...scope,
+                      rootKeyspace: false,
+                      executionPath: [
+                        ...scopeForAttempt(attempt).executionPath,
+                        JSON.stringify(["iteration", run.id]),
+                      ],
+                    },
                     options,
                     attemptSignal,
                   ),
@@ -2497,12 +2543,14 @@ export class DAGExecutor {
     context: WorkflowContext,
     runId: string,
     abortSignal?: AbortSignal,
+    executionPath: readonly string[] = [],
   ): Promise<NodeExecutionResult> {
     const result = await this.config.stepExecutor.execute(
       node,
       context,
       abortSignal,
       runId,
+      executionPath,
     );
     abortSignal?.throwIfAborted();
 

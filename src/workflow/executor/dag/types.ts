@@ -35,6 +35,8 @@ export interface ExecutionScope {
   rootRunId: string;
   /** Run id handed to step execution for run-scoped hooks. */
   executionRunId: string;
+  /** Stable composite ancestry, including actual loop iteration identity. */
+  executionPath: readonly string[];
   /**
    * True when the root run is resuming from a decision it parked on, false when
    * it is recovering from a worker that died mid-node. A node recorded

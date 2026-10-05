@@ -1,4 +1,16 @@
 import "#veryfront/schemas/_test-setup.ts";
+const canonicalTestRunId = "11111111-1111-4111-8111-111111111111";
+const terminalTestToken = `header.${
+  btoa(
+    JSON.stringify({
+      runId: "run-1",
+      canonicalRunId: canonicalTestRunId,
+      tokenUse: "run_event_writer",
+      writerPurpose: "current_run_terminal",
+      dispatchNonce: "test-generation",
+    }),
+  )
+}.signature`;
 import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
@@ -45,7 +57,7 @@ function successfulFetch(calls: Record<string, unknown>[]) {
         },
       });
     }
-    return Response.json({ completed: true, run: { runId: run.runId, status: body.status } });
+    return Response.json({ id: canonicalTestRunId, status: body.status ?? "cancelled" });
   };
 }
 
@@ -56,6 +68,7 @@ function terminalForTest(
   return createManagedBrokerTerminal({
     apiUrl: "https://api.example.test",
     completionAuthToken: "synthetic-completion-token",
+    terminalAuthToken: terminalTestToken,
     run,
     modelId: "model",
     resolveProvider,
@@ -73,17 +86,22 @@ function bindForTest(
 for (const authority of ["token", "capability"] as const) {
   describe(`managed broker persistence (${authority})`, () => {
     const createPersistence = (
-      input: Omit<Parameters<typeof createManagedBrokerPersistence>[0], "completionAuthToken">,
+      input: Omit<
+        Parameters<typeof createManagedBrokerPersistence>[0],
+        "completionAuthToken" | "terminalAuthToken"
+      >,
     ) =>
       authority === "token"
         ? createManagedBrokerPersistence({
           ...input,
           completionAuthToken: "synthetic-completion-token",
+          terminalAuthToken: terminalTestToken,
         })
         : createManagedBrokerPersistenceFromCapability({
           capability: createHostedRunEventWriterCapability({
             apiUrl: input.apiUrl,
             runId: input.run.runId,
+            canonicalRunId: canonicalTestRunId,
             runEventAppendToken: input.runEventToken,
             fetch: input.fetch,
           }),
@@ -190,6 +208,7 @@ for (const authority of ["token", "capability"] as const) {
           });
           await persistence.output.finish({
             completed: true,
+            output: { text: "completed managed output" },
             metadata: {
               modelId: "veryfront-cloud/openai/synthetic",
               usage: { inputTokens: 12, outputTokens: 7, cachedInputTokens: 3 },
@@ -218,14 +237,7 @@ for (const authority of ["token", "capability"] as const) {
         true,
       );
       assertEquals(calls.at(-1)?.status, "completed");
-      assertEquals(calls.at(-1)?.metadata, {
-        provider: "openai",
-        model: "veryfront-cloud/openai/synthetic",
-        inputTokens: 12,
-        outputTokens: 7,
-        usageCaptureStatus: "complete",
-        finishReason: "stop",
-      });
+      assertEquals(calls.at(-1)?.output, { text: "completed managed output" });
     });
 
     it("retains a queued cancellation finish until the original output write settles", async () => {
@@ -274,7 +286,7 @@ for (const authority of ["token", "capability"] as const) {
         }));
         await write;
         await finish;
-        assertEquals(calls.at(-1)?.status, "cancelled");
+        assertEquals(calls.at(-1), {});
         await persistence.cleanup();
       });
     });
@@ -413,7 +425,7 @@ for (const authority of ["token", "capability"] as const) {
           error: new Error("synthetic execution failure"),
         });
         assertEquals(calls.at(-1)?.status, "failed");
-        assertEquals(calls.at(-1)?.terminal_error_code, "STREAM_ERROR");
+        assertEquals((calls.at(-1)?.error as { code: string })?.code, "STREAM_ERROR");
         await persistence.cleanup();
       });
     });
@@ -438,6 +450,7 @@ describe("managed persistence capability authorization", () => {
         apiUrl: "https://api.example.test",
         runEventToken: "synthetic-token",
         completionAuthToken: "synthetic-completion-token",
+        terminalAuthToken: terminalTestToken,
         terminal: terminalForTest(fetch),
         fetch,
         run: canonical,
@@ -446,6 +459,7 @@ describe("managed persistence capability authorization", () => {
         capability: createHostedRunEventWriterCapability({
           apiUrl: "https://api.example.test",
           runId: run.runId,
+          canonicalRunId: canonicalTestRunId,
           runEventAppendToken: "synthetic-token",
           fetch,
         }),
@@ -474,6 +488,7 @@ describe("managed persistence capability authorization", () => {
       apiUrl: "https://api.example.test",
       runEventToken: "synthetic-event-token",
       completionAuthToken: "synthetic-completion-token",
+      terminalAuthToken: terminalTestToken,
       run,
       modelId: "model",
       resolveProvider: function (this: unknown) {
@@ -497,7 +512,7 @@ describe("managed persistence capability authorization", () => {
     const fetch = (input: RequestInfo | URL, init?: RequestInit) => {
       const request = new Request(input, init);
       requests.push({ url: request.url, authorization: request.headers.get("authorization") });
-      const expected = request.url.endsWith("/complete")
+      const expected = request.url.endsWith("/finalize")
         ? "Bearer synthetic-completion-token"
         : "Bearer synthetic-pinned-token";
       // Model the API's purpose separation: append credentials cannot authenticate completion.
@@ -509,6 +524,7 @@ describe("managed persistence capability authorization", () => {
     const capability = createHostedRunEventWriterCapability({
       apiUrl: "https://api.example.test",
       runId: run.runId,
+      canonicalRunId: canonicalTestRunId,
       runEventAppendToken: "synthetic-pinned-token",
       fetch,
     });
@@ -519,6 +535,7 @@ describe("managed persistence capability authorization", () => {
       terminal: createManagedBrokerTerminal({
         apiUrl: "https://api.example.test",
         completionAuthToken: "synthetic-completion-token",
+        terminalAuthToken: terminalTestToken,
         run: mutableRun,
         modelId: "model",
         resolveProvider: () => "provider",
@@ -548,12 +565,12 @@ describe("managed persistence capability authorization", () => {
       assertEquals(new URL(request.url).origin, "https://api.example.test");
       assertEquals(
         request.authorization,
-        request.url.endsWith("/complete")
+        request.url.endsWith("/finalize")
           ? "Bearer synthetic-completion-token"
           : "Bearer synthetic-pinned-token",
       );
       assertEquals(request.url.includes("mutated-run"), false);
-      assertEquals(request.url.includes("run-1"), true);
+      assertEquals(request.url.includes(canonicalTestRunId), true);
     }
     assertEquals(calls.at(-1)?.status, "completed");
   });

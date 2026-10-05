@@ -1,4 +1,8 @@
 import {
+  activateHostedAgentPauseCapability,
+  inheritHostedAgentPauseCapability,
+} from "./manual-pause-credential.ts";
+import {
   hasTrustedPlatformSource,
   inheritTrustedPlatformSource,
 } from "#veryfront/tool/platform-source-provenance.ts";
@@ -305,61 +309,62 @@ export function createManagedExecutorBroker(
           undefined
       ) throw new ExecutorDiscoveryError("EXECUTOR_DISCOVERY_INVALID_OUTPUT");
       if (trusted) {
-        localRuntime = await session.runOwned(() =>
-          trustedRuntimeFactory!({
-            binding: channelBinding,
-            defaultTimeoutMs: Math.max(1, request.hardDeadlineAt - clock.now()),
-            installation: installRequest,
-            projectChannel: channel,
-            projectToolNames: trusted.projectInstallation.allowedToolNames,
-            toolLimits: operationInput.tools.limits,
-            sourceIntegrationPolicy: trusted.sourceIntegrationPolicy,
-            createGate(projectTools) {
-              const localOperations = buildBrokerOperations(
-                channelBinding,
-                session.signal,
-                {
-                  ...operationInput,
-                  tools: {
-                    ...operationInput.tools,
-                    limits: reserveExecutorToolMetadata(
-                      operationInput.tools.limits,
-                      projectTools.aliasMetadataBytes,
-                    ),
-                    sources: new Map([...operationInput.tools.sources, [projectTools.id, {
-                      source: projectTools,
-                      retired: session.settled,
-                      allowedToolNames: new Set(trusted.projectInstallation.allowedToolNames),
-                      projectContext: "skill",
-                      context: {
-                        ...trusted.projectInstallation.context,
-                        projectId: trusted.projectInstallation.context.projectId ?? undefined,
-                        runIdBindsToolAuthorization: true,
-                      },
-                    }]]),
-                  },
+        activateHostedAgentPauseCapability(input, session.signal);
+        const runtimeOptions: Parameters<TrustedManagedRuntimeFactory>[0] = {
+          binding: channelBinding,
+          defaultTimeoutMs: Math.max(1, request.hardDeadlineAt - clock.now()),
+          installation: installRequest,
+          projectChannel: channel,
+          projectToolNames: trusted.projectInstallation.allowedToolNames,
+          toolLimits: operationInput.tools.limits,
+          sourceIntegrationPolicy: trusted.sourceIntegrationPolicy,
+          createGate(projectTools) {
+            const localOperations = buildBrokerOperations(
+              channelBinding,
+              session.signal,
+              {
+                ...operationInput,
+                tools: {
+                  ...operationInput.tools,
+                  limits: reserveExecutorToolMetadata(
+                    operationInput.tools.limits,
+                    projectTools.aliasMetadataBytes,
+                  ),
+                  sources: new Map([...operationInput.tools.sources, [projectTools.id, {
+                    source: projectTools,
+                    retired: session.settled,
+                    allowedToolNames: new Set(trusted.projectInstallation.allowedToolNames),
+                    projectContext: "skill",
+                    context: {
+                      ...trusted.projectInstallation.context,
+                      projectId: trusted.projectInstallation.context.projectId ?? undefined,
+                      runIdBindsToolAuthorization: true,
+                    },
+                  }]]),
                 },
-                installation,
-                allowedModelIds,
-                selectedModelId,
-              );
-              return createExecutorOperationGate({
-                binding: channelBinding,
-                signal: session.signal,
-                operations: localOperations,
-                preparationOperations: new Set([
-                  ...Object.values(executorStateOperations),
-                  executorInitialCheckpointsOperation,
-                ].filter((name) => localOperations.has(name))),
-              });
-            },
-            signal: session.signal,
-            runOwned: session.runOwned.bind(session),
-            requestSessionClose: () => {
-              void session.close("canceled");
-            },
-          })
-        );
+              },
+              installation,
+              allowedModelIds,
+              selectedModelId,
+            );
+            return createExecutorOperationGate({
+              binding: channelBinding,
+              signal: session.signal,
+              operations: localOperations,
+              preparationOperations: new Set([
+                ...Object.values(executorStateOperations),
+                executorInitialCheckpointsOperation,
+              ].filter((name) => localOperations.has(name))),
+            });
+          },
+          signal: session.signal,
+          runOwned: session.runOwned.bind(session),
+          requestSessionClose: () => {
+            void session.close("canceled");
+          },
+        };
+        inheritHostedAgentPauseCapability(runtimeOptions, input);
+        localRuntime = await session.runOwned(() => trustedRuntimeFactory!(runtimeOptions));
         gate = localRuntime.gate;
       }
       const executionChannel = localRuntime?.channel ?? channel;
@@ -395,7 +400,7 @@ export function createManagedExecutorBroker(
       const settled = Promise.all([session.settled, gate!.settled, localRuntime?.settled]).then(
         () => undefined,
       );
-      return {
+      const runtime = {
         definition: description.value.definition,
         modelId: prepared.value.modelId,
         runtimeKind: prepared.value.runtimeKind,
@@ -413,6 +418,8 @@ export function createManagedExecutorBroker(
           return session.close(reason);
         },
       } as ManagedExecutorRuntime;
+      inheritHostedAgentPauseCapability(runtime, input);
+      return runtime;
     } catch (error) {
       gate?.revoke();
       await session.close("canceled").catch(() => {});

@@ -1,3 +1,4 @@
+import { createRoutingRedisClient } from "#veryfront/extensions/distributed/routing-redis-client.ts";
 import { getRedisModule } from "#veryfront/platform/adapters/redis/modules.ts";
 import { getEnv } from "#veryfront/platform/compat/process.ts";
 import { base64urlEncodeBytes } from "#veryfront/utils";
@@ -10,8 +11,6 @@ import type {
 const ROUTING_INVALIDATION_CHANNEL = "vf-proxy-routing-invalidations-v1";
 const ROUTING_INVALIDATION_ACK_PREFIX = `${ROUTING_INVALIDATION_CHANNEL}:ack:`;
 const DEFAULT_ACKNOWLEDGEMENT_TIMEOUT_MS = 1_500;
-const DEFAULT_CONNECT_TIMEOUT_MS = 3_000;
-const MAX_RECONNECT_ATTEMPTS = 5;
 const MAX_RECENT_EVENT_IDS = 1_000;
 const MAX_SIGNED_ENVELOPE_BYTES = 24 * 1024;
 const MAX_SIGNED_PAYLOAD_BYTES = 16 * 1024;
@@ -274,16 +273,7 @@ function parseAcknowledgement(message: string): RoutingInvalidationAcknowledgeme
 async function createDefaultClient(redisUrl: string): Promise<RoutingInvalidationRedisClient> {
   const { NodeRedis } = await getRedisModule();
   if (!NodeRedis) throw new Error("Redis client module is unavailable");
-  return NodeRedis.createClient({
-    url: redisUrl,
-    socket: {
-      connectTimeout: DEFAULT_CONNECT_TIMEOUT_MS,
-      reconnectStrategy: (retries) =>
-        retries >= MAX_RECONNECT_ATTEMPTS
-          ? new Error("Routing invalidation Redis reconnect limit reached")
-          : Math.min(100 * 2 ** retries, 1_000),
-    },
-  });
+  return createRoutingRedisClient((options) => NodeRedis.createClient(options), redisUrl);
 }
 
 async function closeClient(
@@ -355,12 +345,24 @@ export async function startProxyRoutingInvalidationBus(
     if (!listeners) {
       listeners = new Set();
       acknowledgementListeners.set(channel, listeners);
-      await subscribeClient.subscribe(channel, (message, receivedChannel) => {
-        if (receivedChannel !== channel) return;
-        for (const acknowledgementListener of listeners ?? []) {
-          acknowledgementListener(message, receivedChannel);
-        }
-      });
+      try {
+        await subscribeClient.subscribe(channel, (message, receivedChannel) => {
+          if (receivedChannel !== channel) return;
+          for (const acknowledgementListener of listeners ?? []) {
+            acknowledgementListener(message, receivedChannel);
+          }
+        });
+      } catch (error) {
+        acknowledgementListeners.delete(channel);
+        throw error;
+      }
+      if (closed) {
+        acknowledgementListeners.delete(channel);
+        try {
+          await subscribeClient.unsubscribe(channel);
+        } catch { /* The close path owns the transport. */ }
+        throw new Error("Proxy routing invalidation bus is closed");
+      }
     }
     listeners.add(listener);
     activeAcknowledgementChannels.add(channel);

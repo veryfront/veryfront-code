@@ -2,6 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { ChatUiMessage, ChatUiMessageChunk, MessageMetadata } from "../../chat/types.ts";
+import { finalizeConversationAgentRun } from "../conversation/durable.ts";
 import { createConversationHostedTerminalAdapter } from "../conversation/hosted-terminal.ts";
 import type { ConversationRunChunkMirror } from "../conversation/run-chunk-mirror.ts";
 import type { ConversationRunMirrorDisableReason } from "../conversation/run-mirror.ts";
@@ -9,6 +10,14 @@ import { createMirroredToolChunkState } from "../streaming/mirrored-tool-chunk-s
 import type { HostedChatExecutionLifecycleAdapter } from "./chat-execution-lifecycle-types.ts";
 import type { HostedLifecycleTerminalState } from "./lifecycle.ts";
 import { finalizeHostedChatRun } from "./hosted-chat-finalization.ts";
+import {
+  createRunBoundAgentManualPause,
+  inheritHostedAgentPauseCapability,
+} from "./manual-pause-credential.ts";
+import {
+  canSettleHostedAgentPause,
+  recordHostedAgentPauseCleanup,
+} from "./manual-pause-settlement.ts";
 
 function createDurableRunMirror(input: {
   calls: string[];
@@ -135,7 +144,9 @@ describe("agent/hosted-chat-finalization", () => {
       "terminal:completed:",
       "cleanup",
     ]);
-    assertEquals(terminalStates, [{ status: "completed" }]);
+    assertEquals(terminalStates.map(({ output: _output, ...state }) => state), [{
+      status: "completed",
+    }]);
   });
 
   it("fails empty non-aborted response output before appending fallback chunks", async () => {
@@ -195,7 +206,7 @@ describe("agent/hosted-chat-finalization", () => {
       streamError: null,
     });
 
-    assertEquals(terminalStates, [
+    assertEquals(terminalStates.map(({ output: _output, ...state }) => state), [
       {
         status: "completed",
         metadata: {
@@ -217,8 +228,8 @@ describe("agent/hosted-chat-finalization", () => {
       requestBodies.push(init?.body ? JSON.parse(String(init.body)) : null);
       return new Response(
         JSON.stringify({
-          completed: true,
-          run: { runId: "run-1", status: "completed" },
+          id: "11111111-1111-4111-8111-111111111111",
+          status: "completed",
         }),
         {
           status: 200,
@@ -228,7 +239,21 @@ describe("agent/hosted-chat-finalization", () => {
     };
 
     try {
+      const canonicalId = "11111111-1111-4111-8111-111111111111";
+      const terminalToken = `header.${
+        btoa(
+          JSON.stringify({
+            runId: "run-1",
+            canonicalRunId: canonicalId,
+            tokenUse: "run_event_writer",
+            writerPurpose: "current_run_terminal",
+            dispatchNonce: "generation",
+          }),
+        )
+      }.signature`;
       const terminal = createConversationHostedTerminalAdapter({
+        finalize: (input) =>
+          finalizeConversationAgentRun({ ...input, terminalAuthToken: terminalToken }),
         authToken: "token",
         apiUrl: "https://api.example.com",
         run: {
@@ -270,21 +295,17 @@ describe("agent/hosted-chat-finalization", () => {
         streamError: null,
       });
 
-      assertEquals(requestBodies, [
-        {
-          status: "completed",
+      assertEquals(requestBodies, [{
+        status: "completed",
+        output: createResponseMessage({
+          parts: [{ type: "text", text: "done" }],
           metadata: {
-            provider: "test-provider",
-            model: "test-model",
-            inputTokens: 2,
-            outputTokens: 3,
+            modelId: "test-model",
+            usage: { inputTokens: 2, outputTokens: 3 },
             usageCaptureStatus: "complete",
-            finishReason: "stop",
           },
-          terminal_error_code: null,
-          terminal_error_message: null,
-        },
-      ]);
+        }),
+      }]);
     } finally {
       globalThis.fetch = originalFetch;
     }
@@ -320,7 +341,9 @@ describe("agent/hosted-chat-finalization", () => {
       streamError: null,
     });
 
-    assertEquals(terminalStates, [{ status: "completed" }]);
+    assertEquals(terminalStates.map(({ output: _output, ...state }) => state), [{
+      status: "completed",
+    }]);
   });
 
   it("marks local unfinished tool parts as output-error and fails incomplete tool terminal state", async () => {
@@ -547,7 +570,10 @@ describe("agent/hosted-chat-finalization", () => {
       "terminal:completed:",
       "cleanup",
     ]);
-    assertEquals(terminalStates, [{ status: "completed" }]);
+    assertEquals(terminalStates.map(({ output: _output, ...state }) => state), [{
+      status: "completed",
+    }]);
+    assertEquals((terminalStates[0]!.output as ChatUiMessage).parts.length > 0, true);
   });
 
   it("fails detached empty output only without mirrored output or fallback content", async () => {
@@ -603,6 +629,7 @@ describe("agent/hosted-chat-finalization", () => {
 
     assertEquals(calls, ["flush", "terminal:completed:", "cleanup"]);
     assertEquals(terminalStates, [{ status: "completed" }]);
+    assertEquals("output" in terminalStates[0]!, false);
   });
 
   for (const kind of ["response", "detached"] as const) {
@@ -690,7 +717,9 @@ describe("agent/hosted-chat-finalization", () => {
           },
       );
 
-      assertEquals(terminalStates, [{ status: "completed" }]);
+      assertEquals(terminalStates.map(({ output: _output, ...state }) => state), [{
+        status: "completed",
+      }]);
     });
   }
 
@@ -720,7 +749,9 @@ describe("agent/hosted-chat-finalization", () => {
       streamError: new Error("Provider request failed with status 502"),
     });
 
-    assertEquals(terminalStates, [{ status: "completed" }]);
+    assertEquals(terminalStates.map(({ output: _output, ...state }) => state), [{
+      status: "completed",
+    }]);
   });
 
   it("fails a watchdog timeout after a completed tool handoff", async () => {
@@ -749,7 +780,7 @@ describe("agent/hosted-chat-finalization", () => {
       streamError: new Error("Chat stream idle timeout after 300000ms"),
     });
 
-    assertEquals(terminalStates, [{
+    assertEquals(terminalStates.map(({ output: _output, ...state }) => state), [{
       status: "failed",
       terminalErrorCode: "STREAM_TIMEOUT",
       terminalErrorMessage:
@@ -780,7 +811,9 @@ describe("agent/hosted-chat-finalization", () => {
     });
 
     assertEquals(calls, ["terminal:completed:", "cleanup"]);
-    assertEquals(terminalStates, [{ status: "completed" }]);
+    assertEquals(terminalStates.map(({ output: _output, ...state }) => state), [{
+      status: "completed",
+    }]);
     assertEquals(errors, [
       {
         message: "Runtime cleanup failed during finalization",
@@ -818,7 +851,7 @@ describe("agent/hosted-chat-finalization", () => {
     });
 
     assertEquals(calls.filter((call) => call.startsWith("terminal:")), []);
-    assertEquals(terminalStates, []);
+    assertEquals(terminalStates.map(({ output: _output, ...state }) => state), []);
     assertEquals(calls.at(-1), "cleanup");
     assertEquals(errors, []);
   });
@@ -847,7 +880,7 @@ describe("agent/hosted-chat-finalization", () => {
     });
 
     assertEquals(calls, ["flush", "cleanup"]);
-    assertEquals(terminalStates, []);
+    assertEquals(terminalStates.map(({ output: _output, ...state }) => state), []);
   });
 
   // The critical guard: every other mirror stop leaves a live run that still needs
@@ -891,7 +924,9 @@ describe("agent/hosted-chat-finalization", () => {
         ["terminal:completed:"],
         `expected ${disableReason} to still finalize the durable run`,
       );
-      assertEquals(terminalStates, [{ status: "completed" }]);
+      assertEquals(terminalStates.map(({ output: _output, ...state }) => state), [{
+        status: "completed",
+      }]);
     }
   });
 
@@ -1080,4 +1115,82 @@ describe("agent/hosted-chat-finalization", () => {
       "an already-mirrored tool call must not receive a duplicate output-error chunk",
     );
   });
+});
+
+describe("native pause mirror retirement", () => {
+  for (
+    const outcome of [
+      "drained",
+      "disabled",
+      "pending",
+      "in-flight",
+      "retry",
+      "flush-error",
+      "stream-error",
+    ] as const
+  ) {
+    it(`requires a healthy drained mirror after ${outcome}`, async () => {
+      const calls: string[] = [];
+      const terminalStates: HostedLifecycleTerminalState[] = [];
+      const mirror = createDurableRunMirror({ calls });
+      const flush = mirror.flush;
+      mirror.flush = async () => {
+        if (outcome === "flush-error") throw new Error("Mirror persistence failed");
+        const snapshot = await flush();
+        return {
+          ...snapshot,
+          disabled: outcome === "disabled",
+          pendingEventCount: outcome === "pending" ? 1 : 0,
+          inFlight: outcome === "in-flight",
+          hasRetryTimer: outcome === "retry",
+        };
+      };
+      const capability = createRunBoundAgentManualPause({
+        apiUrl: "https://api.example.com",
+        runId: "run_pause_mirror",
+        token: "pause-test-token",
+        signal: new AbortController().signal,
+        fetch: () => Promise.resolve(Response.json({ stop: true })),
+      });
+      await capability.acknowledge({
+        version: 1,
+        nextStep: 0,
+        messages: [],
+        toolCalls: [],
+        usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
+        latestAssistantText: "",
+        completed: false,
+        recoveredEmptyResponse: false,
+        recoveredInterruptedLocalToolBatch: false,
+      });
+      capability.persisted?.(true);
+      const lifecycleAdapter = createLifecycleAdapter({ calls, terminalStates, mirror });
+      inheritHostedAgentPauseCapability(lifecycleAdapter, capability);
+      const { logger, errors } = createLogger();
+      await finalizeHostedChatRun({
+        kind: "response",
+        responseMessage: createResponseMessage({ parts: [] }),
+        isAborted: false,
+        streamResult: {
+          get steps(): Promise<readonly unknown[]> {
+            throw new Error("Paused runs have no final step");
+          },
+        },
+        lifecycleAdapter,
+        mirroredToolChunkState: createMirroredToolChunkState(),
+        capturedMessageId: null,
+        incompleteToolCallsPartErrorText: "Incomplete",
+        streamError: outcome === "stream-error" ? new Error("Stream failed after ACK") : undefined,
+        logger,
+        cleanup: async () => {
+          calls.push("cleanup");
+          recordHostedAgentPauseCleanup(capability, true);
+        },
+      });
+      assertEquals(terminalStates, []);
+      assertEquals(calls.at(-1), "cleanup");
+      assertEquals(canSettleHostedAgentPause(capability), outcome === "drained");
+      assertEquals(errors.length, outcome === "flush-error" ? 1 : 0);
+    });
+  }
 });

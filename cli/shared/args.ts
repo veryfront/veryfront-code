@@ -301,6 +301,7 @@ export const BOOLEAN_FLAGS: ReadonlySet<string> = new Set([
   "json",
   "list",
   "microsoft",
+  "ndjson",
   "no-adopt-pins",
   "no-animation",
   "no-browser",

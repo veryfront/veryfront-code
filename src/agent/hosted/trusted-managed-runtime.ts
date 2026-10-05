@@ -1,3 +1,5 @@
+import { inheritHostedAgentPauseCapability } from "./manual-pause-credential.ts";
+import type { TrustedRuntimePreparationOptions } from "./trusted-runtime-prepare.ts";
 import type {
   TrustedManagedRuntime,
   TrustedManagedRuntimeOptions,
@@ -130,7 +132,7 @@ export async function createTrustedManagedRuntime(
     signal.throwIfAborted();
     const projectFacade = facades.remoteToolSources.get(projectTools.id);
     if (!projectFacade) throw new TypeError("Gated project tools are unavailable");
-    owner = createTrustedRuntimePreparation({
+    const preparation: TrustedRuntimePreparationOptions = {
       binding: options.binding,
       source: options.installation.source,
       channel: options.projectChannel,
@@ -152,7 +154,9 @@ export async function createTrustedManagedRuntime(
         options.requestSessionClose();
         await options.projectChannel.settled;
       },
-    });
+    };
+    inheritHostedAgentPauseCapability(preparation, options);
+    owner = createTrustedRuntimePreparation(preparation);
     setupFinished.resolve();
     return { channel: authority, gate, settled: retired.promise, close };
   } catch (error) {

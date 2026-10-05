@@ -573,7 +573,7 @@ describe("VeryfrontFSAdapter", () => {
       });
 
       assertEquals(getReadyManifestForRender(releaseId), null);
-      await waitFor(async () => getReadyManifestForRender(releaseId)?.manifestVersion === 2);
+      assertEquals((await getReadyManifestForRenderAsync(releaseId))?.manifestVersion, 2);
       assertEquals(fetchCount, 1);
     });
 
