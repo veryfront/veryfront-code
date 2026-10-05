@@ -886,6 +886,8 @@ describe("client/spa/ClientApp (reactive)", () => {
       const restore = installDom("https://example.com/second");
       testGlobal.MODULE_SERVER_URL = `file://${tempDir}`;
       clearComponentCache();
+      let firstRoot: ReturnType<typeof createRoot> | undefined;
+      let secondRoot: ReturnType<typeof createRoot> | undefined;
       try {
         await Promise.all([
           loadComponent("pages/first.tsx"),
@@ -905,22 +907,23 @@ describe("client/spa/ClientApp (reactive)", () => {
         const firstHost = document.getElementById("root")!;
         const secondHost = document.createElement("div");
         document.body.append(secondHost);
-        const firstRoot = createRoot(firstHost);
-        const secondRoot = createRoot(secondHost);
+        firstRoot = createRoot(firstHost);
+        secondRoot = createRoot(secondHost);
 
-        flushSync(() => firstRoot.render(<ClientApp initialData={pageData("first")} />));
-        flushSync(() => secondRoot.render(<ClientApp initialData={pageData("second")} />));
-        await tick();
+        flushSync(() => firstRoot!.render(<ClientApp initialData={pageData("first")} />));
+        flushSync(() => secondRoot!.render(<ClientApp initialData={pageData("second")} />));
+        await waitForText(firstHost, "first");
+        await waitForText(secondHost, "second");
         const newestHandler = testGlobal.__VERYFRONT_SPA_NAVIGATE__;
 
         firstRoot.unmount();
         assertStrictEquals(testGlobal.__VERYFRONT_SPA_NAVIGATE__, newestHandler);
         await testGlobal.__VERYFRONT_SPA_NAVIGATE__!(pageData("updated"));
-        await tick();
+        await waitForText(secondHost, "updated");
         assertStringIncludes(secondHost.textContent ?? "", "updated");
-
-        secondRoot.unmount();
       } finally {
+        firstRoot?.unmount();
+        secondRoot?.unmount();
         clearComponentCache();
         delete testGlobal.MODULE_SERVER_URL;
         restore();
@@ -1007,6 +1010,8 @@ describe("client/spa/ClientApp (reactive)", () => {
       const restore = installDom("https://example.com/first");
       testGlobal.MODULE_SERVER_URL = `file://${tempDir}`;
       clearComponentCache();
+      let firstRoot: ReturnType<typeof createRoot> | undefined;
+      let secondRoot: ReturnType<typeof createRoot> | undefined;
       try {
         await Promise.all([
           loadComponent("pages/first.tsx"),
@@ -1030,23 +1035,23 @@ describe("client/spa/ClientApp (reactive)", () => {
         const firstHost = document.getElementById("root")!;
         const secondHost = document.createElement("div");
         document.body.append(secondHost);
-        const firstRoot = createRoot(firstHost);
-        const secondRoot = createRoot(secondHost);
+        firstRoot = createRoot(firstHost);
+        secondRoot = createRoot(secondHost);
 
-        flushSync(() => firstRoot.render(<FirstClientApp initialData={pageData("first")} />));
-        await tick();
+        flushSync(() => firstRoot!.render(<FirstClientApp initialData={pageData("first")} />));
+        await waitForText(firstHost, "first");
         const firstHandler = testGlobal.__VERYFRONT_SPA_NAVIGATE__;
-        flushSync(() => secondRoot.render(<SecondClientApp initialData={pageData("second")} />));
-        await tick();
+        flushSync(() => secondRoot!.render(<SecondClientApp initialData={pageData("second")} />));
+        await waitForText(secondHost, "second");
 
         secondRoot.unmount();
         assertStrictEquals(testGlobal.__VERYFRONT_SPA_NAVIGATE__, firstHandler);
         await testGlobal.__VERYFRONT_SPA_NAVIGATE__!(pageData("updated"));
-        await tick();
+        await waitForText(firstHost, "updated");
         assertStringIncludes(firstHost.textContent ?? "", "updated");
-
-        firstRoot.unmount();
       } finally {
+        firstRoot?.unmount();
+        secondRoot?.unmount();
         clearComponentCache();
         delete testGlobal.MODULE_SERVER_URL;
         restore();
