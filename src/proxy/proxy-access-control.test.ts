@@ -3,6 +3,7 @@ import { describe, it } from "#veryfront/testing/bdd";
 import {
   buildProxyAuthRedirectUrl,
   checkProtectedProxyAccess,
+  createProxyAuthRedirectBuilder,
   extractUserIdFromToken,
   isProjectMember,
   toProxyPrincipal,
@@ -28,7 +29,7 @@ describe("proxy/proxy-access-control", () => {
     Deno.env.set("VERYFRONT_PROXY_SIGN_IN_ORIGIN", "https://platform.example.test");
     try {
       assertEquals(
-        buildProxyAuthRedirectUrl(
+        createProxyAuthRedirectBuilder(Deno.env.get("VERYFRONT_PROXY_SIGN_IN_ORIGIN"))(
           new URL("http://app.production.platform.example.test/dashboard?a=1"),
         ),
         "https://platform.example.test/sign-in?from=https%3A%2F%2Fapp.production.platform.example.test%2Fdashboard%3Fa%3D1",
@@ -37,7 +38,9 @@ describe("proxy/proxy-access-control", () => {
         const host of ["evil.test", "platform.example.test.evil.test", "notplatform.example.test"]
       ) {
         assertEquals(
-          buildProxyAuthRedirectUrl(new URL(`https://${host}//evil.test?a=1`)),
+          createProxyAuthRedirectBuilder(Deno.env.get("VERYFRONT_PROXY_SIGN_IN_ORIGIN"))(
+            new URL(`https://${host}//evil.test?a=1`),
+          ),
           "https://platform.example.test/sign-in?from=%2Fevil.test%3Fa%3D1",
         );
       }
@@ -52,7 +55,7 @@ describe("proxy/proxy-access-control", () => {
     Deno.env.set("VERYFRONT_PROXY_SIGN_IN_ORIGIN", "https://platform.example.test:8443/");
     try {
       assertEquals(
-        buildProxyAuthRedirectUrl(
+        createProxyAuthRedirectBuilder(Deno.env.get("VERYFRONT_PROXY_SIGN_IN_ORIGIN"))(
           new URL("http://user:pass@app.production.platform.example.test:9999//evil.test?a=1"),
         ),
         "https://platform.example.test:8443/sign-in?from=https%3A%2F%2Fapp.production.platform.example.test%3A8443%2Fevil.test%3Fa%3D1",
@@ -75,7 +78,9 @@ describe("proxy/proxy-access-control", () => {
       ) {
         Deno.env.set("VERYFRONT_PROXY_SIGN_IN_ORIGIN", origin);
         assertEquals(
-          buildProxyAuthRedirectUrl(new URL("https://app.platform.example.test/")),
+          createProxyAuthRedirectBuilder(Deno.env.get("VERYFRONT_PROXY_SIGN_IN_ORIGIN"))(
+            new URL("https://app.platform.example.test/"),
+          ),
           "https://platform.example.test/sign-in?from=https%3A%2F%2Fapp.platform.example.test%2F",
         );
       }
@@ -91,11 +96,15 @@ describe("proxy/proxy-access-control", () => {
       for (const origin of ["https://platform.example.test", "https://platform.example.test."]) {
         Deno.env.set("VERYFRONT_PROXY_SIGN_IN_ORIGIN", origin);
         assertEquals(
-          buildProxyAuthRedirectUrl(new URL("https://app.platform.example.test./dashboard")),
+          createProxyAuthRedirectBuilder(Deno.env.get("VERYFRONT_PROXY_SIGN_IN_ORIGIN"))(
+            new URL("https://app.platform.example.test./dashboard"),
+          ),
           "https://platform.example.test/sign-in?from=https%3A%2F%2Fapp.platform.example.test%2Fdashboard",
         );
         assertEquals(
-          buildProxyAuthRedirectUrl(new URL("https://platform.example.test.evil.test./dashboard")),
+          createProxyAuthRedirectBuilder(Deno.env.get("VERYFRONT_PROXY_SIGN_IN_ORIGIN"))(
+            new URL("https://platform.example.test.evil.test./dashboard"),
+          ),
           "https://platform.example.test/sign-in?from=%2Fdashboard",
         );
       }
@@ -120,7 +129,9 @@ describe("proxy/proxy-access-control", () => {
       ) {
         Deno.env.set("VERYFRONT_PROXY_SIGN_IN_ORIGIN", origin);
         assertThrows(() =>
-          buildProxyAuthRedirectUrl(new URL("https://app.platform.example.test/"))
+          createProxyAuthRedirectBuilder(Deno.env.get("VERYFRONT_PROXY_SIGN_IN_ORIGIN"))(
+            new URL("https://app.platform.example.test/"),
+          )
         );
       }
     } finally {

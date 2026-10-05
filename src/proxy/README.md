@@ -3,11 +3,13 @@
 Set `VERYFRONT_PROXY_SIGN_IN_ORIGIN` to the HTTPS origin of your Studio when you
 operate Veryfront on your own domain. For example, use
 `https://platform.example.test`. The value must contain no credentials, path,
-query or fragment. Invalid values fail redirect construction.
+query or fragment. Configure it in the operator process environment before startup;
+project dotenv values are ignored. Invalid values fail initialization. Restart
+the proxy after changing this setting.
 
 The proxy sends unauthenticated protected-environment requests to `/sign-in` on
 this configured origin. The `from` parameter contains an absolute project URL
-only when the request hostname is the configured hostname or its subdomain.
+only when the routed Host is the configured hostname or its subdomain.
 The return URL uses HTTPS and the configured port. Other request hostnames use a
 sanitized relative return path. Request credentials and ports do not determine
 the redirect destination.
