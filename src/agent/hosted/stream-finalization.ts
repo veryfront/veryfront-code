@@ -1,3 +1,7 @@
+import {
+  invalidateHostedAgentPauseSettlement,
+  recordHostedAgentPauseFlush,
+} from "./manual-pause-settlement.ts";
 import type { HostedLifecycleTerminalState } from "./lifecycle.ts";
 import { getBaseLogger } from "#veryfront/utils/logger/index.ts";
 import { hasHostedAgentPauseStopped } from "./manual-pause-credential.ts";
@@ -155,9 +159,14 @@ export async function finalizeHostedResponse<TMessage, TChunk>(
   options: FinalizeHostedResponseOptions<TMessage, TChunk>,
 ): Promise<void> {
   if (hasHostedAgentPauseStopped(options.dispatchTerminalState)) {
+    if (options.streamError) {
+      invalidateHostedAgentPauseSettlement(options.dispatchTerminalState, options.streamError);
+    }
     try {
       await options.flushMirror();
+      recordHostedAgentPauseFlush(options.dispatchTerminalState, true);
     } catch {
+      recordHostedAgentPauseFlush(options.dispatchTerminalState, false);
       logger.warn("Paused agent output could not be flushed; its continuation remains nonterminal");
     } finally {
       await cleanupAfterFinalization(options.cleanup);
@@ -230,9 +239,14 @@ export async function finalizeHostedDetached<TChunk>(
   options: FinalizeHostedDetachedOptions<TChunk>,
 ): Promise<void> {
   if (hasHostedAgentPauseStopped(options.dispatchTerminalState)) {
+    if (options.streamError) {
+      invalidateHostedAgentPauseSettlement(options.dispatchTerminalState, options.streamError);
+    }
     try {
       await options.flushMirror();
+      recordHostedAgentPauseFlush(options.dispatchTerminalState, true);
     } catch {
+      recordHostedAgentPauseFlush(options.dispatchTerminalState, false);
       logger.warn("Paused agent output could not be flushed; its continuation remains nonterminal");
     } finally {
       await cleanupAfterFinalization(options.cleanup);

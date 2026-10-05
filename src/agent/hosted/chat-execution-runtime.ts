@@ -1,4 +1,9 @@
 import {
+  invalidateHostedAgentPauseSettlement,
+  recordHostedAgentPauseCleanup,
+  recordHostedAgentPauseMirrorSnapshot,
+} from "./manual-pause-settlement.ts";
+import {
   bindHostedAgentPauseLifetime,
   hasHostedAgentPauseStopped,
   inheritHostedAgentPauseCapability,
@@ -232,7 +237,10 @@ export async function cleanupAfterHostedChatExecutionFinalization(input: {
   });
 }
 
-function createHostedChatExecutionCleanup(cleanup: () => Promise<void>): () => Promise<void> {
+function createHostedChatExecutionCleanup(
+  cleanup: () => Promise<void>,
+  carrier: unknown,
+): () => Promise<void> {
   let cleanedUp = false;
 
   return async () => {
@@ -241,7 +249,13 @@ function createHostedChatExecutionCleanup(cleanup: () => Promise<void>): () => P
     }
 
     cleanedUp = true;
-    await cleanup();
+    try {
+      await cleanup();
+      recordHostedAgentPauseCleanup(carrier, true);
+    } catch (error) {
+      recordHostedAgentPauseCleanup(carrier, false);
+      throw error;
+    }
   };
 }
 
@@ -321,7 +335,7 @@ function traceHostedChatRuntimeStream<T>(
 export async function createHostedChatExecutionRuntimeBootstrap(
   input: CreateHostedChatExecutionRuntimeBootstrapInput,
 ): Promise<HostedChatExecutionRuntimeBootstrap> {
-  const cleanup = createHostedChatExecutionCleanup(input.cleanup);
+  const cleanup = createHostedChatExecutionCleanup(input.cleanup, input.lifecycleAdapter);
   const streamingMessageId = input.lifecycleAdapter.durableRootRun?.messageId ?? null;
   if (input.conversationId && !streamingMessageId) {
     throw INVALID_ARGUMENT.create({ detail: "DURABLE_CHAT_ROOT_REQUIRES_CONVERSATION" });
@@ -512,7 +526,8 @@ export function createHostedChatStreamFinalizationHooks(input: {
     appendFallbackChunk: (chunk: ChatUiMessageChunk<MessageMetadata>) =>
       input.lifecycleAdapter.durableRunMirror?.handleChunk(chunk),
     flushMirror: async () => {
-      await input.lifecycleAdapter.durableRunMirror?.flush();
+      const snapshot = await input.lifecycleAdapter.durableRunMirror?.flush();
+      recordHostedAgentPauseMirrorSnapshot(input.lifecycleAdapter, snapshot);
     },
     dispatchTerminalState,
     resolveTerminalState: ({ isAborted, hasIncompleteToolParts }: {
@@ -804,6 +819,7 @@ export function createHostedChatExecutionRuntime(
   };
 
   const fail = async (error: unknown) => {
+    invalidateHostedAgentPauseSettlement(input.bootstrap.lifecycleAdapter, error);
     await input.runContext.withContext(async () => {
       input.bootstrap.rootStreamWatchdog.dispose();
       await input.bootstrap.cleanup().catch((cleanupError: unknown) => {
@@ -825,6 +841,7 @@ export function createHostedChatExecutionRuntime(
     originalMessages: input.originalMessages,
     onError: (error, context) => {
       lastStreamError = context?.code ? createCodedHostedStreamError(error, context.code) : error;
+      invalidateHostedAgentPauseSettlement(input.bootstrap.lifecycleAdapter, lastStreamError);
       return input.runContext.withContext(() => getHostedStreamErrorText(lastStreamError));
     },
     onFinish: ({ responseMessage, isAborted }) => {

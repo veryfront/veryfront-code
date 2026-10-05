@@ -45,6 +45,8 @@ export interface AgentManualPause {
   /** Check whether a pause is requested before snapshotting a bounded continuation. */
   requested?(): Promise<boolean>;
   acknowledge(checkpoint: AgentPauseCheckpoint): Promise<boolean>;
+  /** Report original paused-turn persistence to the private settlement owner. */
+  persisted?(succeeded: boolean): void;
   /** Retire an oversized resumed continuation only when no pause is requested. */
   release?(): Promise<boolean>;
 }

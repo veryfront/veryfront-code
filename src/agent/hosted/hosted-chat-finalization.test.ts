@@ -10,6 +10,14 @@ import { createMirroredToolChunkState } from "../streaming/mirrored-tool-chunk-s
 import type { HostedChatExecutionLifecycleAdapter } from "./chat-execution-lifecycle-types.ts";
 import type { HostedLifecycleTerminalState } from "./lifecycle.ts";
 import { finalizeHostedChatRun } from "./hosted-chat-finalization.ts";
+import {
+  createRunBoundAgentManualPause,
+  inheritHostedAgentPauseCapability,
+} from "./manual-pause-credential.ts";
+import {
+  canSettleHostedAgentPause,
+  recordHostedAgentPauseCleanup,
+} from "./manual-pause-settlement.ts";
 
 function createDurableRunMirror(input: {
   calls: string[];
@@ -1107,4 +1115,82 @@ describe("agent/hosted-chat-finalization", () => {
       "an already-mirrored tool call must not receive a duplicate output-error chunk",
     );
   });
+});
+
+describe("native pause mirror retirement", () => {
+  for (
+    const outcome of [
+      "drained",
+      "disabled",
+      "pending",
+      "in-flight",
+      "retry",
+      "flush-error",
+      "stream-error",
+    ] as const
+  ) {
+    it(`requires a healthy drained mirror after ${outcome}`, async () => {
+      const calls: string[] = [];
+      const terminalStates: HostedLifecycleTerminalState[] = [];
+      const mirror = createDurableRunMirror({ calls });
+      const flush = mirror.flush;
+      mirror.flush = async () => {
+        if (outcome === "flush-error") throw new Error("Mirror persistence failed");
+        const snapshot = await flush();
+        return {
+          ...snapshot,
+          disabled: outcome === "disabled",
+          pendingEventCount: outcome === "pending" ? 1 : 0,
+          inFlight: outcome === "in-flight",
+          hasRetryTimer: outcome === "retry",
+        };
+      };
+      const capability = createRunBoundAgentManualPause({
+        apiUrl: "https://api.example.com",
+        runId: "run_pause_mirror",
+        token: "pause-test-token",
+        signal: new AbortController().signal,
+        fetch: () => Promise.resolve(Response.json({ stop: true })),
+      });
+      await capability.acknowledge({
+        version: 1,
+        nextStep: 0,
+        messages: [],
+        toolCalls: [],
+        usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
+        latestAssistantText: "",
+        completed: false,
+        recoveredEmptyResponse: false,
+        recoveredInterruptedLocalToolBatch: false,
+      });
+      capability.persisted?.(true);
+      const lifecycleAdapter = createLifecycleAdapter({ calls, terminalStates, mirror });
+      inheritHostedAgentPauseCapability(lifecycleAdapter, capability);
+      const { logger, errors } = createLogger();
+      await finalizeHostedChatRun({
+        kind: "response",
+        responseMessage: createResponseMessage({ parts: [] }),
+        isAborted: false,
+        streamResult: {
+          get steps(): Promise<readonly unknown[]> {
+            throw new Error("Paused runs have no final step");
+          },
+        },
+        lifecycleAdapter,
+        mirroredToolChunkState: createMirroredToolChunkState(),
+        capturedMessageId: null,
+        incompleteToolCallsPartErrorText: "Incomplete",
+        streamError: outcome === "stream-error" ? new Error("Stream failed after ACK") : undefined,
+        logger,
+        cleanup: async () => {
+          calls.push("cleanup");
+          recordHostedAgentPauseCleanup(capability, true);
+        },
+      });
+      assertEquals(terminalStates, []);
+      assertEquals(calls.at(-1), "cleanup");
+      assertEquals(canSettleHostedAgentPause(capability), outcome === "drained");
+      assertEquals(errors.length, outcome === "flush-error" ? 1 : 0);
+    });
+  }
 });

@@ -297,13 +297,17 @@ export async function parseBrokerRuntimeAgentIngress<TAuthorization>(
     executor: executorValue,
   };
   if (stopToken) {
-    registerHostedAgentPauseFactory(ingress, (signal) =>
-      createRunBoundAgentManualPause({
-        apiUrl: resolveHostOwnedSourceApiBaseUrl(),
-        runId: expectedRunId,
-        token: stopToken,
-        signal,
-      }));
+    registerHostedAgentPauseFactory(
+      ingress,
+      (signal, settlementSignal) =>
+        createRunBoundAgentManualPause({
+          apiUrl: resolveHostOwnedSourceApiBaseUrl(),
+          runId: expectedRunId,
+          token: stopToken,
+          signal,
+          settlementSignal,
+        }),
+    );
   }
   return ingress;
 }

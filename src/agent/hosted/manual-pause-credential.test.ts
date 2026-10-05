@@ -78,7 +78,7 @@ describe("hosted agent pause capability", () => {
     assertEquals(await authority.acknowledge(checkpoint), true);
     assertEquals(bodies.length, 2);
     assertEquals(bodies[0], bodies[1]);
-    assertEquals(JSON.parse(bodies[0]!), { checkpoint });
+    assertEquals(JSON.parse(bodies[0]!), { checkpoint, settlement_required: true });
     assertEquals(JSON.stringify(authority).includes("pause-test-token"), false);
   });
 
@@ -264,7 +264,7 @@ for (const nextStep of [10_001, Number.MAX_SAFE_INTEGER]) {
     });
     const saved = { ...checkpoint, nextStep };
     assertEquals(await authority.acknowledge(saved), true);
-    assertEquals(sent, { checkpoint: saved });
+    assertEquals(sent, { checkpoint: saved, settlement_required: true });
   });
 }
 

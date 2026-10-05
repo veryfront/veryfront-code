@@ -1,3 +1,8 @@
+import {
+  hostedAgentPauseCapabilities as creationCapabilities,
+  recordHostedAgentPausePersistence,
+  registerHostedAgentPauseSettlement,
+} from "./manual-pause-settlement.ts";
 import { defineSchema } from "#veryfront/schemas/index.ts";
 import { getBaseLogger } from "#veryfront/utils/logger/index.ts";
 import { privateJsonParse, privateJsonStringify } from "#veryfront/security/private-json.ts";
@@ -32,11 +37,10 @@ const getLoadSchema = defineSchema((v) =>
     .strict()
 );
 const credentials = createPrivateWeakStore<object, { token: string; runId: string }>();
-const creationCapabilities = createPrivateWeakStore<object, AgentManualPause>();
 const lifetimeBindings = createPrivateWeakStore<object, (signal: AbortSignal) => void>();
 const capabilityFactories = createPrivateWeakStore<
   object,
-  (signal: AbortSignal) => AgentManualPause | undefined
+  (signal: AbortSignal, settlementSignal?: AbortSignal) => AgentManualPause | undefined
 >();
 const stoppedCapabilities = createPrivateWeakStore<object, { stopped: boolean }>();
 const freeze = Object.freeze;
@@ -90,6 +94,7 @@ export function createRunBoundAgentManualPause(input: {
   runId: string;
   token: string;
   signal: AbortSignal | undefined;
+  settlementSignal?: AbortSignal;
   fetch?: typeof fetch;
 }): AgentManualPause {
   const endpoint = requireHostPrivateApiHttps(input.apiUrl);
@@ -99,16 +104,23 @@ export function createRunBoundAgentManualPause(input: {
   const transport = input.fetch ?? createVeryfrontApiOriginBoundOutboundFetch(apiUrl);
   const token = input.token;
   let signal = input.signal;
+  const settlementSignal = input.settlementSignal;
   const lifetime = (): AbortSignal => {
     if (!signal) throw agentManualPauseBoundary();
     return signal;
   };
+  const settlementLifetime = () => settlementSignal ?? lifetime();
   const path = `${apiUrl}/runs/${encode(input.runId)}`;
   const state = { stopped: false, requiresCheckpoint: false };
-  const send = async (suffix: string, body: string | undefined, onSend?: () => void) => {
+  const send = async (
+    suffix: string,
+    body: string | undefined,
+    onSend?: () => void,
+    transportLifetime = lifetime,
+  ) => {
     try {
-      const outboundSignal = requestSignal(lifetime());
-      throwIfAborted(lifetime());
+      const outboundSignal = requestSignal(transportLifetime());
+      throwIfAborted(transportLifetime());
       onSend?.();
       return await transport(`${path}/${suffix}`, {
         method: body === undefined ? "GET" : "POST",
@@ -241,8 +253,14 @@ export function createRunBoundAgentManualPause(input: {
         );
       }
     },
+    persisted(succeeded: boolean) {
+      recordHostedAgentPausePersistence(capability, succeeded);
+    },
     async acknowledge(checkpoint: AgentPauseCheckpoint) {
-      const body = privateJsonStringify({ checkpoint: parseAgentPauseCheckpoint(checkpoint) })!;
+      const body = privateJsonStringify({
+        checkpoint: parseAgentPauseCheckpoint(checkpoint),
+        settlement_required: true,
+      })!;
       const stop = (await request("pause-ack", body, (value) =>
         getAckSchema().parse(value), true)).stop;
       state.stopped = stop;
@@ -259,6 +277,32 @@ export function createRunBoundAgentManualPause(input: {
     });
   }
   creationCapabilities.set(capability, capability);
+  const settlementBody = privateJsonStringify({ settled: true })!;
+  registerHostedAgentPauseSettlement(
+    capability,
+    () => state.stopped,
+    () => !settlementLifetime().aborted,
+    async () => {
+      const response = await send("pause-ack", settlementBody, undefined, settlementLifetime);
+      if (!response) return "retry";
+      const status = apply(responseStatus, response, []) as number;
+      if (status >= 400 && status < 500) {
+        await cancelResponse(response);
+        return "rejected";
+      }
+      if (status < 200 || status >= 300) {
+        await cancelResponse(response);
+        return "retry";
+      }
+      try {
+        return getAckSchema().parse(await readReply(response, settlementLifetime())).stop
+          ? "confirmed"
+          : "rejected";
+      } catch {
+        return "retry";
+      }
+    },
+  );
   return capability;
 }
 
@@ -276,6 +320,7 @@ export function registerHostedAgentPauseCredential(
 export function createHostedAgentManualPause(
   request: ParsedHostedChatRequest,
   signal: AbortSignal | undefined,
+  settlementSignal?: AbortSignal,
 ): AgentManualPause | undefined {
   const credential = credentials.get(request);
   if (!credential) return undefined;
@@ -284,6 +329,7 @@ export function createHostedAgentManualPause(
     runId: credential.runId,
     token: credential.token,
     signal,
+    settlementSignal,
   });
 }
 
@@ -304,6 +350,7 @@ export function registerHostedAgentPauseCreationOptions(
   const capability = createHostedAgentManualPause(request, undefined);
   if (capability) {
     creationCapabilities.set(requirePauseCarrier(options), capability);
+    creationCapabilities.set(request, capability);
     if (rootContext) creationCapabilities.set(requirePauseCarrier(rootContext), capability);
   }
 }
@@ -329,11 +376,11 @@ export function inheritHostedAgentPauseCapability(
     capabilityFactories.set(
       requirePauseCarrier(target),
       lifetimeSignal
-        ? (signal) => {
+        ? (signal, settlementSignal) => {
           const signals = [signal, lifetimeSignal];
           const privateSignals = createPrivateSet(signals);
           defineOwnDataProperty(signals, Symbol.iterator, () => privateSignals.values());
-          return factory(apply(any, AbortSignal, [signals]));
+          return factory(apply(any, AbortSignal, [signals]), lifetimeSignal ?? settlementSignal);
         }
         : factory,
     );
@@ -350,7 +397,7 @@ export function hasHostedAgentPauseStopped(lifecycle: unknown): boolean {
 /** Broker-only lazy construction binds pause requests to the admitted session lifetime. */
 export function registerHostedAgentPauseFactory(
   target: unknown,
-  factory: (signal: AbortSignal) => AgentManualPause | undefined,
+  factory: (signal: AbortSignal, settlementSignal?: AbortSignal) => AgentManualPause | undefined,
 ): void {
   capabilityFactories.set(requirePauseCarrier(target), factory);
 }

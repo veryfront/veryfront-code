@@ -1,3 +1,8 @@
+import {
+  invalidateHostedAgentPauseSettlement,
+  recordHostedAgentPauseFlush,
+  recordHostedAgentPauseMirrorSnapshot,
+} from "./manual-pause-settlement.ts";
 import { extractChatMessageMetadata } from "../../chat/chat-ui-message-helpers.ts";
 import { isToolUiPart } from "../../chat/conversation.ts";
 import { buildFallbackUiMessageParts, getLastStreamStep } from "../../chat/final-step-fallback.ts";
@@ -391,9 +396,14 @@ export async function finalizeHostedChatRun(
   input: FinalizeHostedChatRunInput,
 ): Promise<void> {
   if (hasHostedAgentPauseStopped(input.lifecycleAdapter)) {
+    if (input.streamError) {
+      invalidateHostedAgentPauseSettlement(input.lifecycleAdapter, input.streamError);
+    }
     try {
-      await flushMirror(input.lifecycleAdapter);
+      const snapshot = await input.lifecycleAdapter.durableRunMirror?.flush();
+      recordHostedAgentPauseMirrorSnapshot(input.lifecycleAdapter, snapshot);
     } catch (error) {
+      recordHostedAgentPauseFlush(input.lifecycleAdapter, false);
       input.logger?.error("Paused agent output could not be flushed", { error: String(error) });
     } finally {
       await cleanupAfterFinalization({ cleanup: input.cleanup, logger: input.logger });
