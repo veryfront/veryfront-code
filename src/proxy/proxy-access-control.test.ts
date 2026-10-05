@@ -84,6 +84,26 @@ describe("proxy/proxy-access-control", () => {
     }
   });
 
+  it("normalizes DNS root dots before trusting customer return hostnames", () => {
+    const previous = Deno.env.get("VERYFRONT_PROXY_SIGN_IN_ORIGIN");
+    try {
+      for (const origin of ["https://platform.example.test", "https://platform.example.test."]) {
+        Deno.env.set("VERYFRONT_PROXY_SIGN_IN_ORIGIN", origin);
+        assertEquals(
+          buildProxyAuthRedirectUrl(new URL("https://app.platform.example.test./dashboard")),
+          "https://platform.example.test/sign-in?from=https%3A%2F%2Fapp.platform.example.test%2Fdashboard",
+        );
+        assertEquals(
+          buildProxyAuthRedirectUrl(new URL("https://platform.example.test.evil.test./dashboard")),
+          "https://platform.example.test/sign-in?from=%2Fdashboard",
+        );
+      }
+    } finally {
+      if (previous === undefined) Deno.env.delete("VERYFRONT_PROXY_SIGN_IN_ORIGIN");
+      else Deno.env.set("VERYFRONT_PROXY_SIGN_IN_ORIGIN", previous);
+    }
+  });
+
   it("rejects unsafe configured sign-in origins", () => {
     const previous = Deno.env.get("VERYFRONT_PROXY_SIGN_IN_ORIGIN");
     try {

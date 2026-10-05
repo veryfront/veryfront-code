@@ -3,6 +3,7 @@ import type { AuthProvider } from "../extensions/auth/index.ts";
 import { resolve as resolveContract } from "../extensions/contracts.ts";
 import { INITIALIZATION_ERROR } from "#veryfront/errors";
 import { normalizeProxyOriginFormPath } from "./request-path.ts";
+import { normalizeProxyRequestHost } from "./request-host.ts";
 
 export interface ProxyAccessControlLogger {
   debug: (msg: string, extra?: Record<string, unknown>) => void;
@@ -272,10 +273,12 @@ export function buildProxyAuthRedirectUrl(url: URL): string {
           "VERYFRONT_PROXY_SIGN_IN_ORIGIN must be an HTTPS origin without credentials, path, query or fragment",
       });
     }
-    const trustedHost = url.hostname === signInOrigin.hostname ||
-      url.hostname.endsWith(`.${signInOrigin.hostname}`);
+    signInOrigin.hostname = normalizeProxyRequestHost(signInOrigin.hostname);
+    const requestHostname = normalizeProxyRequestHost(url.hostname);
+    const trustedHost = requestHostname === signInOrigin.hostname ||
+      requestHostname.endsWith(`.${signInOrigin.hostname}`);
     const projectOrigin = trustedHost
-      ? `https://${url.hostname}${signInOrigin.port ? `:${signInOrigin.port}` : ""}`
+      ? `https://${requestHostname}${signInOrigin.port ? `:${signInOrigin.port}` : ""}`
       : "";
     const returnTarget = projectOrigin + returnPath;
     return `${signInOrigin.origin}/sign-in?from=${encodeURIComponent(returnTarget)}`;
