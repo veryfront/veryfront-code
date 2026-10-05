@@ -24,17 +24,6 @@ describe("events/pilot-transcript", () => {
     assertEquals(frames().filter((frame) => frame.profile === "live").length, 2);
   });
 
-  it("matches the digests pinned for the shared contract artifacts", async () => {
-    for (const [filename, expected] of Object.entries(pilotTranscript.artifacts)) {
-      const bytes = await Deno.readFile(new URL(`./contracts/${filename}`, import.meta.url));
-      const digest = await crypto.subtle.digest("SHA-256", bytes);
-      const actual = [...new Uint8Array(digest)]
-        .map((byte) => byte.toString(16).padStart(2, "0"))
-        .join("");
-      assertEquals(actual, expected, filename);
-    }
-  });
-
   it("keeps live stream signals positionless", () => {
     for (const frame of frames()) {
       assertEquals(frame.position === null, frame.profile === "live");

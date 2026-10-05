@@ -266,4 +266,4 @@ const output = [
 ].join("\n");
 
 await writeFile(OUTPUT_PATH, output);
-execFileSync("deno", ["fmt", fileURLToPath(OUTPUT_PATH)], { stdio: "inherit" });
+execFileSync(Deno.execPath(), ["fmt", fileURLToPath(OUTPUT_PATH)], { stdio: "inherit" });
