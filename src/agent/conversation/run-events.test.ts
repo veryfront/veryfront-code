@@ -445,6 +445,84 @@ describe("agent/conversation-run-events", () => {
     );
   });
 
+  it("attaches active message ownership to native references", () => {
+    const encoder = new ConversationRunEventEncoder();
+    assertEquals(encoder.encode({ type: "start", messageId: "assistant-1" }), []);
+
+    assertEquals(
+      encoder.encode({
+        type: "source-url",
+        sourceId: "web-1",
+        url: "https://example.com/reference",
+      }),
+      [{
+        type: conversationRunEventTypes.urlCited,
+        sourceId: "web-1",
+        url: "https://example.com/reference",
+        parentMessageId: "assistant-1",
+      }],
+    );
+    assertEquals(
+      encoder.encode({
+        type: "file",
+        url: "https://cdn.example.com/report.pdf",
+        mediaType: "application/pdf",
+      }),
+      [{
+        type: conversationRunEventTypes.fileAttached,
+        url: "https://cdn.example.com/report.pdf",
+        mediaType: "application/pdf",
+        parentMessageId: "assistant-1",
+      }],
+    );
+  });
+
+  it("omits native reference ownership when no trusted message is active", () => {
+    const encoder = new ConversationRunEventEncoder();
+
+    assertEquals(
+      encoder.encode({
+        type: "data-source-url",
+        data: {
+          type: "source-url",
+          sourceId: "web-1",
+          url: "https://example.com/reference",
+          parentMessageId: "forged-parent",
+          messageId: "forged-message",
+        },
+      }),
+      [{
+        type: conversationRunEventTypes.urlCited,
+        sourceId: "web-1",
+        url: "https://example.com/reference",
+      }],
+    );
+  });
+
+  it("uses active trusted message ownership over hostile native reference records", () => {
+    const encoder = new ConversationRunEventEncoder();
+    assertEquals(encoder.encode({ type: "start", messageId: "assistant-1" }), []);
+
+    assertEquals(
+      encoder.encode({
+        type: "data-source-document",
+        data: {
+          type: "source-document",
+          sourceId: "doc-1",
+          mediaType: "text/markdown",
+          parentMessageId: "forged-parent",
+          messageId: "forged-message",
+        },
+      }),
+      [{
+        type: conversationRunEventTypes.documentCited,
+        sourceId: "doc-1",
+        mediaType: "text/markdown",
+        parentMessageId: "assistant-1",
+      }],
+    );
+  });
+
   it("encodes source URLs as native URL citations", () => {
     const encoder = new ConversationRunEventEncoder();
 

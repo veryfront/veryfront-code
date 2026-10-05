@@ -430,7 +430,11 @@ export class ConversationRunEventEncoder {
       case "source-document":
       case "source-url":
       case "file": {
-        const native = buildNativeRunEventFrame({ name: chunk.type, value: chunk });
+        const native = buildNativeRunEventFrame({
+          name: chunk.type,
+          value: chunk,
+          parentMessageId: this.activeMessageId,
+        });
         return [
           native ? native.durable : {
             type: conversationRunEventTypes.custom,

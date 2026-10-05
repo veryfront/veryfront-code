@@ -839,7 +839,11 @@ function mapRuntimeStreamEventToAgUiEventsUnstamped(
     case "source-url":
     case "file": {
       state.sawVisibleOutput = true;
-      const native = buildNativeRunEventFrame({ name: event.type, value: event });
+      const native = buildNativeRunEventFrame({
+        name: event.type,
+        value: event,
+        parentMessageId: state.messageId,
+      });
       return [native ? native.live : createCustomDataEvent(event.type, event)];
     }
 

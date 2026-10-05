@@ -329,6 +329,31 @@ describe("agent/ag-ui-encoder", () => {
     );
   });
 
+  it("uses the active message owner for live references instead of record-supplied IDs", () => {
+    const state = createAgUiEncoderState({ nowMs: null, epochMs: null });
+    mapRuntimeStreamEventToAgUiEvents(state, { type: "message-start", messageId: "message-owner" });
+    const references = [
+      { type: "source-url", sourceId: "source-url", url: "https://example.test/reference" },
+      {
+        type: "source-document",
+        sourceId: "source-document",
+        mediaType: "text/plain",
+        title: "Notes",
+      },
+      { type: "file", mediaType: "text/plain", url: "https://example.test/output.txt" },
+    ] as const;
+    for (const reference of references) {
+      const events = mapRuntimeStreamEventToAgUiEvents(state, {
+        ...reference,
+        parentMessageId: "forged-parent",
+        messageId: "forged-message",
+      });
+      assertEquals(events.length, 1);
+      assertEquals(events[0]?.payload.parentMessageId, "message-owner");
+      assertEquals(events[0]?.payload.messageId, undefined);
+    }
+  });
+
   it("emits native frames for citations, attachments, and lifecycle names", () => {
     const state = createAgUiEncoderState({ nowMs: null, epochMs: null });
 
