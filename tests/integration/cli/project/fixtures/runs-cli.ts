@@ -90,9 +90,12 @@ await withMockFetch((_url, init) => {
   }
   if (scenario === "stream-malformed") {
     return Promise.resolve(
-      new Response('id: 1\ndata: {"type":"RUN_STARTED"}\n\ndata: not-json\n\n', {
-        headers: { "Content-Type": "text/event-stream" },
-      }),
+      new Response(
+        'id: 1\nevent: RUN_STARTED\ndata: {"event_id":1,"event_type":"RUN_STARTED","payload":{"type":"RUN_STARTED"},"is_error":false,"created_at":null}\n\ndata: not-json\n\n',
+        {
+          headers: { "Content-Type": "text/event-stream" },
+        },
+      ),
     );
   }
   if (scenario === "login-list") return Promise.resolve(fixtureResponse("listRuns"));

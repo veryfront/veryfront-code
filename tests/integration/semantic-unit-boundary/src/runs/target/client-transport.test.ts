@@ -301,7 +301,9 @@ describe("Runs SDK canonical transport", () => {
     let cancelled = false;
     let source: ReadableStreamDefaultController<Uint8Array>;
     const controller = new AbortController();
-    const event = new TextEncoder().encode('id: 1\ndata: {"type":"RUN_STARTED"}\n\n');
+    const event = new TextEncoder().encode(
+      'id: 1\nevent: RUN_STARTED\ndata: {"event_id":1,"event_type":"RUN_STARTED","payload":{"type":"RUN_STARTED"},"is_error":false,"created_at":null}\n\n',
+    );
     await withMockFetch(() =>
       Promise.resolve(
         new Response(

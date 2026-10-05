@@ -110,10 +110,9 @@ await runs.createEvalRun({
 The deprecated `startMode` option remains accepted for source compatibility,
 but task-based eval runs ignore it.
 
-`createEvalRun()` sends a task run with target `task:eval` and places the
-provided eval target in `config.eval_id`. Direct `POST /runs` callers should use
-the same shape. New `kind: "eval"` requests are rejected. Runs created before
-this change with kind `eval` remain available through read and list APIs.
+`createEvalRun()` sends `target: { type: "task", id: "eval" }` and places the
+provided eval target in `config.eval_id`. Historical eval executions read back
+as task resources through the canonical API.
 
 ## Observe a run
 
@@ -134,6 +133,23 @@ const run = await runs.get(accepted.run.run_id);
 console.log(run.status);
 console.log(run.output);
 ```
+
+Both `get()` and `getRun()` require the canonical run UUID. `get()` adapts the
+resource for existing framework callers. `getRun()` exposes the full grouped
+response: its `id` is the UUID, `target` is
+an object, labels stay available, and execution diagnostics live in `execution`.
+Retain its ETag when preparing a metadata update:
+
+```ts
+let etag: string | null = null;
+const resource = await runs.getRun("11111111-1111-4111-8111-111111111111", {
+  onHeaders: (headers) => { etag = headers.get("etag"); },
+});
+console.log(resource.id, resource.labels, etag);
+```
+
+This method requires an API version serving the canonical UUID resource. Use
+the full `veryfront/runs/target` SDK below for other canonical operations.
 
 Cancel a non-terminal run:
 
@@ -185,7 +201,10 @@ which owns the origin, credentials, retries, body limits and telemetry. Set
 `authMode: "api-key"` to send a project API key as `X-API-Key`. Until the
 hosted API switches to the target contract, set `baseUrl` to an origin that
 serves it. The legacy client at
-`veryfront/runs` stays available until consumers switch over.
+`veryfront/runs` uses the canonical wire contract and adapts the grouped Run
+resource for existing framework callers. Its `run_id` is the canonical UUID.
+Caller-selected aliases and workflow `startMode` are rejected; retries use
+`Idempotency-Key`. Use the target SDK for the complete grouped resource.
 
 ```ts
 import {

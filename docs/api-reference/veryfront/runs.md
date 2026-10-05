@@ -123,6 +123,7 @@ import { createRunsApiTransport, createRunsSdk, runsProblemOf } from "veryfront/
 
 | Name                       | Description                                                                                        | Source                                                                                                           |
 | -------------------------- | -------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| `CanonicalRunStreamFrame`  | Canonical JSON carried by the data field of the Runs event stream.                                 | [source](https://github.com/veryfront/veryfront-code/blob/main/src/runs/target/client.ts)                        |
 | `RunsApiTransportOptions`  | Options for `createRunsApiTransport`.                                                              | [source](https://github.com/veryfront/veryfront-code/blob/main/src/runs/target/transport.ts)                     |
 | `RunsArgs`                 | Method arguments; the input is optional when it has no required field.                             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/runs/target/client.ts)                        |
 | `RunsCallOptions`          | Per-call options.                                                                                  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/runs/target/client.ts)                        |

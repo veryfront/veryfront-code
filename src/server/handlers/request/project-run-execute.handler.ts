@@ -1,4 +1,5 @@
 import { createWorkflowAgentNodeRunner } from "./workflow-agent-child.ts";
+import { adaptManagedEvalRunStream } from "./managed-eval-run-stream.ts";
 import { RunStopRegistry } from "#veryfront/internal-agents/run-stop-registry.ts";
 import { agentRunSessionManager } from "#veryfront/internal-agents/session-manager.ts";
 import {
@@ -206,6 +207,8 @@ function getOwnDataProperty(value: Record<string, unknown>, key: string): unknow
 
 export interface ProjectRunExecuteRequest {
   runId: string;
+  /** Persisted Run UUID authenticated by the control-plane request signature. */
+  canonicalRunId?: string;
   kind: "task" | "workflow";
   target: string;
   projectId: string;
@@ -556,6 +559,14 @@ function parseExecuteRequest(value: unknown, pathRunId: string): ProjectRunExecu
   if (!isRecord(value)) throw INPUT_VALIDATION_FAILED.create({ detail: "Expected object" });
 
   const runId = value.runId;
+  const canonicalRunId = value.canonicalRunId;
+  if (
+    canonicalRunId !== undefined &&
+    (typeof canonicalRunId !== "string" ||
+      !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(canonicalRunId))
+  ) {
+    throw INPUT_VALIDATION_FAILED.create({ detail: "Invalid canonicalRunId" });
+  }
   const kind = value.kind;
   const target = value.target;
   const projectId = value.projectId;
@@ -618,6 +629,7 @@ function parseExecuteRequest(value: unknown, pathRunId: string): ProjectRunExecu
 
   return {
     runId,
+    ...(canonicalRunId === undefined ? {} : { canonicalRunId }),
     kind,
     target,
     projectId,
@@ -2683,28 +2695,36 @@ function createDurableEvalAgentRunBody(
     branchId: input.runtimeTargetBranchId ?? null,
   });
   return {
-    kind: "agent",
-    owner: { kind: "project", id: input.projectId },
-    public_id: request.runId,
+    project_id: input.projectId,
+    target: { type: "agent", id: input.agentId },
     parent_run_id: input.parentRunId,
-    conversation_mode: "create_new",
-    request: {
-      mode: "agent",
-      input: {
-        agent_id: input.agentId,
-        source_target_kind: targets.sourceTargetKind ?? "project",
-        messages: [],
-        tools: request.tools,
-        context: request.context,
-        forwarded_props: createDurableEvalAgentForwardedProps(input, request),
-        ...(targets.runtimeTargetKind ? { runtime_target_kind: targets.runtimeTargetKind } : {}),
-        ...(targets.targetEnvironmentId
-          ? { target_environment_id: targets.targetEnvironmentId }
-          : {}),
-        ...(targets.targetBranchId ? { target_branch_id: targets.targetBranchId } : {}),
-      },
+    input: getEvalAgentPrompt(request),
+    execution: {
+      runtime: targets.runtimeTargetKind === "environment"
+        ? { type: "environment", id: targets.targetEnvironmentId }
+        : targets.runtimeTargetKind === "preview_branch"
+        ? { type: "preview_branch", id: targets.targetBranchId }
+        : { type: "main_branch" },
+    },
+    config: {
+      conversation_mode: "create_new",
+      tools: request.tools,
+      context: request.context,
+      forwarded_props: createDurableEvalAgentForwardedProps(input, request),
     },
   };
+}
+
+function resolveCanonicalEvalParentRunId(request: ProjectRunExecuteRequest): string {
+  const id = request.canonicalRunId;
+  if (
+    id === undefined || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)
+  ) {
+    throw INPUT_VALIDATION_FAILED.create({
+      detail: "Managed eval requires the authenticated canonical parent run UUID",
+    });
+  }
+  return id;
 }
 
 function createDurableEvalAgentFetch(
@@ -2721,7 +2741,7 @@ function createDurableEvalAgentFetch(
     const createRunUrl = createApiUrl(input.apiBaseUrl, "/runs");
     const createResponse = await fetch(createRunUrl, {
       method: "POST",
-      headers,
+      headers: { ...headers, "Idempotency-Key": `eval:${input.parentRunId}:${requestBody.runId}` },
       body: JSON.stringify(createDurableEvalAgentRunBody(input, requestBody)),
       signal: init?.signal,
     });
@@ -2733,9 +2753,11 @@ function createDurableEvalAgentFetch(
     }
 
     const created: unknown = await createResponse.json();
-    const conversationId = (created as { conversation_id?: unknown }).conversation_id;
-    const runId = (created as { run?: { run_id?: unknown } }).run?.run_id;
-    if (typeof conversationId !== "string" || typeof runId !== "string") {
+    const runId = (created as { id?: unknown }).id;
+    if (
+      typeof runId !== "string" ||
+      !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(runId)
+    ) {
       throw API_CLIENT_ERROR.create({
         detail: "Veryfront API returned an invalid durable agent run",
       });
@@ -2743,9 +2765,7 @@ function createDurableEvalAgentFetch(
 
     const streamUrl = createApiUrl(
       input.apiBaseUrl,
-      `/conversations/${encodeURIComponent(conversationId)}/runs/${
-        encodeURIComponent(runId)
-      }/stream`,
+      `/runs/${encodeURIComponent(runId)}/stream`,
     );
     const streamResponse = await fetch(streamUrl, {
       method: "GET",
@@ -2762,7 +2782,7 @@ function createDurableEvalAgentFetch(
       });
     }
 
-    return streamResponse;
+    return adaptManagedEvalRunStream(streamResponse);
   };
 }
 
@@ -3262,7 +3282,7 @@ function createEvalAdapterConfig(input: {
           apiBaseUrl: getEnvironmentConfig().apiBaseUrl,
           authToken,
           projectId: input.request.projectId,
-          parentRunId: input.request.runId,
+          parentRunId: resolveCanonicalEvalParentRunId(input.request),
           agentId,
           runtimeTargetKind: input.request.runtimeTargetKind,
           runtimeTargetEnvironmentId: input.request.runtimeTargetEnvironmentId,

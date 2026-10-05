@@ -45,6 +45,19 @@ describe("control-plane run platform tool source", () => {
     assertEquals(finalize.headers.get(INGRESS_RUN_TERMINAL_TOKEN_HEADER), "test-authority");
     assertEquals(finalize.headers.get(RUN_TERMINAL_TOOL_CALL_ID_HEADER), "call_fin");
     assertEquals(finalize.headers.get("Authorization"), "Bearer t");
+    const key = finalize.headers.get("Idempotency-Key");
+    assertEquals(typeof key, "string");
+    assertEquals(key!.length, 64);
+    await source.executeTool("veryfront__finalize", {}, {
+      ...createTerminalRunControl({ runId: "run-1" }).context,
+      toolCallId: "call_fin",
+    });
+    assertEquals(calls.at(-1)!.headers.get("Idempotency-Key"), key);
+    await source.executeTool("veryfront__finalize", {}, {
+      ...createTerminalRunControl({ runId: "run-1" }).context,
+      toolCallId: "call_other",
+    });
+    assertEquals(calls.at(-1)!.headers.get("Idempotency-Key") === key, false);
 
     for (
       const [name, context] of [

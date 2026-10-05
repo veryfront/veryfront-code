@@ -24,6 +24,7 @@
  */
 
 export {
+  type CanonicalRunStreamFrame,
   createRunsSdk,
   type RunsArgs,
   type RunsCallOptions,

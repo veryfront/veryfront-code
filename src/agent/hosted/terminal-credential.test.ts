@@ -119,6 +119,13 @@ describe("private terminal credential routing", () => {
       toolCallId: "call_fin",
     });
     assertEquals(calls.at(-1)!.headers.get(RUN_TERMINAL_TOOL_CALL_ID_HEADER), "call_fin");
+    const key = calls.at(-1)!.headers.get("Idempotency-Key");
+    assertEquals(key!.length, 64);
+    await source.executeTool("veryfront__finalize", {}, {
+      ...rootContext(),
+      toolCallId: "call_fin",
+    });
+    assertEquals(calls.at(-1)!.headers.get("Idempotency-Key"), key);
     await source.executeTool("finalize", {}, { runId: "run-other", toolCallId: "call_fin" });
     assertEquals(calls.at(-1)!.headers.get(RUN_TERMINAL_TOOL_CALL_ID_HEADER), null);
     await source.executeTool("ordinary", {}, { runId: "run-1", toolCallId: "call_other" });
