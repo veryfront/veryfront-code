@@ -445,7 +445,10 @@ export async function executeTerminalRunTool(
     if (Object.keys(input).some((key) => key !== field)) {
       throw new Error(`${action} accepts only ${field}, without a run ID or status`);
     }
-    const terminalInput = { ...input, status: action === "succeed_run" ? "completed" : "failed" };
+    const terminalInput: Record<string, unknown> = {
+      ...input,
+      status: action === "succeed_run" ? "completed" : "failed",
+    };
     return control.fail(terminalInput, context, () => {
       // Output schema validation and JSON snapshotting happen before transport.
       input[field] = terminalInput[field];
