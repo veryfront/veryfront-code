@@ -253,6 +253,35 @@ export function buildProxyAuthRedirectUrl(url: URL): string {
   const safePath = normalizeProxyOriginFormPath(url.pathname);
   const returnPath = safePath + url.search;
 
+  const configuredOrigin = getEnv("VERYFRONT_PROXY_SIGN_IN_ORIGIN");
+  if (configuredOrigin) {
+    let signInOrigin: URL;
+    try {
+      signInOrigin = new URL(configuredOrigin);
+    } catch {
+      throw INITIALIZATION_ERROR.create({
+        detail: "VERYFRONT_PROXY_SIGN_IN_ORIGIN must be an HTTPS origin",
+      });
+    }
+    if (
+      signInOrigin.protocol !== "https:" || signInOrigin.username || signInOrigin.password ||
+      signInOrigin.pathname !== "/" || signInOrigin.search || signInOrigin.hash ||
+      (configuredOrigin !== signInOrigin.origin && configuredOrigin !== signInOrigin.origin + "/")
+    ) {
+      throw INITIALIZATION_ERROR.create({
+        detail:
+          "VERYFRONT_PROXY_SIGN_IN_ORIGIN must be an HTTPS origin without credentials, path, query or fragment",
+      });
+    }
+    const trustedHost = url.hostname === signInOrigin.hostname ||
+      url.hostname.endsWith(`.${signInOrigin.hostname}`);
+    const projectOrigin = trustedHost
+      ? `https://${url.hostname}${signInOrigin.port ? `:${signInOrigin.port}` : ""}`
+      : "";
+    const returnTarget = projectOrigin + returnPath;
+    return `${signInOrigin.origin}/sign-in?from=${encodeURIComponent(returnTarget)}`;
+  }
+
   const isHostedProductionDeployment = url.hostname.endsWith(".production.veryfront.org") ||
     url.hostname.endsWith(".production.veryfront.com");
   // For hosted production, preserve the absolute origin so the user returns to

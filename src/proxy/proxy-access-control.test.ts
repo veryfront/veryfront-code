@@ -1,4 +1,4 @@
-import { assertEquals } from "#veryfront/testing/assert";
+import { assertEquals, assertThrows } from "#veryfront/testing/assert";
 import { describe, it } from "#veryfront/testing/bdd";
 import {
   buildProxyAuthRedirectUrl,
@@ -22,6 +22,70 @@ function createAuthProvider(userId: string): AuthProvider {
 }
 
 describe("proxy/proxy-access-control", () => {
+  it("uses a configured customer sign-in origin and a bound project return URL", () => {
+    const previous = Deno.env.get("VERYFRONT_PROXY_SIGN_IN_ORIGIN");
+    Deno.env.set("VERYFRONT_PROXY_SIGN_IN_ORIGIN", "https://platform.example.test");
+    try {
+      assertEquals(
+        buildProxyAuthRedirectUrl(
+          new URL("http://app.production.platform.example.test/dashboard?a=1"),
+        ),
+        "https://platform.example.test/sign-in?from=https%3A%2F%2Fapp.production.platform.example.test%2Fdashboard%3Fa%3D1",
+      );
+      for (
+        const host of ["evil.test", "platform.example.test.evil.test", "notplatform.example.test"]
+      ) {
+        assertEquals(
+          buildProxyAuthRedirectUrl(new URL(`https://${host}//evil.test?a=1`)),
+          "https://platform.example.test/sign-in?from=%2Fevil.test%3Fa%3D1",
+        );
+      }
+    } finally {
+      if (previous === undefined) Deno.env.delete("VERYFRONT_PROXY_SIGN_IN_ORIGIN");
+      else Deno.env.set("VERYFRONT_PROXY_SIGN_IN_ORIGIN", previous);
+    }
+  });
+
+  it("binds customer return ports to configuration and removes request credentials", () => {
+    const previous = Deno.env.get("VERYFRONT_PROXY_SIGN_IN_ORIGIN");
+    Deno.env.set("VERYFRONT_PROXY_SIGN_IN_ORIGIN", "https://platform.example.test:8443/");
+    try {
+      assertEquals(
+        buildProxyAuthRedirectUrl(
+          new URL("http://user:pass@app.production.platform.example.test:9999//evil.test?a=1"),
+        ),
+        "https://platform.example.test:8443/sign-in?from=https%3A%2F%2Fapp.production.platform.example.test%3A8443%2Fevil.test%3Fa%3D1",
+      );
+    } finally {
+      if (previous === undefined) Deno.env.delete("VERYFRONT_PROXY_SIGN_IN_ORIGIN");
+      else Deno.env.set("VERYFRONT_PROXY_SIGN_IN_ORIGIN", previous);
+    }
+  });
+
+  it("rejects unsafe configured sign-in origins", () => {
+    const previous = Deno.env.get("VERYFRONT_PROXY_SIGN_IN_ORIGIN");
+    try {
+      for (
+        const origin of [
+          "http://platform.example.test",
+          "https://user:pass@platform.example.test",
+          "https://platform.example.test/path",
+          "https://platform.example.test?next=evil",
+          "https://platform.example.test#fragment",
+          "not-a-url",
+        ]
+      ) {
+        Deno.env.set("VERYFRONT_PROXY_SIGN_IN_ORIGIN", origin);
+        assertThrows(() =>
+          buildProxyAuthRedirectUrl(new URL("https://app.platform.example.test/"))
+        );
+      }
+    } finally {
+      if (previous === undefined) Deno.env.delete("VERYFRONT_PROXY_SIGN_IN_ORIGIN");
+      else Deno.env.set("VERYFRONT_PROXY_SIGN_IN_ORIGIN", previous);
+    }
+  });
+
   it("resolves the current AuthProvider contract after registry replacement", async () => {
     const previousSecret = Deno.env.get("JWT_SECRET");
     Deno.env.set("JWT_SECRET", "test-secret");
