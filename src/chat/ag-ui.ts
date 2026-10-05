@@ -657,7 +657,7 @@ function getReasoningPartId(
         encodeReasoningPartIdComponent(payload.contentId)
       }`;
     }
-    return `agui-reasoning:${encodeReasoningPartIdComponent(payload.contentId)}`;
+    return `agui-reasoning-content:${encodeReasoningPartIdComponent(payload.contentId)}`;
   }
 
   if (typeof payload.messageId === "string" && payload.messageId.length > 0) {

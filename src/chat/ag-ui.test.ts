@@ -580,6 +580,51 @@ describe("chat/ag-ui", () => {
     assertEquals(await collect(dedupeChatUiMessageChunks(toStream(chatEvents))), expected);
   });
 
+  it("keeps content-only reasoning ids distinct from message-only ids", async () => {
+    const state = createAgUiChatEventDecoderState();
+    const result = decodeAgUiSseChunk(
+      state,
+      [
+        "event: ReasoningMessageStart",
+        'data: {"contentId":"shared-id"}',
+        "",
+        "event: ReasoningMessageContent",
+        'data: {"contentId":"shared-id","delta":"Content only"}',
+        "",
+        "event: ReasoningMessageEnd",
+        'data: {"contentId":"shared-id"}',
+        "",
+        "event: ReasoningMessageStart",
+        'data: {"messageId":"shared-id"}',
+        "",
+        "event: ReasoningMessageContent",
+        'data: {"messageId":"shared-id","delta":"Message only"}',
+        "",
+        "event: ReasoningMessageEnd",
+        'data: {"messageId":"shared-id"}',
+        "",
+        "",
+      ].join("\n"),
+    );
+
+    const chatEvents = result.events.flatMap((entry) => entry.chatEvents);
+    const expected: ChatStreamEvent[] = [
+      { type: "reasoning-start", id: "agui-reasoning-content:shared-id" },
+      {
+        type: "reasoning-delta",
+        id: "agui-reasoning-content:shared-id",
+        delta: "Content only",
+      },
+      { type: "reasoning-end", id: "agui-reasoning-content:shared-id" },
+      { type: "reasoning-start", id: "agui-reasoning:shared-id" },
+      { type: "reasoning-delta", id: "agui-reasoning:shared-id", delta: "Message only" },
+      { type: "reasoning-end", id: "agui-reasoning:shared-id" },
+    ];
+
+    assertEquals(chatEvents, expected);
+    assertEquals(await collect(dedupeChatUiMessageChunks(toStream(chatEvents))), expected);
+  });
+
   it("encodes reasoning id components before composing replay ids", async () => {
     const state = createAgUiChatEventDecoderState();
     const result = decodeAgUiSseChunk(
