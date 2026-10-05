@@ -354,6 +354,12 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
     },
     { cache, fetchImpl: options.tokenFetch },
   );
+  /** Mirrors the client pair TokenManager selects for the scope. */
+  function hasServiceCredentials(scope: TokenScope): boolean {
+    return scope === "preview"
+      ? !!config.previewApiClientId && !!config.previewApiClientSecret
+      : !!config.apiClientId && !!config.apiClientSecret;
+  }
   const routingLookupCache = new Map<string, ProjectRoutingCacheEntry>();
   const routingLookupInflight = new Map<string, ProjectRoutingInflightEntry>();
   const projectInvalidationGenerations = new Map<string, number>();
@@ -827,7 +833,7 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
     signedInternalControlPlaneCandidate: boolean,
     verifySignedInternalControlPlaneBinding: VerifySignedInternalControlPlaneBinding,
     requireActiveRelease: boolean,
-    refreshIdentity: RoutingRefreshIdentity,
+    refreshIdentity: RoutingRefreshIdentity | undefined,
   ): Promise<ResolvedProjectMetadata> {
     return await profileProxyServerTimingPhase(
       timing ?? { enabled: false, startedAt: 0, phases: new Map() },
@@ -1072,8 +1078,17 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
         return { error: { status: 502, message: "Proxy API token unavailable" } };
       }
 
-      const resolveWithCurrentToken = () =>
-        resolveProjectMetadataAndProtection(
+      const resolveWithCurrentToken = () => {
+        // Without OAuth client credentials only the host-owned static token is
+        // renewable; any other lookup gets no idle refresh rather than a
+        // doomed OAuth request.
+        const credential: RoutingRefreshIdentity["credential"] | undefined =
+          tokenSource === "static" && !!config.apiToken && metadataToken === config.apiToken
+            ? "static"
+            : hasServiceCredentials(scope)
+            ? "service"
+            : undefined;
+        return resolveProjectMetadataAndProtection(
           req,
           url,
           metadataToken!,
@@ -1085,15 +1100,9 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
           signedInternalControlPlaneCandidate,
           verifySignedInternalControlPlaneBinding,
           scope === "production",
-          {
-            scope,
-            ...tokenIdentity,
-            credential: tokenSource === "static" && !!config.apiToken &&
-                metadataToken === config.apiToken
-              ? "static"
-              : "service",
-          },
+          credential && { scope, ...tokenIdentity, credential },
         );
+      };
 
       try {
         return await resolveWithCurrentToken();
