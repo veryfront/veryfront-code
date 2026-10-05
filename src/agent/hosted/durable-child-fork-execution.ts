@@ -804,6 +804,9 @@ function createDurableChildLifecycleAdapter<
       childAgentId: input.childAgentId,
       childConversationId: identifiers.childConversationId,
       childRunId: identifiers.childRunId,
+      ...(identifiers.childCanonicalRunId !== undefined
+        ? { childCanonicalRunId: identifiers.childCanonicalRunId }
+        : {}),
       childMessageId: identifiers.childMessageId,
       description: input.forkInput.description,
       sourceTargetKind: targets.sourceTargetKind,

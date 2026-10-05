@@ -237,6 +237,28 @@ describe("agent/conversation-run-events", () => {
     }]);
   });
 
+  it("encodes reasoning segment ids as content ids under the active assistant message", () => {
+    const encoder = new ConversationRunEventEncoder();
+    assertEquals(encoder.encode({ type: "start", messageId: "assistant-1" }), []);
+    assertEquals(encoder.encode({ type: "reasoning-start", id: "reasoning-1" }), [{
+      type: conversationRunEventTypes.reasoningMessageStart,
+      messageId: "assistant-1",
+      contentId: "reasoning-1",
+      role: "assistant",
+    }]);
+    assertEquals(encoder.encode({ type: "reasoning-delta", id: "reasoning-1", delta: "think" }), [{
+      type: conversationRunEventTypes.reasoningMessageContent,
+      messageId: "assistant-1",
+      contentId: "reasoning-1",
+      delta: "think",
+    }]);
+    assertEquals(encoder.encode({ type: "reasoning-end", id: "reasoning-1" }), [{
+      type: conversationRunEventTypes.reasoningMessageEnd,
+      messageId: "assistant-1",
+      contentId: "reasoning-1",
+    }]);
+  });
+
   it("encodes tool input availability with args when not previously streamed", () => {
     const encoder = new ConversationRunEventEncoder();
     assertEquals(

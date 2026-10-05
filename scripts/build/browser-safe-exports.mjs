@@ -17,6 +17,9 @@ export const BROWSER_SAFE_EXPORTS = [
   "./markdown",
   "./mdx",
   "./agent/identity",
+  // The Agent Events Protocol parser and schema-derived contract. API, Code,
+  // and Studio consume it in browser bundles with an injected schema adapter.
+  "./events",
   // The typed run event contract. Studio reads a run's event log in the
   // browser bundle. The entry point is vocabulary and schemas only: no npm
   // dependency, no server module, and the single Node builtin it reaches

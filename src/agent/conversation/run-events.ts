@@ -205,6 +205,13 @@ export class ConversationRunEventEncoder {
     };
   }
 
+  private getReasoningMessagePayload(chunk: { id: string }) {
+    return {
+      messageId: this.activeMessageId ?? chunk.id,
+      contentId: chunk.id,
+    };
+  }
+
   // Tool call state is only needed until the call resolves; keeping it for the
   // whole run would grow unbounded over long agent sessions.
   private releaseToolCallState(toolCallId: string): void {
@@ -281,19 +288,22 @@ export class ConversationRunEventEncoder {
       case "reasoning-start":
         return [{
           type: conversationRunEventTypes.reasoningMessageStart,
-          messageId: chunk.id,
+          ...this.getReasoningMessagePayload(chunk),
           role: "assistant",
         }];
 
       case "reasoning-delta":
         return [{
           type: conversationRunEventTypes.reasoningMessageContent,
-          messageId: chunk.id,
+          ...this.getReasoningMessagePayload(chunk),
           delta: chunk.delta,
         }];
 
       case "reasoning-end":
-        return [{ type: conversationRunEventTypes.reasoningMessageEnd, messageId: chunk.id }];
+        return [{
+          type: conversationRunEventTypes.reasoningMessageEnd,
+          ...this.getReasoningMessagePayload(chunk),
+        }];
 
       case "tool-input-start":
         return [{

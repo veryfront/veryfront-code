@@ -74,6 +74,20 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
       "do not require a `service.ts`",
     ],
   },
+  "guides/agent-events.md": {
+    references: ["../api-reference/veryfront/events.md"],
+    snippets: [
+      "createAgentEventParser",
+      "createZodAdapter",
+      "parseAgentEvent",
+      "AgentEvent",
+      "toolCallId",
+      "childCanonicalRunId",
+      "AGENT_EVENT_SCHEMA_BY_TYPE",
+      "AGENT_EVENT_TYPES",
+      "deno task generate",
+    ],
+  },
   "guides/agents.md": {
     references: ["../api-reference/veryfront/agent.md"],
     snippets: [

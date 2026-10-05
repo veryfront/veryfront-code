@@ -499,6 +499,7 @@ export const getAgUiWireEventSchema = defineSchema((v) =>
       payload: v.object({
         id: v.string().optional(),
         messageId: v.string().min(1).optional(),
+        contentId: v.string().min(1).optional(),
         role: v.string().optional(),
       }),
     }),
@@ -507,12 +508,17 @@ export const getAgUiWireEventSchema = defineSchema((v) =>
       payload: v.object({
         id: v.string().optional(),
         messageId: v.string().min(1).optional(),
+        contentId: v.string().min(1).optional(),
         delta: v.string(),
       }),
     }),
     v.object({
       eventName: v.literal("ReasoningMessageEnd"),
-      payload: v.object({ id: v.string().optional(), messageId: v.string().min(1).optional() }),
+      payload: v.object({
+        id: v.string().optional(),
+        messageId: v.string().min(1).optional(),
+        contentId: v.string().min(1).optional(),
+      }),
     }),
     v.object({
       eventName: v.literal("StateDelta"),
@@ -634,11 +640,15 @@ export type AgUiWireEvent = InferSchema<ReturnType<typeof getAgUiWireEventSchema
 
 function getReasoningPartId(
   state: AgUiChatEventDecoderState,
-  payload: { id?: string; messageId?: string },
+  payload: { id?: string; messageId?: string; contentId?: string },
   phase: "start" | "content" | "end",
 ): string {
   if (typeof payload.id === "string" && payload.id.length > 0) {
     return payload.id;
+  }
+
+  if (typeof payload.contentId === "string" && payload.contentId.length > 0) {
+    return `agui-reasoning:${payload.contentId}`;
   }
 
   if (typeof payload.messageId === "string" && payload.messageId.length > 0) {
@@ -671,6 +681,10 @@ function hasStringField(payload: Record<string, unknown>, key: string): boolean 
 
 function hasOptionalStringField(payload: Record<string, unknown>, key: string): boolean {
   return payload[key] === undefined || typeof payload[key] === "string";
+}
+
+function hasOptionalNonEmptyStringField(payload: Record<string, unknown>, key: string): boolean {
+  return payload[key] === undefined || hasStringField(payload, key);
 }
 
 function isValidAgUiPayload(
@@ -761,12 +775,14 @@ function isValidAgUiPayload(
     case "ReasoningMessageEnd":
       return hasOptionalStringField(payload, "messageId") &&
         hasOptionalStringField(payload, "id") &&
+        hasOptionalNonEmptyStringField(payload, "contentId") &&
         hasOptionalStringField(payload, "role");
 
     case "ReasoningMessageContent":
       return typeof payload.delta === "string" &&
         hasOptionalStringField(payload, "messageId") &&
-        hasOptionalStringField(payload, "id");
+        hasOptionalStringField(payload, "id") &&
+        hasOptionalNonEmptyStringField(payload, "contentId");
 
     case "StateDelta":
       return "delta" in payload;

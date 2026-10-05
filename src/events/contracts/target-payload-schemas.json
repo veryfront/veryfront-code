@@ -1,0 +1,1540 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:veryfront:run-events:target:payloads:1",
+  "title": "Agent Events Protocol target payloads",
+  "description": "Working draft portable payload contracts. com.veryfront is a publisher namespace. Select exactly one root definition using envelope.type; data has no duplicate type. Existing source schemas remain migration evidence, not this target.",
+  "x-profile": "portable-public-core",
+  "x-event-count": 36,
+  "x-payload-selection": "Envelope type selects the x-event-type definition. The bundle itself is not a payload union.",
+  "x-excluded-private-events": [
+    "com.veryfront.run.authorization.sealed",
+    "com.veryfront.run.billing.mode.retained",
+    "com.veryfront.run.billing.usage.retained",
+    "com.veryfront.run.context.compacted",
+    "com.veryfront.run.dispatch.accepted",
+    "com.veryfront.run.dispatch.requested",
+    "com.veryfront.run.input.uploads.sealed",
+    "com.veryfront.run.provider.replay.boundary.recorded",
+    "com.veryfront.run.provider.replay.boundary.required",
+    "com.veryfront.run.provider.replay.checkpointed",
+    "com.veryfront.run.runtime.owner.changed",
+    "com.veryfront.run.runtime.retry.recorded",
+    "com.veryfront.run.tool.exposure.checkpointed"
+  ],
+  "x-excluded-synchronization-events": [
+    "com.veryfront.messages.snapshot.emitted",
+    "com.veryfront.shared-state.delta.emitted",
+    "com.veryfront.shared-state.snapshot.emitted"
+  ],
+  "$defs": {
+    "JsonValue": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "number"
+        },
+        {
+          "type": "string"
+        },
+        {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/JsonValue"
+          }
+        },
+        {
+          "$ref": "#/$defs/JsonObject"
+        }
+      ]
+    },
+    "JsonObject": {
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/JsonValue"
+      }
+    },
+    "Extensions": {
+      "type": "object",
+      "propertyNames": {
+        "type": "string",
+        "minLength": 1,
+        "format": "uri"
+      },
+      "additionalProperties": {
+        "$ref": "#/$defs/JsonObject"
+      },
+      "description": "Optional producer-owned absolute URI namespaces, such as https://example.test/extensions or urn:org.example:telemetry. Each value is a JSON object; core fields remain closed. Publishing extensions still requires authorization."
+    },
+    "ErrorInfo": {
+      "type": "object",
+      "properties": {
+        "code": {
+          "type": "string",
+          "minLength": 1
+        },
+        "message": {
+          "type": "string"
+        }
+      },
+      "required": [],
+      "additionalProperties": false,
+      "minProperties": 1
+    },
+    "ModelDescriptor": {
+      "type": "object",
+      "properties": {
+        "provider": {
+          "type": "string",
+          "minLength": 1
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "provider",
+        "name"
+      ],
+      "additionalProperties": false
+    },
+    "ModelInput": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "messages": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/JsonValue"
+              }
+            },
+            "tools": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/JsonValue"
+              }
+            },
+            "parameters": {
+              "$ref": "#/$defs/JsonObject"
+            }
+          },
+          "required": [
+            "messages"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "redacted": {
+              "const": true
+            }
+          },
+          "required": [
+            "redacted"
+          ],
+          "additionalProperties": false
+        }
+      ],
+      "description": "Full captured model input or an explicit authorized redaction. Redaction is not missing-input recovery."
+    },
+    "TokenUsage": {
+      "type": "object",
+      "properties": {
+        "input": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "output": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "total": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "cacheRead": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "cacheWrite": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "reasoning": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "input",
+        "output"
+      ],
+      "additionalProperties": false,
+      "description": "Input/output token counts are the base counters. cacheRead and cacheWrite are subsets of input; reasoning is a subset of output. These counters are not additive charges and must not be added to input/output or total. Optional total is actually reported, not synthesized. Cross-field subset bounds are semantic conformance checks.",
+      "x-semantic-constraints": [
+        "cacheRead <= input when present",
+        "cacheWrite <= input when present",
+        "reasoning <= output when present"
+      ]
+    },
+    "InputField": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "type": {
+          "type": "string",
+          "minLength": 1
+        },
+        "label": {
+          "type": "string",
+          "minLength": 1
+        },
+        "required": {
+          "type": "boolean"
+        },
+        "options": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/JsonValue"
+          }
+        }
+      },
+      "required": [
+        "name",
+        "type"
+      ],
+      "additionalProperties": false
+    },
+    "InputRequestSnapshot": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "status": {
+          "enum": [
+            "open",
+            "submitted",
+            "cancelled",
+            "expired"
+          ]
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1
+        },
+        "description": {
+          "type": "string"
+        },
+        "fields": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/InputField"
+          },
+          "minItems": 1
+        },
+        "schema": {
+          "$ref": "#/$defs/JsonObject"
+        },
+        "response": {
+          "$ref": "#/$defs/JsonValue"
+        },
+        "expiresAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "toolCallId": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Exact logical tool-call occurrence that created the request, when known. Immutable; provider-local IDs do not establish this relation."
+        }
+      },
+      "required": [
+        "id",
+        "status"
+      ],
+      "additionalProperties": false
+    },
+    "InputRequestReference": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "uri": {
+          "type": "string",
+          "format": "uri"
+        },
+        "toolCallId": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Exact logical tool-call occurrence that created the request, when known. Immutable; provider-local IDs do not establish this relation."
+        }
+      },
+      "required": [
+        "id",
+        "uri"
+      ],
+      "additionalProperties": false
+    },
+    "InputRequestChanges": {
+      "type": "object",
+      "properties": {
+        "status": {
+          "enum": [
+            "open",
+            "submitted",
+            "cancelled",
+            "expired"
+          ]
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1
+        },
+        "description": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "fields": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/InputField"
+          },
+          "minItems": 1
+        },
+        "schema": {
+          "$ref": "#/$defs/JsonObject"
+        },
+        "response": {
+          "$ref": "#/$defs/JsonValue"
+        },
+        "expiresAt": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time"
+        }
+      },
+      "required": [],
+      "additionalProperties": false,
+      "minProperties": 1
+    },
+    "ChildRun": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "status": {
+          "enum": [
+            "queued",
+            "running",
+            "waiting",
+            "succeeded",
+            "failed",
+            "cancelled",
+            "unknown"
+          ]
+        },
+        "kind": {
+          "type": "string",
+          "minLength": 1
+        },
+        "conversationId": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "id",
+        "status"
+      ],
+      "additionalProperties": false
+    },
+    "RunRequested": {
+      "type": "object",
+      "properties": {
+        "extensions": {
+          "$ref": "#/$defs/Extensions"
+        }
+      },
+      "required": [],
+      "additionalProperties": false,
+      "title": "com.veryfront.run.requested",
+      "x-event-type": "com.veryfront.run.requested",
+      "x-envelope-required": [
+        "runid"
+      ],
+      "x-semantics": "Owning run lifecycle fact. The envelope runid is authoritative. No execution snapshot or internal runtime protocol is required.",
+      "x-data-omission": "Only declared optional fields may be omitted. Unknown required evidence is not defaulted; redaction alternatives, where present, are explicit. This is not a type-only fallback for malformed source data."
+    },
+    "RunEnqueued": {
+      "type": "object",
+      "properties": {
+        "extensions": {
+          "$ref": "#/$defs/Extensions"
+        }
+      },
+      "required": [],
+      "additionalProperties": false,
+      "title": "com.veryfront.run.enqueued",
+      "x-event-type": "com.veryfront.run.enqueued",
+      "x-envelope-required": [
+        "runid"
+      ],
+      "x-semantics": "Owning run lifecycle fact. The envelope runid is authoritative. No execution snapshot or internal runtime protocol is required.",
+      "x-data-omission": "Only declared optional fields may be omitted. Unknown required evidence is not defaulted; redaction alternatives, where present, are explicit. This is not a type-only fallback for malformed source data."
+    },
+    "RunStarted": {
+      "type": "object",
+      "properties": {
+        "extensions": {
+          "$ref": "#/$defs/Extensions"
+        }
+      },
+      "required": [],
+      "additionalProperties": false,
+      "title": "com.veryfront.run.started",
+      "x-event-type": "com.veryfront.run.started",
+      "x-envelope-required": [
+        "runid"
+      ],
+      "x-semantics": "Owning run lifecycle fact. The envelope runid is authoritative. No execution snapshot or internal runtime protocol is required.",
+      "x-data-omission": "Only declared optional fields may be omitted. Unknown required evidence is not defaulted; redaction alternatives, where present, are explicit. This is not a type-only fallback for malformed source data."
+    },
+    "RunSucceeded": {
+      "type": "object",
+      "properties": {
+        "extensions": {
+          "$ref": "#/$defs/Extensions"
+        }
+      },
+      "required": [],
+      "additionalProperties": false,
+      "title": "com.veryfront.run.succeeded",
+      "x-event-type": "com.veryfront.run.succeeded",
+      "x-envelope-required": [
+        "runid"
+      ],
+      "x-semantics": "Owning run lifecycle fact. The envelope runid is authoritative. No execution snapshot or internal runtime protocol is required.",
+      "x-data-omission": "Only declared optional fields may be omitted. Unknown required evidence is not defaulted; redaction alternatives, where present, are explicit. This is not a type-only fallback for malformed source data."
+    },
+    "RunFailed": {
+      "type": "object",
+      "properties": {
+        "error": {
+          "$ref": "#/$defs/ErrorInfo"
+        },
+        "extensions": {
+          "$ref": "#/$defs/Extensions"
+        }
+      },
+      "required": [],
+      "additionalProperties": false,
+      "title": "com.veryfront.run.failed",
+      "x-event-type": "com.veryfront.run.failed",
+      "x-envelope-required": [
+        "runid"
+      ],
+      "x-semantics": "Owning failed run transition; optional error details do not classify an unrelated transport or delivery error.",
+      "x-data-omission": "Only declared optional fields may be omitted. Unknown required evidence is not defaulted; redaction alternatives, where present, are explicit. This is not a type-only fallback for malformed source data."
+    },
+    "RunCancelled": {
+      "type": "object",
+      "properties": {
+        "reason": {
+          "type": "string",
+          "minLength": 1
+        },
+        "extensions": {
+          "$ref": "#/$defs/Extensions"
+        }
+      },
+      "required": [],
+      "additionalProperties": false,
+      "title": "com.veryfront.run.cancelled",
+      "x-event-type": "com.veryfront.run.cancelled",
+      "x-envelope-required": [
+        "runid"
+      ],
+      "x-semantics": "Owning cancelled run transition. A cancellation reason is optional and is not synthesized from every run error.",
+      "x-data-omission": "Only declared optional fields may be omitted. Unknown required evidence is not defaulted; redaction alternatives, where present, are explicit. This is not a type-only fallback for malformed source data."
+    },
+    "RunLogCaptured": {
+      "type": "object",
+      "properties": {
+        "text": {
+          "type": "string"
+        },
+        "extensions": {
+          "$ref": "#/$defs/Extensions"
+        }
+      },
+      "required": [
+        "text"
+      ],
+      "additionalProperties": false,
+      "title": "com.veryfront.run.log.captured",
+      "x-event-type": "com.veryfront.run.log.captured",
+      "x-envelope-required": [
+        "runid"
+      ],
+      "x-semantics": "Captured log string. No line splitting, severity or timestamp is invented.",
+      "x-data-omission": "Only declared optional fields may be omitted. Unknown required evidence is not defaulted; redaction alternatives, where present, are explicit. This is not a type-only fallback for malformed source data."
+    },
+    "ChildRunReported": {
+      "type": "object",
+      "properties": {
+        "childRun": {
+          "$ref": "#/$defs/ChildRun"
+        },
+        "toolCallId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "extensions": {
+          "$ref": "#/$defs/Extensions"
+        }
+      },
+      "required": [
+        "childRun"
+      ],
+      "additionalProperties": false,
+      "title": "com.veryfront.child-run.reported",
+      "x-event-type": "com.veryfront.child-run.reported",
+      "x-envelope-required": [
+        "runid"
+      ],
+      "x-semantics": "Reports a real association to the recipient run named by envelope runid. It does not create a run or synthesize creator/parent ancestry. unknown must be explicitly reported; missing/unrecognized status is not defaulted.",
+      "x-data-omission": "Only declared optional fields may be omitted. Unknown required evidence is not defaulted; redaction alternatives, where present, are explicit. This is not a type-only fallback for malformed source data."
+    },
+    "StepStarted": {
+      "type": "object",
+      "properties": {
+        "stepId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "extensions": {
+          "$ref": "#/$defs/Extensions"
+        }
+      },
+      "required": [
+        "stepId"
+      ],
+      "additionalProperties": false,
+      "title": "com.veryfront.step.started",
+      "x-event-type": "com.veryfront.step.started",
+      "x-envelope-required": [
+        "runid"
+      ],
+      "x-semantics": "Exact producer-owned step occurrence scoped to the envelope runid. Outcome belongs to the owning step transition; ended does not assert a classified outcome.",
+      "x-data-omission": "Only declared optional fields may be omitted. Unknown required evidence is not defaulted; redaction alternatives, where present, are explicit. This is not a type-only fallback for malformed source data."
+    },
+    "StepSucceeded": {
+      "type": "object",
+      "properties": {
+        "stepId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "extensions": {
+          "$ref": "#/$defs/Extensions"
+        }
+      },
+      "required": [
+        "stepId"
+      ],
+      "additionalProperties": false,
+      "title": "com.veryfront.step.succeeded",
+      "x-event-type": "com.veryfront.step.succeeded",
+      "x-envelope-required": [
+        "runid"
+      ],
+      "x-semantics": "Exact producer-owned step occurrence scoped to the envelope runid. Outcome belongs to the owning step transition; ended does not assert a classified outcome.",
+      "x-data-omission": "Only declared optional fields may be omitted. Unknown required evidence is not defaulted; redaction alternatives, where present, are explicit. This is not a type-only fallback for malformed source data."
+    },
+    "StepFailed": {
+      "type": "object",
+      "properties": {
+        "stepId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "error": {
+          "$ref": "#/$defs/ErrorInfo"
+        },
+        "extensions": {
+          "$ref": "#/$defs/Extensions"
+        }
+      },
+      "required": [
+        "stepId"
+      ],
+      "additionalProperties": false,
+      "title": "com.veryfront.step.failed",
+      "x-event-type": "com.veryfront.step.failed",
+      "x-envelope-required": [
+        "runid"
+      ],
+      "x-semantics": "Exact producer-owned step occurrence scoped to the envelope runid. Outcome belongs to the owning step transition; ended does not assert a classified outcome.",
+      "x-data-omission": "Only declared optional fields may be omitted. Unknown required evidence is not defaulted; redaction alternatives, where present, are explicit. This is not a type-only fallback for malformed source data."
+    },
+    "StepCancelled": {
+      "type": "object",
+      "properties": {
+        "stepId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1
+        },
+        "extensions": {
+          "$ref": "#/$defs/Extensions"
+        }
+      },
+      "required": [
+        "stepId"
+      ],
+      "additionalProperties": false,
+      "title": "com.veryfront.step.cancelled",
+      "x-event-type": "com.veryfront.step.cancelled",
+      "x-envelope-required": [
+        "runid"
+      ],
+      "x-semantics": "Exact producer-owned step occurrence scoped to the envelope runid. Outcome belongs to the owning step transition; ended does not assert a classified outcome.",
+      "x-data-omission": "Only declared optional fields may be omitted. Unknown required evidence is not defaulted; redaction alternatives, where present, are explicit. This is not a type-only fallback for malformed source data."
+    },
+    "StepEnded": {
+      "type": "object",
+      "properties": {
+        "stepId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "extensions": {
+          "$ref": "#/$defs/Extensions"
+        }
+      },
+      "required": [
+        "stepId"
+      ],
+      "additionalProperties": false,
+      "title": "com.veryfront.step.ended",
+      "x-event-type": "com.veryfront.step.ended",
+      "x-envelope-required": [
+        "runid"
+      ],
+      "x-semantics": "Exact producer-owned step occurrence scoped to the envelope runid. Outcome belongs to the owning step transition; ended does not assert a classified outcome.",
+      "x-data-omission": "Only declared optional fields may be omitted. Unknown required evidence is not defaulted; redaction alternatives, where present, are explicit. This is not a type-only fallback for malformed source data."
+    },
+    "ToolCallStarted": {
+      "type": "object",
+      "properties": {
+        "toolCallId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "messageId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "input": {
+          "$ref": "#/$defs/JsonValue"
+        },
+        "extensions": {
+          "$ref": "#/$defs/Extensions"
+        },
+        "toolName": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "toolCallId",
+        "toolName"
+      ],
+      "additionalProperties": false,
+      "title": "com.veryfront.tool-call.started",
+      "x-event-type": "com.veryfront.tool-call.started",
+      "x-envelope-required": [],
+      "x-semantics": "Introduces an exact public tool-call occurrence. Introduction and input assembly do not prove tool execution.",
+      "x-data-omission": "Only declared optional fields may be omitted. Unknown required evidence is not defaulted; redaction alternatives, where present, are explicit. This is not a type-only fallback for malformed source data."
+    },
+    "ToolCallArgumentsDeltaEmitted": {
+      "type": "object",
+      "properties": {
+        "toolCallId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "delta": {
+          "type": "string"
+        },
+        "extensions": {
+          "$ref": "#/$defs/Extensions"
+        }
+      },
+      "required": [
+        "toolCallId",
+        "delta"
+      ],
+      "additionalProperties": false,
+      "title": "com.veryfront.tool-call.arguments.delta.emitted",
+      "x-event-type": "com.veryfront.tool-call.arguments.delta.emitted",
+      "x-envelope-required": [],
+      "x-semantics": "Argument string fragment for the same public toolCallId. It is not a tool output or execution outcome.",
+      "x-data-omission": "Only declared optional fields may be omitted. Unknown required evidence is not defaulted; redaction alternatives, where present, are explicit. This is not a type-only fallback for malformed source data."
+    },
+    "ToolCallArgumentsEnded": {
+      "type": "object",
+      "properties": {
+        "toolCallId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "input": {
+          "$ref": "#/$defs/JsonValue"
+        },
+        "extensions": {
+          "$ref": "#/$defs/Extensions"
+        }
+      },
+      "required": [
+        "toolCallId"
+      ],
+      "additionalProperties": false,
+      "title": "com.veryfront.tool-call.arguments.ended",
+      "x-event-type": "com.veryfront.tool-call.arguments.ended",
+      "x-envelope-required": [],
+      "x-semantics": "Argument assembly ended. Optional input is included only when the completed value is known; no execution completion is inferred.",
+      "x-data-omission": "Only declared optional fields may be omitted. Unknown required evidence is not defaulted; redaction alternatives, where present, are explicit. This is not a type-only fallback for malformed source data."
+    },
+    "ToolCallRefused": {
+      "type": "object",
+      "properties": {
+        "toolCallId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "enum": [
+                "missing_integration_connection",
+                "permission_denied",
+                "budget_exhausted",
+                "invalid_input"
+              ]
+            },
+            {
+              "type": "string",
+              "minLength": 1,
+              "format": "uri"
+            }
+          ],
+          "description": "Reported classified refusal code. Common codes or an absolute URI identifying a producer-defined code; arbitrary error text is not a code."
+        },
+        "integration": {
+          "type": "string",
+          "minLength": 1
+        },
+        "message": {
+          "type": "string",
+          "minLength": 1
+        },
+        "extensions": {
+          "$ref": "#/$defs/Extensions"
+        },
+        "toolName": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "toolCallId",
+        "reason"
+      ],
+      "additionalProperties": false,
+      "title": "com.veryfront.tool-call.refused",
+      "x-event-type": "com.veryfront.tool-call.refused",
+      "x-envelope-required": [],
+      "x-semantics": "Owning executor refused this exact call for the reported classified reason. It does not prove a provider attempt, a generic call end or run failure.",
+      "x-data-omission": "Only declared optional fields may be omitted. Unknown required evidence is not defaulted; redaction alternatives, where present, are explicit. This is not a type-only fallback for malformed source data."
+    },
+    "ToolCallStatusReported": {
+      "type": "object",
+      "properties": {
+        "toolCallId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "status": {
+          "enum": [
+            "introduced",
+            "argumentsReady",
+            "queued",
+            "running",
+            "waiting",
+            "succeeded",
+            "failed",
+            "cancelled",
+            "refused",
+            "unknown"
+          ]
+        },
+        "message": {
+          "type": "string",
+          "minLength": 1
+        },
+        "extensions": {
+          "$ref": "#/$defs/Extensions"
+        }
+      },
+      "required": [
+        "toolCallId",
+        "status"
+      ],
+      "additionalProperties": false,
+      "title": "com.veryfront.tool-call.status.reported",
+      "x-event-type": "com.veryfront.tool-call.status.reported",
+      "x-envelope-required": [],
+      "x-semantics": "Explicit reported status for the exact call. Terminal execution statuses require owning execution evidence; unknown is never a default for missing/unrecognized source text.",
+      "x-data-omission": "Only declared optional fields may be omitted. Unknown required evidence is not defaulted; redaction alternatives, where present, are explicit. This is not a type-only fallback for malformed source data."
+    },
+    "ToolCallResultRecorded": {
+      "type": "object",
+      "properties": {
+        "toolCallId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "output": {
+          "$ref": "#/$defs/JsonValue"
+        },
+        "outputRedacted": {
+          "const": true
+        },
+        "isError": {
+          "type": "boolean"
+        },
+        "extensions": {
+          "$ref": "#/$defs/Extensions"
+        }
+      },
+      "required": [
+        "toolCallId"
+      ],
+      "additionalProperties": false,
+      "title": "com.veryfront.tool-call.result.recorded",
+      "x-event-type": "com.veryfront.tool-call.result.recorded",
+      "x-envelope-required": [],
+      "x-semantics": "Exact call result recorded. Result recording/submission is not proof of execution success or receiver delivery. isError is included only when explicitly reported; unknown is omitted.",
+      "x-data-omission": "Only declared optional fields may be omitted. Unknown required evidence is not defaulted; redaction alternatives, where present, are explicit. This is not a type-only fallback for malformed source data.",
+      "oneOf": [
+        {
+          "required": [
+            "output"
+          ],
+          "not": {
+            "required": [
+              "outputRedacted"
+            ]
+          }
+        },
+        {
+          "required": [
+            "outputRedacted"
+          ],
+          "not": {
+            "required": [
+              "output"
+            ]
+          }
+        }
+      ]
+    },
+    "ToolCallResultSubmitted": {
+      "type": "object",
+      "properties": {
+        "toolCallId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "output": {
+          "$ref": "#/$defs/JsonValue"
+        },
+        "outputRedacted": {
+          "const": true
+        },
+        "isError": {
+          "type": "boolean"
+        },
+        "extensions": {
+          "$ref": "#/$defs/Extensions"
+        }
+      },
+      "required": [
+        "toolCallId"
+      ],
+      "additionalProperties": false,
+      "title": "com.veryfront.tool-call.result.submitted",
+      "x-event-type": "com.veryfront.tool-call.result.submitted",
+      "x-envelope-required": [],
+      "x-semantics": "Exact call result submitted. Result recording/submission is not proof of execution success or receiver delivery. isError is included only when explicitly reported; unknown is omitted.",
+      "x-data-omission": "Only declared optional fields may be omitted. Unknown required evidence is not defaulted; redaction alternatives, where present, are explicit. This is not a type-only fallback for malformed source data.",
+      "oneOf": [
+        {
+          "required": [
+            "output"
+          ],
+          "not": {
+            "required": [
+              "outputRedacted"
+            ]
+          }
+        },
+        {
+          "required": [
+            "outputRedacted"
+          ],
+          "not": {
+            "required": [
+              "output"
+            ]
+          }
+        }
+      ]
+    },
+    "ToolCallResultDeliveryFailed": {
+      "type": "object",
+      "properties": {
+        "toolCallId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "error": {
+          "$ref": "#/$defs/ErrorInfo"
+        },
+        "extensions": {
+          "$ref": "#/$defs/Extensions"
+        }
+      },
+      "required": [
+        "toolCallId"
+      ],
+      "additionalProperties": false,
+      "title": "com.veryfront.tool-call.result.delivery.failed",
+      "x-event-type": "com.veryfront.tool-call.result.delivery.failed",
+      "x-envelope-required": [],
+      "x-semantics": "The result delivery failed for this exact call; transport/receiver delivery failure does not establish tool execution failure or run failure.",
+      "x-data-omission": "Only declared optional fields may be omitted. Unknown required evidence is not defaulted; redaction alternatives, where present, are explicit. This is not a type-only fallback for malformed source data."
+    },
+    "ModelCallInputCaptured": {
+      "type": "object",
+      "properties": {
+        "model": {
+          "$ref": "#/$defs/ModelDescriptor"
+        },
+        "input": {
+          "$ref": "#/$defs/ModelInput"
+        },
+        "extensions": {
+          "$ref": "#/$defs/Extensions"
+        }
+      },
+      "required": [
+        "model",
+        "input"
+      ],
+      "additionalProperties": false,
+      "title": "com.veryfront.model-call.input.captured",
+      "x-event-type": "com.veryfront.model-call.input.captured",
+      "x-envelope-required": [
+        "modelcallid"
+      ],
+      "x-semantics": "Captured model input linked by envelope modelcallid; attemptid is included only if the exact provider attempt is known. Provider-native input JSON is intentional data, not an AG-UI or Veryfront wrapper.",
+      "x-data-omission": "Only declared optional fields may be omitted. Unknown required evidence is not defaulted; redaction alternatives, where present, are explicit. This is not a type-only fallback for malformed source data."
+    },
+    "ModelCallUsageRecorded": {
+      "type": "object",
+      "properties": {
+        "model": {
+          "$ref": "#/$defs/ModelDescriptor"
+        },
+        "tokens": {
+          "$ref": "#/$defs/TokenUsage"
+        },
+        "durationMs": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Measured wall time for the stated scope: attempt dispatch to final response/error, or first call dispatch to final completion including retries and waits. Excludes preparation; omit when boundaries were not measured."
+        },
+        "extensions": {
+          "$ref": "#/$defs/Extensions"
+        },
+        "scope": {
+          "enum": [
+            "attempt",
+            "call"
+          ],
+          "description": "Accounting scope. attempt requires exact envelope attemptid; call is an actual call aggregate and omits attemptid. Missing identity never selects a scope."
+        }
+      },
+      "required": [
+        "model",
+        "tokens",
+        "scope"
+      ],
+      "additionalProperties": false,
+      "title": "com.veryfront.model-call.usage.recorded",
+      "x-event-type": "com.veryfront.model-call.usage.recorded",
+      "x-envelope-required": [
+        "modelcallid"
+      ],
+      "x-semantics": "Reported token usage for an actual known attempt or call accounting bucket, selected by scope and linked by envelope modelcallid. Attempt scope additionally requires exact attemptid. Call aggregates and their constituent attempts are alternative accounting views and must not be added together. Unknown bucket or required counters prevents canonical publication; no provider attempt, call aggregate, total or billing value is invented.",
+      "x-data-omission": "Only declared optional fields may be omitted. Unknown required evidence is not defaulted; redaction alternatives, where present, are explicit. This is not a type-only fallback for malformed source data.",
+      "x-attempt-scope-envelope-required": [
+        "attemptid"
+      ]
+    },
+    "InputRequestCreated": {
+      "type": "object",
+      "properties": {
+        "inputRequest": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/InputRequestSnapshot"
+            },
+            {
+              "$ref": "#/$defs/InputRequestReference"
+            }
+          ]
+        },
+        "extensions": {
+          "$ref": "#/$defs/Extensions"
+        }
+      },
+      "required": [
+        "inputRequest"
+      ],
+      "additionalProperties": false,
+      "title": "com.veryfront.input-request.created",
+      "x-event-type": "com.veryfront.input-request.created",
+      "x-envelope-required": [],
+      "x-semantics": "Typed authorized snapshot or resolvable reference. Created snapshots show open initial state. Updated snapshots show authoritative after-state; updated references require a nonempty typed change set. Optional details may be absent/redacted, but ID and typed state/reference remain meaningful.",
+      "x-data-omission": "Only declared optional fields may be omitted. Unknown required evidence is not defaulted; redaction alternatives, where present, are explicit. This is not a type-only fallback for malformed source data.",
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "inputRequest": {
+                "required": [
+                  "status"
+                ]
+              }
+            },
+            "required": [
+              "inputRequest"
+            ]
+          },
+          "then": {
+            "properties": {
+              "inputRequest": {
+                "properties": {
+                  "status": {
+                    "const": "open"
+                  }
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "InputRequestUpdated": {
+      "type": "object",
+      "properties": {
+        "inputRequest": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/InputRequestSnapshot"
+            },
+            {
+              "$ref": "#/$defs/InputRequestReference"
+            }
+          ]
+        },
+        "changes": {
+          "$ref": "#/$defs/InputRequestChanges"
+        },
+        "extensions": {
+          "$ref": "#/$defs/Extensions"
+        }
+      },
+      "required": [
+        "inputRequest"
+      ],
+      "additionalProperties": false,
+      "title": "com.veryfront.input-request.updated",
+      "x-event-type": "com.veryfront.input-request.updated",
+      "x-envelope-required": [],
+      "x-semantics": "Typed authorized snapshot or resolvable reference. Updated snapshots are the whole authoritative after-state and prohibit changes. Updated references require a nonempty typed change set. Optional details may be absent/redacted, but ID and typed state/reference remain meaningful.",
+      "x-data-omission": "Only declared optional fields may be omitted. Unknown required evidence is not defaulted; redaction alternatives, where present, are explicit. This is not a type-only fallback for malformed source data.",
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "inputRequest": {
+                "required": [
+                  "uri"
+                ]
+              }
+            },
+            "required": [
+              "inputRequest"
+            ]
+          },
+          "then": {
+            "required": [
+              "changes"
+            ]
+          },
+          "else": {
+            "not": {
+              "required": [
+                "changes"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "MessageTextStarted": {
+      "type": "object",
+      "properties": {
+        "messageId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "contentId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "role": {
+          "enum": [
+            "assistant",
+            "user",
+            "system",
+            "developer",
+            "tool"
+          ]
+        },
+        "extensions": {
+          "$ref": "#/$defs/Extensions"
+        }
+      },
+      "required": [
+        "messageId",
+        "contentId"
+      ],
+      "additionalProperties": false,
+      "title": "com.veryfront.message.text.started",
+      "x-event-type": "com.veryfront.message.text.started",
+      "x-envelope-required": [],
+      "x-semantics": "Exact message/content segment identity. Reasoning content is only explicitly publishable text; provider-native signed/redacted replay material is not rendered or reclassified. Redacted deltas retain identity without inventing text.",
+      "x-data-omission": "Only declared optional fields may be omitted. Unknown required evidence is not defaulted; redaction alternatives, where present, are explicit. This is not a type-only fallback for malformed source data."
+    },
+    "MessageTextDeltaEmitted": {
+      "type": "object",
+      "properties": {
+        "messageId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "contentId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "delta": {
+          "type": "string"
+        },
+        "contentRedacted": {
+          "const": true
+        },
+        "extensions": {
+          "$ref": "#/$defs/Extensions"
+        }
+      },
+      "required": [
+        "messageId",
+        "contentId"
+      ],
+      "additionalProperties": false,
+      "title": "com.veryfront.message.text.delta.emitted",
+      "x-event-type": "com.veryfront.message.text.delta.emitted",
+      "x-envelope-required": [],
+      "x-semantics": "Exact message/content segment identity. Reasoning content is only explicitly publishable text; provider-native signed/redacted replay material is not rendered or reclassified. Redacted deltas retain identity without inventing text.",
+      "x-data-omission": "Only declared optional fields may be omitted. Unknown required evidence is not defaulted; redaction alternatives, where present, are explicit. This is not a type-only fallback for malformed source data.",
+      "oneOf": [
+        {
+          "required": [
+            "delta"
+          ],
+          "not": {
+            "required": [
+              "contentRedacted"
+            ]
+          }
+        },
+        {
+          "required": [
+            "contentRedacted"
+          ],
+          "not": {
+            "required": [
+              "delta"
+            ]
+          }
+        }
+      ]
+    },
+    "MessageTextEnded": {
+      "type": "object",
+      "properties": {
+        "messageId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "contentId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "extensions": {
+          "$ref": "#/$defs/Extensions"
+        }
+      },
+      "required": [
+        "messageId",
+        "contentId"
+      ],
+      "additionalProperties": false,
+      "title": "com.veryfront.message.text.ended",
+      "x-event-type": "com.veryfront.message.text.ended",
+      "x-envelope-required": [],
+      "x-semantics": "Exact message/content segment identity. Reasoning content is only explicitly publishable text; provider-native signed/redacted replay material is not rendered or reclassified. Redacted deltas retain identity without inventing text.",
+      "x-data-omission": "Only declared optional fields may be omitted. Unknown required evidence is not defaulted; redaction alternatives, where present, are explicit. This is not a type-only fallback for malformed source data."
+    },
+    "MessageReasoningStarted": {
+      "type": "object",
+      "properties": {
+        "messageId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "contentId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "extensions": {
+          "$ref": "#/$defs/Extensions"
+        }
+      },
+      "required": [
+        "messageId",
+        "contentId"
+      ],
+      "additionalProperties": false,
+      "title": "com.veryfront.message.reasoning.started",
+      "x-event-type": "com.veryfront.message.reasoning.started",
+      "x-envelope-required": [],
+      "x-semantics": "Exact message/content segment identity. Reasoning content is only explicitly publishable text; provider-native signed/redacted replay material is not rendered or reclassified. Redacted deltas retain identity without inventing text.",
+      "x-data-omission": "Only declared optional fields may be omitted. Unknown required evidence is not defaulted; redaction alternatives, where present, are explicit. This is not a type-only fallback for malformed source data."
+    },
+    "MessageReasoningDeltaEmitted": {
+      "type": "object",
+      "properties": {
+        "messageId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "contentId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "delta": {
+          "type": "string"
+        },
+        "contentRedacted": {
+          "const": true
+        },
+        "extensions": {
+          "$ref": "#/$defs/Extensions"
+        }
+      },
+      "required": [
+        "messageId",
+        "contentId"
+      ],
+      "additionalProperties": false,
+      "title": "com.veryfront.message.reasoning.delta.emitted",
+      "x-event-type": "com.veryfront.message.reasoning.delta.emitted",
+      "x-envelope-required": [],
+      "x-semantics": "Exact message/content segment identity. Reasoning content is only explicitly publishable text; provider-native signed/redacted replay material is not rendered or reclassified. Redacted deltas retain identity without inventing text.",
+      "x-data-omission": "Only declared optional fields may be omitted. Unknown required evidence is not defaulted; redaction alternatives, where present, are explicit. This is not a type-only fallback for malformed source data.",
+      "oneOf": [
+        {
+          "required": [
+            "delta"
+          ],
+          "not": {
+            "required": [
+              "contentRedacted"
+            ]
+          }
+        },
+        {
+          "required": [
+            "contentRedacted"
+          ],
+          "not": {
+            "required": [
+              "delta"
+            ]
+          }
+        }
+      ]
+    },
+    "MessageReasoningEnded": {
+      "type": "object",
+      "properties": {
+        "messageId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "contentId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "extensions": {
+          "$ref": "#/$defs/Extensions"
+        }
+      },
+      "required": [
+        "messageId",
+        "contentId"
+      ],
+      "additionalProperties": false,
+      "title": "com.veryfront.message.reasoning.ended",
+      "x-event-type": "com.veryfront.message.reasoning.ended",
+      "x-envelope-required": [],
+      "x-semantics": "Exact message/content segment identity. Reasoning content is only explicitly publishable text; provider-native signed/redacted replay material is not rendered or reclassified. Redacted deltas retain identity without inventing text.",
+      "x-data-omission": "Only declared optional fields may be omitted. Unknown required evidence is not defaulted; redaction alternatives, where present, are explicit. This is not a type-only fallback for malformed source data."
+    },
+    "MessageUrlReferenced": {
+      "type": "object",
+      "properties": {
+        "messageId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "contentId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sourceId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "url": {
+          "type": "string",
+          "format": "uri"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1
+        },
+        "extensions": {
+          "$ref": "#/$defs/Extensions"
+        }
+      },
+      "required": [
+        "messageId",
+        "sourceId",
+        "url"
+      ],
+      "additionalProperties": false,
+      "title": "com.veryfront.message.url.referenced",
+      "x-event-type": "com.veryfront.message.url.referenced",
+      "x-envelope-required": [],
+      "x-semantics": "Reference belongs to this exact message. Optional contentId scopes the segment; sourceId/URL cannot substitute for message ownership.",
+      "x-data-omission": "Only declared optional fields may be omitted. Unknown required evidence is not defaulted; redaction alternatives, where present, are explicit. This is not a type-only fallback for malformed source data."
+    },
+    "MessageDocumentReferenced": {
+      "type": "object",
+      "properties": {
+        "messageId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "contentId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sourceId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "mediaType": {
+          "type": "string",
+          "minLength": 1
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1
+        },
+        "filename": {
+          "type": "string",
+          "minLength": 1
+        },
+        "extensions": {
+          "$ref": "#/$defs/Extensions"
+        }
+      },
+      "required": [
+        "messageId",
+        "sourceId",
+        "mediaType"
+      ],
+      "additionalProperties": false,
+      "title": "com.veryfront.message.document.referenced",
+      "x-event-type": "com.veryfront.message.document.referenced",
+      "x-envelope-required": [],
+      "x-semantics": "Document reference belongs to this exact message. Optional contentId scopes the segment; source identity is separate from message identity.",
+      "x-data-omission": "Only declared optional fields may be omitted. Unknown required evidence is not defaulted; redaction alternatives, where present, are explicit. This is not a type-only fallback for malformed source data."
+    },
+    "MessageFileAttached": {
+      "type": "object",
+      "properties": {
+        "messageId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "contentId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "mediaType": {
+          "type": "string",
+          "minLength": 1
+        },
+        "url": {
+          "type": "string",
+          "format": "uri"
+        },
+        "filename": {
+          "type": "string",
+          "minLength": 1
+        },
+        "extensions": {
+          "$ref": "#/$defs/Extensions"
+        }
+      },
+      "required": [
+        "messageId",
+        "mediaType"
+      ],
+      "additionalProperties": false,
+      "title": "com.veryfront.message.file.attached",
+      "x-event-type": "com.veryfront.message.file.attached",
+      "x-envelope-required": [],
+      "x-semantics": "Attachment descriptor belongs to this exact message. Optional contentId scopes the segment. Omitted URL/filename may reflect authorized descriptor-only disclosure; no missing locator is fabricated.",
+      "x-data-omission": "Only declared optional fields may be omitted. Unknown required evidence is not defaulted; redaction alternatives, where present, are explicit. This is not a type-only fallback for malformed source data."
+    },
+    "StreamHeartbeatEmitted": {
+      "type": "object",
+      "properties": {
+        "extensions": {
+          "$ref": "#/$defs/Extensions"
+        }
+      },
+      "required": [],
+      "additionalProperties": false,
+      "title": "com.veryfront.stream.heartbeat.emitted",
+      "x-event-type": "com.veryfront.stream.heartbeat.emitted",
+      "x-envelope-required": [],
+      "x-semantics": "Optional liveness notification. It carries no execution transition, durable cursor, provider attempt or completion acknowledgement.",
+      "x-data-omission": "Only declared optional fields may be omitted. Unknown required evidence is not defaulted; redaction alternatives, where present, are explicit. This is not a type-only fallback for malformed source data."
+    },
+    "StreamClosed": {
+      "type": "object",
+      "properties": {
+        "reason": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$"
+            },
+            {
+              "type": "string",
+              "minLength": 1,
+              "format": "uri"
+            }
+          ],
+          "description": "Nonempty closure reason code. integration_auth_required is valid only when that actual stream closure is observed; waiting alone does not establish closure."
+        },
+        "extensions": {
+          "$ref": "#/$defs/Extensions"
+        }
+      },
+      "required": [
+        "reason"
+      ],
+      "additionalProperties": false,
+      "title": "com.veryfront.stream.closed",
+      "x-event-type": "com.veryfront.stream.closed",
+      "x-envelope-required": [],
+      "x-semantics": "Optional delivery notification that this stream was observed to close for the reported reason. It establishes no paused, cancelled, succeeded or failed execution outcome. Legacy run.paused or RUN_PARKED alone is insufficient source evidence.",
+      "x-data-omission": "Only declared optional fields may be omitted. Unknown required evidence is not defaulted; redaction alternatives, where present, are explicit. This is not a type-only fallback for malformed source data."
+    }
+  }
+}

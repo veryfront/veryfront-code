@@ -79,6 +79,14 @@ import { parseCliArgs } from "../../cli/shared/args.ts";
 import { AUTH_PRESETS } from "../../cli/scaffold/engine.ts";
 import { getTemplate } from "../../templates/index.ts";
 import { getVeryfrontCloudGatewayBaseUrl } from "#veryfront/provider/veryfront-cloud/shared.ts";
+import { createZodAdapter } from "../../extensions/ext-schema-zod/src/adapter.ts";
+import {
+  AGENT_EVENT_SCHEMA_BY_TYPE,
+  AGENT_EVENT_TARGET_PAYLOAD_EXAMPLES,
+  AGENT_EVENT_TYPES,
+  type AgentEvent,
+  createAgentEventParser,
+} from "../../src/events/index.ts";
 
 const EXISTING_GUIDE_EXAMPLE_SUITE = [
   "agents.md",
@@ -97,6 +105,7 @@ const EXISTING_GUIDE_EXAMPLE_SUITE = [
 ] as const;
 
 const THIS_GUIDE_EXAMPLE_SUITE = [
+  "agent-events.md",
   "agent-service-runtime.md",
   "ai-gateway-quickstart.md",
   "application-auth.md",
@@ -206,6 +215,57 @@ describe("Guide code example coverage", () => {
     const guideFiles = new Set(await guideFilesWithCodeFences());
     const stale = [...GUIDE_CODE_EXAMPLE_COVERAGE].filter((name) => !guideFiles.has(name));
     assertEquals(stale, []);
+  });
+});
+
+describe("Guide: agent-events.md", () => {
+  it("uses the public events parser and schema artifacts", () => {
+    const parser = createAgentEventParser(createZodAdapter());
+    const example = AGENT_EVENT_TARGET_PAYLOAD_EXAMPLES.examples.find((candidate) =>
+      candidate.eventType === "com.veryfront.run.started"
+    );
+
+    assertExists(example);
+    const event = parser.parseAgentEvent({
+      specversion: "1.0",
+      id: example.id,
+      source: "https://example.test/docs",
+      type: example.eventType,
+      datacontenttype: "application/json",
+      dataschema: example.schemaRef,
+      data: example.data,
+      runid: "run-docs",
+    });
+
+    assertEquals(event.type, "com.veryfront.run.started");
+    assertEquals(event.runid, "run-docs");
+    assertEquals(AGENT_EVENT_TYPES.length, 36);
+    assertEquals(AGENT_EVENT_SCHEMA_BY_TYPE[event.type], event.dataschema);
+  });
+
+  it("documents the discriminated AgentEvent payload shape", async () => {
+    const guide = await readGuide("agent-events.md");
+    const event: Extract<
+      AgentEvent,
+      { type: "com.veryfront.message.text.delta.emitted" }
+    > = {
+      specversion: "1.0",
+      id: "evt-docs-text",
+      source: "https://example.test/docs",
+      type: "com.veryfront.message.text.delta.emitted",
+      datacontenttype: "application/json",
+      dataschema: AGENT_EVENT_SCHEMA_BY_TYPE["com.veryfront.message.text.delta.emitted"],
+      data: {
+        messageId: "msg-docs",
+        contentId: "content-docs",
+        delta: "hello",
+      },
+      runid: "run-docs",
+    };
+
+    assertEquals(event.data.delta, "hello");
+    assertStringIncludes(guide, "contentRedacted");
+    assertStringIncludes(guide, "event.data.delta");
   });
 });
 

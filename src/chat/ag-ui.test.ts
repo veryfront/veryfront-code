@@ -457,6 +457,44 @@ describe("chat/ag-ui", () => {
     assertEquals(state.activeFallbackReasoningPartId, null);
   });
 
+  it("keeps reasoning content ids distinct within the same message", () => {
+    const state = createAgUiChatEventDecoderState();
+    const result = decodeAgUiSseChunk(
+      state,
+      [
+        "event: ReasoningMessageStart",
+        'data: {"messageId":"message-a","contentId":"reasoning-a"}',
+        "",
+        "event: ReasoningMessageContent",
+        'data: {"messageId":"message-a","contentId":"reasoning-a","delta":"First"}',
+        "",
+        "event: ReasoningMessageEnd",
+        'data: {"messageId":"message-a","contentId":"reasoning-a"}',
+        "",
+        "event: ReasoningMessageStart",
+        'data: {"messageId":"message-a","contentId":"reasoning-b"}',
+        "",
+        "event: ReasoningMessageContent",
+        'data: {"messageId":"message-a","contentId":"reasoning-b","delta":"Second"}',
+        "",
+        "event: ReasoningMessageEnd",
+        'data: {"messageId":"message-a","contentId":"reasoning-b"}',
+        "",
+        "",
+      ].join("\n"),
+    );
+
+    const chatEvents = result.events.flatMap((entry) => entry.chatEvents);
+    assertEquals(chatEvents, [
+      { type: "reasoning-start", id: "agui-reasoning:reasoning-a" },
+      { type: "reasoning-delta", id: "agui-reasoning:reasoning-a", delta: "First" },
+      { type: "reasoning-end", id: "agui-reasoning:reasoning-a" },
+      { type: "reasoning-start", id: "agui-reasoning:reasoning-b" },
+      { type: "reasoning-delta", id: "agui-reasoning:reasoning-b", delta: "Second" },
+      { type: "reasoning-end", id: "agui-reasoning:reasoning-b" },
+    ]);
+  });
+
   it("preserves non-renderable custom events as data chunks", () => {
     const state = createAgUiChatEventDecoderState();
     const result = decodeAgUiSseChunk(
@@ -1363,6 +1401,31 @@ describe("chat/ag-ui without a registered SchemaValidator", () => {
         [],
         "Custom without value must be rejected by the hand-rolled validator",
       );
+    } finally {
+      ensureTestSchemaValidator();
+    }
+  });
+
+  it("rejects invalid reasoning content ids through the hand-rolled validator", () => {
+    unregister("SchemaValidator");
+    try {
+      for (
+        const [eventName, extra] of [
+          ["ReasoningMessageStart", ""],
+          ["ReasoningMessageContent", ',"delta":"Thinking"'],
+          ["ReasoningMessageEnd", ""],
+        ] as const
+      ) {
+        for (const contentId of ["", 42]) {
+          const state = createAgUiChatEventDecoderState({ validationMode: "strict" });
+          assertThrows(() =>
+            decodeAgUiSseChunk(
+              state,
+              `event: ${eventName}\ndata: {"contentId":${JSON.stringify(contentId)}${extra}}\n\n`,
+            )
+          );
+        }
+      }
     } finally {
       ensureTestSchemaValidator();
     }

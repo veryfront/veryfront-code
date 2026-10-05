@@ -1,0 +1,395 @@
+{
+  "formatVersion": 1,
+  "revision": "0.1-draft.1",
+  "status": "synthetic-cross-repository-contract-fixture",
+  "artifacts": {
+    "target-catalog.json": "6e614abd88b0bbb81dd919503b18c062697aeda1cacd4390a81b3231a6874393",
+    "target-payload-schemas.json": "5911c983b066c4323c218c2ba37fe89572de8b1fd8d935a40614493d394bbdb6",
+    "target-envelope.schema.json": "ff017c5bb244ddcc7f663bd8084cae1071264d1cde287ea5654210050463b318"
+  },
+  "purpose": "Validate the same target records and reducer outcomes in Code, API and Studio. Positions are opaque fixture labels, not a production cursor format. This fixture proves no real producer authority or deployment.",
+  "frames": [
+    {
+      "profile": "stored",
+      "position": "position-pilot-1",
+      "event": {
+        "specversion": "1.0",
+        "id": "event-pilot-1",
+        "source": "https://example.test/executions",
+        "type": "com.veryfront.run.requested",
+        "datacontenttype": "application/json",
+        "dataschema": "urn:veryfront:run-events:target:payloads:1#/$defs/RunRequested",
+        "runid": "run-pilot-a",
+        "data": {}
+      }
+    },
+    {
+      "profile": "stored",
+      "position": "position-pilot-2",
+      "event": {
+        "specversion": "1.0",
+        "id": "event-pilot-2",
+        "source": "https://example.test/executions",
+        "type": "com.veryfront.run.enqueued",
+        "datacontenttype": "application/json",
+        "dataschema": "urn:veryfront:run-events:target:payloads:1#/$defs/RunEnqueued",
+        "runid": "run-pilot-a",
+        "data": {}
+      }
+    },
+    {
+      "profile": "stored",
+      "position": "position-pilot-3",
+      "event": {
+        "specversion": "1.0",
+        "id": "event-pilot-3",
+        "source": "https://example.test/executions",
+        "type": "com.veryfront.run.started",
+        "datacontenttype": "application/json",
+        "dataschema": "urn:veryfront:run-events:target:payloads:1#/$defs/RunStarted",
+        "runid": "run-pilot-a",
+        "data": {}
+      }
+    },
+    {
+      "profile": "stored",
+      "position": "position-pilot-4",
+      "event": {
+        "specversion": "1.0",
+        "id": "event-pilot-4",
+        "source": "https://example.test/executions",
+        "type": "com.veryfront.message.text.started",
+        "datacontenttype": "application/json",
+        "dataschema": "urn:veryfront:run-events:target:payloads:1#/$defs/MessageTextStarted",
+        "runid": "run-pilot-a",
+        "data": {
+          "messageId": "message-pilot-a",
+          "contentId": "text-pilot-a",
+          "role": "assistant"
+        }
+      }
+    },
+    {
+      "profile": "stored",
+      "position": "position-pilot-5",
+      "event": {
+        "specversion": "1.0",
+        "id": "event-pilot-5",
+        "source": "https://example.test/executions",
+        "type": "com.veryfront.message.reasoning.started",
+        "datacontenttype": "application/json",
+        "dataschema": "urn:veryfront:run-events:target:payloads:1#/$defs/MessageReasoningStarted",
+        "runid": "run-pilot-a",
+        "data": {
+          "messageId": "message-pilot-a",
+          "contentId": "reasoning-pilot-a"
+        }
+      }
+    },
+    {
+      "profile": "stored",
+      "position": "position-pilot-6",
+      "event": {
+        "specversion": "1.0",
+        "id": "event-pilot-6",
+        "source": "https://example.test/executions",
+        "type": "com.veryfront.message.reasoning.delta.emitted",
+        "datacontenttype": "application/json",
+        "dataschema": "urn:veryfront:run-events:target:payloads:1#/$defs/MessageReasoningDeltaEmitted",
+        "runid": "run-pilot-a",
+        "data": {
+          "messageId": "message-pilot-a",
+          "contentId": "reasoning-pilot-a",
+          "contentRedacted": true
+        }
+      }
+    },
+    {
+      "profile": "stored",
+      "position": "position-pilot-7",
+      "event": {
+        "specversion": "1.0",
+        "id": "event-pilot-7",
+        "source": "https://example.test/executions",
+        "type": "com.veryfront.message.reasoning.ended",
+        "datacontenttype": "application/json",
+        "dataschema": "urn:veryfront:run-events:target:payloads:1#/$defs/MessageReasoningEnded",
+        "runid": "run-pilot-a",
+        "data": {
+          "messageId": "message-pilot-a",
+          "contentId": "reasoning-pilot-a"
+        }
+      }
+    },
+    {
+      "profile": "stored",
+      "position": "position-pilot-8",
+      "event": {
+        "specversion": "1.0",
+        "id": "event-pilot-8",
+        "source": "https://example.test/executions",
+        "type": "com.veryfront.tool-call.started",
+        "datacontenttype": "application/json",
+        "dataschema": "urn:veryfront:run-events:target:payloads:1#/$defs/ToolCallStarted",
+        "runid": "run-pilot-a",
+        "data": {
+          "toolCallId": "tool-pilot-a",
+          "messageId": "message-pilot-a",
+          "toolName": "read_file"
+        }
+      }
+    },
+    {
+      "profile": "stored",
+      "position": "position-pilot-9",
+      "event": {
+        "specversion": "1.0",
+        "id": "event-pilot-9",
+        "source": "https://example.test/executions",
+        "type": "com.veryfront.tool-call.arguments.delta.emitted",
+        "datacontenttype": "application/json",
+        "dataschema": "urn:veryfront:run-events:target:payloads:1#/$defs/ToolCallArgumentsDeltaEmitted",
+        "runid": "run-pilot-a",
+        "data": {
+          "toolCallId": "tool-pilot-a",
+          "delta": "{\"path\":\"README.md\"}"
+        }
+      }
+    },
+    {
+      "profile": "live",
+      "position": null,
+      "event": {
+        "specversion": "1.0",
+        "id": "event-pilot-heartbeat",
+        "source": "https://example.test/streams/session-pilot-a",
+        "type": "com.veryfront.stream.heartbeat.emitted",
+        "datacontenttype": "application/json",
+        "dataschema": "urn:veryfront:run-events:target:payloads:1#/$defs/StreamHeartbeatEmitted",
+        "runid": "run-pilot-a",
+        "data": {}
+      }
+    },
+    {
+      "profile": "stored",
+      "position": "position-pilot-10",
+      "event": {
+        "specversion": "1.0",
+        "id": "event-pilot-10",
+        "source": "https://example.test/executions",
+        "type": "com.veryfront.tool-call.arguments.ended",
+        "datacontenttype": "application/json",
+        "dataschema": "urn:veryfront:run-events:target:payloads:1#/$defs/ToolCallArgumentsEnded",
+        "runid": "run-pilot-a",
+        "data": {
+          "toolCallId": "tool-pilot-a",
+          "input": {
+            "path": "README.md"
+          }
+        }
+      }
+    },
+    {
+      "profile": "stored",
+      "position": "position-pilot-11",
+      "event": {
+        "specversion": "1.0",
+        "id": "event-pilot-11",
+        "source": "https://example.test/executions",
+        "type": "com.veryfront.tool-call.status.reported",
+        "datacontenttype": "application/json",
+        "dataschema": "urn:veryfront:run-events:target:payloads:1#/$defs/ToolCallStatusReported",
+        "runid": "run-pilot-a",
+        "data": {
+          "toolCallId": "tool-pilot-a",
+          "status": "running"
+        }
+      }
+    },
+    {
+      "profile": "stored",
+      "position": "position-pilot-12",
+      "event": {
+        "specversion": "1.0",
+        "id": "event-pilot-12",
+        "source": "https://example.test/executions",
+        "type": "com.veryfront.tool-call.result.recorded",
+        "datacontenttype": "application/json",
+        "dataschema": "urn:veryfront:run-events:target:payloads:1#/$defs/ToolCallResultRecorded",
+        "runid": "run-pilot-a",
+        "data": {
+          "toolCallId": "tool-pilot-a",
+          "output": {
+            "text": "Example file."
+          },
+          "isError": false
+        }
+      }
+    },
+    {
+      "profile": "stored",
+      "position": "position-pilot-13",
+      "event": {
+        "specversion": "1.0",
+        "id": "event-pilot-13",
+        "source": "https://example.test/executions",
+        "type": "com.veryfront.tool-call.status.reported",
+        "datacontenttype": "application/json",
+        "dataschema": "urn:veryfront:run-events:target:payloads:1#/$defs/ToolCallStatusReported",
+        "runid": "run-pilot-a",
+        "data": {
+          "toolCallId": "tool-pilot-a",
+          "status": "succeeded"
+        }
+      }
+    },
+    {
+      "profile": "stored",
+      "position": "position-pilot-14",
+      "event": {
+        "specversion": "1.0",
+        "id": "event-pilot-14",
+        "source": "https://example.test/executions",
+        "type": "com.veryfront.message.text.delta.emitted",
+        "datacontenttype": "application/json",
+        "dataschema": "urn:veryfront:run-events:target:payloads:1#/$defs/MessageTextDeltaEmitted",
+        "runid": "run-pilot-a",
+        "data": {
+          "messageId": "message-pilot-a",
+          "contentId": "text-pilot-a",
+          "delta": "Read "
+        }
+      }
+    },
+    {
+      "profile": "stored",
+      "position": "position-pilot-15",
+      "event": {
+        "specversion": "1.0",
+        "id": "event-pilot-15",
+        "source": "https://example.test/executions",
+        "type": "com.veryfront.message.text.delta.emitted",
+        "datacontenttype": "application/json",
+        "dataschema": "urn:veryfront:run-events:target:payloads:1#/$defs/MessageTextDeltaEmitted",
+        "runid": "run-pilot-a",
+        "data": {
+          "messageId": "message-pilot-a",
+          "contentId": "text-pilot-a",
+          "delta": "README.md."
+        }
+      }
+    },
+    {
+      "profile": "stored",
+      "position": "position-pilot-16",
+      "event": {
+        "specversion": "1.0",
+        "id": "event-pilot-16",
+        "source": "https://example.test/executions",
+        "type": "com.veryfront.message.text.ended",
+        "datacontenttype": "application/json",
+        "dataschema": "urn:veryfront:run-events:target:payloads:1#/$defs/MessageTextEnded",
+        "runid": "run-pilot-a",
+        "data": {
+          "messageId": "message-pilot-a",
+          "contentId": "text-pilot-a"
+        }
+      }
+    },
+    {
+      "profile": "stored",
+      "position": "position-pilot-17",
+      "event": {
+        "specversion": "1.0",
+        "id": "event-pilot-17",
+        "source": "https://example.test/executions",
+        "type": "com.veryfront.run.succeeded",
+        "datacontenttype": "application/json",
+        "dataschema": "urn:veryfront:run-events:target:payloads:1#/$defs/RunSucceeded",
+        "runid": "run-pilot-a",
+        "data": {}
+      }
+    },
+    {
+      "profile": "live",
+      "position": null,
+      "event": {
+        "specversion": "1.0",
+        "id": "event-pilot-closed",
+        "source": "https://example.test/streams/session-pilot-a",
+        "type": "com.veryfront.stream.closed",
+        "datacontenttype": "application/json",
+        "dataschema": "urn:veryfront:run-events:target:payloads:1#/$defs/StreamClosed",
+        "runid": "run-pilot-a",
+        "data": {
+          "reason": "completed"
+        }
+      }
+    }
+  ],
+  "reconnect": {
+    "deliveredBeforeDisconnect": [
+      "position-pilot-1",
+      "position-pilot-2",
+      "position-pilot-3",
+      "position-pilot-4",
+      "position-pilot-5",
+      "position-pilot-6",
+      "position-pilot-7",
+      "position-pilot-8",
+      "position-pilot-9",
+      "position-pilot-10",
+      "position-pilot-11",
+      "position-pilot-12",
+      "position-pilot-13",
+      "position-pilot-14"
+    ],
+    "savedPosition": "position-pilot-13",
+    "replayedAfterReconnect": [
+      "position-pilot-14",
+      "position-pilot-15",
+      "position-pilot-16",
+      "position-pilot-17"
+    ],
+    "meaning": "The first text delta reached the reducer but its position was not durably saved. Redelivery must not append it twice."
+  },
+  "expected": {
+    "durableOccurrences": 17,
+    "finalSavedPosition": "position-pilot-17",
+    "run": {
+      "id": "run-pilot-a",
+      "status": "succeeded"
+    },
+    "text": {
+      "messageId": "message-pilot-a",
+      "contentId": "text-pilot-a",
+      "value": "Read README.md.",
+      "ended": true
+    },
+    "reasoning": {
+      "messageId": "message-pilot-a",
+      "contentId": "reasoning-pilot-a",
+      "redacted": true,
+      "text": "",
+      "ended": true
+    },
+    "toolCall": {
+      "id": "tool-pilot-a",
+      "messageId": "message-pilot-a",
+      "name": "read_file",
+      "input": {
+        "path": "README.md"
+      },
+      "output": {
+        "text": "Example file."
+      },
+      "isError": false,
+      "status": "succeeded"
+    },
+    "delivery": {
+      "heartbeatAdvancesPosition": false,
+      "closureAdvancesPosition": false,
+      "closureImpliesRunOutcome": false
+    }
+  }
+}
