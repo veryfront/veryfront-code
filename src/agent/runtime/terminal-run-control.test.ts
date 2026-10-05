@@ -456,9 +456,10 @@ for (const name of ["succeed_run", "veryfront__succeed_run", "fail_run", "veryfr
   it(`${name} commits the current run and prevents sibling dispatch`, async () => {
     const success = name.endsWith("succeed_run");
     const control = createAdmittedControl({ runId: "run-current" });
-    const input = success
-      ? { output: { count: 2 } }
-      : { error: { code: "TASK_FAILED", message: "Unable to finish" } };
+    const input = success ? { output: { count: 2 }, idempotency_key: "outcome-key" } : {
+      error: { code: "TASK_FAILED", message: "Unable to finish" },
+      idempotency_key: "outcome-key",
+    };
     const status = success ? "completed" : "failed";
     const error = await assertRejects(() =>
       executeTerminalRunTool(
@@ -480,7 +481,11 @@ for (const name of ["succeed_run", "veryfront__succeed_run", "fail_run", "veryfr
     assertEquals(dispatched, false);
   });
   it(`${name} rejects a run selector or outcome override before dispatch`, async () => {
-    for (const extra of [{ run_id: "other" }, { status: "failed" }]) {
+    for (
+      const extra of [{ run_id: "other" }, { status: "failed" }, { idempotency_key: "" }, {
+        idempotency_key: 1,
+      }]
+    ) {
       const control = createAdmittedControl({ runId: "run-current" });
       const input = name.endsWith("succeed_run")
         ? { output: null, ...extra }

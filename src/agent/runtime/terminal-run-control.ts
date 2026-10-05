@@ -442,11 +442,18 @@ export async function executeTerminalRunTool(
   const action = name.replace(/^veryfront__/, "");
   if (action === "succeed_run" || action === "fail_run") {
     const field = action === "succeed_run" ? "output" : "error";
-    if (Object.keys(input).some((key) => key !== field)) {
+    if (Object.keys(input).some((key) => key !== field && key !== "idempotency_key")) {
       throw new Error(`${action} accepts only ${field}, without a run ID or status`);
     }
+    if (
+      input.idempotency_key !== undefined &&
+      (typeof input.idempotency_key !== "string" || input.idempotency_key.length < 1 ||
+        input.idempotency_key.length > 128)
+    ) {
+      throw new Error(`${action} requires an idempotency key of 1 to 128 characters`);
+    }
     const terminalInput: Record<string, unknown> = {
-      ...input,
+      [field]: input[field],
       status: action === "succeed_run" ? "completed" : "failed",
     };
     return control.fail(terminalInput, context, () => {
