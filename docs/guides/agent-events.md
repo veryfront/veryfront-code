@@ -36,7 +36,7 @@ export function parseEvent(rawEvent: unknown) {
 
 ## Compatibility notes
 
-The project-agent encoder now emits reasoning segment events with `messageId` set to the active assistant message and `contentId` set to the reasoning segment id. Consumers that previously grouped reasoning events by their `messageId` should use `contentId` for the segment identity after adopting the protocol. The fallback `messageId = contentId` is only used when a producer emits reasoning before an assistant message is active, which is a defensive path rather than the normal project-agent stream.
+The project-agent encoder now emits reasoning segment events with `messageId` set to the active assistant message and `contentId` set to the reasoning segment id. Consumers that previously grouped reasoning events by their `messageId` should use `contentId` with the owning `messageId` for the segment identity after adopting the protocol. The fallback `messageId = contentId` is only used when a producer emits reasoning before an assistant message is active, which is a defensive path rather than the normal project-agent stream.
 
 ## Read typed payloads
 

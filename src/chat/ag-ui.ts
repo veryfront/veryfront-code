@@ -648,6 +648,9 @@ function getReasoningPartId(
   }
 
   if (typeof payload.contentId === "string" && payload.contentId.length > 0) {
+    if (typeof payload.messageId === "string" && payload.messageId.length > 0) {
+      return `agui-reasoning:${payload.messageId}:${payload.contentId}`;
+    }
     return `agui-reasoning:${payload.contentId}`;
   }
 
