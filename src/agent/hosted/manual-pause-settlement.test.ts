@@ -10,6 +10,7 @@ import { createHostedConversationRunChunkMirror } from "../conversation/run-chun
 import {
   canSettleHostedAgentPause,
   invalidateHostedAgentPauseSettlement,
+  isHostedAgentPauseAcknowledged,
   recordHostedAgentPauseCleanup,
   recordHostedAgentPauseFlush,
   recordHostedAgentPauseMirrorSnapshot,
@@ -209,6 +210,36 @@ describe("hosted pause settlement transport", () => {
     await assertRejects(() => capability.acknowledge(checkpoint));
     assertEquals(execution.signal.aborted, false);
     assertEquals(canSettleHostedAgentPause(capability), false);
+  });
+
+  it("preserves acknowledged pauses after the settlement lifetime aborts", async () => {
+    const execution = new AbortController();
+    const settlement = new AbortController();
+    let requests = 0;
+    const capability = createRunBoundAgentManualPause({
+      apiUrl: "https://api.example.com",
+      runId: "run_pause_test",
+      token: "pause-test-token",
+      signal: execution.signal,
+      settlementSignal: settlement.signal,
+      fetch: () => {
+        requests++;
+        return Promise.resolve(Response.json({ stop: true }));
+      },
+    });
+    assertEquals(isHostedAgentPauseAcknowledged(capability), false);
+    assertEquals(await capability.acknowledge(checkpoint), true);
+    capability.persisted?.(true);
+    recordHostedAgentPauseFlush(capability, true);
+    recordHostedAgentPauseCleanup(capability, true);
+    const carrier = {};
+    inheritHostedAgentPauseCapability(carrier, capability);
+    assertEquals(canSettleHostedAgentPause(carrier), true);
+    settlement.abort();
+    assertEquals(isHostedAgentPauseAcknowledged(carrier), true);
+    assertEquals(canSettleHostedAgentPause(carrier), false);
+    await settleHostedAgentPause(carrier);
+    assertEquals(requests, 1);
   });
 
   it("ignores unregistered carriers and rejects invalid carriers", async () => {

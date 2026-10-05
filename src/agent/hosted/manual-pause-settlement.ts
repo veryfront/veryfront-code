@@ -7,6 +7,7 @@ type Settlement = {
   flushed: boolean;
   cleaned: boolean;
   failed: boolean;
+  acknowledged: () => boolean;
   eligible: () => boolean;
   confirm: () => Promise<"confirmed" | "retry" | "rejected">;
 };
@@ -18,6 +19,7 @@ const NativePromise = Promise;
 
 export function registerHostedAgentPauseSettlement(
   capability: AgentManualPause,
+  acknowledged: Settlement["acknowledged"],
   eligible: Settlement["eligible"],
   confirm: Settlement["confirm"],
 ): void {
@@ -26,6 +28,7 @@ export function registerHostedAgentPauseSettlement(
     flushed: false,
     cleaned: false,
     failed: false,
+    acknowledged,
     eligible,
     confirm,
   });
@@ -78,13 +81,13 @@ export function invalidateHostedAgentPauseSettlement(target: unknown, error: unk
 }
 
 export function isHostedAgentPauseAcknowledged(target: unknown): boolean {
-  return stateFor(target)?.eligible() === true;
+  return stateFor(target)?.acknowledged() === true;
 }
 
 export function canSettleHostedAgentPause(target: unknown): boolean {
   const state = stateFor(target);
   return state !== undefined && !state.failed && state.nativePersisted && state.flushed &&
-    state.cleaned && state.eligible();
+    state.cleaned && state.acknowledged() && state.eligible();
 }
 
 /** Called only after the original invocation and its owned session have ended. */

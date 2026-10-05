@@ -280,7 +280,8 @@ export function createRunBoundAgentManualPause(input: {
   const settlementBody = privateJsonStringify({ settled: true })!;
   registerHostedAgentPauseSettlement(
     capability,
-    () => state.stopped && !settlementLifetime().aborted,
+    () => state.stopped,
+    () => !settlementLifetime().aborted,
     async () => {
       const response = await send("pause-ack", settlementBody, undefined, settlementLifetime);
       if (!response) return "retry";
