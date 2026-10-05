@@ -11,7 +11,7 @@ const WORKFLOW_PATH = new URL(
 );
 // Cancellation runs from an immutable main commit, never the queued revision.
 const TRUSTED_CANCELLATION_WORKFLOW =
-  "veryfront/veryfront-code/.github/workflows/cancel-failed-merge-group.yml@867aebc7ea8040f3215c4aacd737f1056a10a9aa";
+  "veryfront/veryfront-code/.github/workflows/cancel-failed-merge-group.yml@03903775fbf92852f23cccc1ba6243192042ff64";
 const REQUIRED_DEPENDENCIES = [
   "ci",
   "coverage",
