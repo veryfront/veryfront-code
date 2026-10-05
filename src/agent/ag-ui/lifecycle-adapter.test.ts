@@ -534,7 +534,11 @@ describe("lifecycle AG-UI adapter", () => {
       }),
       [{
         event: "UrlCited",
-        payload: { sourceId: "web-1", url: "https://example.com/a" },
+        payload: {
+          sourceId: "web-1",
+          url: "https://example.com/a",
+          parentMessageId: "assistant-1",
+        },
       }],
     );
 
