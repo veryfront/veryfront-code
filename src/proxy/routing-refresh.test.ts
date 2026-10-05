@@ -152,14 +152,18 @@ describe("idle proxy routing refresh", () => {
     }
   });
 
-  it("does not schedule OAuth refreshes for a user-token lookup without service credentials", async () => {
-    using time = new FakeTime();
+  function createPreviewMetadataFetch(options: { issueTokens?: boolean } = {}) {
     const calls = { routing: 0, token: 0, authorizations: [] as string[] };
     const fakeFetch = (async (input, init) => {
       const path = new URL(input instanceof Request ? input.url : input).pathname;
       if (path === "/auth/token") {
         calls.token++;
-        return new Response(null, { status: 401 });
+        if (!options.issueTokens) return new Response(null, { status: 401 });
+        return Response.json({
+          access_token: `preview-token-${calls.token}`,
+          token_type: "Bearer",
+          expires_in: 3600,
+        });
       }
       calls.authorizations.push(new Headers(init?.headers).get("authorization") ?? "");
       if (path.includes("/proxy-routing/")) calls.routing++;
@@ -171,6 +175,17 @@ describe("idle proxy routing refresh", () => {
         environments: [{ id: "env-1", name: "preview", protected: false }],
       });
     }) as typeof fetch;
+    return { calls, fakeFetch };
+  }
+
+  const previewUserRequest = () =>
+    new Request("https://my-project.preview.veryfront.com/page", {
+      headers: { cookie: "authToken=user-token" },
+    });
+
+  it("does not schedule OAuth refreshes for a user-token lookup without service credentials", async () => {
+    using time = new FakeTime();
+    const { calls, fakeFetch } = createPreviewMetadataFetch();
     const handler = createProxyHandler({
       metadataFetch: fakeFetch,
       tokenFetch: fakeFetch,
@@ -183,21 +198,47 @@ describe("idle proxy routing refresh", () => {
         apiToken: "static-token",
       },
     });
-    const request = () =>
-      new Request("https://my-project.preview.veryfront.com/page", {
-        headers: { cookie: "authToken=user-token" },
-      });
     try {
-      assertEquals((await handler.processRequest(request())).error, undefined);
+      assertEquals((await handler.processRequest(previewUserRequest())).error, undefined);
       assertEquals(calls.routing, 1);
       for (let elapsed = 0; elapsed < 61_000; elapsed += 1_000) await time.tickAsync(1_000);
       await time.runMicrotasks();
       assertEquals(calls.token, 0, "idle refresh must not request an OAuth token");
       assertEquals(calls.routing, 1, "a user-token lookup has no renewable refresh credential");
       assertEquals(calls.authorizations.every((value) => value === "Bearer user-token"), true);
-      assertEquals((await handler.processRequest(request())).error, undefined);
+      assertEquals((await handler.processRequest(previewUserRequest())).error, undefined);
       assertEquals(calls.token, 0, "foreground authorization must stay unchanged");
       assertEquals(calls.routing, 2, "the expired entry must be looked up in the foreground");
+    } finally {
+      await handler.close();
+    }
+  });
+
+  it("refreshes a preview user-token lookup with preview-only service credentials", async () => {
+    using time = new FakeTime();
+    const { calls, fakeFetch } = createPreviewMetadataFetch({ issueTokens: true });
+    const handler = createProxyHandler({
+      metadataFetch: fakeFetch,
+      tokenFetch: fakeFetch,
+      config: {
+        apiBaseUrl: "https://api.example.test",
+        apiClientId: "",
+        apiClientSecret: "",
+        previewApiClientId: "preview-client",
+        previewApiClientSecret: "preview-secret",
+      },
+    });
+    try {
+      assertEquals((await handler.processRequest(previewUserRequest())).error, undefined);
+      assertEquals(calls.token, 0);
+      for (let elapsed = 0; elapsed < 61_000; elapsed += 1_000) await time.tickAsync(1_000);
+      await time.runMicrotasks();
+      assertEquals(calls.token, 1, "refresh must use the preview service credential");
+      assertEquals(calls.routing >= 2, true, "preview routing must refresh while idle");
+      assertEquals(
+        calls.authorizations.slice(2).every((v) => v === "Bearer preview-token-1"),
+        true,
+      );
     } finally {
       await handler.close();
     }

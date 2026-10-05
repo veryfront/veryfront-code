@@ -354,6 +354,12 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
     },
     { cache, fetchImpl: options.tokenFetch },
   );
+  /** Mirrors the client pair TokenManager selects for the scope. */
+  function hasServiceCredentials(scope: TokenScope): boolean {
+    return scope === "preview"
+      ? !!config.previewApiClientId && !!config.previewApiClientSecret
+      : !!config.apiClientId && !!config.apiClientSecret;
+  }
   const routingLookupCache = new Map<string, ProjectRoutingCacheEntry>();
   const routingLookupInflight = new Map<string, ProjectRoutingInflightEntry>();
   const projectInvalidationGenerations = new Map<string, number>();
@@ -1079,7 +1085,7 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
         const credential: RoutingRefreshIdentity["credential"] | undefined =
           tokenSource === "static" && !!config.apiToken && metadataToken === config.apiToken
             ? "static"
-            : config.apiClientId && config.apiClientSecret
+            : hasServiceCredentials(scope)
             ? "service"
             : undefined;
         return resolveProjectMetadataAndProtection(
