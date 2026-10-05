@@ -1,5 +1,10 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertMatch, assertNotEquals } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertExists,
+  assertMatch,
+  assertNotEquals,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { StreamLifecycleFrame } from "#veryfront/agent/streaming/lifecycle/index.ts";
 import fixture from "../conversation/fixtures/legacy-content-after-end.json" with {
@@ -22,6 +27,14 @@ function frames(
   } as StreamLifecycleFrame));
 }
 
+function frame(
+  entry: { class?: StreamLifecycleFrame["class"]; event: unknown },
+): StreamLifecycleFrame {
+  const [result] = frames([entry]);
+  assertExists(result);
+  return result;
+}
+
 function requireStepId(value: unknown): string {
   if (typeof value !== "string") throw new Error("expected stepId");
   assertMatch(value, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
@@ -31,23 +44,23 @@ function requireStepId(value: unknown): string {
 describe("lifecycle AG-UI adapter", () => {
   it("emits producer-owned step ids only for matched lifecycle steps", () => {
     const adapter = createLifecycleAgUiAdapter({ messageId: "message-steps" });
-    const orphan = adapter.encode(frames([{ event: { type: "step_finish" } }])[0]);
+    const orphan = adapter.encode(frame({ event: { type: "step_finish" } }));
     assertEquals(orphan, [{ event: "StepFinished", payload: { stepName: "step-1" } }]);
 
-    const firstStart = adapter.encode(frames([{ event: { type: "step_start" } }])[0])[0];
+    const firstStart = adapter.encode(frame({ event: { type: "step_start" } }))[0];
     assertEquals(firstStart?.event, "StepStarted");
     assertEquals(firstStart?.payload.stepName, "step-1");
     const firstStepId = requireStepId(firstStart?.payload.stepId);
     assertEquals(
-      adapter.encode(frames([{ event: { type: "step_finish" } }])[0]),
+      adapter.encode(frame({ event: { type: "step_finish" } })),
       [{ event: "StepFinished", payload: { stepName: "step-1", stepId: firstStepId } }],
     );
 
-    const secondStart = adapter.encode(frames([{ event: { type: "step_start" } }])[0])[0];
+    const secondStart = adapter.encode(frame({ event: { type: "step_start" } }))[0];
     const secondStepId = requireStepId(secondStart?.payload.stepId);
     assertNotEquals(secondStepId, firstStepId, "repeated lifecycle steps need distinct ids");
     assertEquals(
-      adapter.encode(frames([{ event: { type: "step_finish" } }])[0]),
+      adapter.encode(frame({ event: { type: "step_finish" } })),
       [{ event: "StepFinished", payload: { stepName: "step-2", stepId: secondStepId } }],
     );
   });
