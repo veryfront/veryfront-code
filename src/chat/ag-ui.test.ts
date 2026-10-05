@@ -511,6 +511,34 @@ describe("chat/ag-ui", () => {
     ]);
   });
 
+  it("preserves formatted reasoning segment ids through SSE decoding", () => {
+    const frames = [
+      ["reasoning-a", "First"],
+      ["reasoning-b", "Second"],
+    ].flatMap(([contentId, delta]) => [
+      formatAgUiEvent("ReasoningMessageStart", {
+        messageId: "message-a",
+        contentId,
+        role: "reasoning",
+      }),
+      formatAgUiEvent("ReasoningMessageContent", { messageId: "message-a", contentId, delta }),
+      formatAgUiEvent("ReasoningMessageEnd", { messageId: "message-a", contentId }),
+    ]);
+    const result = decodeAgUiSseChunk(
+      createAgUiChatEventDecoderState(),
+      frames.map((frame) => new TextDecoder().decode(frame)).join(""),
+    );
+
+    assertEquals(result.events.flatMap((entry) => entry.chatEvents), [
+      { type: "reasoning-start", id: "agui-reasoning:message-a:reasoning-a" },
+      { type: "reasoning-delta", id: "agui-reasoning:message-a:reasoning-a", delta: "First" },
+      { type: "reasoning-end", id: "agui-reasoning:message-a:reasoning-a" },
+      { type: "reasoning-start", id: "agui-reasoning:message-a:reasoning-b" },
+      { type: "reasoning-delta", id: "agui-reasoning:message-a:reasoning-b", delta: "Second" },
+      { type: "reasoning-end", id: "agui-reasoning:message-a:reasoning-b" },
+    ]);
+  });
+
   it("keeps reused reasoning content ids distinct across messages", async () => {
     const state = createAgUiChatEventDecoderState();
     const result = decodeAgUiSseChunk(

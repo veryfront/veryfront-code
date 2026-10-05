@@ -394,6 +394,24 @@ describe("internal-agents/ag-ui-sse", () => {
     );
   });
 
+  it("keeps legacy reasoning frames valid and rejects invalid segment ids", () => {
+    const payloads = [
+      { event: "ReasoningMessageStart", fields: { role: "reasoning" } },
+      { event: "ReasoningMessageContent", fields: { delta: "Thinking" } },
+      { event: "ReasoningMessageEnd", fields: {} },
+    ];
+    for (const { event, fields } of payloads) {
+      const legacy = { messageId: "message-a", ...fields, emittedAt: 0 };
+      assertEquals(
+        new TextDecoder().decode(formatAgUiEvent(event, legacy)),
+        `event: ${event}\ndata: ${JSON.stringify(legacy)}\n\n`,
+      );
+      for (const contentId of ["", 42]) {
+        assertThrows(() => formatAgUiEvent(event, { ...legacy, contentId }));
+      }
+    }
+  });
+
   it("declares RuntimeEventRecorded in the payload allow-list with extra fields intact", () => {
     // The eighth native wire name (see native-run-events.ts's P12 decision):
     // an API-catalog diagnostics record with no fixed shape beyond
