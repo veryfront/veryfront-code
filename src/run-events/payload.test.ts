@@ -33,6 +33,7 @@ describe("run-events/payload", () => {
     const schema = RUN_EVENT_PAYLOAD_SCHEMAS.MODEL_CALL_COMPLETED!();
     const payload = { type: "MODEL_CALL_COMPLETED", ...MINIMAL_PAYLOADS.MODEL_CALL_COMPLETED };
     assert(schema.safeParse(payload).success);
+    assert(schema.safeParse({ ...payload, usageCaptureStatus: "partial" }).success);
     for (
       const override of [
         { inputTokens: -1 },
