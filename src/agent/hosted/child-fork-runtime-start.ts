@@ -1,3 +1,4 @@
+import { hostedInheritedInferenceModelResolver } from "./terminal-credential.ts";
 import type { HostToolTraceAttributes } from "#veryfront/tool";
 import {
   type ForkRuntimeStreamResult,
@@ -77,6 +78,9 @@ export function startHostedChildForkRuntimeWithHostTools<
 
   const { streamResult, forkToolNames } = startAgentRuntimeForkWithHostTools({
     ...runtimeInput,
+    ...(durableChildRun
+      ? { createModelRuntimeResolver: () => hostedInheritedInferenceModelResolver(durableChildRun) }
+      : {}),
     abortSignal: forkStreamAbortSignal,
   });
 

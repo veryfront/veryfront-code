@@ -168,6 +168,10 @@ when the tool input is complete enough to commit.
 conversation context and tool inventory. The parent transcript receives a compact
 summary/result and durable child-run identifiers, not the full child transcript.
 
+Inherited admission waits for the parent tool-start event to be durably persisted.
+The API issues a separate inference credential for the admitted child. The hosted
+runtime retains that credential privately and uses it for the child model transport.
+
 For cross-project delegation, `project_reference` accepts a project UUID or slug.
 The hosted runtime resolves it to the canonical project UUID before selecting
 project-agent settings, changing project context, or creating the child run.

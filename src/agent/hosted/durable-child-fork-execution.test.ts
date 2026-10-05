@@ -1714,6 +1714,7 @@ for (
             headers: {
               "Cache-Control": "no-store",
               "X-Veryfront-Run-Terminal-Token": token(canonicalId),
+              "X-Veryfront-Inference-Token": "child-inference",
               "X-Veryfront-Run-Invocation-Token": "invocation",
               "X-Veryfront-Run-Renewal-Token": "renewal",
               "X-Veryfront-Run-Event-Token": "event",

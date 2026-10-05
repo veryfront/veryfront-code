@@ -1,3 +1,4 @@
+import { createVeryfrontCloudInferenceModelResolver } from "./inference-credential.ts";
 import { computeHash } from "#veryfront/utils/hash-utils.ts";
 import { createHostedRunEventWriterCapability } from "./child-run-event-writer-token.ts";
 import type {
@@ -41,6 +42,7 @@ const credentials = createPrivateWeakStore<
     token: string;
     renewalToken?: string;
     eventToken?: string;
+    inferenceToken?: string;
     leaseExpiresAt?: number;
     projectId: string;
     runId: string;
@@ -287,6 +289,7 @@ export async function acceptInheritedRunAdmission(
   const row = await response.json();
   const token = response.headers.get(RUN_TERMINAL_TOKEN_HEADER);
   const authToken = response.headers.get("X-Veryfront-Run-Invocation-Token");
+  const inferenceToken = response.headers.get("X-Veryfront-Inference-Token");
   const renewalToken = response.headers.get("X-Veryfront-Run-Renewal-Token");
   const eventToken = response.headers.get("X-Veryfront-Run-Event-Token");
   if (!token || !authToken || !renewalToken || !eventToken) {
@@ -335,6 +338,7 @@ export async function acceptInheritedRunAdmission(
     authToken,
     renewalToken,
     eventToken,
+    ...(inferenceToken ? { inferenceToken } : {}),
     leaseExpiresAt: Date.parse(response.headers.get("X-Veryfront-Run-Lease-Expires-At") ?? ""),
     runId: run.runId,
     projectId: binding.projectId,
@@ -342,6 +346,18 @@ export async function acceptInheritedRunAdmission(
     fetch: binding.fetch,
   });
   return run;
+}
+
+/** Create inference transport only from this inherited child's private admission authority. */
+export function hostedInheritedInferenceModelResolver(descriptor: HostedTerminalDescriptor) {
+  const authority = credentials.get(descriptor);
+  if (!authority) return undefined;
+  if (!authority.inferenceToken || !authority.apiUrl) {
+    throw new Error("Inherited child inference authority is required");
+  }
+  return createVeryfrontCloudInferenceModelResolver(authority.inferenceToken, {
+    apiBaseUrl: authority.apiUrl,
+  });
 }
 
 /** Preserve exact private authority when a trusted adapter projects its descriptor. */
