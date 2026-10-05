@@ -417,7 +417,14 @@ export function terminalToolCallIdHeaderValue(context?: ToolExecutionContext): s
 }
 
 export function isTerminalRunToolName(name: string): boolean {
-  return name === "veryfront__finalize" || name === "finalize";
+  return [
+    "finalize",
+    "veryfront__finalize",
+    "succeed_run",
+    "veryfront__succeed_run",
+    "fail_run",
+    "veryfront__fail_run",
+  ].includes(name);
 }
 
 /** Called only after selecting a trusted platform source and enforcing tool policy. */
@@ -432,6 +439,19 @@ export async function executeTerminalRunTool(
   }
   const control = (context as ControlContext | undefined)?.[controlKey];
   if (!control || !context) throw new Error("finalize requires an active runtime execution");
+  const action = name.replace(/^veryfront__/, "");
+  if (action === "succeed_run" || action === "fail_run") {
+    const field = action === "succeed_run" ? "output" : "error";
+    if (Object.keys(input).some((key) => key !== field)) {
+      throw new Error(`${action} accepts only ${field}, without a run ID or status`);
+    }
+    const terminalInput = { ...input, status: action === "succeed_run" ? "completed" : "failed" };
+    return control.fail(terminalInput, context, () => {
+      // Output schema validation and JSON snapshotting happen before transport.
+      input[field] = terminalInput[field];
+      return execute();
+    });
+  }
   return control.fail(input, context, execute);
 }
 

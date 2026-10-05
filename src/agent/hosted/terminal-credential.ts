@@ -15,6 +15,7 @@ import { createPrivateWeakStore } from "#veryfront/security/private-weak-store.t
 import {
   bindTerminalRunResponseIdentity,
   hasCurrentTerminalRunCredentialAuthority,
+  isTerminalRunToolName,
   RUN_TERMINAL_TOOL_CALL_ID_HEADER,
   terminalToolCallIdHeaderValue,
 } from "../runtime/terminal-run-control.ts";
@@ -174,7 +175,7 @@ export function hostedTerminalToolSourceFactory(
       id: ordinary.id,
       listTools: (context) => ordinary.listTools(context),
       executeTool: (name, args, context) =>
-        name === "finalize" || name === "veryfront__finalize"
+        isTerminalRunToolName(name)
           ? terminal.executeTool(name, args, context)
           : ordinary.executeTool(name, args, context),
     };
