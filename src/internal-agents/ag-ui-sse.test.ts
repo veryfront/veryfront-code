@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertMatch, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   createStreamTransformState,
@@ -8,6 +8,12 @@ import {
   mapRuntimeEventToAgUi,
   parseSseJsonEvents,
 } from "./ag-ui-sse.ts";
+
+function requireStepId(value: unknown): string {
+  if (typeof value !== "string") throw new Error("expected stepId");
+  assertMatch(value, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
+  return value;
+}
 
 describe("internal-agents/ag-ui-sse", () => {
   const CANONICAL_TOOL_CALL_ID = "tool-call-1";
@@ -159,13 +165,13 @@ describe("internal-agents/ag-ui-sse", () => {
         payload: { toolCallId: "tool-2", content: { ok: true }, isError: false },
       }],
     );
-    assertEquals(
-      mapRuntimeEventToAgUi(state, { type: "step-start" }),
-      [{ event: "StepStarted", payload: { stepName: "step-1" } }],
-    );
+    const stepStart = mapRuntimeEventToAgUi(state, { type: "step-start" });
+    assertEquals(stepStart[0]?.event, "StepStarted");
+    assertEquals(stepStart[0]?.payload.stepName, "step-1");
+    const stepId = requireStepId(stepStart[0]?.payload.stepId);
     assertEquals(
       mapRuntimeEventToAgUi(state, { type: "step-end" }),
-      [{ event: "StepFinished", payload: { stepName: "step-1" } }],
+      [{ event: "StepFinished", payload: { stepName: "step-1", stepId } }],
     );
     assertEquals(
       mapRuntimeEventToAgUi(state, {
@@ -485,12 +491,17 @@ describe("internal-agents/ag-ui-sse", () => {
     // missing through two releases after it was already being stamped, so
     // both halves are pinned: the field survives, and nothing else does.
     const stamped = new TextDecoder().decode(
-      formatAgUiEvent("StepStarted", { stepName: "step-1", elapsedMs: 42 }),
+      formatAgUiEvent("StepStarted", { stepName: "step-1", stepId: "step-exact", elapsedMs: 42 }),
     );
     assertEquals(
       stamped.includes('"elapsedMs":42'),
       true,
       `elapsedMs must reach the wire, got ${JSON.stringify(stamped)}`,
+    );
+    assertEquals(
+      stamped.includes('"stepId":"step-exact"'),
+      true,
+      `stepId must reach the wire, got ${JSON.stringify(stamped)}`,
     );
     assertEquals(
       /"emittedAt":\d+/.test(stamped),

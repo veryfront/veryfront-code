@@ -47,6 +47,7 @@ export interface AgUiEncoderState {
    */
   reasoningSpanIndex?: number;
   activeStepName: string | null;
+  activeStepId?: string | null;
   stepCount: number;
   streamedToolInputIds: Set<string>;
   /**
@@ -122,6 +123,7 @@ export function createAgUiEncoderState(
     reasoningMessageId: null,
     reasoningSpanIndex: 0,
     activeStepName: null,
+    activeStepId: null,
     stepCount: 0,
     streamedToolInputIds: new Set<string>(),
     openToolCallIds: new Set<string>(),
@@ -240,16 +242,22 @@ function isActiveTextIdentity(
   return identity.messageId === state.messageId && identity.contentId === state.activeTextContentId;
 }
 
-function nextStepName(state: AgUiEncoderState): string {
+function nextStep(state: AgUiEncoderState): { stepName: string; stepId: string } {
   state.stepCount += 1;
   state.activeStepName = `step-${state.stepCount}`;
-  return state.activeStepName;
+  state.activeStepId = crypto.randomUUID();
+  return { stepName: state.activeStepName, stepId: state.activeStepId };
 }
 
-function finishStepName(state: AgUiEncoderState): string {
+function finishStep(state: AgUiEncoderState): { stepName: string; stepId?: string } {
   const stepName = state.activeStepName ?? `step-${Math.max(state.stepCount, 1)}`;
+  const stepId = state.activeStepId ?? undefined;
   state.activeStepName = null;
-  return stepName;
+  state.activeStepId = null;
+  return {
+    stepName,
+    ...(stepId !== undefined ? { stepId } : {}),
+  };
 }
 
 function applyDataMetadata(state: AgUiEncoderState, event: AgUiRuntimeStreamEvent): void {
@@ -655,7 +663,7 @@ function createStepEvent(
   return {
     event: type,
     payload: {
-      stepName: type === "StepStarted" ? nextStepName(state) : finishStepName(state),
+      ...(type === "StepStarted" ? nextStep(state) : finishStep(state)),
     },
   };
 }

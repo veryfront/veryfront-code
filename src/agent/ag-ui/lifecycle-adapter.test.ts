@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertMatch, assertNotEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { StreamLifecycleFrame } from "#veryfront/agent/streaming/lifecycle/index.ts";
 import fixture from "../conversation/fixtures/legacy-content-after-end.json" with {
@@ -22,7 +22,36 @@ function frames(
   } as StreamLifecycleFrame));
 }
 
+function requireStepId(value: unknown): string {
+  if (typeof value !== "string") throw new Error("expected stepId");
+  assertMatch(value, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
+  return value;
+}
+
 describe("lifecycle AG-UI adapter", () => {
+  it("emits producer-owned step ids only for matched lifecycle steps", () => {
+    const adapter = createLifecycleAgUiAdapter({ messageId: "message-steps" });
+    const orphan = adapter.encode(frames([{ event: { type: "step_finish" } }])[0]);
+    assertEquals(orphan, [{ event: "StepFinished", payload: { stepName: "step-1" } }]);
+
+    const firstStart = adapter.encode(frames([{ event: { type: "step_start" } }])[0])[0];
+    assertEquals(firstStart?.event, "StepStarted");
+    assertEquals(firstStart?.payload.stepName, "step-1");
+    const firstStepId = requireStepId(firstStart?.payload.stepId);
+    assertEquals(
+      adapter.encode(frames([{ event: { type: "step_finish" } }])[0]),
+      [{ event: "StepFinished", payload: { stepName: "step-1", stepId: firstStepId } }],
+    );
+
+    const secondStart = adapter.encode(frames([{ event: { type: "step_start" } }])[0])[0];
+    const secondStepId = requireStepId(secondStart?.payload.stepId);
+    assertNotEquals(secondStepId, firstStepId, "repeated lifecycle steps need distinct ids");
+    assertEquals(
+      adapter.encode(frames([{ event: { type: "step_finish" } }])[0]),
+      [{ event: "StepFinished", payload: { stepName: "step-2", stepId: secondStepId } }],
+    );
+  });
+
   it("assigns stable text identities when protocol events omit IDs", () => {
     const adapter = createLifecycleAgUiAdapter({
       messageId: "message-1",

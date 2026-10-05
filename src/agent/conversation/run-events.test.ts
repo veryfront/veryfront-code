@@ -1,5 +1,11 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertExists, assertThrows } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertExists,
+  assertMatch,
+  assertNotEquals,
+  assertThrows,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   ConversationRunEventEncoder,
@@ -12,6 +18,12 @@ import {
   getConversationRunEventJsonByteLength,
   MAX_CONVERSATION_RUN_EVENT_PAYLOAD_BYTES,
 } from "./run-event-normalization.ts";
+
+function requireStepId(value: unknown): string {
+  if (typeof value !== "string") throw new Error("expected stepId");
+  assertMatch(value, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
+  return value;
+}
 
 describe("agent/conversation-run-events", () => {
   it("stores a textual rendering for tool output JSON cannot encode", () => {
@@ -197,21 +209,36 @@ describe("agent/conversation-run-events", () => {
   it("encodes model step lifecycle events for durable replay", () => {
     const encoder = new ConversationRunEventEncoder();
 
-    assertEquals(encoder.encode({ type: "start-step" }), [{
-      type: conversationRunEventTypes.stepStarted,
-      stepName: "step-1",
-    }]);
+    const firstStart = encoder.encode({ type: "start-step" })[0];
+    assertEquals(firstStart?.type, conversationRunEventTypes.stepStarted);
+    assertEquals(firstStart?.stepName, "step-1");
+    const firstStepId = requireStepId(firstStart?.stepId);
+
     assertEquals(encoder.encode({ type: "finish-step" }), [{
       type: conversationRunEventTypes.stepFinished,
       stepName: "step-1",
+      stepId: firstStepId,
     }]);
-    assertEquals(encoder.encode({ type: "start-step" }), [{
-      type: conversationRunEventTypes.stepStarted,
-      stepName: "step-2",
-    }]);
+
+    const secondStart = encoder.encode({ type: "start-step" })[0];
+    assertEquals(secondStart?.type, conversationRunEventTypes.stepStarted);
+    assertEquals(secondStart?.stepName, "step-2");
+    const secondStepId = requireStepId(secondStart?.stepId);
+    assertNotEquals(secondStepId, firstStepId, "each step occurrence needs a distinct id");
+
     assertEquals(encoder.encode({ type: "finish-step" }), [{
       type: conversationRunEventTypes.stepFinished,
       stepName: "step-2",
+      stepId: secondStepId,
+    }]);
+  });
+
+  it("omits stepId on orphan finish events instead of inventing identity", () => {
+    const encoder = new ConversationRunEventEncoder();
+
+    assertEquals(encoder.encode({ type: "finish-step" }), [{
+      type: conversationRunEventTypes.stepFinished,
+      stepName: "step-1",
     }]);
   });
 

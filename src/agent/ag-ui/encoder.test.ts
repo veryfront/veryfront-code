@@ -1,5 +1,10 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertMatch,
+  assertNotEquals,
+  assertThrows,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   buildAgUiFinalizeResponse,
@@ -8,6 +13,12 @@ import {
   mapRuntimeStreamEventToAgUiEvents,
   stampAgUiEventTiming,
 } from "./encoder.ts";
+
+function requireStepId(value: unknown): string {
+  if (typeof value !== "string") throw new Error("expected stepId");
+  assertMatch(value, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
+  return value;
+}
 
 describe("agent/ag-ui-encoder", () => {
   it("maps text, reasoning, step, and tool lifecycle events into AG-UI payloads", () => {
@@ -48,10 +59,10 @@ describe("agent/ag-ui-encoder", () => {
         payload: { messageId: "assistant-1:reasoning:0" },
       }],
     );
-    assertEquals(
-      mapRuntimeStreamEventToAgUiEvents(state, { type: "step-start" }),
-      [{ event: "StepStarted", payload: { stepName: "step-1" } }],
-    );
+    const stepStart = mapRuntimeStreamEventToAgUiEvents(state, { type: "step-start" });
+    assertEquals(stepStart[0]?.event, "StepStarted");
+    assertEquals(stepStart[0]?.payload.stepName, "step-1");
+    const stepId = requireStepId(stepStart[0]?.payload.stepId);
     assertEquals(
       mapRuntimeStreamEventToAgUiEvents(state, { type: "text-delta", delta: "hello" }),
       [
@@ -117,7 +128,25 @@ describe("agent/ag-ui-encoder", () => {
     );
     assertEquals(
       mapRuntimeStreamEventToAgUiEvents(state, { type: "step-end" }),
+      [{ event: "StepFinished", payload: { stepName: "step-1", stepId } }],
+    );
+  });
+
+  it("omits stepId on orphan finish events and keeps reset states distinct", () => {
+    const orphan = createAgUiEncoderState({ nowMs: null, epochMs: null });
+    assertEquals(
+      mapRuntimeStreamEventToAgUiEvents(orphan, { type: "step-end" }),
       [{ event: "StepFinished", payload: { stepName: "step-1" } }],
+    );
+
+    const first = createAgUiEncoderState({ nowMs: null, epochMs: null });
+    const second = createAgUiEncoderState({ nowMs: null, epochMs: null });
+    const firstStart = mapRuntimeStreamEventToAgUiEvents(first, { type: "step-start" })[0];
+    const secondStart = mapRuntimeStreamEventToAgUiEvents(second, { type: "step-start" })[0];
+    assertNotEquals(
+      requireStepId(firstStart?.payload.stepId),
+      requireStepId(secondStart?.payload.stepId),
+      "reset encoders must not reuse deterministic step ids",
     );
   });
 
@@ -993,13 +1022,13 @@ describe("agent/ag-ui-encoder", () => {
   it("does not treat step lifecycle events as assistant-visible output", () => {
     const state = createAgUiEncoderState({ nowMs: null, epochMs: null });
 
-    assertEquals(
-      mapRuntimeStreamEventToAgUiEvents(state, { type: "step-start" }),
-      [{ event: "StepStarted", payload: { stepName: "step-1" } }],
-    );
+    const stepStart = mapRuntimeStreamEventToAgUiEvents(state, { type: "step-start" });
+    assertEquals(stepStart[0]?.event, "StepStarted");
+    assertEquals(stepStart[0]?.payload.stepName, "step-1");
+    const stepId = requireStepId(stepStart[0]?.payload.stepId);
     assertEquals(
       mapRuntimeStreamEventToAgUiEvents(state, { type: "step-end" }),
-      [{ event: "StepFinished", payload: { stepName: "step-1" } }],
+      [{ event: "StepFinished", payload: { stepName: "step-1", stepId } }],
     );
 
     assertEquals(

@@ -140,6 +140,7 @@ export class ConversationRunEventEncoder {
   private activeTextContentId: string | null = null;
   private textContentIndex = 0;
   private activeStepName: string | null = null;
+  private activeStepId: string | null = null;
   private stepCount = 0;
   private readonly nowMs?: () => number;
   private readonly startedMs?: number;
@@ -166,16 +167,22 @@ export class ConversationRunEventEncoder {
     };
   }
 
-  private nextStepName(): string {
+  private nextStep(): { stepName: string; stepId: string } {
     this.stepCount += 1;
     this.activeStepName = `step-${this.stepCount}`;
-    return this.activeStepName;
+    this.activeStepId = crypto.randomUUID();
+    return { stepName: this.activeStepName, stepId: this.activeStepId };
   }
 
-  private finishStepName(): string {
+  private finishStep(): { stepName: string; stepId?: string } {
     const stepName = this.activeStepName ?? `step-${Math.max(this.stepCount, 1)}`;
+    const stepId = this.activeStepId ?? undefined;
     this.activeStepName = null;
-    return stepName;
+    this.activeStepId = null;
+    return {
+      stepName,
+      ...(stepId !== undefined ? { stepId } : {}),
+    };
   }
 
   private getToolResultMessageId(toolCallId: string) {
@@ -447,13 +454,13 @@ export class ConversationRunEventEncoder {
       case "start-step":
         return [{
           type: conversationRunEventTypes.stepStarted,
-          stepName: this.nextStepName(),
+          ...this.nextStep(),
         }];
 
       case "finish-step":
         return [{
           type: conversationRunEventTypes.stepFinished,
-          stepName: this.finishStepName(),
+          ...this.finishStep(),
         }];
 
       case "error":
