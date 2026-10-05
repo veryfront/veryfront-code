@@ -277,6 +277,7 @@ export function installGlobalFetchProbe(
     calls: () => calls,
     restore() {
       if (descriptor) Object.defineProperty(globalThis, "fetch", descriptor);
+      else Reflect.deleteProperty(globalThis, "fetch");
     },
   };
 }
