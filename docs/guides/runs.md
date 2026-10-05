@@ -143,7 +143,9 @@ Retain its ETag when preparing a metadata update:
 ```ts
 let etag: string | null = null;
 const resource = await runs.getRun("11111111-1111-4111-8111-111111111111", {
-  onHeaders: (headers) => { etag = headers.get("etag"); },
+  onHeaders: (headers) => {
+    etag = headers.get("etag");
+  },
 });
 console.log(resource.id, resource.labels, etag);
 ```
@@ -241,6 +243,11 @@ removes or retypes a field fails to compile. A new optional field still
 compiles, so update the validator when the pinned contract changes. Error
 responses reject with a `VeryfrontError`, and `runsProblemOf(error)` returns the
 RFC 9457 problem body.
+
+A `RUN_CONFLICT` may include an optional `cause`:
+`schedule_concurrency_forbidden` means the schedule forbids a new run while an
+earlier fire is active; `schedule_fire_in_progress` means the same fire is
+already being processed. Other conflicts may omit `cause`.
 
 ## Scheduling
 

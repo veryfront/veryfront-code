@@ -25,8 +25,16 @@ import { RUNS_OPERATIONS } from "./operations.ts";
 /** Contract operation ID. */
 export type RunsOperationId = keyof operations;
 
-/** RFC 9457 problem body that every Runs error response carries. */
-export type RunsProblem = components["schemas"]["Problem"];
+/**
+ * RFC 9457 Runs error body. Optional `cause` identifies
+ * `schedule_concurrency_forbidden` (overlapping fires forbidden) or
+ * `schedule_fire_in_progress` (the same fire is being processed).
+ */
+// Public causes postdate the immutable pin; remove the extension when the pin includes them.
+export type RunsProblem = components["schemas"]["Problem"] & {
+  /** Schedule admission refusal. */
+  cause?: "schedule_concurrency_forbidden" | "schedule_fire_in_progress";
+};
 
 /** Canonical JSON carried by the data field of the Runs event stream. */
 export interface CanonicalRunStreamFrame {
