@@ -3,6 +3,7 @@ import type {
   AgentEventPayloadByType,
   AgentEventWithExtensions,
   CloudEventsExtensionAttribute,
+  ErrorInfo,
   ModelInput,
 } from "./index.ts";
 
@@ -119,6 +120,17 @@ const modelInputMixed: ModelInput = {
   redacted: true,
 };
 
+const errorInfoWithCode: ErrorInfo = {
+  code: "failed",
+};
+void errorInfoWithCode;
+
+// @ts-expect-error at least-one selections cannot satisfy a selected key with explicit undefined
+const errorInfoWithUndefinedCode: ErrorInfo = {
+  code: undefined,
+};
+void errorInfoWithUndefinedCode;
+
 const createdSnapshot: AgentEventPayloadByType["com.veryfront.input-request.created"] = {
   inputRequest: {
     id: "request-a",
@@ -213,6 +225,17 @@ const updatedReferenceEmptyChanges: AgentEventPayloadByType["com.veryfront.input
     // @ts-expect-error input request reference updates must include at least one typed change
     changes: {},
   };
+
+const updatedReferenceUndefinedStatus:
+  AgentEventPayloadByType["com.veryfront.input-request.updated"] = {
+    inputRequest: {
+      id: "request-a",
+      uri: "https://example.test/input-requests/request-a",
+    },
+    // @ts-expect-error undefined does not satisfy the required changed field
+    changes: { status: undefined },
+  };
+void updatedReferenceUndefinedStatus;
 
 // @ts-expect-error run lifecycle events require the envelope runid
 const runStartedWithoutRunId: AgentEvent<"com.veryfront.run.started"> = {
