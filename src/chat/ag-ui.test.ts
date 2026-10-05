@@ -552,6 +552,83 @@ describe("chat/ag-ui", () => {
     assertEquals(await collect(dedupeChatUiMessageChunks(toStream(chatEvents))), expected);
   });
 
+  it("encodes reasoning id components before composing replay ids", async () => {
+    const state = createAgUiChatEventDecoderState();
+    const result = decodeAgUiSseChunk(
+      state,
+      [
+        "event: ReasoningMessageStart",
+        'data: {"messageId":"message:a","contentId":"reasoning"}',
+        "",
+        "event: ReasoningMessageContent",
+        'data: {"messageId":"message:a","contentId":"reasoning","delta":"First"}',
+        "",
+        "event: ReasoningMessageEnd",
+        'data: {"messageId":"message:a","contentId":"reasoning"}',
+        "",
+        "event: ReasoningMessageStart",
+        'data: {"messageId":"message","contentId":"a:reasoning"}',
+        "",
+        "event: ReasoningMessageContent",
+        'data: {"messageId":"message","contentId":"a:reasoning","delta":"Second"}',
+        "",
+        "event: ReasoningMessageEnd",
+        'data: {"messageId":"message","contentId":"a:reasoning"}',
+        "",
+        "",
+      ].join("\n"),
+    );
+
+    const chatEvents = result.events.flatMap((entry) => entry.chatEvents);
+    const expected: ChatStreamEvent[] = [
+      { type: "reasoning-start", id: "agui-reasoning:message%3Aa:reasoning" },
+      { type: "reasoning-delta", id: "agui-reasoning:message%3Aa:reasoning", delta: "First" },
+      { type: "reasoning-end", id: "agui-reasoning:message%3Aa:reasoning" },
+      { type: "reasoning-start", id: "agui-reasoning:message:a%3Areasoning" },
+      {
+        type: "reasoning-delta",
+        id: "agui-reasoning:message:a%3Areasoning",
+        delta: "Second",
+      },
+      { type: "reasoning-end", id: "agui-reasoning:message:a%3Areasoning" },
+    ];
+
+    assertEquals(chatEvents, expected);
+    assertEquals(await collect(dedupeChatUiMessageChunks(toStream(chatEvents))), expected);
+  });
+
+  it("accepts lone surrogate reasoning id components when composing replay ids", () => {
+    const state = createAgUiChatEventDecoderState();
+    const loneSurrogate = "\uD800";
+    const result = decodeAgUiSseChunk(
+      state,
+      [
+        "event: ReasoningMessageStart",
+        `data: ${JSON.stringify({ messageId: loneSurrogate, contentId: "reasoning" })}`,
+        "",
+        "event: ReasoningMessageContent",
+        `data: ${
+          JSON.stringify({ messageId: loneSurrogate, contentId: "reasoning", delta: "Odd" })
+        }`,
+        "",
+        "event: ReasoningMessageEnd",
+        `data: ${JSON.stringify({ messageId: loneSurrogate, contentId: "reasoning" })}`,
+        "",
+        "",
+      ].join("\n"),
+    );
+
+    assertEquals(result.events.flatMap((entry) => entry.chatEvents), [
+      { type: "reasoning-start", id: `agui-reasoning:${loneSurrogate}:reasoning` },
+      {
+        type: "reasoning-delta",
+        id: `agui-reasoning:${loneSurrogate}:reasoning`,
+        delta: "Odd",
+      },
+      { type: "reasoning-end", id: `agui-reasoning:${loneSurrogate}:reasoning` },
+    ]);
+  });
+
   it("preserves non-renderable custom events as data chunks", () => {
     const state = createAgUiChatEventDecoderState();
     const result = decodeAgUiSseChunk(

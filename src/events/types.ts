@@ -1,12 +1,3 @@
-import type {
-  AgentEventAttemptScopeEnvelopeRequiredByType,
-  AgentEventEnvelopeRequiredByType,
-  AgentEventJsonObject,
-  AgentEventJsonValue,
-  AgentEventPayload,
-  AgentEventPayloadByType,
-} from "./payload-types.generated.ts";
-
 /**
  * Public Agent Events Protocol types.
  *
@@ -17,8 +8,19 @@ import type {
  * @module events/types
  */
 
+import type {
+  AgentEventAttemptScopeEnvelopeRequiredByType,
+  AgentEventEnvelopeRequiredByType,
+  AgentEventJsonObject,
+  AgentEventJsonValue,
+  AgentEventPayload,
+  AgentEventPayloadByType,
+} from "./payload-types.generated.ts";
+
+/** Any JSON value carried in an Agent Events Protocol payload. */
 export type JsonValue = AgentEventJsonValue;
 
+/** Any JSON object carried in an Agent Events Protocol payload. */
 export type JsonObject = AgentEventJsonObject;
 
 export const AGENT_EVENT_TYPES = [

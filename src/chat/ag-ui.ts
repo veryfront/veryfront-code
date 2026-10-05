@@ -638,6 +638,10 @@ export type AgUiWireEventName = InferSchema<ReturnType<typeof getAgUiWireEventNa
 /** Event emitted for AG-UI wire. */
 export type AgUiWireEvent = InferSchema<ReturnType<typeof getAgUiWireEventSchema>>;
 
+function encodeReasoningPartIdComponent(value: string): string {
+  return value.replaceAll("%", "%25").replaceAll(":", "%3A");
+}
+
 function getReasoningPartId(
   state: AgUiChatEventDecoderState,
   payload: { id?: string; messageId?: string; contentId?: string },
@@ -649,13 +653,15 @@ function getReasoningPartId(
 
   if (typeof payload.contentId === "string" && payload.contentId.length > 0) {
     if (typeof payload.messageId === "string" && payload.messageId.length > 0) {
-      return `agui-reasoning:${payload.messageId}:${payload.contentId}`;
+      return `agui-reasoning:${encodeReasoningPartIdComponent(payload.messageId)}:${
+        encodeReasoningPartIdComponent(payload.contentId)
+      }`;
     }
-    return `agui-reasoning:${payload.contentId}`;
+    return `agui-reasoning:${encodeReasoningPartIdComponent(payload.contentId)}`;
   }
 
   if (typeof payload.messageId === "string" && payload.messageId.length > 0) {
-    return `agui-reasoning:${payload.messageId}`;
+    return `agui-reasoning:${encodeReasoningPartIdComponent(payload.messageId)}`;
   }
 
   if (state.activeFallbackReasoningPartId) {
