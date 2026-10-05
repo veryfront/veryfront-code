@@ -152,6 +152,57 @@ describe("idle proxy routing refresh", () => {
     }
   });
 
+  it("does not schedule OAuth refreshes for a user-token lookup without service credentials", async () => {
+    using time = new FakeTime();
+    const calls = { routing: 0, token: 0, authorizations: [] as string[] };
+    const fakeFetch = (async (input, init) => {
+      const path = new URL(input instanceof Request ? input.url : input).pathname;
+      if (path === "/auth/token") {
+        calls.token++;
+        return new Response(null, { status: 401 });
+      }
+      calls.authorizations.push(new Headers(init?.headers).get("authorization") ?? "");
+      if (path.includes("/proxy-routing/")) calls.routing++;
+      else if (!path.includes("/proxy-access/")) return new Response(null, { status: 404 });
+      return Response.json({
+        id: "proj-123",
+        slug: "my-project",
+        name: "My Project",
+        environments: [{ id: "env-1", name: "preview", protected: false }],
+      });
+    }) as typeof fetch;
+    const handler = createProxyHandler({
+      metadataFetch: fakeFetch,
+      tokenFetch: fakeFetch,
+      config: {
+        apiBaseUrl: "https://api.example.test",
+        apiClientId: "",
+        apiClientSecret: "",
+        previewApiClientId: "",
+        previewApiClientSecret: "",
+        apiToken: "static-token",
+      },
+    });
+    const request = () =>
+      new Request("https://my-project.preview.veryfront.com/page", {
+        headers: { cookie: "authToken=user-token" },
+      });
+    try {
+      assertEquals((await handler.processRequest(request())).error, undefined);
+      assertEquals(calls.routing, 1);
+      for (let elapsed = 0; elapsed < 61_000; elapsed += 1_000) await time.tickAsync(1_000);
+      await time.runMicrotasks();
+      assertEquals(calls.token, 0, "idle refresh must not request an OAuth token");
+      assertEquals(calls.routing, 1, "a user-token lookup has no renewable refresh credential");
+      assertEquals(calls.authorizations.every((value) => value === "Bearer user-token"), true);
+      assertEquals((await handler.processRequest(request())).error, undefined);
+      assertEquals(calls.token, 0, "foreground authorization must stay unchanged");
+      assertEquals(calls.routing, 2, "the expired entry must be looked up in the foreground");
+    } finally {
+      await handler.close();
+    }
+  });
+
   it("finishes a refresh whose requests each take nearly the full timeout", async () => {
     using time = new FakeTime();
     let slow = false;
