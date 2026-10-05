@@ -5,6 +5,9 @@ import { RUN_EVENT_TYPES } from "./vocabulary.ts";
 import {
   getChildRunStatusChangedPayloadSchema,
   getDocumentCitedPayloadSchema,
+  getReasoningMessageContentPayloadSchema,
+  getReasoningMessageEndPayloadSchema,
+  getReasoningMessageStartPayloadSchema,
   getRuntimeEventRecordedPayloadSchema,
   getTextMessageStartPayloadSchema,
   getToolCallResultPayloadSchema,
@@ -194,6 +197,42 @@ describe("run-events/payload", () => {
     );
   });
 
+  it("preserves optional contentId on reasoning message payloads", () => {
+    assertEquals(
+      getReasoningMessageStartPayloadSchema().parse({
+        type: "REASONING_MESSAGE_START",
+        messageId: "m1",
+        contentId: "r1",
+      }).contentId,
+      "r1",
+    );
+    assertEquals(
+      getReasoningMessageContentPayloadSchema().parse({
+        type: "REASONING_MESSAGE_CONTENT",
+        messageId: "m1",
+        contentId: "r1",
+        delta: "thinking",
+      }).contentId,
+      "r1",
+    );
+    assertEquals(
+      getReasoningMessageEndPayloadSchema().parse({
+        type: "REASONING_MESSAGE_END",
+        messageId: "m1",
+        contentId: "r1",
+      }).contentId,
+      "r1",
+    );
+    assertThrows(() =>
+      getReasoningMessageContentPayloadSchema().parse({
+        type: "REASONING_MESSAGE_CONTENT",
+        messageId: "m1",
+        contentId: "",
+        delta: "thinking",
+      })
+    );
+  });
+
   it("requires contentId on a text message start", () => {
     assertThrows(() =>
       getTextMessageStartPayloadSchema().parse({
@@ -275,9 +314,9 @@ const MINIMAL_PAYLOADS: Record<string, Record<string, unknown>> = {
   STEP_STARTED: {},
   STEP_FINISHED: {},
   REASONING_START: {},
-  REASONING_MESSAGE_START: { messageId: "m1" },
-  REASONING_MESSAGE_CONTENT: { messageId: "m1", delta: "why" },
-  REASONING_MESSAGE_END: { messageId: "m1" },
+  REASONING_MESSAGE_START: { messageId: "m1", contentId: "r1" },
+  REASONING_MESSAGE_CONTENT: { messageId: "m1", contentId: "r1", delta: "why" },
+  REASONING_MESSAGE_END: { messageId: "m1", contentId: "r1" },
   REASONING_CONTENT: { delta: "why" },
   REASONING_END: {},
   ACTIVITY_SNAPSHOT: {},
