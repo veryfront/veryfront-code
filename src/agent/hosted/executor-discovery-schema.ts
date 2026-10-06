@@ -8,7 +8,6 @@ import { defineError, snapshotVeryfrontError, VeryfrontError } from "#veryfront/
 import { getRuntimeAgentMarkdownDefinitionSchema } from "#veryfront/agent/runtime/agent-definition.ts";
 import { executorAgentJson } from "./executor-agent-schema.ts";
 import { hasControlCharacters, isWellFormedUtf16 } from "#veryfront/skill/string-safety.ts";
-import { SKILL_ID_MAX_LENGTH, SKILL_SELECTOR_MAX_ENTRIES } from "#veryfront/skill/limits.ts";
 
 export const EXECUTOR_DISCOVERY_MAX_AGENTS = 256;
 export const EXECUTOR_DISCOVERY_MAX_DEFINITION_BYTES = 64 * 1024;
@@ -58,11 +57,6 @@ export const getExecutorDiscoveryIdSchema = defineSchema((v) =>
     id.trim() === id && !hasControlCharacters(id) && isWellFormedUtf16(id)
   )
 );
-const getExecutorSkillSelectorPatternSchema = defineSchema((v) =>
-  v.string().min(1).max(SKILL_ID_MAX_LENGTH).refine((id) =>
-    id.trim() === id && !hasControlCharacters(id) && isWellFormedUtf16(id)
-  )
-);
 export const getExecutorDiscoverySourceSchema = defineSchema((v) =>
   v.discriminatedUnion("type", [
     v.object({ type: v.literal("release"), releaseId: getExecutorDiscoveryIdSchema() }).strict(),
@@ -97,21 +91,9 @@ export const getExecutorDiscoveryCandidatesSchema = defineSchema((v) =>
 /** Preserve existing definition semantics while rejecting additional wire fields. */
 export const getExecutorAgentDefinitionSchema = defineSchema((v) => {
   const ids = () => v.array(getExecutorDiscoveryIdSchema()).max(EXECUTOR_DISCOVERY_MAX_AGENTS);
-  const skillSelectorPattern = getExecutorSkillSelectorPatternSchema();
-  const skillSelectors = () =>
-    v.union([
-      v.boolean(),
-      skillSelectorPattern,
-      v.array(skillSelectorPattern).max(SKILL_SELECTOR_MAX_ENTRIES),
-      v.record(skillSelectorPattern, v.boolean()).refine(
-        (selector) => Object.keys(selector).length <= SKILL_SELECTOR_MAX_ENTRIES,
-        `Skill selector exceeds ${SKILL_SELECTOR_MAX_ENTRIES} entries`,
-      ),
-    ]);
   return getRuntimeAgentMarkdownDefinitionSchema().extend({
     id: getExecutorDiscoveryIdSchema(),
     tools: v.union([v.literal(true), ids()]).optional(),
-    skills: skillSelectors().optional(),
     deniedTools: ids().optional(),
     delegates: ids().optional(),
     providerTools: ids().optional(),
