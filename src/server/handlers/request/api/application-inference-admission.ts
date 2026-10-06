@@ -110,7 +110,7 @@ export function createHostApplicationInferenceAdmission(
       throw new Error("Application inference admission response exceeded its limit");
     }
     const admitted = admissionSchema.parse(parseJson(body.text));
-    return {
+    const admission: ApplicationInferenceAdmission = {
       ...admitted,
       async finalize(status) {
         const finalized = await transport(
@@ -129,5 +129,8 @@ export function createHostApplicationInferenceAdmission(
         }
       },
     };
+    // Native async resolution must not consult a tenant-installed inherited then getter.
+    defineProperty(admission, "then", { value: undefined });
+    return admission;
   };
 }

@@ -164,6 +164,7 @@ async function exercise(
   interceptPromise = false,
   omitClientRunId = false,
   configuredBinding?: boolean,
+  interceptInheritedThen = false,
 ) {
   const { ctx, wrapper } = fixture();
   const runId = crypto.randomUUID();
@@ -176,6 +177,9 @@ async function exercise(
   const finalizationOrigins: string[] = [];
   const finalizations: unknown[] = [];
   const originalPromiseResolve = Promise.resolve;
+  const originalInheritedThen = Object.getOwnPropertyDescriptor(Object.prototype, "then");
+  let inheritedThenCalls = 0;
+  let inheritedThenObservedCredential = false;
   let observedAdmissionCredential = false;
   let interceptedPromiseCount = 0;
   let admissionCount = 0;
@@ -241,6 +245,17 @@ async function exercise(
           return Reflect.apply(originalPromiseResolve, Promise, [value]);
         }) as typeof Promise.resolve;
       }
+      if (interceptInheritedThen) {
+        Object.defineProperty(Object.prototype, "then", {
+          configurable: true,
+          get() {
+            inheritedThenCalls++;
+            const credential = Object.getOwnPropertyDescriptor(this, "inferenceToken");
+            if (credential?.value === INFERENCE_CREDENTIAL) inheritedThenObservedCredential = true;
+            return undefined;
+          },
+        });
+      }
       return Promise.resolve({
         POST: (req: Request) => {
           inspectSource();
@@ -269,7 +284,7 @@ async function exercise(
         admissionCount++;
         assertEquals(outgoing.method, "POST");
         assertEquals(outgoing.headers.get("authorization"), BASIC_AUTH);
-        const body = await outgoing.json();
+        const body = JSON.parse(await outgoing.text());
         assertEquals({ ...body, requestId: "request" }, {
           projectId: PROJECT_ID,
           projectSlug: ctx.projectSlug,
@@ -290,7 +305,7 @@ async function exercise(
         finalizationOrigins.push(new URL(outgoing.url).origin);
         assertEquals(outgoing.method, "POST");
         assertEquals(outgoing.headers.get("authorization"), BASIC_AUTH);
-        const body = await outgoing.json();
+        const body = JSON.parse(await outgoing.text());
         assertEquals(body.inferenceToken, INFERENCE_CREDENTIAL);
         finalizations.push(body);
         finalized.resolve();
@@ -419,6 +434,8 @@ async function exercise(
       }
       await bounded(finalized.promise);
       assertEquals(observedAdmissionCredential, false);
+      assertEquals(inheritedThenObservedCredential, false);
+      if (interceptInheritedThen) assert(inheritedThenCalls > 0);
       if (interceptPromise) assert(interceptedPromiseCount > 0);
       assertEquals(admissionCount, 1);
       assertEquals(admissionOrigins, [API_URL]);
@@ -439,6 +456,9 @@ async function exercise(
     });
   } finally {
     Promise.resolve = originalPromiseResolve;
+    if (originalInheritedThen) {
+      Object.defineProperty(Object.prototype, "then", originalInheritedThen);
+    } else Reflect.deleteProperty(Object.prototype, "then");
     returned.resolve();
     __injectDepsForTests(null);
     await resetApiHandler();
@@ -450,6 +470,8 @@ async function exercise(
 }
 
 describe("public authored AG-UI inference", () => {
+  it("keeps admission credentials out of a tenant inherited then getter", () =>
+    exercise("completed", false, "pinned", false, false, undefined, true));
   it("binds direct tool authorization to the admitted run when the client omits runId", () =>
     exercise("completed", false, "pinned", false, true));
   it("binds injected-path tool authorization to the admitted run when the client omits runId", () =>
