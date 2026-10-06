@@ -1,3 +1,4 @@
+import { inheritHostedChildInferenceAuthority } from "./inference-credential.ts";
 import {
   type HostToolSet,
   type RemoteMCPToolSourceConfig,
@@ -569,6 +570,7 @@ export async function createDefaultHostedChatRuntime(
       const taskContext = input.createTaskContext
         ? input.createTaskContext({ options: input.options, modelId })
         : createDefaultTaskContext({ options: input.options, modelId });
+      inheritHostedChildInferenceAuthority(taskContext, input.options);
       // The id is normalized, so hosted identity comes from the run's routing,
       // read with the run's credentials and served catalog.
       const providerNativeToolNames = runWithVeryfrontCloudContext(

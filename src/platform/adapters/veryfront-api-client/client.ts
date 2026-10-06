@@ -78,6 +78,8 @@ export class VeryfrontApiClient {
   private initializingPromise?: Promise<void>;
   /** Cached project data from initialization - avoids redundant API calls */
   private cachedProjectData?: Awaited<ReturnType<VeryfrontAPIOperations["getProject"]>>;
+  /** Kept off `config`: a plain property is readable by any code holding the client. */
+  readonly #apiToken: string | undefined;
 
   constructor(config: VeryfrontAPIConfig) {
     const retryConfig = {
@@ -86,7 +88,9 @@ export class VeryfrontApiClient {
       maxDelay: config.retry?.maxDelay ?? DEFAULT_MAX_RETRY_DELAY_MS,
     };
 
-    this.config = { ...config, retry: retryConfig };
+    const { apiToken, ...publicConfig } = config;
+    this.#apiToken = apiToken;
+    this.config = { ...publicConfig, retry: retryConfig };
 
     const tokenProvider: TokenProvider = () => {
       const requestContext = this.useContextualToken
@@ -96,14 +100,14 @@ export class VeryfrontApiClient {
         : null;
       if (requestContext) {
         if (requestContext.token) return requestContext.token;
-        if (this.config.apiToken) return this.config.apiToken;
+        if (this.#apiToken) return this.#apiToken;
         throw API_CLIENT_ERROR.create({ detail: "No API token available", status: 401 });
       }
       const requestToken = IntrinsicReflectApply(WeakMapPrototypeGet, requestTokens, [this]) as
         | string
         | undefined;
       if (requestToken !== undefined) return requestToken;
-      if (this.config.apiToken) return this.config.apiToken;
+      if (this.#apiToken) return this.#apiToken;
       throw API_CLIENT_ERROR.create({ detail: "No API token available", status: 401 });
     };
 

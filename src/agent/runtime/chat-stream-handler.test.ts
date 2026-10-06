@@ -37,6 +37,12 @@ import { shouldContinueAfterStreamStep } from "./tool-result-continuation.ts";
 import { createChatUiMessageStreamFromDataStream } from "#veryfront/agent/streaming/chat-ui-message-stream.ts";
 import { createConversationRunChunkMirror } from "#veryfront/agent/conversation/run-chunk-mirror.ts";
 import { createConversationRunEventQueueController } from "#veryfront/agent/conversation/durable.ts";
+import {
+  getCurrentToolCallOccurrence,
+  getToolCallOccurrence,
+  runWithToolCallOccurrenceDispatch,
+  runWithToolCallOccurrences,
+} from "#veryfront/runtime/tool-call-occurrence.ts";
 import { ConversationRunEventEncoder } from "#veryfront/agent/conversation/run-events.ts";
 import {
   hasIncompleteToolParts,
@@ -2784,6 +2790,68 @@ describe("processStream active mode", () => {
       { type: "finish", finishReason: "tool-calls", totalUsage: null },
     ]);
     assertEquals(active.state.streamOutcome?.status, "tool_handoff");
+  });
+
+  it("retains active hosted tool occurrences through decoding, mirroring, and dispatch", async () => {
+    const { events, state } = await runWithToolCallOccurrences(() =>
+      runMode("active", [
+        { type: "tool-input-start", id: "local-1", toolName: "create_file" },
+        { type: "tool-input-delta", id: "local-1", delta: '{"path":"a.md"}' },
+        { type: "tool-input-end", id: "local-1" },
+        { type: "finish", finishReason: "tool-calls", totalUsage: null },
+      ])
+    );
+    const start = events.find((event) => event.type === "tool-input-start");
+    const occurrenceId = start?.privateToolCallOccurrenceId;
+    assertEquals(typeof occurrenceId, "string");
+    const call = state.toolCalls.get("local-1");
+    if (!call) throw new Error("Expected the committed local tool call");
+    assertEquals(getToolCallOccurrence(call), occurrenceId);
+    assertEquals(
+      runWithToolCallOccurrenceDispatch(call, getCurrentToolCallOccurrence),
+      occurrenceId,
+    );
+
+    const queueController = createConversationRunEventQueueController({
+      authToken: "writer",
+      apiUrl: "https://api.example.test",
+      conversationId: "66666666-6666-4666-8666-666666666666",
+      runId: "runtime-run",
+      canonicalRunId: "77777777-7777-4777-8777-777777777777",
+      latestEventId: 0,
+      latestExternalEventSequence: 0,
+      fetch: () => Promise.reject(new Error("This fixture must not send requests")),
+    });
+    const mirror = createConversationRunChunkMirror({
+      queueController,
+      encoder: new ConversationRunEventEncoder(),
+      toolCallAdmissions: true,
+      immediateFlushEventCount: 1000,
+      flushDelayMs: 60_000,
+    });
+    try {
+      const sseEncoder = new TextEncoder();
+      const stream = new ReadableStream<Uint8Array>({
+        start(controller) {
+          for (const event of events) {
+            controller.enqueue(sseEncoder.encode(`data: ${JSON.stringify(event)}\n\n`));
+          }
+          controller.close();
+        },
+      });
+      const chunks = createChatUiMessageStreamFromDataStream({ stream }, {
+        generateMessageId: () => "outer-message",
+        privateToolCallAdmissions: true,
+      });
+      for await (const chunk of chunks) {
+        if (chunk.type === "tool-input-start") {
+          assertEquals(getToolCallOccurrence(chunk), occurrenceId);
+        }
+        await mirror.handleChunk(chunk);
+      }
+    } finally {
+      mirror.dispose();
+    }
   });
 
   it("matches legacy SSE and state for a provider-executed tool", async () => {

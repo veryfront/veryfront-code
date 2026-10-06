@@ -43,6 +43,9 @@ import {
 export * from "./agent-service/live-evals/index.ts";
 export * from "./agent-service/durable-run-canaries/index.ts";
 
+// Captured when this module loads, before project code: the adapter is created
+// after the project's eval module loaded, which may have replaced the global.
+const capturedFetch: typeof fetch = globalThis.fetch.bind(globalThis);
 const IntrinsicJSONParse = JSON.parse;
 const IntrinsicJSONStringify = JSON.stringify;
 
@@ -855,7 +858,7 @@ export function createAgentServiceEvalAdapter(
   config: AgentServiceEvalAdapterConfig,
 ): EvalAgentAdapter {
   assertAgentServiceEvalAdapterConfig(config);
-  const requestFetch = config.fetch ?? fetch;
+  const requestFetch = config.fetch ?? capturedFetch;
   const endpoint = config.endpoint ?? DEFAULT_AGENT_SERVICE_EVAL_ENDPOINT;
 
   return async (context): Promise<EvalAgentAdapterResult> => {

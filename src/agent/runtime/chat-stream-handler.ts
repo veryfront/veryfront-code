@@ -817,6 +817,7 @@ async function processActiveStream(
     }),
   });
   const live = createStreamLifecycleLiveAdapter({ textPartId });
+  const toolOccurrences = createPrivateMap<string, { id: string }>();
   let deliveryError: unknown;
   let streamOutcome!: StreamOutcome;
   try {
@@ -830,10 +831,20 @@ async function processActiveStream(
       const events = live.encode(frame);
       for (let index = 0; index < events.length; index++) {
         if (hasOwn(events, index)) {
+          const event = events[index]!;
+          let occurrenceId: string | undefined;
+          if (event.type === "tool-input-start") {
+            const call = { id: event.toolCallId };
+            occurrenceId = introduceToolCallOccurrence(call);
+            if (occurrenceId) toolOccurrences.set(call.id, call);
+          }
           sendSSE(
             controller,
             encoder,
-            withRuntimeStepMessageObservation(events[index]!, callbacks),
+            withRuntimeStepMessageObservation(
+              occurrenceId ? { ...event, privateToolCallOccurrenceId: occurrenceId } : event,
+              callbacks,
+            ),
           );
         }
       }
@@ -849,6 +860,9 @@ async function processActiveStream(
     state.streamOutcome = streamOutcome;
     if (deliveryError === undefined) {
       applyLifecycleSnapshotToChatStreamState(state, streamOutcome.snapshot);
+      for (const call of state.toolCalls.values()) {
+        retainToolCallOccurrence(toolOccurrences.get(call.id), call);
+      }
       finalizeActiveUnresolvedProviderToolCalls(state, controller, encoder);
     }
   }

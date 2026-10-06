@@ -6,6 +6,7 @@ import {
   assertStringIncludes,
 } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { isDeno } from "#veryfront/platform/compat/runtime.ts";
 import {
   createProviderReplayCheckpointEvent,
   parseProviderReplayCheckpointEvent,
@@ -17,6 +18,10 @@ import {
 } from "#veryfront/agent/runtime/provider-replay-limits.ts";
 import { VeryfrontError } from "#veryfront/errors";
 import { observeFetchRequestInit } from "#veryfront/testing/mock-fetch.ts";
+import {
+  HEADER_METHODS,
+  installCredentialProbes,
+} from "#veryfront/security/http/credential-probes.test-helpers.ts";
 import {
   _resetShimForTests,
   setGlobalTracerProvider,
@@ -101,6 +106,42 @@ describe("run-scoped provider replay checkpoint persistence", () => {
       requests[0]?.headers.get("traceparent"),
       "00-11111111111111111111111111111111-2222222222222222-01",
     );
+  });
+
+  // The probes pin what Deno's own Headers and init processing call; Node's
+  // undici takes different internal paths.
+  it("sends the append token without a patched Headers member or init getter seeing it", {
+    ignore: !isDeno,
+  }, async () => {
+    const TOKEN = "vf-replay-append-token-canary-1d73";
+    const authorizations: (string | undefined)[] = [];
+    const persist = createRunScopedProviderReplayCheckpointPersister({
+      apiUrl: "https://api.example.test/api",
+      runId: RUN_ID,
+      runEventAppendToken: TOKEN,
+      // Stands in for the native send: it reads the null-prototype record.
+      fetch: (_input, init) => {
+        const headers = init?.headers as Record<string, string> | undefined;
+        authorizations.push(
+          headers && Object.hasOwn(headers, "authorization") ? headers.authorization : undefined,
+        );
+        return Promise.resolve(
+          Response.json({ latestEventId: 1, appendedCount: 1, run: { runId: RUN_ID } }),
+        );
+      },
+    });
+    if (!persist) throw new Error("Expected a run-scoped checkpoint persister");
+    const probes = installCredentialProbes({
+      headerMethods: HEADER_METHODS.filter((name) => name !== "has" && name !== "append"),
+    });
+    try {
+      await persist(checkpoint());
+    } finally {
+      probes.restore();
+    }
+
+    assertEquals(authorizations, [`Bearer ${TOKEN}`]);
+    assertEquals(probes.saw(TOKEN), false);
   });
 
   it("keeps persistence pending until the exact-run append is acknowledged", async () => {

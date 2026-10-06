@@ -8,6 +8,11 @@ import type { RemoteToolSource, ToolDefinition, ToolExecutionContext } from "./t
 import { readResponseTextPrefix } from "#veryfront/utils/response-body.ts";
 import { guardedOutboundFetch } from "#veryfront/security/http/outbound-fetch.ts";
 import { getHostedToolCallAdmissionRequestFetch } from "#veryfront/agent/hosted/child-run-event-writer-token.ts";
+import {
+  assertNativeRequestProcessing,
+  copyNativeHeaders,
+  createNativeRequestInit,
+} from "#veryfront/platform/compat/http/native-request-init.ts";
 
 /** Default timeout for a single outbound remote MCP request. */
 const REMOTE_MCP_REQUEST_TIMEOUT_MS = 30_000;
@@ -34,6 +39,12 @@ const MAX_REMOTE_MCP_CURSOR_LENGTH = 4_096;
 const MAX_REMOTE_MCP_CORRELATION_ID_LENGTH = 256;
 const UTF8_ENCODER = new TextEncoder();
 const NativeURL = URL;
+// The resolved headers can carry a bearer (the platform source's run token, a
+// user source's OAuth token), so they are only touched through members
+// captured before project code loaded.
+const HeadersPrototypeSet = Headers.prototype.set;
+const HeadersPrototypeGet = Headers.prototype.get;
+const HeadersPrototypeDelete = Headers.prototype.delete;
 const nativeEncodeURIComponent = encodeURIComponent;
 const reflectApply = Reflect.apply;
 const urlHrefGetter = Object.getOwnPropertyDescriptor(
@@ -678,10 +689,14 @@ async function resolveHeaders(
   context?: ToolExecutionContext,
 ): Promise<Headers> {
   const resolvedHeaders = headers ? await resolveValue(headers, context) : undefined;
-  const finalHeaders = new Headers(resolvedHeaders);
-  finalHeaders.delete("X-Veryfront-Run-Event-Writer-Token");
-  finalHeaders.set("Content-Type", "application/json");
-  finalHeaders.set("Accept", mergeAcceptHeader(finalHeaders.get("Accept")));
+  const finalHeaders = copyNativeHeaders(resolvedHeaders);
+  reflectApply(HeadersPrototypeDelete, finalHeaders, ["X-Veryfront-Run-Event-Writer-Token"]);
+  reflectApply(HeadersPrototypeSet, finalHeaders, ["Content-Type", "application/json"]);
+  const accept = reflectApply(HeadersPrototypeGet, finalHeaders, ["Accept"]) as string | null;
+  // The merge works on the Accept value alone, outside the credential headers.
+  const mergedAccept = mergeAcceptHeader(accept);
+  assertNativeRequestProcessing();
+  reflectApply(HeadersPrototypeSet, finalHeaders, ["Accept", mergedAccept]);
   return finalHeaders;
 }
 
@@ -805,13 +820,17 @@ async function postJsonRpc(
 
   try {
     requestScope.signal.throwIfAborted();
-    const response = await requestFetch(endpoint, {
+    // A null-prototype init with a null-prototype header record: no inherited
+    // getter or iterator sees the headers on the way to the transport.
+    const init = createNativeRequestInit(undefined, {
       method: "POST",
       headers,
       body: serializedBody,
       signal: requestScope.signal,
       redirect: "error",
     });
+    assertNativeRequestProcessing();
+    const response = await requestFetch(endpoint, init);
 
     if (!response.ok) {
       const { text } = await readResponseTextPrefix(
