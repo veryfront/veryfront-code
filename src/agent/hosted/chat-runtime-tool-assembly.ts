@@ -578,7 +578,7 @@ function withHostedKnowledgeExecutionContext(
 
 function createHostedKnowledgeSource(
   knowledge: AgentConfig["knowledge"] | undefined,
-  taskContext: HostedKnowledgeSourceContext,
+  getTaskContext: () => HostedKnowledgeSourceContext,
 ): RemoteToolSource | undefined {
   const source = createAgentKnowledgeSource({
     system: "",
@@ -589,9 +589,13 @@ function createHostedKnowledgeSource(
   return {
     ...source,
     listTools: (context) =>
-      source.listTools(withHostedKnowledgeExecutionContext(context, taskContext)),
+      source.listTools(withHostedKnowledgeExecutionContext(context, getTaskContext())),
     executeTool: (name, input, context) =>
-      source.executeTool(name, input, withHostedKnowledgeExecutionContext(context, taskContext)),
+      source.executeTool(
+        name,
+        input,
+        withHostedKnowledgeExecutionContext(context, getTaskContext()),
+      ),
   };
 }
 
@@ -637,12 +641,18 @@ async function prepareHostedChatRuntimeToolAssemblyInternal<
       ) projectToolNames.add(shortName);
     }
   }
-  const knowledgeContext = "remoteToolSources" in input
-    ? input.hostedKnowledgeContext
-    : { ...input.taskContext, apiUrl: input.apiUrl };
-  const knowledgeSource = knowledgeContext === undefined
-    ? undefined
-    : createHostedKnowledgeSource(input.knowledge, knowledgeContext);
+  let knowledgeSource: RemoteToolSource | undefined;
+  if ("remoteToolSources" in input) {
+    const brokerKnowledgeContext = input.hostedKnowledgeContext;
+    knowledgeSource = brokerKnowledgeContext === undefined
+      ? undefined
+      : createHostedKnowledgeSource(input.knowledge, () => brokerKnowledgeContext);
+  } else {
+    knowledgeSource = createHostedKnowledgeSource(input.knowledge, () => ({
+      ...input.taskContext,
+      apiUrl: input.apiUrl,
+    }));
+  }
   const authorizedLocalTools = withoutDeniedHostTools(
     applyHostedHostToolPolicy(input.localTools, input.hostToolPolicy),
     input.deniedToolNames,

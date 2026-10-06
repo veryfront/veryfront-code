@@ -758,6 +758,64 @@ Deno.test("prepareHostedChatRuntimeToolAssembly forwards the active branch to ho
   assertStringIncludes(requestedUrls[0] ?? "", "branch=feature-x");
 });
 
+Deno.test("prepareHostedChatRuntimeToolAssembly reads live project context for hosted knowledge", async () => {
+  const requestedUrls: string[] = [];
+  const taskContext: HostedChatRuntimeToolAssemblyContext = {
+    authToken: "tenant-token",
+    projectId: "project-before-switch",
+    branchId: "branch-before-switch",
+    model: "anthropic/claude-sonnet-4-6",
+  };
+  const toolAssembly = await prepareHostedChatRuntimeToolAssembly({
+    sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
+    taskContext,
+    instructions: "Base instructions",
+    localTools: {},
+    apiUrl: "https://api.example.com",
+    apiMcpUrl: "https://api.example.com/mcp",
+    allowedToolNames: null,
+    knowledge: true,
+    createRemoteToolSource: remoteSourceFromConfig,
+    preloadLatestConversationUserText: false,
+  });
+
+  taskContext.projectId = "project-after-switch";
+  taskContext.branchId = "branch-after-switch";
+
+  const knowledgeSource = toolAssembly.remoteToolSources.find((source) =>
+    source.id === "framework-knowledge"
+  );
+  assertExists(knowledgeSource);
+  const result = await withMockFetch(async (input: RequestInfo | URL) => {
+    const url = input instanceof Request ? input.url : String(input);
+    requestedUrls.push(url);
+    return Response.json({
+      data: [{
+        id: "file-1",
+        version_id: "version-1",
+        path: "knowledge/live-project.md",
+        content: "Live project lookup needle.",
+        type: "file",
+        size: 27,
+        updated_at: "2026-01-01T00:00:00.000Z",
+      }],
+      page_info: { self: null, first: null, next: null, prev: null },
+    });
+  }, () =>
+    knowledgeSource.executeTool("search_knowledge", { query: "live project needle" }, {
+      projectId: "forged-project",
+      branch: "forged-branch",
+    }));
+  const returned = typeof result === "object" && result !== null && "returned" in result
+    ? result.returned
+    : undefined;
+
+  assertEquals(returned, 1);
+  assertEquals(requestedUrls.length, 1);
+  assertStringIncludes(requestedUrls[0] ?? "", "/projects/project-after-switch/files");
+  assertStringIncludes(requestedUrls[0] ?? "", "branch=branch-after-switch");
+});
+
 Deno.test("prepareHostedChatRuntimeToolAssembly keeps research mirroring behind denied remote tools", async () => {
   const executions: string[] = [];
   const toolAssembly = await prepareHostedChatRuntimeToolAssembly({
