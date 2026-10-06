@@ -1,6 +1,6 @@
 import { assert, assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { installGlobalFetchProbe } from "./credential-probes.test-helpers.ts";
+import { installGlobalFetchProbe } from "../../../src/security/http/credential-probes.test-helpers.ts";
 
 describe("global fetch credential probe cleanup", () => {
   it("restores an existing own fetch descriptor", () => {
