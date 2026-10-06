@@ -3,28 +3,28 @@ import "./test-setup.ts";
 import { assert, assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
-  AGENT_EVENT_SCHEMA_BY_TYPE,
-  AGENT_EVENT_TARGET_CATALOG,
-  AGENT_EVENT_TARGET_ENVELOPE_SCHEMA,
-  AGENT_EVENT_TARGET_PAYLOAD_EXAMPLES,
-  AGENT_EVENT_TYPES,
-  type AgentEvent,
-  parseAgentEvent,
-  safeParseAgentEvent,
+  EVENT_SCHEMA_BY_TYPE,
+  EVENT_TARGET_CATALOG,
+  EVENT_TARGET_ENVELOPE_SCHEMA,
+  EVENT_TARGET_PAYLOAD_EXAMPLES,
+  EVENT_TYPES,
+  type EventRecord,
+  parseEvent,
+  safeParseEvent,
 } from "./index.ts";
 
 type TargetExample =
-  | typeof AGENT_EVENT_TARGET_PAYLOAD_EXAMPLES.examples[number]
-  | typeof AGENT_EVENT_TARGET_PAYLOAD_EXAMPLES.negativeCases[number];
+  | typeof EVENT_TARGET_PAYLOAD_EXAMPLES.examples[number]
+  | typeof EVENT_TARGET_PAYLOAD_EXAMPLES.negativeCases[number];
 
 type EnvelopeContext = TargetExample["envelopeContext"];
 
-function targetExamples(): typeof AGENT_EVENT_TARGET_PAYLOAD_EXAMPLES.examples {
-  return AGENT_EVENT_TARGET_PAYLOAD_EXAMPLES.examples;
+function targetExamples(): typeof EVENT_TARGET_PAYLOAD_EXAMPLES.examples {
+  return EVENT_TARGET_PAYLOAD_EXAMPLES.examples;
 }
 
-function targetNegativeCases(): typeof AGENT_EVENT_TARGET_PAYLOAD_EXAMPLES.negativeCases {
-  return AGENT_EVENT_TARGET_PAYLOAD_EXAMPLES.negativeCases;
+function targetNegativeCases(): typeof EVENT_TARGET_PAYLOAD_EXAMPLES.negativeCases {
+  return EVENT_TARGET_PAYLOAD_EXAMPLES.negativeCases;
 }
 
 function definedEnvelopeContext(
@@ -54,19 +54,19 @@ function eventFor(example: TargetExample): Record<string, unknown> {
 
 describe("events/parser", () => {
   it("exports the 36 target types from the pinned catalog in order", () => {
-    const catalogTypes = AGENT_EVENT_TARGET_CATALOG.events.map((event) => event.type);
-    assertEquals(AGENT_EVENT_TYPES.length, 36);
-    assertEquals([...AGENT_EVENT_TYPES], catalogTypes);
+    const catalogTypes = EVENT_TARGET_CATALOG.events.map((event) => event.type);
+    assertEquals(EVENT_TYPES.length, 36);
+    assertEquals([...EVENT_TYPES], catalogTypes);
     assertEquals(
-      Object.keys(AGENT_EVENT_SCHEMA_BY_TYPE),
+      Object.keys(EVENT_SCHEMA_BY_TYPE),
       catalogTypes,
     );
   });
 
-  it("parses every positive target fixture as an AgentEvent", () => {
+  it("parses every positive target fixture as an EventRecord", () => {
     assertEquals(targetExamples().length, 99);
     for (const example of targetExamples()) {
-      const event = parseAgentEvent(eventFor(example));
+      const event = parseEvent(eventFor(example));
       assertEquals(event.type, example.eventType);
       assertEquals(event.dataschema, example.schemaRef);
       assertEquals<unknown>(event.data, example.data);
@@ -76,7 +76,7 @@ describe("events/parser", () => {
   it("rejects every negative target fixture", () => {
     assertEquals(targetNegativeCases().length, 271);
     for (const example of targetNegativeCases()) {
-      const result = safeParseAgentEvent(eventFor(example));
+      const result = safeParseEvent(eventFor(example));
       assert(!result.success, `${example.id} unexpectedly parsed`);
     }
   });
@@ -86,7 +86,7 @@ describe("events/parser", () => {
       candidate.eventType === "com.veryfront.run.started"
     );
     assert(example);
-    const result = safeParseAgentEvent({
+    const result = safeParseEvent({
       ...eventFor(example),
       dataschema: "urn:example:wrong-schema",
     });
@@ -98,10 +98,10 @@ describe("events/parser", () => {
       candidate.eventType === "com.veryfront.run.started"
     );
     assert(example);
-    assert(!safeParseAgentEvent({ ...eventFor(example), payload: {} }).success);
-    assert(!safeParseAgentEvent({ ...eventFor(example), event_type: example.eventType }).success);
+    assert(!safeParseEvent({ ...eventFor(example), payload: {} }).success);
+    assert(!safeParseEvent({ ...eventFor(example), event_type: example.eventType }).success);
     assert(
-      !safeParseAgentEvent({ ...eventFor(example), data: { type: example.eventType } }).success,
+      !safeParseEvent({ ...eventFor(example), data: { type: example.eventType } }).success,
     );
   });
 
@@ -119,10 +119,10 @@ describe("events/parser", () => {
 
     const missingAttempt = eventFor(attempt);
     delete missingAttempt.attemptid;
-    assert(!safeParseAgentEvent(missingAttempt).success);
-    assert(!safeParseAgentEvent({ ...eventFor(call), attemptid: "attempt-a" }).success);
+    assert(!safeParseEvent(missingAttempt).success);
+    assert(!safeParseEvent({ ...eventFor(call), attemptid: "attempt-a" }).success);
     assert(
-      !safeParseAgentEvent({
+      !safeParseEvent({
         ...eventFor(call),
         data: { ...call.data, tokens: { input: 5, output: 4, cacheRead: 6 } },
       }).success,
@@ -135,7 +135,7 @@ describe("events/parser", () => {
     );
     assert(example);
     assert(
-      !safeParseAgentEvent({
+      !safeParseEvent({
         ...eventFor(example),
         recordedat: "2026-10-05T10:00:00Z",
       }).success,
@@ -154,7 +154,7 @@ describe("events/parser", () => {
         ["noncharacter", "bad\uFDD0"],
       ]
     ) {
-      const result = safeParseAgentEvent({
+      const result = safeParseEvent({
         ...eventFor(example),
         customtag: value,
       });
@@ -170,12 +170,12 @@ describe("events/parser", () => {
     assert(example);
     assertThrows(
       () => {
-        (AGENT_EVENT_TARGET_ENVELOPE_SCHEMA as { required?: readonly string[] }).required = [];
+        (EVENT_TARGET_ENVELOPE_SCHEMA as { required?: readonly string[] }).required = [];
       },
       TypeError,
     );
 
-    const event = parseAgentEvent({
+    const event = parseEvent({
       ...eventFor(example),
       customtag: true,
     });
@@ -189,21 +189,21 @@ describe("events/parser", () => {
     assert(example);
     const traceparent = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01";
     assert(
-      safeParseAgentEvent({
+      safeParseEvent({
         ...eventFor(example),
         traceparent,
         tracestate: "a=b,, 	 ,c=d",
       }).success,
     );
     assert(
-      safeParseAgentEvent({
+      safeParseEvent({
         ...eventFor(example),
         traceparent,
         tracestate: `${Array.from({ length: 32 }, (_, index) => `k${index}=v`).join(",")},,`,
       }).success,
     );
     assert(
-      !safeParseAgentEvent({
+      !safeParseEvent({
         ...eventFor(example),
         traceparent,
         tracestate: Array.from({ length: 33 }, (_, index) => `k${index}=v`).join(","),
@@ -211,7 +211,7 @@ describe("events/parser", () => {
     );
     for (const tracestate of ["a=b,\n,c=d", "a=b,\r,c=d", "a=b,\u00a0,c=d"]) {
       assert(
-        !safeParseAgentEvent({
+        !safeParseEvent({
           ...eventFor(example),
           traceparent,
           tracestate,
@@ -221,12 +221,12 @@ describe("events/parser", () => {
     }
   });
 
-  it("keeps AgentEvent discriminated by type for consumers", () => {
+  it("keeps EventRecord discriminated by type for consumers", () => {
     const example = targetExamples().find((candidate) =>
       candidate.eventType === "com.veryfront.stream.closed"
     );
     assert(example);
-    const event: AgentEvent = parseAgentEvent(eventFor(example));
+    const event: EventRecord = parseEvent(eventFor(example));
     assertEquals(event.type, "com.veryfront.stream.closed");
     if (event.type === "com.veryfront.stream.closed") {
       assertEquals(
@@ -238,8 +238,8 @@ describe("events/parser", () => {
     }
   });
 
-  it("throws with a concise validation error from parseAgentEvent", () => {
-    const error = assertThrows(() => parseAgentEvent({}));
+  it("throws with a concise validation error from parseEvent", () => {
+    const error = assertThrows(() => parseEvent({}));
     assert(error instanceof TypeError);
     assert(error.message.startsWith("Invalid Agent Events Protocol event"));
   });

@@ -5,26 +5,26 @@
  * Regenerate with: deno run -A src/events/generate-payload-types.mjs
  */
 
-type AgentEventAtLeastOne<T extends object> = {
+type EventAtLeastOne<T extends object> = {
   readonly [K in keyof T]-?: T & { readonly [P in K]-?: T[P] };
 }[keyof T];
 
-export type AgentEventJsonValue =
+export type EventJsonValue =
   | null
   | boolean
   | number
   | string
-  | readonly AgentEventJsonValue[]
-  | AgentEventJsonObject;
+  | readonly EventJsonValue[]
+  | EventJsonObject;
 
-export type AgentEventJsonObject = { readonly [key: string]: AgentEventJsonValue };
+export type EventJsonObject = { readonly [key: string]: EventJsonValue };
 
 /**
  * Optional producer-owned absolute URI namespaces, such as https://example.test/extensions or urn:org.example:telemetry. Each value is a JSON object; core fields remain closed. Publishing extensions still requires authorization.
  */
-export type Extensions = { readonly [namespace: string]: AgentEventJsonObject };
+export type Extensions = { readonly [namespace: string]: EventJsonObject };
 
-export type ErrorInfo = AgentEventAtLeastOne<{
+export type ErrorInfo = EventAtLeastOne<{
   readonly "code"?: string;
   readonly "message"?: string;
 }>;
@@ -39,9 +39,9 @@ export type ModelDescriptor = {
  */
 export type ModelInput =
   | {
-    readonly "messages": readonly AgentEventJsonValue[];
-    readonly "tools"?: readonly AgentEventJsonValue[];
-    readonly "parameters"?: AgentEventJsonObject;
+    readonly "messages": readonly EventJsonValue[];
+    readonly "tools"?: readonly EventJsonValue[];
+    readonly "parameters"?: EventJsonObject;
   }
     & {
       readonly "redacted"?: never;
@@ -72,7 +72,7 @@ export type InputField = {
   readonly "type": string;
   readonly "label"?: string;
   readonly "required"?: boolean;
-  readonly "options"?: readonly AgentEventJsonValue[];
+  readonly "options"?: readonly EventJsonValue[];
 };
 
 export type InputRequestSnapshot = {
@@ -81,8 +81,8 @@ export type InputRequestSnapshot = {
   readonly "title"?: string;
   readonly "description"?: string;
   readonly "fields"?: readonly InputField[];
-  readonly "schema"?: AgentEventJsonObject;
-  readonly "response"?: AgentEventJsonValue;
+  readonly "schema"?: EventJsonObject;
+  readonly "response"?: EventJsonValue;
   readonly "expiresAt"?: string;
   readonly "toolCallId"?: string;
 };
@@ -93,13 +93,13 @@ export type InputRequestReference = {
   readonly "toolCallId"?: string;
 };
 
-export type InputRequestChanges = AgentEventAtLeastOne<{
+export type InputRequestChanges = EventAtLeastOne<{
   readonly "status"?: "open" | "submitted" | "cancelled" | "expired";
   readonly "title"?: string;
   readonly "description"?: string | null;
   readonly "fields"?: readonly InputField[];
-  readonly "schema"?: AgentEventJsonObject;
-  readonly "response"?: AgentEventJsonValue;
+  readonly "schema"?: EventJsonObject;
+  readonly "response"?: EventJsonValue;
   readonly "expiresAt"?: string | null;
 }>;
 
@@ -189,7 +189,7 @@ export type StepEnded = {
 export type ToolCallStarted = {
   readonly "toolCallId": string;
   readonly "messageId"?: string;
-  readonly "input"?: AgentEventJsonValue;
+  readonly "input"?: EventJsonValue;
   readonly "extensions"?: Extensions;
   readonly "toolName": string;
 };
@@ -202,7 +202,7 @@ export type ToolCallArgumentsDeltaEmitted = {
 
 export type ToolCallArgumentsEnded = {
   readonly "toolCallId": string;
-  readonly "input"?: AgentEventJsonValue;
+  readonly "input"?: EventJsonValue;
   readonly "extensions"?: Extensions;
 };
 
@@ -241,7 +241,7 @@ export type ToolCallStatusReported = {
 
 export type ToolCallResultRecordedBase = {
   readonly "toolCallId": string;
-  readonly "output"?: AgentEventJsonValue;
+  readonly "output"?: EventJsonValue;
   readonly "outputRedacted"?: true;
   readonly "isError"?: boolean;
   readonly "extensions"?: Extensions;
@@ -249,13 +249,13 @@ export type ToolCallResultRecordedBase = {
 export type ToolCallResultRecorded =
   & Omit<ToolCallResultRecordedBase, "output" | "outputRedacted">
   & (
-    | { readonly output: AgentEventJsonValue; readonly outputRedacted?: never }
+    | { readonly output: EventJsonValue; readonly outputRedacted?: never }
     | { readonly outputRedacted: true; readonly output?: never }
   );
 
 export type ToolCallResultSubmittedBase = {
   readonly "toolCallId": string;
-  readonly "output"?: AgentEventJsonValue;
+  readonly "output"?: EventJsonValue;
   readonly "outputRedacted"?: true;
   readonly "isError"?: boolean;
   readonly "extensions"?: Extensions;
@@ -263,7 +263,7 @@ export type ToolCallResultSubmittedBase = {
 export type ToolCallResultSubmitted =
   & Omit<ToolCallResultSubmittedBase, "output" | "outputRedacted">
   & (
-    | { readonly output: AgentEventJsonValue; readonly outputRedacted?: never }
+    | { readonly output: EventJsonValue; readonly outputRedacted?: never }
     | { readonly outputRedacted: true; readonly output?: never }
   );
 
@@ -421,7 +421,7 @@ export type StreamClosed = {
   readonly "extensions"?: Extensions;
 };
 
-export interface AgentEventEnvelopeRequiredByType {
+export interface EventEnvelopeRequiredByType {
   readonly "com.veryfront.run.requested": "runid";
   readonly "com.veryfront.run.enqueued": "runid";
   readonly "com.veryfront.run.started": "runid";
@@ -439,11 +439,11 @@ export interface AgentEventEnvelopeRequiredByType {
   readonly "com.veryfront.model-call.usage.recorded": "modelcallid";
 }
 
-export interface AgentEventAttemptScopeEnvelopeRequiredByType {
+export interface EventAttemptScopeEnvelopeRequiredByType {
   readonly "com.veryfront.model-call.usage.recorded": "attemptid";
 }
 
-export interface AgentEventPayloadByType {
+export interface EventPayloadByType {
   readonly "com.veryfront.run.requested": RunRequested;
   readonly "com.veryfront.run.enqueued": RunEnqueued;
   readonly "com.veryfront.run.started": RunStarted;
@@ -482,5 +482,4 @@ export interface AgentEventPayloadByType {
   readonly "com.veryfront.stream.closed": StreamClosed;
 }
 
-export type AgentEventPayload<TType extends keyof AgentEventPayloadByType> =
-  AgentEventPayloadByType[TType];
+export type EventPayload<TType extends keyof EventPayloadByType> = EventPayloadByType[TType];

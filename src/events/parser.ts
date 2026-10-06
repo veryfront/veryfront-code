@@ -4,23 +4,20 @@ import type {
   JsonSchemaValidationResult,
   SchemaValidator,
 } from "#veryfront/extensions/schema/index.ts";
-import { cloneAgentEventTargetParserSchemas } from "./contracts.ts";
-import {
-  assertAgentEventSchemaValidator,
-  getAgentEventSchemaValidatorVersion,
-} from "./schema-validator.ts";
-import type { AgentEvent, AgentEventParseIssue, AgentEventParseResult } from "./types.ts";
+import { cloneEventTargetParserSchemas } from "./contracts.ts";
+import { assertEventSchemaValidator, getEventSchemaValidatorVersion } from "./schema-validator.ts";
+import type { EventParseIssue, EventParseResult, EventRecord } from "./types.ts";
 
 const TARGET_PAYLOAD_SCHEMA_ID = "urn:veryfront:run-events:target:payloads:1";
 const LOCAL_REF_PREFIX = `${TARGET_PAYLOAD_SCHEMA_ID}#/$defs/`;
 const LOCAL_REF_REPLACEMENT_PREFIX = "#/$defs/";
 
-let compiledAgentEventValidator: JsonSchemaValidationFunction<AgentEvent> | undefined;
-let compiledAgentEventValidatorVersion = -1;
+let compiledEventValidator: JsonSchemaValidationFunction<EventRecord> | undefined;
+let compiledEventValidatorVersion = -1;
 
-export interface AgentEventParser {
-  safeParseAgentEvent(input: unknown): AgentEventParseResult;
-  parseAgentEvent(input: unknown): AgentEvent;
+export interface EventParser {
+  safeParseEvent(input: unknown): EventParseResult;
+  parseEvent(input: unknown): EventRecord;
 }
 
 function isPlainRecord(value: unknown): value is Record<string, unknown> {
@@ -65,7 +62,7 @@ function normalizeSchemaForRuntime(value: unknown): unknown {
 }
 
 function targetEnvelopeSchemaForRuntime(): JsonSchema {
-  const { envelopeSchema, payloadSchemas } = cloneAgentEventTargetParserSchemas();
+  const { envelopeSchema, payloadSchemas } = cloneEventTargetParserSchemas();
   const envelope = normalizeSchemaForRuntime(envelopeSchema);
   const payloads = normalizeSchemaForRuntime(payloadSchemas);
   if (
@@ -114,25 +111,25 @@ function patchStrictRequiredBranches(
   }
 }
 
-function compileAgentEventValidator(
+function compileEventValidator(
   schemaValidator: SchemaValidator,
-): JsonSchemaValidationFunction<AgentEvent> {
+): JsonSchemaValidationFunction<EventRecord> {
   if (!schemaValidator.compileJsonSchema) {
     throw new TypeError(
       "veryfront/events requires a SchemaValidator implementation with compileJsonSchema support",
     );
   }
-  return schemaValidator.compileJsonSchema<AgentEvent>(targetEnvelopeSchemaForRuntime());
+  return schemaValidator.compileJsonSchema<EventRecord>(targetEnvelopeSchemaForRuntime());
 }
 
-function getAgentEventValidator(): JsonSchemaValidationFunction<AgentEvent> {
-  const validatorVersion = getAgentEventSchemaValidatorVersion();
-  if (compiledAgentEventValidator && compiledAgentEventValidatorVersion === validatorVersion) {
-    return compiledAgentEventValidator;
+function getEventValidator(): JsonSchemaValidationFunction<EventRecord> {
+  const validatorVersion = getEventSchemaValidatorVersion();
+  if (compiledEventValidator && compiledEventValidatorVersion === validatorVersion) {
+    return compiledEventValidator;
   }
-  compiledAgentEventValidator = compileAgentEventValidator(assertAgentEventSchemaValidator());
-  compiledAgentEventValidatorVersion = validatorVersion;
-  return compiledAgentEventValidator;
+  compiledEventValidator = compileEventValidator(assertEventSchemaValidator());
+  compiledEventValidatorVersion = validatorVersion;
+  return compiledEventValidator;
 }
 
 function cloudEventsString(value: string): boolean {
@@ -177,7 +174,7 @@ function traceState(value: string): boolean {
   return true;
 }
 
-function semanticIssue(message: string, instancePath: string): AgentEventParseIssue {
+function semanticIssue(message: string, instancePath: string): EventParseIssue {
   return {
     instancePath,
     schemaPath: "#/x-semantics",
@@ -191,8 +188,8 @@ function jsonPointerSegment(value: string): string {
   return value.replaceAll("~", "~0").replaceAll("/", "~1");
 }
 
-function validateAgentEventSemantics(event: AgentEvent): readonly AgentEventParseIssue[] {
-  const issues: AgentEventParseIssue[] = [];
+function validateEventSemantics(event: EventRecord): readonly EventParseIssue[] {
+  const issues: EventParseIssue[] = [];
   for (const [key, value] of Object.entries(event)) {
     if (key === "tracestate") continue;
     if (typeof value === "string" && !cloudEventsString(value)) {
@@ -237,61 +234,61 @@ function validateAgentEventSemantics(event: AgentEvent): readonly AgentEventPars
 
 function isPromiseLikeValidationResult(
   value:
-    | JsonSchemaValidationResult<AgentEvent>
-    | PromiseLike<JsonSchemaValidationResult<AgentEvent>>,
-): value is PromiseLike<JsonSchemaValidationResult<AgentEvent>> {
+    | JsonSchemaValidationResult<EventRecord>
+    | PromiseLike<JsonSchemaValidationResult<EventRecord>>,
+): value is PromiseLike<JsonSchemaValidationResult<EventRecord>> {
   return "then" in value && typeof value.then === "function";
 }
 
 function validationResultSync(
   result:
-    | JsonSchemaValidationResult<AgentEvent>
-    | PromiseLike<JsonSchemaValidationResult<AgentEvent>>,
-): JsonSchemaValidationResult<AgentEvent> {
+    | JsonSchemaValidationResult<EventRecord>
+    | PromiseLike<JsonSchemaValidationResult<EventRecord>>,
+): JsonSchemaValidationResult<EventRecord> {
   if (isPromiseLikeValidationResult(result)) {
     throw new TypeError("veryfront/events requires a synchronous JSON Schema validator");
   }
   return result;
 }
 
-function safeParseAgentEventWithValidator(
-  validator: JsonSchemaValidationFunction<AgentEvent>,
+function safeParseEventWithValidator(
+  validator: JsonSchemaValidationFunction<EventRecord>,
   input: unknown,
-): AgentEventParseResult {
+): EventParseResult {
   const result = validationResultSync(validator(input));
   if (!result.success) {
     return { success: false, issues: result.errors };
   }
-  const semanticIssues = validateAgentEventSemantics(result.value);
+  const semanticIssues = validateEventSemantics(result.value);
   if (semanticIssues.length > 0) {
     return { success: false, issues: semanticIssues };
   }
   return { success: true, data: result.value };
 }
 
-function parseAgentEventResult(result: AgentEventParseResult): AgentEvent {
+function parseEventResult(result: EventParseResult): EventRecord {
   if (result.success) return result.data;
   const first = result.issues[0];
   const suffix = first?.message ? `: ${first.message}` : "";
   throw new TypeError(`Invalid Agent Events Protocol event${suffix}`);
 }
 
-export function createAgentEventParser(schemaValidator: SchemaValidator): AgentEventParser {
-  const validator = compileAgentEventValidator(schemaValidator);
+export function createEventParser(schemaValidator: SchemaValidator): EventParser {
+  const validator = compileEventValidator(schemaValidator);
   return {
-    safeParseAgentEvent(input: unknown): AgentEventParseResult {
-      return safeParseAgentEventWithValidator(validator, input);
+    safeParseEvent(input: unknown): EventParseResult {
+      return safeParseEventWithValidator(validator, input);
     },
-    parseAgentEvent(input: unknown): AgentEvent {
-      return parseAgentEventResult(safeParseAgentEventWithValidator(validator, input));
+    parseEvent(input: unknown): EventRecord {
+      return parseEventResult(safeParseEventWithValidator(validator, input));
     },
   };
 }
 
-export function safeParseAgentEvent(input: unknown): AgentEventParseResult {
-  return safeParseAgentEventWithValidator(getAgentEventValidator(), input);
+export function safeParseEvent(input: unknown): EventParseResult {
+  return safeParseEventWithValidator(getEventValidator(), input);
 }
 
-export function parseAgentEvent(input: unknown): AgentEvent {
-  return parseAgentEventResult(safeParseAgentEvent(input));
+export function parseEvent(input: unknown): EventRecord {
+  return parseEventResult(safeParseEvent(input));
 }

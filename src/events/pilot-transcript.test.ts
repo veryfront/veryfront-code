@@ -3,8 +3,8 @@ import "./test-setup.ts";
 import { assert, assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import pilotTranscript from "./contracts/pilot-transcript.json" with { type: "json" };
-import { parseAgentEvent } from "./index.ts";
-import type { AgentEvent } from "./types.ts";
+import { parseEvent } from "./index.ts";
+import type { EventRecord } from "./types.ts";
 
 interface PilotFrame {
   readonly profile: "stored" | "live";
@@ -18,7 +18,7 @@ function frames(): readonly PilotFrame[] {
 
 describe("events/pilot-transcript", () => {
   it("parses every shared pilot frame", () => {
-    const parsed = frames().map((frame) => parseAgentEvent(frame.event));
+    const parsed = frames().map((frame) => parseEvent(frame.event));
     assertEquals(parsed.length, 19);
     assertEquals(frames().filter((frame) => frame.profile === "stored").length, 17);
     assertEquals(frames().filter((frame) => frame.profile === "live").length, 2);
@@ -43,10 +43,10 @@ describe("events/pilot-transcript", () => {
     assert(replayed.every((frame) => frame !== undefined));
     assertEquals(replayed[0], delivered.at(-1));
 
-    const unique = new Map<string, AgentEvent>();
+    const unique = new Map<string, EventRecord>();
     for (const frame of [...delivered, ...replayed]) {
       assert(frame);
-      const event = parseAgentEvent(frame.event);
+      const event = parseEvent(frame.event);
       unique.set(`${event.source}\n${event.id}`, event);
     }
 
@@ -59,7 +59,7 @@ describe("events/pilot-transcript", () => {
 
     const lastStoredFrame = stored.at(-1);
     assert(lastStoredFrame);
-    const terminal = parseAgentEvent(lastStoredFrame.event);
+    const terminal = parseEvent(lastStoredFrame.event);
     assertEquals(lastStoredFrame.position, pilotTranscript.expected.finalSavedPosition);
     assertEquals(terminal.type, "com.veryfront.run.succeeded");
   });
@@ -67,7 +67,7 @@ describe("events/pilot-transcript", () => {
   it("keeps redacted reasoning out of reconstructed text", () => {
     const stored = frames().filter((frame) => frame.profile === "stored");
     const reasoning = stored
-      .map((frame) => parseAgentEvent(frame.event))
+      .map((frame) => parseEvent(frame.event))
       .filter((event) => event.type === "com.veryfront.message.reasoning.delta.emitted");
     assert(reasoning.some((event) => event.data.contentRedacted === true));
     const text = reasoning.map((event) => event.data.delta ?? "").join("");
