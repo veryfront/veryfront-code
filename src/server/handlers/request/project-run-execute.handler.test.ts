@@ -2830,6 +2830,72 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     assertEquals(typeof recorder.upserts[0]?.artifact_hash, "string");
   });
 
+  it("uses captured intrinsics for explicit style selectors", async () => {
+    const body = {
+      runId: "run_style_artifact_captured_intrinsics",
+      kind: "task",
+      target: "task:style-artifact-build",
+      projectId: "proj-1",
+      config: { release_id: "release-1" },
+    };
+    const { request, publicKeyPem } = await signedRequest(
+      "/api/control-plane/runs/run_style_artifact_captured_intrinsics/execute",
+      body,
+      { "x-token": "test-token" },
+    );
+    const { ctx, readCalls, sourceFileCalls } = createStyleArtifactCtx(publicKeyPem, {
+      files: [{
+        path: "pages/index.tsx",
+        content:
+          'export default function Page() { return <main className="px-4 text-red-500">Hi</main>; }',
+      }],
+      stylesheet: "@tailwind utilities; .from-css { color: red; }",
+      stylesheetPath: "src/styles.css",
+      contentContext: {
+        sourceType: "release",
+        projectSlug: "demo-project",
+        releaseId: "release-1",
+      },
+    });
+    const recorder = createStyleArtifactFetchRecorder();
+
+    const result = await withMockFetch(
+      recorder.fetch,
+      async () => {
+        const values = Object.values;
+        const some = Array.prototype.some;
+        Object.values = ((value: object) => {
+          if (Object.prototype.hasOwnProperty.call(value, "releaseId")) {
+            throw new Error("Project replaced Object.values");
+          }
+          return values(value);
+        }) as typeof Object.values;
+        Array.prototype.some = function (...args: Parameters<typeof some>) {
+          if (this.includes("release-1")) throw new Error("Project replaced Array.some");
+          return Reflect.apply(some, this, args);
+        };
+        try {
+          return await new ProjectRunExecuteHandler().handle(request, ctx);
+        } finally {
+          Object.values = values;
+          Array.prototype.some = some;
+        }
+      },
+    );
+
+    assertExists(result.response);
+    assertEquals(result.response.status, 200);
+    const json = await result.response.json();
+    assertEquals(json.success, true);
+    assertEquals(sourceFileCalls.count, 1);
+    assertEquals(readCalls, ["src/styles.css"]);
+    assertEquals(recorder.upserts.length, 1);
+    assertEquals(recorder.upserts[0]?.release_id, "release-1");
+    assertEquals(recorder.upserts[0]?.environment_name, undefined);
+    assertEquals(recorder.upserts[0]?.status, "ready");
+    assertEquals(typeof recorder.upserts[0]?.artifact_hash, "string");
+  });
+
   it("uses the preview request context when no selector is explicit", async () => {
     const body = {
       runId: "run_style_artifact_context_fallback",

@@ -3835,8 +3835,9 @@ function resolveStyleArtifactBuildSelector(
     environmentName: getStringConfig(config, ["environment_name", "environmentName"]),
     releaseId: getStringConfig(config, ["release_id", "releaseId"]),
   };
-  const hasExplicitSelector = Object.values(explicitSelector)
-    .some((value) => typeof value === "string" && value.length > 0);
+  const hasExplicitSelector = ReflectApply(ArraySome, ObjectValues(explicitSelector), [
+    (value: unknown) => typeof value === "string" && value.length > 0,
+  ]) as boolean;
   const selector: StyleArtifactBuildSelector = hasExplicitSelector ? explicitSelector : {
     branch: optionalString(ctx.parsedDomain?.branch),
     environmentName: optionalString(ctx.environmentName),
