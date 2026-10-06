@@ -2,6 +2,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import {
   bindToolCallStartOccurrence,
   getToolCallOccurrence,
+  type ToolCallOccurrenceCall,
 } from "./tool-call-occurrence-carrier.ts";
 export {
   bindToolCallStartOccurrence,
@@ -21,7 +22,7 @@ export function isToolCallOccurrenceScopeEnabled(): boolean {
   return enabled.getStore() === true;
 }
 
-export function introduceToolCallOccurrence(call: object): string | undefined {
+export function introduceToolCallOccurrence(call: ToolCallOccurrenceCall): string | undefined {
   if (!enabled.getStore()) return undefined;
   const existing = getToolCallOccurrence(call);
   if (existing) return existing;

@@ -43,6 +43,10 @@ import {
   getHostedToolCallAdmissionRequestFetch,
 } from "./child-run-event-writer-token.ts";
 
+type HostedRequestFetch = NonNullable<
+  Parameters<typeof createHostedRunEventWriterCapability>[0]["fetch"]
+>;
+
 const occurrenceId = "11111111-1111-4111-8111-111111111111";
 const projectId = "22222222-2222-4222-8222-222222222222";
 const runId = "33333333-3333-4333-8333-333333333333";
@@ -215,7 +219,7 @@ describe("private tool-call admission", () => {
     for (const type of ["tool-result", "tool-error"]) {
       const storedStarts: Array<{ type: string; providerExecuted?: boolean }> = [];
       let sequence = 0;
-      const fetch: typeof globalThis.fetch = async (_url, init) => {
+      const fetch: HostedRequestFetch = async (_url, init) => {
         const body = getAppendBodySchema().parse(JSON.parse(String(init?.body)));
         assertEquals(body.tool_call_starts, undefined);
         assert(!JSON.stringify(body).includes("privateObservedProviderToolResult"));
@@ -297,7 +301,7 @@ describe("private tool-call admission", () => {
       providerExecuted: true,
     };
     let appends = 0;
-    const fetch: typeof globalThis.fetch = async () => {
+    const fetch: HostedRequestFetch = async () => {
       appends++;
       throw new Error("Unexpected append");
     };
@@ -327,7 +331,7 @@ describe("private tool-call admission", () => {
     );
     bindObservedProviderToolStart(start);
     assertThrows(() => bindToolCallStartOccurrence(start, occurrenceId), TypeError);
-    const admitted = {};
+    const admitted = { id: "admitted-call" };
     bindToolCallStartOccurrence(admitted, occurrenceId);
     assertThrows(() => bindObservedProviderToolStart(admitted), TypeError);
   });
@@ -345,7 +349,7 @@ describe("private tool-call admission", () => {
     ];
     const privateRequests: Request[] = [];
     const configuredRequests: Request[] = [];
-    const responseFor: typeof globalThis.fetch = async (_url, init) => {
+    const responseFor: HostedRequestFetch = async (_url, init) => {
       const body = JSON.parse(String(init?.body));
       return Response.json({
         jsonrpc: "2.0",
@@ -570,7 +574,7 @@ describe("private tool-call admission", () => {
   it("awaits one normal start and sends exact proof with independent auth through owning host transport", async () => {
     let appendCount = 0;
     let mcpCalls = 0;
-    const fetch: typeof globalThis.fetch = async (url, init) => {
+    const fetch: HostedRequestFetch = async (url, init) => {
       const body = JSON.parse(String(init?.body));
       if (String(url) === "https://api.example.test/mcp") {
         mcpCalls++;

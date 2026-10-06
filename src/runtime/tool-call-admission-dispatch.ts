@@ -57,8 +57,8 @@ export function getCurrentToolCallAdmissionReceipt():
   | undefined {
   const scope = storage.getStore();
   if (!scope?.active) return undefined;
-  scope?.assertActive();
-  return scope?.receipt;
+  scope.assertActive();
+  return scope.receipt;
 }
 
 /** Internal opaque callback identity, never a credential or caller-selected proof. */
