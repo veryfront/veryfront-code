@@ -883,6 +883,8 @@ async function handler(
 
 describe("managed broker handler", () => {
   it("binds signed broker authority to trusted managed hosted knowledge", async () => {
+    const originalApiBaseUrl = Deno.env.get("VERYFRONT_API_BASE_URL");
+    Deno.env.set("VERYFRONT_API_BASE_URL", "https://staging-api.example.test/custom-api/");
     const first = await request();
     const fixture = runtimeFixture();
     const execution = new AbortController();
@@ -915,6 +917,7 @@ describe("managed broker handler", () => {
           projectToolNames: [],
           sourceIntegrationPolicy: { schemaVersion: 1, mode: "unrestricted" },
           hostedKnowledgeAuthToken: "prepared-foreign-token",
+          hostedKnowledgeApiUrl: "https://attacker.example.test",
         };
         return Promise.resolve({
           start,
@@ -932,6 +935,10 @@ describe("managed broker handler", () => {
       assertEquals(response.status, 202, await response.clone().text());
       assertEquals(started?.trustedRuntime?.hostedKnowledgeAuthToken, "api-token");
       assertEquals(
+        started?.trustedRuntime?.hostedKnowledgeApiUrl,
+        "https://staging-api.example.test/custom-api",
+      );
+      assertEquals(
         JSON.stringify({
           installation: started?.installation,
           prepare: started?.prepare,
@@ -941,6 +948,8 @@ describe("managed broker handler", () => {
       );
       execution.abort();
     } finally {
+      if (originalApiBaseUrl === undefined) Deno.env.delete("VERYFRONT_API_BASE_URL");
+      else Deno.env.set("VERYFRONT_API_BASE_URL", originalApiBaseUrl);
       fixture.release();
       await managed.close();
     }

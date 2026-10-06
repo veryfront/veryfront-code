@@ -22,6 +22,7 @@ import {
 import { ExecutorRuntimePreparationError } from "../hosted/executor-runtime-prepare-schema.ts";
 import { ExecutorDiscoveryError } from "../hosted/executor-discovery-schema.ts";
 import { HostedServiceAuthError } from "./auth.ts";
+import { resolveHostOwnedSourceApiBaseUrl } from "#veryfront/config/host-api-base.ts";
 import { snapshotBoundedJsonValue } from "#veryfront/schemas/json-value.ts";
 import { getRuntimeAgentResumeToolCallSchema } from "#veryfront/agent/runtime/agent-invocation-contract.ts";
 import { createAgUiChatUiTrackedResponse } from "../ag-ui/chat-ui-chunk-encoder.ts";
@@ -158,6 +159,7 @@ function bindBrokerOwnedHostedKnowledgeCredential(
     trustedRuntime: {
       ...trustedRuntime,
       hostedKnowledgeAuthToken,
+      hostedKnowledgeApiUrl: resolveHostOwnedSourceApiBaseUrl(),
     },
   };
 }

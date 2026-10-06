@@ -127,6 +127,8 @@ export interface ManagedExecutorStartInput {
     sourceIntegrationPolicy: SourceIntegrationPolicyManifest;
     /** Broker-owned token for hosted framework knowledge retrieval. Never sent to the executor. */
     hostedKnowledgeAuthToken?: string;
+    /** Broker-owned Veryfront API origin for hosted framework knowledge retrieval. */
+    hostedKnowledgeApiUrl?: string;
   };
   /** Bind canonical persistence to the admitted session before readiness work starts. */
   bindSessionOwnedWork?: (owner: HostedExecutorOwnedWork) => void;
@@ -508,6 +510,9 @@ function snapshotTrustedRuntime(
       input.hostedKnowledgeAuthToken
     ? {
       authToken: input.hostedKnowledgeAuthToken,
+      ...(typeof input.hostedKnowledgeApiUrl === "string" && input.hostedKnowledgeApiUrl
+        ? { apiUrl: input.hostedKnowledgeApiUrl }
+        : {}),
       ...(execution.projectId === null ? {} : { projectId: execution.projectId }),
       ...(execution.projectSlug === undefined ? {} : { projectSlug: execution.projectSlug }),
       ...(execution.branchId === undefined ? {} : { branch: execution.branchId }),

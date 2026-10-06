@@ -652,6 +652,7 @@ Deno.test("prepareFacadedHostedChatRuntimeToolAssembly binds broker-owned hosted
     },
     hostedKnowledgeContext: {
       authToken: "broker-knowledge-token",
+      apiUrl: "https://staging-api.example.test/custom-api",
       projectId: "project-1",
       branch: "feature-x",
     },
@@ -696,6 +697,7 @@ Deno.test("prepareFacadedHostedChatRuntimeToolAssembly binds broker-owned hosted
   assertEquals(returned, 1);
   assertEquals(authorizationHeaders, ["Bearer broker-knowledge-token"]);
   assertEquals(requestedUrls.length, 1);
+  assertEquals(new URL(requestedUrls[0] ?? "").origin, "https://staging-api.example.test");
   assertStringIncludes(requestedUrls[0] ?? "", "/projects/project-1/files");
   assertStringIncludes(requestedUrls[0] ?? "", "branch=feature-x");
 });

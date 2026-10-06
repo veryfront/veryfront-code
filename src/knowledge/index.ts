@@ -206,6 +206,7 @@ interface HostedKnowledgeContext {
   projectSlug?: string;
   projectId?: string;
   authToken: string;
+  apiUrl?: string;
   productionMode: boolean;
   releaseId?: string | null;
   branch?: string | null;
@@ -912,12 +913,14 @@ function getHostedKnowledgeContext(context?: ToolExecutionContext): HostedKnowle
     typeof context?.environmentName === "string" || context?.environmentName === null
       ? context.environmentName
       : requestContext?.environmentName ?? null;
+  const apiUrl = typeof context?.apiUrl === "string" && context.apiUrl ? context.apiUrl : undefined;
 
   return {
     projectRef,
     projectSlug,
     projectId,
     authToken,
+    ...(apiUrl === undefined ? {} : { apiUrl }),
     productionMode,
     releaseId,
     branch,
@@ -927,7 +930,8 @@ function getHostedKnowledgeContext(context?: ToolExecutionContext): HostedKnowle
 
 function createHostedKnowledgeClient(hostedContext: HostedKnowledgeContext): VeryfrontApiClient {
   const client = new VeryfrontApiClient({
-    apiBaseUrl: getHostEnv("VERYFRONT_API_URL") || "https://api.veryfront.com",
+    apiBaseUrl: (hostedContext.apiUrl ?? getHostEnv("VERYFRONT_API_URL")) ||
+      "https://api.veryfront.com",
     proxyMode: true,
     projectId: hostedContext.projectId,
     projectSlug: hostedContext.projectRef,

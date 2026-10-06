@@ -524,6 +524,7 @@ export type HostedKnowledgeExecutionContext = Pick<
   | "authToken"
   | "projectId"
   | "projectSlug"
+  | "apiUrl"
   | "productionMode"
   | "releaseId"
   | "branch"
@@ -559,9 +560,11 @@ function withHostedKnowledgeExecutionContext(
   const productionMode = knowledgeContextValue(taskContext, "productionMode");
   const releaseId = knowledgeContextValue(taskContext, "releaseId");
   const environmentName = knowledgeContextValue(taskContext, "environmentName");
+  const apiUrl = knowledgeContextValue(taskContext, "apiUrl");
   return {
     ...(context ?? {}),
     authToken: typeof authToken === "string" && authToken ? authToken : undefined,
+    apiUrl: typeof apiUrl === "string" && apiUrl ? apiUrl : undefined,
     projectId: projectId ?? undefined,
     projectSlug: typeof projectSlug === "string" && projectSlug ? projectSlug : undefined,
     productionMode: typeof productionMode === "boolean" ? productionMode : undefined,
@@ -634,9 +637,9 @@ async function prepareHostedChatRuntimeToolAssemblyInternal<
       ) projectToolNames.add(shortName);
     }
   }
-  const knowledgeContext = "hostedKnowledgeContext" in input
+  const knowledgeContext = "remoteToolSources" in input
     ? input.hostedKnowledgeContext
-    : input.taskContext;
+    : { ...input.taskContext, apiUrl: input.apiUrl };
   const knowledgeSource = knowledgeContext === undefined
     ? undefined
     : createHostedKnowledgeSource(input.knowledge, knowledgeContext);
