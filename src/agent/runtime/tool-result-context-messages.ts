@@ -1,3 +1,4 @@
+import { getToolResultError } from "#veryfront/tool/result.ts";
 import type { Message, MessagePart, ToolResultPart } from "../types.ts";
 import type { ToolResultContext } from "./tool-result-context.ts";
 
@@ -36,6 +37,7 @@ function transformPartForToolResultContext(
     toolCallId: part.toolCallId,
     toolName: part.toolName,
     result: part.result,
+    isError: getToolResultError(part.result) !== undefined,
   });
   if (disclosure.kind === "inline") {
     return part;

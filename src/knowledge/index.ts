@@ -475,7 +475,39 @@ function getRagResultManifestPath(
   config: ProjectKnowledgeConfig,
 ): string {
   if (isAbsolute(result.source)) return buildManifestPath(config, result.source);
-  return normalizeManifestPath(result.source);
+  const normalizedSource = normalizeManifestPath(result.source);
+  const contentDir = config.contentDir ?? DEFAULT_CONTENT_DIR;
+  const normalizedContentDir = stripTrailingSlash(trimLeadingSlash(contentDir)).replace(
+    /^\.\//,
+    "",
+  );
+  if (
+    normalizedSource === normalizedContentDir ||
+    normalizedSource.startsWith(`${normalizedContentDir}/`)
+  ) {
+    return normalizedSource;
+  }
+
+  if (config.projectDir && !isAbsolute(config.projectDir)) {
+    const normalizedProjectDir = stripTrailingSlash(trimLeadingSlash(config.projectDir)).replace(
+      /^\.\//,
+      "",
+    );
+    if (
+      normalizedProjectDir &&
+      normalizedSource.startsWith(`${normalizedProjectDir}/`)
+    ) {
+      const projectRelativeSource = normalizedSource.slice(normalizedProjectDir.length + 1);
+      if (
+        projectRelativeSource === normalizedContentDir ||
+        projectRelativeSource.startsWith(`${normalizedContentDir}/`)
+      ) {
+        return projectRelativeSource;
+      }
+    }
+  }
+
+  return normalizedSource;
 }
 
 function filterRagResultsByScope(

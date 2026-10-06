@@ -170,6 +170,50 @@ describe("projectKnowledge", () => {
     });
   });
 
+  it("normalizes relative projectDir RAG sources before scoped filtering", async () => {
+    registerTestEmbeddingProvider();
+
+    await withTempDir(async (workspaceDir) => {
+      const previousCwd = Deno.cwd();
+      try {
+        Deno.chdir(workspaceDir);
+        await mkdir(join("my-project", "docs", "knowledge", "public"), { recursive: true });
+        await mkdir(join("my-project", "docs", "knowledge", "private"), { recursive: true });
+        await writeTextFile(
+          join("my-project", "docs", "knowledge", "public", "login.md"),
+          "Public login SSO runbook.",
+        );
+        await writeTextFile(
+          join("my-project", "docs", "knowledge", "private", "login.md"),
+          "Private login SSO runbook.",
+        );
+
+        const knowledge = projectKnowledge({
+          projectDir: "my-project",
+          contentDir: "docs/knowledge",
+          model: "test/demo",
+          scope: {
+            "docs/knowledge/public/**": true,
+            "docs/knowledge/private/**": false,
+          },
+        });
+
+        await knowledge.index();
+        const result = await knowledge.retrieve("login SSO", { topK: 10 });
+
+        assertEquals(result.matches.length, 1);
+        assertEquals(
+          result.matches[0]?.source,
+          join("my-project", "docs", "knowledge", "public", "login.md"),
+        );
+        assertStringIncludes(result.context, "[public/login]");
+        assertStringIncludes(result.context, "Public login SSO runbook.");
+      } finally {
+        Deno.chdir(previousCwd);
+      }
+    });
+  });
+
   it("keeps indexing explicit on non-blank retrieval", async () => {
     registerTestEmbeddingProvider();
 

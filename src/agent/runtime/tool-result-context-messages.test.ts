@@ -40,6 +40,20 @@ function resultRef(value: unknown): string | undefined {
   return typeof value.ref === "string" ? value.ref : undefined;
 }
 
+function resultIsError(value: unknown): boolean | undefined {
+  if (typeof value !== "object" || value === null || !("isError" in value)) {
+    return undefined;
+  }
+  return typeof value.isError === "boolean" ? value.isError : undefined;
+}
+
+function resultPreview(value: unknown): string | undefined {
+  if (typeof value !== "object" || value === null || !("preview" in value)) {
+    return undefined;
+  }
+  return typeof value.preview === "string" ? value.preview : undefined;
+}
+
 describe("agent runtime tool result context message adapter", () => {
   it("clones only the model-visible oversized tool result part", () => {
     const context = createToolResultContext({ limits: { maxInlineBytes: 8 } });
@@ -57,6 +71,29 @@ describe("agent runtime tool result context message adapter", () => {
       "tool_result_reference",
     );
     assertEquals(context.size, 1);
+  });
+
+  it("classifies oversized failed results even when tiny previews omit trailing failure fields", () => {
+    const context = createToolResultContext({
+      limits: { maxInlineBytes: 8, previewBytes: 12 },
+    });
+    const originalResult = {
+      details: "x".repeat(256),
+      isError: true,
+      message: "Action failed",
+    };
+    const source = toolMessage(originalResult, "run_action");
+
+    const [modelMessage] = createModelToolResultContextMessages([source], context);
+
+    const sourcePart = requireToolResultPart(source.parts[0]!);
+    const modelPart = requireToolResultPart(modelMessage!.parts[0]!);
+    assertStrictEquals(sourcePart.result, originalResult);
+    assertEquals(resultType(modelPart.result), "tool_result_reference");
+    assertEquals(resultIsError(modelPart.result), true);
+    assertEquals(resultPreview(modelPart.result)?.includes("isError"), false);
+    assertEquals(resultPreview(modelPart.result)?.includes("Action failed"), false);
+    assertStrictEquals(context.getOriginalResult(resultRef(modelPart.result)!), originalResult);
   });
 
   it("reuses stable refs when model history is transformed again", () => {
