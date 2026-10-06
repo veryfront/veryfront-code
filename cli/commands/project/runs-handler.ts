@@ -26,7 +26,7 @@ const COMMAND = "project runs";
 /** Use the normal trusted endpoint resolver; explicit scoped credentials come from a file. */
 export async function handleProjectRuns(args: ParsedArgs): Promise<void> {
   const ndjson = args.ndjson === true;
-  let stream = ndjson;
+  let stream = ndjson || args.follow === true || args._[2] === "stream";
   const projectDir = typeof args["project-dir"] === "string" ? args["project-dir"] : Deno.cwd();
   const controller = new AbortController();
   const interrupt = () => controller.abort();

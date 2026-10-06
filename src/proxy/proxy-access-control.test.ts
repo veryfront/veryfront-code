@@ -1,8 +1,9 @@
-import { assertEquals } from "#veryfront/testing/assert";
+import { assertEquals, assertThrows } from "#veryfront/testing/assert";
 import { describe, it } from "#veryfront/testing/bdd";
 import {
   buildProxyAuthRedirectUrl,
   checkProtectedProxyAccess,
+  createProxyAuthRedirectBuilder,
   extractUserIdFromToken,
   isProjectMember,
   toProxyPrincipal,
@@ -10,6 +11,7 @@ import {
 import { register, reset } from "../extensions/contracts.ts";
 import type { AuthProvider } from "../extensions/auth/index.ts";
 
+/** Create a deterministic auth provider for proxy access-control tests. */
 function createAuthProvider(userId: string): AuthProvider {
   const payload = { sub: userId, userId };
   return {
@@ -22,6 +24,197 @@ function createAuthProvider(userId: string): AuthProvider {
 }
 
 describe("proxy/proxy-access-control", () => {
+  it("uses a configured customer sign-in origin and a bound project return URL", () => {
+    const previous = Deno.env.get("VERYFRONT_PROXY_SIGN_IN_ORIGIN");
+    Deno.env.set("VERYFRONT_PROXY_SIGN_IN_ORIGIN", "https://platform.example.test");
+    try {
+      assertEquals(
+        createProxyAuthRedirectBuilder(Deno.env.get("VERYFRONT_PROXY_SIGN_IN_ORIGIN"))(
+          new URL("http://app.production.platform.example.test/dashboard?a=1"),
+        ),
+        "https://platform.example.test/sign-in?from=https%3A%2F%2Fapp.production.platform.example.test%2Fdashboard%3Fa%3D1",
+      );
+      for (
+        const host of ["evil.test", "platform.example.test.evil.test", "notplatform.example.test"]
+      ) {
+        assertEquals(
+          createProxyAuthRedirectBuilder(Deno.env.get("VERYFRONT_PROXY_SIGN_IN_ORIGIN"))(
+            new URL(`https://${host}//evil.test?a=1`),
+          ),
+          "https://platform.example.test/sign-in?from=%2Fevil.test%3Fa%3D1",
+        );
+      }
+    } finally {
+      if (previous === undefined) Deno.env.delete("VERYFRONT_PROXY_SIGN_IN_ORIGIN");
+      else Deno.env.set("VERYFRONT_PROXY_SIGN_IN_ORIGIN", previous);
+    }
+  });
+
+  it("binds customer return ports to configuration and removes request credentials", () => {
+    const previous = Deno.env.get("VERYFRONT_PROXY_SIGN_IN_ORIGIN");
+    Deno.env.set("VERYFRONT_PROXY_SIGN_IN_ORIGIN", "https://platform.example.test:8443/");
+    try {
+      assertEquals(
+        createProxyAuthRedirectBuilder(Deno.env.get("VERYFRONT_PROXY_SIGN_IN_ORIGIN"))(
+          new URL("http://user:pass@app.production.platform.example.test:9999//evil.test?a=1"),
+        ),
+        "https://platform.example.test:8443/sign-in?from=https%3A%2F%2Fapp.production.platform.example.test%3A8443%2Fevil.test%3Fa%3D1",
+      );
+    } finally {
+      if (previous === undefined) Deno.env.delete("VERYFRONT_PROXY_SIGN_IN_ORIGIN");
+      else Deno.env.set("VERYFRONT_PROXY_SIGN_IN_ORIGIN", previous);
+    }
+  });
+
+  it("accepts canonical-equivalent configured HTTPS origins", () => {
+    const previous = Deno.env.get("VERYFRONT_PROXY_SIGN_IN_ORIGIN");
+    try {
+      for (
+        const origin of [
+          "https://PLATFORM.EXAMPLE.TEST",
+          "https://platform.example.test:443",
+          "https://PLATFORM.EXAMPLE.TEST:443/",
+        ]
+      ) {
+        Deno.env.set("VERYFRONT_PROXY_SIGN_IN_ORIGIN", origin);
+        assertEquals(
+          createProxyAuthRedirectBuilder(Deno.env.get("VERYFRONT_PROXY_SIGN_IN_ORIGIN"))(
+            new URL("https://app.platform.example.test/"),
+          ),
+          "https://platform.example.test/sign-in?from=https%3A%2F%2Fapp.platform.example.test%2F",
+        );
+      }
+    } finally {
+      if (previous === undefined) Deno.env.delete("VERYFRONT_PROXY_SIGN_IN_ORIGIN");
+      else Deno.env.set("VERYFRONT_PROXY_SIGN_IN_ORIGIN", previous);
+    }
+  });
+
+  it("normalizes DNS root dots before trusting customer return hostnames", () => {
+    const previous = Deno.env.get("VERYFRONT_PROXY_SIGN_IN_ORIGIN");
+    try {
+      for (const origin of ["https://platform.example.test", "https://platform.example.test."]) {
+        Deno.env.set("VERYFRONT_PROXY_SIGN_IN_ORIGIN", origin);
+        assertEquals(
+          createProxyAuthRedirectBuilder(Deno.env.get("VERYFRONT_PROXY_SIGN_IN_ORIGIN"))(
+            new URL("https://app.platform.example.test./dashboard"),
+          ),
+          "https://platform.example.test/sign-in?from=https%3A%2F%2Fapp.platform.example.test%2Fdashboard",
+        );
+        assertEquals(
+          createProxyAuthRedirectBuilder(Deno.env.get("VERYFRONT_PROXY_SIGN_IN_ORIGIN"))(
+            new URL("https://platform.example.test.evil.test./dashboard"),
+          ),
+          "https://platform.example.test/sign-in?from=%2Fdashboard",
+        );
+      }
+    } finally {
+      if (previous === undefined) Deno.env.delete("VERYFRONT_PROXY_SIGN_IN_ORIGIN");
+      else Deno.env.set("VERYFRONT_PROXY_SIGN_IN_ORIGIN", previous);
+    }
+  });
+
+  it("keeps configured-origin host trust stable after String.prototype.endsWith is patched", () => {
+    const originalDescriptor = Object.getOwnPropertyDescriptor(String.prototype, "endsWith");
+    const buildRedirect = createProxyAuthRedirectBuilder("https://platform.example.test");
+    try {
+      Object.defineProperty(String.prototype, "endsWith", {
+        configurable: true,
+        writable: true,
+        value: () => true,
+      });
+
+      assertEquals(
+        buildRedirect(new URL("https://platform.example.test.evil.test/dashboard")),
+        "https://platform.example.test/sign-in?from=%2Fdashboard",
+      );
+    } finally {
+      if (originalDescriptor) {
+        Object.defineProperty(String.prototype, "endsWith", originalDescriptor);
+      } else {
+        delete (String.prototype as { endsWith?: unknown }).endsWith;
+      }
+    }
+  });
+
+  it("keeps configured-origin return hosts primitive after String.prototype.toLowerCase is patched", () => {
+    const originalDescriptor = Object.getOwnPropertyDescriptor(String.prototype, "toLowerCase");
+    const coercedHost = {
+      conversions: 0,
+      toString() {
+        this.conversions += 1;
+        return this.conversions === 1 ? "app.platform.example.test" : "outside.example.test";
+      },
+    };
+    const buildRedirect = createProxyAuthRedirectBuilder("https://platform.example.test");
+    try {
+      Object.defineProperty(String.prototype, "toLowerCase", {
+        configurable: true,
+        writable: true,
+        value: () => coercedHost,
+      });
+
+      assertEquals(
+        buildRedirect(new URL("https://app.platform.example.test/dashboard")),
+        "https://platform.example.test/sign-in?from=https%3A%2F%2Fapp.platform.example.test%2Fdashboard",
+      );
+      assertEquals(coercedHost.conversions, 0);
+    } finally {
+      if (originalDescriptor) {
+        Object.defineProperty(String.prototype, "toLowerCase", originalDescriptor);
+      } else {
+        delete (String.prototype as { toLowerCase?: unknown }).toLowerCase;
+      }
+    }
+  });
+
+  it("keeps configured-origin return encoding stable after encodeURIComponent is patched", () => {
+    const originalDescriptor = Object.getOwnPropertyDescriptor(globalThis, "encodeURIComponent");
+    const buildRedirect = createProxyAuthRedirectBuilder("https://platform.example.test");
+    try {
+      Object.defineProperty(globalThis, "encodeURIComponent", {
+        configurable: true,
+        writable: true,
+        value: () => "https://outside.example.test/",
+      });
+
+      assertEquals(
+        buildRedirect(new URL("https://app.platform.example.test/dashboard")),
+        "https://platform.example.test/sign-in?from=https%3A%2F%2Fapp.platform.example.test%2Fdashboard",
+      );
+    } finally {
+      if (originalDescriptor) {
+        Object.defineProperty(globalThis, "encodeURIComponent", originalDescriptor);
+      }
+    }
+  });
+
+  it("rejects unsafe configured sign-in origins", () => {
+    const previous = Deno.env.get("VERYFRONT_PROXY_SIGN_IN_ORIGIN");
+    try {
+      for (
+        const origin of [
+          "http://platform.example.test",
+          "https://user:pass@platform.example.test",
+          "https://platform.example.test/path",
+          "https://platform.example.test?next=evil",
+          "https://platform.example.test#fragment",
+          "not-a-url",
+        ]
+      ) {
+        Deno.env.set("VERYFRONT_PROXY_SIGN_IN_ORIGIN", origin);
+        assertThrows(() =>
+          createProxyAuthRedirectBuilder(Deno.env.get("VERYFRONT_PROXY_SIGN_IN_ORIGIN"))(
+            new URL("https://app.platform.example.test/"),
+          )
+        );
+      }
+    } finally {
+      if (previous === undefined) Deno.env.delete("VERYFRONT_PROXY_SIGN_IN_ORIGIN");
+      else Deno.env.set("VERYFRONT_PROXY_SIGN_IN_ORIGIN", previous);
+    }
+  });
+
   it("resolves the current AuthProvider contract after registry replacement", async () => {
     const previousSecret = Deno.env.get("JWT_SECRET");
     Deno.env.set("JWT_SECRET", "test-secret");
@@ -100,6 +293,77 @@ describe("proxy/proxy-access-control", () => {
     );
   });
 
+  it("keeps origin-form path normalization stable after String.prototype.slice is patched", () => {
+    const originalDescriptor = Object.getOwnPropertyDescriptor(String.prototype, "slice");
+    try {
+      Object.defineProperty(String.prototype, "slice", {
+        configurable: true,
+        writable: true,
+        value: () => "/evil.test/",
+      });
+
+      assertEquals(
+        buildProxyAuthRedirectUrl(new URL("https://evil.test///dashboard")),
+        "https://veryfront.com/sign-in?from=%2Fdashboard",
+      );
+    } finally {
+      if (originalDescriptor) {
+        Object.defineProperty(String.prototype, "slice", originalDescriptor);
+      } else {
+        delete (String.prototype as { slice?: unknown }).slice;
+      }
+    }
+  });
+
+  it("keeps origin-form path slash detection stable after String.prototype.charCodeAt is patched", () => {
+    const originalDescriptor = Object.getOwnPropertyDescriptor(String.prototype, "charCodeAt");
+    try {
+      Object.defineProperty(String.prototype, "charCodeAt", {
+        configurable: true,
+        writable: true,
+        value: () => 0,
+      });
+
+      assertEquals(
+        buildProxyAuthRedirectUrl(new URL("https://evil.test///dashboard")),
+        "https://veryfront.com/sign-in?from=%2Fdashboard",
+      );
+    } finally {
+      if (originalDescriptor) {
+        Object.defineProperty(String.prototype, "charCodeAt", originalDescriptor);
+      } else {
+        delete (String.prototype as { charCodeAt?: unknown }).charCodeAt;
+      }
+    }
+  });
+
+  it("keeps return paths stable after URL path accessors are patched", () => {
+    const descriptors = {
+      pathname: Object.getOwnPropertyDescriptor(URL.prototype, "pathname"),
+      search: Object.getOwnPropertyDescriptor(URL.prototype, "search"),
+    };
+    const requestUrl = new URL("https://evil.test/dashboard?ok=1");
+    try {
+      Object.defineProperty(URL.prototype, "pathname", {
+        configurable: true,
+        get: () => "/\\outside.example.test",
+      });
+      Object.defineProperty(URL.prototype, "search", {
+        configurable: true,
+        get: () => "?next=outside",
+      });
+
+      assertEquals(
+        buildProxyAuthRedirectUrl(requestUrl),
+        "https://veryfront.com/sign-in?from=%2Fdashboard%3Fok%3D1",
+      );
+    } finally {
+      for (const [name, descriptor] of Object.entries(descriptors)) {
+        if (descriptor) Object.defineProperty(URL.prototype, name, descriptor);
+      }
+    }
+  });
+
   it("signs in on the apex the request arrived on", () => {
     // Sending a staging visitor to veryfront.com mints a cookie for a domain
     // that a veryfront.org host never receives, so the redirect loop cannot
@@ -136,6 +400,104 @@ describe("proxy/proxy-access-control", () => {
         buildProxyAuthRedirectUrl(new URL(`https://${hostname}/dashboard`)),
         "https://veryfront.com/sign-in?from=%2Fdashboard",
       );
+    }
+  });
+
+  it("keeps default production host trust stable after String.prototype.endsWith is patched", () => {
+    const originalDescriptor = Object.getOwnPropertyDescriptor(String.prototype, "endsWith");
+    try {
+      Object.defineProperty(String.prototype, "endsWith", {
+        configurable: true,
+        writable: true,
+        value: () => true,
+      });
+
+      assertEquals(
+        buildProxyAuthRedirectUrl(
+          new URL("https://app.production.veryfront.com.evil.test/dashboard"),
+        ),
+        "https://veryfront.com/sign-in?from=%2Fdashboard",
+      );
+    } finally {
+      if (originalDescriptor) {
+        Object.defineProperty(String.prototype, "endsWith", originalDescriptor);
+      } else {
+        delete (String.prototype as { endsWith?: unknown }).endsWith;
+      }
+    }
+  });
+
+  it("normalizes default production hosts after string host helpers are patched", () => {
+    const descriptors = {
+      trim: Object.getOwnPropertyDescriptor(String.prototype, "trim"),
+      includes: Object.getOwnPropertyDescriptor(String.prototype, "includes"),
+      toLowerCase: Object.getOwnPropertyDescriptor(String.prototype, "toLowerCase"),
+      endsWith: Object.getOwnPropertyDescriptor(String.prototype, "endsWith"),
+      slice: Object.getOwnPropertyDescriptor(String.prototype, "slice"),
+      startsWith: Object.getOwnPropertyDescriptor(String.prototype, "startsWith"),
+      indexOf: Object.getOwnPropertyDescriptor(String.prototype, "indexOf"),
+      lastIndexOf: Object.getOwnPropertyDescriptor(String.prototype, "lastIndexOf"),
+      charCodeAt: Object.getOwnPropertyDescriptor(String.prototype, "charCodeAt"),
+    };
+    try {
+      Object.defineProperty(String.prototype, "trim", {
+        configurable: true,
+        writable: true,
+        value: () => "",
+      });
+      Object.defineProperty(String.prototype, "includes", {
+        configurable: true,
+        writable: true,
+        value: () => true,
+      });
+      Object.defineProperty(String.prototype, "toLowerCase", {
+        configurable: true,
+        writable: true,
+        value: () => "app.production.veryfront.com.evil.test",
+      });
+      Object.defineProperty(String.prototype, "endsWith", {
+        configurable: true,
+        writable: true,
+        value: () => false,
+      });
+      Object.defineProperty(String.prototype, "slice", {
+        configurable: true,
+        writable: true,
+        value: () => "evil.test",
+      });
+      Object.defineProperty(String.prototype, "startsWith", {
+        configurable: true,
+        writable: true,
+        value: () => true,
+      });
+      Object.defineProperty(String.prototype, "indexOf", {
+        configurable: true,
+        writable: true,
+        value: () => -1,
+      });
+      Object.defineProperty(String.prototype, "lastIndexOf", {
+        configurable: true,
+        writable: true,
+        value: () => -1,
+      });
+      Object.defineProperty(String.prototype, "charCodeAt", {
+        configurable: true,
+        writable: true,
+        value: () => 0,
+      });
+
+      assertEquals(
+        buildProxyAuthRedirectUrl(new URL("https://APP.PRODUCTION.VERYFRONT.COM./dashboard")),
+        "https://veryfront.com/sign-in?from=https%3A%2F%2Fapp.production.veryfront.com%2Fdashboard",
+      );
+    } finally {
+      for (const [name, descriptor] of Object.entries(descriptors)) {
+        if (descriptor) {
+          Object.defineProperty(String.prototype, name, descriptor);
+        } else {
+          delete (String.prototype as unknown as Record<string, unknown>)[name];
+        }
+      }
     }
   });
 

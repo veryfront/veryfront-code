@@ -84,6 +84,11 @@ import * as otelApi from "npm:@opentelemetry/api@1.9.1";
 import { AsyncLocalStorageContextManager } from "npm:@opentelemetry/context-async-hooks@2.9.0";
 import { sealIngressCredentials } from "#veryfront/security/http/ingress-credentials.ts";
 import {
+  HEADER_METHODS,
+  installCredentialProbes,
+  installGlobalFetchProbe,
+} from "#veryfront/security/http/credential-probes.test-helpers.ts";
+import {
   BasicTracerProvider,
   InMemorySpanExporter,
   SimpleSpanProcessor,
@@ -150,13 +155,12 @@ function manualTaskDeadlineClock() {
     clearTimer: (id: number | undefined) => {
       if (id !== undefined) timers.delete(id);
     },
+    // Runs only timers due when advance starts; timers armed by a callback wait for the next advance.
     advance: (milliseconds: number) => {
       now += milliseconds;
-      for (const [id, timer] of timers) {
-        if (timer.at <= now) {
-          timers.delete(id);
-          timer.callback();
-        }
+      const due = [...timers].filter(([, timer]) => timer.at <= now);
+      for (const [id, timer] of due) {
+        if (timers.delete(id)) timer.callback();
       }
     },
   };
@@ -1412,25 +1416,31 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     ] as const
   ) {
     it(name, async () => {
+      const clock = manualTaskDeadlineClock();
+      const started = Promise.withResolvers<void>();
       let signal: AbortSignal | undefined;
       let settle: (() => void) | undefined;
-      const handler = new ProjectRunExecuteHandler(createDeps({
-        runTask: async (options) => {
-          signal = options.signal;
-          await new Promise<void>((resolve) => {
-            settle = resolve;
-            if (cooperative) {
-              signal?.addEventListener("abort", () => {
-                if (maskAborted) Object.defineProperty(signal, "aborted", { value: false });
-                resolve();
-              }, {
-                once: true,
-              });
-            }
-          });
-          return { success: true, result: "late", durationMs: 1 };
-        },
-      }));
+      const handler = new ProjectRunExecuteHandler(
+        createDeps({
+          runTask: async (options) => {
+            signal = options.signal;
+            started.resolve();
+            await new Promise<void>((resolve) => {
+              settle = resolve;
+              if (cooperative) {
+                signal?.addEventListener("abort", () => {
+                  if (maskAborted) Object.defineProperty(signal, "aborted", { value: false });
+                  resolve();
+                }, {
+                  once: true,
+                });
+              }
+            });
+            return { success: true, result: "late", durationMs: 1 };
+          },
+        }),
+        clock,
+      );
       const { request, publicKeyPem } = await signedRequest(
         "/api/control-plane/runs/run_deadline/execute",
         {
@@ -1438,13 +1448,21 @@ describe("server/handlers/request/project-run-execute.handler", () => {
           kind: "task",
           target: "task:sync-calendar-events",
           projectId: "proj-1",
-          deadlineAt: new Date(Date.now() + 100).toISOString(),
+          deadlineAt: new Date(clock.now() + 100).toISOString(),
         },
       );
       let guard: ReturnType<typeof setTimeout> | undefined;
       try {
+        const pending = handler.handle(request, createCtx(publicKeyPem));
+        await Promise.race([
+          started.promise,
+          pending.then(() => {
+            throw new Error("Deadline test completed before executor admission");
+          }),
+        ]);
+        clock.advance(100);
         const result = await Promise.race([
-          handler.handle(request, createCtx(publicKeyPem)),
+          pending,
           new Promise<never>((_resolve, reject) => {
             guard = setTimeout(
               () => reject(new Error("execution exceeded deadline grace")),
@@ -2763,6 +2781,266 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     assertEquals(recorder.upserts[0]?.environment_name, "Preview");
     assertEquals(recorder.upserts[0]?.status, "ready");
     assertEquals(typeof recorder.upserts[0]?.artifact_hash, "string");
+  });
+
+  it("uses an explicit release selector instead of the preview request context", async () => {
+    const body = {
+      runId: "run_style_artifact_explicit_release",
+      kind: "task",
+      target: "task:style-artifact-build",
+      projectId: "proj-1",
+      config: { release_id: "release-1" },
+    };
+    const { request, publicKeyPem } = await signedRequest(
+      "/api/control-plane/runs/run_style_artifact_explicit_release/execute",
+      body,
+      { "x-token": "test-token" },
+    );
+    const { ctx, readCalls, sourceFileCalls } = createStyleArtifactCtx(publicKeyPem, {
+      files: [{
+        path: "pages/index.tsx",
+        content:
+          'export default function Page() { return <main className="px-4 text-red-500">Hi</main>; }',
+      }],
+      stylesheet: "@tailwind utilities; .from-css { color: red; }",
+      stylesheetPath: "src/styles.css",
+      contentContext: {
+        sourceType: "release",
+        projectSlug: "demo-project",
+        releaseId: "release-1",
+      },
+    });
+    const recorder = createStyleArtifactFetchRecorder();
+
+    const result = await withMockFetch(
+      recorder.fetch,
+      async () => await new ProjectRunExecuteHandler().handle(request, ctx),
+    );
+
+    assertExists(result.response);
+    assertEquals(result.response.status, 200);
+    const json = await result.response.json();
+    assertEquals(json.success, true);
+    assertEquals(sourceFileCalls.count, 1);
+    assertEquals(readCalls, ["src/styles.css"]);
+    assertEquals(recorder.upserts.length, 1);
+    assertEquals(recorder.upserts[0]?.release_id, "release-1");
+    assertEquals(recorder.upserts[0]?.environment_name, undefined);
+    assertEquals(recorder.upserts[0]?.status, "ready");
+    assertEquals(typeof recorder.upserts[0]?.artifact_hash, "string");
+  });
+
+  it("uses captured intrinsics for explicit style selectors", async () => {
+    const body = {
+      runId: "run_style_artifact_captured_intrinsics",
+      kind: "task",
+      target: "task:style-artifact-build",
+      projectId: "proj-1",
+      config: { release_id: "release-1" },
+    };
+    const { request, publicKeyPem } = await signedRequest(
+      "/api/control-plane/runs/run_style_artifact_captured_intrinsics/execute",
+      body,
+      { "x-token": "test-token" },
+    );
+    const { ctx, readCalls, sourceFileCalls } = createStyleArtifactCtx(publicKeyPem, {
+      files: [{
+        path: "pages/index.tsx",
+        content:
+          'export default function Page() { return <main className="px-4 text-red-500">Hi</main>; }',
+      }],
+      stylesheet: "@tailwind utilities; .from-css { color: red; }",
+      stylesheetPath: "src/styles.css",
+      contentContext: {
+        sourceType: "release",
+        projectSlug: "demo-project",
+        releaseId: "release-1",
+      },
+    });
+    const recorder = createStyleArtifactFetchRecorder();
+
+    const result = await withMockFetch(
+      recorder.fetch,
+      async () => {
+        const values = Object.values;
+        const some = Array.prototype.some;
+        Object.values = ((value: object) => {
+          if (Object.prototype.hasOwnProperty.call(value, "releaseId")) {
+            throw new Error("Project replaced Object.values");
+          }
+          return values(value);
+        }) as typeof Object.values;
+        Array.prototype.some = function (...args: Parameters<typeof some>) {
+          if (this.includes("release-1")) throw new Error("Project replaced Array.some");
+          return Reflect.apply(some, this, args);
+        };
+        try {
+          return await new ProjectRunExecuteHandler().handle(request, ctx);
+        } finally {
+          Object.values = values;
+          Array.prototype.some = some;
+        }
+      },
+    );
+
+    assertExists(result.response);
+    assertEquals(result.response.status, 200);
+    const json = await result.response.json();
+    assertEquals(json.success, true);
+    assertEquals(sourceFileCalls.count, 1);
+    assertEquals(readCalls, ["src/styles.css"]);
+    assertEquals(recorder.upserts.length, 1);
+    assertEquals(recorder.upserts[0]?.release_id, "release-1");
+    assertEquals(recorder.upserts[0]?.environment_name, undefined);
+    assertEquals(recorder.upserts[0]?.status, "ready");
+    assertEquals(typeof recorder.upserts[0]?.artifact_hash, "string");
+  });
+
+  it("uses the preview request context when no selector is explicit", async () => {
+    const body = {
+      runId: "run_style_artifact_context_fallback",
+      kind: "task",
+      target: "task:style-artifact-build",
+      projectId: "proj-1",
+      config: {},
+    };
+    const { request, publicKeyPem } = await signedRequest(
+      "/api/control-plane/runs/run_style_artifact_context_fallback/execute",
+      body,
+      { "x-token": "test-token" },
+    );
+    const { ctx, readCalls, sourceFileCalls } = createStyleArtifactCtx(publicKeyPem, {
+      files: [{
+        path: "pages/index.tsx",
+        content:
+          'export default function Page() { return <main className="px-4 text-red-500">Hi</main>; }',
+      }],
+      stylesheet: "@tailwind utilities; .from-css { color: red; }",
+      stylesheetPath: "src/styles.css",
+    });
+    const recorder = createStyleArtifactFetchRecorder();
+
+    const result = await withMockFetch(
+      recorder.fetch,
+      async () => await new ProjectRunExecuteHandler().handle(request, ctx),
+    );
+
+    assertExists(result.response);
+    assertEquals(result.response.status, 200);
+    const json = await result.response.json();
+    assertEquals(json.success, true);
+    assertEquals(sourceFileCalls.count, 1);
+    assertEquals(readCalls, ["src/styles.css"]);
+    assertEquals(recorder.upserts.length, 1);
+    assertEquals(recorder.upserts[0]?.release_id, undefined);
+    assertEquals(recorder.upserts[0]?.environment_name, "Preview");
+    assertEquals(recorder.upserts[0]?.status, "ready");
+    assertEquals(typeof recorder.upserts[0]?.artifact_hash, "string");
+  });
+
+  it("rejects multiple explicit style selectors before reading source files", async () => {
+    const body = {
+      runId: "run_style_artifact_ambiguous",
+      kind: "task",
+      target: "task:style-artifact-build",
+      projectId: "proj-1",
+      config: { release_id: "release-1", environment_name: "Preview" },
+    };
+    const { request, publicKeyPem } = await signedRequest(
+      "/api/control-plane/runs/run_style_artifact_ambiguous/execute",
+      body,
+      { "x-token": "test-token" },
+    );
+    const { ctx, readCalls, sourceFileCalls } = createStyleArtifactCtx(publicKeyPem, {
+      files: [{
+        path: "pages/index.tsx",
+        content:
+          'export default function Page() { return <main className="px-4 text-red-500">Hi</main>; }',
+      }],
+      stylesheet: "@tailwind utilities; .from-css { color: red; }",
+      stylesheetPath: "src/styles.css",
+      contentContext: {
+        sourceType: "release",
+        projectSlug: "demo-project",
+        releaseId: "release-1",
+      },
+    });
+    const recorder = createStyleArtifactFetchRecorder();
+
+    const result = await withMockFetch(
+      recorder.fetch,
+      async () => await new ProjectRunExecuteHandler().handle(request, ctx),
+    );
+
+    assertExists(result.response);
+    assertEquals(result.response.status, 200);
+    const json = await result.response.json();
+    assertEquals(json.success, false);
+    assertEquals(json.error.includes("Exactly one style artifact selector is required"), true);
+    assertEquals(sourceFileCalls.count, 0);
+    assertEquals(readCalls, []);
+    assertEquals(recorder.upserts.length, 0);
+  });
+
+  it("rejects multiple explicit style selectors with a poisoned Array filter", async () => {
+    const body = {
+      runId: "run_style_artifact_ambiguous_poisoned_filter",
+      kind: "task",
+      target: "task:style-artifact-build",
+      projectId: "proj-1",
+      config: { release_id: "release-1", environment_name: "Preview" },
+    };
+    const { request, publicKeyPem } = await signedRequest(
+      "/api/control-plane/runs/run_style_artifact_ambiguous_poisoned_filter/execute",
+      body,
+      { "x-token": "test-token" },
+    );
+    const { ctx, readCalls, sourceFileCalls } = createStyleArtifactCtx(publicKeyPem, {
+      files: [{
+        path: "pages/index.tsx",
+        content:
+          'export default function Page() { return <main className="px-4 text-red-500">Hi</main>; }',
+      }],
+      stylesheet: "@tailwind utilities; .from-css { color: red; }",
+      stylesheetPath: "src/styles.css",
+      contentContext: {
+        sourceType: "release",
+        projectSlug: "demo-project",
+        releaseId: "release-1",
+      },
+    });
+    const recorder = createStyleArtifactFetchRecorder();
+
+    const result = await withMockFetch(
+      recorder.fetch,
+      async () => {
+        const filter = Array.prototype.filter;
+        Array.prototype.filter = function (...args: Parameters<typeof filter>) {
+          let hasRelease = false;
+          let hasPreview = false;
+          for (let index = 0; index < this.length; index++) {
+            hasRelease ||= this[index] === "release-1";
+            hasPreview ||= this[index] === "Preview";
+          }
+          if (hasRelease && hasPreview) return ["release-1"];
+          return Reflect.apply(filter, this, args);
+        };
+        try {
+          return await new ProjectRunExecuteHandler().handle(request, ctx);
+        } finally {
+          Array.prototype.filter = filter;
+        }
+      },
+    );
+
+    assertExists(result.response);
+    assertEquals(result.response.status, 200);
+    const json = await result.response.json();
+    assertEquals(json.success, false);
+    assertEquals(json.error.includes("Exactly one style artifact selector is required"), true);
+    assertEquals(sourceFileCalls.count, 0);
+    assertEquals(readCalls, []);
+    assertEquals(recorder.upserts.length, 0);
   });
 
   it("rejects mismatched style profile hashes before scanning source files", async () => {
@@ -9559,6 +9837,68 @@ describe("server/handlers/request/project-run-execute.handler cancellation", () 
     assertEquals(callback.init.signal?.aborted, false);
   });
 
+  it("keeps constructor-time deadline clock methods when the source clock changes later", async () => {
+    const clock = manualTaskDeadlineClock();
+    const deadlineAt = new Date(clock.now() + 25).toISOString();
+    const started = Promise.withResolvers<void>();
+    let receivedSignal: AbortSignal | undefined;
+    const handler = new ProjectRunExecuteHandler(
+      createDeps({
+        executeKnowledgeIngest: async (input: unknown) => {
+          receivedSignal = (input as { signal?: AbortSignal }).signal;
+          started.resolve();
+          if (!receivedSignal) return { success: true };
+          await new Promise<void>((resolve) =>
+            receivedSignal!.addEventListener("abort", () => resolve(), { once: true })
+          );
+          receivedSignal.throwIfAborted();
+          return { success: true };
+        },
+      }),
+      clock,
+    );
+    let replacedCalls = 0;
+    clock.now = () => {
+      replacedCalls++;
+      return 0;
+    };
+    clock.setTimer = () => {
+      replacedCalls++;
+      return 0;
+    };
+    clock.clearTimer = () => {
+      replacedCalls++;
+    };
+    const { request, publicKeyPem } = await signedRequest(
+      "/api/control-plane/runs/run_deadline_clock_snapshot/execute",
+      {
+        runId: "run_deadline_clock_snapshot",
+        kind: "task",
+        target: "task:knowledge-ingest",
+        projectId: "proj-1",
+        deadlineAt,
+      },
+    );
+
+    const pending = handler.handle(request, createCtx(publicKeyPem));
+    await Promise.race([
+      started.promise,
+      pending.then(() => {
+        throw new Error("Deadline snapshot test completed before executor admission");
+      }),
+    ]);
+    clock.advance(25);
+    const result = await waitForBarrier(
+      pending,
+      "deadline did not fire through the constructor-time clock methods",
+    );
+
+    assertExists(result.response);
+    assertEquals(receivedSignal?.aborted, true);
+    assertEquals((await result.response.json()).error_code, "RUN_TIMEOUT");
+    assertEquals(replacedCalls, 0);
+  });
+
   it("acknowledges a stopped task independently only after its execution settles", async () => {
     const started = Promise.withResolvers<void>();
     const settled = Promise.withResolvers<void>();
@@ -10421,6 +10761,362 @@ describe("server/handlers/request/project-run-execute.handler cancellation", () 
   });
 });
 
+describe("project run control-plane Authorization", () => {
+  // The release asset build starts the esbuild service.
+  afterAll(async () => {
+    await stopEsbuild();
+  });
+
+  const SERVICE_TOKEN = "project-run-service-account-canary-71d4";
+  // Everything but Headers has/append, which native fetch calls with the
+  // headers as `this`; replacing those makes the egress refuse instead.
+  const projectCodeProbes = () =>
+    installCredentialProbes({
+      headerMethods: HEADER_METHODS.filter((name) => name !== "has" && name !== "append"),
+    });
+
+  it("takes Authorization off a control-plane run route and leaves it on application routes", () => {
+    const run = sealIngressCredentials(
+      new Request("https://example.com/api/control-plane/runs/run_1/execute", {
+        method: "POST",
+        headers: { authorization: `Bearer ${SERVICE_TOKEN}`, "x-token": SERVICE_TOKEN },
+      }),
+    );
+    assertEquals(run.headers.get("authorization"), null);
+    assertEquals(run.headers.get("x-token"), null);
+
+    const app = sealIngressCredentials(
+      new Request("https://example.com/api/me", {
+        headers: { authorization: "Bearer tenant-user-token", "x-token": SERVICE_TOKEN },
+      }),
+    );
+    assertEquals(app.headers.get("authorization"), "Bearer tenant-user-token");
+    assertEquals(app.headers.get("x-token"), null);
+  });
+
+  it("keeps Authorization and x-token out of reach of task project code", async () => {
+    let ran = false;
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      runTask: async () => {
+        ran = true;
+        return { success: true, result: { ok: true }, durationMs: 1 };
+      },
+    }));
+    const { request, publicKeyPem } = await signedRequest(
+      "/api/control-plane/runs/run_task_authz/execute",
+      {
+        runId: "run_task_authz",
+        kind: "task",
+        target: "task:sync-calendar-events",
+        projectId: "proj-1",
+      },
+      { authorization: `Bearer ${SERVICE_TOKEN}`, "x-token": SERVICE_TOKEN },
+    );
+    // The runtime handler seals before any project code can run.
+    const sealed = sealIngressCredentials(request);
+
+    const probes = projectCodeProbes();
+    // Project code loaded for the run replaces the global fetch.
+    const fetchProbe = installGlobalFetchProbe();
+    let result;
+    try {
+      result = await handler.handle(sealed, createCtx(publicKeyPem));
+    } finally {
+      fetchProbe.restore();
+      probes.restore();
+    }
+
+    assertExists(result.response);
+    assertEquals(result.response.status, 200);
+    assertEquals(ran, true);
+    assertEquals(probes.saw(SERVICE_TOKEN), false);
+    assertEquals(fetchProbe.saw(SERVICE_TOKEN), false);
+  });
+
+  it("authenticates a durable eval with the sealed Authorization, out of project code's reach", async () => {
+    const authorizations: (string | null)[] = [];
+    const idempotencyKeys: (string | null)[] = [];
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      runTask: runTaskDefinition,
+      findEvalById: async (target) =>
+        target === "eval:deep-research"
+          ? {
+            id: "eval:deep-research",
+            name: "Deep research quality",
+            filePath: "evals/deep-research.eval.ts",
+            exportName: "default",
+            definition: evalAgent({
+              id: "eval:deep-research",
+              target: "agent:researcher",
+              dataset: datasets.inline([{ id: "q1", input: "France capital?" }]),
+              metrics: [metrics.answer.contains({ text: "Paris" }).gate()],
+            }),
+          }
+          : null,
+      runEval: runEvalDefinition,
+      createEvalAgentAdapter: (config) =>
+        createAgentServiceEvalAdapter({ ...config, requestTimeoutMs: 250 }),
+    }));
+    const { request, publicKeyPem } = await signedRequest(
+      "/api/control-plane/runs/run_eval_authz/execute",
+      {
+        runId: "run_eval_authz",
+        canonicalRunId: "88888888-8888-4888-8888-888888888888",
+        kind: "task",
+        target: "task:eval",
+        projectId: "55555555-5555-4555-8555-555555555555",
+        runtimeAgUiEndpoint: "https://demo-project.preview.veryfront.org/api/ag-ui",
+        config: { eval_id: "eval:deep-research" },
+      },
+      // No x-token: the run authenticates with the token from Authorization.
+      { authorization: `Bearer ${SERVICE_TOKEN}` },
+      "https://veryfront.org",
+    );
+    const sealed = sealIngressCredentials(request);
+    assertEquals(sealed.headers.get("authorization"), null);
+
+    const probes = projectCodeProbes();
+    // Project code loaded for the run replaces the global fetch.
+    const fetchProbe = installGlobalFetchProbe();
+    let result;
+    try {
+      result = await withEnvValue(
+        "VERYFRONT_API_BASE_URL",
+        "https://api.example.test/",
+        () =>
+          withMockFetch(
+            async (input, init) => {
+              const url = new URL(String(input));
+              const observed = observeFetchRequestInit(init);
+              // The transport hands native fetch a null-prototype header record;
+              // read it by own key, as native fetch does, not through Headers.
+              const headers = observed.headers as Record<string, string> | undefined;
+              authorizations.push(
+                headers && Object.hasOwn(headers, "authorization") ? headers.authorization! : null,
+              );
+              if ((observed.method ?? "GET") === "POST" && url.pathname.endsWith("/runs")) {
+                idempotencyKeys.push(
+                  headers && Object.hasOwn(headers, "idempotency-key")
+                    ? headers["idempotency-key"]!
+                    : null,
+                );
+                return Response.json({ id: "77777777-7777-4777-8777-777777777777" }, {
+                  status: 202,
+                });
+              }
+              return new Response(
+                [
+                  ...[
+                    { type: "RUN_STARTED", runId: "eval-child-run" },
+                    { type: "TEXT_MESSAGE_CONTENT", messageId: "answer", delta: "Paris" },
+                    { type: "RUN_FINISHED", runId: "eval-child-run" },
+                  ].map((payload, index) =>
+                    `id: ${index + 1}\nevent: ${payload.type}\ndata: ${
+                      JSON.stringify({
+                        event_id: index + 1,
+                        event_type: payload.type,
+                        payload,
+                        is_error: false,
+                        created_at: "2026-10-04T20:00:00.000Z",
+                      })
+                    }\n\n`
+                  ),
+                ].join(""),
+                { headers: { "content-type": "text/event-stream" } },
+              );
+            },
+            () =>
+              handler.handle(sealed, {
+                ...createCtx(publicKeyPem),
+                projectId: "55555555-5555-4555-8555-555555555555",
+              }),
+          ),
+      );
+    } finally {
+      fetchProbe.restore();
+      probes.restore();
+    }
+
+    assertExists(result.response);
+    assertEquals(result.response.status, 200);
+    assertEquals((await result.response.json()).result.failed, 0);
+    assertEquals(idempotencyKeys.length, 1);
+    assertStringIncludes(
+      idempotencyKeys[0] ?? "",
+      "eval:88888888-8888-4888-8888-888888888888:eval-run-",
+    );
+    assertEquals(authorizations, [`Bearer ${SERVICE_TOKEN}`, `Bearer ${SERVICE_TOKEN}`]);
+    assertEquals(probes.observed.filter((text) => text.includes(SERVICE_TOKEN)), []);
+    assertEquals(fetchProbe.saw(SERVICE_TOKEN), false);
+  });
+
+  it("authenticates a style build with the sealed Authorization when x-token is absent", async () => {
+    const { request, publicKeyPem } = await signedRequest(
+      "/api/control-plane/runs/run_style_authz/execute",
+      {
+        runId: "run_style_authz",
+        kind: "task",
+        target: "task:style-artifact-build",
+        projectId: "proj-1",
+        config: { environment_name: "Preview" },
+      },
+      { authorization: `Bearer ${SERVICE_TOKEN}` },
+    );
+    const sealed = sealIngressCredentials(request);
+    const { ctx } = createStyleArtifactCtx(publicKeyPem, {
+      files: [{ path: "pages/index.tsx", content: "export default () => null;" }],
+      stylesheet: "@tailwind utilities;",
+      stylesheetPath: "src/styles.css",
+    });
+    const recorder = createStyleArtifactFetchRecorder();
+    const authorizations: (string | undefined)[] = [];
+
+    const result = await withMockFetch(
+      ((input: string | URL | Request, init?: RequestInit) => {
+        const headers = init?.headers as Record<string, string> | undefined;
+        authorizations.push(
+          headers && Object.hasOwn(headers, "authorization") ? headers.authorization : undefined,
+        );
+        return recorder.fetch(input, init);
+      }) as typeof fetch,
+      async () => await new ProjectRunExecuteHandler().handle(sealed, ctx),
+    );
+
+    assertExists(result.response);
+    assertEquals(result.response.status, 200);
+    assertEquals(recorder.upserts.length, 1);
+    assertEquals(authorizations.length > 0, true);
+    assertEquals(authorizations.every((value) => value === `Bearer ${SERVICE_TOKEN}`), true);
+  });
+
+  it("authenticates a release asset build with the sealed Authorization when x-token is absent", async () => {
+    const signed = await signedRequest(
+      "/api/control-plane/runs/run_release_asset_authz/execute",
+      {
+        runId: "run_release_asset_authz",
+        kind: "task",
+        target: "task:release-asset-build",
+        projectId: "proj-1",
+        config: { release_id: "release-1", release_version: 1 },
+      },
+      { authorization: `Bearer ${SERVICE_TOKEN}` },
+    );
+    const sealed = sealIngressCredentials(signed.request);
+    const ctx = createCtx(signed.publicKeyPem);
+    ctx.config = {};
+    const authorizations: (string | null)[] = [];
+
+    const result = await withMockFetch(
+      (async (input, init) => {
+        const url = String(input);
+        authorizations.push(
+          new Headers(observeFetchRequestInit(init).headers).get("authorization"),
+        );
+        if (url.endsWith("/asset-manifest/builds")) {
+          return Response.json({ id: "build-1", manifest_version: 1, state: "building" });
+        }
+        if (url.includes("/releases/release-1/files?")) {
+          return Response.json({
+            data: [{
+              id: "file-1",
+              version_id: "version-1",
+              path: "pages/index.tsx",
+              content: "export default function Page() { return null; }",
+              type: "page",
+              size: 49,
+              updated_at: "2026-09-30T00:00:00.000Z",
+            }],
+            page_info: { self: null, first: null, next: null, prev: null },
+            release_id: "release-1",
+            release_version: "1",
+          });
+        }
+        if (url.endsWith("/asset-manifest/assets")) {
+          return Response.json({ stored: true, existed: false });
+        }
+        if (url.endsWith("/asset-manifest")) {
+          return Response.json({ state: "ready", manifest_version: 1 });
+        }
+        return new Response("Not found", { status: 404 });
+      }) as typeof fetch,
+      async () => await new ProjectRunExecuteHandler().handle(sealed, ctx),
+    );
+
+    assertExists(result.response);
+    const payload = await result.response.json();
+    assertEquals(payload.success, true, payload.error);
+    assertEquals(authorizations.length > 0, true);
+    assertEquals(authorizations.every((value) => value === `Bearer ${SERVICE_TOKEN}`), true);
+  });
+
+  it("hands the in-process AG-UI handler a local eval request without credentials", async () => {
+    const sourceAgent = createStreamingAgent("researcher", "Paris");
+    agentRegistry.register("researcher", {
+      ...sourceAgent,
+      config: {
+        ...sourceAgent.config,
+        resolveModelTransport: () =>
+          Promise.resolve({ model: createEvalTransportModel({ text: "Paris" }) }),
+      } as Agent["config"],
+    });
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      runTask: runTaskDefinition,
+      findEvalById: async (target) =>
+        target === "eval:deep-research"
+          ? {
+            id: "eval:deep-research",
+            name: "Deep research quality",
+            filePath: "evals/deep-research.eval.ts",
+            exportName: "default",
+            definition: evalAgent({
+              id: "eval:deep-research",
+              target: "agent:researcher",
+              dataset: datasets.inline([{ id: "q1", input: "France capital?" }]),
+              metrics: [metrics.answer.contains({ text: "Paris" }).gate()],
+            }),
+          }
+          : null,
+      runEval: runEvalDefinition,
+      createEvalAgentAdapter: (config) =>
+        createAgentServiceEvalAdapter({ ...config, requestTimeoutMs: 250 }),
+    }));
+    const { request, publicKeyPem } = await signedRequest(
+      "/api/control-plane/runs/run_eval_local_authz/execute",
+      {
+        runId: "run_eval_local_authz",
+        kind: "task",
+        target: "task:eval",
+        projectId: "proj-1",
+        runtimeAgUiEndpoint: "http://localhost:4311/api/ag-ui",
+        config: { eval_id: "eval:deep-research" },
+      },
+      { authorization: `Bearer ${SERVICE_TOKEN}`, "x-token": SERVICE_TOKEN },
+      "http://localhost:4311",
+    );
+    const sealed = sealIngressCredentials(request);
+
+    // The agent runs in this isolate: its header reads go through the probes.
+    const probes = projectCodeProbes();
+    let result;
+    try {
+      result = await withEnvValue(
+        "PORT",
+        "4311",
+        () => handler.handle(sealed, createCtx(publicKeyPem)),
+      );
+    } finally {
+      probes.restore();
+      agentRegistry.delete("researcher");
+    }
+
+    assertExists(result.response);
+    assertEquals(result.response.status, 200);
+    assertEquals((await result.response.json()).result.failed, 0);
+    assertEquals(Object.keys(probes.calls).length > 0, true);
+    assertEquals(probes.saw(SERVICE_TOKEN), false);
+  });
+});
+
 describe("server/handlers/request/project-run-execute.handler manual pause (#2588)", () => {
   afterAll(async () => {
     await stopEsbuild();
@@ -11134,6 +11830,55 @@ describe("server/handlers/request/project-run-execute.handler manual pause (#258
     assertEquals((await backend.getRun(runId))?.status, "waiting");
   });
 
+  it("settles a duplicate manual resume while a live boundary holds its lock (#2666)", async () => {
+    const backend = new SharedMemoryBackend();
+    const calls: string[] = [];
+    const definition = threeSteps(calls);
+    const boundaryEntered = Promise.withResolvers<void>();
+    const releaseBoundary = Promise.withResolvers<void>();
+    let acknowledgements = 0;
+    let duplicateResumes = 0;
+    let polls = 0;
+    let live: ReturnType<typeof dispatch> | undefined;
+    try {
+      await withMockFetch(async () => {
+        acknowledgements++;
+        if (acknowledgements === 1) return Response.json({ stop: true });
+        if (acknowledgements === 3) {
+          boundaryEntered.resolve();
+          await releaseBoundary.promise;
+        }
+        return Response.json({ stop: false });
+      }, async () => {
+        await dispatch(createHandler(backend, definition));
+        live = dispatch(createHandler(backend, definition), { type: "manual" });
+        await boundaryEntered.promise;
+        assertEquals((await backend.getRun(runId))?.status, "running");
+        assertEquals((await backend.getRun(runId))?.currentNodes, []);
+        assertEquals(await backend.isLocked(runId), true);
+        const duplicate = await dispatch(
+          createHandler(backend, definition, {
+            onResume: () => duplicateResumes++,
+            sleep: async () => {
+              if (++polls === 400) releaseBoundary.resolve();
+              await delay(0);
+            },
+          }),
+          { type: "manual" },
+        );
+        assertEquals(duplicate.success, true);
+        assertEquals(duplicate.error, undefined);
+        assertEquals((await live).success, true);
+        assertEquals(duplicateResumes, 0);
+        assertEquals((await backend.getRun(runId))?.status, "completed");
+      });
+    } finally {
+      releaseBoundary.resolve();
+      await live;
+    }
+    assertEquals(calls, ["first", "second", "third"]);
+  });
+
   it("recovers a post-ack crash record before settling and executes completed nodes once", async () => {
     const backend = new SharedMemoryBackend();
     const calls: string[] = [];
@@ -11161,6 +11906,33 @@ describe("server/handlers/request/project-run-execute.handler manual pause (#258
       assertEquals((await backend.getRun(runId))?.status, "completed");
     });
     assertEquals(attemptedResume, true);
+    assertEquals(calls, ["first", "second", "third"]);
+  });
+
+  it("recovers a post-ack crash after the dead execution lease expires (#2666)", async () => {
+    const backend = new SharedMemoryBackend();
+    const calls: string[] = [];
+    const definition = threeSteps(calls);
+    let stop = true;
+    let resumedWhileLocked: Promise<boolean> | undefined;
+    await withMockFetch(async () => Response.json({ stop }), async () => {
+      await dispatch(createHandler(backend, definition));
+      await backend.updateRun(runId, { status: "running" });
+      assertExists(await backend.acquireLock(runId, 25));
+      stop = false;
+      const resumed = await dispatch(
+        createHandler(backend, definition, {
+          onResume: () => {
+            resumedWhileLocked = backend.isLocked(runId);
+          },
+        }),
+        { type: "manual" },
+      );
+      assertEquals(resumed.success, true);
+      assertExists(resumedWhileLocked);
+      assertEquals(await resumedWhileLocked, false);
+      assertEquals((await backend.getRun(runId))?.status, "completed");
+    });
     assertEquals(calls, ["first", "second", "third"]);
   });
 

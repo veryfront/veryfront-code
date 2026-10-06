@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import type { ProjectFile, VeryfrontApiClient } from "../../veryfront-api-client/index.ts";
 import type { FileCache } from "../cache/file-cache.ts";
 import type { InvalidationCallbacks } from "./types.ts";
+import { buildFileListCacheKey } from "./cache-keys.ts";
 import { WebSocketManager } from "./websocket-manager.ts";
 import { REQUEST_ERROR } from "#veryfront/errors/error-registry/server.ts";
 import { isDeno } from "#veryfront/platform/compat/runtime.ts";
@@ -116,6 +117,7 @@ function withJsonLogFormat<T>(fn: () => T): T {
 
 function createWebSocketManager(options: {
   apiBaseUrl?: string;
+  projectSlug?: string;
   /** Branch this preview is pinned to; `null` previews the default branch. */
   branch?: string | null;
   /** Request-scoped branch override on a reused contextual adapter. */
@@ -162,7 +164,7 @@ function createWebSocketManager(options: {
   return new WebSocketManager({
     apiBaseUrl: options.apiBaseUrl ?? "https://api.example.com/api",
     apiToken: "test-token",
-    projectSlug: "test-project",
+    projectSlug: options.projectSlug ?? "test-project",
     cache,
     client,
     invalidationCallbacks,
@@ -1069,6 +1071,55 @@ describe("WebSocketManager", () => {
     ]);
 
     manager.dispose();
+  });
+
+  it("clears encoded listing keys on a broad publish for slugs that need encoding", async () => {
+    const longEnvironment = "e".repeat(300);
+    const listingKeys = (projectSlug: string): string[] => [
+      buildFileListCacheKey({ sourceType: "release", projectSlug, releaseId: "rel-1" }),
+      buildFileListCacheKey({
+        sourceType: "environment",
+        projectSlug,
+        environmentName: "production",
+        releaseId: "rel-1",
+      }),
+      buildFileListCacheKey({
+        sourceType: "environment",
+        projectSlug,
+        environmentName: longEnvironment,
+        releaseId: "rel-1",
+      }),
+    ];
+
+    for (const projectSlug of ["acme:shop", "tenant-vf-sanitized"]) {
+      const published = listingKeys(projectSlug);
+      assertEquals(published.some((key) => key.includes(":encoded:")), true);
+      assertEquals(published.some((key) => key.includes(":hashed:")), true);
+      const otherProjects = [...listingKeys("acme"), ...listingKeys("tenant")];
+      const keys = new Set([...published, ...otherProjects]);
+      const manager = createWebSocketManager({
+        projectSlug,
+        cache: {
+          deleteByPrefixAsync: (prefix: string) => {
+            let deleted = 0;
+            for (const key of keys) {
+              if (key.startsWith(prefix) && keys.delete(key)) deleted++;
+            }
+            return Promise.resolve(deleted);
+          },
+        },
+      });
+
+      manager.connect("project-1");
+      const socket = MockWebSocket.instances.at(-1);
+      assertExists(socket);
+
+      deliverPoke(socket, { entityType: "deployment" });
+      await Promise.resolve();
+
+      assertEquals([...keys].sort(), otherProjects.sort(), projectSlug);
+      manager.dispose();
+    }
   });
 
   it("blocks all derived reads until an inactive branch cache clear completes", async () => {

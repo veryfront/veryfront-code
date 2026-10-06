@@ -1,6 +1,6 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { API_CLIENT_ERROR } from "#veryfront/errors";
-import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   LOG_PREVIEW_MAX_LENGTH_CHARS,
@@ -24,6 +24,12 @@ import {
 } from "./telemetry-error.ts";
 import { createRuntimeProviderStreamFailure } from "#veryfront/runtime/provider-stream-error-provenance.ts";
 import { isNativeErrorWithoutHooks } from "#veryfront/platform/compat/error-introspection.ts";
+import {
+  ProviderRateLimitError,
+  ProviderRequestError,
+} from "#veryfront/provider/runtime-loader/provider-http.ts";
+import { withRuntimeProviderStreamErrorProvenance } from "#veryfront/agent/runtime/chat-stream-handler.ts";
+import type { ModelRuntime } from "#veryfront/provider/types.ts";
 
 describe("observability/telemetry-error", () => {
   it("sanitizes hostile flattened attributes without throwing", () => {
@@ -963,6 +969,117 @@ describe("observability/telemetry-error", () => {
       assertEquals(summarize(transientCode), [
         { name: "Error", code: "ECONNRESET", messageRedacted: true },
       ]);
+    });
+
+    it("logs bounded provider request diagnostics from wrapped model stream failures", async () => {
+      const providerError = new ProviderRequestError({
+        provider: "mistral",
+        status: 401,
+        message: "Provider request failed with key sk-private and prompt text",
+        retryable: false,
+      });
+      const model: ModelRuntime<Record<string, never>> = {
+        provider: "veryfront-cloud",
+        modelId: "mistral-small-2503",
+        doGenerate: () => Promise.reject(new Error("Unexpected generate")),
+        doStream: () => Promise.reject(providerError),
+      };
+
+      const wrapped = withRuntimeProviderStreamErrorProvenance(model);
+      const failure = await assertRejects(() => Promise.resolve(wrapped.doStream({})));
+
+      assertEquals(summarizeErrorCausesForLog(failure), [{
+        name: "ProviderRequestError",
+        provider: "mistral",
+        status: 401,
+        retryable: false,
+        messageRedacted: true,
+      }]);
+    });
+
+    it("logs rate-limit retryability and normalizes statusCode to status", () => {
+      const rateLimit = new ProviderRateLimitError({
+        provider: "openai",
+        status: 429,
+        message: "Provider request failed with status 429",
+        retryable: true,
+      });
+      const statusCode = Object.assign(new Error("request failed"), {
+        statusCode: 503,
+        retryable: true,
+      });
+      const summarize = (cause: unknown) =>
+        summarizeErrorCausesForLog(createRuntimeProviderStreamFailure(cause));
+
+      assertEquals(summarize(rateLimit), [{
+        name: "ProviderRateLimitError",
+        provider: "openai",
+        status: 429,
+        retryable: true,
+        messageRedacted: true,
+      }]);
+      assertEquals(summarize(statusCode), [{
+        name: "Error",
+        status: 503,
+        retryable: true,
+        messageRedacted: true,
+      }]);
+    });
+
+    it("ignores hostile or unbounded provider diagnostics", () => {
+      let statusGetterCalls = 0;
+      let providerGetterCalls = 0;
+      const accessorBacked = new Error("request failed");
+      Object.defineProperty(accessorBacked, "status", {
+        get() {
+          statusGetterCalls++;
+          return 401;
+        },
+      });
+      Object.defineProperty(accessorBacked, "statusCode", {
+        value: 99,
+      });
+      Object.defineProperty(accessorBacked, "retryable", {
+        value: "true",
+      });
+      Object.defineProperty(accessorBacked, "provider", {
+        get() {
+          providerGetterCalls++;
+          return "mistral";
+        },
+      });
+
+      assertEquals(
+        summarizeErrorCausesForLog(createRuntimeProviderStreamFailure(accessorBacked)),
+        [{ name: "Error", messageRedacted: true }],
+      );
+      assertEquals(statusGetterCalls, 0);
+      assertEquals(providerGetterCalls, 0);
+    });
+
+    it("ignores invalid status boundaries and provider proxies", () => {
+      let proxyCalls = 0;
+      const belowRange = Object.assign(new Error("request failed"), { status: 99 });
+      const aboveRange = Object.assign(new Error("request failed"), { statusCode: 600 });
+      const nonInteger = Object.assign(new Error("request failed"), { status: 429.5 });
+      const proxy = new Proxy(new Error("request failed"), {
+        getOwnPropertyDescriptor() {
+          proxyCalls++;
+          throw new Error("hostile proxy trap");
+        },
+        get() {
+          proxyCalls++;
+          throw new Error("hostile proxy trap");
+        },
+      });
+      const summarize = (cause: unknown) =>
+        summarizeErrorCausesForLog(createRuntimeProviderStreamFailure(cause));
+
+      assertEquals(summarize(belowRange), [{ name: "Error", messageRedacted: true }]);
+      assertEquals(summarize(aboveRange), [{ name: "Error", messageRedacted: true }]);
+      assertEquals(summarize(nonInteger), [{ name: "Error", messageRedacted: true }]);
+      assertEquals(summarize(proxy), [{ name: "Unknown", messageRedacted: true }]);
+      assertEquals(proxyCalls, 0);
     });
 
     it("logs only allowlisted framework diagnostics, never untrusted cause text", () => {
