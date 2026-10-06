@@ -340,7 +340,7 @@ async function createAgUiStreamResponse(
       let succeeded = false;
       let failed = false;
       const recordRunError = (event: string) => {
-        if (event !== "RunError") return;
+        if (event !== "RunError" || failed) return;
         failed = true;
         onError?.(new Error("Agent run failed"));
       };
@@ -386,7 +386,10 @@ async function createAgUiStreamResponse(
           succeeded = true;
         }
       } catch (error) {
-        onError?.(error);
+        if (!failed) {
+          failed = true;
+          onError?.(error);
+        }
         enqueueEvent(controller, "RunError", {
           message: error instanceof Error ? error.message : "Agent run failed",
         });
@@ -508,6 +511,28 @@ async function createDirectAgentUpstream(options: {
   };
 }
 
+async function getRequiredPrivateApplicationInferenceRuntime(
+  agentId: string,
+  model: string | undefined,
+  signal: AbortSignal,
+): Promise<PrivateApplicationInferenceRuntime | undefined> {
+  if (signal.aborted) {
+    throw signal.reason ??
+      new DOMException("Application inference admission was cancelled", "AbortError");
+  }
+  if (!shouldUseApplicationInferenceRuntime(model)) return undefined;
+
+  const privateRuntime = await getPrivateApplicationInferenceRuntimeOptions(agentId, signal);
+  if (privateRuntime) return privateRuntime;
+
+  if (signal.aborted) {
+    throw signal.reason ??
+      new DOMException("Application inference admission was cancelled", "AbortError");
+  }
+
+  throw new Error("Application inference admission was cancelled");
+}
+
 async function createAgUiDirectStreamResponse(
   agent: Agent,
   request: AgUiRequest,
@@ -532,11 +557,11 @@ async function createAgUiDirectStreamResponse(
   });
   if (isResponseLike(beforeStreamResult)) return beforeStreamResult;
 
-  const privateRuntime = shouldUseApplicationInferenceRuntime(
-      request.model ?? getAgentExecutionConfig(agent.config).model,
-    )
-    ? await getPrivateApplicationInferenceRuntimeOptions(agent.id, rawRequest.signal)
-    : undefined;
+  const privateRuntime = await getRequiredPrivateApplicationInferenceRuntime(
+    agent.id,
+    request.model ?? getAgentExecutionConfig(agent.config).model,
+    rawRequest.signal,
+  );
   try {
     const prepared = prepareAgUiStreamInput({
       messages,
@@ -656,11 +681,11 @@ async function createAgUiInjectedToolsStreamResponse(
   });
   if (isResponseLike(beforeStreamResult)) return beforeStreamResult;
 
-  const privateRuntime = shouldUseApplicationInferenceRuntime(
-      request.model ?? getAgentExecutionConfig(agent.config).model,
-    )
-    ? await getPrivateApplicationInferenceRuntimeOptions(agent.id, rawRequest.signal)
-    : undefined;
+  const privateRuntime = await getRequiredPrivateApplicationInferenceRuntime(
+    agent.id,
+    request.model ?? getAgentExecutionConfig(agent.config).model,
+    rawRequest.signal,
+  );
   let sessionStarted = false;
   try {
     const prepared = prepareAgUiStreamInput({

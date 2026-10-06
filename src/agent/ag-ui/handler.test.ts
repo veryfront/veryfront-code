@@ -10,7 +10,10 @@ import {
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
 import { type AgUiCompletion, AgUiRequestSchema, createAgUiHandler } from "./handler.ts";
-import { runWithApplicationInferenceAdmission } from "../runtime/application-inference-admission.ts";
+import {
+  type ApplicationInferenceAdmission,
+  runWithApplicationInferenceAdmission,
+} from "../runtime/application-inference-admission.ts";
 import { AgentRuntime, RunResumeSessionManager } from "../index.ts";
 import { createEphemeralAgent } from "../factory.ts";
 import { tool } from "#veryfront/tool";
@@ -334,6 +337,236 @@ describe("agent/ag-ui-handler", () => {
     assertEquals(admissions, 0);
     assertEquals([500, 503].includes(response.status), true);
     assertEquals(finalized, undefined);
+  });
+
+  for (const injectedTools of [false, true]) {
+    it(`does not start model work for an already-aborted ${injectedTools ? "injected" : "direct"} request`, async () => {
+      const testAgent = createTestAgent();
+      testAgent.agent.config.model = "admitted-alias";
+      let streamCalls = 0;
+      let admissions = 0;
+      testAgent.agent.stream = async () => {
+        streamCalls += 1;
+        throw new Error("An aborted request must not start model work");
+      };
+      const originalStream = AgentRuntime.prototype.stream;
+      AgentRuntime.prototype.stream = async () => {
+        streamCalls += 1;
+        throw new Error("An aborted request must not start injected model work");
+      };
+      const controller = new AbortController();
+      controller.abort(new Error("request already aborted"));
+      const request = new Request("http://localhost/api/ag-ui", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        signal: controller.signal,
+        body: JSON.stringify({
+          messages: [{ id: "msg-1", role: "user", parts: [{ type: "text", text: "hello" }] }],
+          ...(injectedTools ? { tools: [{ name: "client_confirm" }] } : {}),
+        }),
+      });
+      Object.defineProperty(request, "signal", { value: controller.signal });
+      try {
+        const response = await runWithApplicationInferenceAdmission(
+          async () => {
+            admissions += 1;
+            throw new Error("An aborted request must not admit inference");
+          },
+          () => createAgUiHandler({ agent: testAgent.agent })(request),
+          controller.signal,
+        );
+        assertEquals(response.status, 500);
+        assertEquals(admissions, 0);
+        assertEquals(streamCalls, 0);
+      } finally {
+        AgentRuntime.prototype.stream = originalStream;
+      }
+    });
+  }
+
+  it("fails closed when direct managed admission is cancelled before it resolves", async () => {
+    const testAgent = createTestAgent();
+    testAgent.agent.config.model = "admitted-alias";
+    let streamCalls = 0;
+    const originalStream = testAgent.agent.stream;
+    testAgent.agent.stream = async (input) => {
+      streamCalls += 1;
+      return await originalStream(input);
+    };
+
+    const admissionStarted = deferred();
+    const releaseAdmission = deferred<ApplicationInferenceAdmission>();
+    let finalized: string | undefined;
+    const controller = new AbortController();
+    const request = new Request("http://localhost/api/ag-ui", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      signal: controller.signal,
+      body: JSON.stringify({
+        messages: [{
+          id: "msg-1",
+          role: "user",
+          parts: [{ type: "text", text: "hello" }],
+        }],
+      }),
+    });
+    Object.defineProperty(request, "signal", { value: controller.signal });
+
+    const handler = createAgUiHandler({ agent: testAgent.agent });
+    const responsePromise = runWithApplicationInferenceAdmission(
+      async () => {
+        admissionStarted.resolve();
+        return await releaseAdmission.promise;
+      },
+      () => handler(request),
+      controller.signal,
+    );
+
+    await admissionStarted.promise;
+    controller.abort(new Error("request aborted"));
+    releaseAdmission.resolve({
+      runId: "550e8400-e29b-41d4-a716-446655440010",
+      inferenceToken: "vf_inference_private_cancelled_direct",
+      expiresAt: new Date(Date.now() + 60_000).toISOString(),
+      finalize: (status) => {
+        finalized = status;
+      },
+    });
+
+    const response = await responsePromise;
+
+    assertEquals(response.status, 500);
+    assertEquals(streamCalls, 0);
+    assertEquals(finalized, "cancelled");
+  });
+
+  it("fails closed when managed admission scope is revoked before the raw request aborts", async () => {
+    const testAgent = createTestAgent();
+    testAgent.agent.config.model = "admitted-alias";
+    let streamCalls = 0;
+    const originalStream = testAgent.agent.stream;
+    testAgent.agent.stream = async (input) => {
+      streamCalls += 1;
+      return await originalStream(input);
+    };
+
+    const admissionStarted = deferred();
+    const releaseAdmission = deferred<ApplicationInferenceAdmission>();
+    let finalized: string | undefined;
+    const scopeController = new AbortController();
+    const request = new Request("http://localhost/api/ag-ui", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        messages: [{
+          id: "msg-1",
+          role: "user",
+          parts: [{ type: "text", text: "hello" }],
+        }],
+      }),
+    });
+
+    const handler = createAgUiHandler({ agent: testAgent.agent });
+    const responsePromise = runWithApplicationInferenceAdmission(
+      async () => {
+        admissionStarted.resolve();
+        return await releaseAdmission.promise;
+      },
+      () => handler(request),
+      scopeController.signal,
+    );
+
+    await admissionStarted.promise;
+    scopeController.abort(new DOMException("admission revoked", "AbortError"));
+    releaseAdmission.resolve({
+      runId: "550e8400-e29b-41d4-a716-446655440012",
+      inferenceToken: "vf_inference_private_revoked_scope",
+      expiresAt: new Date(Date.now() + 60_000).toISOString(),
+      finalize: (status) => {
+        finalized = status;
+      },
+    });
+
+    const response = await responsePromise;
+
+    assertEquals(request.signal.aborted, false);
+    assertEquals(response.status, 500);
+    assertEquals(streamCalls, 0);
+    assertEquals(finalized, "cancelled");
+  });
+
+  it("fails closed when injected-tool managed admission is cancelled before it resolves", async () => {
+    const testAgent = createTestAgent();
+    testAgent.agent.config.model = "admitted-alias";
+    const sessionManager = new RunResumeSessionManager<{ result: unknown; isError: boolean }>();
+    const admissionStarted = deferred();
+    const releaseAdmission = deferred<ApplicationInferenceAdmission>();
+    let finalized: string | undefined;
+    let runtimeStreamCalls = 0;
+    const originalStream = AgentRuntime.prototype.stream;
+    AgentRuntime.prototype.stream = function (): Promise<ReadableStream<Uint8Array>> {
+      runtimeStreamCalls += 1;
+      return Promise.resolve(
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.close();
+          },
+        }),
+      );
+    };
+
+    try {
+      const controller = new AbortController();
+      const request = new Request("http://localhost/api/ag-ui", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        signal: controller.signal,
+        body: JSON.stringify({
+          runId: "run_cancelled_private_injected_1",
+          threadId: crypto.randomUUID(),
+          messages: [{
+            id: "msg-1",
+            role: "user",
+            parts: [{ type: "text", text: "hello" }],
+          }],
+          tools: [{ name: "client_confirm" }],
+        }),
+      });
+      Object.defineProperty(request, "signal", { value: controller.signal });
+
+      const handler = createAgUiHandler({
+        agent: testAgent.agent,
+        sessionManager,
+      });
+      const responsePromise = runWithApplicationInferenceAdmission(
+        async () => {
+          admissionStarted.resolve();
+          return await releaseAdmission.promise;
+        },
+        () => handler(request),
+        controller.signal,
+      );
+
+      await admissionStarted.promise;
+      controller.abort(new Error("request aborted"));
+      releaseAdmission.resolve({
+        runId: "550e8400-e29b-41d4-a716-446655440011",
+        inferenceToken: "vf_inference_private_cancelled_injected",
+        expiresAt: new Date(Date.now() + 60_000).toISOString(),
+        finalize: (status) => {
+          finalized = status;
+        },
+      });
+
+      const response = await responsePromise;
+
+      assertEquals(response.status, 500);
+      assertEquals(runtimeStreamCalls, 0);
+      assertEquals(finalized, "cancelled");
+      assertEquals(sessionManager.getRunStatus("run_cancelled_private_injected_1"), null);
+    } finally {
+      AgentRuntime.prototype.stream = originalStream;
+    }
   });
 
   it("keeps a client-supplied direct AG-UI run ID eligible for binding", async () => {
@@ -2258,6 +2491,66 @@ describe("agent/ag-ui-handler onComplete (server-side persistence)", () => {
       assertEquals(completedRunIds, []);
       assertEquals(failedRunIds, ["run_empty_injected_1"]);
       assertEquals(sessionManager.getRunStatus("run_empty_injected_1"), null);
+    } finally {
+      AgentRuntime.prototype.stream = originalStream;
+    }
+  });
+
+  it("fails an injected-tool session only once when upstream emits multiple run errors", async () => {
+    const sessionManager = new RunResumeSessionManager<{ result: unknown; isError: boolean }>();
+    const failedRunIds: string[] = [];
+    const failRun = sessionManager.failRun.bind(sessionManager);
+    sessionManager.failRun = ((runId, signal) => {
+      failedRunIds.push(runId);
+      failRun(runId, signal);
+    }) as typeof sessionManager.failRun;
+
+    const originalStream = AgentRuntime.prototype.stream;
+    AgentRuntime.prototype.stream = function (): Promise<ReadableStream<Uint8Array>> {
+      return Promise.resolve(
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(
+              encodeDataStreamEvent({ type: "error", error: "first failure", code: "FIRST" }),
+            );
+            controller.enqueue(
+              encodeDataStreamEvent({ type: "error", error: "second failure", code: "SECOND" }),
+            );
+            controller.close();
+          },
+        }),
+      );
+    };
+
+    try {
+      const handler = createAgUiHandler({
+        agent: createTestAgent().agent,
+        sessionManager,
+      });
+
+      const response = await handler(
+        new Request("http://localhost/api/ag-ui", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            runId: "run_multiple_upstream_errors_1",
+            threadId: crypto.randomUUID(),
+            messages: [{
+              id: "msg-1",
+              role: "user",
+              parts: [{ type: "text", text: "hello" }],
+            }],
+            tools: [{ name: "client_confirm" }],
+          }),
+        }),
+      );
+
+      const body = await response.text();
+
+      assertStringIncludes(body, "FIRST");
+      assertStringIncludes(body, "SECOND");
+      assertEquals(failedRunIds, ["run_multiple_upstream_errors_1"]);
+      assertEquals(sessionManager.getRunStatus("run_multiple_upstream_errors_1"), null);
     } finally {
       AgentRuntime.prototype.stream = originalStream;
     }

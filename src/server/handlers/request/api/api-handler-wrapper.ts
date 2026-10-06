@@ -22,10 +22,7 @@ import { requiresIsolatedProjectRuntime } from "#veryfront/security/project-loca
 import { isPreflightRequest } from "#veryfront/security/http/cors/preflight.ts";
 import { getApplicationPreflightHeaders } from "#veryfront/security/http/application-request.ts";
 import { DEFAULT_CORS_METHODS, handleCORSPreflight } from "#veryfront/security";
-import {
-  type ApplicationInferenceAdmitter,
-  createHostApplicationInferenceAdmission,
-} from "./application-inference-admission.ts";
+import { createHostApplicationInferenceAdmission } from "./application-inference-admission.ts";
 import { runWithApplicationInferenceAdmission } from "#veryfront/agent/runtime/application-inference-admission.ts";
 
 type FsWrapper = {
@@ -204,7 +201,6 @@ export class ApiHandlerWrapper extends BaseHandler {
         const preparedResponse = this.handlePreparedFrameworkPreflight(req, ctx);
         if (preparedResponse) return preparedResponse;
 
-        const admitInference = createHostApplicationInferenceAdmission(req, ctx);
         const canResolveAsPage = this.canResolveAsPage(req, pathname);
 
         // A document path can change ownership between App Router page and
@@ -226,7 +222,6 @@ export class ApiHandlerWrapper extends BaseHandler {
             ctx,
             pathname,
             canResolveAsPage,
-            admitInference,
           );
         } catch (error) {
           if (req.signal.aborted) throw error;
@@ -280,13 +275,12 @@ export class ApiHandlerWrapper extends BaseHandler {
     ctx: HandlerContext,
     pathname: string,
     canResolveAsPage: boolean,
-    admitInference: ApplicationInferenceAdmitter | undefined,
   ): Promise<HandlerResult> {
     if (canResolveAsPage && await this.isPageRequest(pathname, ctx, req.signal)) {
       return this.continue();
     }
 
-    const apiRes = await this.executeApiRoute(req, ctx, admitInference);
+    const apiRes = await this.executeApiRoute(req, ctx);
     if (!apiRes) {
       this.logDebug(
         "[API-Wrapper] API handler returned null, continuing to next handler",
@@ -308,12 +302,12 @@ export class ApiHandlerWrapper extends BaseHandler {
   private async executeApiRoute(
     req: Request,
     ctx: HandlerContext,
-    admitInference: ApplicationInferenceAdmitter | undefined,
   ): Promise<Response | null> {
     // OPTIONS is authenticated by APIRouteHandler before discovery. The
     // callback runs after a matched route's auth decision but before the
     // route module is loaded or executed.
     const isOptionsRequest = req.method.toUpperCase() === "OPTIONS";
+    const admitInference = createHostApplicationInferenceAdmission(req, ctx);
     if (!isOptionsRequest) {
       // Lazy per-project primitive discovery (agents, tools) on first
       // access. Must run within runWithContext so VFS and registry scope

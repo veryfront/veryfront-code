@@ -48,6 +48,13 @@ function expiresIn(milliseconds: number): string {
   return new Date(Date.now() + milliseconds).toISOString();
 }
 
+function waitForSignalAbort(signal: AbortSignal): Promise<void> {
+  if (signal.aborted) return Promise.resolve();
+  return new Promise((resolve) => {
+    signal.addEventListener("abort", () => resolve(), { once: true });
+  });
+}
+
 async function admittedRuntime(input: {
   expiresAt?: string;
   signal?: AbortSignal;
@@ -358,7 +365,7 @@ describe("application inference admission runtime", () => {
       return {
         runId: `${RUN_ID}-${agentId}`,
         inferenceToken: `${INFERENCE_TOKEN}-${agentId}`,
-        expiresAt: expiresIn(20),
+        expiresAt: expiresIn(1_000),
         finalize: () => {},
       };
     }, () => getPrivateApplicationInferenceRuntimeOptions("parent-short-lived"));
@@ -368,7 +375,7 @@ describe("application inference admission runtime", () => {
       rootRuntime,
       () => getPrivateApplicationInferenceRuntimeOptions("child-after-parent-expiry"),
     );
-    await new Promise((resolve) => setTimeout(resolve, 30));
+    await waitForSignalAbort(rootRuntime.signal);
     childAdmission.resolve({
       runId: `${RUN_ID}-child`,
       inferenceToken: `${INFERENCE_TOKEN}-child`,
