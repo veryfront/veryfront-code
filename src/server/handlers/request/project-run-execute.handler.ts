@@ -2952,7 +2952,8 @@ function createRuntimeApiClient(
       );
       if (
         !response.ok || !response.body ||
-        response.headers.get("content-type")?.split(";")[0] !== "application/octet-stream"
+        response.headers.get("content-type")?.split(";")[0]?.trim().toLowerCase() !==
+          "application/octet-stream"
       ) {
         await response.body?.cancel();
         throw API_CLIENT_ERROR.create({

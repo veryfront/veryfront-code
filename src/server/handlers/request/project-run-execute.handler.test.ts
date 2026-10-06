@@ -2232,7 +2232,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
             "the guard inspects redirects before following",
           );
           return new Response("# Guide\n\nCancellation-safe knowledge.", {
-            headers: { "Content-Type": "application/octet-stream" },
+            headers: { "Content-Type": "Application/Octet-Stream ; charset=binary" },
           });
         }
         assertStringIncludes(url, "/projects/demo-project/files/knowledge%2Fguide.md");

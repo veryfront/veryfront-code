@@ -1987,6 +1987,26 @@ describe("authenticated binary API downloads", () => {
     });
   });
 
+  it("accepts case-insensitive binary media types with parameter whitespace", async () => {
+    for (
+      const contentType of ["Application/Octet-Stream", "application/octet-stream ; charset=binary"]
+    ) {
+      await withMockFetch(() =>
+        Promise.resolve(
+          new Response("binary", {
+            headers: { "content-type": contentType },
+          }),
+        ), async () => {
+        const getStream = createApiClient(makeConfig()).getStream;
+        if (!getStream) throw new Error("Missing binary download client");
+        assertEquals(
+          await new Response(await getStream("/projects/my-project/uploads/file")).text(),
+          "binary",
+        );
+      });
+    }
+  });
+
   it("requests binary bytes with auth and rejects redirects", async () => {
     let init: RequestInit | undefined;
     await withMockFetch(

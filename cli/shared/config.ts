@@ -933,7 +933,8 @@ export function createApiClient(config: ResolvedConfig): ApiClient {
     if (binary) {
       if (
         !response.body ||
-        response.headers.get("content-type")?.split(";")[0] !== "application/octet-stream"
+        response.headers.get("content-type")?.split(";")[0]?.trim().toLowerCase() !==
+          "application/octet-stream"
       ) {
         await response.body?.cancel();
         throw new Error("API did not return upload content");
