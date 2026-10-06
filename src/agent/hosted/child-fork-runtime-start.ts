@@ -1,3 +1,4 @@
+import { inheritHostedChildInferenceAuthority } from "./inference-credential.ts";
 import type { HostToolTraceAttributes } from "#veryfront/tool";
 import {
   type ForkRuntimeStreamResult,
@@ -47,6 +48,7 @@ export function startHostedChildForkRuntimeWithHostTools<
     abortSignal,
     ...runtimeInput
   } = input;
+  inheritHostedChildInferenceAuthority(runtimeInput, input);
   const forkStreamAbortController = new AbortController();
   const forkStreamAbortSignal = composeAbortSignals([
     abortSignal,
@@ -75,10 +77,12 @@ export function startHostedChildForkRuntimeWithHostTools<
     })
     : Promise.resolve();
 
-  const { streamResult, forkToolNames } = startAgentRuntimeForkWithHostTools({
+  const forkInput = {
     ...runtimeInput,
     abortSignal: forkStreamAbortSignal,
-  });
+  };
+  inheritHostedChildInferenceAuthority(forkInput, runtimeInput);
+  const { streamResult, forkToolNames } = startAgentRuntimeForkWithHostTools(forkInput);
 
   return {
     forkStreamAbortController,

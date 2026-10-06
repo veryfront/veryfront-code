@@ -1,3 +1,4 @@
+import { scopeHostedChildInferenceAuthority } from "./inference-credential.ts";
 import { hasTrustedHostToolProvenance } from "#veryfront/tool/host-tool-provenance.ts";
 import { platformMcpLegacyName } from "../platform-mcp-tool-source.ts";
 import type {
@@ -507,103 +508,110 @@ async function executeForkTask<TContext extends DefaultHostedInvokeAgentContext>
   const invocationContext = forkInput.context?.veryfront_invocation_context as
     | HostedChildInvocationContext
     | undefined;
-  const scopedOptions = invocationContext
-    ? {
-      ...options,
-      context: {
-        ...options.context,
-        veryfrontInvocationContext: invocationContext,
-      },
-    }
-    : options;
+  const scopedOptions = {
+    ...options,
+    context: {
+      ...options.context,
+      ...(invocationContext ? { veryfrontInvocationContext: invocationContext } : {}),
+    },
+  };
   const instrumentation = buildInstrumentation(scopedOptions);
   const writeHostedChildExecutionLog = createHostedChildExecutionLogWriter(options.logger);
 
-  return executeHostedChildForkToolInput<DefaultHostedInvokeAgentTraceAttributes>({
-    apiUrl: config.apiUrl,
-    authToken: scopedOptions.context.authToken,
-    ...(runtimeOptions.runEventWriterCapability
-      ? { runEventWriterCapability: runtimeOptions.runEventWriterCapability }
-      : {}),
-    projectId: scopedOptions.context.projectId || null,
-    forkInput,
-    toolCallId: execution.toolCallId,
-    contextModel: scopedOptions.context.model,
-    defaultModel: options.defaultModel ?? DEFAULT_USER_AGENT_MODEL,
-    defaultMaxSteps: runtimeOptions.childConfig?.maxSteps ??
-      options.defaultMaxSteps ??
-      DEFAULT_USER_AGENT_MAX_STEPS,
-    hostedModel: options.hostedModel,
-    resolveModelId: options.resolveModelId,
-    resolveProvider: options.resolveProvider,
-    resolveModelThinking: options.resolveModelThinking,
-    onRequestedProjectId: (projectId, projectSlug) =>
-      applyRequestedProjectId(scopedOptions, projectId, projectSlug),
-    onRuntimeConfig: (runtimeConfig) => {
-      options.logger.info("Starting child fork", {
-        conversationId: scopedOptions.context.conversationId,
-        parentRunId: scopedOptions.context.parentRunId,
-        description: runtimeConfig.description,
-        kind: "invoke_agent",
-        model: runtimeConfig.forkModel,
-        maxSteps: runtimeConfig.maxSteps,
-        requestedTools: runtimeConfig.requestedTools?.length,
-      });
-    },
-    prepareToolAssembly: ({ runtimeConfig, requestedTools, abortSignal }) =>
-      prepareForkToolAssembly(scopedOptions, config, {
-        childAgentId: runtimeOptions.childAgentId,
-        childConfig: runtimeOptions.childConfig,
-        provider: runtimeConfig.provider,
-        forkModel: runtimeConfig.forkModel,
-        hostedModel: runtimeConfig.hostedModel,
-        effectivePrompt: runtimeConfig.effectivePrompt,
-        requestedTools,
-        abortSignal,
-        durableChildRun: runtimeOptions.durableChildRun,
-      }),
-    resolveProviderOptions: options.resolveProviderOptions,
-    resolveReasoning: options.resolveReasoning,
-    forkContext: scopedOptions.context,
-    parentConversationId: scopedOptions.context.conversationId,
-    parentMessageId: scopedOptions.context.parentMessageId,
-    trustedInvocationContext: scopedOptions.context.veryfrontInvocationContext,
-    inputAlreadyHasInvocationContext: true,
-    ...(runtimeOptions.childConfig
-      ? {
-        buildInstructions: () => {
-          const baseInstructions = buildHostedChildForkInstructions({
-            ...scopedOptions.context,
-            availableSkillIds: runtimeOptions.childConfig?.availableSkillIds,
-          });
-          const childSystem = runtimeOptions.childConfig?.system;
-          if (childSystem === undefined) {
-            return baseInstructions;
-          }
-          if (typeof childSystem === "string") {
-            return childSystem ? `${childSystem}\n\n${baseInstructions}` : baseInstructions;
-          }
-          return [
-            ...childSystem,
-            { role: "system", content: baseInstructions },
-          ];
-        },
-      }
-      : {}),
-    abortSignal: execution.abortSignal,
-    durableChildRun: runtimeOptions.durableChildRun,
-    conversationId: scopedOptions.context.conversationId,
-    parentRunId: scopedOptions.context.parentRunId,
-    kind: "invoke_agent",
-    onSettled: runtimeOptions.onSettled,
-    logger: options.logger,
-    pendingToolLogWriter: options.logger,
-    writeLog: writeHostedChildExecutionLog,
-    startRuntime: options.startRuntime ?? startHostedChildForkRuntimeWithHostTools,
-    shouldRethrowError: options.shouldRethrowError,
-    instrumentation,
-    sourceIntegrationPolicy: execution.sourceIntegrationPolicy,
-  });
+  const revokeChildInference = scopeHostedChildInferenceAuthority(
+    scopedOptions.context,
+    options.context,
+    execution.abortSignal,
+  );
+  try {
+    return await executeHostedChildForkToolInput<DefaultHostedInvokeAgentTraceAttributes>({
+      apiUrl: config.apiUrl,
+      authToken: scopedOptions.context.authToken,
+      ...(runtimeOptions.runEventWriterCapability
+        ? { runEventWriterCapability: runtimeOptions.runEventWriterCapability }
+        : {}),
+      projectId: scopedOptions.context.projectId || null,
+      forkInput,
+      toolCallId: execution.toolCallId,
+      contextModel: scopedOptions.context.model,
+      defaultModel: options.defaultModel ?? DEFAULT_USER_AGENT_MODEL,
+      defaultMaxSteps: runtimeOptions.childConfig?.maxSteps ??
+        options.defaultMaxSteps ??
+        DEFAULT_USER_AGENT_MAX_STEPS,
+      hostedModel: options.hostedModel,
+      resolveModelId: options.resolveModelId,
+      resolveProvider: options.resolveProvider,
+      resolveModelThinking: options.resolveModelThinking,
+      onRequestedProjectId: (projectId, projectSlug) =>
+        applyRequestedProjectId(scopedOptions, projectId, projectSlug),
+      onRuntimeConfig: (runtimeConfig) => {
+        options.logger.info("Starting child fork", {
+          conversationId: scopedOptions.context.conversationId,
+          parentRunId: scopedOptions.context.parentRunId,
+          description: runtimeConfig.description,
+          kind: "invoke_agent",
+          model: runtimeConfig.forkModel,
+          maxSteps: runtimeConfig.maxSteps,
+          requestedTools: runtimeConfig.requestedTools?.length,
+        });
+      },
+      prepareToolAssembly: ({ runtimeConfig, requestedTools, abortSignal }) =>
+        prepareForkToolAssembly(scopedOptions, config, {
+          childAgentId: runtimeOptions.childAgentId,
+          childConfig: runtimeOptions.childConfig,
+          provider: runtimeConfig.provider,
+          forkModel: runtimeConfig.forkModel,
+          hostedModel: runtimeConfig.hostedModel,
+          effectivePrompt: runtimeConfig.effectivePrompt,
+          requestedTools,
+          abortSignal,
+          durableChildRun: runtimeOptions.durableChildRun,
+        }),
+      resolveProviderOptions: options.resolveProviderOptions,
+      resolveReasoning: options.resolveReasoning,
+      forkContext: scopedOptions.context,
+      parentConversationId: scopedOptions.context.conversationId,
+      parentMessageId: scopedOptions.context.parentMessageId,
+      trustedInvocationContext: scopedOptions.context.veryfrontInvocationContext,
+      inputAlreadyHasInvocationContext: true,
+      ...(runtimeOptions.childConfig
+        ? {
+          buildInstructions: () => {
+            const baseInstructions = buildHostedChildForkInstructions({
+              ...scopedOptions.context,
+              availableSkillIds: runtimeOptions.childConfig?.availableSkillIds,
+            });
+            const childSystem = runtimeOptions.childConfig?.system;
+            if (childSystem === undefined) {
+              return baseInstructions;
+            }
+            if (typeof childSystem === "string") {
+              return childSystem ? `${childSystem}\n\n${baseInstructions}` : baseInstructions;
+            }
+            return [
+              ...childSystem,
+              { role: "system", content: baseInstructions },
+            ];
+          },
+        }
+        : {}),
+      abortSignal: execution.abortSignal,
+      durableChildRun: runtimeOptions.durableChildRun,
+      conversationId: scopedOptions.context.conversationId,
+      parentRunId: scopedOptions.context.parentRunId,
+      kind: "invoke_agent",
+      onSettled: runtimeOptions.onSettled,
+      logger: options.logger,
+      pendingToolLogWriter: options.logger,
+      writeLog: writeHostedChildExecutionLog,
+      startRuntime: options.startRuntime ?? startHostedChildForkRuntimeWithHostTools,
+      shouldRethrowError: options.shouldRethrowError,
+      instrumentation,
+      sourceIntegrationPolicy: execution.sourceIntegrationPolicy,
+    });
+  } finally {
+    revokeChildInference();
+  }
 }
 
 function getToolCallId(executionContext?: ToolExecutionContext): string {
