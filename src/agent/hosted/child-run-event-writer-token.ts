@@ -13,7 +13,12 @@ import {
   type VeryfrontApiRequestUrlResolver,
 } from "#veryfront/platform/adapters/veryfront-api-url.ts";
 import { readResponseTextPrefix } from "#veryfront/utils/response-body.ts";
-import { readOwnInitField } from "#veryfront/platform/compat/http/native-request-init.ts";
+import {
+  assertNativeRequestProcessing,
+  copyNativeHeaders,
+  createNativeRequestInit,
+  readOwnInitField,
+} from "#veryfront/platform/compat/http/native-request-init.ts";
 import {
   type ConversationRunProjection,
   type createConversationAgentRun,
@@ -275,16 +280,18 @@ export function getHostedToolCallAdmissionRequestFetch(endpoint: string): Fetch 
         },
       },
     }]);
-    const headers = new NativeHeaders(readOwnInitField(init, "headers"));
+    const headers = copyNativeHeaders(readOwnInitField(init, "headers"));
     apply(headersDelete, headers, ["X-Veryfront-Run-Event-Writer-Token"]);
     apply(headersSet, headers, ["X-Veryfront-Run-Event-Writer-Token", state.runEventAppendToken]);
-    return await state.fetch(resolvedEndpoint, {
+    const requestInit = createNativeRequestInit(undefined, {
       method: "POST",
       headers,
       body,
       signal,
       redirect: "error",
     });
+    assertNativeRequestProcessing();
+    return await state.fetch(resolvedEndpoint, requestInit);
   };
 }
 
