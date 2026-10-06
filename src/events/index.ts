@@ -64,7 +64,7 @@ export {
   projectNativeEvent,
   type ProjectNativeEventInput,
   safeParseAgUiEvent,
-} from "./ag-ui/index.ts";
+} from "#veryfront/events/ag-ui/index.ts";
 
 export type {
   ChildRun,
