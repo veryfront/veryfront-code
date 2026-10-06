@@ -237,7 +237,7 @@ function sliceUnderUtf8Budget(value: string, start: number, maxBytes: number): {
     Math.min(Math.max(start, 0), value.length),
   );
   let low = boundedStart;
-  let high = value.length;
+  let high = Math.min(value.length, boundedStart + maxBytes);
   let bestEnd = boundedStart;
   let bestText = "";
   let bestBytes = 0;

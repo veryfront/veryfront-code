@@ -493,6 +493,23 @@ export function resolveSkillSelector<TDefinition>(
   );
 }
 
+/** Convert a resolved skill selector policy back into an authored selector shape. */
+export function skillSelectorPolicyToSelector(
+  policy: Extract<ResolvedSkillSelectorPolicy, { kind: "allowlist" | "rules" }>,
+): SkillSelector {
+  if (policy.kind === "allowlist") return policy.entries;
+  const selector: Record<string, boolean> = {};
+  for (const entry of policy.entries) {
+    defineOwnProperty(selector, entry.pattern, {
+      configurable: true,
+      enumerable: true,
+      value: entry.allow,
+      writable: true,
+    });
+  }
+  return selector;
+}
+
 /** Throw the generic selector configuration error for unresolved explicit entries. */
 export function assertResolvedSkillSelector<TDefinition>(
   snapshot: ResolvedSkillSelectorSnapshot<TDefinition>,

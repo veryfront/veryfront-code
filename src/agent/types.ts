@@ -39,7 +39,7 @@ import type {
 } from "./schemas/index.ts";
 import type { RuntimeAgentThinkingConfig } from "./runtime/agent-definition.ts";
 import type { SkillSelector } from "#veryfront/skill/selector.ts";
-import type { ToolResultContextLimits } from "./runtime/tool-result-context.ts";
+import type { ToolResultContextLimits } from "#veryfront/agent/runtime/tool-result-context.ts";
 
 /**
  * Model configuration string format: "provider/model-name"
