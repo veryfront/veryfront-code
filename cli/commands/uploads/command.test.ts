@@ -7,6 +7,7 @@ import {
   assertThrows,
 } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { makeTempDir } from "#veryfront/testing/deno-compat.ts";
 import { VeryfrontError } from "veryfront/errors";
 import {
   buildUploadCreateUrl,
@@ -182,7 +183,7 @@ describe("downloadUploadToFile", () => {
     assertEquals(opened, false);
   });
   it("downloads filenames near the filesystem component length limit", async () => {
-    const tempDir = await Deno.makeTempDir();
+    const tempDir = await makeTempDir();
     const filename = `${"a".repeat(220)}.pdf`;
     try {
       const client = createMockClient({
@@ -195,7 +196,7 @@ describe("downloadUploadToFile", () => {
     }
   });
   it("preserves the existing output and removes temporary data on a download failure", async () => {
-    const tempDir = await Deno.makeTempDir();
+    const tempDir = await makeTempDir();
     await Deno.writeTextFile(`${tempDir}/file`, "original");
     try {
       const client = createMockClient({

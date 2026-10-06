@@ -23,6 +23,7 @@ import {
 import type { ResolvedConfig } from "./config.ts";
 import type { EnvironmentConfig } from "#veryfront/config/environment-config.ts";
 import { makeTempDir } from "#veryfront/testing/deno-compat.ts";
+import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { join } from "veryfront/platform/path";
 import { withTempDir } from "#veryfront/testing/deno-compat";
 import {
@@ -1936,27 +1937,26 @@ describe("nonprompting management configuration", () => {
 
 describe("authenticated binary API downloads", () => {
   it("requests binary bytes with auth and rejects redirects", async () => {
-    const originalFetch = globalThis.fetch;
     let init: RequestInit | undefined;
-    globalThis.fetch = ((_input: unknown, requestInit?: RequestInit) => {
-      init = requestInit;
-      return Promise.resolve(
-        new Response("binary", { headers: { "content-type": "application/octet-stream" } }),
-      );
-    }) as typeof fetch;
-    try {
-      const client = createApiClient(makeConfig());
-      if (!client.getStream) throw new Error("Missing binary download client");
-      const stream = await client.getStream("/projects/my-project/uploads/file");
-      assertEquals(await new Response(stream).text(), "binary");
-      assertEquals(init?.redirect, "error");
-      assertEquals(new Headers(init?.headers).get("accept"), "application/octet-stream");
-      assertEquals(
-        new Headers(init?.headers).get("authorization"),
-        `Bearer ${makeConfig().apiToken}`,
-      );
-    } finally {
-      globalThis.fetch = originalFetch;
-    }
+    await withMockFetch(
+      ((_input: unknown, requestInit?: RequestInit) => {
+        init = requestInit;
+        return Promise.resolve(
+          new Response("binary", { headers: { "content-type": "application/octet-stream" } }),
+        );
+      }) as typeof fetch,
+      async () => {
+        const client = createApiClient(makeConfig());
+        if (!client.getStream) throw new Error("Missing binary download client");
+        const stream = await client.getStream("/projects/my-project/uploads/file");
+        assertEquals(await new Response(stream).text(), "binary");
+        assertEquals(init?.redirect, "error");
+        assertEquals(new Headers(init?.headers).get("accept"), "application/octet-stream");
+        assertEquals(
+          new Headers(init?.headers).get("authorization"),
+          `Bearer ${makeConfig().apiToken}`,
+        );
+      },
+    );
   });
 });
