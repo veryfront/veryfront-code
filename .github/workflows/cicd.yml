@@ -172,6 +172,7 @@ jobs:
             typecheck) deno task typecheck ;;
             test-typecheck) deno task lint:test-typecheck ;;
           esac
+      # test:scripts is a local task; CI needs this focused generator lane.
       - name: Run Runs fixture generator regression tests
         if: ${{ matrix.check == 'typecheck' }}
         run: deno task test:file scripts/generate-runs-fixtures.test.ts

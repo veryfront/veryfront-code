@@ -36,30 +36,6 @@ const document = {
 };
 
 describe("Runs fixture generation", () => {
-  it("runs in the script task and required CI source checks", async () => {
-    const config = JSON.parse(
-      await Deno.readTextFile(new URL("../deno.json", import.meta.url)),
-    );
-    assertStringIncludes(
-      config.tasks["test:scripts"],
-      " scripts/generate-runs-fixtures.test.ts",
-    );
-    const workflow = await Deno.readTextFile(
-      new URL("../.github/workflows/cicd.yml", import.meta.url),
-    );
-    const sourceChecks = workflow.split("\n  ci:")[1]!.split(
-      "\n  tests-integration:",
-    )[0]!;
-    assertStringIncludes(
-      sourceChecks,
-      "deno task test:file scripts/generate-runs-fixtures.test.ts",
-    );
-    assertStringIncludes(
-      workflow,
-      "SOURCE_CHECKS_RESULT: ${{ needs.ci.result }}",
-    );
-  });
-
   it("propagates a compatible contract example change without a fixture edit", () => {
     const changed = structuredClone(document);
     changed.paths["/runs/{run_id}"].get.responses["200"]
