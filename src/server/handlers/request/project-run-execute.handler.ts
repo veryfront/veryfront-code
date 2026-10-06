@@ -3830,12 +3830,17 @@ function resolveStyleArtifactBuildSelector(
   config: Record<string, unknown>,
   ctx: HandlerContext,
 ): StyleArtifactBuildSelector {
-  const selector: StyleArtifactBuildSelector = {
-    branch: getStringConfig(config, ["branch"]) ?? optionalString(ctx.parsedDomain?.branch),
-    environmentName: getStringConfig(config, ["environment_name", "environmentName"]) ??
-      optionalString(ctx.environmentName),
-    releaseId: getStringConfig(config, ["release_id", "releaseId"]) ??
-      optionalString(ctx.releaseId),
+  const explicitSelector: StyleArtifactBuildSelector = {
+    branch: getStringConfig(config, ["branch"]),
+    environmentName: getStringConfig(config, ["environment_name", "environmentName"]),
+    releaseId: getStringConfig(config, ["release_id", "releaseId"]),
+  };
+  const hasExplicitSelector = Object.values(explicitSelector)
+    .some((value) => typeof value === "string" && value.length > 0);
+  const selector: StyleArtifactBuildSelector = hasExplicitSelector ? explicitSelector : {
+    branch: optionalString(ctx.parsedDomain?.branch),
+    environmentName: optionalString(ctx.environmentName),
+    releaseId: optionalString(ctx.releaseId),
   };
   const count = [selector.branch, selector.environmentName, selector.releaseId]
     .filter((value) => typeof value === "string" && value.length > 0).length;
