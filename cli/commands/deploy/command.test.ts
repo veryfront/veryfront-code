@@ -260,6 +260,7 @@ describe("deploy command adapters", () => {
           dryRun: true,
           force: false,
           deployProject: dryRunDeployment,
+          quiet: false,
         })
       );
       assertEquals(unsuppressed.result, null);
@@ -277,6 +278,7 @@ describe("deploy command adapters", () => {
           dryRun: true,
           force: false,
           deployProject: dryRunDeployment,
+          quiet: false,
           suppressJsonOutput: true,
         })
       );
