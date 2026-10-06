@@ -163,6 +163,8 @@ export function getCachedWithBatching(
   options?: CacheReadOptions,
 ): Promise<string | null> {
   const read = readCachedWithBatching(backend, key, options);
+  // Use the intrinsic species default even if project code mutates Promise.
+  IntrinsicObjectDefineProperty(read, "constructor", { value: undefined });
   // Observe detached failures without changing the promise callers await.
   void IntrinsicReflectApply(PromisePrototypeThen, read, [undefined, () => undefined]);
   return read;
