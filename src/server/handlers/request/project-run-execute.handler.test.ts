@@ -155,13 +155,12 @@ function manualTaskDeadlineClock() {
     clearTimer: (id: number | undefined) => {
       if (id !== undefined) timers.delete(id);
     },
+    // Runs only timers due when advance starts; timers armed by a callback wait for the next advance.
     advance: (milliseconds: number) => {
       now += milliseconds;
-      for (const [id, timer] of timers) {
-        if (timer.at <= now) {
-          timers.delete(id);
-          timer.callback();
-        }
+      const due = [...timers].filter(([, timer]) => timer.at <= now);
+      for (const [id, timer] of due) {
+        if (timers.delete(id)) timer.callback();
       }
     },
   };
@@ -9572,6 +9571,68 @@ describe("server/handlers/request/project-run-execute.handler cancellation", () 
       "/runs/run_deadline_late_stop/cancellation-ack",
     );
     assertEquals(callback.init.signal?.aborted, false);
+  });
+
+  it("keeps constructor-time deadline clock methods when the source clock changes later", async () => {
+    const clock = manualTaskDeadlineClock();
+    const deadlineAt = new Date(clock.now() + 25).toISOString();
+    const started = Promise.withResolvers<void>();
+    let receivedSignal: AbortSignal | undefined;
+    const handler = new ProjectRunExecuteHandler(
+      createDeps({
+        executeKnowledgeIngest: async (input: unknown) => {
+          receivedSignal = (input as { signal?: AbortSignal }).signal;
+          started.resolve();
+          if (!receivedSignal) return { success: true };
+          await new Promise<void>((resolve) =>
+            receivedSignal!.addEventListener("abort", () => resolve(), { once: true })
+          );
+          receivedSignal.throwIfAborted();
+          return { success: true };
+        },
+      }),
+      clock,
+    );
+    let replacedCalls = 0;
+    clock.now = () => {
+      replacedCalls++;
+      return 0;
+    };
+    clock.setTimer = () => {
+      replacedCalls++;
+      return 0;
+    };
+    clock.clearTimer = () => {
+      replacedCalls++;
+    };
+    const { request, publicKeyPem } = await signedRequest(
+      "/api/control-plane/runs/run_deadline_clock_snapshot/execute",
+      {
+        runId: "run_deadline_clock_snapshot",
+        kind: "task",
+        target: "task:knowledge-ingest",
+        projectId: "proj-1",
+        deadlineAt,
+      },
+    );
+
+    const pending = handler.handle(request, createCtx(publicKeyPem));
+    await Promise.race([
+      started.promise,
+      pending.then(() => {
+        throw new Error("Deadline snapshot test completed before executor admission");
+      }),
+    ]);
+    clock.advance(25);
+    const result = await waitForBarrier(
+      pending,
+      "deadline did not fire through the constructor-time clock methods",
+    );
+
+    assertExists(result.response);
+    assertEquals(receivedSignal?.aborted, true);
+    assertEquals((await result.response.json()).error_code, "RUN_TIMEOUT");
+    assertEquals(replacedCalls, 0);
   });
 
   it("acknowledges a stopped task independently only after its execution settles", async () => {
