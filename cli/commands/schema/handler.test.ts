@@ -13,6 +13,13 @@ describe("Schema Command", () => {
       assertEquals(result.success, false);
       if (!result.success) assertStringIncludes(result.error.message, "Unknown option");
     });
+
+    it("rejects unknown categories before producing an empty schema", () => {
+      const result = parseSchemaArgs(parseCliArgs(["schema", "--category", "not-real", "--json"]));
+
+      assertEquals(result.success, false);
+      if (!result.success) assertStringIncludes(result.error.message, "Invalid option");
+    });
   });
 
   describe("generateSchema", () => {

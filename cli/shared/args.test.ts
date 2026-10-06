@@ -305,6 +305,27 @@ describe("cli/shared/args", () => {
       assertEquals(parseCliArgs(["clean", "--force", "target"])._, ["clean", "target"]);
     });
 
+    it("should preserve a command after an unknown pre-command option", () => {
+      const args = parseCliArgs(["--definitely-bad", "schema", "--json"]);
+
+      assertEquals(args["definitely-bad"], true);
+      assertEquals(args._, ["schema"]);
+    });
+
+    it("should preserve known pre-command value-taking options", () => {
+      const output = parseCliArgs(["--output", "schema", "--help", "--json"]);
+      assertEquals(output.output, "schema");
+      assertEquals(output._, []);
+
+      const project = parseCliArgs(["--project", "dev", "pull", "--json"]);
+      assertEquals(project.project, "dev");
+      assertEquals(project._, ["pull"]);
+
+      const projectSlug = parseCliArgs(["--project-slug", "dev", "pull", "--json"]);
+      assertEquals(projectSlug["project-slug"], "dev");
+      assertEquals(projectSlug._, ["pull"]);
+    });
+
     it("should parse explicit false values for boolean flags", () => {
       const args = parseCliArgs(["pull", "--force=false"]);
       assertEquals(args.force, false);

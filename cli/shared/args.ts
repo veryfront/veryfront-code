@@ -372,6 +372,50 @@ function isValue(arg: string | undefined): boolean {
   return arg !== undefined && (!arg.startsWith("-") || /^-\d/.test(arg));
 }
 
+function isKnownCommandToken(value: string | undefined): boolean {
+  return value === "help" || (value !== undefined && Object.hasOwn(COMMANDS, value));
+}
+
+function isCommonValueFlag(key: string): boolean {
+  return Object.values(CommonArgs).some((spec) =>
+    spec.type !== "boolean" && spec.keys.includes(key)
+  );
+}
+
+function isDocumentedValueFlag(key: string): boolean {
+  if (isCommonValueFlag(key)) return true;
+
+  for (const definition of Object.values(COMMANDS)) {
+    for (const option of definition.options ?? []) {
+      if (!option.flag.includes("<")) continue;
+      const names = option.flag.match(/--?[a-z0-9-]+/gi) ?? [];
+      if (names.some((name) => name.replace(/^-+/, "") === key)) return true;
+    }
+  }
+
+  return false;
+}
+
+function shouldConsumeLongOptionValue(
+  key: string,
+  next: string | undefined,
+  positionalArgs: string[],
+): boolean {
+  if (isBooleanFlag(key, positionalArgs) || !isValue(next)) return false;
+
+  // Before the command word is known, an unknown option has unknown arity. Do
+  // not let it consume a valid command token and silently route to the default
+  // command. Known value-taking options still keep their value, including values
+  // that happen to match command names.
+  if (
+    positionalArgs.length === 0 &&
+    isKnownCommandToken(next) &&
+    !isDocumentedValueFlag(key)
+  ) return false;
+
+  return true;
+}
+
 function parse(
   args: string[],
   options: { alias?: Record<string, string>; default?: Record<string, unknown> } = {},
@@ -415,7 +459,7 @@ function parse(
       const key = arg.slice(2);
       const next = args[i + 1];
 
-      if (!isBooleanFlag(key, result._ as string[]) && isValue(next)) {
+      if (shouldConsumeLongOptionValue(key, next, result._ as string[])) {
         setValue(key, next);
         i++;
         continue;
