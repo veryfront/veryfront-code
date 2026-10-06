@@ -266,26 +266,27 @@ function assertNodeRequestMembersUnchangedExceptNativeDestroy(): void {
   if (changed) throw changedNodeRequestMemberError(changed.member);
 }
 
-function isInPrototypeChain(value: PrototypeTarget, prototype: PrototypeTarget): boolean {
-  for (
-    let target = ReflectGetPrototypeOf(value);
-    target !== null && target !== Object.prototype;
-    target = ReflectGetPrototypeOf(target)
-  ) {
-    if (target === prototype) return true;
-  }
-  return false;
-}
-
 function isCredentialSocketLockKey(key: PropertyKey): boolean {
   return key === "write" || key === "end" || key === "destroy" || key === "emit" ||
     key === "_write" || key === "_writev" || key === "_final" || key === "_destroy";
 }
 
 function lockCredentialSocketInstance(socket: nodeNet.Socket): void {
-  for (let snapshotIndex = 0; snapshotIndex < NODE_REQUEST_MEMBERS.length; snapshotIndex++) {
-    const snapshot = NODE_REQUEST_MEMBERS[snapshotIndex]!;
-    if (!isInPrototypeChain(socket, snapshot.target)) continue;
+  // Preserve the effective socket override. Snapshot insertion order also
+  // contains stream ancestors, whose generic teardown does not close a socket.
+  for (
+    let target = ReflectGetPrototypeOf(socket);
+    target !== null && target !== Object.prototype;
+    target = ReflectGetPrototypeOf(target)
+  ) {
+    let snapshot: MemberSnapshot | undefined;
+    for (let index = 0; index < NODE_REQUEST_MEMBERS.length; index++) {
+      if (NODE_REQUEST_MEMBERS[index]!.target === target) {
+        snapshot = NODE_REQUEST_MEMBERS[index];
+        break;
+      }
+    }
+    if (snapshot === undefined) continue;
     for (let index = 0; index < snapshot.keys.length; index++) {
       const key = snapshot.keys[index]!;
       if (!isCredentialSocketLockKey(key)) continue;

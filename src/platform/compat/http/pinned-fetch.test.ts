@@ -1,4 +1,8 @@
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { spawnSync } from "node:child_process";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { isBun, isDeno, isNode } from "#veryfront/platform/compat/runtime.ts";
 import {
@@ -19,6 +23,43 @@ import {
 // Probe tests pin what Deno 2.7.7's own Request and fetch call through the
 // live prototypes; Node's undici and Bun take different internal paths.
 const DENO_INTERNALS = { ignore: !isDeno };
+
+type NodeTestCertificate = {
+  readonly cert: string;
+  readonly key: string;
+};
+
+function createNodeTestCertificate(hostname: string): NodeTestCertificate | undefined {
+  const directory = mkdtempSync(join(tmpdir(), "veryfront-pinned-fetch-tls-"));
+  const keyPath = join(directory, "key.pem");
+  const certPath = join(directory, "cert.pem");
+  try {
+    const result = spawnSync("openssl", [
+      "req",
+      "-x509",
+      "-newkey",
+      "rsa:2048",
+      "-nodes",
+      "-keyout",
+      keyPath,
+      "-out",
+      certPath,
+      "-days",
+      "1",
+      "-subj",
+      `/CN=${hostname}`,
+      "-addext",
+      `subjectAltName=DNS:${hostname}`,
+    ], { encoding: "utf8" });
+    if (result.status !== 0) return undefined;
+    return {
+      cert: readFileSync(certPath, "utf8"),
+      key: readFileSync(keyPath, "utf8"),
+    };
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+}
 
 type ClosableNodeTestServer = {
   closeAllConnections?: () => void;
@@ -365,13 +406,12 @@ describe("fetchWithPinnedAddresses", () => {
       if (!address || typeof address === "string") {
         throw new Error("Node test server did not expose a TCP address");
       }
-      // 127.0.0.2 is loopback with nothing listening, so it refuses fast. Only
-      // the second validated address serves. autoSelectFamily races IPv4
-      // against IPv6 and does nothing for two addresses of the same family, so
-      // the transport has to walk the list itself.
+      // The server listens only on IPv4. The IPv6 loopback attempt fails at
+      // connect time, then the second validated address serves. This keeps the
+      // retry regression fast on hosts where 127.0.0.2 silently black-holes.
       const response = await fetchWithPinnedAddresses(
         new URL(`http://localhost:${address.port}/resource`),
-        ["127.0.0.2", "127.0.0.1"],
+        ["::1", "127.0.0.1"],
         { method: "GET" },
       );
       assertEquals(response.status, 200);
@@ -380,6 +420,126 @@ describe("fetchWithPinnedAddresses", () => {
       await new Promise<void>((resolve, reject) => {
         server.close((error) => error ? reject(error) : resolve());
       });
+    }
+  });
+
+  for (const method of ["GET", "POST"] as const) {
+    it(`closes the HTTP provider socket when an in-flight ${method} request is aborted`, async () => {
+      if (!isNode) return;
+
+      const { createServer } = await import("node:http");
+      let requestSeen!: () => void;
+      const seen = new Promise<void>((resolve) => {
+        requestSeen = resolve;
+      });
+      let connectionClosed!: () => void;
+      const closed = new Promise<boolean>((resolve) => {
+        connectionClosed = () => resolve(true);
+      });
+      const server = createServer((request, _response) => {
+        request.socket.once("close", connectionClosed);
+        request.resume();
+        requestSeen();
+      });
+      await new Promise<void>((resolve, reject) => {
+        server.once("error", reject);
+        server.listen(0, "127.0.0.1", resolve);
+      });
+      let timeout: ReturnType<typeof setTimeout> | undefined;
+      try {
+        const address = server.address();
+        if (!address || typeof address === "string") throw new Error("Missing test TCP address");
+        const controller = new AbortController();
+        const pending = fetchWithPinnedAddresses(
+          new URL(`http://pinned-abort.test:${address.port}/resource`),
+          ["127.0.0.1"],
+          {
+            method,
+            ...(method === "POST" ? { body: "payload" } : {}),
+            headers: { authorization: BEARER },
+            signal: controller.signal,
+          },
+        );
+        await seen;
+        const rejected = assertRejects(() => pending, DOMException, "stop");
+        controller.abort(new DOMException("stop", "AbortError"));
+        await rejected;
+        const providerDisconnected = await Promise.race([
+          closed,
+          new Promise<boolean>((resolve) => {
+            timeout = setTimeout(() => resolve(false), 1_500);
+          }),
+        ]);
+        assertEquals(
+          providerDisconnected,
+          true,
+          "Aborting must close the provider socket before cleanup",
+        );
+      } finally {
+        if (timeout !== undefined) clearTimeout(timeout);
+        await closeNodeTestServer(server);
+      }
+    });
+  }
+
+  it("closes the HTTPS provider socket when an in-flight POST request is aborted", async () => {
+    if (!isNode) return;
+
+    const certificate = createNodeTestCertificate("pinned-abort.test");
+    if (certificate === undefined) return;
+
+    const { createServer } = await import("node:https");
+    let requestSeen!: () => void;
+    const seen = new Promise<void>((resolve) => {
+      requestSeen = resolve;
+    });
+    let connectionClosed!: () => void;
+    const closed = new Promise<boolean>((resolve) => {
+      connectionClosed = () => resolve(true);
+    });
+    const server = createServer(certificate, (request, _response) => {
+      request.socket.once("close", connectionClosed);
+      request.resume();
+      requestSeen();
+    });
+    await new Promise<void>((resolve, reject) => {
+      server.once("error", reject);
+      server.listen(0, "127.0.0.1", resolve);
+    });
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const address = server.address();
+      if (!address || typeof address === "string") throw new Error("Missing test TCP address");
+      const controller = new AbortController();
+      const pending = fetchWithPinnedAddresses(
+        new URL(`https://pinned-abort.test:${address.port}/resource`),
+        ["127.0.0.1"],
+        {
+          method: "POST",
+          body: "payload",
+          headers: { authorization: BEARER },
+          signal: controller.signal,
+        },
+        { trustedCaCertificates: [certificate.cert] },
+      );
+      await seen;
+      const rejected = assertRejects(() => pending, DOMException, "stop");
+      controller.abort(new DOMException("stop", "AbortError"));
+      await rejected;
+      const providerDisconnected = await Promise.race([
+        closed,
+        new Promise<boolean>((resolve) => {
+          timeout = setTimeout(() => resolve(false), 1_500);
+        }),
+      ]);
+      assertEquals(
+        providerDisconnected,
+        true,
+        "Aborting must close the provider socket before cleanup",
+      );
+    } finally {
+      if (timeout !== undefined) clearTimeout(timeout);
+      await closeNodeTestServer(server);
     }
   });
 
