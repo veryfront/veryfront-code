@@ -8,6 +8,7 @@ import {
   mapRuntimeEventToAgUi,
   parseSseJsonEvents,
 } from "./ag-ui-sse.ts";
+import { createAgUiChatEventDecoderState, decodeAgUiSseChunk } from "#veryfront/chat/ag-ui.ts";
 
 function requireStepId(value: unknown): string {
   if (typeof value !== "string") throw new Error("expected stepId");
@@ -287,7 +288,11 @@ describe("internal-agents/ag-ui-sse", () => {
       mapRuntimeEventToAgUi(state, { type: "reasoning-start", id: "reasoning-1" }),
       [{
         event: "ReasoningMessageStart",
-        payload: { messageId: "assistant-3:reasoning:0", role: "reasoning" },
+        payload: {
+          messageId: "assistant-3:reasoning:0",
+          contentId: "reasoning-1",
+          role: "reasoning",
+        },
       }],
     );
     assertEquals(
@@ -298,16 +303,73 @@ describe("internal-agents/ag-ui-sse", () => {
       }),
       [{
         event: "ReasoningMessageContent",
-        payload: { messageId: "assistant-3:reasoning:0", delta: "thinking..." },
+        payload: {
+          messageId: "assistant-3:reasoning:0",
+          contentId: "reasoning-1",
+          delta: "thinking...",
+        },
       }],
     );
     assertEquals(
       mapRuntimeEventToAgUi(state, { type: "reasoning-end", id: "reasoning-1" }),
       [{
         event: "ReasoningMessageEnd",
-        payload: { messageId: "assistant-3:reasoning:0" },
+        payload: { messageId: "assistant-3:reasoning:0", contentId: "reasoning-1" },
       }],
     );
+  });
+
+  it("preserves runtime reasoning ids through AG-UI formatting and public decoding", () => {
+    const state = createStreamTransformState({ nowMs: null, epochMs: null });
+    const decoderState = createAgUiChatEventDecoderState();
+
+    mapRuntimeEventToAgUi(state, { type: "message-start", messageId: "assistant-runtime" });
+    const encoded = [
+      { type: "reasoning-start", id: "producer-segment-a" } as const,
+      { type: "reasoning-delta", id: "producer-segment-a", delta: "First" } as const,
+      { type: "reasoning-end", id: "producer-segment-a" } as const,
+      { type: "reasoning-start", id: "producer-segment-b" } as const,
+      { type: "reasoning-delta", id: "producer-segment-b", delta: "Second" } as const,
+      { type: "reasoning-end", id: "producer-segment-b" } as const,
+    ].flatMap((event) => mapRuntimeEventToAgUi(state, event));
+    const sse = encoded.map((entry) =>
+      new TextDecoder().decode(
+        formatAgUiEvent(entry.event, entry.payload),
+      )
+    ).join("");
+
+    const decoded = decodeAgUiSseChunk(decoderState, sse).events.flatMap((entry) =>
+      entry.chatEvents
+    );
+
+    assertEquals(decoded, [
+      {
+        type: "reasoning-start",
+        id: "agui-reasoning:assistant-runtime%3Areasoning%3A0:producer-segment-a",
+      },
+      {
+        type: "reasoning-delta",
+        id: "agui-reasoning:assistant-runtime%3Areasoning%3A0:producer-segment-a",
+        delta: "First",
+      },
+      {
+        type: "reasoning-end",
+        id: "agui-reasoning:assistant-runtime%3Areasoning%3A0:producer-segment-a",
+      },
+      {
+        type: "reasoning-start",
+        id: "agui-reasoning:assistant-runtime%3Areasoning%3A1:producer-segment-b",
+      },
+      {
+        type: "reasoning-delta",
+        id: "agui-reasoning:assistant-runtime%3Areasoning%3A1:producer-segment-b",
+        delta: "Second",
+      },
+      {
+        type: "reasoning-end",
+        id: "agui-reasoning:assistant-runtime%3Areasoning%3A1:producer-segment-b",
+      },
+    ]);
   });
 
   it("finalizes open assistant text with usage metadata", () => {

@@ -42,6 +42,11 @@ export interface AgUiEncoderState {
   textContentIndex: number;
   reasoningMessageId: string | null;
   /**
+   * Producer-owned reasoning segment id for the currently open reasoning span.
+   * Optional so state objects built before this field existed stay valid.
+   */
+  activeReasoningContentId?: string | null;
+  /**
    * How many reasoning spans have opened in this run. Optional so a state
    * object built before this counter existed stays valid; absent reads as 0.
    */
@@ -121,6 +126,7 @@ export function createAgUiEncoderState(
     activeTextContentId: null,
     textContentIndex: 0,
     reasoningMessageId: null,
+    activeReasoningContentId: null,
     reasoningSpanIndex: 0,
     activeStepName: null,
     activeStepId: null,
@@ -171,6 +177,12 @@ function openReasoningMessageId(state: AgUiEncoderState): string {
     ? `${state.messageId}:reasoning:${index}`
     : `reasoning:${index}`;
   return state.reasoningMessageId;
+}
+
+function getReasoningContentId(event: AgUiRuntimeStreamEvent): string | null {
+  if (typeof event.contentId === "string" && event.contentId.length > 0) return event.contentId;
+  if (typeof event.id === "string" && event.id.length > 0) return event.id;
+  return null;
 }
 
 function getReasoningMessageId(
@@ -677,16 +689,24 @@ function createReasoningEvent(
     state,
     type === "ReasoningMessageStart" ? "open" : "continue",
   );
+  const contentId = type === "ReasoningMessageStart"
+    ? getReasoningContentId(event)
+    : state.activeReasoningContentId ?? null;
+  if (type === "ReasoningMessageStart") {
+    state.activeReasoningContentId = contentId;
+  }
+
   return {
     event: type,
     payload: type === "ReasoningMessageStart"
-      ? { messageId, role: "reasoning" }
+      ? { messageId, ...(contentId ? { contentId } : {}), role: "reasoning" }
       : type === "ReasoningMessageContent"
       ? {
         messageId,
+        ...(contentId ? { contentId } : {}),
         delta: typeof event.delta === "string" ? event.delta : "",
       }
-      : { messageId },
+      : { messageId, ...(contentId ? { contentId } : {}) },
   };
 }
 
@@ -728,10 +748,12 @@ function closeOpenReasoningEvent(state: AgUiEncoderState): AgUiEncodedEvent[] {
   }
 
   const messageId = state.reasoningMessageId;
+  const contentId = state.activeReasoningContentId ?? null;
   state.reasoningMessageId = null;
+  state.activeReasoningContentId = null;
   return [{
     event: "ReasoningMessageEnd",
-    payload: { messageId },
+    payload: { messageId, ...(contentId ? { contentId } : {}) },
   }];
 }
 
