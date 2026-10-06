@@ -452,9 +452,17 @@ function createOriginBoundFetchWithTransport(
     // headers, body, signal, or other request-level semantics at this boundary.
     const guardedInput: RequestInfo | URL = isRequestInput ? (input as Request) : target;
     const operations: Promise<Response>[] = [];
-    const track = (operation: Promise<Response>): Promise<Response> => {
-      primordialArraySet(operations, operations.length, operation);
-      return operation;
+    const track = (
+      operation: Promise<Response>,
+      signal?: AbortSignal | null,
+    ): Promise<Response> => {
+      const settled = (async () => {
+        const response = await operation;
+        if (signal?.aborted) await response.body?.cancel().catch(() => undefined);
+        return response;
+      })();
+      primordialArraySet(operations, operations.length, settled);
+      return settled;
     };
     const pinnedFetch = transport.pinnedFetch ??
       ((isNode || isBun) ? fetchWithPinnedAddresses : undefined);
@@ -462,12 +470,16 @@ function createOriginBoundFetchWithTransport(
       ? {
         ...transport,
         fetch: ((fetchInput: RequestInfo | URL, fetchInit?: RequestInit) =>
-          track(transport.fetch(fetchInput, fetchInit))) as typeof transport.fetch,
+          track(
+            transport.fetch(fetchInput, fetchInit),
+            fetchInit?.signal,
+          )) as typeof transport.fetch,
         ...(pinnedFetch
           ? {
             pinnedFetch: ((url, addresses, requestInit) =>
               track(
                 pinnedFetch(url, addresses, requestInit),
+                requestInit.signal,
               )) as WorkerEgressPinnedFetch,
           }
           : {}),

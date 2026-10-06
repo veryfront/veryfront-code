@@ -813,6 +813,63 @@ describe("createVeryfrontApiOriginBoundOutboundFetch", () => {
 });
 
 describe("authenticated download transport settlement", () => {
+  it("waits for cancellation of a late transport response body", async () => {
+    const controller = new AbortController();
+    let resolveTransport!: (response: Response) => void;
+    let releaseCleanup!: () => void;
+    let startTransport!: () => void;
+    let startCleanup!: () => void;
+    const transportStarted = new Promise<void>((resolve) => {
+      startTransport = resolve;
+    });
+    const cleanupStarted = new Promise<void>((resolve) => {
+      startCleanup = resolve;
+    });
+    const cleanup = new Promise<void>((resolve) => {
+      releaseCleanup = resolve;
+    });
+    const pendingResponse = new Promise<Response>((resolve) => {
+      resolveTransport = resolve;
+    });
+    const fetchImpl = (() => {
+      startTransport();
+      return pendingResponse;
+    }) as typeof fetch;
+    await __runWithOutboundFetchTransportForTests({
+      fetch: fetchImpl,
+      pinnedFetch: () => fetchImpl("https://api.example.test/file"),
+      resolveHost: () => Promise.resolve(["93.184.216.34"]),
+    }, async () => {
+      const download = createVeryfrontApiDownloadOutboundFetch("https://api.example.test");
+      let settled = false;
+      const result = download("https://api.example.test/file", { signal: controller.signal });
+      const rejection = assertRejects(() => result, Error);
+      void result.then(() => {
+        settled = true;
+      }, () => {
+        settled = true;
+      });
+      await transportStarted;
+      controller.abort(new Error("stop download"));
+      resolveTransport(
+        new Response(
+          new ReadableStream<Uint8Array>({
+            cancel() {
+              startCleanup();
+              return cleanup;
+            },
+          }),
+        ),
+      );
+      await cleanupStarted;
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      const settledBeforeCleanup = settled;
+      releaseCleanup();
+      await rejection;
+      assertEquals(settledBeforeCleanup, false);
+    });
+  });
+
   it("retains the host promise without invoking an inherited indexed setter", async () => {
     const responsePromise = Promise.resolve(new Response("content"));
     let exposed = false;
