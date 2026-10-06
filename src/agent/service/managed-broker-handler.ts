@@ -22,6 +22,7 @@ import {
 import { ExecutorRuntimePreparationError } from "../hosted/executor-runtime-prepare-schema.ts";
 import { ExecutorDiscoveryError } from "../hosted/executor-discovery-schema.ts";
 import { HostedServiceAuthError } from "./auth.ts";
+import { resolveHostOwnedSourceApiBaseUrl } from "#veryfront/config/host-api-base.ts";
 import { snapshotBoundedJsonValue } from "#veryfront/schemas/json-value.ts";
 import { getRuntimeAgentResumeToolCallSchema } from "#veryfront/agent/runtime/agent-invocation-contract.ts";
 import { createAgUiChatUiTrackedResponse } from "../ag-ui/chat-ui-chunk-encoder.ts";
@@ -129,6 +130,38 @@ function snapshotManagedResumeToolCall(
   return snapshot.value as NonNullable<
     ManagedDurableAgentIngressResult["executor"]["serverResolvedResumeToolCall"]
   >;
+}
+
+function brokerOwnedApiAuthToken(ingress: unknown): string | undefined {
+  if (ingress === null || typeof ingress !== "object") return undefined;
+  const privateAuthorityDescriptor = Object.getOwnPropertyDescriptor(ingress, "privateAuthority");
+  if (!privateAuthorityDescriptor || !Object.hasOwn(privateAuthorityDescriptor, "value")) {
+    return undefined;
+  }
+  const privateAuthority = privateAuthorityDescriptor.value;
+  if (privateAuthority === null || typeof privateAuthority !== "object") return undefined;
+  const tokenDescriptor = Object.getOwnPropertyDescriptor(privateAuthority, "apiAuthToken");
+  if (!tokenDescriptor || !Object.hasOwn(tokenDescriptor, "value")) return undefined;
+  const token = tokenDescriptor.value;
+  return typeof token === "string" && token.length > 0 ? token : undefined;
+}
+
+function bindBrokerOwnedHostedKnowledgeCredential(
+  start: ManagedExecutorStartInput,
+  ingress: unknown,
+): ManagedExecutorStartInput {
+  const trustedRuntime = start.trustedRuntime;
+  if (trustedRuntime === undefined) return start;
+  const hostedKnowledgeAuthToken = brokerOwnedApiAuthToken(ingress);
+  if (hostedKnowledgeAuthToken === undefined) return start;
+  return {
+    ...start,
+    trustedRuntime: {
+      ...trustedRuntime,
+      hostedKnowledgeAuthToken,
+      hostedKnowledgeApiUrl: resolveHostOwnedSourceApiBaseUrl(),
+    },
+  };
 }
 
 /** Authenticate request-owned AG-UI in the broker before executor admission. */
@@ -344,10 +377,10 @@ function createManagedBrokerIngressHandler<TIngress>(options: {
           ingress as object,
           prepared.executionSignal,
         );
-        const start = {
+        const start = bindBrokerOwnedHostedKnowledgeCredential({
           ...prepared.start,
           session: { ...prepared.start.session, preparationSignal: signal },
-        };
+        }, ingress);
         inheritHostedAgentPauseCapability(start, prepared.start);
         const runtime = await options.broker.start(start, {
           onAdmitted(settled) {

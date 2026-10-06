@@ -28,6 +28,7 @@ import {
   type PrepareAgentRuntimeMessagesFromUiMessagesOptions,
 } from "../runtime/message-preparation.ts";
 import type { RuntimeAgentThinkingConfig } from "../runtime/agent-definition.ts";
+import type { AgentConfig } from "../types.ts";
 import {
   type ResolvedHostedRuntimeRequestConfig,
   resolveHostedRuntimeRequestConfig,
@@ -149,7 +150,10 @@ export type HostedChatRuntimeCreationPreparationInput<TRuntimeAgentDefinition> =
     providerTools?: string[];
     tools?: true | string[];
     deniedTools?: string[];
-    skills?: true | false | string[];
+    skills?: import("#veryfront/skill/selector.ts").SkillSelector;
+    toolLoading?: AgentConfig["toolLoading"];
+    toolResultContext?: AgentConfig["toolResultContext"];
+    knowledge?: AgentConfig["knowledge"];
   };
   projectId: string | null;
   authToken: string;
@@ -533,6 +537,15 @@ export async function prepareHostedChatRuntimeCreationOptions<
       ...(runtimeConfig.deniedToolNames !== undefined
         ? { deniedTools: runtimeConfig.deniedToolNames }
         : {}),
+      ...(input.agentConfig.toolLoading !== undefined
+        ? { toolLoading: input.agentConfig.toolLoading }
+        : {}),
+      ...(input.agentConfig.toolResultContext !== undefined
+        ? { toolResultContext: input.agentConfig.toolResultContext }
+        : {}),
+      ...(input.agentConfig.knowledge !== undefined
+        ? { knowledge: input.agentConfig.knowledge }
+        : {}),
       allowedProviderTools: runtimeConfig.requestedAllowedProviderTools,
       includeRuntimeEssentialToolsWhenEmpty: runtimeConfig.includeRuntimeEssentialToolsWhenEmpty,
       ...(input.serverResolvedToolExposureCheckpoint
@@ -618,6 +631,9 @@ export async function prepareHostedChatExecution<
     providerTools?: string[];
     tools?: true | string[];
     deniedTools?: string[];
+    toolLoading?: AgentConfig["toolLoading"];
+    toolResultContext?: AgentConfig["toolResultContext"];
+    knowledge?: AgentConfig["knowledge"];
   },
   TRuntimeResult extends HostedChatRuntimeCreationResult,
 >(

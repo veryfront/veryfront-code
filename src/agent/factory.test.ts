@@ -9,7 +9,7 @@ import {
   assertThrows,
 } from "#veryfront/testing/assert.ts";
 import { beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
-import { tool, toolRegistry } from "#veryfront/tool";
+import { type RemoteToolSource, tool, toolRegistry } from "#veryfront/tool";
 import { defineSchema } from "#veryfront/schemas/index.ts";
 import { VeryfrontError } from "#veryfront/errors";
 import { getEffectiveAgentSystem } from "./runtime/effective-agent-system.ts";
@@ -24,7 +24,9 @@ import { registerSkill } from "#veryfront/skill/registry.ts";
 import { reset as resetExtensionContracts, tryResolve } from "#veryfront/extensions/contracts.ts";
 import { createSkillTestAdapter } from "#veryfront/skill/testing.ts";
 import type { ModelRuntime, ModelRuntimeCallOptions } from "#veryfront/provider/types.ts";
+import { scriptedModel } from "./runtime/model-runtime.test-helpers.ts";
 import { DEFAULT_MAX_BODY_SIZE_BYTES } from "#veryfront/utils/constants/index.ts";
+import { createAgentKnowledgeTool } from "#veryfront/agent/runtime/knowledge-tools.ts";
 
 function createSkill(id: string, description: string) {
   return {
@@ -100,6 +102,429 @@ describe("agent factory", () => {
     agentRegistry.clearAll();
     skillRegistryInternal.clearAll();
     toolRegistryInternal.clearAll();
+  });
+
+  it("ignores another agent's owned search_knowledge tool for tools true knowledge agents", () => {
+    toolRegistryInternal.register("search_knowledge", {
+      ...tool({
+        id: "search_knowledge",
+        description: "Foreign owned knowledge search",
+        inputSchema: defineSchema((v) => v.object({}))(),
+        execute: () => ({ ok: true }),
+      }),
+      ownerAgentId: "other-agent",
+    });
+
+    const assistant = agent({
+      id: "knowledge-owner",
+      system: "Use scoped knowledge.",
+      tools: true,
+      knowledge: true,
+      skills: [],
+    });
+
+    assertEquals(assistant.id, "knowledge-owner");
+  });
+
+  it("rejects visible registered search_knowledge tools for tools true knowledge agents", () => {
+    for (
+      const [registeredOwner, expectedAgentId] of [
+        [undefined, "global-collision-agent"],
+        ["own-collision-agent", "own-collision-agent"],
+      ] as const
+    ) {
+      toolRegistryInternal.clearAll();
+      toolRegistryInternal.register("search_knowledge", {
+        ...tool({
+          id: "search_knowledge",
+          description: `Visible knowledge search ${expectedAgentId}`,
+          inputSchema: defineSchema((v) => v.object({}))(),
+          execute: () => ({ ok: true }),
+        }),
+        ...(registeredOwner === undefined ? {} : { ownerAgentId: registeredOwner }),
+      });
+
+      assertThrows(
+        () =>
+          agent({
+            id: expectedAgentId,
+            system: "Use scoped knowledge.",
+            tools: true,
+            knowledge: true,
+            skills: [],
+          }),
+        Error,
+        "registered search_knowledge tool conflicts with the agent knowledge scope",
+      );
+    }
+  });
+
+  it("exposes one eager framework knowledge schema for tools true agents", async () => {
+    const model = scriptedModel([{ text: "done" }], {
+      modelId: "hosted/eager-knowledge-catalog",
+      only: "generate",
+    });
+    const assistant = agent({
+      id: "eager-knowledge-catalog-agent",
+      model: "hosted/eager-knowledge-catalog",
+      system: "Use scoped knowledge.",
+      tools: true,
+      toolLoading: "eager",
+      knowledge: true,
+      skills: [],
+      resolveModelTransport: async () => ({ model }),
+    });
+
+    await assistant.generate({ input: "List available knowledge tools" });
+
+    const names = model.toolNames(0);
+    assertEquals(names.filter((name) => name === "search_knowledge").length, 1);
+  });
+
+  it("loads one deferred framework knowledge schema for tools true agents", async () => {
+    const model = scriptedModel([
+      {
+        toolCalls: [{
+          id: "load-knowledge",
+          name: "tool_search",
+          input: { query: "search_knowledge" },
+        }],
+      },
+      { text: "done" },
+    ], {
+      modelId: "hosted/deferred-knowledge-catalog",
+      only: "generate",
+    });
+    const assistant = agent({
+      id: "deferred-knowledge-catalog-agent",
+      model: "hosted/deferred-knowledge-catalog",
+      system: "Use scoped knowledge.",
+      tools: true,
+      toolLoading: "deferred",
+      knowledge: true,
+      skills: [],
+      maxSteps: 3,
+      resolveModelTransport: async () => ({ model }),
+    });
+
+    await assistant.generate({ input: "Load the knowledge tool" });
+
+    assertEquals(model.toolNames(0).filter((name) => name === "search_knowledge").length, 0);
+    assertEquals(model.toolNames(1).filter((name) => name === "search_knowledge").length, 1);
+  });
+
+  it("keeps tools true knowledge scoped when search_knowledge registers later", async () => {
+    let modelCalls = 0;
+    let unscopedCalls = 0;
+    const assistant = agent({
+      id: "late-registry-knowledge-agent",
+      model: "hosted/late-knowledge",
+      system: "Use scoped knowledge.",
+      tools: true,
+      knowledge: { "knowledge/public/**": true },
+      skills: [],
+      resolveModelTransport: async () => ({
+        model: {
+          provider: "hosted",
+          modelId: "hosted/late-knowledge",
+          async doGenerate() {
+            modelCalls++;
+            if (modelCalls === 1) {
+              return {
+                content: [{
+                  type: "tool-call",
+                  toolCallId: "search-late-knowledge",
+                  toolName: "search_knowledge",
+                  input: JSON.stringify({ query: "support", limit: 1 }),
+                }],
+                finishReason: "tool-calls",
+                usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+              };
+            }
+            return {
+              content: [{ type: "text", text: "done" }],
+              finishReason: "stop",
+              usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+            };
+          },
+          async doStream() {
+            throw new Error("Unexpected stream");
+          },
+        },
+      }),
+    });
+
+    toolRegistryInternal.register("search_knowledge", {
+      ...tool({
+        id: "search_knowledge",
+        description: "Late unscoped knowledge search",
+        inputSchema: defineSchema((v) => v.object({ query: v.string() }))(),
+        execute: () => {
+          unscopedCalls++;
+          return { unscoped: true };
+        },
+      }),
+    });
+
+    const response = await assistant.generate({ input: "Search support knowledge" });
+
+    assertEquals(response.toolCalls[0]?.status, "error");
+    assertEquals(unscopedCalls, 0);
+    assertEquals(JSON.stringify(response.toolCalls).includes("unscoped"), false);
+  });
+
+  it("rejects late sibling remote search_knowledge collisions before dispatch", async () => {
+    let siblingListCalls = 0;
+    let siblingExecuted = false;
+    const siblingSource: RemoteToolSource = {
+      id: "late-sibling-knowledge",
+      listTools: () => {
+        siblingListCalls++;
+        return Promise.resolve(
+          siblingListCalls >= 3
+            ? [{
+              name: "search_knowledge",
+              description: "Late sibling knowledge search",
+              parameters: { type: "object", properties: {} },
+            }]
+            : [],
+        );
+      },
+      executeTool: () => {
+        siblingExecuted = true;
+        return Promise.resolve({ unscoped: true });
+      },
+    };
+    const model = scriptedModel([
+      {
+        toolCalls: [{
+          id: "late-sibling-search",
+          name: "search_knowledge",
+          input: { query: "support", limit: 1 },
+        }],
+      },
+      { text: "done" },
+    ], {
+      modelId: "hosted/late-sibling-knowledge",
+      only: "generate",
+    });
+    const config: AgentConfig & { __vfRemoteToolSources: RemoteToolSource[] } = {
+      id: "late-sibling-knowledge-agent",
+      model: "hosted/late-sibling-knowledge",
+      system: "Use scoped knowledge.",
+      tools: true,
+      toolLoading: "eager",
+      knowledge: true,
+      skills: [],
+      maxSteps: 2,
+      __vfRemoteToolSources: [siblingSource],
+      resolveModelTransport: async () => ({ model }),
+    };
+    const assistant = agent(config);
+
+    const response = await assistant.generate({ input: "Search support knowledge" });
+
+    assertEquals(response.toolCalls[0]?.status, "error");
+    assertStringIncludes(
+      response.toolCalls[0]?.error ?? "",
+      'Remote tool "search_knowledge" conflicts with the agent knowledge scope',
+    );
+    assertEquals(siblingExecuted, false);
+  });
+
+  it("keeps streamed tools true knowledge scoped when search_knowledge registers later", async () => {
+    let modelCalls = 0;
+    let unscopedCalls = 0;
+    const assistant = agent({
+      id: "late-registry-stream-knowledge-agent",
+      model: "hosted/late-stream-knowledge",
+      system: "Use scoped knowledge.",
+      tools: true,
+      knowledge: { "knowledge/public/**": true },
+      skills: [],
+      resolveModelTransport: async () => ({
+        model: {
+          provider: "hosted",
+          modelId: "hosted/late-stream-knowledge",
+          async doGenerate() {
+            throw new Error("Unexpected generate");
+          },
+          async doStream() {
+            modelCalls++;
+            return {
+              stream: new ReadableStream<unknown>({
+                start(controller) {
+                  if (modelCalls === 1) {
+                    controller.enqueue({
+                      type: "tool-call",
+                      toolCallId: "search-late-stream-knowledge",
+                      toolName: "search_knowledge",
+                      input: { query: "support", limit: 1 },
+                    });
+                    controller.enqueue({
+                      type: "finish",
+                      finishReason: "tool-calls",
+                      usage: { inputTokens: 1, outputTokens: 1 },
+                    });
+                  } else {
+                    controller.enqueue({ type: "text-delta", id: "text-1", delta: "done" });
+                    controller.enqueue({
+                      type: "finish",
+                      finishReason: "stop",
+                      usage: { inputTokens: 1, outputTokens: 1 },
+                    });
+                  }
+                  controller.close();
+                },
+              }),
+            };
+          },
+        },
+      }),
+    });
+
+    toolRegistryInternal.register("search_knowledge", {
+      ...tool({
+        id: "search_knowledge",
+        description: "Late unscoped knowledge search",
+        inputSchema: defineSchema((v) => v.object({ query: v.string() }))(),
+        execute: () => {
+          unscopedCalls++;
+          return { unscoped: true };
+        },
+      }),
+    });
+
+    const response = await assistant.stream({ input: "Search support knowledge" });
+    const body = await response.toDataStreamResponse().text();
+
+    assertEquals(unscopedCalls, 0);
+    assertEquals(body.includes("unscoped"), false);
+  });
+
+  it("replaces explicit boolean knowledge bindings with the scoped framework tool", async () => {
+    let unscopedCalls = 0;
+    toolRegistryInternal.register("search_knowledge", {
+      ...tool({
+        id: "search_knowledge",
+        description: "Unscoped registry knowledge search",
+        inputSchema: defineSchema((v) => v.object({ query: v.string() }))(),
+        execute: () => {
+          unscopedCalls++;
+          return { unscoped: true };
+        },
+      }),
+    });
+
+    const assistant = agent({
+      id: "map-scoped-knowledge",
+      system: "Use scoped knowledge.",
+      tools: { search_knowledge: true },
+      knowledge: {
+        "knowledge/public/**": true,
+        "knowledge/private/**": false,
+      },
+      skills: [],
+    });
+
+    if (!assistant.config.tools || assistant.config.tools === true) {
+      throw new Error("Expected a concrete scoped knowledge tool map");
+    }
+
+    const scopedKnowledgeTool = assistant.config.tools.search_knowledge;
+    if (!scopedKnowledgeTool || typeof scopedKnowledgeTool !== "object") {
+      throw new Error("Expected scoped search_knowledge tool");
+    }
+    assertEquals(scopedKnowledgeTool === toolRegistry.get("search_knowledge"), false);
+    const definitions = await getAvailableTools(assistant.config.tools);
+    assertEquals(definitions.map((definition) => definition.name), ["search_knowledge"]);
+    const result = await scopedKnowledgeTool.execute({ query: "policy", limit: 1 });
+    assertEquals(unscopedCalls, 0);
+    assertEquals(JSON.stringify(result).includes("unscoped"), false);
+  });
+
+  it("accepts framework-owned knowledge tools when preserving a prevalidated catalog", () => {
+    const config = {
+      id: "prevalidated-framework-knowledge",
+      system: "Use scoped knowledge.",
+      tools: {},
+      knowledge: true,
+      skills: [],
+    } satisfies AgentConfig;
+    const knowledgeTool = createAgentKnowledgeTool(config);
+    if (knowledgeTool === undefined) throw new Error("Expected framework knowledge tool");
+
+    const assistant = createEphemeralAgentWithRuntimeOptions({
+      ...config,
+      tools: { search_knowledge: knowledgeTool },
+    }, { preserveToolCatalog: true });
+
+    assertEquals(assistant.config.tools, { search_knowledge: knowledgeTool });
+  });
+
+  it("allows hosted boolean remote knowledge selections when preserving a prevalidated catalog", () => {
+    const assistant = createEphemeralAgentWithRuntimeOptions({
+      id: "prevalidated-remote-knowledge",
+      system: "Use hosted knowledge.",
+      tools: { search_knowledge: true },
+      knowledge: true,
+      skills: [],
+    }, { preserveToolCatalog: true });
+
+    assertEquals(assistant.config.tools, { search_knowledge: true });
+  });
+
+  it("rejects custom knowledge collisions when preserving a prevalidated catalog", () => {
+    const customKnowledgeTool = tool({
+      id: "search_knowledge",
+      description: "Custom knowledge search",
+      inputSchema: defineSchema((v) => v.object({}))(),
+      execute: () => ({ ok: true }),
+    });
+
+    assertThrows(
+      () =>
+        createEphemeralAgentWithRuntimeOptions({
+          id: "prevalidated-custom-knowledge",
+          system: "Use scoped knowledge.",
+          tools: { search_knowledge: customKnowledgeTool },
+          knowledge: true,
+          skills: [],
+        }, { preserveToolCatalog: true }),
+      Error,
+      "custom search_knowledge tool conflicts with the agent knowledge scope",
+    );
+  });
+
+  it("preserves knowledge denials and rejects concrete search_knowledge collisions", () => {
+    const denied = agent({
+      id: "denied-scoped-knowledge",
+      system: "Do not search knowledge.",
+      tools: { search_knowledge: false },
+      knowledge: true,
+      skills: [],
+    });
+    assertEquals(denied.config.tools, { search_knowledge: false });
+
+    const customKnowledgeTool = tool({
+      id: "search_knowledge",
+      description: "Custom knowledge search",
+      inputSchema: defineSchema((v) => v.object({}))(),
+      execute: () => ({ ok: true }),
+    });
+
+    assertThrows(
+      () =>
+        agent({
+          id: "custom-knowledge-collision",
+          system: "Use scoped knowledge.",
+          tools: { search_knowledge: customKnowledgeTool },
+          knowledge: true,
+          skills: [],
+        }),
+      Error,
+      "custom search_knowledge tool conflicts with the agent knowledge scope",
+    );
   });
 
   it("rejects empty explicit identities and preserves valid or generated identities", () => {
@@ -478,6 +903,35 @@ description: Excluded skill
       execute_skill_script: false,
     });
     assertEquals(assistant.config.skills, false);
+  });
+
+  it("treats empty and exclusion-only skill maps as explicit none selectors", () => {
+    const skillSelectors: AgentConfig["skills"][] = [{}, { "support-*": false }];
+    for (const skills of skillSelectors) {
+      const assistant = agent({
+        id: "map-disabled-skill-tools",
+        system: "Do not use skills.",
+        skills,
+      });
+
+      assertEquals(assistant.config.tools, undefined);
+      assertEquals(resolveSkillToolDisposition(assistant.config, assistant.id), "disable");
+    }
+  });
+
+  it("keeps skill tools for maps with positive grants", () => {
+    const assistant = agent({
+      id: "map-enabled-skill-tools",
+      system: "Use support skills, but not internal ones.",
+      skills: { "support-*": true, "support-internal": false },
+    });
+
+    assertEquals(Object.keys(assistant.config.tools ?? {}).sort(), [
+      "execute_skill_script",
+      "load_skill",
+      "load_skill_reference",
+    ]);
+    assertEquals(resolveSkillToolDisposition(assistant.config, assistant.id), "inject");
   });
 
   it("preserves explicit skill tool denials when skills are omitted", () => {

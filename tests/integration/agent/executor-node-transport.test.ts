@@ -320,6 +320,7 @@ if (typeof Deno !== "undefined") {
     it("keeps an unauthenticated socket open after early delivery and expires at the five-second cap", async () => {
       let now = 0;
       const scheduled = new Map<object, { callback: () => void; delayMs: number }>();
+      const handshakeScheduled = Promise.withResolvers<void>();
       const listener = await listenExecutorTransport({
         host,
         port: 0,
@@ -331,6 +332,7 @@ if (typeof Deno !== "undefined") {
           schedule(callback, delayMs) {
             const handle = {};
             scheduled.set(handle, { callback, delayMs });
+            if (delayMs === 5_000) handshakeScheduled.resolve();
             return handle;
           },
           cancel: (handle) => {
@@ -342,7 +344,7 @@ if (typeof Deno !== "undefined") {
       const closed = new Promise<string>((resolve) => raw.once("close", () => resolve("closed")));
       try {
         await new Promise<void>((resolve) => raw.once("connect", resolve));
-        await setImmediate();
+        await handshakeScheduled.promise;
         const entry = [...scheduled.entries()].find(([, wake]) => wake.delayMs === 5_000);
         assert(entry, "unauthenticated socket must use the guarded clock");
         scheduled.delete(entry[0]);
@@ -570,10 +572,14 @@ if (typeof Deno !== "undefined") {
       const { listener, client } = await pair();
       try {
         const writer = client.writable.getWriter();
+        await writer.write(new Uint8Array(1));
         const chunk = new Uint8Array(1024 * 1024);
         const queued = Array.from({ length: 64 }, () => writer.write(chunk));
         const writes = Promise.allSettled(queued);
-        await queued[0];
+        let settled = false;
+        void writes.then(() => settled = true);
+        await setImmediate();
+        assertEquals(settled, false);
         await writer.abort(new Error("synthetic-private-reason"));
         assert((await writes).some((result) => result.status === "rejected"));
         await assertRejects(() => client.readable.getReader().read(), Error);

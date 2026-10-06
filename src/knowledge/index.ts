@@ -17,6 +17,7 @@ import { ragStore } from "#veryfront/embedding/index.ts";
 import { INPUT_VALIDATION_FAILED } from "#veryfront/errors";
 import { base64urlEncodeBytes } from "#veryfront/utils";
 import type {
+  RagDocumentMeta,
   RagSearchOptions,
   RagSearchResult,
   RagStore,
@@ -29,6 +30,7 @@ import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 import { getRuntimeRequestContext } from "#veryfront/platform/runtime-request-context.ts";
 import { VeryfrontApiClient } from "#veryfront/platform/adapters/veryfront-api-client/client.ts";
 import { tool } from "#veryfront/tool/factory.ts";
+import { compileGlobMatcher } from "#veryfront/utils/glob-matcher.ts";
 import type { JsonSchema } from "#veryfront/tool/schema/index.ts";
 import type { Tool, ToolExecutionContext } from "#veryfront/tool/types.ts";
 
@@ -38,8 +40,14 @@ const DEFAULT_TOP_K = 3;
 const DEFAULT_QUERY_MAX_CHARS = 500;
 const DEFAULT_LOOKUP_LIMIT = 8;
 const MAX_LOOKUP_LIMIT = 12;
+// Scoped RAG search cannot pre-filter before vector ranking with the current
+// store API. Overscan reduces false negatives, but exact scoped ranking needs
+// store-level filtering.
+const SCOPED_RAG_SEARCH_MIN_TOP_K = 50;
 const MAX_FRONTMATTER_FIELDS = 6;
 const MAX_FRONTMATTER_VALUE_LENGTH = 240;
+const MAX_KNOWLEDGE_SCOPE_ENTRIES = 1_024;
+const MAX_KNOWLEDGE_PATH_LENGTH = 4_096;
 const KNOWLEDGE_LOOKUP_CURSOR_VERSION = 1;
 const FRONTMATTER_FIELD_PRIORITY = [
   "title",
@@ -50,6 +58,22 @@ const FRONTMATTER_FIELD_PRIORITY = [
   "source_type",
   "added",
 ] as const;
+
+const reflectApply = Reflect.apply;
+const arrayIsArray = Array.isArray;
+const objectFreeze = Object.freeze;
+const objectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const objectGetOwnPropertyNames = Object.getOwnPropertyNames;
+const objectGetPrototypeOf = Object.getPrototypeOf;
+const objectHasOwn = Object.hasOwn;
+const stringCharCodeAt = String.prototype.charCodeAt;
+const stringEndsWith = String.prototype.endsWith;
+const stringIncludes = String.prototype.includes;
+const stringReplace = String.prototype.replace;
+const stringSlice = String.prototype.slice;
+const stringSplit = String.prototype.split;
+const stringStartsWith = String.prototype.startsWith;
+const stringTrim = String.prototype.trim;
 
 /** Configuration for project knowledge indexing and retrieval. */
 export interface ProjectKnowledgeConfig {
@@ -74,12 +98,34 @@ export interface ProjectKnowledgeConfig {
    */
   storagePath?: string;
   contentExtensions?: string[];
+  /**
+   * Authorized knowledge files for lookup and retrieval.
+   *
+   * Omit this to preserve the existing helper behavior and expose all files
+   * under `contentDir`. Use `false` to expose no files. Strings and string
+   * arrays match manifest paths. Boolean maps include `true` paths and exclude
+   * `false` paths, with exclusions taking precedence. Empty and exclusion-only
+   * selectors expose no files.
+   */
+  scope?: ProjectKnowledgeScopeSelector;
   model?: string;
   backend?: RagStoreBackend;
   branch?: string;
   topK?: number;
   threshold?: number;
   maxQueryChars?: number;
+}
+
+export type ProjectKnowledgeScopeSelector =
+  | boolean
+  | string
+  | string[]
+  | Record<string, boolean>;
+
+export interface NormalizedProjectKnowledgeScopeSelector {
+  readonly includes: readonly string[];
+  readonly excludes: readonly string[];
+  readonly includeAll: boolean;
 }
 
 /** Per-call options for project knowledge retrieval. */
@@ -177,6 +223,7 @@ interface HostedKnowledgeContext {
   projectSlug?: string;
   projectId?: string;
   authToken: string;
+  apiUrl?: string;
   productionMode: boolean;
   releaseId?: string | null;
   branch?: string | null;
@@ -239,7 +286,7 @@ export interface ProjectKnowledge {
     query: string,
     options?: ProjectKnowledgeRetrieveOptions,
   ): Promise<ProjectKnowledgeResult>;
-  search(query: string, options?: RagSearchOptions): Promise<RagSearchResult[]>;
+  search(query: string, options?: ProjectKnowledgeRetrieveOptions): Promise<RagSearchResult[]>;
 }
 
 function resolveProjectPath(projectDir: string | undefined, path: string): string {
@@ -247,38 +294,362 @@ function resolveProjectPath(projectDir: string | undefined, path: string): strin
   return join(projectDir, path);
 }
 
+function replaceString(value: string, searchValue: string | RegExp, replaceValue: string): string {
+  return reflectApply(stringReplace, value, [searchValue, replaceValue]) as string;
+}
+
+function trimString(value: string): string {
+  return reflectApply(stringTrim, value, []) as string;
+}
+
+function stringContains(value: string, search: string): boolean {
+  return reflectApply(stringIncludes, value, [search]) as boolean;
+}
+
+function stringHasPrefix(value: string, prefix: string): boolean {
+  return reflectApply(stringStartsWith, value, [prefix]) as boolean;
+}
+
+function stringHasSuffix(value: string, suffix: string): boolean {
+  return reflectApply(stringEndsWith, value, [suffix]) as boolean;
+}
+
+function sliceString(value: string, start: number, end?: number): string {
+  return reflectApply(stringSlice, value, end === undefined ? [start] : [start, end]) as string;
+}
+
+function stringSegmentsContain(value: string, separator: string, needle: string): boolean {
+  const segments = reflectApply(stringSplit, value, [separator]) as string[];
+  for (let index = 0; index < segments.length; index += 1) {
+    if (segments[index] === needle) return true;
+  }
+  return false;
+}
+
+function appendArrayElement<T>(target: T[], value: T): void {
+  target[target.length] = value;
+}
+
 function toPosixPath(path: string): string {
-  return path.replace(/\\/g, "/");
+  return replaceString(path, /\\/g, "/");
 }
 
 function stripTrailingSlash(path: string): string {
-  return toPosixPath(path).replace(/\/+$/, "");
+  return replaceString(toPosixPath(path), /\/+$/, "");
 }
 
 function trimLeadingSlash(path: string): string {
-  return toPosixPath(path).replace(/^\/+/, "");
+  return replaceString(toPosixPath(path), /^\/+/, "");
 }
 
 function normalizeManifestPath(path: string): string {
-  return trimLeadingSlash(path).replace(/^\.\//, "");
+  return replaceString(trimLeadingSlash(path), /^\.\//, "");
+}
+
+function hasControlCharacters(value: string): boolean {
+  for (let index = 0; index < value.length; index += 1) {
+    const code = reflectApply(stringCharCodeAt, value, [index]) as number;
+    if (code <= 0x1f || (code >= 0x7f && code <= 0x9f)) return true;
+  }
+  return false;
+}
+
+function validateRelativeKnowledgePath(path: string, errorDetail: string): string {
+  const normalizedPath = normalizeManifestPath(trimString(path));
+  if (
+    !normalizedPath ||
+    path.length > MAX_KNOWLEDGE_PATH_LENGTH ||
+    hasControlCharacters(path) ||
+    stringContains(path, "\\") ||
+    isAbsolute(path) ||
+    stringHasPrefix(normalizedPath, "../") ||
+    normalizedPath === ".." ||
+    stringSegmentsContain(normalizedPath, "/", "..")
+  ) {
+    throw INPUT_VALIDATION_FAILED.create({ detail: errorDetail });
+  }
+
+  return normalizedPath;
+}
+
+function validateKnowledgeScopePattern(pattern: string): string {
+  const normalizedPattern = validateRelativeKnowledgePath(pattern, "Invalid knowledge scope path");
+  if (
+    stringHasPrefix(normalizedPattern, "!") || stringHasPrefix(normalizedPattern, "collection:")
+  ) {
+    throw INPUT_VALIDATION_FAILED.create({ detail: "Invalid knowledge scope selector" });
+  }
+
+  return normalizedPattern;
+}
+
+function validateKnowledgeLookupTargetPath(path: string): string {
+  return validateRelativeKnowledgePath(path, "Invalid knowledge lookup target path");
+}
+
+function appendKnowledgeScopePattern(
+  target: string[],
+  pattern: string,
+): void {
+  appendArrayElement(target, validateKnowledgeScopePattern(pattern));
+}
+
+function assertKnowledgeScopeEntryCount(count: number): void {
+  if (count > MAX_KNOWLEDGE_SCOPE_ENTRIES) {
+    throw INPUT_VALIDATION_FAILED.create({ detail: "Invalid knowledge scope selector" });
+  }
+}
+
+function assertPlainKnowledgeScopeMap(
+  selector: unknown,
+): asserts selector is Record<string, boolean> {
+  if (selector === null || typeof selector !== "object" || arrayIsArray(selector)) {
+    throw INPUT_VALIDATION_FAILED.create({ detail: "Invalid knowledge scope selector" });
+  }
+  const prototype = objectGetPrototypeOf(selector);
+  if (prototype !== Object.prototype && prototype !== null) {
+    throw INPUT_VALIDATION_FAILED.create({ detail: "Invalid knowledge scope selector" });
+  }
+}
+
+export function normalizeProjectKnowledgeScopeSelector(
+  selector: ProjectKnowledgeScopeSelector,
+): NormalizedProjectKnowledgeScopeSelector {
+  if (selector === true) {
+    return objectFreeze({
+      includes: objectFreeze([]),
+      excludes: objectFreeze([]),
+      includeAll: true,
+    });
+  }
+  if (selector === false) {
+    return objectFreeze({
+      includes: objectFreeze([]),
+      excludes: objectFreeze([]),
+      includeAll: false,
+    });
+  }
+  if (typeof selector === "string") {
+    return objectFreeze({
+      includes: objectFreeze([validateKnowledgeScopePattern(selector)]),
+      excludes: objectFreeze([]),
+      includeAll: false,
+    });
+  }
+  if (arrayIsArray(selector)) {
+    assertKnowledgeScopeEntryCount(selector.length);
+    const includes: string[] = [];
+    for (let index = 0; index < selector.length; index += 1) {
+      const descriptor = objectGetOwnPropertyDescriptor(selector, index);
+      if (!descriptor || !objectHasOwn(descriptor, "value")) {
+        throw INPUT_VALIDATION_FAILED.create({ detail: "Invalid knowledge scope selector" });
+      }
+      appendKnowledgeScopePattern(includes, descriptor.value);
+    }
+    return objectFreeze({
+      includes: objectFreeze(includes),
+      excludes: objectFreeze([]),
+      includeAll: false,
+    });
+  }
+
+  assertPlainKnowledgeScopeMap(selector);
+  const patterns = objectGetOwnPropertyNames(selector);
+  assertKnowledgeScopeEntryCount(patterns.length);
+  const includes: string[] = [];
+  const excludes: string[] = [];
+  for (let index = 0; index < patterns.length; index += 1) {
+    const pattern = patterns[index]!;
+    const descriptor = objectGetOwnPropertyDescriptor(selector, pattern);
+    if (
+      !descriptor ||
+      !descriptor.enumerable ||
+      !objectHasOwn(descriptor, "value") ||
+      typeof descriptor.value !== "boolean"
+    ) {
+      throw INPUT_VALIDATION_FAILED.create({ detail: "Invalid knowledge scope selector" });
+    }
+
+    if (descriptor.value) {
+      appendKnowledgeScopePattern(includes, pattern);
+    } else {
+      appendKnowledgeScopePattern(excludes, pattern);
+    }
+  }
+
+  return objectFreeze({
+    includes: objectFreeze(includes),
+    excludes: objectFreeze(excludes),
+    includeAll: false,
+  });
+}
+
+export function projectKnowledgeScopeSelectorGrantsAnyPath(
+  selector: ProjectKnowledgeScopeSelector | undefined,
+): boolean {
+  if (selector === undefined) return true;
+  const scope = normalizeProjectKnowledgeScopeSelector(selector);
+  return scope.includeAll || scope.includes.length > 0;
+}
+
+export function normalizedProjectKnowledgeScopeGrantsAnyPath(
+  scope: NormalizedProjectKnowledgeScopeSelector,
+): boolean {
+  return scope.includeAll || scope.includes.length > 0;
+}
+
+function createKnowledgeScopeMatcher(
+  selector: ProjectKnowledgeScopeSelector,
+): (path: string) => boolean {
+  const scope = normalizeProjectKnowledgeScopeSelector(selector);
+  const includeMatchers: ((path: string) => boolean)[] = [];
+  for (let index = 0; index < scope.includes.length; index += 1) {
+    appendArrayElement(includeMatchers, compileGlobMatcher(scope.includes[index]!));
+  }
+  const excludeMatchers: ((path: string) => boolean)[] = [];
+  for (let index = 0; index < scope.excludes.length; index += 1) {
+    appendArrayElement(excludeMatchers, compileGlobMatcher(scope.excludes[index]!));
+  }
+
+  return (path: string): boolean => {
+    if (selector === false) return false;
+
+    let normalizedPath: string;
+    try {
+      normalizedPath = validateRelativeKnowledgePath(path, "Invalid knowledge path");
+    } catch {
+      return false;
+    }
+
+    let included = scope.includeAll;
+    for (let index = 0; !included && index < includeMatchers.length; index += 1) {
+      included = includeMatchers[index]!(normalizedPath);
+    }
+    if (!included) return false;
+
+    for (let index = 0; index < excludeMatchers.length; index += 1) {
+      if (excludeMatchers[index]!(normalizedPath)) return false;
+    }
+    return true;
+  };
+}
+
+function applyKnowledgeScope(
+  manifest: ProjectKnowledgeManifestEntry[],
+  selector: ProjectKnowledgeScopeSelector | undefined,
+): ProjectKnowledgeManifestEntry[] {
+  if (selector === undefined) return manifest;
+  const isInScope = createKnowledgeScopeMatcher(selector);
+  const scopedManifest: ProjectKnowledgeManifestEntry[] = [];
+  for (let index = 0; index < manifest.length; index += 1) {
+    const entry = manifest[index]!;
+    if (isInScope(entry.path)) appendArrayElement(scopedManifest, entry);
+  }
+  return scopedManifest;
+}
+
+function getRagSourceManifestPath(
+  source: string,
+  config: ProjectKnowledgeConfig,
+): string {
+  if (isAbsolute(source)) return buildManifestPath(config, source);
+  const normalizedSource = normalizeManifestPath(source);
+  const contentDir = config.contentDir ?? DEFAULT_CONTENT_DIR;
+  const normalizedContentDir = replaceString(
+    stripTrailingSlash(trimLeadingSlash(contentDir)),
+    /^\.\//,
+    "",
+  );
+  if (
+    normalizedSource === normalizedContentDir ||
+    stringHasPrefix(normalizedSource, `${normalizedContentDir}/`)
+  ) {
+    return normalizedSource;
+  }
+
+  if (config.projectDir && !isAbsolute(config.projectDir)) {
+    const normalizedProjectDir = replaceString(
+      stripTrailingSlash(trimLeadingSlash(config.projectDir)),
+      /^\.\//,
+      "",
+    );
+    if (
+      normalizedProjectDir &&
+      stringHasPrefix(normalizedSource, `${normalizedProjectDir}/`)
+    ) {
+      const projectRelativeSource = sliceString(normalizedSource, normalizedProjectDir.length + 1);
+      if (
+        projectRelativeSource === normalizedContentDir ||
+        stringHasPrefix(projectRelativeSource, `${normalizedContentDir}/`)
+      ) {
+        return projectRelativeSource;
+      }
+    }
+  }
+
+  return normalizedSource;
+}
+
+function getRagResultManifestPath(
+  result: RagSearchResult,
+  config: ProjectKnowledgeConfig,
+): string {
+  return getRagSourceManifestPath(result.source, config);
+}
+
+function getRagDocumentManifestPath(
+  document: RagDocumentMeta,
+  config: ProjectKnowledgeConfig,
+): string {
+  return getRagSourceManifestPath(document.source, config);
+}
+
+function filterRagResultsByScope(
+  results: RagSearchResult[],
+  config: ProjectKnowledgeConfig,
+): RagSearchResult[] {
+  if (config.scope === undefined) return results;
+  const isInScope = createKnowledgeScopeMatcher(config.scope);
+  const scopedResults: RagSearchResult[] = [];
+  for (let index = 0; index < results.length; index += 1) {
+    const result = results[index]!;
+    if (isInScope(getRagResultManifestPath(result, config))) {
+      appendArrayElement(scopedResults, result);
+    }
+  }
+  return scopedResults;
+}
+
+function createRagDocumentScopePredicate(
+  config: ProjectKnowledgeConfig,
+  optionPredicate: ((document: RagDocumentMeta) => boolean) | undefined,
+): ((document: RagDocumentMeta) => boolean) | undefined {
+  if (config.scope === undefined) return optionPredicate;
+  const isInScope = createKnowledgeScopeMatcher(config.scope);
+  return (document: RagDocumentMeta): boolean => {
+    if (!isInScope(getRagDocumentManifestPath(document, config))) return false;
+    return optionPredicate === undefined || optionPredicate(document);
+  };
 }
 
 function buildHostedManifestPath(contentDir: string, filePath: string): string | null {
   const normalizedPath = trimLeadingSlash(filePath);
-  const normalizedContentDir = stripTrailingSlash(trimLeadingSlash(contentDir)).replace(
+  const normalizedContentDir = replaceString(
+    stripTrailingSlash(trimLeadingSlash(contentDir)),
     /^\.\//,
     "",
   );
 
   if (
-    normalizedPath === normalizedContentDir || !normalizedPath.startsWith(
+    normalizedPath === normalizedContentDir || !stringHasPrefix(
+      normalizedPath,
       `${normalizedContentDir}/`,
     )
   ) {
     return null;
   }
 
-  if (!normalizedPath.endsWith(".md")) return null;
+  if (!stringHasSuffix(normalizedPath, ".md")) return null;
   return normalizedPath;
 }
 
@@ -288,7 +659,7 @@ function buildManifestPath(config: ProjectKnowledgeConfig, absolutePath: string)
   const relativeToContent = toPosixPath(relative(contentDirPath, absolutePath));
 
   if (!isAbsolute(contentDir)) {
-    const normalizedContentDir = stripTrailingSlash(contentDir).replace(/^\.\//, "");
+    const normalizedContentDir = replaceString(stripTrailingSlash(contentDir), /^\.\//, "");
     return `${normalizedContentDir}/${relativeToContent}`;
   }
 
@@ -440,17 +811,19 @@ function toSearchableEntry(
 }
 
 function getLookupTargetPath(lookupTarget: unknown): string | null {
-  if (typeof lookupTarget === "string" && lookupTarget.trim()) {
-    return normalizeManifestPath(lookupTarget);
+  if (typeof lookupTarget === "string" && trimString(lookupTarget)) {
+    return validateKnowledgeLookupTargetPath(lookupTarget);
   }
-  if (!lookupTarget || typeof lookupTarget !== "object" || Array.isArray(lookupTarget)) {
+  if (!lookupTarget || typeof lookupTarget !== "object" || arrayIsArray(lookupTarget)) {
     return null;
   }
 
   const record = lookupTarget as Record<string, unknown>;
   for (const key of ["path", "source", "id", "documentCode", "document_code"]) {
     const value = record[key];
-    if (typeof value === "string" && value.trim()) return normalizeManifestPath(value);
+    if (typeof value === "string" && trimString(value)) {
+      return validateKnowledgeLookupTargetPath(value);
+    }
   }
 
   return null;
@@ -648,12 +1021,14 @@ function getHostedKnowledgeContext(context?: ToolExecutionContext): HostedKnowle
     typeof context?.environmentName === "string" || context?.environmentName === null
       ? context.environmentName
       : requestContext?.environmentName ?? null;
+  const apiUrl = typeof context?.apiUrl === "string" && context.apiUrl ? context.apiUrl : undefined;
 
   return {
     projectRef,
     projectSlug,
     projectId,
     authToken,
+    ...(apiUrl === undefined ? {} : { apiUrl }),
     productionMode,
     releaseId,
     branch,
@@ -663,7 +1038,8 @@ function getHostedKnowledgeContext(context?: ToolExecutionContext): HostedKnowle
 
 function createHostedKnowledgeClient(hostedContext: HostedKnowledgeContext): VeryfrontApiClient {
   const client = new VeryfrontApiClient({
-    apiBaseUrl: getHostEnv("VERYFRONT_API_URL") || "https://api.veryfront.com",
+    apiBaseUrl: (hostedContext.apiUrl ?? getHostEnv("VERYFRONT_API_URL")) ||
+      "https://api.veryfront.com",
     proxyMode: true,
     projectId: hostedContext.projectId,
     projectSlug: hostedContext.projectRef,
@@ -840,7 +1216,7 @@ function lookupKnowledgeManifest(
 function coerceSearchKnowledgeInput(
   input: ProjectKnowledgeLookupInput,
 ): ProjectKnowledgeLookupInput {
-  if (input === null || typeof input !== "object" || Array.isArray(input)) {
+  if (input === null || typeof input !== "object" || arrayIsArray(input)) {
     throw INPUT_VALIDATION_FAILED.create({ detail: "search_knowledge input must be an object" });
   }
 
@@ -884,8 +1260,12 @@ export async function searchProjectKnowledge(
   config: ProjectKnowledgeConfig = {},
   context?: ToolExecutionContext,
 ): Promise<ProjectKnowledgeLookupOutput> {
+  if (!projectKnowledgeScopeSelectorGrantsAnyPath(config.scope)) {
+    return lookupKnowledgeManifest([], input);
+  }
+
   const manifest = await getProjectKnowledgeManifest(config, context);
-  return lookupKnowledgeManifest(manifest, input);
+  return lookupKnowledgeManifest(applyKnowledgeScope(manifest, config.scope), input);
 }
 
 /** Create a local tool with the same id and response shape as hosted `search_knowledge`. */
@@ -919,16 +1299,33 @@ export function projectKnowledge(config: ProjectKnowledgeConfig = {}): ProjectKn
     await store.indexContentDir();
   }
 
-  async function search(
-    query: string,
+  async function searchNormalized(
+    normalizedQuery: string,
     options?: RagSearchOptions,
   ): Promise<RagSearchResult[]> {
-    const normalizedQuery = normalizeKnowledgeQuery(query, config.maxQueryChars);
     if (!normalizedQuery) return [];
-    return store.search(normalizedQuery, {
-      topK: options?.topK ?? config.topK ?? DEFAULT_TOP_K,
+    if (!projectKnowledgeScopeSelectorGrantsAnyPath(config.scope)) return [];
+    const requestedTopK = options?.topK ?? config.topK ?? DEFAULT_TOP_K;
+    const storeTopK = config.scope === undefined
+      ? requestedTopK
+      : Math.max(requestedTopK, SCOPED_RAG_SEARCH_MIN_TOP_K);
+    const results = await store.search(normalizedQuery, {
+      topK: storeTopK,
       threshold: options?.threshold ?? config.threshold,
+      filterDocument: createRagDocumentScopePredicate(config, options?.filterDocument),
     });
+    return filterRagResultsByScope(results, config).slice(0, requestedTopK);
+  }
+
+  async function search(
+    query: string,
+    options?: ProjectKnowledgeRetrieveOptions,
+  ): Promise<RagSearchResult[]> {
+    const normalizedQuery = normalizeKnowledgeQuery(
+      query,
+      options?.maxQueryChars ?? config.maxQueryChars,
+    );
+    return searchNormalized(normalizedQuery, options);
   }
 
   return {
@@ -946,10 +1343,7 @@ export function projectKnowledge(config: ProjectKnowledgeConfig = {}): ProjectKn
       );
       if (!normalizedQuery) return { query: "", matches: [], context: "" };
 
-      const matches = await store.search(normalizedQuery, {
-        topK: options?.topK ?? config.topK ?? DEFAULT_TOP_K,
-        threshold: options?.threshold ?? config.threshold,
-      });
+      const matches = await searchNormalized(normalizedQuery, options);
 
       return {
         query: normalizedQuery,

@@ -38,6 +38,60 @@ describe("agent/runtime-tool-config", () => {
     });
   });
 
+  it("lets authored config defer explicit tool maps without changing the default", () => {
+    assertEquals(
+      resolveRuntimeToolLoading(runtimeConfig({
+        tools: { get_release: true },
+        toolLoading: "deferred",
+      })),
+      {
+        mode: "deferred",
+        provenance: "authored-tool-loading",
+      },
+    );
+    assertEquals(
+      resolveRuntimeToolLoading(runtimeConfig({
+        tools: { get_release: true },
+        toolLoading: "deferred",
+        deniedTools: ["tool_search"],
+      })),
+      {
+        mode: "eager",
+        provenance: "authored-tool-loading",
+      },
+    );
+    assertEquals(
+      resolveRuntimeToolLoading(runtimeConfig({
+        tools: { get_release: true, tool_search: false },
+        toolLoading: "deferred",
+      })),
+      {
+        mode: "eager",
+        provenance: "authored-tool-loading",
+      },
+    );
+    assertEquals(
+      resolveRuntimeToolLoading(runtimeConfig({
+        tools: { get_release: true },
+        toolLoading: "eager",
+      })),
+      {
+        mode: "eager",
+        provenance: "authored-tool-loading",
+      },
+    );
+    assertEquals(
+      resolveRuntimeToolLoading(runtimeConfig({
+        tools: { get_release: true },
+        toolLoading: "invalid",
+      })),
+      {
+        mode: "eager",
+        provenance: "tools-selector",
+      },
+    );
+  });
+
   it("keeps host bindings internal and gives the eager rollback override precedence", () => {
     assertEquals(
       resolveRuntimeToolLoading(runtimeConfig({
@@ -51,13 +105,46 @@ describe("agent/runtime-tool-config", () => {
     );
     assertEquals(
       resolveRuntimeToolLoading(runtimeConfig({
+        tools: { get_release: true },
+        toolLoading: "deferred",
+        __vfToolLoadingMode: "eager",
+      })),
+      {
+        mode: "eager",
+        provenance: "host-runtime-binding",
+      },
+    );
+    assertEquals(
+      resolveRuntimeToolLoading(runtimeConfig({
         tools: true,
+        toolLoading: "deferred",
         __vfToolLoadingMode: "deferred",
         __vfOperationalToolLoadingOverride: "eager",
       })),
       {
         mode: "eager",
         provenance: "host-operational-override",
+      },
+    );
+    assertEquals(
+      resolveRuntimeToolLoading(runtimeConfig({
+        tools: true,
+        __vfToolLoadingMode: "deferred",
+        deniedTools: ["tool_search"],
+      })),
+      {
+        mode: "eager",
+        provenance: "host-runtime-binding",
+      },
+    );
+    assertEquals(
+      resolveRuntimeToolLoading(runtimeConfig({
+        tools: true,
+        deniedTools: ["tool_search"],
+      })),
+      {
+        mode: "eager",
+        provenance: "tools-selector",
       },
     );
   });
