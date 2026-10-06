@@ -79,6 +79,20 @@ A missing, malformed, or ambiguous receipt refuses dispatch. An oversized input 
 
 This SDK bridge requires matching API support. Projectless canonical runs keep their supported legacy capture and dispatch behavior without new project correlation; target projectless provenance remains unsupported. The bridge does not create provider-attempt evidence or infer usage from accounting. The gateway owns actual HTTP-attempt IDs and must retain failed attempts independently of billing. Publish usage only when the provider reports the required counters.
 
+## Hosted tool-start admission
+
+The trusted hosted path can opt into tool-start admission when it owns a project-bound run-event writer credential. Before an SDK tool executes, the runtime waits for the ordinary durable tool-start append and its exact admission receipt. The bridge does not append a second tool start. Released paths without this opt-in keep their existing behavior.
+
+The private append sidecar uses `tool_call_starts` entries with `occurrence_id` and `event_index`. The occurrence UUID identifies one submitted start, and the index selects that start in the batch. A provider-local tool id or tool name cannot select an occurrence when calls repeat or run in parallel.
+
+The append response uses `tool_call_admissions` entries with `occurrence_id`, `admission_event_id`, `start_event_id`, `tool_call_id`, `public_tool_call_id`, `run_id`, and `project_id`. Preserve the server-issued event IDs exactly. The SDK validates the submitted occurrence and its authenticated run/project binding. The receipt contains no writer credential.
+
+For the owning Veryfront project MCP endpoint, the private transport sends the receipt as `_meta.tool_call_admission` and the worker-generation credential as `X-Veryfront-Run-Event-Writer-Token`. Normal MCP authentication remains required. The matching API verifies the stored admission and current writer generation before tool side effects. The credential stays inside the trusted transport and never enters application context or public event payloads.
+
+Missing, malformed, or ambiguous receipts refuse opted-in SDK dispatch. Dispatch also refuses when the matching admission transport is unavailable or the owning endpoint has the wrong project, path, or query. Caller admission selectors and writer headers are removed from ordinary requests, tool-list requests, and third-party MCP requests. Third-party calls still require the broker grant and durable start receipt, but receive no Veryfront API proof or credential; their API authority coverage remains a separate observation gate.
+
+This bridge requires matching worker-generation API support. Projectless admission remains unsupported. A provider-executed result that supplies a synthetic legacy start is an observation of an already executed call, so it receives no SDK pre-dispatch admission. Target replay remains unavailable when the source cannot prove an actual tool start.
+
 ## Validate producer output
 
 Parse each outgoing event with the shared validator before publishing it:
