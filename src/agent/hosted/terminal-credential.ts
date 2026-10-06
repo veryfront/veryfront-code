@@ -1,6 +1,10 @@
 import { createVeryfrontCloudInferenceModelResolver } from "./inference-credential.ts";
 import { computeHash } from "#veryfront/utils/hash-utils.ts";
-import { createHostedRunEventWriterCapability } from "./child-run-event-writer-token.ts";
+import {
+  createHostedRunEventWriterCapability,
+  getActiveHostedRunEventWriterCapability,
+  waitForHostedParentToolStart,
+} from "./child-run-event-writer-token.ts";
 import type {
   BoundConversationAgentRunFinalizer,
   ConversationRunProjection,
@@ -139,6 +143,7 @@ export function hostedTerminalToolSourceFactory(
   const authority = request ? credentials.get(request) : undefined;
   if (!authority) return fallback;
   const expectedEndpoint = createProjectScopedMcpUrl(apiMcpUrl, authority.projectId);
+  const parentEventWriter = getActiveHostedRunEventWriterCapability();
   return (config, server) => {
     if (server?.kind !== "veryfront-api") return fallback(config);
     const ordinary = fallback(config);
@@ -176,7 +181,7 @@ export function hostedTerminalToolSourceFactory(
     return {
       id: ordinary.id,
       listTools: (context) => ordinary.listTools(context),
-      executeTool: (name, args, context) => {
+      executeTool: async (name, args, context) => {
         if (isTerminalRunToolName(name)) return terminal.executeTool(name, args, context);
         if (
           (name === "create_run" || name === "veryfront__create_run") &&
@@ -188,6 +193,11 @@ export function hostedTerminalToolSourceFactory(
         ) {
           // Runtime-owned invocation identity reaches ordinary admission; the API
           // still verifies the authenticated parent and its recorded tool start.
+          await waitForHostedParentToolStart(
+            parentEventWriter,
+            authority.runId,
+            terminalToolCallIdHeaderValue(context)!,
+          );
           const parentRunId = terminalRoute(authority.token, authority.runId).id;
           const input = args.input as Record<string, unknown>;
           return ordinary.executeTool(name, {

@@ -583,6 +583,20 @@ export function runWithHostedRunEventWriterCapability<T>(
   }
 }
 
+/** Wait on the private exact-parent persistence barrier before a child transport runs. */
+export async function waitForHostedParentToolStart(
+  capability: HostedRunEventWriterCapability | undefined,
+  parentRunId: string,
+  toolCallId: string,
+): Promise<void> {
+  const state = capability ? getWeakMapValue(capabilityState, capability) : undefined;
+  if (!state || state.runId !== parentRunId) {
+    throw new Error("Parent tool start persistence authority is required");
+  }
+  const barrier = state.parentToolStartBarrier ??= createParentToolStartBarrier(state.timeoutMs);
+  await barrier.wait(toolCallId);
+}
+
 /** Obtain a parent-bound admission closure without disclosing its credential. */
 export function inheritedChildAdmitter(
   capability: HostedRunEventWriterCapability | undefined,
