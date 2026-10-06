@@ -11,9 +11,9 @@
  */
 
 import { existsSync, readFileSync } from "node:fs";
-import { resolve, dirname } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { BROWSER_SAFE_CLIENT_MODULES, BROWSER_SAFE_EXPORTS } from "../build/browser-safe-exports.mjs";
+import { BROWSER_SAFE_CLIENT_MODULES, BROWSER_SAFE_EXPORTS, BROWSER_SAFE_TRANSITIVE_EXPORTS } from "../build/browser-safe-exports.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(__dirname, "../..");
@@ -75,6 +75,52 @@ const REQUIRED_EXPORTS = {
 
 let passed = 0;
 let failed = 0;
+
+const IMPORT_SPECIFIER_PATTERN = /(?:import|export)\s+(?:[^"';]+?\s+from\s+)?["']([^"']+)["']|import\(["']([^"']+)["']\)/g;
+
+function moduleSpecifiers(source) {
+  const specifiers = [];
+  for (const match of source.matchAll(IMPORT_SPECIFIER_PATTERN)) {
+    specifiers.push(match[1] ?? match[2]);
+  }
+  return specifiers;
+}
+
+function resolveRelativeBuiltImport(fromFile, specifier) {
+  if (!specifier.startsWith(".")) return null;
+  const withoutQuery = specifier.split("?")[0];
+  const base = resolve(dirname(fromFile), withoutQuery);
+  const candidates = /\.[cm]?js$/.test(base) ? [base] : [base, `${base}.js`, join(base, "index.js")];
+  return candidates.find((candidate) => existsSync(candidate)) ?? null;
+}
+
+function collectTransitiveDntImporters(entryFile) {
+  const queue = [entryFile];
+  const visited = new Set();
+  const importers = new Set();
+
+  while (queue.length > 0) {
+    const file = queue.shift();
+    if (!file || visited.has(file)) continue;
+    visited.add(file);
+    if (!file.startsWith(resolve(NPM_DIR, "esm")) || !existsSync(file)) continue;
+
+    const content = readFileSync(file, "utf8");
+    if (content.includes("_dnt.polyfills.js") || content.includes("_dnt.shims.js")) {
+      importers.add(file);
+    }
+
+    for (const specifier of moduleSpecifiers(content)) {
+      const target = resolveRelativeBuiltImport(file, specifier);
+      if (target && !visited.has(target)) {
+        queue.push(target);
+      }
+    }
+  }
+
+  return [...importers].sort();
+}
+
 const errors = [];
 
 for (const exportPath of moduleExports) {
@@ -150,11 +196,22 @@ for (const exportPath of BROWSER_SAFE_EXPORTS) {
   }
 
   const content = readFileSync(builtFile, "utf8");
-  if (content.includes('_dnt.polyfills.js')) {
+  if (content.includes('_dnt.polyfills.js') || content.includes('_dnt.shims.js')) {
     failed++;
-    errors.push(`  ${label}: should not import _dnt.polyfills.js`);
-    console.log(`  FAIL  ${label} — still imports _dnt.polyfills.js`);
+    errors.push(`  ${label}: should not import dnt shim/polyfill`);
+    console.log(`  FAIL  ${label} — still imports dnt shim/polyfill`);
     continue;
+  }
+
+  if (BROWSER_SAFE_TRANSITIVE_EXPORTS.includes(exportPath)) {
+    const transitiveDntImporters = collectTransitiveDntImporters(builtFile);
+    if (transitiveDntImporters.length > 0) {
+      failed++;
+      const relativeImporters = transitiveDntImporters.map((file) => file.replace(`${resolve(NPM_DIR, "esm")}/`, ""));
+      errors.push(`  ${label}: transitive browser graph imports dnt shim/polyfill via ${relativeImporters.join(", ")}`);
+      console.log(`  FAIL  ${label} — transitive graph imports dnt shim/polyfill`);
+      continue;
+    }
   }
 
   passed++;

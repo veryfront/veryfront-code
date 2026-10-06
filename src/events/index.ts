@@ -30,6 +30,42 @@ export {
 } from "./contracts.ts";
 export { createEventParser, parseEvent, safeParseEvent } from "./parser.ts";
 export type { EventParser } from "./parser.ts";
+export {
+  acceptAgUiEvent,
+  type AcceptAgUiEventInput,
+  type AcceptAgUiEventResult,
+  acceptNativeEvent,
+  type AcceptNativeEventInput,
+  AG_UI_CORE_PACKAGE,
+  AG_UI_CORE_VERSION,
+  AG_UI_EVENT_SCHEMA,
+  AG_UI_EVENT_TYPES,
+  AG_UI_PROTOCOL_VERSION,
+  AG_UI_RELEASE,
+  AG_UI_RELEASE_COMMIT,
+  type AgUiAcceptedEvent,
+  type AgUiAcceptedEventCommand,
+  type AgUiEvent,
+  type AgUiEventType,
+  type AgUiExpandedEventCommand,
+  type AgUiJsonValue,
+  type AgUiMissingFactRequirementCommand,
+  type AgUiNormalizationCommand,
+  type AgUiNormalizationState,
+  type AgUiParseIssue,
+  type AgUiParser,
+  type AgUiParseResult,
+  type AgUiPendingStream,
+  type AgUiProducerOccurrence,
+  createAgUiParser,
+  parseAgUiEvent,
+  projectAgUiEvent,
+  type ProjectAgUiEventInput,
+  projectNativeEvent,
+  type ProjectNativeEventInput,
+  safeParseAgUiEvent,
+} from "./ag-ui/index.ts";
+
 export type {
   ChildRun,
   ChildRunReported,
