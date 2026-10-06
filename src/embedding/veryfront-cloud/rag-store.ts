@@ -9,6 +9,7 @@ import {
 } from "#veryfront/provider/veryfront-cloud/shared.ts";
 import { chunk } from "../chunk.ts";
 import { embedding } from "../embedding.ts";
+import { validateRagDocumentSize } from "../rag-document-size.ts";
 import {
   activeDocumentPaths,
   buildChunkFilePaths,
@@ -548,6 +549,7 @@ async function ingestDocument(
   text: string,
   meta?: { source?: string; type?: string; size?: number },
 ): Promise<string> {
+  validateRagDocumentSize(meta?.size);
   const documentId = crypto.randomUUID();
   await writeDocumentContent(context, config, documentId, title, text, meta);
   return documentId;

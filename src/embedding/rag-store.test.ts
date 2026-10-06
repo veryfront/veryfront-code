@@ -10,6 +10,7 @@ import { runWithRequestContext } from "#veryfront/platform/adapters/fs/veryfront
 import { runWithVeryfrontCloudContext } from "#veryfront/provider/veryfront-cloud/context.ts";
 import { withLocalJsonStoreLock } from "./local-json-store-lock.ts";
 import { ragStore } from "./rag-store.ts";
+import { createVeryfrontCloudRagStore } from "./veryfront-cloud/rag-store.ts";
 import { ensureBuiltinLLMProviders } from "#veryfront/extensions/builtin-extensions.ts";
 import { clearEmbeddingProviders, registerEmbeddingProvider } from "./resolve.ts";
 
@@ -273,6 +274,46 @@ describe("ragStore", () => {
       } finally {
         Object.defineProperty(Deno, "writeTextFile", writeTextFileDescriptor);
       }
+    });
+  });
+
+  it("rejects invalid document sizes before local store writes", async () => {
+    await withTempDir(async (tempDir) => {
+      const storagePath = join(tempDir, "data", "index.json");
+      const store = ragStore({
+        model: "local/test-model",
+        storagePath,
+      });
+
+      for (const size of [-1, 1.5, NaN, Infinity]) {
+        const error = await assertRejects(
+          () => store.ingest("Doc", "Hello world", { size }),
+          VeryfrontError,
+          "RAG document size must be a non-negative integer",
+        );
+        assert(error instanceof VeryfrontError);
+        assertEquals(error.slug, "invalid-argument");
+      }
+
+      assertEquals(await exists(storagePath), false);
+    });
+  });
+
+  it("accepts zero as a local document size", async () => {
+    await withTempDir(async (tempDir) => {
+      const storagePath = join(tempDir, "data", "index.json");
+      const store = ragStore({
+        model: "local/test-model",
+        storagePath,
+      });
+
+      const id = await store.ingest("Empty file", "Hello world", { size: 0 });
+      const documents = await store.listDocuments();
+
+      assertEquals(documents.length, 1);
+      assertEquals(documents[0]?.id, id);
+      assertEquals(documents[0]?.title, "Empty file");
+      assertEquals(documents[0]?.size, 0);
     });
   });
 
@@ -1476,6 +1517,62 @@ describe("ragStore", () => {
     });
   });
 
+  it("rejects invalid document sizes before cloud RAG requests", async () => {
+    setEnv("VERYFRONT_API_TOKEN", "vf_test_cloud");
+    setEnv("VERYFRONT_PROJECT_SLUG", "cloud-project");
+
+    let fetchCalls = 0;
+    await withMockFetch(
+      () => {
+        fetchCalls++;
+        throw new Error("fetch should not run for invalid document sizes");
+      },
+      async () => {
+        const store = ragStore({ model: "test/demo" });
+
+        for (const size of [-1, 1.5, NaN, Infinity]) {
+          const error = await assertRejects(
+            () => store.ingest("Cloud Doc", "Hello cloud world", { size }),
+            VeryfrontError,
+            "RAG document size must be a non-negative integer",
+          );
+          assert(error instanceof VeryfrontError);
+          assertEquals(error.slug, "invalid-argument");
+        }
+      },
+    );
+
+    assertEquals(fetchCalls, 0);
+  });
+
+  it("rejects invalid document sizes before direct cloud RAG requests", async () => {
+    setEnv("VERYFRONT_API_TOKEN", "vf_test_cloud");
+    setEnv("VERYFRONT_PROJECT_SLUG", "cloud-project");
+
+    let fetchCalls = 0;
+    await withMockFetch(
+      () => {
+        fetchCalls++;
+        throw new Error("fetch should not run for invalid direct cloud document sizes");
+      },
+      async () => {
+        const store = createVeryfrontCloudRagStore({ model: "test/demo" });
+
+        for (const size of [-1, 1.5, NaN, Infinity]) {
+          const error = await assertRejects(
+            () => store.ingest("Cloud Doc", "Hello cloud world", { size }),
+            VeryfrontError,
+            "RAG document size must be a non-negative integer",
+          );
+          assert(error instanceof VeryfrontError);
+          assertEquals(error.slug, "invalid-argument");
+        }
+      },
+    );
+
+    assertEquals(fetchCalls, 0);
+  });
+
   it("auto-upgrades to the veryfront-cloud backend when cloud bootstrap is present", async () => {
     setEnv("VERYFRONT_API_TOKEN", "vf_test_cloud");
     setEnv("VERYFRONT_PROJECT_SLUG", "cloud-project");
@@ -1659,14 +1756,14 @@ describe("ragStore", () => {
         const id = await store.ingest("Cloud Doc", "Hello cloud world", {
           source: "upload:cloud.txt",
           type: "txt",
-          size: 17,
+          size: 0,
         });
 
         const documents = await store.listDocuments();
         assertEquals(documents.length, 1);
         assertEquals(documents[0]?.id, id);
-        assertEquals(documents[0]?.size, 17);
-        assertEquals(ragDocuments.get(id)?.metadata?.size, 17);
+        assertEquals(documents[0]?.size, 0);
+        assertEquals(ragDocuments.get(id)?.metadata?.size, 0);
 
         const results = await store.search("cloud", { topK: 1 });
         assertEquals(results.length, 1);

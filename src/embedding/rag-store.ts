@@ -24,6 +24,7 @@ import { embedding } from "./embedding.ts";
 import { chunk } from "./chunk.ts";
 import { createVeryfrontCloudRagStore } from "./veryfront-cloud/rag-store.ts";
 import { resolveConfiguredEmbeddingModel } from "./model-resolution.ts";
+import { validateRagDocumentSize } from "./rag-document-size.ts";
 import type {
   RagChunk,
   RagDocumentMeta,
@@ -231,8 +232,9 @@ export function ragStore(config: RagStoreConfig): RagStore {
   }
 
   return {
-    ingest(title, text, meta) {
-      return getStore().ingest(title, text, meta);
+    async ingest(title, text, meta) {
+      validateRagDocumentSize(meta?.size);
+      return await getStore().ingest(title, text, meta);
     },
     refreshDocument(id, text, meta) {
       const store = getStore();
