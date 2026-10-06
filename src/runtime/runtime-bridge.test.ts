@@ -10,8 +10,14 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { FakeTime } from "#std/testing/time";
 import { metricsManager } from "#veryfront/observability/metrics/index.ts";
 import { type AgentRunEvent, runWithRunEventSink } from "../agent/index.ts";
+import type { AgentRunEventSink } from "./model-call-context.ts";
 import type { ModelRuntime } from "#veryfront/provider/types.ts";
 import { DurableRunEventPersistenceError } from "#veryfront/agent/conversation/private-run-event.ts";
+import { getCurrentVeryfrontCloudModelCallCapture } from "#veryfront/provider/veryfront-cloud/context.ts";
+import {
+  registerVeryfrontCloudModelFacts,
+  type VeryfrontCloudModelFacts,
+} from "#veryfront/provider/veryfront-cloud/model-catalog.ts";
 import { resolveRuntimeExecutionErrorEvent } from "#veryfront/agent/runtime/chat-stream-handler.ts";
 import {
   DEFAULT_PROVIDER_STREAM_IDLE_TIMEOUT_MS,
@@ -21,6 +27,11 @@ import {
 } from "#veryfront/provider/runtime-loader.ts";
 import { runWithMandatoryRunEventSink } from "./run-event-sink-context.ts";
 import { generateText, streamText } from "./runtime-bridge.ts";
+import {
+  bindRuntimeObservationWriterCapability,
+  createRuntimeObservationWriterCapability,
+  revokeRuntimeObservationWriterCapability,
+} from "./runtime-observation-carrier.ts";
 import {
   collectAsync,
   createGenerateModel,
@@ -76,6 +87,36 @@ function readableStreamFrom<T>(values: Iterable<T>): ReadableStream<T> {
       controller.close();
     },
   });
+}
+
+function registerVeryfrontCloudTestModel(model: ModelRuntime): ModelRuntime {
+  const facts = {
+    provider: "openai",
+    surface: "openai",
+    native: true,
+    transportPlan: { transport: "chat-completions", pinned: true },
+  } satisfies VeryfrontCloudModelFacts;
+  registerVeryfrontCloudModelFacts(model, () => facts);
+  return model;
+}
+
+function bindTestRuntimeObservationWriter(input: {
+  sink: AgentRunEventSink;
+  runId: string;
+  canonicalRunId: string;
+  projectId: string;
+  assertActive?: () => void;
+}) {
+  const capability = createRuntimeObservationWriterCapability({
+    scope: {
+      runId: input.runId,
+      canonicalRunId: input.canonicalRunId,
+      projectId: input.projectId,
+    },
+    ...(input.assertActive ? { assertActive: input.assertActive } : {}),
+  });
+  bindRuntimeObservationWriterCapability(input.sink, capability);
+  return capability;
 }
 
 describe("runtime-bridge", () => {
@@ -766,6 +807,279 @@ describe("runtime-bridge", () => {
     );
 
     assertEquals(order, ["mandatory", "public", "dispatch"]);
+  });
+
+  it("installs exact Veryfront Cloud capture only after a matching mandatory receipt", async () => {
+    const projectId = "11111111-1111-4111-8111-111111111111";
+    const canonicalRunId = "22222222-2222-4222-8222-222222222222";
+    let recordedEvent: AgentRunEvent | undefined;
+    let dispatchCapture: unknown;
+    const sink: AgentRunEventSink = (event) => {
+      recordedEvent = event;
+      if (!event.modelCallId) throw new Error("expected model call id");
+      return {
+        eventId: "9007199254740993",
+        projectId,
+        runId: canonicalRunId,
+        modelCallId: event.modelCallId,
+      };
+    };
+    bindTestRuntimeObservationWriter({
+      sink,
+      runId: "33333333-3333-4333-8333-333333333333",
+      canonicalRunId,
+      projectId,
+    });
+    const model = registerVeryfrontCloudTestModel(
+      createGenerateModel(
+        "veryfront-cloud",
+        "veryfront-cloud/openai/gpt-test",
+        async () => {
+          dispatchCapture = getCurrentVeryfrontCloudModelCallCapture();
+          return { content: [{ type: "text", text: "done" }], finishReason: "stop", usage: {} };
+        },
+      ),
+    );
+
+    await runWithMandatoryRunEventSink(
+      sink,
+      () => generateText({ model, messages: [{ role: "user", content: "Hello" }] }),
+    );
+
+    assertEquals(typeof recordedEvent?.modelCallId, "string");
+    assertEquals(dispatchCapture, {
+      eventId: "9007199254740993",
+      projectId,
+      runId: canonicalRunId,
+      modelCallId: recordedEvent?.modelCallId,
+    });
+  });
+
+  it("refuses Veryfront Cloud dispatch when the mandatory capture receipt mismatches", async () => {
+    const projectId = "11111111-1111-4111-8111-111111111111";
+    const canonicalRunId = "22222222-2222-4222-8222-222222222222";
+    let dispatches = 0;
+    const sink: AgentRunEventSink = (event) => ({
+      eventId: "9007199254740993",
+      projectId,
+      runId: canonicalRunId,
+      modelCallId: event.modelCallId === undefined
+        ? "33333333-3333-4333-8333-333333333333"
+        : "44444444-4444-4444-8444-444444444444",
+    });
+    bindTestRuntimeObservationWriter({
+      sink,
+      runId: "33333333-3333-4333-8333-333333333333",
+      canonicalRunId,
+      projectId,
+    });
+    const model = registerVeryfrontCloudTestModel(
+      createGenerateModel(
+        "veryfront-cloud",
+        "veryfront-cloud/openai/gpt-test",
+        async () => {
+          dispatches += 1;
+          return { content: [], finishReason: "stop", usage: {} };
+        },
+      ),
+    );
+
+    await assertRejects(
+      async () =>
+        await runWithMandatoryRunEventSink(
+          sink,
+          async () => await generateText({ model, messages: [{ role: "user", content: "Hello" }] }),
+        ),
+      DurableRunEventPersistenceError,
+      "Model call capture receipt is missing or invalid",
+    );
+    assertEquals(dispatches, 0);
+  });
+
+  it("refuses exact capture when material provider controls are not represented", async () => {
+    const projectId = "11111111-1111-4111-8111-111111111111";
+    const canonicalRunId = "22222222-2222-4222-8222-222222222222";
+    let dispatches = 0;
+    const sink: AgentRunEventSink = (event) => ({
+      eventId: "9007199254740993",
+      projectId,
+      runId: canonicalRunId,
+      modelCallId: event.modelCallId ?? "33333333-3333-4333-8333-333333333333",
+    });
+    bindTestRuntimeObservationWriter({
+      sink,
+      runId: "33333333-3333-4333-8333-333333333333",
+      canonicalRunId,
+      projectId,
+    });
+    const model = registerVeryfrontCloudTestModel(
+      createGenerateModel(
+        "veryfront-cloud",
+        "veryfront-cloud/openai/gpt-test",
+        async () => {
+          dispatches += 1;
+          return { content: [], finishReason: "stop", usage: {} };
+        },
+      ),
+    );
+
+    await assertRejects(
+      async () =>
+        await runWithMandatoryRunEventSink(
+          sink,
+          async () =>
+            await generateText({
+              model,
+              messages: [{ role: "user", content: "Hello" }],
+              providerOptions: { "veryfront-cloud": { extra: true } },
+            }),
+        ),
+      DurableRunEventPersistenceError,
+      "Exact model call capture does not support these provider controls: providerOptions",
+    );
+    assertEquals(dispatches, 0);
+  });
+
+  it("refuses exact capture when system provider options are not represented", async () => {
+    const projectId = "11111111-1111-4111-8111-111111111111";
+    const canonicalRunId = "22222222-2222-4222-8222-222222222222";
+    let dispatches = 0;
+    const sink: AgentRunEventSink = (event) => ({
+      eventId: "9007199254740993",
+      projectId,
+      runId: canonicalRunId,
+      modelCallId: event.modelCallId ?? "33333333-3333-4333-8333-333333333333",
+    });
+    bindTestRuntimeObservationWriter({
+      sink,
+      runId: "33333333-3333-4333-8333-333333333333",
+      canonicalRunId,
+      projectId,
+    });
+    const model = registerVeryfrontCloudTestModel(
+      createGenerateModel(
+        "veryfront-cloud",
+        "veryfront-cloud/openai/gpt-test",
+        async () => {
+          dispatches += 1;
+          return { content: [], finishReason: "stop", usage: {} };
+        },
+      ),
+    );
+
+    await assertRejects(
+      async () =>
+        await runWithMandatoryRunEventSink(
+          sink,
+          async () =>
+            await generateText({
+              model,
+              system: [{
+                role: "system",
+                content: "Shared prompt",
+                providerOptions: { openai: { store: false } },
+              }],
+              messages: [{ role: "user", content: "Hello" }],
+            }),
+        ),
+      DurableRunEventPersistenceError,
+      "Exact model call capture does not support these provider controls: system.providerOptions",
+    );
+    assertEquals(dispatches, 0);
+  });
+
+  it("refuses exact capture when system provider options mix recorded and omitted controls", async () => {
+    const projectId = "11111111-1111-4111-8111-111111111111";
+    const canonicalRunId = "22222222-2222-4222-8222-222222222222";
+    let dispatches = 0;
+    const sink: AgentRunEventSink = (event) => ({
+      eventId: "9007199254740993",
+      projectId,
+      runId: canonicalRunId,
+      modelCallId: event.modelCallId ?? "33333333-3333-4333-8333-333333333333",
+    });
+    bindTestRuntimeObservationWriter({
+      sink,
+      runId: "33333333-3333-4333-8333-333333333333",
+      canonicalRunId,
+      projectId,
+    });
+    const model = registerVeryfrontCloudTestModel(
+      createGenerateModel(
+        "veryfront-cloud",
+        "veryfront-cloud/openai/gpt-test",
+        async () => {
+          dispatches += 1;
+          return { content: [], finishReason: "stop", usage: {} };
+        },
+      ),
+    );
+
+    await assertRejects(
+      async () =>
+        await runWithMandatoryRunEventSink(
+          sink,
+          async () =>
+            await generateText({
+              model,
+              system: [{
+                role: "system",
+                content: "Shared prompt",
+                providerOptions: {
+                  anthropic: { cacheControl: { type: "ephemeral" } },
+                  openai: { store: false },
+                },
+              }],
+              messages: [{ role: "user", content: "Hello" }],
+            }),
+        ),
+      DurableRunEventPersistenceError,
+      "Exact model call capture does not support these provider controls: system.providerOptions",
+    );
+    assertEquals(dispatches, 0);
+  });
+
+  it("revalidates exact capture authority before provider dispatch", async () => {
+    const projectId = "11111111-1111-4111-8111-111111111111";
+    const canonicalRunId = "22222222-2222-4222-8222-222222222222";
+    let dispatches = 0;
+    const sink: AgentRunEventSink = (event) => ({
+      eventId: "9007199254740993",
+      projectId,
+      runId: canonicalRunId,
+      modelCallId: event.modelCallId ?? "33333333-3333-4333-8333-333333333333",
+    });
+    const capability = bindTestRuntimeObservationWriter({
+      sink,
+      runId: "33333333-3333-4333-8333-333333333333",
+      canonicalRunId,
+      projectId,
+    });
+    const model = registerVeryfrontCloudTestModel(
+      createGenerateModel(
+        "veryfront-cloud",
+        "veryfront-cloud/openai/gpt-test",
+        async () => {
+          dispatches += 1;
+          return { content: [], finishReason: "stop", usage: {} };
+        },
+      ),
+    );
+
+    await assertRejects(
+      async () =>
+        await runWithMandatoryRunEventSink(
+          sink,
+          async () => {
+            const result = generateText({ model, messages: [{ role: "user", content: "Hello" }] });
+            revokeRuntimeObservationWriterCapability(capability);
+            await result;
+          },
+        ),
+      Error,
+      "Runtime observation writer capability is no longer active",
+    );
+    assertEquals(dispatches, 0);
   });
 
   it("fails closed when the mandatory context cannot be cloned", async () => {

@@ -1,4 +1,5 @@
 import { readVeryfrontCloudModelFacts } from "#veryfront/provider/veryfront-cloud/model-catalog.ts";
+import { runWithVeryfrontCloudModelCallCapture } from "#veryfront/provider/veryfront-cloud/context.ts";
 import { mapPrivateArray, pushPrivateArray } from "#veryfront/security/private-array.ts";
 import { createPrivateMap } from "#veryfront/security/private-map.ts";
 import { getPrivateAsyncIterator } from "#veryfront/security/private-iterator.ts";
@@ -43,6 +44,11 @@ import type {
   ModelCallTool,
 } from "./model-call-context.ts";
 import { getActiveRunEventSinks } from "./run-event-sink-context.ts";
+import { getRuntimeObservationWriterBinding } from "./runtime-observation-carrier.ts";
+import {
+  type AgentRunModelCallCaptureReceipt,
+  getModelCallCaptureReceiptSchema,
+} from "./model-call-capture-receipt.ts";
 import {
   buildModelCallContextRequest,
   resolveModelCallProvider,
@@ -755,16 +761,61 @@ async function settleVeryfrontCloudModel(options: DirectTextOptions): Promise<vo
   }
 }
 
+function hasUnsupportedExactCapturePromptProviderOptions(
+  directOptions: DirectModelOptions,
+): boolean {
+  return directOptions.prompt.some((message) => {
+    return message.role === "system" && message.providerOptions !== undefined;
+  });
+}
+
+function assertExactModelCallCaptureControlsSupported(
+  directOptions: DirectModelOptions,
+): void {
+  const unsupportedControls = [
+    "toolChoice",
+    "headers",
+    "providerOptions",
+    "responseFormat",
+    "includeRawChunks",
+  ].filter((field) => directOptions[field] !== undefined);
+  if (hasUnsupportedExactCapturePromptProviderOptions(directOptions)) {
+    unsupportedControls.push("system.providerOptions");
+  }
+  if (unsupportedControls.length === 0) return;
+  throw new DurableRunEventPersistenceError(
+    `Exact model call capture does not support these provider controls: ${
+      unsupportedControls.join(", ")
+    }`,
+  );
+}
+
 async function emitModelCallContextEvent(
   options: DirectTextOptions,
   directOptions: DirectModelOptions,
-): Promise<void> {
+): Promise<
+  | {
+    receipt: AgentRunModelCallCaptureReceipt | undefined;
+    assertActive: () => void;
+  }
+  | undefined
+> {
   const sinks = getActiveRunEventSinks();
-  if (!sinks.mandatory && !sinks.public) return;
+  if (!sinks.mandatory && !sinks.public) return undefined;
   const request = buildModelCallContextRequest(options.model, directOptions);
+  const writerBinding = getRuntimeObservationWriterBinding(sinks.mandatory);
+  const writerScope = writerBinding?.scope;
+  const captureEnabled = writerBinding !== undefined &&
+    readVeryfrontCloudModelFacts(options.model) !== undefined;
+  if (captureEnabled) {
+    writerBinding.assertActive();
+    assertExactModelCallCaptureControlsSupported(directOptions);
+  }
+  const modelCallId = captureEnabled ? crypto.randomUUID() : undefined;
 
   const event: AgentRunModelCallContextEvent = {
     type: "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED",
+    ...(modelCallId ? { modelCallId } : {}),
     ...(options.model.modelId
       ? {
         model: {
@@ -778,6 +829,11 @@ async function emitModelCallContextEvent(
     ...(request ? { request } : {}),
     messages: sanitizeModelCallContextMessages(directOptions.prompt),
     ...(directOptions.tools ? { tools: directOptions.tools } : {}),
+  };
+
+  const assertActive = () => {
+    options.abortSignal?.throwIfAborted();
+    writerBinding?.assertActive();
   };
 
   const cloneEvent = ():
@@ -809,12 +865,49 @@ async function emitModelCallContextEvent(
   const mandatoryEvent = mandatoryClone?.ok ? mandatoryClone.event : undefined;
   const publicClone = sinks.public && sinks.public !== sinks.mandatory ? cloneEvent() : undefined;
   const publicEvent = publicClone?.ok ? publicClone.event : undefined;
+  let acknowledgement: unknown;
   if (sinks.mandatory && mandatoryEvent) {
-    await sinks.mandatory(mandatoryEvent);
+    acknowledgement = await sinks.mandatory(mandatoryEvent);
   }
   if (sinks.public && sinks.public !== sinks.mandatory && publicEvent) {
     await sinks.public(publicEvent);
   }
+  assertActive();
+  if (!captureEnabled || !writerScope) {
+    if (acknowledgement !== undefined) {
+      throw new DurableRunEventPersistenceError(
+        "Model call capture receipt was returned without an active writer scope",
+      );
+    }
+    return { receipt: undefined, assertActive };
+  }
+  const receipt = getModelCallCaptureReceiptSchema().safeParse(acknowledgement);
+  if (
+    !receipt.success ||
+    receipt.data.modelCallId.toLowerCase() !== modelCallId?.toLowerCase() ||
+    receipt.data.runId.toLowerCase() !== writerScope.canonicalRunId.toLowerCase() ||
+    receipt.data.projectId.toLowerCase() !== writerScope.projectId.toLowerCase()
+  ) {
+    throw new DurableRunEventPersistenceError(
+      "Model call capture receipt is missing or invalid",
+    );
+  }
+  return { receipt: Object.freeze(receipt.data), assertActive };
+}
+
+function runWithModelCallCapture<T>(
+  capture:
+    | {
+      receipt: AgentRunModelCallCaptureReceipt | undefined;
+      assertActive: () => void;
+    }
+    | undefined,
+  operation: () => T,
+): T {
+  return runWithVeryfrontCloudModelCallCapture(
+    capture ?? { receipt: undefined, assertActive() {} },
+    operation,
+  );
 }
 
 function isDirectToolCallPart(
@@ -1292,14 +1385,18 @@ export function generateText(options: GenerateTextOptions): PromiseLike<RuntimeG
   return resolveDirectTools(options.tools).then(async (tools) => {
     await settleVeryfrontCloudModel(options);
     const directOptions = buildDirectModelOptions(options, tools);
-    await emitModelCallContextEvent(options, directOptions);
+    const capture = await emitModelCallContextEvent(options, directOptions);
     if (shouldGenerateViaStream(options.model)) {
-      return options.model.doStream(directOptions).then(({ stream }) =>
-        buildGenerateResultFromStream(stream)
-      );
+      return runWithModelCallCapture(
+        capture,
+        () => options.model.doStream(directOptions),
+      ).then(({ stream }) => buildGenerateResultFromStream(stream));
     }
 
-    return options.model.doGenerate(directOptions).then(buildDirectGenerateResult);
+    return runWithModelCallCapture(
+      capture,
+      () => options.model.doGenerate(directOptions),
+    ).then(buildDirectGenerateResult);
   });
 }
 
@@ -1307,8 +1404,8 @@ export function streamText(options: StreamTextOptions): RuntimeStreamResult {
   const directResultPromise = resolveDirectTools(options.tools).then(async (tools) => {
     await settleVeryfrontCloudModel(options);
     const directOptions = buildDirectModelOptions(options, tools);
-    await emitModelCallContextEvent(options, directOptions);
-    return options.model.doStream(directOptions);
+    const capture = await emitModelCallContextEvent(options, directOptions);
+    return runWithModelCallCapture(capture, () => options.model.doStream(directOptions));
   });
   // Guard against an unhandled rejection when a branch is consumed lazily (or a
   // branch is never consumed at all) and doStream rejects.

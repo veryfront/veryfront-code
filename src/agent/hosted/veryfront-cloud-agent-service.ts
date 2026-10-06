@@ -119,6 +119,8 @@ export type NodeVeryfrontCloudAgentServiceOptions = {
   forwardedConfigNamespace?: string;
   /** Framework host tools this service deployment authorizes. */
   hostToolPolicy?: HostedHostToolPolicy;
+  /** Host-owned default-off exact model-call capture for authenticated canonical durable runs. */
+  hostedModelCallCapture?: boolean;
   /**
    * Deployment-owned remote MCP source composition.
    *
