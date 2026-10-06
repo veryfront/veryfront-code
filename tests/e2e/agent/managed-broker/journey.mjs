@@ -231,6 +231,8 @@ export default tool({ id: "project_probe", description: "Inspect approved data",
   const ingressControls = [];
   const releases = [];
   const persisted = [];
+  const persistedRows = new Map();
+  const modelCaptureReceipts = [];
   const completions = [];
   const modelCalls = [];
   const steeringRefreshes = [];
@@ -272,13 +274,30 @@ export default tool({ id: "project_probe", description: "Inspect approved data",
           request.url,
           `/runs/${canonicalRunId}/events`,
         );
-        persisted.push(...data.events);
-        cursor += data.events.length;
+        const acceptedRows = data.events.map((event) => {
+          const eventId = String(++cursor);
+          persisted.push(event);
+          persistedRows.set(eventId, event);
+          return { eventId, event };
+        });
+        const captures = acceptedRows.flatMap(({ eventId, event }) =>
+          event.type === "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED" &&
+            typeof event.modelCallId === "string"
+            ? [{
+              event_id: eventId,
+              project_id: projectId,
+              run_id: canonicalRunId,
+              model_call_id: event.modelCallId,
+            }]
+            : []
+        );
+        modelCaptureReceipts.push(...captures);
         response.end(JSON.stringify({
           run_id: canonicalRunId,
           latest_event_id: cursor,
           latest_external_event_sequence: cursor,
           appended_count: data.events.length,
+          model_call_captures: captures,
           run: {
             run_id: runId,
             conversation_id: conversationId,
@@ -886,6 +905,26 @@ export default tool({ id: "project_probe", description: "Inspect approved data",
       steering ? ["host_probe", "update_file"] : ["host_probe"],
     );
     assertEquals(modelCalls.length, 2);
+    if (steering || trusted) {
+      assertEquals(modelCaptureReceipts.length, modelCalls.length);
+      assertEquals(
+        new Set(modelCaptureReceipts.map((receipt) => receipt.event_id)).size,
+        modelCalls.length,
+      );
+      assertEquals(
+        new Set(modelCaptureReceipts.map((receipt) => receipt.model_call_id)).size,
+        modelCalls.length,
+      );
+      for (const receipt of modelCaptureReceipts) {
+        const event = persistedRows.get(receipt.event_id);
+        assertEquals(event?.type, "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED");
+        assertEquals(event?.modelCallId, receipt.model_call_id);
+        assertEquals(receipt.run_id, canonicalRunId);
+        assertEquals(receipt.project_id, projectId);
+      }
+    } else {
+      assertEquals(modelCaptureReceipts, []);
+    }
     assert(
       JSON.stringify(modelCalls[0].prompt).includes("Run the host probe."),
     );

@@ -81,11 +81,11 @@ import { getTemplate } from "../../templates/index.ts";
 import { getVeryfrontCloudGatewayBaseUrl } from "#veryfront/provider/veryfront-cloud/shared.ts";
 import { createZodAdapter } from "../../extensions/ext-schema-zod/src/adapter.ts";
 import {
+  createEventParser,
   EVENT_SCHEMA_BY_TYPE,
   EVENT_TARGET_PAYLOAD_EXAMPLES,
   EVENT_TYPES,
   type EventRecord,
-  createEventParser,
 } from "../../src/events/index.ts";
 
 const EXISTING_GUIDE_EXAMPLE_SUITE = [

@@ -2,7 +2,6 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assert, assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { defineSchema, type JsonValue } from "#veryfront/schemas/index.ts";
-import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import {
   getCurrentToolCallOccurrence,
   getToolCallOccurrence,
@@ -44,6 +43,10 @@ import {
   getHostedToolCallAdmissionRequestFetch,
 } from "./child-run-event-writer-token.ts";
 
+type HostedRequestFetch = NonNullable<
+  Parameters<typeof createHostedRunEventWriterCapability>[0]["fetch"]
+>;
+
 const occurrenceId = "11111111-1111-4111-8111-111111111111";
 const projectId = "22222222-2222-4222-8222-222222222222";
 const runId = "33333333-3333-4333-8333-333333333333";
@@ -65,9 +68,7 @@ const call = {
   occurrenceId,
 };
 
-type TestFetch = Exclude<Parameters<typeof withMockFetch>[0], undefined>;
-
-function managedPersistenceFixture(fetch: TestFetch) {
+function managedPersistenceFixture(fetch: HostedRequestFetch) {
   const terminalToken = `header.${
     btoa(JSON.stringify({
       runId: "external-run",
@@ -228,7 +229,7 @@ describe("private tool-call admission", () => {
         startObservedFromResult?: true;
       }> = [];
       let sequence = 0;
-      const fetch: TestFetch = async (_url, init) => {
+      const fetch: HostedRequestFetch = async (_url, init) => {
         const body = getAppendBodySchema().parse(JSON.parse(String(init?.body)));
         assertEquals(body.tool_call_starts, undefined);
         assert(!JSON.stringify(body).includes("privateObservedToolResult"));
@@ -311,7 +312,9 @@ describe("private tool-call admission", () => {
           storedStarts[0]?.providerExecuted,
           scenario === "configured-provider" ? true : undefined,
         );
-        assert(!JSON.stringify({ chunks, finished }).includes("privateObservedToolResult"));
+        assert(
+          !JSON.stringify({ chunks, finished }).includes("privateObservedToolResult"),
+        );
         assert(!JSON.stringify({ chunks, finished }).includes("startObservedFromResult"));
         await persistence.cleanup();
       }
@@ -326,7 +329,7 @@ describe("private tool-call admission", () => {
       providerExecuted: true,
     };
     let appends = 0;
-    const fetch: TestFetch = async () => {
+    const fetch: HostedRequestFetch = async () => {
       appends++;
       throw new Error("Unexpected append");
     };
@@ -376,7 +379,7 @@ describe("private tool-call admission", () => {
     ];
     const privateRequests: Request[] = [];
     const configuredRequests: Request[] = [];
-    const responseFor: TestFetch = async (_url, init) => {
+    const responseFor: HostedRequestFetch = async (_url, init) => {
       const body = JSON.parse(String(init?.body));
       return Response.json({
         jsonrpc: "2.0",
@@ -407,7 +410,7 @@ describe("private tool-call admission", () => {
         return responseFor(url, init);
       },
     });
-    let retainedFetch: TestFetch | undefined;
+    let retainedFetch: HostedRequestFetch | undefined;
     await runWithToolCallAdmissionReceipt(receipt, () => {}, async () => {
       for (const endpoint of [...owning, ...other]) {
         const source = createSource({
@@ -601,7 +604,7 @@ describe("private tool-call admission", () => {
   it("awaits one normal start and sends exact proof with independent auth through owning host transport", async () => {
     let appendCount = 0;
     let mcpCalls = 0;
-    const fetch: TestFetch = async (url, init) => {
+    const fetch: HostedRequestFetch = async (url, init) => {
       const body = JSON.parse(String(init?.body));
       if (String(url) === "https://api.example.test/mcp") {
         mcpCalls++;
