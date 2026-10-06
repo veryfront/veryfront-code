@@ -387,6 +387,53 @@ describe("VeryfrontAPIOperations", () => {
       assertEquals(result.files[0]?.checksum, "abc123");
     });
 
+    it("passes branch listing abort signals to the transport request", async () => {
+      let observedSignal: AbortSignal | undefined;
+      const controller = new AbortController();
+      stubJsonFetch((_url, init) => {
+        observedSignal = init?.signal ?? undefined;
+        return {
+          data: [],
+          page_info: { self: null, first: null, next: null, prev: null },
+        };
+      });
+
+      await createOps().listBranchFiles("project-slug", "main", {
+        signal: controller.signal,
+      });
+
+      assertEquals(observedSignal?.aborted, false);
+      controller.abort();
+      assertEquals(observedSignal?.aborted, true);
+    });
+
+    it("passes branch file abort signals to the transport request", async () => {
+      let observedSignal: AbortSignal | undefined;
+      const controller = new AbortController();
+      stubJsonFetch((_url, init) => {
+        observedSignal = init?.signal ?? undefined;
+        return {
+          id: "file-id",
+          path: "veryfront.config.ts",
+          content: "export default {};",
+          size: 18,
+          type: "file",
+          updated_at: "2026-10-06T00:00:00.000Z",
+        };
+      });
+
+      await createOps().getBranchFile(
+        "project-slug",
+        "main",
+        "veryfront.config.ts",
+        { signal: controller.signal },
+      );
+
+      assertEquals(observedSignal?.aborted, false);
+      controller.abort();
+      assertEquals(observedSignal?.aborted, true);
+    });
+
     it("requests branch file content with server functions for preview handlers", async () => {
       let requestedUrl = "";
       stubJsonFetch((url) => {
@@ -665,6 +712,84 @@ describe("VeryfrontAPIOperations", () => {
         ),
         true,
       );
+    });
+
+    it("passes release listing option abort signals to the transport request", async () => {
+      let observedSignal: AbortSignal | undefined;
+      const controller = new AbortController();
+      stubJsonFetch((_url, init) => {
+        observedSignal = init?.signal ?? undefined;
+        return {
+          data: [],
+          page_info: { self: null, first: null, next: null, prev: null },
+          release_id: "release-id",
+          release_version: "v1",
+        };
+      });
+
+      await createOps().listReleaseFiles("project-slug", "release-id", {
+        signal: controller.signal,
+      });
+
+      assertEquals(observedSignal?.aborted, false);
+      controller.abort();
+      assertEquals(observedSignal?.aborted, true);
+    });
+
+    it("keeps positional release listing abort signals ahead of options signals", async () => {
+      let observedSignal: AbortSignal | undefined;
+      const optionsController = new AbortController();
+      const positionalController = new AbortController();
+      stubJsonFetch((_url, init) => {
+        observedSignal = init?.signal ?? undefined;
+        return {
+          data: [],
+          page_info: { self: null, first: null, next: null, prev: null },
+          release_id: "release-id",
+          release_version: "v1",
+        };
+      });
+
+      await createOps().listReleaseFiles(
+        "project-slug",
+        "release-id",
+        { signal: optionsController.signal },
+        positionalController.signal,
+      );
+
+      optionsController.abort();
+      assertEquals(observedSignal?.aborted, false);
+      positionalController.abort();
+      assertEquals(observedSignal?.aborted, true);
+    });
+
+    it("passes release all-files option abort signals through every page", async () => {
+      const observedSignals: Array<AbortSignal | undefined> = [];
+      const controller = new AbortController();
+      stubJsonFetch((url, init) => {
+        observedSignals.push(init?.signal ?? undefined);
+        const cursor = new URL(url).searchParams.get("cursor");
+        return {
+          data: [],
+          page_info: {
+            self: null,
+            first: null,
+            next: cursor === null ? "next-page" : null,
+            prev: null,
+          },
+          release_id: "release-id",
+          release_version: "v1",
+        };
+      });
+
+      await createOps().listAllReleaseFiles("project-slug", "release-id", {
+        signal: controller.signal,
+      });
+
+      assertEquals(observedSignals.length, 2);
+      assertEquals(observedSignals.every((signal) => signal?.aborted === false), true);
+      controller.abort();
+      assertEquals(observedSignals.every((signal) => signal?.aborted === true), true);
     });
 
     it("requests release file lists with server functions for runtime route discovery", async () => {

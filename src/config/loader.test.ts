@@ -9998,17 +9998,32 @@ export default config as const;
         });
       }
 
-      it("settles an aborted caller while its admitted filesystem read remains blocked", async () => {
+      it("cancels an abandoned physical source read and admits recovered work", async () => {
         const adapter = createHostedAdapter();
         const preparedContext = await prepareProductionContext();
         const readStarted = Promise.withResolvers<void>();
-        const releaseRead = Promise.withResolvers<void>();
+        const physicalAborted = Promise.withResolvers<void>();
         const controller = new AbortController();
+        let reads = 0;
         let evaluations = 0;
-        adapter.fs.readFile = async (path: string) => {
+        let abortedReadSignal: AbortSignal | undefined;
+        adapter.fs.readFile = async (path: string, options?: { signal?: AbortSignal }) => {
           if (path === "/veryfront.config.js") {
-            readStarted.resolve();
-            await releaseRead.promise;
+            reads += 1;
+            if (reads === 1) {
+              abortedReadSignal = options?.signal;
+              readStarted.resolve();
+              return await new Promise<string>((_resolve, reject) => {
+                options?.signal?.addEventListener(
+                  "abort",
+                  () => {
+                    physicalAborted.resolve();
+                    reject(configCandidateNotFound(path));
+                  },
+                  { once: true },
+                );
+              });
+            }
             throw configCandidateNotFound(path);
           }
           if (path === "/veryfront.config.ts") {
@@ -10018,7 +10033,7 @@ export default config as const;
         };
         __setHostedConfigEvaluatorForTests(async () => {
           evaluations += 1;
-          return { title: "must-not-evaluate" };
+          return { title: "source" };
         });
 
         const request = loadProductionHostedConfig(adapter, preparedContext, {
@@ -10040,23 +10055,83 @@ export default config as const;
           controller.abort();
           const error = await failure;
           assertEquals(error.reason, "worker-aborted");
+          await physicalAborted.promise;
+          assertEquals(abortedReadSignal?.aborted, true);
           await waitForHostedSourceReadState({
-            active: 1,
+            active: 0,
             queued: 0,
-            flights: 1,
+            flights: 0,
             waiters: 0,
           });
           assertEquals(evaluations, 0);
         } finally {
-          releaseRead.resolve();
           await Promise.allSettled([request]);
         }
-        await waitForHostedSourceReadState({
-          active: 0,
-          queued: 0,
-          flights: 0,
-          waiters: 0,
+
+        const recovered = await loadProductionHostedConfig(adapter, preparedContext, {
+          projectId: "project-single-flight-recovered",
         });
+        assertEquals(recovered.title, "source");
+        assertEquals(evaluations, 1);
+      });
+
+      it("keeps a shared physical source read alive when only one coalesced waiter aborts", async () => {
+        const adapter = createHostedAdapter();
+        const preparedContext = await prepareProductionContext();
+        const readStarted = Promise.withResolvers<void>();
+        const releaseRead = Promise.withResolvers<void>();
+        const firstController = new AbortController();
+        const secondController = new AbortController();
+        let reads = 0;
+        let evaluations = 0;
+        let sharedReadSignal: AbortSignal | undefined;
+        adapter.fs.readFile = async (path: string, options?: { signal?: AbortSignal }) => {
+          if (path !== "/veryfront.config.js") throw configCandidateNotFound(path);
+          reads += 1;
+          sharedReadSignal = options?.signal;
+          readStarted.resolve();
+          await releaseRead.promise;
+          return 'export default { title: "peer-survived" };';
+        };
+        __setHostedConfigEvaluatorForTests(async () => {
+          evaluations += 1;
+          return { title: "peer-survived" };
+        });
+
+        const first = loadProductionHostedConfig(adapter, preparedContext, {
+          signal: firstController.signal,
+        });
+        await readStarted.promise;
+        const second = loadProductionHostedConfig(adapter, preparedContext, {
+          signal: secondController.signal,
+        });
+        await waitForHostedSourceReadState({
+          active: 1,
+          queued: 0,
+          flights: 1,
+          waiters: 2,
+        });
+
+        const firstFailure = assertRejects(
+          () => first,
+          DeclarativeConfigEvaluationError,
+        ) as Promise<DeclarativeConfigEvaluationError>;
+        firstController.abort();
+        const error = await firstFailure;
+        assertEquals(error.reason, "worker-aborted");
+        await waitForHostedSourceReadState({
+          active: 1,
+          queued: 0,
+          flights: 1,
+          waiters: 1,
+        });
+        assertEquals(sharedReadSignal?.aborted, false);
+
+        releaseRead.resolve();
+        const survivingPeer = await second;
+        assertEquals(survivingPeer.title, "peer-survived");
+        assertEquals(reads, 1);
+        assertEquals(evaluations, 1);
       });
 
       it("coalesces one immutable production read before distinct environment evaluations", async () => {
@@ -10803,7 +10878,7 @@ export default config as const;
           await waitForHostedSourceReadState({
             active: admission.maxActive,
             queued: 0,
-            flights: admission.maxActive,
+            flights: 0,
             waiters: 0,
           });
           assertEquals(reads, admission.maxActive);
@@ -10814,7 +10889,7 @@ export default config as const;
           await waitForHostedSourceReadState({
             active: admission.maxActive,
             queued: 1,
-            flights: admission.maxActive + 1,
+            flights: 1,
             waiters: 1,
           });
           assertEquals(reads, admission.maxActive);
@@ -10841,6 +10916,69 @@ export default config as const;
           flights: 0,
           waiters: 0,
         });
+      });
+
+      it("does not let an abandoned source read seed the recovered config cache", async () => {
+        const adapter = createHostedAdapter();
+        const preparedContext = await prepareProductionContext();
+        const staleReadStarted = Promise.withResolvers<void>();
+        const releaseStaleRead = Promise.withResolvers<void>();
+        const staleController = new AbortController();
+        let reads = 0;
+        adapter.fs.readFile = async (path: string) => {
+          if (path !== "/veryfront.config.js") throw configCandidateNotFound(path);
+          reads += 1;
+          if (reads === 1) {
+            staleReadStarted.resolve();
+            await releaseStaleRead.promise;
+            return 'export default { title: "stale" };';
+          }
+          return 'export default { title: "fresh" };';
+        };
+        __setHostedConfigEvaluatorForTests(async (payload) => ({
+          title: payload.evaluationOptions.source.includes('"fresh"') ? "fresh" : "stale",
+        }));
+
+        const projectId = "project-single-flight-late-source";
+        const stale = loadProductionHostedConfig(adapter, preparedContext, {
+          projectId,
+          signal: staleController.signal,
+        });
+        let fresh: ReturnType<typeof loadProductionHostedConfig> | undefined;
+        try {
+          await staleReadStarted.promise;
+          const staleFailure = assertRejects(
+            () => stale,
+            DeclarativeConfigEvaluationError,
+          ) as Promise<DeclarativeConfigEvaluationError>;
+          staleController.abort();
+          const error = await staleFailure;
+          assertEquals(error.reason, "worker-aborted");
+
+          fresh = loadProductionHostedConfig(adapter, preparedContext, { projectId });
+          await waitForHostedSourceReadState({
+            active: 2,
+            queued: 0,
+            flights: 1,
+            waiters: 1,
+          });
+          assertEquals((await fresh).title, "fresh");
+
+          releaseStaleRead.resolve();
+          await waitForHostedSourceReadState({
+            active: 0,
+            queued: 0,
+            flights: 0,
+            waiters: 0,
+          });
+          const cached = await loadProductionHostedConfig(adapter, preparedContext, { projectId });
+          assertEquals(cached.title, "fresh");
+          assertEquals(reads >= 2, true);
+        } finally {
+          staleController.abort();
+          releaseStaleRead.resolve();
+          await Promise.allSettled([stale, ...(fresh ? [fresh] : [])]);
+        }
       });
 
       it("uses captured abort and TextDecoder primordials for Uint8Array hosted sources", async () => {

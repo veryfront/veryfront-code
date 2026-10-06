@@ -43,6 +43,10 @@ const IN_FLIGHT_REQUEST_TIMEOUT_MS = 15_000;
 const MAX_IN_FLIGHT_REQUESTS = 100;
 const IN_FLIGHT_CLEANUP_INTERVAL_MS = 1_000;
 const MAX_EXTENSION_RESOLUTION_ENTRIES = 1_024;
+interface ReadSignalOptions {
+  readonly signal?: AbortSignal;
+}
+
 export class ReadOperations {
   private readonly inFlightRequests = new InFlightRequestDeduper<string>({
     timeoutMs: IN_FLIGHT_REQUEST_TIMEOUT_MS,
@@ -113,12 +117,12 @@ export class ReadOperations {
     return requestBranch;
   }
 
-  readFile(path: string): Promise<Uint8Array> {
+  readFile(path: string, options: ReadSignalOptions = {}): Promise<Uint8Array> {
     return withSpan(
       "fs.veryfront.readFile",
       async () => {
         const normalizedPath = this.normalizer.normalize(path);
-        const content = await this.fetchContent(normalizedPath);
+        const content = await this.fetchContent(normalizedPath, options);
         return new TextEncoder().encode(content);
       },
       { "fs.path": path },
@@ -227,19 +231,19 @@ export class ReadOperations {
       );
   }
 
-  readTextFile(path: string): Promise<string> {
+  readTextFile(path: string, options: ReadSignalOptions = {}): Promise<string> {
     return withSpan(
       "fs.veryfront.readTextFile",
       () => {
         const normalizedPath = this.normalizer.normalize(path);
         logger.debug("readTextFile called", { path, normalizedPath });
-        return this.fetchContent(normalizedPath);
+        return this.fetchContent(normalizedPath, options);
       },
       { "fs.path": path },
     );
   }
 
-  readOptionalTextFile(path: string): Promise<string> {
+  readOptionalTextFile(path: string, options: ReadSignalOptions = {}): Promise<string> {
     return withSpan(
       "fs.veryfront.readOptionalTextFile",
       async () => {
@@ -258,7 +262,7 @@ export class ReadOperations {
         // does not share: the read stays on the exact requested path, it is
         // not subject to the framework-module guard, and its 404 is declared
         // expected. See fetchContent for why each matters.
-        return await this.fetchContent(normalizedPath, { optional: true });
+        return await this.fetchContent(normalizedPath, { ...options, optional: true });
       },
       { "fs.path": path },
     );
@@ -379,6 +383,7 @@ export class ReadOperations {
     ctx: ResolvedContentContext | null,
     missReason: MissReason,
     expectedMissing = false,
+    signal?: AbortSignal,
   ): Promise<string> {
     const cleanupResult = this.inFlightRequests.cleanup();
     if (cleanupResult) {
@@ -391,14 +396,16 @@ export class ReadOperations {
       fileCachePrefix !== undefined &&
       (this.contextProvider?.isPersistentCacheInvalidated?.(fileCachePrefix) ?? false);
     const inFlightKey = this.getInFlightKey(cacheKey, snapshotVersion, isInvalidated());
-    const existingEntry = this.inFlightRequests.get(inFlightKey);
-    if (existingEntry) {
-      logger.debug("Deduplicating request - joining existing fetch", {
-        path: normalizedPath,
-        cacheKey,
-        ageMs: Date.now() - existingEntry.startedAt,
-      });
-      return existingEntry.promise;
+    if (signal === undefined) {
+      const existingEntry = this.inFlightRequests.get(inFlightKey);
+      if (existingEntry) {
+        logger.debug("Deduplicating request - joining existing fetch", {
+          path: normalizedPath,
+          cacheKey,
+          ageMs: Date.now() - existingEntry.startedAt,
+        });
+        return existingEntry.promise;
+      }
     }
 
     // Track why we're making a network fetch (for optimization analysis)
@@ -440,6 +447,7 @@ export class ReadOperations {
             ctx?.environmentName ?? null,
             shouldCache,
             expectedMissing,
+            signal,
           )
           : await this.fetchDraftContent(
             normalizedPath,
@@ -448,6 +456,7 @@ export class ReadOperations {
             shouldCache,
             expectedMissing,
             ctx?.branch,
+            signal,
           );
 
         const fetchDuration = Math.round(performance.now() - fetchStartTime);
@@ -463,11 +472,15 @@ export class ReadOperations {
 
         return result;
       } finally {
-        this.inFlightRequests.delete(inFlightKey);
+        if (signal === undefined) {
+          this.inFlightRequests.delete(inFlightKey);
+        }
       }
     })();
 
-    this.inFlightRequests.set(inFlightKey, fetchPromise, Date.now());
+    if (signal === undefined) {
+      this.inFlightRequests.set(inFlightKey, fetchPromise, Date.now());
+    }
     return fetchPromise;
   }
 
@@ -640,12 +653,15 @@ export class ReadOperations {
     releaseId: string | null,
     environmentName?: string | null,
     expectedMissing = false,
+    signal?: AbortSignal,
   ): Promise<string> {
     return this.client.getPublishedFileContent(
       apiPath,
       releaseId ?? undefined,
       environmentName ?? undefined,
-      expectedMissing ? { expectedMissing: true } : undefined,
+      expectedMissing || signal
+        ? { expectedMissing: expectedMissing || undefined, signal }
+        : undefined,
     );
   }
 
@@ -662,7 +678,7 @@ export class ReadOperations {
    */
   private async fetchContent(
     normalizedPath: string,
-    { optional = false }: { optional?: boolean } = {},
+    { optional = false, signal }: ReadSignalOptions & { optional?: boolean } = {},
   ): Promise<string> {
     // Framework paths should NEVER be fetched from API - they must be read from local filesystem.
     // If we reach here for a framework path, the module server's local resolution failed.
@@ -757,6 +773,7 @@ export class ReadOperations {
         effectiveContentContext,
         "indexed_without_content",
         optional,
+        signal,
       );
     }
 
@@ -805,6 +822,8 @@ export class ReadOperations {
             isPreviewMode,
             effectiveContentContext,
             "indexed_without_content",
+            false,
+            signal,
           );
 
           this.cacheResolvedContent(
@@ -856,6 +875,7 @@ export class ReadOperations {
         ? "not_in_filelist"
         : "no_filelist_cache",
       optional,
+      signal,
     );
   }
 
@@ -867,6 +887,7 @@ export class ReadOperations {
     environmentName: string | null,
     shouldCache: boolean | (() => boolean),
     expectedMissing = false,
+    signal?: AbortSignal,
   ): Promise<string> {
     logger.debug("Fetching published content", {
       path: normalizedPath,
@@ -881,6 +902,7 @@ export class ReadOperations {
         releaseId,
         environmentName,
         expectedMissing,
+        signal,
       );
 
       logger.debug("Fetched published content", {
@@ -917,6 +939,7 @@ export class ReadOperations {
         shouldCache,
         releaseId,
         environmentName,
+        signal,
       );
       if (fallbackContent !== null) return fallbackContent;
 
@@ -934,6 +957,7 @@ export class ReadOperations {
     shouldCache: boolean | (() => boolean),
     releaseId: string | null,
     environmentName?: string | null,
+    signal?: AbortSignal,
   ): Promise<string | null> {
     const pathParts = splitKnownFileExtension(apiPath);
     if (!pathParts) return null;
@@ -970,6 +994,7 @@ export class ReadOperations {
         shouldCache,
         releaseId,
         environmentName,
+        signal,
       );
     }
   }
@@ -982,6 +1007,7 @@ export class ReadOperations {
     shouldCache: boolean | (() => boolean),
     releaseId: string | null,
     environmentName?: string | null,
+    signal?: AbortSignal,
   ): Promise<string | null> {
     // Start all extension fetches in parallel, but resolve in priority order.
     // This gives us parallel network initiation (no sequential round trips)
@@ -991,7 +1017,13 @@ export class ReadOperations {
     const startTime = performance.now();
 
     const promises = candidates.map(async (ext) => {
-      const content = await this.fetchPublishedVariant(basePath + ext, releaseId, environmentName);
+      const content = await this.fetchPublishedVariant(
+        basePath + ext,
+        releaseId,
+        environmentName,
+        false,
+        signal,
+      );
       return { ext, content };
     });
 
@@ -1037,6 +1069,7 @@ export class ReadOperations {
     shouldCache: boolean | (() => boolean),
     expectedMissing = false,
     branch = "main",
+    signal?: AbortSignal,
   ): Promise<string> {
     logger.debug("API_FETCH_START - fetching draft from API", {
       path: normalizedPath,
@@ -1046,7 +1079,9 @@ export class ReadOperations {
 
     const content = await this.client.getFileContent(
       apiPath,
-      expectedMissing ? { expectedMissing: true } : undefined,
+      expectedMissing || signal
+        ? { expectedMissing: expectedMissing || undefined, signal }
+        : undefined,
       { type: "branch", name: branch ?? "main" },
     );
 

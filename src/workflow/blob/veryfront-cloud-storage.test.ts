@@ -6,6 +6,11 @@ import { runWithRequestContext } from "#veryfront/platform/adapters/fs/veryfront
 import { runWithVeryfrontCloudContext } from "#veryfront/provider/veryfront-cloud/context.ts";
 import { VeryfrontCloudBlobStorage } from "./veryfront-cloud-storage.ts";
 import {
+  __resetOperatorVeryfrontApiOriginsForTests,
+  __runWithOutboundFetchTransportForTests,
+  trustOperatorConfiguredVeryfrontApiOrigins,
+} from "#veryfront/security/http/outbound-fetch.ts";
+import {
   deleteEnv,
   deleteHostSecret,
   setEnv,
@@ -231,12 +236,42 @@ describe("VeryfrontCloudBlobStorage", () => {
 
   afterEach(() => {
     restoreMockFetch();
+    __resetOperatorVeryfrontApiOriginsForTests();
     deleteHostSecret("VERYFRONT_API_TOKEN");
     try {
       deleteEnv("VERYFRONT_API_BASE_URL");
     } catch {
       // expected: env may already be unset
     }
+  });
+
+  it("allows only the operator-selected private API for blob control requests", async () => {
+    const apiBaseUrl = "https://api.staging.example";
+    setEnv("VERYFRONT_API_BASE_URL", apiBaseUrl);
+    const storage = new VeryfrontCloudBlobStorage({
+      apiBaseUrl,
+      apiToken: "test-token",
+      projectSlug: "test-project",
+    });
+    const paths: string[] = [];
+    const fetchStub: typeof fetch = (input) => {
+      paths.push(new URL(String(input)).pathname);
+      return Promise.resolve(Response.json({ data: [] }));
+    };
+    const transport = {
+      fetch: fetchStub,
+      pinnedFetch: (url: URL, _addresses: readonly string[], init: RequestInit) =>
+        fetchStub(url, init),
+      resolveHost: () => Promise.resolve(["10.255.128.3"]),
+    };
+    __resetOperatorVeryfrontApiOriginsForTests();
+    await __runWithOutboundFetchTransportForTests(transport, async () => {
+      await assertRejects(() => storage.list(), Error);
+      assertEquals(paths, []);
+      trustOperatorConfiguredVeryfrontApiOrigins();
+      assertEquals(await storage.list(), []);
+      assertEquals(paths.length, 1);
+    });
   });
 
   it("does not expose a stored token to replaced Headers intrinsics", async () => {

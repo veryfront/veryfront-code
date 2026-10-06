@@ -280,6 +280,112 @@ describe("VeryfrontFSAdapter", () => {
 
       assertEquals(poisonedCalls, 0);
     });
+
+    it("does not invoke mutable client initialize accessors while initializing", async () => {
+      const adapter = createAdapter({
+        veryfront: {
+          apiBaseUrl: "https://api.example.com",
+          apiToken: "test-token",
+          projectSlug: "test-project",
+          projectId: "test-project-id",
+          contentSource: { type: "branch", branch: "main" },
+          cache: { enabled: false },
+        },
+      });
+      const internals = adapter as unknown as {
+        client: {
+          getProjectSlug(): string;
+          getProjectId(): string;
+          getCachedProject(): { provider: string; layout: string };
+          listAllFiles(): Promise<Array<{ path: string; content: string }>>;
+        };
+        wsManager: { connect(projectId: string): void };
+      };
+      const originalClientPrototype = Object.getPrototypeOf(internals.client) as object;
+      const poisonedClientPrototype = Object.create(originalClientPrototype) as object;
+      let accessorCalls = 0;
+      internals.client.getProjectSlug = () => "test-project";
+      internals.client.getProjectId = () => "test-project-id";
+      internals.client.getCachedProject = () => ({ provider: "veryfront", layout: "default" });
+      internals.client.listAllFiles = () => Promise.resolve([]);
+      internals.wsManager.connect = () => {};
+
+      Object.defineProperty(poisonedClientPrototype, "initialize", {
+        configurable: true,
+        get() {
+          accessorCalls++;
+          throw new Error("project initialize getter must not run");
+        },
+      });
+      Object.defineProperty(poisonedClientPrototype, "initializeForHost", {
+        configurable: true,
+        get() {
+          accessorCalls++;
+          throw new Error("project initializeForHost getter must not run");
+        },
+      });
+      Object.setPrototypeOf(internals.client, poisonedClientPrototype);
+
+      try {
+        await adapter.initialize();
+      } finally {
+        Object.setPrototypeOf(internals.client, originalClientPrototype);
+        adapter.dispose();
+      }
+
+      assertEquals(accessorCalls, 0);
+    });
+
+    it("keeps the owner initialization flight for a third caller after one peer aborts", async () => {
+      const adapter = createAdapter({
+        veryfront: {
+          apiBaseUrl: "https://api.example.com",
+          apiToken: "test-token",
+          projectSlug: "test-project",
+          projectId: "test-project-id",
+          contentSource: { type: "branch", branch: "main" },
+          cache: { enabled: false },
+        },
+      });
+      const clientInitialize = Promise.withResolvers<void>();
+      const internals = adapter as unknown as {
+        client: {
+          initialize(signal?: AbortSignal): Promise<void>;
+          getProjectSlug(): string;
+          getProjectId(): string;
+          getCachedProject(): { provider: string; layout: string };
+          listAllFiles(): Promise<Array<{ path: string; content: string }>>;
+        };
+        wsManager: { connect(projectId: string): void };
+      };
+      let initializeCalls = 0;
+      internals.client.initialize = (_signal?: AbortSignal) => {
+        initializeCalls++;
+        return clientInitialize.promise;
+      };
+      internals.client.getProjectSlug = () => "test-project";
+      internals.client.getProjectId = () => "test-project-id";
+      internals.client.getCachedProject = () => ({ provider: "veryfront", layout: "default" });
+      internals.client.listAllFiles = () => Promise.resolve([]);
+      internals.wsManager.connect = () => {};
+
+      const controller = new AbortController();
+      const first = adapter.initialize(controller.signal);
+      const firstRejected = assertRejects(() => first, Error);
+      const second = adapter.initialize();
+      controller.abort();
+      await firstRejected;
+
+      const third = adapter.initialize();
+      assertEquals(
+        initializeCalls,
+        1,
+        "a later caller must join the still-running adapter initialization flight",
+      );
+      clientInitialize.resolve();
+      await Promise.all([second, third]);
+      assertEquals(initializeCalls, 1);
+    });
   });
 
   describe("bounded byte reads", () => {

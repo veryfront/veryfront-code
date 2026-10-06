@@ -322,6 +322,49 @@ describe("ReadOperations", () => {
   });
 
   describe("readTextFile", () => {
+    it("does not let a caller abort signal cancel an unrelated shared in-flight read", async () => {
+      const normalStarted = Promise.withResolvers<void>();
+      const signalStarted = Promise.withResolvers<void>();
+      const releaseNormal = Promise.withResolvers<void>();
+      const controller = new AbortController();
+      const signals: Array<AbortSignal | undefined> = [];
+      let calls = 0;
+      const client = createMockClient({
+        getFileContent: async (path: string, options?: { signal?: AbortSignal }) => {
+          assertEquals(path, "pages/index.tsx");
+          const callIndex = calls;
+          calls += 1;
+          signals.push(options?.signal);
+          if (callIndex === 0) {
+            normalStarted.resolve();
+            await releaseNormal.promise;
+            return "normal content";
+          }
+          signalStarted.resolve();
+          return await new Promise<string>((_resolve, reject) => {
+            options?.signal?.addEventListener(
+              "abort",
+              () => reject(new Error("caller cancelled")),
+              { once: true },
+            );
+          });
+        },
+      });
+      const readOps = createReadyReadOps(client, false, createBranchContext());
+
+      const normal = readOps.readTextFile("pages/index.tsx");
+      await normalStarted.promise;
+      const signaled = readOps.readTextFile("pages/index.tsx", { signal: controller.signal });
+      await signalStarted.promise;
+
+      controller.abort();
+      await assertRejects(() => signaled, Error, "caller cancelled");
+      releaseNormal.resolve();
+      assertEquals(await normal, "normal content");
+      assertEquals(calls, 2);
+      assertEquals(signals, [undefined, controller.signal]);
+    });
+
     it("should fetch draft content for branch context", async () => {
       let fetchedPath: string | undefined;
       const client = createMockClient({

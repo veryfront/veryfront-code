@@ -16,6 +16,15 @@ export const MAX_PORT_ATTEMPTS = 100;
 export const DEFAULT_API_URL = "https://api.veryfront.com";
 export const DEFAULT_LOCAL_API_URL = "https://api.veryfront.com";
 
+/** Select the matching hosted web environment for an operator-selected API. */
+export function getCloudDomain(apiUrl: string = DEFAULT_API_URL): string {
+  try {
+    return new URL(apiUrl).hostname === "api.veryfront.org" ? "veryfront.org" : "veryfront.com";
+  } catch {
+    return "veryfront.com";
+  }
+}
+
 export function trimTrailingSlashes(value: string): string {
   let end = value.length;
   while (end > 0 && value[end - 1] === "/") end--;

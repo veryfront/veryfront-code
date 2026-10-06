@@ -98,6 +98,7 @@ export async function resolveContentContext(
   client: ContextResolverClient,
   contentSource: ContentSource,
   projectSlug: string,
+  signal?: AbortSignal,
 ): Promise<ResolvedContentContext> {
   switch (contentSource.type) {
     case "branch":
@@ -108,7 +109,7 @@ export async function resolveContentContext(
       };
 
     case "environment": {
-      const envResult = await client.listEnvironmentFiles(contentSource.name);
+      const envResult = await client.listEnvironmentFiles(contentSource.name, { signal });
       return {
         sourceType: "environment",
         projectSlug,
@@ -158,16 +159,17 @@ export async function fetchSourceListingForContext(
   client: FileListClient,
   context: ResolvedContentContext,
   sourceKey: string,
+  signal?: AbortSignal,
 ): Promise<{ files: Array<{ path: string; content?: string }>; contentReused: boolean }> {
   if (context.sourceType !== "branch") {
-    return { files: await fetchFileListForContext(client, context), contentReused: false };
+    return { files: await fetchFileListForContext(client, context, signal), contentReused: false };
   }
 
   const branch = { type: "branch", name: context.branch ?? "main" } as const;
   if (hasVerifiedSourceContents(sourceKey)) {
     let metadata: Awaited<ReturnType<FileListClient["listAllFiles"]>> | undefined;
     try {
-      metadata = await client.listAllFiles({ withoutContent: true }, branch);
+      metadata = await client.listAllFiles({ withoutContent: true, signal }, branch);
     } catch (error) {
       // Only a rejected field selection is specific to this query. Transport,
       // authorization and server failures would fail the complete listing
@@ -185,7 +187,7 @@ export async function fetchSourceListingForContext(
     if (assembled) return { files: assembled, contentReused: true };
   }
 
-  const files = await client.listAllFiles({}, branch);
+  const files = await client.listAllFiles({ signal }, branch);
   await admitVerifiedSourceContents(sourceKey, files);
   return { files, contentReused: false };
 }
@@ -193,15 +195,16 @@ export async function fetchSourceListingForContext(
 export function fetchFileListForContext(
   client: FileListClient,
   context: ResolvedContentContext,
+  signal?: AbortSignal,
 ): Promise<Array<{ path: string; content?: string }>> {
   switch (context.sourceType) {
     case "branch":
-      return client.listAllFiles({}, { type: "branch", name: context.branch ?? "main" });
+      return client.listAllFiles({ signal }, { type: "branch", name: context.branch ?? "main" });
     case "environment":
       return context.releaseId
-        ? client.listPublishedFiles(undefined, context.releaseId)
-        : client.listAllEnvironmentFiles(context.environmentName!);
+        ? client.listPublishedFiles(undefined, context.releaseId, undefined, signal)
+        : client.listAllEnvironmentFiles(context.environmentName!, { signal });
     case "release":
-      return client.listPublishedFiles(undefined, context.releaseId);
+      return client.listPublishedFiles(undefined, context.releaseId, undefined, signal);
   }
 }
