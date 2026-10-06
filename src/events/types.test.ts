@@ -1,6 +1,8 @@
 import type {
   CloudEventsExtensionAttribute,
   ErrorInfo,
+  EventDataschema,
+  EventEnvelope,
   EventPayloadByType,
   EventRecord,
   EventWithExtensions,
@@ -81,6 +83,36 @@ const runStartedWithoutExtensions: EventWithExtensions<"com.veryfront.run.starte
   data: {},
 };
 void runStartedWithoutExtensions;
+
+const runStartedEnvelope: EventEnvelope<
+  "com.veryfront.run.started",
+  EventDataschema<"com.veryfront.run.started">
+> = runStartedWithoutExtensions;
+void runStartedEnvelope;
+
+const runStartedEnvelopeWithExtensions: EventEnvelope<
+  "com.veryfront.run.started",
+  EventDataschema<"com.veryfront.run.started">,
+  { customtag: boolean }
+> = eventWithExtension;
+void runStartedEnvelopeWithExtensions;
+
+const runStartedEnvelopeWithUnknownSchema: EventEnvelope<
+  "com.veryfront.run.started",
+  // @ts-expect-error an envelope schema must match its event type
+  "urn:example:wrong-schema"
+> = { ...runStartedWithoutExtensions, dataschema: "urn:example:wrong-schema" };
+void runStartedEnvelopeWithUnknownSchema;
+
+const runStartedEnvelopeWithOtherEventSchema: EventEnvelope<
+  "com.veryfront.run.started",
+  // @ts-expect-error another catalog event's schema cannot describe run.started
+  EventDataschema<"com.veryfront.run.succeeded">
+> = {
+  ...runStartedWithoutExtensions,
+  dataschema: "urn:veryfront:run-events:target:payloads:1#/$defs/RunSucceeded",
+};
+void runStartedEnvelopeWithOtherEventSchema;
 
 const eventWithObjectExtension: EventWithExtensions<
   "com.veryfront.run.started",

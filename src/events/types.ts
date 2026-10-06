@@ -133,7 +133,7 @@ export type CloudEventsExtensionAttribute = string | boolean | number;
 
 interface EventEnvelopeCore<
   TType extends EventType,
-  TDataschema extends string,
+  TDataschema extends EventDataschema<TType>,
 > {
   readonly specversion: "1.0";
   readonly id: string;
@@ -162,7 +162,7 @@ export type EventExtensionAttributes<
 
 export type EventEnvelope<
   TType extends EventType,
-  TDataschema extends string,
+  TDataschema extends EventDataschema<TType>,
   TExtensionAttributes extends Record<string, CloudEventsExtensionAttribute> = Record<
     never,
     never
