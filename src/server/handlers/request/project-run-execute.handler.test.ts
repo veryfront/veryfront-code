@@ -8012,6 +8012,10 @@ describe("project run execution span", () => {
       await provider.forceFlush();
       return { spans: exporter.getFinishedSpans(), body: await result.response!.json() };
     } finally {
+      // InMemorySpanExporter completes export callbacks on setTimeout(0) while
+      // forceFlush() is a no-op. Let that callback settle inside this test so
+      // the parallel suite does not inherit an exporter timer.
+      await delay(0);
       _resetShimForTests();
       contextManager.disable();
       otelApi.context.disable();

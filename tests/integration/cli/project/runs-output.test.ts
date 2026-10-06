@@ -6,10 +6,15 @@ import { fileURLToPath } from "node:url";
 const root = new URL("../../../../", import.meta.url);
 const fixture = new URL("fixtures/runs-cli.ts", import.meta.url);
 
-async function cli(scenario: string, config?: unknown) {
+async function cli(
+  scenario: string,
+  config?: unknown,
+  terminalToken: string | null = "terminal-test-token\n",
+) {
   const dir = await makeTempDir({ prefix: "vf-runs-cli-" });
   try {
     await Deno.writeTextFile(`${dir}/credential`, "scoped-test-token\n");
+    if (terminalToken !== null) await Deno.writeTextFile(`${dir}/terminal-token`, terminalToken);
     if (scenario.startsWith("login-")) {
       await Deno.mkdir(`${dir}/config/veryfront`, { recursive: true });
       await Deno.writeTextFile(`${dir}/config/veryfront/token`, "scoped-test-token\n");
@@ -124,6 +129,27 @@ async function cli(scenario: string, config?: unknown) {
 }
 
 describe("project runs CLI output and host credentials", () => {
+  it("rejects missing, empty and multiline terminal files without exposing their contents", async () => {
+    for (const token of [null, " \n", "terminal-test-token\nsecond-secret"]) {
+      const result = await cli("terminal-finalize", undefined, token);
+      assertEquals(result.code, 2, result.stderr);
+      assertEquals(JSON.parse(result.stdout).success, false);
+      assert(!result.stdout.includes("terminal-test-token"));
+      assert(!result.stderr.includes("second-secret"));
+    }
+  });
+
+  for (const action of ["finalize", "succeed", "fail"]) {
+    it(`${action} forwards file-based terminal authority without emitting credentials`, async () => {
+      const result = await cli(`terminal-${action}`);
+      assertEquals(result.code, 0, result.stderr);
+      assertEquals(JSON.parse(result.stdout).success, true);
+      assert(!result.stdout.includes("terminal-test-token"));
+      assert(!result.stderr.includes("terminal-test-token"));
+      assert(!result.stdout.includes("scoped-test-token"));
+    });
+  }
+
   it("dispatches through the existing project handler and emits JSON with a file credential and no login", async () => {
     const result = await cli("success");
     assertEquals(result.code, 0, result.stderr);

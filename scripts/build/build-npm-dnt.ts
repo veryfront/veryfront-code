@@ -19,6 +19,7 @@ import {
 	BROWSER_SAFE_CLIENT_MODULES,
 	BROWSER_SAFE_DNT_TIMER_MODULES,
 	BROWSER_SAFE_EXPORTS,
+	BROWSER_SAFE_TRANSITIVE_MODULES,
 } from "./browser-safe-exports.mjs";
 import {
 	npmDependencyRange,
@@ -296,6 +297,26 @@ await build({
 					`${exportPath} browser-safe polyfill removal`,
 				);
 			}
+		}
+
+		for (const path of BROWSER_SAFE_TRANSITIVE_MODULES) {
+			stripPolyfillImportIfPresent(
+				`./npm/esm/${path}`,
+				`${path} browser-safe transitive polyfill removal`,
+			);
+			normalizeBrowserTimerShim(
+				`./npm/esm/${path}`,
+				`${path} browser-safe transitive dnt shim removal`,
+			);
+			const declarationPath = `./npm/esm/${path.replace(/\.js$/, ".d.ts")}`;
+			stripPolyfillImportIfPresent(
+				declarationPath,
+				`${path} browser-safe transitive declaration polyfill removal`,
+			);
+			normalizeBrowserTimerShim(
+				declarationPath,
+				`${path} browser-safe transitive declaration dnt shim removal`,
+			);
 		}
 
 		for (const path of [

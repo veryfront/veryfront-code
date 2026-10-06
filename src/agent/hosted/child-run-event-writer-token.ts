@@ -1,10 +1,24 @@
 import { AsyncLocalStorage } from "node:async_hooks";
+import { defineSchema, getJsonValueSchema } from "#veryfront/schemas/index.ts";
+import {
+  type AdmitExecutorToolCall,
+  getCurrentToolCallAdmissionReceipt,
+  getCurrentToolCallAdmissionSource,
+} from "#veryfront/runtime/tool-call-admission-dispatch.ts";
+import { getToolCallAdmissionReceiptSchema } from "#veryfront/runtime/tool-call-admission-receipt.ts";
+import { PERMISSION_DENIED } from "#veryfront/errors";
 import { MAX_ROOT_RUN_EVENT_WRITER_TOKEN_BYTES } from "../conversation/run-event-limits.ts";
 import {
   createVeryfrontApiRequestUrlResolver,
   type VeryfrontApiRequestUrlResolver,
 } from "#veryfront/platform/adapters/veryfront-api-url.ts";
 import { readResponseTextPrefix } from "#veryfront/utils/response-body.ts";
+import {
+  assertNativeRequestProcessing,
+  copyNativeHeaders,
+  createNativeRequestInit,
+  readOwnInitField,
+} from "#veryfront/platform/compat/http/native-request-init.ts";
 import {
   type ConversationRunProjection,
   type createConversationAgentRun,
@@ -34,11 +48,15 @@ type Fetch = typeof globalThis.fetch;
 // These intrinsics are captured before tenant code can mutate the shared realm.
 // Secret-bearing operations below must use only these references.
 const NativeTextEncoder = TextEncoder;
+const NativeHeaders = Headers;
+const headersSet = NativeHeaders.prototype.set;
+const headersDelete = NativeHeaders.prototype.delete;
 const NativeWeakMap = WeakMap;
 const apply = Reflect.apply;
 const arrayIsArray = Array.isArray;
 const arraySome = Array.prototype.some;
 const jsonParse = JSON.parse;
+const jsonStringify = JSON.stringify;
 const objectCreate = Object.create;
 const objectDefineProperty = Object.defineProperty;
 const objectFreeze = Object.freeze;
@@ -155,9 +173,127 @@ type VerifiedRequestWriterScope = {
 };
 
 const capabilityState = new NativeWeakMap<HostedRunEventWriterCapability, CapabilityState>();
+const admissionWriterState = new NativeWeakMap<AdmitExecutorToolCall, {
+  state: CapabilityState;
+  projectId: string;
+}>();
 const requestRunEventWriterState = new NativeWeakMap<object, VerifiedRequestWriterState>();
 const capabilityStorage = new AsyncLocalStorage<CapabilityScope>();
 const verifiedRequestWriterStorage = new AsyncLocalStorage<VerifiedRequestWriterScope>();
+
+const getAdmissionMcpRequestSchema = defineSchema((v) =>
+  v.object({
+    jsonrpc: v.literal("2.0"),
+    id: v.string().min(1),
+    method: v.literal("tools/call"),
+    params: v.object({
+      name: v.string().min(1),
+      arguments: v.record(v.string(), getJsonValueSchema()),
+      _meta: v.record(v.string(), getJsonValueSchema()).optional(),
+    }).strict(),
+  }).strict()
+);
+
+/** Bind only an opaque exact-run host capability; no caller-provided transport is admitted. */
+export function bindHostedToolCallAdmissionWriter(
+  callback: AdmitExecutorToolCall,
+  input: {
+    capability: HostedRunEventWriterCapability;
+    expectedRunId: string;
+    projectId: string;
+  },
+): void {
+  const state = getWeakMapValue(capabilityState, input.capability);
+  if (
+    !state || state.runId !== input.expectedRunId || !isRunUuid(state.canonicalRunId) ||
+    !isRunUuid(input.projectId) || getWeakMapValue(admissionWriterState, callback)
+  ) {
+    throw new TypeError("Tool-call admission requires an exact hosted writer capability");
+  }
+  setWeakMapValue(admissionWriterState, callback, { state, projectId: input.projectId });
+}
+
+/**
+ * Dispatch proof only to the exact owning MCP endpoint with captured host transport.
+ * Neither credentials nor credential-bearing headers leave this module.
+ */
+export function getHostedToolCallAdmissionRequestFetch(endpoint: string): Fetch | undefined {
+  const source = getCurrentToolCallAdmissionSource();
+  const currentReceipt = getCurrentToolCallAdmissionReceipt();
+  const writer = source && getWeakMapValue(admissionWriterState, source);
+  if (!writer || !currentReceipt) return undefined;
+  const receipt = getToolCallAdmissionReceiptSchema().parse(currentReceipt);
+  const { state, projectId } = writer;
+  if (
+    apply(stringToLowerCase, receipt.runId, []) !==
+      apply(stringToLowerCase, state.canonicalRunId!, []) ||
+    apply(stringToLowerCase, receipt.projectId, []) !== apply(stringToLowerCase, projectId, [])
+  ) {
+    throw new TypeError("Tool-call admission does not match its hosted writer");
+  }
+  let resolvedEndpoint: string;
+  try {
+    resolvedEndpoint = state.resolveApiUrl(endpoint);
+  } catch {
+    return undefined;
+  }
+  if (
+    resolvedEndpoint !== state.resolveApiUrl("/mcp") &&
+    resolvedEndpoint !== state.resolveApiUrl(`/projects/${projectId}/mcp`)
+  ) {
+    throw PERMISSION_DENIED.create({
+      detail: "Target tool-call admission requires the exact owning MCP endpoint",
+    });
+  }
+
+  return async (target, init) => {
+    const method = readOwnInitField(init, "method");
+    const requestBody = readOwnInitField(init, "body");
+    if (
+      target !== resolvedEndpoint || method !== "POST" || typeof requestBody !== "string" ||
+      getCurrentToolCallAdmissionSource() !== source ||
+      getCurrentToolCallAdmissionReceipt() !== currentReceipt
+    ) {
+      throw new TypeError("Tool-call admission dispatch scope is no longer current");
+    }
+    const signal = readOwnInitField(init, "signal");
+    signal?.throwIfAborted();
+    const request = getAdmissionMcpRequestSchema().parse(
+      apply(jsonParse, undefined, [requestBody]),
+    );
+    const body = apply(jsonStringify, undefined, [{
+      ...request,
+      params: {
+        ...request.params,
+        _meta: {
+          ...request.params._meta,
+          run_id: state.runId,
+          tool_call_admission: {
+            occurrence_id: receipt.occurrenceId,
+            admission_event_id: receipt.admissionEventId,
+            start_event_id: receipt.startEventId,
+            tool_call_id: receipt.toolCallId,
+            public_tool_call_id: receipt.publicToolCallId,
+            run_id: receipt.runId,
+            project_id: receipt.projectId,
+          },
+        },
+      },
+    }]);
+    const headers = copyNativeHeaders(readOwnInitField(init, "headers"));
+    apply(headersDelete, headers, ["X-Veryfront-Run-Event-Writer-Token"]);
+    apply(headersSet, headers, ["X-Veryfront-Run-Event-Writer-Token", state.runEventAppendToken]);
+    const requestInit = createNativeRequestInit(undefined, {
+      method: "POST",
+      headers,
+      body,
+      signal,
+      redirect: "error",
+    });
+    assertNativeRequestProcessing();
+    return await state.fetch(resolvedEndpoint, requestInit);
+  };
+}
 
 function isNoStoreResponse(response: Response): boolean {
   const value = response.headers.get("Cache-Control");

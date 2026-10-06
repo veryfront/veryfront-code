@@ -1,12 +1,13 @@
 ---
 title: "Runs"
-description: "Run project-scoped task, workflow, and eval definitions through the Veryfront platform."
+description: "Run agent, task, workflow, and eval definitions through the Veryfront platform."
 order: 31
 ---
 
-Veryfront runs are durable, project-scoped executions. Tasks, workflows, and
-evals are definitions. A run is what executes one of those definitions.
+Veryfront runs are durable executions of agents, tasks, and workflows. An eval
+runs through the built-in eval task.
 
+- An **agent run** executes an `agent:<agent-id>` target.
 - A **task run** executes a `task:<task-id>` target.
 - A **workflow run** executes a `workflow:<workflow-id>` target.
 - An **eval run** executes the built-in `task:eval` target with its
@@ -204,7 +205,11 @@ which owns the origin, credentials, retries, body limits and telemetry. Set
 hosted API switches to the target contract, set `baseUrl` to an origin that
 serves it. The legacy client at
 `veryfront/runs` uses the canonical wire contract and adapts the grouped Run
-resource for existing framework callers. Its `run_id` is the canonical UUID.
+resource for existing framework callers. Creation returns either this full
+resource or a compact receipt with only `run_id` and `status`. Both variants
+use `run_id` as the canonical UUID. Narrow with `"output" in accepted.run`
+before reading full-resource fields, or call `runs.get(accepted.run.run_id)`
+to read the current run.
 Caller-selected aliases and workflow `startMode` are rejected; retries use
 `Idempotency-Key`. Use the target SDK for the complete grouped resource.
 
@@ -288,7 +293,7 @@ describe the run.
 
 ## Runs target CLI reference
 
-Use `veryfront project runs <command>` with an API that serves the Runs 0.8.2
+Use `veryfront project runs <command>` with an API that serves the Runs 0.8.7
 contract. The CLI calls the typed Runs SDK. Target deployment and live parity
 are tracked separately from the fixture tests for these commands.
 
@@ -328,6 +333,8 @@ credential. Select `api-key` only when that credential is a project API key.
 | `cancel-input`          | `cancelInputRequest`            | `--input-request-id`                             |
 | `pause`                 | `pauseRun`                      | `--run-id`                                       |
 | `finalize`              | `finalizeRun`                   | `--run-id`                                       |
+| `succeed`               | `succeedRun`                    | `--run-id`                                       |
+| `fail`                  | `failRun`                       | `--run-id`                                       |
 | `heartbeat`             | `createRunHeartbeat`            | `--run-id`                                       |
 | `event-token`           | `createRunEventToken`           | `--run-id`                                       |
 | `children`              | `listRunChildRuns`              | `--run-id`                                       |
@@ -336,9 +343,10 @@ credential. Select `api-key` only when that credential is a project API key.
 Supply request bodies with `--body '<JSON>'`. Supply filters and paging arguments
 with `--query '<JSON>'`, preserving the contract's snake_case keys and JSON types.
 Use `--idempotency-key` for idempotent mutations and `--if-match` for `update`.
-`create`, `resume`, `update`, `create-input`, `respond`, `finalize`, and `heartbeat`
-require `--body`. `create`, `cancel`, `resume`, `create-input`, `respond`,
-`cancel-input`, `pause`, and `finalize` require `--idempotency-key`. `update`
+`create`, `resume`, `update`, `create-input`, `respond`, `finalize`, `succeed`,
+`fail`, and `heartbeat` require `--body`. `create`, `cancel`, `resume`,
+`create-input`, `respond`, `cancel-input`, `pause`, `finalize`, `succeed`, and
+`fail` require `--idempotency-key`. `update`
 requires `--if-match`. The table lists route flags only.
 The service validates the shared contract. The CLI adds no lifecycle policy.
 
@@ -360,8 +368,11 @@ veryfront project runs create --idempotency-key <REQUEST_KEY> --json \
   --body '{"project_id":"<PROJECT_ID>","source":{"type":"schedule","id":"<SCHEDULE_ID>"}}'
 veryfront project runs stream --run-id <RUN_ID> --last-event-id <EVENT_ID> --json
 veryfront project runs finalize --run-id <RUN_ID> --idempotency-key <REQUEST_KEY> \
-  --credential-file <EXECUTION_TOKEN_FILE> --json \
-  --body '{"status":"completed","output":null}'
+  --json --body '{"status":"completed","output":null}'
+veryfront project runs succeed --run-id <RUN_ID> --idempotency-key <REQUEST_KEY> \
+  --json --body '{"output":null}'
+veryfront project runs fail --run-id <RUN_ID> --idempotency-key <REQUEST_KEY> \
+  --json --body '{"error":{"code":"TASK_FAILED","message":"Task failed"}}'
 ```
 
 Use `--ndjson` on a paginated list command to receive items as they arrive:
@@ -397,10 +408,23 @@ code 1. JSON errors retain the server's Problem code. Local syntax errors use
 the CLI's normal usage-error envelope.
 
 The target CLI includes children, individual events, event types, all input
-request actions, runtime finalization, heartbeats, and event-writer credentials.
-Use `finalize` for completion with output or failure. Remote direct and saved
+request actions, finalization, heartbeats, and event-writer credentials.
+Use `finalize` to select completion with output or failure, `succeed` with
+`{"output":<JSON>}`, or `fail` with `{"error":{"code":"<CODE>","message":"<MESSAGE>"}}`.
+Supply explicit `null` when there is no output.
+
+For these terminal actions, your user token or API key requires project run write
+permission and editor access to any bound conversation. Execution credentials
+require matching current-run terminal authority; an unrelated or stale execution
+credential cannot finalize the run. Supply that authority through
+`--terminal-token-file <TERMINAL_TOKEN_FILE>` when you use an execution credential.
+The CLI reads the file without printing its token. A terminal token is not required for ordinary
+user or API-key requests. The API enforces the same rules for agent, workflow and
+task runs.
+
+Remote direct and saved
 schedule creation both use `create`. Existing local `task`, `workflow`, `eval`,
 and `schedule` execution commands retain their local behavior. The existing
 `schedule run --remote` legacy source-name resolver stays until the coordinated
 consumer cutover; use the target `create` invocation with a saved schedule UUID
-for the 0.8.2 contract. These tests do not prove deployed parity.
+for the 0.8.7 contract. These tests do not prove deployed parity.

@@ -1,3 +1,4 @@
+import { isObservedToolResultStart } from "#veryfront/runtime/tool-call-occurrence-carrier.ts";
 import { defineSchema, lazySchema } from "#veryfront/schemas/index.ts";
 import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
 import { type ChatStreamEvent } from "#veryfront/chat/protocol.ts";
@@ -5,6 +6,7 @@ import { buildNativeRunEventFrame, nativeRunEventTypes } from "../ag-ui/native-r
 import type { AgentRunEventTimingOptions } from "../../runtime/model-call-context.ts";
 import { normalizeConversationRunEvents } from "./run-event-normalization.ts";
 import { isToolResultErrorOutput } from "#veryfront/tool/result.ts";
+import type { PrivateRuntimeObservation } from "#veryfront/runtime/runtime-observation-carrier.ts";
 import { getStepIdentity } from "../streaming/step-identity.ts";
 
 /** Shared conversation run event types value. */
@@ -142,6 +144,7 @@ export class ConversationRunEventEncoder {
   private textContentIndex = 0;
   private activeStepName: string | null = null;
   private activeStepId: string | null = null;
+  private readonly observedStepNames = new Map<string, string>();
   private stepCount = 0;
   private readonly nowMs?: () => number;
   private readonly startedMs?: number;
@@ -175,6 +178,27 @@ export class ConversationRunEventEncoder {
     this.activeStepName = `step-${this.stepCount}`;
     this.activeStepId = getStepIdentity(chunk) ?? crypto.randomUUID();
     return { stepName: this.activeStepName, stepId: this.activeStepId };
+  }
+
+  private startObservedStep(stepId: string): { stepName: string; stepId: string } {
+    this.stepCount += 1;
+    this.activeStepName = `step-${this.stepCount}`;
+    this.activeStepId = stepId;
+    this.observedStepNames.set(stepId, this.activeStepName);
+    return { stepName: this.activeStepName, stepId };
+  }
+
+  private finishObservedStep(stepId: string): { stepName: string; stepId: string } {
+    const stepName = this.observedStepNames.get(stepId) ??
+      (this.activeStepId === stepId && this.activeStepName
+        ? this.activeStepName
+        : `step-${Math.max(this.stepCount, 1)}`);
+    this.observedStepNames.delete(stepId);
+    if (this.activeStepId === stepId) {
+      this.activeStepName = null;
+      this.activeStepId = null;
+    }
+    return { stepName, stepId };
   }
 
   private finishStep(): { stepName: string; stepId?: string } {
@@ -231,6 +255,13 @@ export class ConversationRunEventEncoder {
 
   encode(chunk: ChatStreamEvent): ConversationRunEvent[] {
     return this.stampElapsed(this.encodeChunk(chunk));
+  }
+
+  encodeObserved(
+    chunk: ChatStreamEvent,
+    observation: PrivateRuntimeObservation,
+  ): ConversationRunEvent[] {
+    return this.stampElapsed(this.encodeObservedChunk(chunk, observation));
   }
 
   // Stamped on the way out rather than in each case arm, so every emitted record
@@ -322,6 +353,7 @@ export class ConversationRunEventEncoder {
           toolCallName: chunk.toolName,
           ...(this.activeMessageId ? { parentMessageId: this.activeMessageId } : {}),
           ...providerExecutionMarker(chunk),
+          ...(isObservedToolResultStart(chunk) ? { startObservedFromResult: true } : {}),
         }];
 
       case "tool-input-delta":
@@ -477,6 +509,51 @@ export class ConversationRunEventEncoder {
         return chunk.type.startsWith("data-")
           ? encodeCustomDataEvent(chunk, this.activeMessageId)
           : [];
+    }
+  }
+
+  private encodeObservedChunk(
+    chunk: ChatStreamEvent,
+    observation: PrivateRuntimeObservation,
+  ): ConversationRunEvent[] {
+    switch (observation.kind) {
+      case "execution_entry":
+        if (chunk.type !== "data-veryfront.runtime_context") {
+          throw new TypeError("Execution-entry observation must select runtime context");
+        }
+        return this.encodeChunk(chunk);
+      case "step_started":
+        if (chunk.type !== "start-step") {
+          throw new TypeError("Step-start observation must select step start");
+        }
+        return [{
+          type: conversationRunEventTypes.stepStarted,
+          ...this.startObservedStep(observation.stepId),
+        }];
+      case "step_ended":
+        if (chunk.type !== "finish-step") {
+          throw new TypeError("Step-end observation must select step finish");
+        }
+        return [{
+          type: conversationRunEventTypes.stepFinished,
+          ...this.finishObservedStep(observation.stepId),
+        }];
+      case "step_message":
+        if (
+          chunk.type !== "text-start" &&
+          chunk.type !== "text-delta" &&
+          chunk.type !== "text-end" &&
+          chunk.type !== "reasoning-start" &&
+          chunk.type !== "reasoning-delta" &&
+          chunk.type !== "reasoning-end"
+        ) {
+          throw new TypeError("Step-message observation must select text or reasoning");
+        }
+        return this.encodeChunk(chunk);
+      default: {
+        const _exhaustive: never = observation;
+        return _exhaustive;
+      }
     }
   }
 }

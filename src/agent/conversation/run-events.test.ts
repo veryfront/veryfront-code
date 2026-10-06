@@ -233,6 +233,111 @@ describe("agent/conversation-run-events", () => {
     }]);
   });
 
+  it("encodes trusted runtime observations with supplied step identity", () => {
+    const encoder = new ConversationRunEventEncoder();
+    const stepId = "11111111-1111-4111-8111-111111111111";
+    const messageSpanId = "22222222-2222-4222-8222-222222222222";
+
+    assertEquals(
+      encoder.encodeObserved(
+        { type: "start-step" },
+        { version: 1, kind: "step_started", stepId },
+      ),
+      [{ type: conversationRunEventTypes.stepStarted, stepName: "step-1", stepId }],
+    );
+    assertEquals(
+      encoder.encodeObserved(
+        { type: "text-delta", id: "outer-message", delta: "hello" },
+        { version: 1, kind: "step_message", stepId, messageSpanId },
+      ),
+      [{
+        type: conversationRunEventTypes.textMessageContent,
+        messageId: "outer-message",
+        contentId: "text:0",
+        delta: "hello",
+      }],
+    );
+    assertEquals(
+      encoder.encodeObserved(
+        { type: "finish-step" },
+        { version: 1, kind: "step_ended", stepId },
+      ),
+      [{ type: conversationRunEventTypes.stepFinished, stepName: "step-1", stepId }],
+    );
+  });
+
+  it("keeps delayed observed step ends attached to their original step names", () => {
+    const encoder = new ConversationRunEventEncoder();
+    const firstStepId = "11111111-1111-4111-8111-111111111111";
+    const secondStepId = "22222222-2222-4222-8222-222222222222";
+    const firstMessageSpanId = "33333333-3333-4333-8333-333333333333";
+    const secondMessageSpanId = "44444444-4444-4444-8444-444444444444";
+
+    assertEquals(
+      encoder.encodeObserved(
+        { type: "start-step" },
+        { version: 1, kind: "step_started", stepId: firstStepId },
+      ),
+      [{ type: conversationRunEventTypes.stepStarted, stepName: "step-1", stepId: firstStepId }],
+    );
+    assertEquals(
+      encoder.encodeObserved(
+        { type: "text-delta", id: "outer-message", delta: "first" },
+        {
+          version: 1,
+          kind: "step_message",
+          stepId: firstStepId,
+          messageSpanId: firstMessageSpanId,
+        },
+      ),
+      [{
+        type: conversationRunEventTypes.textMessageContent,
+        messageId: "outer-message",
+        contentId: "text:0",
+        delta: "first",
+      }],
+    );
+    assertEquals(
+      encoder.encodeObserved(
+        { type: "start-step" },
+        { version: 1, kind: "step_started", stepId: secondStepId },
+      ),
+      [{ type: conversationRunEventTypes.stepStarted, stepName: "step-2", stepId: secondStepId }],
+    );
+    assertEquals(
+      encoder.encodeObserved(
+        { type: "text-delta", id: "outer-message", delta: "second" },
+        {
+          version: 1,
+          kind: "step_message",
+          stepId: secondStepId,
+          messageSpanId: secondMessageSpanId,
+        },
+      ),
+      [{
+        type: conversationRunEventTypes.textMessageContent,
+        messageId: "outer-message",
+        contentId: "text:0",
+        delta: "second",
+      }],
+    );
+
+    assertEquals(
+      encoder.encodeObserved(
+        { type: "finish-step" },
+        { version: 1, kind: "step_ended", stepId: firstStepId },
+      ),
+      [{ type: conversationRunEventTypes.stepFinished, stepName: "step-1", stepId: firstStepId }],
+    );
+    assertEquals(
+      encoder.encodeObserved(
+        { type: "finish-step" },
+        { version: 1, kind: "step_ended", stepId: secondStepId },
+      ),
+      [{ type: conversationRunEventTypes.stepFinished, stepName: "step-2", stepId: secondStepId }],
+    );
+  });
+
   it("omits stepId on orphan finish events instead of inventing identity", () => {
     const encoder = new ConversationRunEventEncoder();
 

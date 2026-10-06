@@ -2,6 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertInstanceOf, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { ConversationRunChunkMirror } from "../conversation/run-chunk-mirror.ts";
+import type { AgentRunModelCallCaptureReceipt } from "#veryfront/runtime/model-call-capture-receipt.ts";
 import { ConversationRunEventEncoder } from "../conversation/run-events.ts";
 import type { ConversationRunMirrorSnapshot } from "../conversation/run-mirror.ts";
 import { generateText } from "../../runtime/runtime-bridge.ts";
@@ -42,6 +43,7 @@ function snapshot(
 function mirror(input: {
   append?: (events: unknown[]) => Promise<void>;
   flush?: () => Promise<ConversationRunMirrorSnapshot>;
+  capture?: (modelCallId: string) => AgentRunModelCallCaptureReceipt | undefined;
 } = {}) {
   const appended: unknown[][] = [];
   let disposed = false;
@@ -52,6 +54,7 @@ function mirror(input: {
       await input.append?.(events);
     },
     flush: input.flush ?? (async () => snapshot()),
+    takeModelCallCaptureReceipt: input.capture,
     getSnapshot: () => snapshot(),
     dispose: () => {
       disposed = true;
@@ -90,6 +93,102 @@ function createModelCallContextEventWithText(
 }
 
 describe("agent/hosted/durable-run-event-sink", () => {
+  it("returns the exact capture receipt after flushing and never derives it from the cursor", async () => {
+    const receipt = {
+      eventId: "9007199254740993",
+      projectId: "11111111-1111-4111-8111-111111111111",
+      runId: "22222222-2222-4222-8222-222222222222",
+      modelCallId: "33333333-3333-4333-8333-333333333333",
+    };
+    const order: string[] = [];
+    const target = mirror({
+      flush: async () => {
+        order.push("flush");
+        return snapshot({ latestEventId: 9 });
+      },
+      capture(id) {
+        order.push("receipt");
+        assertEquals(id, receipt.modelCallId);
+        return receipt;
+      },
+    });
+    const acknowledged = await createDurableRunEventSink({ mirror: target.result })({
+      type: "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED",
+      modelCallId: receipt.modelCallId,
+      messages: [],
+    });
+    assertEquals(acknowledged, receipt);
+    assertEquals(order, ["flush", "receipt"]);
+  });
+
+  it("rejects a drained mirror without a matching capture receipt", async () => {
+    for (
+      const capture of [undefined, () => ({
+        eventId: "8",
+        projectId: "11111111-1111-4111-8111-111111111111",
+        runId: "22222222-2222-4222-8222-222222222222",
+        modelCallId: "44444444-4444-4444-8444-444444444444",
+      })]
+    ) {
+      const target = mirror({ capture });
+      await assertRejects(
+        async () =>
+          await createDurableRunEventSink({ mirror: target.result })({
+            type: "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED",
+            modelCallId: "33333333-3333-4333-8333-333333333333",
+            messages: [],
+          }),
+        DurableRunEventPersistenceError,
+        "capture receipt",
+      );
+      assertEquals(target.isDisposed(), true);
+    }
+  });
+
+  it("accepts UUID case variants without altering the opaque capture occurrence", async () => {
+    const submittedId = "abcdef12-abcd-4abc-8def-abcdef123456";
+    const receipt = {
+      eventId: "Opaque-Capture-9007199254740993",
+      projectId: "11111111-1111-4111-8111-111111111111",
+      runId: "22222222-2222-4222-8222-222222222222",
+      modelCallId: submittedId.toUpperCase(),
+    };
+    const target = mirror({
+      capture(id) {
+        assertEquals(id, submittedId);
+        return receipt;
+      },
+    });
+    const acknowledged = await createDurableRunEventSink({ mirror: target.result })({
+      type: "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED",
+      modelCallId: submittedId,
+      messages: [],
+    });
+    assertEquals(acknowledged, receipt);
+  });
+
+  it("does not confer a complete capture receipt on a clamped legacy audit record", async () => {
+    let receiptReads = 0;
+    const target = mirror({
+      capture() {
+        receiptReads++;
+        throw new Error("A clamped record cannot have a capture receipt");
+      },
+    });
+    await assertRejects(
+      async () =>
+        await createDurableRunEventSink({ mirror: target.result })({
+          ...createModelCallContextEventWithText(10 * 1024 * 1024),
+          modelCallId: "33333333-3333-4333-8333-333333333333",
+        }),
+      DurableRunEventPersistenceError,
+      "truncated",
+    );
+    assertEquals(firstAppendedEvent(target.appended).modelCallId, undefined);
+    assertEquals(receiptReads, 0);
+    assertEquals(target.isDisposed(), false);
+  });
+
   it("uses one run anchor for public and private event families", async () => {
     let now = 100;
     const timing = createAgentRunEventTimingAnchor({

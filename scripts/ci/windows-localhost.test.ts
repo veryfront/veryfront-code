@@ -105,12 +105,19 @@ describe("wildcard localhost Windows contract", () => {
       "the documented E2E task must use the same working ESM path as Windows CI",
     );
 
+    const releaseGate = record(jobs["quality-gate-release"], "quality-gate-release job");
+    assert(Array.isArray(releaseGate.needs), "quality-gate-release needs must be an array");
+    assert(
+      releaseGate.needs.includes("tests-windows-localhost"),
+      "quality-gate-release must wait for Windows localhost coverage",
+    );
+
     for (const releaseJobName of ["prerelease", "release"]) {
       const releaseJob = record(jobs[releaseJobName], `${releaseJobName} job`);
       assert(Array.isArray(releaseJob.needs), `${releaseJobName} needs must be an array`);
       assert(
-        releaseJob.needs.includes("tests-windows-localhost"),
-        `${releaseJobName} must wait for Windows localhost coverage`,
+        releaseJob.needs.includes("quality-gate-release"),
+        `${releaseJobName} must wait for the release quality gate`,
       );
     }
   });

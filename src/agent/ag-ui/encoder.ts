@@ -859,7 +859,7 @@ function mapRuntimeStreamEventToAgUiEventsUnstamped(
       return [];
     }
 
-    state.sawVisibleOutput = true;
+    if (name !== "veryfront.runtime_context") state.sawVisibleOutput = true;
     const value = "data" in event ? event.data : null;
     const native = buildNativeRunEventFrame({
       name,
