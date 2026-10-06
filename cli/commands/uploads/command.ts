@@ -266,12 +266,12 @@ export async function downloadUploadToFile(
   const fs = createFileSystem();
   signal?.throwIfAborted();
   if (!client.getStream) throw new Error("API client does not support upload downloads");
+  const localPath = resolveUploadOutputPath(uploadPath, outputDir);
+  const temporaryPath = join(dirname(localPath), `.vf-download-${crypto.randomUUID()}`);
   const response = await client.getStream(
     `${buildUploadsListUrl(projectSlug)}/${encodeURIComponent(normalizeUploadPath(uploadPath))}`,
     { signal },
   );
-  const localPath = resolveUploadOutputPath(uploadPath, outputDir);
-  const temporaryPath = join(dirname(localPath), `.vf-download-${crypto.randomUUID()}`);
   let created = false;
   try {
     await fs.mkdir(dirname(localPath), { recursive: true });

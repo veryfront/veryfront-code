@@ -170,6 +170,17 @@ describe("downloadUploadToFile", () => {
       await Deno.remove(tempDir, { recursive: true });
     }
   });
+  it("validates the output path before opening the download stream", async () => {
+    let opened = false;
+    const client = createMockClient({
+      getStream: () => {
+        opened = true;
+        return Promise.resolve(new ReadableStream<Uint8Array>());
+      },
+    });
+    await assertRejects(() => downloadUploadToFile(client, "my-project", "file", "/"));
+    assertEquals(opened, false);
+  });
   it("downloads filenames near the filesystem component length limit", async () => {
     const tempDir = await Deno.makeTempDir();
     const filename = `${"a".repeat(220)}.pdf`;
