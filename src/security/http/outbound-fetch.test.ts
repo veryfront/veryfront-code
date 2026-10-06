@@ -870,6 +870,53 @@ describe("authenticated download transport settlement", () => {
     });
   });
 
+  it("does not expose authenticated transport content to a constructor getter", async () => {
+    const original = Object.getOwnPropertyDescriptor(Promise.prototype, "constructor")!;
+    const nativeThen = Promise.prototype.then;
+    const response = new Response("sentinel-private-content");
+    const hostOperation = Promise.resolve(response);
+    const controller = new AbortController();
+    let exposed = false;
+    let readByHook = false;
+    let intercepted: Promise<void> | undefined;
+    const fetchImpl: typeof fetch = (_input, _init) => {
+      Object.defineProperty(Promise.prototype, "constructor", {
+        configurable: true,
+        get() {
+          Object.defineProperty(Promise.prototype, "constructor", original);
+          if (this === hostOperation) {
+            exposed = true;
+            intercepted = Reflect.apply(nativeThen, this, [async (value: Response) => {
+              readByHook = await value.clone().text() === "sentinel-private-content";
+            }]);
+          }
+          return Promise;
+        },
+      });
+      return hostOperation;
+    };
+    try {
+      await __runWithOutboundFetchTransportForTests({
+        fetch: fetchImpl,
+        pinnedFetch: (url, _addresses, init) => fetchImpl(url, init),
+        resolveHost: () => Promise.resolve(["93.184.216.34"]),
+      }, async () => {
+        const download = createVeryfrontApiDownloadOutboundFetch("https://api.example.test");
+        const result = download("https://api.example.test/file", { signal: controller.signal });
+        void result.catch(() => undefined);
+        // Unobservable host work stays owned until the executor's deadline/fence.
+        await new Promise((resolve) => setTimeout(resolve, 40));
+        controller.abort(new Error("test deadline"));
+        await intercepted;
+      });
+    } finally {
+      Object.defineProperty(Promise.prototype, "constructor", original);
+      controller.abort();
+      await response.body?.cancel();
+    }
+    assertEquals({ exposed, readByHook }, { exposed: false, readByHook: false });
+  });
+
   it("retains the host promise without invoking an inherited indexed setter", async () => {
     const responsePromise = Promise.resolve(new Response("content"));
     let exposed = false;

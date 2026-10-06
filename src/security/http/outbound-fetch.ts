@@ -1,5 +1,5 @@
 import { primordialArraySet } from "#veryfront/platform/compat/primordials/array.ts";
-import { primordialPromiseAllSettled } from "#veryfront/platform/compat/primordials/promise.ts";
+import { allPrivatePromises, chainPrivatePromise } from "#veryfront/security/private-promise.ts";
 /**
  * Host-owned outbound HTTP boundary.
  *
@@ -451,17 +451,22 @@ function createOriginBoundFetchWithTransport(
     // Keep a Request input intact so provider SDKs do not lose its method,
     // headers, body, signal, or other request-level semantics at this boundary.
     const guardedInput: RequestInfo | URL = isRequestInput ? (input as Request) : target;
-    const operations: Promise<Response>[] = [];
+    const operations: Promise<void>[] = [];
     const track = (
       operation: Promise<Response>,
       signal?: AbortSignal | null,
     ): Promise<Response> => {
-      const settled = (async () => {
-        const response = await operation;
-        if (signal?.aborted) await response.body?.cancel().catch(() => undefined);
+      const settled = chainPrivatePromise(operation, (response) => {
+        if (signal?.aborted && response.body) {
+          return chainPrivatePromise(response.body.cancel(), () => response, () => response);
+        }
         return response;
-      })();
-      primordialArraySet(operations, operations.length, settled);
+      });
+      primordialArraySet(
+        operations,
+        operations.length,
+        chainPrivatePromise(settled, () => undefined, () => undefined),
+      );
       return settled;
     };
     const pinnedFetch = transport.pinnedFetch ??
@@ -504,7 +509,7 @@ function createOriginBoundFetchWithTransport(
     } finally {
       // Aborting the guard does not prove a non-cooperative transport has stopped.
       // Keep the download pending until every started host transport settles.
-      if (retainTransportSettlement) await primordialPromiseAllSettled(operations);
+      if (retainTransportSettlement) await allPrivatePromises(operations);
     }
   };
 }
