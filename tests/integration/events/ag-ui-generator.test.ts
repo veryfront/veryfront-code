@@ -1,9 +1,10 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { makeTempDirWithOptions } from "#veryfront/testing/deno-compat.ts";
 
 describe("AG-UI generated type output", () => {
   it("writes formatted output and checks it without rewriting stale output", async () => {
-    const directory = await Deno.makeTempDir();
+    const directory = await makeTempDirWithOptions();
     const outputPath = new URL(`file://${directory}/types.ts`);
     const scriptPath = `${directory}/generate.ts`;
     try {
