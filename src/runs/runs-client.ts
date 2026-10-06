@@ -330,7 +330,7 @@ export class VeryfrontRunsClient {
       body,
       headers: { "Idempotency-Key": input.idempotencyKey ?? crypto.randomUUID() },
     });
-    return { accepted: true, run: compatibilityRun(run) };
+    return { accepted: true, run: "id" in run ? compatibilityRun(run) : run };
   }
 
   createTaskRun(input: CreateTaskRunInput): Promise<CreateRunResponse> {
@@ -397,7 +397,8 @@ export class VeryfrontRunsClient {
           `${GENERATED_SCHEDULE_RUN_IDEMPOTENCY_PREFIX}:${crypto.randomUUID()}`,
       },
     });
-    return { run_id: run.id, run_execution_id: run.id, schedule_id: input.scheduleId };
+    const runId = "id" in run ? run.id : run.run_id;
+    return { run_id: runId, run_execution_id: runId, schedule_id: input.scheduleId };
   }
 
   async createScheduleRunFromSource(

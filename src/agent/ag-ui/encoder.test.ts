@@ -1038,6 +1038,21 @@ describe("agent/ag-ui-encoder", () => {
     );
   });
 
+  it("does not complete a bookkeeping-only runtime context stream", () => {
+    const state = createAgUiEncoderState({ nowMs: null, epochMs: null });
+    mapRuntimeStreamEventToAgUiEvents(state, {
+      type: "data-veryfront.runtime_context",
+      data: { runStartedAtUtc: "2026-10-06T08:00:21.000Z" },
+    });
+    assertEquals(finalizeAgUiEvents(state, null), [{
+      event: "RunError",
+      payload: {
+        code: "EMPTY_ASSISTANT_OUTPUT",
+        message: "Agent run produced no assistant-visible output",
+      },
+    }]);
+  });
+
   it("does not treat step lifecycle events as assistant-visible output", () => {
     const state = createAgUiEncoderState({ nowMs: null, epochMs: null });
 

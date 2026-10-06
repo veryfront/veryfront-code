@@ -38,6 +38,8 @@ export const RUNS_OPERATIONS = {
   cancelInputRequest: { method: "POST", path: "/input-requests/{input_request_id}/cancel" },
   pauseRun: { method: "POST", path: "/runs/{run_id}/pause" },
   finalizeRun: { method: "POST", path: "/runs/{run_id}/finalize" },
+  succeedRun: { method: "POST", path: "/runs/{run_id}/succeed" },
+  failRun: { method: "POST", path: "/runs/{run_id}/fail" },
   createRunHeartbeat: { method: "POST", path: "/runs/{run_id}/heartbeats" },
   createRunEventToken: { method: "POST", path: "/runs/{run_id}/event-tokens" },
   listRunChildRuns: { method: "GET", path: "/runs/{run_id}/child-runs" },

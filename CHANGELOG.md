@@ -6,6 +6,15 @@ versions are listed at
 
 ## Unreleased
 
+### Breaking: run creation can return a compact receipt
+
+`CreateRunResponse.run` is now a full `Run` or a compact `{ run_id, status }`
+receipt. The API can accept a run without returning its complete resource.
+Use `result.run.run_id` and `result.run.status` in either variant. Narrow with
+`"output" in result.run` before accessing full-run fields such as `output`,
+or use `runs.get(result.run.run_id)` to read the current resource. Do not
+assume every creation response includes those fields.
+
 ### Breaking: init project names and options are validated
 
 Project names passed to `veryfront init`, provided by its wizard, or set in its

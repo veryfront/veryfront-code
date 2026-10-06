@@ -102,7 +102,10 @@ export const getCreateRunResponseSchema = defineSchema((v) =>
   v.object({
     accepted: v.boolean(),
     duplicate: v.boolean().optional(),
-    run: getRunSchema(),
+    run: v.union([
+      getRunSchema(),
+      v.object({ run_id: v.string().min(1), status: getRunStatusSchema() }),
+    ]),
   })
 );
 
@@ -240,7 +243,11 @@ export type RunTriggerKind = InferSchema<ReturnType<typeof getRunTriggerKindSche
 export type RunExecutionError = InferSchema<ReturnType<typeof getRunExecutionErrorSchema>>;
 /** Canonical durable run. */
 export type Run = InferSchema<ReturnType<typeof getRunSchema>>;
-/** Response returned when a run is accepted. */
+/**
+ * An accepted run with either a full Run or a compact receipt containing only run_id and status.
+ * Use run_id and status in either variant. Narrow with `"output" in response.run` before
+ * reading full-run fields, or read the resource with `runs.get(response.run.run_id)`.
+ */
 export type CreateRunResponse = InferSchema<ReturnType<typeof getCreateRunResponseSchema>>;
 /** Response returned when a schedule-triggered run is accepted. */
 export type ScheduleRunCreateResponse = InferSchema<
