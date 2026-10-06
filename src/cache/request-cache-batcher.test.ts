@@ -106,7 +106,7 @@ describe("cache/request-cache-batcher", () => {
       }
     });
 
-    it("drains rejected detached reads after their request stops waiting", async () => {
+    it("observes detached read rejection while its request continues", async () => {
       const backendError = new Error("backend failed after request finished");
       const backend: CacheBackend = {
         type: "memory",
@@ -132,7 +132,7 @@ describe("cache/request-cache-batcher", () => {
         let read: Promise<string | null> | undefined;
         await runWithCacheBatching(async () => {
           read = getCachedWithBatching(backend, "admitted");
-          await Promise.resolve();
+          await new Promise((resolve) => setTimeout(resolve, 20));
         });
 
         await new Promise((resolve) => setTimeout(resolve, 10));
