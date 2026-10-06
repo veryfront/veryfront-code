@@ -13,6 +13,7 @@ import {
   type VeryfrontApiRequestUrlResolver,
 } from "#veryfront/platform/adapters/veryfront-api-url.ts";
 import { readResponseTextPrefix } from "#veryfront/utils/response-body.ts";
+import { readOwnInitField } from "#veryfront/platform/compat/http/native-request-init.ts";
 import {
   type ConversationRunProjection,
   type createConversationAgentRun,
@@ -241,15 +242,20 @@ export function getHostedToolCallAdmissionRequestFetch(endpoint: string): Fetch 
   }
 
   return async (target, init) => {
+    const method = readOwnInitField(init, "method");
+    const requestBody = readOwnInitField(init, "body");
     if (
-      target !== resolvedEndpoint || init?.method !== "POST" || typeof init.body !== "string" ||
+      target !== resolvedEndpoint || method !== "POST" || typeof requestBody !== "string" ||
       getCurrentToolCallAdmissionSource() !== source ||
       getCurrentToolCallAdmissionReceipt() !== currentReceipt
     ) {
       throw new TypeError("Tool-call admission dispatch scope is no longer current");
     }
-    init.signal?.throwIfAborted();
-    const request = getAdmissionMcpRequestSchema().parse(apply(jsonParse, undefined, [init.body]));
+    const signal = readOwnInitField(init, "signal");
+    signal?.throwIfAborted();
+    const request = getAdmissionMcpRequestSchema().parse(
+      apply(jsonParse, undefined, [requestBody]),
+    );
     const body = apply(jsonStringify, undefined, [{
       ...request,
       params: {
@@ -269,14 +275,14 @@ export function getHostedToolCallAdmissionRequestFetch(endpoint: string): Fetch 
         },
       },
     }]);
-    const headers = new NativeHeaders(init.headers);
+    const headers = new NativeHeaders(readOwnInitField(init, "headers"));
     apply(headersDelete, headers, ["X-Veryfront-Run-Event-Writer-Token"]);
     apply(headersSet, headers, ["X-Veryfront-Run-Event-Writer-Token", state.runEventAppendToken]);
     return await state.fetch(resolvedEndpoint, {
       method: "POST",
       headers,
       body,
-      signal: init.signal,
+      signal,
       redirect: "error",
     });
   };

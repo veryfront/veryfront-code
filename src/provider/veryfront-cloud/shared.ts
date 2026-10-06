@@ -17,6 +17,7 @@ import {
   assertNativeRequestProcessing,
   createNativeRequest,
   createNativeRequestInit,
+  readOwnInitField,
 } from "#veryfront/platform/compat/http/native-request-init.ts";
 import {
   getCurrentVeryfrontCloudContext,
@@ -798,9 +799,7 @@ export function createVeryfrontCloudFetch(
           request,
           headers,
           wireModelProvider,
-          init && IntrinsicReflectApply(ObjectHasOwn, undefined, [init, "body"])
-            ? init.body
-            : undefined,
+          readOwnInitField(init, "body"),
         )
         : createVeryfrontApiOriginBoundOutboundFetch(apiBaseUrl)(
           withCredentialHeaders(request, headers),
