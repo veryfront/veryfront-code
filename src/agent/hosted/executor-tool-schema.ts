@@ -117,6 +117,7 @@ export const getExecutorToolCallSchema = defineSchema((v) =>
     toolName: getExecutorToolIdSchema(),
     args: v.record(v.string(), getJsonValueSchema()),
     projectContext: getExecutorProjectCallContextSchema().optional(),
+    occurrenceId: v.string().uuid().optional(),
     ...correlationShape(v),
   }).strict()
 );

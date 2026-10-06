@@ -1,4 +1,8 @@
 import {
+  type AdmitExecutorToolCall,
+  getToolCallAdmissionOwner,
+} from "#veryfront/runtime/tool-call-admission-dispatch.ts";
+import {
   activateHostedAgentPauseCapability,
   inheritHostedAgentPauseCapability,
 } from "./manual-pause-credential.ts";
@@ -142,6 +146,7 @@ export interface ManagedExecutorStartInput {
     maxCalls: number;
     maxConcurrent: number;
     limits?: Parameters<typeof createExecutorToolBroker>[0]["limits"];
+    admitToolCall?: AdmitExecutorToolCall;
   };
   persistence: PersistenceInput;
   state: StateInput;
@@ -211,6 +216,23 @@ export function createManagedExecutorBroker(
       ? undefined
       : snapshotTrustedRuntime(input.trustedRuntime, installation, operationInput);
     const bindSessionOwnedWork = input.bindSessionOwnedWork;
+    if (
+      operationInput.tools.admitToolCall &&
+      (installation.grant.execution.kind !== "canonical" ||
+        installation.grant.execution.projectId === null || trusted)
+    ) {
+      throw new TypeError("Tool-call admissions require a project-bound remote canonical runtime");
+    }
+    if (operationInput.tools.admitToolCall) {
+      const owner = getToolCallAdmissionOwner(operationInput.tools.admitToolCall);
+      const execution = installation.grant.execution;
+      if (
+        !owner || execution.kind !== "canonical" || owner.runId !== execution.runId ||
+        owner.projectId.toLowerCase() !== execution.projectId?.toLowerCase()
+      ) {
+        throw new TypeError("Tool-call admission writer does not match its execution grant");
+      }
+    }
     if (
       installation.grant.execution.kind === "ephemeral" &&
       operationInput.model.runEventSink !== undefined
@@ -387,6 +409,7 @@ export function createManagedExecutorBroker(
       const remoteAgent = createExecutorHostedChatRuntimeAgent({
         channel: executionChannel,
         preparedRuntimeHandle: prepared.value.preparedRuntimeHandle,
+        ...(operationInput.tools.admitToolCall ? { toolCallAdmissions: true } : {}),
       });
       const agent: HostedChatRuntimeAgent = {
         async stream(streamInput) {
@@ -714,6 +737,7 @@ function snapshotOperationInput(input: ManagedExecutorStartInput): ManagedExecut
       maxCalls: input.tools.maxCalls,
       maxConcurrent: input.tools.maxConcurrent,
       limits: executorToolLimits(input.tools.limits),
+      ...(input.tools.admitToolCall ? { admitToolCall: input.tools.admitToolCall } : {}),
     },
     persistence: {
       ...(input.persistence.initialToolExposureCheckpoint

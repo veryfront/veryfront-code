@@ -17,11 +17,16 @@ import type {
   ConversationRunAppendRecoveryOutcome,
   ConversationRunEventQueueController,
   ConversationRunProjection,
+  ConversationRunToolCallAdmissionStart,
   CreateConversationAgentRunInput,
   FinalizeConversationAgentRunInput,
   TerminalConversationRunStatus,
 } from "./durable-contracts.ts";
 import type { AgentRunModelCallCaptureReceipt } from "#veryfront/runtime/model-call-capture-receipt.ts";
+import {
+  type AgentRunToolCallAdmissionReceipt,
+  getToolCallAdmissionWireReceiptSchema,
+} from "#veryfront/runtime/tool-call-admission-receipt.ts";
 import {
   AppendConversationRunEventsError,
   isCursorMismatchConversationRunAppendError,
@@ -55,7 +60,10 @@ export {
   isPermanentAuthConversationRunAppendError,
   parseAppendConversationRunEventsErrorBody,
 } from "./durable-append-errors.ts";
-import { normalizeConversationRunEvents } from "./run-event-normalization.ts";
+import {
+  normalizeConversationRunEvent,
+  normalizeConversationRunEvents,
+} from "./run-event-normalization.ts";
 import { MAX_CONVERSATION_RUN_EVENT_APPEND_REQUEST_BYTES } from "./run-event-limits.ts";
 import {
   DurableRunEventPersistenceError,
@@ -75,6 +83,7 @@ export type {
   ConversationRunProjection,
   ConversationRunQueueFlushOutcome,
   ConversationRunTargets,
+  ConversationRunToolCallAdmissionStart,
   CreateConversationAgentRunInput,
   FinalizeConversationAgentRunInput,
   TerminalConversationRunStatus,
@@ -84,6 +93,9 @@ const AGENT_RUN_API_TIMEOUT_MS = 15_000;
 type ConversationRunApiFetch = typeof globalThis.fetch;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED_EVENT_TYPE = "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED";
+const TOOL_CALL_START_EVENT_TYPE = "TOOL_CALL_START";
+const IntrinsicReflectApply = Reflect.apply;
+const StringPrototypeToLowerCase = String.prototype.toLowerCase;
 
 /**
  * Wrap a trusted transport so durable run persistence stays in the active
@@ -282,6 +294,221 @@ function validateAppendModelCallCaptureReceipts(input: {
       );
     }
   }
+}
+
+interface SubmittedToolCallAdmissionStart {
+  occurrenceId: string;
+  eventIndex: number;
+  toolCallId: string;
+}
+
+function isToolCallStartEvent(value: unknown): value is { toolCallId: string } {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return false;
+  }
+  const record = value as Record<string, unknown>;
+  return record.type === TOOL_CALL_START_EVENT_TYPE &&
+    typeof record.toolCallId === "string" &&
+    record.toolCallId.length > 0;
+}
+
+function readSubmittedToolCallAdmissionStarts(input: {
+  events: unknown[];
+  toolCallStarts?: ConversationRunToolCallAdmissionStart[];
+}): SubmittedToolCallAdmissionStart[] {
+  if (!input.toolCallStarts || input.toolCallStarts.length === 0) {
+    return [];
+  }
+
+  const seenOccurrences = new Set<string>();
+  const seenEventIndexes = new Set<number>();
+  const submitted: SubmittedToolCallAdmissionStart[] = [];
+
+  for (const start of input.toolCallStarts) {
+    if (!UUID_PATTERN.test(start.occurrenceId)) {
+      throw new DurableRunEventPersistenceError(
+        "Tool call admission sidecar occurrence_id must be a UUID",
+      );
+    }
+    if (!Number.isInteger(start.eventIndex) || start.eventIndex < 0) {
+      throw new DurableRunEventPersistenceError(
+        "Tool call admission sidecar event_index must select an event in the append",
+      );
+    }
+    if (seenEventIndexes.has(start.eventIndex)) {
+      throw new DurableRunEventPersistenceError(
+        "Tool call admission sidecar references the same event more than once",
+      );
+    }
+    seenEventIndexes.add(start.eventIndex);
+
+    const event = input.events[start.eventIndex];
+    if (!isToolCallStartEvent(event)) {
+      throw new DurableRunEventPersistenceError(
+        "Tool call admission sidecar event_index must select a TOOL_CALL_START event",
+      );
+    }
+
+    const occurrenceId = start.occurrenceId.toLowerCase();
+    if (seenOccurrences.has(occurrenceId)) {
+      throw new DurableRunEventPersistenceError(
+        "Tool call admission sidecar contains duplicate occurrence_id values",
+      );
+    }
+    seenOccurrences.add(occurrenceId);
+    submitted.push({
+      occurrenceId,
+      eventIndex: start.eventIndex,
+      toolCallId: event.toolCallId,
+    });
+  }
+
+  return submitted;
+}
+
+function toWireToolCallAdmissionStarts(
+  starts: SubmittedToolCallAdmissionStart[],
+): Array<{ occurrence_id: string; event_index: number }> {
+  return starts.map((start) => ({
+    occurrence_id: start.occurrenceId,
+    event_index: start.eventIndex,
+  }));
+}
+
+function validateAppendToolCallAdmissionReceipts(input: {
+  response: AppendConversationRunEventsResponse;
+  submittedStarts: SubmittedToolCallAdmissionStart[];
+  canonicalRunId: string;
+}): void {
+  const expectedByOccurrence = new Map<string, SubmittedToolCallAdmissionStart>();
+  for (const start of input.submittedStarts) {
+    expectedByOccurrence.set(start.occurrenceId, start);
+  }
+
+  const receipts = input.response.toolCallAdmissions ?? [];
+  if (expectedByOccurrence.size === 0) {
+    if (receipts.length > 0) {
+      throw new DurableRunEventPersistenceError(
+        "Append receipt returned tool call admissions for an append without submitted starts",
+      );
+    }
+    return;
+  }
+
+  if (input.response.toolCallAdmissions === undefined) {
+    throw new DurableRunEventPersistenceError(
+      "Append receipt is missing tool call admission acknowledgements",
+    );
+  }
+
+  if (receipts.length !== expectedByOccurrence.size) {
+    throw new DurableRunEventPersistenceError(
+      "Append receipt tool call admission acknowledgement count does not match the submitted starts",
+    );
+  }
+
+  const seenOccurrences = new Set<string>();
+  const seenDurableEventIds = new Set<string>();
+  const canonicalRunId = input.canonicalRunId.toLowerCase();
+
+  for (const receipt of receipts) {
+    const occurrenceId = receipt.occurrenceId.toLowerCase();
+    const submitted = expectedByOccurrence.get(occurrenceId);
+    if (!submitted) {
+      throw new DurableRunEventPersistenceError(
+        "Append receipt tool call admission does not match a submitted occurrence",
+      );
+    }
+    if (seenOccurrences.has(occurrenceId)) {
+      throw new DurableRunEventPersistenceError(
+        "Append receipt returned duplicate tool call admission occurrences",
+      );
+    }
+    seenOccurrences.add(occurrenceId);
+
+    if (receipt.runId.toLowerCase() !== canonicalRunId) {
+      throw new DurableRunEventPersistenceError(
+        "Append receipt tool call admission identifies a different canonical run",
+      );
+    }
+    if (receipt.toolCallId !== submitted.toolCallId) {
+      throw new DurableRunEventPersistenceError(
+        "Append receipt tool call admission does not match the submitted tool call",
+      );
+    }
+    if (receipt.admissionEventId === receipt.startEventId) {
+      throw new DurableRunEventPersistenceError(
+        "Append receipt tool call admission reuses one durable event identifier",
+      );
+    }
+    if (seenDurableEventIds.has(receipt.admissionEventId)) {
+      throw new DurableRunEventPersistenceError(
+        "Append receipt returned duplicate tool call durable event identifiers",
+      );
+    }
+    seenDurableEventIds.add(receipt.admissionEventId);
+    if (seenDurableEventIds.has(receipt.startEventId)) {
+      throw new DurableRunEventPersistenceError(
+        "Append receipt returned duplicate tool call durable event identifiers",
+      );
+    }
+    seenDurableEventIds.add(receipt.startEventId);
+  }
+}
+
+function shiftToolCallAdmissionStarts(
+  starts: ConversationRunToolCallAdmissionStart[] | undefined,
+  offset: number,
+): ConversationRunToolCallAdmissionStart[] {
+  if (!starts || starts.length === 0) {
+    return [];
+  }
+  return starts.map((start) => ({
+    occurrenceId: start.occurrenceId,
+    eventIndex: start.eventIndex + offset,
+  }));
+}
+
+function selectToolCallAdmissionStartsForRange(input: {
+  starts?: ConversationRunToolCallAdmissionStart[];
+  startIndex: number;
+  eventCount: number;
+}): ConversationRunToolCallAdmissionStart[] {
+  if (!input.starts || input.starts.length === 0) {
+    return [];
+  }
+  const endIndex = input.startIndex + input.eventCount;
+  return input.starts
+    .filter((start) => start.eventIndex >= input.startIndex && start.eventIndex < endIndex)
+    .map((start) => ({
+      occurrenceId: start.occurrenceId,
+      eventIndex: start.eventIndex - input.startIndex,
+    }));
+}
+
+function normalizeAppendEvents(input: {
+  events: unknown[];
+  hasToolCallAdmissionStarts: boolean;
+}): unknown[] {
+  if (!input.hasToolCallAdmissionStarts) {
+    return normalizeConversationRunEvents(
+      input.events as Parameters<typeof normalizeConversationRunEvents>[0],
+    );
+  }
+
+  const normalizedEvents: unknown[] = [];
+  for (const event of input.events) {
+    const normalized = normalizeConversationRunEvent(
+      event as Parameters<typeof normalizeConversationRunEvent>[0],
+    );
+    if (normalized.length !== 1) {
+      throw new DurableRunEventPersistenceError(
+        "Tool call admission sidecar requires stable event indexes after normalization",
+      );
+    }
+    normalizedEvents.push(normalized[0]);
+  }
+  return normalizedEvents;
 }
 
 /** Error shape for conversation run terminal state. */
@@ -585,6 +812,8 @@ export async function recoverConversationRunAppendExecution(input: {
   latestExternalEventSequence: number;
   remainingEvents: unknown[];
   pendingEvents: unknown[];
+  remainingToolCallStarts?: ConversationRunToolCallAdmissionStart[];
+  pendingToolCallStarts?: ConversationRunToolCallAdmissionStart[];
   cursorResyncsThisFlush: number;
   consecutiveFailures: number;
   maxCursorResyncsPerFlush: number;
@@ -598,6 +827,7 @@ export async function recoverConversationRunAppendExecution(input: {
     latestEventId: number;
     latestExternalEventSequence: number;
     pendingEvents: unknown[];
+    pendingToolCallStarts?: ConversationRunToolCallAdmissionStart[];
     consecutiveFailures: number;
   }
   | {
@@ -618,6 +848,7 @@ export async function recoverConversationRunAppendExecution(input: {
     latestEventId: number;
     latestExternalEventSequence: number;
     pendingEvents: unknown[];
+    pendingToolCallStarts?: ConversationRunToolCallAdmissionStart[];
     consecutiveFailures: number;
     errorMessage: string;
     retryCause?: "timeout";
@@ -638,12 +869,18 @@ export async function recoverConversationRunAppendExecution(input: {
     fetch: input.fetch,
   });
 
+  const pendingToolCallStarts = [
+    ...(input.remainingToolCallStarts ?? []),
+    ...shiftToolCallAdmissionStarts(input.pendingToolCallStarts, input.remainingEvents.length),
+  ];
+
   if (recovered.outcome === "resumed") {
     return {
       outcome: "resumed",
       latestEventId: recovered.latestEventId,
       latestExternalEventSequence: recovered.latestExternalEventSequence,
       pendingEvents: [...input.remainingEvents, ...input.pendingEvents],
+      ...(pendingToolCallStarts.length > 0 ? { pendingToolCallStarts } : {}),
       consecutiveFailures: 0,
     };
   }
@@ -662,6 +899,7 @@ export async function recoverConversationRunAppendExecution(input: {
     latestEventId: recovered.latestEventId,
     latestExternalEventSequence: recovered.latestExternalEventSequence,
     pendingEvents: [...input.remainingEvents, ...input.pendingEvents],
+    ...(pendingToolCallStarts.length > 0 ? { pendingToolCallStarts } : {}),
     consecutiveFailures: input.consecutiveFailures + 1,
     errorMessage: recovered.errorMessage ?? "Conversation run append failed",
     ...(recovered.retryCause ? { retryCause: recovered.retryCause } : {}),
@@ -717,7 +955,9 @@ export async function flushConversationRunEventBatches(input: {
   latestEventId: number;
   latestExternalEventSequence: number;
   events: unknown[];
+  toolCallStarts?: ConversationRunToolCallAdmissionStart[];
   pendingEvents?: unknown[];
+  pendingToolCallStarts?: ConversationRunToolCallAdmissionStart[];
   maxEventsPerBatch: number;
   maxBatchPayloadBytes?: number;
   cursorResyncsThisFlush?: number;
@@ -726,6 +966,7 @@ export async function flushConversationRunEventBatches(input: {
   abortSignal?: AbortSignal;
   onAppendRequest?: () => void;
   onModelCallCaptureReceipts?: (receipts: AgentRunModelCallCaptureReceipt[]) => void;
+  onToolCallAdmissionReceipts?: (receipts: AgentRunToolCallAdmissionReceipt[]) => void;
   /** Host-owned transport used by trusted capability-backed callers. */
   fetch?: ConversationRunApiFetch;
 }): Promise<
@@ -739,6 +980,7 @@ export async function flushConversationRunEventBatches(input: {
     latestEventId: number;
     latestExternalEventSequence: number;
     pendingEvents: unknown[];
+    pendingToolCallStarts?: ConversationRunToolCallAdmissionStart[];
     consecutiveFailures: number;
     errorMessage?: string;
     retryCause?: "timeout";
@@ -765,6 +1007,7 @@ export async function flushConversationRunEventBatches(input: {
 
   let latestEventId = input.latestEventId;
   let latestExternalEventSequence = input.latestExternalEventSequence;
+  let batchStartIndex = 0;
 
   for (let batchIndex = 0; batchIndex < batches.length; batchIndex += 1) {
     input.abortSignal?.throwIfAborted();
@@ -775,6 +1018,11 @@ export async function flushConversationRunEventBatches(input: {
     const cursorMode = batch.some(isPrivateConversationRunEvent)
       ? "durable_event_id" as const
       : "external_sequence" as const;
+    const batchToolCallStarts = selectToolCallAdmissionStartsForRange({
+      starts: input.toolCallStarts,
+      startIndex: batchStartIndex,
+      eventCount: batch.length,
+    });
     try {
       input.onAppendRequest?.();
       const response = await appendConversationRunEvents({
@@ -786,16 +1034,27 @@ export async function flushConversationRunEventBatches(input: {
         ...(cursorMode === "durable_event_id" ? { expectedPreviousEventId: latestEventId } : {}),
         expectedPreviousExternalEventSequence: latestExternalEventSequence,
         events: batch,
+        toolCallStarts: batchToolCallStarts,
         abortSignal: input.abortSignal,
         fetch: input.fetch,
       });
       if (response.modelCallCaptures && response.modelCallCaptures.length > 0) {
         input.onModelCallCaptureReceipts?.(response.modelCallCaptures);
       }
+      if (response.toolCallAdmissions && response.toolCallAdmissions.length > 0) {
+        input.onToolCallAdmissionReceipts?.(response.toolCallAdmissions);
+      }
       latestEventId = response.latestEventId;
       latestExternalEventSequence = response.latestExternalEventSequence;
+      batchStartIndex += batch.length;
     } catch (error) {
       input.abortSignal?.throwIfAborted();
+      const remainingEvents = batches.slice(batchIndex).flat();
+      const remainingToolCallStarts = selectToolCallAdmissionStartsForRange({
+        starts: input.toolCallStarts,
+        startIndex: batchStartIndex,
+        eventCount: remainingEvents.length,
+      });
       const recovered = await recoverConversationRunAppendExecution({
         error,
         authToken: input.authToken,
@@ -804,8 +1063,10 @@ export async function flushConversationRunEventBatches(input: {
         runId: input.runId,
         latestEventId,
         latestExternalEventSequence,
-        remainingEvents: batches.slice(batchIndex).flat(),
+        remainingEvents,
         pendingEvents: input.pendingEvents ?? [],
+        remainingToolCallStarts,
+        pendingToolCallStarts: input.pendingToolCallStarts,
         cursorResyncsThisFlush: input.cursorResyncsThisFlush ?? 0,
         consecutiveFailures: input.consecutiveFailures ?? 0,
         maxCursorResyncsPerFlush: input.maxCursorResyncsPerFlush,
@@ -828,6 +1089,9 @@ export async function flushConversationRunEventBatches(input: {
         latestEventId: recovered.latestEventId,
         latestExternalEventSequence: recovered.latestExternalEventSequence,
         pendingEvents: recovered.pendingEvents,
+        ...(recovered.pendingToolCallStarts && recovered.pendingToolCallStarts.length > 0
+          ? { pendingToolCallStarts: recovered.pendingToolCallStarts }
+          : {}),
         consecutiveFailures: recovered.consecutiveFailures,
         ...(recovered.outcome === "retry_scheduled"
           ? {
@@ -856,6 +1120,7 @@ export async function flushConversationRunEventQueue(input: {
   latestEventId: number;
   latestExternalEventSequence: number;
   events: unknown[];
+  toolCallStarts?: ConversationRunToolCallAdmissionStart[];
   maxEventsPerBatch: number;
   maxBatchPayloadBytes?: number;
   maxCursorResyncsPerFlush: number;
@@ -863,6 +1128,7 @@ export async function flushConversationRunEventQueue(input: {
   abortSignal?: AbortSignal;
   onAppendRequest?: () => void;
   onModelCallCaptureReceipts?: (receipts: AgentRunModelCallCaptureReceipt[]) => void;
+  onToolCallAdmissionReceipts?: (receipts: AgentRunToolCallAdmissionReceipt[]) => void;
   /** Host-owned transport used by trusted capability-backed callers. */
   fetch?: ConversationRunApiFetch;
 }): Promise<
@@ -889,6 +1155,7 @@ export async function flushConversationRunEventQueue(input: {
     latestEventId: number;
     latestExternalEventSequence: number;
     pendingEvents: unknown[];
+    pendingToolCallStarts?: ConversationRunToolCallAdmissionStart[];
     consecutiveFailures: number;
     errorMessage: string;
     retryCause?: "timeout";
@@ -897,12 +1164,15 @@ export async function flushConversationRunEventQueue(input: {
   let latestEventId = input.latestEventId;
   let latestExternalEventSequence = input.latestExternalEventSequence;
   let pendingEvents = [...input.events];
+  let pendingToolCallStarts = input.toolCallStarts ?? [];
   let cursorResyncsThisFlush = 0;
   let consecutiveFailures = input.consecutiveFailures ?? 0;
 
   while (pendingEvents.length > 0) {
     const events = pendingEvents;
+    const toolCallStarts = pendingToolCallStarts;
     pendingEvents = [];
+    pendingToolCallStarts = [];
 
     const flushed = await flushConversationRunEventBatches({
       authToken: input.authToken,
@@ -913,7 +1183,9 @@ export async function flushConversationRunEventQueue(input: {
       latestEventId,
       latestExternalEventSequence,
       events,
+      toolCallStarts,
       pendingEvents,
+      pendingToolCallStarts,
       maxEventsPerBatch: input.maxEventsPerBatch,
       maxBatchPayloadBytes: input.maxBatchPayloadBytes,
       cursorResyncsThisFlush,
@@ -922,6 +1194,7 @@ export async function flushConversationRunEventQueue(input: {
       abortSignal: input.abortSignal,
       onAppendRequest: input.onAppendRequest,
       onModelCallCaptureReceipts: input.onModelCallCaptureReceipts,
+      onToolCallAdmissionReceipts: input.onToolCallAdmissionReceipts,
       fetch: input.fetch,
     });
 
@@ -935,6 +1208,7 @@ export async function flushConversationRunEventQueue(input: {
 
     if (flushed.outcome === "resumed") {
       pendingEvents = flushed.pendingEvents;
+      pendingToolCallStarts = flushed.pendingToolCallStarts ?? [];
       consecutiveFailures = flushed.consecutiveFailures;
       cursorResyncsThisFlush += 1;
       continue;
@@ -954,6 +1228,9 @@ export async function flushConversationRunEventQueue(input: {
       latestEventId: flushed.latestEventId,
       latestExternalEventSequence: flushed.latestExternalEventSequence,
       pendingEvents: flushed.pendingEvents,
+      ...(flushed.pendingToolCallStarts && flushed.pendingToolCallStarts.length > 0
+        ? { pendingToolCallStarts: flushed.pendingToolCallStarts }
+        : {}),
       consecutiveFailures: flushed.consecutiveFailures,
       errorMessage: flushed.errorMessage ?? "Conversation run append failed",
       ...(flushed.retryCause ? { retryCause: flushed.retryCause } : {}),
@@ -985,11 +1262,13 @@ export function createConversationRunEventQueueController(input: {
   let latestEventId = input.latestEventId;
   let latestExternalEventSequence = input.latestExternalEventSequence;
   let pendingEvents: unknown[] = [];
+  let pendingToolCallStarts: ConversationRunToolCallAdmissionStart[] = [];
   let consecutiveFailures = 0;
   let disabled = false;
   let disposed = false;
   let appendRequestCount = 0;
   const modelCallCaptureReceipts = new Map<string, AgentRunModelCallCaptureReceipt>();
+  const toolCallAdmissionReceipts = new Map<string, AgentRunToolCallAdmissionReceipt>();
   let disableReason: ReturnType<
     ConversationRunEventQueueController["getSnapshot"]
   >["disableReason"];
@@ -1012,6 +1291,29 @@ export function createConversationRunEventQueueController(input: {
         );
       }
       modelCallCaptureReceipts.set(key, receipt);
+    }
+  }
+
+  function storeToolCallAdmissionReceipts(receipts: AgentRunToolCallAdmissionReceipt[]): void {
+    for (const receipt of receipts) {
+      const key = receipt.occurrenceId.toLowerCase();
+      const existing = toolCallAdmissionReceipts.get(key);
+      if (existing) {
+        if (
+          existing.admissionEventId === receipt.admissionEventId &&
+          existing.startEventId === receipt.startEventId &&
+          existing.toolCallId === receipt.toolCallId &&
+          existing.publicToolCallId === receipt.publicToolCallId &&
+          existing.projectId.toLowerCase() === receipt.projectId.toLowerCase() &&
+          existing.runId.toLowerCase() === receipt.runId.toLowerCase()
+        ) {
+          continue;
+        }
+        throw new DurableRunEventPersistenceError(
+          "Conflicting tool call admission acknowledgement for already acknowledged occurrence",
+        );
+      }
+      toolCallAdmissionReceipts.set(key, receipt);
     }
   }
 
@@ -1040,7 +1342,9 @@ export function createConversationRunEventQueueController(input: {
     }
 
     const queuedEvents = pendingEvents;
+    const queuedToolCallStarts = pendingToolCallStarts;
     pendingEvents = [];
+    pendingToolCallStarts = [];
 
     let flushed;
     try {
@@ -1053,6 +1357,7 @@ export function createConversationRunEventQueueController(input: {
         latestEventId,
         latestExternalEventSequence,
         events: queuedEvents,
+        toolCallStarts: queuedToolCallStarts,
         maxEventsPerBatch: input.maxEventsPerBatch,
         maxBatchPayloadBytes: input.maxBatchPayloadBytes,
         maxCursorResyncsPerFlush: input.maxCursorResyncsPerFlush ?? 3,
@@ -1063,10 +1368,15 @@ export function createConversationRunEventQueueController(input: {
           appendRequestCount += 1;
         },
         onModelCallCaptureReceipts: storeModelCallCaptureReceipts,
+        onToolCallAdmissionReceipts: storeToolCallAdmissionReceipts,
       });
     } catch (error) {
       if (!disposed) {
         pendingEvents = [...queuedEvents, ...pendingEvents];
+        pendingToolCallStarts = [
+          ...queuedToolCallStarts,
+          ...shiftToolCallAdmissionStarts(pendingToolCallStarts, queuedEvents.length),
+        ];
       }
       throw error;
     }
@@ -1099,6 +1409,7 @@ export function createConversationRunEventQueueController(input: {
 
     if (flushed.outcome === "stopped") {
       pendingEvents = [];
+      pendingToolCallStarts = [];
       disabled = true;
       disableReason = flushed.disableReason;
       return {
@@ -1113,6 +1424,10 @@ export function createConversationRunEventQueueController(input: {
     }
 
     pendingEvents = [...flushed.pendingEvents, ...pendingEvents];
+    pendingToolCallStarts = [
+      ...(flushed.pendingToolCallStarts ?? []),
+      ...shiftToolCallAdmissionStarts(pendingToolCallStarts, flushed.pendingEvents.length),
+    ];
     consecutiveFailures = flushed.consecutiveFailures;
     return {
       outcome: "retry_scheduled" as const,
@@ -1127,11 +1442,15 @@ export function createConversationRunEventQueueController(input: {
   }
 
   return {
-    enqueue(events) {
+    enqueue(events, options) {
       if (disposed || disabled || events.length === 0) {
         return;
       }
 
+      pendingToolCallStarts = [
+        ...pendingToolCallStarts,
+        ...shiftToolCallAdmissionStarts(options?.toolCallStarts, pendingEvents.length),
+      ];
       pendingEvents.push(...events);
     },
     takeModelCallCaptureReceipt(modelCallId) {
@@ -1139,6 +1458,14 @@ export function createConversationRunEventQueueController(input: {
       const receipt = modelCallCaptureReceipts.get(key);
       if (receipt) {
         modelCallCaptureReceipts.delete(key);
+      }
+      return receipt;
+    },
+    takeToolCallAdmissionReceipt(occurrenceId) {
+      const key = occurrenceId.toLowerCase();
+      const receipt = toolCallAdmissionReceipts.get(key);
+      if (receipt) {
+        toolCallAdmissionReceipts.delete(key);
       }
       return receipt;
     },
@@ -1175,7 +1502,9 @@ export function createConversationRunEventQueueController(input: {
       disposed = true;
       disabled = true;
       pendingEvents = [];
+      pendingToolCallStarts = [];
       modelCallCaptureReceipts.clear();
+      toolCallAdmissionReceipts.clear();
     },
   };
 }
@@ -1369,6 +1698,7 @@ export async function appendConversationRunEvents(input: {
   expectedPreviousEventId?: number;
   expectedPreviousExternalEventSequence?: number;
   events: unknown[];
+  toolCallStarts?: ConversationRunToolCallAdmissionStart[];
   abortSignal?: AbortSignal;
   /** Host-owned transport used by trusted capability-backed callers. */
   fetch?: ConversationRunApiFetch;
@@ -1384,9 +1714,25 @@ export async function appendConversationRunEvents(input: {
     );
   }
 
-  const normalizedEvents = normalizeConversationRunEvents(
-    input.events as Parameters<typeof normalizeConversationRunEvents>[0],
-  );
+  const submittedToolCallAdmissionStarts = readSubmittedToolCallAdmissionStarts({
+    events: input.events,
+    toolCallStarts: input.toolCallStarts,
+  });
+  const normalizedEvents = normalizeAppendEvents({
+    events: input.events,
+    hasToolCallAdmissionStarts: submittedToolCallAdmissionStarts.length > 0,
+  });
+  for (const start of submittedToolCallAdmissionStarts) {
+    const normalizedEvent = normalizedEvents[start.eventIndex];
+    if (
+      !isToolCallStartEvent(normalizedEvent) ||
+      normalizedEvent.toolCallId !== start.toolCallId
+    ) {
+      throw new DurableRunEventPersistenceError(
+        "Tool call admission sidecar event_index changed during normalization",
+      );
+    }
+  }
   const submittedModelCallCaptureIds = readSubmittedModelCallCaptureIds(normalizedEvents);
   requireUniqueSubmittedModelCallCaptureIds(submittedModelCallCaptureIds);
   const requiresDurableCursor = normalizedEvents.some(isPrivateConversationRunEvent);
@@ -1419,6 +1765,9 @@ export async function appendConversationRunEvents(input: {
         ? {
           expected_previous_external_event_sequence: input.expectedPreviousExternalEventSequence,
         }
+        : {}),
+      ...(submittedToolCallAdmissionStarts.length > 0
+        ? { tool_call_starts: toWireToolCallAdmissionStarts(submittedToolCallAdmissionStarts) }
         : {}),
       events: normalizedEvents,
     });
@@ -1459,7 +1808,8 @@ export async function appendConversationRunEvents(input: {
     if (typeof responseBody === "object" && responseBody !== null && "run_id" in responseBody) {
       if (
         typeof responseBody.run_id !== "string" ||
-        responseBody.run_id.toLowerCase() !== canonicalRunId.toLowerCase()
+        IntrinsicReflectApply(StringPrototypeToLowerCase, responseBody.run_id, []) !==
+          IntrinsicReflectApply(StringPrototypeToLowerCase, canonicalRunId, [])
       ) {
         throw new DurableRunEventPersistenceError(
           "Append receipt identifies a different canonical run",
@@ -1467,6 +1817,8 @@ export async function appendConversationRunEvents(input: {
       }
       const hasRawModelCallCaptures = Object.hasOwn(responseBody, "model_call_captures");
       const rawModelCallCaptures = responseBody.model_call_captures;
+      const hasRawToolCallAdmissions = Object.hasOwn(responseBody, "tool_call_admissions");
+      const rawToolCallAdmissions = responseBody.tool_call_admissions;
       responseBody = {
         latestEventId: responseBody.latest_event_id,
         latestExternalEventSequence: responseBody.latest_external_event_sequence ??
@@ -1488,6 +1840,15 @@ export async function appendConversationRunEvents(input: {
                 };
               })
               : rawModelCallCaptures,
+          }
+          : {}),
+        ...(hasRawToolCallAdmissions
+          ? {
+            toolCallAdmissions: Array.isArray(rawToolCallAdmissions)
+              ? rawToolCallAdmissions.map((receipt) =>
+                getToolCallAdmissionWireReceiptSchema().parse(receipt)
+              )
+              : rawToolCallAdmissions,
           }
           : {}),
         run: {
@@ -1512,6 +1873,11 @@ export async function appendConversationRunEvents(input: {
     validateAppendModelCallCaptureReceipts({
       response: parsed,
       submittedModelCallIds: submittedModelCallCaptureIds,
+      canonicalRunId,
+    });
+    validateAppendToolCallAdmissionReceipts({
+      response: parsed,
+      submittedStarts: submittedToolCallAdmissionStarts,
       canonicalRunId,
     });
     return parsed;

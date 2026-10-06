@@ -13,6 +13,11 @@ const projectId = "33333333-3333-4333-8333-333333333333";
 const modelCallId = "44444444-4444-4444-8444-444444444444";
 const otherModelCallId = "55555555-5555-4555-8555-555555555555";
 const exactReceiptEventId = "9007199254740993";
+const toolOccurrenceId = "66666666-6666-4666-8666-666666666666";
+const otherToolOccurrenceId = "77777777-7777-4777-8777-777777777777";
+const toolCallId = "toolu_exact_raw";
+const admissionEventId = "9007199254740994";
+const startEventId = "9007199254740995";
 
 function modelCallCaptureEvent(id = modelCallId) {
   return {
@@ -22,11 +27,38 @@ function modelCallCaptureEvent(id = modelCallId) {
   };
 }
 
+function toolCallStartEvent(id = toolCallId) {
+  return {
+    type: "TOOL_CALL_START",
+    toolCallId: id,
+    toolName: "create_file",
+  };
+}
+
 function wireReceipt(id = modelCallId, runId = canonicalRunId, eventId = exactReceiptEventId) {
   return {
     event_id: eventId,
     model_call_id: id,
     run_id: runId,
+    project_id: projectId,
+  };
+}
+
+function wireToolCallAdmission(options: {
+  occurrenceId?: string;
+  toolId?: string;
+  publicToolId?: string;
+  runId?: string;
+  admissionId?: string;
+  startId?: string;
+} = {}) {
+  return {
+    occurrence_id: options.occurrenceId ?? toolOccurrenceId,
+    admission_event_id: options.admissionId ?? admissionEventId,
+    start_event_id: options.startId ?? startEventId,
+    tool_call_id: options.toolId ?? toolCallId,
+    public_tool_call_id: options.publicToolId ?? toolCallId,
+    run_id: options.runId ?? canonicalRunId,
     project_id: projectId,
   };
 }
@@ -49,6 +81,7 @@ function appendResponse(options: {
   appendedCount?: number;
   latestEventId?: number;
   modelCallCaptures?: unknown;
+  toolCallAdmissions?: unknown;
 } = {}) {
   return {
     run_id: canonicalRunId,
@@ -57,6 +90,9 @@ function appendResponse(options: {
     appended_count: options.appendedCount ?? 1,
     ...(Object.hasOwn(options, "modelCallCaptures")
       ? { model_call_captures: options.modelCallCaptures }
+      : {}),
+    ...(Object.hasOwn(options, "toolCallAdmissions")
+      ? { tool_call_admissions: options.toolCallAdmissions }
       : {}),
   };
 }
@@ -207,6 +243,311 @@ it("accepts canonical append response run id casing variants with exact capture 
   });
 
   assertEquals(response.modelCallCaptures?.[0]?.eventId, exactReceiptEventId);
+});
+
+it("submits tool call admission sidecars and parses exact admission receipts", async () => {
+  let request: Request | undefined;
+  const response = await appendConversationRunEvents({
+    authToken: "writer",
+    apiUrl: "https://api.example.test",
+    runId: "runtime-run-id",
+    canonicalRunId,
+    conversationId,
+    events: [toolCallStartEvent()],
+    toolCallStarts: [{ occurrenceId: toolOccurrenceId.toUpperCase(), eventIndex: 0 }],
+    fetch: (_input, init) => {
+      request = new Request(_input, init);
+      return Promise.resolve(
+        Response.json(appendResponse({ toolCallAdmissions: [wireToolCallAdmission()] })),
+      );
+    },
+  });
+
+  assertEquals((await request!.json()).tool_call_starts, [{
+    occurrence_id: toolOccurrenceId,
+    event_index: 0,
+  }]);
+  assertEquals(response.toolCallAdmissions, [{
+    occurrenceId: toolOccurrenceId,
+    admissionEventId,
+    startEventId,
+    toolCallId,
+    publicToolCallId: toolCallId,
+    runId: canonicalRunId,
+    projectId,
+  }]);
+});
+
+it("accepts distinct canonical public tool call ids while preserving raw tool call matching", async () => {
+  const response = await appendConversationRunEvents({
+    authToken: "writer",
+    apiUrl: "https://api.example.test",
+    runId: "runtime-run-id",
+    canonicalRunId,
+    conversationId,
+    events: [toolCallStartEvent()],
+    toolCallStarts: [{ occurrenceId: toolOccurrenceId, eventIndex: 0 }],
+    fetch: () =>
+      Promise.resolve(
+        Response.json(
+          appendResponse({
+            toolCallAdmissions: [wireToolCallAdmission({ publicToolId: "toolu_public_canonical" })],
+          }),
+        ),
+      ),
+  });
+
+  assertEquals(response.toolCallAdmissions?.[0]?.toolCallId, toolCallId);
+  assertEquals(response.toolCallAdmissions?.[0]?.publicToolCallId, "toolu_public_canonical");
+});
+
+it("rejects missing, unknown, duplicate, and wrong tool call admission receipts", async () => {
+  const badBodies = [
+    appendResponse(),
+    appendResponse({
+      toolCallAdmissions: [wireToolCallAdmission({ occurrenceId: otherToolOccurrenceId })],
+    }),
+    appendResponse({ toolCallAdmissions: [wireToolCallAdmission(), wireToolCallAdmission()] }),
+    appendResponse({
+      toolCallAdmissions: [
+        wireToolCallAdmission({ runId: "88888888-8888-4888-8888-888888888888" }),
+      ],
+    }),
+    appendResponse({ toolCallAdmissions: [wireToolCallAdmission({ toolId: "other-tool" })] }),
+    appendResponse({
+      toolCallAdmissions: [{ ...wireToolCallAdmission(), admission_event_id: "" }],
+    }),
+    appendResponse({
+      toolCallAdmissions: [{ ...wireToolCallAdmission(), can_read_input: true }],
+    }),
+    appendResponse({ toolCallAdmissions: "malformed" }),
+  ];
+
+  for (const body of badBodies) {
+    await assertRejects(() =>
+      appendConversationRunEvents({
+        authToken: "writer",
+        apiUrl: "https://api.example.test",
+        runId: "runtime-run-id",
+        canonicalRunId,
+        conversationId,
+        events: [toolCallStartEvent()],
+        toolCallStarts: [{ occurrenceId: toolOccurrenceId, eventIndex: 0 }],
+        fetch: () => Promise.resolve(Response.json(body)),
+      })
+    );
+  }
+});
+
+it("rejects tool call admission sidecars that do not select exact tool starts", async () => {
+  for (
+    const toolCallStarts of [
+      [{ occurrenceId: toolOccurrenceId, eventIndex: 2 }],
+      [{ occurrenceId: toolOccurrenceId, eventIndex: 0 }],
+      [
+        { occurrenceId: toolOccurrenceId, eventIndex: 1 },
+        { occurrenceId: otherToolOccurrenceId, eventIndex: 1 },
+      ],
+    ]
+  ) {
+    await assertRejects(() =>
+      appendConversationRunEvents({
+        authToken: "writer",
+        apiUrl: "https://api.example.test",
+        runId: "runtime-run-id",
+        canonicalRunId,
+        conversationId,
+        events: [{ type: "STATE_SNAPSHOT", snapshot: {} }, toolCallStartEvent()],
+        toolCallStarts,
+        fetch: () =>
+          Promise.resolve(
+            Response.json(appendResponse({ toolCallAdmissions: [wireToolCallAdmission()] })),
+          ),
+      })
+    );
+  }
+});
+
+it("rejects sidecar-bearing appends when normalization would move repeated tool starts", async () => {
+  await assertRejects(() =>
+    appendConversationRunEvents({
+      authToken: "writer",
+      apiUrl: "https://api.example.test",
+      runId: "runtime-run-id",
+      canonicalRunId,
+      conversationId,
+      events: [
+        { type: "TEXT_MESSAGE_CONTENT", delta: "x".repeat(300 * 1024) },
+        toolCallStartEvent(toolCallId),
+        toolCallStartEvent(toolCallId),
+      ],
+      toolCallStarts: [{ occurrenceId: toolOccurrenceId, eventIndex: 2 }],
+      fetch: () =>
+        Promise.resolve(
+          Response.json(appendResponse({ toolCallAdmissions: [wireToolCallAdmission()] })),
+        ),
+    })
+  );
+});
+
+it("rejects tool call admission receipts for legacy appends without submitted sidecars", async () => {
+  await assertRejects(() =>
+    appendConversationRunEvents({
+      authToken: "writer",
+      apiUrl: "https://api.example.test",
+      runId: "runtime-run-id",
+      canonicalRunId,
+      conversationId,
+      events: [toolCallStartEvent()],
+      fetch: () =>
+        Promise.resolve(
+          Response.json(appendResponse({ toolCallAdmissions: [wireToolCallAdmission()] })),
+        ),
+    })
+  );
+});
+
+it("rejects duplicate tool call admission and start event identifiers", async () => {
+  for (
+    const toolCallAdmissions of [
+      [
+        wireToolCallAdmission({ occurrenceId: toolOccurrenceId, toolId: toolCallId }),
+        wireToolCallAdmission({
+          occurrenceId: otherToolOccurrenceId,
+          toolId: "toolu_other_raw",
+          publicToolId: "toolu_other_raw",
+          startId: "9007199254740996",
+        }),
+      ],
+      [
+        wireToolCallAdmission({ occurrenceId: toolOccurrenceId, toolId: toolCallId }),
+        wireToolCallAdmission({
+          occurrenceId: otherToolOccurrenceId,
+          toolId: "toolu_other_raw",
+          publicToolId: "toolu_other_raw",
+          admissionId: "9007199254740996",
+        }),
+      ],
+      [
+        wireToolCallAdmission({ occurrenceId: toolOccurrenceId, startId: admissionEventId }),
+        wireToolCallAdmission({
+          occurrenceId: otherToolOccurrenceId,
+          toolId: "toolu_other_raw",
+          publicToolId: "toolu_other_raw",
+          admissionId: "9007199254740998",
+          startId: "9007199254740999",
+        }),
+      ],
+      [
+        wireToolCallAdmission({
+          occurrenceId: toolOccurrenceId,
+          toolId: toolCallId,
+          admissionId: "9007199254740998",
+          startId: "9007199254740999",
+        }),
+        wireToolCallAdmission({
+          occurrenceId: otherToolOccurrenceId,
+          toolId: "toolu_other_raw",
+          publicToolId: "toolu_other_raw",
+          admissionId: "9007199254740999",
+          startId: "9007199254741000",
+        }),
+      ],
+    ]
+  ) {
+    await assertRejects(() =>
+      appendConversationRunEvents({
+        authToken: "writer",
+        apiUrl: "https://api.example.test",
+        runId: "runtime-run-id",
+        canonicalRunId,
+        conversationId,
+        events: [toolCallStartEvent(toolCallId), toolCallStartEvent("toolu_other_raw")],
+        toolCallStarts: [
+          { occurrenceId: toolOccurrenceId, eventIndex: 0 },
+          { occurrenceId: otherToolOccurrenceId, eventIndex: 1 },
+        ],
+        fetch: () => Promise.resolve(Response.json(appendResponse({ toolCallAdmissions }))),
+      })
+    );
+  }
+});
+
+it("stores queue tool call admissions by occurrence id and preserves sidecar indexes", async () => {
+  let body: Record<string, unknown> | undefined;
+  const queue = createConversationRunEventQueueController({
+    authToken: "writer",
+    apiUrl: "https://api.example.test",
+    runId: "runtime-run-id",
+    canonicalRunId,
+    conversationId,
+    latestEventId: 1,
+    latestExternalEventSequence: 4,
+    maxEventsPerBatch: 100,
+    fetch: (_input, init) => {
+      body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      return Promise.resolve(
+        Response.json(appendResponse({ toolCallAdmissions: [wireToolCallAdmission()] })),
+      );
+    },
+  });
+
+  queue.enqueue([{ type: "STATE_SNAPSHOT", snapshot: {} }, toolCallStartEvent()], {
+    toolCallStarts: [{ occurrenceId: toolOccurrenceId.toUpperCase(), eventIndex: 1 }],
+  });
+  await queue.flush();
+  assertEquals(body?.tool_call_starts, [{ occurrence_id: toolOccurrenceId, event_index: 1 }]);
+  assertEquals(queue.takeToolCallAdmissionReceipt?.(toolOccurrenceId.toUpperCase()), {
+    occurrenceId: toolOccurrenceId,
+    admissionEventId,
+    startEventId,
+    toolCallId,
+    publicToolCallId: toolCallId,
+    runId: canonicalRunId,
+    projectId,
+  });
+  assertEquals(queue.takeToolCallAdmissionReceipt?.(toolOccurrenceId), undefined);
+});
+
+it("keeps tool call admission sidecars pending after retryable append failures", async () => {
+  let calls = 0;
+  const queue = createConversationRunEventQueueController({
+    authToken: "writer",
+    apiUrl: "https://api.example.test",
+    runId: "runtime-run-id",
+    canonicalRunId,
+    conversationId,
+    latestEventId: 1,
+    latestExternalEventSequence: 4,
+    maxEventsPerBatch: 100,
+    fetch: () => {
+      calls += 1;
+      return Promise.resolve(
+        calls === 1
+          ? Response.json(appendResponse(), { status: 500 })
+          : Response.json(appendResponse({ toolCallAdmissions: [wireToolCallAdmission()] })),
+      );
+    },
+  });
+
+  queue.enqueue([toolCallStartEvent()], {
+    toolCallStarts: [{ occurrenceId: toolOccurrenceId, eventIndex: 0 }],
+  });
+  const retry = await queue.flush();
+  assertEquals(retry.outcome, "retry_scheduled");
+  assertEquals(retry.pendingEventCount, 1);
+  assertEquals(await queue.flush(), {
+    outcome: "flushed",
+    latestEventId: 7,
+    latestExternalEventSequence: 5,
+    pendingEventCount: 0,
+    consecutiveFailures: 0,
+    disabled: false,
+  });
+  assertEquals(
+    queue.takeToolCallAdmissionReceipt?.(toolOccurrenceId)?.admissionEventId,
+    admissionEventId,
+  );
 });
 
 it("requires exact capture acknowledgements even when replay appends no new events", async () => {

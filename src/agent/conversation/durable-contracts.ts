@@ -4,6 +4,11 @@ import {
   type AgentRunModelCallCaptureReceipt,
   getModelCallCaptureReceiptSchema,
 } from "#veryfront/runtime/model-call-capture-receipt.ts";
+import {
+  type AgentRunToolCallAdmissionReceipt,
+  getToolCallAdmissionReceiptSchema,
+  getToolCallAdmissionWireReceiptSchema,
+} from "#veryfront/runtime/tool-call-admission-receipt.ts";
 
 /** Zod schema for get conversation run targets. */
 export const getConversationRunTargetsSchema = defineSchema((v) =>
@@ -231,11 +236,24 @@ export type ConversationRunQueueFlushOutcome =
   | "stopped"
   | "retry_scheduled";
 
+/** Private append sidecar binding one generated occurrence to one event in the same request. */
+export interface ConversationRunToolCallAdmissionStart {
+  occurrenceId: string;
+  eventIndex: number;
+}
+
 /** Public API contract for conversation run event queue controller. */
 export interface ConversationRunEventQueueController {
-  enqueue(events: unknown[]): void;
+  enqueue(
+    events: unknown[],
+    options?: { toolCallStarts?: ConversationRunToolCallAdmissionStart[] },
+  ): void;
   /** Consume the exact append acknowledgement for one submitted capture. */
   takeModelCallCaptureReceipt?(modelCallId: string): AgentRunModelCallCaptureReceipt | undefined;
+  /** Consume the exact append acknowledgement for one admitted tool-call start. */
+  takeToolCallAdmissionReceipt?(
+    occurrenceId: string,
+  ): AgentRunToolCallAdmissionReceipt | undefined;
   flush(options?: { abortSignal?: AbortSignal }): Promise<
     | {
       outcome: "idle" | "flushed";
@@ -355,6 +373,7 @@ export interface AppendConversationRunEventsResponse {
   latestExternalEventSequence: number;
   appendedCount: number;
   modelCallCaptures?: AgentRunModelCallCaptureReceipt[];
+  toolCallAdmissions?: AgentRunToolCallAdmissionReceipt[];
   run: {
     runId: string;
     conversationId: string;
@@ -372,6 +391,7 @@ export const getAppendConversationRunEventsResponseSchema = defineSchema((v) =>
       latestExternalEventSequence: v.number().int().nonnegative(),
       appendedCount: v.number().int().nonnegative(),
       modelCallCaptures: v.array(getModelCallCaptureReceiptSchema()).optional(),
+      toolCallAdmissions: v.array(getToolCallAdmissionReceiptSchema()).optional(),
       run: v.object({
         runId: v.string().min(1),
         conversationId: v.string().uuid(),
@@ -390,6 +410,9 @@ export const getAppendConversationRunEventsResponseSchema = defineSchema((v) =>
           run_id: v.string().uuid(),
           model_call_id: v.string().uuid(),
         }).strict(),
+      ).optional(),
+      tool_call_admissions: v.array(
+        getToolCallAdmissionWireReceiptSchema(),
       ).optional(),
       run: v.object({
         run_id: v.string().min(1),
@@ -415,6 +438,11 @@ export const getAppendConversationRunEventsResponseSchema = defineSchema((v) =>
                   modelCallId: receipt.model_call_id,
                 }),
             ),
+          }
+          : {}),
+        ...("tool_call_admissions" in d
+          ? {
+            toolCallAdmissions: d.tool_call_admissions as AgentRunToolCallAdmissionReceipt[],
           }
           : {}),
         run: {

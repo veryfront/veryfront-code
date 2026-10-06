@@ -1,4 +1,8 @@
 import { privateJsonParse } from "#veryfront/security/private-json.ts";
+import {
+  bindObservedProviderToolStart,
+  bindToolCallStartOccurrence,
+} from "#veryfront/runtime/tool-call-occurrence-carrier.ts";
 import type { ChatFinishReason, ChatStreamEvent } from "#veryfront/chat/protocol.ts";
 import type {
   ChatDynamicToolUiPart,
@@ -70,6 +74,8 @@ export type ChatUiMessageStreamFinish<TMessageMetadata = MessageMetadata> = {
 
 /** Options accepted by chat UI message stream. */
 export type ChatUiMessageStreamOptions<TMessageMetadata = MessageMetadata> = {
+  /** @internal Consume private hosted sidecars; they never enter public chunks or snapshots. */
+  privateToolCallAdmissions?: boolean;
   generateMessageId?: () => string;
   sendReasoning?: boolean;
   onError?: (error: unknown, context?: { code?: string }) => string;
@@ -637,7 +643,9 @@ export function createChatUiMessageStreamFromDataStream<TMessageMetadata = Messa
         messageId: responseMessageId,
       };
 
-      for await (const event of streamDataStreamEvents(input.stream)) {
+      for await (const rawEvent of streamDataStreamEvents(input.stream)) {
+        const { privateToolCallOccurrenceId, privateObservedProviderToolResult, ...event } =
+          rawEvent;
         manuallyPaused ||= event.type === "data-veryfront.manual_pause";
         trackPendingFrameworkToolInput({
           state,
@@ -662,6 +670,18 @@ export function createChatUiMessageStreamFromDataStream<TMessageMetadata = Messa
             replaceExistingSourceDocument: replacesDerivedSourceDocument,
           });
           const chunk = toUiChunk(chatEvent);
+          if (
+            options.privateToolCallAdmissions && event.type === "tool-input-start" &&
+            chunk?.type === "tool-input-start" && typeof privateToolCallOccurrenceId === "string"
+          ) {
+            bindToolCallStartOccurrence(chunk, privateToolCallOccurrenceId);
+          }
+          if (
+            options.privateToolCallAdmissions && event.type === "tool-input-start" &&
+            chunk?.type === "tool-input-start" && privateObservedProviderToolResult === true
+          ) {
+            bindObservedProviderToolStart(chunk);
+          }
           if (chunk && !isDuplicateSourceDocument && !isDuplicateSourceUrl) {
             yield chunk;
           }

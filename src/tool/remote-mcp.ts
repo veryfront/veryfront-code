@@ -7,6 +7,7 @@ import { hasToolExecutionErrorMarker } from "./result.ts";
 import type { RemoteToolSource, ToolDefinition, ToolExecutionContext } from "./types.ts";
 import { readResponseTextPrefix } from "#veryfront/utils/response-body.ts";
 import { guardedOutboundFetch } from "#veryfront/security/http/outbound-fetch.ts";
+import { getHostedToolCallAdmissionRequestFetch } from "#veryfront/agent/hosted/child-run-event-writer-token.ts";
 
 /** Default timeout for a single outbound remote MCP request. */
 const REMOTE_MCP_REQUEST_TIMEOUT_MS = 30_000;
@@ -678,6 +679,7 @@ async function resolveHeaders(
 ): Promise<Headers> {
   const resolvedHeaders = headers ? await resolveValue(headers, context) : undefined;
   const finalHeaders = new Headers(resolvedHeaders);
+  finalHeaders.delete("X-Veryfront-Run-Event-Writer-Token");
   finalHeaders.set("Content-Type", "application/json");
   finalHeaders.set("Accept", mergeAcceptHeader(finalHeaders.get("Accept")));
   return finalHeaders;
@@ -1011,6 +1013,9 @@ function createRemoteMCPToolSourceWithFetch(
     async listTools(context) {
       const endpoint = validateEndpoint(await resolveValue(config.endpoint, context));
       const headers = await resolveHeaders(config.headers, context);
+      const listMeta = config.listMeta === undefined ? undefined : Object.fromEntries(
+        Object.entries(config.listMeta).filter(([key]) => key !== "tool_call_admission"),
+      );
 
       const definitions: ToolDefinition[] = [];
       const definitionNames = new Set<string>();
@@ -1025,11 +1030,11 @@ function createRemoteMCPToolSourceWithFetch(
             jsonrpc: "2.0",
             id: requestId,
             method: listMethod,
-            ...(cursor !== undefined || config.listMeta !== undefined
+            ...(cursor !== undefined || listMeta !== undefined
               ? {
                 params: {
                   ...(cursor !== undefined ? { cursor } : {}),
-                  ...(config.listMeta !== undefined ? { _meta: config.listMeta } : {}),
+                  ...(listMeta !== undefined ? { _meta: listMeta } : {}),
                 },
               }
               : {}),
@@ -1102,7 +1107,7 @@ function createRemoteMCPToolSourceWithFetch(
               ...(meta ? { _meta: meta } : {}),
             },
           },
-          getRequestFetch(endpoint),
+          getHostedToolCallAdmissionRequestFetch(endpoint) ?? getRequestFetch(endpoint),
           context?.abortSignal,
           MAX_REMOTE_MCP_CALL_RESPONSE_BYTES,
         );

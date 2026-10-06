@@ -31,6 +31,11 @@ import {
 } from "#veryfront/runtime/provider-stream-error-provenance.ts";
 import { sendSSE } from "./sse-utils.ts";
 import {
+  introduceToolCallOccurrence,
+  isToolCallOccurrenceScopeEnabled,
+  retainToolCallOccurrence,
+} from "#veryfront/runtime/tool-call-occurrence.ts";
+import {
   mergeToolCallInput,
   mergeToolInputDelta,
   parseToolInputObject,
@@ -331,10 +336,12 @@ export function announceStreamedToolCallInput(
   }
 
   const dynamic = toolCall.dynamic ?? isDynamicTool(toolCall.name);
+  const occurrenceId = introduceToolCallOccurrence(toolCall);
   sendSSE(controller, encoder, {
     type: "tool-input-start",
     toolCallId: toolCall.id,
     toolName: toolCall.name,
+    ...(occurrenceId ? { privateToolCallOccurrenceId: occurrenceId } : {}),
     ...(dynamic ? { dynamic: true } : {}),
   });
 
@@ -1124,6 +1131,7 @@ export function processStreamInternal(
 
       if (!existing) {
         const normalizedInput = parseToolInputObject(part.input);
+        const observationOnly = providerExecuted === true && isToolCallOccurrenceScopeEnabled();
         state.toolCalls.set(part.toolCallId, {
           id: part.toolCallId,
           name: part.toolName,
@@ -1137,6 +1145,9 @@ export function processStreamInternal(
           type: "tool-input-start",
           toolCallId: part.toolCallId,
           toolName: part.toolName,
+          ...(observationOnly
+            ? { privateObservedProviderToolResult: true, providerExecuted: true }
+            : {}),
           ...(dynamic ? { dynamic: true } : {}),
         });
         sendSSE(controller, encoder, {
@@ -1466,14 +1477,20 @@ export function processStreamInternal(
             const resolvedArguments = mergeToolCallInput(previousArguments, inputStr);
             const wasInputAvailable = previous?.inputAvailable === true;
             const dynamic = typedPart.dynamic ?? isDynamicTool(typedPart.toolName);
-            state.toolCalls.set(toolId, {
+            const toolCall: StreamingToolCall = {
               id: toolId,
               name: typedPart.toolName,
               arguments: resolvedArguments,
               inputAvailable: true,
               providerExecuted,
               dynamic,
-            });
+            };
+            retainToolCallOccurrence(previous, toolCall);
+            if (introduceToolCallOccurrence(toolCall)) {
+              toolCall.inputAnnounced = previous?.inputAnnounced ?? false;
+              announceToolInputStart(toolCall);
+            }
+            state.toolCalls.set(toolId, toolCall);
 
             if (!wasInputAvailable) {
               sendSSE(controller, encoder, {
@@ -1522,6 +1539,7 @@ export function processStreamInternal(
               providerExecuted,
               dynamic: typedPart.dynamic,
             };
+            retainToolCallOccurrence(previous, toolCall);
             state.toolCalls.set(toolId, toolCall);
 
             const dynamic = isDynamicTool(typedPart.toolName);
