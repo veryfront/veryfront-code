@@ -43,6 +43,11 @@ import {
   getHostedToolCallAdmissionRequestFetch,
 } from "./child-run-event-writer-token.ts";
 
+import {
+  HEADER_METHODS,
+  installCredentialProbes,
+} from "#veryfront/security/http/credential-probes.test-helpers.ts";
+
 type HostedRequestFetch = NonNullable<
   Parameters<typeof createHostedRunEventWriterCapability>[0]["fetch"]
 >;
@@ -487,6 +492,56 @@ describe("private tool-call admission", () => {
       );
     }, callback);
     assertEquals(privateRequests.length, 2);
+  });
+
+  it("keeps the admission writer token private through native request conversion", async () => {
+    const token = "synthetic-private-admission-token";
+    const endpoint = "https://api.example.test/mcp";
+    const nativeRequest = Request;
+    const nativeHeadersGet = Headers.prototype.get;
+    const delivered: Array<string | null> = [];
+    const response = Response.json({ jsonrpc: "2.0", id: "request", result: {} });
+    const capability = createHostedRunEventWriterCapability({
+      apiUrl: "https://api.example.test",
+      runId: "external-run",
+      canonicalRunId: runId,
+      runEventAppendToken: token,
+      fetch: (url, init) => {
+        const request = new nativeRequest(url, init);
+        delivered.push(Reflect.apply(nativeHeadersGet, request.headers, [
+          "X-Veryfront-Run-Event-Writer-Token",
+        ]));
+        return Promise.resolve(response);
+      },
+    });
+    const callback = async () => receipt;
+    bindHostedToolCallAdmissionWriter(callback, {
+      capability,
+      expectedRunId: "external-run",
+      projectId,
+    });
+    await runWithToolCallAdmissionReceipt(receipt, () => {}, async () => {
+      const dispatch = getHostedToolCallAdmissionRequestFetch(endpoint);
+      assert(dispatch);
+      const probes = installCredentialProbes({
+        headerMethods: HEADER_METHODS.filter((name) => name !== "has" && name !== "append"),
+      });
+      try {
+        await dispatch(endpoint, {
+          method: "POST",
+          body: JSON.stringify({
+            jsonrpc: "2.0",
+            id: "request",
+            method: "tools/call",
+            params: { name: "lookup", arguments: {} },
+          }),
+        });
+      } finally {
+        probes.restore();
+      }
+      assertEquals(delivered, [token]);
+      assertEquals(probes.saw(token), false);
+    }, callback);
   });
 
   it("fails before source execution for missing occurrence and mismatched acknowledgments", async () => {
