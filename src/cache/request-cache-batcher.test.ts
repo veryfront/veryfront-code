@@ -44,6 +44,19 @@ function createMockBackend(
   };
 }
 
+async function waitForRead(read: Promise<string | null> | undefined): Promise<string | null> {
+  assertExists(read);
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error("Admitted cache read did not settle")), 1000);
+  });
+  try {
+    return await Promise.race([read, timeout]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 describe("cache/request-cache-batcher", () => {
   it("reuses parsed values while the request-local raw value is unchanged", async () => {
     let parseCalls = 0;
@@ -64,20 +77,14 @@ describe("cache/request-cache-batcher", () => {
 
   it("drains admitted cache reads after their request stops waiting", async () => {
     const backend = createMockBackend({ admitted: "value" });
-    let settled = false;
     let read: Promise<string | null> | undefined;
     await runWithCacheBatching(async () => {
       read = getCachedWithBatching(backend, "admitted");
-      void read.then(() => {
-        settled = true;
-      });
       // Cancellation can finish the request before its admitted producer retires.
       await Promise.resolve();
     });
-    await new Promise((resolve) => setTimeout(resolve, 20));
+    assertEquals(await waitForRead(read), "value");
     assertEquals(backend.getCalls, ["admitted"]);
-    assertEquals(settled, true);
-    assertEquals(await read, "value");
   });
 
   it("drains admitted reads when their request rejects", async () => {
@@ -94,9 +101,8 @@ describe("cache/request-cache-batcher", () => {
       caught = error;
     }
     assertEquals(caught, cancelled);
-    await new Promise((resolve) => setTimeout(resolve, 20));
+    assertEquals(await waitForRead(read), "value");
     assertEquals(backend.getCalls, ["admitted"]);
-    assertEquals(await read, "value");
   });
 
   describe("runWithCacheBatching", () => {
