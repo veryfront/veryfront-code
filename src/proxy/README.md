@@ -12,7 +12,9 @@ this configured origin. The `from` parameter contains an absolute project URL
 only when the routed Host is the configured hostname or its subdomain.
 The return URL uses HTTPS and the configured port. Other request hostnames use a
 sanitized relative return path. Request credentials and ports do not determine
-the redirect destination.
+the redirect destination. Trusted project hosts must also serve HTTPS on the
+configured port. If Studio and project hosts use different ports, the return URL
+can point to a project port that does not serve the project.
 
 Configure API and Studio cookie domains and redirect validation for the same
 customer domain. Verify sign-in and the return to a protected project in a browser.
