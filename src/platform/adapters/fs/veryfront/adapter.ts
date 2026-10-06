@@ -828,6 +828,7 @@ async function computeSourceSnapshotFingerprint(
 interface BranchSnapshotRecoveryOptions<T> {
   isRecoverableMissResult?: (result: T) => boolean;
   requirePendingSourceInvalidation?: boolean;
+  signal?: AbortSignal;
 }
 
 /**
@@ -889,7 +890,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
     | null = null;
   private readonly fileListRetentionMs: number;
   /** Single-flight foreground refresh when a branch preview read misses a newly pushed file. */
-  private readonly branchMissRecoveryPromises = new Map<string, Promise<void>>();
+  private readonly branchMissRecoveryFlights = new Map<string, SharedInitialization<void>>();
   private readonly branchMissRecoveryFailures = new Map<string, number>();
   /** Last successful source check and generation of the materialized snapshot. */
   private sourceSnapshotCheckedAt = 0;
@@ -1589,6 +1590,13 @@ export class VeryfrontFSAdapter implements FSAdapter {
     return `${this.#getBranchMissRecoveryKeyPrefix()}${normalizedPath}`;
   }
 
+  #clearBranchMissRecoveryFlights(): void {
+    for (const flight of this.branchMissRecoveryFlights.values()) {
+      cancelSharedInitialization(flight);
+    }
+    this.branchMissRecoveryFlights.clear();
+  }
+
   #hasRecentBranchMissRecoveryFailure(key: string): boolean {
     const failedAt = this.branchMissRecoveryFailures.get(key);
     if (!failedAt) return false;
@@ -1660,23 +1668,30 @@ export class VeryfrontFSAdapter implements FSAdapter {
     return !this.#hasRecentBranchMissRecoveryFailure(recoveryKey);
   }
 
-  async #refreshBranchSnapshotAfterMiss(path: string): Promise<void> {
+  async #refreshBranchSnapshotAfterMiss(path: string, signal?: AbortSignal): Promise<void> {
+    throwIfAborted(signal);
     const recoveryScope = this.#getBranchMissRecoveryScope();
-    let recoveryPromise = this.branchMissRecoveryPromises.get(recoveryScope);
+    let flight = this.branchMissRecoveryFlights.get(recoveryScope);
 
-    if (!recoveryPromise) {
+    if (flight && isSharedInitializationAborted(flight)) {
+      await drainSharedInitialization(flight, signal);
+      return await this.#refreshBranchSnapshotAfterMiss(path, signal);
+    }
+
+    if (!flight) {
       const normalizedPath = this.normalizer.normalize(path);
-      recoveryPromise = this.#refreshSourceSnapshot(`branch-miss:${normalizedPath}`);
-      this.branchMissRecoveryPromises.set(recoveryScope, recoveryPromise);
+      flight = startSharedInitialization((sharedSignal) =>
+        this.#refreshSourceSnapshot(`branch-miss:${normalizedPath}`, sharedSignal)
+      );
+      this.branchMissRecoveryFlights.set(recoveryScope, flight);
+      onSharedInitializationSettled(flight, () => {
+        if (this.branchMissRecoveryFlights.get(recoveryScope) === flight) {
+          this.branchMissRecoveryFlights.delete(recoveryScope);
+        }
+      });
     }
 
-    try {
-      await recoveryPromise;
-    } finally {
-      if (this.branchMissRecoveryPromises.get(recoveryScope) === recoveryPromise) {
-        this.branchMissRecoveryPromises.delete(recoveryScope);
-      }
-    }
+    await joinSharedInitialization(flight, signal);
   }
 
   async #withBranchSnapshotRecovery<T>(
@@ -1690,8 +1705,9 @@ export class VeryfrontFSAdapter implements FSAdapter {
 
       const recoveryKey = this.#getBranchMissRecoveryKey(path);
       try {
-        await this.#refreshBranchSnapshotAfterMiss(path);
+        await this.#refreshBranchSnapshotAfterMiss(path, options?.signal);
       } catch (refreshError) {
+        throwIfAborted(options?.signal);
         this.branchMissRecoveryFailures.set(recoveryKey, currentTime());
         logger.warn("Branch snapshot recovery failed after result miss", {
           path: this.normalizer.normalize(path),
@@ -1712,8 +1728,9 @@ export class VeryfrontFSAdapter implements FSAdapter {
 
       const recoveryKey = this.#getBranchMissRecoveryKey(path);
       try {
-        await this.#refreshBranchSnapshotAfterMiss(path);
+        await this.#refreshBranchSnapshotAfterMiss(path, options?.signal);
       } catch (refreshError) {
+        throwIfAborted(options?.signal);
         this.branchMissRecoveryFailures.set(recoveryKey, currentTime());
         logger.warn("Branch snapshot recovery failed after not-found miss", {
           path: this.normalizer.normalize(path),
@@ -2317,8 +2334,9 @@ export class VeryfrontFSAdapter implements FSAdapter {
     }
   }
 
-  async #performSourceSnapshotRefresh(reason: string): Promise<void> {
-    await this.#ensureInitialized();
+  async #performSourceSnapshotRefresh(reason: string, signal?: AbortSignal): Promise<void> {
+    await this.#ensureInitialized(signal);
+    throwIfAborted(signal);
 
     if (!this.contentContext) {
       logger.debug("Skipping source snapshot refresh without content context", {
@@ -2336,7 +2354,8 @@ export class VeryfrontFSAdapter implements FSAdapter {
     const refreshIdentity = this.#getCurrentSourceSnapshotIdentity();
     const previousVersion = this.sourceSnapshotVersion;
     const refreshListing = this.#beginSourceListing();
-    const fetchedListing = await this.#fetchSourceListing(effectiveRefreshContext);
+    const fetchedListing = await this.#fetchSourceListing(effectiveRefreshContext, signal);
+    throwIfAborted(signal);
     let files = fetchedListing.files;
     const result = await this.#runSourceSnapshotMutation(async () => {
       const isSnapshotSuperseded = () =>
@@ -2448,18 +2467,23 @@ export class VeryfrontFSAdapter implements FSAdapter {
     });
   }
 
-  async #refreshSourceSnapshot(reason: string): Promise<void> {
-    await this.#ensureInitialized();
+  async #refreshSourceSnapshot(reason: string, signal?: AbortSignal): Promise<void> {
+    await this.#ensureInitialized(signal);
 
     while (true) {
-      this.sourceSnapshotRefreshPromise ??= this.#performSourceSnapshotRefresh(reason);
-      const refresh = this.sourceSnapshotRefreshPromise;
+      throwIfAborted(signal);
+      if (signal) {
+        await this.#performSourceSnapshotRefresh(reason, signal);
+      } else {
+        this.sourceSnapshotRefreshPromise ??= this.#performSourceSnapshotRefresh(reason);
+        const refresh = this.sourceSnapshotRefreshPromise;
 
-      try {
-        await refresh;
-      } finally {
-        if (this.sourceSnapshotRefreshPromise === refresh) {
-          this.sourceSnapshotRefreshPromise = null;
+        try {
+          await refresh;
+        } finally {
+          if (this.sourceSnapshotRefreshPromise === refresh) {
+            this.sourceSnapshotRefreshPromise = null;
+          }
         }
       }
 
@@ -2604,6 +2628,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
     return this.#withBranchSnapshotRecovery(
       path,
       () => this.readOps.readTextFile(path, options),
+      { signal: options.signal },
     );
   }
 
@@ -2626,6 +2651,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
     return this.#withBranchSnapshotRecovery(
       path,
       () => this.readOps.readTextFile(path, options),
+      { signal: options.signal },
     );
   }
 
@@ -2637,6 +2663,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
     return this.#withBranchSnapshotRecovery(
       path,
       () => this.readOps.readOptionalTextFile(path, options),
+      { signal: options.signal },
     );
   }
 
@@ -2705,7 +2732,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
     this.fileListWarmupPromise = null;
     this.fileListWarmupKey = null;
     this.clearRetainedFileList();
-    this.branchMissRecoveryPromises.clear();
+    this.#clearBranchMissRecoveryFlights();
     this.branchMissRecoveryFailures.clear();
 
     logger.debug("Disposed");
@@ -2842,7 +2869,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
     this.dirOps.clearTree();
     this.fileListWarmupPromise = null;
     this.fileListWarmupKey = null;
-    this.branchMissRecoveryPromises.clear();
+    this.#clearBranchMissRecoveryFlights();
     this.branchMissRecoveryFailures.clear();
     this.sourceSnapshotCheckedAt = 0;
     this.sourceSnapshotVersion = nextSourceSnapshotGeneration();
@@ -2928,7 +2955,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
       this.fileListWarmupPromise = null;
       this.fileListWarmupKey = null;
       this.clearRetainedFileList();
-      this.branchMissRecoveryPromises.clear();
+      this.#clearBranchMissRecoveryFlights();
       this.branchMissRecoveryFailures.clear();
       this.sourceSnapshotCheckedAt = 0;
       this.sourceSnapshotVersion = nextSourceSnapshotGeneration();
