@@ -816,7 +816,10 @@ async function processActiveStream(
       mode: "active",
     }),
   });
-  const live = createStreamLifecycleLiveAdapter({ textPartId });
+  const live = createStreamLifecycleLiveAdapter({
+    textPartId,
+    privateToolCallAdmissions: isToolCallOccurrenceScopeEnabled(),
+  });
   const toolOccurrences = createPrivateMap<string, { id: string }>();
   let deliveryError: unknown;
   let streamOutcome!: StreamOutcome;
@@ -833,7 +836,10 @@ async function processActiveStream(
         if (hasOwn(events, index)) {
           const event = events[index]!;
           let occurrenceId: string | undefined;
-          if (event.type === "tool-input-start") {
+          if (
+            event.type === "tool-input-start" &&
+            !("privateObservedToolResult" in event && event.privateObservedToolResult === true)
+          ) {
             const call = { id: event.toolCallId };
             occurrenceId = introduceToolCallOccurrence(call);
             if (occurrenceId) toolOccurrences.set(call.id, call);

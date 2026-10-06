@@ -65,6 +65,8 @@ export type StreamProtocolEvent =
     toolName: string;
     providerExecuted?: boolean;
     dynamic?: boolean;
+    /** A retrospective result supplied this input boundary, not an observed dispatch start. */
+    observedFromResult?: true;
   }
   | { type: "tool_input_content"; toolCallId: string; delta: string }
   | {

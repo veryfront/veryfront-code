@@ -44,6 +44,7 @@ import {
   runWithToolCallOccurrences,
 } from "#veryfront/runtime/tool-call-occurrence.ts";
 import { ConversationRunEventEncoder } from "#veryfront/agent/conversation/run-events.ts";
+import { isObservedToolResultStart } from "#veryfront/runtime/tool-call-occurrence-carrier.ts";
 import {
   hasIncompleteToolParts,
   isToolUiPart,
@@ -2853,6 +2854,86 @@ describe("processStream active mode", () => {
     } finally {
       mirror.dispose();
     }
+  });
+
+  it("keeps active result-only tool starts observational without dispatch admission", async () => {
+    const { events, state } = await runWithToolCallOccurrences(() =>
+      runMode("active", [
+        {
+          type: "tool-result",
+          toolCallId: "native-1",
+          toolName: "web_search",
+          output: "done",
+          providerExecuted: true,
+        },
+        { type: "finish", finishReason: "stop", totalUsage: null },
+      ])
+    );
+    const start = events.find((event) => event.type === "tool-input-start");
+    assertEquals(start?.privateObservedToolResult, true);
+    assertEquals(start?.privateToolCallOccurrenceId, undefined);
+    const call = state.toolCalls.get("native-1");
+    if (!call) throw new Error("Expected the observed provider tool result");
+    assertEquals(getToolCallOccurrence(call), undefined);
+    assertEquals(runWithToolCallOccurrenceDispatch(call, getCurrentToolCallOccurrence), undefined);
+
+    const sseEncoder = new TextEncoder();
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        for (const event of events) {
+          controller.enqueue(sseEncoder.encode(`data: ${JSON.stringify(event)}\n\n`));
+        }
+        controller.close();
+      },
+    });
+    const chunks = createChatUiMessageStreamFromDataStream({ stream }, {
+      generateMessageId: () => "outer-message",
+      privateToolCallAdmissions: true,
+    });
+    const queueController = createConversationRunEventQueueController({
+      authToken: "writer",
+      apiUrl: "https://api.example.test",
+      conversationId: "66666666-6666-4666-8666-666666666666",
+      runId: "runtime-run",
+      canonicalRunId: "77777777-7777-4777-8777-777777777777",
+      latestEventId: 0,
+      latestExternalEventSequence: 0,
+      maxEventsPerBatch: 100,
+      fetch: () => Promise.reject(new Error("This fixture must not send requests")),
+    });
+    let admissionCount = 0;
+    let observedStartRecorded = false;
+    const mirror = createConversationRunChunkMirror({
+      queueController: {
+        ...queueController,
+        enqueue(events, options) {
+          admissionCount += options?.toolCallStarts?.length ?? 0;
+          queueController.enqueue(events, options);
+        },
+      },
+      encoder: new ConversationRunEventEncoder(),
+      toolCallAdmissions: true,
+      immediateFlushEventCount: 1000,
+      flushDelayMs: 60_000,
+      onChunkPrepared({ events }) {
+        observedStartRecorded ||= events.some((event) =>
+          event.type === "TOOL_CALL_START" && event.startObservedFromResult === true
+        );
+      },
+    });
+    try {
+      for await (const chunk of chunks) {
+        if (chunk.type === "tool-input-start") {
+          assertEquals(isObservedToolResultStart(chunk), true);
+          assertEquals(getToolCallOccurrence(chunk), undefined);
+        }
+        await mirror.handleChunk(chunk);
+      }
+    } finally {
+      mirror.dispose();
+    }
+    assertEquals(observedStartRecorded, true);
+    assertEquals(admissionCount, 0);
   });
 
   it("matches legacy SSE and state for a provider-executed tool", async () => {
