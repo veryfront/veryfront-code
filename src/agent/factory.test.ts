@@ -157,6 +157,78 @@ describe("agent factory", () => {
     }
   });
 
+  it("replaces explicit boolean knowledge bindings with the scoped framework tool", async () => {
+    let unscopedCalls = 0;
+    toolRegistryInternal.register("search_knowledge", {
+      ...tool({
+        id: "search_knowledge",
+        description: "Unscoped registry knowledge search",
+        inputSchema: defineSchema((v) => v.object({ query: v.string() }))(),
+        execute: () => {
+          unscopedCalls++;
+          return { unscoped: true };
+        },
+      }),
+    });
+
+    const assistant = agent({
+      id: "map-scoped-knowledge",
+      system: "Use scoped knowledge.",
+      tools: { search_knowledge: true },
+      knowledge: {
+        "knowledge/public/**": true,
+        "knowledge/private/**": false,
+      },
+      skills: [],
+    });
+
+    if (!assistant.config.tools || assistant.config.tools === true) {
+      throw new Error("Expected a concrete scoped knowledge tool map");
+    }
+
+    const scopedKnowledgeTool = assistant.config.tools.search_knowledge;
+    if (!scopedKnowledgeTool || typeof scopedKnowledgeTool !== "object") {
+      throw new Error("Expected scoped search_knowledge tool");
+    }
+    assertEquals(scopedKnowledgeTool === toolRegistry.get("search_knowledge"), false);
+    const definitions = await getAvailableTools(assistant.config.tools);
+    assertEquals(definitions.map((definition) => definition.name), ["search_knowledge"]);
+    const result = await scopedKnowledgeTool.execute({ query: "policy", limit: 1 });
+    assertEquals(unscopedCalls, 0);
+    assertEquals(JSON.stringify(result).includes("unscoped"), false);
+  });
+
+  it("preserves knowledge denials and rejects concrete search_knowledge collisions", () => {
+    const denied = agent({
+      id: "denied-scoped-knowledge",
+      system: "Do not search knowledge.",
+      tools: { search_knowledge: false },
+      knowledge: true,
+      skills: [],
+    });
+    assertEquals(denied.config.tools, { search_knowledge: false });
+
+    const customKnowledgeTool = tool({
+      id: "search_knowledge",
+      description: "Custom knowledge search",
+      inputSchema: defineSchema((v) => v.object({}))(),
+      execute: () => ({ ok: true }),
+    });
+
+    assertThrows(
+      () =>
+        agent({
+          id: "custom-knowledge-collision",
+          system: "Use scoped knowledge.",
+          tools: { search_knowledge: customKnowledgeTool },
+          knowledge: true,
+          skills: [],
+        }),
+      Error,
+      "custom search_knowledge tool conflicts with the agent knowledge scope",
+    );
+  });
+
   it("rejects empty explicit identities and preserves valid or generated identities", () => {
     for (const id of ["", "   ", "\t\n"]) {
       assertThrows(() => agent({ id, system: "Synthetic" }), Error, "Agent id cannot be empty");

@@ -222,6 +222,67 @@ Deno.test("project agent runtime preserves structured system metadata for hosted
   assertEquals(definition.system, system);
 });
 
+Deno.test("project agent runtime keeps framework knowledge out of hosted tool projections", async () => {
+  const inspect = tool({
+    id: "inspect",
+    description: "Inspect a support record",
+    inputSchema: defineSchema((v) => v.object({ id: v.string() }))(),
+    execute: ({ id }) => ({ id }),
+  });
+  const support = agent({
+    id: "knowledge-projection",
+    system: "Answer with scoped knowledge.",
+    knowledge: { "knowledge/public/**": true },
+    tools: { inspect },
+  });
+
+  const configuredTools = support.config.tools;
+  if (!configuredTools || configuredTools === true) {
+    throw new Error("expected finite factory tool configuration");
+  }
+  assertEquals("search_knowledge" in configuredTools, true);
+
+  const definition = await createRuntimeAgentDefinitionFromAgent(support);
+  const inlineTools = getProjectAgentRuntimeInlineTools({
+    agents: new Map([[support.id, support]]),
+  }, support.id);
+
+  assertEquals(definition.knowledge, { "knowledge/public/**": true });
+  assertEquals(definition.tools, ["inspect"]);
+  assertEquals([...inlineTools.keys()], ["inspect"]);
+});
+
+Deno.test("project agent runtime preserves custom search knowledge tools without enabled knowledge", async () => {
+  const customSearchKnowledge = tool({
+    id: "search_knowledge",
+    description: "Custom search when framework knowledge is disabled",
+    inputSchema: defineSchema((v) => v.object({ query: v.string() }))(),
+    execute: ({ query }) => ({ query }),
+  });
+
+  for (
+    const [id, knowledge] of [
+      ["custom-search-no-knowledge", false],
+      ["custom-search-exclusion-only", { "knowledge/private/**": false }],
+    ] as const
+  ) {
+    const searchAgent = agent({
+      id,
+      system: "Use the custom local search tool.",
+      knowledge,
+      tools: { search_knowledge: customSearchKnowledge },
+    });
+
+    const definition = await createRuntimeAgentDefinitionFromAgent(searchAgent);
+    const inlineTools = getProjectAgentRuntimeInlineTools({
+      agents: new Map([[searchAgent.id, searchAgent]]),
+    }, searchAgent.id);
+
+    assertEquals(definition.tools, ["search_knowledge"]);
+    assertEquals([...inlineTools.keys()], ["search_knowledge"]);
+  }
+});
+
 Deno.test("project agent runtime serializes scoped delegates and first-party MCP presets", async () => {
   const coordinator = agent({
     id: "coordinator",
@@ -733,6 +794,57 @@ Help from configured markdown.
     });
 
     await assertMultiAgentProjectDiscoveryWithoutServiceEntrypoint();
+  },
+});
+
+Deno.test({
+  name: "project runtime discovery omits factory knowledge tool from hosted projections",
+  sanitizeOps: false,
+  sanitizeResources: false,
+  fn: async () => {
+    await withTempDir(async (rootDir) => {
+      const agentsDir = resolve(rootDir, "agents");
+      Deno.mkdirSync(agentsDir, { recursive: true });
+      Deno.writeTextFileSync(
+        resolve(agentsDir, "support.ts"),
+        [
+          'import { agent } from "veryfront/agent";',
+          'import { tool } from "veryfront/tool";',
+          'import { defineSchema } from "veryfront/schemas";',
+          "",
+          "const inspect = tool({",
+          '  id: "inspect",',
+          '  description: "Inspect a support record",',
+          "  inputSchema: defineSchema((v) => v.object({ id: v.string() }))(),",
+          "  execute: ({ id }) => ({ id }),",
+          "});",
+          "",
+          "export default agent({",
+          '  id: "discovered-knowledge-agent",',
+          '  system: "Use scoped support knowledge.",',
+          '  knowledge: { "knowledge/public/**": true },',
+          "  tools: { inspect },",
+          "});",
+          "",
+        ].join("\n"),
+      );
+
+      const result = await discoverProjectAgentRuntime({
+        projectDir: rootDir,
+        adapter: nodeAdapter,
+      });
+      const runtimeAgent = result.agents.get("discovered-knowledge-agent");
+      if (!runtimeAgent) throw new Error("expected discovered knowledge agent");
+
+      assertEquals(
+        (await createRuntimeAgentDefinitionFromAgent(runtimeAgent)).tools,
+        ["inspect"],
+      );
+      assertEquals(
+        [...getProjectAgentRuntimeInlineTools(result, runtimeAgent.id).keys()],
+        ["inspect"],
+      );
+    });
   },
 });
 

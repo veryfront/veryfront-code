@@ -1,4 +1,5 @@
 import { getAgentExecutionConfig } from "../runtime/execution-config.ts";
+import { isKnowledgeEnabled } from "#veryfront/agent/runtime/knowledge-tools.ts";
 import type { DiscoveryResult } from "#veryfront/discovery/types.ts";
 import { replaceDiscoveredProjectPrimitives } from "#veryfront/discovery/registry-replacement.ts";
 import { createProjectDiscoveryConfig } from "#veryfront/discovery/project-discovery-config.ts";
@@ -42,16 +43,30 @@ const arraySort = Array.prototype.sort;
 const apply = Reflect.apply;
 const mapGet = Map.prototype.get;
 
+const FRAMEWORK_KNOWLEDGE_TOOL_NAME = "search_knowledge";
+
+function shouldProjectPositiveToolName(
+  name: string,
+  knowledge: AgentConfig["knowledge"],
+): boolean {
+  return name !== FRAMEWORK_KNOWLEDGE_TOOL_NAME || !isKnowledgeEnabled(knowledge);
+}
+
 function selectedConfigToolNames(
   tools: Exclude<AgentConfig["tools"], true | undefined>,
   denied: boolean,
+  knowledge?: AgentConfig["knowledge"],
 ): string[] {
   const entries = objectEntries(tools);
   const names: string[] = [];
   for (let index = 0; index < entries.length; index++) {
     const entry = entries[index]!;
-    if ((entry[1] === false) === denied) {
-      defineOwnDataProperty(names, names.length, entry[0], {
+    const name = entry[0];
+    if (
+      (entry[1] === false) === denied &&
+      (denied || shouldProjectPositiveToolName(name, knowledge))
+    ) {
+      defineOwnDataProperty(names, names.length, name, {
         enumerable: true,
         configurable: true,
         writable: true,
@@ -130,7 +145,10 @@ async function resolveAgentSystem(system: AgentConfig["system"]): Promise<AgentS
   return typeof system === "function" ? await system() : system;
 }
 
-function resolveAgentToolNames(tools: AgentConfig["tools"]): true | string[] | undefined {
+function resolveAgentToolNames(
+  tools: AgentConfig["tools"],
+  knowledge: AgentConfig["knowledge"],
+): true | string[] | undefined {
   if (tools === true) {
     return true;
   }
@@ -139,7 +157,7 @@ function resolveAgentToolNames(tools: AgentConfig["tools"]): true | string[] | u
     return undefined;
   }
 
-  const names = selectedConfigToolNames(tools, false);
+  const names = selectedConfigToolNames(tools, false, knowledge);
 
   return names.length > 0 ? names : undefined;
 }
@@ -206,13 +224,16 @@ export function getProjectAgentRuntimeInlineTools(
 ): Map<string, Tool> {
   const tools = createPrivateMap<string, Tool>();
   const selected: Agent | undefined = apply(mapGet, result.agents, [agentId]);
-  const configuredTools = selected?.config.tools;
+  const selectedConfig = selected?.config;
+  const configuredTools = selectedConfig?.tools;
   if (configuredTools === undefined || configuredTools === true) return tools;
+  const knowledge = selectedConfig?.knowledge;
   const entries = objectEntries(configuredTools);
   for (let index = 0; index < entries.length; index++) {
     const entry = entries[index]!;
     const name = entry[0], value = entry[1];
     if (
+      shouldProjectPositiveToolName(name, knowledge) &&
       value !== false && value !== undefined && typeof value === "object" &&
       typeof (value as Tool).execute === "function"
     ) {
@@ -292,7 +313,7 @@ export async function createRuntimeAgentDefinitionFromAgent(
   }
   const config = { ...getAgentExecutionConfig(runtimeAgent.config) };
   objectSetPrototypeOf(config, null);
-  const toolNames = resolveAgentToolNames(config.tools);
+  const toolNames = resolveAgentToolNames(config.tools, config.knowledge);
   const deniedToolNames = resolveAgentDeniedToolNames(config.tools);
   const mcpServers = resolveSerializableMcpServers(config.mcpServers);
   const system = await resolveAgentSystem(config.system);
