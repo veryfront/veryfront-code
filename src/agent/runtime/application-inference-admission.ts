@@ -209,6 +209,10 @@ export async function runWithApplicationInferenceAdmission<T>(
   ]) as Promise<T>);
 }
 
+export function hasApplicationInferenceAdmission(): boolean {
+  return IntrinsicReflectApply(AsyncLocalStorageGetStore, scopes, []) !== undefined;
+}
+
 export async function getPrivateApplicationInferenceRuntimeOptions(
   agentId: string,
   signal?: AbortSignal,

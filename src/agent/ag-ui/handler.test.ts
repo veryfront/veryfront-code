@@ -240,11 +240,54 @@ describe("agent/ag-ui-handler", () => {
             assertStringIncludes(await response.text(), "event: RunFinished");
             assertEquals(streamCalls, 1);
             assertEquals(admissions, 0);
-          },
-          ),
+          }),
       );
     });
   }
+
+  it("runs a local custom stream for an omitted model before default model credential resolution", async () => {
+    await runWithProjectEnv(
+      { ANTHROPIC_API_KEY: "synthetic-direct-anthropic-key" },
+      () =>
+        runWithVeryfrontCloudContext({
+          apiBaseUrl: "https://api.example.test/api",
+          serviceLayer: "local",
+        }, async () => {
+          const testAgent = createTestAgent();
+          testAgent.agent.config = {
+            ...testAgent.agent.config,
+            model: undefined,
+          } as Agent["config"];
+
+          let streamCalls = 0;
+          const originalStream = testAgent.agent.stream;
+          testAgent.agent.stream = async (input) => {
+            streamCalls += 1;
+            return await originalStream(input);
+          };
+
+          const handler = createAgUiHandler({ agent: testAgent.agent });
+          const response = await handler(
+            new Request("http://localhost/api/ag-ui", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                messages: [{
+                  id: "synthetic-direct-message",
+                  role: "user",
+                  parts: [{ type: "text", text: "hello" }],
+                }],
+              }),
+            }),
+          );
+
+          assertEquals(response.status, 200);
+          assertStringIncludes(await response.text(), "event: RunFinished");
+          assertEquals(streamCalls, 1);
+          assertEquals(testAgent.capturedModel, undefined);
+        }),
+    );
+  });
 
   it("preserves an explicit provider stream without admitting managed inference", async () => {
     const testAgent = createTestAgent();

@@ -5,6 +5,7 @@ import { getAgent } from "../composition/index.ts";
 import { createEphemeralAgent, createEphemeralAgentWithRuntimeOptions } from "../factory.ts";
 import {
   getPrivateApplicationInferenceRuntimeOptions,
+  hasApplicationInferenceAdmission,
   type PrivateApplicationInferenceRuntime,
 } from "../runtime/application-inference-admission.ts";
 import type { Agent, AgentResponse, Message } from "../types.ts";
@@ -69,6 +70,8 @@ const AG_UI_HEADERS: Record<string, string> = {
 };
 
 function shouldUseApplicationInferenceRuntime(agent: Agent, request: AgUiRequest): boolean {
+  if (!hasApplicationInferenceAdmission()) return false;
+
   const model = request.model ?? getAgentExecutionConfig(agent.config).model;
   if (model?.startsWith("veryfront-cloud/")) return true;
   const resolved = resolveRuntimeModel(model);
