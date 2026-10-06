@@ -450,8 +450,14 @@ function createKnowledgeScopeMatcher(
   const excludeMatchers = scope.excludes.map(compileGlobMatcher);
 
   return (path: string): boolean => {
-    const normalizedPath = validateRelativeKnowledgePath(path, "Invalid knowledge path");
     if (selector === false) return false;
+
+    let normalizedPath: string;
+    try {
+      normalizedPath = validateRelativeKnowledgePath(path, "Invalid knowledge path");
+    } catch {
+      return false;
+    }
 
     const included = scope.includeAll ||
       includeMatchers.some((matches) => matches(normalizedPath));

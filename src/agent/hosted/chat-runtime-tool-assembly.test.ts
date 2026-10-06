@@ -529,6 +529,60 @@ Deno.test("prepareHostedChatRuntimeToolAssembly supplies authored framework know
   assertEquals(taskContext.availableToolNames, ["tool_search"]);
 });
 
+Deno.test("prepareHostedChatRuntimeToolAssembly rejects remote search_knowledge when authored knowledge is enabled", async () => {
+  await assertRejects(
+    () =>
+      prepareHostedChatRuntimeToolAssembly({
+        sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
+        taskContext: {
+          authToken: "token",
+          projectId: "project-1",
+          model: "anthropic/claude-sonnet-4-6",
+        },
+        instructions: "Base instructions",
+        localTools: {},
+        apiUrl: "https://api.example.com",
+        apiMcpUrl: "https://api.example.com/mcp",
+        allowedToolNames: null,
+        knowledge: true,
+        createRemoteToolSource: (config) => ({
+          id: config.id ?? "source",
+          listTools: () => Promise.resolve([remoteTool("search_knowledge", "Remote search")]),
+          executeTool: () => Promise.resolve({ ok: true }),
+        }),
+        preloadLatestConversationUserText: false,
+      }),
+    Error,
+    'Remote tool "search_knowledge" conflicts with the agent knowledge scope',
+  );
+});
+
+Deno.test("prepareHostedChatRuntimeToolAssembly allows denied knowledge collisions to stay denied", async () => {
+  const toolAssembly = await prepareHostedChatRuntimeToolAssembly({
+    sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
+    taskContext: {
+      authToken: "token",
+      projectId: "project-1",
+      model: "anthropic/claude-sonnet-4-6",
+    },
+    instructions: "Base instructions",
+    localTools: {},
+    apiUrl: "https://api.example.com",
+    apiMcpUrl: "https://api.example.com/mcp",
+    allowedToolNames: null,
+    deniedToolNames: ["search_knowledge"],
+    knowledge: true,
+    createRemoteToolSource: (config) => ({
+      id: config.id ?? "source",
+      listTools: () => Promise.resolve([remoteTool("search_knowledge", "Remote search")]),
+      executeTool: () => Promise.resolve({ ok: true }),
+    }),
+    preloadLatestConversationUserText: false,
+  });
+
+  assertEquals(toolAssembly.remoteToolNames.includes("search_knowledge"), false);
+});
+
 Deno.test("prepareHostedChatRuntimeToolAssembly binds trusted project-id credentials to hosted knowledge", async () => {
   const requestedUrls: string[] = [];
   const authorizationPresent: boolean[] = [];

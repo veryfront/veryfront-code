@@ -193,9 +193,12 @@ toolResultContext: {
 Persisted messages, result events, and callbacks retain the original data. Small
 results remain inline. Skill instructions, schema lookup results, and retrieved
 sections remain visible rather than being wrapped in another reference.
-Exceeding the stored-result limit fails explicitly instead of evicting a live
-reference. Storage also has hard limits of 16 MiB per serialized result and 64 MiB
-per run. Byte options are limited to 1 MiB and the result count to 1,024.
+When storage is full, later oversized results become bounded preview-only
+payloads with `complete: false`, no reference, and
+`retrievalUnavailable.reason: "capacity_exceeded"`. Existing references remain
+readable, and raw run history and events retain the original results. Storage
+has hard limits of 16 MiB per serialized result and 64 MiB per run. Byte options
+are limited to 1 MiB and the result count to 1,024.
 Omission or `false` preserves inline results. Per-call replacement tools opt out
 of this framework behavior.
 

@@ -52,7 +52,32 @@ export interface ReferencedToolResultDisclosure {
   readonly byteLength: number;
 }
 
-export type ToolResultDisclosure = InlineToolResultDisclosure | ReferencedToolResultDisclosure;
+export interface PreviewOnlyToolResultDisclosure {
+  readonly kind: "preview";
+  readonly modelResult: ToolResultPreviewOnlyPayload;
+  readonly originalResult: unknown;
+  readonly byteLength: number;
+}
+
+export type ToolResultDisclosure =
+  | InlineToolResultDisclosure
+  | ReferencedToolResultDisclosure
+  | PreviewOnlyToolResultDisclosure;
+
+export interface ToolResultPreviewOnlyPayload {
+  readonly type: "tool_result_preview";
+  readonly toolCallId: string;
+  readonly toolName: string;
+  readonly totalBytes: number;
+  readonly isError?: boolean;
+  readonly preview: string;
+  readonly previewBytes: number;
+  readonly complete: false;
+  readonly retrievalUnavailable: {
+    readonly reason: "capacity_exceeded";
+    readonly detail: string;
+  };
+}
 
 export interface ToolResultReferencePayload {
   readonly type: typeof TOOL_RESULT_REFERENCE_TYPE;
@@ -203,10 +228,14 @@ function isObjectIdentity(value: unknown): value is object {
 
 function sliceUnderUtf8Budget(value: string, start: number, maxBytes: number): {
   readonly text: string;
+  readonly start: number;
   readonly end: number;
   readonly byteLength: number;
 } {
-  const boundedStart = Math.min(Math.max(start, 0), value.length);
+  const boundedStart = adjustSurrogateStartBoundary(
+    value,
+    Math.min(Math.max(start, 0), value.length),
+  );
   let low = boundedStart;
   let high = value.length;
   let bestEnd = boundedStart;
@@ -228,7 +257,22 @@ function sliceUnderUtf8Budget(value: string, start: number, maxBytes: number): {
     }
   }
 
-  return { text: bestText, end: bestEnd, byteLength: bestBytes };
+  return { text: bestText, start: boundedStart, end: bestEnd, byteLength: bestBytes };
+}
+
+function adjustSurrogateStartBoundary(value: string, start: number): number {
+  if (start <= 0 || start >= value.length) {
+    return start;
+  }
+  const previous = privateTextCharCodeAt(value, start - 1);
+  const current = privateTextCharCodeAt(value, start);
+  if (
+    previous >= HIGH_SURROGATE_MIN && previous <= HIGH_SURROGATE_MAX &&
+    current >= LOW_SURROGATE_MIN && current <= LOW_SURROGATE_MAX
+  ) {
+    return start - 1;
+  }
+  return start;
 }
 
 function adjustSurrogateBoundary(value: string, end: number): number {
@@ -250,9 +294,12 @@ function parseCursor(cursor: string | undefined): number {
   if (cursor === undefined || cursor === "") {
     return 0;
   }
+  if (!/^(0|[1-9]\d*)$/.test(cursor)) {
+    throw new RangeError("Tool result cursor must be a plain non-negative decimal integer string");
+  }
   const parsed = Number(cursor);
-  if (!Number.isSafeInteger(parsed) || parsed < 0) {
-    throw new RangeError("Tool result cursor must be a non-negative integer string");
+  if (!Number.isSafeInteger(parsed)) {
+    throw new RangeError("Tool result cursor must be a safe integer string");
   }
   return parsed;
 }
@@ -280,6 +327,48 @@ function createReferencePayload(
       },
     },
   };
+}
+
+function createPreviewOnlyPayload(input: {
+  readonly toolCallId: string;
+  readonly toolName: string;
+  readonly serialized: string;
+  readonly byteLength: number;
+  readonly previewBytes: number;
+  readonly detail: string;
+  readonly isError?: boolean;
+}): ToolResultPreviewOnlyPayload {
+  const preview = sliceUnderUtf8Budget(input.serialized, 0, input.previewBytes);
+  return {
+    type: "tool_result_preview",
+    toolCallId: input.toolCallId,
+    toolName: input.toolName,
+    totalBytes: input.byteLength,
+    ...(input.isError === true ? { isError: true } : {}),
+    preview: preview.text,
+    previewBytes: preview.byteLength,
+    complete: false,
+    retrievalUnavailable: {
+      reason: "capacity_exceeded",
+      detail: input.detail,
+    },
+  };
+}
+
+function capacityDetail(error: unknown): string | undefined {
+  if (!(error instanceof RangeError)) {
+    return undefined;
+  }
+  if (error.message.includes("per-result storage limit")) {
+    return "per-result storage limit exceeded";
+  }
+  if (error.message.includes("stored result limit exceeded")) {
+    return "stored result limit exceeded";
+  }
+  if (error.message.includes("total storage limit exceeded")) {
+    return "total storage limit exceeded";
+  }
+  return undefined;
 }
 
 export class ToolResultContext {
@@ -332,6 +421,33 @@ export class ToolResultContext {
     };
   }
 
+  discloseForModelContext(input: ToolResultDisclosureInput): ToolResultDisclosure {
+    try {
+      return this.disclose(input);
+    } catch (error) {
+      const detail = capacityDetail(error);
+      if (detail === undefined) {
+        throw error;
+      }
+      const serialized = safeSerializedResult(input.result);
+      const length = byteLength(serialized);
+      return {
+        kind: "preview",
+        modelResult: createPreviewOnlyPayload({
+          toolCallId: input.toolCallId,
+          toolName: input.toolName,
+          serialized,
+          byteLength: length,
+          previewBytes: this.#limits.previewBytes,
+          detail,
+          ...(input.isError === true ? { isError: true } : {}),
+        }),
+        originalResult: input.result,
+        byteLength: length,
+      };
+    }
+  }
+
   read(request: ToolResultSectionRequest): ToolResultSection {
     const record = this.#records.get(request.ref);
     if (!record) {
@@ -352,7 +468,7 @@ export class ToolResultContext {
       toolCallId: record.toolCallId,
       toolName: record.toolName,
       totalBytes: record.byteLength,
-      cursor: String(cursor),
+      cursor: String(section.start),
       ...(nextCursor ? { nextCursor } : {}),
       done: nextCursor === undefined,
       text: section.text,

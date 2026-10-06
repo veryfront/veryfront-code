@@ -49,7 +49,7 @@ store support for filtering before ranking.
 
 ## Add knowledge files
 
-Create Markdown files under `knowledge/`. Write YAML frontmatter as a mapping:
+Create Markdown files under `knowledge/`.
 
 Knowledge documents follow the [Open Knowledge Format](https://github.com/GoogleCloudPlatform/knowledge-catalog/blob/main/okf/SPEC.md).
 Agent configuration stays in TypeScript; OKF document metadata uses the standard's
@@ -58,6 +58,8 @@ frontmatter format. Concept documents require a non-empty `type`; `index.md` and
 The current manifest reader accepts existing Markdown files without enforcing
 every OKF requirement. Validate document metadata during ingestion before
 treating an existing catalog as OKF compliant.
+
+Write YAML frontmatter as a mapping:
 
 ```md
 ---

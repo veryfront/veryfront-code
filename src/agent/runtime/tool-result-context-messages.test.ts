@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertStrictEquals, assertThrows } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertLessOrEqual, assertStrictEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { Message, MessagePart, ToolResultPart } from "../types.ts";
 import { createToolResultContext } from "./tool-result-context.ts";
@@ -52,6 +52,28 @@ function resultPreview(value: unknown): string | undefined {
     return undefined;
   }
   return typeof value.preview === "string" ? value.preview : undefined;
+}
+
+function resultComplete(value: unknown): boolean | undefined {
+  if (typeof value !== "object" || value === null || !("complete" in value)) {
+    return undefined;
+  }
+  return typeof value.complete === "boolean" ? value.complete : undefined;
+}
+
+function hasResultRef(value: unknown): boolean {
+  return typeof value === "object" && value !== null && "ref" in value;
+}
+
+function hasResultRetrieval(value: unknown): boolean {
+  return typeof value === "object" && value !== null && "retrieval" in value;
+}
+
+function resultRetrievalUnavailable(value: unknown): unknown {
+  if (typeof value !== "object" || value === null || !("retrievalUnavailable" in value)) {
+    return undefined;
+  }
+  return value.retrievalUnavailable;
 }
 
 describe("agent runtime tool result context message adapter", () => {
@@ -147,17 +169,38 @@ describe("agent runtime tool result context message adapter", () => {
     assertEquals(context.size, 0);
   });
 
-  it("surfaces capacity exhaustion instead of replacing a live reference", () => {
+  it("degrades storage exhaustion to bounded preview-only model context", () => {
     const context = createToolResultContext({
-      limits: { maxInlineBytes: 1, maxStoredResults: 1 },
+      limits: { maxInlineBytes: 1, previewBytes: 10, maxStoredResults: 1 },
     });
     const first = toolMessage("first oversized value", "read_one");
-    const second = toolMessage("second oversized value", "read_two");
+    const failedSecond = toolMessage({
+      details: "second oversized value",
+      isError: true,
+      message: "Action failed after capacity was full",
+    }, "read_two");
 
-    assertThrows(
-      () => createModelToolResultContextMessages([first, second], context),
-      RangeError,
-      "stored result limit exceeded",
-    );
+    const transformed = createModelToolResultContextMessages([first, failedSecond], context);
+    const firstResult = requireToolResultPart(transformed[0]!.parts[0]!).result;
+    const secondResult = requireToolResultPart(transformed[1]!.parts[0]!).result;
+
+    assertEquals(resultType(firstResult), "tool_result_reference");
+    const firstRef = resultRef(firstResult);
+    if (firstRef === undefined) {
+      throw new Error("expected first result ref");
+    }
+    assertEquals(context.read({ ref: firstRef }).text, "first oversized value");
+
+    assertEquals(resultType(secondResult), "tool_result_preview");
+    assertEquals(resultComplete(secondResult), false);
+    assertEquals(resultIsError(secondResult), true);
+    assertEquals(hasResultRef(secondResult), false);
+    assertEquals(hasResultRetrieval(secondResult), false);
+    assertEquals(resultRetrievalUnavailable(secondResult), {
+      reason: "capacity_exceeded",
+      detail: "stored result limit exceeded",
+    });
+    assertLessOrEqual(resultPreview(secondResult)?.length ?? 0, 10);
+    assertEquals(context.size, 1);
   });
 });

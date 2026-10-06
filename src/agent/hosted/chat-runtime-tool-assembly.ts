@@ -760,16 +760,38 @@ async function prepareHostedChatRuntimeToolAssemblyInternal<
   const researchArtifactRemoteToolSource =
     filteredConfiguredRemoteToolSources.find(hasTrustedPlatformSource) ??
       filteredConfiguredRemoteToolSources[0];
-  const remoteToolSources = [
-    ...knowledgeRemoteToolSources,
-    ...filteredConfiguredRemoteToolSources,
-  ];
-  const remoteToolNames = await listProjectScopedRemoteToolNames(remoteToolSources, {
+  const remoteToolListOptions = {
     sourceIntegrationPolicy: input.sourceIntegrationPolicy,
     projectId: activeProjectId(input.taskContext),
     projectScopedRemoteToolOptions: input.projectScopedRemoteToolOptions,
     ...("remoteToolSources" in input ? { context: { abortSignal: input.signal } } : {}),
-  });
+  };
+  const knowledgeRemoteToolNames = await listProjectScopedRemoteToolNames(
+    knowledgeRemoteToolSources,
+    remoteToolListOptions,
+  );
+  const configuredRemoteToolNames = await listProjectScopedRemoteToolNames(
+    filteredConfiguredRemoteToolSources,
+    remoteToolListOptions,
+  );
+  if (
+    includesValue(knowledgeRemoteToolNames, FRAMEWORK_KNOWLEDGE_TOOL_NAME) &&
+    includesValue(configuredRemoteToolNames, FRAMEWORK_KNOWLEDGE_TOOL_NAME)
+  ) {
+    throw CONFIG_INVALID.create({
+      detail:
+        `Remote tool "${FRAMEWORK_KNOWLEDGE_TOOL_NAME}" conflicts with the agent knowledge scope. ` +
+        "Rename the remote tool or remove the knowledge selector.",
+    });
+  }
+  const remoteToolSources = [
+    ...knowledgeRemoteToolSources,
+    ...filteredConfiguredRemoteToolSources,
+  ];
+  const remoteToolNames = sortValues(
+    [...createPrivateSet([...knowledgeRemoteToolNames, ...configuredRemoteToolNames])],
+    compareStrings,
+  );
   const localProviderToolNames = createPrivateSet(
     filterValues(
       ownKeys(sortedLocalTools),

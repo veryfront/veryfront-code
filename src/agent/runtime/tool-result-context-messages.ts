@@ -33,7 +33,7 @@ function transformPartForToolResultContext(
     return part;
   }
 
-  const disclosure = context.disclose({
+  const disclosure = context.discloseForModelContext({
     toolCallId: part.toolCallId,
     toolName: part.toolName,
     result: part.result,

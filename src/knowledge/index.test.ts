@@ -176,6 +176,122 @@ describe("projectKnowledge", () => {
     });
   });
 
+  it("excludes out-of-project RAG result sources without aborting scoped retrieval", async () => {
+    registerTestEmbeddingProvider();
+
+    await withTempDir(async (projectDir) => {
+      const storagePath = join(projectDir, "data", "knowledge-index.json");
+      await mkdir(join(projectDir, "data"), { recursive: true });
+      await writeTextFile(
+        storagePath,
+        JSON.stringify({
+          documents: [
+            {
+              id: "outside-source",
+              title: "Outside source",
+              source: "../outside/source.md",
+              type: "md",
+              createdAt: 1,
+            },
+            {
+              id: "outside-content-dir",
+              title: "Outside content dir",
+              source: "docs/private.md",
+              type: "md",
+              createdAt: 2,
+            },
+            {
+              id: "public-login",
+              title: "Public login",
+              source: "knowledge/public/login.md",
+              type: "md",
+              createdAt: 3,
+            },
+          ],
+          chunks: [
+            {
+              id: "outside-source-chunk",
+              documentId: "outside-source",
+              text: "Outside source content.",
+              embedding: [1, 0],
+              index: 0,
+            },
+            {
+              id: "outside-content-dir-chunk",
+              documentId: "outside-content-dir",
+              text: "Outside content directory content.",
+              embedding: [1, 0],
+              index: 0,
+            },
+            {
+              id: "public-login-chunk",
+              documentId: "public-login",
+              text: "Public login content.",
+              embedding: [1, 0],
+              index: 0,
+            },
+          ],
+        }),
+      );
+
+      const knowledge = projectKnowledge({
+        projectDir,
+        storagePath,
+        model: "test/demo",
+        scope: "knowledge/public/**",
+      });
+
+      const result = await knowledge.retrieve("login", { topK: 10 });
+
+      assertEquals(result.matches.map((match) => match.source), ["knowledge/public/login.md"]);
+      assertStringIncludes(result.context, "Public login content.");
+    });
+  });
+
+  it("does not validate candidate paths for false knowledge scopes", async () => {
+    registerTestEmbeddingProvider();
+
+    await withTempDir(async (projectDir) => {
+      const storagePath = join(projectDir, "data", "knowledge-index.json");
+      await mkdir(join(projectDir, "data"), { recursive: true });
+      await writeTextFile(
+        storagePath,
+        JSON.stringify({
+          documents: [
+            {
+              id: "outside-source",
+              title: "Outside source",
+              source: "../outside/source.md",
+              type: "md",
+              createdAt: 1,
+            },
+          ],
+          chunks: [
+            {
+              id: "outside-source-chunk",
+              documentId: "outside-source",
+              text: "Outside source content.",
+              embedding: [1, 0],
+              index: 0,
+            },
+          ],
+        }),
+      );
+
+      const knowledge = projectKnowledge({
+        projectDir,
+        storagePath,
+        model: "test/demo",
+        scope: false,
+      });
+
+      const result = await knowledge.retrieve("login", { topK: 10 });
+
+      assertEquals(result.matches, []);
+      assertEquals(result.context, "");
+    });
+  });
+
   it("normalizes relative projectDir RAG sources before scoped filtering", async () => {
     registerTestEmbeddingProvider();
 

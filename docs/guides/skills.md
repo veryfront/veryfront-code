@@ -136,15 +136,17 @@ export default agent({
 ```
 
 Use `skills: ["code-review"]` to advertise and authorize only that skill.
-Use `skills: false` or `skills: []` to disable skill access. A string selects an
-ID or glob; a boolean map grants matching skills and subtracts exclusions:
+Use `skills: false` or `skills: []` to disable skill access. A string selects this
+agent's own skill short name, a visible skill ID, or a glob. Exact names resolve
+this agent's own short names before IDs. A boolean map grants matching skills
+and subtracts exclusions:
 
 ```ts
 skills: { "support-*": true, "support-internal": false }
 ```
 
 Exclusion-only maps grant nothing. The framework supplies `load_skill` for an
-enabled selection; developers do not need to add it to `tools`. Loading a skill
+enabled selection; you do not need to add it to `tools`. Loading a skill
 outside the selected scope is denied. Omitted `skills` preserves the existing
 behavior of allowing every visible skill.
 

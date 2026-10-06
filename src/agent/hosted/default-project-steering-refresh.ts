@@ -179,26 +179,26 @@ function resolveRefreshedSkillSnapshot(input: {
   selector: SkillSelector;
   policy: ResolvedSkillSelectorPolicy | undefined;
 }) {
-  if (
-    !input.policy &&
-    (input.selector === false || (Array.isArray(input.selector) && input.selector.length === 0))
-  ) {
-    return createNoneSkillSelectorSnapshot<RuntimeSkillDefinition>();
-  }
+  if (!input.policy) {
+    if (
+      input.selector === false ||
+      (Array.isArray(input.selector) && input.selector.length === 0)
+    ) {
+      return createNoneSkillSelectorSnapshot<RuntimeSkillDefinition>();
+    }
 
-  if (!input.policy && Array.isArray(input.selector)) {
     return resolveRuntimeSkillSelectorSnapshotForAgent({
       skills: input.skills,
       agentId: input.agentId,
-      selector: [...input.selector],
+      selector: Array.isArray(input.selector) ? [...input.selector] : input.selector,
     });
   }
 
-  if (!input.policy || input.policy.kind === "all-visible") {
+  if (input.policy.kind === "all-visible") {
     return resolveRuntimeSkillSelectorSnapshotForAgent({
       skills: input.skills,
       agentId: input.agentId,
-      selector: input.policy?.source === "true" ? true : undefined,
+      selector: input.policy.source === "true" ? true : undefined,
     });
   }
 

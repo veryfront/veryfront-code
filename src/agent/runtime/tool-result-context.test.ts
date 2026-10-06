@@ -323,6 +323,42 @@ describe("agent runtime tool result context", () => {
     assertEquals(second.text, "b🙂");
   });
 
+  it("requires plain decimal cursors and preserves surrogate boundaries", () => {
+    const context = createToolResultContext({
+      limits: { maxInlineBytes: 1, maxSectionBytes: 5 },
+    });
+    const disclosure = context.disclose({
+      toolCallId: "call-cursor-form",
+      toolName: "read",
+      result: "a🙂b",
+    });
+
+    assertEquals(disclosure.kind, "reference");
+    if (disclosure.kind !== "reference") {
+      throw new Error("expected referenced tool result disclosure");
+    }
+
+    for (const cursor of ["01", "1e0", " 1", "+1", "1.0", "-1"]) {
+      assertThrows(
+        () => context.read({ ref: disclosure.modelResult.ref, cursor }),
+        RangeError,
+        "plain non-negative decimal integer string",
+      );
+    }
+
+    const first = context.read({ ref: disclosure.modelResult.ref, maxBytes: 5 });
+    assertEquals(first.text, "a🙂");
+    assertEquals(first.nextCursor, "3");
+
+    const midSurrogate = context.read({
+      ref: disclosure.modelResult.ref,
+      cursor: "2",
+      maxBytes: 5,
+    });
+    assertEquals(midSurrogate.cursor, "1");
+    assertEquals(midSurrogate.text, "🙂b");
+  });
+
   it("advances through unpaired high surrogates", () => {
     const context = createToolResultContext({
       limits: { maxInlineBytes: 1, maxSectionBytes: 4 },
