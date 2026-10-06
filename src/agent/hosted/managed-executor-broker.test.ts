@@ -444,6 +444,7 @@ describe("managed executor broker", () => {
     const f = fixture({ completeStream: true, runtimeObservationStepId: stepId });
     const { persistence, bodies } = observationPersistence();
     configureCanonical(f.input, persistence.modelRunEventSink, persistence.bindSessionOwnedWork);
+    f.input.model.modelCallCaptureReceipts = true;
     f.input.installation.grant.execution = {
       kind: "canonical",
       projectId: owner.projectId,
@@ -1360,6 +1361,7 @@ function trustedFixture(
   const steeringEntered = Promise.withResolvers<void>();
   configureCanonical(f.input, () => Promise.resolve(), () => {});
   f.input.installation.grant.execution.projectId = scope.projectId;
+  if (scope.projectId !== null) f.input.model.modelCallCaptureReceipts = true;
   let captureEventId = 0;
   f.input.model.runEventSink = async (event) => {
     if (scope.projectId === null) {

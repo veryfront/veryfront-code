@@ -139,6 +139,8 @@ export interface ManagedExecutorStartInput {
     resolver: AgentModelRuntimeResolver;
     grant: ExecutorModelGrant;
     runEventSink?: AgentRunEventSink;
+    /** Trusted API rollout opt-in, never selected by executor or project payloads. */
+    modelCallCaptureReceipts?: true;
   };
   tools: {
     /** Complete trusted inventory, including project-local tools, before selector resolution. */
@@ -654,6 +656,7 @@ function buildBrokerOperations(
       scope,
       grant: input.model.grant,
       runEventSink: input.model.runEventSink,
+      ...(input.model.modelCallCaptureReceipts ? { modelCallCaptureReceipts: true } : {}),
     })
     : createEphemeralHostedExecutorModelBroker({
       resolveModelRuntime: input.model.resolver,
@@ -697,6 +700,10 @@ function buildBrokerOperations(
 }
 
 function snapshotOperationInput(input: ManagedExecutorStartInput): ManagedExecutorOperationInput {
+  const modelCallCaptureReceipts = input.model.modelCallCaptureReceipts;
+  if (modelCallCaptureReceipts !== undefined && modelCallCaptureReceipts !== true) {
+    throw new TypeError("Hosted model capture activation must be explicit");
+  }
   if (input.tools.catalog === undefined) {
     throw new TypeError("Managed executor tool catalog is required");
   }
@@ -745,6 +752,7 @@ function snapshotOperationInput(input: ManagedExecutorStartInput): ManagedExecut
         }])),
       },
       ...(input.model.runEventSink ? { runEventSink: input.model.runEventSink } : {}),
+      ...(modelCallCaptureReceipts ? { modelCallCaptureReceipts: true } : {}),
     },
     tools: {
       catalog,
