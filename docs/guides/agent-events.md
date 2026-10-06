@@ -1,0 +1,116 @@
+---
+title: "Agent Events Protocol"
+description: "Parse target Agent Events Protocol CloudEvents with schema-derived TypeScript payloads."
+order: 58
+---
+
+Use `veryfront/events` when a surface receives target Agent Events Protocol frames and needs the shared parser, target schemas, and per-type payload typings. Keep `veryfront/run-events` for existing stored run-event rows until your surface has completed the protocol cutover. For all public exports, see the [`veryfront/events` API reference](../api-reference/veryfront/events.md).
+
+## Prerequisites
+
+You need an existing Veryfront project with `veryfront` installed. Browser and SDK parser examples also use `@veryfront/ext-schema-zod` as the injected JSON Schema validator.
+
+## Create a parser
+
+Use validator injection for browser code and shared SDK code. It avoids global validator registration for that parser instance. The entrypoint also exports registry helpers for server processes that want module-level parsing.
+
+```ts
+import { createEventParser } from "veryfront/events";
+import { createZodAdapter } from "@veryfront/ext-schema-zod";
+
+const events = createEventParser(createZodAdapter());
+
+export function parseEvent(rawEvent: unknown) {
+  return events.parseEvent(rawEvent);
+}
+```
+
+If your server process wants module-level helpers, register the validator once at startup:
+
+```ts
+import { parseEvent as parseEventRecord, registerEventSchemaValidator } from "veryfront/events";
+import { createZodAdapter } from "@veryfront/ext-schema-zod";
+
+registerEventSchemaValidator(createZodAdapter());
+
+export function parseEvent(rawEvent: unknown) {
+  return parseEventRecord(rawEvent);
+}
+```
+
+## Compatibility notes
+
+The project-agent encoder emits reasoning segment events with `messageId` set to the active assistant message and `contentId` set to the reasoning segment id. The AG-UI SSE formatter preserves `contentId` on start, delta, and end frames; legacy frames without it remain valid. Use `contentId` with the owning `messageId` for segment identity. The fallback `messageId = contentId` applies only when reasoning begins before an assistant message is active.
+
+## Read typed payloads
+
+`EventRecord` narrows by `type`, so `data` has the fields for the selected event.
+
+```ts
+import type { EventRecord } from "veryfront/events";
+
+export function textFromEvent(event: EventRecord): string | undefined {
+  switch (event.type) {
+    case "com.veryfront.message.text.delta.emitted":
+      return event.data.contentRedacted === true ? undefined : event.data.delta;
+    case "com.veryfront.stream.closed":
+      return event.data.reason;
+    default:
+      return undefined;
+  }
+}
+```
+
+## Correlate input requests to tool calls
+
+Input request snapshots and references can include `toolCallId` when the producer knows the exact logical tool-call occurrence that created the request. Keep the field on `inputRequest`, not in `changes`, because the relation is immutable. Omit it when the producer only has a provider-local id or cannot prove the run-level occurrence.
+
+Child-run lifecycle producers should keep the existing `childRunId` and include `childCanonicalRunId` only when the child admission owner supplies the exact canonical run UUID. Omit `childCanonicalRunId` when the producer cannot prove that identity.
+
+## Validate producer output
+
+Parse each outgoing event with the shared validator before publishing it:
+
+```ts
+import { createEventParser } from "veryfront/events";
+import { createZodAdapter } from "@veryfront/ext-schema-zod";
+
+const events = createEventParser(createZodAdapter());
+
+export function validateOutgoingEvent(outgoingEvent: unknown) {
+  const result = events.safeParseEvent(outgoingEvent);
+  if (!result.success) {
+    throw new TypeError(result.issues[0]?.message ?? "Invalid Agent Events Protocol event");
+  }
+  return result.data;
+}
+```
+
+Use `EVENT_TYPES` and `EVENT_SCHEMA_BY_TYPE` when a producer needs to inspect the protocol surface instead of hard-coding protocol strings.
+
+## Verify it worked
+
+Run the event parser tests after changing parser behavior, schema artifacts, or generated payload types:
+
+```sh
+deno task test:file src/events/
+```
+
+## Regenerate payload types
+
+The payload types are generated from the committed target payload schema artifact. Run the repository generator after changing the target schema JSON:
+
+```sh
+deno task generate
+```
+
+To check only the Agent Events payload type artifact:
+
+```sh
+deno run -A src/events/generate-payload-types.mjs
+git diff --exit-code -- src/events/payload-types.generated.ts
+```
+
+## Next steps
+
+Read the [`veryfront/events` API reference](../api-reference/veryfront/events.md) for the full export surface. For existing stored run-event rows and streaming behavior during the cutover, see the [`veryfront/run-events` API reference](../api-reference/veryfront/run-events.md) and the server-side streaming notes in [Memory and streaming](memory-and-streaming.md#server-side-streaming).

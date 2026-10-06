@@ -354,6 +354,9 @@ describe("lifecycle run event adapter", () => {
       "TOOL_CALL_END",
       "TOOL_CALL_RESULT",
     ]);
+    assertEquals(emitted[0]?.messageId, "message-1");
+    assertEquals(emitted[0]?.parentMessageId, "message-1");
+    assertEquals(emitted[3]?.parentMessageId, "message-1");
     assertEquals(emitted[3]?.input, { query: "x" });
     assertEquals(emitted[3]?.isError, false);
     assertEquals(emitted[3]?.providerExecuted, true);
@@ -460,7 +463,40 @@ describe("lifecycle run event adapter", () => {
       const result = emitted.find((event) => event.type === "TOOL_CALL_RESULT");
       assertEquals(result?.isError, true);
       assertEquals(result?.providerExecuted, true);
+      assertEquals(result?.parentMessageId, "message-1");
     }
+  });
+
+  it("uses trusted writer context for custom native reference events", () => {
+    const { emitted, adapter } = createCollector();
+    adapter.handleFrame(
+      frames([{
+        event: {
+          type: "custom",
+          name: "source-url",
+          data: {
+            type: "source-url",
+            sourceId: "web-1",
+            url: "https://example.com/a",
+            parentMessageId: "forged-parent",
+            messageId: "forged-message",
+          },
+        },
+      }])[0]!,
+    );
+    adapter.dispose();
+
+    assertEquals(emitted, [{
+      type: "URL_CITED",
+      sourceId: "web-1",
+      url: "https://example.com/a",
+      parentMessageId: "message-1",
+      stream_protocol_version: 2,
+      attempt_id: "attempt-1",
+      attempt_index: 0,
+      logical_sequence: 1,
+      idempotency_key: "stream-v2:run-1:attempt-1:1",
+    }]);
   });
 
   it("records ready-only tool input before committing the durable tool call", () => {

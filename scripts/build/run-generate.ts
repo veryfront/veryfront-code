@@ -77,6 +77,17 @@ export const UNITS: GeneratorUnit[] = [
     outputs: ["cli/skills/core-skills.generated.ts"],
   },
   {
+    name: "agent-events-payload-types",
+    commands: [["deno", "run", "-A", "src/events/generate-payload-types.mjs"]],
+    inputRoots: [],
+    inputFiles: [
+      "src/events/contracts/target-payload-schemas.json",
+      "src/events/generate-payload-types.mjs",
+      "deno.json",
+    ],
+    outputs: ["src/events/payload-types.generated.ts"],
+  },
+  {
     name: "dev-ui",
     commands: [
       ["deno", "run", "-A", "extensions/ext-dev-ui-react/scripts/generate-styles.ts"],
