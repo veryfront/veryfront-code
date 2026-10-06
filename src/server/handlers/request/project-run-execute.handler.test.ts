@@ -11505,6 +11505,55 @@ describe("server/handlers/request/project-run-execute.handler manual pause (#258
     assertEquals((await backend.getRun(runId))?.status, "waiting");
   });
 
+  it("settles a duplicate manual resume while a live boundary holds its lock (#2666)", async () => {
+    const backend = new SharedMemoryBackend();
+    const calls: string[] = [];
+    const definition = threeSteps(calls);
+    const boundaryEntered = Promise.withResolvers<void>();
+    const releaseBoundary = Promise.withResolvers<void>();
+    let acknowledgements = 0;
+    let duplicateResumes = 0;
+    let polls = 0;
+    let live: ReturnType<typeof dispatch> | undefined;
+    try {
+      await withMockFetch(async () => {
+        acknowledgements++;
+        if (acknowledgements === 1) return Response.json({ stop: true });
+        if (acknowledgements === 3) {
+          boundaryEntered.resolve();
+          await releaseBoundary.promise;
+        }
+        return Response.json({ stop: false });
+      }, async () => {
+        await dispatch(createHandler(backend, definition));
+        live = dispatch(createHandler(backend, definition), { type: "manual" });
+        await boundaryEntered.promise;
+        assertEquals((await backend.getRun(runId))?.status, "running");
+        assertEquals((await backend.getRun(runId))?.currentNodes, []);
+        assertEquals(await backend.isLocked(runId), true);
+        const duplicate = await dispatch(
+          createHandler(backend, definition, {
+            onResume: () => duplicateResumes++,
+            sleep: async () => {
+              if (++polls === 400) releaseBoundary.resolve();
+              await delay(0);
+            },
+          }),
+          { type: "manual" },
+        );
+        assertEquals(duplicate.success, true);
+        assertEquals(duplicate.error, undefined);
+        assertEquals((await live).success, true);
+        assertEquals(duplicateResumes, 0);
+        assertEquals((await backend.getRun(runId))?.status, "completed");
+      });
+    } finally {
+      releaseBoundary.resolve();
+      await live;
+    }
+    assertEquals(calls, ["first", "second", "third"]);
+  });
+
   it("recovers a post-ack crash record before settling and executes completed nodes once", async () => {
     const backend = new SharedMemoryBackend();
     const calls: string[] = [];
@@ -11532,6 +11581,33 @@ describe("server/handlers/request/project-run-execute.handler manual pause (#258
       assertEquals((await backend.getRun(runId))?.status, "completed");
     });
     assertEquals(attemptedResume, true);
+    assertEquals(calls, ["first", "second", "third"]);
+  });
+
+  it("recovers a post-ack crash after the dead execution lease expires (#2666)", async () => {
+    const backend = new SharedMemoryBackend();
+    const calls: string[] = [];
+    const definition = threeSteps(calls);
+    let stop = true;
+    let resumedWhileLocked: Promise<boolean> | undefined;
+    await withMockFetch(async () => Response.json({ stop }), async () => {
+      await dispatch(createHandler(backend, definition));
+      await backend.updateRun(runId, { status: "running" });
+      assertExists(await backend.acquireLock(runId, 25));
+      stop = false;
+      const resumed = await dispatch(
+        createHandler(backend, definition, {
+          onResume: () => {
+            resumedWhileLocked = backend.isLocked(runId);
+          },
+        }),
+        { type: "manual" },
+      );
+      assertEquals(resumed.success, true);
+      assertExists(resumedWhileLocked);
+      assertEquals(await resumedWhileLocked, false);
+      assertEquals((await backend.getRun(runId))?.status, "completed");
+    });
     assertEquals(calls, ["first", "second", "third"]);
   });
 
