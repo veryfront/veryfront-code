@@ -3830,15 +3830,25 @@ function resolveStyleArtifactBuildSelector(
   config: Record<string, unknown>,
   ctx: HandlerContext,
 ): StyleArtifactBuildSelector {
-  const selector: StyleArtifactBuildSelector = {
-    branch: getStringConfig(config, ["branch"]) ?? optionalString(ctx.parsedDomain?.branch),
-    environmentName: getStringConfig(config, ["environment_name", "environmentName"]) ??
-      optionalString(ctx.environmentName),
-    releaseId: getStringConfig(config, ["release_id", "releaseId"]) ??
-      optionalString(ctx.releaseId),
+  const explicitSelector: StyleArtifactBuildSelector = {
+    branch: getStringConfig(config, ["branch"]),
+    environmentName: getStringConfig(config, ["environment_name", "environmentName"]),
+    releaseId: getStringConfig(config, ["release_id", "releaseId"]),
   };
-  const count = [selector.branch, selector.environmentName, selector.releaseId]
-    .filter((value) => typeof value === "string" && value.length > 0).length;
+  const hasExplicitSelector = ReflectApply(ArraySome, ObjectValues(explicitSelector), [
+    (value: unknown) => typeof value === "string" && value.length > 0,
+  ]) as boolean;
+  const selector: StyleArtifactBuildSelector = hasExplicitSelector ? explicitSelector : {
+    branch: optionalString(ctx.parsedDomain?.branch),
+    environmentName: optionalString(ctx.environmentName),
+    releaseId: optionalString(ctx.releaseId),
+  };
+  let count = 0;
+  if (typeof selector.branch === "string" && selector.branch.length > 0) count += 1;
+  if (typeof selector.environmentName === "string" && selector.environmentName.length > 0) {
+    count += 1;
+  }
+  if (typeof selector.releaseId === "string" && selector.releaseId.length > 0) count += 1;
 
   if (count !== 1) {
     throw INVALID_ARGUMENT.create({ detail: "Exactly one style artifact selector is required" });

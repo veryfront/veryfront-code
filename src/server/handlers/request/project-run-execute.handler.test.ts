@@ -2783,6 +2783,266 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     assertEquals(typeof recorder.upserts[0]?.artifact_hash, "string");
   });
 
+  it("uses an explicit release selector instead of the preview request context", async () => {
+    const body = {
+      runId: "run_style_artifact_explicit_release",
+      kind: "task",
+      target: "task:style-artifact-build",
+      projectId: "proj-1",
+      config: { release_id: "release-1" },
+    };
+    const { request, publicKeyPem } = await signedRequest(
+      "/api/control-plane/runs/run_style_artifact_explicit_release/execute",
+      body,
+      { "x-token": "test-token" },
+    );
+    const { ctx, readCalls, sourceFileCalls } = createStyleArtifactCtx(publicKeyPem, {
+      files: [{
+        path: "pages/index.tsx",
+        content:
+          'export default function Page() { return <main className="px-4 text-red-500">Hi</main>; }',
+      }],
+      stylesheet: "@tailwind utilities; .from-css { color: red; }",
+      stylesheetPath: "src/styles.css",
+      contentContext: {
+        sourceType: "release",
+        projectSlug: "demo-project",
+        releaseId: "release-1",
+      },
+    });
+    const recorder = createStyleArtifactFetchRecorder();
+
+    const result = await withMockFetch(
+      recorder.fetch,
+      async () => await new ProjectRunExecuteHandler().handle(request, ctx),
+    );
+
+    assertExists(result.response);
+    assertEquals(result.response.status, 200);
+    const json = await result.response.json();
+    assertEquals(json.success, true);
+    assertEquals(sourceFileCalls.count, 1);
+    assertEquals(readCalls, ["src/styles.css"]);
+    assertEquals(recorder.upserts.length, 1);
+    assertEquals(recorder.upserts[0]?.release_id, "release-1");
+    assertEquals(recorder.upserts[0]?.environment_name, undefined);
+    assertEquals(recorder.upserts[0]?.status, "ready");
+    assertEquals(typeof recorder.upserts[0]?.artifact_hash, "string");
+  });
+
+  it("uses captured intrinsics for explicit style selectors", async () => {
+    const body = {
+      runId: "run_style_artifact_captured_intrinsics",
+      kind: "task",
+      target: "task:style-artifact-build",
+      projectId: "proj-1",
+      config: { release_id: "release-1" },
+    };
+    const { request, publicKeyPem } = await signedRequest(
+      "/api/control-plane/runs/run_style_artifact_captured_intrinsics/execute",
+      body,
+      { "x-token": "test-token" },
+    );
+    const { ctx, readCalls, sourceFileCalls } = createStyleArtifactCtx(publicKeyPem, {
+      files: [{
+        path: "pages/index.tsx",
+        content:
+          'export default function Page() { return <main className="px-4 text-red-500">Hi</main>; }',
+      }],
+      stylesheet: "@tailwind utilities; .from-css { color: red; }",
+      stylesheetPath: "src/styles.css",
+      contentContext: {
+        sourceType: "release",
+        projectSlug: "demo-project",
+        releaseId: "release-1",
+      },
+    });
+    const recorder = createStyleArtifactFetchRecorder();
+
+    const result = await withMockFetch(
+      recorder.fetch,
+      async () => {
+        const values = Object.values;
+        const some = Array.prototype.some;
+        Object.values = ((value: object) => {
+          if (Object.prototype.hasOwnProperty.call(value, "releaseId")) {
+            throw new Error("Project replaced Object.values");
+          }
+          return values(value);
+        }) as typeof Object.values;
+        Array.prototype.some = function (...args: Parameters<typeof some>) {
+          if (this.includes("release-1")) throw new Error("Project replaced Array.some");
+          return Reflect.apply(some, this, args);
+        };
+        try {
+          return await new ProjectRunExecuteHandler().handle(request, ctx);
+        } finally {
+          Object.values = values;
+          Array.prototype.some = some;
+        }
+      },
+    );
+
+    assertExists(result.response);
+    assertEquals(result.response.status, 200);
+    const json = await result.response.json();
+    assertEquals(json.success, true);
+    assertEquals(sourceFileCalls.count, 1);
+    assertEquals(readCalls, ["src/styles.css"]);
+    assertEquals(recorder.upserts.length, 1);
+    assertEquals(recorder.upserts[0]?.release_id, "release-1");
+    assertEquals(recorder.upserts[0]?.environment_name, undefined);
+    assertEquals(recorder.upserts[0]?.status, "ready");
+    assertEquals(typeof recorder.upserts[0]?.artifact_hash, "string");
+  });
+
+  it("uses the preview request context when no selector is explicit", async () => {
+    const body = {
+      runId: "run_style_artifact_context_fallback",
+      kind: "task",
+      target: "task:style-artifact-build",
+      projectId: "proj-1",
+      config: {},
+    };
+    const { request, publicKeyPem } = await signedRequest(
+      "/api/control-plane/runs/run_style_artifact_context_fallback/execute",
+      body,
+      { "x-token": "test-token" },
+    );
+    const { ctx, readCalls, sourceFileCalls } = createStyleArtifactCtx(publicKeyPem, {
+      files: [{
+        path: "pages/index.tsx",
+        content:
+          'export default function Page() { return <main className="px-4 text-red-500">Hi</main>; }',
+      }],
+      stylesheet: "@tailwind utilities; .from-css { color: red; }",
+      stylesheetPath: "src/styles.css",
+    });
+    const recorder = createStyleArtifactFetchRecorder();
+
+    const result = await withMockFetch(
+      recorder.fetch,
+      async () => await new ProjectRunExecuteHandler().handle(request, ctx),
+    );
+
+    assertExists(result.response);
+    assertEquals(result.response.status, 200);
+    const json = await result.response.json();
+    assertEquals(json.success, true);
+    assertEquals(sourceFileCalls.count, 1);
+    assertEquals(readCalls, ["src/styles.css"]);
+    assertEquals(recorder.upserts.length, 1);
+    assertEquals(recorder.upserts[0]?.release_id, undefined);
+    assertEquals(recorder.upserts[0]?.environment_name, "Preview");
+    assertEquals(recorder.upserts[0]?.status, "ready");
+    assertEquals(typeof recorder.upserts[0]?.artifact_hash, "string");
+  });
+
+  it("rejects multiple explicit style selectors before reading source files", async () => {
+    const body = {
+      runId: "run_style_artifact_ambiguous",
+      kind: "task",
+      target: "task:style-artifact-build",
+      projectId: "proj-1",
+      config: { release_id: "release-1", environment_name: "Preview" },
+    };
+    const { request, publicKeyPem } = await signedRequest(
+      "/api/control-plane/runs/run_style_artifact_ambiguous/execute",
+      body,
+      { "x-token": "test-token" },
+    );
+    const { ctx, readCalls, sourceFileCalls } = createStyleArtifactCtx(publicKeyPem, {
+      files: [{
+        path: "pages/index.tsx",
+        content:
+          'export default function Page() { return <main className="px-4 text-red-500">Hi</main>; }',
+      }],
+      stylesheet: "@tailwind utilities; .from-css { color: red; }",
+      stylesheetPath: "src/styles.css",
+      contentContext: {
+        sourceType: "release",
+        projectSlug: "demo-project",
+        releaseId: "release-1",
+      },
+    });
+    const recorder = createStyleArtifactFetchRecorder();
+
+    const result = await withMockFetch(
+      recorder.fetch,
+      async () => await new ProjectRunExecuteHandler().handle(request, ctx),
+    );
+
+    assertExists(result.response);
+    assertEquals(result.response.status, 200);
+    const json = await result.response.json();
+    assertEquals(json.success, false);
+    assertEquals(json.error.includes("Exactly one style artifact selector is required"), true);
+    assertEquals(sourceFileCalls.count, 0);
+    assertEquals(readCalls, []);
+    assertEquals(recorder.upserts.length, 0);
+  });
+
+  it("rejects multiple explicit style selectors with a poisoned Array filter", async () => {
+    const body = {
+      runId: "run_style_artifact_ambiguous_poisoned_filter",
+      kind: "task",
+      target: "task:style-artifact-build",
+      projectId: "proj-1",
+      config: { release_id: "release-1", environment_name: "Preview" },
+    };
+    const { request, publicKeyPem } = await signedRequest(
+      "/api/control-plane/runs/run_style_artifact_ambiguous_poisoned_filter/execute",
+      body,
+      { "x-token": "test-token" },
+    );
+    const { ctx, readCalls, sourceFileCalls } = createStyleArtifactCtx(publicKeyPem, {
+      files: [{
+        path: "pages/index.tsx",
+        content:
+          'export default function Page() { return <main className="px-4 text-red-500">Hi</main>; }',
+      }],
+      stylesheet: "@tailwind utilities; .from-css { color: red; }",
+      stylesheetPath: "src/styles.css",
+      contentContext: {
+        sourceType: "release",
+        projectSlug: "demo-project",
+        releaseId: "release-1",
+      },
+    });
+    const recorder = createStyleArtifactFetchRecorder();
+
+    const result = await withMockFetch(
+      recorder.fetch,
+      async () => {
+        const filter = Array.prototype.filter;
+        Array.prototype.filter = function (...args: Parameters<typeof filter>) {
+          let hasRelease = false;
+          let hasPreview = false;
+          for (let index = 0; index < this.length; index++) {
+            hasRelease ||= this[index] === "release-1";
+            hasPreview ||= this[index] === "Preview";
+          }
+          if (hasRelease && hasPreview) return ["release-1"];
+          return Reflect.apply(filter, this, args);
+        };
+        try {
+          return await new ProjectRunExecuteHandler().handle(request, ctx);
+        } finally {
+          Array.prototype.filter = filter;
+        }
+      },
+    );
+
+    assertExists(result.response);
+    assertEquals(result.response.status, 200);
+    const json = await result.response.json();
+    assertEquals(json.success, false);
+    assertEquals(json.error.includes("Exactly one style artifact selector is required"), true);
+    assertEquals(sourceFileCalls.count, 0);
+    assertEquals(readCalls, []);
+    assertEquals(recorder.upserts.length, 0);
+  });
+
   it("rejects mismatched style profile hashes before scanning source files", async () => {
     const body = {
       runId: "run_style_artifact_hash_mismatch",
