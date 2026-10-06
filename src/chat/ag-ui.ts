@@ -642,56 +642,88 @@ function encodeReasoningPartIdComponent(value: string): string {
   return value.replaceAll("%", "%25").replaceAll(":", "%3A");
 }
 
+type ReasoningIdentity = Pick<
+  Extract<AgUiWireEvent, { eventName: "ReasoningMessageStart" }>["payload"],
+  "id" | "messageId" | "contentId"
+>;
+
+const activeReasoningPartsByDecoder = new WeakMap<
+  AgUiChatEventDecoderState,
+  Map<string, ReasoningIdentity>
+>();
+
 function getReasoningPartId(
   state: AgUiChatEventDecoderState,
-  payload: { id?: string; messageId?: string; contentId?: string },
+  payload: ReasoningIdentity,
   phase: "start" | "content" | "end",
-): string {
-  if (phase !== "start" && state.activeFallbackReasoningPartId) {
-    const fallbackId = state.activeFallbackReasoningPartId;
+): string | null {
+  let activeParts = activeReasoningPartsByDecoder.get(state);
+  if (!activeParts) {
+    activeParts = new Map<string, ReasoningIdentity>();
+    if (state.activeFallbackReasoningPartId) {
+      activeParts.set(state.activeFallbackReasoningPartId, {});
+    }
+    activeReasoningPartsByDecoder.set(state, activeParts);
+  }
+
+  const identity = {
+    id: payload.id || undefined,
+    messageId: payload.messageId || undefined,
+    contentId: payload.contentId || undefined,
+  };
+  const identityKeys = ["id", "messageId", "contentId"] satisfies (keyof ReasoningIdentity)[];
+
+  if (phase !== "start" && activeParts.size > 0) {
+    const hasIdentity = identityKeys.some((key) => identity[key] !== undefined);
+    const compatible = [...activeParts.entries()].filter(([, start]) =>
+      identityKeys.every((key) =>
+        identity[key] === undefined || start[key] === undefined || identity[key] === start[key]
+      ) && (!hasIdentity ||
+        identityKeys.every((key) => start[key] === undefined) ||
+        identityKeys.some((key) => identity[key] !== undefined && identity[key] === start[key]))
+    );
+    const match = compatible.length === 1 ? compatible[0] : undefined;
+    if (!match) {
+      return null;
+    }
+    const [partId] = match;
     if (phase === "end") {
-      state.activeFallbackReasoningPartId = null;
+      activeParts.delete(partId);
+      state.activeFallbackReasoningPartId = activeParts.size === 1
+        ? activeParts.keys().next().value ?? null
+        : null;
     }
-    return fallbackId;
+    return partId;
   }
 
-  if (typeof payload.id === "string" && payload.id.length > 0) {
-    return payload.id;
+  let partId: string;
+  if (identity.id !== undefined) {
+    partId = identity.id;
+  } else if (identity.contentId !== undefined) {
+    partId = identity.messageId !== undefined
+      ? `agui-reasoning:${encodeReasoningPartIdComponent(identity.messageId)}:${
+        encodeReasoningPartIdComponent(identity.contentId)
+      }`
+      : `agui-reasoning-content:${encodeReasoningPartIdComponent(identity.contentId)}`;
+  } else if (identity.messageId !== undefined) {
+    partId = `agui-reasoning:${encodeReasoningPartIdComponent(identity.messageId)}`;
+  } else {
+    state.reasoningFallbackIndex += 1;
+    partId = `agui-reasoning:${state.reasoningFallbackIndex}`;
   }
 
-  if (typeof payload.contentId === "string" && payload.contentId.length > 0) {
-    if (typeof payload.messageId === "string" && payload.messageId.length > 0) {
-      return `agui-reasoning:${encodeReasoningPartIdComponent(payload.messageId)}:${
-        encodeReasoningPartIdComponent(payload.contentId)
-      }`;
+  if (
+    phase === "start" ||
+    (phase === "content" && identityKeys.every((key) => identity[key] === undefined))
+  ) {
+    const existing = activeParts.get(partId);
+    if (existing && identityKeys.some((key) => existing[key] !== identity[key])) {
+      return null;
     }
-    return `agui-reasoning-content:${encodeReasoningPartIdComponent(payload.contentId)}`;
+    activeParts.set(partId, identity);
+    state.activeFallbackReasoningPartId = activeParts.size === 1 ? partId : null;
   }
-
-  if (typeof payload.messageId === "string" && payload.messageId.length > 0) {
-    const messageReasoningPartId = `agui-reasoning:${
-      encodeReasoningPartIdComponent(payload.messageId)
-    }`;
-    if (phase === "start") {
-      state.activeFallbackReasoningPartId = messageReasoningPartId;
-    }
-    return messageReasoningPartId;
-  }
-
-  if (state.activeFallbackReasoningPartId) {
-    const fallbackId = state.activeFallbackReasoningPartId;
-    if (phase === "end") {
-      state.activeFallbackReasoningPartId = null;
-    }
-    return fallbackId;
-  }
-
-  state.reasoningFallbackIndex += 1;
-  const fallbackId = `agui-reasoning:${state.reasoningFallbackIndex}`;
-  if (phase !== "end") {
-    state.activeFallbackReasoningPartId = fallbackId;
-  }
-  return fallbackId;
+  return partId;
 }
 
 function isAgUiWireEventName(value: string | null): value is AgUiWireEventNameLiteral {
@@ -907,6 +939,7 @@ function mapWireEventToChatEvents(
     case "RunStarted":
       state.toolCalls.clear();
       state.activeFallbackReasoningPartId = null;
+      activeReasoningPartsByDecoder.delete(state);
       return [{
         type: "start",
         messageMetadata: wireEvent.payload,
@@ -934,24 +967,20 @@ function mapWireEventToChatEvents(
         ...(textContentId ? { contentId: textContentId } : {}),
       }];
 
-    case "ReasoningMessageStart":
-      return [{
-        type: "reasoning-start",
-        id: getReasoningPartId(state, wireEvent.payload, "start"),
-      }];
+    case "ReasoningMessageStart": {
+      const id = getReasoningPartId(state, wireEvent.payload, "start");
+      return id === null ? [] : [{ type: "reasoning-start", id }];
+    }
 
-    case "ReasoningMessageContent":
-      return [{
-        type: "reasoning-delta",
-        id: getReasoningPartId(state, wireEvent.payload, "content"),
-        delta: wireEvent.payload.delta,
-      }];
+    case "ReasoningMessageContent": {
+      const id = getReasoningPartId(state, wireEvent.payload, "content");
+      return id === null ? [] : [{ type: "reasoning-delta", id, delta: wireEvent.payload.delta }];
+    }
 
-    case "ReasoningMessageEnd":
-      return [{
-        type: "reasoning-end",
-        id: getReasoningPartId(state, wireEvent.payload, "end"),
-      }];
+    case "ReasoningMessageEnd": {
+      const id = getReasoningPartId(state, wireEvent.payload, "end");
+      return id === null ? [] : [{ type: "reasoning-end", id }];
+    }
 
     case "ToolCallStart":
       state.toolCalls.set(wireEvent.payload.toolCallId, {
@@ -1186,6 +1215,7 @@ function mapWireEventToChatEvents(
     case "RunFinished":
       state.toolCalls.clear();
       state.activeFallbackReasoningPartId = null;
+      activeReasoningPartsByDecoder.delete(state);
       return [{
         type: "finish",
         ...(mapFinishReason(wireEvent.payload.metadata?.finishReason)
@@ -1196,6 +1226,7 @@ function mapWireEventToChatEvents(
     case "RunError":
       state.toolCalls.clear();
       state.activeFallbackReasoningPartId = null;
+      activeReasoningPartsByDecoder.delete(state);
       if (wireEvent.payload.code === "CANCELLED") {
         return [{ type: "abort" }];
       }
