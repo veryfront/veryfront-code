@@ -22,6 +22,8 @@ import { requiresIsolatedProjectRuntime } from "#veryfront/security/project-loca
 import { isPreflightRequest } from "#veryfront/security/http/cors/preflight.ts";
 import { getApplicationPreflightHeaders } from "#veryfront/security/http/application-request.ts";
 import { DEFAULT_CORS_METHODS, handleCORSPreflight } from "#veryfront/security";
+import { createHostApplicationInferenceAdmission } from "./application-inference-admission.ts";
+import { runWithApplicationInferenceAdmission } from "#veryfront/agent/runtime/application-inference-admission.ts";
 
 type FsWrapper = {
   isMultiProjectMode?: () => boolean;
@@ -199,6 +201,8 @@ export class ApiHandlerWrapper extends BaseHandler {
         const preparedResponse = this.handlePreparedFrameworkPreflight(req, ctx);
         if (preparedResponse) return preparedResponse;
 
+        const admitInference = createHostApplicationInferenceAdmission(req, ctx);
+
         const canResolveAsPage = pathname !== "/api" &&
           !pathname.startsWith("/api/") &&
           (req.method === "GET" || req.method === "HEAD");
@@ -238,22 +242,26 @@ export class ApiHandlerWrapper extends BaseHandler {
             await ensureProjectDiscovery(ctx);
           }
 
-          const apiRes = await withApiHandler(
-            ctx,
-            (api) =>
-              api.handle(
-                req,
-                ctx,
-                isOptionsRequest
-                  ? {
-                    beforeOptionsDispatch: async () => {
-                      await ensureProjectDiscovery(ctx);
-                    },
-                  }
-                  : undefined,
-              ),
-            { sourceSnapshotReady: true },
-          );
+          const executeRoute = () =>
+            withApiHandler(
+              ctx,
+              (api) =>
+                api.handle(
+                  req,
+                  ctx,
+                  isOptionsRequest
+                    ? {
+                      beforeOptionsDispatch: async () => {
+                        await ensureProjectDiscovery(ctx);
+                      },
+                    }
+                    : undefined,
+                ),
+              { sourceSnapshotReady: true },
+            );
+          const apiRes = admitInference
+            ? await runWithApplicationInferenceAdmission(admitInference, executeRoute)
+            : await executeRoute();
 
           if (!apiRes) {
             this.logDebug(

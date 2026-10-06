@@ -1,7 +1,9 @@
 import { getAgentExecutionConfig } from "../runtime/execution-config.ts";
+import { resolveRuntimeModel } from "../runtime/model-resolution.ts";
 import { isResponseLike } from "../service/response-like.ts";
 import { getAgent } from "../composition/index.ts";
-import { createEphemeralAgent } from "../factory.ts";
+import { createEphemeralAgent, createEphemeralAgentWithRuntimeOptions } from "../factory.ts";
+import { getPrivateApplicationInferenceRuntimeOptions } from "../runtime/application-inference-admission.ts";
 import type { Agent, AgentResponse, Message } from "../types.ts";
 import { fromError } from "#veryfront/errors";
 import {
@@ -61,6 +63,14 @@ const AG_UI_HEADERS: Record<string, string> = {
   "Cache-Control": "no-cache",
   Connection: "keep-alive",
 };
+
+function shouldUseApplicationInferenceRuntime(agent: Agent, request: AgUiRequest): boolean {
+  const model = request.model ?? getAgentExecutionConfig(agent.config).model;
+  if (model === undefined || model === "auto" || model.startsWith("veryfront-cloud/")) return true;
+  const resolved = resolveRuntimeModel(model);
+  // Unqualified served aliases need the admitted catalog before resolution.
+  return !resolved.includes("/") || resolved.startsWith("veryfront-cloud/");
+}
 
 /**
  * Payload handed to {@link AgUiHandlerOptions.onComplete} after an AG-UI run
@@ -211,6 +221,7 @@ async function createAgUiStreamResponse(
     getCompletedResponse?: () => AgentResponse | null;
     onFinish?: () => void;
     onError?: (error: unknown) => void;
+    onCancel?: () => void;
     onToolCallSeen?: (toolCallId: string) => void;
     /**
      * Fired once, after the stream is fully flushed and closed, with the
@@ -233,6 +244,7 @@ async function createAgUiStreamResponse(
     onFinish,
     onError,
     onToolCallSeen,
+    onCancel,
     onComplete,
   } = options;
 
@@ -276,6 +288,7 @@ async function createAgUiStreamResponse(
       // success paths below — a client disconnect early-returns before this is
       // flipped, and the error path leaves it false.
       let succeeded = false;
+      let failed = false;
       try {
         if (!upstreamBody) {
           for (const event of finalizeRunEvents(state, null)) {
@@ -292,6 +305,10 @@ async function createAgUiStreamResponse(
           const event of streamDataStreamEvents(upstreamBody) as AsyncIterable<AgUiRuntimePart>
         ) {
           for (const mapped of mapRuntimeEventToAgUi(state, event)) {
+            if (mapped.event === "RunError") {
+              failed = true;
+              onError?.(new Error("Agent run failed"));
+            }
             prepareToolResultIfNeeded(mapped.event, mapped.payload);
             if (!enqueueEvent(controller, mapped.event, mapped.payload)) {
               return;
@@ -304,8 +321,10 @@ async function createAgUiStreamResponse(
             return;
           }
         }
-        onFinish?.();
-        succeeded = true;
+        if (!failed) {
+          onFinish?.();
+          succeeded = true;
+        }
       } catch (error) {
         onError?.(error);
         enqueueEvent(controller, "RunError", {
@@ -326,6 +345,9 @@ async function createAgUiStreamResponse(
           }
         }
       }
+    },
+    cancel() {
+      onCancel?.();
     },
   });
 
@@ -360,88 +382,134 @@ async function createAgUiDirectStreamResponse(
   });
   if (isResponseLike(beforeStreamResult)) return beforeStreamResult;
 
-  messages = applyBeforeStreamResult(messages, beforeStreamResult ?? undefined);
-  // beforeStream may return a fresh context, dropping the generated-run marker.
-  const finalContext = {
-    ...(beforeStreamResult?.context ?? context),
-    runIdBindsToolAuthorization: context.runIdBindsToolAuthorization,
-  };
+  const privateRuntime = shouldUseApplicationInferenceRuntime(agent, request)
+    ? await getPrivateApplicationInferenceRuntimeOptions(agent.id, rawRequest.signal)
+    : undefined;
+  try {
+    const effectiveRunId = privateRuntime?.runId ?? runId;
+    messages = applyBeforeStreamResult(messages, beforeStreamResult ?? undefined);
+    // beforeStream may return a fresh context, dropping the generated-run marker.
+    const finalContext = {
+      ...(beforeStreamResult?.context ?? context),
+      runId: effectiveRunId,
+      runIdBindsToolAuthorization: context.runIdBindsToolAuthorization,
+    };
 
-  const toolDataEvents = createToolDataEventBridge();
-  let completedResponse: AgentResponse | null = null;
-  const streamContext = {
-    ...finalContext,
-    publishDataEvent: toolDataEvents.publishDataEvent,
-  };
-  const onFinish = (response: AgentResponse) => {
-    completedResponse = response;
-  };
+    const toolDataEvents = createToolDataEventBridge();
+    let completedResponse: AgentResponse | null = null;
+    const streamContext = {
+      ...finalContext,
+      publishDataEvent: toolDataEvents.publishDataEvent,
+    };
+    const onFinish = (response: AgentResponse) => {
+      completedResponse = response;
+    };
 
-  // `agent.stream()` runs the agent's own runtime, which carries its full
-  // configured tool surface. A restricted run therefore streams through an
-  // unregistered agent rebuilt by the same factory from the narrowed
-  // configuration: the ceiling binds tool exposure and execution instead of
-  // travelling as unenforced request metadata, while the run keeps the
-  // framework's own prompt composition (project and environment context, and
-  // the skill catalog only when the loader survives the ceiling), security
-  // middleware, resolved skill-selector context, and private runtime dispatch.
-  const streamAgent = hasAgUiRuntimeRestrictions(restrictions)
-    ? createEphemeralAgent({
-      ...applyAgUiRuntimeRestrictionsForModel(
-        getAgentExecutionConfig(agent.config),
-        restrictions,
-        request.model,
-        agent.id,
-      ),
-      // A factory-assigned id lives on `agent.id` while `agent.config.id`
-      // stays undefined. Rebuilding without it would mint a fresh id, hiding
-      // owner-scoped registry tools and skills from the restricted run and
-      // handing hooks such as `resolveModelTransport` the wrong identity.
-      id: agent.id,
-    })
-    : agent;
+    // `agent.stream()` runs the agent's own runtime, which carries its full
+    // configured tool surface. A restricted run therefore streams through an
+    // unregistered agent rebuilt by the same factory from the narrowed
+    // configuration: the ceiling binds tool exposure and execution instead of
+    // travelling as unenforced request metadata, while the run keeps the
+    // framework's own prompt composition (project and environment context, and
+    // the skill catalog only when the loader survives the ceiling), security
+    // middleware, resolved skill-selector context, and private runtime dispatch.
+    const streamAgent = hasAgUiRuntimeRestrictions(restrictions)
+      ? createEphemeralAgent({
+        ...applyAgUiRuntimeRestrictionsForModel(
+          getAgentExecutionConfig(agent.config),
+          restrictions,
+          request.model,
+          agent.id,
+        ),
+        // A factory-assigned id lives on `agent.id` while `agent.config.id`
+        // stays undefined. Rebuilding without it would mint a fresh id, hiding
+        // owner-scoped registry tools and skills from the restricted run and
+        // handing hooks such as `resolveModelTransport` the wrong identity.
+        id: agent.id,
+      })
+      : agent;
 
-  // A restricted run uses a fresh ephemeral agent, so it has no prior memory
-  // to clear. Do not call mutable methods on the source agent before the
-  // capability ceiling is in place.
-  if (streamAgent === agent) await agent.clearMemory();
+    // A restricted run uses a fresh ephemeral agent, so it has no prior memory
+    // to clear. Do not call mutable methods on the source agent before the
+    // capability ceiling is in place.
+    if (streamAgent === agent) await agent.clearMemory();
 
-  const result = await streamAgent.stream({
-    messages,
-    context: streamContext,
-    ...(request.model ? { model: request.model } : {}),
-    ...(request.maxOutputTokens ? { maxOutputTokens: request.maxOutputTokens } : {}),
-    onFinish,
-  });
+    let upstreamBody: ReadableStream<Uint8Array> | null;
+    let upstreamStatus = 200;
+    let upstreamStatusText = "";
+    try {
+      if (privateRuntime) {
+        const inferenceAgent = await privateRuntime.prepareAgent(() =>
+          createEphemeralAgentWithRuntimeOptions(
+            { ...getAgentExecutionConfig(streamAgent.config), id: agent.id },
+            privateRuntime.runtimeOptions,
+          )
+        );
+        const result = await inferenceAgent.stream({
+          messages,
+          context: streamContext,
+          onFinish,
+          model: request.model,
+          maxOutputTokens: request.maxOutputTokens,
+          abortSignal: privateRuntime.signal,
+        });
+        const upstream = result.toDataStreamResponse();
+        upstreamBody = upstream.body ? toolDataEvents.wrapStream(upstream.body) : upstream.body;
+      } else {
+        const result = await streamAgent.stream({
+          messages,
+          context: streamContext,
+          ...(request.model ? { model: request.model } : {}),
+          ...(request.maxOutputTokens ? { maxOutputTokens: request.maxOutputTokens } : {}),
+          onFinish,
+        });
 
-  const upstream = result.toDataStreamResponse();
-  const upstreamBody = upstream.body ? toolDataEvents.wrapStream(upstream.body) : upstream.body;
-  const upstreamStatus = upstream.status;
-  const upstreamStatusText = upstream.statusText;
+        const upstream = result.toDataStreamResponse();
+        upstreamBody = upstream.body ? toolDataEvents.wrapStream(upstream.body) : upstream.body;
+        upstreamStatus = upstream.status;
+        upstreamStatusText = upstream.statusText;
+      }
+    } catch (error) {
+      privateRuntime?.onAbandon();
+      throw error;
+    }
 
-  return await createAgUiStreamResponse({
-    agentId: agent.id,
-    agentName: agent.config.name ?? agent.id,
-    agentAvatarUrl: agent.config.avatarUrl ?? agent.config.avatar_url,
-    request,
-    runId,
-    threadId,
-    upstreamBody,
-    upstreamStatus,
-    upstreamStatusText,
-    getCompletedResponse: () => completedResponse,
-    onComplete: onComplete
-      ? (response) =>
-        onComplete({
-          agentId: agent.id,
-          threadId,
-          runId,
-          messages: response.messages,
-          inputMessages: messages,
-          response,
-        })
-      : undefined,
-  });
+    return await createAgUiStreamResponse({
+      agentId: agent.id,
+      agentName: agent.config.name ?? agent.id,
+      agentAvatarUrl: agent.config.avatarUrl ?? agent.config.avatar_url,
+      request,
+      runId: effectiveRunId,
+      threadId,
+      upstreamBody,
+      upstreamStatus,
+      upstreamStatusText,
+      getCompletedResponse: () => completedResponse,
+      onFinish: () => {
+        privateRuntime?.finish("completed");
+      },
+      onError: () => {
+        privateRuntime?.finish("failed");
+      },
+      onCancel: () => {
+        privateRuntime?.finish("cancelled");
+      },
+      onComplete: onComplete
+        ? (response) =>
+          onComplete({
+            agentId: agent.id,
+            threadId,
+            runId: effectiveRunId,
+            messages: response.messages,
+            inputMessages: messages,
+            response,
+          })
+        : undefined,
+    });
+  } catch (error) {
+    privateRuntime?.onAbandon();
+    throw error;
+  }
 }
 
 async function createAgUiInjectedToolsStreamResponse(
@@ -469,100 +537,148 @@ async function createAgUiInjectedToolsStreamResponse(
   });
   if (isResponseLike(beforeStreamResult)) return beforeStreamResult;
 
-  messages = applyBeforeStreamResult(messages, beforeStreamResult ?? undefined);
-  // beforeStream may return a fresh context, dropping the generated-run marker.
-  const finalContext = {
-    ...(beforeStreamResult?.context ?? context),
-    runIdBindsToolAuthorization: context.runIdBindsToolAuthorization,
-  };
-
+  const privateRuntime = shouldUseApplicationInferenceRuntime(agent, request)
+    ? await getPrivateApplicationInferenceRuntimeOptions(agent.id, rawRequest.signal)
+    : undefined;
+  let sessionStarted = false;
   try {
-    sessionManager.startRun({ runId, threadId });
-  } catch (error) {
-    if (error instanceof RunAlreadyExistsError) {
-      return Response.json({ error: "Run already active" }, { status: 409 });
+    const effectiveRunId = privateRuntime?.runId ?? runId;
+    messages = applyBeforeStreamResult(messages, beforeStreamResult ?? undefined);
+    // beforeStream may return a fresh context, dropping the generated-run marker.
+    const finalContext = {
+      ...(beforeStreamResult?.context ?? context),
+      runId: effectiveRunId,
+      runIdBindsToolAuthorization: context.runIdBindsToolAuthorization,
+    };
+
+    try {
+      sessionManager.startRun({ runId: effectiveRunId, threadId });
+      sessionStarted = true;
+    } catch (error) {
+      privateRuntime?.onAbandon();
+      if (error instanceof RunAlreadyExistsError) {
+        return Response.json({ error: "Run already active" }, { status: 409 });
+      }
+      throw error;
     }
-    throw error;
-  }
 
-  // Only a step-only ceiling reaches here: a tool allowlist refuses the
-  // injected-tools path outright, so this narrows the step budget without
-  // touching the merged client tool surface.
-  const restrictedConfig = hasAgUiRuntimeRestrictions(restrictions)
-    ? applyAgUiRuntimeRestrictionsForModel(
-      getAgentExecutionConfig(agent.config),
-      restrictions,
-      request.model,
-      agent.id,
-    )
-    : getAgentExecutionConfig(agent.config);
-  const runtime = new AgentRuntime(agent.id, {
-    ...restrictedConfig,
-    tools: buildMergedAgUiTools(agent, runId, request.tools, sessionManager),
-  });
-  // A ceiling-bound run must not reach the model through the mutable
-  // `AgentRuntime.prototype.stream`: project code can replace that method and
-  // run outside the narrowed configuration, so the restricted run dispatches
-  // through the framework-owned private capability instead. An unrestricted
-  // run keeps the public method, which stays available as an extension seam.
-  const streamRun: (
-    ...args: Parameters<AgentRuntime["stream"]>
-  ) => Promise<ReadableStream<Uint8Array>> = hasAgUiRuntimeRestrictions(restrictions)
-    ? (...args) => streamWithAgentRuntimeDispatch(runtime, ...args)
-    : (...args) => runtime.stream(...args);
+    // Only a step-only ceiling reaches here: a tool allowlist refuses the
+    // injected-tools path outright, so this narrows the step budget without
+    // touching the merged client tool surface.
+    const restrictedConfig = hasAgUiRuntimeRestrictions(restrictions)
+      ? applyAgUiRuntimeRestrictionsForModel(
+        getAgentExecutionConfig(agent.config),
+        restrictions,
+        request.model,
+        agent.id,
+      )
+      : getAgentExecutionConfig(agent.config);
+    const runtimeConfig = {
+      ...restrictedConfig,
+      tools: buildMergedAgUiTools(agent, effectiveRunId, request.tools, sessionManager),
+    };
+    const inferenceAgent = privateRuntime
+      ? await privateRuntime.prepareAgent(() =>
+        createEphemeralAgentWithRuntimeOptions(
+          { ...runtimeConfig, id: agent.id },
+          privateRuntime.runtimeOptions,
+        )
+      )
+      : undefined;
+    // A ceiling-bound run must not reach the model through the mutable
+    // `AgentRuntime.prototype.stream`: project code can replace that method and
+    // run outside the narrowed configuration, so the restricted run dispatches
+    // through the framework-owned private capability instead. An unrestricted
+    // run keeps the public method, which stays available as an extension seam.
+    const streamRun: (
+      ...args: Parameters<AgentRuntime["stream"]>
+    ) => Promise<ReadableStream<Uint8Array>> = inferenceAgent
+      ? async (messages, context, callbacks, model, maxOutputTokens, abortSignal) => {
+        const result = await inferenceAgent.stream({
+          messages,
+          context,
+          onFinish: callbacks?.onFinish,
+          model,
+          maxOutputTokens,
+          abortSignal,
+        });
+        const body = result.toDataStreamResponse().body;
+        if (!body) throw new Error("Agent stream is unavailable");
+        return body;
+      }
+      : (() => {
+        const runtime = new AgentRuntime(agent.id, runtimeConfig);
+        return hasAgUiRuntimeRestrictions(restrictions)
+          ? (...args: Parameters<AgentRuntime["stream"]>) =>
+            streamWithAgentRuntimeDispatch(runtime, ...args)
+          : (...args: Parameters<AgentRuntime["stream"]>) => runtime.stream(...args);
+      })();
 
-  let upstreamBody: ReadableStream<Uint8Array>;
-  let completedResponse: AgentResponse | null = null;
-  const toolDataEvents = createToolDataEventBridge();
-  try {
-    upstreamBody = await streamRun(
-      messages,
-      {
-        ...finalContext,
-        publishDataEvent: toolDataEvents.publishDataEvent,
-      },
-      {
-        onFinish: (response) => {
-          completedResponse = response;
+    let upstreamBody: ReadableStream<Uint8Array>;
+    let completedResponse: AgentResponse | null = null;
+    const toolDataEvents = createToolDataEventBridge();
+    try {
+      upstreamBody = await streamRun(
+        messages,
+        {
+          ...finalContext,
+          publishDataEvent: toolDataEvents.publishDataEvent,
         },
+        {
+          onFinish: (response) => {
+            completedResponse = response;
+          },
+        },
+        request.model,
+        request.maxOutputTokens,
+        privateRuntime?.signal,
+      );
+      upstreamBody = toolDataEvents.wrapStream(upstreamBody);
+    } catch (error) {
+      privateRuntime?.onAbandon();
+      sessionManager.failRun(effectiveRunId);
+      throw error;
+    }
+
+    return await createAgUiStreamResponse({
+      agentId: agent.id,
+      agentName: agent.config.name ?? agent.id,
+      agentAvatarUrl: agent.config.avatarUrl ?? agent.config.avatar_url,
+      request,
+      runId: effectiveRunId,
+      threadId,
+      upstreamBody,
+      upstreamStatus: 200,
+      getCompletedResponse: () => completedResponse,
+      onFinish: () => {
+        privateRuntime?.finish("completed");
+        sessionManager.completeRun(effectiveRunId);
       },
-      request.model,
-      request.maxOutputTokens,
-    );
-    upstreamBody = toolDataEvents.wrapStream(upstreamBody);
+      onError: () => {
+        privateRuntime?.finish("failed");
+        sessionManager.failRun(effectiveRunId);
+      },
+      onCancel: () => {
+        privateRuntime?.finish("cancelled");
+        sessionManager.failRun(effectiveRunId);
+      },
+      onComplete: onComplete
+        ? (response) =>
+          onComplete({
+            agentId: agent.id,
+            threadId,
+            runId: effectiveRunId,
+            messages: response.messages,
+            inputMessages: messages,
+            response,
+          })
+        : undefined,
+    });
   } catch (error) {
-    sessionManager.failRun(runId);
+    privateRuntime?.onAbandon();
+    if (sessionStarted) sessionManager.failRun(privateRuntime?.runId ?? runId);
     throw error;
   }
-
-  return await createAgUiStreamResponse({
-    agentId: agent.id,
-    agentName: agent.config.name ?? agent.id,
-    agentAvatarUrl: agent.config.avatarUrl ?? agent.config.avatar_url,
-    request,
-    runId,
-    threadId,
-    upstreamBody,
-    upstreamStatus: 200,
-    getCompletedResponse: () => completedResponse,
-    onFinish: () => {
-      sessionManager.completeRun(runId);
-    },
-    onError: () => {
-      sessionManager.failRun(runId);
-    },
-    onComplete: onComplete
-      ? (response) =>
-        onComplete({
-          agentId: agent.id,
-          threadId,
-          runId,
-          messages: response.messages,
-          inputMessages: messages,
-          response,
-        })
-      : undefined,
-  });
 }
 
 /** Options accepted by AG-UI handler. */

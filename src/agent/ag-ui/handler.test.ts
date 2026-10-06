@@ -9,6 +9,7 @@ import {
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
 import { type AgUiCompletion, AgUiRequestSchema, createAgUiHandler } from "./handler.ts";
+import { runWithApplicationInferenceAdmission } from "../runtime/application-inference-admission.ts";
 import { AgentRuntime, RunResumeSessionManager } from "../index.ts";
 import { createEphemeralAgent } from "../factory.ts";
 import { tool } from "#veryfront/tool";
@@ -188,6 +189,60 @@ describe("agent/ag-ui-handler", () => {
     assertStringIncludes(body, '"model":"anthropic/claude-sonnet-4-6"');
     assertStringIncludes(body, '"delta":"hello from runtime"');
     assertStringIncludes(body, `"runId":"${testAgent.capturedContext?.runId}"`);
+  });
+
+  it("preserves an explicit provider stream without admitting managed inference", async () => {
+    const originalApiUrl = Deno.env.get("VERYFRONT_API_URL");
+    Deno.env.set("VERYFRONT_API_URL", "https://api.example.test/api");
+    try {
+      const testAgent = createTestAgent();
+      let streamCalls = 0;
+      let admissions = 0;
+      let finalized: string | undefined;
+      testAgent.agent.config.model = "test/no-credentials";
+      testAgent.agent.stream = async () => {
+        streamCalls += 1;
+        throw new Error("project stream must not run");
+      };
+      const handler = createAgUiHandler({ agent: testAgent.agent });
+
+      const response = await runWithApplicationInferenceAdmission(
+        async (agentId) => {
+          admissions += 1;
+          assertEquals(agentId, testAgent.agent.id);
+          return {
+            runId: "550e8400-e29b-41d4-a716-446655440000",
+            inferenceToken: "vf_inference_private_1",
+            expiresAt: new Date(Date.now() + 60_000).toISOString(),
+            finalize: (status) => {
+              finalized = status;
+            },
+          };
+        },
+        () =>
+          handler(
+            new Request("http://localhost/api/ag-ui", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                messages: [{
+                  id: "msg-1",
+                  role: "user",
+                  parts: [{ type: "text", text: "hello" }],
+                }],
+              }),
+            }),
+          ),
+      );
+
+      assertEquals(streamCalls, 1);
+      assertEquals(admissions, 0);
+      assertEquals([500, 503].includes(response.status), true);
+      assertEquals(finalized, undefined);
+    } finally {
+      if (originalApiUrl === undefined) Deno.env.delete("VERYFRONT_API_URL");
+      else Deno.env.set("VERYFRONT_API_URL", originalApiUrl);
+    }
   });
 
   it("keeps a client-supplied direct AG-UI run ID eligible for binding", async () => {
