@@ -1165,6 +1165,7 @@ function trustedFixture(
   const steeringEntered = Promise.withResolvers<void>();
   configureCanonical(f.input, () => Promise.resolve(), () => {});
   f.input.installation.grant.execution.projectId = scope.projectId;
+  if (scope.projectId !== null) f.input.model.modelCallCaptureReceipts = true;
   let captureEventId = 0;
   f.input.model.runEventSink = async (event) => {
     if (scope.projectId === null) {

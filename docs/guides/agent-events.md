@@ -69,7 +69,9 @@ Child-run lifecycle producers should keep the existing `childRunId` and include 
 
 ## Hosted model-call capture
 
-For a project-bound canonical run, the hosted model broker allocates one logical `modelCallId` for each generation or streaming operation. It persists the prepared input before provider dispatch and requires an exact capture receipt from the run-event append response, matching the project in the authenticated canonical grant. Provider retries keep the same logical call identity.
+The trusted API runtime configuration enables `modelCallCaptureReceipts` only after the append API supports exact capture acknowledgements. Until then, project-bound canonical runs retain their existing context persistence and model dispatch. Executor requests and project payloads cannot select this capability.
+
+After activation, the hosted model broker persists one logical `modelCallId` for each generation or streaming operation before provider dispatch. It requires an exact capture receipt matching the authenticated project grant. Provider retries keep the same logical call identity. Missing receipts cannot downgrade an activated run to legacy dispatch.
 
 The append response uses the additive `model_call_captures` array. Each receipt contains `event_id`, `model_call_id`, `run_id`, and `project_id`. Only complete captures submitted in that append, including an acknowledged replay, can receive receipts. Preserve `event_id` as the exact server-issued string. A batch cursor or an append count cannot identify a capture occurrence.
 
@@ -77,7 +79,7 @@ Cloud transport removes caller correlation headers and sends `x-veryfront-model-
 
 A missing, malformed, or ambiguous receipt refuses dispatch. An oversized input can leave a truncated legacy audit record, but it has no usable complete-input receipt and sends no provider request. Legacy records and acknowledgements remain readable; they cannot supply missing capture evidence.
 
-This SDK bridge requires matching API support. Projectless canonical runs keep their supported legacy capture and dispatch behavior without new project correlation; target projectless provenance remains unsupported. The bridge does not create provider-attempt evidence or infer usage from accounting. The gateway owns actual HTTP-attempt IDs and must retain failed attempts independently of billing. Publish usage only when the provider reports the required counters.
+Activation requires matching API support; merging this SDK change does not activate it or establish that the API is deployed. Remove the migration gate only after the API supports receipts, the SDK is released and consumers are pinned, and integrated acceptance tests pass. Projectless canonical runs retain legacy dispatch without new project correlation; target projectless provenance remains unsupported. The gateway owns actual HTTP-attempt IDs and must retain failed attempts independently of billing. Publish usage only when the provider reports the required counters.
 
 ## Hosted tool-start admission
 

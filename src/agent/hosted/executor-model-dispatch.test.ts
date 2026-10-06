@@ -12,6 +12,8 @@ import {
   runWithVeryfrontCloudModelCallCapture,
 } from "#veryfront/provider/veryfront-cloud/context.ts";
 import { isPrivateConversationRunEvent } from "../conversation/private-run-event.ts";
+import { appendConversationRunEvents } from "../conversation/durable.ts";
+import type { components } from "#veryfront/runs/contract/runs-api.generated.ts";
 import { createExecutorChannel, type ExecutorOperation } from "../executor/channel.ts";
 import type { ExecutorBinding } from "../executor/protocol.ts";
 import {
@@ -41,6 +43,7 @@ function createHostedExecutorModelBroker(
   }
   return createHostedBroker({
     ...input,
+    modelCallCaptureReceipts: true,
     projectId: "11111111-1111-4111-8111-111111111111",
     runEventSink: async (event) => {
       const receipt = receiptFor(event.modelCallId);
@@ -135,6 +138,71 @@ async function proxy(channels: ReturnType<typeof pair>) {
 const tick = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
 
 describe("hosted executor model dispatch", () => {
+  it("dispatches project calls against the current cursor-only API before capture activation", async () => {
+    let dispatches = 0;
+    let appends = 0;
+    const channels = pair(createHostedBroker({
+      projectId: "11111111-1111-4111-8111-111111111111",
+      grant: grant(),
+      allowedModelIds,
+      scope: scope(),
+      resolveModelRuntime: () =>
+        model(() => {
+          dispatches++;
+          assertEquals(getCurrentVeryfrontCloudModelCallCapture(), undefined);
+        }),
+      runEventSink: async (event) => {
+        await appendConversationRunEvents({
+          apiUrl: "https://api.example.test",
+          authToken: "synthetic-writer-token",
+          conversationId: "33333333-3333-4333-8333-333333333333",
+          runId: "22222222-2222-4222-8222-222222222222",
+          expectedPreviousExternalEventSequence: 0,
+          expectedPreviousEventId: appends,
+          events: [event],
+          fetch: () => {
+            const response = {
+              appended_count: 1,
+              latest_event_id: ++appends,
+              run_id: "22222222-2222-4222-8222-222222222222",
+            } satisfies components["schemas"]["AppendRunEventsResponse"];
+            return Promise.resolve(Response.json(response));
+          },
+        });
+        assertEquals(event.modelCallId, undefined);
+      },
+    }));
+    try {
+      const runtime = await proxy(channels);
+      await runtime.doGenerate({ prompt });
+      const reader = (await runtime.doStream({ prompt })).stream.getReader();
+      while (!(await reader.read()).done) { /* Consume the bounded legacy stream. */ }
+      assertEquals(dispatches, 2);
+      assertEquals(appends, 2);
+    } finally {
+      await channels.close();
+    }
+  });
+
+  it("refuses unexpected capture receipts before activation", async () => {
+    let dispatches = 0;
+    const channels = pair(createHostedBroker({
+      projectId: "11111111-1111-4111-8111-111111111111",
+      grant: grant(),
+      allowedModelIds,
+      scope: scope(),
+      resolveModelRuntime: () => model(() => dispatches++),
+      runEventSink: () => receiptFor("33333333-3333-4333-8333-333333333333"),
+    }));
+    try {
+      const runtime = await proxy(channels);
+      await assertRejects(async () => await runtime.doGenerate({ prompt }));
+      assertEquals(dispatches, 0);
+    } finally {
+      await channels.close();
+    }
+  });
+
   it("refuses missing, mismatched, and malformed capture receipts before provider dispatch", async () => {
     for (
       const sink of [
@@ -156,6 +224,7 @@ describe("hosted executor model dispatch", () => {
       let dispatches = 0;
       const channels = pair(createHostedBroker({
         projectId: "11111111-1111-4111-8111-111111111111",
+        modelCallCaptureReceipts: true,
         grant: grant(),
         allowedModelIds,
         scope: scope(),
@@ -214,6 +283,7 @@ describe("hosted executor model dispatch", () => {
     let dispatches = 0;
     const channels = pair(createHostedBroker({
       projectId,
+      modelCallCaptureReceipts: true,
       grant: grant(),
       allowedModelIds,
       scope: scope(),
