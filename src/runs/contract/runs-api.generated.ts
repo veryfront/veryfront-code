@@ -8,9 +8,7 @@ export interface paths {
         };
         /**
          * Get run analytics
-         * @description Get run analytics.
-         *
-         *     - Historical runs may lack a trigger or target.id; newly created runs have both.
+         * @description Returns run analytics.
          */
         get: operations["getAccountRunAnalytics"];
         put?: never;
@@ -30,10 +28,7 @@ export interface paths {
         };
         /**
          * List conversation child runs
-         * @description List conversation child runs.
-         *
-         *     - Omit optional filters for the default collection; follow page_info.next with unchanged filters when pagination is provided.
-         *     - Persist terminal child outcome and delivery intent atomically. Delivery is at least once; the parent consumes an outcome once per child and durable invocation, preserving identity across retries/restarts. Handled failure or cancellation allows recovery; unhandled child outcome fails the parent and requests cancellation of its remaining descendants. Do not cancel siblings merely because one child failed while the parent handles it.
+         * @description Lists child runs in a conversation.
          */
         get: operations["listConversationChildRuns"];
         put?: never;
@@ -53,10 +48,7 @@ export interface paths {
         };
         /**
          * List conversation input requests
-         * @description List conversation input requests.
-         *
-         *     - Omit optional filters for the default collection; follow page_info.next with unchanged filters when pagination is provided.
-         *     - Project and private-conversation permissions apply; password values are never returned.
+         * @description Lists input requests in a conversation.
          */
         get: operations["listConversationInputRequests"];
         put?: never;
@@ -76,9 +68,7 @@ export interface paths {
         };
         /**
          * List conversation runs
-         * @description List conversation runs.
-         *
-         *     - Omit optional filters for the default collection; follow page_info.next with unchanged filters when pagination is provided.
+         * @description Lists runs in a conversation.
          */
         get: operations["listConversationRuns"];
         put?: never;
@@ -98,10 +88,7 @@ export interface paths {
         };
         /**
          * Get input request
-         * @description Get input request.
-         *
-         *     - Project and private-conversation permissions apply; password values are never returned.
-         *     - Execution credentials need run.input_requests.read and access to the bound run.
+         * @description Returns an input request.
          */
         get: operations["getInputRequest"];
         put?: never;
@@ -123,11 +110,7 @@ export interface paths {
         put?: never;
         /**
          * Cancel input request
-         * @description Cancel input request.
-         *
-         *     - Only an open input request can be cancelled; an already resolved request returns 409 unless this is an identical idempotent replay.
-         *     - Cancelling the request does not cancel the run; notify its matching durable wait with cancellation rather than fabricated field values.
-         *     - Retry with the same Idempotency-Key and payload to receive the original response; a changed payload with the same key returns 409.
+         * @description Cancels an input request.
          */
         post: operations["cancelInputRequest"];
         delete?: never;
@@ -147,13 +130,7 @@ export interface paths {
         put?: never;
         /**
          * Respond to input request
-         * @description Respond to input request.
-         *
-         *     - Submit values keyed by field name; responder identity comes from authentication.
-         *     - Values must match the stored fields and required responder role; runtime execution credentials do not impersonate human responders.
-         *     - Submission, cancellation and expiry compete atomically; a different resolution after completion returns 409.
-         *     - Only the matching durable wait is resumed; the response returns the updated input request with password values omitted.
-         *     - Retry with the same Idempotency-Key and payload to receive the original response; a changed payload with the same key returns 409.
+         * @description Submits a response to an input request.
          */
         post: operations["createInputResponse"];
         delete?: never;
@@ -171,9 +148,7 @@ export interface paths {
         };
         /**
          * List evaluation runs
-         * @description List evaluation runs.
-         *
-         *     - Omit optional filters for the default collection; follow page_info.next with unchanged filters when pagination is provided.
+         * @description Lists runs of an evaluation.
          */
         get: operations["listEvalRuns"];
         put?: never;
@@ -193,9 +168,7 @@ export interface paths {
         };
         /**
          * List project runs
-         * @description List project runs.
-         *
-         *     - Omit optional filters for the default collection; follow page_info.next with unchanged filters when pagination is provided.
+         * @description Lists runs in a project.
          */
         get: operations["listProjectRuns"];
         put?: never;
@@ -215,9 +188,7 @@ export interface paths {
         };
         /**
          * List webhook runs
-         * @description List webhook runs.
-         *
-         *     - Omit optional filters for the default collection; follow page_info.next with unchanged filters when pagination is provided.
+         * @description Lists runs of a webhook.
          */
         get: operations["listProjectWebhookRuns"];
         put?: never;
@@ -237,22 +208,13 @@ export interface paths {
         };
         /**
          * List runs
-         * @description List runs.
-         *
-         *     - Omit optional filters for the default collection; follow page_info.next with unchanged filters when pagination is provided.
+         * @description Lists runs.
          */
         get: operations["listRuns"];
         put?: never;
         /**
          * Create run
-         * @description Create run.
-         *
-         *     - 202 means the run was accepted; it can remain pending until an executor is available.
-         *     - Use a project API key or user token for a root run; child creation requires the parent’s execution credential and run.child_runs.create permission.
-         *     - trigger identifies the authenticated user or credential for a direct run, or the parent execution definition for a child; parent_run_id identifies that exact execution.
-         *     - source selects a saved definition in the create request only; the response returns the resolved target and server-derived trigger. Manual invocation records the authenticated user or credential as trigger.
-         *     - Retry with the same Idempotency-Key and payload to receive the original response; a changed payload with the same key returns 409.
-         *     - Create a child with parent_run_id and one verified invocation reference: node_id for a workflow node, or tool_call_id for an agent tool call; they are mutually exclusive and require parent_run_id. Verify correlation against the authenticated parent execution. Task parents use the existing durable invocation identity and Idempotency-Key. Derive trigger from the parent target; reject wrong parent-type correlation and cycles.
+         * @description Creates a run of type agent, workflow or task.
          */
         post: operations["createRun"];
         delete?: never;
@@ -270,30 +232,21 @@ export interface paths {
         };
         /**
          * Get run
-         * @description Get run.
-         *
-         *     - Historical runs may lack a trigger or target.id; newly created runs have both.
-         *     - Execution credentials need run.read and access to the bound run.
+         * @description Returns a run.
          */
         get: operations["getRun"];
         put?: never;
         post?: never;
         /**
          * Delete run
-         * @description Delete run.
-         *
-         *     - Only a terminal run without direct children or a retention hold can be deleted; administrator access is required.
-         *     - 204 confirms deletion of the run and its events.
+         * @description Deletes a run.
          */
         delete: operations["deleteRun"];
         options?: never;
         head?: never;
         /**
          * Update run
-         * @description Update run.
-         *
-         *     - Only title and labels can change; omitted fields stay unchanged, title:null clears the title and labels:{} clears labels.
-         *     - Send the ETag in If-Match; a stale version returns 412.
+         * @description Updates a run’s title and labels.
          */
         patch: operations["updateRun"];
         trace?: never;
@@ -309,12 +262,7 @@ export interface paths {
         put?: never;
         /**
          * Cancel run
-         * @description Cancel run.
-         *
-         *     - 202 confirms a cancellation request; inspect status and control.cancellation for confirmation.
-         *     - A terminal state prevents further execution; conflicting terminal actions return 409.
-         *     - Retry with the same Idempotency-Key and payload to receive the original response; a changed payload with the same key returns 409.
-         *     - Cancel requests cancellation of the run and all its descendants. Atomically gate new work and new child admission against cancellation of any ancestor; retry delivery of stop requests. Do not cancel ancestors or unrelated siblings. stopped_at requires acknowledgement that this run stopped; the subtree is stopped only when descendants.active is zero. Already terminal outcomes are not rewritten.
+         * @description Requests cancellation of a run and its descendants.
          */
         post: operations["cancelRun"];
         delete?: never;
@@ -332,11 +280,7 @@ export interface paths {
         };
         /**
          * List child runs
-         * @description List child runs.
-         *
-         *     - Omit optional filters for the default collection; follow page_info.next with unchanged filters when pagination is provided.
-         *     - Execution credentials need run.child_runs.read and access to the bound run.
-         *     - Persist terminal child outcome and delivery intent atomically. Delivery is at least once; the parent consumes an outcome once per child and durable invocation, preserving identity across retries/restarts. Handled failure or cancellation allows recovery; unhandled child outcome fails the parent and requests cancellation of its remaining descendants. Do not cancel siblings merely because one child failed while the parent handles it.
+         * @description Lists child runs of a run.
          */
         get: operations["listRunChildRuns"];
         put?: never;
@@ -358,10 +302,7 @@ export interface paths {
         put?: never;
         /**
          * Create run event token
-         * @description Create run event token.
-         *
-         *     - The parent execution credential, or an event token delegated under its execution generation, may mint append-only authority for the direct child identified by run_id.
-         *     - The token may mint event tokens for its own direct children while the root execution generation is current. It cannot read events, finalize, heartbeat or create children.
+         * @description Creates a run event token.
          */
         post: operations["createRunEventToken"];
         delete?: never;
@@ -379,22 +320,13 @@ export interface paths {
         };
         /**
          * List run events
-         * @description List run events.
-         *
-         *     - Filter by event_type only when needed; omit filters to list all visible events.
-         *     - Each known event has a named payload type; unknown historical or future types use the fallback.
-         *     - Recorded payloads retain their original field names, including inputRequest.id; resource renames do not rewrite event history.
-         *     - Omit optional filters for the default collection; follow page_info.next with unchanged filters when pagination is provided.
-         *     - Execution credentials need run.events.read and access to the bound run.
+         * @description Lists recorded run events.
          */
         get: operations["listRunEvents"];
         put?: never;
         /**
          * Append run events
-         * @description Append run events.
-         *
-         *     - Each event uses its named payload schema; the payload type selects the variant.
-         *     - Append permission is required for the bound run and current execution generation; durable cursors identify persisted events.
+         * @description Appends run events.
          */
         post: operations["appendRunEvents"];
         delete?: never;
@@ -412,10 +344,7 @@ export interface paths {
         };
         /**
          * Get run event
-         * @description Get run event.
-         *
-         *     - Historical runs may lack a trigger or target.id; newly created runs have both.
-         *     - Execution credentials need run.events.read and access to the bound run.
+         * @description Returns a run event.
          */
         get: operations["getRunEvent"];
         put?: never;
@@ -435,14 +364,31 @@ export interface paths {
         };
         /**
          * Get run event summary
-         * @description Get run event summary.
-         *
-         *     - Historical runs may lack a trigger or target.id; newly created runs have both.
-         *     - Execution credentials need run.events.read and access to the bound run.
+         * @description Summarizes run events.
          */
         get: operations["getRunEventsSummary"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/runs/{run_id}/fail": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Fail a run
+         * @description Fails a run.
+         */
+        post: operations["failRun"];
         delete?: never;
         options?: never;
         head?: never;
@@ -459,15 +405,8 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Finalize run
-         * @description Finalize run.
-         *
-         *     - Current execution authority is required; send completed with output or failed with error.
-         *     - Validate output against the pinned schema before the terminal commit; invalid output returns 400 and oversized output returns 413.
-         *     - 200 confirms the terminal commit; stale authority or a conflicting result returns 409.
-         *     - Retry with the same Idempotency-Key and payload to receive the original response; a changed payload with the same key returns 409.
-         *     - A successful finalize requires no active descendants and returns 409 otherwise. Failed finalize gates new parent work and requests cancellation of remaining descendants. One terminal outcome wins against cancel/finalize races; a conflicting request returns 409 and GET returns the committed outcome. Never overwrite an earlier result.
-         *     - Persist terminal child outcome and delivery intent atomically. Delivery is at least once; the parent consumes an outcome once per child and durable invocation, preserving identity across retries/restarts. Handled failure or cancellation allows recovery; unhandled child outcome fails the parent and requests cancellation of its remaining descendants. Do not cancel siblings merely because one child failed while the parent handles it.
+         * Finalize a run
+         * @description Finalizes a run with output or an error.
          */
         post: operations["finalizeRun"];
         delete?: never;
@@ -487,10 +426,7 @@ export interface paths {
         put?: never;
         /**
          * Send run heartbeat
-         * @description Send run heartbeat.
-         *
-         *     - Renews execution authority for the bound run, using 60 seconds when the body is empty.
-         *     - Terminal, cancelled or stale execution authority returns 409; a heartbeat never starts a new execution.
+         * @description Renews the run’s execution lease.
          */
         post: operations["createRunHeartbeat"];
         delete?: never;
@@ -508,23 +444,13 @@ export interface paths {
         };
         /**
          * List run input requests
-         * @description List run input requests.
-         *
-         *     - Omit optional filters for the default collection; follow page_info.next with unchanged filters when pagination is provided.
-         *     - Project and private-conversation permissions apply; password values are never returned.
-         *     - Execution credentials need run.input_requests.read and access to the bound run.
+         * @description Lists input requests for a run.
          */
         get: operations["listRunInputRequests"];
         put?: never;
         /**
          * Create input request
-         * @description Create input request.
-         *
-         *     - The run supplies project and conversation scope; send only the question and fields.
-         *     - Creation does not pause execution; the runtime must register the matching durable wait.
-         *     - Password fields cannot have defaults; values must never appear in reads, events, replay responses or logs.
-         *     - Execution credentials need run.input_requests.create and access to the bound run.
-         *     - Retry with the same Idempotency-Key and payload to receive the original response; a changed payload with the same key returns 409.
+         * @description Creates an input request for a run.
          */
         post: operations["createRunInputRequest"];
         delete?: never;
@@ -544,12 +470,7 @@ export interface paths {
         put?: never;
         /**
          * Pause run
-         * @description Pause run.
-         *
-         *     - 202 confirms the pause request, not that execution stopped.
-         *     - A confirmed pause has status=waiting and control.waiting.reason=manual_pause; control.pause records when it was requested.
-         *     - Retry with the same Idempotency-Key and payload to receive the original response; a changed payload with the same key returns 409.
-         *     - Pause affects this run at its next safe boundary, not its descendants. Resume requeues this same run and only clears its matching wait. Child outcomes arriving while manually paused remain durable until resume.
+         * @description Requests a pause for a run.
          */
         post: operations["pauseRun"];
         delete?: never;
@@ -569,13 +490,7 @@ export interface paths {
         put?: never;
         /**
          * Resume run
-         * @description Resume run.
-         *
-         *     - Only a signal matching the current wait is accepted; a mismatch returns 409.
-         *     - Use type=manual for a confirmed manual pause; workflow approval and event signals must include the current wait_id.
-         *     - The same run is queued again; its original trigger do not change.
-         *     - Retry with the same Idempotency-Key and payload to receive the original response; a changed payload with the same key returns 409.
-         *     - Pause affects this run at its next safe boundary, not its descendants. Resume requeues this same run and only clears its matching wait. Child outcomes arriving while manually paused remain durable until resume.
+         * @description Resumes a waiting run.
          */
         post: operations["resumeRun"];
         delete?: never;
@@ -593,10 +508,7 @@ export interface paths {
         };
         /**
          * Get run snapshot
-         * @description Get run snapshot.
-         *
-         *     - Historical runs may lack a trigger or target.id; newly created runs have both.
-         *     - Execution credentials need run.events.read and access to the bound run.
+         * @description Returns a run snapshot.
          */
         get: operations["getRunSnapshot"];
         put?: never;
@@ -616,14 +528,31 @@ export interface paths {
         };
         /**
          * Stream run events
-         * @description Stream run events.
-         *
-         *     - Live delivery can be repeated and does not prove durable persistence; use recorded events for the durable history.
-         *     - Execution credentials need run.events.read and access to the bound run.
+         * @description Streams live run events.
          */
         get: operations["streamRunEvents"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/runs/{run_id}/succeed": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Succeed a run
+         * @description Completes a run successfully.
+         */
+        post: operations["succeedRun"];
         delete?: never;
         options?: never;
         head?: never;
@@ -639,9 +568,7 @@ export interface paths {
         };
         /**
          * List run event types
-         * @description List run event types.
-         *
-         *     - Omit optional filters for the default collection; follow page_info.next with unchanged filters when pagination is provided.
+         * @description Lists run event types and their payload schemas.
          */
         get: operations["listRunEventTypes"];
         put?: never;
@@ -728,6 +655,34 @@ export interface components {
             requestHash: string;
             /** @enum {string} */
             type: "AGENT_RUN_CONTROL_PLANE_DISPATCH_ACCEPTED";
+        };
+        AgentRunControlPlaneDispatchAcceptedPayloadRead: {
+            requestHash: string;
+            /** @enum {string} */
+            type: "AGENT_RUN_CONTROL_PLANE_DISPATCH_ACCEPTED";
+        } | {
+            /** Format: uuid */
+            dispatchAttemptId: string;
+            /** Format: date-time */
+            leaseExpiresAt: string;
+            leaseOwner: string;
+            /** Format: uuid */
+            projectId: string;
+            requestHash: string;
+            /** Format: uuid */
+            resumesDispatchAttemptId?: string;
+            runId: string;
+            /** @enum {string} */
+            state: "intent_recorded";
+            /** Format: int64 */
+            transportRecoveryAttempt: number;
+            /** @enum {string} */
+            type: "AGENT_RUN_CONTROL_PLANE_DISPATCH_ACCEPTED";
+            /**
+             * Format: double
+             * @enum {number}
+             */
+            version: 2;
         };
         AgentRunControlPlaneDispatchAcceptedPayloadRedacted: {
             /** @enum {string} */
@@ -1197,15 +1152,25 @@ export interface components {
             /** @enum {string} */
             type: "CHILD_RUN_STATUS_CHANGED";
         };
-        /** @description Provider and platform charges in EUR before tax; total is their sum when known. Credits are billed units, not a currency or a fixed EUR conversion. Signed decimal strings have at most eight fractional digits. Negative amounts are billing adjustments. Status is independent of token capture; unavailable requires all amounts null. Posted amounts come from the billing ledger and may change through later adjustments. */
+        /** @description Estimated EUR usage value before tax: total values billed credits at EUR 0.10 each; provider converts recorded USD cost at the catalog reference rate; platform is total minus provider and can be negative. These amounts are visible to authorized run readers and do not represent invoice charges or actual purchase prices. Descendants sum the same per-run amounts. Credits are exact billed units. Signed decimal strings have at most eight fractional digits. Unknown provider costs leave provider and platform null. Status is independent of token capture; unavailable requires all amounts null. Posted amounts come from the billing ledger and may change through later adjustments. */
         Cost: {
+            /** @description Billed credit units. */
             credits: string | null;
-            /** @enum {string} */
+            /**
+             * @description Currency of reference usage value and provider costs.
+             * @enum {string}
+             */
             currency: "EUR";
+            /** @description Reference usage value minus estimated provider cost; null when either amount is unknown. */
             platform: string | null;
+            /** @description Recorded provider USD cost converted to EUR at the catalog reference rate; null when unknown. */
             provider: string | null;
-            /** @enum {string} */
+            /**
+             * @description Whether charges are estimated, posted or unavailable.
+             * @enum {string}
+             */
             status: "estimated" | "posted" | "unavailable";
+            /** @description Billed credits valued at EUR 0.10 per credit, independent of subscription or purchase discounts. */
             total: string | null;
         } & unknown;
         /** @description A newly created run with resolved target and recorded trigger. */
@@ -1251,6 +1216,7 @@ export interface components {
                  * @description Total descendants at every depth.
                  */
                 total: number;
+                /** @description Aggregate usage of every descendant, excluding this run. */
                 usage?: components["schemas"]["Usage"];
             };
             /** @description Failure details, present only when the run failed. */
@@ -1267,17 +1233,28 @@ export interface components {
                  * @description Elapsed time from first start to finish, including waits and retries; null when not finished.
                  */
                 duration_ms?: number | null;
+                /** @description Runtime process exit code, or null when no exit code was recorded. */
                 exit_code?: number | null;
+                /** @description Captured runtime text logs, when available. */
                 logs?: string;
-                /** Format: int64 */
+                /**
+                 * Format: int64
+                 * @description Maximum retries after the first attempt; only retryable failures are retried.
+                 */
                 retry_limit?: number;
                 /** @description Resolved logical runtime selection; main_branch identifies the selected main-branch deployment, not a worker process. */
                 runtime?: components["schemas"]["RunRuntime"];
                 /** @description Recorded execution start mode, when available. */
                 start_mode?: string;
-                /** Format: int64 */
+                /**
+                 * Format: int64
+                 * @description Deadline for the whole run in seconds, measured from its first start and including retries.
+                 */
                 timeout_seconds?: number;
-                /** Format: int64 */
+                /**
+                 * Format: int64
+                 * @description Recorded failed tool invocations during this run.
+                 */
                 tool_error_count?: number;
             };
             /**
@@ -1328,15 +1305,19 @@ export interface components {
             /** @description Pinned schemas for business input and output; null means no declared schema. */
             schemas?: {
                 input: {
+                    /** @description JSON Schema captured for this run; object schemas and boolean schemas are supported. */
                     schema: boolean | {
                         [key: string]: unknown;
                     };
+                    /** @description SHA-256 digest of the pinned schema. */
                     sha256: string;
                 } | null;
                 output: {
+                    /** @description JSON Schema captured for this run; object schemas and boolean schemas are supported. */
                     schema: boolean | {
                         [key: string]: unknown;
                     };
+                    /** @description SHA-256 digest of the pinned schema. */
                     sha256: string;
                 } | null;
             };
@@ -1408,25 +1389,44 @@ export interface components {
         };
         /** @description Create a direct run with project_id, target:{type,id}, and optional input, or execute a saved schedule or webhook. Input is business data; configuration and execution settings are separate. */
         CreateRunRequest: components["schemas"]["DirectRunRequest"] | components["schemas"]["ScheduleRunRequest"] | components["schemas"]["WebhookRunRequest"];
+        /** @description The full created run when readable by the caller; otherwise only its admission receipt. Replay uses the same caller visibility. */
+        CreateRunResult: components["schemas"]["CreatedRun"] | components["schemas"]["RunCreationReceipt"];
         DirectRunRequest: {
-            /** Format: uuid */
+            /**
+             * Format: uuid
+             * @description Batch UUID associated with the accepted run.
+             */
             batch_id?: string;
+            /** @description Definition-specific configuration; business keys retain their spelling on every transport. */
             config?: {
                 [key: string]: unknown;
             };
-            /** Format: uuid */
+            /**
+             * Format: uuid
+             * @description Conversation associated with an agent admission, when applicable.
+             */
             conversation_id?: string;
+            /** @description Execution overrides, separate from business input and configuration. */
             execution?: components["schemas"]["RunExecutionOptions"];
-            /** @description A JSON value. */
+            /** @description Business input passed to the definition unchanged; omitted input resolves to null. */
             input?: unknown;
             labels?: components["schemas"]["RunLabels"];
+            /** @description Started workflow node on the parent; requires parent_run_id and excludes tool_call_id. */
             node_id?: string;
-            /** Format: uuid */
+            /**
+             * Format: uuid
+             * @description Canonical UUID of the authenticated runtime parent; ordinary users cannot assert parent authority.
+             */
             parent_run_id?: string;
-            /** Format: uuid */
+            /**
+             * Format: uuid
+             * @description UUID of the project containing the execution definition or saved source.
+             */
             project_id: string;
             target: components["schemas"]["RunTarget"];
+            /** @description Optional display title for the accepted run. */
             title?: string;
+            /** @description Durable tool invocation on an agent parent; requires parent_run_id and excludes node_id. */
             tool_call_id?: string;
         } & unknown;
         DocumentCitedPayload: {
@@ -1637,6 +1637,10 @@ export interface components {
                 status?: "ok" | "error" | "skipped" | "denied";
             }[];
         };
+        /** @description Error for a failed run. */
+        FailRunRequest: {
+            error: components["schemas"]["RunFailure"];
+        };
         FileAttachedPayload: {
             filename?: string;
             mediaType: string;
@@ -1663,7 +1667,7 @@ export interface components {
             /** @enum {string} */
             type: "FILES_CHANGED";
         };
-        /** @description Finalize the current execution generation; successful finalization requires an output, including explicit null when there is no value. */
+        /** @description Finalizes a run with output or an error. */
         FinalizeRunRequest: {
             /** @description Any JSON value. The HTTP boundary rejects non-JSON values. */
             output: unknown;
@@ -1676,8 +1680,12 @@ export interface components {
         };
         /** @description Recorded execution definition; historical IDs may be unavailable. */
         HistoricalRunTarget: {
+            /** @description Definition ID; null when unavailable on a historical run. */
             id: string | null;
-            /** @enum {string} */
+            /**
+             * @description Execution definition type.
+             * @enum {string}
+             */
             type: "agent" | "task" | "workflow" | "eval";
         };
         InputRequest: {
@@ -1956,7 +1964,7 @@ export interface components {
             /** @enum {string} */
             type: "MODEL_CALL_COMPLETED";
             /** @enum {string} */
-            usageCaptureStatus: "complete" | "missing";
+            usageCaptureStatus: "complete" | "partial" | "missing";
         } & {
             /** Format: int64 */
             cacheCreationTokens: number;
@@ -1977,7 +1985,7 @@ export interface components {
             /** @enum {string} */
             type: "MODEL_CALL_COMPLETED";
             /** @enum {string} */
-            usageCaptureStatus: "complete" | "missing";
+            usageCaptureStatus: "complete" | "partial" | "missing";
         };
         /** @description Opaque cursor for the next page; null means there are no more results. */
         PageInfo: {
@@ -1985,6 +1993,11 @@ export interface components {
         };
         PaginationCursor: string;
         Problem: {
+            /**
+             * @description Schedule admission refusal.
+             * @enum {string}
+             */
+            cause?: "schedule_concurrency_forbidden" | "schedule_fire_in_progress";
             code: string;
             detail?: string;
             errors?: {
@@ -2124,6 +2137,7 @@ export interface components {
                  * @description Total descendants at every depth.
                  */
                 total: number;
+                /** @description Aggregate usage of every descendant, excluding this run. */
                 usage?: components["schemas"]["Usage"];
             };
             /** @description Failure details, present only when the run failed. */
@@ -2140,17 +2154,28 @@ export interface components {
                  * @description Elapsed time from first start to finish, including waits and retries; null when not finished.
                  */
                 duration_ms?: number | null;
+                /** @description Runtime process exit code, or null when no exit code was recorded. */
                 exit_code?: number | null;
+                /** @description Captured runtime text logs, when available. */
                 logs?: string;
-                /** Format: int64 */
+                /**
+                 * Format: int64
+                 * @description Maximum retries after the first attempt; only retryable failures are retried.
+                 */
                 retry_limit?: number;
                 /** @description Resolved logical runtime selection; main_branch identifies the selected main-branch deployment, not a worker process. */
                 runtime?: components["schemas"]["RunRuntime"];
                 /** @description Recorded execution start mode, when available. */
                 start_mode?: string;
-                /** Format: int64 */
+                /**
+                 * Format: int64
+                 * @description Deadline for the whole run in seconds, measured from its first start and including retries.
+                 */
                 timeout_seconds?: number;
-                /** Format: int64 */
+                /**
+                 * Format: int64
+                 * @description Recorded failed tool invocations during this run.
+                 */
                 tool_error_count?: number;
             };
             /**
@@ -2201,15 +2226,19 @@ export interface components {
             /** @description Pinned schemas for business input and output; null means no declared schema. */
             schemas?: {
                 input: {
+                    /** @description JSON Schema captured for this run; object schemas and boolean schemas are supported. */
                     schema: boolean | {
                         [key: string]: unknown;
                     };
+                    /** @description SHA-256 digest of the pinned schema. */
                     sha256: string;
                 } | null;
                 output: {
+                    /** @description JSON Schema captured for this run; object schemas and boolean schemas are supported. */
                     schema: boolean | {
                         [key: string]: unknown;
                     };
+                    /** @description SHA-256 digest of the pinned schema. */
                     sha256: string;
                 } | null;
             };
@@ -2297,7 +2326,7 @@ export interface components {
                 status: string;
             }[];
             summary: {
-                /** @description Average completed run duration in milliseconds. */
+                /** @description Average finished run duration in milliseconds. */
                 average_duration_ms: number | null;
                 /**
                  * Format: double
@@ -2311,7 +2340,7 @@ export interface components {
                 failed_runs: number;
                 /** @description Most recent run creation timestamp. */
                 last_run_at: string | null;
-                /** @description 95th percentile completed run duration in milliseconds. */
+                /** @description 95th percentile finished run duration in milliseconds. */
                 p95_duration_ms: number | null;
                 /**
                  * Format: double
@@ -2340,29 +2369,55 @@ export interface components {
             tools: {
                 /**
                  * Format: double
-                 * @description Number of uses.
+                 * @description Runs with this recorded waiting tool.
                  */
                 count: number;
-                /** @description Tool name. */
+                /** @description Recorded waiting tool name. */
                 name: string;
             }[];
         };
         /** @description An immutable file reference authorized through the run’s project and conversation permissions. */
         RunArtifact: {
+            /** @description Immutable artifact identifier. */
             artifact_id: string;
-            /** Format: uri */
+            /**
+             * Format: uri
+             * @description Authorized artifact URL.
+             */
             href: string;
+            /** @description File media type. */
             media_type: string;
+            /** @description SHA-256 digest of the file. */
             sha256: string;
-            /** Format: int64 */
+            /**
+             * Format: int64
+             * @description File size in bytes.
+             */
             size_bytes: number;
+            /** @description Artifact kind. */
             type: string;
         };
         RunCancellation: {
-            /** Format: date-time */
+            /**
+             * Format: date-time
+             * @description Time cancellation was requested.
+             */
             requested_at: string;
-            /** Format: date-time */
+            /**
+             * Format: date-time
+             * @description Time the runtime confirmed its stop; null until confirmed.
+             */
             stopped_at: string | null;
+        };
+        /** @description Minimal admission receipt for a caller who cannot read the created run. No private fields are disclosed. */
+        RunCreationReceipt: {
+            /** Format: uuid */
+            run_id: string;
+            /**
+             * @description Current execution state.
+             * @enum {string}
+             */
+            status: "pending" | "running" | "waiting" | "completed" | "failed" | "cancelled";
         };
         RunErrorPayload: {
             code?: string;
@@ -3535,7 +3590,7 @@ export interface components {
             origin_event_type: string;
             /** @description The parent span id associated with this record. */
             parent_span_id: string | null;
-            payload: components["schemas"]["AgentRunControlPlaneDispatchAcceptedPayload"] | components["schemas"]["AgentRunControlPlaneDispatchAcceptedPayloadRedacted"];
+            payload: components["schemas"]["AgentRunControlPlaneDispatchAcceptedPayloadRead"] | components["schemas"]["AgentRunControlPlaneDispatchAcceptedPayloadRedacted"];
             /**
              * Format: uuid
              * @description Run identifier associated with the record.
@@ -4208,8 +4263,12 @@ export interface components {
             /** @description List of unrecoverable fields associated with this record. */
             unrecoverable_fields: string[];
         };
+        /** @description Replay events with a continuation cursor. For task and workflow histories over 5000 events or 10 MiB, use paginated event reads. */
         RunEventSnapshot: {
-            /** Format: int64 */
+            /**
+             * Format: int64
+             * @description Cursor for continuing event reads after this snapshot.
+             */
             after_event_id: number;
             events: components["schemas"]["RunSnapshotEvent"][];
         };
@@ -4269,17 +4328,27 @@ export interface components {
         };
         /** @description Optional execution overrides; unsupported overrides return 400 before admission. Retry policy only repeats retryable failures. */
         RunExecutionOptions: {
-            /** Format: int64 */
+            /**
+             * Format: int64
+             * @description Maximum retries after the first attempt, restricted to retryable failures.
+             */
             retry_limit?: number;
+            /** @description Deployment or registered runtime override; omit to use the definition default. */
             runtime?: components["schemas"]["RunRuntime"];
-            /** Format: int64 */
+            /**
+             * Format: int64
+             * @description Whole-run deadline in seconds, including retries; unsupported target overrides are refused.
+             */
             timeout_seconds?: number;
         };
         RunFailure: {
+            /** @description Stable failure code. */
             code: string;
+            /** @description Additional failure details. */
             details?: {
                 [key: string]: unknown;
             };
+            /** @description Human-readable failure message. */
             message: string;
         };
         RunFinishedPayload: {
@@ -4299,6 +4368,7 @@ export interface components {
             /** Format: uuid */
             run_id: string;
         };
+        /** @description Labels used to organize runs. */
         RunLabels: {
             [key: string]: string;
         };
@@ -4328,26 +4398,48 @@ export interface components {
         };
         /** @description When a pause was requested; control.waiting confirms when execution is paused. */
         RunPause: {
-            /** Format: date-time */
+            /**
+             * Format: date-time
+             * @description Time the pause was requested.
+             */
             requested_at: string;
         };
         /** @description Select an authorized deployment or registered runtime; omit to use the definition default. */
         RunRuntime: {
-            /** @enum {string} */
+            /**
+             * @description Runtime selection kind.
+             * @enum {string}
+             */
             type: "main_branch";
         } | {
-            /** Format: uuid */
+            /**
+             * Format: uuid
+             * @description Environment UUID.
+             */
             id: string;
-            /** @enum {string} */
+            /**
+             * @description Runtime selection kind.
+             * @enum {string}
+             */
             type: "environment";
         } | {
-            /** Format: uuid */
+            /**
+             * Format: uuid
+             * @description Preview branch UUID.
+             */
             id: string;
-            /** @enum {string} */
+            /**
+             * @description Runtime selection kind.
+             * @enum {string}
+             */
             type: "preview_branch";
         } | {
+            /** @description Registered runtime identifier. */
             id: string;
-            /** @enum {string} */
+            /**
+             * @description Runtime selection kind.
+             * @enum {string}
+             */
             type: "registered";
         };
         RunSnapshotEvent: {
@@ -5508,7 +5600,7 @@ export interface components {
             origin_event_type: string;
             /** @description The parent span id associated with this record. */
             parent_span_id: string | null;
-            payload: components["schemas"]["AgentRunControlPlaneDispatchAcceptedPayload"] | components["schemas"]["AgentRunControlPlaneDispatchAcceptedPayloadRedacted"];
+            payload: components["schemas"]["AgentRunControlPlaneDispatchAcceptedPayloadRead"] | components["schemas"]["AgentRunControlPlaneDispatchAcceptedPayloadRedacted"];
             /**
              * Format: uuid
              * @description Run identifier associated with the record.
@@ -6189,11 +6281,30 @@ export interface components {
             /** @enum {string} */
             type: "RUN_STARTED";
         };
-        RunStreamEvent: components["schemas"]["TextMessageStartPayload"] | components["schemas"]["TextMessageContentPayload"] | components["schemas"]["TextMessageEndPayload"] | components["schemas"]["ToolCallStartPayload"] | components["schemas"]["ToolCallArgsPayload"] | components["schemas"]["ToolCallChunkPayload"] | components["schemas"]["ToolCallEndPayload"] | components["schemas"]["ToolCallResultPayload"] | components["schemas"]["MessagesSnapshotPayload"] | components["schemas"]["StateSnapshotPayload"] | components["schemas"]["StateDeltaPayload"] | components["schemas"]["RunStartedPayload"] | components["schemas"]["RunFinishedPayload"] | components["schemas"]["RunErrorPayload"] | components["schemas"]["StepStartedPayload"] | components["schemas"]["StepFinishedPayload"] | components["schemas"]["ReasoningStartPayload"] | components["schemas"]["ReasoningMessageStartPayload"] | components["schemas"]["ReasoningMessageContentPayload"] | components["schemas"]["ReasoningMessageEndPayload"] | components["schemas"]["ReasoningContentPayload"] | components["schemas"]["ReasoningEndPayload"] | components["schemas"]["ActivitySnapshotPayload"] | components["schemas"]["ActivityDeltaPayload"] | components["schemas"]["ToolCallStatusChangedPayload"] | components["schemas"]["InputRequestCreatedPayload"] | components["schemas"]["InputRequestUpdatedPayload"] | components["schemas"]["ChildRunStatusChangedPayload"] | components["schemas"]["ModelCallCompletedPayload"] | components["schemas"]["RunParkedPayload"] | components["schemas"]["RunLogCapturedPayload"] | components["schemas"]["StreamHeartbeatEmittedPayload"] | components["schemas"]["UrlCitedPayload"] | components["schemas"]["DocumentCitedPayload"] | components["schemas"]["FileAttachedPayload"] | components["schemas"]["FilesChangedPayload"] | components["schemas"]["RuntimeEventRecordedPayload"] | components["schemas"]["AgentRunContextCompactedPayload"] | components["schemas"]["AgentRunControlPlaneDispatchAcceptedPayload"] | components["schemas"]["AgentRunControlPlaneDispatchReceiptPayload"] | components["schemas"]["AgentRunToolExposureCheckpointedPayload"] | components["schemas"]["AgentRunToolExposureCheckpointPayload"] | components["schemas"]["AgentRunProviderReplayCheckpointedPayload"] | components["schemas"]["AgentRunProviderReplayCheckpointPayload"] | components["schemas"]["AgentRunModelCallContextRecordedPayload"] | components["schemas"]["AgentRunModelCallContextPayload"];
+        RunStreamEvent: {
+            type: string;
+        } & {
+            [key: string]: unknown;
+        };
+        RunStreamFrame: {
+            /** @description Stored timestamp; null when the frame has no stored timestamp. */
+            created_at: string | null;
+            /** @description Durable reconnect cursor; null for transient frames. */
+            event_id: number | null;
+            /** @description Stored event type used for the SSE event name. */
+            event_type: string;
+            /** @description Error classification from the stored row. */
+            is_error: boolean;
+            payload: components["schemas"]["RunStreamEvent"];
+        };
         /** @description Definition executed by this run. */
         RunTarget: {
+            /** @description Definition ID without a kind prefix, such as health-check rather than task:health-check. */
             id: string;
-            /** @enum {string} */
+            /**
+             * @description Kind of execution definition.
+             * @enum {string}
+             */
             type: "agent" | "task" | "workflow";
         };
         RuntimeEventRecordedPayload: {
@@ -6253,76 +6364,154 @@ export interface components {
         };
         /** @description The current durable wait, with only the fields required to satisfy that wait. */
         RunWait: {
-            /** @enum {string} */
+            /**
+             * @description Condition required to resume the run.
+             * @enum {string}
+             */
             reason: "manual_pause";
-            /** Format: date-time */
+            /**
+             * Format: date-time
+             * @description Scheduled automatic resume time.
+             */
             resume_at?: string;
         } | {
-            /** @enum {string} */
+            /**
+             * @description Condition required to resume the run.
+             * @enum {string}
+             */
             reason: "tool_result";
-            /** Format: date-time */
+            /**
+             * Format: date-time
+             * @description Scheduled automatic resume time.
+             */
             resume_at?: string;
+            /** @description Tool call awaiting a result. */
             tool_call_id: string;
         } | {
+            /** @description Integration awaiting connection. */
             integration: string;
-            /** @enum {string} */
+            /**
+             * @description Condition required to resume the run.
+             * @enum {string}
+             */
             reason: "integration_connected";
-            /** Format: date-time */
+            /**
+             * Format: date-time
+             * @description Scheduled automatic resume time.
+             */
             resume_at?: string;
         } | {
+            /** @description Workflow nodes awaiting approval. */
             node_ids: string[];
-            /** @enum {string} */
+            /**
+             * @description Condition required to resume the run.
+             * @enum {string}
+             */
             reason: "approval";
-            /** Format: date-time */
+            /**
+             * Format: date-time
+             * @description Scheduled automatic resume time.
+             */
             resume_at?: string;
+            /** @description Durable wait identifier. */
             wait_id: string;
         } | {
+            /** @description Event required to resume. */
             name: string;
-            /** @enum {string} */
+            /**
+             * @description Condition required to resume the run.
+             * @enum {string}
+             */
             reason: "event";
-            /** Format: date-time */
+            /**
+             * Format: date-time
+             * @description Scheduled automatic resume time.
+             */
             resume_at?: string;
+            /** @description Durable wait identifier. */
             wait_id: string;
         } | {
+            /** @description Input requests awaiting responses. */
             input_request_ids: string[];
-            /** @enum {string} */
+            /**
+             * @description Condition required to resume the run.
+             * @enum {string}
+             */
             reason: "input_request";
-            /** Format: date-time */
+            /**
+             * Format: date-time
+             * @description Scheduled automatic resume time.
+             */
             resume_at?: string;
         } | {
+            /** @description Child runs that must finish. */
             dependencies: {
                 correlation: {
+                    /** @description Tool call identifier. */
                     id: string;
-                    /** @enum {string} */
+                    /**
+                     * @description Child invocation kind.
+                     * @enum {string}
+                     */
                     type: "tool_call";
                 } | {
+                    /** @description Workflow node identifier. */
                     id: string;
-                    /** @enum {string} */
+                    /**
+                     * @description Child invocation kind.
+                     * @enum {string}
+                     */
                     type: "workflow_node";
                 };
-                /** Format: uuid */
+                /**
+                 * Format: uuid
+                 * @description Canonical UUID of the child run.
+                 */
                 run_id: string;
             }[];
-            /** @enum {string} */
+            /**
+             * @description Condition required to resume the run.
+             * @enum {string}
+             */
             reason: "child_run";
-            /** Format: date-time */
+            /**
+             * Format: date-time
+             * @description Scheduled automatic resume time.
+             */
             resume_at?: string;
         } | {
-            /** @enum {string} */
+            /**
+             * @description Condition required to resume the run.
+             * @enum {string}
+             */
             reason: "timer";
-            /** Format: date-time */
+            /**
+             * Format: date-time
+             * @description Scheduled automatic resume time.
+             */
             resume_at: string;
         };
         ScheduleRunRequest: {
             labels?: components["schemas"]["RunLabels"];
-            /** Format: uuid */
+            /**
+             * Format: uuid
+             * @description UUID of the project containing the execution definition or saved source.
+             */
             project_id: string;
+            /** @description Saved schedule supplying the target and execution configuration. */
             source: {
-                /** Format: uuid */
+                /**
+                 * Format: uuid
+                 * @description UUID of the saved schedule in this project.
+                 */
                 id: string;
-                /** @enum {string} */
+                /**
+                 * @description Execute a saved schedule.
+                 * @enum {string}
+                 */
                 type: "schedule";
             };
+            /** @description Optional display title for the accepted run. */
             title?: string;
         };
         StateDeltaPayload: {
@@ -6389,6 +6578,11 @@ export interface components {
             /** @enum {string} */
             type: "STREAM_HEARTBEAT_EMITTED";
         };
+        /** @description Final output for a successful run. */
+        SucceedRunRequest: {
+            /** @description Final JSON output. Use explicit null when there is no value. */
+            output: unknown;
+        };
         TextMessageContentPayload: {
             contentId?: string;
             delta: string;
@@ -6429,18 +6623,36 @@ export interface components {
         /** @description Input excludes cache reads/writes; output includes reasoning. Total is input + output + cache.read + cache.write. Null means unknown, never zero. */
         TokenUsage: {
             cache: {
-                /** Format: int64 */
+                /**
+                 * Format: int64
+                 * @description Tokens read from the provider cache.
+                 */
                 read: number | null;
-                /** Format: int64 */
+                /**
+                 * Format: int64
+                 * @description Tokens written to the provider cache.
+                 */
                 write: number | null;
             };
-            /** Format: int64 */
+            /**
+             * Format: int64
+             * @description Input tokens excluding cache reads and writes.
+             */
             input: number | null;
-            /** Format: int64 */
+            /**
+             * Format: int64
+             * @description Output tokens including reasoning.
+             */
             output: number | null;
-            /** Format: int64 */
+            /**
+             * Format: int64
+             * @description Reasoning tokens included in output.
+             */
             reasoning?: number | null;
-            /** Format: int64 */
+            /**
+             * Format: int64
+             * @description Sum of input, output, cache-read and cache-write tokens.
+             */
             total: number | null;
         };
         ToolCallArgsPayload: {
@@ -6560,22 +6772,208 @@ export interface components {
         };
         /** @description Shared usage shape for a run, descendant aggregate, or evaluation; capture_status describes token capture coverage. Cost can remain unavailable independently. */
         Usage: {
-            /** @enum {string} */
+            /**
+             * @description Token capture coverage.
+             * @enum {string}
+             */
             capture_status: "complete" | "partial" | "missing";
             cost: components["schemas"]["Cost"];
-            /** Format: int64 */
+            /**
+             * Format: int64
+             * @description Billed provider call count.
+             */
             model_calls?: number | null;
             tokens: components["schemas"]["TokenUsage"];
         };
+        VersionedRun: {
+            /** @description Files produced by the run. */
+            artifacts?: components["schemas"]["RunArtifact"][];
+            /**
+             * Format: uuid
+             * @description Batch containing the run.
+             */
+            batch_id?: string;
+            /** @description Definition-specific execution configuration. */
+            config?: {
+                [key: string]: unknown;
+            };
+            /** @description Pending control requests and the current wait. */
+            control?: {
+                cancellation?: components["schemas"]["RunCancellation"];
+                pause?: components["schemas"]["RunPause"];
+                waiting?: components["schemas"]["RunWait"];
+            };
+            /**
+             * Format: uuid
+             * @description Conversation containing the run.
+             */
+            conversation_id?: string;
+            /**
+             * Format: date-time
+             * @description When the run was accepted.
+             */
+            created_at: string;
+            /** @description Counts and usage across all descendant runs, excluding this run. */
+            descendants?: {
+                /**
+                 * Format: int64
+                 * @description Descendants that are pending, running or waiting.
+                 */
+                active: number;
+                /** @description Whether any descendant has failed. */
+                has_failures: boolean;
+                /**
+                 * Format: int64
+                 * @description Total descendants at every depth.
+                 */
+                total: number;
+                /** @description Aggregate usage of every descendant, excluding this run. */
+                usage?: components["schemas"]["Usage"];
+            };
+            /** @description Failure details, present only when the run failed. */
+            error?: components["schemas"]["RunFailure"];
+            /** @description Version of caller-editable run metadata. */
+            etag: string;
+            /** @description Resolved execution settings and diagnostics. */
+            execution?: {
+                /**
+                 * Format: int64
+                 * @description Current or last execution attempt, starting at 1; absent before execution.
+                 */
+                attempt?: number;
+                /**
+                 * Format: int64
+                 * @description Elapsed time from first start to finish, including waits and retries; null when not finished.
+                 */
+                duration_ms?: number | null;
+                /** @description Runtime process exit code, or null when no exit code was recorded. */
+                exit_code?: number | null;
+                /** @description Captured runtime text logs, when available. */
+                logs?: string;
+                /**
+                 * Format: int64
+                 * @description Maximum retries after the first attempt; only retryable failures are retried.
+                 */
+                retry_limit?: number;
+                /** @description Resolved logical runtime selection; main_branch identifies the selected main-branch deployment, not a worker process. */
+                runtime?: components["schemas"]["RunRuntime"];
+                /** @description Recorded execution start mode, when available. */
+                start_mode?: string;
+                /**
+                 * Format: int64
+                 * @description Deadline for the whole run in seconds, measured from its first start and including retries.
+                 */
+                timeout_seconds?: number;
+                /**
+                 * Format: int64
+                 * @description Recorded failed tool invocations during this run.
+                 */
+                tool_error_count?: number;
+            };
+            /**
+             * Format: date-time
+             * @description When the run completed, failed or was cancelled.
+             */
+            finished_at?: string;
+            /**
+             * Format: uuid
+             * @description Unique run UUID.
+             */
+            id: string;
+            /** @description Business input supplied when the run was created. */
+            input: unknown;
+            /**
+             * Format: uuid
+             * @description Conversation message that supplied the input.
+             */
+            input_message_id?: string;
+            /** @description Labels used to organize runs. */
+            labels?: components["schemas"]["RunLabels"];
+            /** @description Additional resource metadata. */
+            metadata?: {
+                [key: string]: unknown;
+            };
+            /** @description Final business output; null until successful finalization. */
+            output: unknown;
+            /**
+             * Format: uuid
+             * @description Conversation message containing the result.
+             */
+            output_message_id?: string;
+            /**
+             * Format: uuid
+             * @description Immediate parent run ID, present on child runs.
+             */
+            parent_run_id?: string;
+            /**
+             * Format: uuid
+             * @description Project containing the run.
+             */
+            project_id: string;
+            /**
+             * Format: uuid
+             * @description Top-level ancestor run ID, present on child runs.
+             */
+            root_run_id?: string;
+            /** @description Pinned schemas for business input and output; null means no declared schema. */
+            schemas?: {
+                input: {
+                    /** @description JSON Schema captured for this run; object schemas and boolean schemas are supported. */
+                    schema: boolean | {
+                        [key: string]: unknown;
+                    };
+                    /** @description SHA-256 digest of the pinned schema. */
+                    sha256: string;
+                } | null;
+                output: {
+                    /** @description JSON Schema captured for this run; object schemas and boolean schemas are supported. */
+                    schema: boolean | {
+                        [key: string]: unknown;
+                    };
+                    /** @description SHA-256 digest of the pinned schema. */
+                    sha256: string;
+                } | null;
+            };
+            /**
+             * Format: date-time
+             * @description When the first execution attempt started, omitted before execution.
+             */
+            started_at?: string;
+            /**
+             * @description Current execution state.
+             * @enum {string}
+             */
+            status: "pending" | "running" | "waiting" | "completed" | "failed" | "cancelled";
+            /** @description Execution definition; its ID may be null only on historical runs. */
+            target: components["schemas"]["HistoricalRunTarget"];
+            /** @description Orchestration task ID, distinct from the execution definition. */
+            task_id?: string;
+            /** @description Display title, omitted when unset. */
+            title?: string;
+            /** @description How execution was initiated. */
+            trigger?: components["schemas"]["RunTrigger"];
+            /**
+             * Format: date-time
+             * @description When the resource last changed, including usage updates.
+             */
+            updated_at: string;
+            /** @description Usage when available; unknown measurements are null. */
+            usage?: components["schemas"]["Usage"];
+        } & (unknown & unknown & unknown & unknown & unknown & unknown & unknown);
         WebhookRunRequest: {
             /** @description A JSON value. */
             input: unknown;
             labels?: components["schemas"]["RunLabels"];
             /** Format: uuid */
             project_id: string;
+            /** @description Saved webhook to execute. */
             source: {
+                /** @description Saved webhook identifier. */
                 id: string;
-                /** @enum {string} */
+                /**
+                 * @description Saved source kind.
+                 * @enum {string}
+                 */
                 type: "webhook";
             };
             title?: string;
@@ -6692,6 +7090,7 @@ export interface operations {
             query?: {
                 /** @description Opaque page_info.next cursor; reuse with unchanged filters and ordering. */
                 cursor?: components["schemas"]["PaginationCursor"];
+                /** @description Maximum number of records in a page, from 1 to 100. Defaults to 20. */
                 limit?: number;
                 /** @description Filter by tool_call_id. */
                 tool_call_id?: string;
@@ -6782,6 +7181,7 @@ export interface operations {
             query?: {
                 /** @description Opaque page_info.next cursor; reuse with unchanged filters and ordering. */
                 cursor?: components["schemas"]["PaginationCursor"];
+                /** @description Maximum number of records in a page, from 1 to 100. Defaults to 20. */
                 limit?: number;
                 run_id?: string;
                 /** @description Lifecycle status for the target record. */
@@ -6873,6 +7273,7 @@ export interface operations {
             query?: {
                 /** @description Opaque page_info.next cursor; reuse with unchanged filters and ordering. */
                 cursor?: components["schemas"]["PaginationCursor"];
+                /** @description Maximum number of records in a page, from 1 to 100. Defaults to 20. */
                 limit?: number;
                 /** @description Filter by status. Repeat the query parameter for multiple values; comma-separated values remain a compatibility alias. Values within this filter use OR; different filters use AND. */
                 status?: string[];
@@ -7060,7 +7461,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Cancelled input request, including repeated cancellation */
+            /** @description Cancelled input request */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -7260,6 +7661,18 @@ export interface operations {
                     };
                 };
             };
+            /** @description Service temporarily unavailable; retry the request */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"] & {
+                        /** @constant */
+                        status?: 503;
+                    };
+                };
+            };
         };
     };
     listEvalRuns: {
@@ -7267,6 +7680,7 @@ export interface operations {
             query?: {
                 /** @description Opaque page_info.next cursor; reuse with unchanged filters and ordering. */
                 cursor?: string;
+                /** @description Maximum number of records in a page, from 1 to 100. Defaults to 20. */
                 limit?: number;
                 sort_by?: "created_at" | "status";
                 sort_order?: "asc" | "desc";
@@ -7362,10 +7776,13 @@ export interface operations {
             query?: {
                 /** @description Opaque page_info.next cursor; reuse with unchanged filters and ordering. */
                 cursor?: string;
+                /** @description Maximum number of records in a page, from 1 to 100. Defaults to 20. */
                 limit?: number;
                 parent_run_id?: string;
                 root_only?: "true" | "false";
+                /** @description Field used to order runs: created_at, status or duration. Defaults to created_at. */
                 sort_by?: "created_at" | "status" | "duration";
+                /** @description Sort direction: asc or desc. Defaults to desc. */
                 sort_order?: "asc" | "desc";
                 /** @description Filter by status. Repeat the query parameter for multiple values; comma-separated values remain a compatibility alias. Values within this filter use OR; different filters use AND. */
                 status?: string[];
@@ -7466,6 +7883,7 @@ export interface operations {
             query?: {
                 /** @description Opaque page_info.next cursor; reuse with unchanged filters and ordering. */
                 cursor?: string;
+                /** @description Maximum number of records in a page, from 1 to 100. Defaults to 20. */
                 limit?: number;
                 sort_order?: "asc" | "desc";
             };
@@ -7559,12 +7977,15 @@ export interface operations {
                 conversation_id?: string;
                 /** @description Opaque page_info.next cursor; reuse with unchanged filters and ordering. */
                 cursor?: string;
+                /** @description Maximum number of records in a page, from 1 to 100. Defaults to 20. */
                 limit?: number;
                 parent_run_id?: string;
                 /** @description Restrict accessible runs to this project; filters intersect and never grant access. */
                 project_id?: string;
                 root_only?: "true" | "false";
+                /** @description Field used to order runs: created_at, status or duration. Defaults to created_at. */
                 sort_by?: "created_at" | "status" | "duration";
+                /** @description Sort direction: asc or desc. Defaults to desc. */
                 sort_order?: "asc" | "desc";
                 /** @description Filter by status. Repeat the query parameter for multiple values; comma-separated values remain a compatibility alias. Values within this filter use OR; different filters use AND. */
                 status?: string[];
@@ -7684,7 +8105,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["CreatedRun"];
+                    "application/json": components["schemas"]["CreateRunResult"];
                 };
             };
             /** @description Invalid request or cursor */
@@ -8398,6 +8819,7 @@ export interface operations {
                 event_type?: string[];
                 include_descendants?: "true" | "false";
                 is_error?: "true" | "false";
+                /** @description Maximum number of records in a page, from 1 to 100. Defaults to 20. */
                 limit?: number;
                 search?: string;
                 sort_order?: "asc" | "desc";
@@ -8596,6 +9018,18 @@ export interface operations {
                     };
                 };
             };
+            /** @description Service temporarily unavailable; retry the request */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"] & {
+                        /** @constant */
+                        status?: 503;
+                    };
+                };
+            };
         };
     };
     getRunEvent: {
@@ -8790,6 +9224,126 @@ export interface operations {
             };
         };
     };
+    failRun: {
+        parameters: {
+            query?: never;
+            header: {
+                /**
+                 * @description Caller-scoped retry key; replay the same request for at least 24 hours. A different payload with the same key returns 409.
+                 * @example example-request-1
+                 */
+                "Idempotency-Key": string;
+                /** @description Required for execution credentials. */
+                "X-Veryfront-Run-Terminal-Token"?: string;
+            };
+            path: {
+                /** @example 11111111-1111-4111-8111-111111111111 */
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FailRunRequest"];
+            };
+        };
+        responses: {
+            /** @description Run */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Run"];
+                };
+            };
+            /** @description Invalid request or cursor */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"] & {
+                        /** @constant */
+                        status?: 400;
+                    };
+                };
+            };
+            /** @description Missing, invalid, or expired credentials */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"] & {
+                        /** @constant */
+                        status?: 401;
+                    };
+                };
+            };
+            /** @description Insufficient resource permission or credential purpose */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"] & {
+                        /** @constant */
+                        status?: 403;
+                    };
+                };
+            };
+            /** @description Resource not found or not visible */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"] & {
+                        /** @constant */
+                        status?: 404;
+                    };
+                };
+            };
+            /** @description State conflict, stale execution generation, or idempotency mismatch */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"] & {
+                        /** @constant */
+                        status?: 409;
+                    };
+                };
+            };
+            /** @description Request or final output exceeds its byte limit */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"] & {
+                        /** @constant */
+                        status?: 413;
+                    };
+                };
+            };
+            /** @description Rate limit exceeded */
+            429: {
+                headers: {
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"] & {
+                        /** @constant */
+                        status?: 429;
+                    };
+                };
+            };
+        };
+    };
     finalizeRun: {
         parameters: {
             query?: never;
@@ -8799,6 +9353,8 @@ export interface operations {
                  * @example example-request-1
                  */
                 "Idempotency-Key": string;
+                /** @description Required for execution credentials. */
+                "X-Veryfront-Run-Terminal-Token"?: string;
             };
             path: {
                 /** @example 11111111-1111-4111-8111-111111111111 */
@@ -9025,6 +9581,7 @@ export interface operations {
             query?: {
                 /** @description Opaque page_info.next cursor; reuse with unchanged filters and ordering. */
                 cursor?: components["schemas"]["PaginationCursor"];
+                /** @description Maximum number of records in a page, from 1 to 100. Defaults to 20. */
                 limit?: number;
                 /** @description Lifecycle status for the target record. */
                 status?: "open" | "submitted" | "cancelled" | "expired";
@@ -9615,6 +10172,126 @@ export interface operations {
                     "application/problem+json": components["schemas"]["Problem"] & {
                         /** @constant */
                         status?: 404;
+                    };
+                };
+            };
+            /** @description Rate limit exceeded */
+            429: {
+                headers: {
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"] & {
+                        /** @constant */
+                        status?: 429;
+                    };
+                };
+            };
+        };
+    };
+    succeedRun: {
+        parameters: {
+            query?: never;
+            header: {
+                /**
+                 * @description Caller-scoped retry key; replay the same request for at least 24 hours. A different payload with the same key returns 409.
+                 * @example example-request-1
+                 */
+                "Idempotency-Key": string;
+                /** @description Required for execution credentials. */
+                "X-Veryfront-Run-Terminal-Token"?: string;
+            };
+            path: {
+                /** @example 11111111-1111-4111-8111-111111111111 */
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SucceedRunRequest"];
+            };
+        };
+        responses: {
+            /** @description Run */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Run"];
+                };
+            };
+            /** @description Invalid request or cursor */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"] & {
+                        /** @constant */
+                        status?: 400;
+                    };
+                };
+            };
+            /** @description Missing, invalid, or expired credentials */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"] & {
+                        /** @constant */
+                        status?: 401;
+                    };
+                };
+            };
+            /** @description Insufficient resource permission or credential purpose */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"] & {
+                        /** @constant */
+                        status?: 403;
+                    };
+                };
+            };
+            /** @description Resource not found or not visible */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"] & {
+                        /** @constant */
+                        status?: 404;
+                    };
+                };
+            };
+            /** @description State conflict, stale execution generation, or idempotency mismatch */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"] & {
+                        /** @constant */
+                        status?: 409;
+                    };
+                };
+            };
+            /** @description Request or final output exceeds its byte limit */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"] & {
+                        /** @constant */
+                        status?: 413;
                     };
                 };
             };

@@ -1,4 +1,5 @@
 import { assert, assertEquals, assertRejects } from "#veryfront/testing/assert";
+import { VeryfrontError } from "#veryfront/errors/types.ts";
 import { describe, it } from "#veryfront/testing/bdd";
 import { parseCliArgs } from "../../../../cli/shared/args.ts";
 import { runProjectRuns, RUNS_COMMANDS } from "../../../../cli/commands/project/runs.ts";
@@ -6,6 +7,7 @@ import { createRunsSdk, type RunsOperationId } from "#veryfront/runs/target/clie
 import { RUNS_OPERATIONS } from "#veryfront/runs/target/operations.ts";
 import {
   createFixtureTransport,
+  CURRENT_RUN_STREAM_FRAME,
   fixtureResponse,
   RUNS_OPERATION_FIXTURES,
 } from "#veryfront/runs/target/client.test-helpers.ts";
@@ -45,9 +47,9 @@ async function execute(args: string[], responses: Response[], token = "user-toke
 }
 
 describe("project runs CLI fixture mapping", () => {
-  it("maps all 31 target operations through the SDK with exact wire bodies and headers", async () => {
+  it("maps all 33 target operations through the SDK with exact wire bodies and headers", async () => {
     assertEquals(Object.keys(RUNS_COMMANDS).sort(), Object.keys(RUNS_OPERATIONS).sort());
-    assertEquals(new Set(Object.values(RUNS_COMMANDS)).size, 31);
+    assertEquals(new Set(Object.values(RUNS_COMMANDS)).size, 33);
     for (const id of Object.keys(RUNS_COMMANDS) as RunsOperationId[]) {
       const { output, requests } = await execute(argv(id), [fixtureResponse(id)]);
       const fixture = RUNS_OPERATION_FIXTURES[id];
@@ -118,6 +120,8 @@ describe("project runs CLI fixture mapping", () => {
   });
 
   it("follows an accepted remote run using the SDK stream", async () => {
+    const created = RUNS_OPERATION_FIXTURES.createRun.response.body;
+    assert("id" in created);
     const { requests, output } = await execute([
       ...argv("createRun"),
       "--follow",
@@ -126,9 +130,54 @@ describe("project runs CLI fixture mapping", () => {
     assert(requests[1]);
     assertEquals(
       requests[1].url,
-      `https://api.example.test/runs/${RUNS_OPERATION_FIXTURES.createRun.response.body.id}/stream`,
+      `https://api.example.test/runs/${created.id}/stream`,
     );
     assert(output.length > 1);
+  });
+
+  it("follows a creation receipt when the server grants stream access", async () => {
+    const receipt = { run_id: "11111111-1111-4111-8111-111111111111", status: "pending" };
+    const { requests, output } = await execute(
+      [...argv("createRun"), "--follow"],
+      [Response.json(receipt, { status: 202 }), fixtureResponse("streamRunEvents")],
+    );
+    assertEquals(output, [receipt, { id: "42", event: CURRENT_RUN_STREAM_FRAME }]);
+    assertEquals(requests.length, 2);
+    assert(requests[1]);
+    assertEquals(new URL(requests[1].url).pathname, `/runs/${receipt.run_id}/stream`);
+    assertEquals(requests[1].headers.get("Authorization"), "Bearer user-token");
+  });
+
+  it("follows a creation receipt through ordinary stream authorization", async () => {
+    const receipt = { run_id: "11111111-1111-4111-8111-111111111111", status: "pending" };
+    const { transport, requests } = createFixtureTransport([
+      Response.json(receipt, { status: 202 }),
+      Response.json(
+        { type: "about:blank", title: "Forbidden", status: 403, code: "RUN_FORBIDDEN" },
+        {
+          status: 403,
+          headers: { "Content-Type": "application/problem+json" },
+        },
+      ),
+    ]);
+    const output: unknown[] = [];
+    const error = await assertRejects(() =>
+      runProjectRuns(
+        parseCliArgs([...argv("createRun"), "--follow"]),
+        createRunsSdk({ transport }),
+        (value) => {
+          output.push(value);
+          return Promise.resolve();
+        },
+      )
+    );
+    assert(error instanceof VeryfrontError);
+    assertEquals(error.status, 403);
+    assertEquals(output, [receipt]);
+    assertEquals(requests.length, 2);
+    assert(requests[1]);
+    assertEquals(new URL(requests[1].url).pathname, `/runs/${receipt.run_id}/stream`);
+    assertEquals(requests[1].headers.get("Authorization"), "Bearer user-token");
   });
 
   it("forwards schedule creation unchanged instead of creating a CLI execution policy", async () => {
@@ -151,7 +200,7 @@ describe("project runs CLI fixture mapping", () => {
 
   it("rejects a missing follow run ID before sending a stream request", async () => {
     const fixture = createFixtureTransport([Response.json({ status: "pending" })]);
-    await assertRejects(
+    const error = await assertRejects(
       () =>
         runProjectRuns(
           parseCliArgs([...argv("createRun"), "--follow"]),
@@ -161,6 +210,8 @@ describe("project runs CLI fixture mapping", () => {
       Error,
       "does not include a run ID",
     );
+    assert(error instanceof VeryfrontError);
+    assertEquals(error.status, 502);
     assertEquals(fixture.requests.length, 1);
   });
 

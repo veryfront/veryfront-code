@@ -102,7 +102,10 @@ export const getCreateRunResponseSchema = defineSchema((v) =>
   v.object({
     accepted: v.boolean(),
     duplicate: v.boolean().optional(),
-    run: getRunSchema(),
+    run: v.union([
+      getRunSchema(),
+      v.object({ run_id: v.string().min(1), status: getRunStatusSchema() }),
+    ]),
   })
 );
 

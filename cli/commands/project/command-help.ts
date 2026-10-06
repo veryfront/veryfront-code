@@ -34,6 +34,8 @@ export const projectHelp: CommandHelp = {
     "veryfront project runs list --ndjson",
     "veryfront project runs get --run-id <RUN_ID> --json",
     "veryfront project runs stream --run-id <RUN_ID> --json",
+    "veryfront project runs succeed --run-id <RUN_ID> --idempotency-key <KEY> --body '{\"output\":null}' --json",
+    'veryfront project runs fail --run-id <RUN_ID> --idempotency-key <KEY> --body \'{"error":{"code":"TASK_FAILED","message":"Task failed"}}\' --json',
     "veryfront project delete",
     "veryfront project delete my-app --yes",
     "veryfront project delete my-app --force --json",

@@ -2,6 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { installMockFetch, restoreMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd";
 import {
+  assert,
   assertEquals,
   assertExists,
   assertRejects,
@@ -187,6 +188,25 @@ describe("VeryfrontRunsClient", () => {
     );
   });
 
+  it("preserves a private task creation receipt without an extra read", async () => {
+    const receipt = { run_id: "11111111-1111-4111-8111-111111111111", status: "pending" };
+    mockFetch([jsonResponse(receipt, 202)]);
+    const result = await createTestClient().createTaskRun({ projectId, target: "task:sync-data" });
+    assertEquals(result, { accepted: true, run: receipt });
+    assertEquals(fetchCalls.length, 1);
+  });
+
+  it("uses canonical private receipts for schedule creation", async () => {
+    const runId = "11111111-1111-4111-8111-111111111111";
+    mockFetch([
+      jsonResponse({ id: projectId, name: "Project", slug: "dreamy-haven" }),
+      jsonResponse({ run_id: runId, status: "pending" }, 202),
+    ]);
+    const result = await createTestClient().createScheduleRun({ scheduleId });
+    assertEquals(result, { run_id: runId, run_execution_id: runId, schedule_id: scheduleId });
+    assertEquals(fetchCalls.length, 2);
+  });
+
   it("creates task runs through canonical /runs", async () => {
     mockFetch([jsonResponse(makeRun(), 202)]);
 
@@ -204,6 +224,7 @@ describe("VeryfrontRunsClient", () => {
       config: { batchSize: 100 },
     });
 
+    assert("kind" in response.run);
     assertEquals(response.run.kind, "task");
     assertStringIncludes(call(0).url, "/runs");
     assertEquals(call(0).init?.method, "POST");
@@ -307,6 +328,7 @@ describe("VeryfrontRunsClient", () => {
       input,
       execution: { runtime: { type: "environment", id: "44444444-4444-4444-8444-444444444444" } },
     });
+    assert("target" in result.run);
     assertEquals(result.run.target, "workflow:requested-definition");
     assertEquals(
       new Headers(call(0).init?.headers).get("Idempotency-Key"),
@@ -405,6 +427,7 @@ describe("VeryfrontRunsClient", () => {
     });
     await client.createEvalRun({ projectId, target: "eval:invoice-lookup", input });
 
+    assert("input" in task.run);
     assertEquals(task.run.input, input);
     assertEquals(jsonBody(0), {
       project_id: projectId,

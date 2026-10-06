@@ -38,6 +38,8 @@ export const RUNS_COMMANDS = {
   cancelInputRequest: "cancel-input",
   pauseRun: "pause",
   finalizeRun: "finalize",
+  succeedRun: "succeed",
+  failRun: "fail",
   createRunHeartbeat: "heartbeat",
   createRunEventToken: "event-token",
   listRunChildRuns: "children",
@@ -65,6 +67,8 @@ const IDEMPOTENT = new Set<RunsOperationId>([
   "cancelInputRequest",
   "pauseRun",
   "finalizeRun",
+  "succeedRun",
+  "failRun",
 ]);
 const BODY_REQUIRED = new Set<RunsOperationId>([
   "createRun",
@@ -73,6 +77,8 @@ const BODY_REQUIRED = new Set<RunsOperationId>([
   "createRunInputRequest",
   "createInputResponse",
   "finalizeRun",
+  "succeedRun",
+  "failRun",
   "createRunHeartbeat",
 ]);
 const BODY_OPTIONAL = new Set<RunsOperationId>(["appendRunEvents"]);
@@ -271,6 +277,8 @@ export function parseRunsInvocation(args: ParsedArgs) {
 function runIdOf(result: unknown): string {
   const runId = result !== null && typeof result === "object" && "id" in result
     ? result.id
+    : result !== null && typeof result === "object" && "run_id" in result
+    ? result.run_id
     : undefined;
   if (typeof runId !== "string" || runId.length === 0) {
     throw API_CLIENT_ERROR.create({
