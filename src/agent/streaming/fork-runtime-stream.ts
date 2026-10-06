@@ -1,4 +1,8 @@
 import {
+  createHostedChildInferenceModelResolver,
+  inheritHostedChildInferenceAuthority,
+} from "../hosted/inference-credential.ts";
+import {
   createToolsFromHostDefinitions,
   type HostToolSet,
   type HostToolTraceAttributes,
@@ -201,7 +205,7 @@ export function startAgentRuntimeForkWithHostTools<
   );
 
   return {
-    streamResult: startAgentRuntimeFork({
+    streamResult: startAgentRuntimeFork(inheritForkInference({
       apiUrl: input.apiUrl,
       authToken: input.authToken,
       projectId: input.projectId,
@@ -224,7 +228,7 @@ export function startAgentRuntimeForkWithHostTools<
       logger: input.logger,
       prepareStep: input.prepareStep,
       runStep: input.runStep,
-    }),
+    }, input)),
     forkToolNames,
   };
 }
@@ -362,7 +366,12 @@ export async function runAgentRuntimeForkStep(input: RunAgentRuntimeForkStepInpu
       ? { __vfSourceIntegrationPolicy: input.sourceIntegrationPolicy }
       : {}),
   };
-  const runtime = new AgentRuntime("invoke-agent-child-runtime", runtimeConfig);
+  const resolveModelRuntime = createHostedChildInferenceModelResolver(input);
+  const runtime = new AgentRuntime(
+    "invoke-agent-child-runtime",
+    runtimeConfig,
+    resolveModelRuntime ? { resolveModelRuntime } : undefined,
+  );
 
   let stream: ReadableStream<Uint8Array>;
   try {
@@ -543,7 +552,7 @@ export function startAgentRuntimeFork(input: StartAgentRuntimeForkInput): ForkRu
           const effectiveForkToolNames: string[] = [
             ...(prepared.forkToolNames ?? input.forkToolNames),
           ];
-          const { stream, responsePromise } = await runStep({
+          const { stream, responsePromise } = await runStep(inheritForkInference({
             apiUrl: input.apiUrl,
             authToken: input.authToken,
             projectId: input.projectId,
@@ -560,7 +569,7 @@ export function startAgentRuntimeFork(input: StartAgentRuntimeForkInput): ForkRu
               : {}),
             ...(input.providerOptions ? { providerOptions: input.providerOptions } : {}),
             ...(input.reasoning ? { reasoning: input.reasoning } : {}),
-          });
+          }, input));
 
           for await (const event of streamDataStreamEvents(stream)) {
             const parts = mapAgUiRuntimeEventToForkParts(event, state);
@@ -610,4 +619,9 @@ export function startAgentRuntimeFork(input: StartAgentRuntimeForkInput): ForkRu
     steps: stepsDeferred.promise,
     totalUsage: totalUsageDeferred.promise,
   };
+}
+
+function inheritForkInference<T extends object>(target: T, source: object): T {
+  inheritHostedChildInferenceAuthority(target, source);
+  return target;
 }

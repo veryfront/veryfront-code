@@ -43,7 +43,10 @@ import {
   resolveAgentServiceRegistrationInput,
 } from "../service/registration.ts";
 import type { ParsedHostedChatRequest } from "./chat-request-parser.ts";
-import { createHostedInferenceModelResolver } from "./inference-credential.ts";
+import {
+  createHostedInferenceModelResolver,
+  createHostedRuntimeWithChildInferenceAuthority,
+} from "./inference-credential.ts";
 import type { AgentRuntimeInternalOptions } from "../runtime/index.ts";
 import type { PreparedHostedChatExecution } from "./prepared-chat-execution.ts";
 import {
@@ -148,7 +151,7 @@ export function createProjectSteeringRefresh(context: NodeVeryfrontCloudAgentSer
 }
 
 /** Creates the hosted chat runtime for the given options. */
-export function createAgentRuntime(
+export async function createAgentRuntime(
   context: NodeVeryfrontCloudAgentServiceContext,
   options: DefaultHostedChatRuntimeCreationOptions,
   runtimeOptions?: AgentRuntimeInternalOptions,
@@ -165,56 +168,72 @@ export function createAgentRuntime(
     buildBaseTools: (taskContext) => buildLocalTools(context, options, taskContext),
   });
 
-  return createDefaultHostedChatRuntime({
-    options,
-    hostToolPolicy: context.options.hostToolPolicy,
-    sourceIntegrationPolicy: projectRuntime.sourceIntegrationPolicy,
-    config: {
-      apiUrl: config.VERYFRONT_API_URL,
-      apiMcpUrl: config.VERYFRONT_MCP_URL,
-      studioMcpUrl: config.VERYFRONT_STUDIO_MCP_URL,
-      mcpServers: resolveMcpServers(
-        context.options,
-        options.liveProjectSteering?.agent,
-      ),
-    },
-    buildLocalTools: localToolRuntime.buildLocalTools,
-    cleanup: localToolRuntime.cleanup,
-    refreshSystem,
-    onSteeringMutation: async ({ mutation, taskContext }) => {
-      if (mutation.skillsChanged) {
-        // Pass the live task context (not a spread copy) so the refreshed
-        // owner-scoped skill ids and source paths actually land on the run.
-        await refreshProjectSkillIds(context, taskContext);
-      }
-    },
-    onStudioProjectSwitch: async ({ projectId, projectSlug, taskContext }) => {
-      if (!applyAgentProjectContextChange(taskContext, projectId, projectSlug)) {
-        return false;
-      }
-
-      await refreshProjectSkillIds(context, taskContext);
-      return true;
-    },
-    projectScopedRemoteToolOptions: {
-      projectNavigationToolNames: DEFAULT_PROJECT_NAVIGATION_TOOL_NAMES,
-    },
-    createRemoteToolSource: hostedTerminalToolSourceFactory(
+  let cleanupPromise: Promise<void> | undefined;
+  const cleanup = () => {
+    return cleanupPromise ??= localToolRuntime.cleanup();
+  };
+  try {
+    return await createHostedRuntimeWithChildInferenceAuthority(
+      options,
       terminalRequest,
-      config.VERYFRONT_MCP_URL,
-      getRemoteToolSourceFactory(context),
-    ),
-    traceLocalTools: {
-      trace: (spanName, operation) => context.infrastructure.tracer.trace(spanName, operation),
-      buildAttributes: ({ toolName, toolCallId }) =>
-        buildExecuteToolTraceAttributes({
-          toolName,
-          toolCallId,
-        }),
-      setAttributes: (attributes) => setFilteredTraceAttributes(context, attributes),
-    },
-    logger: context.infrastructure.logger,
-  }, runtimeOptions);
+      { apiBaseUrl: resolveAgentServiceInferenceApiBaseUrl(config) },
+      () =>
+        createDefaultHostedChatRuntime({
+          options,
+          hostToolPolicy: context.options.hostToolPolicy,
+          sourceIntegrationPolicy: projectRuntime.sourceIntegrationPolicy,
+          config: {
+            apiUrl: config.VERYFRONT_API_URL,
+            apiMcpUrl: config.VERYFRONT_MCP_URL,
+            studioMcpUrl: config.VERYFRONT_STUDIO_MCP_URL,
+            mcpServers: resolveMcpServers(
+              context.options,
+              options.liveProjectSteering?.agent,
+            ),
+          },
+          buildLocalTools: localToolRuntime.buildLocalTools,
+          cleanup,
+          refreshSystem,
+          onSteeringMutation: async ({ mutation, taskContext }) => {
+            if (mutation.skillsChanged) {
+              // Pass the live task context (not a spread copy) so the refreshed
+              // owner-scoped skill ids and source paths actually land on the run.
+              await refreshProjectSkillIds(context, taskContext);
+            }
+          },
+          onStudioProjectSwitch: async ({ projectId, projectSlug, taskContext }) => {
+            if (!applyAgentProjectContextChange(taskContext, projectId, projectSlug)) {
+              return false;
+            }
+
+            await refreshProjectSkillIds(context, taskContext);
+            return true;
+          },
+          projectScopedRemoteToolOptions: {
+            projectNavigationToolNames: DEFAULT_PROJECT_NAVIGATION_TOOL_NAMES,
+          },
+          createRemoteToolSource: hostedTerminalToolSourceFactory(
+            terminalRequest,
+            config.VERYFRONT_MCP_URL,
+            getRemoteToolSourceFactory(context),
+          ),
+          traceLocalTools: {
+            trace: (spanName, operation) =>
+              context.infrastructure.tracer.trace(spanName, operation),
+            buildAttributes: ({ toolName, toolCallId }) =>
+              buildExecuteToolTraceAttributes({
+                toolName,
+                toolCallId,
+              }),
+            setAttributes: (attributes) => setFilteredTraceAttributes(context, attributes),
+          },
+          logger: context.infrastructure.logger,
+        }, runtimeOptions),
+    );
+  } catch (error) {
+    await cleanup().catch(() => {});
+    throw error;
+  }
 }
 
 function setPrepareChatExecutionStartAttributes(
