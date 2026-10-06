@@ -1,4 +1,5 @@
 import { AsyncLocalStorage } from "node:async_hooks";
+import { defineOwnDataProperty } from "#veryfront/security/own-data-property.ts";
 import { chainPrivatePromise } from "#veryfront/security/private-promise.ts";
 import { createVeryfrontCloudInferenceModel } from "#veryfront/provider/veryfront-cloud/provider.ts";
 import {
@@ -29,6 +30,7 @@ const NativeClearTimeout = globalThis.clearTimeout;
 const AbortControllerAbort = AbortController.prototype.abort;
 const AbortSignalAbortedGetter = Object.getOwnPropertyDescriptor(AbortSignal.prototype, "aborted")!
   .get!;
+const ObjectCreate = Object.create;
 
 export type ApplicationInferenceFinalizeStatus = "completed" | "failed" | "cancelled";
 
@@ -182,21 +184,25 @@ function createPrivateRuntime(
     signal: controller.signal,
     expire: close,
   });
-  return {
-    runId: admission.runId,
-    signal: controller.signal,
-    runtimeOptions: {
-      resolveModelRuntime: transport.resolver,
-      onStreamCompletion(completion) {
-        // Producer settlement also occurs after an in-band error. The AG-UI
-        // relay observes the terminal event and selects the durable status.
-        void chainPrivatePromise(completion, () => {}, () => finish("failed"));
-      },
+  const runtimeOptions: AgentRuntimeInternalOptions = {
+    resolveModelRuntime: transport.resolver,
+    onStreamCompletion(completion) {
+      // Producer settlement also occurs after an in-band error. The AG-UI
+      // relay observes the terminal event and selects the durable status.
+      void chainPrivatePromise(completion, () => {}, () => finish("failed"));
     },
-    finish,
-    onAbandon: () => finish("failed"),
-    prepareAgent: transport.prepareAgent,
   };
+  const runtime = ObjectCreate(null) as PrivateApplicationInferenceRuntime & {
+    readonly then?: undefined;
+  };
+  defineOwnDataProperty(runtime, "runId", admission.runId, { enumerable: true });
+  defineOwnDataProperty(runtime, "signal", controller.signal, { enumerable: true });
+  defineOwnDataProperty(runtime, "runtimeOptions", runtimeOptions, { enumerable: true });
+  defineOwnDataProperty(runtime, "finish", finish, { enumerable: true });
+  defineOwnDataProperty(runtime, "onAbandon", () => finish("failed"), { enumerable: true });
+  defineOwnDataProperty(runtime, "prepareAgent", transport.prepareAgent, { enumerable: true });
+  defineOwnDataProperty(runtime, "then", undefined);
+  return runtime;
 }
 
 export async function runWithApplicationInferenceAdmission<T>(

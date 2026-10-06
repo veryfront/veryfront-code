@@ -92,6 +92,30 @@ describe("application inference admission runtime", () => {
     assertEquals(runtime.signal.aborted, true);
   });
 
+  it("does not expose the private runtime to inherited then accessors", async () => {
+    const originalThen = Object.getOwnPropertyDescriptor(Object.prototype, "then");
+    let capturedRuntime: unknown;
+    Object.defineProperty(Object.prototype, "then", {
+      configurable: true,
+      get() {
+        if (Object.hasOwn(this, "runtimeOptions")) capturedRuntime = this;
+        return undefined;
+      },
+    });
+    try {
+      const runtime = await admittedRuntime();
+
+      assertEquals(capturedRuntime, undefined);
+      assertEquals(Object.getPrototypeOf(runtime), null);
+      assertEquals(Object.hasOwn(runtime, "then"), true);
+      assertEquals(Reflect.get(runtime, "then"), undefined);
+      runtime.finish("completed");
+    } finally {
+      if (originalThen) Object.defineProperty(Object.prototype, "then", originalThen);
+      else Reflect.deleteProperty(Object.prototype, "then");
+    }
+  });
+
   it("finalizes a caller-aborted run as cancelled", async () => {
     const finalizations: ApplicationInferenceFinalizeStatus[] = [];
     const controller = new AbortController();
