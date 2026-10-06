@@ -1768,3 +1768,59 @@ for (
     }
   });
 }
+
+describe("canonical child identity in invoke results", () => {
+  const canonicalRunId = "99999999-9999-4999-8999-999999999999";
+  const identifiers = {
+    ...INJECTED_CHILD_IDENTIFIERS,
+    childRunId: "run_child_public",
+    childCanonicalRunId: canonicalRunId,
+  };
+  const targets: ConversationRunTargets = {
+    sourceTargetKind: "project",
+    runtimeTargetKind: "main_branch",
+    targetBranchId: null,
+  };
+
+  it("retains distinct public and canonical identities in successful results", () => {
+    const result = baseSuccessResult();
+    const output = buildHostedDurableChildInvokeSuccessResult({
+      result,
+      snapshot: buildChildRunExecutionSnapshot(result),
+      identifiers,
+      targets,
+    });
+    assertEquals(output.childCanonicalRunId, canonicalRunId);
+    assertEquals(output.childRunId, "run_child_public");
+  });
+
+  it("retains canonical identity after a terminal failure", () => {
+    const output = buildHostedDurableChildInvokeTerminalFailureResult({
+      status: "failed",
+      identifiers,
+      targets,
+      terminalErrorCode: "DURABLE_CHILD_FAILED",
+      terminalErrorMessage: "Controlled child failure",
+    });
+    assertEquals(output.childCanonicalRunId, canonicalRunId);
+    assertEquals(output.childRunId, "run_child_public");
+  });
+
+  it("rejects malformed canonical identities in success and failure envelopes", () => {
+    for (const status of ["completed", "failed"]) {
+      assertEquals(
+        getHostedDurableChildInvokeResultSchema().safeParse({
+          ok: status === "completed",
+          status,
+          childConversationId: CHILD_CONVERSATION_ID,
+          childRunId: "run_child_public",
+          childCanonicalRunId: "run_child_public",
+          childMessageId: CHILD_MESSAGE_ID,
+          terminalErrorCode: null,
+          terminalErrorMessage: null,
+        }).success,
+        false,
+      );
+    }
+  });
+});
