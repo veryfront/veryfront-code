@@ -430,7 +430,7 @@ async function normalizeRequestBody(
 
 type RequestPayload =
   | { readonly kind: "chunk"; readonly chunk: string | Uint8Array | undefined }
-  | { readonly kind: "stream"; readonly source: Readable };
+  | { readonly kind: "stream"; readonly source: ReadableStream<Uint8Array> };
 
 /**
  * The request body in the form node:http writes, prepared before the request
@@ -449,28 +449,120 @@ async function prepareRequestPayload(body: BodyInit | null): Promise<RequestPayl
       chunk: new Uint8Array(body.buffer, body.byteOffset, body.byteLength),
     };
   }
-  const { Readable } = await import("node:stream");
-  const webStream = body instanceof Blob ? body.stream() : body;
   return {
     kind: "stream",
-    source: Readable.fromWeb(webStream as import("node:stream/web").ReadableStream<Uint8Array>),
+    source: (body instanceof Blob ? body.stream() : body) as ReadableStream<Uint8Array>,
   };
 }
 
+function waitForRequestEvent(
+  request: ClientRequest,
+  event: "drain" | "finish",
+): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    const cleanup = () => {
+      request.off(event, done);
+      request.off("error", fail);
+      request.off("close", closed);
+    };
+    const done = () => {
+      cleanup();
+      resolve();
+    };
+    const fail = (error: unknown) => {
+      cleanup();
+      reject(error);
+    };
+    const closed = () => {
+      cleanup();
+      reject(new Error("Request closed before the payload finished writing"));
+    };
+    request.once(event, done);
+    request.once("error", fail);
+    request.once("close", closed);
+  });
+}
+
 /** Write a prepared payload; a chunk is written in the caller's turn. */
-function writeRequestPayload(request: ClientRequest, payload: RequestPayload): Promise<void> {
+function observeReaderCancellation(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+  error: unknown,
+): void {
+  void reader.cancel(error).then(
+    () => {
+      try {
+        reader.releaseLock();
+      } catch {
+        // A late cleanup attempt must not replace the original write failure.
+      }
+    },
+    () => {
+      try {
+        reader.releaseLock();
+      } catch {
+        // A late cleanup attempt must not replace the original write failure.
+      }
+    },
+  );
+}
+
+async function readRequestPayloadChunk(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+  request: ClientRequest,
+): Promise<ReadableStreamReadResult<Uint8Array>> {
+  return await new Promise<ReadableStreamReadResult<Uint8Array>>((resolve, reject) => {
+    let settled = false;
+    const cleanup = () => {
+      request.off("error", fail);
+      request.off("close", closed);
+    };
+    const resolveRead = (result: ReadableStreamReadResult<Uint8Array>) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      resolve(result);
+    };
+    const fail = (error: unknown) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      reject(error);
+    };
+    const closed = () => {
+      fail(new Error("Request closed before the payload finished writing"));
+    };
+    request.once("error", fail);
+    request.once("close", closed);
+    reader.read().then(resolveRead, fail);
+  });
+}
+
+async function writeRequestPayload(request: ClientRequest, payload: RequestPayload): Promise<void> {
   if (payload.kind === "chunk") {
     if (payload.chunk === undefined) request.end();
     else request.end(payload.chunk);
-    return Promise.resolve();
+    return;
   }
-  const source = payload.source;
-  return new Promise<void>((resolve, reject) => {
-    source.once("error", reject);
-    request.once("error", reject);
-    request.once("finish", resolve);
-    source.pipe(request);
-  });
+  const reader = payload.source.getReader();
+  let releaseReader = true;
+  try {
+    while (true) {
+      assertNodeRequestMembersUnchanged();
+      const { done, value } = await readRequestPayloadChunk(reader, request);
+      if (done) break;
+      assertNodeRequestMembersUnchanged();
+      if (!request.write(value)) await waitForRequestEvent(request, "drain");
+    }
+    assertNodeRequestMembersUnchanged();
+    request.end();
+    await waitForRequestEvent(request, "finish");
+  } catch (error) {
+    releaseReader = false;
+    observeReaderCancellation(reader, error);
+    throw error;
+  } finally {
+    if (releaseReader) reader.releaseLock();
+  }
 }
 
 function errorForNodeDestroy(error: unknown): Error | undefined {
@@ -599,6 +691,7 @@ export async function fetchWithPinnedAddresses(
         let responseMessage: IncomingMessage | undefined;
         const abortReason = () =>
           signal?.reason ?? new DOMException("The operation was aborted", "AbortError");
+        let request: ClientRequest | undefined;
         const abort = () => {
           let reason: unknown;
           let destroyError: Error | undefined;
@@ -637,52 +730,57 @@ export async function fetchWithPinnedAddresses(
         assertNativeRequestProcessing();
         assertObjectPrototypeUnchanged();
         assertNodeRequestMembersUnchanged();
-        const request = sendRequest(requestOptions, async (message) => {
-          responseMessage = message;
-          try {
-            // The response's `req` is the request: checked again before any
-            // member of either runs in this turn.
-            assertNodeRequestMembersUnchanged();
-            const responseHeaders = copyResponseHeaders(message);
-            const status = message.statusCode ?? 500;
-            if (method === "HEAD" || NULL_BODY_STATUSES.has(status)) {
-              message.once("end", cleanupAbortListener);
-              message.once("close", cleanupAbortListener);
-              message.once("error", cleanupAbortListener);
-              // Drain any protocol-invalid payload without exposing it through the
-              // Fetch response. Response rejects stream bodies for these statuses.
-              message.resume();
+        try {
+          request = sendRequest(requestOptions, async (message) => {
+            responseMessage = message;
+            try {
+              // The response's `req` is the request: checked again before any
+              // member of either runs in this turn.
+              assertNodeRequestMembersUnchanged();
+              const responseHeaders = copyResponseHeaders(message);
+              const status = message.statusCode ?? 500;
+              if (method === "HEAD" || NULL_BODY_STATUSES.has(status)) {
+                message.once("end", cleanupAbortListener);
+                message.once("close", cleanupAbortListener);
+                message.once("error", cleanupAbortListener);
+                // Drain any protocol-invalid payload without exposing it through the
+                // Fetch response. Response rejects stream bodies for these statuses.
+                message.resume();
+                settled = true;
+                resolve(createPinnedFetchResponse(
+                  status,
+                  message.statusMessage ?? "",
+                  responseHeaders,
+                  null,
+                  method,
+                ));
+                return;
+              }
+              const decoded = await decodeResponseBody(message, responseHeaders);
+              assertNodeRequestMembersUnchanged();
+              decoded.once("end", cleanupAbortListener);
+              decoded.once("close", cleanupAbortListener);
+              decoded.once("error", cleanupAbortListener);
+              const { Readable } = await import("node:stream");
+              assertNodeRequestMembersUnchanged();
+              const statusMessage = message.statusMessage ?? "";
+              const webBody = Readable.toWeb(decoded) as globalThis.ReadableStream<Uint8Array>;
               settled = true;
               resolve(createPinnedFetchResponse(
                 status,
-                message.statusMessage ?? "",
+                statusMessage,
                 responseHeaders,
-                null,
+                webBody,
                 method,
               ));
-              return;
+            } catch (error) {
+              rejectBeforeResponse(error);
             }
-            const decoded = await decodeResponseBody(message, responseHeaders);
-            assertNodeRequestMembersUnchanged();
-            decoded.once("end", cleanupAbortListener);
-            decoded.once("close", cleanupAbortListener);
-            decoded.once("error", cleanupAbortListener);
-            const { Readable } = await import("node:stream");
-            assertNodeRequestMembersUnchanged();
-            const statusMessage = message.statusMessage ?? "";
-            const webBody = Readable.toWeb(decoded) as globalThis.ReadableStream<Uint8Array>;
-            settled = true;
-            resolve(createPinnedFetchResponse(
-              status,
-              statusMessage,
-              responseHeaders,
-              webBody,
-              method,
-            ));
-          } catch (error) {
-            rejectBeforeResponse(error);
-          }
-        });
+          });
+        } catch (error) {
+          rejectBeforeResponse(error);
+          return;
+        }
 
         // node:http writes the header block once a socket is assigned, a later
         // turn than the check above: check again when the socket arrives, and

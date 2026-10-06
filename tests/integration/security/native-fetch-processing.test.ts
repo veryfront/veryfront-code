@@ -3,6 +3,7 @@ import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/as
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   HEADER_METHODS,
+  installArrayWriteProbe,
   installCredentialProbes,
 } from "../../../src/security/http/credential-probes.test-helpers.ts";
 import {
@@ -123,6 +124,29 @@ describe("native fetch with credential headers", () => {
     });
   });
 
+  it("refuses the native send while an Array.prototype index accessor observes array writes", async () => {
+    await withServer(async (port, received) => {
+      const probe = installArrayWriteProbe("Array.prototype index");
+      try {
+        await assertRejects(
+          () =>
+            guardedEgressFetch(
+              `http://localhost:${port}/v1/messages`,
+              { headers: { authorization: BEARER }, body: '{"model":"m"}' },
+              guardedDeps(),
+            ),
+          TypeError,
+          "Refused a credential-bearing request",
+        );
+      } finally {
+        probe.restore();
+      }
+
+      assertEquals(probe.saw(BEARER), false);
+      assertEquals(received, []);
+    });
+  });
+
   it("refuses the native send once Headers has was replaced", async () => {
     await withServer(async (port, received) => {
       const probes = installCredentialProbes();
@@ -169,7 +193,6 @@ describe("node:http options and a modified Object.prototype", () => {
     assertObjectPrototypeUnchanged();
   });
 
-
   it("refuses the node:http call once Object.prototype gained a member", async () => {
     // node:http copies its options into an ordinary object and reads `agent`
     // and others from it, so a getter here would run with the headers in reach.
@@ -204,7 +227,11 @@ describe("node:http members the pinned transport depends on", () => {
   const hooks: [string, () => object, string][] = [
     ["OutgoingMessage.prototype.setHeader", () => nodeHttp.OutgoingMessage.prototype, "setHeader"],
     ["OutgoingMessage.prototype.getHeader", () => nodeHttp.OutgoingMessage.prototype, "getHeader"],
-    ["ClientRequest.prototype.setHeader (own)", () => nodeHttp.ClientRequest.prototype, "setHeader"],
+    [
+      "ClientRequest.prototype.setHeader (own)",
+      () => nodeHttp.ClientRequest.prototype,
+      "setHeader",
+    ],
     ["EventEmitter.prototype.emit", () => EventEmitter.prototype, "emit"],
     ["Agent.prototype.addRequest", () => nodeHttp.Agent.prototype, "addRequest"],
     ["net.Socket.prototype.write", () => nodeNet.Socket.prototype, "write"],
