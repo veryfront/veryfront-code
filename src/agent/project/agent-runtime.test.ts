@@ -799,8 +799,6 @@ Help from configured markdown.
 
 Deno.test({
   name: "project runtime discovery omits factory knowledge tool from hosted projections",
-  sanitizeOps: false,
-  sanitizeResources: false,
   fn: async () => {
     await withTempDir(async (rootDir) => {
       const agentsDir = resolve(rootDir, "agents");
