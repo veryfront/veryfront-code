@@ -657,6 +657,23 @@ const activeReasoningPartsByDecoder = new WeakMap<
   Map<string, ReasoningPartBinding>
 >();
 
+const REASONING_IDENTITY_KEYS = [
+  "id",
+  "messageId",
+  "contentId",
+] satisfies (keyof ReasoningIdentity)[];
+
+function mergeReasoningIdentity(
+  retained: ReasoningIdentity,
+  learned: ReasoningIdentity,
+): ReasoningIdentity {
+  return {
+    id: retained.id ?? learned.id,
+    messageId: retained.messageId ?? learned.messageId,
+    contentId: retained.contentId ?? learned.contentId,
+  };
+}
+
 function getReasoningPartId(
   state: AgUiChatEventDecoderState,
   payload: ReasoningIdentity,
@@ -676,25 +693,31 @@ function getReasoningPartId(
     messageId: payload.messageId || undefined,
     contentId: payload.contentId || undefined,
   };
-  const identityKeys = ["id", "messageId", "contentId"] satisfies (keyof ReasoningIdentity)[];
 
   if (phase !== "start" && activeParts.size > 0) {
-    const hasIdentity = identityKeys.some((key) => identity[key] !== undefined);
+    const hasIdentity = REASONING_IDENTITY_KEYS.some((key) => identity[key] !== undefined);
     const compatible = [...activeParts.entries()].filter(([, { identity: start }]) =>
-      identityKeys.every((key) =>
+      REASONING_IDENTITY_KEYS.every((key) =>
         identity[key] === undefined || start[key] === undefined || identity[key] === start[key]
       ) && (!hasIdentity ||
-        identityKeys.every((key) => start[key] === undefined) ||
-        identityKeys.some((key) => identity[key] !== undefined && identity[key] === start[key]))
+        REASONING_IDENTITY_KEYS.every((key) => start[key] === undefined) ||
+        REASONING_IDENTITY_KEYS.some((key) =>
+          identity[key] !== undefined && identity[key] === start[key]
+        ))
     );
     const match = compatible.length === 1 ? compatible[0] : undefined;
     if (match) {
-      const [partId] = match;
+      const [partId, binding] = match;
       if (phase === "end") {
         activeParts.delete(partId);
         state.activeFallbackReasoningPartId = activeParts.size === 1
           ? activeParts.keys().next().value ?? null
           : null;
+      } else {
+        activeParts.set(partId, {
+          identity: mergeReasoningIdentity(binding.identity, identity),
+          origin: binding.origin,
+        });
       }
       return partId;
     }
@@ -723,7 +746,9 @@ function getReasoningPartId(
 
   if (phase !== "end") {
     const existing = activeParts.get(partId);
-    if (existing && identityKeys.some((key) => existing.identity[key] !== identity[key])) {
+    if (
+      existing && REASONING_IDENTITY_KEYS.some((key) => existing.identity[key] !== identity[key])
+    ) {
       return null;
     }
     activeParts.set(partId, { identity, origin: phase });

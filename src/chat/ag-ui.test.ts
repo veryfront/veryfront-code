@@ -673,6 +673,37 @@ describe("chat/ag-ui", () => {
     assertEquals(state.activeFallbackReasoningPartId, null);
   });
 
+  it("retains a reasoning content id learned from a matched continuation", () => {
+    const state = createAgUiChatEventDecoderState();
+    const result = decodeAgUiSseChunk(
+      state,
+      encodeAgUiWireFrames([
+        { eventName: "ReasoningMessageStart", payload: { messageId: "message-a" } },
+        {
+          eventName: "ReasoningMessageContent",
+          payload: { messageId: "message-a", contentId: "reasoning-a", delta: "First" },
+        },
+        {
+          eventName: "ReasoningMessageContent",
+          payload: { contentId: "reasoning-b", delta: "Wrong" },
+        },
+        {
+          eventName: "ReasoningMessageContent",
+          payload: { contentId: "reasoning-a", delta: "Second" },
+        },
+        { eventName: "ReasoningMessageEnd", payload: { contentId: "reasoning-a" } },
+      ]),
+    );
+
+    assertEquals(result.events.flatMap((entry) => entry.chatEvents), [
+      { type: "reasoning-start", id: "agui-reasoning:message-a" },
+      { type: "reasoning-delta", id: "agui-reasoning:message-a", delta: "First" },
+      { type: "reasoning-delta", id: "agui-reasoning:message-a", delta: "Second" },
+      { type: "reasoning-end", id: "agui-reasoning:message-a" },
+    ]);
+    assertEquals(state.activeFallbackReasoningPartId, null);
+  });
+
   it("retains explicit and content-only start ids for unidentified later frames", () => {
     const starts = [
       { payload: { id: "native-a" }, expected: "native-a" },
