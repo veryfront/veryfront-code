@@ -796,9 +796,13 @@ describe("npm supply-chain policy", () => {
   it("exports Studio AG-UI package entrypoints", async () => {
     const denoConfig = JSON.parse(await Deno.readTextFile("deno.json"));
     const exports = denoConfig.exports as Record<string, string>;
+    const imports = denoConfig.imports as Record<string, string>;
 
     assertEquals(exports["./chat/ag-ui"], "./src/chat/ag-ui.ts");
     assertEquals(exports["./chat/protocol"], "./src/chat/protocol.ts");
+    assertEquals(exports["./events/ag-ui"], "./src/events/ag-ui/public.ts");
+    assertEquals(imports["veryfront/events/ag-ui"], "./src/events/ag-ui/public.ts");
+    assertEquals(imports["#veryfront/events/ag-ui"], "./src/events/ag-ui/public.ts");
   });
 
   it("exports agent-service evals without legacy agent testing", async () => {
