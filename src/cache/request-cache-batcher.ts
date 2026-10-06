@@ -134,7 +134,11 @@ export function runWithCacheBatching<T>(fn: () => Promise<T>): Promise<T> {
     try {
       return await fn();
     } finally {
-      if (context.batchTimer) clearBatchTimer(context.batchTimer);
+      // A cancelled request can stop waiting before its admitted reads settle.
+      // Keep their scheduled flush alive so underlying producers can retire.
+      if (context.batchTimer && context.batchQueue.length === 0) {
+        clearBatchTimer(context.batchTimer);
+      }
     }
   });
 }
