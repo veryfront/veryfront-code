@@ -989,6 +989,27 @@ describe("ReadOperations", () => {
       assertEquals(publishedFetchPaths.includes("pages/guide.jsx"), true);
     });
 
+    it("preserves caller cancellation during published extension fallback", async () => {
+      const controller = new AbortController();
+      const reason = new Error("caller cancelled extension fallback");
+      const client = createMockClient({
+        getPublishedFileContent: (path: string) => {
+          if (path === "pages/guide.tsx") return Promise.reject(notFoundError());
+          controller.abort(reason);
+          return Promise.reject(reason);
+        },
+        resolveFileWithExtension: () => Promise.reject(new Error("pattern search unavailable")),
+      });
+      const readOps = createReadyReadOps(client, false, createReleaseContext("release-cancelled"));
+
+      const error = await assertRejects(
+        () => readOps.readTextFile("pages/guide.tsx", { signal: controller.signal }),
+        Error,
+        reason.message,
+      );
+      assertEquals(error, reason);
+    });
+
     it("should return highest-priority extension when multiple match in parallel fallback", async () => {
       const client = createMockClient({
         getPublishedFileContent: (path: string) => {

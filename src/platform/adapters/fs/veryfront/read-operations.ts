@@ -1053,7 +1053,8 @@ export class ReadOperations {
         });
 
         return this.storeFetchedContent(cacheKey, content, shouldCache);
-      } catch (_) {
+      } catch (error) {
+        if (signal?.aborted) throw error;
         /* expected: this extension variant does not exist, try next priority */
         continue;
       }
