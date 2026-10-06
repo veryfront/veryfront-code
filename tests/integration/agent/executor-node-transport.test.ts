@@ -579,6 +579,7 @@ if (typeof Deno !== "undefined") {
       const socketWrites = mock.method(tls.TLSSocket.prototype, "write");
       try {
         const writer = client.writable.getWriter();
+        await writer.write(new Uint8Array(1));
         const chunk = new Uint8Array(1024 * 1024);
         const queued = Array.from({ length: 64 }, () => writer.write(chunk));
         const writes = Promise.allSettled(queued);

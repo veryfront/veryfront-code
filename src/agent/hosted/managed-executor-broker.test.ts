@@ -1825,7 +1825,7 @@ describe("broker-local trusted runtime", () => {
     assertEquals(requestedUrls.length, 1);
     assertStringIncludes(
       requestedUrls[0] ?? "",
-      "/projects/project-test/releases/release-test/files",
+      `/projects/${owner.projectId}/releases/release-test/files`,
     );
     assertEquals(f.projectWire.includes("broker-knowledge-token"), false);
     assertEquals(f.projectWire.includes('"authToken"'), false);
