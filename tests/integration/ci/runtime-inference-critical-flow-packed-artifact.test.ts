@@ -5,10 +5,7 @@ import {
   assertStringIncludes,
 } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import {
-  makeTempDirWithOptions,
-  remove,
-} from "#veryfront/testing/deno-compat.ts";
+import { makeTempDirWithOptions, remove } from "#veryfront/testing/deno-compat.ts";
 import { isAbsolute, relative } from "#std/path";
 import {
   loadPackedArtifactDirectory,
@@ -171,9 +168,7 @@ fs.writeFileSync(name + "/package.json", JSON.stringify({
         ]),
       Error,
     );
-    const message = `${(error as Error).message}\n${
-      (error as Error).stack ?? ""
-    }`;
+    const message = `${(error as Error).message}\n${(error as Error).stack ?? ""}`;
 
     assert(
       !message.includes(privateDirectory),
