@@ -4,7 +4,7 @@ import "#veryfront/schemas/_test-setup.ts";
  * @module cli/commands/deploy.test
  */
 
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { setJsonMode } from "../../shared/json-output.ts";
@@ -174,6 +174,61 @@ describe("deploy command adapters", () => {
       success: true,
       data: sentinelResult,
     });
+
+    let nestedJson: { result: DeployResult | null; output: string[] };
+    try {
+      setJsonMode(true);
+      nestedJson = await withMockFetch(
+        () => {
+          throw new Error("adapter performed fetch orchestration");
+        },
+        () =>
+          captureConsole(() =>
+            deployCommand({
+              ...options,
+              deployProject: createFakeDeployment(),
+              suppressJsonOutput: true,
+            })
+          ),
+      );
+    } finally {
+      setJsonMode(false);
+    }
+
+    assertEquals(nestedJson.result, sentinelResult);
+    assertEquals(nestedJson.output, []);
+
+    const failingOutput: string[] = [];
+    const originalLog = console.log;
+    const originalWarn = console.warn;
+    try {
+      setJsonMode(true);
+      console.log = (...args: unknown[]) => {
+        failingOutput.push(args.map(String).join(" "));
+      };
+      console.warn = (...args: unknown[]) => {
+        failingOutput.push(args.map(String).join(" "));
+      };
+      await assertRejects(
+        () =>
+          deployCommand({
+            ...options,
+            deployProject: {
+              async execute() {
+                throw new Error("sentinel deploy failure");
+              },
+            },
+            suppressJsonOutput: true,
+          }),
+        Error,
+        "sentinel deploy failure",
+      );
+    } finally {
+      console.log = originalLog;
+      console.warn = originalWarn;
+      setJsonMode(false);
+    }
+    assertEquals(failingOutput, []);
   });
 });
 

@@ -24,7 +24,7 @@ A chatbot that answers questions from your own documents using Retrieval-Augment
 2. Start the dev server:
 
    ```bash
-   npx veryfront@latest dev
+   npx veryfront dev
    ```
 
 3. Index the sample docs in `content/`:
@@ -47,10 +47,12 @@ Veryfront Cloud automatically:
 - `veryfront-cloud/openai/...` and `veryfront-cloud/google/...` models use AI Gateway.
 - RAG documents, chunks, and embeddings are stored in the target project.
 
-The default cloud embedding model is
-`veryfront-cloud/openai/text-embedding-3-small`. Set
-`VERYFRONT_DEFAULT_EMBEDDING_MODEL` only when you need a different embedding
-model.
+This starter selects `veryfront-cloud/google/gemini-embedding-001` with
+`cloudModel` in `store.ts` for project-scoped Cloud inference. Local inference
+keeps the framework default. Set `model` in `store.ts` to override either choice.
+
+Keep the model used to create an existing index. Reindex documents before
+switching embedding models.
 
 ## Architecture
 

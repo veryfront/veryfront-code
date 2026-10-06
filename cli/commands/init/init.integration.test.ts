@@ -45,6 +45,43 @@ function runInitCommand(
   });
 }
 
+function shellQuote(value: string): string {
+  return "'" + value.replaceAll("'", "'\\''") + "'";
+}
+
+function ptyCommandArgs(command: string, args: string[]): string[] {
+  if (Deno.build.os === "darwin") {
+    return ["-q", "/dev/null", command, ...args];
+  }
+
+  return [
+    "-q",
+    "-e",
+    "-c",
+    [command, ...args].map(shellQuote).join(" "),
+    "/dev/null",
+  ];
+}
+
+function runInitCommandInPty(
+  args: string[],
+  options?: { cwd?: string; env?: Record<string, string> },
+): Promise<{ code: number; stdout?: string; stderr?: string }> {
+  return runCommand("script", {
+    args: ptyCommandArgs("deno", ["run", "--allow-all", getCliPath(), "init", ...args]),
+    cwd: options?.cwd ?? TEST_DIR,
+    capture: true,
+    env: options?.env,
+  });
+}
+
+function extractJsonObject(output: string): string {
+  const start = output.indexOf("{");
+  const end = output.lastIndexOf("}");
+  if (start === -1 || end === -1 || end < start) return output;
+  return output.slice(start, end + 1);
+}
+
 function runQuietInitCommand(
   options: InitOptions,
   cwd = TEST_DIR,
@@ -69,15 +106,29 @@ function runQuietInitCommand(
 
 async function createFakeNpm(
   mode: "success" | "failure",
+  options: { noisy?: boolean } = {},
 ): Promise<{ binDir: string; logPath: string }> {
   const binDir = await makeTempDir({ prefix: "veryfront-fake-npm-" });
   const logPath = join(binDir, "npm.log");
   const isWindows = Deno.build.os === "windows";
   const npmPath = join(binDir, isWindows ? "npm.cmd" : "npm");
+  const noisyBatch = options.noisy
+    ? [
+      "echo fake npm stdout",
+      "1>&2 echo fake npm stderr",
+    ]
+    : [];
+  const noisyShell = options.noisy
+    ? [
+      "printf '%s\\n' 'fake npm stdout'",
+      "printf '%s\\n' 'fake npm stderr' >&2",
+    ].join("\n")
+    : "";
   const script = isWindows
     ? [
       "@echo off",
       `>>"${logPath}" echo %CD% %*`,
+      ...noisyBatch,
       ...(mode === "success"
         ? [
           `>package-lock.json echo {"lockfileVersion":3,"packages":{}}`,
@@ -88,6 +139,7 @@ async function createFakeNpm(
     ].join("\r\n")
     : `#!/usr/bin/env sh
 printf '%s\\n' "$PWD $*" >> "${logPath}"
+${noisyShell}
 if [ "${mode}" = "success" ]; then
   printf '%s\\n' '{"lockfileVersion":3,"packages":{}}' > package-lock.json
   exit 0
@@ -158,6 +210,216 @@ describe("init command integration", () => {
         assertEquals(await exists(join(emptyDir, "app")), true);
       } finally {
         await remove(emptyDir, { recursive: true }).catch(() => {});
+      }
+    });
+
+    it("prints only a JSON success envelope for --json --yes", async () => {
+      const name = `json-success-${randomSuffix()}`;
+      const dir = join(TEST_DIR, name);
+      const expectedDir = await Deno.realPath(TEST_DIR).then((root) => join(root, name));
+
+      try {
+        const result = await runInitCommand([
+          name,
+          "--template",
+          "ai-agent",
+          "--skip-install",
+          "--json",
+          "--yes",
+        ]);
+        const stdout = result.stdout ?? "";
+        const data = JSON.parse(stdout) as {
+          success: boolean;
+          command: string;
+          data: {
+            cancelled: boolean;
+            projectDir: string;
+            projectName: string;
+            template: string;
+            runtime: string;
+            dependencyInstallation: string;
+          };
+        };
+
+        assertEquals(result.code, 0, stdout + (result.stderr ?? ""));
+        assertEquals(data.success, true);
+        assertEquals(data.command, "init");
+        assertEquals(data.data.cancelled, false);
+        assertEquals(data.data.projectDir, expectedDir);
+        assertEquals(data.data.projectName, name);
+        assertEquals(data.data.template, "ai-agent");
+        assertEquals(data.data.runtime, "node");
+        assertEquals(data.data.dependencyInstallation, "skipped");
+        assertEquals(stdout.includes(" ready"), false);
+        assertEquals(stdout.includes("Environment Setup"), false);
+        assertEquals(await exists(join(dir, "app")), true);
+        assertEquals(await exists(join(dir, "package.json")), true);
+      } finally {
+        await remove(dir, { recursive: true }).catch(() => {});
+      }
+    });
+
+    it("returns one JSON error envelope when --json --deploy cannot authenticate", async () => {
+      const parentDir = await makeTempDir({ prefix: "veryfront-init-json-deploy-auth-" });
+      const name = `json-deploy-auth-${randomSuffix()}`;
+      const dir = join(parentDir, name);
+
+      try {
+        const result = await runInitCommand([
+          name,
+          "--json",
+          "--deploy",
+          "--skip-install",
+          "--no-color",
+        ], {
+          cwd: parentDir,
+          env: {
+            VERYFRONT_API_TOKEN: "",
+            XDG_CONFIG_HOME: join(parentDir, "xdg"),
+            VERYFRONT_NO_UPDATE_CHECK: "1",
+            CI: "1",
+            NO_COLOR: "1",
+          },
+        });
+        const stdout = (result.stdout ?? "").trim();
+        const stderr = result.stderr ?? "";
+        const parsed = JSON.parse(stdout) as {
+          success: boolean;
+          command: string;
+          error: {
+            code: string;
+            slug: string;
+            message: string;
+            context?: {
+              localProject?: {
+                projectName: string;
+                deployment: { status: string; message: string };
+              };
+            };
+          };
+        };
+
+        assertEquals(result.code, 1, stdout + stderr);
+        assertEquals(stdout.startsWith("{"), true);
+        assertEquals(stdout.endsWith("}"), true);
+        assertEquals(stdout.includes("}\n{"), false);
+        assertEquals(parsed.success, false);
+        assertEquals(parsed.command, "init");
+        assertEquals(parsed.error.code, "DEPLOYMENT_FAILED");
+        assertEquals(parsed.error.slug, "deployment-failed");
+        assertEquals(parsed.error.message, "Authentication required for --deploy.");
+        assertEquals(parsed.error.context?.localProject?.projectName, name);
+        assertEquals(parsed.error.context?.localProject?.deployment, {
+          status: "failed",
+          message: "Authentication required for --deploy.",
+        });
+        assertEquals(stdout.includes("Let's set up your project."), false);
+        assertEquals(stdout.includes("Choose a starter template:"), false);
+        assertEquals(stderr.includes("Let's set up your project."), false);
+        assertEquals(stderr.includes("Choose a starter template:"), false);
+        assertEquals(await exists(join(dir, "app", "page.tsx")), true);
+        assertEquals(await exists(join(dir, "package.json")), true);
+      } finally {
+        await remove(parentDir, { recursive: true }).catch(() => {});
+      }
+    });
+
+    it("does not run the setup wizard for --json in a TTY", async () => {
+      if (Deno.build.os === "windows") return;
+
+      const name = `json-pty-${randomSuffix()}`;
+      const dir = join(TEST_DIR, name);
+
+      try {
+        const result = await runInitCommandInPty([
+          name,
+          "--json",
+          "--skip-install",
+        ]);
+        const stdout = (result.stdout ?? "").replaceAll("\r\n", "\n");
+        const data = JSON.parse(extractJsonObject(stdout)) as {
+          success: boolean;
+          command: string;
+          data: {
+            projectName: string;
+            template: string;
+          };
+        };
+
+        assertEquals(result.code, 0, stdout + (result.stderr ?? ""));
+        assertEquals(data.success, true);
+        assertEquals(data.command, "init");
+        assertEquals(data.data.projectName, name);
+        assertEquals(data.data.template, "ai-agent");
+        assertEquals(stdout.includes("Let's set up your project."), false);
+        assertEquals(stdout.includes("Choose a starter template:"), false);
+        assertEquals(await exists(join(dir, "package.json")), true);
+      } finally {
+        await remove(dir, { recursive: true }).catch(() => {});
+      }
+    });
+
+    it("keeps package metadata for Deno projects created with --json", async () => {
+      const name = `json-deno-${randomSuffix()}`;
+      const dir = join(TEST_DIR, name);
+
+      try {
+        const result = await runInitCommand([
+          name,
+          "--template",
+          "minimal",
+          "--runtime",
+          "deno",
+          "--skip-install",
+          "--json",
+          "--yes",
+        ]);
+        const stdout = result.stdout ?? "";
+        const data = JSON.parse(stdout) as {
+          success: boolean;
+          data: { runtime: string };
+        };
+
+        assertEquals(result.code, 0, stdout + (result.stderr ?? ""));
+        assertEquals(data.success, true);
+        assertEquals(data.data.runtime, "deno");
+        assertEquals(await exists(join(dir, "package.json")), true);
+        assertEquals(await exists(join(dir, "deno.json")), true);
+      } finally {
+        await remove(dir, { recursive: true }).catch(() => {});
+      }
+    });
+
+    it("keeps dependency install output out of --json stdout", async () => {
+      const name = `json-install-${randomSuffix()}`;
+      const dir = join(TEST_DIR, name);
+      const fakeNpm = await createFakeNpm("success", { noisy: true });
+
+      try {
+        const result = await runInitCommand([
+          name,
+          "--template",
+          "minimal",
+          "--json",
+          "--yes",
+        ], {
+          env: withPath(fakeNpm.binDir),
+        });
+        const stdout = result.stdout ?? "";
+        const data = JSON.parse(stdout) as {
+          success: boolean;
+          data: { dependencyInstallation: string };
+        };
+
+        assertEquals(result.code, 0, stdout + (result.stderr ?? ""));
+        assertEquals(data.success, true);
+        assertEquals(data.data.dependencyInstallation, "installed");
+        assertEquals(stdout.includes("fake npm stdout"), false);
+        assertEquals(stdout.includes("fake npm stderr"), false);
+        assertEquals(await exists(join(dir, "package-lock.json")), true);
+      } finally {
+        await remove(dir, { recursive: true }).catch(() => {});
+        await remove(fakeNpm.binDir, { recursive: true }).catch(() => {});
       }
     });
   });
@@ -827,6 +1089,99 @@ describe("init command integration", () => {
         assertEquals(output.includes("Authentication required for --deploy."), true);
         assertEquals(output.includes("Could not read auth token."), false);
         assertEquals(await exists(join(projectDir, "app", "page.tsx")), true);
+      } finally {
+        await server.shutdown();
+        await remove(parentDir, { recursive: true }).catch(() => {});
+      }
+    });
+
+    it("writes --json --deploy --output relative to the invocation directory after nested deploy failure", async () => {
+      const parentDir = await makeTempDir({ prefix: "veryfront-init-json-output-deploy-" });
+      const name = `deploy-output-${randomSuffix()}`;
+      const projectDir = join(parentDir, name);
+      const outputPath = join(parentDir, "result.json");
+      const nestedOutputPath = join(projectDir, "result.json");
+      const requests: Array<{ path: string; authorization: string | null }> = [];
+      const server = Deno.serve(
+        { hostname: "127.0.0.1", port: 0, onListen: () => {} },
+        (request) => {
+          const url = new URL(request.url);
+          requests.push({
+            path: url.pathname,
+            authorization: request.headers.get("authorization"),
+          });
+          if (url.pathname === "/me") {
+            return Response.json({ id: "user-1", email: "dev@example.test" });
+          }
+          return Response.json({ error: "deployment unavailable" }, { status: 500 });
+        },
+      );
+      const baseUrl = `http://127.0.0.1:${(server.addr as Deno.NetAddr).port}`;
+
+      try {
+        await Deno.mkdir(projectDir);
+        await Deno.writeTextFile(
+          join(projectDir, "veryfront.json"),
+          `${
+            JSON.stringify(
+              {
+                apiToken: "project-config-token",
+                apiUrl: baseUrl,
+                projectSlug: "created-project",
+              },
+              null,
+              2,
+            )
+          }\n`,
+        );
+
+        const result = await runInitCommand(
+          [
+            name,
+            "--template",
+            "minimal",
+            "--skip-install",
+            "--skip-env-prompt",
+            "--force",
+            "--deploy",
+            "--json",
+            "--output",
+            "result.json",
+            "--no-color",
+          ],
+          {
+            cwd: parentDir,
+            env: {
+              VERYFRONT_API_TOKEN: "",
+              XDG_CONFIG_HOME: join(parentDir, "config"),
+              VERYFRONT_NO_UPDATE_CHECK: "1",
+              CI: "1",
+              NO_COLOR: "1",
+            },
+          },
+        );
+        const stdout = (result.stdout ?? "").trim();
+        const stderr = result.stderr ?? "";
+        const stdoutJson = JSON.parse(stdout) as {
+          success: boolean;
+          command: string;
+          error: { code: string; context?: { localProject?: { projectName: string } } };
+        };
+        const fileJson = JSON.parse(await readTextFile(outputPath)) as typeof stdoutJson;
+
+        assertEquals(result.code, 1, stdout + stderr);
+        assertEquals(stdoutJson.success, false);
+        assertEquals(stdoutJson.command, "init");
+        assertEquals(stdoutJson.error.code, "DEPLOYMENT_FAILED");
+        assertEquals(stdoutJson.error.context?.localProject?.projectName, name);
+        assertEquals(fileJson, stdoutJson);
+        assertEquals(await exists(outputPath), true);
+        assertEquals(await exists(nestedOutputPath), false);
+        assertEquals(await exists(join(projectDir, "app", "page.tsx")), true);
+        assertEquals(requests[0], {
+          path: "/me",
+          authorization: "Bearer project-config-token",
+        });
       } finally {
         await server.shutdown();
         await remove(parentDir, { recursive: true }).catch(() => {});

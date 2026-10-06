@@ -24,6 +24,8 @@ export interface InitOptions {
   env?: EnvValues;
   /** Suppress output messages */
   quiet?: boolean;
+  /** Include runtime package metadata such as package.json and deno.json. */
+  includePackageMetadata?: boolean;
   /** Deploy to cloud after scaffolding */
   deploy?: boolean;
   /** Overwrite existing files and directories */

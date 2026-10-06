@@ -297,8 +297,10 @@ describe("createUploadHandler", () => {
   });
 
   it("returns chat upload registry fields for docs-agent uploads", async () => {
+    let ingestMeta: { source?: string; type?: string; size?: number } | undefined;
     const store = createStubStore({
-      async ingest(): Promise<string> {
+      async ingest(_title, _text, meta): Promise<string> {
+        ingestMeta = meta;
         return "doc-123";
       },
       async listDocuments() {
@@ -309,6 +311,7 @@ describe("createUploadHandler", () => {
             source: "upload:guide.txt",
             type: "txt",
             createdAt: 1,
+            size: 11,
           },
         ];
       },
@@ -337,11 +340,12 @@ describe("createUploadHandler", () => {
     assertEquals(postBody.name, "guide.txt");
     assertEquals(postBody.mediaType, "text/plain");
     assertEquals(postBody.size, 11);
+    assertEquals(ingestMeta?.size, 11);
     assertEquals(getBody.items[0], {
       id: "doc-123",
       name: "guide.txt",
       mediaType: "text/plain",
-      size: 0,
+      size: 11,
     });
   });
 

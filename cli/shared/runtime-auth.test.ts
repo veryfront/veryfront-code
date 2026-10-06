@@ -5,9 +5,10 @@ import { deleteEnv, env, getEnv, setEnv } from "#veryfront/compat/process.ts";
 import { deleteHostSecret, getHostEnv } from "#cli/process-env";
 import { join } from "veryfront/platform/path";
 import { makeTempDir } from "#veryfront/testing/deno-compat.ts";
-import { saveToken } from "../auth/token-store.ts";
+import { readToken, saveToken } from "../auth/token-store.ts";
 import {
   _resetEnvironmentConfig,
+  _setEnvironmentConfigForTesting,
   getEnvironmentConfig,
 } from "#veryfront/config/environment-config.ts";
 import { __resetEnvLoaderForTests, getEnvSource, loadEnv } from "veryfront/utils/env-loader";
@@ -56,6 +57,7 @@ async function useTempConfigHome(): Promise<string> {
   const dir = await makeTempDir({ prefix: "vf-runtime-auth-" });
   tempDirs.push(dir);
   setEnv("XDG_CONFIG_HOME", dir);
+  _resetEnvironmentConfig();
   return dir;
 }
 
@@ -72,6 +74,25 @@ describe("cli/shared/runtime-auth", () => {
       }
     }
     tempDirs = [];
+  });
+
+  it("keeps temporary token stores isolated after the environment config was cached", async () => {
+    const staleHome = await makeTempDir({ prefix: "vf-runtime-auth-stale-home-" });
+    tempDirs.push(staleHome);
+    _setEnvironmentConfigForTesting({ homeDir: staleHome, xdgConfigHome: undefined });
+
+    const configHome = await useTempConfigHome();
+    await saveToken("stored-token");
+
+    assertEquals(await readToken(), "stored-token");
+    assertEquals(
+      await Deno.readTextFile(join(staleHome, ".config", "veryfront", "token")).catch(() => null),
+      null,
+    );
+    assertEquals(
+      await Deno.readTextFile(join(configHome, "veryfront", "token")).catch(() => null),
+      "stored-token\n",
+    );
   });
 
   it("prefers explicit environment auth over the token store", async () => {
