@@ -36,7 +36,7 @@ export function onSharedInitializationSettled(
   flight: SharedInitialization<unknown>,
   callback: () => void,
 ): void {
-  apply(promiseThen, flight.promise, [callback, callback]);
+  void apply(promiseThen, flight.promise, [callback, callback]);
 }
 
 export function drainSharedInitialization(
@@ -62,7 +62,7 @@ export function drainSharedInitialization(
       abort();
       return;
     }
-    apply(promiseThen, drained, [
+    void apply(promiseThen, drained, [
       () => finish(resolve),
       () => finish(resolve),
     ]);
@@ -82,7 +82,7 @@ export function startSharedInitialization<T>(
   const settled = () => {
     flight.settled = true;
   };
-  apply(promiseThen, flight.promise, [settled, settled]);
+  void apply(promiseThen, flight.promise, [settled, settled]);
   return flight;
 }
 

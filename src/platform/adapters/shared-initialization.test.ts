@@ -5,6 +5,7 @@ import {
   drainSharedInitialization,
   isSharedInitializationAborted,
   joinSharedInitialization,
+  onSharedInitializationSettled,
   startSharedInitialization,
 } from "./shared-initialization.ts";
 
@@ -24,6 +25,27 @@ describe("shared initialization", () => {
     drain.resolve();
     await healthy;
     assertEquals(flight.waiters, 0);
+    assertEquals(flight.settled, true);
+  });
+
+  it("runs settlement callbacks and marks failed flights settled", async () => {
+    const failure = new Error("initialization failed");
+    const drain = Promise.withResolvers<void>();
+    const flight = startSharedInitialization(async () => {
+      await drain.promise;
+      throw failure;
+    });
+    let callbacks = 0;
+
+    onSharedInitializationSettled(flight, () => {
+      callbacks++;
+    });
+
+    drain.resolve();
+    await assertRejects(() => flight.promise, Error, "initialization failed");
+    await drainSharedInitialization(flight);
+
+    assertEquals(callbacks, 1);
     assertEquals(flight.settled, true);
   });
 
