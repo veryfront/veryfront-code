@@ -27,6 +27,7 @@ import {
   assertResolvedSkillSelector,
   type ResolvedSkillSelectorSnapshot,
   resolveSkillSelector,
+  type SkillSelector,
 } from "#veryfront/skill/selector.ts";
 import {
   isValidProviderSafeSkillId,
@@ -328,41 +329,16 @@ export function isRuntimeSkillVisibleTo(
 export function resolveRuntimeSkillsForAgent(input: {
   skills: readonly RuntimeSkillDefinition[];
   agentId: string;
-  selector: true | false | readonly string[] | undefined;
+  selector: SkillSelector;
 }): RuntimeSkillDefinition[] {
-  const visibleSkills = input.skills.filter((skill) =>
-    isRuntimeSkillVisibleTo(skill, { agentId: input.agentId })
-  );
-  if (input.selector === false) {
-    return [];
-  }
-  if (input.selector === undefined || input.selector === true) {
-    return visibleSkills;
-  }
-
-  const byId = new Map(visibleSkills.map((skill) => [skill.id, skill]));
-  const ownByShortName = new Map(
-    visibleSkills
-      .filter((skill) => skill.ownerAgentId === input.agentId && skill.shortName !== undefined)
-      .map((skill) => [skill.shortName as string, skill]),
-  );
-  const selectedSkills = new Map<string, RuntimeSkillDefinition>();
-
-  for (const requested of input.selector) {
-    const skill = ownByShortName.get(requested) ?? byId.get(requested);
-    if (skill) {
-      selectedSkills.set(skill.id, skill);
-    }
-  }
-
-  return [...selectedSkills.values()];
+  return resolveRuntimeSkillSelectorSnapshotForAgent(input).definitions;
 }
 
 /** Resolve a presence-aware runtime skill selector snapshot without throwing on explicit misses. */
 export function resolveRuntimeSkillSelectorSnapshotForAgent(input: {
   skills: readonly RuntimeSkillDefinition[];
   agentId: string;
-  selector: true | readonly string[] | undefined;
+  selector: SkillSelector;
 }): ResolvedSkillSelectorSnapshot<RuntimeSkillDefinition> {
   return resolveSkillSelector({
     definitions: input.skills,
@@ -379,7 +355,7 @@ export function resolveRuntimeSkillSelectorSnapshotForAgent(input: {
 export function resolveRuntimeSkillSelectorForAgent(input: {
   skills: readonly RuntimeSkillDefinition[];
   agentId: string;
-  selector: true | readonly string[] | undefined;
+  selector: SkillSelector;
 }): ResolvedSkillSelectorSnapshot<RuntimeSkillDefinition> {
   const snapshot = resolveRuntimeSkillSelectorSnapshotForAgent(input);
   assertResolvedSkillSelector(snapshot);

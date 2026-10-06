@@ -26,6 +26,7 @@ import {
 } from "#veryfront/platform/core-platform.ts";
 import { registerTool } from "#veryfront/mcp";
 import { assertLocalToolId, toolRegistry, toolRegistryInternal } from "#veryfront/tool/registry.ts";
+import { isToolVisibleTo } from "#veryfront/tool/executor.ts";
 import { skillRegistryInternal } from "#veryfront/skill/registry.ts";
 import {
   resolveSkillToolDisposition,
@@ -72,6 +73,11 @@ import {
   buildAgentCallContextPreservingRuntimeMarker,
 } from "./runtime/call-context.ts";
 import type { RuntimeSkillDefinition } from "./runtime/skill-metadata.ts";
+import {
+  createAgentKnowledgeTool,
+  isAgentKnowledgeTool,
+  isKnowledgeEnabled,
+} from "#veryfront/agent/runtime/knowledge-tools.ts";
 
 const IntrinsicReflectApply = Reflect.apply;
 const IntrinsicStringTrim = String.prototype.trim;
@@ -590,6 +596,48 @@ function createAgent<TOutput = never>(
       skillTools: resolveSkillToolDisposition(config, id),
       resolveSkillSnapshot,
     });
+  }
+
+  // Hosted callers already assembled the catalog under their authorization
+  // ceiling. Feature configuration must not re-add a filtered capability.
+  const knowledgeEnabled = isKnowledgeEnabled(config.knowledge);
+  if (preserveToolCatalog && knowledgeEnabled && mergedToolsConfig !== true) {
+    const configuredKnowledgeTool = mergedToolsConfig?.search_knowledge;
+    if (
+      typeof configuredKnowledgeTool === "object" && configuredKnowledgeTool !== null &&
+      !isAgentKnowledgeTool(configuredKnowledgeTool)
+    ) {
+      throw INVALID_ARGUMENT.create({
+        detail: "A custom search_knowledge tool conflicts with the agent knowledge scope. " +
+          "Rename the custom tool or remove the knowledge selector.",
+      });
+    }
+  }
+  const knowledgeTool = preserveToolCatalog ? undefined : createAgentKnowledgeTool(config);
+  const registeredKnowledgeTool = toolRegistry.get("search_knowledge");
+  if (
+    knowledgeTool && mergedToolsConfig === true && registeredKnowledgeTool &&
+    isToolVisibleTo(registeredKnowledgeTool, { agentId: id })
+  ) {
+    throw INVALID_ARGUMENT.create({
+      detail: "A registered search_knowledge tool conflicts with the agent knowledge scope. " +
+        "Use an explicit tool selection or rename the custom tool.",
+    });
+  }
+  if (knowledgeTool && mergedToolsConfig !== true) {
+    const configuredKnowledgeTool = mergedToolsConfig?.search_knowledge;
+    if (
+      configuredKnowledgeTool && configuredKnowledgeTool !== true &&
+      !isAgentKnowledgeTool(configuredKnowledgeTool)
+    ) {
+      throw INVALID_ARGUMENT.create({
+        detail: "A custom search_knowledge tool conflicts with the agent knowledge scope. " +
+          "Rename the custom tool or remove the knowledge selector.",
+      });
+    }
+    if (configuredKnowledgeTool !== false) {
+      mergedToolsConfig = { ...mergedToolsConfig, search_knowledge: knowledgeTool };
+    }
   }
 
   const augmentedSystem = createAugmentedSystem({

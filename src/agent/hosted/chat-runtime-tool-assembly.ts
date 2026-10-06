@@ -16,6 +16,7 @@ import {
   type ProjectScopedRemoteToolOptions,
   type RemoteMCPToolSourceConfig,
   type RemoteToolSource,
+  type ToolExecutionContext,
   type ToolSet,
   traceHostTools,
   type TraceHostToolsOptions,
@@ -40,6 +41,10 @@ import { selectProviderCompatibleToolNames } from "../runtime/provider-tool-comp
 import { getProviderNativeToolNames } from "../runtime/provider-native-tool-inventory.ts";
 import { flattenSystemInstructions, withRuntimeToolInventory } from "../runtime/tool-inventory.ts";
 import {
+  createAgentKnowledgeSource,
+  inheritAgentKnowledgeSource,
+} from "#veryfront/agent/runtime/knowledge-tools.ts";
+import {
   type HostedRuntimeAllowedToolNames,
   normalizeHostedRuntimeAllowedToolNames,
   resolveHostedRuntimeAllowedToolNames,
@@ -53,6 +58,8 @@ import type { RuntimeToolDiscoveryContext } from "../runtime/tool-discovery-cont
 import type { RuntimeToolLoadingMode } from "../runtime/runtime-tool-config.ts";
 import { TOOL_SEARCH_TOOL_NAME } from "../runtime/tool-exposure.ts";
 import { compareStrings } from "#veryfront/utils/compare.ts";
+import { CONFIG_INVALID } from "#veryfront/errors";
+import type { AgentConfig } from "../types.ts";
 
 const apply = Reflect.apply;
 const arrayIncludes = Array.prototype.includes;
@@ -62,6 +69,7 @@ const objectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 const objectSetPrototypeOf = Object.setPrototypeOf;
 const objectHasOwn = Object.hasOwn;
 const objectKeys = Object.keys;
+const FRAMEWORK_KNOWLEDGE_TOOL_NAME = "search_knowledge";
 
 function ownEntries<T>(value: Record<string, T>): Array<[string, T]> {
   return apply(objectEntries, Object, [value]) as Array<[string, T]>;
@@ -169,6 +177,8 @@ export type HostedChatRuntimeToolAssemblyResult = {
   readonly sourceIntegrationPolicy: SourceIntegrationPolicyManifest;
   runtimeTools: ToolSet;
   remoteToolSources: RemoteToolSource[];
+  /** API-backed source used for framework research artifact mirroring. */
+  researchArtifactRemoteToolSource?: RemoteToolSource;
   localToolNames: string[];
   remoteToolNames: string[];
   providerToolNames: string[];
@@ -223,6 +233,10 @@ export type PrepareHostedChatRuntimeToolAssemblyInput<
    */
   includeRuntimeEssentialToolsWhenEmpty?: boolean;
   sourceProviderToolNames?: readonly string[];
+  /** Authored tool schema loading mode, resolved before legacy selector defaults. */
+  toolLoading?: RuntimeToolLoadingMode;
+  /** Authored framework knowledge selector supplied by trusted agent config. */
+  knowledge?: AgentConfig["knowledge"];
   projectScopedRemoteToolOptions?: ProjectScopedRemoteToolOptions;
   createRemoteToolSource?: (
     config: RemoteMCPToolSourceConfig,
@@ -270,6 +284,7 @@ export type PrepareFacadedHostedChatRuntimeToolAssemblyInput<
     remoteToolSources: readonly RemoteToolSource[];
     signal: AbortSignal;
     loadLatestConversationUserText?: (signal: AbortSignal) => Promise<string | null>;
+    hostedKnowledgeContext?: HostedKnowledgeExecutionContext;
   };
 
 type FacadedHostedChatRuntimeToolAssemblyResult = HostedChatRuntimeToolAssemblyResult & {
@@ -507,6 +522,103 @@ function shouldIncludeHostedWebFetchFallback(input: {
   return input.sourceProviderToolNames.has("web_fetch");
 }
 
+export type HostedKnowledgeExecutionContext = Pick<
+  ToolExecutionContext,
+  | "authToken"
+  | "projectId"
+  | "projectSlug"
+  | "apiUrl"
+  | "productionMode"
+  | "releaseId"
+  | "branch"
+  | "environmentName"
+>;
+
+type HostedKnowledgeSourceTaskContext = Omit<HostedChatRuntimeToolAssemblyContext, "authToken"> & {
+  authToken?: string;
+};
+
+type HostedKnowledgeSourceContext =
+  | HostedKnowledgeSourceTaskContext
+  | HostedKnowledgeExecutionContext;
+
+function knowledgeContextValue<K extends keyof ToolExecutionContext>(
+  context: HostedKnowledgeSourceContext,
+  key: K,
+): ToolExecutionContext[K] | undefined {
+  const descriptor = Object.getOwnPropertyDescriptor(context, key);
+  return descriptor && Object.hasOwn(descriptor, "value") ? descriptor.value : undefined;
+}
+
+function withHostedKnowledgeExecutionContext(
+  context: ToolExecutionContext | undefined,
+  taskContext: HostedKnowledgeSourceContext,
+): ToolExecutionContext {
+  const branch = "branchId" in taskContext
+    ? taskContext.branchId
+    : knowledgeContextValue(taskContext, "branch");
+  const authToken = knowledgeContextValue(taskContext, "authToken");
+  const projectId = knowledgeContextValue(taskContext, "projectId");
+  const projectSlug = knowledgeContextValue(taskContext, "projectSlug");
+  const productionMode = knowledgeContextValue(taskContext, "productionMode");
+  const releaseId = knowledgeContextValue(taskContext, "releaseId");
+  const environmentName = knowledgeContextValue(taskContext, "environmentName");
+  const apiUrl = knowledgeContextValue(taskContext, "apiUrl");
+  return {
+    ...(context ?? {}),
+    authToken: typeof authToken === "string" && authToken ? authToken : undefined,
+    apiUrl: typeof apiUrl === "string" && apiUrl ? apiUrl : undefined,
+    projectId: projectId ?? undefined,
+    projectSlug: typeof projectSlug === "string" && projectSlug ? projectSlug : undefined,
+    productionMode: typeof productionMode === "boolean" ? productionMode : undefined,
+    releaseId: typeof releaseId === "string" || releaseId === null ? releaseId : undefined,
+    environmentName: typeof environmentName === "string" || environmentName === null
+      ? environmentName
+      : undefined,
+    branch: branch ?? null,
+  };
+}
+
+function createHostedKnowledgeSource(
+  knowledge: AgentConfig["knowledge"] | undefined,
+  getTaskContext: () => HostedKnowledgeSourceContext,
+): RemoteToolSource | undefined {
+  const source = createAgentKnowledgeSource({
+    system: "",
+    tools: true,
+    knowledge,
+  });
+  if (source === undefined) return undefined;
+  return inheritAgentKnowledgeSource(source, {
+    ...source,
+    listTools: (context) =>
+      source.listTools(withHostedKnowledgeExecutionContext(context, getTaskContext())),
+    executeTool: (name, input, context) =>
+      source.executeTool(
+        name,
+        input,
+        withHostedKnowledgeExecutionContext(context, getTaskContext()),
+      ),
+  });
+}
+
+function assertNoLocalFrameworkKnowledgeToolShadow(input: {
+  knowledgeSource: RemoteToolSource | undefined;
+  localTools: HostToolSet;
+}): void {
+  if (input.knowledgeSource === undefined) {
+    return;
+  }
+  if (!hasOwn(input.localTools, FRAMEWORK_KNOWLEDGE_TOOL_NAME)) {
+    return;
+  }
+  throw CONFIG_INVALID.create({
+    detail:
+      `Local tool "${FRAMEWORK_KNOWLEDGE_TOOL_NAME}" conflicts with the agent knowledge scope. ` +
+      "Rename the local tool or remove the knowledge selector.",
+  });
+}
+
 async function prepareHostedChatRuntimeToolAssemblyInternal<
   TTraceAttributes extends HostToolTraceAttributes = HostToolTraceAttributes,
 >(
@@ -531,6 +643,18 @@ async function prepareHostedChatRuntimeToolAssemblyInternal<
         !shortName.includes("__")
       ) projectToolNames.add(shortName);
     }
+  }
+  let knowledgeSource: RemoteToolSource | undefined;
+  if ("remoteToolSources" in input) {
+    const brokerKnowledgeContext = input.hostedKnowledgeContext;
+    knowledgeSource = brokerKnowledgeContext === undefined
+      ? undefined
+      : createHostedKnowledgeSource(input.knowledge, () => brokerKnowledgeContext);
+  } else {
+    knowledgeSource = createHostedKnowledgeSource(input.knowledge, () => ({
+      ...input.taskContext,
+      apiUrl: input.apiUrl,
+    }));
   }
   const authorizedLocalTools = withoutDeniedHostTools(
     applyHostedHostToolPolicy(input.localTools, input.hostToolPolicy),
@@ -601,17 +725,76 @@ async function prepareHostedChatRuntimeToolAssemblyInternal<
     ? undefined
     : input.createRemoteToolSource ?? createRemoteMCPToolSource;
 
-  const remoteToolSources = withoutDeniedRemoteTools(
-    "remoteToolSources" in input
-      ? mapValues(input.remoteToolSources, (source) => {
-        const sourceOptions: Parameters<typeof createHostedProjectRemoteToolSource>[0] = {
-          source: withoutDeniedRemoteTool(
-            wrapRemoteToolSourceWithMcpPolicy(
-              source,
-              allowedToolNames === null ? undefined : { allow: [...allowedToolNames] },
-            ),
-            input.deniedToolNames,
-            projectToolNames,
+  const configuredRemoteToolSources = "remoteToolSources" in input
+    ? mapValues(input.remoteToolSources, (source) => {
+      const sourceOptions: Parameters<typeof createHostedProjectRemoteToolSource>[0] = {
+        source: withoutDeniedRemoteTool(
+          wrapRemoteToolSourceWithMcpPolicy(
+            source,
+            allowedToolNames === null ? undefined : { allow: [...allowedToolNames] },
+          ),
+          input.deniedToolNames,
+          projectToolNames,
+        ),
+        defaultProjectId: () => activeProjectId(input.taskContext),
+        getActiveBranchId: () => activeBranchId(input.taskContext),
+        allowedToolNames,
+        projectScopedRemoteToolOptions: input.projectScopedRemoteToolOptions,
+        prepareToolInput: input.prepareRemoteToolInput,
+        shouldRetryWithTool: input.shouldRetryWithRemoteTool,
+        onProjectSwitch: input.onStudioProjectSwitch,
+        onSteeringMutation: input.onSteeringMutation,
+      };
+      objectSetPrototypeOf(sourceOptions, null);
+      return createHostedProjectRemoteToolSource(sourceOptions);
+    })
+    : createHostedProjectRemoteToolSources({
+      authToken: input.taskContext.authToken,
+      apiMcpUrl: input.apiMcpUrl,
+      studioMcpUrl: input.studioMcpUrl,
+      mcpServers: augmentVeryfrontApiMcpServerPolicy(
+        input.mcpServers,
+        input.serverResolvedIntegrationToolNames,
+      ),
+      clientProfile: input.taskContext.clientProfile,
+      // Project-scoped sources perform retry calls against their input source.
+      // Apply the denial at this inner boundary as well as the returned source
+      // so a retry cannot invoke a denied companion tool.
+      createRemoteToolSource: (config, server) =>
+        withoutDeniedRemoteTool(
+          createRemoteToolSource!(config, server),
+          input.deniedToolNames,
+          projectToolNames,
+          server?.kind === "veryfront-api",
+          true,
+        ),
+      defaultProjectId: () => activeProjectId(input.taskContext),
+      getProjectId: input.getProjectId ?? (() => activeProjectId(input.taskContext)),
+      getActiveBranchId: input.getActiveBranchId ?? (() => activeBranchId(input.taskContext)),
+      conversationId: input.conversationId,
+      allowedToolNames,
+      ...(input.toolDiscoveryContext?.activatedRemoteToolNames !== undefined
+        ? { activatedRemoteToolNames: input.toolDiscoveryContext.activatedRemoteToolNames }
+        : {}),
+      projectScopedRemoteToolOptions: input.projectScopedRemoteToolOptions,
+      prepareToolInput: input.prepareRemoteToolInput,
+      shouldRetryWithTool: input.shouldRetryWithRemoteTool,
+      onSteeringMutation: input.onSteeringMutation,
+      onStudioProjectSwitch: input.onStudioProjectSwitch,
+    });
+  const filteredConfiguredRemoteToolSources = withoutDeniedRemoteTools(
+    configuredRemoteToolSources,
+    input.deniedToolNames,
+    projectToolNames,
+  );
+  const knowledgeRemoteToolSources = knowledgeSource === undefined ? [] : withoutDeniedRemoteTools(
+    [
+      inheritAgentKnowledgeSource(
+        knowledgeSource,
+        createHostedProjectRemoteToolSource({
+          source: wrapRemoteToolSourceWithMcpPolicy(
+            knowledgeSource,
+            allowedToolNames === null ? undefined : { allow: [...allowedToolNames] },
           ),
           defaultProjectId: () => activeProjectId(input.taskContext),
           getActiveBranchId: () => activeBranchId(input.taskContext),
@@ -621,53 +804,53 @@ async function prepareHostedChatRuntimeToolAssemblyInternal<
           shouldRetryWithTool: input.shouldRetryWithRemoteTool,
           onProjectSwitch: input.onStudioProjectSwitch,
           onSteeringMutation: input.onSteeringMutation,
-        };
-        objectSetPrototypeOf(sourceOptions, null);
-        return createHostedProjectRemoteToolSource(sourceOptions);
-      })
-      : createHostedProjectRemoteToolSources({
-        authToken: input.taskContext.authToken,
-        apiMcpUrl: input.apiMcpUrl,
-        studioMcpUrl: input.studioMcpUrl,
-        mcpServers: augmentVeryfrontApiMcpServerPolicy(
-          input.mcpServers,
-          input.serverResolvedIntegrationToolNames,
-        ),
-        clientProfile: input.taskContext.clientProfile,
-        // Project-scoped sources perform retry calls against their input source.
-        // Apply the denial at this inner boundary as well as the returned source
-        // so a retry cannot invoke a denied companion tool.
-        createRemoteToolSource: (config, server) =>
-          withoutDeniedRemoteTool(
-            createRemoteToolSource!(config, server),
-            input.deniedToolNames,
-            projectToolNames,
-            server?.kind === "veryfront-api",
-            true,
-          ),
-        defaultProjectId: () => activeProjectId(input.taskContext),
-        getProjectId: input.getProjectId ?? (() => activeProjectId(input.taskContext)),
-        getActiveBranchId: input.getActiveBranchId ?? (() => activeBranchId(input.taskContext)),
-        conversationId: input.conversationId,
-        allowedToolNames,
-        ...(input.toolDiscoveryContext?.activatedRemoteToolNames !== undefined
-          ? { activatedRemoteToolNames: input.toolDiscoveryContext.activatedRemoteToolNames }
-          : {}),
-        projectScopedRemoteToolOptions: input.projectScopedRemoteToolOptions,
-        prepareToolInput: input.prepareRemoteToolInput,
-        shouldRetryWithTool: input.shouldRetryWithRemoteTool,
-        onSteeringMutation: input.onSteeringMutation,
-        onStudioProjectSwitch: input.onStudioProjectSwitch,
-      }),
+        }),
+      ),
+    ],
     input.deniedToolNames,
     projectToolNames,
   );
-  const remoteToolNames = await listProjectScopedRemoteToolNames(remoteToolSources, {
+  const researchArtifactRemoteToolSource =
+    filteredConfiguredRemoteToolSources.find(hasTrustedPlatformSource) ??
+      filteredConfiguredRemoteToolSources[0];
+  const remoteToolListOptions = {
     sourceIntegrationPolicy: input.sourceIntegrationPolicy,
     projectId: activeProjectId(input.taskContext),
     projectScopedRemoteToolOptions: input.projectScopedRemoteToolOptions,
     ...("remoteToolSources" in input ? { context: { abortSignal: input.signal } } : {}),
-  });
+  };
+  const knowledgeRemoteToolNames = await listProjectScopedRemoteToolNames(
+    knowledgeRemoteToolSources,
+    remoteToolListOptions,
+  );
+  const configuredRemoteToolNames = await listProjectScopedRemoteToolNames(
+    filteredConfiguredRemoteToolSources,
+    remoteToolListOptions,
+  );
+  if (includesValue(knowledgeRemoteToolNames, FRAMEWORK_KNOWLEDGE_TOOL_NAME)) {
+    assertNoLocalFrameworkKnowledgeToolShadow({
+      knowledgeSource,
+      localTools: sortedLocalTools,
+    });
+  }
+  if (
+    includesValue(knowledgeRemoteToolNames, FRAMEWORK_KNOWLEDGE_TOOL_NAME) &&
+    includesValue(configuredRemoteToolNames, FRAMEWORK_KNOWLEDGE_TOOL_NAME)
+  ) {
+    throw CONFIG_INVALID.create({
+      detail:
+        `Remote tool "${FRAMEWORK_KNOWLEDGE_TOOL_NAME}" conflicts with the agent knowledge scope. ` +
+        "Rename the remote tool or remove the knowledge selector.",
+    });
+  }
+  const remoteToolSources = [
+    ...knowledgeRemoteToolSources,
+    ...filteredConfiguredRemoteToolSources,
+  ];
+  const remoteToolNames = sortValues(
+    [...createPrivateSet([...knowledgeRemoteToolNames, ...configuredRemoteToolNames])],
+    compareStrings,
+  );
   const localProviderToolNames = createPrivateSet(
     filterValues(
       ownKeys(sortedLocalTools),
@@ -698,10 +881,12 @@ async function prepareHostedChatRuntimeToolAssemblyInternal<
   const localRuntimeTools = createToolsFromHostDefinitions(localHostTools);
   const localToolNames = ownKeys(localRuntimeTools);
   const toolSearchDenied = deniedProviderToolNames.has(TOOL_SEARCH_TOOL_NAME);
-  const toolLoadingMode: RuntimeToolLoadingMode = normalizedAllowedToolNames === null &&
-      !toolSearchDenied
-    ? "deferred"
-    : "eager";
+  const requestedToolLoadingMode: RuntimeToolLoadingMode = input.toolLoading ??
+    (normalizedAllowedToolNames === null && !toolSearchDenied ? "deferred" : "eager");
+  const toolLoadingMode: RuntimeToolLoadingMode = requestedToolLoadingMode === "deferred" &&
+      toolSearchDenied
+    ? "eager"
+    : requestedToolLoadingMode;
   const authorizedToolNames = [
     ...createPrivateSet([...localToolNames, ...providerToolNames, ...remoteToolNames]),
   ];
@@ -790,6 +975,7 @@ async function prepareHostedChatRuntimeToolAssemblyInternal<
     sourceIntegrationPolicy: input.sourceIntegrationPolicy,
     runtimeTools: compatibleLocalRuntimeTools,
     remoteToolSources,
+    ...(researchArtifactRemoteToolSource === undefined ? {} : { researchArtifactRemoteToolSource }),
     localToolNames: compatibleLocalToolNames,
     remoteToolNames,
     providerToolNames: compatibleProviderToolNames,

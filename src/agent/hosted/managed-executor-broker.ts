@@ -31,6 +31,7 @@ import {
 } from "#veryfront/agent/hosted/executor-runtime-install-schema.ts";
 import type { AgentRunEventSink } from "#veryfront/runtime/model-call-context.ts";
 import type { RuntimeAgentMarkdownDefinition } from "../runtime/agent-definition.ts";
+import type { HostedKnowledgeExecutionContext } from "#veryfront/agent/hosted/chat-runtime-tool-assembly.ts";
 import type { AgentModelRuntimeResolver } from "../runtime/model-transport.ts";
 import {
   createExecutorOperationGate,
@@ -128,6 +129,10 @@ export interface ManagedExecutorStartInput {
   trustedRuntime?: {
     projectToolNames: readonly string[];
     sourceIntegrationPolicy: SourceIntegrationPolicyManifest;
+    /** Broker-owned token for hosted framework knowledge retrieval. Never sent to the executor. */
+    hostedKnowledgeAuthToken?: string;
+    /** Broker-owned Veryfront API origin for hosted framework knowledge retrieval. */
+    hostedKnowledgeApiUrl?: string;
   };
   /** Bind canonical persistence to the admitted session before readiness work starts. */
   bindSessionOwnedWork?: (owner: HostedExecutorOwnedWork) => void;
@@ -342,6 +347,7 @@ export function createManagedExecutorBroker(
           projectToolNames: trusted.projectInstallation.allowedToolNames,
           toolLimits: operationInput.tools.limits,
           sourceIntegrationPolicy: trusted.sourceIntegrationPolicy,
+          hostedKnowledgeContext: trusted.hostedKnowledgeContext,
           createGate(projectTools) {
             const localOperations = buildBrokerOperations(
               channelBinding,
@@ -474,6 +480,7 @@ function snapshotTrustedRuntime(
 ): {
   projectInstallation: ExecutorProjectToolInstall;
   sourceIntegrationPolicy: SourceIntegrationPolicyManifest;
+  hostedKnowledgeContext?: HostedKnowledgeExecutionContext;
 } {
   const execution = installation.grant.execution;
   if (
@@ -524,11 +531,31 @@ function snapshotTrustedRuntime(
   ) {
     throw new TypeError("Project tool authority exceeds the normalized invocation grant");
   }
+  const hostedKnowledgeContext = typeof input.hostedKnowledgeAuthToken === "string" &&
+      input.hostedKnowledgeAuthToken
+    ? {
+      authToken: input.hostedKnowledgeAuthToken,
+      ...(typeof input.hostedKnowledgeApiUrl === "string" && input.hostedKnowledgeApiUrl
+        ? { apiUrl: input.hostedKnowledgeApiUrl }
+        : {}),
+      ...(execution.projectId === null ? {} : { projectId: execution.projectId }),
+      ...(execution.projectSlug === undefined ? {} : { projectSlug: execution.projectSlug }),
+      ...(execution.branchId === undefined ? {} : { branch: execution.branchId }),
+      ...(installation.source.type === "release"
+        ? { productionMode: true, releaseId: installation.source.releaseId }
+        : {
+          productionMode: true,
+          releaseId: installation.source.releaseId,
+          environmentName: installation.source.environmentName,
+        }),
+    }
+    : undefined;
   return {
     projectInstallation,
     sourceIntegrationPolicy: parseSourceIntegrationPolicyManifest(
       snapshotOwnDataRecords(input.sourceIntegrationPolicy),
     ),
+    ...(hostedKnowledgeContext === undefined ? {} : { hostedKnowledgeContext }),
   };
 }
 
