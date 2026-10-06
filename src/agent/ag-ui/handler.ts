@@ -9,6 +9,7 @@ import {
 import {
   getPrivateApplicationInferenceRuntimeOptions,
   type PrivateApplicationInferenceRuntime,
+  runWithRetainedApplicationInferenceAdmission,
   shouldUseApplicationInferenceRuntime,
 } from "../runtime/application-inference-admission.ts";
 import type { Agent, AgentResponse, Message } from "../types.ts";
@@ -469,14 +470,18 @@ async function createDirectAgentUpstream(options: {
       defineOwnDataProperty(admittedAgent, "then", undefined);
       return admittedAgent;
     });
-    const result = await inferenceAgent.stream({
-      messages: options.messages,
-      context: options.context,
-      onFinish: options.onFinish,
-      model: options.request.model,
-      maxOutputTokens: options.request.maxOutputTokens,
-      abortSignal: privateRuntime.signal,
-    });
+    const result = await runWithRetainedApplicationInferenceAdmission(
+      privateRuntime,
+      () =>
+        inferenceAgent.stream({
+          messages: options.messages,
+          context: options.context,
+          onFinish: options.onFinish,
+          model: options.request.model,
+          maxOutputTokens: options.request.maxOutputTokens,
+          abortSignal: privateRuntime.signal,
+        }),
+    );
     const upstream = result.toDataStreamResponse();
     return {
       body: upstream.body ? options.toolDataEvents.wrapStream(upstream.body) : upstream.body,
@@ -743,21 +748,26 @@ async function createAgUiInjectedToolsStreamResponse(
     let completedResponse: AgentResponse | null = null;
     const toolDataEvents = createToolDataEventBridge();
     try {
-      upstreamBody = await streamRun(
-        messages,
-        {
-          ...prepared.context,
-          publishDataEvent: toolDataEvents.publishDataEvent,
-        },
-        {
-          onFinish: (response) => {
-            completedResponse = response;
+      const streamContext = {
+        ...prepared.context,
+        publishDataEvent: toolDataEvents.publishDataEvent,
+      };
+      const dispatch = () =>
+        streamRun(
+          messages,
+          streamContext,
+          {
+            onFinish: (response) => {
+              completedResponse = response;
+            },
           },
-        },
-        request.model,
-        request.maxOutputTokens,
-        privateRuntime?.signal,
-      );
+          request.model,
+          request.maxOutputTokens,
+          privateRuntime?.signal,
+        );
+      upstreamBody = privateRuntime
+        ? await runWithRetainedApplicationInferenceAdmission(privateRuntime, dispatch)
+        : await dispatch();
       upstreamBody = toolDataEvents.wrapStream(upstreamBody);
     } catch (error) {
       privateRuntime?.onAbandon();

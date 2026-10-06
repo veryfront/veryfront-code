@@ -340,7 +340,7 @@ export class ApiHandlerWrapper extends BaseHandler {
       );
 
     if (admitInference) {
-      return await runWithApplicationInferenceAdmission(admitInference, executeRoute);
+      return await runWithApplicationInferenceAdmission(admitInference, executeRoute, req.signal);
     }
     return await executeRoute();
   }

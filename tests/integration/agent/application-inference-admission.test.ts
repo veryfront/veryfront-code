@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assert, assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import {
   __resetVeryfrontCloudCatalogForTests,
@@ -15,7 +15,9 @@ import { resolveAgentModelTransport } from "#veryfront/agent/runtime/model-trans
 import {
   type ApplicationInferenceFinalizeStatus,
   getPrivateApplicationInferenceRuntimeOptions,
+  type PrivateApplicationInferenceRuntime,
   runWithApplicationInferenceAdmission,
+  runWithRetainedApplicationInferenceAdmission,
 } from "#veryfront/agent/runtime/application-inference-admission.ts";
 
 const RUN_ID = "run-application-inference-admission";
@@ -75,6 +77,308 @@ describe("application inference admission runtime", () => {
     const runtime = await getPrivateApplicationInferenceRuntimeOptions("synthetic-agent");
 
     assertEquals(runtime, undefined);
+  });
+
+  it("does not admit a detached task after the route scope settles", async () => {
+    let admissions = 0;
+    const timerDetached = Promise.withResolvers<PrivateApplicationInferenceRuntime | undefined>();
+    const promiseDetached = Promise.withResolvers<PrivateApplicationInferenceRuntime | undefined>();
+    const releasePromiseContinuation = Promise.withResolvers<void>();
+
+    await runWithApplicationInferenceAdmission(async () => {
+      admissions++;
+      return {
+        runId: RUN_ID,
+        inferenceToken: INFERENCE_TOKEN,
+        expiresAt: expiresIn(60_000),
+        finalize: () => {},
+      };
+    }, () => {
+      setTimeout(() => {
+        void getPrivateApplicationInferenceRuntimeOptions("timer-detached-agent").then(
+          timerDetached.resolve,
+          timerDetached.reject,
+        );
+      }, 0);
+      void releasePromiseContinuation.promise.then(() =>
+        getPrivateApplicationInferenceRuntimeOptions("promise-detached-agent")
+      ).then(
+        promiseDetached.resolve,
+        promiseDetached.reject,
+      );
+    });
+    releasePromiseContinuation.resolve();
+
+    assertEquals(await timerDetached.promise, undefined);
+    assertEquals(await promiseDetached.promise, undefined);
+    assertEquals(admissions, 0);
+  });
+
+  it("does not admit a detached task after a rejected route scope settles", async () => {
+    let admissions = 0;
+    const detached = Promise.withResolvers<PrivateApplicationInferenceRuntime | undefined>();
+    const releaseContinuation = Promise.withResolvers<void>();
+
+    await assertRejects(
+      () =>
+        runWithApplicationInferenceAdmission(async () => {
+          admissions++;
+          return {
+            runId: RUN_ID,
+            inferenceToken: INFERENCE_TOKEN,
+            expiresAt: expiresIn(60_000),
+            finalize: () => {},
+          };
+        }, () => {
+          void releaseContinuation.promise.then(() =>
+            getPrivateApplicationInferenceRuntimeOptions("rejected-detached-agent")
+          ).then(detached.resolve, detached.reject);
+          throw new Error("synthetic route failure");
+        }),
+      Error,
+      "synthetic route failure",
+    );
+    releaseContinuation.resolve();
+
+    assertEquals(await detached.promise, undefined);
+    assertEquals(admissions, 0);
+  });
+
+  it("does not call the host when the root request is already aborted", async () => {
+    const controller = new AbortController();
+    controller.abort(new DOMException("already closed", "AbortError"));
+    let admissions = 0;
+
+    const runtime = await runWithApplicationInferenceAdmission(
+      async () => {
+        admissions++;
+        return {
+          runId: RUN_ID,
+          inferenceToken: INFERENCE_TOKEN,
+          expiresAt: expiresIn(60_000),
+          finalize: () => {},
+        };
+      },
+      () => getPrivateApplicationInferenceRuntimeOptions("aborted-root", controller.signal),
+      controller.signal,
+    );
+
+    assertEquals(runtime, undefined);
+    assertEquals(admissions, 0);
+  });
+
+  it("cancels a pending root admission that resolves after the route scope settles", async () => {
+    const pending = Promise.withResolvers<{
+      runId: string;
+      inferenceToken: string;
+      expiresAt: string;
+      finalize: (status: ApplicationInferenceFinalizeStatus) => void;
+    }>();
+    const finalizations: ApplicationInferenceFinalizeStatus[] = [];
+    let runtimePromise: Promise<PrivateApplicationInferenceRuntime | undefined> | undefined;
+    let admissions = 0;
+
+    await runWithApplicationInferenceAdmission(() => {
+      admissions++;
+      return pending.promise;
+    }, () => {
+      runtimePromise = getPrivateApplicationInferenceRuntimeOptions("pending-root");
+    });
+
+    pending.resolve({
+      runId: RUN_ID,
+      inferenceToken: INFERENCE_TOKEN,
+      expiresAt: expiresIn(60_000),
+      finalize: (status) => finalizations.push(status),
+    });
+
+    assert(runtimePromise, "pending root runtime request must be started");
+    assertEquals(await runtimePromise, undefined);
+    assertEquals(admissions, 1);
+    assertEquals(finalizations, ["cancelled"]);
+  });
+
+  it("cancels a pending root admission when the caller aborts before it resolves", async () => {
+    const controller = new AbortController();
+    const pending = Promise.withResolvers<{
+      runId: string;
+      inferenceToken: string;
+      expiresAt: string;
+      finalize: (status: ApplicationInferenceFinalizeStatus) => void;
+    }>();
+    const finalizations: ApplicationInferenceFinalizeStatus[] = [];
+    let runtimePromise: Promise<PrivateApplicationInferenceRuntime | undefined> | undefined;
+    let admissions = 0;
+
+    await runWithApplicationInferenceAdmission(() => {
+      admissions++;
+      return pending.promise;
+    }, () => {
+      runtimePromise = getPrivateApplicationInferenceRuntimeOptions(
+        "pending-aborted-root",
+        controller.signal,
+      );
+      controller.abort(new DOMException("client closed", "AbortError"));
+    }, controller.signal);
+
+    pending.resolve({
+      runId: RUN_ID,
+      inferenceToken: INFERENCE_TOKEN,
+      expiresAt: expiresIn(60_000),
+      finalize: (status) => finalizations.push(status),
+    });
+
+    assert(runtimePromise, "pending aborted runtime request must be started");
+    assertEquals(await runtimePromise, undefined);
+    assertEquals(admissions, 1);
+    assertEquals(finalizations, ["cancelled"]);
+  });
+
+  it("keeps retained producer child admission after root return while detached root tasks fail", async () => {
+    const release = Promise.withResolvers<void>();
+    const detached = Promise.withResolvers<PrivateApplicationInferenceRuntime | undefined>();
+    let childRuntimePromise: Promise<PrivateApplicationInferenceRuntime | undefined> | undefined;
+    const admittedAgents: string[] = [];
+
+    const rootRuntime = await runWithApplicationInferenceAdmission(async (agentId) => {
+      admittedAgents.push(agentId);
+      return {
+        runId: `${RUN_ID}-${agentId}`,
+        inferenceToken: `${INFERENCE_TOKEN}-${agentId}`,
+        expiresAt: expiresIn(60_000),
+        finalize: () => {},
+      };
+    }, async () => {
+      const root = await getPrivateApplicationInferenceRuntimeOptions("root-agent");
+      assert(root, "root admission must be available during route execution");
+      childRuntimePromise = runWithRetainedApplicationInferenceAdmission(
+        root,
+        () =>
+          release.promise.then(() => getPrivateApplicationInferenceRuntimeOptions("child-agent")),
+      );
+      void release.promise.then(() =>
+        getPrivateApplicationInferenceRuntimeOptions("detached-root-agent")
+      )
+        .then(detached.resolve, detached.reject);
+      return root;
+    });
+
+    assert(rootRuntime, "root runtime must be returned");
+    release.resolve();
+
+    assert(childRuntimePromise, "child runtime request must be started under retained scope");
+    const child = await childRuntimePromise;
+    assert(child, "retained producer scope must allow child admission after route return");
+    assertEquals(await detached.promise, undefined);
+    assertEquals(admittedAgents, ["root-agent", "child-agent"]);
+    child.finish("completed");
+    rootRuntime.finish("completed");
+  });
+
+  it("does not fall back to an ambient admission scope after a retained runtime closes", async () => {
+    const runtime = await admittedRuntime();
+    runtime.finish("completed");
+    let admissions = 0;
+
+    const retained = await runWithApplicationInferenceAdmission(async () => {
+      admissions++;
+      return {
+        runId: "unexpected-root-admission",
+        inferenceToken: INFERENCE_TOKEN,
+        expiresAt: expiresIn(60_000),
+        finalize: () => {},
+      };
+    }, () =>
+      runWithRetainedApplicationInferenceAdmission(
+        runtime,
+        () => getPrivateApplicationInferenceRuntimeOptions("child-after-parent-close"),
+      ));
+
+    assertEquals(retained, undefined);
+    assertEquals(admissions, 0);
+  });
+
+  it("does not admit from retained scope after parent completion, cancellation, failure, or expiry", async () => {
+    for (const status of ["completed", "failed", "cancelled"] as const) {
+      const runtime = await admittedRuntime();
+      runtime.finish(status);
+      let admissions = 0;
+
+      const retained = await runWithApplicationInferenceAdmission(async () => {
+        admissions++;
+        return {
+          runId: `unexpected-${status}`,
+          inferenceToken: INFERENCE_TOKEN,
+          expiresAt: expiresIn(60_000),
+          finalize: () => {},
+        };
+      }, () =>
+        runWithRetainedApplicationInferenceAdmission(
+          runtime,
+          () => getPrivateApplicationInferenceRuntimeOptions(`child-after-${status}`),
+        ));
+
+      assertEquals(retained, undefined, status);
+      assertEquals(admissions, 0, status);
+    }
+
+    const expired = await admittedRuntime({ expiresAt: expiresIn(-1) });
+    let admissions = 0;
+    const retained = await runWithApplicationInferenceAdmission(async () => {
+      admissions++;
+      return {
+        runId: "unexpected-expired",
+        inferenceToken: INFERENCE_TOKEN,
+        expiresAt: expiresIn(60_000),
+        finalize: () => {},
+      };
+    }, () =>
+      runWithRetainedApplicationInferenceAdmission(
+        expired,
+        () => getPrivateApplicationInferenceRuntimeOptions("child-after-expiry"),
+      ));
+
+    assertEquals(retained, undefined, "expired");
+    assertEquals(admissions, 0, "expired");
+  });
+
+  it("cancels a pending retained child admission when the parent expires before host response", async () => {
+    const childAdmission = Promise.withResolvers<{
+      runId: string;
+      inferenceToken: string;
+      expiresAt: string;
+      finalize: (status: ApplicationInferenceFinalizeStatus) => void;
+    }>();
+    const finalizations: ApplicationInferenceFinalizeStatus[] = [];
+    const admittedAgents: string[] = [];
+
+    const rootRuntime = await runWithApplicationInferenceAdmission(async (agentId) => {
+      admittedAgents.push(agentId);
+      if (agentId === "child-after-parent-expiry") return childAdmission.promise;
+      return {
+        runId: `${RUN_ID}-${agentId}`,
+        inferenceToken: `${INFERENCE_TOKEN}-${agentId}`,
+        expiresAt: expiresIn(20),
+        finalize: () => {},
+      };
+    }, () => getPrivateApplicationInferenceRuntimeOptions("parent-short-lived"));
+    assert(rootRuntime, "parent admission must be created before expiry");
+
+    const childRuntime = runWithRetainedApplicationInferenceAdmission(
+      rootRuntime,
+      () => getPrivateApplicationInferenceRuntimeOptions("child-after-parent-expiry"),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    childAdmission.resolve({
+      runId: `${RUN_ID}-child`,
+      inferenceToken: `${INFERENCE_TOKEN}-child`,
+      expiresAt: expiresIn(60_000),
+      finalize: (status) => finalizations.push(status),
+    });
+
+    assertEquals(await childRuntime, undefined);
+    assertEquals(admittedAgents, ["parent-short-lived", "child-after-parent-expiry"]);
+    assertEquals(finalizations, ["cancelled"]);
   });
 
   it("finalizes a completed run exactly once", async () => {

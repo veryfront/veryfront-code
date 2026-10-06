@@ -12,6 +12,7 @@ import type { Agent, AgentResponse } from "../types.ts";
 import { getAgentExecutionConfig } from "../runtime/execution-config.ts";
 import {
   getPrivateApplicationInferenceRuntimeOptions,
+  runWithRetainedApplicationInferenceAdmission,
   shouldUseApplicationInferenceRuntime,
 } from "../runtime/application-inference-admission.ts";
 import { defineOwnDataProperty } from "#veryfront/security/own-data-property.ts";
@@ -98,14 +99,20 @@ async function runAgentAsStreamingTool(
       const streamContext = privateRuntime
         ? buildAdmittedChildStreamContext(context, privateRuntime.runId)
         : undefined;
-      const stream = await streamAgent.stream({
+      const streamInput = {
         input,
         ...(streamContext ? { context: streamContext } : {}),
         abortSignal: privateRuntime?.signal ?? signal,
-        onFinish: (response) => {
+        onFinish: (response: AgentResponse) => {
           finalResponse = response;
         },
-      });
+      };
+      const stream = await (privateRuntime
+        ? runWithRetainedApplicationInferenceAdmission(
+          privateRuntime,
+          () => streamAgent.stream(streamInput),
+        )
+        : streamAgent.stream(streamInput));
       let streamError: string | undefined;
       const response = stream.toDataStreamResponse();
       if (response.body) {

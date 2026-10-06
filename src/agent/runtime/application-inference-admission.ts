@@ -32,6 +32,10 @@ const AbortControllerAbort = AbortController.prototype.abort;
 const AbortSignalAbortedGetter = Object.getOwnPropertyDescriptor(AbortSignal.prototype, "aborted")!
   .get!;
 const ObjectCreate = Object.create;
+const NativeWeakMap = WeakMap;
+const WeakMapGet = WeakMap.prototype.get;
+const WeakMapSet = WeakMap.prototype.set;
+const unboundedScopeSignal = new AbortController().signal;
 
 export type ApplicationInferenceFinalizeStatus = "completed" | "failed" | "cancelled";
 
@@ -48,6 +52,9 @@ export type ApplicationInferenceAdmissionCallback = (
 
 interface ApplicationInferenceScope {
   readonly admit: ApplicationInferenceAdmissionCallback;
+  readonly signal: AbortSignal;
+  readonly expiresAtMs?: number;
+  active: boolean;
 }
 
 export interface PrivateApplicationInferenceRuntime {
@@ -66,9 +73,23 @@ interface RetainedCredentialScope {
   active: boolean;
 }
 
+interface RetainedAdmissionScope {
+  readonly admit: ApplicationInferenceAdmissionCallback;
+  readonly signal: AbortSignal;
+  readonly expiresAtMs?: number;
+}
+
 const scopes = new AsyncLocalStorage<ApplicationInferenceScope>();
+const runtimeAdmissions = new NativeWeakMap<
+  PrivateApplicationInferenceRuntime,
+  RetainedAdmissionScope
+>();
 const AsyncLocalStorageRun = AsyncLocalStorage.prototype.run;
 const AsyncLocalStorageGetStore = AsyncLocalStorage.prototype.getStore;
+
+function isAbortSignalAborted(signal: AbortSignal | undefined): boolean {
+  return signal ? IntrinsicReflectApply(AbortSignalAbortedGetter, signal, []) as boolean : false;
+}
 
 function resolveTrustedInferenceApiBaseUrl(): string {
   const apiBaseUrl = resolveVeryfrontInferenceApiBaseUrlFromHostEnv();
@@ -93,7 +114,7 @@ function createRetainedResolver(input: {
     active: true,
   };
   const readActiveCredential = (): string => {
-    const aborted = IntrinsicReflectApply(AbortSignalAbortedGetter, scope.signal, []) as boolean;
+    const aborted = isAbortSignalAborted(scope.signal);
     if (!scope.active || aborted || Number.isNaN(expiresAtMs) || expiresAtMs <= DateNow()) {
       input.expire();
       throw new TypeError("Application inference credential is no longer active");
@@ -206,18 +227,126 @@ function createPrivateRuntime(
   return runtime;
 }
 
+function createApplicationInferenceScope(
+  admissionScope: RetainedAdmissionScope,
+  active = true,
+): ApplicationInferenceScope & { readonly then?: undefined } {
+  const scope = ObjectCreate(null) as ApplicationInferenceScope & { readonly then?: undefined };
+  defineOwnDataProperty(scope, "admit", admissionScope.admit, { enumerable: true });
+  defineOwnDataProperty(scope, "signal", admissionScope.signal, { enumerable: true });
+  if (admissionScope.expiresAtMs !== undefined) {
+    defineOwnDataProperty(scope, "expiresAtMs", admissionScope.expiresAtMs, { enumerable: true });
+  }
+  defineOwnDataProperty(scope, "active", active, { enumerable: true, writable: true });
+  defineOwnDataProperty(scope, "then", undefined);
+  return scope;
+}
+
+function isApplicationInferenceScopeActive(
+  scope: ApplicationInferenceScope | undefined,
+): scope is ApplicationInferenceScope {
+  if (!scope?.active || isAbortSignalAborted(scope.signal)) return false;
+  const expiresAtMs = scope.expiresAtMs;
+  return expiresAtMs === undefined || (Number.isFinite(expiresAtMs) && expiresAtMs > DateNow());
+}
+
 export async function runWithApplicationInferenceAdmission<T>(
   admit: ApplicationInferenceAdmissionCallback,
   fn: () => Promise<T> | T,
+  signal: AbortSignal = unboundedScopeSignal,
 ): Promise<T> {
-  return await (IntrinsicReflectApply(AsyncLocalStorageRun, scopes, [
-    { admit },
-    fn,
-  ]) as Promise<T>);
+  const scope = createApplicationInferenceScope({ admit, signal });
+  try {
+    return await (IntrinsicReflectApply(AsyncLocalStorageRun, scopes, [
+      scope,
+      fn,
+    ]) as Promise<T>);
+  } finally {
+    scope.active = false;
+  }
+}
+
+function createInactiveApplicationInferenceScope(): ApplicationInferenceScope {
+  return createApplicationInferenceScope(
+    {
+      admit: () => Promise.reject(new TypeError("Application inference admission is inactive")),
+      signal: unboundedScopeSignal,
+    },
+    false,
+  );
+}
+
+export function runWithRetainedApplicationInferenceAdmission<T>(
+  runtime: PrivateApplicationInferenceRuntime,
+  fn: () => Promise<T> | T,
+): Promise<T> | T {
+  const admissionScope = IntrinsicReflectApply(WeakMapGet, runtimeAdmissions, [runtime]) as
+    | RetainedAdmissionScope
+    | undefined;
+  let scope = createInactiveApplicationInferenceScope();
+  if (admissionScope) {
+    const candidate = createApplicationInferenceScope(admissionScope);
+    if (isApplicationInferenceScopeActive(candidate)) scope = candidate;
+  }
+  return IntrinsicReflectApply(AsyncLocalStorageRun, scopes, [scope, fn]) as Promise<T> | T;
 }
 
 export function hasApplicationInferenceAdmission(): boolean {
-  return IntrinsicReflectApply(AsyncLocalStorageGetStore, scopes, []) !== undefined;
+  const scope = IntrinsicReflectApply(AsyncLocalStorageGetStore, scopes, []) as
+    | ApplicationInferenceScope
+    | undefined;
+  return isApplicationInferenceScopeActive(scope);
+}
+
+function retainAdmissionForRuntime(
+  runtime: PrivateApplicationInferenceRuntime,
+  admit: ApplicationInferenceAdmissionCallback,
+  expiresAtMs: number,
+): void {
+  IntrinsicReflectApply(WeakMapSet, runtimeAdmissions, [
+    runtime,
+    { admit, signal: runtime.signal, expiresAtMs },
+  ]);
+}
+
+function closeLateAdmission(admission: ApplicationInferenceAdmission): void {
+  try {
+    const completion = admission.finalize("cancelled");
+    if (completion) void chainPrivatePromise(completion, () => {}, () => {});
+  } catch {
+    // Reconciliation owns cleanup if the host finalizer cannot be reached.
+  }
+}
+
+async function admitPrivateApplicationInferenceRuntime(
+  admissionScope: ApplicationInferenceScope,
+  agentId: string,
+  signal: AbortSignal | undefined,
+): Promise<PrivateApplicationInferenceRuntime | undefined> {
+  if (
+    !isApplicationInferenceScopeActive(admissionScope) || isAbortSignalAborted(signal)
+  ) {
+    return undefined;
+  }
+  return await chainPrivatePromise(admissionScope.admit(agentId), (admission) => {
+    if (
+      !isApplicationInferenceScopeActive(admissionScope) || isAbortSignalAborted(signal)
+    ) {
+      closeLateAdmission(admission);
+      return undefined;
+    }
+    const runtime = createPrivateRuntime(admission);
+    const runtimeExpiresAtMs = IntrinsicReflectApply(DateParse, Date, [
+      admission.expiresAt,
+    ]) as number;
+    retainAdmissionForRuntime(runtime, admissionScope.admit, runtimeExpiresAtMs);
+    if (signal) {
+      const cancel = () => runtime.finish("cancelled");
+      if (isAbortSignalAborted(signal)) cancel();
+      else signal.addEventListener("abort", cancel, { once: true });
+    }
+    return runtime;
+  });
 }
 
 export async function getPrivateApplicationInferenceRuntimeOptions(
@@ -227,16 +356,8 @@ export async function getPrivateApplicationInferenceRuntimeOptions(
   const scope = IntrinsicReflectApply(AsyncLocalStorageGetStore, scopes, []) as
     | ApplicationInferenceScope
     | undefined;
-  if (!scope) return undefined;
-  return await chainPrivatePromise(scope.admit(agentId), (admission) => {
-    const runtime = createPrivateRuntime(admission);
-    if (signal) {
-      const cancel = () => runtime.finish("cancelled");
-      if (signal.aborted) cancel();
-      else signal.addEventListener("abort", cancel, { once: true });
-    }
-    return runtime;
-  });
+  if (!isApplicationInferenceScopeActive(scope)) return undefined;
+  return await admitPrivateApplicationInferenceRuntime(scope, agentId, signal);
 }
 
 export function shouldUseApplicationInferenceRuntime(model: string | undefined): boolean {
