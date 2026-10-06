@@ -864,6 +864,7 @@ function buildDirectGenerateResult(
   result: ModelRuntimeGenerateResult | DirectGenerateResult,
 ): RuntimeGenerateTextResult {
   let text = "";
+  let reasoning = "";
   const toolCalls: RuntimeGenerateTextResult["toolCalls"] = [];
   const toolResults: RuntimeGenerateTextResult["toolResults"] = [];
 
@@ -871,6 +872,13 @@ function buildDirectGenerateResult(
   for (let partIndex = 0; partIndex < content.length; partIndex++) {
     if (!ObjectHasOwn(content, partIndex)) continue;
     const part = content[partIndex]!;
+    if (
+      part && typeof part === "object" && "type" in part && part.type === "reasoning" &&
+      "text" in part && typeof part.text === "string"
+    ) {
+      reasoning += part.text;
+      continue;
+    }
     if (isDirectTextPart(part)) {
       text += part.text;
       continue;
@@ -897,6 +905,7 @@ function buildDirectGenerateResult(
 
   return {
     text,
+    ...(reasoning ? { reasoning } : {}),
     ...(toolCalls.length > 0 ? { toolCalls } : {}),
     ...(toolResults.length > 0 ? { toolResults } : {}),
     usage: normalizeUsage(result.usage),
@@ -979,6 +988,7 @@ async function buildGenerateResultFromStream(
   stream: ReadableStream<unknown>,
 ): Promise<RuntimeGenerateTextResult> {
   let text = "";
+  let reasoning = "";
   let usage: RuntimeGenerateTextResult["usage"];
   let finishReason: string | null = null;
   let providerMetadata: Record<string, unknown> | undefined;
@@ -1000,6 +1010,10 @@ async function buildGenerateResultFromStream(
     const part = rawPart as RuntimeStreamPart;
 
     switch (part.type) {
+      case "reasoning-delta":
+        reasoning += part.delta;
+        break;
+
       case "text-delta":
         text += part.text;
         break;
@@ -1086,6 +1100,7 @@ async function buildGenerateResultFromStream(
 
   return {
     text,
+    ...(reasoning ? { reasoning } : {}),
     ...(finalToolCalls.length > 0 ? { toolCalls: finalToolCalls } : {}),
     ...(toolResults.length > 0 ? { toolResults } : {}),
     usage,

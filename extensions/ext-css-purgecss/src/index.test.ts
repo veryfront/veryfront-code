@@ -36,7 +36,10 @@ describe("ext-css-purgecss", () => {
     assertEquals(extension.version, extensionPackage.version);
     assertEquals(extension.contracts?.provides, [CSSPurgingEngineName]);
     assertEquals(extensionPackage.veryfront.capabilities, [
-      { type: "system:read", apis: ["cpus"] },
+      {
+        type: "env:read",
+        keys: ["__MINIMATCH_TESTING_PLATFORM__", "NO_COLOR", "FORCE_COLOR", "TERM", "CI"],
+      },
     ]);
     assertEquals(
       extension.capabilities,
@@ -44,7 +47,7 @@ describe("ext-css-purgecss", () => {
     );
     assertEquals(
       extensionPackage.tasks.test,
-      "deno test --frozen --no-check --allow-sys=cpus src/",
+      "deno test --frozen --no-check --allow-env=__MINIMATCH_TESTING_PLATFORM__,NO_COLOR,FORCE_COLOR,TERM,CI src/",
     );
 
     await extension.setup?.({
@@ -64,7 +67,7 @@ describe("ext-css-purgecss", () => {
       engine.cacheIdentity,
       `ext-css-purgecss@${extensionPackage.version}`,
     );
-    assertStringIncludes(engine.cacheIdentity, "purgecss@8.0.0");
+    assertStringIncludes(engine.cacheIdentity, "purgecss@7.0.2");
     assertThrows(
       () => {
         (engine as { cacheIdentity: string }).cacheIdentity = "changed@2";

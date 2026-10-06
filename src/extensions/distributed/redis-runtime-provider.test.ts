@@ -533,3 +533,18 @@ describe("RedisRuntimeProvider", () => {
     );
   });
 });
+
+it("preserves current raw readiness across the captured module boundary", async () => {
+  const client = createModuleClient();
+  let ready = false;
+  Object.defineProperty(client, "isReady", { get: () => ready });
+  const provider = createProvider();
+  provider.loadModule = () => Promise.resolve({ createClient: () => client } as never);
+  const module = await captureRedisRuntimeProvider(provider).loadModule();
+  const captured = module.createClient({});
+  assertEquals(captured.isReady, false);
+  ready = true;
+  assertEquals(captured.isReady, true);
+  ready = false;
+  assertEquals(captured.isReady, false);
+});

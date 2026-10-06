@@ -17,6 +17,7 @@ import {
 } from "#veryfront/data/index.ts";
 import { runWithCacheKeyContext } from "#veryfront/cache/cache-key-builder.ts";
 import { delay } from "#std/async";
+import { FakeTime } from "#std/testing/time";
 
 type StaticDataContext = Omit<DataContext, "request" | "query">;
 
@@ -283,17 +284,26 @@ describe("DataFetcher", () => {
               },
             };
 
+            // The clock is faked so the 1 ms revalidate window is crossed only where the test
+            // says so, never by a slow runner between two reads (#2685).
+            using time = new FakeTime(0);
             const c = makeContext("http://x/path");
             const first = await testFetcher.fetchData(pageProd, c, "production");
             const second = await testFetcher.fetchData(pageProd, c, "production");
-            assertEquals((second.props as any)?.t === (first.props as any)?.t, true);
+            assertEquals(second.props, first.props);
+            assertEquals(staticCalls, 1);
 
-            await delay(5);
+            time.tick(5);
 
+            // A stale entry is served as cached while it revalidates in the background.
             const third = await testFetcher.fetchData(pageProd, c, "production");
-            assertEquals((third.props as any)?.t === (first.props as any)?.t, true);
+            assertEquals(third.props, first.props);
+            for (let i = 0; i < 10 && staticCalls < 2; i++) await time.runMicrotasks();
+            assertEquals(staticCalls, 2);
+            await time.runMicrotasks();
 
-            void staticCalls;
+            const fourth = await testFetcher.fetchData(pageProd, c, "production");
+            assertEquals(fourth.props, { t: 5 });
           });
         },
       );

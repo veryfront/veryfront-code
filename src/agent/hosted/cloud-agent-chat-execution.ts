@@ -1,3 +1,4 @@
+import { inheritHostedAgentPauseCapability } from "./manual-pause-credential.ts";
 import { hostedTerminalToolSourceFactory } from "./terminal-credential.ts";
 /** Chat execution preparation and runtime wiring for the cloud agent service. */
 import { type HostToolSet, sleepTool } from "#veryfront/tool";
@@ -103,7 +104,9 @@ export function buildLocalTools(
   const tools: HostToolSet = {
     ...getDiscoveredHostTools({ agentId: taskContext.agentId }),
     ...markTrustedHostToolSet({
-      form_input: createHostedFormInputTool(taskContext, config.VERYFRONT_API_URL),
+      form_input: createHostedFormInputTool(taskContext, config.VERYFRONT_API_URL, {
+        controlPlaneReplay: Boolean(taskContext.parentRunId && taskContext.conversationId),
+      }),
       load_skill: createLoadSkillTool(context, taskContext),
       sleep: sleepTool,
       web_fetch: createHostedWebFetchTool(),
@@ -388,12 +391,11 @@ export async function prepareChatExecutionWithinProjectRuntime(
     ),
     createRuntime: (creationOptions) =>
       context.trace("chat.createRuntime", () => {
+        const options = { ...creationOptions, userId: req.userId };
+        inheritHostedAgentPauseCapability(options, creationOptions);
         return createAgentRuntime(
           context,
-          {
-            ...creationOptions,
-            userId: req.userId,
-          },
+          options,
           resolveModelRuntime ? { resolveModelRuntime } : undefined,
           req,
         );

@@ -1,3 +1,7 @@
+import {
+  type BoundConversationAgentRunFinalizer,
+  finalizeConversationAgentRun,
+} from "./durable.ts";
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
@@ -20,6 +24,23 @@ type RecordedCall = {
 };
 
 const calls: RecordedCall[] = [];
+const canonicalId = "11111111-1111-4111-8111-111111111111";
+const terminalToken = `header.${
+  btoa(
+    JSON.stringify({
+      runId: "run-1",
+      canonicalRunId: canonicalId,
+      tokenUse: "run_event_writer",
+      writerPurpose: "current_run_terminal",
+      dispatchNonce: "generation",
+    }),
+  )
+}.signature`;
+let finalizedInput: Parameters<BoundConversationAgentRunFinalizer>[0];
+const canonicalFinalize: BoundConversationAgentRunFinalizer = (input) => {
+  finalizedInput = input;
+  return finalizeConversationAgentRun({ ...input, terminalAuthToken: terminalToken });
+};
 
 function installFetchMock() {
   installMockFetch(async (input: string | URL | Request, init?: RequestInit) => {
@@ -30,8 +51,8 @@ function installFetchMock() {
     });
     return new Response(
       JSON.stringify({
-        completed: true,
-        run: { runId: "run-1", status: "completed" },
+        id: canonicalId,
+        status: "completed",
       }),
       {
         status: 200,
@@ -87,6 +108,7 @@ describe("agent/conversation-hosted-terminal", () => {
     const restoreFetch = installFetchMock();
     try {
       const adapter = createConversationHostedTerminalAdapter({
+        finalize: canonicalFinalize,
         authToken: "tok",
         apiUrl: "https://api.example.com",
         run: {
@@ -106,6 +128,7 @@ describe("agent/conversation-hosted-terminal", () => {
 
       await adapter.finalizeRun({
         status: "completed",
+        output: { text: "persisted assistant result" },
         metadata: {
           usage: {
             inputTokens: 4,
@@ -119,17 +142,10 @@ describe("agent/conversation-hosted-terminal", () => {
       assertEquals(calls.length, 1);
       assertEquals(calls[0]?.body, {
         status: "completed",
-        metadata: {
-          provider: "provider:fallback-model",
-          model: "fallback-model",
-          inputTokens: 4,
-          outputTokens: 6,
-          usageCaptureStatus: "complete",
-          finishReason: "stop",
-        },
-        terminal_error_code: null,
-        terminal_error_message: null,
+        output: { text: "persisted assistant result" },
       });
+      assertEquals(finalizedInput.model, "fallback-model");
+      assertEquals(finalizedInput.provider, "provider:fallback-model");
     } finally {
       restoreFetch();
     }
@@ -140,6 +156,7 @@ describe("agent/conversation-hosted-terminal", () => {
     const restoreFetch = installFetchMock();
     try {
       const adapter = createConversationHostedTerminalAdapter({
+        finalize: canonicalFinalize,
         authToken: "tok",
         apiUrl: "https://api.example.com",
         run: {
@@ -162,19 +179,9 @@ describe("agent/conversation-hosted-terminal", () => {
         metadata: { usageCaptureStatus: "missing" },
       });
 
-      assertEquals(calls[0]?.body, {
-        status: "completed",
-        metadata: {
-          provider: "provider:fallback-model",
-          model: "fallback-model",
-          inputTokens: 0,
-          outputTokens: 0,
-          usageCaptureStatus: "missing",
-          finishReason: "stop",
-        },
-        terminal_error_code: null,
-        terminal_error_message: null,
-      });
+      assertEquals(calls[0]?.body, { status: "completed", output: null });
+      assertEquals(finalizedInput.model, "fallback-model");
+      assertEquals(finalizedInput.provider, "provider:fallback-model");
     } finally {
       restoreFetch();
     }
@@ -183,6 +190,7 @@ describe("agent/conversation-hosted-terminal", () => {
   it("dispatches terminal state observers even without a durable run", async () => {
     const seen: unknown[] = [];
     const adapter = createConversationHostedTerminalAdapter({
+      finalize: canonicalFinalize,
       authToken: "tok",
       apiUrl: "https://api.example.com",
       run: null,
@@ -217,6 +225,7 @@ describe("agent/conversation-hosted-terminal", () => {
     const restoreFetch = installFetchMock();
     try {
       const adapter = createConversationHostedTerminalAdapter({
+        finalize: canonicalFinalize,
         authToken: "tok",
         apiUrl: "https://api.example.com",
         run: {
@@ -263,8 +272,8 @@ describe("agent/conversation-hosted-terminal", () => {
       }
       return new Response(
         JSON.stringify({
-          completed: true,
-          run: { runId: "run-1", status: "completed" },
+          id: canonicalId,
+          status: "completed",
         }),
         {
           status: 200,
@@ -274,6 +283,7 @@ describe("agent/conversation-hosted-terminal", () => {
     });
     try {
       const adapter = createConversationHostedTerminalAdapter({
+        finalize: canonicalFinalize,
         authToken: "tok",
         apiUrl: "https://api.example.com",
         run: {
@@ -307,7 +317,7 @@ describe("agent/conversation-hosted-terminal", () => {
       );
       assertEquals(
         attempts[1],
-        "https://api.example.com/runs/run-1/complete",
+        `https://api.example.com/runs/${canonicalId}/finalize`,
         "the retry must target the same durable run completion endpoint",
       );
     } finally {

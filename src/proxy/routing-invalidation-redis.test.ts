@@ -1,5 +1,6 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assert, assertEquals } from "#veryfront/testing/assert.ts";
+import { FakeTime } from "#std/testing/time";
+import { assert, assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   type RoutingInvalidationRedisClient,
@@ -16,7 +17,11 @@ const ACK_SIGNATURE_DOMAIN = "vf-proxy-routing-invalidation:ack:v1";
 const TEST_NOW_MS = 1_800_000_000_000;
 const TIMEOUT_NOT_UNDER_TEST_MS = 600_000;
 
-async function settleWithin<T>(promise: Promise<T>, label: string): Promise<T> {
+async function settleWithin<T>(
+  promise: Promise<T>,
+  label: string,
+  nextTurn: () => Promise<void> = () => new Promise<void>((resolve) => setTimeout(resolve, 0)),
+): Promise<T> {
   let outcome:
     | { ok: true; value: T }
     | { error: unknown; ok: false }
@@ -30,7 +35,7 @@ async function settleWithin<T>(promise: Promise<T>, label: string): Promise<T> {
     },
   );
   for (let turn = 0; turn < 200 && outcome === undefined; turn++) {
-    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    await nextTurn();
   }
   if (outcome === undefined) {
     throw new Error(`${label} did not settle within 200 event-loop turns`);
@@ -380,6 +385,85 @@ function answerEventWithRejectedAcknowledgement(
 }
 
 describe("proxy routing invalidation Redis bus", () => {
+  it("refuses a late acknowledgement subscription after bus shutdown", async () => {
+    const redis = createFakeRedisServer();
+    let clients = 0;
+    let finishSubscription: (() => void) | undefined;
+    let rawPublishes = 0;
+    const bus = await startProxyRoutingInvalidationBus({
+      redisUrl: "redis://example.test:6379",
+      integritySecret: createIntegritySecret(),
+      onInvalidate: () => {},
+      createClient: () => {
+        const client = redis.createClient();
+        const subscriber = clients++ === 1;
+        return {
+          ...client,
+          publish: async (channel, message) => {
+            rawPublishes++;
+            return await client.publish(channel, message);
+          },
+          subscribe: async (channel, listener) => {
+            if (subscriber && channel.startsWith(ROUTING_INVALIDATION_ACK_PREFIX)) {
+              await new Promise<void>((resolve) => {
+                finishSubscription = resolve;
+              });
+            }
+            return await client.subscribe(channel, listener);
+          },
+        };
+      },
+    });
+    assert(bus);
+    const publishing = bus.publish(createEvent()).catch((error) => error);
+    assert(finishSubscription);
+    await bus.close();
+    finishSubscription();
+    const error = await publishing;
+    assert(error instanceof Error);
+    assertEquals(error.message, "Proxy routing invalidation bus is closed");
+    assertEquals(rawPublishes, 0);
+    await assertRejects(() => bus.publish(createEvent()), Error, "closed");
+  });
+
+  it("retries an acknowledgement subscription after an offline refusal without retaining a stale channel", async () => {
+    const redis = createFakeRedisServer();
+    let clients = 0;
+    let acknowledgementSubscriptions = 0;
+    const bus = await startProxyRoutingInvalidationBus({
+      redisUrl: "redis://example.test:6379",
+      integritySecret: createIntegritySecret(),
+      onInvalidate: () => {},
+      createClient: () => {
+        const client = redis.createClient();
+        if (clients++ !== 1) return client;
+        return {
+          ...client,
+          async subscribe(channel, listener) {
+            if (channel.startsWith(ROUTING_INVALIDATION_ACK_PREFIX)) {
+              if (++acknowledgementSubscriptions === 1) {
+                throw new Error("Routing Redis connection is not ready");
+              }
+            }
+            return await client.subscribe(channel, listener);
+          },
+        };
+      },
+    });
+    assert(bus);
+    try {
+      await assertRejects(() => bus.publish(createEvent()), Error, "not ready");
+      assertEquals(await bus.publish(createEvent()), {
+        acknowledged: 1,
+        converged: true,
+        recipients: 1,
+      });
+      assertEquals(acknowledgementSubscriptions, 2);
+    } finally {
+      await bus.close();
+    }
+  });
+
   it("warns for a managed socket recycle and reports successful resubscription", async () => {
     const redis = createFakeRedisServer();
     const info: Array<{ message: string; extra?: Record<string, unknown> }> = [];
@@ -489,6 +573,7 @@ describe("proxy routing invalidation Redis bus", () => {
   });
 
   it("fans out to every replica and waits for a distinct acknowledgement from each", async () => {
+    using time = new FakeTime();
     const redis = createFakeRedisServer();
     const integritySecret = createIntegritySecret();
     const replicaA: ProxyRoutingInvalidationEvent[] = [];
@@ -497,7 +582,7 @@ describe("proxy routing invalidation Redis bus", () => {
       redisUrl: "redis://example.test:6379",
       expectedReplicas: 2,
       replicaId: "replica-a",
-      acknowledgementTimeoutMs: 100,
+      acknowledgementTimeoutMs: TIMEOUT_NOT_UNDER_TEST_MS,
       createClient: redis.createClient,
       integritySecret,
       onInvalidate: (event) => {
@@ -508,7 +593,7 @@ describe("proxy routing invalidation Redis bus", () => {
       redisUrl: "redis://example.test:6379",
       expectedReplicas: 2,
       replicaId: "replica-b",
-      acknowledgementTimeoutMs: 100,
+      acknowledgementTimeoutMs: TIMEOUT_NOT_UNDER_TEST_MS,
       createClient: redis.createClient,
       integritySecret,
       onInvalidate: (event) => {
@@ -516,16 +601,33 @@ describe("proxy routing invalidation Redis bus", () => {
       },
     });
 
-    const result = await busA?.publish(createEvent());
-    const duplicateResult = await busA?.publish(createEvent());
+    assert(busA);
+    assert(busB);
+    const publish = busA.publish(createEvent());
+    let duplicatePublish: Promise<unknown> | undefined;
+    try {
+      const result = await settleWithin(
+        publish,
+        "fan-out acknowledgement",
+        () => time.runMicrotasks(),
+      );
+      duplicatePublish = busA.publish(createEvent());
+      const duplicateResult = await settleWithin(
+        duplicatePublish,
+        "duplicate acknowledgement",
+        () => time.runMicrotasks(),
+      );
 
-    assertEquals(result, { acknowledged: 2, converged: true, recipients: 2 });
-    assertEquals(duplicateResult, { acknowledged: 2, converged: true, recipients: 2 });
-    assertEquals(replicaA, [createEvent()]);
-    assertEquals(replicaB, [createEvent()]);
-
-    await busA?.close();
-    await busB?.close();
+      assertEquals(result, { acknowledged: 2, converged: true, recipients: 2 });
+      assertEquals(duplicateResult, { acknowledged: 2, converged: true, recipients: 2 });
+      assertEquals(replicaA, [createEvent()]);
+      assertEquals(replicaB, [createEvent()]);
+    } finally {
+      await busA.close();
+      await busB.close();
+      await publish.catch(() => undefined);
+      await duplicatePublish?.catch(() => undefined);
+    }
     assertEquals(redis.clients.length, 4);
   });
 
@@ -684,6 +786,7 @@ describe("proxy routing invalidation Redis bus", () => {
   });
 
   it("keeps overlapping publish acknowledgement subscriptions isolated", async () => {
+    using time = new FakeTime();
     const redis = createFakeRedisServer();
     const integritySecret = createIntegritySecret();
     const replicaA: string[] = [];
@@ -692,7 +795,7 @@ describe("proxy routing invalidation Redis bus", () => {
       redisUrl: "redis://example.test:6379",
       expectedReplicas: 2,
       replicaId: "replica-a",
-      acknowledgementTimeoutMs: 100,
+      acknowledgementTimeoutMs: TIMEOUT_NOT_UNDER_TEST_MS,
       createClient: redis.createClient,
       integritySecret,
       onInvalidate: (event) => {
@@ -703,7 +806,7 @@ describe("proxy routing invalidation Redis bus", () => {
       redisUrl: "redis://example.test:6379",
       expectedReplicas: 2,
       replicaId: "replica-b",
-      acknowledgementTimeoutMs: 100,
+      acknowledgementTimeoutMs: TIMEOUT_NOT_UNDER_TEST_MS,
       createClient: redis.createClient,
       integritySecret,
       onInvalidate: (event) => {
@@ -711,18 +814,26 @@ describe("proxy routing invalidation Redis bus", () => {
       },
     });
 
-    const [firstResult, secondResult] = await Promise.all([
-      busA?.publish(createEvent("event-1")),
-      busA?.publish(createEvent("event-2")),
-    ]);
+    assert(busA);
+    assert(busB);
+    const firstPublish = busA.publish(createEvent("event-1"));
+    const secondPublish = busA.publish(createEvent("event-2"));
+    try {
+      const [firstResult, secondResult] = await settleWithin(
+        Promise.all([firstPublish, secondPublish]),
+        "overlapping publish acknowledgements",
+        () => time.runMicrotasks(),
+      );
 
-    assertEquals(firstResult, { acknowledged: 2, converged: true, recipients: 2 });
-    assertEquals(secondResult, { acknowledged: 2, converged: true, recipients: 2 });
-    assertEquals(replicaA.sort(), ["event-1", "event-2"]);
-    assertEquals(replicaB.sort(), ["event-1", "event-2"]);
-
-    await busA?.close();
-    await busB?.close();
+      assertEquals(firstResult, { acknowledged: 2, converged: true, recipients: 2 });
+      assertEquals(secondResult, { acknowledged: 2, converged: true, recipients: 2 });
+      assertEquals(replicaA.sort(), ["event-1", "event-2"]);
+      assertEquals(replicaB.sort(), ["event-1", "event-2"]);
+    } finally {
+      await busA.close();
+      await busB.close();
+      await Promise.allSettled([firstPublish, secondPublish]);
+    }
   });
 
   it("ignores forged Redis invalidation events", async () => {

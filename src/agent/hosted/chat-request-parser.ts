@@ -2,6 +2,7 @@ import {
   registerHostedTerminalCredential,
   RUN_TERMINAL_TOKEN_HEADER,
 } from "./terminal-credential.ts";
+import { registerHostedAgentPauseCredential } from "./manual-pause-credential.ts";
 import { readOwnDataProperty } from "#veryfront/agent/runtime/data-property-descriptor.ts";
 import { computeHash } from "#veryfront/utils/hash-utils.ts";
 import { privateJsonStringify } from "#veryfront/security/private-json.ts";
@@ -44,6 +45,7 @@ import { requireInferenceProviderCredential } from "#veryfront/provider/runtime-
 import {
   INGRESS_INFERENCE_TOKEN_HEADER,
   INGRESS_RUN_EVENT_TOKEN_HEADER,
+  INGRESS_RUN_STOP_TOKEN_HEADER,
   INGRESS_RUN_TERMINAL_TOKEN_HEADER,
   readIngressCredential,
 } from "#veryfront/security/http/ingress-credentials.ts";
@@ -382,6 +384,10 @@ async function withVerifiedRunEventAppendToken(
   registerHostedTerminalCredential(
     verifiedRequest,
     readRequestHeader(request, RUN_TERMINAL_TOKEN_HEADER),
+  );
+  registerHostedAgentPauseCredential(
+    verifiedRequest,
+    readIngressCredential(request, INGRESS_RUN_STOP_TOKEN_HEADER) ?? undefined,
   );
   return verifiedRequest;
 }

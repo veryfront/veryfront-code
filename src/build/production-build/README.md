@@ -314,7 +314,7 @@ const stats = await buildProduction({
 
 ## Build Statistics
 
-The build system provides comprehensive statistics:
+The build system reports these statistics:
 
 ```typescript
 interface SSGStats {

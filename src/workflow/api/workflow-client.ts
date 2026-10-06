@@ -445,7 +445,10 @@ export class WorkflowClient {
     return this.executor.cancel(runId);
   }
 
-  /** @internal Wait for positive executor-local evidence that a run's DAG execution stopped. */
+  /**
+   * @internal Wait for positive executor-local evidence that a run's DAG execution stopped.
+   * Without `executor.retainExecutionStopEvidence`, a run that already settled reports false.
+   */
   waitForExecutionStopped(runId: string): Promise<boolean> {
     return this.executor.waitForExecutionStopped(runId);
   }

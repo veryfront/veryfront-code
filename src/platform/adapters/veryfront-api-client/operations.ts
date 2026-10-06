@@ -64,6 +64,10 @@ import { copyFixedUint8ArrayWithinLimit } from "../file-system-capabilities.ts";
 const logger = baseLogger.component("api");
 
 const DEFAULT_PAGE_LIMIT = 100;
+// The API takes larger pages for listings without content. A fresh credential
+// lists a branch as metadata, so this keeps that listing to one request for
+// typical projects instead of one per hundred files.
+const METADATA_PAGE_LIMIT = 1000;
 const MAX_DEPENDENCY_METADATA_HISTORY_RESPONSE_BYTES = 1024 * 1024;
 const IntrinsicArrayIsArray = Array.isArray;
 const IntrinsicJSONParse = JSON.parse;
@@ -529,13 +533,25 @@ export class VeryfrontAPIOperations {
     branchRef = "main",
     options: Omit<ListFilesOptions, "cursor"> = {},
   ): Promise<ProjectFile[]> {
-    const allFiles = await listAllFiles((cursor) =>
-      this.listBranchFiles(projectRef, branchRef, {
-        ...options,
-        cursor,
-        limit: DEFAULT_PAGE_LIMIT,
-      })
-    );
+    const listPages = (limit: number) =>
+      listAllFiles((cursor) =>
+        this.listBranchFiles(projectRef, branchRef, { ...options, cursor, limit })
+      );
+    let allFiles: ProjectFile[];
+    if (options.withoutContent) {
+      try {
+        allFiles = await listPages(METADATA_PAGE_LIMIT);
+      } catch (error) {
+        // An API without large metadata pages rejects the page size; any other
+        // rejection of the metadata query repeats and surfaces from here.
+        if (!(error instanceof VeryfrontError && (error.status === 400 || error.status === 422))) {
+          throw error;
+        }
+        allFiles = await listPages(DEFAULT_PAGE_LIMIT);
+      }
+    } else {
+      allFiles = await listPages(DEFAULT_PAGE_LIMIT);
+    }
 
     logger.debug("listAllBranchFiles DONE", {
       projectRef,

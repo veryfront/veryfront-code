@@ -260,7 +260,10 @@ const extCSSPurgeCSS: ExtensionFactory = (config) => {
     name: "ext-css-purgecss",
     version: extensionPackage.version,
     contracts: { provides: ["CSSPurgingEngine"] },
-    capabilities: [{ type: "system:read", apis: ["cpus"] }],
+    capabilities: [{
+      type: "env:read",
+      keys: ["__MINIMATCH_TESTING_PLATFORM__", "NO_COLOR", "FORCE_COLOR", "TERM", "CI"],
+    }],
     setup(ctx) {
       ctx.provide(CSSPurgingEngineName, engine);
       ctx.logger.debug(

@@ -1,10 +1,14 @@
-import { type ConversationRunProjection, getConversationRun } from "../conversation/durable.ts";
+import { hostedBoundRunStatus } from "./terminal-credential.ts";
+import { type ConversationRunProjection, getCanonicalRunStatus } from "../conversation/durable.ts";
 import { agentLogger } from "#veryfront/utils";
 
 /** Public API contract for hosted child run identifiers. */
 export interface HostedChildRunIdentifiers {
+  status?: ConversationRunProjection["status"];
   childConversationId: string;
   childRunId: string;
+  /** Canonical routing UUID returned by the child admission owner. */
+  childCanonicalRunId?: string;
   childMessageId: string;
   latestEventId: number;
   latestExternalEventSequence: number;
@@ -149,6 +153,7 @@ export interface MonitorHostedChildRunStatusInput {
 export async function monitorHostedChildRunStatus(
   input: MonitorHostedChildRunStatusInput,
 ): Promise<void> {
+  const boundStatus = hostedBoundRunStatus(input.identifiers, input.identifiers.childRunId);
   let consecutiveFailures = 0;
 
   while (!input.abortSignal?.aborted) {
@@ -158,13 +163,13 @@ export async function monitorHostedChildRunStatus(
     }
 
     try {
-      const run = await getConversationRun({
+      const run = await (boundStatus ? boundStatus(input.abortSignal) : getCanonicalRunStatus({
         authToken: input.authToken,
         apiUrl: input.apiUrl,
-        conversationId: input.identifiers.childConversationId,
+        canonicalRunId: input.identifiers.childCanonicalRunId,
         runId: input.identifiers.childRunId,
         abortSignal: input.abortSignal,
-      });
+      }));
 
       consecutiveFailures = 0;
 

@@ -228,7 +228,7 @@ type RegistryAttempt =
   | { readonly kind: "metadata"; readonly metadata: RegistryPackageMetadata }
   | {
     readonly kind: "failure";
-    readonly failure: RegistryReleaseError | "timeout";
+    readonly failure: RegistryReleaseError;
   };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -404,6 +404,7 @@ async function attemptRegistryLookup(
   fetcher: typeof fetch,
   spec: string,
 ): Promise<RegistryAttempt> {
+  let stage = "version metadata";
   try {
     // All registry surfaces share one request deadline; retries retain the existing poll budget.
     const signal = AbortSignal.timeout(options.requestTimeoutMs);
@@ -439,6 +440,7 @@ async function attemptRegistryLookup(
     const incomplete = incompleteMetadataError(metadata, options);
     if (incomplete) return { kind: "failure", failure: incomplete };
     validateMetadata(metadata, options);
+    stage = "install index";
     const installFailure = await verifyInstallIndex(
       metadata,
       options,
@@ -448,6 +450,7 @@ async function attemptRegistryLookup(
     );
     if (installFailure) return { kind: "failure", failure: installFailure };
     if (options.requireRcTag) {
+      stage = "RC tag";
       const tagFailure = await verifyRcTag(options, fetcher, spec, signal);
       if (tagFailure) return { kind: "failure", failure: tagFailure };
     }
@@ -463,7 +466,14 @@ async function attemptRegistryLookup(
         registryErrorContext(options, "registry lookup failed"),
       );
     }
-    return { kind: "failure", failure: "timeout" };
+    return {
+      kind: "failure",
+      failure: new RegistryReleaseError(
+        "timeout",
+        `${spec} registry lookup timed out.`,
+        registryErrorContext(options, `${stage} lookup timed out`),
+      ),
+    };
   }
 }
 
@@ -473,7 +483,7 @@ export async function pollRegistryPackage(
   const fetcher = options.fetcher ?? fetch;
   const delay = options.delay ?? defaultDelay;
   const spec = `${options.packageName}@${options.version}`;
-  let lastFailure: RegistryReleaseError | "timeout" = new RegistryReleaseError(
+  let lastFailure = new RegistryReleaseError(
     "missing-version",
     `${spec} is not available yet.`,
     registryErrorContext(options, "version is not available yet"),
@@ -496,7 +506,7 @@ export async function pollRegistryPackage(
 
     if (attempt < options.maxAttempts) {
       options.onRetry?.(
-        `Waiting for ${spec} registry propagation (attempt ${attempt}/${options.maxAttempts}).`,
+        `Waiting for ${spec} registry propagation (attempt ${attempt}/${options.maxAttempts}): ${lastFailure.safeReason}.`,
       );
       // The last wait is shortened to what is left, so a lookup still begins
       // at the deadline however long each one takes.
@@ -506,11 +516,11 @@ export async function pollRegistryPackage(
     }
   }
 
-  if (lastFailure === "timeout") {
+  if (lastFailure.classification === "timeout") {
     throw new RegistryReleaseError(
       "timeout",
       `${spec} registry lookup timed out after ${options.maxAttempts} attempts.`,
-      registryErrorContext(options, "registry lookup timed out"),
+      lastFailure.context,
     );
   }
   throw new RegistryReleaseError(

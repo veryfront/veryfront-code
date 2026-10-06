@@ -1225,33 +1225,16 @@ function createSeededSubWorkflowNodeStates(
   return { seededNodeStates, ownedNodeIds };
 }
 
-const LOOP_EXIT_REASONS: ReadonlySet<unknown> = new Set(["condition", "maxIterations", "error"]);
-
 /**
- * Whether a persisted state may hold loop output, whatever node now uses its id.
- * Callback updates can overwrite result keys with undefined, which durable JSON
- * omits, or replace every metadata value with user data. Step and sub-workflow
- * states record input provenance; loop states do not. Legacy composite output
- * keys child results by bare id, so fewer than three keys count only when their
- * values have the loop result shape.
+ * A callback can erase every loop result key before JSON persistence. Without
+ * input provenance, any object publication may therefore be old loop output.
+ * Recovery must corroborate composite publications using their retained tree.
  */
 function mayHoldLoopPublication(state: NodeState): boolean {
-  const { output } = state;
-  if (
-    Object.hasOwn(state, "input") || state._stepInputRecorded === true ||
-    state._subWorkflowInputParsed === true ||
-    typeof output !== "object" || output === null || Array.isArray(output)
-  ) return false;
-  const result = output as Record<string, unknown>;
-  // Preserve refusal when callbacks replace all metadata values with user data.
-  if (["exitReason", "iterations", "previousResults"].every((key) => Object.hasOwn(result, key))) {
-    return true;
-  }
-  return [
-    Object.hasOwn(result, "exitReason") && LOOP_EXIT_REASONS.has(result.exitReason),
-    Object.hasOwn(result, "iterations") && Number.isInteger(result.iterations),
-    Object.hasOwn(result, "previousResults") && Array.isArray(result.previousResults),
-  ].filter(Boolean).length >= 2;
+  return !Object.hasOwn(state, "input") && state._stepInputRecorded !== true &&
+    state._subWorkflowInputParsed !== true && state._waitInstanceId === undefined &&
+    typeof state.output === "object" &&
+    state.output !== null && !Array.isArray(state.output);
 }
 
 /** Follow only completed, owned composite paths retained by the checkpoint. */
@@ -1307,26 +1290,48 @@ function hasRetainedPublicationTree(
 }
 
 /** Corroborate every surviving value against current or inherited publications. */
-function corroboratesLegacyParallelPublication(
+function corroboratesLegacyCompositePublication(
   node: WorkflowNode,
   nodeStates: Readonly<Record<string, NodeState>>,
   ownerPath: string,
   resumeContext: Readonly<WorkflowContext>,
   stateOwner: string | undefined,
 ): boolean {
-  if (node.config.type !== "parallel") return false;
+  if (node.config.type !== "parallel" && node.config.type !== "branch") return false;
   const output = nodeStates[node.id]?.output;
   if (typeof output !== "object" || output === null || Array.isArray(output)) return false;
-  if (!hasRetainedPublicationTree(node.config.nodes, nodeStates, stateOwner)) return false;
+  const state = nodeStates[node.id]!;
+  const children = retainedPublicationChildren(node, state);
+  if (children === undefined || !hasRetainedPublicationTree(children, nodeStates, stateOwner)) {
+    return false;
+  }
+  let result = output as Record<string, unknown>;
+  if (node.config.type === "branch") {
+    if (children.length === 0) {
+      // An empty arm has no child execution evidence. Require the branch's
+      // own durable selection, since loop callbacks can mimic its output.
+      return state._branchSelected === result.branch &&
+        isDeepStrictEqual(result, { branch: result.branch, skipped: true });
+    }
+    if (
+      typeof result.result !== "object" || result.result === null || Array.isArray(result.result)
+    ) {
+      return false;
+    }
+    if (Object.keys(result).some((key) => key !== "branch" && key !== "result")) return false;
+    result = result.result as Record<string, unknown>;
+  }
+  // An empty parallel has no retained execution evidence to distinguish it
+  // from a loop callback that erased every result key.
+  if (node.config.type === "parallel" && children.length === 0) return false;
   const publications = Object.create(null) as WorkflowContext;
   restorePublishedChildOutputs(
-    node.config.nodes,
+    children,
     nodeStates,
     publications,
     ownerPath,
     resumeContext,
   );
-  const result = output as Record<string, unknown>;
   const matched = new Set<string>();
   for (const [key, value] of Object.entries(publications)) {
     const aliases = [key, key.startsWith(`${node.id}/`) ? key.slice(node.id.length + 1) : key];
@@ -1349,11 +1354,11 @@ function corroboratesLegacyParallelPublication(
 }
 
 /**
- * Whether `nodeId` is a parallel whose loop-shaped output is corroborated by its
+ * Whether `nodeId` is a composite whose ambiguous output is corroborated by its
  * retained children. `stateOwner` is the owner path the retained states record:
  * `ownerPath` for owned rows, `undefined` for a fully ownerless legacy tree.
  */
-function hasLegacyParallelPublication(
+function hasLegacyCompositePublication(
   nodes: readonly WorkflowNode[],
   nodeId: string,
   nodeStates: Readonly<Record<string, NodeState>>,
@@ -1365,7 +1370,7 @@ function hasLegacyParallelPublication(
     const state = nodeStates[node.id];
     if (state?.status !== "completed" || state._subWorkflowOwnerPath !== stateOwner) continue;
     if (node.id === nodeId) {
-      return corroboratesLegacyParallelPublication(
+      return corroboratesLegacyCompositePublication(
         node,
         nodeStates,
         ownerPath,
@@ -1376,7 +1381,7 @@ function hasLegacyParallelPublication(
     const children = retainedPublicationChildren(node, state);
     if (
       children &&
-      hasLegacyParallelPublication(
+      hasLegacyCompositePublication(
         children,
         nodeId,
         nodeStates,
@@ -1423,7 +1428,7 @@ function assertNoLegacyLoopPublication(
     if (state._subWorkflowOwnerPath !== undefined) {
       if (
         state._subWorkflowOwnerPath === ownerPath &&
-        !hasLegacyParallelPublication(
+        !hasLegacyCompositePublication(
           nodes,
           nodeId,
           nodeStates,
@@ -1437,11 +1442,11 @@ function assertNoLegacyLoopPublication(
     // Retained child IDs identify removed producers when owner metadata is absent.
     // Older rows without that evidence may only use unclaimed legacy states;
     // root declarations and already-produced sibling records stay outside.
-    // A fully ownerless parallel stays restorable when its children corroborate it.
+    // A fully ownerless composite stays restorable when its children corroborate it.
     if (
       !scope.declaredNodeIds.has(nodeId) && !previouslyProducedNodeIds.has(nodeId) &&
       (recordedChildIds === undefined || recordedChildIds.includes(nodeId)) &&
-      !hasLegacyParallelPublication(
+      !hasLegacyCompositePublication(
         nodes,
         nodeId,
         nodeStates,
@@ -1470,7 +1475,7 @@ function restorePublishedChildOutputs(
       requireExactPublication && state?.status === "completed" &&
       (node.config.type === "loop" ||
         mayHoldLoopPublication(state) &&
-          !hasLegacyParallelPublication(
+          !hasLegacyCompositePublication(
             [node],
             node.id,
             nodeStates,
@@ -1609,6 +1614,7 @@ export class DAGExecutor {
     const scope: ExecutionScope = {
       rootRunId: run.id,
       executionRunId: run.id,
+      executionPath: [],
       // Read the reason execution stopped once, here, from the only run record
       // that carries it. Every child graph below runs against a synthetic run
       // whose status is always "running" and would otherwise read a crash.
@@ -2176,6 +2182,24 @@ export class DAGExecutor {
         queued.add(nodeId);
         ready.push(nodeId);
       }
+
+      // The settled batch is persisted and checkpointed and nothing else has
+      // started: the only point where stopping leaves no node half-run. Queued
+      // nodes have no recorded state, so a later execution finds them ready.
+      if (isDurableRun && ready.length > 0 && this.config.shouldPause) {
+        const paused = await this.config.shouldPause(run.id);
+        abortSignal?.throwIfAborted();
+        if (paused) {
+          return {
+            completed: false,
+            waiting: false,
+            paused: true,
+            context,
+            nodeStates,
+            contextPatch,
+          };
+        }
+      }
     }
 
     const unfinished = getUnfinishedNodeDetails(nodes, nodeStates);
@@ -2337,24 +2361,49 @@ export class DAGExecutor {
     }
 
     const config = node.config;
+    if (config.type !== "step") {
+      scope = {
+        ...scope,
+        executionPath: [...scope.executionPath, JSON.stringify([config.type, node.id])],
+      };
+    }
+
+    const scopeForAttempt = (attempt: number): ExecutionScope =>
+      attempt === 1 ? scope : {
+        ...scope,
+        executionPath: [...scope.executionPath, JSON.stringify(["retry", attempt])],
+      };
 
     switch (config.type) {
       case "step":
-        return this.executeStepNode(node, context, scope.executionRunId, abortSignal);
+        return this.executeStepNode(
+          node,
+          context,
+          scope.executionRunId,
+          abortSignal,
+          scope.executionPath,
+        );
       case "parallel":
         return executeCompositeNodeWithPolicy({
           node,
           parentSignal: abortSignal,
           cancellationGracePeriod: this.config.cancellationGracePeriod,
-          execute: (attemptSignal) =>
-            this.executeParallelNode(node, config, context, nodeStates, scope, attemptSignal),
+          execute: (attemptSignal, attempt) =>
+            this.executeParallelNode(
+              node,
+              config,
+              context,
+              nodeStates,
+              scopeForAttempt(attempt),
+              attemptSignal,
+            ),
         });
       case "map":
         return executeCompositeNodeWithPolicy({
           node,
           parentSignal: abortSignal,
           cancellationGracePeriod: this.config.cancellationGracePeriod,
-          execute: (attemptSignal) =>
+          execute: (attemptSignal, attempt) =>
             executeMapNodeStrategy({
               node,
               config,
@@ -2365,7 +2414,13 @@ export class DAGExecutor {
                 // Map children ride the parent node-state map like parallel
                 // children, so the root-keyspace flag is inherited unchanged.
                 executeChildGraph: (nodes, run, options) =>
-                  this.executeChildGraph(nodes, run, scope, options, attemptSignal),
+                  this.executeChildGraph(
+                    nodes,
+                    run,
+                    scopeForAttempt(attempt),
+                    options,
+                    attemptSignal,
+                  ),
                 selectChildNodeStates: (nodes, states) =>
                   createCompositeNodeStateView(
                     nodes,
@@ -2391,7 +2446,7 @@ export class DAGExecutor {
           node,
           parentSignal: abortSignal,
           cancellationGracePeriod: this.config.cancellationGracePeriod,
-          execute: async (attemptSignal) => {
+          execute: async (attemptSignal, attempt) => {
             if (!hasSelectedBranch) {
               selectedBranch = await config.condition(context);
               attemptSignal.throwIfAborted();
@@ -2403,7 +2458,7 @@ export class DAGExecutor {
               selectedBranch,
               context,
               nodeStates,
-              scope,
+              scopeForAttempt(attempt),
               attemptSignal,
             );
           },
@@ -2416,8 +2471,15 @@ export class DAGExecutor {
           node,
           parentSignal: abortSignal,
           cancellationGracePeriod: this.config.cancellationGracePeriod,
-          execute: (attemptSignal) =>
-            this.executeSubWorkflowNode(node, config, context, nodeStates, scope, attemptSignal),
+          execute: (attemptSignal, attempt) =>
+            this.executeSubWorkflowNode(
+              node,
+              config,
+              context,
+              nodeStates,
+              scopeForAttempt(attempt),
+              attemptSignal,
+            ),
         });
         const parsedState = nodeStates[nodeId];
         if (result.state.status !== "failed" || !parsedState?._subWorkflowInputParsed) {
@@ -2439,7 +2501,7 @@ export class DAGExecutor {
           node,
           parentSignal: abortSignal,
           cancellationGracePeriod: this.config.cancellationGracePeriod,
-          execute: (attemptSignal) =>
+          execute: (attemptSignal, attempt) =>
             executeLoopNodeStrategy({
               node,
               config,
@@ -2451,7 +2513,14 @@ export class DAGExecutor {
                   this.executeChildGraph(
                     nodes,
                     run,
-                    { ...scope, rootKeyspace: false },
+                    {
+                      ...scope,
+                      rootKeyspace: false,
+                      executionPath: [
+                        ...scopeForAttempt(attempt).executionPath,
+                        JSON.stringify(["iteration", run.id]),
+                      ],
+                    },
                     options,
                     attemptSignal,
                   ),
@@ -2474,12 +2543,14 @@ export class DAGExecutor {
     context: WorkflowContext,
     runId: string,
     abortSignal?: AbortSignal,
+    executionPath: readonly string[] = [],
   ): Promise<NodeExecutionResult> {
     const result = await this.config.stepExecutor.execute(
       node,
       context,
       abortSignal,
       runId,
+      executionPath,
     );
     abortSignal?.throwIfAborted();
 
@@ -2613,6 +2684,7 @@ export class DAGExecutor {
         nodeId: node.id,
         status: "completed",
         output: { branch: conditionResult ? "then" : "else", skipped: true },
+        _branchSelected: conditionResult ? "then" : "else",
         attempt: 1,
         startedAt: new Date(startTime),
         completedAt: new Date(),

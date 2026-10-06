@@ -29,7 +29,9 @@ import {
 import { classifyTestPath } from "./test-layout.ts";
 import {
   formatSuitePlan,
+  planIntegrationShard,
   planSuiteFiles,
+  selectDurationShard,
   selectOrdinalShard,
   type SuitePlanId,
 } from "./run-suite.ts";
@@ -297,6 +299,56 @@ describe("suite planning parity", () => {
     assertEquals(new Set(flattened).size, paths.length);
     assertEquals(sorted(flattened), sorted(paths));
     for (const plan of shards) assertEquals(plan.files, sorted(plan.files));
+  });
+
+  it("balances recorded durations deterministically without dropping files", () => {
+    const files = ["a", "b", "c", "d", "e", "new"];
+    const durations = { a: 106, b: 95, c: 75, d: 34, e: 31 };
+    const shards = [1, 2, 3].map((index) =>
+      selectDurationShard(files, { index, total: 3 }, durations)
+    );
+    assertEquals(sorted(shards.flat()), sorted(files));
+    assertEquals(new Set(shards.flat()).size, files.length);
+    const loads = shards.map((paths) =>
+      paths.reduce(
+        (sum, path) => sum + (durations[path as keyof typeof durations] ?? 1),
+        0,
+      )
+    );
+    assert(Math.max(...loads) / Math.min(...loads) <= 1.3);
+    for (const [offset, shard] of shards.entries()) {
+      assertEquals(shard, sorted(shard));
+      assertEquals(
+        selectDurationShard([...files].reverse(), {
+          index: offset + 1,
+          total: 3,
+        }, durations),
+        shard,
+      );
+    }
+    assertThrows(() =>
+      selectDurationShard(files, { index: 0, total: 3 }, durations)
+    );
+  });
+
+  it("keeps all integration and CLI files exactly once with their original profiles", async () => {
+    const suites = [
+      "integration:legacy-tests-root",
+      "integration:cli",
+    ] as const;
+    const original = await Promise.all(
+      suites.map((suite) => planSuiteFiles({ suite })),
+    );
+    const shards = await Promise.all(
+      [1, 2, 3].map((index) => planIntegrationShard({ index, total: 3 })),
+    );
+    for (const [offset, suite] of suites.entries()) {
+      const files = shards.flatMap((plans) =>
+        plans.find((plan) => plan.suite === suite)!.files
+      );
+      assertEquals(sorted(files), original[offset]!.files);
+      assertEquals(new Set(files).size, files.length);
+    }
   });
 
   it("uses locale-independent ordinal ordering for shard membership", () => {
@@ -722,7 +774,8 @@ describe("migration command surface", () => {
     );
 
     assert(
-      workflow.includes("deno task test:integration:cli --no-lock"),
+      workflow.includes("planIntegrationShard({ index, total: 3 })") &&
+        workflow.includes("buildDenoSuiteCommandArgs(suite, files"),
       "CI must execute the CLI integration suite",
     );
   });

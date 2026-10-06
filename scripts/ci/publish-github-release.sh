@@ -182,11 +182,29 @@ run_with_retry \
   create_draft_release
 incomplete_draft_created=true
 
+# Start long transfers first so metadata cannot delay their worker allocation.
+asset_sizes=()
 for asset in "${assets[@]}"; do
-  run_with_retry \
-    "GitHub release asset $(basename "$asset") upload" \
-    gh release upload "$tag" "$asset" --repo "$repo" --clobber
+  asset_size=$(wc -c < "$asset")
+  asset_sizes+=("$asset_size")
 done
+for ((asset_index = 1; asset_index < ${#assets[@]}; asset_index++)); do
+  asset="${assets[$asset_index]}"
+  asset_size="${asset_sizes[$asset_index]}"
+  position="$asset_index"
+  while ((position > 0)) && ((asset_size > asset_sizes[position - 1])); do
+    assets[$position]="${assets[$((position - 1))]}"
+    asset_sizes[$position]="${asset_sizes[$((position - 1))]}"
+    position=$((position - 1))
+  done
+  assets[$position]="$asset"
+  asset_sizes[$position]="$asset_size"
+done
+
+# GitHub CLI uploads the complete asset batch with five concurrent workers.
+run_with_retry \
+  "GitHub release assets upload" \
+  gh release upload "$tag" "${assets[@]}" --repo "$repo" --clobber
 incomplete_draft_created=false
 
 publish_args=(release edit "$tag" --repo "$repo" --draft=false)

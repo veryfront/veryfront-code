@@ -1,8 +1,9 @@
 import { assert, assertEquals, assertRejects } from "#veryfront/testing/assert";
 import { describe, it } from "#veryfront/testing/bdd";
 import { VeryfrontError } from "#veryfront/errors/types.ts";
-import type { components, operations, paths } from "../contract/runs-api.generated.ts";
+import type { components, operations, paths } from "#veryfront/runs/contract/runs-api.generated.ts";
 import {
+  type CanonicalRunStreamFrame,
   createRunsSdk,
   type RunsInput,
   type RunsOperationId,
@@ -12,13 +13,13 @@ import {
   runsProblemOf,
   type RunsResult,
   type RunStreamFrame,
-} from "./client.ts";
+} from "#veryfront/runs/target/client.ts";
 import {
   createFixtureTransport,
   fixtureResponse,
   RUNS_OPERATION_FIXTURES,
-} from "./client.test-helpers.ts";
-import { RUNS_OPERATIONS } from "./operations.ts";
+} from "#veryfront/runs/target/client.test-helpers.ts";
+import { RUNS_OPERATIONS } from "#veryfront/runs/target/operations.ts";
 
 type Schemas = components["schemas"];
 type Expect<T extends true> = T;
@@ -45,6 +46,9 @@ export type RunsSdkTypeChecks = [
   Expect<Equal<RunsOutput<"createRun">, Schemas["CreatedRun"]>>,
   Expect<Equal<RunsOutput<"deleteRun">, undefined>>,
   Expect<Equal<RunsResult<"streamRunEvents">, AsyncIterable<RunStreamFrame>>>,
+  Expect<Equal<RunStreamFrame["event"], CanonicalRunStreamFrame>>,
+  Expect<Equal<RunStreamFrame["event"]["event_id"], number | null>>,
+  Expect<Equal<RunStreamFrame["event"]["payload"]["type"], string>>,
   Expect<Equal<RunsInput<"createRun">["body"], Schemas["CreateRunRequest"]>>,
   Expect<Equal<RunsInput<"createRun">["headers"], { "Idempotency-Key": string }>>,
   Expect<
@@ -73,10 +77,10 @@ const FIXTURE_INPUTS = {
 };
 const FIXTURE_RUN = RUNS_OPERATION_FIXTURES.getRun.response.body;
 
-function sdkWith(responses: Response[], credential = { bearer: "user-token" }) {
+function sdkWith(responses: Response[]) {
   const fixture = createFixtureTransport(responses);
   return {
-    sdk: createRunsSdk({ baseUrl: BASE_URL, transport: fixture.transport, credential }),
+    sdk: createRunsSdk({ transport: fixture.transport }),
     ...fixture,
   };
 }
@@ -97,6 +101,21 @@ function problemResponse(problem: RunsProblem): Response {
     status: problem.status,
     headers: { "Content-Type": "application/problem+json" },
   });
+}
+
+// The immutable 0.8.2 fixture has bare payload SSE. The current API serves
+// the shared five-field frame; keep its source pin untouched and test this wire shape.
+function canonicalFrame(
+  payload: { type: string; [key: string]: unknown },
+  id: number,
+): CanonicalRunStreamFrame {
+  return {
+    event_id: id,
+    event_type: payload.type,
+    payload,
+    is_error: false,
+    created_at: "2026-10-04T20:00:00.000Z",
+  };
 }
 
 function streamResponse(chunks: string[]): Response {
@@ -124,7 +143,15 @@ describe("Runs target SDK", () => {
   it("serializes every operation's fixture request and returns its typed response", async () => {
     for (const [operationId, fixture] of Object.entries(RUNS_OPERATION_FIXTURES)) {
       const id = operationId as RunsOperationId;
-      const { sdk, requests } = sdkWith([fixtureResponse(id)]);
+      const response = id === "streamRunEvents"
+        ? streamResponse([`id: 42\ndata: ${
+          JSON.stringify(canonicalFrame({
+            type: "MODEL_CALL_COMPLETED",
+            usage: { business_null: null },
+          }, 42))
+        }\n\n`])
+        : fixtureResponse(id);
+      const { sdk, requests } = sdkWith([response]);
       const method = sdk[id] as (input: unknown) => unknown;
       const result = method(fixture.input);
       const received = "stream" in RUNS_OPERATIONS[id]
@@ -151,7 +178,7 @@ describe("Runs target SDK", () => {
       if (typeof fixture.response.body === "string") {
         const [frame] = received as RunStreamFrame[];
         assertEquals(frame?.id, "42", operationId);
-        assertEquals(frame?.event.type, "MODEL_CALL_COMPLETED", operationId);
+        assertEquals(frame?.event.payload.type, "MODEL_CALL_COMPLETED", operationId);
       } else {
         assertEquals(received, fixture.response.body, operationId);
       }
@@ -176,64 +203,53 @@ describe("Runs target SDK", () => {
   });
 
   it("encodes path parameters and tolerates a trailing slash on the base URL", async () => {
-    const fixture = createFixtureTransport([fixtureResponse("listProjectRuns")]);
-    const sdk = createRunsSdk({ baseUrl: `${BASE_URL}/`, transport: fixture.transport });
+    const fixture = createFixtureTransport(
+      [fixtureResponse("listProjectRuns")],
+      undefined,
+      `${BASE_URL}/`,
+    );
+    const sdk = createRunsSdk({ transport: fixture.transport });
     await sdk.listProjectRuns({ path: { project_reference: "team/a b" } });
     assertEquals(fixture.requests[0]?.url, `${BASE_URL}/projects/team%2Fa%20b/runs`);
   });
 
-  it("forwards the configured credential, an API key, or a per-call execution credential", async () => {
-    const { sdk, requests } = sdkWith([fixtureResponse("getRun"), fixtureResponse("finalizeRun")]);
+  it("leaves credential selection to the host-owned transport", async () => {
+    let token = "user-token";
+    const { transport, requests } = createFixtureTransport(
+      [fixtureResponse("getRun"), fixtureResponse("finalizeRun")],
+      () => token,
+    );
+    const sdk = createRunsSdk({ transport });
     await sdk.getRun({ path: { run_id: RUN_ID } });
-    await sdk.finalizeRun(FIXTURE_INPUTS.finalizeRun, {
-      credential: { bearer: "execution-token" },
-    });
+    token = "execution-token";
+    await sdk.finalizeRun(FIXTURE_INPUTS.finalizeRun);
     assertEquals(requests.map((request) => request.headers.get("Authorization")), [
       "Bearer user-token",
       "Bearer execution-token",
     ]);
-
-    const keyed = createFixtureTransport([fixtureResponse("getRun"), fixtureResponse("getRun")]);
-    const keyedSdk = createRunsSdk({
-      baseUrl: BASE_URL,
-      transport: keyed.transport,
-      credential: { apiKey: "<API_KEY>" },
-    });
-    await keyedSdk.getRun({ path: { run_id: RUN_ID } });
-    assertEquals(keyed.requests[0]?.headers.get("X-API-Key"), "<API_KEY>");
-    assertEquals(keyed.requests[0]?.headers.get("Authorization"), null);
-
-    const anonymous = createFixtureTransport([fixtureResponse("listRunEventTypes")]);
-    await createRunsSdk({ baseUrl: BASE_URL, transport: anonymous.transport }).listRunEventTypes();
-    assertEquals(anonymous.requests[0]?.headers.get("Authorization"), null);
-    assertEquals(anonymous.requests[0]?.headers.get("X-API-Key"), null);
   });
 
-  it("refuses redirects on credentialed requests and follows them on anonymous ones", async () => {
+  it("uses the canonical transport's fail-closed redirect policy", async () => {
     const keyed = createFixtureTransport([fixtureResponse("getRun"), fixtureResponse("getRun")]);
     await createRunsSdk({
-      baseUrl: BASE_URL,
       transport: keyed.transport,
-      credential: { apiKey: "<API_KEY>" },
     }).getRun({ path: { run_id: RUN_ID } });
     await createRunsSdk({
-      baseUrl: BASE_URL,
       transport: keyed.transport,
-      credential: { bearer: "user-token" },
     }).getRun({ path: { run_id: RUN_ID } });
     assertEquals(keyed.requests.map((request) => request.redirect), ["error", "error"]);
-
-    const anonymous = createFixtureTransport([fixtureResponse("listRunEventTypes")]);
-    await createRunsSdk({ baseUrl: BASE_URL, transport: anonymous.transport }).listRunEventTypes();
-    assertEquals(anonymous.requests[0]?.redirect, "follow");
   });
 
-  it("passes the abort signal to the transport", async () => {
+  it("rejects an already-aborted request before transport I/O", async () => {
     const { sdk, requests } = sdkWith([fixtureResponse("getRun")]);
     const controller = new AbortController();
     await sdk.getRun({ path: { run_id: RUN_ID } }, { signal: controller.signal });
+    assertEquals(requests[0]?.signal.aborted, false);
     controller.abort();
-    assertEquals(requests[0]?.signal.aborted, true);
+    await assertRejects(() =>
+      sdk.getRun({ path: { run_id: RUN_ID } }, { signal: controller.signal })
+    );
+    assertEquals(requests.length, 1);
   });
 
   it("hands success headers to onHeaders so a getRun ETag can guard updateRun", async () => {
@@ -265,6 +281,45 @@ describe("Runs target SDK", () => {
       collect(sdk.streamRunEvents({ path: { run_id: RUN_ID } }))
     );
     assertEquals(frameError.status, 502);
+  });
+
+  it("rejects malformed canonical envelopes and contradictory SSE metadata", async () => {
+    const valid = canonicalFrame({ type: "TEXT_MESSAGE_CONTENT", delta: "x" }, 7);
+    const invalid: unknown[] = [
+      {},
+      { ...valid, event_id: -1 },
+      { ...valid, event_id: 1.5 },
+      { ...valid, event_type: "" },
+      { ...valid, payload: null },
+      { ...valid, payload: { type: "WRONG" } },
+      { ...valid, is_error: "false" },
+      { ...valid, created_at: 123 },
+    ];
+    const wires = invalid.map((event) => `data: ${JSON.stringify(event)}\n\n`);
+    wires.push(`id: 999\nevent: ${valid.event_type}\ndata: ${JSON.stringify(valid)}\n\n`);
+    wires.push(`id: 7\nevent: WRONG\ndata: ${JSON.stringify(valid)}\n\n`);
+    for (const wire of wires) {
+      const { sdk } = sdkWith([streamResponse([wire])]);
+      const error = await rejection(() =>
+        collect(sdk.streamRunEvents({ path: { run_id: RUN_ID } }))
+      );
+      assertEquals(error.status, 502);
+    }
+  });
+
+  it("preserves canonical transient frames and opaque payload extensions without SSE metadata", async () => {
+    const frame = {
+      ...canonicalFrame({ type: "CUSTOM", value: { nested: null }, future: [1, 2] }, 7),
+      event_id: null,
+      created_at: null,
+    };
+    const { sdk } = sdkWith([
+      streamResponse([`event: CUSTOM\ndata: ${JSON.stringify(frame)}\n\n`]),
+    ]);
+    assertEquals(await collect(sdk.streamRunEvents({ path: { run_id: RUN_ID } })), [{
+      id: null,
+      event: frame,
+    }]);
   });
 
   it("follows page_info.next with unchanged filters until it is null", async () => {
@@ -307,9 +362,33 @@ describe("Runs target SDK", () => {
     assertEquals(requests.length, 2);
   });
 
+  it("detects cursor cycles after a non-cyclic prefix with bounded cursor state", async () => {
+    const cursors = ["prefix", "a", "b", "c", "a", "b", "c", "a", "b", "c", "a"];
+    const { sdk, requests } = sdkWith(
+      cursors.map((next, index) =>
+        Response.json({
+          data: [{ id: index === 0 ? "initial" : cursors[index - 1] }],
+          page_info: { next },
+        })
+      ),
+    );
+    const output: unknown[] = [];
+    const error = await rejection(async () => {
+      for await (const item of sdk.paginate("listRunChildRuns", { path: { run_id: RUN_ID } })) {
+        output.push(item);
+      }
+    });
+    assertEquals(error.status, 502);
+    assert(requests.length < cursors.length);
+    assertEquals(output.length, requests.length - 1);
+    assertEquals(new Set(output.map((item) => (item as { id: string }).id)).size, output.length);
+  });
+
   it("parses event-stream frames split across chunks, CRLF line ends and keep-alive comments", async () => {
-    const first = JSON.stringify({ type: "RUN_STARTED", threadId: "t", runId: RUN_ID });
-    const second = JSON.stringify({ type: "STEP_STARTED", stepName: "plan" });
+    const first = JSON.stringify(
+      canonicalFrame({ type: "RUN_STARTED", threadId: "t", runId: RUN_ID }, 7),
+    );
+    const second = JSON.stringify(canonicalFrame({ type: "STEP_STARTED", stepName: "plan" }, 8));
     const { sdk, requests } = sdkWith([
       streamResponse([
         `: keep-alive\r\n\r\nid: 7\r\ndata: ${first.slice(0, 10)}`,
@@ -330,7 +409,9 @@ describe("Runs target SDK", () => {
   });
 
   it("parses an event stream that ends its lines with a bare CR", async () => {
-    const event = JSON.stringify({ type: "RUN_STARTED", threadId: "t", runId: RUN_ID });
+    const event = JSON.stringify(
+      canonicalFrame({ type: "RUN_STARTED", threadId: "t", runId: RUN_ID }, 1),
+    );
     const { sdk } = sdkWith([streamResponse([`id: 1\rdata: ${event}\r`, `\r`])]);
     const frames = await collect(sdk.streamRunEvents({ path: { run_id: RUN_ID } }));
     assertEquals(frames, [{ id: "1", event: JSON.parse(event) }]);

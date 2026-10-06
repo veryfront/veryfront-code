@@ -1,3 +1,5 @@
+import { createTerminalRunControl } from "#veryfront/agent/runtime/terminal-run-control.ts";
+import { bindRuntimeRemoteToolSourcesToCredentialOwner } from "#veryfront/agent/runtime/mcp-server-tool-sources.ts";
 import { executeConfiguredTool, getAvailableTools } from "#veryfront/agent/runtime/tool-helpers.ts";
 import { toolRegistryInternal } from "#veryfront/tool/registry.ts";
 import "#veryfront/schemas/_test-setup.ts";
@@ -1512,11 +1514,20 @@ describe("server/handlers/request/agent-stream.handler", () => {
         assertExists(source);
         await source.listTools({ runId: "run_1" });
         for (const runId of ["run_1", "run_other"]) {
-          await source.executeTool("finalize", { runId, status: "failed" }, { runId });
+          await source.executeTool(
+            "finalize",
+            { runId, status: "failed" },
+            createTerminalRunControl({ runId }).context,
+          );
         }
+        const root = createTerminalRunControl({ runId: "run_1" }).context;
+        const child = createTerminalRunControl({ runId: "run_child" }).context;
+        const inherited = bindRuntimeRemoteToolSourcesToCredentialOwner([source], root)![0]!;
+        await inherited.executeTool("finalize", { runId: "run_1", status: "failed" }, child);
         assertEquals(finalizeCalls, [
           { runId: "run_1", authorization, terminal: expected },
           { runId: "run_other", authorization, terminal: null },
+          { runId: "run_1", authorization, terminal: null },
         ]);
       } finally {
         restoreMockFetch();
@@ -3285,7 +3296,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
           };
           if (request.method === "tools/call") {
             assertEquals(request.params?._meta, undefined);
-            assertEquals(request.params?.name, "list_uploads");
+            assertEquals(request.params?.name, "veryfront__list_uploads");
             capturedToolArguments = request.params?.arguments;
             return Promise.resolve(
               new Response(
@@ -3294,6 +3305,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
               ),
             );
           }
+          assertEquals(request.params?._meta, undefined);
           return Promise.resolve(
             new Response(
               JSON.stringify({
@@ -3302,9 +3314,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
                 result: {
                   tools: [
                     {
-                      name: request.params?._meta?.["veryfront/tool-names"] === "legacy"
-                        ? "list_uploads"
-                        : "veryfront__list_uploads",
+                      name: "veryfront__list_uploads",
                       description: "List uploads",
                       inputSchema: {
                         type: "object",
@@ -3316,9 +3326,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
                       },
                     },
                     {
-                      name: request.params?._meta?.["veryfront/tool-names"] === "legacy"
-                        ? "delete_upload"
-                        : "veryfront__delete_upload",
+                      name: "veryfront__delete_upload",
                       description: "Delete upload",
                       inputSchema: { type: "object", properties: {} },
                     },
@@ -3469,7 +3477,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
         if (result.response.status !== 200) throw new Error(await result.response.text());
         assertEquals(result.response.status, 200);
         assertEquals(
-          capturedAllowedRemoteTools,
+          capturedAllowedRemoteTools?.slice().sort(),
           denied
             ? []
             : ownedProjectDenial
@@ -3477,7 +3485,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
             : ["list_uploads", "veryfront__list_uploads"],
         );
         assertEquals(
-          capturedRemoteToolNames,
+          capturedRemoteToolNames.slice().sort(),
           denied
             ? []
             : ownedProjectDenial

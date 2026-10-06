@@ -1,4 +1,17 @@
+import {
+  observeAdmittedAgentToolCalls,
+  observeGeneratedAgentMessage,
+  observeGeneratedAgentTurn,
+  withLocalChildRuntime,
+} from "../composition/local-child-execution.ts";
 import { forEachSequential } from "./sequential.ts";
+import {
+  type AgentManualPause,
+  agentManualPauseBoundary,
+  type AgentPauseCheckpoint,
+  isAgentManualPauseBoundary,
+  parseAgentPauseCheckpoint,
+} from "./manual-pause.ts";
 import { getAgentRuntimeToolCallPart } from "./message-adapter.ts";
 import {
   admitTerminalDispatch,
@@ -126,7 +139,7 @@ import {
   type TurnProviderRequestValidator,
 } from "#veryfront/agent/middleware/turn-validation.ts";
 import { tryGetCacheKeyContext } from "#veryfront/cache/cache-key-builder.ts";
-import type { ToolExecutionContext } from "#veryfront/tool";
+import type { ToolDefinition, ToolExecutionContext } from "#veryfront/tool";
 import {
   isLocalModelRuntime,
   supportsModelRuntimeToolCalling,
@@ -1972,6 +1985,8 @@ type RuntimeStepState = {
 
 /** @internal Framework-only AgentRuntime construction options. */
 export type AgentRuntimeInternalOptions = {
+  /** Framework-owned continuation and pause capability for this exact dispatch. */
+  manualPause?: AgentManualPause;
   resolveModelRuntime?: AgentModelRuntimeResolver;
   /** Preserve the factory caller's prevalidated catalog without implicit tools or delegates. */
   preserveToolCatalog?: boolean;
@@ -2068,6 +2083,7 @@ export function streamWithAgentRuntimeDispatch(
 
 /** Implement agent runtime. */
 export class AgentRuntime {
+  #manualPause: AgentManualPause | undefined;
   #modelResolverState: AgentRuntimeModelResolverState;
   #modelCallThinking: AgentRuntimeInternalOptions["modelCallThinking"];
   #onStreamCompletion: AgentRuntimeInternalOptions["onStreamCompletion"];
@@ -2094,6 +2110,7 @@ export class AgentRuntime {
       ObjectDefineProperty(this, name, descriptor);
     }
     this.#modelCallThinking = internalOptions.modelCallThinking;
+    this.#manualPause = internalOptions.manualPause;
     this.#onStreamCompletion = internalOptions.onStreamCompletion;
     this.#resumeToolCall = internalOptions.resumeToolCall;
     this.#modelResolverState = internalOptions.resolveModelRuntime
@@ -2618,7 +2635,10 @@ export class AgentRuntime {
   }
 
   #generate(...args: AgentRuntimeGenerateArgs): Promise<AgentResponse> {
-    return withRuntimeTurnLineage(this, () => this.#generateWithinTurn(...args));
+    return withRuntimeTurnLineage(
+      this,
+      () => withLocalChildRuntime(this, () => this.#generateWithinTurn(...args)),
+    );
   }
 
   async #generateWithinTurn(
@@ -2704,7 +2724,10 @@ export class AgentRuntime {
                     systemPrompt,
                     messages,
                     turnPersistence.validateProviderRequest,
-                    turnPersistence.addMessage,
+                    async (message) => {
+                      await turnPersistence.addMessage(message);
+                      await observeGeneratedAgentMessage(message);
+                    },
                     turnPersistence.prepareTerminalDispatch,
                     {
                       ...terminalControl.binding,
@@ -2744,7 +2767,13 @@ export class AgentRuntime {
             },
           );
         } catch (error) {
-          await turnPersistence.finalize();
+          try {
+            await turnPersistence.finalize();
+            if (isAgentManualPauseBoundary(error)) this.#manualPause?.persisted?.(true);
+          } catch (finalizationError) {
+            if (isAgentManualPauseBoundary(error)) this.#manualPause?.persisted?.(false);
+            throw finalizationError;
+          }
           throw error;
         }
 
@@ -2799,7 +2828,10 @@ export class AgentRuntime {
   }
 
   #stream(...args: AgentRuntimeStreamArgs): Promise<ReadableStream<Uint8Array>> {
-    return withRuntimeTurnLineage(this, () => this.#streamWithinTurn(...args));
+    return withRuntimeTurnLineage(
+      this,
+      () => withLocalChildRuntime(this, () => this.#streamWithinTurn(...args)),
+    );
   }
 
   async #streamWithinTurn(
@@ -2917,6 +2949,8 @@ export class AgentRuntime {
       let inFlight: Promise<AgentResponse> | undefined;
 
       const completion = createPrivateDeferred<void>();
+      // The observer is optional; retain cleanup failure without an unhandled rejection.
+      void chainPrivatePromise(completion.promise, () => {}, () => {});
       this.#onStreamCompletion?.(completion.promise);
       const runtimeStream = createPrivateReadableStream<Uint8Array>({
         start: async (controller) => {
@@ -2958,7 +2992,10 @@ export class AgentRuntime {
                       systemPrompt,
                       memoryMessages,
                       turnPersistence.validateProviderRequest,
-                      turnPersistence.addMessage,
+                      async (message) => {
+                        await turnPersistence.addMessage(message);
+                        await observeAdmittedAgentToolCalls(message);
+                      },
                       turnPersistence.prepareTerminalDispatch,
                       controller,
                       encoder,
@@ -3032,6 +3069,20 @@ export class AgentRuntime {
             });
             closeSSEStream(controller);
           } catch (streamError) {
+            if (isAgentManualPauseBoundary(streamError)) {
+              try {
+                await turnPersistence.finalize();
+                this.#manualPause?.persisted?.(true);
+              } catch (finalizationError) {
+                this.#manualPause?.persisted?.(false);
+                logger.debug("Manual pause memory finalization failed", {
+                  errorCauses: summarizeErrorCausesForLog(finalizationError),
+                });
+              }
+              sendSSE(controller, encoder, { type: "data-veryfront.manual_pause", data: {} });
+              closeSSEStream(controller);
+              return;
+            }
             let error = streamError;
             try {
               await turnPersistence.finalize();
@@ -3078,10 +3129,15 @@ export class AgentRuntime {
             sendSSE(controller, encoder, errorEvent);
             closeSSEStream(controller);
           } finally {
+            let disposed = false;
             try {
               abortScope.dispose();
+              disposed = true;
+            } catch (cleanupError) {
+              this.#manualPause?.persisted?.(false);
+              completion.reject(cleanupError);
             } finally {
-              completion.resolve();
+              if (disposed) completion.resolve();
             }
           }
         },
@@ -3392,6 +3448,7 @@ export class AgentRuntime {
         const admittedTurn = snapshotAdmittedToolTurn(assistantMessage, currentMessages.length);
         pushPrivateArray(currentMessages, assistantMessage);
         await persistMessage(assistantMessage);
+        await observeGeneratedAgentTurn(assistantMessage.id, response);
         await persistProviderReplayCheckpointAfterTurn({
           emission: providerReplayCheckpointEmission,
           providerMetadata: readAttachedProviderMetadata(assistantMessage),
@@ -3908,14 +3965,33 @@ export class AgentRuntime {
     const effectiveModel = resolveRuntimeModel(modelString || this.config.model);
     const languageModel = resolvedModel ?? resolveModel(effectiveModel);
 
-    const toolCalls: ToolCall[] = [];
-    const currentMessages = mapPrivateArray(messages, (message) => message);
+    const continuation = await this.#manualPause?.load();
+    const checkpoint = continuation == null ? undefined : parseAgentPauseCheckpoint(continuation);
+    if (checkpoint?.providerMetadata) {
+      mapPrivateArray(checkpoint.messages, (message) => {
+        const saved = filterPrivateArray(checkpoint.providerMetadata!, (entry) =>
+          entry.messageId === message.id)[0];
+        if (saved) {
+          attachProviderMetadata(message, saved.metadata);
+        }
+      });
+    }
+    const toolCalls: ToolCall[] = checkpoint?.toolCalls ?? [];
+    const currentMessages = mapPrivateArray(checkpoint?.messages ?? messages, (message) => message);
+    const runtimeGeneratedMessageIds = createPrivateSet(
+      checkpoint?.runtimeGeneratedMessageIds ?? [],
+    );
+    mapPrivateArray(currentMessages, (message) => {
+      if (runtimeGeneratedMessageIds.has(message.id)) markRuntimeGeneratedUserMessage(message);
+      return message;
+    });
     applyProviderReplayCheckpointsToMessages(
       currentMessages,
       getRuntimeProviderReplayCheckpoints(this.config),
       { activeProvider: resolveActiveProviderReplayProvider(languageModel) },
     );
-    const totalUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
+    const totalUsage = checkpoint?.usage ??
+      { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
 
     if (!supportsToolCalling && this.config.tools) {
       warnUnsupportedToolCalling(this.id, effectiveModel);
@@ -3923,10 +3999,16 @@ export class AgentRuntime {
 
     // Request-scoped skill policy (not class-level mutable state)
     const skillState = AgentLoopSkillState.hydrate(currentMessages, runtimeContext);
-    let finalFinishReason: string | undefined;
-    let latestAssistantText = "";
-    let completedWithinStepBudget = false;
-    const initialToolExposureCheckpoint = getRuntimeToolExposureCheckpoint(this.config);
+    if (checkpoint) {
+      skillState.activeSkillDelegationOverrides = checkpoint.activeSkillDelegationOverrides;
+      skillState.markFormInputSubmitted(checkpoint.hasSubmittedFormInput === true);
+    }
+    let finalFinishReason: string | undefined = checkpoint?.finishReason;
+    let latestAssistantText = checkpoint?.latestAssistantText ?? "";
+    let completedWithinStepBudget = checkpoint?.completed ?? false;
+    const initialToolExposureCheckpoint = checkpoint?.toolExposureCheckpoint ??
+      getRuntimeToolExposureCheckpoint(this.config);
+    let pauseToolExposureAuthorized: readonly ToolDefinition[] | undefined;
     const toolExposureState = createToolExposureState();
     const persistToolExposureCheckpoint = getRuntimeToolExposureCheckpointPersister(this.config);
     const requireToolExposureCheckpointPersistence =
@@ -3947,16 +4029,87 @@ export class AgentRuntime {
       : configuredProviderTools;
     let currentSystemPrompt = systemPrompt;
     let currentRuntimeContext = runtimeContext;
-    let agentWriteFinalResponseToolGuardEnabled = false;
-    let recoveredEmptyResponse = false;
+    let agentWriteFinalResponseToolGuardEnabled =
+      checkpoint?.agentWriteFinalResponseToolGuardEnabled ?? false;
+    let recoveredEmptyResponse = checkpoint?.recoveredEmptyResponse ?? false;
     // One retry gives the model a chance to reconstruct a transport-truncated
     // batch without allowing a repeatedly broken provider stream to loop.
-    let recoveredInterruptedLocalToolBatch = false;
-    let interruptedLocalToolBatchRecoveryStep: number | undefined;
-    let interruptedLocalToolBatchRecoveryText: string | undefined;
-    let resumeToolCallExecuted = false;
+    let recoveredInterruptedLocalToolBatch = checkpoint?.recoveredInterruptedLocalToolBatch ??
+      false;
+    let interruptedLocalToolBatchRecoveryStep = checkpoint?.interruptedLocalToolBatchRecoveryStep;
+    let interruptedLocalToolBatchRecoveryText = checkpoint?.interruptedLocalToolBatchRecoveryText;
+    let resumeToolCallExecuted = checkpoint?.resumeToolCallExecuted ?? false;
 
-    for (let step = 0; step < maxSteps; step++) {
+    const pauseAtBoundary = async (nextStep: number) => {
+      if (!this.#manualPause) return;
+      if (this.#manualPause.requested && !(await this.#manualPause.requested())) return;
+      let saved: AgentPauseCheckpoint;
+      try {
+        saved = parseAgentPauseCheckpoint({
+          version: 1,
+          nextStep,
+          messages: currentMessages,
+          toolCalls,
+          usage: totalUsage,
+          latestAssistantText,
+          completed: completedWithinStepBudget,
+          ...(finalFinishReason ? { finishReason: finalFinishReason } : {}),
+          recoveredEmptyResponse,
+          recoveredInterruptedLocalToolBatch,
+          hasSubmittedFormInput: skillState.hasSubmittedFormInput,
+          activeSkillDelegationOverrides: skillState.activeSkillDelegationOverrides,
+          resumeToolCallExecuted,
+          agentWriteFinalResponseToolGuardEnabled,
+          interruptedLocalToolBatchRecoveryStep,
+          interruptedLocalToolBatchRecoveryText,
+          providerMetadata: mapPrivateArray(
+            filterPrivateArray(
+              currentMessages,
+              (message) => readAttachedProviderMetadata(message) !== undefined,
+            ),
+            (message) => ({
+              messageId: message.id,
+              metadata: readAttachedProviderMetadata(message)!,
+            }),
+          ),
+          runtimeGeneratedMessageIds: mapPrivateArray(
+            filterPrivateArray(currentMessages, isRuntimeGeneratedUserMessage),
+            (message) => message.id,
+          ),
+          toolExposureCheckpoint: pauseToolExposureAuthorized
+            ? createToolExposureCheckpoint(pauseToolExposureAuthorized, toolExposureState)
+            : initialToolExposureCheckpoint,
+        });
+      } catch {
+        if (this.#manualPause.release && !(await this.#manualPause.release())) return;
+        logger.warn(
+          "Agent is held at a safe boundary because its pause continuation cannot be saved",
+        );
+        throw agentManualPauseBoundary();
+      }
+      if (await this.#manualPause.acknowledge(saved)) throw agentManualPauseBoundary();
+    };
+    if (this.#manualPause) {
+      await validateProviderRequest(
+        withAgentRunRuntimeContext(systemPrompt, runRuntimeContext),
+        currentMessages,
+      );
+      if (checkpoint) {
+        const persistedIds = createPrivateSet(mapPrivateArray(messages, (message) => message.id));
+        for (let index = 0; index < currentMessages.length; index++) {
+          const message = currentMessages[index]!;
+          if (persistedIds.has(message.id)) continue;
+          await persistMessage(message);
+          persistedIds.add(message.id);
+        }
+      }
+    }
+    await pauseAtBoundary(checkpoint?.nextStep ?? 0);
+    for (
+      let step = checkpoint?.nextStep ?? 0;
+      !completedWithinStepBudget && step < maxSteps;
+      step++
+    ) {
       throwIfAborted(abortSignal);
       sendSSE(controller, encoder, { type: "step-start" });
       const currentStepToolResults = createPrivateMap<string, ToolResultPart>();
@@ -3993,8 +4146,11 @@ export class AgentRuntime {
         systemPrompt: currentSystemPrompt,
         toolContextBase,
         toolExposureState,
-        toolExposureCheckpoint: step === 0 ? initialToolExposureCheckpoint : undefined,
+        toolExposureCheckpoint: step === (checkpoint?.nextStep ?? 0)
+          ? initialToolExposureCheckpoint
+          : undefined,
       });
+      pauseToolExposureAuthorized = preparedStep.toolExposurePlan.authorized;
       currentSystemPrompt = preparedStep.systemPrompt;
       currentRuntimeContext = preparedStep.runtimeContext;
       const toolContext = preparedStep.toolContext;
@@ -4684,6 +4840,7 @@ export class AgentRuntime {
             timestamp: Date.now(),
           }),
         );
+        await pauseAtBoundary(step + 1);
         this.status = "thinking";
         continue;
       }
@@ -4781,6 +4938,7 @@ export class AgentRuntime {
         }
         sendSSE(controller, encoder, { type: "step-end" });
         completedWithinStepBudget = !exhaustedStepBudgetDuringInterruptedLocalToolRecovery;
+        if (!completedWithinStepBudget) await pauseAtBoundary(step + 1);
         break;
       }
 
@@ -5178,6 +5336,7 @@ export class AgentRuntime {
 
       throwIfAborted(abortSignal);
       sendSSE(controller, encoder, { type: "step-end" });
+      await pauseAtBoundary(step + 1);
       this.status = "thinking";
     }
 

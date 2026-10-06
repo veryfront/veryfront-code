@@ -617,19 +617,20 @@ Provider-neutral routing-invalidation primitives shared with extensions.
 
 ```ts
 import {
+  createRoutingRedisClient,
   hasProjectIdentityControlCharacters,
   isCanonicalOpaqueProjectIdentifier,
-  parseProxyRoutingInvalidationEvent,
 } from "veryfront/extensions/distributed/routing-invalidation-support";
 ```
 
 #### Functions
 
-| Name                                  | Description                                                | Source                                                                                            |
-| ------------------------------------- | ---------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
-| `hasProjectIdentityControlCharacters` | Whether a string contains a Unicode Cc control code point. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/project-identity.ts)     |
-| `isCanonicalOpaqueProjectIdentifier`  | Whether a value is a bounded, exact opaque identifier.     | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/project-identity.ts)     |
-| `parseProxyRoutingInvalidationEvent`  |                                                            | [source](https://github.com/veryfront/veryfront-code/blob/main/src/proxy/routing-invalidation.ts) |
+| Name                                  | Description                                                       | Source                                                                                                             |
+| ------------------------------------- | ----------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| `createRoutingRedisClient`            | Keep one bounded routing transport owner and refuse offline work. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/distributed/routing-redis-client.ts) |
+| `hasProjectIdentityControlCharacters` | Whether a string contains a Unicode Cc control code point.        | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/project-identity.ts)                      |
+| `isCanonicalOpaqueProjectIdentifier`  | Whether a value is a bounded, exact opaque identifier.            | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/project-identity.ts)                      |
+| `parseProxyRoutingInvalidationEvent`  |                                                                   | [source](https://github.com/veryfront/veryfront-code/blob/main/src/proxy/routing-invalidation.ts)                  |
 
 #### Types
 

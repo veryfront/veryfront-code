@@ -402,7 +402,9 @@ await workflows.approve(runId, pending.id, "editor@example.com", "Ship it", {
 The submitted `data` is validated against the wait node's `responseSchema`
 before it is persisted. A non-conformant answer is refused with an error and
 the approval stays pending. Validation only covers wait nodes declared in a
-static step list. When a workflow's `steps`, or the `steps` of a nested loop,
+static step list.
+
+When a workflow's `steps`, or the `steps` of a nested loop,
 is a function, the node list depends on runtime state, so no schema can be
 resolved for the decision and the answer is accepted unvalidated. After
 approval, the decision lands in the workflow context under the wait node's id,
@@ -538,7 +540,9 @@ export default workflow({
 The run ID list is resolved once when the node first parks and is stored with the workflow state.
 The cloud runtime reports each dependency with the node ID as its correlation, and the control
 plane resumes the same workflow run only after all listed child runs are completed, failed, or
-cancelled. A child-run wait has no timeout. Use between 1 and 1000 run IDs per node, and keep the
+cancelled. A child-run wait has no timeout.
+
+Use between 1 and 1000 run IDs per node, and keep the
 combined child dependencies across one parallel pause at or below 1000.
 Built-in durable workflow backends apply child completion only while the exact persisted wait
 boundary is still current. A custom backend must support atomic key-merge run patches and atomic
@@ -640,7 +644,12 @@ repeating completed steps or loop callbacks. Older nested runs with completed lo
 and no retained child context fail with an explicit legacy compatibility error when
 they are retried or resumed after a wait. Loop output mixes completion callback
 updates with framework metadata, and iteration history does not prove the original
-final publication. The current workflow definition cannot recover that provenance.
+final publication.
+
+The current workflow definition cannot recover that provenance, even when a
+completion callback erased all loop metadata keys. Object outputs without step,
+input, or wait identity are refused unless retained composite children corroborate
+the publication.
 Resume such a run from a checkpoint that retains the original child context.
 
 A run that pauses on an approval or an event has no output until it completes.
@@ -768,7 +777,9 @@ The backend verifies the run identity, terminal status, completion time, and
 mutation revision in the same operation that deletes its state. A failed run
 that starts retrying, or receives another state patch after the sweep reads it,
 is retained. A failed run with accepted retry work still queued or pending is
-not selected. In that case, or when Redis must resume bounded queue cleanup,
+not selected.
+
+In that case, or when Redis must resume bounded queue cleanup,
 `hasMore` is `false` so the loop does not immediately reselect the refreshed
 run. The next scheduled maintenance invocation can retry it. After deletion,
 reads return the existing not-found result; this retention API does not create
@@ -778,11 +789,14 @@ Redis stores a completion-time index and reads at most `limit + 1` candidate
 records per sweep without hydrating run input, output, or context. Completion
 times use numeric Redis scores, so ordering stays chronological for every valid
 JavaScript `Date`. One deletion script cleans at most 100 indexed stream
-messages for a run, then defers final deletion if more remain. Each call
+messages for a run, then defers final deletion if more remain.
+
+Each call
 requests one run-key `SCAN` page with `COUNT 100` and reads at most 100 queue
 entries during repair. Redis completes both repair cycles before
 returning candidates. Once both finish, that backend instance queries the
 completed index directly and does not restart repair between deletion batches.
+
 A new backend instance performs its own bounded repair. The queue cycle uses a
 fixed stream high-water mark, so current queue traffic does not keep the
 one-time repair open forever.

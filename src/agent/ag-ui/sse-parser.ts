@@ -147,7 +147,7 @@ function applyParsedEvent(run: ParsedAgUiSseRun, event: Record<string, unknown>)
   }
 }
 
-function coerceWireEvent(
+export function coerceWireEvent(
   eventName: string,
   payload: Record<string, unknown>,
 ): Record<string, unknown> {

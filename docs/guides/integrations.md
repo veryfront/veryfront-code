@@ -430,10 +430,14 @@ precondition support in `x-veryfront-tool-preconditions`. If it does not, the
 client throws `IntegrationApiError` with `kind === "unsupported_precondition"` and
 `outcomeUnknown === false` before sending the call. If support is no longer
 confirmed on a successful call response, the error has `outcomeUnknown === true`:
-the operation may already have run. Inspect the provider outcome before retrying.
+the operation may already have run.
+
+Inspect the provider outcome before retrying.
 The client never automatically replays the call. A missing or malformed readiness
 projection, or a response for another project, tool, or connection, throws
-`IntegrationApiError` with `kind === "invalid_response"`. Changing project or
+`IntegrationApiError` with `kind === "invalid_response"`.
+
+Changing project or
 platform credentials requires a new bound client. See the
 [integration API reference](../api-reference/veryfront/integrations.md) for the
 public types.
@@ -574,12 +578,16 @@ independent contracts:
 The agent source and source configuration select eligible tools from the
 catalog. Managed OAuth tools additionally require an authenticated connection
 to run. Local static-credential tools resolve their credentials from the host
-environment or credential provider and do not use connection inventory. Adding
+environment or credential provider and do not use connection inventory.
+
+Adding
 a tool does not create a connection. Connecting OAuth does not
 rewrite agent source or source configuration. If a project has several
 accessible accounts, a REST, GraphQL, MCP, TypeScript client, or CLI call can
 select an exact connection; Veryfront validates that it belongs to the project
-and is visible to the caller, and never falls back to another account. Framework
+and is visible to the caller, and never falls back to another account.
+
+Framework
 tool calls use the runtime-selected connection.
 
 ## Authentication flow

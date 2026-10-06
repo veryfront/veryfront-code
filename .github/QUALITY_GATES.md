@@ -25,20 +25,27 @@ reporting remains advisory.
 A main push whose exact commit already passed a green merge queue run of this
 workflow, with that run's artifacts still available, inherits the test results
 from that run instead of re-running them. Both gates accept a skipped test
-dependency only in that case. The Sonar scan still runs and still blocks, using
-the merge queue run's coverage, and the release publishes that run's npm
-artifact. Without such a run, main runs the full pipeline. Evidence:
+dependency only in that case. The fresh Sonar scan uses the merge queue run's
+coverage and blocks staging dispatch. RC publication runs alongside that scan
+and publishes the tested npm artifact. Without such a run, main runs the full pipeline. Evidence:
 [tested merge-queue run contract](../tests/integration/ci/tested-merge-queue-run-workflow.test.ts).
 
 The scanner emits the diagnostic `SonarQube Cloud scan` check.
 `SonarQube Cloud quality gate` is the only Sonar check required by the ruleset
-and depends on that scanner result. Merge queue scans explicitly analyze their
-`gh-readonly-queue` ref plus generated commit SHA with `main` as the target
-branch. Including the SHA isolates rebuilt groups even when GitHub reuses a
-queue ref. Sonar does
-not auto-detect `merge_group` events; leaving the branch unset publishes queue
-analyses into `main`, where concurrent groups compete with each other and main
-pushes. Pull requests and main pushes retain Sonar's automatic detection.
+and depends on that scanner result. Merge queue scans analyze the exact
+generated commit as a pull-request analysis: `sonar.pullrequest.key` is the PR
+number parsed from `gh-readonly-queue/main/pr-N-<sha>`,
+`sonar.pullrequest.branch` is that queue ref, and `sonar.pullrequest.base` is
+`main`. Unexpected queue refs fail before the scanner runs. PR mode reuses the
+JS/TS analysis cache and evaluates new-code gate conditions. The current gate
+contains only new-code conditions; main still runs its full branch analysis.
+
+Queue scans share the originating PR's Sonar analysis identity. A queue rebuild
+replaces that PR's earlier decoration instead of creating a SHA-isolated
+branch. Each scan still waits for its server-side quality gate, and queue
+analyses never target main's analysis. Sonar does not auto-detect `merge_group`
+events, so the explicit PR properties are required. Ordinary pull requests and
+main pushes retain Sonar's automatic detection.
 The 28-minute scan budget, 20-minute server wait, required quality gate, and
 single infrastructure-error retry remain unchanged.
 
@@ -124,13 +131,24 @@ pins the single-build invariant and the download ordering in each consumer.
 
 ## Main release runner budget
 
-Main pushes enforce the server-side Sonar result in the scan job and evaluate
-all merge correctness results as the first publisher step. Standalone
-`SonarQube Cloud quality gate` and `quality gate (merge)` jobs still report on
-pull requests and merge-group events with unchanged required names. Publishers
-accept skipped correctness jobs only with the authoritative tested merge-queue
-run id, and always require the fresh main Sonar gate to succeed. Fallback runs
-require every correctness dependency to succeed.
+Main pushes reuse the authoritative tested merge-queue run only for the same
+commit and available artifacts. On RC reuse, npm publication accepts the skipped
+local correctness jobs and starts alongside the fresh main Sonar analysis.
+Separate reuse coverage and scan jobs keep that analysis outside the publisher's
+dependency path. The parallel path requires both reuse and an RC version.
+Stable reuse keeps the original fresh scan, with coverage from the tested queue
+run. Both scan paths share the same steps. Fallback runs still wait
+for every correctness dependency and the Sonar scan before publishing.
+
+The `SonarQube Cloud quality gate` job checks the selected fresh scan on every
+trusted run, including main pushes. Stable publication still waits for the original fresh scan. The canonical registry gate requires it before any downstream dispatch
+step can run. An RC published before a failed main gate remains published but
+never dispatches to staging.
+
+npm publication does not consume binary assets. Binary builds gate GitHub asset
+preparation and public upload, so they still block staging dispatch without
+delaying npm publication. The actual public RC upload has no dependency on the
+parallel main scan through the skipped stable publisher.
 
 Stable registry validation and downstream dispatch share one runner. RC registry
 validation starts after npm publication on a read-only runner, in parallel with
@@ -141,5 +159,5 @@ Every dispatch step requires successful validation, the selected publication
 job, and public release upload, retains a five-minute timeout, and stays inside
 the existing `production` approval environment. The validation container
 terminates before token creation; no repository script or local action runs on
-the host after validation. The standalone main Sonar and merge gate runners
-remain folded without removing any gate.
+the host after validation. The standalone main merge gate runner
+remains folded without removing any gate.

@@ -65,13 +65,16 @@ origins use `__Host-vf_csrf`, which is host-only, path-scoped to `/`, and always
 secure. Plain-HTTP LAN development uses an origin-scoped
 `vf_csrf_http_<encoded-origin-and-config>` physical cookie, because browsers
 discard `Secure` `__Host-` cookies there and an HTTP sibling must not collide
-with an HTTPS token. Its companion `vf_csrf_names_<encoded-origin>` cookie lets
+with an HTTPS token.
+
+Its companion `vf_csrf_names_<encoded-origin>` cookie lets
 `csrfMutationHeaders` discover that physical name; application code should not
 read or construct it directly. During migration, if an HTTP sibling still
 advertises a legacy shared token, HTTPS uses an origin-scoped
 `vf_csrf_https_<encoded-origin-and-config>` token instead of making that legacy
 cookie unreadable to the already-open HTTP app. The default header is
 `x-csrf-token`.
+
 Cookie/header names and token lifetimes are
 bounded both in configuration and at the public helper boundary.
 State-changing requests are checked unless an exact, schema-validated exclusion
@@ -197,10 +200,14 @@ credential rejection, or explicit invalidation never returns stale or empty
 secret data.
 
 Hosted proxy mode requires both `VERYFRONT_API_INTERNAL_USER` and
-`VERYFRONT_API_INTERNAL_PASS`, and `VERYFRONT_API_BASE_URL` must provide the
-canonical `/internal/project-environment-variables` endpoint. Before using
-those host credentials, the runtime verifies the request bearer token against
-the project-scoped management endpoint. A missing credential, redirected
+`VERYFRONT_API_INTERNAL_PASS`. Both environment requests go to one origin:
+`VERYFRONT_API_INTERNAL_URL` when it is set to a non-blank value, otherwise
+`VERYFRONT_API_BASE_URL`. That origin must provide the canonical
+`/internal/project-environment-variables` endpoint and the project-scoped
+management endpoint. `VERYFRONT_API_INTERNAL_URL` is read from the host
+environment only; project overlays and project env files cannot set it.
+Before using those host credentials, the runtime verifies the request bearer
+token against the project-scoped management endpoint. A missing credential, redirected
 endpoint, or failed internal request is an error. There is no compatibility
 fallback to masked management values. Local CLI proxy mode and non-proxy
 runtimes do not require these host credentials.
@@ -213,7 +220,9 @@ assert project, environment, and branch identity on routes outside the signed
 control-plane path. There is no per-request cryptographic binding on the
 proxy-to-runtime hop, so the design has no defence in depth if pod network
 privacy fails. Operators must keep the runtime origin unreachable except from
-the proxy (private service plus network policy). Planned follow-up: an
+the proxy (private service plus network policy).
+
+Planned follow-up: an
 authenticated proxy-to-runtime hop (mTLS or a per-hop shared secret) so
 identity headers are honoured only on an authenticated channel. Agent-run
 dispatch is already independent of this hop; its branch and environment
@@ -229,9 +238,11 @@ derives from the signed control-plane body. Upgrading an existing deployment
 is safe in this order:
 
 1. Deploy and verify the canonical
-   `/internal/project-environment-variables` endpoint on
+   `/internal/project-environment-variables` endpoint on the origin the
+   runtime will use: `VERYFRONT_API_INTERNAL_URL` if you set it, otherwise
    `VERYFRONT_API_BASE_URL`. Provision the credential pair that the endpoint
-   accepts.
+   accepts. If you add `VERYFRONT_API_INTERNAL_URL` to a running deployment,
+   verify the endpoint on that origin before setting the variable.
 2. Set `VERYFRONT_API_INTERNAL_USER`, `VERYFRONT_API_INTERNAL_PASS`, and
    `VERYFRONT_TRUST_FORWARDED_HEADERS=1` (and ensure
    `CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY` is set) on the runtime environment
@@ -294,13 +305,16 @@ path before delegating to the configured runtime adapter. Its trust root and
 policy are immutable after construction; it exposes no raw-adapter escape
 hatch. Policy records and directory allowlists are copied from own data
 properties, so inherited settings, accessors, and later caller mutations cannot
-change the active policy. Directory iteration and watcher installation use
+change the active policy.
+
+Directory iteration and watcher installation use
 asynchronous physical canonicalization. Filesystem adapters must provide
 `lstat`/`realPath` for the requested symlink policy or explicitly guarantee that
 their API cannot traverse symbolic links; unknown semantics fail closed.
 An omitted module-import allowlist is explicitly unrestricted within the
 project root, while an empty allowlist denies every project subdirectory; the
 two states are never collapsed.
+
 Callers that create a watcher must await `watcher.ready` before assuming it is
 active. Binary reads require a native binary-safe adapter capability and never
 fall back to text transcoding. Temporary directories are created beneath the
@@ -414,7 +428,9 @@ Worker: API ownership returns the typed
 `project-execution-unavailable` 503 response until the request is routed to a
 genuinely external or dedicated isolated project runtime. Raw-path server-data
 modules are local-only; remote data and renderer-backed module endpoints return
-503 before resolving project modules. Shared-runtime CORS preflights never
+503 before resolving project modules.
+
+Shared-runtime CORS preflights never
 import route modules to discover methods, and component-snippet requests fail
 before source reads or compilation. Shared markdown previews likewise stop
 before source reads or custom not-found rendering.

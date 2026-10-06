@@ -1,7 +1,9 @@
 import {
   createPlatformMcpCatalogSource,
+  platformMcpLegacyName,
   withPlatformMcpPolicyAliases,
 } from "#veryfront/agent/platform-mcp-tool-source.ts";
+import { createHostOwnedAgentManualPause } from "#veryfront/agent/hosted/manual-pause-credential.ts";
 import { markTrustedPlatformSource } from "#veryfront/tool/platform-source-provenance.ts";
 import {
   runWithRegistryScopeNamespace,
@@ -31,6 +33,7 @@ import {
 import {
   createRuntimeAgentStreamResponse,
   registerRuntimeInferenceCredential,
+  registerRuntimeManualPause,
   type RuntimeAgentStreamExecutionDeps,
 } from "#veryfront/internal-agents/run-stream.ts";
 import {
@@ -128,6 +131,7 @@ import { isProviderReplayCheckpointEmissionEnabled } from "#veryfront/agent/host
 import { getServerResolvedProviderReplayCheckpoints } from "#veryfront/agent/hosted/runtime-request-config.ts";
 import {
   INGRESS_RUN_EVENT_TOKEN_HEADER,
+  INGRESS_RUN_STOP_TOKEN_HEADER,
   INGRESS_RUN_TERMINAL_TOKEN_HEADER,
   readIngressCredential,
 } from "#veryfront/security/http/ingress-credentials.ts";
@@ -540,11 +544,10 @@ async function resolveAgentSourceConfig(
 function isPlatformToolDeniedByAgent(
   agent: Agent,
   toolName: string,
-  aliases: ReadonlyMap<string, string>,
 ): boolean {
   const configuredTools = agent.config.tools;
   if (!isRecord(configuredTools)) return false;
-  const legacyName = aliases.get(toolName) ?? toolName;
+  const legacyName = platformMcpLegacyName(toolName);
   const canonicalName = legacyName.includes("__") ? legacyName : `veryfront__${legacyName}`;
   if (configuredTools[canonicalName] === false) return true;
   const projectTool = resolveVisibleRegistryTool(legacyName, agent.id);
@@ -591,7 +594,6 @@ async function withVeryfrontPlatformRemoteTools(input: {
   const apiUrl = resolveVeryfrontApiBaseUrlFromHostEnv();
   const platformRemoteToolSource = createRunPlatformToolSource({
     id: VERYFRONT_API_MCP_SOURCE_ID,
-    listMeta: { "veryfront/tool-names": "legacy" },
     endpoint: `${apiUrl}/mcp`,
     headers: { Authorization: `Bearer ${input.token}` },
   }, input.terminalAuthority ?? null);
@@ -617,7 +619,9 @@ async function withVeryfrontPlatformRemoteTools(input: {
   );
   const { aliases } = platformCatalog;
   platformToolDefinitions = platformCatalog.definitions;
-  for (const [canonicalName, legacyName] of aliases) {
+  for (const [, wireName] of aliases) {
+    const legacyName = platformMcpLegacyName(wireName);
+    const canonicalName = `veryfront__${legacyName}`;
     if (!requestedToolNames.includes(canonicalName) && !requestedToolNames.includes(legacyName)) {
       continue;
     }
@@ -636,10 +640,10 @@ async function withVeryfrontPlatformRemoteTools(input: {
       toolName,
     ) =>
       platformToolNames.has(toolName) &&
-      !isPlatformToolDeniedByAgent(input.agent, toolName, aliases) &&
+      !isPlatformToolDeniedByAgent(input.agent, toolName) &&
       !veryfrontApiMcpPolicy.deniedToolNames.has(toolName) &&
-      !veryfrontApiMcpPolicy.deniedToolNames.has(aliases.get(toolName) ?? toolName) &&
-      !veryfrontApiMcpPolicy.deniedToolNames.has(`veryfront__${toolName}`)
+      !veryfrontApiMcpPolicy.deniedToolNames.has(platformMcpLegacyName(toolName)) &&
+      !veryfrontApiMcpPolicy.deniedToolNames.has(`veryfront__${platformMcpLegacyName(toolName)}`)
     );
   const runtimeRemoteToolConfig = input.agent.config as Agent["config"] & RuntimeRemoteToolConfig;
   const remoteTools = runtimeRemoteToolConfig.__vfRemoteToolSources ?? [];
@@ -1157,6 +1161,8 @@ export class AgentStreamHandler extends BaseHandler {
       });
       const runEventAppendToken = readIngressCredential(req, INGRESS_RUN_EVENT_TOKEN_HEADER);
       const terminalToken = readRunTerminalToken(req);
+      const pauseToken = readIngressCredential(req, INGRESS_RUN_STOP_TOKEN_HEADER);
+      const pauseSignal = req.signal;
       if (
         payload.sourceProject && (
           payload.sourceProject.projectId !== ctx.projectId ||
@@ -1411,6 +1417,16 @@ export class AgentStreamHandler extends BaseHandler {
                         const inferenceAuthToken = payload.credentials?.inferenceAuthToken;
                         if (verifiedClaims && inferenceAuthToken) {
                           registerRuntimeInferenceCredential(runtimeInput, inferenceAuthToken);
+                        }
+                        if (pauseToken) {
+                          registerRuntimeManualPause(
+                            runtimeInput,
+                            createHostOwnedAgentManualPause({
+                              runId: payload.runId,
+                              token: pauseToken,
+                              signal: pauseSignal,
+                            }),
+                          );
                         }
                         const runAgentStream = () =>
                           createRuntimeAgentStreamResponse(runtimeInput, runtimeAgent, {

@@ -1,3 +1,7 @@
+import {
+  invalidateHostedAgentPauseSettlement,
+  settleHostedAgentPause,
+} from "./manual-pause-settlement.ts";
 import { parseProviderError } from "../../chat/provider-errors.ts";
 import { CURATED_PROVIDER_FAILURE_CODES } from "#veryfront/chat/provider-error-registry.ts";
 import { ERROR_REGISTRY, INPUT_VALIDATION_FAILED, INVALID_ARGUMENT } from "#veryfront/errors";
@@ -259,7 +263,13 @@ async function executeHostedDurableChatRunStart<TExecution>(
           executionDisposition = "transferred";
           input.tracker.trackRun(durableRootRun.runId);
         },
+        onFinish: async () => {
+          const settlement = settleHostedAgentPause(input.req);
+          input.tracker.registerExecution(durableRootRun.runId, settlement);
+          await settlement;
+        },
         onError: async ({ error }) => {
+          invalidateHostedAgentPauseSettlement(input.req, error);
           input.tracker.untrackRun(durableRootRun.runId);
           input.logger?.error("Detached durable run execution failed", {
             runId: durableRootRun.runId,

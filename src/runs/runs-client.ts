@@ -8,21 +8,25 @@ import {
 } from "#veryfront/platform/adapters/veryfront-api-client/retry-handler.ts";
 import { API_CLIENT_ERROR } from "#veryfront/platform/adapters/veryfront-api-client/types.ts";
 import type { Schema } from "#veryfront/extensions/schema/index.ts";
+import { INVALID_ARGUMENT } from "#veryfront/errors/index.ts";
+import { getProjectSchema } from "#veryfront/platform/adapters/veryfront-api-client/schemas/index.ts";
 import type { ResolvedTriggerTarget } from "#veryfront/trigger/target.ts";
 import {
+  createRunsSdk,
+  type RunsCallOptions,
+  type RunsOutput,
+  type RunsSdk,
+} from "./target/client.ts";
+import {
   type CancelRunResponse,
-  CancelRunResponseSchema,
   type CreateRunResponse,
-  CreateRunResponseSchema,
   type Run,
   type RunEventList,
-  RunEventListSchema,
   type RunList,
   RunListSchema,
   RunSchema,
   ScheduleReferenceListSchema,
   type ScheduleRunCreateResponse,
-  ScheduleRunCreateResponseSchema,
 } from "./schemas.ts";
 
 const DEFAULT_MAX_RETRIES = 3;
@@ -71,6 +75,10 @@ export interface RunRuntimeTargetOptions {
 export interface RunCreateBaseInput {
   projectId: string;
   publicId?: string;
+  /** Stable retry key; generated once per call when omitted. */
+  idempotencyKey?: string;
+  toolCallId?: string;
+  nodeId?: string;
   parentRunId?: string;
 }
 
@@ -149,6 +157,9 @@ export interface ListRunsOptions extends ProjectScopedOptions {
 }
 
 export interface ListRunEventsOptions {
+  /** The previous page_info.next cursor. */
+  cursor?: string;
+  /** Deprecated ascending cursor. Use cursor; do not supply both. */
   afterEventId?: number;
   limit?: number;
 }
@@ -170,12 +181,80 @@ function withQuery(path: string, params: URLSearchParams): string {
   return query.length > 0 ? `${path}?${query}` : path;
 }
 
-function runtimeTargetBody(input: RunRuntimeTargetOptions): Record<string, unknown> {
-  return {
-    runtime_target_kind: input.runtimeTargetKind,
-    runtime_target_environment_id: input.runtimeTargetEnvironmentId,
-    runtime_target_branch_id: input.runtimeTargetBranchId,
-  };
+function runtimeTargetBody(input: RunRuntimeTargetOptions) {
+  const type = input.runtimeTargetKind;
+  if (!type) return undefined;
+  if (type === "main_branch") return { type } as const;
+  const id = type === "environment"
+    ? input.runtimeTargetEnvironmentId
+    : input.runtimeTargetBranchId;
+  if (!id) throw new Error(`Run runtime ${type} requires its UUID.`);
+  return { type, id };
+}
+
+/** Local adapter for existing framework callers; every wire request uses the canonical contract. */
+function compatibilityRun(run: RunsOutput<"getRun">): Run {
+  return RunSchema.parse({
+    run_id: run.id,
+    kind: run.target.type,
+    status: run.status,
+    owner: {
+      kind: run.conversation_id ? "conversation" : "project",
+      id: run.conversation_id ?? run.project_id,
+    },
+    parent_run_id: run.parent_run_id ?? null,
+    root_run_id: run.root_run_id ?? run.id,
+    waiting_reason: run.control?.waiting?.reason ?? null,
+    waiting_on: run.control?.waiting?.reason === "child_run"
+      ? run.control.waiting.dependencies.map((dependency) => ({
+        kind: "run",
+        run_id: dependency.run_id,
+        correlation: { kind: dependency.correlation.type, id: dependency.correlation.id },
+      }))
+      : null,
+    metadata: run.metadata ?? null,
+    target: run.target.id === null ? null : `${run.target.type}:${run.target.id}`,
+    workflow_id: run.target.type === "workflow" ? run.target.id : null,
+    schedule_id: run.trigger?.type === "schedule" ? run.trigger.id : null,
+    batch_id: run.batch_id ?? null,
+    runtime_target_kind: run.execution?.runtime?.type === "registered"
+      ? null
+      : run.execution?.runtime?.type ?? null,
+    runtime_target_environment_id: run.execution?.runtime?.type === "environment"
+      ? run.execution.runtime.id
+      : null,
+    runtime_target_branch_id: run.execution?.runtime?.type === "preview_branch"
+      ? run.execution.runtime.id
+      : null,
+    input: run.input,
+    config: run.config ?? null,
+    input_schema_sha256: run.schemas?.input?.sha256 ?? null,
+    output_schema_sha256: run.schemas?.output?.sha256 ?? null,
+    output: run.output,
+    error: run.error
+      ? { code: run.error.code, message: run.error.message, detail: run.error.details }
+      : null,
+    logs: run.execution?.logs ?? null,
+    artifacts: run.artifacts ?? [],
+    duration_ms: run.execution?.duration_ms ?? null,
+    exit_code: run.execution?.exit_code ?? null,
+    start_mode: run.execution?.start_mode ?? null,
+    timeout_seconds: run.execution?.timeout_seconds ?? null,
+    backoff_limit: run.execution?.retry_limit ?? null,
+    trigger_kind: !run.trigger
+      ? null
+      : run.trigger.type === "api_key" || run.trigger.type === "service_account"
+      ? "api"
+      : run.trigger.type === "schedule" || run.trigger.type === "webhook"
+      ? run.trigger.type
+      : "manual",
+    trigger_id: run.trigger?.id ?? null,
+    created_by: null,
+    updated_at: run.updated_at,
+    created_at: run.created_at,
+    started_at: run.started_at ?? null,
+    completed_at: run.finished_at ?? null,
+  });
 }
 
 /** Public client for canonical durable runs. */
@@ -220,116 +299,105 @@ export class VeryfrontRunsClient {
     this.requestProjectReference = undefined;
   }
 
-  createTaskRun(input: CreateTaskRunInput): Promise<CreateRunResponse> {
-    const {
-      projectId,
-      publicId,
-      parentRunId,
-      name,
-      target,
-      batchId,
-      input: taskInput,
-      config,
-      timeoutSeconds,
-      backoffLimit,
-      ...runtimeTarget
-    } = input;
+  private sdk(): RunsSdk {
+    const { apiUrl, authToken } = this.#resolveConnection();
+    const baseUrl = applyIntrinsic(stringReplace, apiUrl, [/\/+$/, ""]) as string;
+    const origin = readUrlOrigin(new NativeURL(baseUrl));
+    return createRunsSdk({
+      transport: {
+        request: (path, init) =>
+          requestWithRetry(`${baseUrl}${path}`, authToken, this.retryConfig, init, {
+            authorizeUrl: (url) => {
+              if (readUrlOrigin(url) !== origin) {
+                throw new Error("Runs request blocked: destination origin is not authorized");
+              }
+            },
+          }),
+      },
+    });
+  }
 
-    return this.requestJson("/runs", CreateRunResponseSchema, {
-      method: "POST",
-      body: {
-        kind: "task",
-        owner: { kind: "project", id: projectId },
-        public_id: publicId,
-        parent_run_id: parentRunId,
-        request: {
-          name,
-          target,
-          batch_id: batchId,
-          ...runtimeTargetBody(runtimeTarget),
-          input: taskInput,
-          config,
-          timeout_seconds: timeoutSeconds,
-          backoff_limit: backoffLimit,
-        },
+  private async createDefinitionRun(
+    input: RunCreateBaseInput,
+    body: import("./target/client.ts").RunsInput<"createRun">["body"],
+  ): Promise<CreateRunResponse> {
+    if (input.publicId) {
+      throw new Error(
+        "Caller-selected public run aliases are retired; use the returned canonical UUID.",
+      );
+    }
+    const run = await this.sdk().createRun({
+      body,
+      headers: { "Idempotency-Key": input.idempotencyKey ?? crypto.randomUUID() },
+    });
+    return { accepted: true, run: compatibilityRun(run) };
+  }
+
+  createTaskRun(input: CreateTaskRunInput): Promise<CreateRunResponse> {
+    return this.createDefinitionRun(input, {
+      project_id: input.projectId,
+      target: { type: "task", id: input.target.slice("task:".length) },
+      title: input.name,
+      parent_run_id: input.parentRunId,
+      tool_call_id: input.toolCallId,
+      node_id: input.nodeId,
+      batch_id: input.batchId,
+      input: input.input,
+      config: input.config,
+      execution: {
+        runtime: runtimeTargetBody(input),
+        timeout_seconds: input.timeoutSeconds,
+        retry_limit: input.backoffLimit,
       },
     });
   }
 
   createWorkflowRun(input: CreateWorkflowRunInput): Promise<CreateRunResponse> {
-    const {
-      projectId,
-      publicId,
-      parentRunId,
-      workflowId,
-      target,
-      input: workflowInput,
-      startMode,
-      ...runtimeTarget
-    } = input;
-
-    return this.requestJson("/runs", CreateRunResponseSchema, {
-      method: "POST",
-      body: {
-        kind: "workflow",
-        owner: { kind: "project", id: projectId },
-        public_id: publicId,
-        parent_run_id: parentRunId,
-        request: {
-          workflow_id: workflowId,
-          target,
-          ...runtimeTargetBody(runtimeTarget),
-          input: workflowInput,
-          start_mode: startMode,
-        },
-      },
+    if (input.startMode) {
+      throw new Error("Workflow startMode is not supported by canonical run creation.");
+    }
+    return this.createDefinitionRun(input, {
+      project_id: input.projectId,
+      target: { type: "workflow", id: input.target.slice("workflow:".length) },
+      parent_run_id: input.parentRunId,
+      tool_call_id: input.toolCallId,
+      node_id: input.nodeId,
+      input: input.input,
+      execution: { runtime: runtimeTargetBody(input) },
     });
   }
 
   createEvalRun(input: CreateEvalRunInput): Promise<CreateRunResponse> {
-    const {
-      projectId,
-      publicId,
-      parentRunId,
-      target,
-      input: evalInput,
-      config,
-      ...runtimeTarget
-    } = input;
-
-    return this.requestJson("/runs", CreateRunResponseSchema, {
-      method: "POST",
-      body: {
-        kind: "task",
-        owner: { kind: "project", id: projectId },
-        public_id: publicId,
-        parent_run_id: parentRunId,
-        request: {
-          target: "task:eval",
-          ...runtimeTargetBody(runtimeTarget),
-          input: evalInput,
-          config: { ...config, eval_id: target },
-        },
-      },
+    return this.createDefinitionRun(input, {
+      project_id: input.projectId,
+      target: { type: "task", id: "eval" },
+      parent_run_id: input.parentRunId,
+      tool_call_id: input.toolCallId,
+      node_id: input.nodeId,
+      input: input.input,
+      config: { ...input.config, eval_id: input.target },
+      execution: { runtime: runtimeTargetBody(input) },
     });
   }
 
-  createScheduleRun(input: CreateScheduleRunInput): Promise<ScheduleRunCreateResponse> {
-    const { scheduleId, projectReference, runName, idempotencyKey } = input;
-    const project = this.resolveProjectReference(projectReference);
-    const resolvedIdempotencyKey = idempotencyKey ??
-      `${GENERATED_SCHEDULE_RUN_IDEMPOTENCY_PREFIX}:${crypto.randomUUID()}`;
-    return this.requestJson(
-      `/projects/${encodeURIComponent(project)}/schedules/${encodeURIComponent(scheduleId)}/runs`,
-      ScheduleRunCreateResponseSchema,
-      {
-        method: "POST",
-        body: {
-          run_name: runName,
-          idempotency_key: resolvedIdempotencyKey,
-        },
-      },
+  async createScheduleRun(input: CreateScheduleRunInput): Promise<ScheduleRunCreateResponse> {
+    const reference = this.resolveProjectReference(input.projectReference);
+    const project = await this.requestJson(
+      `/projects/${encodeURIComponent(reference)}`,
+      getProjectSchema(),
     );
+    const run = await this.sdk().createRun({
+      body: {
+        project_id: project.id,
+        source: { type: "schedule", id: input.scheduleId },
+        title: input.runName,
+      },
+      headers: {
+        "Idempotency-Key": input.idempotencyKey ??
+          `${GENERATED_SCHEDULE_RUN_IDEMPOTENCY_PREFIX}:${crypto.randomUUID()}`,
+      },
+    });
+    return { run_id: run.id, run_execution_id: run.id, schedule_id: input.scheduleId };
   }
 
   async createScheduleRunFromSource(
@@ -373,35 +441,66 @@ export class VeryfrontRunsClient {
   }
 
   async list(options: ListRunsOptions = {}): Promise<RunList> {
-    const { projectReference, cursor, limit } = options;
-    return await this.requestJson(
-      withQuery(
-        `/projects/${encodeURIComponent(this.resolveProjectReference(projectReference))}/runs`,
-        toQueryParams({ cursor, limit }),
-      ),
-      RunListSchema,
-    );
-  }
-
-  get(runId: string): Promise<Run> {
-    return this.requestJson(`/runs/${encodeURIComponent(runId)}`, RunSchema);
-  }
-
-  events(runId: string, options: ListRunEventsOptions = {}): Promise<RunEventList> {
-    const { afterEventId, limit } = options;
-    return this.requestJson(
-      withQuery(
-        `/runs/${encodeURIComponent(runId)}/events`,
-        toQueryParams({ after_event_id: afterEventId, limit }),
-      ),
-      RunEventListSchema,
-    );
-  }
-
-  cancel(runId: string): Promise<CancelRunResponse> {
-    return this.requestJson(`/runs/${encodeURIComponent(runId)}/cancel`, CancelRunResponseSchema, {
-      method: "POST",
+    const page = await this.sdk().listProjectRuns({
+      path: { project_reference: this.resolveProjectReference(options.projectReference) },
+      query: { cursor: options.cursor, limit: options.limit },
     });
+    return RunListSchema.parse({
+      ...page,
+      page_info: {
+        self: options.cursor ?? null,
+        first: null,
+        prev: null,
+        next: page.page_info.next,
+      },
+      data: page.data.map(compatibilityRun),
+    });
+  }
+
+  /** Read a canonical UUID; adapts the grouped resource for existing framework callers. */
+  async get(runId: string): Promise<Run> {
+    return compatibilityRun(await this.getRun(runId));
+  }
+
+  /** Read the grouped resource by canonical UUID, retaining headers through onHeaders. */
+  getRun(runId: string, options?: RunsCallOptions): Promise<RunsOutput<"getRun">> {
+    return this.sdk().getRun({ path: { run_id: runId } }, options);
+  }
+
+  async events(
+    runId: string,
+    options: ListRunEventsOptions = {},
+  ): Promise<RunsOutput<"listRunEvents"> & { page_info: RunEventList["page_info"] }> {
+    if (options.cursor !== undefined && options.afterEventId !== undefined) {
+      throw INVALID_ARGUMENT.create({ detail: "Use cursor or afterEventId, not both." });
+    }
+    const page = await this.sdk().listRunEvents({
+      path: { run_id: runId },
+      query: { cursor: options.cursor, after_event_id: options.afterEventId, limit: options.limit },
+    });
+    return {
+      ...page,
+      page_info: {
+        self: options.cursor ?? null,
+        first: null,
+        prev: null,
+        next: page.page_info.next,
+      },
+    };
+  }
+
+  async cancel(
+    runId: string,
+    idempotencyKey: string = crypto.randomUUID(),
+  ): Promise<CancelRunResponse> {
+    const run = await this.sdk().cancelRun({
+      path: { run_id: runId },
+      headers: { "Idempotency-Key": idempotencyKey },
+    });
+    return {
+      cancelled: run.status === "cancelled" || run.control?.cancellation?.requested_at != null,
+      run: compatibilityRun(run),
+    };
   }
 
   private ingestKnowledgeByUploadIds(

@@ -1,3 +1,4 @@
+import { RunStopRegistry } from "./run-stop-registry.ts";
 import {
   RunAlreadyExistsError,
   RunCancelledError,
@@ -87,6 +88,7 @@ export interface RunServingIdentity {
 export type SubmitToolResultOutcome = SubmitResumeValueOutcome;
 
 export class AgentRunSessionManager {
+  readonly stopRegistry = new RunStopRegistry();
   private readonly sessions: RunResumeSessionManager<SubmittedToolResult>;
   private readonly servingIdentities = new Map<string, RunServingIdentity>();
 

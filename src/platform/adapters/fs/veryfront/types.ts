@@ -218,4 +218,10 @@ export interface InvalidationCallbacks {
    * one cached for an agent run that already finished.
    */
   isAdapterInUse?: () => boolean;
+  /**
+   * Whether the API credential the current shared proxy adapter was created
+   * for has expired. Such an adapter is evicted on its next poke rather than
+   * invalidating caches under a credential the API refuses.
+   */
+  isCredentialExpired?: () => boolean;
 }

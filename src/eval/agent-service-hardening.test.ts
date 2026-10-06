@@ -683,12 +683,27 @@ describe("eval/agent-service hardening", () => {
       agentId: "veryfront",
       projectId: null,
       requestTimeoutMs: 1_000,
-      fetch: async (input) => {
+      fetch: async (input, init) => {
+        if (init?.method === "POST") {
+          return Response.json({
+            id: "44444444-4444-4444-8444-444444444444",
+            conversation_id: "11111111-1111-4111-8111-111111111111",
+            output_message_id: "22222222-2222-4222-8222-222222222222",
+            status: "running",
+          });
+        }
         requestedUrls.push(String(input));
         return new Response("not found", { status: 404 });
       },
     });
 
+    await client.startDurableRun({
+      conversationId: "conversation/one",
+      runId: "run?one",
+      messageId: "",
+      prompt: "test",
+      userMessageId: "33333333-3333-4333-8333-333333333333",
+    });
     const error = await assertRejects(
       () =>
         client.getRunSummary({
@@ -702,11 +717,11 @@ describe("eval/agent-service hardening", () => {
     assertEquals(error.status, 404);
     assertEquals(
       new URL(requestedUrls[0] ?? "").pathname,
-      "/conversations/conversation%2Fone/runs/run%3Fone",
+      "/runs/44444444-4444-4444-8444-444444444444",
     );
   });
 
-  it("accepts bodyless successful durable run mutations", async () => {
+  it("rejects admission without its canonical run descriptor", async () => {
     const client = createDurableRunCanaryApiClient({
       apiUrl: "https://api.example.test",
       authToken: "token",
@@ -716,17 +731,15 @@ describe("eval/agent-service hardening", () => {
       fetch: async () => new Response(null, { status: 204 }),
     });
 
-    await client.createDurableRootRun({
-      conversationId: "conversation_123",
-      runId: "run_123",
-    });
-    await client.startDurableRun({
-      conversationId: "conversation_123",
-      messageId: "message_123",
-      prompt: "Run the canary",
-      runId: "run_123",
-      userMessageId: "user_message_123",
-    });
+    await assertRejects(() =>
+      client.startDurableRun({
+        conversationId: "conversation_123",
+        messageId: "message_123",
+        prompt: "Run the canary",
+        runId: "run_123",
+        userMessageId: "user_message_123",
+      })
+    );
   });
 
   it("contains durable prepare and sidecar-cleanup failures as results", async () => {
@@ -1136,15 +1149,8 @@ describe("eval/agent-service hardening", () => {
     let summaryCalls = 0;
     const apiClient: DurableRunCanaryApiClient = {
       createDurableRootRun: async () => {},
-      getRunSummary: async ({ runId }) => {
+      getRunSummary: async () => {
         summaryCalls += 1;
-        if (summaryCalls === 1) {
-          return {
-            ...createRunSummary(conversationId, runId),
-            status: "running",
-            finishedAt: null,
-          };
-        }
         return await new Promise<DurableRunCanaryRunSummary>(() => {});
       },
       listMessagesForCanary: async () => [],
@@ -1180,8 +1186,8 @@ describe("eval/agent-service hardening", () => {
     assertEquals(result.runId.startsWith("run_"), true);
     assertEquals(
       summaryCalls,
-      2,
-      "the canary polls once for running state and once for the deadline-bounded pending request",
+      1,
+      "the canonical admission is followed by one deadline-bounded pending read",
     );
     assertEquals(
       result.durationMs >= requestTimeoutMs - NODE_TIMER_EARLY_FIRE_MS,
@@ -1232,7 +1238,7 @@ describe("eval/agent-service hardening", () => {
     });
 
     assertEquals(result.status, "pass");
-    assertEquals(summaryCalls, 3);
+    assertEquals(summaryCalls, 2);
   });
 
   it("accepts plain Error 404 responses from injected durable clients", async () => {
@@ -1277,7 +1283,7 @@ describe("eval/agent-service hardening", () => {
     });
 
     assertEquals(result.status, "pass");
-    assertEquals(summaryCalls, 3);
+    assertEquals(summaryCalls, 2);
   });
 
   it("rejects malformed configuration and invalid performance samples", () => {

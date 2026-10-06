@@ -116,9 +116,18 @@ export const SENSITIVE_EXTENSION_CAPABILITY_POLICIES:
       ],
     },
     {
-      label: "PurgeCSS CPU discovery",
+      label: "PurgeCSS platform and color discovery",
       packageName: "@veryfront/ext-css-purgecss",
-      requiredCapabilities: [{ type: "system:read", apis: ["cpus"] }],
+      requiredCapabilities: [{
+        type: "env:read",
+        keys: [
+          "__MINIMATCH_TESTING_PLATFORM__",
+          "NO_COLOR",
+          "FORCE_COLOR",
+          "TERM",
+          "CI",
+        ],
+      }],
       exactCapabilities: true,
     },
     {

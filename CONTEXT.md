@@ -61,7 +61,9 @@ resolved config, the reference source, and whether the run may create or only
 plan; it settles into one typed outcome — existing, created, or
 planned-create. Push, deploy, up, demo, and the TUI are presentation adapters
 over this module: they own their wording, spinners, and typed-error phrasing,
-never the decision. There is exactly one persisted link format
+never the decision.
+
+There is exactly one persisted link format
 (`.veryfront/project.json`), written only for references a directory owns
 (inferred or local-link) and never on a dry run. The project client
 (control plane over HTTP, CLI API client, fake in tests) is its one seam.
@@ -107,7 +109,9 @@ the ID `WorkflowHandle.runId` returns. It survives across processes, and it may 
 more than once: a run that pauses at a wait node or a pending approval is resumed later as a
 fresh execution of the same run. Composite nodes muddy the word: `parallel`, `branch`, `map`,
 `loop`, and `subWorkflow` construct local `WorkflowRun`-shaped records while executing their
-children. The `parallel`, `branch`, and `map` record IDs derive from the composite node ID;
+children.
+
+The `parallel`, `branch`, and `map` record IDs derive from the composite node ID;
 `loop` record IDs derive from the node ID and iteration; `subWorkflow` record IDs add a
 generated component. None of those local records are persisted or available for lookup. Only
 the root persisted ID identifies a run outside the process, so callers, the backends, and
@@ -121,6 +125,7 @@ environment variables, the working directory, command-line arguments, process
 exit, and termination signals, nothing else. CLI command handlers and shared
 CLI helpers receive it as a positional `host` parameter that defaults to the
 live adapter (`parseServeArgs(args, host: HostRuntime = liveHostRuntime())`).
+
 There are exactly two adapters: `liveHostRuntime()`
 delegates to the cross-runtime compat functions and is the production path;
 `createInMemoryHostRuntime()` holds an isolated env map, a fixed cwd and argv,

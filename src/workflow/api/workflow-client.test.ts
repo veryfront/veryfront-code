@@ -181,7 +181,10 @@ describe("WorkflowClient", () => {
   for (const waitBeforeCancel of [true, false]) {
     it(`preserves actual raw-operation settlement through client cleanup (wait before cancel: ${waitBeforeCancel})`, async () => {
       await client.destroy();
-      client = createWorkflowClient({ backend, executor: { cancellationGracePeriod: 0 } });
+      client = createWorkflowClient({
+        backend,
+        executor: { cancellationGracePeriod: 0, retainExecutionStopEvidence: true },
+      });
       const started = Promise.withResolvers<void>();
       const operation = Promise.withResolvers<unknown>();
       client.register(workflow({
@@ -238,6 +241,8 @@ describe("WorkflowClient", () => {
   });
 
   it("reports execution-stop evidence only for DAG operations observed by this client", async () => {
+    await client.destroy();
+    client = createWorkflowClient({ backend, executor: { retainExecutionStopEvidence: true } });
     client.register(workflow({
       id: "local-execution-stop-evidence",
       steps: [step("finish", { tool: createMockTool("finish", { ok: true }) })],
@@ -248,6 +253,47 @@ describe("WorkflowClient", () => {
 
     assertEquals(await client.waitForExecutionStopped(handle.runId), true);
     assertEquals(await client.waitForExecutionStopped("run-not-observed-here"), false);
+  });
+
+  it("does not retain stop evidence for settled runs on an ordinary long-lived client (#2365)", async () => {
+    client.register(workflow({
+      id: "ordinary-client-history",
+      steps: [step("finish", { tool: createMockTool("finish", { ok: true }) })],
+    }));
+
+    const runIds: string[] = [];
+    for (let index = 0; index < 25; index++) {
+      const handle = await client.start("ordinary-client-history", { index });
+      await handle.settled();
+      runIds.push(handle.runId);
+    }
+    await delay(0);
+
+    for (const runId of runIds) {
+      assertEquals(await client.waitForExecutionStopped(runId), false, runId);
+    }
+
+    // A run still executing here keeps its evidence until it settles.
+    const started = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<unknown>();
+    client.register(workflow({
+      id: "ordinary-client-active",
+      steps: [step("hold", {
+        tool: {
+          ...createMockTool("hold", {}),
+          execute: () => {
+            started.resolve();
+            return release.promise;
+          },
+        },
+      })],
+    }));
+    const active = await client.start("ordinary-client-active", {});
+    await started.promise;
+    const stopped = client.waitForExecutionStopped(active.runId);
+    release.resolve({ ok: true });
+    assertEquals(await stopped, true);
+    await active.settled();
   });
 
   it("hands a parent the selected output of a nested workflow that declares one (#2107)", async () => {
@@ -6061,6 +6107,7 @@ describe("WorkflowClient durable event waits", () => {
   });
 
   it("does not deliver an event published after the declared deadline passed", async () => {
+    using time = new FakeTime();
     const sharedBackend = new MemoryBackend();
     const parked = createWorkflowClient({ backend: sharedBackend });
     // A publisher whose sweep is pinned far away, so only the drain-time
@@ -6081,11 +6128,11 @@ describe("WorkflowClient durable event waits", () => {
       await handle.settled();
       const [wait] = await parked.getPendingEventWaits(handle.runId);
       assertExists(wait?.expiresAt);
+      assertEquals(wait.expiresAt.getTime(), Date.now() + 30);
       // The process that parked the wait dies before its deadline timer fires.
       parked.getEventWaitManager().stop();
-      await waitFor(() => Date.now() > wait.expiresAt!.getTime(), {
-        message: "the deadline never passed",
-      });
+      await time.tickAsync(31);
+      assert(Date.now() > wait.expiresAt.getTime());
 
       const outcome = await publisher.publishEvent(handle.runId, "payment.confirmed", {
         amount: 9,
@@ -6113,6 +6160,7 @@ describe("WorkflowClient durable event waits", () => {
   });
 
   it("expires a live timed wait when resume observes it after restart", async () => {
+    using time = new FakeTime();
     const sharedBackend = new MemoryBackend();
     const parked = createWorkflowClient({
       backend: sharedBackend,
@@ -6136,11 +6184,11 @@ describe("WorkflowClient durable event waits", () => {
       await handle.settled();
       const [wait] = await parked.getPendingEventWaits(handle.runId);
       assertExists(wait?.expiresAt);
+      assertEquals(wait.expiresAt.getTime(), Date.now() + 30);
 
       parked.getEventWaitManager().stop();
-      await waitFor(() => Date.now() > wait.expiresAt!.getTime(), {
-        message: "the deadline never passed",
-      });
+      await time.tickAsync(31);
+      assert(Date.now() > wait.expiresAt.getTime());
 
       await recovering.resume(handle.runId);
 

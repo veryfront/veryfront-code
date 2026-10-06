@@ -222,6 +222,7 @@ type UploadFailureStatus = 1 | 64;
 async function runReleaseScript({
   stateDir,
   asset,
+  extraAssets = [],
   initialReleaseState = "missing",
   createFailure = "none",
   failedUploadAttempts = 0,
@@ -230,6 +231,7 @@ async function runReleaseScript({
 }: {
   stateDir: string;
   asset: string;
+  extraAssets?: string[];
   initialReleaseState?: ReleaseState;
   createFailure?: CreateFailure;
   failedUploadAttempts?: number;
@@ -251,7 +253,7 @@ async function runReleaseScript({
       [
         "set -euo pipefail",
         'release_script="$1"',
-        'asset="$2"',
+        "shift",
         "gh() {",
         '  printf "%s\\n" "$*" >> "$GH_LOG"',
         '  if [ "$1" = "release" ] && [ "$2" = "view" ]; then',
@@ -272,6 +274,11 @@ async function runReleaseScript({
         "    fi",
         "  fi",
         '  if [ "$1" = "release" ] && [ "$2" = "upload" ]; then',
+        "    shift 3",
+        '    while [ "$1" != "--repo" ]; do',
+        '      [ -f "$1" ] || return 1',
+        "      shift",
+        "    done",
         '    count="$(cat "$UPLOAD_COUNT")"',
         "    count=$((count + 1))",
         '    printf "%s" "$count" > "$UPLOAD_COUNT"',
@@ -301,11 +308,12 @@ async function runReleaseScript({
         '  --notes "Install notes" \\',
         "  --prerelease \\",
         "  -- \\",
-        '  "$asset"',
+        '  "$@"',
       ].join("\n"),
       "release-script-test",
       RELEASE_SCRIPT_PATH,
       asset,
+      ...extraAssets,
     ],
     env: {
       GH_LOG: ghLog,
@@ -321,6 +329,28 @@ async function runReleaseScript({
     stderr: "piped",
   }).output();
 }
+
+it("starts the largest assets first in the concurrent upload batch", async () => {
+  await withTempDir(async (stateDir) => {
+    const small = `${stateDir}/metadata.json`;
+    const large = `${stateDir}/veryfront large binary`;
+    const medium = `${stateDir}/veryfront-proxy`;
+    await Deno.writeTextFile(small, "x");
+    await Deno.writeTextFile(large, "x".repeat(1024));
+    await Deno.writeTextFile(medium, "x".repeat(64));
+    const output = await runReleaseScript({
+      stateDir,
+      asset: small,
+      extraAssets: [large, medium],
+    });
+    assertEquals(output.code, 0, decoder.decode(output.stderr));
+    const ghLog = await Deno.readTextFile(`${stateDir}/gh.log`);
+    const uploads = ghLog.trim().split("\n").filter((call) => call.startsWith("release upload "));
+    assertEquals(uploads, [
+      `release upload v1.2.3-rc.4 ${large} ${medium} ${small} --repo veryfront/veryfront --clobber`,
+    ], ghLog);
+  });
+});
 
 describe("registry release workflow", () => {
   it("publishes stable assets while preserving a previously published RC and its tag", async () => {
@@ -360,7 +390,12 @@ case "$1:$2" in
     [ -f "$STATE_DIR/releases/$3" ] || exit 1
     if [ "$(cat "$STATE_DIR/releases/$3")" = draft ]; then echo true; else echo false; fi ;;
   release:create) printf draft > "$STATE_DIR/releases/$3" ;;
-  release:upload) [ -f "$4" ] ;;
+  release:upload)
+    shift 3
+    while [ "$1" != --repo ]; do
+      [ -f "$1" ] || exit 1
+      shift
+    done ;;
   release:edit) printf published > "$STATE_DIR/releases/$3" ;;
   release:delete) rm -f "$STATE_DIR/releases/$3" ;;
   *) exit 1 ;;
@@ -397,12 +432,63 @@ printf '%064d  %s\n' 0 "$1"
         await Deno.readTextFile(retainedRelease),
         "published RC assets and tag",
       );
-      assertStringIncludes(
-        await Deno.readTextFile(`${stateDir}/gh.log`),
-        "--prerelease=false --latest",
-      );
+      const calls = (await Deno.readTextFile(`${stateDir}/gh.log`)).trim()
+        .split("\n");
+      const uploads = calls.filter((call) => call.startsWith("release upload "));
+      assertEquals(uploads.length, 1);
+      for (
+        const asset of [
+          "install.sh",
+          "install.ps1",
+          "veryfront-linux-x64",
+          "sbom.json",
+          "SHA256SUMS",
+        ]
+      ) {
+        assertStringIncludes(uploads[0], `public-release-assets/${asset}`);
+      }
+      assertStringIncludes(calls.join("\n"), "--prerelease=false --latest");
     });
   });
+
+  for (const failedUploadAttempts of [0, 1, 3]) {
+    it(`uploads every asset in one batch with ${failedUploadAttempts} failed attempts`, async () => {
+      await withTempDir(async (stateDir) => {
+        const assets = [
+          `${stateDir}/veryfront-linux-x64`,
+          `${stateDir}/veryfront macos arm64`,
+          `${stateDir}/SHA256SUMS`,
+        ];
+        for (const asset of assets) await Deno.writeTextFile(asset, "binary");
+        const output = await runReleaseScript({
+          stateDir,
+          asset: assets[0],
+          extraAssets: assets.slice(1),
+          failedUploadAttempts,
+        });
+        const calls = (await Deno.readTextFile(`${stateDir}/gh.log`)).trim()
+          .split("\n");
+        const uploads = calls.filter((call) => call.startsWith("release upload "));
+        assertEquals(uploads.length, Math.min(failedUploadAttempts + 1, 3));
+        for (const upload of uploads) {
+          assertEquals(
+            upload,
+            `release upload v1.2.3-rc.4 ${assets.join(" ")} --repo veryfront/veryfront --clobber`,
+          );
+        }
+        assertEquals(output.code, failedUploadAttempts === 3 ? 1 : 0);
+        const publications = calls.filter((call) => call.startsWith("release edit "));
+        assertEquals(publications.length, failedUploadAttempts === 3 ? 0 : 1);
+        const deletions = calls.filter((call) => call.startsWith("release delete "));
+        assertEquals(deletions.length, failedUploadAttempts === 3 ? 1 : 0);
+        if (publications.length) {
+          assert(
+            calls.indexOf(publications[0]) > calls.lastIndexOf(uploads.at(-1)!),
+          );
+        }
+      });
+    });
+  }
 
   it("publishes after retrying a transient release asset upload failure", async () => {
     await withTempDir(async (stateDir) => {
@@ -806,10 +892,10 @@ printf '%064d  %s\n' 0 "$1"
     assertEquals(npmSteps.some((step) => step.id === "release-app-token"), false);
 
     const github = asRecord(jobs["github-prerelease"], "GitHub prerelease job");
-    assertEquals(github.needs, ["prerelease"]);
+    assertEquals(github.needs, ["prerelease", "build-binaries"]);
     assertEquals(
       github.if,
-      "${{ !cancelled() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && needs.prerelease.result == 'success' }}",
+      "${{ !cancelled() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && needs.prerelease.result == 'success' && needs.build-binaries.result == 'success' }}",
     );
     assertEquals(github.environment, npm.environment);
     assertEquals(github["runs-on"], npm["runs-on"]);
@@ -1108,6 +1194,7 @@ printf '%064d  %s\n' 0 "$1"
     assertEquals(
       gate.needs,
       [
+        "sonar-quality-gate",
         "prerelease",
         "github-prerelease",
         "registry-validation-rc",
@@ -1119,8 +1206,8 @@ printf '%064d  %s\n' 0 "$1"
     );
     assertEquals(
       gateSteps[0]?.name,
-      "Report selected release result",
-      "selected release result must be reported before checkout",
+      "Require fresh Sonar quality gate",
+      "Sonar must pass before registry or dispatch code runs",
     );
     assert(
       gateSteps.findIndex((step) => String(step.uses).startsWith("actions/checkout@")) > 0,
@@ -1304,6 +1391,7 @@ printf '%064d  %s\n' 0 "$1"
     assertEquals(
       registrySteps.map((step) => String(step.name ?? step.uses).split(" #")[0]),
       [
+        "Require fresh Sonar quality gate",
         "Report selected release result",
         "Require RC release dependencies",
         "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
@@ -1531,11 +1619,16 @@ fi
     }
   });
 
-  it("serializes RC tag writes and dispatch without replacing pending publishers", async () => {
+  it("serializes RC tag writes and dispatch independently without replacing pending jobs", async () => {
     const jobs = await readJobs();
-    for (const name of ["prerelease", "quality-gate-registry"]) {
+    for (
+      const [name, group] of [
+        ["prerelease", "veryfront-rc-publication"],
+        ["quality-gate-registry", "veryfront-rc-dispatch"],
+      ] as const
+    ) {
       const job = asRecord(jobs[name], name);
-      assertEquals(job.concurrency, { group: "veryfront-rc-publication", queue: "max" });
+      assertEquals(job.concurrency, { group, queue: "max" });
     }
     const dispatch = asRecord(jobs["quality-gate-registry"], "dispatch release job");
     const guard = namedStep(dispatch, "Check current RC tag");
@@ -1700,6 +1793,7 @@ fi
     const tokenStep = namedStep(dispatch, "Create release GitHub App token");
 
     assertEquals(dispatch.needs, [
+      "sonar-quality-gate",
       "prerelease",
       "github-prerelease",
       "registry-validation-rc",
@@ -1916,6 +2010,7 @@ describe("parallel RC registry validation with folded stable dispatch", () => {
     const jobs = await readJobs();
     const join = asRecord(jobs["quality-gate-registry"], "registry and publication join");
     assertEquals(join.needs, [
+      "sonar-quality-gate",
       "prerelease",
       "github-prerelease",
       "registry-validation-rc",
@@ -2032,6 +2127,7 @@ describe("bounded RC publication and deferred metadata verification", () => {
     assertEquals(
       asRecord(jobs["quality-gate-registry"], "required registry join").needs,
       [
+        "sonar-quality-gate",
         "prerelease",
         "github-prerelease",
         "registry-validation-rc",
@@ -2040,5 +2136,82 @@ describe("bounded RC publication and deferred metadata verification", () => {
         "version-check",
       ],
     );
+  });
+});
+
+type ParallelJob = { needs: string[]; if: string; steps: Record<string, unknown>[] };
+async function parallelJobs(): Promise<Record<string, ParallelJob>> {
+  const workflow = parse(
+    await Deno.readTextFile(
+      new URL("../../../.github/workflows/cicd.yml", import.meta.url),
+    ),
+  ) as { jobs: Record<string, ParallelJob> };
+  return workflow.jobs;
+}
+
+describe("RC publication alongside the reused main Sonar scan", () => {
+  it("keeps the reused scan out of publication ancestors and retains fallback scanning", async () => {
+    const graph = await parallelJobs();
+    assert(graph["sonar-main"], "reuse must have its own parallel scan");
+    assertEquals(graph["sonar-coverage-main"].needs, ["tested-run", "version-check"]);
+    assertStringIncludes(graph["sonar-coverage"].if, "needs.tested-run.outputs.reuse != 'true'");
+    assertStringIncludes(graph["sonar-main"].if, "needs.tested-run.outputs.reuse == 'true'");
+    const visit = (name: string): string[] => [name, ...(graph[name].needs ?? []).flatMap(visit)];
+    for (
+      const name of [
+        "prerelease",
+        "registry-validation-rc",
+        "github-prerelease",
+        "publish-public-release",
+      ]
+    ) {
+      assertEquals(visit(name).includes("sonar-main"), false);
+    }
+    assert(graph.prerelease.needs.includes("sonar"));
+    assertEquals(graph.prerelease.needs.includes("build-binaries"), false);
+    assert(graph["github-prerelease"].needs.includes("build-binaries"));
+    assertStringIncludes(graph["github-prerelease"].if, "needs.build-binaries.result == 'success'");
+    assert(graph.release.needs.includes("sonar"));
+    assertEquals(graph["sonar-main"].steps, graph.sonar.steps);
+    assertEquals(graph["sonar-coverage-main"].steps, graph["sonar-coverage"].steps);
+  });
+
+  it("selects the parallel scan only for RC reuse and preserves stable reused coverage", async () => {
+    const graph = await parallelJobs();
+    const parallel =
+      "needs.tested-run.outputs.reuse == 'true' && needs.version-check.outputs.is_stable == 'false'";
+    const original =
+      "(needs.tested-run.outputs.reuse != 'true' || needs.version-check.outputs.is_stable != 'false')";
+    for (const name of ["sonar-main", "sonar-coverage-main"]) {
+      assertStringIncludes(graph[name].if, parallel);
+      assert(graph[name].needs.includes("version-check"));
+    }
+    for (const name of ["sonar", "sonar-coverage"]) {
+      assertStringIncludes(graph[name].if, original);
+      assert(graph[name].needs.includes("version-check"));
+    }
+    assertStringIncludes(graph["sonar-coverage"].if, "needs.tested-run.outputs.reuse == 'true' ||");
+    const gate = graph["sonar-quality-gate"].steps[0];
+    assertEquals(gate.env, {
+      SONAR_RESULT: "${{ " + parallel + " && needs.sonar-main.result || needs.sonar.result }}",
+    });
+  });
+
+  it("blocks dispatch for every unsuccessful fresh Sonar result", async () => {
+    const graph = await parallelJobs();
+    const dispatch = graph["quality-gate-registry"];
+    assert(dispatch.needs.includes("sonar-quality-gate"));
+    const guard = dispatch.steps[0];
+    assertEquals(guard.name, "Require fresh Sonar quality gate");
+    assertEquals(guard.env, { SONAR_RESULT: "${{ needs.sonar-quality-gate.result }}" });
+    for (const result of ["success", "failure", "cancelled", "skipped", ""]) {
+      const output = await new Deno.Command("bash", {
+        args: ["-c", String(guard.run)],
+        env: { SONAR_RESULT: result },
+        stdout: "piped",
+        stderr: "piped",
+      }).output();
+      assertEquals(output.code, result === "success" ? 0 : 1);
+    }
   });
 });

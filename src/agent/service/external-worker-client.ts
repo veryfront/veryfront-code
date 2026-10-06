@@ -1,3 +1,5 @@
+import { finalizeConversationAgentRun } from "../conversation/durable.ts";
+import { terminalRoute } from "../conversation/terminal-route.ts";
 import type { Schema, SchemaValidator } from "#veryfront/extensions/schema/index.ts";
 import { defineSchema } from "../../schemas/define.ts";
 import { lazySchema } from "../../schemas/lazy.ts";
@@ -178,6 +180,25 @@ const RegisterExternalAgentWorkerResponseSchema = lazySchema(
   ),
 );
 
+type RunCredentials = { auth_token: string; run_event_token: string; run_terminal_token: string };
+const NativeMap = Map;
+const mapGet = Map.prototype.get;
+const mapSet = Map.prototype.set;
+const mapDelete = Map.prototype.delete;
+const apply = Reflect.apply;
+const WorkerClaimSchema = lazySchema(
+  defineSchema<{ run: ExternalAgentWorkerRun | null; credentials?: RunCredentials }>((v) =>
+    v.object({
+      run: externalAgentWorkerRun(v).nullable(),
+      credentials: v.object({
+        auth_token: v.string().min(1),
+        run_event_token: v.string().min(1),
+        run_terminal_token: v.string().min(1),
+      }).optional(),
+    })
+  ),
+);
+
 /** Options accepted by external agent worker client. */
 export interface ExternalAgentWorkerClientOptions {
   apiUrl: string;
@@ -214,6 +235,7 @@ export interface RecordExternalAgentWorkerSessionInput {
 export interface CompleteExternalAgentWorkerRunInput {
   runId: string;
   status: "completed" | "failed" | "cancelled";
+  output?: unknown;
   terminalErrorCode?: string;
   terminalErrorMessage?: string;
 }
@@ -245,6 +267,7 @@ class DefaultExternalAgentWorkerClient implements ExternalAgentWorkerClient {
   readonly #apiUrl: string;
   readonly #authToken: string;
   readonly #fetch: typeof fetch;
+  readonly #runCredentials = new NativeMap<string, RunCredentials>();
   readonly #workerTokensByWorkerId = new Map<string, string>();
 
   constructor(options: ExternalAgentWorkerClientOptions) {
@@ -322,17 +345,20 @@ class DefaultExternalAgentWorkerClient implements ExternalAgentWorkerClient {
   ): Promise<ExternalAgentWorkerRun | null> {
     const response = await this.#request(
       `/agent-workers/workers/${encodeURIComponent(input.workerId)}/claim`,
-      lazySchema(
-        defineSchema<{ run: ExternalAgentWorkerRun | null }>((v) =>
-          v.object({ run: externalAgentWorkerRun(v).nullable() })
-        ),
-      ),
+      WorkerClaimSchema,
       {
         method: "POST",
         body: JSON.stringify({ lease_duration_seconds: input.leaseDurationSeconds }),
       },
       { workerId: input.workerId },
     );
+    if (response.run && response.credentials) {
+      terminalRoute(response.credentials.run_terminal_token, response.run.run_id);
+      apply(mapSet, this.#runCredentials, [response.run.run_id, response.credentials]);
+    }
+    if (response.run && !response.credentials) {
+      apply(mapDelete, this.#runCredentials, [response.run.run_id]);
+    }
     return response.run;
   }
 
@@ -343,17 +369,20 @@ class DefaultExternalAgentWorkerClient implements ExternalAgentWorkerClient {
       `/agent-workers/workers/${encodeURIComponent(input.workerId)}/runs/${
         encodeURIComponent(input.runId)
       }/lease`,
-      lazySchema(
-        defineSchema<{ run: ExternalAgentWorkerRun | null }>((v) =>
-          v.object({ run: externalAgentWorkerRun(v).nullable() })
-        ),
-      ),
+      WorkerClaimSchema,
       {
         method: "POST",
         body: JSON.stringify({ lease_duration_seconds: input.leaseDurationSeconds }),
       },
       { workerId: input.workerId },
     );
+    if (response.run && response.credentials) {
+      terminalRoute(response.credentials.run_terminal_token, response.run.run_id);
+      apply(mapSet, this.#runCredentials, [response.run.run_id, response.credentials]);
+    }
+    if (!response.run || !response.credentials) {
+      apply(mapDelete, this.#runCredentials, [input.runId]);
+    }
     return response.run;
   }
 
@@ -382,14 +411,21 @@ class DefaultExternalAgentWorkerClient implements ExternalAgentWorkerClient {
     return response.session;
   }
 
+  #credentialsFor(runId: string): RunCredentials {
+    const credentials = apply(mapGet, this.#runCredentials, [runId]) as RunCredentials | undefined;
+    if (!credentials) throw new Error("Current worker claim authority is required");
+    return credentials;
+  }
+
   async appendRunEvents(input: AppendExternalAgentWorkerRunEventsInput): Promise<void> {
+    const credentials = this.#credentialsFor(input.runId);
+    const route = terminalRoute(credentials.run_terminal_token, input.runId);
     await this.#request(
-      `/conversations/${encodeURIComponent(input.conversationId)}/runs/${
-        encodeURIComponent(input.runId)
-      }/events`,
+      `/runs/${route.id}/events`,
       lazySchema(defineSchema((v) => v.unknown())),
       {
         method: "POST",
+        headers: { Authorization: `Bearer ${credentials.run_event_token}` },
         body: JSON.stringify({
           events: input.events,
           expected_previous_external_event_sequence: input.expectedPreviousExternalEventSequence,
@@ -399,18 +435,20 @@ class DefaultExternalAgentWorkerClient implements ExternalAgentWorkerClient {
   }
 
   async completeRun(input: CompleteExternalAgentWorkerRunInput): Promise<void> {
-    await this.#request(
-      `/runs/${encodeURIComponent(input.runId)}/complete`,
-      lazySchema(defineSchema((v) => v.unknown())),
-      {
-        method: "POST",
-        body: JSON.stringify({
-          status: input.status,
-          terminal_error_code: input.terminalErrorCode,
-          terminal_error_message: input.terminalErrorMessage,
-        }),
-      },
-    );
+    const credentials = this.#credentialsFor(input.runId);
+    await finalizeConversationAgentRun({
+      ...input,
+      authToken: credentials.auth_token,
+      terminalAuthToken: credentials.run_terminal_token,
+      apiUrl: this.#apiUrl,
+      conversationId: "",
+      provider: "",
+      model: "",
+      fetch: this.#fetch,
+    });
+    if (apply(mapGet, this.#runCredentials, [input.runId]) === credentials) {
+      apply(mapDelete, this.#runCredentials, [input.runId]);
+    }
   }
 }
 

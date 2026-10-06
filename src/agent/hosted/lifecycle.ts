@@ -5,6 +5,7 @@ const logger = serverLogger.component("hosted-lifecycle");
 /** State for hosted lifecycle terminal. */
 export interface HostedLifecycleTerminalState {
   status: "completed" | "failed" | "cancelled";
+  output?: unknown;
   metadata?: {
     modelId?: string;
     usage?: {

@@ -14,6 +14,7 @@ import {
   ROOT_OPTIONAL_RUNTIME_PEERS,
 } from "./npm-package-metadata.ts";
 import {
+  createExtensionPackageSpec,
   type ExtensionManifest,
   firstPartyExtensionManifestPaths,
   manifestDependencies,
@@ -550,6 +551,50 @@ describe("normalizeNpmPackageMetadata", () => {
     assertEquals(pkg.files, ["esm", "script", "bin", "README.md"]);
   });
 
+  it("keeps MDX analysis dependencies out of automatic root npm installs", async () => {
+    const analysisDependencies = {
+      acorn: "8.17.0",
+      "acorn-jsx": "5.3.2",
+      micromark: "4.0.2",
+      parse5: "7.3.0",
+      "mdast-util-mdx": "3.0.0",
+      "micromark-extension-mdx-expression": "3.0.1",
+      "micromark-extension-mdx-jsx": "3.0.2",
+      "micromark-extension-mdx-md": "2.0.0",
+      "micromark-extension-mdxjs-esm": "3.0.0",
+      "micromark-util-combine-extensions": "2.0.1",
+      "micromark-util-types": "2.0.2",
+    };
+    const pkg = normalizeNpmPackageMetadata({
+      dependencies: { ...analysisDependencies, zod: "4.3.6" },
+      optionalDependencies: { ...analysisDependencies },
+    });
+
+    assertEquals(pkg.dependencies, { zod: "4.3.6" });
+    assertEquals(pkg.optionalDependencies, undefined);
+
+    const manifestPath = "extensions/ext-content-mdx/deno.json";
+    const spec = createExtensionPackageSpec({
+      manifestPath,
+      manifest: JSON.parse(
+        await Deno.readTextFile(new URL(manifestPath, repoRoot)),
+      ),
+      rootConfig: JSON.parse(
+        await Deno.readTextFile(new URL("deno.json", repoRoot)),
+      ),
+      rootDir: Deno.cwd(),
+      version: "0.1.1270",
+      license: "Apache-2.0",
+    });
+    const extensionDependencies = spec.packageJson.dependencies as Record<
+      string,
+      string
+    >;
+    for (const [name, version] of Object.entries(analysisDependencies)) {
+      assertEquals(extensionDependencies[name], version);
+    }
+  });
+
   // veryfront@0.1.1239 listed @veryfront/ext-content-mdx under runtime
   // `dependencies`, which drags @mdx-js/mdx -> @types/mdx@2.0.14 into every
   // consumer's node_modules/@types. That file references the *global* JSX
@@ -598,6 +643,7 @@ describe("normalizeNpmPackageMetadata", () => {
         "@kreuzberg/wasm": "4.5.2",
         "@opentelemetry/api": "1.9.1",
         "@opentelemetry/exporter-metrics-otlp-http": "0.219.0",
+        "@opentelemetry/otlp-transformer": "0.220.0",
         "@opentelemetry/sdk-metrics": "2.8.0",
         "@opentelemetry/sdk-node": "0.218.0",
         "@sentry/deno": "10.68.0",
@@ -790,8 +836,8 @@ describe("npm supply-chain policy", () => {
       "extensions/ext-sandbox-shell-tools/src/index.ts",
     );
 
-    assertEquals(source.includes('import("bash-tool")'), true);
-    assertEquals(source.includes('from "bash-tool"'), false);
+    assertEquals(source.includes('import("./tools.ts")'), true);
+    assertEquals(source.includes('from "./tools.ts"'), false);
   });
 
   it("keeps CLI startup off first-party extension package imports", async () => {
@@ -838,8 +884,14 @@ describe("npm supply-chain policy", () => {
       source,
       "TypeScript config module graph required Node native type stripping",
     );
-    assertStringIncludes(source, "Config helper import.meta.url did not preserve");
-    assertStringIncludes(source, 'import.meta.resolve("vf-esm-config-condition-smoke")');
+    assertStringIncludes(
+      source,
+      "Config helper import.meta.url did not preserve",
+    );
+    assertStringIncludes(
+      source,
+      'import.meta.resolve("vf-esm-config-condition-smoke")',
+    );
     assertStringIncludes(source, "vf-nested-config-smoke");
     assertStringIncludes(source, "file-url-values.ts");
     assertStringIncludes(source, "vf-cjs-config-condition-smoke");

@@ -35,7 +35,7 @@ interface CompositeNodeExecutionInput {
   node: WorkflowNode;
   parentSignal?: AbortSignal;
   cancellationGracePeriod?: number;
-  execute: (abortSignal: AbortSignal) => Promise<NodeExecutionResult>;
+  execute: (abortSignal: AbortSignal, attempt: number) => Promise<NodeExecutionResult>;
 }
 
 const nonCooperativeErrors = new WeakSet<Error>();
@@ -73,7 +73,7 @@ export async function executeCompositeNodeWithPolicy(
 
     try {
       const result = await executeAttempt(
-        execute,
+        (signal) => execute(signal, attempt),
         node.id,
         timeout,
         parentSignal,

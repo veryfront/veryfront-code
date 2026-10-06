@@ -1,10 +1,12 @@
 import { getBaseLogger } from "#veryfront/utils/logger/logger.ts";
 import { sanitizeUrlForSpan } from "#veryfront/utils/logger/redact.ts";
 import type { FileCache } from "../cache/file-cache.ts";
+import { isCacheCredentialRejection } from "#veryfront/cache/backends/api.ts";
 import type { ProjectFile, VeryfrontApiClient } from "../../veryfront-api-client/index.ts";
 import type {
   ContentSource,
   InvalidationCallbacks,
+  InvalidationProjectContext,
   PreviewStyleArtifactInfo,
   ResolvedContentContext,
 } from "./types.ts";
@@ -14,6 +16,7 @@ import {
   buildFileListCacheKey,
   buildStatCacheKeyPrefix,
 } from "./cache-keys.ts";
+import { buildVersionedFileOperationProjectPrefix } from "#veryfront/cache/keys/builders/file.ts";
 import {
   addPendingInvalidation,
   getPendingInvalidationsCount,
@@ -153,6 +156,30 @@ interface WebSocketDeps {
   createWebSocket?: WebSocketFactory;
 }
 
+const OPERATION_CACHE_TYPES = ["file", "stat", "dir"] as const;
+/** Legacy and versioned source namespaces of file/stat/directory keys. */
+const OPERATION_SOURCE_TYPES = [
+  "branch",
+  "release",
+  "env",
+  "branch-v2",
+  "release-v2",
+  "env-v2",
+] as const;
+
+/** Exact file, stat and directory source prefixes of one content context. */
+function buildOperationSourcePrefixes(contentContext: ResolvedContentContext): {
+  file: string;
+  stat: string;
+  dir: string;
+} {
+  return {
+    file: `${buildFileCacheKeyPrefix(contentContext)}:`,
+    stat: `${buildStatCacheKeyPrefix(contentContext)}:`,
+    dir: `${buildDirCacheKeyPrefix(contentContext)}:`,
+  };
+}
+
 export class WebSocketManager {
   private ws: WebSocket | null = null;
   private wsReconnectTimer: ReturnType<typeof setTimeout> | null = null;
@@ -170,6 +197,8 @@ export class WebSocketManager {
   private wsConsecutiveFailures = 0;
   private wsErrorLogged = false;
   private disposed = false;
+  /** Set once the adapter was evicted because the API no longer accepts its credential. */
+  private credentialRetired = false;
   private nextPreviewInvalidationVersion = 0;
   private previewInvalidationVersions = new Map<string, number>();
   private activePreviewInvalidationPrefixes = new Set<string>();
@@ -226,11 +255,13 @@ export class WebSocketManager {
       () => {
         for (const prefix of pendingPrefixes) removePendingInvalidation(prefix);
       },
-      (error) =>
+      (error) => {
+        if (this.retireOnCredentialRejection(error)) return;
         logger.error("Branch poke cache invalidation failed", {
           projectSlug: this.deps.projectSlug,
           error: error instanceof Error ? error.message : String(error),
-        }),
+        });
+      },
     );
   }
 
@@ -462,10 +493,78 @@ export class WebSocketManager {
     }
   }
 
+  /**
+   * Evict the adapter once its credential is expired or rejected. The socket
+   * keeps the credential of the request that opened it, so every later poke
+   * would run its cache invalidations under that credential and be refused.
+   * Requests carrying a current credential get a fresh adapter. A standalone
+   * adapter cannot be replaced that way, so it keeps handling pokes. Reports
+   * whether the adapter is retired.
+   */
+  private retireForCredential(reason: "expired" | "rejected"): boolean {
+    if (this.credentialRetired) return true;
+    if (!this.deps.invalidationCallbacks.evictCurrentAdapter) return false;
+    this.credentialRetired = true;
+    if (this.disposed) return true;
+    logger.info(
+      reason === "expired"
+        ? "Retiring adapter whose API credential expired"
+        : "Retiring adapter whose API credential was rejected",
+      { projectSlug: this.deps.projectSlug },
+    );
+    this.deps.invalidationCallbacks.evictCurrentAdapter();
+    return true;
+  }
+
+  /** Whether this adapter's credential can no longer invalidate caches. */
+  private retireIfCredentialUnusable(): boolean {
+    if (this.credentialRetired) return true;
+    return this.deps.invalidationCallbacks.isCredentialExpired?.() === true &&
+      this.retireForCredential("expired");
+  }
+
+  /** Retire the adapter when the API refused its credential. */
+  private retireOnCredentialRejection(error: unknown): boolean {
+    return isCacheCredentialRejection(error) && this.retireForCredential("rejected");
+  }
+
+  /**
+   * Run debounced invalidations in order. The credential is checked before
+   * each one, because it can expire or be refused between the poke and the
+   * batch. Batches skipped that way release their preview markers, as
+   * `dispose()` does for batches that never ran.
+   */
+  private async runQueuedInvalidations<T extends { token: PreviewInvalidationToken }>(
+    queued: T[],
+    perform: (invalidation: T) => Promise<void>,
+    failureMessage: "Queued full invalidation failed" | "Queued selective invalidation failed",
+  ): Promise<void> {
+    for (const [index, invalidation] of queued.entries()) {
+      if (this.retireIfCredentialUnusable()) {
+        for (const skipped of queued.slice(index)) this.completePreviewInvalidation(skipped.token);
+        return;
+      }
+      try {
+        await perform(invalidation);
+      } catch (error) {
+        if (this.retireOnCredentialRejection(error)) continue;
+        logger.error(failureMessage, {
+          projectSlug: this.deps.projectSlug,
+          error,
+        });
+      }
+    }
+  }
+
   private handlePokeMessage(event: MessageEvent): void {
     try {
       const message = parsePokeWebSocketMessage(event.data as string);
       if (!message) return;
+      if (this.retireIfCredentialUnusable()) {
+        // The domain cache is process-wide and needs no API credential.
+        this.deps.invalidationCallbacks.clearDomainCache?.();
+        return;
+      }
       const payload = message.payload;
 
       // Validate payload fields rather than blindly casting Record<string,unknown>.
@@ -680,6 +779,11 @@ export class WebSocketManager {
       const sourceKey = sourceType === "release" ? "release" : "env";
       const base = `${sourceKey}:${this.deps.projectSlug}:`;
       addPrefixes([`file:${base}`, `stat:${base}`, `dir:${base}`, `files:${base}`]);
+      addPrefixes(
+        OPERATION_CACHE_TYPES.map((cacheType) =>
+          buildVersionedFileOperationProjectPrefix(cacheType, sourceKey, this.deps.projectSlug)
+        ),
+      );
     };
 
     if (releaseId) {
@@ -725,6 +829,7 @@ export class WebSocketManager {
           totalDeleted,
         });
       } catch (error) {
+        this.retireOnCredentialRejection(error);
         logger.error("PUBLISH POKE - failed to clear persistent cache (stale data may be served)", {
           projectSlug: this.deps.projectSlug,
           error: error instanceof Error ? error.message : String(error),
@@ -775,18 +880,11 @@ export class WebSocketManager {
       this.invalidationTimer = null;
       const pending = [...this.pendingFullInvalidations.values()];
       this.pendingFullInvalidations.clear();
-      void (async () => {
-        for (const invalidation of pending) {
-          try {
-            await this.performInvalidation(invalidation.contentContext, invalidation.token);
-          } catch (error) {
-            logger.error("Queued full invalidation failed", {
-              projectSlug: this.deps.projectSlug,
-              error,
-            });
-          }
-        }
-      })();
+      void this.runQueuedInvalidations(
+        pending,
+        (invalidation) => this.performInvalidation(invalidation.contentContext, invalidation.token),
+        "Queued full invalidation failed",
+      );
     }, INVALIDATION_DEBOUNCE_MS);
   }
 
@@ -823,23 +921,17 @@ export class WebSocketManager {
       this.selectiveInvalidationTimer = null;
       const scheduled = [...this.pendingSelectiveInvalidations.values()];
       this.pendingSelectiveInvalidations.clear();
-      void (async () => {
-        for (const invalidation of scheduled) {
-          try {
-            await this.performSelectiveInvalidation(
-              [...invalidation.changedPaths],
-              invalidation.contentContext,
-              invalidation.token,
-              invalidation.reservedDataOnly,
-            );
-          } catch (error) {
-            logger.error("Queued selective invalidation failed", {
-              projectSlug: this.deps.projectSlug,
-              error,
-            });
-          }
-        }
-      })();
+      void this.runQueuedInvalidations(
+        scheduled,
+        (invalidation) =>
+          this.performSelectiveInvalidation(
+            [...invalidation.changedPaths],
+            invalidation.contentContext,
+            invalidation.token,
+            invalidation.reservedDataOnly,
+          ),
+        "Queued selective invalidation failed",
+      );
     }, INVALIDATION_DEBOUNCE_MS);
   }
 
@@ -1001,7 +1093,7 @@ export class WebSocketManager {
     const acceptedPokes = this.acceptedPokes;
     let preparedStyleArtifact: PreviewStyleArtifactInfo | undefined;
     let reloadSuperseded = false;
-    let succeeded = false;
+    let cacheInvalidated = false;
     let reservedDataKind: "data" | "definition" | undefined;
 
     try {
@@ -1016,8 +1108,13 @@ export class WebSocketManager {
         count: changedPaths.length,
       });
 
-      const sourceTypes = ["branch:", "release:", "env:"] as const;
-      const fileTypes = ["file:", "stat:"] as const;
+      // A known source deletes only its own exact prefixes. Without one, every
+      // legacy and versioned source namespace is cleared for the changed paths.
+      const exactPrefixes = contentContext ? buildOperationSourcePrefixes(contentContext) : null;
+      const prefixesFor = (cacheType: typeof OPERATION_CACHE_TYPES[number]): string[] =>
+        exactPrefixes
+          ? [exactPrefixes[cacheType]]
+          : OPERATION_SOURCE_TYPES.map((sourceType) => `${cacheType}:${sourceType}:`);
 
       const parentDirs = new Set<string>();
       const deletionPromises: Promise<number>[] = [];
@@ -1026,20 +1123,14 @@ export class WebSocketManager {
         const slashIndex = path.lastIndexOf("/");
         parentDirs.add(slashIndex > 0 ? path.substring(0, slashIndex) : "");
 
-        for (const fileType of fileTypes) {
-          for (const sourceType of sourceTypes) {
-            deletionPromises.push(
-              this.deps.cache.deleteByPrefixAndSuffixAsync(fileType + sourceType, path),
-            );
-          }
+        for (const prefix of [...prefixesFor("file"), ...prefixesFor("stat")]) {
+          deletionPromises.push(this.deps.cache.deleteByPrefixAndSuffixAsync(prefix, path));
         }
       }
 
       for (const parentDir of parentDirs) {
-        for (const sourceType of sourceTypes) {
-          deletionPromises.push(
-            this.deps.cache.deleteByPrefixAndSuffixAsync("dir:" + sourceType, parentDir),
-          );
+        for (const prefix of prefixesFor("dir")) {
+          deletionPromises.push(this.deps.cache.deleteByPrefixAndSuffixAsync(prefix, parentDir));
         }
       }
 
@@ -1115,6 +1206,7 @@ export class WebSocketManager {
       }
 
       this.pokeMetrics.invalidationsTriggered++;
+      cacheInvalidated = true;
 
       if (reloadSuperseded) {
         logger.debug("Skipping reload for superseded selective invalidation", {
@@ -1139,7 +1231,7 @@ export class WebSocketManager {
           preparedStyleArtifact,
         );
 
-        this.deps.invalidationCallbacks.triggerReload?.(changedPaths, projectContext);
+        void this.triggerReload(changedPaths, projectContext);
       }
 
       logger.info("Selective invalidation complete", {
@@ -1148,11 +1240,9 @@ export class WebSocketManager {
         totalInvalidations: this.pokeMetrics.invalidationsTriggered,
         reloadTriggered: !reloadSuperseded,
       });
-
-      this.sendPokeAck("selective", changedPaths);
-      succeeded = true;
     } finally {
-      if (succeeded) {
+      if (cacheInvalidated) {
+        this.sendPokeAck("selective", changedPaths);
         this.completePreviewInvalidation(previewInvalidationToken);
         // A patched adapter is current; evicting it would make the next
         // request list the whole project again.
@@ -1173,7 +1263,28 @@ export class WebSocketManager {
     const acceptedPokes = this.acceptedPokes;
     let preparedStyleArtifact: PreviewStyleArtifactInfo | undefined;
     let reloadSuperseded = false;
-    let succeeded = false;
+    let cacheInvalidated = false;
+    // A known source deletes only its own exact prefixes, preserving sibling
+    // branches. Publish handling clears release and environment scopes first.
+    const exactPrefixes = contentContext ? buildOperationSourcePrefixes(contentContext) : null;
+    const deleteOperationSourcePrefix = async (
+      cacheType: typeof OPERATION_CACHE_TYPES[number],
+      sourceType: "branch" | "release" | "env",
+    ): Promise<number> => {
+      if (exactPrefixes) {
+        const exactSourceType = contentContext?.sourceType === "environment"
+          ? "env"
+          : contentContext?.sourceType;
+        return exactSourceType === sourceType
+          ? await this.deps.cache.deleteByPrefixAsync(exactPrefixes[cacheType])
+          : 0;
+      }
+      const [legacy, encoded] = await Promise.all([
+        this.deps.cache.deleteByPrefixAsync(`${cacheType}:${sourceType}:`),
+        this.deps.cache.deleteByPrefixAsync(`${cacheType}:${sourceType}-v2:`),
+      ]);
+      return legacy + encoded;
+    };
 
     try {
       logger.debug("CACHE INVALIDATION STARTED - clearing all caches");
@@ -1192,15 +1303,15 @@ export class WebSocketManager {
         filesReleaseCount,
         filesEnvCount,
       ] = await Promise.all([
-        this.deps.cache.deleteByPrefixAsync("file:branch:"),
-        this.deps.cache.deleteByPrefixAsync("file:release:"),
-        this.deps.cache.deleteByPrefixAsync("file:env:"),
-        this.deps.cache.deleteByPrefixAsync("stat:branch:"),
-        this.deps.cache.deleteByPrefixAsync("stat:release:"),
-        this.deps.cache.deleteByPrefixAsync("stat:env:"),
-        this.deps.cache.deleteByPrefixAsync("dir:branch:"),
-        this.deps.cache.deleteByPrefixAsync("dir:release:"),
-        this.deps.cache.deleteByPrefixAsync("dir:env:"),
+        deleteOperationSourcePrefix("file", "branch"),
+        deleteOperationSourcePrefix("file", "release"),
+        deleteOperationSourcePrefix("file", "env"),
+        deleteOperationSourcePrefix("stat", "branch"),
+        deleteOperationSourcePrefix("stat", "release"),
+        deleteOperationSourcePrefix("stat", "env"),
+        deleteOperationSourcePrefix("dir", "branch"),
+        deleteOperationSourcePrefix("dir", "release"),
+        deleteOperationSourcePrefix("dir", "env"),
         this.deps.cache.deleteByPrefixAsync("files:branch:"),
         this.deps.cache.deleteByPrefixAsync("files:release:"),
         this.deps.cache.deleteByPrefixAsync("files:env:"),
@@ -1285,6 +1396,7 @@ export class WebSocketManager {
       }
 
       this.pokeMetrics.invalidationsTriggered++;
+      cacheInvalidated = true;
 
       if (reloadSuperseded) {
         logger.debug("Skipping reload for superseded full invalidation", {
@@ -1304,7 +1416,7 @@ export class WebSocketManager {
           preparedStyleArtifact,
         );
 
-        this.deps.invalidationCallbacks.triggerReload?.(undefined, projectContext);
+        void this.triggerReload(undefined, projectContext);
       }
 
       logger.debug("CACHE INVALIDATION COMPLETE", {
@@ -1315,16 +1427,30 @@ export class WebSocketManager {
         durationMs: currentTime() - startTime,
         totalInvalidations: this.pokeMetrics.invalidationsTriggered,
       });
-
-      this.sendPokeAck("full");
-      succeeded = true;
     } finally {
-      if (succeeded) {
+      if (cacheInvalidated) {
+        this.sendPokeAck("full");
         this.completePreviewInvalidation(previewInvalidationToken);
         if (!reloadSuperseded) {
           this.deps.invalidationCallbacks.evictCurrentAdapter?.();
         }
       }
+    }
+  }
+
+  private async triggerReload(
+    changedPaths: string[] | undefined,
+    projectContext: InvalidationProjectContext,
+  ): Promise<void> {
+    try {
+      // Observe async failures without delaying completed cache invalidation.
+      await this.deps.invalidationCallbacks.triggerReload?.(changedPaths, projectContext);
+    } catch (error) {
+      const kind = changedPaths === undefined ? "full" : "selective";
+      logger.error(`Queued ${kind} invalidation failed`, {
+        projectSlug: this.deps.projectSlug,
+        error,
+      });
     }
   }
 

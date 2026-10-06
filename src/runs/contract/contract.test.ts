@@ -6,7 +6,7 @@
  */
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import type { components } from "./runs-api.generated.ts";
+import type { components, operations } from "./runs-api.generated.ts";
 
 type Schemas = components["schemas"];
 type Lacks<T, K extends PropertyKey> = K extends keyof T ? false : true;
@@ -20,12 +20,47 @@ type NotNever<T> = [T] extends [never] ? false : true;
 export type RunsContractTypeChecks = [
   Expect<Lacks<Schemas["Run"], "run_id">>,
   Expect<Lacks<Schemas["Run"], "source">>,
+  Expect<
+    Equal<
+      { type: "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED" } extends
+        Schemas["AgentRunModelCallContextRecordedPayload"] ? true : false,
+      false
+    >
+  >,
   // A missing event would make the payload `never`, which every type extends.
   Expect<NotNever<PayloadOf<"MODEL_CALL_COMPLETED">>>,
   Expect<Equal<PayloadOf<"MODEL_CALL_COMPLETED">, Schemas["ModelCallCompletedPayload"]>>,
+  // An unavailable response actor must carry its reason.
+  Expect<
+    Equal<{ type: "unavailable" } extends Schemas["InputResponse"]["actor"] ? true : false, false>
+  >,
 ];
 
 describe("Runs target contract types", () => {
+  it("types redacted diagnostics in read results", () => {
+    const type = "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED";
+    const detail = { type } satisfies PayloadOf<typeof type>;
+    const snapshot = { type } satisfies Extract<
+      Schemas["RunSnapshotEvent"],
+      { event_type: typeof type }
+    >["payload"];
+    assertEquals(detail, { type });
+    assertEquals(snapshot, { type });
+  });
+  it("accepts omitted request defaults", () => {
+    const heartbeat =
+      {} satisfies operations["createRunHeartbeat"]["requestBody"]["content"]["application/json"];
+    const input = {
+      title: "Input",
+      fields: [{ name: "answer", type: "text", default: "Yes" }],
+    } satisfies operations["createRunInputRequest"]["requestBody"]["content"]["application/json"];
+    assertEquals(heartbeat, {});
+    assertEquals(input.fields[0]?.default, "Yes");
+  });
+  it("types a timer wait for a delayed workflow", () => {
+    const wait: Schemas["RunWait"] = { reason: "timer", resume_at: "2099-01-01T00:00:00Z" };
+    assertEquals(wait.reason, "timer");
+  });
   it("type a child run request by the contract", () => {
     const child = {
       project_id: "00000000-0000-4000-8000-000000000001",
@@ -34,5 +69,12 @@ describe("Runs target contract types", () => {
       node_id: "research",
     } satisfies Schemas["CreateRunRequest"];
     assertEquals(child.target.type, "agent");
+  });
+  it("accepts an unavailable actor on a historical input response", () => {
+    const actor = {
+      type: "unavailable",
+      reason: "identity_removed",
+    } satisfies Schemas["InputResponse"]["actor"];
+    assertEquals(actor.reason, "identity_removed");
   });
 });

@@ -252,6 +252,14 @@ export interface ArrayWriteProbe {
   restore(): void;
 }
 
+export interface GlobalFetchProbe {
+  /** True when the replacement was handed `secret` in its URL or headers. */
+  saw(secret: string): boolean;
+  /** How many times the replacement was called. */
+  readonly calls: () => number;
+  restore(): void;
+}
+
 /**
  * Install one {@link ArrayWriteRoute}. Index accessors catch an entry pushed
  * onto a fresh array; a replaced species catches the entries `filter`, `map`
@@ -360,5 +368,43 @@ export function installObjectToJsonHook(onCall: () => void): () => void {
   return () => {
     if (original) Object.defineProperty(Object.prototype, "toJSON", original);
     else Reflect.deleteProperty(Object.prototype, "toJSON");
+  };
+}
+
+/**
+ * Stand in for project code that replaced the global `fetch`: the replacement
+ * records what it is handed and answers `fallback` (by default, forwards to the
+ * fetch it replaced). Not a fetch stub: framework code must never reach it.
+ */
+export function installGlobalFetchProbe(
+  fallback?: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>,
+): GlobalFetchProbe {
+  const descriptor = Object.getOwnPropertyDescriptor(globalThis, "fetch");
+  const original = globalThis.fetch;
+  const seen: string[] = [];
+  let calls = 0;
+  const replacement = (input: RequestInfo | URL, init?: RequestInit) => {
+    calls++;
+    let headers = "";
+    try {
+      headers = JSON.stringify(init?.headers ?? null);
+    } catch {
+      // Unserializable headers are recorded by URL only.
+    }
+    seen.push(String(input), headers);
+    return fallback ? fallback(input, init) : original(input, init);
+  };
+  Object.defineProperty(globalThis, "fetch", {
+    value: replacement,
+    configurable: true,
+    writable: true,
+  });
+  return {
+    saw: (secret) => seen.some((text) => text.includes(secret)),
+    calls: () => calls,
+    restore() {
+      if (descriptor) Object.defineProperty(globalThis, "fetch", descriptor);
+      else Reflect.deleteProperty(globalThis, "fetch");
+    },
   };
 }

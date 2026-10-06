@@ -74,7 +74,7 @@ describe("agent/hosted-child-status", () => {
   it("stores status and identifiers on HostedChildTerminalStateError", () => {
     const error = new HostedChildTerminalStateError("failed", {
       childConversationId: "11111111-1111-4111-a111-111111111111",
-      childRunId: "run_123",
+      childRunId: "20000000-0000-4000-8000-000000000004",
       childMessageId: "22222222-2222-4222-a222-222222222222",
       latestEventId: 1,
       latestExternalEventSequence: 0,
@@ -82,7 +82,7 @@ describe("agent/hosted-child-status", () => {
 
     assertEquals(error.status, "failed");
     assertEquals(error.name, "HostedChildTerminalStateError");
-    assertEquals(error.identifiers.childRunId, "run_123");
+    assertEquals(error.identifiers.childRunId, "20000000-0000-4000-8000-000000000004");
   });
 
   it("returns immediately when already aborted", async () => {
@@ -95,7 +95,7 @@ describe("agent/hosted-child-status", () => {
       apiUrl: "https://api.example.com",
       identifiers: {
         childConversationId: "11111111-1111-4111-a111-111111111111",
-        childRunId: "run_123",
+        childRunId: "20000000-0000-4000-8000-000000000004",
         childMessageId: "22222222-2222-4222-a222-222222222222",
         latestEventId: 1,
         latestExternalEventSequence: 0,
@@ -117,8 +117,8 @@ describe("agent/hosted-child-status", () => {
     const projection = (status: string) =>
       new Response(
         JSON.stringify({
-          runId: "run_123",
-          conversationId: "11111111-1111-4111-a111-111111111111",
+          id: "20000000-0000-4000-8000-000000000004",
+          conversation_id: "11111111-1111-4111-a111-111111111111",
           messageId: "22222222-2222-4222-a222-222222222222",
           latestEventId: 1,
           latestExternalEventSequence: 0,
@@ -145,7 +145,7 @@ describe("agent/hosted-child-status", () => {
           apiUrl: "https://api.example.com",
           identifiers: {
             childConversationId: "11111111-1111-4111-a111-111111111111",
-            childRunId: "run_123",
+            childRunId: "20000000-0000-4000-8000-000000000004",
             childMessageId: "22222222-2222-4222-a222-222222222222",
             latestEventId: 1,
             latestExternalEventSequence: 0,
@@ -169,7 +169,7 @@ describe("agent/hosted-child-status", () => {
     );
     assertEquals(
       terminalErrors[0].identifiers.childRunId,
-      "run_123",
+      "20000000-0000-4000-8000-000000000004",
       "identifiers must be forwarded",
     );
     assertEquals(
@@ -196,7 +196,7 @@ describe("agent/hosted-child-status", () => {
           apiUrl: "https://api.example.com",
           identifiers: {
             childConversationId: "11111111-1111-4111-a111-111111111111",
-            childRunId: "run_123",
+            childRunId: "20000000-0000-4000-8000-000000000004",
             childMessageId: "22222222-2222-4222-a222-222222222222",
             latestEventId: 1,
             latestExternalEventSequence: 0,

@@ -1,4 +1,8 @@
+import { computeHash } from "#veryfront/utils/hash-utils.ts";
+import { terminalRoute } from "#veryfront/agent/conversation/terminal-route.ts";
 import {
+  bindTerminalRunResponseIdentity,
+  hasCurrentTerminalRunCredentialAuthority,
   isTerminalRunToolName,
   RUN_TERMINAL_TOOL_CALL_ID_HEADER,
   terminalToolCallIdHeaderValue,
@@ -9,9 +13,9 @@ import { INGRESS_RUN_TERMINAL_TOKEN_HEADER } from "#veryfront/security/http/ingr
 
 /**
  * Builds the platform MCP source for one control-plane run. The API-minted
- * terminal credential is attached only to finalize calls whose context names
- * the dispatched run; discovery and every other tool use the ordinary source.
- * Inherited delegate contexts are rebound to that run (inbox#2496).
+ * terminal credential is attached only to finalize calls from the dispatched
+ * run's own terminal control. Delegates retain ordinary run-bound authorization
+ * without inheriting terminal authority.
  */
 export function createRunPlatformToolSource(
   config: RemoteMCPToolSourceConfig & { headers: Record<string, string> },
@@ -27,18 +31,30 @@ export function createRunPlatformToolSource(
   const terminalSource = createSource({
     ...config,
     // The call id only names which call the API closes; the token is the authority.
-    headers: (context) => {
+    headers: async (context) => {
       const toolCallId = terminalToolCallIdHeaderValue(context);
-      return toolCallId
-        ? { ...terminalHeaders, [RUN_TERMINAL_TOOL_CALL_ID_HEADER]: toolCallId }
-        : terminalHeaders;
+      // The held credential and admitted call remain stable across a lost-response retry.
+      const idempotencyKey = await computeHash(`${terminal.token}:${toolCallId ?? "finalize"}`);
+      let canonicalRunId: string | undefined;
+      try {
+        canonicalRunId = terminalRoute(terminal.token, terminal.runId).id;
+      } catch {
+        // Malformed credentials cannot establish canonical response identity; the API rejects them.
+      }
+      if (canonicalRunId) bindTerminalRunResponseIdentity(context, canonicalRunId);
+      return {
+        ...terminalHeaders,
+        "Idempotency-Key": idempotencyKey,
+        ...(toolCallId ? { [RUN_TERMINAL_TOOL_CALL_ID_HEADER]: toolCallId } : {}),
+      };
     },
   });
   return {
     id: ordinary.id,
     listTools: (context) => ordinary.listTools(context),
     executeTool: (name, args, context) =>
-      isTerminalRunToolName(name) && context?.runId === terminal.runId
+      isTerminalRunToolName(name) && context?.runId === terminal.runId &&
+        hasCurrentTerminalRunCredentialAuthority(context)
         ? terminalSource.executeTool(name, args, context)
         : ordinary.executeTool(name, args, context),
   };

@@ -4,6 +4,7 @@ import type { ToolExecutionContext } from "#veryfront/tool/types.ts";
 import {
   admitTerminalDispatch,
   awaitTerminalRunControl,
+  bindTerminalRunResponseIdentity,
   createTerminalRunControl,
   dispatchWithTerminalRunControl,
   executeTerminalRunTool,
@@ -107,9 +108,9 @@ it("invalid terminal requests leave the dispatch gate usable", async () => {
       { status: "failed" },
       { status: "failed", error: [] },
       { status: "failed", error: { code: "ERR", message: "bad" }, output: null },
-      { status: "failed", error: { code: "lowercase", message: "bad" } },
-      { status: "failed", error: { code: "ERR", message: "  " } },
-      { status: "failed", error: { code: "ERR", message: "x".repeat(2001) } },
+      { status: "failed", error: { code: "x".repeat(129), message: "bad" } },
+      { status: "failed", error: { code: "ERR", message: "" } },
+      { status: "failed", error: { code: "ERR", message: "x".repeat(4001) } },
       { status: "failed", error: { code: "ERR", message: "bad", extra: true } },
       { status: "cancelled", output: null },
     ]
@@ -403,3 +404,100 @@ it("overlapping invocations retain separate terminal ownership and scheduling ga
   assertEquals(terminalCompletionResponse(firstError)?.object, "first");
   assertEquals(terminalCompletionResponse(secondError)?.object, "second");
 });
+
+Deno.test("canonical terminal resources stop execution only for the credential-bound UUID", async () => {
+  const canonicalRunId = "11111111-1111-4111-8111-111111111111";
+  for (const id of [canonicalRunId, "22222222-2222-4222-8222-222222222222"]) {
+    const control = createAdmittedControl({ runId: "run-current" });
+    bindTerminalRunResponseIdentity(control.context, canonicalRunId);
+    const error = await assertRejects(() =>
+      executeTerminalRunTool(
+        "finalize",
+        { status: "completed", output: { count: 3 } },
+        control.context,
+        async () => ({ id, status: "completed", output: { count: 3 } }),
+      )
+    );
+    assert(error instanceof TerminalRunControlError);
+    assertEquals(error.status, id === canonicalRunId ? "completed" : "unknown");
+    assertEquals(error.output, id === canonicalRunId ? { count: 3 } : undefined);
+  }
+});
+
+Deno.test("failure finalization preserves the canonical code, message and JSON details", async () => {
+  const control = createAdmittedControl({ runId: "run-current" });
+  const canonicalRunId = "11111111-1111-4111-8111-111111111111";
+  bindTerminalRunResponseIdentity(control.context, canonicalRunId);
+  const failure = {
+    code: "ingest.failed",
+    message: "x".repeat(3000),
+    details: { attempt: 2, context: { camelKey: true } },
+  };
+  const error = await assertRejects(() =>
+    executeTerminalRunTool(
+      "finalize",
+      { status: "failed", error: failure },
+      control.context,
+      async () => ({ id: canonicalRunId, status: "failed", output: null, error: failure }),
+    )
+  );
+  assert(error instanceof TerminalRunControlError);
+  assertEquals(error.status, "failed");
+  assertEquals(error.code, failure.code);
+  assertEquals(error.acknowledgedResult, {
+    id: canonicalRunId,
+    status: "failed",
+    output: null,
+    error: failure,
+  });
+});
+
+for (const name of ["succeed_run", "veryfront__succeed_run", "fail_run", "veryfront__fail_run"]) {
+  it(`${name} commits the current run and prevents sibling dispatch`, async () => {
+    const success = name.endsWith("succeed_run");
+    const control = createAdmittedControl({ runId: "run-current" });
+    const input = success ? { output: { count: 2 }, idempotency_key: "outcome-key" } : {
+      error: { code: "TASK_FAILED", message: "Unable to finish" },
+      idempotency_key: "outcome-key",
+    };
+    const status = success ? "completed" : "failed";
+    const error = await assertRejects(() =>
+      executeTerminalRunTool(
+        name,
+        input,
+        control.context,
+        async () => ({ run: { run_id: "run-current", status, ...input } }),
+      )
+    );
+    assert(isTerminalRunControlError(error));
+    assertEquals(error.status, status);
+    assertEquals(control.signal.aborted, true);
+    let dispatched = false;
+    await assertRejects(() =>
+      dispatchWithTerminalRunControl(control.context, async () => {
+        dispatched = true;
+      })
+    );
+    assertEquals(dispatched, false);
+  });
+  it(`${name} rejects a run selector or outcome override before dispatch`, async () => {
+    for (
+      const extra of [{ run_id: "other" }, { status: "failed" }, { idempotency_key: "" }, {
+        idempotency_key: 1,
+      }]
+    ) {
+      const control = createAdmittedControl({ runId: "run-current" });
+      const input = name.endsWith("succeed_run")
+        ? { output: null, ...extra }
+        : { error: { code: "TASK_FAILED", message: "Unable to finish" }, ...extra };
+      let dispatched = false;
+      await assertRejects(() =>
+        executeTerminalRunTool(name, input, control.context, async () => {
+          dispatched = true;
+        })
+      );
+      assertEquals(dispatched, false);
+      assertEquals(control.signal.aborted, false);
+    }
+  });
+}

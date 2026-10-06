@@ -1,4 +1,5 @@
 import { mock } from "node:test";
+import tls from "node:tls";
 import {
   createExecutorNodeClock,
   executorNodeClock,
@@ -167,6 +168,237 @@ if (typeof Deno !== "undefined") {
       } finally {
         listener.close();
         await setImmediate();
+      }
+    });
+
+    for (const ending of ["deadline", "abort", "close"] as const) {
+      it(`keeps caller I/O alive after an early lifetime wake and cancels on ${ending}`, async () => {
+        // The trusted clock seam uses a fixed UTC anchor plus monotonic elapsed time.
+        // Only the caller uses it; the authenticated peer retains its real clock.
+        const epochMs = 1_700_000_000_000;
+        let elapsedMs = 0;
+        const scheduled = new Map<object, { callback: () => void; delayMs: number }>();
+        const controller = new AbortController();
+        const key = randomBytes(32);
+        const listener = await listenExecutorTransport({ host, port: 0, binding, key, timeoutMs });
+        let client: ExecutorNodeTransport | undefined;
+        let server: ExecutorNodeTransport | undefined;
+        try {
+          client = await connectExecutorTransport({
+            podIp: host,
+            port: listener.address.port,
+            binding,
+            key,
+            signal: controller.signal,
+            timeoutMs: 1_000,
+            clock: {
+              now: () => epochMs + elapsedMs,
+              schedule(callback, delayMs) {
+                const handle = {};
+                scheduled.set(handle, { callback, delayMs });
+                return handle;
+              },
+              cancel: (handle) => {
+                scheduled.delete(handle as object);
+              },
+            },
+          });
+          server = await listener.connection;
+          assertEquals(scheduled.size, 1, "authentication must cancel the handshake timer");
+          const [handle, wake] = [...scheduled.entries()][0]!;
+          assertEquals(wake.delayMs, 1_000);
+          const reader = client.readable.getReader();
+          const pending = reader.read();
+          const outcome = pending.then(() => "read", (error: Error) => error.message);
+          scheduled.delete(handle);
+          elapsedMs = 999;
+          wake.callback();
+          assertEquals(await Promise.race([outcome, setImmediate("pending")]), "pending");
+          assertEquals(scheduled.size, 1);
+          const [replacement, next] = [...scheduled.entries()][0]!;
+          assertEquals(next.delayMs, 1, "early delivery must preserve the absolute deadline");
+
+          const serverWriter = server.writable.getWriter();
+          await serverWriter.write(new Uint8Array([42]));
+          assertEquals((await pending).value, new Uint8Array([42]));
+          reader.releaseLock();
+          const clientWriter = client.writable.getWriter();
+          await clientWriter.write(new Uint8Array([43]));
+          assertEquals(await readBytes(server, 1), new Uint8Array([43]));
+          const rejected = assertRejects(
+            () => client!.readable.getReader().read(),
+            Error,
+            `Executor transport ${
+              ending === "deadline"
+                ? "deadline exceeded"
+                : ending === "abort"
+                ? "aborted"
+                : "closed"
+            }`,
+          );
+          if (ending === "deadline") {
+            scheduled.delete(replacement);
+            elapsedMs = 1_000;
+            next.callback();
+          } else if (ending === "abort") {
+            controller.abort();
+          } else {
+            client.close();
+          }
+          await rejected;
+          assertEquals(scheduled.size, 0, "termination must cancel the replacement timer");
+          assertEquals(getEventListeners(controller.signal, "abort").length, 0);
+          next.callback();
+          assertEquals(scheduled.size, 0, "a canceled wake must not rearm");
+          await assertRejects(() => clientWriter.write(new Uint8Array([44])), Error);
+        } finally {
+          client?.close();
+          server?.close();
+          listener.close();
+          key.fill(0);
+          await setImmediate();
+        }
+      });
+    }
+
+    it("keeps a client handshake pending after early delivery and expires at the five-second cap", async () => {
+      let now = 0;
+      const scheduled = new Map<object, { callback: () => void; delayMs: number }>();
+      const clock = {
+        now: () => now,
+        schedule(callback: () => void, delayMs: number) {
+          const handle = {};
+          scheduled.set(handle, { callback, delayMs });
+          return handle;
+        },
+        cancel: (handle: unknown) => {
+          scheduled.delete(handle as object);
+        },
+      };
+      const tcp = createTcpServer();
+      const accepted = new Promise<import("node:net").Socket>((resolve) =>
+        tcp.once("connection", resolve)
+      );
+      await new Promise<void>((resolve) => tcp.listen(0, host, resolve));
+      const address = tcp.address();
+      assert(address && typeof address !== "string");
+      const controller = new AbortController();
+      const connecting = connectExecutorTransport({
+        podIp: host,
+        port: address.port,
+        binding,
+        key: randomBytes(32),
+        timeoutMs: 30_000,
+        signal: controller.signal,
+        clock,
+      });
+      const outcome = connecting.then(() => "connected", (error: Error) => error.message);
+      const raw = await accepted;
+      raw.resume();
+      try {
+        const entry = [...scheduled.entries()].find(([, wake]) => wake.delayMs === 5_000);
+        assert(entry, "client handshake must use the guarded clock");
+        scheduled.delete(entry[0]);
+        now = 4_999;
+        entry[1].callback();
+        assertEquals(await Promise.race([outcome, setImmediate("pending")]), "pending");
+        const next = [...scheduled.entries()].find(([, wake]) => wake.delayMs === 1);
+        assert(next);
+        scheduled.delete(next[0]);
+        now = 5_000;
+        next[1].callback();
+        assertEquals(await outcome, "Executor transport handshake deadline exceeded");
+        assertEquals(scheduled.size, 0);
+      } finally {
+        controller.abort();
+        await outcome;
+        raw.destroy();
+        await new Promise<void>((resolve) => tcp.close(() => resolve()));
+      }
+    });
+
+    it("keeps an unauthenticated socket open after early delivery and expires at the five-second cap", async () => {
+      let now = 0;
+      const scheduled = new Map<object, { callback: () => void; delayMs: number }>();
+      const listener = await listenExecutorTransport({
+        host,
+        port: 0,
+        binding,
+        key: randomBytes(32),
+        timeoutMs: 30_000,
+        clock: {
+          now: () => now,
+          schedule(callback, delayMs) {
+            const handle = {};
+            scheduled.set(handle, { callback, delayMs });
+            return handle;
+          },
+          cancel: (handle) => {
+            scheduled.delete(handle as object);
+          },
+        },
+      });
+      const raw = connectTcp({ host, port: listener.address.port });
+      const closed = new Promise<string>((resolve) => raw.once("close", () => resolve("closed")));
+      try {
+        await new Promise<void>((resolve) => raw.once("connect", resolve));
+        await setImmediate();
+        const entry = [...scheduled.entries()].find(([, wake]) => wake.delayMs === 5_000);
+        assert(entry, "unauthenticated socket must use the guarded clock");
+        scheduled.delete(entry[0]);
+        now = 4_999;
+        entry[1].callback();
+        assertEquals(await Promise.race([closed, setImmediate("pending")]), "pending");
+        const next = [...scheduled.entries()].find(([, wake]) => wake.delayMs === 1);
+        assert(next);
+        scheduled.delete(next[0]);
+        now = 5_000;
+        next[1].callback();
+        assertEquals(await closed, "closed");
+        assertEquals(await Promise.race([listener.connection, setImmediate("pending")]), "pending");
+      } finally {
+        listener.close();
+        raw.destroy();
+        await closed;
+        assertEquals(scheduled.size, 0);
+      }
+    });
+
+    it("uses the guarded deadline as the only listener handshake timer", async () => {
+      const { syncBuiltinESMExports } = await import("node:module");
+      let nativeTimeout: number | undefined;
+      let observed = false;
+      const original = tls.createServer;
+      const factory = mock.method(
+        tls,
+        "createServer",
+        (options: import("node:tls").TlsOptions) =>
+          original({
+            ...options,
+            pskCallback(socket, identity) {
+              nativeTimeout = socket.timeout;
+              observed = true;
+              return options.pskCallback!(socket, identity);
+            },
+          }),
+      );
+      syncBuiltinESMExports();
+      try {
+        const { listener, client } = await pair();
+        try {
+          assert(observed);
+          assertEquals(
+            nativeTimeout,
+            undefined,
+            "native TLS timer must not bypass the guarded deadline",
+          );
+        } finally {
+          listener.close();
+          client.close();
+        }
+      } finally {
+        factory.mock.restore();
+        syncBuiltinESMExports();
       }
     });
 

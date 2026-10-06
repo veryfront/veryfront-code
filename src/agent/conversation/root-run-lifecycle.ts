@@ -130,6 +130,11 @@ export async function prepareHostedConversationRootRunContext(
   input: PrepareHostedConversationRootRunContextInput,
   options: { abortSignal: AbortSignal },
 ): Promise<HostedConversationRootRunContext> {
+  if (input.conversationId && !input.providedRun) {
+    throw new Error(
+      "An API-issued durable root run descriptor is required before hosted conversation execution",
+    );
+  }
   let durableRunMirror: ConversationRunChunkMirror | null = null;
   let privateDurableRunMirror: ConversationRunChunkMirror | null = null;
   const runEventWriterCapability = getActiveHostedRunEventWriterCapability();

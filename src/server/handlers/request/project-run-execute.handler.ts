@@ -1,3 +1,12 @@
+import { createWorkflowAgentNodeRunner } from "./workflow-agent-child.ts";
+import { adaptManagedEvalRunStream } from "./managed-eval-run-stream.ts";
+import { RunStopRegistry } from "#veryfront/internal-agents/run-stop-registry.ts";
+import { agentRunSessionManager } from "#veryfront/internal-agents/session-manager.ts";
+import {
+  snapshotTaskDeadlineClock,
+  systemTaskDeadlineClock,
+  type TaskDeadlineClock,
+} from "#veryfront/server/handlers/request/task-deadline-clock.ts";
 import {
   API_CLIENT_ERROR,
   INPUT_VALIDATION_FAILED,
@@ -21,23 +30,35 @@ import {
   resolveHostOwnedSourceApiBaseUrl,
 } from "#veryfront/config/host-api-base.ts";
 import {
+  addAbortSignalListenerOnce,
   isAbortSignalAborted,
   removeAbortSignalListener,
 } from "#veryfront/platform/compat/abort-signal.ts";
 import {
+  IntrinsicPromise,
   primordialPromiseCatch,
   primordialPromiseResolve,
   primordialPromiseThen,
 } from "#veryfront/platform/compat/primordials/promise.ts";
+import { primordialArrayMap } from "#veryfront/platform/compat/primordials/array.ts";
 import { getRequestTransportLifetime } from "#veryfront/platform/adapters/runtime/shared/request-peer.ts";
-import { createVeryfrontApiOriginBoundOutboundFetch } from "#veryfront/security/http/outbound-fetch.ts";
+import {
+  createVeryfrontApiOriginBoundOutboundFetch,
+  trustedHostFetch,
+} from "#veryfront/security/http/outbound-fetch.ts";
+import {
+  createNativeRequestInit,
+  readOwnInitField,
+} from "#veryfront/platform/compat/http/native-request-init.ts";
 import {
   ControlPlaneRequestError,
   verifyControlPlaneRequest,
 } from "#veryfront/internal-agents/control-plane-auth.ts";
 import {
   INGRESS_API_TOKEN_HEADER,
+  INGRESS_AUTHORIZATION_HEADER,
   INGRESS_INFERENCE_TOKEN_HEADER,
+  INGRESS_RUN_EVENT_TOKEN_HEADER,
   INGRESS_RUN_STOP_TOKEN_HEADER,
   inheritIngressCredentials,
   readIngressCredential,
@@ -58,6 +79,7 @@ import type { VeryfrontApiClient } from "#veryfront/platform/adapters/veryfront-
 import type { ResolvedContentContext } from "#veryfront/platform/adapters/fs/veryfront/types.ts";
 import type { StyleScopeProfile } from "#veryfront/html/styles-builder/style-scope-profile.ts";
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
+import { utf8ByteLength } from "#veryfront/utils/utf8-byte-length.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
 import type { DiscoveryResult } from "#veryfront/discovery";
 import { findProjectRuntimeTask } from "#veryfront/task/project-runtime.ts";
@@ -115,7 +137,6 @@ import { parseProjectDomain } from "#veryfront/server/utils/domain-parser.ts";
 const TaskDate = Date;
 /** Captured before project code runs, which may replace the global. */
 const TaskError = Error;
-const TaskDateNow = Date.now;
 const TaskDateParse = Date.parse;
 const TaskSetTimeout = globalThis.setTimeout;
 const TaskClearTimeout = globalThis.clearTimeout;
@@ -124,6 +145,7 @@ const TaskAbort = AbortController.prototype.abort;
 const TaskAbortSignalAny = AbortSignal.any;
 const RunStopTimeout = AbortSignal.timeout;
 const RunStopAddListener = EventTarget.prototype.addEventListener;
+const ResponsePrototypeJson = Response.prototype.json;
 
 const EXECUTE_PATH_REGEX = /^\/api\/control-plane\/runs\/([^/]+)\/execute$/;
 const DEFAULT_WORKFLOW_STATUS_POLL_INTERVAL_MS = 100;
@@ -137,6 +159,19 @@ const WORKFLOW_UNPERSISTED_WAIT_GRACE_MS = 5_000;
 const DEFAULT_WORKFLOW_CLIENT_DESTROY_TIMEOUT_MS = 5_000;
 /** When the control plane re-dispatches a resume whose request timed out, to report where the run got to. */
 const WORKFLOW_RESUME_RECHECK_MS = 30_000;
+/** At most one pause acknowledgement per run in this window; a boundary inside it skips the call. */
+const WORKFLOW_PAUSE_CHECK_INTERVAL_MS = 1_000;
+const WORKFLOW_PAUSE_ACK_ATTEMPTS = 3;
+const WORKFLOW_PAUSE_ACK_RETRY_MS = 100;
+/** One pause-ack request; the run waits for the answer at its boundary. */
+const WORKFLOW_PAUSE_ACK_TIMEOUT_MS = 2_000;
+/** Backoff between unknown decision rounds while retaining the safe boundary. */
+const WORKFLOW_PAUSE_CHECK_BACKOFF_MS = 30_000;
+/**
+ * How often a manual resume retries, 100ms apart, while the paused execution still holds the
+ * run: about 35s, past the 30s workflow lock lease a parking execution that died may leave.
+ */
+const WORKFLOW_MANUAL_RESUME_ATTEMPTS = 350;
 /** Prefix of a `wait_id` that lists one short hash per wait record of the pause. */
 const WAIT_ID_PREFIX = "w";
 const WAIT_ID_HASH_LENGTH = 16;
@@ -155,6 +190,14 @@ const NumberIsFinite = Number.isFinite;
 const NumberParseInt = Number.parseInt;
 const MathTrunc = Math.trunc;
 const ObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const ObjectHasOwn = Object.hasOwn;
+const ResponseStatusGetter = ObjectGetOwnPropertyDescriptor(Response.prototype, "status")!.get!;
+const ResponseOkGetter = ObjectGetOwnPropertyDescriptor(Response.prototype, "ok")!.get!;
+const ResponseBodyGetter = ObjectGetOwnPropertyDescriptor(Response.prototype, "body")!.get!;
+const ReadableStreamCancel = ReadableStream.prototype.cancel;
+const ObjectValues = Object.values;
+const ArraySome = Array.prototype.some;
+const ObjectSetPrototypeOf = Object.setPrototypeOf;
 const NumberPrototypeToString = Number.prototype.toString;
 const StringPrototypeCharCodeAt = String.prototype.charCodeAt;
 const StringPrototypeTrim = String.prototype.trim;
@@ -172,6 +215,8 @@ function getOwnDataProperty(value: Record<string, unknown>, key: string): unknow
 
 export interface ProjectRunExecuteRequest {
   runId: string;
+  /** Persisted Run UUID authenticated by the control-plane request signature. */
+  canonicalRunId?: string;
   kind: "task" | "workflow";
   target: string;
   projectId: string;
@@ -210,7 +255,12 @@ export type WorkflowResumeSignal =
   }
   | { type: "event"; name: string; payload?: unknown; wait_id?: string }
   | { type: "deadline"; wait_id?: string }
-  | { type: "child_run"; wait_id: string };
+  | { type: "child_run"; wait_id: string }
+  /** Continue a run that paused at a safe boundary on a manual pause request. It names no wait. */
+  | { type: "manual" };
+
+/** A resume that releases wait records, as opposed to a manual resume of a paused run. */
+type WorkflowWaitResumeSignal = Exclude<WorkflowResumeSignal, { type: "manual" }>;
 
 export interface WorkflowWaitingDependency {
   kind: "run";
@@ -238,7 +288,7 @@ export interface ProjectRunExecuteResponse {
   success: boolean;
   /** Lifecycle outcome. Sent for a pause, which `success` alone cannot express (#2085). */
   status?: "waiting";
-  waiting_reason?: "approval" | "event" | "child_run";
+  waiting_reason?: "approval" | "event" | "child_run" | "manual_pause";
   /** Every independently durable run that must terminate before this workflow continues. */
   waiting_on?: WorkflowWaitingDependency[];
   waiting?: WorkflowWaitingDetails;
@@ -274,6 +324,7 @@ interface EvalReportUploadInput {
   report: EvalReport;
   projectReference: string;
   reportPath: string;
+  content?: string;
   signal?: AbortSignal;
 }
 
@@ -316,6 +367,8 @@ interface WorkflowClientView {
     options?: { runId?: string; [CONTROL_PLANE_OWNED_START]?: true },
   ): Promise<WorkflowStartHandle>;
   getRun(runId: string): Promise<WorkflowRunView | null>;
+  /** Continue a durable run that paused at a safe boundary. */
+  resume?(runId: string): Promise<void>;
   getPendingEventWaits?(runId: string): Promise<WorkflowEventWaitView[]>;
   resumeChildRuns?(
     runId: string,
@@ -341,12 +394,21 @@ interface WorkflowClientView {
   getApprovalManager?(): { checkExpiredApprovals(runId?: string): Promise<void> };
   getEventWaitManager?(): { checkExpiredEventWaits(runId?: string): Promise<void> };
   cancel(runId: string): Promise<void>;
-  /** Positive only for locally owned execution whose underlying operation has stopped. */
+  /**
+   * Positive only for locally owned execution whose underlying operation has stopped.
+   * Settled runs keep this evidence only with `executor.retainExecutionStopEvidence`.
+   */
   waitForExecutionStopped?(runId: string): Promise<boolean>;
   destroy(): Promise<void>;
 }
 
 export interface ProjectRunExecuteHandlerDeps {
+  /** Host-owned clock; defaults to intrinsics captured before project code runs. */
+  taskDeadlineClock?: {
+    now(): number;
+    setTimeout: typeof globalThis.setTimeout;
+    clearTimeout: typeof globalThis.clearTimeout;
+  };
   runTask(options: RunTaskOptions): Promise<TaskRunResult>;
   findWorkflowById(
     workflowId: string,
@@ -505,6 +567,14 @@ function parseExecuteRequest(value: unknown, pathRunId: string): ProjectRunExecu
   if (!isRecord(value)) throw INPUT_VALIDATION_FAILED.create({ detail: "Expected object" });
 
   const runId = value.runId;
+  const canonicalRunId = value.canonicalRunId;
+  if (
+    canonicalRunId !== undefined &&
+    (typeof canonicalRunId !== "string" ||
+      !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(canonicalRunId))
+  ) {
+    throw INPUT_VALIDATION_FAILED.create({ detail: "Invalid canonicalRunId" });
+  }
   const kind = value.kind;
   const target = value.target;
   const projectId = value.projectId;
@@ -567,6 +637,7 @@ function parseExecuteRequest(value: unknown, pathRunId: string): ProjectRunExecu
 
   return {
     runId,
+    ...(canonicalRunId === undefined ? {} : { canonicalRunId }),
     kind,
     target,
     projectId,
@@ -647,6 +718,8 @@ function parseResumeSignal(
       return { type: "deadline", ...parseResumeWaitId(value.wait_id) };
     case "child_run":
       return { type: "child_run", wait_id: parseResumeId(value.wait_id, "resume.wait_id") };
+    case "manual":
+      return { type: "manual" };
     default:
       throw INPUT_VALIDATION_FAILED.create({ detail: "Invalid resume.type" });
   }
@@ -667,8 +740,25 @@ function buildEvalReportPath(report: EvalReport, request: ProjectRunExecuteReque
   return `evals/reports/${evalId}/${runId}.json`;
 }
 
-function createEvalReportArtifact(path: string): Record<string, string> {
-  return { kind: "eval-report", path, contentType: "application/json" };
+// Capture before project code can replace the process-wide serializer.
+const capturedArtifactJsonStringify = JSON.stringify.bind(JSON);
+
+function serializeEvalReportFile(report: EvalReport, reportPath: string): string {
+  return `${capturedArtifactJsonStringify({ __proto__: null, ...report, reportPath }, null, 2)}\n`;
+}
+
+async function createEvalReportArtifact(
+  path: string,
+  content: string,
+): Promise<Record<string, unknown>> {
+  return {
+    __proto__: null,
+    kind: "eval-report",
+    path,
+    contentType: "application/json",
+    size_bytes: utf8ByteLength(content),
+    sha256: await computeHash(content),
+  };
 }
 
 function getRunId(pathname: string): string | null {
@@ -710,6 +800,24 @@ function createInputValidationFailure(
   };
 }
 
+/** Keep artifact identity outside the shared prototype graph during wire serialization. */
+function serializeRunResponseEnvelope(response: ProjectRunExecuteResponse): string {
+  const envelope = { __proto__: null, ...response };
+  if (ArrayIsArray(envelope.artifacts)) {
+    envelope.artifacts = ObjectSetPrototypeOf(
+      primordialArrayMap(
+        envelope.artifacts!,
+        (artifact) =>
+          typeof artifact === "object" && artifact !== null && !ArrayIsArray(artifact)
+            ? { __proto__: null, ...artifact }
+            : artifact,
+      ),
+      null,
+    );
+  }
+  return serializeRunOutput(envelope) ?? "null";
+}
+
 /**
  * Applies the run output limit before a response is sent (veryfront/veryfront-issue-inbox#2113).
  * A successful result over the limit becomes an OUTPUT_TOO_LARGE failure without the result; a
@@ -720,7 +828,7 @@ function enforceRunOutputLimit(response: ProjectRunExecuteResponse): {
   wireJson: string;
 } {
   if (!("result" in response)) {
-    return { response, wireJson: serializeRunOutput(response) ?? "null" };
+    return { response, wireJson: serializeRunResponseEnvelope(response) };
   }
   // Serialize once: the checked serialization is the one sent, so a result whose `toJSON`
   // or getters change between serializations cannot slip past the limit.
@@ -736,7 +844,7 @@ function enforceRunOutputLimit(response: ProjectRunExecuteResponse): {
     const { result: _checked, ...envelope } = response;
     return {
       response: safeResponse,
-      wireJson: withSerializedResult(serializeRunOutput(envelope) ?? "{}", serialized),
+      wireJson: withSerializedResult(serializeRunResponseEnvelope(envelope), serialized),
     };
   }
 
@@ -750,7 +858,7 @@ function enforceRunOutputLimit(response: ProjectRunExecuteResponse): {
       error_detail: tooLarge.detail,
     }
     : withoutResult;
-  return { response: safeResponse, wireJson: serializeRunOutput(safeResponse) ?? "null" };
+  return { response: safeResponse, wireJson: serializeRunResponseEnvelope(safeResponse) };
 }
 
 /** Appends an already serialized `result` member to a serialized response envelope. */
@@ -913,6 +1021,7 @@ async function runWhileActive<T>(signal: AbortSignal, operation: () => Promise<T
 async function executeTaskRun(
   request: ProjectRunExecuteRequest,
   execute: (control?: TaskDeadlineControl) => Promise<ProjectRunExecuteResponse>,
+  clock: TaskDeadlineClock,
   acknowledgeNotStarted?: () => Promise<void>,
 ): Promise<ProjectRunExecuteResponse> {
   if (!request.deadlineAt) return execute();
@@ -936,18 +1045,18 @@ async function executeTaskRun(
   const control: TaskDeadlineControl = {
     signal,
     throwIfExpired() {
-      if (TaskDateNow() >= deadline) throw expire();
+      if (clock.now() >= deadline) throw expire();
     },
   };
   try {
     control.throwIfExpired();
     const expiration = new Promise<never>((_resolve, reject) => {
       const arm = () => {
-        const remaining = deadline - TaskDateNow();
+        const remaining = deadline - clock.now();
         if (remaining <= 0) {
           reject(expire());
         } else {
-          timer = TaskSetTimeout(arm, Math.min(remaining, MAX_TIMER_DELAY_MS));
+          timer = clock.setTimer(arm, Math.min(remaining, MAX_TIMER_DELAY_MS));
         }
       };
       arm();
@@ -960,11 +1069,11 @@ async function executeTaskRun(
     control.throwIfExpired();
     return result;
   } catch (failure) {
-    if (!expired && TaskDateNow() >= deadline) expire();
+    if (!expired && clock.now() >= deadline) expire();
     if (!expired) throw failure;
     return { success: false, error: error.message, error_code: "RUN_TIMEOUT" };
   } finally {
-    TaskClearTimeout(timer);
+    clock.clearTimer(timer);
     if (!executionStarted) await acknowledgeNotStarted?.();
   }
 }
@@ -1060,7 +1169,7 @@ async function waitForWorkflowResult(
     if (!run) throw RESOURCE_NOT_FOUND.create({ detail: `Workflow run not found: ${runId}` });
 
     // A waiting run is resumable, so an aborted request cancels it too.
-    if (signal.aborted && !isTerminalWorkflowStatus(run.status)) {
+    if (isAbortSignalAborted(signal) && !isTerminalWorkflowStatus(run.status)) {
       await (cancelRun ? cancelRun() : client.cancel(runId));
       return {
         status: "cancelled",
@@ -1069,7 +1178,7 @@ async function waitForWorkflowResult(
       };
     }
 
-    if (pollingStopped?.aborted) {
+    if ((pollingStopped !== undefined && isAbortSignalAborted(pollingStopped))) {
       throw TIMEOUT_ERROR.create({ detail: `Workflow run timed out: ${runId}` });
     }
 
@@ -1077,7 +1186,9 @@ async function waitForWorkflowResult(
 
     if (run.status === "waiting") {
       if (client.statePersistence !== "durable") return run;
-      const keys = waitKeys(await readPendingWaits(client, runId, run));
+      const parked = await readPendingWaits(client, runId, run);
+      if (isManualPause(run, parked)) return run;
+      const keys = waitKeys(parked);
       // A backend without event waits saves no record for a `waitForEvent()`
       // or `delay()`, so nothing can ever resume the run: fail it instead of
       // polling until the status timeout. An approval pause still saves its
@@ -1232,6 +1343,15 @@ function isParkedOnNothing(
   return approvals.length === 0 && eventWaits.length === 0 && childRunWaits.length === 0;
 }
 
+/**
+ * A run paused at a safe boundary on request. A wait pause always names the
+ * nodes it is parked on; a manual pause names none and holds no wait record.
+ */
+function isManualPause(run: WorkflowRunView, parked: PendingWorkflowWaits): boolean {
+  return run.status === "waiting" && run.currentNodes !== undefined &&
+    run.currentNodes.length === 0 && isParkedOnNothing(parked);
+}
+
 async function waitKeyHash(key: string): Promise<string> {
   return (await computeHash(key)).slice(0, WAIT_ID_HASH_LENGTH);
 }
@@ -1295,7 +1415,7 @@ async function deliverResumeEvent(
 async function applyResumeSignal(
   client: WorkflowClientView,
   runId: string,
-  resume: WorkflowResumeSignal,
+  resume: WorkflowWaitResumeSignal,
   parked: PendingWorkflowWaits,
   nowMs: number,
 ): Promise<{ released: boolean } | { failure: string }> {
@@ -1335,7 +1455,7 @@ async function applyResumeSignal(
  * every pending wait belongs to the pause it was scheduled for.
  */
 async function isStaleDecision(
-  resume: WorkflowResumeSignal,
+  resume: WorkflowWaitResumeSignal,
   parked: PendingWorkflowWaits,
 ): Promise<boolean> {
   if (resume.wait_id === undefined) return false;
@@ -1355,7 +1475,10 @@ async function isStaleDecision(
 }
 
 /** The pending wait records an approval or event decision would release. */
-function targetedWaitKeys(resume: WorkflowResumeSignal, parked: PendingWorkflowWaits): string[] {
+function targetedWaitKeys(
+  resume: WorkflowWaitResumeSignal,
+  parked: PendingWorkflowWaits,
+): string[] {
   if (resume.type === "child_run") {
     return waitKeys({ approvals: [], eventWaits: [], childRunWaits: parked.childRunWaits });
   }
@@ -1387,46 +1510,69 @@ async function resumeWaitingWorkflowRun(
   deps: ProjectRunExecuteHandlerDeps,
   pollingStopped: AbortSignal,
   cancelRun: () => Promise<void>,
+  acknowledgePause?: () => Promise<boolean | undefined>,
 ): Promise<{ run: WorkflowRunView } | { failure: string }> {
   if (client.statePersistence !== "durable") {
     return { failure: "Cannot resume a workflow run without durable workflow persistence" };
+  }
+  if (resume.type === "manual") {
+    return await resumeManuallyPausedRun(
+      client,
+      runId,
+      signal,
+      deps,
+      pollingStopped,
+      cancelRun,
+      acknowledgePause,
+    );
   }
   const current = await client.getRun(runId);
   if (!current) return { failure: `Workflow run not found: ${runId}` };
 
   // A re-dispatch that repeats a decision already applied (the previous
-  // attempt died after applying it) just reports where the run is now.
+  // attempt died after applying it) just reports where the run is now. An
+  // older attempt the control plane told to stop may park it meanwhile; that
+  // pause continues like a manual resume, which asks the control plane first.
   if (current.status !== "waiting") {
-    return {
-      run: await waitForWorkflowResult(
-        client,
-        runId,
-        signal,
-        deps,
-        undefined,
-        pollingStopped,
-        cancelRun,
-      ),
-    };
+    return await resumeManuallyPausedRun(
+      client,
+      runId,
+      signal,
+      deps,
+      pollingStopped,
+      cancelRun,
+      acknowledgePause,
+    );
   }
 
   const parked = await readPendingWaits(client, runId, current);
+  // A pause the control plane did not keep (it told a stale attempt to stop) parks the run
+  // with no wait. It continues like a manual resume, which asks the control plane first.
+  if (isManualPause(current, parked)) {
+    return await resumeManuallyPausedRun(
+      client,
+      runId,
+      signal,
+      deps,
+      pollingStopped,
+      cancelRun,
+      acknowledgePause,
+    );
+  }
   if (await isStaleDecision(resume, parked)) {
-    return {
-      run: await waitForWorkflowResult(
-        client,
-        runId,
-        signal,
-        deps,
-        undefined,
-        pollingStopped,
-        cancelRun,
-      ),
-    };
+    return await resumeManuallyPausedRun(
+      client,
+      runId,
+      signal,
+      deps,
+      pollingStopped,
+      cancelRun,
+      acknowledgePause,
+    );
   }
   // A timed-out request still applies its decision: the timeout reports the
   // run waiting and the recheck dispatch names no decision to apply again.
-  if (signal.aborted) {
+  if (isAbortSignalAborted(signal)) {
     await cancelRun();
     return { run: { status: "cancelled", error: { message: "Workflow run cancelled" } } };
   }
@@ -1452,6 +1598,143 @@ async function resumeWaitingWorkflowRun(
   };
 }
 
+/**
+ * Continue a run paused at a safe boundary under the same run id. The
+ * persisted node states carry every completed node, so only the rest runs.
+ * The paused execution may still be releasing the run when this dispatch
+ * arrives: wait for it to settle, and retry while it still holds the run.
+ *
+ * The run is still at a boundary, so the attempt asks the control plane
+ * before every resume. A duplicate of an earlier resume dispatch, or an
+ * attempt whose run was paused again meanwhile, is told to stop and reports
+ * the pause instead of releasing it.
+ */
+async function awaitRunPauseDecision(
+  acknowledge: () => Promise<boolean | undefined>,
+  signal: AbortSignal,
+  deps: Pick<ProjectRunExecuteHandlerDeps, "sleep">,
+  runId: string,
+  pollingStopped?: AbortSignal,
+): Promise<boolean> {
+  // A stopped poll (the resume request already answered) ends the wait like a
+  // cancellation: the run holds its boundary and a later dispatch decides.
+  const ended = () =>
+    isAbortSignalAborted(signal) ||
+    (pollingStopped !== undefined && isAbortSignalAborted(pollingStopped));
+  for (let round = 1; !ended(); round++) {
+    const decision = await acknowledge();
+    // A decision that arrives after the wait ended answers nobody: the request
+    // already reported the hold, so even a continue must not release the run.
+    if (ended()) break;
+    if (decision !== undefined) return decision;
+    // An unknown reply may hide a committed stop. Hold the durable boundary until
+    // the current authority explicitly permits continuation or cancellation ends it.
+    serverLogger.warn("[project-run-execute] Pause decision unknown; holding the boundary", {
+      runId,
+      round,
+    });
+    await sleepUntilAborted(
+      (ms) => deps.sleep(ms),
+      WORKFLOW_PAUSE_CHECK_BACKOFF_MS,
+      pollingStopped === undefined ? [signal] : [signal, pollingStopped],
+    );
+  }
+  return true;
+}
+
+/**
+ * Sleep that ends early once any of the signals aborts. Project code may have
+ * replaced the global Promise by the time a pause boundary waits, so the race
+ * is built from host-captured Promise operations.
+ */
+async function sleepUntilAborted(
+  sleep: (ms: number) => Promise<void>,
+  ms: number,
+  signals: readonly AbortSignal[],
+): Promise<void> {
+  for (const signal of signals) {
+    if (isAbortSignalAborted(signal)) return;
+  }
+  let wake: (() => void) | undefined;
+  let fail: ((error: unknown) => void) | undefined;
+  const woken = new IntrinsicPromise<void>((resolve, reject) => {
+    wake = () => resolve();
+    fail = reject;
+  });
+  const onAbort = () => wake?.();
+  for (const signal of signals) {
+    addAbortSignalListenerOnce(signal, onAbort);
+  }
+  try {
+    // Listeners are in place first: the sleep itself may observe the abort.
+    void primordialPromiseThen(sleep(ms), () => wake?.(), (error) => fail?.(error));
+    await woken;
+  } finally {
+    for (const signal of signals) removeAbortSignalListener(signal, onAbort);
+  }
+}
+
+function isRecoverableManualPauseBoundary(
+  run: WorkflowRunView,
+  parked: PendingWorkflowWaits,
+): boolean {
+  return run.status === "running" && run.currentNodes?.length === 0 &&
+    isParkedOnNothing(parked) &&
+    IntrinsicReflectApply(ArraySome, ObjectValues(run.nodeStates ?? {}), [
+        (state: NonNullable<WorkflowRunView["nodeStates"]>[string]) =>
+          state?.status === "completed" || state?.status === "skipped",
+      ]) === true;
+}
+
+async function resumeManuallyPausedRun(
+  client: WorkflowClientView,
+  runId: string,
+  signal: AbortSignal,
+  deps: ProjectRunExecuteHandlerDeps,
+  pollingStopped: AbortSignal,
+  cancelRun: () => Promise<void>,
+  acknowledgePause?: () => Promise<boolean | undefined>,
+): Promise<{ run: WorkflowRunView } | { failure: string }> {
+  const settle = () =>
+    waitForWorkflowResult(client, runId, signal, deps, undefined, pollingStopped, cancelRun);
+  let current = await client.getRun(runId);
+  if (!current) return { failure: "Workflow run was not found" };
+  for (let attempt = 1;; attempt++) {
+    const parked = await readPendingWaits(client, runId, current);
+    if (!isManualPause(current, parked) && !isRecoverableManualPauseBoundary(current, parked)) {
+      current = await settle();
+      if (!isManualPause(current, await readPendingWaits(client, runId, current))) {
+        return { run: current };
+      }
+      continue;
+    }
+    if (!acknowledgePause) return { failure: "Manual resume requires a run stop capability" };
+    const stop = await awaitRunPauseDecision(
+      acknowledgePause,
+      signal,
+      deps,
+      runId,
+      pollingStopped,
+    );
+    if (isAbortSignalAborted(signal)) {
+      await cancelRun();
+      return { run: { status: "cancelled", error: { message: "Workflow run cancelled" } } };
+    }
+    if (stop) return { run: { ...current, status: "waiting", currentNodes: [] } };
+    if (!client.resume) return { failure: "Workflow client cannot resume paused runs" };
+    try {
+      await client.resume(runId);
+      break;
+    } catch (error) {
+      if (attempt >= WORKFLOW_MANUAL_RESUME_ATTEMPTS) throw error;
+      await deps.sleep(DEFAULT_WORKFLOW_STATUS_POLL_INTERVAL_MS);
+      current = await client.getRun(runId);
+      if (!current) return { failure: "Workflow run was not found" };
+    }
+  }
+  return { run: await settle() };
+}
+
 function isTerminalWorkflowStatus(status: string): boolean {
   return status === "completed" || status === "failed" || status === "cancelled";
 }
@@ -1462,6 +1745,9 @@ async function executeWorkflowRun(
   signal: AbortSignal,
   deps: ProjectRunExecuteHandlerDeps,
   acknowledgeStop?: () => Promise<void>,
+  acknowledgePause?: () => Promise<boolean | undefined>,
+  releaseStop?: () => void,
+  runAgentNode?: ReturnType<typeof createWorkflowAgentNodeRunner>,
 ): Promise<ProjectRunExecuteResponse> {
   let executionEntered = false;
   try {
@@ -1503,6 +1789,9 @@ async function executeWorkflowRun(
         deps,
         startedAt,
         acknowledgeStop,
+        acknowledgePause,
+        releaseStop,
+        runAgentNode,
       );
     } catch (error) {
       // A failure after discovery still ran against the declared schemas; keep their identity.
@@ -1515,8 +1804,12 @@ async function executeWorkflowRun(
       ...(outputSchemaSha256 ? { output_schema_sha256: outputSchemaSha256 } : {}),
     };
   } finally {
-    // Discovery/schema preparation never admitted execution; resumes may still run elsewhere.
-    if (!executionEntered && !request.resume) await acknowledgeStop?.();
+    // Discovery/schema preparation never admitted execution. A resume may still run
+    // elsewhere, so it drops its local registration without claiming settlement.
+    if (!executionEntered) {
+      if (request.resume) releaseStop?.();
+      else await acknowledgeStop?.();
+    }
   }
 }
 
@@ -1528,11 +1821,36 @@ async function runDiscoveredWorkflow(
   deps: ProjectRunExecuteHandlerDeps,
   startedAt: number,
   acknowledgeStop?: () => Promise<void>,
+  acknowledgePause?: () => Promise<boolean | undefined>,
+  releaseStop?: () => void,
+  runAgentNode?: ReturnType<typeof createWorkflowAgentNodeRunner>,
 ): Promise<ProjectRunExecuteResponse> {
+  // Only a durable run can pause: an ephemeral one has nothing to resume from.
+  let pauseChecksEnabled = false;
+  let lastPauseCheckAt: number | undefined;
+  const shouldPause = async (runId: string): Promise<boolean> => {
+    if (!acknowledgePause || !pauseChecksEnabled || runId !== request.runId) return false;
+    if (isAbortSignalAborted(signal)) return false;
+    const now = deps.now();
+    if (
+      lastPauseCheckAt !== undefined && now - lastPauseCheckAt < WORKFLOW_PAUSE_CHECK_INTERVAL_MS
+    ) return false;
+    const answer = await awaitRunPauseDecision(acknowledgePause, signal, deps, runId);
+    lastPauseCheckAt = deps.now();
+    return answer;
+  };
   let client: WorkflowClientView;
   try {
     client = await deps.createWorkflowClient(
-      withRuntimeStepRegistries({ debug: ctx.debug }),
+      // Per-request client: keep stop evidence for the cancellation acknowledgement.
+      withRuntimeStepRegistries({
+        debug: ctx.debug,
+        executor: {
+          retainExecutionStopEvidence: true,
+          stepExecutor: { runAgentNode },
+          ...(acknowledgePause ? { shouldPause } : {}),
+        },
+      }),
       {
         projectId: request.projectId,
         runtimeTargetKind: request.runtimeTargetKind,
@@ -1542,8 +1860,10 @@ async function runDiscoveredWorkflow(
     );
   } catch (error) {
     if (!request.resume) await acknowledgeStop?.();
+    else releaseStop?.();
     throw error;
   }
+  pauseChecksEnabled = client.statePersistence === "durable";
   let executionStarted = false;
   let activeResume: Promise<unknown> | undefined;
   let stopped: Promise<boolean> | undefined;
@@ -1551,13 +1871,15 @@ async function runDiscoveredWorkflow(
   const acknowledgeSettledStop = () => {
     if (!stopped || stopAcknowledgement) return;
     stopAcknowledgement = primordialPromiseThen(stopped, async (confirmed) => {
+      // Without ownership evidence this pod never ran the execution: retire, never acknowledge.
       if (confirmed) await acknowledgeStop?.();
+      else releaseStop?.();
     });
   };
   try {
     client.register(workflow.definition);
     // A first dispatch has no durable run yet. A resume must cancel its persisted run below.
-    if (signal.aborted && !request.resume) {
+    if (isAbortSignalAborted(signal) && !request.resume) {
       await acknowledgeStop?.();
       return {
         success: false,
@@ -1598,7 +1920,7 @@ async function runDiscoveredWorkflow(
         void cancelRun().catch(() => {});
       };
       signal.addEventListener("abort", forwardCancellation, { once: true });
-      if (signal.aborted) forwardCancellation();
+      if (isAbortSignalAborted(signal)) forwardCancellation();
       const operation = resumeWaitingWorkflowRun(
         client,
         request.runId,
@@ -1607,6 +1929,7 @@ async function runDiscoveredWorkflow(
         deps,
         pollingStopped.signal,
         cancelRun,
+        acknowledgePause,
       ).then(async (result) => {
         await cancellation;
         return cancellationResult ? { run: cancellationResult } : result;
@@ -1705,7 +2028,7 @@ async function runDiscoveredWorkflow(
     const durationMs = Math.max(0, deps.now() - startedAt);
 
     // The cancel can arrive after the last poll, while the pause is persisted.
-    if (run.status === "waiting" && signal.aborted) {
+    if (run.status === "waiting" && isAbortSignalAborted(signal)) {
       await client.cancel(request.runId);
       return {
         success: false,
@@ -1730,6 +2053,18 @@ async function runDiscoveredWorkflow(
       // plane keeps the canonical run `waiting` (#2085) and knows when to
       // dispatch it again (#2110). The pause payload is never sent as output.
       const parked = await readPendingWaits(client, request.runId, run);
+      if (isManualPause(run, parked)) {
+        // The control plane already recorded this pause through the pause
+        // acknowledgement; this response converges a lost acknowledgement.
+        return {
+          success: true,
+          status: "waiting",
+          waiting_reason: "manual_pause",
+          waiting: {},
+          logs: null,
+          duration_ms: durationMs,
+        };
+      }
       const waiting = await describeWorkflowWait(parked);
       const waitingOn = childRunDependencies(parked);
       if (waitingOn.length > MAX_WORKFLOW_CHILD_RUN_DEPENDENCIES) {
@@ -1904,7 +2239,7 @@ const NativeHeaders = Headers;
  * request it can reach must no longer carry the credential. The body was read
  * and verified before this point and is not needed again.
  */
-function withoutProjectRunInferenceToken(req: Request): Request {
+function withoutProjectRunInferenceToken(req: Request, signal?: AbortSignal): Request {
   // Copied entry by entry with iteration primitives captured at load, and the
   // credential is skipped rather than deleted afterwards: handing the original
   // Headers to a constructor would run a patchable `Symbol.iterator` over it.
@@ -1928,7 +2263,7 @@ function withoutProjectRunInferenceToken(req: Request): Request {
     method: IntrinsicReflectApply(RequestMethodGetter, req, []) as string,
     headers,
     // The run is cancelled through this signal; the copy must keep it.
-    signal: IntrinsicReflectApply(RequestSignalGetter, req, []) as AbortSignal,
+    signal: signal ?? IntrinsicReflectApply(RequestSignalGetter, req, []) as AbortSignal,
   });
   // The run still reads its `x-token` from the ingress credentials.
   return inheritIngressCredentials(req, copy);
@@ -1950,8 +2285,18 @@ function readProjectRunInferenceToken(req: Request): string | undefined {
   return requireInferenceProviderCredential(value, "Inference token header");
 }
 
+/** Release acknowledgement bodies through operations captured before project code runs. */
+async function cancelAcknowledgementBody(response: Response): Promise<void> {
+  const body = ReflectApply(ResponseBodyGetter, response, []) as ReadableStream | null;
+  if (body) await ReflectApply(ReadableStreamCancel, body, []);
+}
+
 /** Independent evidence of a settled execution, never evidence from abort alone. */
-function createRunStopAcknowledger(req: Request, runId: string): (() => Promise<void>) | undefined {
+function createRunStopAcknowledger(
+  req: Request,
+  runId: string,
+  executionSignal?: AbortSignal,
+): (() => Promise<void>) | undefined {
   const rawToken = readIngressCredential(req, INGRESS_RUN_STOP_TOKEN_HEADER);
   if (rawToken === null) return undefined;
   const token = requireInferenceProviderCredential(rawToken, "Run stop token header");
@@ -1968,7 +2313,7 @@ function createRunStopAcknowledger(req: Request, runId: string): (() => Promise<
     return undefined;
   }
   const lifetime = getRequestTransportLifetime(req);
-  const signal = lifetime?.signal ??
+  const signal = executionSignal ?? lifetime?.signal ??
     IntrinsicReflectApply(RequestSignalGetter, req, []) as AbortSignal;
   let stopped = false;
   let cancellationObserved = isAbortSignalAborted(signal);
@@ -2003,8 +2348,10 @@ function createRunStopAcknowledger(req: Request, runId: string): (() => Promise<
         // Execution's signal is already aborted; this request owns its deadline.
         signal: ReflectApply(RunStopTimeout, AbortSignal, [10_000]),
       });
-      await response.body?.cancel();
-      if (!response.ok) throw new TaskError("Run stop acknowledgement rejected");
+      await cancelAcknowledgementBody(response);
+      if (!ReflectApply(ResponseOkGetter, response, [])) {
+        throw new TaskError("Run stop acknowledgement rejected");
+      }
     } catch {
       // Best effort. Missing acknowledgement remains unconfirmed in the API.
       serverLogger.warn("[project-run-execute] Could not acknowledge stopped execution", { runId });
@@ -2016,9 +2363,109 @@ function createRunStopAcknowledger(req: Request, runId: string): (() => Promise<
   };
 }
 
+const StringSlice = String.prototype.slice;
+
+/**
+ * The bearer token of the `Authorization` the control plane sent, which the
+ * ingress seal took off this run route. Parsed with captured methods: the
+ * value is a credential and project code may have patched `String.prototype`.
+ */
+function readSealedBearerToken(req: Request): string | undefined {
+  const authorization = readIngressCredential(req, INGRESS_AUTHORIZATION_HEADER);
+  if (authorization === null || authorization.length <= 7) return undefined;
+  const scheme = IntrinsicReflectApply(
+    StringToLowerCase,
+    IntrinsicReflectApply(StringSlice, authorization, [0, 7]) as string,
+    [],
+  );
+  if (scheme !== "bearer ") return undefined;
+  return IntrinsicReflectApply(StringSlice, authorization, [7]) as string;
+}
+
+/**
+ * Ask the control plane whether this attempt should stop at a safe boundary.
+ * A `{ "stop": true }` reply means the API confirmed a requested pause for this
+ * attempt, or the attempt no longer holds the run. The call is idempotent, so a
+ * transport error or 5xx is retried a few times and then answers `undefined`.
+ * Unknown, rejected, and malformed replies never authorize continuation.
+ */
+function createRunPauseAcknowledger(
+  req: Request,
+  runId: string,
+  sleep: (ms: number) => Promise<void>,
+): (() => Promise<boolean | undefined>) | undefined {
+  const rawToken = readIngressCredential(req, INGRESS_RUN_STOP_TOKEN_HEADER);
+  if (rawToken === null) return undefined;
+  const token = requireInferenceProviderCredential(rawToken, "Run stop token header");
+  let url: string;
+  let transport: typeof fetch;
+  try {
+    const apiUrl = requireHostPrivateApiHttps(resolveHostOwnedSourceApiBaseUrl());
+    url = `${apiUrl}/runs/${encodeURIComponent(runId)}/pause-ack`;
+    transport = createVeryfrontApiOriginBoundOutboundFetch(apiUrl);
+  } catch {
+    serverLogger.warn("[project-run-execute] Pause acknowledgement transport is unavailable", {
+      runId,
+    });
+    return undefined;
+  }
+  // Captured before project code runs, so a replaced `Request.prototype.signal` getter cannot
+  // throw from or forge the acknowledgement.
+  const signal = IntrinsicReflectApply(RequestSignalGetter, req, []) as AbortSignal;
+  return async () => {
+    for (let attempt = 1;; attempt++) {
+      try {
+        const response = await transport(url, {
+          method: "POST",
+          redirect: "error",
+          headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+          body: "{}",
+          // A cancelled request stops waiting for the answer at once.
+          signal: ReflectApply(TaskAbortSignalAny, AbortSignal, [[
+            signal,
+            ReflectApply(RunStopTimeout, AbortSignal, [WORKFLOW_PAUSE_ACK_TIMEOUT_MS]),
+          ]]),
+        });
+        const status = ReflectApply(ResponseStatusGetter, response, []) as number;
+        if (status < 500) {
+          if (!ReflectApply(ResponseOkGetter, response, [])) {
+            if (status === 401 || status === 403) {
+              serverLogger.warn("[project-run-execute] Pause acknowledgement was not authorized", {
+                runId,
+                status,
+              });
+            }
+            await cancelAcknowledgementBody(response);
+            return undefined;
+          }
+          const body: unknown = await ReflectApply(ResponsePrototypeJson, response, []);
+          if (
+            status === 200 && isRecord(body) && ObjectHasOwn(body, "stop") &&
+            typeof body.stop === "boolean"
+          ) {
+            return body.stop;
+          }
+        }
+        await cancelAcknowledgementBody(response);
+      } catch {
+        // A transport failure or unreadable reply is retried like a 5xx.
+      }
+      // A cancelled request stops at this boundary; the cancellation then ends the run.
+      if (isAbortSignalAborted(signal)) return true;
+      if (attempt >= WORKFLOW_PAUSE_ACK_ATTEMPTS) {
+        serverLogger.warn("[project-run-execute] Could not read the pause acknowledgement", {
+          runId,
+        });
+        return undefined;
+      }
+      await sleep(WORKFLOW_PAUSE_ACK_RETRY_MS);
+    }
+  };
+}
+
 function getRuntimeApiToken(req: Request, ctx: HandlerContext): string {
-  return readIngressCredential(req, INGRESS_API_TOKEN_HEADER) ?? ctx.proxyToken ??
-    ctx.requestContext?.token ?? "";
+  return readIngressCredential(req, INGRESS_API_TOKEN_HEADER) ?? readSealedBearerToken(req) ??
+    ctx.proxyToken ?? ctx.requestContext?.token ?? "";
 }
 
 function getHeaderFirstValue(value: string | null): string | undefined {
@@ -2173,6 +2620,23 @@ async function readLocalEvalRuntimeRestrictions(
   };
 }
 
+/**
+ * The eval adapter's init without its `Authorization` and `x-token`. The local
+ * AG-UI handler runs the project's agent in this isolate and reads no
+ * credential from its request, so the request it gets carries none. The
+ * headers become a null-prototype record first (the adapter sends one), so
+ * removing the two is a plain own-property delete.
+ */
+function withoutLocalEvalCredentials(init: RequestInit | undefined): RequestInit {
+  const local = createNativeRequestInit(init);
+  const headers = readOwnInitField(local, "headers") as Record<string, string> | undefined;
+  if (headers !== undefined) {
+    delete headers["authorization"];
+    delete headers[INGRESS_API_TOKEN_HEADER];
+  }
+  return local;
+}
+
 function createLocalEvalAgentFetch(input: {
   endpoint: string;
   agentId?: string;
@@ -2184,8 +2648,13 @@ function createLocalEvalAgentFetch(input: {
   if (!agent) return undefined;
 
   return async (requestInput, init) => {
-    const request = new NativeRequest(requestInput, init);
-    if (!isLocalAgUiEndpoint(request.url)) return fetch(request);
+    const request = new NativeRequest(requestInput, withoutLocalEvalCredentials(init));
+    // Not local: the adapter's credentials are minted for the local endpoint
+    // only, so the request goes without them, through the host transport
+    // captured at load rather than a global fetch project code may replace.
+    if (!isLocalAgUiEndpoint(request.url)) {
+      return trustedHostFetch(requestInput, withoutLocalEvalCredentials(init));
+    }
     const runtimeRestrictions = input.runtimeRestrictions ??
       await readLocalEvalRuntimeRestrictions(request);
     const handler = createAgUiHandler({
@@ -2275,48 +2744,63 @@ function createDurableEvalAgentRunBody(
     branchId: input.runtimeTargetBranchId ?? null,
   });
   return {
-    kind: "agent",
-    owner: { kind: "project", id: input.projectId },
-    public_id: request.runId,
+    project_id: input.projectId,
+    target: { type: "agent", id: input.agentId },
     parent_run_id: input.parentRunId,
-    conversation_mode: "create_new",
-    request: {
-      mode: "agent",
-      input: {
-        agent_id: input.agentId,
-        source_target_kind: targets.sourceTargetKind ?? "project",
-        messages: [],
-        tools: request.tools,
-        context: request.context,
-        forwarded_props: createDurableEvalAgentForwardedProps(input, request),
-        ...(targets.runtimeTargetKind ? { runtime_target_kind: targets.runtimeTargetKind } : {}),
-        ...(targets.targetEnvironmentId
-          ? { target_environment_id: targets.targetEnvironmentId }
-          : {}),
-        ...(targets.targetBranchId ? { target_branch_id: targets.targetBranchId } : {}),
-      },
+    input: getEvalAgentPrompt(request),
+    execution: {
+      runtime: targets.runtimeTargetKind === "environment"
+        ? { type: "environment", id: targets.targetEnvironmentId }
+        : targets.runtimeTargetKind === "preview_branch"
+        ? { type: "preview_branch", id: targets.targetBranchId }
+        : { type: "main_branch" },
+    },
+    config: {
+      conversation_mode: "create_new",
+      tools: request.tools,
+      context: request.context,
+      forwarded_props: createDurableEvalAgentForwardedProps(input, request),
     },
   };
+}
+
+function resolveCanonicalEvalParentRunId(request: ProjectRunExecuteRequest): string {
+  const id = request.canonicalRunId;
+  if (
+    id === undefined || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)
+  ) {
+    throw INPUT_VALIDATION_FAILED.create({
+      detail: "Managed eval requires the authenticated canonical parent run UUID",
+    });
+  }
+  return id;
 }
 
 function createDurableEvalAgentFetch(
   input: DurableEvalAgentFetchInput,
 ): NonNullable<AgentServiceEvalAdapterConfig["fetch"]> {
-  const headers = {
-    Authorization: `Bearer ${input.authToken}`,
-    Accept: "application/json",
-    "Content-Type": "application/json",
-  };
+  // The bearer goes out through the Veryfront API transport, captured before
+  // project code loaded, in null-prototype inits: the eval module that runs
+  // around this fetch can replace the global fetch or Object.prototype getters.
+  const send = createVeryfrontApiOriginBoundOutboundFetch(input.apiBaseUrl);
 
   return async (_requestInput, init) => {
     const requestBody = parseEvalAgentRequestBody(init);
     const createRunUrl = createApiUrl(input.apiBaseUrl, "/runs");
-    const createResponse = await fetch(createRunUrl, {
-      method: "POST",
-      headers,
-      body: JSON.stringify(createDurableEvalAgentRunBody(input, requestBody)),
-      signal: init?.signal,
-    });
+    const createResponse = await send(
+      createRunUrl,
+      createNativeRequestInit(undefined, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${input.authToken}`,
+          Accept: "application/json",
+          "Content-Type": "application/json",
+          "Idempotency-Key": `eval:${input.parentRunId}:${requestBody.runId}`,
+        },
+        body: JSON.stringify(createDurableEvalAgentRunBody(input, requestBody)),
+        signal: init?.signal,
+      }),
+    );
     if (!createResponse.ok) {
       throw API_CLIENT_ERROR.create({
         detail:
@@ -2325,9 +2809,11 @@ function createDurableEvalAgentFetch(
     }
 
     const created: unknown = await createResponse.json();
-    const conversationId = (created as { conversation_id?: unknown }).conversation_id;
-    const runId = (created as { run?: { run_id?: unknown } }).run?.run_id;
-    if (typeof conversationId !== "string" || typeof runId !== "string") {
+    const runId = (created as { id?: unknown }).id;
+    if (
+      typeof runId !== "string" ||
+      !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(runId)
+    ) {
       throw API_CLIENT_ERROR.create({
         detail: "Veryfront API returned an invalid durable agent run",
       });
@@ -2335,18 +2821,19 @@ function createDurableEvalAgentFetch(
 
     const streamUrl = createApiUrl(
       input.apiBaseUrl,
-      `/conversations/${encodeURIComponent(conversationId)}/runs/${
-        encodeURIComponent(runId)
-      }/stream`,
+      `/runs/${encodeURIComponent(runId)}/stream`,
     );
-    const streamResponse = await fetch(streamUrl, {
-      method: "GET",
-      headers: {
-        Authorization: `Bearer ${input.authToken}`,
-        Accept: "text/event-stream",
-      },
-      signal: init?.signal,
-    });
+    const streamResponse = await send(
+      streamUrl,
+      createNativeRequestInit(undefined, {
+        method: "GET",
+        headers: {
+          Authorization: `Bearer ${input.authToken}`,
+          Accept: "text/event-stream",
+        },
+        signal: init?.signal,
+      }),
+    );
     if (!streamResponse.ok) {
       throw API_CLIENT_ERROR.create({
         detail:
@@ -2354,7 +2841,7 @@ function createDurableEvalAgentFetch(
       });
     }
 
-    return streamResponse;
+    return adaptManagedEvalRunStream(streamResponse);
   };
 }
 
@@ -2386,6 +2873,8 @@ function createRuntimeApiClient(
   if (!token) {
     throw INVALID_ARGUMENT.create({ detail: "Missing project runtime API token" });
   }
+  // Not the global fetch, which project code loaded for the run can replace.
+  const send = createVeryfrontApiOriginBoundOutboundFetch(apiUrl);
 
   async function requestJson<T>(
     method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE",
@@ -2399,16 +2888,19 @@ function createRuntimeApiClient(
       url.searchParams.set(key, value);
     }
 
-    const response = await fetch(url.toString(), {
-      method,
-      headers: {
-        Authorization: `Bearer ${token}`,
-        Accept: "application/json",
-        "Content-Type": "application/json",
-      },
-      body: body === undefined ? undefined : JSON.stringify(body),
-      signal,
-    });
+    const response = await send(
+      url.toString(),
+      createNativeRequestInit(undefined, {
+        method,
+        headers: {
+          Authorization: `Bearer ${token}`,
+          Accept: "application/json",
+          "Content-Type": "application/json",
+        },
+        body: body === undefined ? undefined : capturedArtifactJsonStringify(body),
+        signal,
+      }),
+    );
 
     if (!response.ok) {
       throw API_CLIENT_ERROR.create({
@@ -2454,10 +2946,13 @@ export async function uploadEvalReportToProjectFiles(
   const client = createRuntimeApiClient(input.req, input.ctx);
   const encodedProject = encodeURIComponent(input.projectReference);
   const encodedPath = encodeURIComponent(input.reportPath);
-  const reportWithPath = { ...input.report, reportPath: input.reportPath };
   const response = await client.put<{ path?: string }>(
     `/projects/${encodedProject}/files/${encodedPath}`,
-    { content: `${JSON.stringify(reportWithPath, null, 2)}\n` },
+    // The native serializer must not invoke an inherited project toJSON hook.
+    {
+      __proto__: null,
+      content: input.content ?? serializeEvalReportFile(input.report, input.reportPath),
+    },
     { signal: input.signal },
   );
   input.signal?.throwIfAborted();
@@ -2851,7 +3346,7 @@ function createEvalAdapterConfig(input: {
           apiBaseUrl: getEnvironmentConfig().apiBaseUrl,
           authToken,
           projectId: input.request.projectId,
-          parentRunId: input.request.runId,
+          parentRunId: resolveCanonicalEvalParentRunId(input.request),
           agentId,
           runtimeTargetKind: input.request.runtimeTargetKind,
           runtimeTargetEnvironmentId: input.request.runtimeTargetEnvironmentId,
@@ -2951,19 +3446,26 @@ async function executeEvalRun(
   const failed = Math.max(report.summary.failed, countFailedEvalRecords(report));
   const projectReference = ctx.projectSlug ?? request.projectId;
   const requestedReportPath = buildEvalReportPath(report, request);
+  let artifact: Record<string, unknown> | null = null;
+  let reportPath: string | null = null;
   let uploadError: string | null = null;
-  const reportPath = await deps.uploadEvalReport({
-    request,
-    ctx,
-    req,
-    report,
-    projectReference,
-    reportPath: requestedReportPath,
-    signal: options.signal,
-  }).catch((error) => {
+  try {
+    const reportContent = serializeEvalReportFile(report, requestedReportPath);
+    artifact = await createEvalReportArtifact(requestedReportPath, reportContent);
+    options.signal?.throwIfAborted();
+    reportPath = await deps.uploadEvalReport({
+      request,
+      ctx,
+      req,
+      report,
+      projectReference,
+      reportPath: requestedReportPath,
+      content: reportContent,
+      signal: options.signal,
+    });
+  } catch (error) {
     uploadError = `Eval report upload failed: ${errorMessage(error)}`;
-    return null;
-  });
+  }
   options.signal?.throwIfAborted();
   const result = options.summaryOnly
     ? report.summary
@@ -2982,7 +3484,7 @@ async function executeEvalRun(
   return {
     success: failureMessages.length === 0,
     result,
-    ...(reportPath ? { artifacts: [createEvalReportArtifact(reportPath)] } : {}),
+    ...(reportPath ? { artifacts: [{ __proto__: null, ...artifact, path: reportPath }] } : {}),
     ...(failureMessages.length > 0 ? { error: failureMessages.join("; ") } : {}),
     logs,
     duration_ms: Math.max(0, deps.now() - startedAt),
@@ -3079,9 +3581,7 @@ async function executeReleaseAssetBuildRun(input: {
     );
 
     const apiBaseUrl = getEnvironmentConfig().apiBaseUrl;
-    const token = readIngressCredential(input.req, INGRESS_API_TOKEN_HEADER) ??
-      input.ctx.proxyToken ??
-      input.ctx.requestContext?.token ?? "";
+    const token = getRuntimeApiToken(input.req, input.ctx);
     if (!token) throw INVALID_ARGUMENT.create({ detail: "Missing project runtime API token" });
 
     const apiClient = new VeryfrontApiClient({
@@ -3445,9 +3945,7 @@ async function executeStyleArtifactBuildRun(input: {
       "#veryfront/html/styles-builder/style-scope-profile.ts"
     );
 
-    const token = readIngressCredential(input.req, INGRESS_API_TOKEN_HEADER) ??
-      input.ctx.proxyToken ??
-      input.ctx.requestContext?.token ?? "";
+    const token = getRuntimeApiToken(input.req, input.ctx);
     if (!token) throw INVALID_ARGUMENT.create({ detail: "Missing project runtime API token" });
 
     apiClient = new VeryfrontApiClient({
@@ -3575,7 +4073,7 @@ const defaultDeps: ProjectRunExecuteHandlerDeps = {
   executeReleaseAssetBuild: executeReleaseAssetBuildRun,
   executeDependencyArtifactBuild: executeDependencyArtifactBuildRun,
   executeStyleArtifactBuild: executeStyleArtifactBuildRun,
-  sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+  sleep: (ms) => new IntrinsicPromise<void>((resolve) => TaskSetTimeout(resolve, ms)),
   now: () => Date.now(),
 };
 
@@ -3585,34 +4083,68 @@ function executeProjectRun(
   ctx: HandlerContext,
   req: Request,
   deps: ProjectRunExecuteHandlerDeps,
+  taskClock: TaskDeadlineClock,
   acknowledgeStop?: () => Promise<void>,
+  acknowledgePause?: () => Promise<boolean | undefined>,
+  releaseStop?: () => void,
 ): Promise<ProjectRunExecuteResponse> {
   if (request.kind === "task") {
-    return executeTaskRun(request, async (control) => {
-      try {
-        const signal = control
-          ? ReflectApply(TaskAbortSignalAny, AbortSignal, [[req.signal, control.signal]])
-          : req.signal;
-        switch (request.target) {
-          case "task:eval":
-            return await executeEvalTaskRun(request, ctx, req, req.signal, deps, control);
-          case "task:knowledge-ingest":
-            return await deps.executeKnowledgeIngest({ request, ctx, req, signal });
-          case "task:release-asset-build":
-            return await deps.executeReleaseAssetBuild({ request, ctx, req, signal });
-          case "task:dependency-artifact-build":
-            return await deps.executeDependencyArtifactBuild({ request, ctx, req, signal });
-          case "task:style-artifact-build":
-            return await deps.executeStyleArtifactBuild({ request, ctx, req, signal });
-          default:
-            return await executeDiscoveredTaskRun(request, ctx, req.signal, deps, control);
+    return executeTaskRun(
+      request,
+      async (control) => {
+        try {
+          const signal = control
+            ? ReflectApply(TaskAbortSignalAny, AbortSignal, [[req.signal, control.signal]])
+            : req.signal;
+          switch (request.target) {
+            case "task:eval":
+              return await executeEvalTaskRun(request, ctx, req, req.signal, deps, control);
+            case "task:knowledge-ingest":
+              return await deps.executeKnowledgeIngest({ request, ctx, req, signal });
+            case "task:release-asset-build":
+              return await deps.executeReleaseAssetBuild({ request, ctx, req, signal });
+            case "task:dependency-artifact-build":
+              return await deps.executeDependencyArtifactBuild({ request, ctx, req, signal });
+            case "task:style-artifact-build":
+              return await deps.executeStyleArtifactBuild({ request, ctx, req, signal });
+            default:
+              return await executeDiscoveredTaskRun(request, ctx, req.signal, deps, control);
+          }
+        } finally {
+          await acknowledgeStop?.();
         }
-      } finally {
-        await acknowledgeStop?.();
-      }
-    }, acknowledgeStop);
+      },
+      taskClock,
+      acknowledgeStop,
+    );
   }
-  return executeWorkflowRun(request, ctx, req.signal, deps, acknowledgeStop);
+  const hostApiUrl = resolveHostOwnedSourceApiBaseUrl();
+  const eventToken = readIngressCredential(req, INGRESS_RUN_EVENT_TOKEN_HEADER) ?? undefined;
+  const authToken = getRuntimeApiToken(req, ctx);
+  let runAgentNode: ReturnType<typeof createWorkflowAgentNodeRunner> | undefined;
+  return executeWorkflowRun(
+    request,
+    ctx,
+    req.signal,
+    deps,
+    acknowledgeStop,
+    acknowledgePause,
+    releaseStop,
+    async (invocation) => {
+      if (!runAgentNode) {
+        const apiUrl = requireHostPrivateApiHttps(hostApiUrl);
+        runAgentNode = createWorkflowAgentNodeRunner({
+          runId: request.runId,
+          projectId: request.projectId,
+          apiUrl,
+          fetch: createVeryfrontApiOriginBoundOutboundFetch(apiUrl),
+          eventToken,
+          authToken,
+        });
+      }
+      return await runAgentNode(invocation);
+    },
+  );
 }
 
 export class ProjectRunExecuteHandler extends BaseHandler {
@@ -3624,8 +4156,31 @@ export class ProjectRunExecuteHandler extends BaseHandler {
     ],
   };
 
-  constructor(private readonly deps: ProjectRunExecuteHandlerDeps = defaultDeps) {
+  private readonly taskDeadlineClock: TaskDeadlineClock;
+
+  constructor(
+    private readonly deps: ProjectRunExecuteHandlerDeps = defaultDeps,
+    taskDeadlineClock?: TaskDeadlineClock,
+    private readonly stopRegistry: RunStopRegistry = agentRunSessionManager.stopRegistry,
+  ) {
     super();
+    const descriptor = ObjectGetOwnPropertyDescriptor(deps, "taskDeadlineClock");
+    const hostClock = descriptor && ObjectHasOwn(descriptor, "value")
+      ? descriptor.value as ProjectRunExecuteHandlerDeps["taskDeadlineClock"]
+      : undefined;
+    const hostNow = hostClock?.now;
+    const hostSchedule = hostClock?.setTimeout;
+    const hostClear = hostClock?.clearTimeout;
+    const clock = taskDeadlineClock ?? (hostClock
+      ? {
+        now: () => ReflectApply(hostNow!, hostClock, []),
+        setTimer: (callback: () => void, delayMs: number) =>
+          ReflectApply(hostSchedule!, hostClock, [callback, delayMs]),
+        clearTimer: (handle: ReturnType<typeof setTimeout> | undefined) =>
+          ReflectApply(hostClear!, hostClock, [handle]),
+      }
+      : systemTaskDeadlineClock);
+    this.taskDeadlineClock = snapshotTaskDeadlineClock(clock);
   }
 
   async handle(req: Request, ctx: HandlerContext): Promise<HandlerResult> {
@@ -3661,12 +4216,24 @@ export class ProjectRunExecuteHandler extends BaseHandler {
           return this.respond(builder.json({ error: "Invalid control-plane signature" }, 401));
         }
         const inferenceToken = readProjectRunInferenceToken(req);
-        const acknowledgeStop = createRunStopAcknowledger(req, request.runId);
-        const stopCredentialPresent = readIngressCredential(req, INGRESS_RUN_STOP_TOKEN_HEADER) !==
-          null;
-        const executionRequest = inferenceToken === undefined && !stopCredentialPresent
-          ? req
-          : withoutProjectRunInferenceToken(req);
+        const stopController = new TaskAbortController();
+        const executionSignal = ReflectApply(TaskAbortSignalAny, AbortSignal, [[
+          IntrinsicReflectApply(RequestSignalGetter, req, []) as AbortSignal,
+          stopController.signal,
+        ]]) as AbortSignal;
+        const callback = createRunStopAcknowledger(req, request.runId, executionSignal);
+        const acknowledgePause = request.kind === "workflow"
+          ? createRunPauseAcknowledger(req, request.runId, this.deps.sleep)
+          : undefined;
+        const executionRequest = withoutProjectRunInferenceToken(req, executionSignal);
+        const settledStop = this.stopRegistry.register(request.runId, () => {
+          ReflectApply(TaskAbort, stopController, [new Error("Run cancelled")]);
+        });
+        const acknowledgeStop = async () => {
+          settledStop();
+          await callback?.();
+        };
+        const releaseStop = () => settledStop("abandoned");
 
         return await withSpan(
           "project_run.execute",
@@ -3680,7 +4247,10 @@ export class ProjectRunExecuteHandler extends BaseHandler {
                     ctx,
                     executionRequest,
                     this.deps,
+                    this.taskDeadlineClock,
                     acknowledgeStop,
+                    acknowledgePause,
+                    releaseStop,
                   )
                   : await runWithProjectRunInferenceCredential(
                     inferenceToken,
@@ -3690,7 +4260,10 @@ export class ProjectRunExecuteHandler extends BaseHandler {
                         ctx,
                         executionRequest,
                         this.deps,
+                        this.taskDeadlineClock,
                         acknowledgeStop,
+                        acknowledgePause,
+                        releaseStop,
                       ),
                   ),
               );

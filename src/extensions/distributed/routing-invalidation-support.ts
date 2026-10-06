@@ -10,3 +10,5 @@ export {
   hasProjectIdentityControlCharacters,
   isCanonicalOpaqueProjectIdentifier,
 } from "#veryfront/utils/project-identity.ts";
+
+export { createRoutingRedisClient } from "./routing-redis-client.ts";

@@ -253,6 +253,108 @@ describe("registry propagation budget", () => {
 });
 
 describe("registry release integrity polling", () => {
+  it("names each incomplete sub-check as registry propagation advances", async () => {
+    const retries: string[] = [];
+    const version = "0.1.1253-rc.100";
+    const metadata = publishedPackage({ version });
+    let attempt = 0;
+    await pollRegistryPackage({
+      packageName: PACKAGE_NAME,
+      version,
+      expectedGitHead: GIT_HEAD,
+      requireRcTag: true,
+      maxAttempts: 7,
+      retryDelayMs: 0,
+      requestTimeoutMs: 1000,
+      delay: () => Promise.resolve(),
+      onRetry: (message) => retries.push(message),
+      fetcher: (input) => {
+        const url = String(input);
+        if (url.endsWith(`/${version}`)) {
+          attempt++;
+          if (attempt === 1) {
+            return Promise.resolve(new Response("private-registry-value", { status: 404 }));
+          }
+          if (attempt === 2) {
+            return Promise.resolve(Response.json({ ...metadata, version: undefined }));
+          }
+          if (attempt === 3) {
+            return Promise.resolve(Response.json({ ...metadata, gitHead: undefined }));
+          }
+          if (attempt === 4) return Promise.resolve(Response.json({ ...metadata, dist: {} }));
+          return Promise.resolve(Response.json(metadata));
+        }
+        if (url.endsWith("/dist-tags")) {
+          return Promise.resolve(Response.json({ rc: attempt === 6 ? "0.1.1253-rc.99" : version }));
+        }
+        return Promise.resolve(Response.json({
+          name: PACKAGE_NAME,
+          versions: attempt === 5 ? {} : { [version]: metadata },
+        }));
+      },
+    });
+    const reasons = [
+      "version is not available yet",
+      "version metadata missing",
+      "gitHead metadata missing",
+      "SLSA provenance missing",
+      "install index metadata missing",
+      "RC tag missing or older than candidate",
+    ];
+    assertEquals(attempt, 7);
+    assertEquals(
+      retries,
+      reasons.map((reason, index) =>
+        `Waiting for ${PACKAGE_NAME}@${version} registry propagation (attempt ${
+          index + 1
+        }/7): ${reason}.`
+      ),
+    );
+  });
+
+  for (const stage of ["version metadata", "install index", "RC tag"]) {
+    it(`names the ${stage} sub-check when it times out`, async () => {
+      const retries: string[] = [];
+      let attempts = 0;
+      const version = "0.1.1253-rc.100";
+      const metadata = publishedPackage({ version });
+      await pollRegistryPackage({
+        packageName: PACKAGE_NAME,
+        version,
+        expectedGitHead: GIT_HEAD,
+        requireRcTag: true,
+        maxAttempts: 2,
+        retryDelayMs: 0,
+        requestTimeoutMs: 1000,
+        delay: () => Promise.resolve(),
+        onRetry: (message) => retries.push(message),
+        fetcher: (input) => {
+          const url = String(input);
+          const currentStage = url.endsWith(`/${version}`)
+            ? "version metadata"
+            : url.endsWith("/dist-tags")
+            ? "RC tag"
+            : "install index";
+          if (currentStage === "version metadata") attempts++;
+          if (attempts === 1 && currentStage === stage) {
+            throw new DOMException("private-registry-value", "TimeoutError");
+          }
+          return Promise.resolve(Response.json(
+            currentStage === "version metadata"
+              ? metadata
+              : currentStage === "RC tag"
+              ? { rc: version }
+              : { name: PACKAGE_NAME, versions: { [version]: metadata } },
+          ));
+        },
+      });
+      assertEquals(retries, [
+        `Waiting for ${PACKAGE_NAME}@${version} registry propagation (attempt 1/2): ${stage} lookup timed out.`,
+      ]);
+      assertEquals(attempts, 2);
+    });
+  }
+
   it("retries a missing exact version and accepts it after propagation", async () => {
     let attempts = 0;
     const delays: number[] = [];

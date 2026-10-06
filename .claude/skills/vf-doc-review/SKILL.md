@@ -36,7 +36,7 @@ These tests already run in CI. Run them first; only flag what they miss.
 Run before reviewing:
 
 ```bash
-deno task test -- tests/docs/
+deno task test:file tests/docs/
 ```
 
 If any of these fail, **fix the test failures first** — they are higher-signal than any review finding.
@@ -209,7 +209,7 @@ When invoked (e.g. via `/vf-doc-review`):
    - "A specific guide" → review that file
    - "Getting Started" → review the six-step flow
    - "Full audit" → all 44 guides (will be long)
-2. **Run automated tests first.** `deno task test -- tests/docs/`.
+2. **Run automated tests first.** `deno task test:file tests/docs/`.
    - If failures originate in `tests/docs/*` or in `docs/guides/*`: surface them and fix before reviewing — they're higher-signal than any manual finding.
    - If failures originate elsewhere (e.g. `.claude/worktrees/*`, stray `src/` issues, environment problems): note them as out-of-scope and proceed with the review. Don't get sidetracked.
 3. **Run the structural greps** from Pillar 2 — these are mechanical and find most issues in seconds.
@@ -246,7 +246,7 @@ When invoked (e.g. via `/vf-doc-review`):
 | Mistake                                                                         | Fix                                                                                                                               |
 | ------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
 | Reviewing reference docs body                                                   | They are generated. Only check links into them.                                                                                   |
-| Skipping the automated tests                                                    | Run `deno task test -- tests/docs/` first; their failures outrank your findings.                                                  |
+| Skipping the automated tests                                                    | Run `deno task test:file tests/docs/` first; their failures outrank your findings.                                                  |
 | Flagging vague "tone" issues without a rewrite                                  | Always propose the replacement text.                                                                                              |
 | Bulk-rewriting AI prose without diff                                            | Show the user each change; voice is opinionated.                                                                                  |
 | Citing `docs/architecture/` issues                                              | Out of scope for this skill.                                                                                                      |

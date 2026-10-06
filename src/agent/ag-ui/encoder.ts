@@ -63,6 +63,8 @@ export interface AgUiEncoderState {
   openToolCallIds?: Set<string>;
   sawVisibleOutput: boolean;
   sawTerminalError: boolean;
+  /** A manual pause closes the transport while execution waits for resume. */
+  manuallyPaused?: boolean;
   metadata: AgUiRunFinishedMetadata;
   /**
    * Clock for `elapsedMs`, and the run-relative anchor it measures from. Absent
@@ -812,6 +814,10 @@ function mapRuntimeStreamEventToAgUiEventsUnstamped(
   state: AgUiEncoderState,
   event: AgUiRuntimeStreamEvent,
 ): AgUiEncodedEvent[] {
+  if (event.type === "data-veryfront.manual_pause") {
+    state.manuallyPaused = true;
+    return [];
+  }
   if (event.type.startsWith("data-")) {
     const name = event.type.slice("data-".length);
     if (name.length === 0) {
@@ -1082,7 +1088,7 @@ function finalizeAgUiEventsUnstamped(
 ): AgUiEncodedEvent[] {
   applyResponseMetadata(state, response);
 
-  if (state.sawTerminalError) {
+  if (state.sawTerminalError || state.manuallyPaused) {
     return [];
   }
 

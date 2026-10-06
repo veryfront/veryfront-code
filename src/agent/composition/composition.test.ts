@@ -20,6 +20,7 @@ import type { Agent, AgentResponse, AgentStreamResult } from "../types.ts";
 import type { ToolExecutionContext } from "#veryfront/tool";
 
 // Side-effect import: registers the globalThis bridges
+import { withLocalChildExecution } from "./local-child-execution.ts";
 import { agentAsTool, agentRegistry, registerAgent } from "./composition.ts";
 import { createInvokeAgentTool } from "../runtime/agent-delegation.ts";
 import { parseInvokeAgentStreamValue } from "#veryfront/chat/invoke-agent-stream.ts";
@@ -376,6 +377,37 @@ describe("agentAsTool", () => {
       Error,
       "Veryfront API MCP is unavailable",
     );
+  });
+
+  it("routes the real generic delegation through its request-scoped owner exactly once", async () => {
+    const child = createMinimalAgent("research");
+    let streams = 0;
+    let owned = 0;
+    const originalStream = child.stream;
+    child.stream = (input) => {
+      streams++;
+      return originalStream(input);
+    };
+    const tool = createInvokeAgentTool({ resolveAgent: () => child });
+    const result = await withLocalChildExecution(
+      async (invocation) => {
+        owned++;
+        assertEquals(invocation.agentId, "research");
+        assertEquals(invocation.toolName, "invoke_agent");
+        assertEquals(invocation.context?.toolCallId, "actual-call");
+        assertEquals(invocation.input, "Find facts");
+        return await invocation.execute();
+      },
+      async () =>
+        await tool.execute({
+          agent_id: "research",
+          description: "Research",
+          prompt: "Find facts",
+          context: {},
+        }, { toolCallId: "actual-call" }),
+    );
+    assertEquals([owned, streams], [1, 1]);
+    assertEquals(result, { text: "ok", toolCalls: 0, status: "completed" });
   });
 
   it("does not publish child stream events from generic invoke_agent calls", async () => {
