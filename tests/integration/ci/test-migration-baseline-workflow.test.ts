@@ -76,6 +76,7 @@ describe("test migration baseline workflow", () => {
       const result = await new Deno.Command(Deno.execPath(), {
         args: [
           "run",
+          "--quiet",
           `--config=${fromFileUrl(new URL("scripts/test.deno.json", repository))}`,
           "--no-check",
           "--allow-read",
