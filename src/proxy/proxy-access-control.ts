@@ -245,7 +245,7 @@ function resolveSignInApex(hostname: string, isHostedProductionDeployment: boole
   if (isHostedProductionDeployment) return DEFAULT_SIGN_IN_APEX;
 
   for (const apex of SIGN_IN_APEX_DOMAINS) {
-    if (hostname === apex || hostname.endsWith(`.${apex}`)) return apex;
+    if (hostname === apex || stringEndsWith(hostname, `.${apex}`)) return apex;
   }
   return DEFAULT_SIGN_IN_APEX;
 }
@@ -258,16 +258,62 @@ function resolveSignInApex(hostname: string, isHostedProductionDeployment: boole
  * hostname; untrusted request hosts receive only a sanitized path and query.
  */
 const NativeURL = URL;
+const NativeEncodeURIComponent = encodeURIComponent;
 const IntrinsicReflectApply = Reflect.apply;
 const StringPrototypeEndsWith = String.prototype.endsWith;
+const URLProtocolGetter = Object.getOwnPropertyDescriptor(NativeURL.prototype, "protocol")!.get!;
+const URLUsernameGetter = Object.getOwnPropertyDescriptor(NativeURL.prototype, "username")!.get!;
+const URLPasswordGetter = Object.getOwnPropertyDescriptor(NativeURL.prototype, "password")!.get!;
+const URLHostnameGetter = Object.getOwnPropertyDescriptor(NativeURL.prototype, "hostname")!.get!;
+const URLPortGetter = Object.getOwnPropertyDescriptor(NativeURL.prototype, "port")!.get!;
+const URLPathnameGetter = Object.getOwnPropertyDescriptor(NativeURL.prototype, "pathname")!.get!;
+const URLSearchGetter = Object.getOwnPropertyDescriptor(NativeURL.prototype, "search")!.get!;
+const URLHashGetter = Object.getOwnPropertyDescriptor(NativeURL.prototype, "hash")!.get!;
 
 function stringEndsWith(value: string, search: string): boolean {
   return IntrinsicReflectApply(StringPrototypeEndsWith, value, [search]) as boolean;
 }
 
+function urlProtocol(url: URL): string {
+  return IntrinsicReflectApply(URLProtocolGetter, url, []) as string;
+}
+
+function urlUsername(url: URL): string {
+  return IntrinsicReflectApply(URLUsernameGetter, url, []) as string;
+}
+
+function urlPassword(url: URL): string {
+  return IntrinsicReflectApply(URLPasswordGetter, url, []) as string;
+}
+
+function urlHostname(url: URL): string {
+  return IntrinsicReflectApply(URLHostnameGetter, url, []) as string;
+}
+
+function urlPort(url: URL): string {
+  return IntrinsicReflectApply(URLPortGetter, url, []) as string;
+}
+
+function urlPathname(url: URL): string {
+  return IntrinsicReflectApply(URLPathnameGetter, url, []) as string;
+}
+
+function urlSearch(url: URL): string {
+  return IntrinsicReflectApply(URLSearchGetter, url, []) as string;
+}
+
+function urlHash(url: URL): string {
+  return IntrinsicReflectApply(URLHashGetter, url, []) as string;
+}
+
 function isTrustedProxyReturnHost(requestHostname: string, configuredHostname: string): boolean {
   return requestHostname === configuredHostname ||
     stringEndsWith(requestHostname, `.${configuredHostname}`);
+}
+
+function isHostedProductionHostname(hostname: string): boolean {
+  return stringEndsWith(hostname, ".production.veryfront.org") ||
+    stringEndsWith(hostname, ".production.veryfront.com");
 }
 
 /** Parse operator configuration once; request handling retains only immutable strings. */
@@ -285,34 +331,33 @@ export function createProxyAuthRedirectBuilder(configuredOrigin?: string) {
       });
     }
     if (
-      signInOrigin.protocol !== "https:" || signInOrigin.username || signInOrigin.password ||
-      signInOrigin.pathname !== "/" || signInOrigin.search || signInOrigin.hash
+      urlProtocol(signInOrigin) !== "https:" || urlUsername(signInOrigin) ||
+      urlPassword(signInOrigin) ||
+      urlPathname(signInOrigin) !== "/" || urlSearch(signInOrigin) || urlHash(signInOrigin)
     ) {
       throw INITIALIZATION_ERROR.create({
         detail:
           "VERYFRONT_PROXY_SIGN_IN_ORIGIN must be an HTTPS origin without credentials, path, query or fragment",
       });
     }
-    signInOrigin.hostname = normalizeProxyRequestHost(signInOrigin.hostname);
-    origin = signInOrigin.origin;
-    hostname = signInOrigin.hostname;
-    port = signInOrigin.port;
+    hostname = normalizeProxyRequestHost(urlHostname(signInOrigin));
+    port = urlPort(signInOrigin);
+    origin = `https://${hostname}${port ? `:${port}` : ""}`;
   }
-  return (url: URL, routedHost: string = url.hostname): string => {
-    const requestHostname = normalizeProxyRequestHost(routedHost);
-    const safePath = normalizeProxyOriginFormPath(url.pathname);
-    const returnPath = safePath + url.search;
+  return (url: URL, routedHost?: string): string => {
+    const requestHostname = normalizeProxyRequestHost(routedHost ?? urlHostname(url));
+    const safePath = normalizeProxyOriginFormPath(urlPathname(url));
+    const returnPath = safePath + urlSearch(url);
     if (origin) {
       const trustedHost = isTrustedProxyReturnHost(requestHostname, hostname);
       const projectOrigin = trustedHost
         ? `https://${requestHostname}${port ? `:${port}` : ""}`
         : "";
       const returnTarget = projectOrigin + returnPath;
-      return `${origin}/sign-in?from=${encodeURIComponent(returnTarget)}`;
+      return `${origin}/sign-in?from=${NativeEncodeURIComponent(returnTarget)}`;
     }
 
-    const isHostedProductionDeployment = requestHostname.endsWith(".production.veryfront.org") ||
-      requestHostname.endsWith(".production.veryfront.com");
+    const isHostedProductionDeployment = isHostedProductionHostname(requestHostname);
     // For hosted production, preserve the absolute origin so the user returns to
     // the correct subdomain — but rebuild it from the allowlisted hostname and the
     // already-sanitized path instead of the raw request URL. This prevents
@@ -323,7 +368,7 @@ export function createProxyAuthRedirectBuilder(configuredOrigin?: string) {
       : returnPath;
 
     const signInApex = resolveSignInApex(requestHostname, isHostedProductionDeployment);
-    return `https://${signInApex}/sign-in?from=${encodeURIComponent(returnTarget)}`;
+    return `https://${signInApex}/sign-in?from=${NativeEncodeURIComponent(returnTarget)}`;
   };
 }
 
