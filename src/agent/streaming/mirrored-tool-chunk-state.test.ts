@@ -1,9 +1,13 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { ChatMessageMetadata, ChatUiMessageChunk } from "../../chat/protocol.ts";
 import { createAgUiChatUiChunkEncoder } from "../ag-ui/chat-ui-chunk-encoder.ts";
 import { ConversationRunEventEncoder } from "../conversation/run-events.ts";
+import {
+  bindRuntimeObservation,
+  getRuntimeObservation,
+} from "../../runtime/runtime-observation-carrier.ts";
 import {
   cloneMirroredToolChunkState,
   closeHostedMirroredOpenToolCalls,
@@ -53,6 +57,49 @@ async function collectChunks(stream: AsyncIterable<Chunk>): Promise<Chunk[]> {
 }
 
 describe("mirrored-tool-chunk-state", () => {
+  it("preserves the trusted producer step identity across mirror and live projections", async () => {
+    const stepId = "11111111-1111-4111-8111-111111111111";
+    const start: Extract<Chunk, { type: "start-step" }> = { type: "start-step" };
+    const end: Extract<Chunk, { type: "finish-step" }> = { type: "finish-step" };
+    bindRuntimeObservation(start, { version: 1, kind: "step_started", stepId });
+    bindRuntimeObservation(end, { version: 1, kind: "step_ended", stepId });
+    const durable = new ConversationRunEventEncoder();
+    const live = createAgUiChatUiChunkEncoder();
+    const stored: ReturnType<typeof durable.encode> = [];
+    const emitted: ReturnType<typeof live.encode> = [];
+    const chunks: Chunk[] = [];
+    const output = createHostedMirroredUiStream({
+      sourceStream: streamChunks([start, end]),
+      rootStreamWatchdog: { observe() {}, dispose() {} },
+      mirroredToolChunkState: createMirroredToolChunkState(),
+      appendChunk: (chunk) => {
+        if (chunk.type !== "start-step" && chunk.type !== "finish-step") {
+          throw new Error("Expected a mirrored step boundary");
+        }
+        const observation = getRuntimeObservation(chunk);
+        stored.push(
+          ...(observation ? durable.encodeObserved(chunk, observation) : durable.encode(chunk)),
+        );
+      },
+    });
+    for await (const chunk of output) {
+      chunks.push(chunk);
+      emitted.push(...live.encode(chunk));
+    }
+    assertEquals(stored.map((event) => event.stepId), [stepId, stepId]);
+    assertEquals(emitted.map((event) => event.payload.stepId), [stepId, stepId]);
+    const [mirroredStart, mirroredEnd] = chunks;
+    assert(mirroredStart);
+    assert(mirroredEnd);
+    assertEquals(mirroredStart === start, false);
+    assertEquals(getRuntimeObservation(mirroredStart), getRuntimeObservation(start));
+    assertEquals(getRuntimeObservation(mirroredEnd), getRuntimeObservation(end));
+    assertEquals(
+      JSON.stringify(chunks),
+      JSON.stringify([{ type: "start-step" }, { type: "finish-step" }]),
+    );
+  });
+
   it("shares each hosted step identity between live output and durable records", async () => {
     const durable = new ConversationRunEventEncoder();
     const live = createAgUiChatUiChunkEncoder();

@@ -25,6 +25,11 @@ import {
   normalizeChatUiMessageStream,
 } from "../../chat/chat-ui-message-helpers.ts";
 import { deriveKnowledgeSourceDocumentChunk } from "../../chat/knowledge-source-document.ts";
+import {
+  bindRuntimeObservation,
+  getPrivateRuntimeObservationSchema,
+  type PrivateRuntimeObservation,
+} from "#veryfront/runtime/runtime-observation-carrier.ts";
 
 /** Public API contract for chat UI message stream finish part. */
 export type ChatUiMessageStreamFinishPart = {
@@ -76,6 +81,8 @@ export type ChatUiMessageStreamFinish<TMessageMetadata = MessageMetadata> = {
 export type ChatUiMessageStreamOptions<TMessageMetadata = MessageMetadata> = {
   /** @internal Consume private hosted sidecars; they never enter public chunks or snapshots. */
   privateToolCallAdmissions?: boolean;
+  /** @internal Consume private runtime-observation sidecars for trusted durable mirrors only. */
+  privateRuntimeObservations?: boolean;
   generateMessageId?: () => string;
   sendReasoning?: boolean;
   onError?: (error: unknown, context?: { code?: string }) => string;
@@ -613,6 +620,67 @@ function toUiChunk(event: ChatStreamEvent): ChatUiMessageChunk<MessageMetadata> 
   }
 }
 
+function isRuntimeObservationRawEventCompatible(input: {
+  eventType: string;
+  observation: PrivateRuntimeObservation;
+}): boolean {
+  switch (input.observation.kind) {
+    case "execution_entry":
+      return input.eventType === "data-veryfront.runtime_context";
+    case "step_started":
+      return input.eventType === "step-start";
+    case "step_ended":
+      return input.eventType === "step-end";
+    case "step_message":
+      return input.eventType === "text-start" ||
+        input.eventType === "text-delta" ||
+        input.eventType === "text-end" ||
+        input.eventType === "reasoning-start" ||
+        input.eventType === "reasoning-delta" ||
+        input.eventType === "reasoning-end";
+    default: {
+      const _exhaustive: never = input.observation;
+      return _exhaustive;
+    }
+  }
+}
+
+function isRuntimeObservationChunkForEvent(input: {
+  eventType: string;
+  chunk: ChatUiMessageChunk<MessageMetadata>;
+  observation: PrivateRuntimeObservation;
+}): boolean {
+  if (!isRuntimeObservationRawEventCompatible(input)) {
+    return false;
+  }
+  switch (input.observation.kind) {
+    case "execution_entry":
+      return input.chunk.type === "data-veryfront.runtime_context";
+    case "step_started":
+      return input.chunk.type === "start-step";
+    case "step_ended":
+      return input.chunk.type === "finish-step";
+    case "step_message":
+      return input.eventType === input.chunk.type;
+    default: {
+      const _exhaustive: never = input.observation;
+      return _exhaustive;
+    }
+  }
+}
+
+function parseTrustedRuntimeObservation(
+  privateRuntimeObservation: unknown,
+): PrivateRuntimeObservation {
+  const parsedRuntimeObservation = getPrivateRuntimeObservationSchema().safeParse(
+    privateRuntimeObservation,
+  );
+  if (!parsedRuntimeObservation.success) {
+    throw new TypeError("Invalid private runtime observation");
+  }
+  return parsedRuntimeObservation.data;
+}
+
 /** Create chat UI message stream from data stream. */
 export function createChatUiMessageStreamFromDataStream<TMessageMetadata = MessageMetadata>(
   input: { stream: ReadableStream<Uint8Array> },
@@ -644,7 +712,18 @@ export function createChatUiMessageStreamFromDataStream<TMessageMetadata = Messa
       };
 
       for await (const rawEvent of streamDataStreamEvents(input.stream)) {
-        const { privateToolCallOccurrenceId, privateObservedToolResult, ...event } = rawEvent;
+        const {
+          privateToolCallOccurrenceId,
+          privateObservedToolResult,
+          privateRuntimeObservation,
+          ...event
+        } = rawEvent;
+        const trustedRuntimeObservation = options.privateRuntimeObservations &&
+            privateRuntimeObservation !== undefined
+          ? parseTrustedRuntimeObservation(privateRuntimeObservation)
+          : undefined;
+        let matchedRuntimeObservation = false;
+        const pendingChunks: ChatUiMessageChunk<MessageMetadata>[] = [];
         manuallyPaused ||= event.type === "data-veryfront.manual_pause";
         trackPendingFrameworkToolInput({
           state,
@@ -681,8 +760,19 @@ export function createChatUiMessageStreamFromDataStream<TMessageMetadata = Messa
           ) {
             bindObservedToolResultStart(chunk);
           }
+          if (
+            trustedRuntimeObservation && chunk &&
+            isRuntimeObservationChunkForEvent({
+              eventType: event.type,
+              chunk,
+              observation: trustedRuntimeObservation,
+            })
+          ) {
+            bindRuntimeObservation(chunk, trustedRuntimeObservation);
+            matchedRuntimeObservation = true;
+          }
           if (chunk && !isDuplicateSourceDocument && !isDuplicateSourceUrl) {
-            yield chunk;
+            pendingChunks.push(chunk);
           }
 
           if (chatEvent.type !== "tool-output-available") {
@@ -701,7 +791,21 @@ export function createChatUiMessageStreamFromDataStream<TMessageMetadata = Messa
             responseMessageId,
             state,
           });
-          yield sourceChunk;
+          pendingChunks.push(sourceChunk);
+        }
+        if (
+          trustedRuntimeObservation && !matchedRuntimeObservation &&
+          !isRuntimeObservationRawEventCompatible({
+            eventType: event.type,
+            observation: trustedRuntimeObservation,
+          })
+        ) {
+          throw new TypeError(
+            `Private runtime observation is attached to an incompatible event: ${event.type}`,
+          );
+        }
+        for (const chunk of pendingChunks) {
+          yield chunk;
         }
       }
 

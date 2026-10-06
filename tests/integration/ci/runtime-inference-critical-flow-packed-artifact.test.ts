@@ -111,7 +111,6 @@ describe("runtime inference critical-flow packed artifact integration", () => {
 
   it("loads packed artifact tarballs as absolute paths before scaffold cwd changes", async () => {
     const artifactDir = await makeTempDirWithOptions({
-      dir: Deno.cwd(),
       prefix: ".runtime-packed-artifact-",
     });
     try {
@@ -158,7 +157,6 @@ describe("runtime inference critical-flow packed artifact integration", () => {
 
   it("redacts paths when a checksum-valid packed artifact is not a tarball", async () => {
     const artifactDir = await makeTempDirWithOptions({
-      dir: Deno.cwd(),
       prefix: ".runtime-invalid-packed-artifact-",
     });
     try {

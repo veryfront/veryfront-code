@@ -434,6 +434,7 @@ function providerToolTerminalSignals(
         toolCallId: typed.toolCallId,
         toolName: typed.toolName,
         providerExecuted: true,
+        ...(!tool ? { observedFromResult: true as const } : {}),
         ...(dynamic ? { dynamic: true } : {}),
       },
     },

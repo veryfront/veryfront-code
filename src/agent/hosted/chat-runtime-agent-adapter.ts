@@ -71,6 +71,7 @@ export function createHostedChatRuntimeAgentAdapter(
               onError: options.onError,
               messageMetadata: options.messageMetadata,
               onFinish: options.onFinish,
+              privateRuntimeObservations: streamInput.runtimeObservations === true,
               onOrphanedToolInput: ({ toolCallId, inputText }) => {
                 input.warnOrphanedToolInput?.(
                   "Dropping orphan AG-UI runtime tool-input-delta stream without a matching lifecycle",
@@ -114,6 +115,7 @@ export async function createHostedChatRuntimeDataStream(
             ...(input.conversationId ? { conversationId: input.conversationId } : {}),
             ...(projectContext?.projectId ? { projectId: projectContext.projectId } : {}),
             ...(projectContext?.projectSlug ? { projectSlug: projectContext.projectSlug } : {}),
+            ...(streamInput.runtimeObservations ? { runtimeObservations: true } : {}),
             abortSignal: streamInput.abortSignal,
             publishDataEvent: (event: ToolExecutionDataEvent) => publishDataEvent(event),
           },

@@ -100,6 +100,8 @@ function fixture(
   options: {
     owner?: HostedExecutorSessionOptions["request"]["owner"];
     completeStream?: boolean;
+    skipModelRequest?: boolean;
+    runtimeObservationStepId?: string;
     agentId?: string;
     prepareFailure?: boolean;
     prepareModelId?: string;
@@ -121,6 +123,7 @@ function fixture(
     hardDeadlineAt: now + (options.hardDeadlineMs ?? 60_000),
   };
   const calls: string[] = [];
+  const streamInputs: JsonValue[] = [];
   let peer: ReturnType<typeof createExecutorChannel> | undefined;
   let generation = 0;
   let preparationDenied = false;
@@ -256,15 +259,37 @@ function fixture(
         }],
         ["agent.stream", {
           mode: "stream",
-          async *handle(): AsyncGenerator<JsonValue> {
+          async *handle(value): AsyncGenerator<JsonValue> {
             calls.push("stream");
-            await peer!.request("model.generate", {
-              modelId,
-              options: { prompt: [], maxOutputTokens: installed!.grant.models[0]!.maxOutputTokens },
-            });
+            streamInputs.push(value);
+            if (!options.skipModelRequest) {
+              await peer!.request("model.generate", {
+                modelId,
+                options: {
+                  prompt: [],
+                  maxOutputTokens: installed!.grant.models[0]!.maxOutputTokens,
+                },
+              });
+            }
             executionAllowed = true;
             yield { type: "ready" };
             if (options.completeStream) {
+              if (
+                options.runtimeObservationStepId && value && typeof value === "object" &&
+                !Array.isArray(value) && value.runtimeObservations === true
+              ) {
+                yield {
+                  type: "event",
+                  event: {
+                    type: "step-start",
+                    privateRuntimeObservation: {
+                      version: 1,
+                      kind: "step_started",
+                      stepId: options.runtimeObservationStepId,
+                    },
+                  },
+                };
+              }
               yield { type: "event", event: { type: "message-finish" } };
               yield { type: "complete" };
               return;
@@ -339,6 +364,7 @@ function fixture(
   }
   return {
     calls,
+    streamInputs,
     input,
     preparation,
     prepareEntered: prepareEntered.promise,
@@ -386,7 +412,177 @@ function configureCanonical(
   if (bindSessionOwnedWork) input.bindSessionOwnedWork = bindSessionOwnedWork;
 }
 
+function observationPersistence(projectId = owner.projectId) {
+  const bodies: Record<string, unknown>[] = [];
+  let cursor = 0;
+  const persistence = createManagedBrokerPersistence({
+    apiUrl: "https://api.example.test",
+    runEventToken: "run-event-token",
+    completionAuthToken: "completion-token",
+    terminalAuthToken: terminalTestToken,
+    run: {
+      runId: "run-1",
+      conversationId: "00000000-0000-4000-8000-000000000001",
+      messageId: "00000000-0000-4000-8000-000000000002",
+      latestEventId: 0,
+      latestExternalEventSequence: 0,
+      waitingToolCallId: null,
+      waitingToolName: null,
+      status: "running",
+      streamProtocolVersion: 2,
+    },
+    modelId,
+    resolveProvider: () => "provider",
+    runtimeObservations: { projectId: projectId },
+    fetch: async (_input, init) => {
+      const body = await new Request(_input, init).json();
+      bodies.push(body);
+      cursor += body.events.length;
+      return Response.json({
+        run_id: canonicalTestRunId,
+        latest_event_id: cursor,
+        latest_external_event_sequence: cursor,
+        appended_count: body.events.length,
+        model_call_captures: body.events.flatMap((event: Record<string, unknown>) =>
+          event.type === "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED"
+            ? [{
+              event_id: String(cursor),
+              model_call_id: event.modelCallId,
+              run_id: canonicalTestRunId,
+              project_id: projectId,
+            }]
+            : []
+        ),
+      });
+    },
+  });
+  return { persistence, bodies };
+}
+
 describe("managed executor broker", () => {
+  it("enables the producer from an exact runtime-observation persistence sink", async () => {
+    const stepId = "22222222-2222-4222-8222-222222222222";
+    const f = fixture({ completeStream: true, runtimeObservationStepId: stepId });
+    const { persistence, bodies } = observationPersistence();
+    configureCanonical(f.input, persistence.modelRunEventSink, persistence.bindSessionOwnedWork);
+    f.input.model.modelCallCaptureReceipts = true;
+    f.input.installation.grant.execution = {
+      kind: "canonical",
+      projectId: owner.projectId,
+      conversationId: "00000000-0000-4000-8000-000000000001",
+      runId: "run-1",
+      messageId: "00000000-0000-4000-8000-000000000002",
+      providerReplay: "disabled",
+    };
+    f.input.installation.capabilities.projectSteering = "steering";
+    f.input.state.prepareProjectSteering = ({ definition }) =>
+      Promise.resolve({ agent: definition });
+    f.input.state.refreshProjectSteering = () => "Work";
+    const broker = createManagedExecutorBroker({ maxActive: 1 });
+    let runtime: Awaited<ReturnType<typeof broker.start>> | undefined;
+    try {
+      runtime = await broker.start(f.input);
+      runtime.accept({ kind: "execution" });
+      const stream = await runtime.agent.stream({
+        messages: [],
+        abortSignal: new AbortController().signal,
+      });
+      const chunks = await Array.fromAsync(stream.toUIMessageStream());
+      const request = f.streamInputs.at(-1);
+      assert(request && typeof request === "object" && !Array.isArray(request));
+      assertEquals(request.runtimeObservations, true);
+      for (const chunk of chunks) await persistence.output.write(chunk);
+      assertEquals(
+        bodies.some((body) => JSON.stringify(body.runtime_observations ?? {}).includes(stepId)),
+        true,
+      );
+      assertEquals(JSON.stringify(chunks).includes(stepId), false);
+    } finally {
+      await runtime?.close("completed");
+      await broker.shutdown();
+      await broker.settled;
+      await persistence.cleanup();
+    }
+  });
+
+  for (const mismatch of ["run", "project", "projectless", "ephemeral"] as const) {
+    it(`rejects a runtime observation writer with a mismatched ${mismatch} grant before allocation`, async () => {
+      const otherProjectId = "44444444-4444-4444-8444-444444444444";
+      const fixtureProjectId = mismatch === "project" ? otherProjectId : owner.projectId;
+      const f = fixture({ owner: { scopeKind: "project", projectId: fixtureProjectId } });
+      const { persistence } = observationPersistence();
+      configureCanonical(f.input, persistence.modelRunEventSink, persistence.bindSessionOwnedWork);
+      f.input.installation.capabilities.projectSteering = "steering";
+      f.input.state.prepareProjectSteering = ({ definition }) =>
+        Promise.resolve({ agent: definition });
+      f.input.state.refreshProjectSteering = () => "Work";
+      f.input.installation.grant.execution = mismatch === "ephemeral"
+        ? { kind: "ephemeral", projectId: null }
+        : {
+          kind: "canonical",
+          runId: mismatch === "run" ? "another-run" : "run-1",
+          projectId: mismatch === "projectless" ? null : fixtureProjectId,
+          conversationId: "conversation-1",
+          messageId: "message-1",
+          providerReplay: "disabled",
+        };
+      const broker = createManagedExecutorBroker({ maxActive: 1 });
+      let runtime: Awaited<ReturnType<typeof broker.start>> | undefined;
+      try {
+        await assertRejects(
+          async () => {
+            runtime = await broker.start(f.input);
+          },
+          TypeError,
+          "Runtime observation writer does not match its execution grant",
+        );
+        assertEquals(f.calls, []);
+      } finally {
+        await runtime?.close();
+        await broker.shutdown();
+        await broker.settled;
+        await persistence.cleanup();
+      }
+    });
+  }
+
+  for (const forged of [false, true]) {
+    it(`ignores public observation flags on an unbound sink (forged scope ${forged})`, async () => {
+      const f = fixture({ completeStream: true, skipModelRequest: true });
+      const sink = () => Promise.resolve();
+      if (forged) {
+        Object.assign(sink, {
+          runtimeObservationScope: {
+            runId: "run-1",
+            canonicalRunId: canonicalTestRunId,
+            projectId: owner.projectId,
+          },
+        });
+      }
+      configureCanonical(f.input, sink, () => {});
+      Object.assign(f.input, { runtimeObservations: true });
+      const broker = createManagedExecutorBroker({ maxActive: 1 });
+      let runtime: Awaited<ReturnType<typeof broker.start>> | undefined;
+      try {
+        runtime = await broker.start(f.input);
+        runtime.accept({ kind: "execution" });
+        const stream = await runtime.agent.stream({
+          messages: [],
+          abortSignal: new AbortController().signal,
+          runtimeObservations: true,
+        });
+        await Array.fromAsync(stream.toUIMessageStream());
+        const request = f.streamInputs.at(-1);
+        assert(request && typeof request === "object" && !Array.isArray(request));
+        assertEquals(request.runtimeObservations, undefined);
+      } finally {
+        await runtime?.close("completed");
+        await broker.shutdown();
+        await broker.settled;
+      }
+    });
+  }
+
   it("executes an owned host tool selected by its short alias through installed runtime facades", async () => {
     const f = fixture();
     const model = scriptedModel([

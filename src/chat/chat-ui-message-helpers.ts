@@ -1,5 +1,6 @@
 import type { ChatMessageMetadata, ChatUiMessageChunk } from "./protocol.ts";
 import { readCacheWrite1hShare } from "#veryfront/provider/runtime-usage.ts";
+import { retainRuntimeObservation } from "#veryfront/runtime/runtime-observation-carrier.ts";
 
 type StreamChunkMetadataPart = {
   type: string;
@@ -356,27 +357,36 @@ export function normalizeChatUiMessageChunk(
   chunk: ChatUiMessageChunk<unknown>,
 ): ChatUiMessageChunk<ChatMessageMetadata> {
   switch (chunk.type) {
-    case "start":
-      return {
+    case "start": {
+      const normalized: ChatUiMessageChunk<ChatMessageMetadata> = {
         type: "start",
         ...(chunk.messageId ? { messageId: chunk.messageId } : {}),
         ...(chunk.messageMetadata !== undefined
           ? { messageMetadata: normalizeChatMessageMetadata(chunk.messageMetadata) }
           : {}),
       };
-    case "message-metadata":
-      return {
+      retainRuntimeObservation(chunk, normalized);
+      return normalized;
+    }
+    case "message-metadata": {
+      const normalized: ChatUiMessageChunk<ChatMessageMetadata> = {
         type: "message-metadata",
         messageMetadata: normalizeChatMessageMetadata(chunk.messageMetadata),
       };
-    case "finish":
-      return {
+      retainRuntimeObservation(chunk, normalized);
+      return normalized;
+    }
+    case "finish": {
+      const normalized: ChatUiMessageChunk<ChatMessageMetadata> = {
         type: "finish",
         ...(chunk.finishReason ? { finishReason: chunk.finishReason } : {}),
         ...(chunk.messageMetadata !== undefined
           ? { messageMetadata: normalizeChatMessageMetadata(chunk.messageMetadata) }
           : {}),
       };
+      retainRuntimeObservation(chunk, normalized);
+      return normalized;
+    }
     default:
       return chunk;
   }
@@ -419,10 +429,12 @@ export async function* dedupeChatUiMessageChunks<TMessageMetadata>(
 
       if (diverged) {
         if (state.outputOpen) {
-          yield {
+          const endChunk = {
             type: chunk.type === "text-delta" ? "text-end" : "reasoning-end",
             ...replayOutputIdentity(chunk, state.outputId),
           } as ChatUiMessageChunk<TMessageMetadata>;
+          retainRuntimeObservation(chunk, endChunk);
+          yield endChunk;
         }
         state.replacementCount++;
         state.outputId = `${inputId}:replacement:${state.replacementCount}`;
@@ -430,15 +442,19 @@ export async function* dedupeChatUiMessageChunks<TMessageMetadata>(
         state.content = state.replayContent;
         state.replayContent = "";
         state.replayOffset = null;
-        yield {
+        const startChunk = {
           type: chunk.type === "text-delta" ? "text-start" : "reasoning-start",
           ...replayOutputIdentity(chunk, state.outputId),
         } as ChatUiMessageChunk<TMessageMetadata>;
-        yield {
+        retainRuntimeObservation(chunk, startChunk);
+        yield startChunk;
+        const deltaChunk = {
           ...chunk,
           ...replayOutputIdentity(chunk, state.outputId),
           delta: state.content,
         };
+        retainRuntimeObservation(chunk, deltaChunk);
+        yield deltaChunk;
         continue;
       }
 
@@ -455,25 +471,31 @@ export async function* dedupeChatUiMessageChunks<TMessageMetadata>(
         state.content = replacementContent;
         state.replayContent = "";
         state.replayOffset = null;
-        yield {
+        const startChunk = {
           type: chunk.type === "text-delta" ? "text-start" : "reasoning-start",
           ...replayOutputIdentity(chunk, state.outputId),
         } as ChatUiMessageChunk<TMessageMetadata>;
-        yield {
+        retainRuntimeObservation(chunk, startChunk);
+        yield startChunk;
+        const deltaChunk = {
           ...chunk,
           ...replayOutputIdentity(chunk, state.outputId),
           delta: replacementContent,
         };
+        retainRuntimeObservation(chunk, deltaChunk);
+        yield deltaChunk;
         continue;
       }
 
       state.replayContent = "";
       state.content += emit;
-      yield {
+      const deltaChunk = {
         ...chunk,
         ...replayOutputIdentity(chunk, state.outputId),
         delta: emit,
       };
+      retainRuntimeObservation(chunk, deltaChunk);
+      yield deltaChunk;
       continue;
     }
 
@@ -488,7 +510,9 @@ export async function* dedupeChatUiMessageChunks<TMessageMetadata>(
       state.replayOffset = null;
       state.replayContent = "";
       state.outputOpen = false;
-      yield { ...chunk, ...replayOutputIdentity(chunk, state.outputId) };
+      const endChunk = { ...chunk, ...replayOutputIdentity(chunk, state.outputId) };
+      retainRuntimeObservation(chunk, endChunk);
+      yield endChunk;
       continue;
     }
 
