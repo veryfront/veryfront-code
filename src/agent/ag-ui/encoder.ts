@@ -1,6 +1,7 @@
 import type { AgentResponse } from "../types.ts";
 import { buildNativeRunEventFrame } from "./native-run-events.ts";
 import { isToolResultErrorOutput } from "#veryfront/tool/result.ts";
+import { getStepIdentity } from "../streaming/step-identity.ts";
 
 /** Event emitted for AG-UI runtime stream. */
 export type AgUiRuntimeStreamEvent = Record<string, unknown> & { type: string };
@@ -254,10 +255,13 @@ function isActiveTextIdentity(
   return identity.messageId === state.messageId && identity.contentId === state.activeTextContentId;
 }
 
-function nextStep(state: AgUiEncoderState): { stepName: string; stepId: string } {
+function nextStep(
+  state: AgUiEncoderState,
+  event: AgUiRuntimeStreamEvent,
+): { stepName: string; stepId: string } {
   state.stepCount += 1;
   state.activeStepName = `step-${state.stepCount}`;
-  state.activeStepId = crypto.randomUUID();
+  state.activeStepId = getStepIdentity(event) ?? crypto.randomUUID();
   return { stepName: state.activeStepName, stepId: state.activeStepId };
 }
 
@@ -671,11 +675,12 @@ function createCustomDataEvent(
 function createStepEvent(
   state: AgUiEncoderState,
   type: "StepStarted" | "StepFinished",
+  event: AgUiRuntimeStreamEvent,
 ): AgUiEncodedEvent {
   return {
     event: type,
     payload: {
-      ...(type === "StepStarted" ? nextStep(state) : finishStep(state)),
+      ...(type === "StepStarted" ? nextStep(state, event) : finishStep(state)),
     },
   };
 }
@@ -1069,7 +1074,7 @@ function mapRuntimeStreamEventToAgUiEventsUnstamped(
       return [
         ...closeOpenTextEvent(state),
         ...closeOpenReasoningEvent(state),
-        createStepEvent(state, "StepStarted"),
+        createStepEvent(state, "StepStarted", event),
       ];
 
     case "step-end":
@@ -1077,7 +1082,7 @@ function mapRuntimeStreamEventToAgUiEventsUnstamped(
       return [
         ...closeOpenTextEvent(state),
         ...closeOpenReasoningEvent(state),
-        createStepEvent(state, "StepFinished"),
+        createStepEvent(state, "StepFinished", event),
       ];
 
     case "data":

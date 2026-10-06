@@ -1,5 +1,6 @@
 import type { ChatMessageMetadata, ChatUiMessageChunk } from "#veryfront/chat/protocol.ts";
 import { deriveKnowledgeSourceDocumentChunk } from "#veryfront/chat/knowledge-source-document.ts";
+import { createMirroredStepChunk } from "./step-identity.ts";
 
 /** Check whether a durable chunk mirrors tool output. */
 export function isDurableMirroredOutputChunk(
@@ -352,8 +353,11 @@ export async function* createHostedMirroredUiStream(
         pendingDerivedSource = derivedSource;
       }
 
-      await mirrorChunk(sourceChunk);
-      yield sourceChunk;
+      const emittedChunk = sourceChunk.type === "start-step"
+        ? createMirroredStepChunk(sourceChunk)
+        : sourceChunk;
+      await mirrorChunk(emittedChunk);
+      yield emittedChunk;
     }
 
     const pendingSource = takePendingDerivedSource();
