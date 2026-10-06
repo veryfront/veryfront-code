@@ -83,6 +83,8 @@ export type HostedDurableChildInvokeResult = {
   durationMs?: ChildRunExecutionSnapshot["durationMs"];
   childConversationId?: string | null;
   childRunId?: string | null;
+  /** Canonical Run UUID used by the Runs REST API, when provided by admission. */
+  childCanonicalRunId?: string | null;
   childMessageId?: string | null;
   sourceTargetKind?: ConversationRunTargets["sourceTargetKind"];
   runtimeTargetKind?: ConversationRunTargets["runtimeTargetKind"];
@@ -115,6 +117,7 @@ export const getHostedDurableChildInvokeResultSchema = defineSchema((v) => {
     toolResults: v.array(v.unknown()).optional(),
     usage: v.record(v.string(), v.unknown()).optional(),
     durationMs: v.number().optional(),
+    childCanonicalRunId: v.string().uuid().nullable().optional(),
     sourceTargetKind: v.string().nullable().optional(),
     runtimeTargetKind: v.string().nullable().optional(),
     terminalErrorCode: v.string().nullable(),
@@ -144,6 +147,8 @@ export type BuildHostedDurableChildInvokeFailureResultInput = {
   targets?: ConversationRunTargets;
   childConversationId?: string | null;
   childRunId?: string | null;
+  /** Canonical Run UUID used by the Runs REST API, when provided by admission. */
+  childCanonicalRunId?: string | null;
   childMessageId?: string | null;
 };
 
@@ -171,6 +176,7 @@ export type HostedDurableChildTerminalFailure = {
 
 /** Public API contract for hosted durable child setup failure. */
 export type HostedDurableChildSetupFailure = {
+  childCanonicalRunId?: string | null;
   targets: ConversationRunTargets;
   childConversationId: string | null;
   childRunId: string | null;
@@ -248,6 +254,7 @@ export function buildHostedDurableChildInvokeFailureResult(
     summary: buildChildRunResultSummary(failureText),
     ...(input.childConversationId ? { childConversationId: input.childConversationId } : {}),
     ...(input.childRunId ? { childRunId: input.childRunId } : {}),
+    ...(input.childCanonicalRunId ? { childCanonicalRunId: input.childCanonicalRunId } : {}),
     ...(input.childMessageId ? { childMessageId: input.childMessageId } : {}),
     ...(input.targets
       ? {
@@ -270,6 +277,9 @@ export function buildHostedDurableChildInvokeTerminalFailureResult(
     targets: input.targets,
     childConversationId: input.identifiers.childConversationId,
     childRunId: input.identifiers.childRunId,
+    ...(input.identifiers.childCanonicalRunId
+      ? { childCanonicalRunId: input.identifiers.childCanonicalRunId }
+      : {}),
     childMessageId: input.identifiers.childMessageId,
   });
 }
@@ -307,6 +317,9 @@ export function buildHostedDurableChildInvokeSuccessResult<
     durationMs: input.snapshot.durationMs,
     childConversationId: input.identifiers.childConversationId,
     childRunId: input.identifiers.childRunId,
+    ...(input.identifiers.childCanonicalRunId
+      ? { childCanonicalRunId: input.identifiers.childCanonicalRunId }
+      : {}),
     childMessageId: input.identifiers.childMessageId,
     sourceTargetKind: input.targets.sourceTargetKind,
     runtimeTargetKind: input.targets.runtimeTargetKind,
@@ -379,6 +392,9 @@ export function createHostedDurableChildInvokeTraceRecorder(input: {
         targets: failure.targets,
         childConversationId: failure.childConversationId,
         childRunId: failure.childRunId,
+        ...(failure.childCanonicalRunId
+          ? { childCanonicalRunId: failure.childCanonicalRunId }
+          : {}),
         childMessageId: failure.childMessageId,
       });
     },
@@ -1062,6 +1078,9 @@ async function executeHostedDurableChildForkWithCapability<
       targets,
       childConversationId: identifiers.childConversationId,
       childRunId: identifiers.childRunId,
+      ...(identifiers.childCanonicalRunId
+        ? { childCanonicalRunId: identifiers.childCanonicalRunId }
+        : {}),
       childMessageId: identifiers.childMessageId,
       terminalErrorCode: terminalState.terminalErrorCode,
       terminalErrorMessage: terminalState.terminalErrorMessage,

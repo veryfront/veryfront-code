@@ -1,4 +1,8 @@
 import { instrumentConversationRunFetch } from "#veryfront/agent/conversation/durable.ts";
+import {
+  assertNativeRequestProcessing,
+  createNativeRequestInit,
+} from "#veryfront/platform/compat/http/native-request-init.ts";
 import { MAX_ROOT_RUN_EVENT_WRITER_TOKEN_BYTES } from "#veryfront/agent/conversation/run-event-limits.ts";
 import {
   MAX_PROVIDER_REPLAY_RAW_METADATA_DEPTH,
@@ -263,7 +267,9 @@ export function createRunScopedProviderReplayCheckpointPersister(input: {
     abortSignal?.addEventListener("abort", onAbort, { once: true });
 
     try {
-      const response = await fetchImpl(url, {
+      // A null-prototype init and header record, checked in the same turn as
+      // the send: no inherited getter or patched array intrinsic sees the token.
+      const init = createNativeRequestInit(undefined, {
         method: "POST",
         headers: {
           Accept: "application/json",
@@ -275,6 +281,8 @@ export function createRunScopedProviderReplayCheckpointPersister(input: {
         cache: "no-store",
         signal: controller.signal,
       });
+      assertNativeRequestProcessing();
+      const response = await fetchImpl(url, init);
       if (!response.ok) {
         await response.body?.cancel().catch(() => undefined);
         throw persistenceFailure(
