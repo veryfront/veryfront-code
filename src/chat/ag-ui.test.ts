@@ -6,6 +6,7 @@ import {
   createAgUiRunErrorEvent,
   createAgUiSseErrorResponse,
 } from "#veryfront/agent/ag-ui/host-support.ts";
+import type { ChatStreamEvent } from "./protocol.ts";
 // Test-only imports from the agent tree: this file is not part of the
 // client bundle graph that `deno task lint:client-bundle` audits, so these
 // pin the decoder's copied wire-name and timing-stamp-field lists against
@@ -19,7 +20,9 @@ import {
 import { formatAgUiEvent } from "#veryfront/internal-agents/ag-ui-sse.ts";
 import { AG_UI_EVENT_TIMING_STAMP_FIELDS } from "#veryfront/agent/ag-ui/encoder.ts";
 import { readConversationRunLifecycleFrames } from "#veryfront/agent/conversation/legacy-run-read-adapter.ts";
+import { dedupeChatUiMessageChunks } from "./chat-ui-message-helpers.ts";
 import {
+  type AgUiWireEvent,
   createAgUiChatEventDecoderState,
   decodeAgUiSseChunk,
   flushAgUiSseChunk,
@@ -27,6 +30,26 @@ import {
   mapAgUiRuntimeMessagesToChatUiMessages,
   parseSseEvent,
 } from "./ag-ui.ts";
+
+async function collect<T>(stream: AsyncIterable<T>): Promise<T[]> {
+  const items: T[] = [];
+  for await (const item of stream) {
+    items.push(item);
+  }
+  return items;
+}
+
+async function* toStream<T>(items: readonly T[]): AsyncIterable<T> {
+  for (const item of items) {
+    yield item;
+  }
+}
+
+function encodeAgUiWireFrames(frames: readonly AgUiWireEvent[]): string {
+  return frames.map(({ eventName, payload }) =>
+    `event: ${eventName}\ndata: ${JSON.stringify(payload)}\n\n`
+  ).join("");
+}
 
 describe("chat/ag-ui", () => {
   it("keeps the public browser entrypoint off server-side data stream imports", async () => {
@@ -455,6 +478,637 @@ describe("chat/ag-ui", () => {
       { type: "reasoning-end", id: "agui-reasoning:1" },
     ]);
     assertEquals(state.activeFallbackReasoningPartId, null);
+  });
+
+  it("keeps legacy message reasoning ids stable when later frames add content ids", async () => {
+    const state = createAgUiChatEventDecoderState();
+    const mixed = decodeAgUiSseChunk(
+      state,
+      [
+        "event: ReasoningMessageStart",
+        'data: {"messageId":"assistant-1","role":"reasoning"}',
+        "",
+        "event: ReasoningMessageContent",
+        'data: {"messageId":"assistant-1","contentId":"segment-a","delta":"First"}',
+        "",
+        "event: ReasoningMessageEnd",
+        'data: {"messageId":"assistant-1","contentId":"segment-a"}',
+        "",
+        "",
+      ].join("\n"),
+    );
+
+    const chatEvents = mixed.events.flatMap((entry) => entry.chatEvents);
+    const expected: ChatStreamEvent[] = [
+      { type: "reasoning-start", id: "agui-reasoning:assistant-1" },
+      { type: "reasoning-delta", id: "agui-reasoning:assistant-1", delta: "First" },
+      { type: "reasoning-end", id: "agui-reasoning:assistant-1" },
+    ];
+
+    assertEquals(chatEvents, expected);
+    assertEquals(await collect(dedupeChatUiMessageChunks(toStream(chatEvents))), expected);
+    assertEquals(state.activeFallbackReasoningPartId, null);
+  });
+
+  it("keeps fallback reasoning ids stable when later frames add content ids", async () => {
+    const state = createAgUiChatEventDecoderState();
+    const mixed = decodeAgUiSseChunk(
+      state,
+      [
+        "event: ReasoningMessageStart",
+        'data: {"role":"reasoning"}',
+        "",
+        "event: ReasoningMessageContent",
+        'data: {"contentId":"segment-a","delta":"First"}',
+        "",
+        "event: ReasoningMessageEnd",
+        'data: {"contentId":"segment-a"}',
+        "",
+        "event: ReasoningMessageStart",
+        'data: {"role":"reasoning"}',
+        "",
+        "event: ReasoningMessageContent",
+        'data: {"id":"segment-b","delta":"Second"}',
+        "",
+        "event: ReasoningMessageEnd",
+        'data: {"id":"segment-b"}',
+
+        "",
+        "",
+      ].join("\n"),
+    );
+
+    const chatEvents = mixed.events.flatMap((entry) => entry.chatEvents);
+    const expected: ChatStreamEvent[] = [
+      { type: "reasoning-start", id: "agui-reasoning:1" },
+      { type: "reasoning-delta", id: "agui-reasoning:1", delta: "First" },
+      { type: "reasoning-end", id: "agui-reasoning:1" },
+      { type: "reasoning-start", id: "agui-reasoning:2" },
+      { type: "reasoning-delta", id: "agui-reasoning:2", delta: "Second" },
+      { type: "reasoning-end", id: "agui-reasoning:2" },
+    ];
+
+    assertEquals(chatEvents, expected);
+    assertEquals(await collect(dedupeChatUiMessageChunks(toStream(chatEvents))), expected);
+    assertEquals(state.activeFallbackReasoningPartId, null);
+  });
+
+  it("closes reasoning identities established by content without a start", () => {
+    for (
+      const { identity, partId } of [
+        { identity: { messageId: "m" }, partId: "agui-reasoning:m" },
+        { identity: { id: "provider-part" }, partId: "provider-part" },
+        { identity: { contentId: "content" }, partId: "agui-reasoning-content:content" },
+        {
+          identity: { messageId: "m", contentId: "content" },
+          partId: "agui-reasoning:m:content",
+        },
+      ]
+    ) {
+      const state = createAgUiChatEventDecoderState();
+      const result = decodeAgUiSseChunk(
+        state,
+        encodeAgUiWireFrames([
+          { eventName: "ReasoningMessageContent", payload: { ...identity, delta: "thought" } },
+          { eventName: "ReasoningMessageEnd", payload: {} },
+        ]),
+      );
+      assertEquals(result.events.flatMap((entry) => entry.chatEvents), [
+        { type: "reasoning-delta", id: partId, delta: "thought" },
+        { type: "reasoning-end", id: partId },
+      ]);
+      assertEquals(state.activeFallbackReasoningPartId, null);
+      const next = decodeAgUiSseChunk(
+        state,
+        encodeAgUiWireFrames([
+          { eventName: "ReasoningMessageContent", payload: { delta: "next" } },
+          { eventName: "ReasoningMessageEnd", payload: {} },
+        ]),
+      );
+      assertEquals(next.events.flatMap((entry) => entry.chatEvents), [
+        { type: "reasoning-delta", id: "agui-reasoning:1", delta: "next" },
+        { type: "reasoning-end", id: "agui-reasoning:1" },
+      ]);
+    }
+  });
+
+  it("retains separately identified orphan reasoning parts without guessing an end", () => {
+    const state = createAgUiChatEventDecoderState();
+    const result = decodeAgUiSseChunk(
+      state,
+      encodeAgUiWireFrames([
+        { eventName: "ReasoningMessageContent", payload: { messageId: "a", delta: "A" } },
+        { eventName: "ReasoningMessageContent", payload: { messageId: "b", delta: "B" } },
+        { eventName: "ReasoningMessageContent", payload: { messageId: "a", delta: "A2" } },
+        { eventName: "ReasoningMessageEnd", payload: {} },
+        { eventName: "ReasoningMessageEnd", payload: { messageId: "b" } },
+        { eventName: "ReasoningMessageEnd", payload: {} },
+      ]),
+    );
+    assertEquals(result.events[1]?.chatEvents, [
+      { type: "reasoning-delta", id: "agui-reasoning:b", delta: "B" },
+    ]);
+    assertEquals(
+      result.events[3]?.chatEvents,
+      [],
+      "an identifierless end cannot pick either orphan",
+    );
+    assertEquals(result.events.flatMap((entry) => entry.chatEvents), [
+      { type: "reasoning-delta", id: "agui-reasoning:a", delta: "A" },
+      { type: "reasoning-delta", id: "agui-reasoning:b", delta: "B" },
+      { type: "reasoning-delta", id: "agui-reasoning:a", delta: "A2" },
+      { type: "reasoning-end", id: "agui-reasoning:b" },
+      { type: "reasoning-end", id: "agui-reasoning:a" },
+    ]);
+    assertEquals(state.activeFallbackReasoningPartId, null);
+  });
+
+  it("keeps orphan reasoning active alongside a separately started part", () => {
+    const state = createAgUiChatEventDecoderState();
+    const result = decodeAgUiSseChunk(
+      state,
+      encodeAgUiWireFrames([
+        { eventName: "ReasoningMessageContent", payload: { messageId: "a", delta: "A" } },
+        { eventName: "ReasoningMessageStart", payload: { messageId: "b", contentId: "content" } },
+        { eventName: "ReasoningMessageEnd", payload: {} },
+        { eventName: "ReasoningMessageEnd", payload: { messageId: "a" } },
+        { eventName: "ReasoningMessageContent", payload: { messageId: "b", delta: "B" } },
+        { eventName: "ReasoningMessageEnd", payload: {} },
+      ]),
+    );
+    assertEquals(result.events[2]?.chatEvents, [], "an identifierless end cannot pick either part");
+    assertEquals(result.events.flatMap((entry) => entry.chatEvents), [
+      { type: "reasoning-delta", id: "agui-reasoning:a", delta: "A" },
+      { type: "reasoning-start", id: "agui-reasoning:b:content" },
+      { type: "reasoning-end", id: "agui-reasoning:a" },
+      { type: "reasoning-delta", id: "agui-reasoning:b:content", delta: "B" },
+      { type: "reasoning-end", id: "agui-reasoning:b:content" },
+    ]);
+    assertEquals(state.activeFallbackReasoningPartId, null);
+  });
+
+  it("keeps a composite reasoning start id when later frames omit the content id", () => {
+    const state = createAgUiChatEventDecoderState();
+    const result = decodeAgUiSseChunk(
+      state,
+      [
+        formatAgUiEvent("ReasoningMessageStart", {
+          messageId: "message-a",
+          contentId: "reasoning-a",
+          role: "reasoning",
+        }),
+        formatAgUiEvent("ReasoningMessageContent", {
+          messageId: "message-a",
+          delta: "First",
+        }),
+        formatAgUiEvent("ReasoningMessageEnd", { messageId: "message-a" }),
+      ].map((frame) => new TextDecoder().decode(frame)).join(""),
+    );
+
+    assertEquals(result.events.flatMap((entry) => entry.chatEvents), [
+      { type: "reasoning-start", id: "agui-reasoning:message-a:reasoning-a" },
+      { type: "reasoning-delta", id: "agui-reasoning:message-a:reasoning-a", delta: "First" },
+      { type: "reasoning-end", id: "agui-reasoning:message-a:reasoning-a" },
+    ]);
+    assertEquals(state.activeFallbackReasoningPartId, null);
+  });
+
+  it("retains a reasoning content id learned from a matched continuation", () => {
+    const state = createAgUiChatEventDecoderState();
+    const result = decodeAgUiSseChunk(
+      state,
+      encodeAgUiWireFrames([
+        { eventName: "ReasoningMessageStart", payload: { messageId: "message-a" } },
+        {
+          eventName: "ReasoningMessageContent",
+          payload: { messageId: "message-a", contentId: "reasoning-a", delta: "First" },
+        },
+        {
+          eventName: "ReasoningMessageContent",
+          payload: { contentId: "reasoning-b", delta: "Wrong" },
+        },
+        {
+          eventName: "ReasoningMessageContent",
+          payload: { contentId: "reasoning-a", delta: "Second" },
+        },
+        { eventName: "ReasoningMessageEnd", payload: { contentId: "reasoning-a" } },
+      ]),
+    );
+
+    assertEquals(result.events.flatMap((entry) => entry.chatEvents), [
+      { type: "reasoning-start", id: "agui-reasoning:message-a" },
+      { type: "reasoning-delta", id: "agui-reasoning:message-a", delta: "First" },
+      { type: "reasoning-delta", id: "agui-reasoning:message-a", delta: "Second" },
+      { type: "reasoning-end", id: "agui-reasoning:message-a" },
+    ]);
+    assertEquals(state.activeFallbackReasoningPartId, null);
+  });
+
+  it("retains explicit and content-only start ids for unidentified later frames", () => {
+    const starts = [
+      { payload: { id: "native-a" }, expected: "native-a" },
+      { payload: { contentId: "content-a" }, expected: "agui-reasoning-content:content-a" },
+    ];
+    for (const { payload, expected } of starts) {
+      const state = createAgUiChatEventDecoderState();
+      const result = decodeAgUiSseChunk(
+        state,
+        encodeAgUiWireFrames([
+          { eventName: "ReasoningMessageStart", payload },
+          { eventName: "ReasoningMessageContent", payload: { delta: "First" } },
+          { eventName: "ReasoningMessageEnd", payload: {} },
+        ]),
+      );
+      assertEquals(result.events.flatMap((entry) => entry.chatEvents), [
+        { type: "reasoning-start", id: expected },
+        { type: "reasoning-delta", id: expected, delta: "First" },
+        { type: "reasoning-end", id: expected },
+      ]);
+      assertEquals(state.activeFallbackReasoningPartId, null);
+    }
+  });
+
+  it("matches interleaved reasoning by the supplied message identity", () => {
+    const state = createAgUiChatEventDecoderState();
+    const result = decodeAgUiSseChunk(
+      state,
+      encodeAgUiWireFrames([
+        {
+          eventName: "ReasoningMessageStart",
+          payload: { messageId: "message-a", contentId: "content-a" },
+        },
+        {
+          eventName: "ReasoningMessageStart",
+          payload: { messageId: "message-b", contentId: "content-b" },
+        },
+        { eventName: "ReasoningMessageContent", payload: { messageId: "message-a", delta: "A" } },
+        { eventName: "ReasoningMessageEnd", payload: { messageId: "message-a" } },
+        { eventName: "ReasoningMessageContent", payload: { messageId: "message-b", delta: "B" } },
+        { eventName: "ReasoningMessageEnd", payload: { messageId: "message-b" } },
+      ]),
+    );
+    assertEquals(result.events.flatMap((entry) => entry.chatEvents), [
+      { type: "reasoning-start", id: "agui-reasoning:message-a:content-a" },
+      { type: "reasoning-start", id: "agui-reasoning:message-b:content-b" },
+      { type: "reasoning-delta", id: "agui-reasoning:message-a:content-a", delta: "A" },
+      { type: "reasoning-end", id: "agui-reasoning:message-a:content-a" },
+      { type: "reasoning-delta", id: "agui-reasoning:message-b:content-b", delta: "B" },
+      { type: "reasoning-end", id: "agui-reasoning:message-b:content-b" },
+    ]);
+    assertEquals(state.activeFallbackReasoningPartId, null);
+  });
+
+  it("leaves simultaneous same-message starts alive when a partial frame is ambiguous", () => {
+    const state = createAgUiChatEventDecoderState();
+    const result = decodeAgUiSseChunk(
+      state,
+      encodeAgUiWireFrames([
+        {
+          eventName: "ReasoningMessageStart",
+          payload: { messageId: "message-a", contentId: "content-a" },
+        },
+        {
+          eventName: "ReasoningMessageStart",
+          payload: { messageId: "message-a", contentId: "content-b" },
+        },
+        {
+          eventName: "ReasoningMessageContent",
+          payload: { messageId: "message-a", delta: "Unknown" },
+        },
+        { eventName: "ReasoningMessageEnd", payload: {} },
+        {
+          eventName: "ReasoningMessageEnd",
+          payload: { messageId: "message-a", contentId: "content-a" },
+        },
+        { eventName: "ReasoningMessageContent", payload: { messageId: "message-a", delta: "B" } },
+        { eventName: "ReasoningMessageEnd", payload: { messageId: "message-a" } },
+      ]),
+    );
+    assertEquals(result.events[2]?.chatEvents, []);
+    assertEquals(result.events[3]?.chatEvents, []);
+    assertEquals(result.events.flatMap((entry) => entry.chatEvents), [
+      { type: "reasoning-start", id: "agui-reasoning:message-a:content-a" },
+      { type: "reasoning-start", id: "agui-reasoning:message-a:content-b" },
+      { type: "reasoning-end", id: "agui-reasoning:message-a:content-a" },
+      { type: "reasoning-delta", id: "agui-reasoning:message-a:content-b", delta: "B" },
+      { type: "reasoning-end", id: "agui-reasoning:message-a:content-b" },
+    ]);
+    assertEquals(state.activeFallbackReasoningPartId, null);
+  });
+
+  it("does not close a reasoning start when a continuation supplies unrelated identifiers", () => {
+    const state = createAgUiChatEventDecoderState();
+    const result = decodeAgUiSseChunk(
+      state,
+      encodeAgUiWireFrames([
+        {
+          eventName: "ReasoningMessageStart",
+          payload: { messageId: "message-a", contentId: "content-a" },
+        },
+        { eventName: "ReasoningMessageEnd", payload: { id: "other" } },
+        { eventName: "ReasoningMessageEnd", payload: { messageId: "other" } },
+        {
+          eventName: "ReasoningMessageContent",
+          payload: { messageId: "message-a", contentId: "other", delta: "Wrong" },
+        },
+        { eventName: "ReasoningMessageContent", payload: { messageId: "message-a", delta: "A" } },
+        { eventName: "ReasoningMessageEnd", payload: { messageId: "message-a" } },
+      ]),
+    );
+    assertEquals(result.events.slice(1, 4).flatMap((entry) => entry.chatEvents), []);
+    assertEquals(result.events.flatMap((entry) => entry.chatEvents), [
+      { type: "reasoning-start", id: "agui-reasoning:message-a:content-a" },
+      { type: "reasoning-delta", id: "agui-reasoning:message-a:content-a", delta: "A" },
+      { type: "reasoning-end", id: "agui-reasoning:message-a:content-a" },
+    ]);
+    assertEquals(state.activeFallbackReasoningPartId, null);
+  });
+
+  it("does not replace an active start with a conflicting start that renders the same id", () => {
+    const state = createAgUiChatEventDecoderState();
+    const result = decodeAgUiSseChunk(
+      state,
+      encodeAgUiWireFrames([
+        {
+          eventName: "ReasoningMessageStart",
+          payload: { messageId: "message-a", contentId: "content-a" },
+        },
+        {
+          eventName: "ReasoningMessageStart",
+          payload: { id: "agui-reasoning:message-a:content-a" },
+        },
+        { eventName: "ReasoningMessageContent", payload: { messageId: "message-a", delta: "A" } },
+        { eventName: "ReasoningMessageEnd", payload: { messageId: "message-a" } },
+      ]),
+    );
+    assertEquals(result.events[1]?.chatEvents, []);
+    assertEquals(result.events.flatMap((entry) => entry.chatEvents), [
+      { type: "reasoning-start", id: "agui-reasoning:message-a:content-a" },
+      { type: "reasoning-delta", id: "agui-reasoning:message-a:content-a", delta: "A" },
+      { type: "reasoning-end", id: "agui-reasoning:message-a:content-a" },
+    ]);
+  });
+
+  it("clears retained reasoning start identities at each run boundary", () => {
+    const boundaries: AgUiWireEvent[] = [
+      { eventName: "RunStarted", payload: {} },
+      { eventName: "RunFinished", payload: {} },
+      { eventName: "RunError", payload: { message: "Failed" } },
+    ];
+    for (const boundary of boundaries) {
+      const state = createAgUiChatEventDecoderState();
+      decodeAgUiSseChunk(
+        state,
+        encodeAgUiWireFrames([
+          {
+            eventName: "ReasoningMessageStart",
+            payload: { messageId: "message-a", contentId: "content-a" },
+          },
+          boundary,
+        ]),
+      );
+      const result = decodeAgUiSseChunk(
+        state,
+        encodeAgUiWireFrames([
+          {
+            eventName: "ReasoningMessageContent",
+            payload: { messageId: "message-a", delta: "New" },
+          },
+        ]),
+      );
+      assertEquals(result.events.flatMap((entry) => entry.chatEvents), [
+        { type: "reasoning-delta", id: "agui-reasoning:message-a", delta: "New" },
+      ]);
+    }
+  });
+
+  it("keeps reasoning content ids distinct within the same message", () => {
+    const state = createAgUiChatEventDecoderState();
+    const result = decodeAgUiSseChunk(
+      state,
+      [
+        "event: ReasoningMessageStart",
+        'data: {"messageId":"message-a","contentId":"reasoning-a"}',
+        "",
+        "event: ReasoningMessageContent",
+        'data: {"messageId":"message-a","contentId":"reasoning-a","delta":"First"}',
+        "",
+        "event: ReasoningMessageEnd",
+        'data: {"messageId":"message-a","contentId":"reasoning-a"}',
+        "",
+        "event: ReasoningMessageStart",
+        'data: {"messageId":"message-a","contentId":"reasoning-b"}',
+        "",
+        "event: ReasoningMessageContent",
+        'data: {"messageId":"message-a","contentId":"reasoning-b","delta":"Second"}',
+        "",
+        "event: ReasoningMessageEnd",
+        'data: {"messageId":"message-a","contentId":"reasoning-b"}',
+        "",
+        "",
+      ].join("\n"),
+    );
+
+    const chatEvents = result.events.flatMap((entry) => entry.chatEvents);
+    assertEquals(chatEvents, [
+      { type: "reasoning-start", id: "agui-reasoning:message-a:reasoning-a" },
+      { type: "reasoning-delta", id: "agui-reasoning:message-a:reasoning-a", delta: "First" },
+      { type: "reasoning-end", id: "agui-reasoning:message-a:reasoning-a" },
+      { type: "reasoning-start", id: "agui-reasoning:message-a:reasoning-b" },
+      { type: "reasoning-delta", id: "agui-reasoning:message-a:reasoning-b", delta: "Second" },
+      { type: "reasoning-end", id: "agui-reasoning:message-a:reasoning-b" },
+    ]);
+  });
+
+  it("preserves formatted reasoning segment ids through SSE decoding", () => {
+    const frames = [
+      ["reasoning-a", "First"],
+      ["reasoning-b", "Second"],
+    ].flatMap(([contentId, delta]) => [
+      formatAgUiEvent("ReasoningMessageStart", {
+        messageId: "message-a",
+        contentId,
+        role: "reasoning",
+      }),
+      formatAgUiEvent("ReasoningMessageContent", { messageId: "message-a", contentId, delta }),
+      formatAgUiEvent("ReasoningMessageEnd", { messageId: "message-a", contentId }),
+    ]);
+    const result = decodeAgUiSseChunk(
+      createAgUiChatEventDecoderState(),
+      frames.map((frame) => new TextDecoder().decode(frame)).join(""),
+    );
+
+    assertEquals(result.events.flatMap((entry) => entry.chatEvents), [
+      { type: "reasoning-start", id: "agui-reasoning:message-a:reasoning-a" },
+      { type: "reasoning-delta", id: "agui-reasoning:message-a:reasoning-a", delta: "First" },
+      { type: "reasoning-end", id: "agui-reasoning:message-a:reasoning-a" },
+      { type: "reasoning-start", id: "agui-reasoning:message-a:reasoning-b" },
+      { type: "reasoning-delta", id: "agui-reasoning:message-a:reasoning-b", delta: "Second" },
+      { type: "reasoning-end", id: "agui-reasoning:message-a:reasoning-b" },
+    ]);
+  });
+
+  it("keeps reused reasoning content ids distinct across messages", async () => {
+    const state = createAgUiChatEventDecoderState();
+    const result = decodeAgUiSseChunk(
+      state,
+      [
+        "event: ReasoningMessageStart",
+        'data: {"messageId":"message-a","contentId":"reasoning-0"}',
+        "",
+        "event: ReasoningMessageContent",
+        'data: {"messageId":"message-a","contentId":"reasoning-0","delta":"Same"}',
+        "",
+        "event: ReasoningMessageEnd",
+        'data: {"messageId":"message-a","contentId":"reasoning-0"}',
+        "",
+        "event: ReasoningMessageStart",
+        'data: {"messageId":"message-b","contentId":"reasoning-0"}',
+        "",
+        "event: ReasoningMessageContent",
+        'data: {"messageId":"message-b","contentId":"reasoning-0","delta":"Same"}',
+        "",
+        "event: ReasoningMessageEnd",
+        'data: {"messageId":"message-b","contentId":"reasoning-0"}',
+        "",
+        "",
+      ].join("\n"),
+    );
+
+    const chatEvents = result.events.flatMap((entry) => entry.chatEvents);
+    const expected: ChatStreamEvent[] = [
+      { type: "reasoning-start", id: "agui-reasoning:message-a:reasoning-0" },
+      { type: "reasoning-delta", id: "agui-reasoning:message-a:reasoning-0", delta: "Same" },
+      { type: "reasoning-end", id: "agui-reasoning:message-a:reasoning-0" },
+      { type: "reasoning-start", id: "agui-reasoning:message-b:reasoning-0" },
+      { type: "reasoning-delta", id: "agui-reasoning:message-b:reasoning-0", delta: "Same" },
+      { type: "reasoning-end", id: "agui-reasoning:message-b:reasoning-0" },
+    ];
+
+    assertEquals(chatEvents, expected);
+    assertEquals(await collect(dedupeChatUiMessageChunks(toStream(chatEvents))), expected);
+  });
+
+  it("keeps content-only reasoning ids distinct from message-only ids", async () => {
+    const state = createAgUiChatEventDecoderState();
+    const result = decodeAgUiSseChunk(
+      state,
+      [
+        "event: ReasoningMessageStart",
+        'data: {"contentId":"shared-id"}',
+        "",
+        "event: ReasoningMessageContent",
+        'data: {"contentId":"shared-id","delta":"Content only"}',
+        "",
+        "event: ReasoningMessageEnd",
+        'data: {"contentId":"shared-id"}',
+        "",
+        "event: ReasoningMessageStart",
+        'data: {"messageId":"shared-id"}',
+        "",
+        "event: ReasoningMessageContent",
+        'data: {"messageId":"shared-id","delta":"Message only"}',
+        "",
+        "event: ReasoningMessageEnd",
+        'data: {"messageId":"shared-id"}',
+        "",
+        "",
+      ].join("\n"),
+    );
+
+    const chatEvents = result.events.flatMap((entry) => entry.chatEvents);
+    const expected: ChatStreamEvent[] = [
+      { type: "reasoning-start", id: "agui-reasoning-content:shared-id" },
+      {
+        type: "reasoning-delta",
+        id: "agui-reasoning-content:shared-id",
+        delta: "Content only",
+      },
+      { type: "reasoning-end", id: "agui-reasoning-content:shared-id" },
+      { type: "reasoning-start", id: "agui-reasoning:shared-id" },
+      { type: "reasoning-delta", id: "agui-reasoning:shared-id", delta: "Message only" },
+      { type: "reasoning-end", id: "agui-reasoning:shared-id" },
+    ];
+
+    assertEquals(chatEvents, expected);
+    assertEquals(await collect(dedupeChatUiMessageChunks(toStream(chatEvents))), expected);
+  });
+
+  it("encodes reasoning id components before composing replay ids", async () => {
+    const state = createAgUiChatEventDecoderState();
+    const result = decodeAgUiSseChunk(
+      state,
+      [
+        "event: ReasoningMessageStart",
+        'data: {"messageId":"message:a","contentId":"reasoning"}',
+        "",
+        "event: ReasoningMessageContent",
+        'data: {"messageId":"message:a","contentId":"reasoning","delta":"First"}',
+        "",
+        "event: ReasoningMessageEnd",
+        'data: {"messageId":"message:a","contentId":"reasoning"}',
+        "",
+        "event: ReasoningMessageStart",
+        'data: {"messageId":"message","contentId":"a:reasoning"}',
+        "",
+        "event: ReasoningMessageContent",
+        'data: {"messageId":"message","contentId":"a:reasoning","delta":"Second"}',
+        "",
+        "event: ReasoningMessageEnd",
+        'data: {"messageId":"message","contentId":"a:reasoning"}',
+        "",
+        "",
+      ].join("\n"),
+    );
+
+    const chatEvents = result.events.flatMap((entry) => entry.chatEvents);
+    const expected: ChatStreamEvent[] = [
+      { type: "reasoning-start", id: "agui-reasoning:message%3Aa:reasoning" },
+      { type: "reasoning-delta", id: "agui-reasoning:message%3Aa:reasoning", delta: "First" },
+      { type: "reasoning-end", id: "agui-reasoning:message%3Aa:reasoning" },
+      { type: "reasoning-start", id: "agui-reasoning:message:a%3Areasoning" },
+      {
+        type: "reasoning-delta",
+        id: "agui-reasoning:message:a%3Areasoning",
+        delta: "Second",
+      },
+      { type: "reasoning-end", id: "agui-reasoning:message:a%3Areasoning" },
+    ];
+
+    assertEquals(chatEvents, expected);
+    assertEquals(await collect(dedupeChatUiMessageChunks(toStream(chatEvents))), expected);
+  });
+
+  it("accepts lone surrogate reasoning id components when composing replay ids", () => {
+    const state = createAgUiChatEventDecoderState();
+    const loneSurrogate = "\uD800";
+    const result = decodeAgUiSseChunk(
+      state,
+      [
+        "event: ReasoningMessageStart",
+        `data: ${JSON.stringify({ messageId: loneSurrogate, contentId: "reasoning" })}`,
+        "",
+        "event: ReasoningMessageContent",
+        `data: ${
+          JSON.stringify({ messageId: loneSurrogate, contentId: "reasoning", delta: "Odd" })
+        }`,
+        "",
+        "event: ReasoningMessageEnd",
+        `data: ${JSON.stringify({ messageId: loneSurrogate, contentId: "reasoning" })}`,
+        "",
+        "",
+      ].join("\n"),
+    );
+
+    assertEquals(result.events.flatMap((entry) => entry.chatEvents), [
+      { type: "reasoning-start", id: `agui-reasoning:${loneSurrogate}:reasoning` },
+      {
+        type: "reasoning-delta",
+        id: `agui-reasoning:${loneSurrogate}:reasoning`,
+        delta: "Odd",
+      },
+      { type: "reasoning-end", id: `agui-reasoning:${loneSurrogate}:reasoning` },
+    ]);
   });
 
   it("preserves non-renderable custom events as data chunks", () => {
@@ -1363,6 +2017,31 @@ describe("chat/ag-ui without a registered SchemaValidator", () => {
         [],
         "Custom without value must be rejected by the hand-rolled validator",
       );
+    } finally {
+      ensureTestSchemaValidator();
+    }
+  });
+
+  it("rejects invalid reasoning content ids through the hand-rolled validator", () => {
+    unregister("SchemaValidator");
+    try {
+      for (
+        const [eventName, extra] of [
+          ["ReasoningMessageStart", ""],
+          ["ReasoningMessageContent", ',"delta":"Thinking"'],
+          ["ReasoningMessageEnd", ""],
+        ] as const
+      ) {
+        for (const contentId of ["", 42]) {
+          const state = createAgUiChatEventDecoderState({ validationMode: "strict" });
+          assertThrows(() =>
+            decodeAgUiSseChunk(
+              state,
+              `event: ${eventName}\ndata: {"contentId":${JSON.stringify(contentId)}${extra}}\n\n`,
+            )
+          );
+        }
+      }
     } finally {
       ensureTestSchemaValidator();
     }

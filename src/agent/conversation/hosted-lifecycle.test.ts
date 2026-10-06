@@ -3,7 +3,12 @@ import {
   finalizeConversationAgentRun,
 } from "./durable.ts";
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertMatch,
+  assertNotEquals,
+  assertRejects,
+} from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import {
   createConversationChildLifecycleAdapter,
@@ -22,6 +27,12 @@ const BRANCH_ID = "55555555-5555-4555-8555-555555555555";
 const originalFetch = globalThis.fetch;
 
 type FetchCall = [RequestInfo | URL, RequestInit | undefined];
+
+function requireStepId(value: unknown): string {
+  if (typeof value !== "string") throw new Error("expected stepId");
+  assertMatch(value, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
+  return value;
+}
 
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -204,24 +215,27 @@ describe("agent/conversation-hosted-lifecycle", () => {
     await adapter.appendEvents?.(run, { type: "start-step" });
     await adapter.appendEvents?.(run, { type: "start-step" });
 
-    const stepNames = fetchCalls.map((call) =>
-      JSON.parse(String(call[1]?.body)).events[0].stepName
-    );
+    const persistedEvents = fetchCalls.map((call) => JSON.parse(String(call[1]?.body)).events[0]);
+    const stepNames = persistedEvents.map((event) => event.stepName);
     assertEquals(
       stepNames,
       ["step-1", "step-2"],
       `a second chunk must continue the run's step count, got ${JSON.stringify(stepNames)}`,
     );
+    const stepIds = persistedEvents.map((event) => requireStepId(event.stepId));
+    assertNotEquals(
+      stepIds[0],
+      stepIds[1],
+      "each persisted step start needs a distinct occurrence id",
+    );
 
-    const elapsed = fetchCalls.map((call) => JSON.parse(String(call[1]?.body)).events[0].elapsedMs);
+    const elapsed = persistedEvents.map((event) => event.elapsedMs);
     assertEquals(
       elapsed.every((value) => typeof value === "number"),
       true,
       `every persisted event must carry elapsedMs, got ${JSON.stringify(elapsed)}`,
     );
-    const emittedAt = fetchCalls.map((call) =>
-      JSON.parse(String(call[1]?.body)).events[0].emittedAt
-    );
+    const emittedAt = persistedEvents.map((event) => event.emittedAt);
     assertEquals(
       emittedAt.every((value) => typeof value === "number" && Number.isInteger(value) && value > 0),
       true,

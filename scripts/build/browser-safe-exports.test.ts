@@ -140,5 +140,33 @@ Deno.test("the run events entry point retains no browser-unsafe Node builtin", a
 		builtins,
 		["node:async_hooks"],
 		"veryfront/run-events must reach no Node builtin beyond the contract registry's async_hooks",
+  );
+});
+
+Deno.test("the agent events entry point retains no Node builtin", async () => {
+	const output = await new Deno.Command(Deno.execPath(), {
+		args: [
+			"bundle",
+			"--platform=browser",
+			"--no-check",
+			"src/events/index.ts",
+		],
+		cwd: new URL("../../", import.meta.url),
+		stdin: "null",
+		stdout: "piped",
+		stderr: "piped",
+	}).output();
+	const stderr = new TextDecoder().decode(output.stderr);
+	assert(output.success, `agent events browser bundle failed:\n${stderr}`);
+
+	const bundle = new TextDecoder().decode(output.stdout);
+	const builtins = [...new Set(bundle.match(/["']node:[a-z_/]+/g) ?? [])]
+		.map((match: string) => match.slice(1))
+		.toSorted();
+
+	assertEquals(
+		builtins,
+		[],
+		"veryfront/events must not retain Node builtin imports",
 	);
 });

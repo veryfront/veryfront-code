@@ -1,6 +1,7 @@
 import type { AgentResponse } from "../types.ts";
 import { buildNativeRunEventFrame } from "./native-run-events.ts";
 import { isToolResultErrorOutput } from "#veryfront/tool/result.ts";
+import { getStepIdentity } from "../streaming/step-identity.ts";
 
 /** Event emitted for AG-UI runtime stream. */
 export type AgUiRuntimeStreamEvent = Record<string, unknown> & { type: string };
@@ -42,11 +43,17 @@ export interface AgUiEncoderState {
   textContentIndex: number;
   reasoningMessageId: string | null;
   /**
+   * Producer-owned reasoning segment id for the currently open reasoning span.
+   * Optional so state objects built before this field existed stay valid.
+   */
+  activeReasoningContentId?: string | null;
+  /**
    * How many reasoning spans have opened in this run. Optional so a state
    * object built before this counter existed stays valid; absent reads as 0.
    */
   reasoningSpanIndex?: number;
   activeStepName: string | null;
+  activeStepId?: string | null;
   stepCount: number;
   streamedToolInputIds: Set<string>;
   /**
@@ -120,8 +127,10 @@ export function createAgUiEncoderState(
     activeTextContentId: null,
     textContentIndex: 0,
     reasoningMessageId: null,
+    activeReasoningContentId: null,
     reasoningSpanIndex: 0,
     activeStepName: null,
+    activeStepId: null,
     stepCount: 0,
     streamedToolInputIds: new Set<string>(),
     openToolCallIds: new Set<string>(),
@@ -169,6 +178,12 @@ function openReasoningMessageId(state: AgUiEncoderState): string {
     ? `${state.messageId}:reasoning:${index}`
     : `reasoning:${index}`;
   return state.reasoningMessageId;
+}
+
+function getReasoningContentId(event: AgUiRuntimeStreamEvent): string | null {
+  if (typeof event.contentId === "string" && event.contentId.length > 0) return event.contentId;
+  if (typeof event.id === "string" && event.id.length > 0) return event.id;
+  return null;
 }
 
 function getReasoningMessageId(
@@ -240,16 +255,25 @@ function isActiveTextIdentity(
   return identity.messageId === state.messageId && identity.contentId === state.activeTextContentId;
 }
 
-function nextStepName(state: AgUiEncoderState): string {
+function nextStep(
+  state: AgUiEncoderState,
+  event: AgUiRuntimeStreamEvent,
+): { stepName: string; stepId: string } {
   state.stepCount += 1;
   state.activeStepName = `step-${state.stepCount}`;
-  return state.activeStepName;
+  state.activeStepId = getStepIdentity(event) ?? crypto.randomUUID();
+  return { stepName: state.activeStepName, stepId: state.activeStepId };
 }
 
-function finishStepName(state: AgUiEncoderState): string {
+function finishStep(state: AgUiEncoderState): { stepName: string; stepId?: string } {
   const stepName = state.activeStepName ?? `step-${Math.max(state.stepCount, 1)}`;
+  const stepId = state.activeStepId ?? undefined;
   state.activeStepName = null;
-  return stepName;
+  state.activeStepId = null;
+  return {
+    stepName,
+    ...(stepId !== undefined ? { stepId } : {}),
+  };
 }
 
 function applyDataMetadata(state: AgUiEncoderState, event: AgUiRuntimeStreamEvent): void {
@@ -651,11 +675,12 @@ function createCustomDataEvent(
 function createStepEvent(
   state: AgUiEncoderState,
   type: "StepStarted" | "StepFinished",
+  event: AgUiRuntimeStreamEvent,
 ): AgUiEncodedEvent {
   return {
     event: type,
     payload: {
-      stepName: type === "StepStarted" ? nextStepName(state) : finishStepName(state),
+      ...(type === "StepStarted" ? nextStep(state, event) : finishStep(state)),
     },
   };
 }
@@ -669,16 +694,24 @@ function createReasoningEvent(
     state,
     type === "ReasoningMessageStart" ? "open" : "continue",
   );
+  const contentId = type === "ReasoningMessageStart"
+    ? getReasoningContentId(event)
+    : state.activeReasoningContentId ?? null;
+  if (type === "ReasoningMessageStart") {
+    state.activeReasoningContentId = contentId;
+  }
+
   return {
     event: type,
     payload: type === "ReasoningMessageStart"
-      ? { messageId, role: "reasoning" }
+      ? { messageId, ...(contentId ? { contentId } : {}), role: "reasoning" }
       : type === "ReasoningMessageContent"
       ? {
         messageId,
+        ...(contentId ? { contentId } : {}),
         delta: typeof event.delta === "string" ? event.delta : "",
       }
-      : { messageId },
+      : { messageId, ...(contentId ? { contentId } : {}) },
   };
 }
 
@@ -720,10 +753,12 @@ function closeOpenReasoningEvent(state: AgUiEncoderState): AgUiEncodedEvent[] {
   }
 
   const messageId = state.reasoningMessageId;
+  const contentId = state.activeReasoningContentId ?? null;
   state.reasoningMessageId = null;
+  state.activeReasoningContentId = null;
   return [{
     event: "ReasoningMessageEnd",
-    payload: { messageId },
+    payload: { messageId, ...(contentId ? { contentId } : {}) },
   }];
 }
 
@@ -839,7 +874,11 @@ function mapRuntimeStreamEventToAgUiEventsUnstamped(
     case "source-url":
     case "file": {
       state.sawVisibleOutput = true;
-      const native = buildNativeRunEventFrame({ name: event.type, value: event });
+      const native = buildNativeRunEventFrame({
+        name: event.type,
+        value: event,
+        parentMessageId: state.messageId,
+      });
       return [native ? native.live : createCustomDataEvent(event.type, event)];
     }
 
@@ -1035,7 +1074,7 @@ function mapRuntimeStreamEventToAgUiEventsUnstamped(
       return [
         ...closeOpenTextEvent(state),
         ...closeOpenReasoningEvent(state),
-        createStepEvent(state, "StepStarted"),
+        createStepEvent(state, "StepStarted", event),
       ];
 
     case "step-end":
@@ -1043,7 +1082,7 @@ function mapRuntimeStreamEventToAgUiEventsUnstamped(
       return [
         ...closeOpenTextEvent(state),
         ...closeOpenReasoningEvent(state),
-        createStepEvent(state, "StepFinished"),
+        createStepEvent(state, "StepFinished", event),
       ];
 
     case "data":

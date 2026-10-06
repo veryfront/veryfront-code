@@ -5,6 +5,7 @@ import { buildNativeRunEventFrame, nativeRunEventTypes } from "../ag-ui/native-r
 import type { AgentRunEventTimingOptions } from "../../runtime/model-call-context.ts";
 import { normalizeConversationRunEvents } from "./run-event-normalization.ts";
 import { isToolResultErrorOutput } from "#veryfront/tool/result.ts";
+import { getStepIdentity } from "../streaming/step-identity.ts";
 
 /** Shared conversation run event types value. */
 export const conversationRunEventTypes = {
@@ -140,6 +141,7 @@ export class ConversationRunEventEncoder {
   private activeTextContentId: string | null = null;
   private textContentIndex = 0;
   private activeStepName: string | null = null;
+  private activeStepId: string | null = null;
   private stepCount = 0;
   private readonly nowMs?: () => number;
   private readonly startedMs?: number;
@@ -166,16 +168,24 @@ export class ConversationRunEventEncoder {
     };
   }
 
-  private nextStepName(): string {
+  private nextStep(
+    chunk: Extract<ChatStreamEvent, { type: "start-step" }>,
+  ): { stepName: string; stepId: string } {
     this.stepCount += 1;
     this.activeStepName = `step-${this.stepCount}`;
-    return this.activeStepName;
+    this.activeStepId = getStepIdentity(chunk) ?? crypto.randomUUID();
+    return { stepName: this.activeStepName, stepId: this.activeStepId };
   }
 
-  private finishStepName(): string {
+  private finishStep(): { stepName: string; stepId?: string } {
     const stepName = this.activeStepName ?? `step-${Math.max(this.stepCount, 1)}`;
+    const stepId = this.activeStepId ?? undefined;
     this.activeStepName = null;
-    return stepName;
+    this.activeStepId = null;
+    return {
+      stepName,
+      ...(stepId !== undefined ? { stepId } : {}),
+    };
   }
 
   private getToolResultMessageId(toolCallId: string) {
@@ -202,6 +212,13 @@ export class ConversationRunEventEncoder {
     return {
       messageId,
       contentId,
+    };
+  }
+
+  private getReasoningMessagePayload(chunk: { id: string }) {
+    return {
+      messageId: this.activeMessageId ?? chunk.id,
+      contentId: chunk.id,
     };
   }
 
@@ -281,19 +298,22 @@ export class ConversationRunEventEncoder {
       case "reasoning-start":
         return [{
           type: conversationRunEventTypes.reasoningMessageStart,
-          messageId: chunk.id,
+          ...this.getReasoningMessagePayload(chunk),
           role: "assistant",
         }];
 
       case "reasoning-delta":
         return [{
           type: conversationRunEventTypes.reasoningMessageContent,
-          messageId: chunk.id,
+          ...this.getReasoningMessagePayload(chunk),
           delta: chunk.delta,
         }];
 
       case "reasoning-end":
-        return [{ type: conversationRunEventTypes.reasoningMessageEnd, messageId: chunk.id }];
+        return [{
+          type: conversationRunEventTypes.reasoningMessageEnd,
+          ...this.getReasoningMessagePayload(chunk),
+        }];
 
       case "tool-input-start":
         return [{
@@ -420,7 +440,11 @@ export class ConversationRunEventEncoder {
       case "source-document":
       case "source-url":
       case "file": {
-        const native = buildNativeRunEventFrame({ name: chunk.type, value: chunk });
+        const native = buildNativeRunEventFrame({
+          name: chunk.type,
+          value: chunk,
+          parentMessageId: this.activeMessageId,
+        });
         return [
           native ? native.durable : {
             type: conversationRunEventTypes.custom,
@@ -433,13 +457,13 @@ export class ConversationRunEventEncoder {
       case "start-step":
         return [{
           type: conversationRunEventTypes.stepStarted,
-          stepName: this.nextStepName(),
+          ...this.nextStep(chunk),
         }];
 
       case "finish-step":
         return [{
           type: conversationRunEventTypes.stepFinished,
-          stepName: this.finishStepName(),
+          ...this.finishStep(),
         }];
 
       case "error":

@@ -1,7 +1,7 @@
 ---
 title: "veryfront/mcp"
 description: "MCP server exposing tools, prompts, and resources. Resource-template captures are percent-decoded exactly once; malformed escapes are not found, and resources with `mcp.enabled: false` are omitted from both lists and reads."
-order: 18
+order: 19
 ---
 
 ## Import
