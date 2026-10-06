@@ -728,8 +728,9 @@ async function writeStreamExclusive(
   remove: () => Promise<void>,
 ): Promise<number> {
   const reader = source.getReader();
+  let cancellation: Promise<void> | undefined;
   const abort = () => {
-    void reader.cancel(signal?.reason).catch(() => {});
+    cancellation = reader.cancel(signal?.reason).catch(() => {});
   };
   let handle: Awaited<ReturnType<typeof open>> | undefined;
   let failed = true;
@@ -758,7 +759,7 @@ async function writeStreamExclusive(
   } finally {
     signal?.removeEventListener("abort", abort);
     if (failed) {
-      await reader.cancel().catch(() => {});
+      await (cancellation ?? reader.cancel().catch(() => {}));
       if (handle) {
         try {
           await handle.close();

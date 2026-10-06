@@ -120,6 +120,48 @@ describe("Filesystem Compat", () => {
     });
   });
 
+  describe("stream cancellation", () => {
+    it("waits for asynchronous source cancellation before settling", async () => {
+      const fs = createFileSystem();
+      assertExists(fs.writeFileStream);
+      const target = join(testDir, "cancelled-stream.bin");
+      const controller = new AbortController();
+      let releaseCancellation!: () => void;
+      let startedRead!: () => void;
+      const reading = new Promise<void>((resolve) => {
+        startedRead = resolve;
+      });
+      const cancellation = new Promise<void>((resolve) => {
+        releaseCancellation = resolve;
+      });
+      const source = new ReadableStream<Uint8Array>({
+        pull() {
+          startedRead();
+        },
+        cancel() {
+          return cancellation;
+        },
+      });
+      let settled = false;
+      const writing = fs.writeFileStream(target, source, controller.signal);
+      const rejection = assertRejects(() => writing, Error);
+      void writing.then(() => {
+        settled = true;
+      }, () => {
+        settled = true;
+      });
+      await reading;
+      controller.abort(new Error("cancel download"));
+      // Drain the async file cleanup too, so an early settlement is observable.
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      const settledBeforeCleanup = settled;
+      releaseCancellation();
+      await rejection;
+      assertEquals(settledBeforeCleanup, false);
+      assertEquals(await fs.exists(target), false);
+    });
+  });
+
   describe("writeFile / readFile", () => {
     it("should write and read binary files", async () => {
       const filePath = join(testDir, "test-binary.bin");
