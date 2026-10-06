@@ -36,7 +36,7 @@ import type { HostedExecutorOwnedWork } from "./executor-session.ts";
 import { createPrivateWeakStore } from "#veryfront/security/private-weak-store.ts";
 import { createPrivateMap } from "#veryfront/security/private-map.ts";
 import { getToolCallOccurrence } from "#veryfront/runtime/tool-call-occurrence.ts";
-import { isObservedProviderToolStart } from "#veryfront/runtime/tool-call-occurrence-carrier.ts";
+import { isObservedToolResultStart } from "#veryfront/runtime/tool-call-occurrence-carrier.ts";
 import {
   type AgentRunToolCallAdmissionReceipt,
   getToolCallAdmissionReceiptSchema,
@@ -266,7 +266,7 @@ export function createManagedBrokerPersistenceFromCapability(input: {
         await flush();
         if (
           admissionScope && chunk.type === "tool-input-start" &&
-          !isObservedProviderToolStart(chunk)
+          !isObservedToolResultStart(chunk)
         ) {
           const occurrenceId = getToolCallOccurrence(chunk);
           const acknowledged = occurrenceId &&

@@ -1131,7 +1131,7 @@ export function processStreamInternal(
 
       if (!existing) {
         const normalizedInput = parseToolInputObject(part.input);
-        const observationOnly = providerExecuted === true && isToolCallOccurrenceScopeEnabled();
+        const observationOnly = isToolCallOccurrenceScopeEnabled();
         state.toolCalls.set(part.toolCallId, {
           id: part.toolCallId,
           name: part.toolName,
@@ -1146,7 +1146,10 @@ export function processStreamInternal(
           toolCallId: part.toolCallId,
           toolName: part.toolName,
           ...(observationOnly
-            ? { privateObservedProviderToolResult: true, providerExecuted: true }
+            ? {
+              privateObservedToolResult: true,
+              ...(providerExecuted !== undefined ? { providerExecuted } : {}),
+            }
             : {}),
           ...(dynamic ? { dynamic: true } : {}),
         });

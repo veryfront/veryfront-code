@@ -91,7 +91,7 @@ For the owning Veryfront project MCP endpoint, the private transport sends the r
 
 Missing, malformed, or ambiguous receipts refuse opted-in SDK dispatch. Dispatch also refuses when the matching admission transport is unavailable or the owning endpoint has the wrong project, path, or query. Caller admission selectors and writer headers are removed from ordinary requests, tool-list requests, and third-party MCP requests. Third-party calls still require the broker grant and durable start receipt, but receive no Veryfront API proof or credential; their API authority coverage remains a separate observation gate.
 
-This bridge requires matching worker-generation API support. Projectless admission remains unsupported. A provider-executed result that supplies a synthetic legacy start is an observation of an already executed call, so it receives no SDK pre-dispatch admission. Target replay remains unavailable when the source cannot prove an actual tool start.
+This bridge requires matching worker-generation API support. Projectless admission remains unsupported. A synthetic legacy start derived from a tool result or error receives no SDK pre-dispatch admission. The durable start carries `startObservedFromResult: true`, independently of the actual `providerExecuted` flag. Target replay remains unavailable when the source cannot prove an actual tool start.
 
 ## Validate producer output
 

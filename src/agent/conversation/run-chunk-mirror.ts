@@ -3,7 +3,7 @@ import type { AgentRunModelCallCaptureReceipt } from "#veryfront/runtime/model-c
 import type { AgentRunToolCallAdmissionReceipt } from "#veryfront/runtime/tool-call-admission-receipt.ts";
 import {
   getToolCallOccurrence,
-  isObservedProviderToolStart,
+  isObservedToolResultStart,
 } from "#veryfront/runtime/tool-call-occurrence-carrier.ts";
 import {
   type AgentRunEventTimingOptions,
@@ -235,7 +235,7 @@ export function createConversationRunChunkMirror(
 
       if (
         input.toolCallAdmissions && chunk.type === "tool-input-start" &&
-        !isObservedProviderToolStart(chunk)
+        !isObservedToolResultStart(chunk)
       ) {
         const occurrenceId = getToolCallOccurrence(chunk);
         const startIndices = events.flatMap((event, eventIndex) =>

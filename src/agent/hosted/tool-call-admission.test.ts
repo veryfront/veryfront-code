@@ -28,8 +28,8 @@ import { createMockResult } from "../runtime/chat-stream-handler.test-helpers.ts
 import { createChatUiMessageStreamFromDataStream } from "../streaming/chat-ui-message-stream.ts";
 import type { ChatUiMessageChunk } from "#veryfront/chat/types.ts";
 import {
-  bindObservedProviderToolStart,
-  isObservedProviderToolStart,
+  bindObservedToolResultStart,
+  isObservedToolResultStart,
 } from "#veryfront/runtime/tool-call-occurrence-carrier.ts";
 import { getExecutorDataEventSchema } from "../streaming/executor-data-schema.ts";
 import {
@@ -204,25 +204,35 @@ describe("private tool-call admission", () => {
     assert(!JSON.stringify({ chunks, finished }).includes(getToolCallOccurrence(toolCall)!));
   });
 
-  it("persists provider-native result-only lifecycle observations without minting dispatch admission", async () => {
+  it("persists result-only lifecycle observations without minting dispatch admission", async () => {
     const getAppendBodySchema = defineSchema((v) =>
       v.object({
         events: v.array(
           v.object({
             type: v.string(),
             providerExecuted: v.boolean().optional(),
+            startObservedFromResult: v.literal(true).optional(),
           }).passthrough(),
         ),
         tool_call_starts: v.array(v.unknown()).optional(),
       }).passthrough()
     );
-    for (const type of ["tool-result", "tool-error"]) {
-      const storedStarts: Array<{ type: string; providerExecuted?: boolean }> = [];
+    const scenarios = ["configured-provider", "unflagged", "explicit-false"];
+    for (
+      const { scenario, type } of scenarios.flatMap((scenario) =>
+        ["tool-result", "tool-error"].map((type) => ({ scenario, type }))
+      )
+    ) {
+      const storedStarts: Array<{
+        type: string;
+        providerExecuted?: boolean;
+        startObservedFromResult?: true;
+      }> = [];
       let sequence = 0;
       const fetch: HostedRequestFetch = async (_url, init) => {
         const body = getAppendBodySchema().parse(JSON.parse(String(init?.body)));
         assertEquals(body.tool_call_starts, undefined);
-        assert(!JSON.stringify(body).includes("privateObservedProviderToolResult"));
+        assert(!JSON.stringify(body).includes("privateObservedToolResult"));
         storedStarts.push(...body.events.filter((event) => event.type === "TOOL_CALL_START"));
         sequence += body.events.length;
         return Response.json({
@@ -244,6 +254,7 @@ describe("private tool-call admission", () => {
                     type,
                     toolCallId: "provider-only-result",
                     toolName: "web_search",
+                    ...(scenario === "explicit-false" ? { providerExecuted: false } : {}),
                     input: { query: "test" },
                     ...(type === "tool-result"
                       ? { output: { result: "test" } }
@@ -256,7 +267,9 @@ describe("private tool-call admission", () => {
                 new TextEncoder(),
                 "test",
                 {
-                  providerExecutedToolNames: ["web_search"],
+                  providerExecutedToolNames: scenario === "configured-provider"
+                    ? ["web_search"]
+                    : [],
                 },
               );
               controller.enqueue(new TextEncoder().encode('data: {"type":"message-finish"}\n\n'));
@@ -279,15 +292,30 @@ describe("private tool-call admission", () => {
         }
         const starts = chunks.filter((chunk) => chunk.type === "tool-input-start");
         assertEquals(starts.length, 1);
-        assert(isObservedProviderToolStart(starts[0]!));
+        assert(isObservedToolResultStart(starts[0]!));
         assertEquals(getToolCallOccurrence(starts[0]!), undefined);
         assertEquals(
           getToolCallOccurrence(state.toolCalls.get("provider-only-result")!),
           undefined,
         );
         assertEquals(storedStarts.length, 1);
-        assertEquals(storedStarts[0]?.providerExecuted, true);
-        assert(!JSON.stringify({ chunks, finished }).includes("privateObservedProviderToolResult"));
+        assertEquals(storedStarts[0]?.startObservedFromResult, true);
+        assertEquals(
+          state.toolCalls.get("provider-only-result")?.providerExecuted,
+          scenario === "configured-provider"
+            ? true
+            : scenario === "explicit-false"
+            ? false
+            : undefined,
+        );
+        assertEquals(
+          storedStarts[0]?.providerExecuted,
+          scenario === "configured-provider" ? true : undefined,
+        );
+        assert(
+          !JSON.stringify({ chunks, finished }).includes("privateObservedToolResult"),
+        );
+        assert(!JSON.stringify({ chunks, finished }).includes("startObservedFromResult"));
         await persistence.cleanup();
       }
     }
@@ -316,24 +344,26 @@ describe("private tool-call admission", () => {
     assertEquals(
       getExecutorDataEventSchema().safeParse({
         ...start,
-        privateObservedProviderToolResult: true,
+        privateObservedToolResult: true,
         privateToolCallOccurrenceId: occurrenceId,
       }).success,
       false,
     );
-    assertEquals(
-      getExecutorDataEventSchema().safeParse({
-        ...start,
-        providerExecuted: false,
-        privateObservedProviderToolResult: true,
-      }).success,
-      false,
-    );
-    bindObservedProviderToolStart(start);
+    for (const providerExecuted of [undefined, false, true]) {
+      assertEquals(
+        getExecutorDataEventSchema().safeParse({
+          ...start,
+          providerExecuted,
+          privateObservedToolResult: true,
+        }).success,
+        true,
+      );
+    }
+    bindObservedToolResultStart(start);
     assertThrows(() => bindToolCallStartOccurrence(start, occurrenceId), TypeError);
     const admitted = { id: "admitted-call" };
     bindToolCallStartOccurrence(admitted, occurrenceId);
-    assertThrows(() => bindObservedProviderToolStart(admitted), TypeError);
+    assertThrows(() => bindObservedToolResultStart(admitted), TypeError);
   });
 
   it("pins private proof to owning endpoints and scrubs caller selectors from list and other transports", async () => {

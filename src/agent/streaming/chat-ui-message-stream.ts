@@ -1,6 +1,6 @@
 import { privateJsonParse } from "#veryfront/security/private-json.ts";
 import {
-  bindObservedProviderToolStart,
+  bindObservedToolResultStart,
   bindToolCallStartOccurrence,
 } from "#veryfront/runtime/tool-call-occurrence-carrier.ts";
 import type { ChatFinishReason, ChatStreamEvent } from "#veryfront/chat/protocol.ts";
@@ -644,8 +644,7 @@ export function createChatUiMessageStreamFromDataStream<TMessageMetadata = Messa
       };
 
       for await (const rawEvent of streamDataStreamEvents(input.stream)) {
-        const { privateToolCallOccurrenceId, privateObservedProviderToolResult, ...event } =
-          rawEvent;
+        const { privateToolCallOccurrenceId, privateObservedToolResult, ...event } = rawEvent;
         manuallyPaused ||= event.type === "data-veryfront.manual_pause";
         trackPendingFrameworkToolInput({
           state,
@@ -678,9 +677,9 @@ export function createChatUiMessageStreamFromDataStream<TMessageMetadata = Messa
           }
           if (
             options.privateToolCallAdmissions && event.type === "tool-input-start" &&
-            chunk?.type === "tool-input-start" && privateObservedProviderToolResult === true
+            chunk?.type === "tool-input-start" && privateObservedToolResult === true
           ) {
-            bindObservedProviderToolStart(chunk);
+            bindObservedToolResultStart(chunk);
           }
           if (chunk && !isDuplicateSourceDocument && !isDuplicateSourceUrl) {
             yield chunk;

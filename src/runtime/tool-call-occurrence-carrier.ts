@@ -9,7 +9,7 @@ type ToolCallOccurrenceCarrier =
   | Extract<ChatUiMessageChunk, { type: "tool-input-start" }>;
 
 const occurrences = createPrivateWeakStore<ToolCallOccurrenceCarrier, string>();
-const observedProviderStarts = createPrivateWeakStore<ToolCallOccurrenceCarrier, true>();
+const observedToolResultStarts = createPrivateWeakStore<ToolCallOccurrenceCarrier, true>();
 const getOccurrenceSchema = defineSchema((v) => v.string().uuid());
 
 export function getToolCallOccurrence(call: ToolCallOccurrenceCarrier): string | undefined {
@@ -30,20 +30,20 @@ export function bindToolCallStartOccurrence(
   chunk: ToolCallOccurrenceCarrier,
   occurrenceId: string,
 ): void {
-  if (isObservedProviderToolStart(chunk)) {
-    throw new TypeError("Observed provider result cannot carry dispatch admission");
+  if (isObservedToolResultStart(chunk)) {
+    throw new TypeError("Observed tool result cannot carry dispatch admission");
   }
   occurrences.set(chunk, getOccurrenceSchema().parse(occurrenceId).toLowerCase());
 }
 
-/** A retrospective provider-result lifecycle grants no SDK dispatch admission. */
-export function bindObservedProviderToolStart(chunk: ToolCallOccurrenceCarrier): void {
+/** A retrospective tool-result lifecycle grants no SDK dispatch admission. */
+export function bindObservedToolResultStart(chunk: ToolCallOccurrenceCarrier): void {
   if (getToolCallOccurrence(chunk)) {
-    throw new TypeError("Dispatch start cannot become a provider-result observation");
+    throw new TypeError("Dispatch start cannot become a tool-result observation");
   }
-  observedProviderStarts.set(chunk, true);
+  observedToolResultStarts.set(chunk, true);
 }
 
-export function isObservedProviderToolStart(chunk: ToolCallOccurrenceCarrier): boolean {
-  return observedProviderStarts.get(chunk) === true;
+export function isObservedToolResultStart(chunk: ToolCallOccurrenceCarrier): boolean {
+  return observedToolResultStarts.get(chunk) === true;
 }

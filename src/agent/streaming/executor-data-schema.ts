@@ -82,14 +82,14 @@ export const getExecutorDataEventSchema = defineSchema((v) => {
       toolCallId: id,
       toolName: id,
       privateToolCallOccurrenceId: v.string().uuid().optional(),
-      privateObservedProviderToolResult: v.literal(true).optional(),
+      privateObservedToolResult: v.literal(true).optional(),
       ...flags,
     })
       .strict().refine(
         (event) =>
-          event.privateObservedProviderToolResult !== true ||
-          (event.providerExecuted === true && event.privateToolCallOccurrenceId === undefined),
-        "Observed provider results cannot carry dispatch admission",
+          event.privateObservedToolResult !== true ||
+          event.privateToolCallOccurrenceId === undefined,
+        "Observed tool results cannot carry dispatch admission",
       ),
     v.object({
       type: v.literal("tool-input-delta"),

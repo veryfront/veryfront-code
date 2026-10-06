@@ -1,3 +1,4 @@
+import { isObservedToolResultStart } from "#veryfront/runtime/tool-call-occurrence-carrier.ts";
 import { defineSchema, lazySchema } from "#veryfront/schemas/index.ts";
 import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
 import { type ChatStreamEvent } from "#veryfront/chat/protocol.ts";
@@ -319,6 +320,7 @@ export class ConversationRunEventEncoder {
           toolCallName: chunk.toolName,
           ...(this.activeMessageId ? { parentMessageId: this.activeMessageId } : {}),
           ...providerExecutionMarker(chunk),
+          ...(isObservedToolResultStart(chunk) ? { startObservedFromResult: true } : {}),
         }];
 
       case "tool-input-delta":
