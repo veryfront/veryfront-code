@@ -126,14 +126,20 @@ function fixture() {
   return { ctx, wrapper: new ApiHandlerWrapper(projectDir, adapter) };
 }
 
-function request(signal?: AbortSignal, blocked = false, injected = false, auto = false): Request {
+function request(
+  signal?: AbortSignal,
+  blocked = false,
+  injected = false,
+  auto = false,
+  omitClientRunId = false,
+): Request {
   return new Request("https://public-agui-probe.example.test/api/ag-ui", {
     method: "POST",
     signal,
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
       threadId: crypto.randomUUID(),
-      runId: `client-${crypto.randomUUID()}`,
+      ...(omitClientRunId ? {} : { runId: `client-${crypto.randomUUID()}` }),
       messages: [{
         id: "synthetic-message",
         role: "user",
@@ -156,6 +162,8 @@ async function exercise(
   injected = false,
   model: "pinned" | "omitted" | "alias" | "catalog-alias" | "auto" = "pinned",
   interceptPromise = false,
+  omitClientRunId = false,
+  configuredBinding?: boolean,
 ) {
   const { ctx, wrapper } = fixture();
   const runId = crypto.randomUUID();
@@ -196,6 +204,7 @@ async function exercise(
           inputSchema: defineSchema((v) => v.object({}))(),
           execute: (_input, context) => {
             assertEquals(context?.runId, runId);
+            assertEquals(context?.runIdBindsToolAuthorization, configuredBinding ?? true);
             inspectSource();
             toolCount++;
             return { ok: true };
@@ -206,6 +215,9 @@ async function exercise(
   const createPost = () =>
     createAgUiHandler({
       agent: createAssistant(),
+      ...(configuredBinding === undefined
+        ? {}
+        : { context: { runIdBindsToolAuthorization: configuredBinding } }),
       ...(injected
         ? { sessionManager: new RunResumeSessionManager<{ result: unknown; isError: boolean }>() }
         : {}),
@@ -358,7 +370,7 @@ async function exercise(
     }, async () => {
       const controller = new AbortController();
       const handled = await wrapper.handle(
-        request(controller.signal, mode === "blocked", injected, model === "auto"),
+        request(controller.signal, mode === "blocked", injected, model === "auto", omitClientRunId),
         ctx,
       );
       assert(handled.response);
@@ -438,6 +450,12 @@ async function exercise(
 }
 
 describe("public authored AG-UI inference", () => {
+  it("binds direct tool authorization to the admitted run when the client omits runId", () =>
+    exercise("completed", false, "pinned", false, true));
+  it("binds injected-path tool authorization to the admitted run when the client omits runId", () =>
+    exercise("completed", true, "pinned", false, true));
+  it("preserves an explicit server tool-authorization binding opt-out", () =>
+    exercise("completed", false, "pinned", false, true, false));
   it("resolves a cold catalog-only alias using private catalog authority", () =>
     exercise("completed", false, "catalog-alias"));
   it("finalizes on ingress abort before the response reader is cancelled", () =>

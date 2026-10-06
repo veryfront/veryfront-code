@@ -392,7 +392,10 @@ async function createAgUiDirectStreamResponse(
     const finalContext = {
       ...(beforeStreamResult?.context ?? context),
       runId: effectiveRunId,
-      runIdBindsToolAuthorization: context.runIdBindsToolAuthorization,
+      runIdBindsToolAuthorization: privateRuntime &&
+          typeof baseContext.runIdBindsToolAuthorization !== "boolean"
+        ? true
+        : context.runIdBindsToolAuthorization,
     };
 
     const toolDataEvents = createToolDataEventBridge();
@@ -548,7 +551,10 @@ async function createAgUiInjectedToolsStreamResponse(
     const finalContext = {
       ...(beforeStreamResult?.context ?? context),
       runId: effectiveRunId,
-      runIdBindsToolAuthorization: context.runIdBindsToolAuthorization,
+      runIdBindsToolAuthorization: privateRuntime &&
+          typeof baseContext.runIdBindsToolAuthorization !== "boolean"
+        ? true
+        : context.runIdBindsToolAuthorization,
     };
 
     try {
