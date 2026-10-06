@@ -759,18 +759,19 @@ function createLocalJsonRagStore(config: ResolvedRagStoreConfig): RagStore {
       const threshold = options?.threshold;
 
       const docMap = new Map(data.documents.map((d) => [d.id, d]));
-
-      const scored = data.chunks.map((c) => {
+      const scored: RagSearchResult[] = [];
+      for (const c of data.chunks) {
         const doc = docMap.get(c.documentId);
-        return {
+        if (options?.filterDocument && (!doc || !options.filterDocument(doc))) continue;
+        scored.push({
           text: c.text,
           score: cosineSimilarity(queryEmbedding, c.embedding),
           documentId: c.documentId,
           title: doc?.title ?? "Unknown",
           source: doc?.source ?? "",
           type: doc?.type ?? "",
-        };
-      });
+        });
+      }
 
       scored.sort((a, b) => b.score - a.score);
 

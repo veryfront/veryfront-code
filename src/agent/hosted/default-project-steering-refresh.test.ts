@@ -301,6 +301,61 @@ describe("agent/default-hosted-project-steering-refresh", () => {
     assertEquals(system.includes("Fresh instructions:"), true);
   });
 
+  it("preserves authored skill selectors when no refresh policy exists", async () => {
+    const refresh = createDefaultHostedProjectSteeringRefresh({
+      fetchProjectInstructions: () => Promise.resolve("Fresh instructions"),
+      fetchSkills: () =>
+        Promise.resolve([
+          createSkill("support-triage"),
+          createSkill("support-private"),
+          createSkill("billing"),
+        ]),
+      buildInstructions: (input) =>
+        `${input.instructions}:${input.skills.map((skill) => skill.id).join(",")}`,
+    });
+
+    const runWithSelector = async (selector: RuntimeAgentMarkdownDefinition["skills"]) => {
+      const input = createRefreshInput();
+      input.liveProjectSteering.agent.skills = selector;
+      input.taskContext.skillSelectorPolicy = undefined;
+      input.liveProjectSteering.skillSelectorPolicy = undefined;
+      input.taskContext.availableSkillIds = ["stale-skill"];
+
+      const system = systemText(await refresh(input));
+      return { input, system };
+    };
+
+    const stringGlob = await runWithSelector("support-*");
+    assertStringIncludes(stringGlob.system, "Fresh instructions:support-triage,support-private");
+    assertEquals(stringGlob.system.includes("billing"), false);
+    assertEquals(stringGlob.input.taskContext.availableSkillIds, [
+      "support-triage",
+      "support-private",
+    ]);
+
+    const mapGrantAndDeny = await runWithSelector({
+      "support-*": true,
+      "support-private": false,
+    });
+    assertStringIncludes(mapGrantAndDeny.system, "Fresh instructions:support-triage");
+    assertEquals(mapGrantAndDeny.system.includes("support-private"), false);
+    assertEquals(mapGrantAndDeny.system.includes("billing"), false);
+    assertEquals(mapGrantAndDeny.input.taskContext.availableSkillIds, ["support-triage"]);
+
+    const emptyMap = await runWithSelector({});
+    assertStringIncludes(emptyMap.system, "Fresh instructions:");
+    assertEquals(emptyMap.system.includes("support-triage"), false);
+    assertEquals(emptyMap.input.taskContext.availableSkillIds, []);
+
+    const exclusionOnlyMap = await runWithSelector({
+      "support-private": false,
+    });
+    assertStringIncludes(exclusionOnlyMap.system, "Fresh instructions:");
+    assertEquals(exclusionOnlyMap.system.includes("support-private"), false);
+    assertEquals(exclusionOnlyMap.system.includes("support-triage"), false);
+    assertEquals(exclusionOnlyMap.input.taskContext.availableSkillIds, []);
+  });
+
   it("suppresses refreshed skills when the loader is unavailable", async () => {
     const refresh = createDefaultHostedProjectSteeringRefresh({
       fetchProjectInstructions: () => Promise.resolve("Fresh instructions"),
@@ -357,6 +412,44 @@ describe("agent/default-hosted-project-steering-refresh", () => {
     assertStringIncludes(explicitSystem, "Fresh instructions:build");
     assertEquals(explicitSystem.includes("new-skill"), false);
     assertEquals(explicitInput.taskContext.availableSkillIds, ["build"]);
+  });
+
+  it("preserves rules selector policies during refresh", async () => {
+    const refresh = createDefaultHostedProjectSteeringRefresh({
+      fetchProjectInstructions: () => Promise.resolve("Fresh instructions"),
+      fetchSkills: () =>
+        Promise.resolve([
+          createSkill("support-triage"),
+          createSkill("support-private"),
+          createSkill("billing"),
+        ]),
+      buildInstructions: (input) =>
+        `${input.instructions}:${input.skills.map((skill) => skill.id).join(",")}`,
+    });
+
+    const input = createRefreshInput();
+    input.taskContext.skillSelectorPolicy = {
+      kind: "rules",
+      entries: [
+        { pattern: "support-*", allow: true },
+        { pattern: "support-private", allow: false },
+      ],
+    };
+    input.taskContext.availableSkillIds = ["support-triage"];
+
+    const system = systemText(await refresh(input));
+
+    assertStringIncludes(system, "Fresh instructions:support-triage");
+    assertEquals(system.includes("support-private"), false);
+    assertEquals(system.includes("billing"), false);
+    assertEquals(input.taskContext.availableSkillIds, ["support-triage"]);
+    assertEquals(input.taskContext.skillSelectorPolicy, {
+      kind: "rules",
+      entries: [
+        { pattern: "support-*", allow: true },
+        { pattern: "support-private", allow: false },
+      ],
+    });
   });
 
   it("rejects deleted explicit skill selections during refresh without narrowing state", async () => {

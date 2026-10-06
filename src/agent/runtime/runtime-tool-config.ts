@@ -9,6 +9,7 @@ import { type SourceIntegrationPolicyManifest } from "#veryfront/integrations/so
 import {
   isSupportedToolExposureCheckpointVersion,
   isValidToolExposureCheckpointName,
+  TOOL_SEARCH_TOOL_NAME,
   type ToolExposureCheckpoint,
 } from "./tool-exposure.ts";
 import { type ProviderReplayCheckpoint } from "./provider-replay.ts";
@@ -114,8 +115,35 @@ export type RuntimeToolFilterConfig = AgentConfig & {
 /** Effective runtime loading mode and the trusted source that selected it. */
 export type RuntimeToolLoadingResolution = {
   mode: RuntimeToolLoadingMode;
-  provenance: "host-operational-override" | "host-runtime-binding" | "tools-selector";
+  provenance:
+    | "host-operational-override"
+    | "host-runtime-binding"
+    | "authored-tool-loading"
+    | "tools-selector";
 };
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function isToolSearchDenied(config: AgentConfig): boolean {
+  const deniedTools = (config as { deniedTools?: unknown }).deniedTools;
+  if (ArrayIsArray(deniedTools) && deniedTools.includes(TOOL_SEARCH_TOOL_NAME)) {
+    return true;
+  }
+  return isRecord(config.tools) && config.tools[TOOL_SEARCH_TOOL_NAME] === false;
+}
+
+function resolveToolLoadingWithDenials(
+  config: AgentConfig,
+  mode: RuntimeToolLoadingMode,
+  provenance: RuntimeToolLoadingResolution["provenance"],
+): RuntimeToolLoadingResolution {
+  return {
+    mode: mode === "deferred" && isToolSearchDenied(config) ? "eager" : mode,
+    provenance,
+  };
+}
 
 /** Resolve tool loading without accepting request context as configuration. */
 export function resolveRuntimeToolLoading(
@@ -131,15 +159,17 @@ export function resolveRuntimeToolLoading(
   }
   const hostRuntimeMode = (config as RuntimeToolFilterConfig).__vfToolLoadingMode;
   if (hostRuntimeMode === "eager" || hostRuntimeMode === "deferred") {
-    return {
-      mode: hostRuntimeMode,
-      provenance: "host-runtime-binding",
-    };
+    return resolveToolLoadingWithDenials(config, hostRuntimeMode, "host-runtime-binding");
   }
-  return {
-    mode: config.tools === true ? "deferred" : "eager",
-    provenance: "tools-selector",
-  };
+  const authoredToolLoading = config.toolLoading;
+  if (authoredToolLoading === "eager" || authoredToolLoading === "deferred") {
+    return resolveToolLoadingWithDenials(config, authoredToolLoading, "authored-tool-loading");
+  }
+  return resolveToolLoadingWithDenials(
+    config,
+    config.tools === true ? "deferred" : "eager",
+    "tools-selector",
+  );
 }
 
 export function getRuntimeAllowedRemoteTools(config: AgentConfig): string[] | undefined {

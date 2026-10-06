@@ -395,6 +395,7 @@ export async function executeConfiguredTool(
   },
   options?: {
     strictConfiguredToolsOnly?: boolean;
+    frameworkLocalTools?: Record<string, Tool>;
   },
 ): Promise<unknown> {
   const configuredEntry = toolsConfig === true ? undefined : toolsConfig?.[toolName];
@@ -430,6 +431,22 @@ export async function executeConfiguredTool(
     throw PERMISSION_DENIED.create({
       detail: `Tool "${configuredRemoteToolName}" is not allowed for this run`,
     });
+  }
+
+  const frameworkLocalTool = options?.frameworkLocalTools?.[toolName];
+  if (frameworkLocalTool !== undefined && (toolsConfig === true || configuredEntry === true)) {
+    const remoteSourceResult = await executeRemoteToolFromSources(
+      toolName,
+      input,
+      context,
+      allowedRemoteToolNames,
+      remoteToolSources,
+      sourceIntegrationPolicy,
+      selectedSource,
+    );
+    if (remoteSourceResult.handled) {
+      return remoteSourceResult.result;
+    }
   }
 
   const configuredTool = resolveConfiguredTool(toolsConfig, toolName, context, {
@@ -550,6 +567,7 @@ export async function getAvailableTools(
     onIntegrationToolDiscovery?: (result: RemoteIntegrationToolDiscoveryResult) => void;
     sourceIntegrationPolicy?: SourceIntegrationPolicyManifest;
     strictConfiguredToolsOnly?: boolean;
+    frameworkLocalTools?: Record<string, Tool>;
     /** Calling agent id for owner-aware tool visibility. */
     callerAgentId?: string;
   },
@@ -563,7 +581,12 @@ export async function getAvailableTools(
     const allTools = toolRegistry.getAll();
     logger.debug(`Loading all ${allTools.size} tools from registry`);
 
-    const visibleTools = Array.from(allTools.entries()).filter(([, tool]) =>
+    const frameworkLocalTools = options?.frameworkLocalTools;
+    const frameworkLocalToolNames = createPrivateSet(
+      frameworkLocalTools === undefined ? [] : Object.keys(frameworkLocalTools),
+    );
+    const visibleTools = Array.from(allTools.entries()).filter(([name, tool]) =>
+      !frameworkLocalToolNames.has(name) &&
       isToolVisibleTo(tool, { agentId: options?.callerAgentId })
     );
     const tools = visibleTools.map(([name, tool]) => {

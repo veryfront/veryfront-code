@@ -274,6 +274,8 @@ async function buildToolAssembly(
       }
       : {}),
     allowedProviderToolNames: input.options.allowedProviderTools,
+    toolLoading: input.options.toolLoading,
+    knowledge: input.options.knowledge,
     providerNativeToolNames: input.providerNativeToolNames,
     includeRuntimeEssentialToolsWhenEmpty: input.options.includeRuntimeEssentialToolsWhenEmpty,
     sourceProviderToolNames: input.options.liveProjectSteering?.agent.providerTools,
@@ -354,6 +356,11 @@ function createRuntimeAgentConfig(input: PreparedHostedRuntimeAgentOptions): Age
     system: input.toolAssembly.systemMessages ?? input.toolAssembly.systemInstructions,
     tools: runtimeTools,
     __vfToolLoadingMode: input.toolAssembly.toolLoadingMode,
+    ...(input.options.toolLoading !== undefined ? { toolLoading: input.options.toolLoading } : {}),
+    ...(input.options.toolResultContext !== undefined
+      ? { toolResultContext: input.options.toolResultContext }
+      : {}),
+    ...(input.options.knowledge !== undefined ? { knowledge: input.options.knowledge } : {}),
     providerTools: input.toolAssembly.providerToolNames,
     __vfRemoteToolSources: input.toolAssembly.remoteToolSources,
     __vfAllowedRemoteTools: input.toolAssembly.compatibleRemoteToolNames,
@@ -392,7 +399,8 @@ function createRuntimeAgentConfig(input: PreparedHostedRuntimeAgentOptions): Age
     },
     onToolResult: createDefaultResearchRunArtifactMirrorHandler({
       taskContext: input.taskContext,
-      remoteToolSource: input.toolAssembly.remoteToolSources[0],
+      remoteToolSource: input.toolAssembly.researchArtifactRemoteToolSource ??
+        input.toolAssembly.remoteToolSources[0],
     }),
   };
   objectSetPrototypeOf(runtimeConfig, null);
