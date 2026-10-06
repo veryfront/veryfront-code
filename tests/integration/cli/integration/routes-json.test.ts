@@ -1,6 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { makeTempDir } from "#veryfront/testing/deno-compat.ts";
 import { parseCliArgs } from "#cli/shared/args";
 import { handleRoutesCommand } from "#cli/commands/routes/handler";
 import { setJsonMode } from "#cli/shared/json-output";
@@ -20,7 +21,7 @@ async function captureConsole(run: () => Promise<void>): Promise<string> {
 }
 
 async function withRoutesProject(run: (projectDir: string) => Promise<void>): Promise<void> {
-  const projectDir = await Deno.makeTempDir({ prefix: "vf-routes-handler-" });
+  const projectDir = await makeTempDir({ prefix: "vf-routes-handler-" });
   try {
     await Deno.mkdir(`${projectDir}/app/api/health`, { recursive: true });
     await Deno.writeTextFile(
