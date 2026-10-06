@@ -330,6 +330,7 @@ export function sealInterceptedRequest(source: Request, intercepted: Request): R
     try {
       deleteCredentialHeaders(
         IntrinsicReflectApply(RequestHeadersGetter, intercepted, []) as Headers,
+        written[INGRESS_AUTHORIZATION_HEADER] !== null,
       );
     } catch (error) {
       // Only the immutable-headers refusal is expected; the sealed copy above

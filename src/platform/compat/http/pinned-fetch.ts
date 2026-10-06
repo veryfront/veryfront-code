@@ -473,6 +473,30 @@ function writeRequestPayload(request: ClientRequest, payload: RequestPayload): P
   });
 }
 
+function errorForNodeDestroy(error: unknown): Error | undefined {
+  return isErrorAcrossRealms(error) ? error : undefined;
+}
+
+function teardownDeferredNodeRequest(
+  request: ClientRequest | undefined,
+  response: IncomingMessage | undefined,
+  error: Error | undefined,
+): unknown | undefined {
+  try {
+    assertNodeRequestMembersUnchanged();
+    if (response) {
+      response.destroy(error);
+      // `response.destroy()` can synchronously re-enter stream teardown. Check
+      // again before touching the request graph in the same cleanup path.
+      assertNodeRequestMembersUnchanged();
+    }
+    request?.destroy(error);
+    return undefined;
+  } catch (teardownError) {
+    return teardownError;
+  }
+}
+
 async function decodeResponseBody(
   response: IncomingMessage,
   headers: Headers,
@@ -576,13 +600,26 @@ export async function fetchWithPinnedAddresses(
         const abortReason = () =>
           signal?.reason ?? new DOMException("The operation was aborted", "AbortError");
         const abort = () => {
-          const reason = abortReason();
-          responseMessage?.destroy(isErrorAcrossRealms(reason) ? reason : undefined);
-          // Registered before the request exists; it only fires afterwards.
-          request.destroy(isErrorAcrossRealms(reason) ? reason : undefined);
-          if (!settled) rejectBeforeResponse(reason);
+          let reason: unknown;
+          let destroyError: Error | undefined;
+          try {
+            reason = abortReason();
+            destroyError = errorForNodeDestroy(reason);
+          } catch (error) {
+            rejectBeforeResponse(error);
+            return;
+          }
+          const teardownError = teardownDeferredNodeRequest(request, responseMessage, destroyError);
+          if (!settled) rejectBeforeResponse(teardownError ?? reason);
         };
-        const cleanupAbortListener = () => signal?.removeEventListener("abort", abort);
+        const cleanupAbortListener = () => {
+          try {
+            signal?.removeEventListener("abort", abort);
+          } catch {
+            // Rejecting the request must not depend on user-replaceable signal
+            // cleanup methods succeeding.
+          }
+        };
         const rejectBeforeResponse = (error: unknown) => {
           cleanupAbortListener();
           reject(error);
@@ -626,15 +663,18 @@ export async function fetchWithPinnedAddresses(
               return;
             }
             const decoded = await decodeResponseBody(message, responseHeaders);
+            assertNodeRequestMembersUnchanged();
             decoded.once("end", cleanupAbortListener);
             decoded.once("close", cleanupAbortListener);
             decoded.once("error", cleanupAbortListener);
             const { Readable } = await import("node:stream");
+            assertNodeRequestMembersUnchanged();
+            const statusMessage = message.statusMessage ?? "";
             const webBody = Readable.toWeb(decoded) as globalThis.ReadableStream<Uint8Array>;
             settled = true;
             resolve(createPinnedFetchResponse(
               status,
-              message.statusMessage ?? "",
+              statusMessage,
               responseHeaders,
               webBody,
               method,
@@ -651,7 +691,12 @@ export async function fetchWithPinnedAddresses(
           try {
             assertNodeRequestMembersUnchanged();
           } catch (error) {
-            request.destroy(isErrorAcrossRealms(error) ? error : undefined);
+            const teardownError = teardownDeferredNodeRequest(
+              request,
+              undefined,
+              errorForNodeDestroy(error),
+            );
+            rejectBeforeResponse(teardownError ?? error);
           }
         });
         request.once("error", rejectBeforeResponse);
@@ -665,19 +710,26 @@ export async function fetchWithPinnedAddresses(
         // error still rejects through `rejectBeforeResponse`.
         request.on("error", () => {});
         pendingRequest = request;
-        void writeRequestPayload(request, payload).catch((error) => request.destroy(error));
+        void writeRequestPayload(request, payload).catch((error) => {
+          const teardownError = teardownDeferredNodeRequest(
+            request,
+            undefined,
+            errorForNodeDestroy(error),
+          );
+          rejectBeforeResponse(teardownError ?? error);
+        });
       });
     } catch (error) {
       // Release the socket of the attempt being abandoned. The sink above stays
       // attached, so a teardown error from this destroy has somewhere to land.
-      pendingRequest?.destroy();
-      lastConnectError = error;
+      const teardownError = teardownDeferredNodeRequest(pendingRequest, undefined, undefined);
+      lastConnectError = teardownError ?? error;
       const hasAnotherAddress = attemptIndex < attempts.length - 1;
       if (
         !hasAnotherAddress || !bodyIsReplayable || signal?.aborted ||
-        !isRetriableConnectFailure(error)
+        teardownError !== undefined || !isRetriableConnectFailure(error)
       ) {
-        throw error;
+        throw teardownError ?? error;
       }
     }
   }
