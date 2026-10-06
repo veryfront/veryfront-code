@@ -15,6 +15,7 @@ import {
   assertStrictEquals,
   assertThrows,
 } from "#veryfront/testing/assert.ts";
+import { runWithApplicationInferenceAdmission } from "../runtime/application-inference-admission.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { Agent, AgentResponse, AgentStreamResult } from "../types.ts";
 import type { ToolExecutionContext } from "#veryfront/tool";
@@ -155,6 +156,20 @@ function createMinimalAgent(id: string): Agent {
 }
 
 describe("agentAsTool", () => {
+  it("keeps local child streams independent of managed admission", async () => {
+    const child = createMinimalAgent("local-child");
+    child.config.model = "local/synthetic";
+    let admissions = 0;
+    const result = await runWithApplicationInferenceAdmission(
+      () => {
+        admissions++;
+        return Promise.reject(new Error("Managed admission must not be used"));
+      },
+      () => agentAsTool(child, "Local child").execute({ input: "hello" }),
+    );
+    assertEquals(admissions, 0);
+    assertEquals(result, { text: "ok", toolCalls: 0, status: "completed" });
+  });
   it("executes child agents through the streaming path", async () => {
     let generated = false;
     let streamedInput: string | undefined;

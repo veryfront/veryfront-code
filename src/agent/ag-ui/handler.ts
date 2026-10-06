@@ -1,6 +1,5 @@
 import { defineOwnDataProperty } from "#veryfront/security/own-data-property.ts";
 import { getAgentExecutionConfig } from "../runtime/execution-config.ts";
-import { resolveRuntimeModel } from "../runtime/model-resolution.ts";
 import { isResponseLike } from "../service/response-like.ts";
 import { getAgent } from "../composition/index.ts";
 import {
@@ -9,8 +8,8 @@ import {
 } from "#veryfront/agent/factory.ts";
 import {
   getPrivateApplicationInferenceRuntimeOptions,
-  hasApplicationInferenceAdmission,
   type PrivateApplicationInferenceRuntime,
+  shouldUseApplicationInferenceRuntime,
 } from "../runtime/application-inference-admission.ts";
 import type { Agent, AgentResponse, Message } from "../types.ts";
 import { fromError } from "#veryfront/errors";
@@ -72,16 +71,6 @@ const AG_UI_HEADERS: Record<string, string> = {
   "Cache-Control": "no-cache",
   Connection: "keep-alive",
 };
-
-function shouldUseApplicationInferenceRuntime(agent: Agent, request: AgUiRequest): boolean {
-  if (!hasApplicationInferenceAdmission()) return false;
-
-  const model = request.model ?? getAgentExecutionConfig(agent.config).model;
-  if (model?.startsWith("veryfront-cloud/")) return true;
-  const resolved = resolveRuntimeModel(model);
-  // Unqualified served aliases need the admitted catalog before resolution.
-  return !resolved.includes("/") || resolved.startsWith("veryfront-cloud/");
-}
 
 /**
  * Payload handed to {@link AgUiHandlerOptions.onComplete} after an AG-UI run
@@ -538,7 +527,9 @@ async function createAgUiDirectStreamResponse(
   });
   if (isResponseLike(beforeStreamResult)) return beforeStreamResult;
 
-  const privateRuntime = shouldUseApplicationInferenceRuntime(agent, request)
+  const privateRuntime = shouldUseApplicationInferenceRuntime(
+      request.model ?? getAgentExecutionConfig(agent.config).model,
+    )
     ? await getPrivateApplicationInferenceRuntimeOptions(agent.id, rawRequest.signal)
     : undefined;
   try {
@@ -660,7 +651,9 @@ async function createAgUiInjectedToolsStreamResponse(
   });
   if (isResponseLike(beforeStreamResult)) return beforeStreamResult;
 
-  const privateRuntime = shouldUseApplicationInferenceRuntime(agent, request)
+  const privateRuntime = shouldUseApplicationInferenceRuntime(
+      request.model ?? getAgentExecutionConfig(agent.config).model,
+    )
     ? await getPrivateApplicationInferenceRuntimeOptions(agent.id, rawRequest.signal)
     : undefined;
   let sessionStarted = false;

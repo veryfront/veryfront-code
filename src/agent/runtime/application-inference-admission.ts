@@ -1,3 +1,4 @@
+import { resolveRuntimeModel } from "./model-resolution.ts";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { defineOwnDataProperty } from "#veryfront/security/own-data-property.ts";
 import { chainPrivatePromise } from "#veryfront/security/private-promise.ts";
@@ -236,4 +237,11 @@ export async function getPrivateApplicationInferenceRuntimeOptions(
     }
     return runtime;
   });
+}
+
+export function shouldUseApplicationInferenceRuntime(model: string | undefined): boolean {
+  if (!hasApplicationInferenceAdmission()) return false;
+  if (model?.startsWith("veryfront-cloud/")) return true;
+  const resolved = resolveRuntimeModel(model);
+  return !resolved.includes("/") || resolved.startsWith("veryfront-cloud/");
 }

@@ -13,7 +13,7 @@ import { createEphemeralAgentWithRuntimeOptions } from "../factory.ts";
 import { getAgentExecutionConfig } from "../runtime/execution-config.ts";
 import {
   getPrivateApplicationInferenceRuntimeOptions,
-  hasApplicationInferenceAdmission,
+  shouldUseApplicationInferenceRuntime,
 } from "../runtime/application-inference-admission.ts";
 import { defineOwnDataProperty } from "#veryfront/security/own-data-property.ts";
 import type { Tool, ToolExecutionContext } from "#veryfront/tool";
@@ -52,9 +52,10 @@ async function runAgentAsStreamingTool(
   const execute = async (): Promise<AgentResponse> => {
     let finalResponse: AgentResponse | undefined;
     const signal = control?.signal ?? context?.abortSignal;
-    const privateRuntime = hasApplicationInferenceAdmission()
-      ? await getPrivateApplicationInferenceRuntimeOptions(agent.id, signal)
-      : undefined;
+    const privateRuntime =
+      shouldUseApplicationInferenceRuntime(getAgentExecutionConfig(agent.config).model)
+        ? await getPrivateApplicationInferenceRuntimeOptions(agent.id, signal)
+        : undefined;
     try {
       const streamAgent = privateRuntime
         ? await privateRuntime.prepareAgent(() => {
