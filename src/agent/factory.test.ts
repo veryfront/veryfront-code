@@ -26,6 +26,7 @@ import { createSkillTestAdapter } from "#veryfront/skill/testing.ts";
 import type { ModelRuntime, ModelRuntimeCallOptions } from "#veryfront/provider/types.ts";
 import { scriptedModel } from "./runtime/model-runtime.test-helpers.ts";
 import { DEFAULT_MAX_BODY_SIZE_BYTES } from "#veryfront/utils/constants/index.ts";
+import { createAgentKnowledgeTool } from "#veryfront/agent/runtime/knowledge-tools.ts";
 
 function createSkill(id: string, description: string) {
   return {
@@ -440,6 +441,59 @@ describe("agent factory", () => {
     const result = await scopedKnowledgeTool.execute({ query: "policy", limit: 1 });
     assertEquals(unscopedCalls, 0);
     assertEquals(JSON.stringify(result).includes("unscoped"), false);
+  });
+
+  it("accepts framework-owned knowledge tools when preserving a prevalidated catalog", () => {
+    const config = {
+      id: "prevalidated-framework-knowledge",
+      system: "Use scoped knowledge.",
+      tools: {},
+      knowledge: true,
+      skills: [],
+    } satisfies AgentConfig;
+    const knowledgeTool = createAgentKnowledgeTool(config);
+    if (knowledgeTool === undefined) throw new Error("Expected framework knowledge tool");
+
+    const assistant = createEphemeralAgentWithRuntimeOptions({
+      ...config,
+      tools: { search_knowledge: knowledgeTool },
+    }, { preserveToolCatalog: true });
+
+    assertEquals(assistant.config.tools, { search_knowledge: knowledgeTool });
+  });
+
+  it("allows hosted boolean remote knowledge selections when preserving a prevalidated catalog", () => {
+    const assistant = createEphemeralAgentWithRuntimeOptions({
+      id: "prevalidated-remote-knowledge",
+      system: "Use hosted knowledge.",
+      tools: { search_knowledge: true },
+      knowledge: true,
+      skills: [],
+    }, { preserveToolCatalog: true });
+
+    assertEquals(assistant.config.tools, { search_knowledge: true });
+  });
+
+  it("rejects custom knowledge collisions when preserving a prevalidated catalog", () => {
+    const customKnowledgeTool = tool({
+      id: "search_knowledge",
+      description: "Custom knowledge search",
+      inputSchema: defineSchema((v) => v.object({}))(),
+      execute: () => ({ ok: true }),
+    });
+
+    assertThrows(
+      () =>
+        createEphemeralAgentWithRuntimeOptions({
+          id: "prevalidated-custom-knowledge",
+          system: "Use scoped knowledge.",
+          tools: { search_knowledge: customKnowledgeTool },
+          knowledge: true,
+          skills: [],
+        }, { preserveToolCatalog: true }),
+      Error,
+      "custom search_knowledge tool conflicts with the agent knowledge scope",
+    );
   });
 
   it("preserves knowledge denials and rejects concrete search_knowledge collisions", () => {
