@@ -233,12 +233,23 @@ const privateKeyAsymmetricKeyDetailsProperty = capturePrototypeProperty(
   "asymmetricKeyDetails",
 );
 const bufferLengthProperty = capturePrototypeProperty(Buffer.prototype, "length");
-const CipherPrototype = getPrototypeOf(
-  createCipheriv("aes-256-gcm", bufferAlloc(AES_KEY_BYTES), bufferAlloc(AES_GCM_IV_BYTES)),
+const prototypeSampleKey = bufferAlloc(AES_KEY_BYTES);
+const prototypeSampleIv = bufferAlloc(AES_GCM_IV_BYTES);
+const prototypeSampleCipher = createCipheriv("aes-256-gcm", prototypeSampleKey, prototypeSampleIv);
+const CipherPrototype = getPrototypeOf(prototypeSampleCipher);
+prototypeSampleCipher.final();
+const prototypeSampleTag = prototypeSampleCipher.getAuthTag();
+const prototypeSampleDecipher = createDecipheriv(
+  "aes-256-gcm",
+  prototypeSampleKey,
+  prototypeSampleIv,
 );
-const DecipherPrototype = getPrototypeOf(
-  createDecipheriv("aes-256-gcm", bufferAlloc(AES_KEY_BYTES), bufferAlloc(AES_GCM_IV_BYTES)),
-);
+const DecipherPrototype = getPrototypeOf(prototypeSampleDecipher);
+prototypeSampleDecipher.setAuthTag(prototypeSampleTag);
+prototypeSampleDecipher.final();
+apply(bufferFill, prototypeSampleKey, [0]);
+apply(bufferFill, prototypeSampleIv, [0]);
+apply(bufferFill, prototypeSampleTag, [0]);
 const cipherSetAAD = CipherPrototype.setAAD;
 const cipherUpdate = CipherPrototype.update;
 const cipherFinal = CipherPrototype.final;
