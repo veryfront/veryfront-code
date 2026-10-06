@@ -250,6 +250,9 @@ export function getCachedWithBatching(
     clearPendingRead(ctx, key, returnedPromise);
     throw error;
   });
+  // A read may reject before request teardown while its caller does other work.
+  // Observe it immediately without changing the promise returned to the caller.
+  void chainPrivatePromise(returnedPromise, () => undefined, () => undefined);
   mapSet(ctx.pending, key, returnedPromise);
   return returnedPromise;
 }
