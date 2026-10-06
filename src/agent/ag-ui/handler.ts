@@ -66,7 +66,7 @@ const AG_UI_HEADERS: Record<string, string> = {
 
 function shouldUseApplicationInferenceRuntime(agent: Agent, request: AgUiRequest): boolean {
   const model = request.model ?? getAgentExecutionConfig(agent.config).model;
-  if (model === undefined || model === "auto" || model.startsWith("veryfront-cloud/")) return true;
+  if (model?.startsWith("veryfront-cloud/")) return true;
   const resolved = resolveRuntimeModel(model);
   // Unqualified served aliases need the admitted catalog before resolution.
   return !resolved.includes("/") || resolved.startsWith("veryfront-cloud/");

@@ -191,6 +191,64 @@ describe("agent/ag-ui-handler", () => {
     assertStringIncludes(body, `"runId":"${testAgent.capturedContext?.runId}"`);
   });
 
+  for (const selection of ["omitted", "auto"] as const) {
+    it(`preserves local direct credentials for ${selection} model selection without admission`, async () => {
+      const env = {
+        VERYFRONT_SERVICE_LAYER: "local",
+        OPENAI_API_KEY: "synthetic-direct-openai-key",
+        VERYFRONT_API_URL: "https://api.example.test/api",
+      };
+      const original = new Map(Object.keys(env).map((key) => [key, Deno.env.get(key)]));
+      for (const [key, value] of Object.entries(env)) Deno.env.set(key, value);
+      try {
+        const testAgent = createTestAgent();
+        testAgent.agent.config = {
+          ...testAgent.agent.config,
+          model: selection === "auto" ? "auto" : undefined,
+        } as Agent["config"];
+        let streamCalls = 0;
+        let admissions = 0;
+        const originalStream = testAgent.agent.stream;
+        testAgent.agent.stream = async (input) => {
+          streamCalls++;
+          return await originalStream(input);
+        };
+        const handler = createAgUiHandler({ agent: testAgent.agent });
+        const response = await runWithApplicationInferenceAdmission(
+          async () => {
+            admissions++;
+            throw new Error(
+              "Direct provider selection must not request managed inference admission",
+            );
+          },
+          () =>
+            handler(
+              new Request("http://localhost/api/ag-ui", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  messages: [{
+                    id: "synthetic-direct-message",
+                    role: "user",
+                    parts: [{ type: "text", text: "hello" }],
+                  }],
+                }),
+              }),
+            ),
+        );
+        assertEquals(response.status, 200);
+        assertStringIncludes(await response.text(), "event: RunFinished");
+        assertEquals(streamCalls, 1);
+        assertEquals(admissions, 0);
+      } finally {
+        for (const [key, value] of original) {
+          if (value === undefined) Deno.env.delete(key);
+          else Deno.env.set(key, value);
+        }
+      }
+    });
+  }
+
   it("preserves an explicit provider stream without admitting managed inference", async () => {
     const originalApiUrl = Deno.env.get("VERYFRONT_API_URL");
     Deno.env.set("VERYFRONT_API_URL", "https://api.example.test/api");
