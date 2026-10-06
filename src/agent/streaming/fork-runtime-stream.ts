@@ -313,15 +313,12 @@ export async function runAgentRuntimeForkStep(input: RunAgentRuntimeForkStepInpu
   stream: ReadableStream<Uint8Array>;
   responsePromise: Promise<AgentResponse>;
 }> {
-  let resolveResponsePromise: (response: AgentResponse) => void;
-  let rejectResponsePromise: (error: Error) => void;
-  const responsePromise = new Promise<AgentResponse>((resolve, reject) => {
-    resolveResponsePromise = resolve;
-    rejectResponsePromise = reject;
-  });
-  // Callers may never await responsePromise (e.g. Stop during a fork). Mark its
-  // rejection as observed so an abort does not surface as an unhandled rejection.
-  responsePromise.catch(() => {});
+  // The shared deferred marks rejection observed even when Stop prevents the caller awaiting it.
+  const {
+    promise: responsePromise,
+    resolve: resolveResponsePromise,
+    reject: rejectResponsePromise,
+  } = createForkRuntimeDeferred<AgentResponse>();
   const abortHandler = (): Error => {
     const error = createAgentRuntimeForkAbortError(input.abortSignal);
     rejectResponsePromise(error);
@@ -339,43 +336,42 @@ export async function runAgentRuntimeForkStep(input: RunAgentRuntimeForkStepInpu
         }),
         responsePromise,
       };
-    } else {
-      input.abortSignal.addEventListener("abort", abortHandler, { once: true });
     }
   }
 
-  const runtimeConfig = {
-    model: input.model,
-    ...(input.temperature === undefined ? {} : { temperature: input.temperature }),
-    system: input.system,
-    tools: input.runtimeTools,
-    providerTools: input.providerToolNames ?? [],
-    maxSteps: 1,
-    ...(input.providerOptions || input.reasoning
-      ? {
-        resolveModelTransport: () => ({
-          providerOptions: input.providerOptions,
-          reasoning: input.reasoning,
-        }),
-      }
-      : {}),
-    __vfAllowedRemoteTools: getForkRuntimeAuthorizationToolNames(
-      input.forkToolNames,
-      input.runtimeTools,
-    ),
-    ...(input.sourceIntegrationPolicy
-      ? { __vfSourceIntegrationPolicy: input.sourceIntegrationPolicy }
-      : {}),
-  };
-  const resolveModelRuntime = createHostedChildInferenceModelResolver(input);
-  const runtime = new AgentRuntime(
-    "invoke-agent-child-runtime",
-    runtimeConfig,
-    resolveModelRuntime ? { resolveModelRuntime } : undefined,
-  );
-
   let stream: ReadableStream<Uint8Array>;
   try {
+    input.abortSignal?.addEventListener("abort", abortHandler, { once: true });
+    const runtimeConfig = {
+      model: input.model,
+      ...(input.temperature === undefined ? {} : { temperature: input.temperature }),
+      system: input.system,
+      tools: input.runtimeTools,
+      providerTools: input.providerToolNames ?? [],
+      maxSteps: 1,
+      ...(input.providerOptions || input.reasoning
+        ? {
+          resolveModelTransport: () => ({
+            providerOptions: input.providerOptions,
+            reasoning: input.reasoning,
+          }),
+        }
+        : {}),
+      __vfAllowedRemoteTools: getForkRuntimeAuthorizationToolNames(
+        input.forkToolNames,
+        input.runtimeTools,
+      ),
+      ...(input.sourceIntegrationPolicy
+        ? { __vfSourceIntegrationPolicy: input.sourceIntegrationPolicy }
+        : {}),
+    };
+    const resolveModelRuntime = createHostedChildInferenceModelResolver(input);
+    const runtime = new AgentRuntime(
+      "invoke-agent-child-runtime",
+      runtimeConfig,
+      resolveModelRuntime ? { resolveModelRuntime } : undefined,
+    );
+
     stream = await runWithVeryfrontCloudContextAsync(
       {
         apiBaseUrl: input.apiUrl,
@@ -398,9 +394,10 @@ export async function runAgentRuntimeForkStep(input: RunAgentRuntimeForkStepInpu
         ),
     );
   } catch (error) {
-    // stream() failed before onFinish ran; drop the abort listener so it does
+    // Setup or stream() failed before onFinish ran; drop the abort listener so it does
     // not leak on the signal for the lifetime of the request.
     input.abortSignal?.removeEventListener("abort", abortHandler);
+    rejectResponsePromise(error);
     throw error;
   }
 

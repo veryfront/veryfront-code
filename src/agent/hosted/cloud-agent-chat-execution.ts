@@ -170,7 +170,8 @@ export async function createAgentRuntime(
 
   let cleanupPromise: Promise<void> | undefined;
   const cleanup = () => {
-    return cleanupPromise ??= localToolRuntime.cleanup();
+    if (!cleanupPromise) cleanupPromise = localToolRuntime.cleanup();
+    return cleanupPromise;
   };
   try {
     return await createHostedRuntimeWithChildInferenceAuthority(

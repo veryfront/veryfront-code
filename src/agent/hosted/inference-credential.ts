@@ -190,7 +190,8 @@ export async function createHostedRuntimeWithChildInferenceAuthority<
       ...runtime,
       cleanup: () => {
         revoke();
-        return cleanupPromise ??= runtime.cleanup();
+        if (!cleanupPromise) cleanupPromise = runtime.cleanup();
+        return cleanupPromise;
       },
     };
   } catch (error) {

@@ -1,3 +1,8 @@
+import { getEventListeners } from "node:events";
+import {
+  runAgentRuntimeForkStep,
+  type RunAgentRuntimeForkStepInput,
+} from "#veryfront/agent/streaming/fork-runtime-stream.ts";
 import { resolveVeryfrontCloudModelId } from "#veryfront/provider/veryfront-cloud/model-catalog.ts";
 import { runWithHostedRequestPreparationSignal } from "#veryfront/agent/service/request-preparation-context.ts";
 import { createAgentRuntime } from "#veryfront/agent/hosted/cloud-agent-chat-execution.ts";
@@ -449,4 +454,111 @@ it("cloud root authority survives the ended preparation request and expires on e
     "Hosted parent inference authority is no longer active",
   );
   clearModelProviders();
+});
+
+it("a rejected revoked fork step leaves no abort listener on a live signal", async () => {
+  const request = { authToken: "test-execution-authority" } as ParsedHostedChatRequest;
+  registerHostedInferenceCredential(request, "test-inference-authority");
+  const controller = new AbortController();
+  const input: RunAgentRuntimeForkStepInput = {
+    apiUrl: "https://api.veryfront.com",
+    authToken: request.authToken,
+    projectId: null,
+    model: "mistral/mistral-small-2503",
+    messages: [],
+    system: "Be concise.",
+    forkToolNames: [],
+    runtimeTools: {},
+    abortSignal: controller.signal,
+  };
+  const revoke = bindHostedChildInferenceAuthority(input, request, {
+    apiBaseUrl: "https://api.veryfront.com",
+  });
+  revoke();
+  const before = getEventListeners(controller.signal, "abort").length;
+  try {
+    await assertRejects(
+      () => runAgentRuntimeForkStep(input),
+      TypeError,
+      "Hosted parent inference authority is no longer active",
+    );
+    assertEquals(getEventListeners(controller.signal, "abort").length, before);
+  } finally {
+    controller.abort();
+  }
+});
+
+it("an already aborted fork preserves the cancellation reason even after authority retirement", async () => {
+  const controller = new AbortController();
+  const reason = new Error("Child cancelled before startup");
+  controller.abort(reason);
+  const input: RunAgentRuntimeForkStepInput = {
+    apiUrl: "https://api.veryfront.com",
+    authToken: "test-execution-authority",
+    projectId: null,
+    model: "mistral/mistral-small-2503",
+    messages: [],
+    system: "Be concise.",
+    forkToolNames: [],
+    runtimeTools: {},
+    abortSignal: controller.signal,
+  };
+  const request = { authToken: input.authToken } as ParsedHostedChatRequest;
+  registerHostedInferenceCredential(request, "test-inference-authority");
+  bindHostedChildInferenceAuthority(input, request, { apiBaseUrl: "https://api.veryfront.com" })();
+  const result = await runAgentRuntimeForkStep(input);
+  const responseFailure = await assertRejects(
+    async () => await result.responsePromise,
+    Error,
+    reason.message,
+  );
+  const streamFailure = await assertRejects(
+    () => result.stream.getReader().read(),
+    Error,
+    reason.message,
+  );
+  assertEquals(responseFailure, reason);
+  assertEquals(streamFailure, reason);
+  assertEquals(getEventListeners(controller.signal, "abort").length, 0);
+});
+
+it("a fork configuration failure leaves no abort listener on its live signal", async () => {
+  const controller = new AbortController();
+  const input: RunAgentRuntimeForkStepInput = {
+    apiUrl: "https://api.veryfront.com",
+    authToken: "test-execution-authority",
+    projectId: null,
+    model: "mistral/mistral-small-2503",
+    messages: [],
+    get system(): string {
+      throw new Error("Fork configuration failed");
+    },
+    forkToolNames: [],
+    runtimeTools: {},
+    abortSignal: controller.signal,
+  };
+  await assertRejects(() => runAgentRuntimeForkStep(input), Error, "Fork configuration failed");
+  assertEquals(getEventListeners(controller.signal, "abort").length, 0);
+});
+
+it("cancellation during fork configuration preserves its reason and releases the listener", async () => {
+  const controller = new AbortController();
+  const reason = new Error("Child cancelled during startup");
+  const input: RunAgentRuntimeForkStepInput = {
+    apiUrl: "https://api.veryfront.com",
+    authToken: "test-execution-authority",
+    projectId: null,
+    model: "mistral/mistral-small-2503",
+    messages: [],
+    get system(): string {
+      controller.abort(reason);
+      return "Be concise.";
+    },
+    forkToolNames: [],
+    runtimeTools: {},
+    abortSignal: controller.signal,
+  };
+  const error = await assertRejects(() => runAgentRuntimeForkStep(input), Error, reason.message);
+  assertEquals(error, reason);
+  assertEquals(getEventListeners(controller.signal, "abort").length, 0);
 });
