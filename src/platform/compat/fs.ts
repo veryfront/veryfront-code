@@ -21,6 +21,7 @@ const UNSUPPORTED_CHMOD_ERROR_CODES = new Set([
   "EOPNOTSUPP",
 ]);
 const getOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const ObjectPrototype = Object.prototype;
 const createObject = Object.create;
 const defineProperty = Object.defineProperty;
 const hasOwnProperty = Object.prototype.hasOwnProperty;
@@ -100,6 +101,12 @@ function observeCancellation(promise: Promise<unknown>): Promise<void> {
     void reflectApply(NativePromiseThen, bindNativePromiseConstructor(promise), [settle, settle]);
   });
   return bindNativePromiseConstructor(observed);
+}
+
+function assertNoInheritedThenHook(): void {
+  if (getOwnPropertyDescriptor(ObjectPrototype, "then") !== undefined) {
+    throw new TypeError("Refused to stream private bytes with an inherited then hook installed");
+  }
 }
 
 /** Stable native identity for one filesystem object. */
@@ -800,6 +807,7 @@ export async function writeStreamExclusive(
     handle = await bindNativePromiseConstructor(open());
     while (true) {
       signal?.throwIfAborted();
+      assertNoInheritedThenHook();
       const chunk = await bindNativePromiseConstructor(
         reflectApply(ReadableStreamDefaultReaderRead, reader, []) as Promise<
           ReadableStreamReadResult<Uint8Array>

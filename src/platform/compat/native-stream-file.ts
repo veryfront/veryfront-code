@@ -18,9 +18,12 @@ const denoWrite = deno?.FsFile.prototype.write;
 const denoClose = deno?.FsFile.prototype.close;
 
 function ownFunction(
-  value: object,
+  value: unknown,
   key: PropertyKey,
 ): ((...args: unknown[]) => unknown) | undefined {
+  if (value === null || (typeof value !== "object" && typeof value !== "function")) {
+    return undefined;
+  }
   const descriptor = getOwnPropertyDescriptor(value, key);
   return descriptor && apply(hasOwnProperty, descriptor, ["value"]) &&
       typeof descriptor.value === "function"

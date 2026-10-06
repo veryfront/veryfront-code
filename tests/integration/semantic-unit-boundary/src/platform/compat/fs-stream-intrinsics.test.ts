@@ -199,6 +199,53 @@ describe("filesystem stream intrinsic boundary", () => {
     assertEquals(removed, true);
   });
 
+  it("refuses inherited then hooks before reading private chunks", async () => {
+    const objectThen = Object.getOwnPropertyDescriptor(Object.prototype, "then");
+    let observed = "";
+    Object.defineProperty(Object.prototype, "then", {
+      configurable: true,
+      get() {
+        if (
+          this !== null &&
+          typeof this === "object" &&
+          "value" in this &&
+          (this as { value?: unknown }).value instanceof Uint8Array
+        ) {
+          observed = new TextDecoder().decode((this as { value: Uint8Array }).value);
+        }
+        return undefined;
+      },
+    });
+    try {
+      const source = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode("private-inherited-then"));
+          controller.close();
+        },
+      });
+      await assertRejects(
+        () =>
+          writeStreamExclusive(
+            source,
+            undefined,
+            async () => ({
+              write(chunk: Uint8Array) {
+                return Promise.resolve(chunk.byteLength);
+              },
+              close() {},
+            }),
+            async () => {},
+          ),
+        TypeError,
+        "inherited then hook",
+      );
+    } finally {
+      if (objectThen) Object.defineProperty(Object.prototype, "then", objectThen);
+      else delete (Object.prototype as { then?: unknown }).then;
+    }
+    assertEquals(observed, "");
+  });
+
   it("streams through captured reader intrinsics", async () => {
     const fs = createFileSystem();
     assertExists(fs.writeFileStream);
