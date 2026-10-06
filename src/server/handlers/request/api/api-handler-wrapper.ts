@@ -22,7 +22,10 @@ import { requiresIsolatedProjectRuntime } from "#veryfront/security/project-loca
 import { isPreflightRequest } from "#veryfront/security/http/cors/preflight.ts";
 import { getApplicationPreflightHeaders } from "#veryfront/security/http/application-request.ts";
 import { DEFAULT_CORS_METHODS, handleCORSPreflight } from "#veryfront/security";
-import { createHostApplicationInferenceAdmission } from "./application-inference-admission.ts";
+import {
+  type ApplicationInferenceAdmitter,
+  createHostApplicationInferenceAdmission,
+} from "./application-inference-admission.ts";
 import { runWithApplicationInferenceAdmission } from "#veryfront/agent/runtime/application-inference-admission.ts";
 
 type FsWrapper = {
@@ -202,85 +205,29 @@ export class ApiHandlerWrapper extends BaseHandler {
         if (preparedResponse) return preparedResponse;
 
         const admitInference = createHostApplicationInferenceAdmission(req, ctx);
-
-        const canResolveAsPage = pathname !== "/api" &&
-          !pathname.startsWith("/api/") &&
-          (req.method === "GET" || req.method === "HEAD");
+        const canResolveAsPage = this.canResolveAsPage(req, pathname);
 
         // A document path can change ownership between App Router page and
         // route.ts without changing the branch identity. Establish strict
         // freshness before classifying it, then let SSR reuse that snapshot.
         // This must stay outside the API-discovery catch: downstream document
         // handlers must never serve an older snapshot after freshness fails.
-        if (canResolveAsPage) {
-          await preparePreviewDocumentSourceSnapshot(
-            ctx,
-            () => this.handleWithContext(req, ctx, pathname, mustDenyProjectExecution),
-          );
-        } else {
-          await ensurePreviewSourceSnapshotFresh(ctx);
-        }
+        await this.prepareApiSourceSnapshot(
+          req,
+          ctx,
+          pathname,
+          mustDenyProjectExecution,
+          canResolveAsPage,
+        );
 
         try {
-          let isPageRequest = false;
-          if (canResolveAsPage) {
-            isPageRequest = await this.isPageRequest(pathname, ctx, req.signal);
-          }
-
-          if (isPageRequest) {
-            return this.continue();
-          }
-
-          // OPTIONS is authenticated by APIRouteHandler before discovery. The
-          // callback runs after a matched route's auth decision but before the
-          // route module is loaded or executed.
-          const isOptionsRequest = req.method.toUpperCase() === "OPTIONS";
-          if (!isOptionsRequest) {
-            // Lazy per-project primitive discovery (agents, tools) on first
-            // access. Must run within runWithContext so VFS and registry scope
-            // are correct.
-            await ensureProjectDiscovery(ctx);
-          }
-
-          const executeRoute = () =>
-            withApiHandler(
-              ctx,
-              (api) =>
-                api.handle(
-                  req,
-                  ctx,
-                  isOptionsRequest
-                    ? {
-                      beforeOptionsDispatch: async () => {
-                        await ensureProjectDiscovery(ctx);
-                      },
-                    }
-                    : undefined,
-                ),
-              { sourceSnapshotReady: true },
-            );
-          const apiRes = admitInference
-            ? await runWithApplicationInferenceAdmission(admitInference, executeRoute)
-            : await executeRoute();
-
-          if (!apiRes) {
-            this.logDebug(
-              "[API-Wrapper] API handler returned null, continuing to next handler",
-              { pathname },
-              ctx,
-            );
-            return this.continue();
-          }
-
-          this.logDebug(
-            "[API-Wrapper] API handler returned response",
-            { pathname, status: apiRes.status },
+          return await this.handleDiscoveredApiRequest(
+            req,
             ctx,
+            pathname,
+            canResolveAsPage,
+            admitInference,
           );
-
-          const finalRes = this.finalizeApiResponse(req, ctx, apiRes);
-
-          return this.respond(finalRes);
         } catch (error) {
           if (req.signal.aborted) throw error;
           this.logDebug(
@@ -302,6 +249,100 @@ export class ApiHandlerWrapper extends BaseHandler {
         "api.projectSlug": ctx.projectSlug ?? "unknown",
       },
     );
+  }
+
+  private canResolveAsPage(req: Request, pathname: string): boolean {
+    return pathname !== "/api" &&
+      !pathname.startsWith("/api/") &&
+      (req.method === "GET" || req.method === "HEAD");
+  }
+
+  private async prepareApiSourceSnapshot(
+    req: Request,
+    ctx: HandlerContext,
+    pathname: string,
+    mustDenyProjectExecution: boolean,
+    canResolveAsPage: boolean,
+  ): Promise<void> {
+    if (!canResolveAsPage) {
+      await ensurePreviewSourceSnapshotFresh(ctx);
+      return;
+    }
+
+    await preparePreviewDocumentSourceSnapshot(
+      ctx,
+      () => this.handleWithContext(req, ctx, pathname, mustDenyProjectExecution),
+    );
+  }
+
+  private async handleDiscoveredApiRequest(
+    req: Request,
+    ctx: HandlerContext,
+    pathname: string,
+    canResolveAsPage: boolean,
+    admitInference: ApplicationInferenceAdmitter | undefined,
+  ): Promise<HandlerResult> {
+    if (canResolveAsPage && await this.isPageRequest(pathname, ctx, req.signal)) {
+      return this.continue();
+    }
+
+    const apiRes = await this.executeApiRoute(req, ctx, admitInference);
+    if (!apiRes) {
+      this.logDebug(
+        "[API-Wrapper] API handler returned null, continuing to next handler",
+        { pathname },
+        ctx,
+      );
+      return this.continue();
+    }
+
+    this.logDebug(
+      "[API-Wrapper] API handler returned response",
+      { pathname, status: apiRes.status },
+      ctx,
+    );
+
+    return this.respond(this.finalizeApiResponse(req, ctx, apiRes));
+  }
+
+  private async executeApiRoute(
+    req: Request,
+    ctx: HandlerContext,
+    admitInference: ApplicationInferenceAdmitter | undefined,
+  ): Promise<Response | null> {
+    // OPTIONS is authenticated by APIRouteHandler before discovery. The
+    // callback runs after a matched route's auth decision but before the
+    // route module is loaded or executed.
+    const isOptionsRequest = req.method.toUpperCase() === "OPTIONS";
+    if (!isOptionsRequest) {
+      // Lazy per-project primitive discovery (agents, tools) on first
+      // access. Must run within runWithContext so VFS and registry scope
+      // are correct.
+      await ensureProjectDiscovery(ctx);
+    }
+
+    const executeRoute = () =>
+      withApiHandler(
+        ctx,
+        (api) =>
+          api.handle(
+            req,
+            ctx,
+            isOptionsRequest
+              ? {
+                beforeOptionsDispatch: async () => {
+                  await ensureProjectDiscovery(ctx);
+                },
+              }
+              : undefined,
+          ),
+        { sourceSnapshotReady: true },
+      );
+
+    if (admitInference) {
+      return await runWithApplicationInferenceAdmission(admitInference, executeRoute);
+    }
+    return await executeRoute();
   }
 
   private async handleDeniedProjectExecution(

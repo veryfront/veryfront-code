@@ -3,7 +3,10 @@ import { resolveRuntimeModel } from "../runtime/model-resolution.ts";
 import { isResponseLike } from "../service/response-like.ts";
 import { getAgent } from "../composition/index.ts";
 import { createEphemeralAgent, createEphemeralAgentWithRuntimeOptions } from "../factory.ts";
-import { getPrivateApplicationInferenceRuntimeOptions } from "../runtime/application-inference-admission.ts";
+import {
+  getPrivateApplicationInferenceRuntimeOptions,
+  type PrivateApplicationInferenceRuntime,
+} from "../runtime/application-inference-admission.ts";
 import type { Agent, AgentResponse, Message } from "../types.ts";
 import { fromError } from "#veryfront/errors";
 import {
@@ -25,6 +28,7 @@ import {
 } from "../streaming/tool-execution-data-event-bridge.ts";
 import {
   type AgUiBeforeStream,
+  type AgUiBeforeStreamResult,
   applyBeforeStreamResult,
   extractLastUserText,
 } from "../service/before-stream.ts";
@@ -125,6 +129,16 @@ function isModelCredentialError(error: ReturnType<typeof fromError>): boolean {
 }
 
 type AgUiRuntimePart = Record<string, unknown> & { type: string };
+type PreparedAgUiStreamInput = {
+  effectiveRunId: string;
+  messages: Message[];
+  context: Record<string, unknown>;
+};
+type DirectAgentUpstream = {
+  body: ReadableStream<Uint8Array> | null;
+  status: number;
+  statusText: string;
+};
 
 function generateRunId(): string {
   return `run_${crypto.randomUUID().replaceAll("-", "")}`;
@@ -161,27 +175,58 @@ function createToolDataEventBridge() {
   };
 }
 
+function resolveRunIdBinding(
+  request: AgUiRequest,
+  baseContext: Record<string, unknown>,
+): boolean | undefined {
+  const configuredRunIdBinding = baseContext.runIdBindsToolAuthorization;
+  if (typeof configuredRunIdBinding === "boolean") return configuredRunIdBinding;
+  if (request.runId === undefined) return false;
+  return undefined;
+}
+
 function buildStreamContext(
   request: AgUiRequest,
   baseContext: Record<string, unknown>,
   threadId: string,
   runId: string,
 ): Record<string, unknown> {
-  const configuredRunIdBinding = baseContext.runIdBindsToolAuthorization;
   return {
     ...baseContext,
     threadId,
     runId,
     // A trusted server context can mark locally generated client IDs, such as
     // eval IDs, as non-binding. Other client-supplied IDs keep existing behavior.
-    runIdBindsToolAuthorization: typeof configuredRunIdBinding === "boolean"
-      ? configuredRunIdBinding
-      : request.runId === undefined
-      ? false
-      : undefined,
+    runIdBindsToolAuthorization: resolveRunIdBinding(request, baseContext),
     agUi: {
       context: request.context,
       forwardedProps: request.forwardedProps,
+    },
+  };
+}
+
+function prepareAgUiStreamInput(options: {
+  messages: Message[];
+  beforeStreamResult?: AgUiBeforeStreamResult;
+  context: Record<string, unknown>;
+  baseContext: Record<string, unknown>;
+  runId: string;
+  privateRuntime?: PrivateApplicationInferenceRuntime;
+}): PreparedAgUiStreamInput {
+  const effectiveRunId = options.privateRuntime?.runId ?? options.runId;
+  const runIdBindsToolAuthorization = options.privateRuntime &&
+      typeof options.baseContext.runIdBindsToolAuthorization !== "boolean"
+    ? true
+    : options.context.runIdBindsToolAuthorization;
+
+  return {
+    effectiveRunId,
+    messages: applyBeforeStreamResult(options.messages, options.beforeStreamResult),
+    context: {
+      // beforeStream may return a fresh context, dropping the generated-run marker.
+      ...(options.beforeStreamResult?.context ?? options.context),
+      runId: effectiveRunId,
+      runIdBindsToolAuthorization,
     },
   };
 }
@@ -358,6 +403,80 @@ async function createAgUiStreamResponse(
   });
 }
 
+function createRestrictedDirectStreamAgent(
+  agent: Agent,
+  request: AgUiRequest,
+  restrictions: AgUiRuntimeRestrictions | undefined,
+): Agent {
+  if (!hasAgUiRuntimeRestrictions(restrictions)) return agent;
+
+  return createEphemeralAgent({
+    ...applyAgUiRuntimeRestrictionsForModel(
+      getAgentExecutionConfig(agent.config),
+      restrictions,
+      request.model,
+      agent.id,
+    ),
+    // A factory-assigned id lives on `agent.id` while `agent.config.id`
+    // stays undefined. Rebuilding without it would mint a fresh id, hiding
+    // owner-scoped registry tools and skills from the restricted run and
+    // handing hooks such as `resolveModelTransport` the wrong identity.
+    id: agent.id,
+  });
+}
+
+async function createDirectAgentUpstream(options: {
+  agent: Agent;
+  streamAgent: Agent;
+  request: AgUiRequest;
+  messages: Message[];
+  context: Record<string, unknown>;
+  toolDataEvents: ReturnType<typeof createToolDataEventBridge>;
+  onFinish: (response: AgentResponse) => void;
+  privateRuntime?: PrivateApplicationInferenceRuntime;
+}): Promise<DirectAgentUpstream> {
+  const privateRuntime = options.privateRuntime;
+  if (privateRuntime) {
+    const inferenceAgent = await privateRuntime.prepareAgent(() =>
+      createEphemeralAgentWithRuntimeOptions(
+        { ...getAgentExecutionConfig(options.streamAgent.config), id: options.agent.id },
+        privateRuntime.runtimeOptions,
+      )
+    );
+    const result = await inferenceAgent.stream({
+      messages: options.messages,
+      context: options.context,
+      onFinish: options.onFinish,
+      model: options.request.model,
+      maxOutputTokens: options.request.maxOutputTokens,
+      abortSignal: privateRuntime.signal,
+    });
+    const upstream = result.toDataStreamResponse();
+    return {
+      body: upstream.body ? options.toolDataEvents.wrapStream(upstream.body) : upstream.body,
+      status: 200,
+      statusText: "",
+    };
+  }
+
+  const result = await options.streamAgent.stream({
+    messages: options.messages,
+    context: options.context,
+    ...(options.request.model ? { model: options.request.model } : {}),
+    ...(options.request.maxOutputTokens
+      ? { maxOutputTokens: options.request.maxOutputTokens }
+      : {}),
+    onFinish: options.onFinish,
+  });
+
+  const upstream = result.toDataStreamResponse();
+  return {
+    body: upstream.body ? options.toolDataEvents.wrapStream(upstream.body) : upstream.body,
+    status: upstream.status,
+    statusText: upstream.statusText,
+  };
+}
+
 async function createAgUiDirectStreamResponse(
   agent: Agent,
   request: AgUiRequest,
@@ -386,22 +505,20 @@ async function createAgUiDirectStreamResponse(
     ? await getPrivateApplicationInferenceRuntimeOptions(agent.id, rawRequest.signal)
     : undefined;
   try {
-    const effectiveRunId = privateRuntime?.runId ?? runId;
-    messages = applyBeforeStreamResult(messages, beforeStreamResult ?? undefined);
-    // beforeStream may return a fresh context, dropping the generated-run marker.
-    const finalContext = {
-      ...(beforeStreamResult?.context ?? context),
-      runId: effectiveRunId,
-      runIdBindsToolAuthorization: privateRuntime &&
-          typeof baseContext.runIdBindsToolAuthorization !== "boolean"
-        ? true
-        : context.runIdBindsToolAuthorization,
-    };
+    const prepared = prepareAgUiStreamInput({
+      messages,
+      beforeStreamResult: beforeStreamResult ?? undefined,
+      context,
+      baseContext,
+      runId,
+      privateRuntime,
+    });
+    messages = prepared.messages;
 
     const toolDataEvents = createToolDataEventBridge();
     let completedResponse: AgentResponse | null = null;
     const streamContext = {
-      ...finalContext,
+      ...prepared.context,
       publishDataEvent: toolDataEvents.publishDataEvent,
     };
     const onFinish = (response: AgentResponse) => {
@@ -416,62 +533,25 @@ async function createAgUiDirectStreamResponse(
     // framework's own prompt composition (project and environment context, and
     // the skill catalog only when the loader survives the ceiling), security
     // middleware, resolved skill-selector context, and private runtime dispatch.
-    const streamAgent = hasAgUiRuntimeRestrictions(restrictions)
-      ? createEphemeralAgent({
-        ...applyAgUiRuntimeRestrictionsForModel(
-          getAgentExecutionConfig(agent.config),
-          restrictions,
-          request.model,
-          agent.id,
-        ),
-        // A factory-assigned id lives on `agent.id` while `agent.config.id`
-        // stays undefined. Rebuilding without it would mint a fresh id, hiding
-        // owner-scoped registry tools and skills from the restricted run and
-        // handing hooks such as `resolveModelTransport` the wrong identity.
-        id: agent.id,
-      })
-      : agent;
+    const streamAgent = createRestrictedDirectStreamAgent(agent, request, restrictions);
 
     // A restricted run uses a fresh ephemeral agent, so it has no prior memory
     // to clear. Do not call mutable methods on the source agent before the
     // capability ceiling is in place.
     if (streamAgent === agent) await agent.clearMemory();
 
-    let upstreamBody: ReadableStream<Uint8Array> | null;
-    let upstreamStatus = 200;
-    let upstreamStatusText = "";
+    let upstream: DirectAgentUpstream;
     try {
-      if (privateRuntime) {
-        const inferenceAgent = await privateRuntime.prepareAgent(() =>
-          createEphemeralAgentWithRuntimeOptions(
-            { ...getAgentExecutionConfig(streamAgent.config), id: agent.id },
-            privateRuntime.runtimeOptions,
-          )
-        );
-        const result = await inferenceAgent.stream({
-          messages,
-          context: streamContext,
-          onFinish,
-          model: request.model,
-          maxOutputTokens: request.maxOutputTokens,
-          abortSignal: privateRuntime.signal,
-        });
-        const upstream = result.toDataStreamResponse();
-        upstreamBody = upstream.body ? toolDataEvents.wrapStream(upstream.body) : upstream.body;
-      } else {
-        const result = await streamAgent.stream({
-          messages,
-          context: streamContext,
-          ...(request.model ? { model: request.model } : {}),
-          ...(request.maxOutputTokens ? { maxOutputTokens: request.maxOutputTokens } : {}),
-          onFinish,
-        });
-
-        const upstream = result.toDataStreamResponse();
-        upstreamBody = upstream.body ? toolDataEvents.wrapStream(upstream.body) : upstream.body;
-        upstreamStatus = upstream.status;
-        upstreamStatusText = upstream.statusText;
-      }
+      upstream = await createDirectAgentUpstream({
+        agent,
+        streamAgent,
+        request,
+        messages,
+        context: streamContext,
+        toolDataEvents,
+        onFinish,
+        privateRuntime,
+      });
     } catch (error) {
       privateRuntime?.onAbandon();
       throw error;
@@ -482,11 +562,11 @@ async function createAgUiDirectStreamResponse(
       agentName: agent.config.name ?? agent.id,
       agentAvatarUrl: agent.config.avatarUrl ?? agent.config.avatar_url,
       request,
-      runId: effectiveRunId,
+      runId: prepared.effectiveRunId,
       threadId,
-      upstreamBody,
-      upstreamStatus,
-      upstreamStatusText,
+      upstreamBody: upstream.body,
+      upstreamStatus: upstream.status,
+      upstreamStatusText: upstream.statusText,
       getCompletedResponse: () => completedResponse,
       onFinish: () => {
         privateRuntime?.finish("completed");
@@ -502,7 +582,7 @@ async function createAgUiDirectStreamResponse(
           onComplete({
             agentId: agent.id,
             threadId,
-            runId: effectiveRunId,
+            runId: prepared.effectiveRunId,
             messages: response.messages,
             inputMessages: messages,
             response,
@@ -545,17 +625,16 @@ async function createAgUiInjectedToolsStreamResponse(
     : undefined;
   let sessionStarted = false;
   try {
-    const effectiveRunId = privateRuntime?.runId ?? runId;
-    messages = applyBeforeStreamResult(messages, beforeStreamResult ?? undefined);
-    // beforeStream may return a fresh context, dropping the generated-run marker.
-    const finalContext = {
-      ...(beforeStreamResult?.context ?? context),
-      runId: effectiveRunId,
-      runIdBindsToolAuthorization: privateRuntime &&
-          typeof baseContext.runIdBindsToolAuthorization !== "boolean"
-        ? true
-        : context.runIdBindsToolAuthorization,
-    };
+    const prepared = prepareAgUiStreamInput({
+      messages,
+      beforeStreamResult: beforeStreamResult ?? undefined,
+      context,
+      baseContext,
+      runId,
+      privateRuntime,
+    });
+    const effectiveRunId = prepared.effectiveRunId;
+    messages = prepared.messages;
 
     try {
       sessionManager.startRun({ runId: effectiveRunId, threadId });
@@ -632,7 +711,7 @@ async function createAgUiInjectedToolsStreamResponse(
       upstreamBody = await streamRun(
         messages,
         {
-          ...finalContext,
+          ...prepared.context,
           publishDataEvent: toolDataEvents.publishDataEvent,
         },
         {

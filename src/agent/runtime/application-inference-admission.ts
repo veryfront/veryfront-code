@@ -126,7 +126,9 @@ function createRetainedResolver(input: {
         ...catalogScope(),
         fresh: true,
         maxWaitMs: CATALOG_LOAD_MAX_WAIT_MS,
-        assertCredentialActive: () => void readActiveCredential(),
+        assertCredentialActive: () => {
+          readActiveCredential();
+        },
       });
     },
     read: <T>(fn: () => T): T => withVeryfrontCloudCatalogScope(catalogScope(), fn),

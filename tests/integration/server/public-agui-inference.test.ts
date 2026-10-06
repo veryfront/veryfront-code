@@ -23,6 +23,7 @@ import { servedCatalogPayload } from "#veryfront/provider/veryfront-cloud/catalo
 import { __resetVeryfrontCloudCatalogForTests } from "#veryfront/provider/veryfront-cloud/catalog-client.ts";
 import { clearModelProviders } from "#veryfront/provider/index.ts";
 import { runWithProjectEnv } from "#veryfront/server/project-env/storage.ts";
+import { encryptApplicationInferenceToken } from "#veryfront/server/handlers/request/api/application-inference-crypto.ts";
 import type { HandlerContext } from "#veryfront/types";
 
 const SOURCE_CREDENTIAL = "synthetic-filesystem-service-token";
@@ -212,6 +213,8 @@ async function exercise(
   const originalInheritedThen = Object.getOwnPropertyDescriptor(Object.prototype, "then");
   let inheritedThenCalls = 0;
   let inheritedThenObservedCredential = false;
+  let inheritedThenObservedCredentialSource = "";
+  const inheritedThenProbes: Promise<void>[] = [];
   let observedAdmissionCredential = false;
   let interceptedPromiseCount = 0;
   let admissionCount = 0;
@@ -281,7 +284,35 @@ async function exercise(
           get() {
             inheritedThenCalls++;
             const credential = Object.getOwnPropertyDescriptor(this, "inferenceToken");
-            if (credential?.value === INFERENCE_CREDENTIAL) inheritedThenObservedCredential = true;
+            if (credential?.value === INFERENCE_CREDENTIAL) {
+              inheritedThenObservedCredential = true;
+              inheritedThenObservedCredentialSource = "inferenceToken";
+            }
+            const text = Object.getOwnPropertyDescriptor(this, "text");
+            if (typeof text?.value === "string" && text.value.includes(INFERENCE_CREDENTIAL)) {
+              inheritedThenObservedCredential = true;
+              inheritedThenObservedCredentialSource = "text";
+            }
+            const value = Object.getOwnPropertyDescriptor(this, "value");
+            if (value?.value instanceof Uint8Array) {
+              const decoded = new TextDecoder().decode(value.value);
+              if (decoded.includes(INFERENCE_CREDENTIAL)) {
+                inheritedThenObservedCredential = true;
+                inheritedThenObservedCredentialSource = "value";
+              }
+            }
+            if (this instanceof Response && this.body) {
+              inheritedThenProbes.push(
+                this.clone().text().then((body) => {
+                  if (body.includes(INFERENCE_CREDENTIAL)) {
+                    inheritedThenObservedCredential = true;
+                    inheritedThenObservedCredentialSource = `response:${
+                      body.replaceAll(INFERENCE_CREDENTIAL, "<INFERENCE_CREDENTIAL>").slice(0, 160)
+                    }`;
+                  }
+                }, () => {}),
+              );
+            }
             return undefined;
           },
         });
@@ -318,6 +349,7 @@ async function exercise(
         assertEquals(outgoing.method, "POST");
         assertEquals(outgoing.headers.get("authorization"), BASIC_AUTH);
         const body = JSON.parse(await outgoing.text());
+        assert(typeof body.inferencePublicKey === "string");
         assertEquals({ ...body, requestId: "request" }, {
           projectId: PROJECT_ID,
           projectSlug: ctx.projectSlug,
@@ -326,12 +358,20 @@ async function exercise(
           routePath: "/api/ag-ui",
           requestId: "request",
           agentId: "assistant",
+          inferencePublicKey: body.inferencePublicKey,
         });
         assert(typeof body.requestId === "string" && body.requestId.length > 0);
+        assertEquals(JSON.stringify(body).includes(INFERENCE_CREDENTIAL), false);
+        const expiresAt = new Date(Date.now() + 300_000).toISOString();
         return Response.json({
           runId,
-          inferenceToken: INFERENCE_CREDENTIAL,
-          expiresAt: new Date(Date.now() + 300_000).toISOString(),
+          expiresAt,
+          encryptedInferenceToken: encryptApplicationInferenceToken({
+            publicKey: body.inferencePublicKey,
+            runId,
+            expiresAt,
+            inferenceToken: INFERENCE_CREDENTIAL,
+          }),
         });
       }
       if (path === `/internal/application-agui-inference/runs/${runId}/finalize`) {
@@ -486,8 +526,9 @@ async function exercise(
         }
       }
       await bounded(finalized.promise);
+      await Promise.all(inheritedThenProbes);
       assertEquals(observedAdmissionCredential, false);
-      assertEquals(inheritedThenObservedCredential, false);
+      assertEquals(inheritedThenObservedCredential, false, inheritedThenObservedCredentialSource);
       if (interceptInheritedThen) assert(inheritedThenCalls > 0);
       if (interceptPromise) assert(interceptedPromiseCount > 0);
       assertEquals(admissionCount, 1);
