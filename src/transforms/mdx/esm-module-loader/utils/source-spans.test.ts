@@ -155,7 +155,7 @@ describe("transforms/mdx/esm-module-loader/utils/source-spans", () => {
 
   it("keeps repeated trivia lookups linear on minified lines across import scanners", () => {
     const matchRelative = (specifier: string) => specifier.startsWith("./") ? specifier : null;
-    // Each non-null assertion asks for the significant token before its trivia.
+    // Non-null assertions enter previousSignificantIndexBeforeIgnored on each repetition.
     // Static declarations also enter findFromSpan at every statement boundary.
     const minified = 'import/* trivia */"pkg";value /* trivia */ ! / 2;' +
       'import/* trivia */("pkg");';
@@ -179,8 +179,11 @@ describe("transforms/mdx/esm-module-loader/utils/source-spans", () => {
 
     for (const scanner of cases) {
       const makeSource = (count: number) => `${minified.repeat(count)}${scanner.tail}`;
-      assertEquals(scanner.scan(makeSource(51_600)).map((span) => span.path), ["./real.js"]);
-      assertLinearScan(scanner.name, scanner.scan, makeSource, 12_900);
+      let sample = 0;
+      // Distinct text forces a cold line-comment cache for every timed sample.
+      const scan = (source: string) => scanner.scan(`${source}/* sample ${sample++} */`);
+      assertEquals(scan(makeSource(51_600)).map((span) => span.path), ["./real.js"]);
+      assertLinearScan(scanner.name, scan, makeSource, 12_900);
     }
   });
 
