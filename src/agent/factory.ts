@@ -26,6 +26,7 @@ import {
 } from "#veryfront/platform/core-platform.ts";
 import { registerTool } from "#veryfront/mcp";
 import { assertLocalToolId, toolRegistry, toolRegistryInternal } from "#veryfront/tool/registry.ts";
+import { isToolVisibleTo } from "#veryfront/tool/executor.ts";
 import { skillRegistryInternal } from "#veryfront/skill/registry.ts";
 import {
   resolveSkillToolDisposition,
@@ -596,7 +597,11 @@ function createAgent<TOutput = never>(
   // Hosted callers already assembled the catalog under their authorization
   // ceiling. Feature configuration must not re-add a filtered capability.
   const knowledgeTool = preserveToolCatalog ? undefined : createAgentKnowledgeTool(config);
-  if (knowledgeTool && mergedToolsConfig === true && toolRegistry.has("search_knowledge")) {
+  const registeredKnowledgeTool = toolRegistry.get("search_knowledge");
+  if (
+    knowledgeTool && mergedToolsConfig === true && registeredKnowledgeTool &&
+    isToolVisibleTo(registeredKnowledgeTool, { agentId: id })
+  ) {
     throw INVALID_ARGUMENT.create({
       detail: "A registered search_knowledge tool conflicts with the agent knowledge scope. " +
         "Use an explicit tool selection or rename the custom tool.",

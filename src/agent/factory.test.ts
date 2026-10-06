@@ -102,6 +102,61 @@ describe("agent factory", () => {
     toolRegistryInternal.clearAll();
   });
 
+  it("ignores another agent's owned search_knowledge tool for tools true knowledge agents", () => {
+    toolRegistryInternal.register("search_knowledge", {
+      ...tool({
+        id: "search_knowledge",
+        description: "Foreign owned knowledge search",
+        inputSchema: defineSchema((v) => v.object({}))(),
+        execute: () => ({ ok: true }),
+      }),
+      ownerAgentId: "other-agent",
+    });
+
+    const assistant = agent({
+      id: "knowledge-owner",
+      system: "Use scoped knowledge.",
+      tools: true,
+      knowledge: true,
+      skills: [],
+    });
+
+    assertEquals(assistant.id, "knowledge-owner");
+  });
+
+  it("rejects visible registered search_knowledge tools for tools true knowledge agents", () => {
+    for (
+      const [registeredOwner, expectedAgentId] of [
+        [undefined, "global-collision-agent"],
+        ["own-collision-agent", "own-collision-agent"],
+      ] as const
+    ) {
+      toolRegistryInternal.clearAll();
+      toolRegistryInternal.register("search_knowledge", {
+        ...tool({
+          id: "search_knowledge",
+          description: `Visible knowledge search ${expectedAgentId}`,
+          inputSchema: defineSchema((v) => v.object({}))(),
+          execute: () => ({ ok: true }),
+        }),
+        ...(registeredOwner === undefined ? {} : { ownerAgentId: registeredOwner }),
+      });
+
+      assertThrows(
+        () =>
+          agent({
+            id: expectedAgentId,
+            system: "Use scoped knowledge.",
+            tools: true,
+            knowledge: true,
+            skills: [],
+          }),
+        Error,
+        "registered search_knowledge tool conflicts with the agent knowledge scope",
+      );
+    }
+  });
+
   it("rejects empty explicit identities and preserves valid or generated identities", () => {
     for (const id of ["", "   ", "\t\n"]) {
       assertThrows(() => agent({ id, system: "Synthetic" }), Error, "Agent id cannot be empty");

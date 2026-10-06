@@ -588,6 +588,7 @@ export function createRuntimePreparationCore(input: RuntimePreparationCoreOption
         configuredDeniedTools: definition.deniedTools,
         configuredDelegates: definition.delegates,
         configuredSkills: definition.skills,
+        configuredKnowledge: definition.knowledge,
         requestedTools: undefined,
       });
       let allowedToolNames = intersectNames(
@@ -700,6 +701,11 @@ export function createRuntimePreparationCore(input: RuntimePreparationCoreOption
         allowedTools: allowedToolNames,
         allowedProviderTools: providerToolNames,
         availableSkillIds: skills.allowedSkillIds,
+        ...(definition.toolLoading !== undefined ? { toolLoading: definition.toolLoading } : {}),
+        ...(definition.toolResultContext !== undefined
+          ? { toolResultContext: definition.toolResultContext }
+          : {}),
+        ...(definition.knowledge !== undefined ? { knowledge: definition.knowledge } : {}),
         skillSelectorPolicy: skills.policy,
         skillSourcePaths: skills.skillSourcePaths,
         ...(request.serverResolvedResumeToolCall
@@ -779,6 +785,8 @@ export function createRuntimePreparationCore(input: RuntimePreparationCoreOption
         allowedToolNames,
         deniedToolNames,
         allowedProviderToolNames: providerToolNames,
+        toolLoading: definition.toolLoading,
+        knowledge: definition.knowledge,
         // Executor models run through Veryfront Cloud whatever their id form.
         providerNativeToolNames: withServedFacts(() =>
           getProviderNativeToolNames({ model: modelId, hosted: true })
