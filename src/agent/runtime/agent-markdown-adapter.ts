@@ -66,6 +66,11 @@ export function createRuntimeAgentFromMarkdownDefinition(
         (selectedTools === true || Object.keys(selectedTools).length > 0)
       ? { tools: selectedTools }
       : {}),
+    ...(definition.toolLoading === undefined ? {} : { toolLoading: definition.toolLoading }),
+    ...(definition.toolResultContext === undefined
+      ? {}
+      : { toolResultContext: definition.toolResultContext }),
+    ...(definition.knowledge === undefined ? {} : { knowledge: definition.knowledge }),
   });
 
   markdownDefinitionByAgent.set(runtimeAgent, definition);

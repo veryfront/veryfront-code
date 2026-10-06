@@ -91,8 +91,8 @@ skills/
 
 ## Agent tools
 
-Every agent gets `load_skill`. Local and project runtimes also expose the two
-supporting skill tools:
+Agents with enabled skill access get `load_skill`. Local and project runtimes
+also expose the two supporting skill tools when skill access is enabled:
 
 | Tool                   | Availability               | Description                                                            |
 | ---------------------- | -------------------------- | ---------------------------------------------------------------------- |
@@ -135,9 +135,20 @@ export default agent({
 });
 ```
 
-Use `skills: ["code-review"]` to advertise only that skill. Use `skills: []`
-to advertise none. This changes the prompt catalog only. `load_skill` remains
-available and can load any visible skill by ID.
+Use `skills: ["code-review"]` to advertise and authorize only that skill.
+Use `skills: false` or `skills: []` to disable skill access. A string selects this
+agent's own skill short name, a visible skill ID, or a glob. Exact names resolve
+this agent's own short names before IDs. A boolean map grants matching skills
+and subtracts exclusions:
+
+```ts
+skills: { "support-*": true, "support-internal": false }
+```
+
+Exclusion-only maps grant nothing. The framework supplies `load_skill` for an
+enabled selection; you do not need to add it to `tools`. Loading a skill
+outside the selected scope is denied. Omitted `skills` preserves the existing
+behavior of allowing every visible skill.
 
 Expose the agent through an AG-UI route, then ask it to use the skill:
 

@@ -24,7 +24,11 @@ import type { AgentConfig } from "./types.ts";
 export type SkillToolDisposition = "disable" | "omit" | "inject";
 
 function isExplicitNoneSkillSelector(skills: AgentConfig["skills"]): boolean {
-  return skills === false || (Array.isArray(skills) && skills.length === 0);
+  if (skills === false || (Array.isArray(skills) && skills.length === 0)) {
+    return true;
+  }
+  return typeof skills === "object" && skills !== null && !Array.isArray(skills) &&
+    Object.values(skills).every((enabled) => enabled === false);
 }
 
 /**

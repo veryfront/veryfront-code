@@ -89,6 +89,8 @@ export interface ToolExecutionContext {
   projectSlug?: string;
   /** Request-scoped Veryfront auth token for project-local platform API tools */
   authToken?: string;
+  /** Runtime-owned Veryfront API base URL for project-local platform API tools */
+  apiUrl?: string;
   /** Whether the tool should read production release-backed project content */
   productionMode?: boolean;
   /** Release ID for production release-backed project content */

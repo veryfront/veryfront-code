@@ -460,6 +460,19 @@ describe("agent/ag-ui/runtime-restrictions", () => {
     assertEquals(restricted.tools, {});
   });
 
+  it("does not regrant explicitly denied delegate tools", () => {
+    const restricted = applyAgUiRuntimeRestrictions(
+      createConfig({
+        tools: { agent_writer: false },
+        delegates: ["writer"],
+      }),
+      { allowedTools: ["agent_writer"] },
+    );
+
+    assertEquals(restricted.delegates, ["writer"]);
+    assertEquals(restricted.tools, { agent_writer: false });
+  });
+
   it("keeps allowlisted provider tools, delegates, and skills", () => {
     const restricted = applyAgUiRuntimeRestrictions(createConfig(), {
       allowedTools: ["web_fetch", "agent_writer", "load_skill"],
@@ -565,6 +578,24 @@ describe("agent/ag-ui/runtime-restrictions", () => {
   // The tampered-reflection-intrinsics test mutates shared global intrinsics,
   // so it lives in tests/integration/agent/ag-ui-runtime-restrictions-intrinsics.test.ts
   // to keep this unit hermetic.
+
+  it("retains scoped framework knowledge only when the tool ceiling allows it", () => {
+    const allowed = applyAgUiRuntimeRestrictions(
+      createConfig({ tools: true, knowledge: "knowledge/public/**" }),
+      { allowedTools: ["search_knowledge"] },
+    );
+    const allowedTools = allowed.tools;
+    if (allowedTools === true || allowedTools === undefined) {
+      throw new Error("Expected explicit restricted tool map");
+    }
+    assertEquals(typeof allowedTools.search_knowledge, "object");
+
+    const denied = applyAgUiRuntimeRestrictions(
+      createConfig({ tools: true, knowledge: "knowledge/public/**" }),
+      { allowedTools: [] },
+    );
+    assertEquals(denied.tools, {});
+  });
 
   it("leaves the tool surface alone when only the step bound is restricted", () => {
     const config = createConfig();

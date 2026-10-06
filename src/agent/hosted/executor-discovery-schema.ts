@@ -94,7 +94,6 @@ export const getExecutorAgentDefinitionSchema = defineSchema((v) => {
   return getRuntimeAgentMarkdownDefinitionSchema().extend({
     id: getExecutorDiscoveryIdSchema(),
     tools: v.union([v.literal(true), ids()]).optional(),
-    skills: v.union([v.literal(true), v.literal(false), ids()]).optional(),
     deniedTools: ids().optional(),
     delegates: ids().optional(),
     providerTools: ids().optional(),

@@ -1,7 +1,10 @@
 import { getAgentExecutionConfig } from "../runtime/execution-config.ts";
 import { isResponseLike } from "../service/response-like.ts";
 import { getAgent } from "../composition/index.ts";
-import { createEphemeralAgent } from "../factory.ts";
+import {
+  createEphemeralAgent,
+  createEphemeralAgentWithRuntimeOptions,
+} from "#veryfront/agent/factory.ts";
 import type { Agent, AgentResponse, Message } from "../types.ts";
 import { fromError } from "#veryfront/errors";
 import {
@@ -385,8 +388,10 @@ async function createAgUiDirectStreamResponse(
   // framework's own prompt composition (project and environment context, and
   // the skill catalog only when the loader survives the ceiling), security
   // middleware, resolved skill-selector context, and private runtime dispatch.
-  const streamAgent = hasAgUiRuntimeRestrictions(restrictions)
-    ? createEphemeralAgent({
+  const hasRestrictions = hasAgUiRuntimeRestrictions(restrictions);
+  const restrictedAllowedTools = hasRestrictions ? restrictions.allowedTools : undefined;
+  const restrictedAgentConfig = hasRestrictions
+    ? {
       ...applyAgUiRuntimeRestrictionsForModel(
         getAgentExecutionConfig(agent.config),
         restrictions,
@@ -398,8 +403,19 @@ async function createAgUiDirectStreamResponse(
       // owner-scoped registry tools and skills from the restricted run and
       // handing hooks such as `resolveModelTransport` the wrong identity.
       id: agent.id,
-    })
-    : agent;
+    }
+    : undefined;
+  const prevalidatedRestrictedAgentConfig = restrictedAgentConfig !== undefined &&
+      restrictedAllowedTools !== undefined
+    ? { ...restrictedAgentConfig, delegates: undefined }
+    : undefined;
+  const streamAgent = restrictedAgentConfig === undefined
+    ? agent
+    : prevalidatedRestrictedAgentConfig === undefined
+    ? createEphemeralAgent(restrictedAgentConfig)
+    : createEphemeralAgentWithRuntimeOptions(prevalidatedRestrictedAgentConfig, {
+      preserveToolCatalog: true,
+    });
 
   // A restricted run uses a fresh ephemeral agent, so it has no prior memory
   // to clear. Do not call mutable methods on the source agent before the

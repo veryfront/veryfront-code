@@ -57,6 +57,32 @@ Do NOT infer tool availability from examples, skills, or the base prompt.`,
     assertEquals(content.includes("You must not call a deferred tool directly."), true);
   });
 
+  it("bounds large deferred tool inventories while keeping search guidance", () => {
+    const deferredTools = Array.from({ length: 50 }, (_, index) => ({
+      name: `catalog_tool_${String(index).padStart(3, "0")}`,
+      description: `${"x".repeat(300)} SCHEMA_LEAK_SENTINEL_${index}`,
+    }));
+    const [, inventory] = withRuntimeToolInventory(
+      "Base system",
+      ["tool_search"],
+      deferredTools,
+    );
+
+    const content = inventory?.content ?? "";
+    assertEquals(content.includes("- catalog_tool_000: "), true);
+    assertEquals(content.includes("- catalog_tool_019: "), true);
+    assertEquals(content.includes("- catalog_tool_020: "), false);
+    assertEquals(content.includes("30 additional authorized deferred tools are omitted"), true);
+    assertEquals(
+      content.includes(
+        "Use tool_search with exact names or capability phrases to load omitted tools.",
+      ),
+      true,
+    );
+    assertEquals(content.includes("SCHEMA_LEAK_SENTINEL"), false);
+    assertEquals(content.length < 7_000, true);
+  });
+
   it("omits the deferred section when nothing is deferred", () => {
     // The common case must render exactly as before, so an agent with no
     // deferred catalog gains no prompt weight from this feature.
