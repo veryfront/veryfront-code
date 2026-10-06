@@ -1,3 +1,4 @@
+import { inheritHostedChildInferenceAuthority } from "./inference-credential.ts";
 import type { HostToolTraceAttributes } from "#veryfront/tool";
 import type { AgentSystem } from "#veryfront/agent/types.ts";
 import type { ChatSystemMessage } from "#veryfront/chat/types.ts";
@@ -460,7 +461,10 @@ async function executeHostedChildForkWithoutWriterAuthority<
             providerOptionKey: input.provider,
             resolveSystem: input.resolveSystem ?? defaultResolveSystem,
           }),
-        runStep: input.runStep ?? runAgentRuntimeForkStep,
+        runStep: input.runStep ?? ((stepInput) => {
+          if (input.forkContext) inheritHostedChildInferenceAuthority(stepInput, input.forkContext);
+          return runAgentRuntimeForkStep(stepInput);
+        }),
         traceTools,
       });
     const started = await (startupRunEventSink
