@@ -126,7 +126,8 @@ describe("cache/request-cache-batcher", () => {
         unhandled.resolve(event.reason);
       };
 
-      globalThis.addEventListener("unhandledrejection", onUnhandled);
+      const supportsRejectionEvents = typeof globalThis.addEventListener === "function";
+      if (supportsRejectionEvents) globalThis.addEventListener("unhandledrejection", onUnhandled);
       try {
         let read: Promise<string | null> | undefined;
         await runWithCacheBatching(async () => {
@@ -144,7 +145,9 @@ describe("cache/request-cache-batcher", () => {
         const detachedRead = read;
         await assertRejects(() => detachedRead, Error, "backend failed after request finished");
       } finally {
-        globalThis.removeEventListener("unhandledrejection", onUnhandled);
+        if (supportsRejectionEvents) {
+          globalThis.removeEventListener("unhandledrejection", onUnhandled);
+        }
       }
     });
 
