@@ -182,6 +182,7 @@ async function exercise(
   interceptInheritedThen = false,
   injectedDescription = "First synthetic client tool description",
   delegated = false,
+  interceptObjectFreeze = false,
 ) {
   const { ctx, wrapper } = fixture();
   const pendingTool = mode === "pending-tool-cancelled" || mode === "pending-tool-ingress";
@@ -215,9 +216,11 @@ async function exercise(
   const finalizationOrigins: string[] = [];
   const finalizations: unknown[] = [];
   const originalPromiseResolve = Promise.resolve;
+  const originalObjectFreeze = Object.freeze;
   const originalInheritedThen = Object.getOwnPropertyDescriptor(Object.prototype, "then");
   let inheritedThenCalls = 0;
   let inheritedThenCapturedAuthority = false;
+  let objectFreezeObservedAuthorization = false;
   let inheritedThenObservedCredential = false;
   let inheritedThenObservedCredentialSource = "";
   const inheritedThenProbes: Promise<void>[] = [];
@@ -361,6 +364,17 @@ async function exercise(
     PROXY_MODE: "1",
   };
   const original = new Map(Object.keys(env).map((key) => [key, getEnv(key)]));
+  if (interceptObjectFreeze) {
+    Object.freeze = ((value: unknown) => {
+      if (
+        value !== null && typeof value === "object" &&
+        Object.getOwnPropertyDescriptor(value, "authorization")?.value === BASIC_AUTH
+      ) {
+        objectFreezeObservedAuthorization = true;
+      }
+      return originalObjectFreeze(value);
+    }) as typeof Object.freeze;
+  }
   resetHostApiOriginSnapshot();
   __resetVeryfrontCloudCatalogForTests();
   for (const [key, value] of Object.entries(env)) setEnv(key, value);
@@ -575,6 +589,7 @@ async function exercise(
       assertEquals(inheritedThenObservedCredential, false, inheritedThenObservedCredentialSource);
       if (interceptInheritedThen) assert(inheritedThenCalls > 0);
       if (interceptPromise) assert(interceptedPromiseCount > 0);
+      assertEquals(objectFreezeObservedAuthorization, false);
       assertEquals(admissionCount, delegated ? 2 : 1);
       assertEquals(new Set(admissionRequestIds).size, admissionCount);
       assertEquals(admissionOrigins, delegated ? [API_URL, API_URL] : [API_URL]);
@@ -612,6 +627,7 @@ async function exercise(
     });
   } finally {
     Promise.resolve = originalPromiseResolve;
+    Object.freeze = originalObjectFreeze;
     if (originalInheritedThen) {
       Object.defineProperty(Object.prototype, "then", originalInheritedThen);
     } else Reflect.deleteProperty(Object.prototype, "then");
@@ -662,6 +678,21 @@ describe("public authored AG-UI inference", () => {
     exercise("ingress-cancelled", true));
   it("keeps admission credentials out of a tenant Promise.resolve interceptor", () =>
     exercise("completed", false, "pinned", true));
+  it("keeps host admission authorization out of a tenant Object.freeze hook across requests", async () => {
+    await exercise("completed");
+    await exercise(
+      "completed",
+      false,
+      "pinned",
+      false,
+      false,
+      undefined,
+      false,
+      undefined,
+      false,
+      true,
+    );
+  });
   it("resolves a cold served alias through private catalog preparation", () =>
     exercise("completed", false, "alias"));
   it("resolves a request auto model through the admitted private catalog credential", () =>

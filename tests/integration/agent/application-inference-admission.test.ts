@@ -11,12 +11,12 @@ import {
   __runWithOutboundFetchTransportForTests,
   type OutboundFetchTransport,
 } from "#veryfront/security/http/outbound-fetch.ts";
-import { resolveAgentModelTransport } from "./model-transport.ts";
+import { resolveAgentModelTransport } from "#veryfront/agent/runtime/model-transport.ts";
 import {
   type ApplicationInferenceFinalizeStatus,
   getPrivateApplicationInferenceRuntimeOptions,
   runWithApplicationInferenceAdmission,
-} from "./application-inference-admission.ts";
+} from "#veryfront/agent/runtime/application-inference-admission.ts";
 
 const RUN_ID = "run-application-inference-admission";
 const INFERENCE_TOKEN = "private-application-inference-token";

@@ -9,7 +9,6 @@
 
 import { executeLocalChild, type LocalChildInvocation } from "./local-child-execution.ts";
 import type { Agent, AgentResponse } from "../types.ts";
-import { createEphemeralAgentWithRuntimeOptions } from "../factory.ts";
 import { getAgentExecutionConfig } from "../runtime/execution-config.ts";
 import {
   getPrivateApplicationInferenceRuntimeOptions,
@@ -32,6 +31,28 @@ import {
   type InvokeAgentStreamIdentity,
 } from "#veryfront/chat/invoke-agent-stream.ts";
 
+const DELEGATED_STREAM_CONTEXT_EXCLUSIONS = new Set([
+  "abortSignal",
+  "agentId",
+  "progressToken",
+  "runId",
+  "runIdBindsToolAuthorization",
+  "toolCallId",
+]);
+
+function buildAdmittedChildStreamContext(
+  context: ToolExecutionContext | undefined,
+  runId: string,
+): Record<string, unknown> {
+  const streamContext: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(context ?? {})) {
+    if (!DELEGATED_STREAM_CONTEXT_EXCLUSIONS.has(key)) streamContext[key] = value;
+  }
+  streamContext.runId = runId;
+  streamContext.runIdBindsToolAuthorization = true;
+  return streamContext;
+}
+
 /** Agent as tool helper. */
 async function runAgentAsStreamingTool(
   agent: Agent,
@@ -52,14 +73,21 @@ async function runAgentAsStreamingTool(
   const execute = async (): Promise<AgentResponse> => {
     let finalResponse: AgentResponse | undefined;
     const signal = control?.signal ?? context?.abortSignal;
-    const privateRuntime =
-      shouldUseApplicationInferenceRuntime(getAgentExecutionConfig(agent.config).model)
-        ? await getPrivateApplicationInferenceRuntimeOptions(agent.id, signal)
-        : undefined;
+    const useApplicationRuntime = shouldUseApplicationInferenceRuntime(
+      getAgentExecutionConfig(agent.config).model,
+    );
+    // The factory also imports the registry. Defer loading it until invocation
+    // so composition does not create an eager module-initialization cycle.
+    const createAdmittedAgent = useApplicationRuntime
+      ? (await import("../factory.ts")).createEphemeralAgentWithRuntimeOptions
+      : undefined;
+    const privateRuntime = useApplicationRuntime
+      ? await getPrivateApplicationInferenceRuntimeOptions(agent.id, signal)
+      : undefined;
     try {
-      const streamAgent = privateRuntime
+      const streamAgent = privateRuntime && createAdmittedAgent
         ? await privateRuntime.prepareAgent(() => {
-          const admittedAgent = createEphemeralAgentWithRuntimeOptions(
+          const admittedAgent = createAdmittedAgent(
             { ...getAgentExecutionConfig(agent.config), id: agent.id },
             privateRuntime.runtimeOptions,
           );
@@ -67,8 +95,12 @@ async function runAgentAsStreamingTool(
           return admittedAgent;
         })
         : agent;
+      const streamContext = privateRuntime
+        ? buildAdmittedChildStreamContext(context, privateRuntime.runId)
+        : undefined;
       const stream = await streamAgent.stream({
         input,
+        ...(streamContext ? { context: streamContext } : {}),
         abortSignal: privateRuntime?.signal ?? signal,
         onFinish: (response) => {
           finalResponse = response;

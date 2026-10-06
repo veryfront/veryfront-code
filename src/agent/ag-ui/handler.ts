@@ -703,8 +703,8 @@ async function createAgUiInjectedToolsStreamResponse(
     const inferenceAgent = privateRuntime
       ? await privateRuntime.prepareAgent(() => {
         const admittedAgent = createEphemeralAgentWithRuntimeOptions(
-          { ...runtimeConfig, id: agent.id },
-          privateRuntime.runtimeOptions,
+          { ...runtimeConfig, id: agent.id, delegates: undefined },
+          { ...privateRuntime.runtimeOptions, preserveToolCatalog: true },
         );
         defineOwnDataProperty(admittedAgent, "then", undefined);
         return admittedAgent;

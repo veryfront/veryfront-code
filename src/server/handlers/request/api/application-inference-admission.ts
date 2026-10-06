@@ -23,6 +23,7 @@ const createObject = Object.create;
 const defineProperty = Object.defineProperty;
 const getOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 const keys = Object.keys;
+const objectFreeze = Object.freeze;
 const timeout = AbortSignal.timeout.bind(AbortSignal);
 const encodeBasic = globalThis.btoa.bind(globalThis);
 const apply = Reflect.apply;
@@ -77,7 +78,7 @@ interface HostApplicationInferenceAdmissionOptions {
   readonly createOriginBoundFetch?: (origin: string) => typeof fetch;
 }
 
-const EMPTY_HOST_APPLICATION_INFERENCE_ADMISSION_OPTIONS = Object.freeze(
+const EMPTY_HOST_APPLICATION_INFERENCE_ADMISSION_OPTIONS = objectFreeze(
   createObject(null),
 ) as HostApplicationInferenceAdmissionOptions;
 
@@ -132,7 +133,7 @@ export function createHostApplicationInferenceAdmission(
     routePath: new NativeURL(request.url).pathname,
   };
   const signal = request.signal;
-  const headers = Object.freeze({ authorization, "content-type": "application/json" });
+  const headers = objectFreeze({ authorization, "content-type": "application/json" });
   return async (agentId) => {
     const keyPair = hostApplicationInferenceEncryptionKeyPair;
     const response = await transport(`${origin}/internal/application-agui-inference/admissions`, {
