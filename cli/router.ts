@@ -307,9 +307,10 @@ export async function routeCommand(args: ParsedArgs): Promise<void> {
     : undefined;
 
   if ((args.help || args.h) && !duplicatedBinaryTarget) {
-    const helpTopic = command === "help"
-      ? (typeof args._[1] === "string" ? args._[1] : undefined)
-      : command;
+    let helpTopic = command;
+    if (command === "help") {
+      helpTopic = typeof args._[1] === "string" ? args._[1] : undefined;
+    }
     if (isJsonMode()) {
       const ok = await outputHelpJson(helpTopic, args.all === true);
       await updateCheck;
