@@ -2,7 +2,10 @@ import { getAgentExecutionConfig } from "../runtime/execution-config.ts";
 import { resolveRuntimeModel } from "../runtime/model-resolution.ts";
 import { isResponseLike } from "../service/response-like.ts";
 import { getAgent } from "../composition/index.ts";
-import { createEphemeralAgent, createEphemeralAgentWithRuntimeOptions } from "../factory.ts";
+import {
+  createEphemeralAgent,
+  createEphemeralAgentWithRuntimeOptions,
+} from "#veryfront/agent/factory.ts";
 import {
   getPrivateApplicationInferenceRuntimeOptions,
   hasApplicationInferenceAdmission,
@@ -431,7 +434,7 @@ function createRestrictedDirectStreamAgent(
 ): Agent {
   if (!hasAgUiRuntimeRestrictions(restrictions)) return agent;
 
-  return createEphemeralAgent({
+  const restrictedConfig = {
     ...applyAgUiRuntimeRestrictionsForModel(
       getAgentExecutionConfig(agent.config),
       restrictions,
@@ -443,6 +446,12 @@ function createRestrictedDirectStreamAgent(
     // owner-scoped registry tools and skills from the restricted run and
     // handing hooks such as `resolveModelTransport` the wrong identity.
     id: agent.id,
+  };
+
+  if (restrictions.allowedTools === undefined) return createEphemeralAgent(restrictedConfig);
+
+  return createEphemeralAgentWithRuntimeOptions({ ...restrictedConfig, delegates: undefined }, {
+    preserveToolCatalog: true,
   });
 }
 

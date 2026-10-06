@@ -6,13 +6,17 @@ import type {
 import { isToolVisibleTo, toolRegistry } from "#veryfront/tool";
 import { getRemoteToolProvenance } from "#veryfront/tool/remote-tool-provenance.ts";
 import { AGENT_DELEGATE_TOOL_PREFIX } from "#veryfront/agent/runtime/agent-delegation-names.ts";
-import { INVOKE_AGENT_TOOL_ID } from "#veryfront/agent/runtime/agent-delegation.ts";
+import {
+  buildAgentDelegateTools,
+  INVOKE_AGENT_TOOL_ID,
+} from "#veryfront/agent/runtime/agent-delegation.ts";
 import {
   resolveConfiguredAgentModel,
   resolveRuntimeModel,
 } from "#veryfront/agent/runtime/model-resolution.ts";
 import { isVeryfrontCloudEnabled } from "#veryfront/platform/cloud/resolver.ts";
 import { DEFAULT_MAX_STEPS } from "#veryfront/agent/runtime/constants.ts";
+import { createAgentKnowledgeTool } from "#veryfront/agent/runtime/knowledge-tools.ts";
 import type { RuntimeRemoteToolConfig } from "#veryfront/agent/runtime/mcp-server-tool-sources.ts";
 import { getProviderNativeToolNames } from "#veryfront/agent/runtime/provider-native-tool-inventory.ts";
 import {
@@ -343,6 +347,18 @@ export function applyAgUiRuntimeRestrictionsForModel(
     visibleLocalTools,
     sourceAgentId,
   );
+  const frameworkKnowledgeTool = allowedTools.search_knowledge === true
+    ? createAgentKnowledgeTool(config)
+    : undefined;
+  if (frameworkKnowledgeTool !== undefined) {
+    const tools = restricted.tools === undefined || restricted.tools === true
+      ? {}
+      : { ...restricted.tools };
+    if (tools.search_knowledge === undefined || tools.search_knowledge === true) {
+      tools.search_knowledge = frameworkKnowledgeTool;
+    }
+    restricted.tools = tools;
+  }
   if (config.tools === true) {
     // Replacing the authored `tools: true` selector with an explicit map would
     // flip `resolveRuntimeToolLoading` from deferred to eager, sending every
@@ -355,9 +371,31 @@ export function applyAgUiRuntimeRestrictionsForModel(
   restricted.providerTools = config.providerTools === undefined
     ? undefined
     : filterAllowedNames(config.providerTools, allowedTools);
-  restricted.delegates = config.delegates === undefined
+  const restrictedDelegates = config.delegates === undefined
     ? undefined
     : filterAllowedNames(config.delegates, allowedTools, AGENT_DELEGATE_TOOL_PREFIX);
+  restricted.delegates = restrictedDelegates;
+  if (restrictedDelegates !== undefined && restrictedDelegates.length > 0) {
+    const tools = restricted.tools === undefined || restricted.tools === true
+      ? {}
+      : { ...restricted.tools };
+    const delegateTools = buildAgentDelegateTools({
+      delegates: restrictedDelegates,
+      selfId: sourceAgentId,
+    });
+    const delegateToolNames = ObjectKeys(delegateTools);
+    for (let index = 0; index < delegateToolNames.length; index++) {
+      const toolName = delegateToolNames[index];
+      const delegateTool = toolName === undefined ? undefined : delegateTools[toolName];
+      if (
+        toolName !== undefined && delegateTool !== undefined && allowedTools[toolName] === true &&
+        tools[toolName] !== false
+      ) {
+        tools[toolName] = delegateTool;
+      }
+    }
+    restricted.tools = tools;
+  }
   // Preserve explicitly configured MCP sources, but stamp the run allowlist
   // into every server policy before the rebuilt agent can connect. The list
   // stays explicitly empty when no source was configured: an absent

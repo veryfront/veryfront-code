@@ -74,6 +74,106 @@ it("deferred generate searches, exposes on the next step, and executes once", as
   assertEquals(response.text, "Release marker marker-1");
 });
 
+it("authored deferred loading hides explicit tool map schemas until lookup", async () => {
+  const model = scriptedModel([
+    {
+      toolCalls: [{
+        id: "search-denied",
+        name: "tool_search",
+        input: { query: "denied marker" },
+      }],
+    },
+    {
+      toolCalls: [{
+        id: "search-allowed",
+        name: "tool_search",
+        input: { query: "release marker" },
+      }],
+    },
+    { toolCalls: [{ id: "marker-1", name: "read_release_marker", input: {} }] },
+    { text: "Release marker marker-1" },
+  ], { modelId: "hosted/authored-deferred-explicit-tools", only: "generate" });
+  let executionCount = 0;
+  const assistant = agent(
+    {
+      id: "authored-deferred-explicit-tools-test",
+      model: "hosted/authored-deferred-explicit-tools",
+      system: "Use tools when needed.",
+      skills: false,
+      tools: {
+        denied_marker: false,
+        read_release_marker: tool({
+          id: "read_release_marker",
+          description: "Read the release marker",
+          inputSchema: defineSchema((v) => v.object({}))(),
+          execute: () => {
+            executionCount++;
+            return { marker: "marker-1" };
+          },
+        }),
+      },
+      toolLoading: "deferred",
+      maxSteps: 5,
+      resolveModelTransport: () => ({ model }),
+    } as AgentConfig,
+  );
+
+  const response = await assistant.generate({ input: "Read the release marker" });
+
+  const observedSystems = model.systemPrompts();
+  assertEquals(observedToolNames(model), [
+    ["tool_search"],
+    ["tool_search"],
+    ["read_release_marker"],
+    ["read_release_marker"],
+  ]);
+  assertEquals((observedSystems[0] ?? "").includes("read_release_marker"), false);
+  assertEquals((observedSystems[1] ?? "").includes("denied_marker"), false);
+  assertEquals((observedSystems[1] ?? "").includes("denied marker"), false);
+  assertEquals(executionCount, 1);
+  assertEquals(response.text, "Release marker marker-1");
+});
+
+it("authored tool_search false keeps deferred loading from reintroducing tool search", async () => {
+  const model = scriptedModel([
+    { toolCalls: [{ id: "marker-1", name: "read_release_marker", input: {} }] },
+    { text: "Release marker marker-1" },
+  ], { modelId: "hosted/authored-deferred-denied-tool-search", only: "generate" });
+  let executionCount = 0;
+  const assistant = agent(
+    {
+      id: "authored-deferred-denied-tool-search-test",
+      model: "hosted/authored-deferred-denied-tool-search",
+      system: "Use tools when needed.",
+      skills: false,
+      tools: {
+        tool_search: false,
+        read_release_marker: tool({
+          id: "read_release_marker",
+          description: "Read the release marker",
+          inputSchema: defineSchema((v) => v.object({}))(),
+          execute: () => {
+            executionCount++;
+            return { marker: "marker-1" };
+          },
+        }),
+      },
+      toolLoading: "deferred",
+      maxSteps: 3,
+      resolveModelTransport: () => ({ model }),
+    } as AgentConfig,
+  );
+
+  const response = await assistant.generate({ input: "Read the release marker" });
+
+  assertEquals(observedToolNames(model), [
+    ["read_release_marker"],
+    ["read_release_marker"],
+  ]);
+  assertEquals(executionCount, 1);
+  assertEquals(response.text, "Release marker marker-1");
+});
+
 it("deferred generate can reload create_agent after a successful agent write", async () => {
   const model = scriptedModel([
     {

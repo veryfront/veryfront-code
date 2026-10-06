@@ -88,6 +88,7 @@ validateSkillMetadata(parsed.frontmatter, "review");
 | `SkillScriptResult`        | Result from executing a skill script.                                    | [source](https://github.com/veryfront/veryfront-code/blob/main/src/skill/types.ts)           |
 | `SkillScriptSnapshot`      | Bounded, validated script tree used to preserve same-directory imports.  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/skill/types.ts)           |
 | `SkillScriptSnapshotFile`  | One validated text file retained in an executable skill-script snapshot. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/skill/types.ts)           |
+| `SkillSelector`            |                                                                          | [source](https://github.com/veryfront/veryfront-code/blob/main/src/skill/selector.ts)        |
 
 ### Constants
 

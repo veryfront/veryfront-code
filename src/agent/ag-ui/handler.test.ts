@@ -749,6 +749,7 @@ describe("agent/ag-ui-handler", () => {
           }),
         },
         providerTools: ["web_search", "web_fetch"],
+        knowledge: true,
         skills: true,
         maxSteps: 20,
         resolveModelTransport: () => Promise.resolve({ model }),
@@ -815,6 +816,237 @@ describe("agent/ag-ui-handler", () => {
       AgentRuntime.prototype.stream = originalStream;
       skillRegistryInternal.clearAll();
     }
+  });
+
+  it("strips denied delegates before a restricted AG-UI prevalidated rebuild", async () => {
+    let observedToolNames: string[] = [];
+    const model: ModelRuntime<ModelRuntimeCallOptions> = {
+      provider: "anthropic",
+      modelId: "claude-sonnet-4-6",
+      doGenerate: () => {
+        throw new Error("Expected the streaming path");
+      },
+      doStream: (options) => {
+        observedToolNames = (options.tools ?? []).map((definition) => definition.name).toSorted();
+        return Promise.resolve({
+          stream: new ReadableStream<unknown>({
+            start(controller) {
+              controller.enqueue({ type: "text-delta", id: "text-1", delta: "delegates-filtered" });
+              controller.enqueue({ type: "finish", finishReason: "stop" });
+              controller.close();
+            },
+          }),
+        });
+      },
+    };
+
+    const coordinator = createEphemeralAgent({
+      id: "ag-ui-denied-delegates",
+      model: "anthropic/claude-sonnet-4-6",
+      system: "Coordinate work.",
+      tools: {},
+      delegates: ["writer"],
+      skills: [],
+      resolveModelTransport: () => Promise.resolve({ model }),
+    });
+    const handler = createAgUiHandler({
+      agent: coordinator,
+      runtimeRestrictions: { allowedTools: [] },
+    });
+
+    const response = await handler(
+      new Request("http://localhost/api/ag-ui", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          runId: "run_restricted_denied_delegate_1",
+          threadId: crypto.randomUUID(),
+          messages: [{
+            id: "msg-1",
+            role: "user",
+            parts: [{ type: "text", text: "hello" }],
+          }],
+        }),
+      }),
+    );
+
+    const body = await response.text();
+    assertStringIncludes(body, "delegates-filtered");
+    assertEquals(observedToolNames.includes("agent_writer"), false);
+  });
+
+  it("keeps an allowlisted delegate tool on a restricted AG-UI prevalidated rebuild", async () => {
+    let observedToolNames: string[] = [];
+    const model: ModelRuntime<ModelRuntimeCallOptions> = {
+      provider: "anthropic",
+      modelId: "claude-sonnet-4-6",
+      doGenerate: () => {
+        throw new Error("Expected the streaming path");
+      },
+      doStream: (options) => {
+        observedToolNames = (options.tools ?? []).map((definition) => definition.name).toSorted();
+        return Promise.resolve({
+          stream: new ReadableStream<unknown>({
+            start(controller) {
+              controller.enqueue({ type: "text-delta", id: "text-1", delta: "delegates-kept" });
+              controller.enqueue({ type: "finish", finishReason: "stop" });
+              controller.close();
+            },
+          }),
+        });
+      },
+    };
+
+    const coordinator = createEphemeralAgent({
+      id: "ag-ui-allowed-delegates",
+      model: "anthropic/claude-sonnet-4-6",
+      system: "Coordinate work.",
+      tools: {},
+      delegates: ["writer"],
+      skills: [],
+      resolveModelTransport: () => Promise.resolve({ model }),
+    });
+    const handler = createAgUiHandler({
+      agent: coordinator,
+      runtimeRestrictions: { allowedTools: ["agent_writer"] },
+    });
+
+    const response = await handler(
+      new Request("http://localhost/api/ag-ui", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          runId: "run_restricted_allowed_delegate_1",
+          threadId: crypto.randomUUID(),
+          messages: [{
+            id: "msg-1",
+            role: "user",
+            parts: [{ type: "text", text: "hello" }],
+          }],
+        }),
+      }),
+    );
+
+    const body = await response.text();
+    assertStringIncludes(body, "delegates-kept");
+    assertEquals(observedToolNames.includes("agent_writer"), true);
+  });
+
+  it("does not re-inject knowledge when a restricted AG-UI allowlist excludes it", async () => {
+    let observedToolNames: string[] = [];
+    const model: ModelRuntime<ModelRuntimeCallOptions> = {
+      provider: "anthropic",
+      modelId: "claude-sonnet-4-6",
+      doGenerate: () => {
+        throw new Error("Expected the streaming path");
+      },
+      doStream: (options) => {
+        observedToolNames = (options.tools ?? []).map((definition) => definition.name).toSorted();
+        return Promise.resolve({
+          stream: new ReadableStream<unknown>({
+            start(controller) {
+              controller.enqueue({ type: "text-delta", id: "text-1", delta: "knowledge-filtered" });
+              controller.enqueue({ type: "finish", finishReason: "stop" });
+              controller.close();
+            },
+          }),
+        });
+      },
+    };
+
+    const knowledgeAgent = createEphemeralAgent({
+      id: "ag-ui-knowledge-filtered",
+      model: "anthropic/claude-sonnet-4-6",
+      system: "Use project knowledge only when available.",
+      tools: true,
+      toolLoading: "eager",
+      knowledge: true,
+      skills: [],
+      resolveModelTransport: () => Promise.resolve({ model }),
+    });
+    const handler = createAgUiHandler({
+      agent: knowledgeAgent,
+      runtimeRestrictions: { allowedTools: [] },
+    });
+
+    const response = await handler(
+      new Request("http://localhost/api/ag-ui", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          runId: "run_restricted_knowledge_filtered_1",
+          threadId: crypto.randomUUID(),
+          messages: [{
+            id: "msg-1",
+            role: "user",
+            parts: [{ type: "text", text: "hello" }],
+          }],
+        }),
+      }),
+    );
+
+    const body = await response.text();
+    assertStringIncludes(body, "knowledge-filtered");
+    assertEquals(observedToolNames.includes("search_knowledge"), false);
+  });
+
+  it("keeps framework knowledge on a maxSteps-only AG-UI rebuild", async () => {
+    let observedToolNames: string[] = [];
+    const model: ModelRuntime<ModelRuntimeCallOptions> = {
+      provider: "anthropic",
+      modelId: "claude-sonnet-4-6",
+      doGenerate: () => {
+        throw new Error("Expected the streaming path");
+      },
+      doStream: (options) => {
+        observedToolNames = (options.tools ?? []).map((definition) => definition.name).toSorted();
+        return Promise.resolve({
+          stream: new ReadableStream<unknown>({
+            start(controller) {
+              controller.enqueue({ type: "text-delta", id: "text-1", delta: "knowledge-kept" });
+              controller.enqueue({ type: "finish", finishReason: "stop" });
+              controller.close();
+            },
+          }),
+        });
+      },
+    };
+
+    const knowledgeAgent = createEphemeralAgent({
+      id: "ag-ui-knowledge-step-only",
+      model: "anthropic/claude-sonnet-4-6",
+      system: "Use project knowledge.",
+      tools: true,
+      toolLoading: "eager",
+      knowledge: true,
+      skills: [],
+      maxSteps: 20,
+      resolveModelTransport: () => Promise.resolve({ model }),
+    });
+    const handler = createAgUiHandler({
+      agent: knowledgeAgent,
+      runtimeRestrictions: { maxSteps: 2 },
+    });
+
+    const response = await handler(
+      new Request("http://localhost/api/ag-ui", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          runId: "run_restricted_knowledge_steps_1",
+          threadId: crypto.randomUUID(),
+          messages: [{
+            id: "msg-1",
+            role: "user",
+            parts: [{ type: "text", text: "hello" }],
+          }],
+        }),
+      }),
+    );
+
+    const body = await response.text();
+    assertStringIncludes(body, "knowledge-kept");
+    assertEquals(observedToolNames.includes("search_knowledge"), true);
   });
 
   it("preserves a factory-assigned agent id on the rebuilt restricted agent", async () => {

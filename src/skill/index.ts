@@ -17,6 +17,7 @@
  */
 
 // Types
+export type { SkillSelector } from "./selector.ts";
 export type {
   ActiveSkillContext,
   Skill,

@@ -116,6 +116,15 @@ export const getExecutorRuntimeSteeringSchema = defineSchema((v) =>
         .strict(),
       v.object({ kind: v.literal("none") }).strict(),
       v.object({ kind: v.literal("allowlist"), entries: v.array(v.string()) }).strict(),
+      v.object({
+        kind: v.literal("rules"),
+        entries: v.array(
+          v.object({
+            pattern: v.string().min(1).max(256),
+            allow: v.boolean(),
+          }).strict(),
+        ).max(1_000),
+      }).strict(),
     ]).optional(),
     initialSkills: v.array(
       v.object({
