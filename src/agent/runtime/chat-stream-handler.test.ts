@@ -2820,6 +2820,7 @@ describe("processStream active mode", () => {
       canonicalRunId: "77777777-7777-4777-8777-777777777777",
       latestEventId: 0,
       latestExternalEventSequence: 0,
+      maxEventsPerBatch: 100,
       fetch: () => Promise.reject(new Error("This fixture must not send requests")),
     });
     const mirror = createConversationRunChunkMirror({
