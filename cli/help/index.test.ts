@@ -57,7 +57,7 @@ describe("structured CLI help", () => {
 
     assertEquals(
       help.categories.map((category) => category.value),
-      COMMAND_CATEGORIES,
+      [...COMMAND_CATEGORIES],
     );
     assertEquals(
       help.categories.find((category) => category.value === "ai")?.label,
