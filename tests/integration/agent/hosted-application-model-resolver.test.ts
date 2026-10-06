@@ -24,7 +24,12 @@ import {
 } from "#veryfront/provider/veryfront-cloud/provider.ts";
 import { createExecutorChannel } from "#veryfront/agent/executor/channel.ts";
 import { createExecutorModelRuntimeResolver } from "#veryfront/agent/hosted/executor-model-bridge.ts";
-import { createEphemeralHostedExecutorModelBroker } from "#veryfront/agent/hosted/executor-model-dispatch.ts";
+import {
+  createEphemeralHostedExecutorModelBroker,
+  createHostedExecutorModelBroker,
+} from "#veryfront/agent/hosted/executor-model-dispatch.ts";
+import { createDurableRunEventSink } from "#veryfront/agent/hosted/durable-run-event-sink.ts";
+import { createConversationRunChunkMirror } from "#veryfront/agent/conversation/run-chunk-mirror.ts";
 import { runWithMandatoryRunEventSink } from "#veryfront/runtime/run-event-sink-context.ts";
 import { buildModelCallContextRequest } from "#veryfront/runtime/model-call-context-request.ts";
 import type { ModelRuntimeCallOptions } from "#veryfront/provider/types.ts";
@@ -374,6 +379,246 @@ describe("hosted ordinary application model resolver", () => {
     assert(contexts.length > 0);
     assert(contexts.every((value) => value === appToken));
     assertEquals(cancellationContext, appToken);
+  });
+
+  it("sends no real provider request when capture fails or has no exact receipt", async () => {
+    const input = resolverOptions();
+    const resolver = createHostedApplicationModelResolver(input);
+    let providerFetches = 0;
+    try {
+      await withMockFetch(() => {
+        providerFetches++;
+        return Promise.resolve(response(false));
+      }, async () => {
+        for (const failWrite of [false, true]) {
+          const operations = createHostedExecutorModelBroker({
+            projectId: "11111111-1111-4111-8111-111111111111",
+            grant: {
+              maxCalls: 1,
+              maxConcurrentCalls: 1,
+              models: new Map([[modelId, { maxOutputTokens: 4096, providerTools: [] }]]),
+            },
+            resolveModelRuntime: resolver,
+            allowedModelIds: input.allowedModelIds,
+            scope: input.scope,
+            runEventSink: async () => {
+              if (failWrite) throw new Error("Synthetic capture failure");
+            },
+          });
+          const operation = operations.get("model.generate");
+          assert(operation?.mode === "unary");
+          await assertRejects(async () =>
+            await operation.handle({
+              modelId,
+              options: {
+                prompt: [{ role: "user", content: [{ type: "text", text: "Synthetic prompt" }] }],
+              },
+            }, { binding, signal: input.scope.signal, deadline: Date.now() + 60_000 })
+          );
+        }
+      });
+      assertEquals(providerFetches, 0);
+    } finally {
+      revokeModelRuntimeResolver(resolver);
+    }
+  });
+
+  it("sends no provider request or capture receipt when the input guard rejects an oversized call", async () => {
+    const input = resolverOptions();
+    const resolver = createHostedApplicationModelResolver(input);
+    const runId = "22222222-2222-4222-8222-222222222222";
+    const mirror = createConversationRunChunkMirror({
+      authToken: "synthetic-append-token",
+      apiUrl: "https://example.com",
+      conversationId: "33333333-3333-4333-8333-333333333333",
+      runId,
+      latestEventId: 5,
+      latestExternalEventSequence: 0,
+    });
+    let providerFetches = 0;
+    let auditRows = 0;
+    try {
+      await withMockFetch(async (requestInput, init) => {
+        const request = new Request(requestInput, init);
+        if (new URL(request.url).pathname !== `/runs/${runId}/events`) {
+          providerFetches++;
+          return response(false);
+        }
+        const body: unknown = await request.json();
+        assert(
+          body !== null && typeof body === "object" && "events" in body &&
+            Array.isArray(body.events),
+        );
+        const event: unknown = body.events[0];
+        assert(event !== null && typeof event === "object");
+        assertEquals("modelCallId" in event, false);
+        auditRows++;
+        return Response.json({
+          run_id: runId,
+          latest_event_id: 6,
+          appended_count: 1,
+          model_call_captures: [],
+        });
+      }, async () => {
+        const operation = createHostedExecutorModelBroker({
+          projectId: "11111111-1111-4111-8111-111111111111",
+          grant: {
+            maxCalls: 1,
+            maxConcurrentCalls: 1,
+            models: new Map([[modelId, { maxOutputTokens: 4096, providerTools: [] }]]),
+          },
+          resolveModelRuntime: resolver,
+          allowedModelIds: input.allowedModelIds,
+          scope: input.scope,
+          runEventSink: createDurableRunEventSink({ mirror }),
+        }).get("model.generate");
+        assert(operation?.mode === "unary");
+        await assertRejects(async () =>
+          await operation.handle({
+            modelId,
+            options: {
+              prompt: [{
+                role: "user",
+                content: [{ type: "text", text: "x".repeat(10 * 1024 * 1024) }],
+              }],
+            },
+          }, { binding, signal: input.scope.signal, deadline: Date.now() + 60_000 })
+        );
+      });
+      assertEquals(auditRows, 0);
+      assertEquals(providerFetches, 0);
+    } finally {
+      mirror.dispose();
+      revokeModelRuntimeResolver(resolver);
+    }
+  });
+
+  it("binds real concurrent provider calls and retries to case-equivalent UUIDs and exact opaque captures", async () => {
+    const input = resolverOptions();
+    const applicationResolver = createHostedApplicationModelResolver(input);
+    const runId = "22222222-2222-4222-8222-222222222222";
+    const projectId = "abcdef12-abcd-4abc-8def-abcdef123456";
+    const entered = Promise.withResolvers<void>();
+    const acknowledge = Promise.withResolvers<void>();
+    const captures = new Map<string, string>();
+    const acknowledged = new Set<string>();
+    const providerCalls: Array<{ modelCallId: string; eventId: string; stream: boolean }> = [];
+    let streamAttempts = 0;
+    let latestEventId = 5;
+    const mirror = createConversationRunChunkMirror({
+      authToken: "synthetic-append-token",
+      apiUrl: "https://example.com",
+      conversationId: "33333333-3333-4333-8333-333333333333",
+      runId,
+      latestEventId,
+      latestExternalEventSequence: 0,
+    });
+    const forward = new TransformStream<Uint8Array, Uint8Array>();
+    const backward = new TransformStream<Uint8Array, Uint8Array>();
+    const caller = createExecutorChannel({
+      binding,
+      transport: { readable: backward.readable, writable: forward.writable },
+    });
+    const broker = createExecutorChannel({
+      binding,
+      transport: { readable: forward.readable, writable: backward.writable },
+      operations: createHostedExecutorModelBroker({
+        projectId,
+        grant: {
+          maxCalls: 2,
+          maxConcurrentCalls: 2,
+          models: new Map([[modelId, { maxOutputTokens: 4096, providerTools: [] }]]),
+        },
+        resolveModelRuntime: applicationResolver,
+        allowedModelIds: input.allowedModelIds,
+        scope: input.scope,
+        runEventSink: createDurableRunEventSink({ mirror }),
+      }),
+    });
+    try {
+      await withMockFetch(async (requestInput, init) => {
+        const request = new Request(requestInput, init);
+        if (new URL(request.url).pathname === `/runs/${runId}/events`) {
+          const body: unknown = await request.json();
+          assert(
+            body !== null && typeof body === "object" && "events" in body &&
+              Array.isArray(body.events),
+          );
+          const event: unknown = body.events[0];
+          assert(
+            event !== null && typeof event === "object" && "modelCallId" in event &&
+              typeof event.modelCallId === "string",
+          );
+          const id = event.modelCallId;
+          latestEventId++;
+          const eventId = captures.size === 0 ? "9007199254740993" : "9007199254740994";
+          captures.set(id, eventId);
+          if (captures.size === 1) {
+            entered.resolve();
+            await acknowledge.promise;
+          }
+          acknowledged.add(id);
+          return Response.json({
+            run_id: runId,
+            latest_event_id: latestEventId,
+            appended_count: 1,
+            model_call_captures: [{
+              event_id: eventId,
+              model_call_id: id.toUpperCase(),
+              run_id: runId,
+              project_id: projectId.toUpperCase(),
+            }],
+          });
+        }
+        assertEquals(request.headers.get("authorization"), `Bearer ${appToken}`);
+        const id = request.headers.get("x-veryfront-model-call-id");
+        const eventId = request.headers.get("x-veryfront-model-call-capture-event-id");
+        assert(id !== null && eventId !== null);
+        assertEquals(id, id.toUpperCase());
+        assert(acknowledged.has(id.toLowerCase()));
+        assertEquals(eventId, captures.get(id.toLowerCase()));
+        const body: unknown = await request.json();
+        assert(body !== null && typeof body === "object");
+        const stream = "stream" in body && body.stream === true;
+        providerCalls.push({ modelCallId: id, eventId, stream });
+        if (stream && ++streamAttempts === 1) {
+          return Response.json({
+            error: { code: "rate_limit_exceeded", message: "Synthetic retry" },
+          }, {
+            status: 429,
+            headers: { "Retry-After": "0" },
+          });
+        }
+        return response(stream);
+      }, async () => {
+        const resolver = await createExecutorModelRuntimeResolver({
+          channel: caller,
+          allowedModelIds: input.allowedModelIds,
+        });
+        const model = resolver(modelId)!;
+        const pending = Promise.all([
+          model.doGenerate({ prompt }),
+          model.doStream({ prompt }).then((result) => drain(result.stream)),
+        ]);
+        void pending.catch(() => {});
+        await entered.promise;
+        assertEquals(providerCalls.length, 0);
+        acknowledge.resolve();
+        await pending;
+      });
+      assertEquals(captures.size, 2);
+      assertEquals(providerCalls.length, 3);
+      const retries = providerCalls.filter((call) => call.stream);
+      assertEquals(retries.length, 2);
+      assertEquals(retries[0], retries[1]);
+      assertEquals(new Set(providerCalls.map((call) => call.modelCallId)).size, 2);
+    } finally {
+      acknowledge.resolve();
+      caller.close();
+      await broker.closed;
+      mirror.dispose();
+      revokeModelRuntimeResolver(applicationResolver);
+    }
   });
 
   it("keeps application authority in the broker during paired ephemeral generation and streaming", async () => {

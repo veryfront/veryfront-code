@@ -53,7 +53,7 @@ import type { ExecutorBinding } from "#veryfront/agent/executor/protocol.ts";
 import { ExecutorAgentError } from "#veryfront/agent/hosted/executor-agent-schema.ts";
 
 const modelId = "veryfront-cloud/openai/synthetic";
-const owner = { scopeKind: "project" as const, projectId: "project-test" };
+const owner = { scopeKind: "project" as const, projectId: "11111111-1111-4111-8111-111111111111" };
 const source = { type: "release" as const, releaseId: "release-test" };
 const image = `registry.example.test/executor@sha256:${"a".repeat(64)}`;
 const tick = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
@@ -1157,7 +1157,7 @@ function trustedFixture(
   projectAliases?: { name: string; shortName: string }[],
   scope: { owner: HostedExecutorSessionOptions["request"]["owner"]; projectId: string | null } = {
     owner,
-    projectId: "project-test",
+    projectId: owner.projectId,
   },
 ) {
   const f = fixture({ owner: scope.owner, allocationLifetimeMs: 120_000, hardDeadlineMs: 120_000 });
@@ -1165,6 +1165,20 @@ function trustedFixture(
   const steeringEntered = Promise.withResolvers<void>();
   configureCanonical(f.input, () => Promise.resolve(), () => {});
   f.input.installation.grant.execution.projectId = scope.projectId;
+  let captureEventId = 0;
+  f.input.model.runEventSink = async (event) => {
+    if (scope.projectId === null) {
+      assertEquals(event.modelCallId, undefined);
+      return;
+    }
+    assert(typeof event.modelCallId === "string");
+    return {
+      eventId: String(++captureEventId),
+      projectId: scope.projectId,
+      runId: canonicalTestRunId,
+      modelCallId: event.modelCallId,
+    };
+  };
   if (scope.projectId !== null) f.input.installation.capabilities.projectSteering = "steering";
   f.input.installation.grant.allowedToolNames = ["inspect"];
   f.input.installation.grant.remoteToolSourceIds = ["project"];
@@ -1425,7 +1439,7 @@ describe("broker-local trusted runtime", () => {
     assertEquals(observed[0]?.runId, "run-1");
     assertEquals(observed[0]?.authToken, undefined);
     assertEquals(f.projectWire.includes(f.privateMarker), false);
-    assertEquals(f.projectWire.includes('"projectId":"project-test"'), false);
+    assertEquals(f.projectWire.includes(`"projectId":"${owner.projectId}"`), false);
     assert(f.projectWire.includes('"projectId":null'));
   });
 

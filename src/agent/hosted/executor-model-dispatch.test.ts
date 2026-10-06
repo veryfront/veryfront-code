@@ -7,6 +7,10 @@ import type {
   AgentRunModelCallContextEvent,
 } from "#veryfront/runtime/model-call-context.ts";
 import { runWithMandatoryRunEventSink } from "#veryfront/runtime/run-event-sink-context.ts";
+import {
+  getCurrentVeryfrontCloudModelCallCapture,
+  runWithVeryfrontCloudModelCallCapture,
+} from "#veryfront/provider/veryfront-cloud/context.ts";
 import { isPrivateConversationRunEvent } from "../conversation/private-run-event.ts";
 import { createExecutorChannel, type ExecutorOperation } from "../executor/channel.ts";
 import type { ExecutorBinding } from "../executor/protocol.ts";
@@ -15,7 +19,36 @@ import {
   createExecutorModelRuntimeResolver,
   type ExecutorModelDispatch,
 } from "./executor-model-bridge.ts";
-import { createHostedExecutorModelBroker } from "./executor-model-dispatch.ts";
+import { createHostedExecutorModelBroker as createHostedBroker } from "./executor-model-dispatch.ts";
+
+function receiptFor(modelCallId: string | undefined) {
+  if (!modelCallId) throw new TypeError("Expected broker-owned logical call identity");
+  return {
+    eventId: "9007199254740993",
+    projectId: "11111111-1111-4111-8111-111111111111",
+    runId: "22222222-2222-4222-8222-222222222222",
+    modelCallId,
+  };
+}
+
+/** Existing capture scenarios use a fixture writer that acknowledges the exact submitted call. */
+function createHostedExecutorModelBroker(
+  input: Omit<Parameters<typeof createHostedBroker>[0], "projectId">,
+) {
+  const sink = input.runEventSink;
+  if (!sink) {
+    return createHostedBroker({ ...input, projectId: "11111111-1111-4111-8111-111111111111" });
+  }
+  return createHostedBroker({
+    ...input,
+    projectId: "11111111-1111-4111-8111-111111111111",
+    runEventSink: async (event) => {
+      const receipt = receiptFor(event.modelCallId);
+      const acknowledgement = await sink(event);
+      return acknowledgement ?? receipt;
+    },
+  });
+}
 
 const modelId = "veryfront-cloud/openai/synthetic-model";
 const allowedModelIds = new Set([modelId]);
@@ -102,6 +135,119 @@ async function proxy(channels: ReturnType<typeof pair>) {
 const tick = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
 
 describe("hosted executor model dispatch", () => {
+  it("refuses missing, mismatched, and malformed capture receipts before provider dispatch", async () => {
+    for (
+      const sink of [
+        () => undefined,
+        (event: AgentRunModelCallContextEvent) => ({
+          ...receiptFor(event.modelCallId),
+          modelCallId: "44444444-4444-4444-8444-444444444444",
+        }),
+        (event: AgentRunModelCallContextEvent) => ({
+          ...receiptFor(event.modelCallId),
+          eventId: "",
+        }),
+        (event: AgentRunModelCallContextEvent) => ({
+          ...receiptFor(event.modelCallId),
+          projectId: "55555555-5555-4555-8555-555555555555",
+        }),
+      ]
+    ) {
+      let dispatches = 0;
+      const channels = pair(createHostedBroker({
+        projectId: "11111111-1111-4111-8111-111111111111",
+        grant: grant(),
+        allowedModelIds,
+        scope: scope(),
+        resolveModelRuntime: () => model(() => dispatches++),
+        runEventSink: sink,
+      }));
+      try {
+        const runtime = await proxy(channels);
+        await assertRejects(async () => await runtime.doGenerate({ prompt }));
+        await assertRejects(async () => await runtime.doStream({ prompt }));
+        assertEquals(dispatches, 0);
+      } finally {
+        await channels.close();
+      }
+    }
+  });
+
+  it("preserves projectless legacy capture without inheriting a project receipt", async () => {
+    let captures = 0;
+    let dispatches = 0;
+    const channels = pair(createHostedBroker({
+      projectId: null,
+      grant: grant(),
+      allowedModelIds,
+      scope: scope(),
+      resolveModelRuntime: () =>
+        model(() => {
+          dispatches++;
+          assertEquals(getCurrentVeryfrontCloudModelCallCapture(), undefined);
+        }),
+      runEventSink: (event) => {
+        captures++;
+        assertEquals(event.modelCallId, undefined);
+      },
+    }));
+    try {
+      const runtime = await proxy(channels);
+      await runWithVeryfrontCloudModelCallCapture({
+        receipt: receiptFor("33333333-3333-4333-8333-333333333333"),
+        assertActive() {},
+      }, async () => {
+        await runtime.doGenerate({ prompt });
+        const reader = (await runtime.doStream({ prompt })).stream.getReader();
+        while (!(await reader.read()).done) { /* Consume the bounded legacy stream. */ }
+      });
+      assertEquals(captures, 2);
+      assertEquals(dispatches, 2);
+    } finally {
+      await channels.close();
+    }
+  });
+
+  it("accepts case-equivalent capture and project UUIDs while preserving opaque occurrence spelling", async () => {
+    const projectId = "abcdef12-abcd-4abc-8def-abcdef123456";
+    const capturedIds: string[] = [];
+    let dispatches = 0;
+    const channels = pair(createHostedBroker({
+      projectId,
+      grant: grant(),
+      allowedModelIds,
+      scope: scope(),
+      runEventSink(event) {
+        const receipt = receiptFor(event.modelCallId);
+        capturedIds.push(receipt.modelCallId);
+        return {
+          ...receipt,
+          eventId: "Opaque-Capture-9007199254740993",
+          projectId: projectId.toUpperCase(),
+          modelCallId: receipt.modelCallId.toUpperCase(),
+        };
+      },
+      resolveModelRuntime: () =>
+        model(() => {
+          const capture = getCurrentVeryfrontCloudModelCallCapture();
+          assert(capture);
+          assertEquals(capture.eventId, "Opaque-Capture-9007199254740993");
+          assertEquals(capture.projectId, projectId.toUpperCase());
+          assertEquals(capture.modelCallId, capturedIds.at(-1)?.toUpperCase());
+          dispatches++;
+        }),
+    }));
+    try {
+      const runtime = await proxy(channels);
+      await runtime.doGenerate({ prompt });
+      const reader = (await runtime.doStream({ prompt })).stream.getReader();
+      while (!(await reader.read()).done) { /* Consume the acknowledged stream. */ }
+      assertEquals(dispatches, 2);
+    } finally {
+      await channels.close();
+    }
+  });
+
   it("persists the validated request projection before dispatch and isolates sink mutation", async () => {
     const entered = Promise.withResolvers<void>();
     const persisted = Promise.withResolvers<void>();
@@ -162,6 +308,7 @@ describe("hosted executor model dispatch", () => {
       assert(isPrivateConversationRunEvent(events[0]));
       assertEquals<unknown>(events[0], {
         type: "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED",
+        modelCallId: events[0]?.modelCallId,
         model: { id: "synthetic-model", modelProvider: "openai" },
         messages: [{
           role: "system",
@@ -866,6 +1013,74 @@ describe("hosted executor model dispatch", () => {
     }
   });
 
+  it("enters the acknowledged permit scope only around provider invocation", async () => {
+    const modes: string[] = [];
+    let entered = false;
+    const channels = pair(createExecutorModelBroker({
+      allowedModelIds,
+      resolveModelRuntime: () =>
+        model((_options, mode) => {
+          assert(entered);
+          modes.push(mode);
+        }),
+      beforeModelDispatch: () => ({
+        assertActive() {
+          assertEquals(entered, false);
+        },
+        run(operation) {
+          entered = true;
+          try {
+            return operation();
+          } finally {
+            entered = false;
+          }
+        },
+      }),
+    }));
+    try {
+      const runtime = await proxy(channels);
+      await runtime.doGenerate({ prompt });
+      const reader = (await runtime.doStream({ prompt })).stream.getReader();
+      while (!(await reader.read()).done) { /* Consume the bounded stream. */ }
+      assertEquals(modes, ["generate", "stream"]);
+      assertEquals(entered, false);
+    } finally {
+      await channels.close();
+    }
+  });
+
+  it("owns distinct logical identities while concurrent dispatch gates remain pending", async () => {
+    const ready = Promise.withResolvers<void>();
+    const acknowledgement = Promise.withResolvers<void>();
+    const ids: string[] = [];
+    let dispatches = 0;
+    const channels = pair(createExecutorModelBroker({
+      allowedModelIds,
+      resolveModelRuntime: () => model(() => dispatches++),
+      beforeModelDispatch: async (request) => {
+        ids.push(request.identity.modelCallId);
+        if (ids.length === 2) ready.resolve();
+        await acknowledgement.promise;
+      },
+    }));
+    try {
+      const runtime = await proxy(channels);
+      const pending = Promise.all([
+        runtime.doGenerate({ prompt }),
+        runtime.doGenerate({ prompt }),
+      ]);
+      await ready.promise;
+      assertEquals(new Set(ids).size, 2);
+      assertEquals(dispatches, 0);
+      acknowledgement.resolve();
+      await pending;
+      assertEquals(dispatches, 2);
+    } finally {
+      acknowledgement.resolve();
+      await channels.close();
+    }
+  });
+
   it("gives the generic gate a canonical host sequence and an independent request snapshot", async () => {
     const calls: ExecutorModelDispatch[] = [];
     let dispatches = 0;
@@ -891,6 +1106,11 @@ describe("hosted executor model dispatch", () => {
         calls.map((call) => [call.identity.binding, call.identity.sequence, call.mode]),
         [[binding, 1, "generate"], [binding, 2, "stream"]],
       );
+      const logicalIds = calls.map((call) => call.identity.modelCallId);
+      assertEquals(new Set(logicalIds).size, 2);
+      for (const id of logicalIds) {
+        assert(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(id));
+      }
       assertEquals(dispatches, 2);
     } finally {
       await channels.close();

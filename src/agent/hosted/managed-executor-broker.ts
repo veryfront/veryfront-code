@@ -610,6 +610,7 @@ function buildBrokerOperations(
   const scope = { binding, signal, assertActive: () => signal.throwIfAborted() };
   const model = installation.grant.execution.kind === "canonical"
     ? createHostedExecutorModelBroker({
+      projectId: installation.grant.execution.projectId,
       resolveModelRuntime: input.model.resolver,
       allowedModelIds,
       scope,

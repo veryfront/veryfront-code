@@ -11,6 +11,11 @@ import type {
   ModelCallMessage,
 } from "#veryfront/runtime/model-call-context.ts";
 import {
+  type AgentRunModelCallCaptureReceipt,
+  getModelCallCaptureReceiptSchema,
+} from "#veryfront/runtime/model-call-capture-receipt.ts";
+import { runWithVeryfrontCloudModelCallCapture } from "#veryfront/provider/veryfront-cloud/context.ts";
+import {
   DurableRunEventPersistenceError,
   isPrivateConversationRunEvent,
 } from "../conversation/private-run-event.ts";
@@ -46,15 +51,43 @@ interface HostedModelBrokerInput {
  */
 export function createHostedExecutorModelBroker(
   input: HostedModelBrokerInput & {
+    /** Canonical authenticated grant scope; null preserves the legacy projectless lane. */
+    projectId: string | null;
     runEventSink: AgentRunEventSink | undefined;
   },
 ): ReadonlyMap<string, ExecutorOperation> {
   const sink = input.runEventSink;
+  const projectId = input.projectId;
+  if (projectId !== null && typeof projectId !== "string") {
+    throw new TypeError("Hosted model dispatch requires an explicit project scope");
+  }
   if (typeof sink !== "function") {
     throw new DurableRunEventPersistenceError("Hosted model dispatch requires a run event sink");
   }
   return createScopedHostedModelBroker(input, async (request, context) => {
-    await acknowledgePersistence(() => sink(createContextEvent(request)), context.signal);
+    const acknowledgement = await acknowledgePersistence(
+      () => sink(createContextEvent(request, projectId !== null)),
+      context.signal,
+    );
+    if (projectId === null) {
+      if (acknowledgement !== undefined) {
+        throw new DurableRunEventPersistenceError(
+          "Projectless model dispatch cannot accept a project capture receipt",
+        );
+      }
+      return undefined;
+    }
+    const receipt = getModelCallCaptureReceiptSchema().safeParse(acknowledgement);
+    if (
+      !receipt.success ||
+      receipt.data.modelCallId.toLowerCase() !== request.identity.modelCallId.toLowerCase() ||
+      receipt.data.projectId.toLowerCase() !== projectId.toLowerCase()
+    ) {
+      throw new DurableRunEventPersistenceError(
+        "Hosted model capture receipt is missing or invalid",
+      );
+    }
+    return Object.freeze(receipt.data);
   });
 }
 
@@ -77,7 +110,10 @@ export function createEphemeralHostedExecutorModelBroker(
 
 function createScopedHostedModelBroker(
   input: HostedModelBrokerInput,
-  persist?: (request: ExecutorModelDispatch, context: ExecutorOperationContext) => Promise<void>,
+  persist?: (
+    request: ExecutorModelDispatch,
+    context: ExecutorOperationContext,
+  ) => Promise<AgentRunModelCallCaptureReceipt | undefined>,
 ): ReadonlyMap<string, ExecutorOperation> {
   const binding = parseExecutorModelData(getExecutorBindingSchema(), input.scope.binding);
   const lifetime = input.scope.signal;
@@ -112,9 +148,15 @@ function createScopedHostedModelBroker(
       assertPersistedModelOptions(request);
       // Durable callers provide the acknowledging sink. Ephemeral callers
       // perform the same authority/control checks without fabricating events.
-      if (persist) await persist(request, context);
+      const receipt = await persist?.(request, context);
       assertScope(context);
-      return { assertActive: () => assertScope(context) };
+      const assertActive = () => assertScope(context);
+      return {
+        assertActive,
+        run<T>(operation: () => T): T {
+          return runWithVeryfrontCloudModelCallCapture({ receipt, assertActive }, operation);
+        },
+      };
     },
   });
   const bindContext = (context: ExecutorOperationContext): ExecutorOperationContext => {
@@ -165,18 +207,19 @@ function createScopedHostedModelBroker(
   ]));
 }
 
-async function acknowledgePersistence(
-  persist: () => void | Promise<void>,
+async function acknowledgePersistence<T>(
+  persist: () => T | Promise<T>,
   signal: AbortSignal,
-): Promise<void> {
+): Promise<T> {
   signal.throwIfAborted();
   const aborted = Promise.withResolvers<never>();
   const onAbort = () => aborted.reject(new TypeError("Hosted model persistence cancelled"));
   signal.addEventListener("abort", onAbort, { once: true });
   const persistence = Promise.resolve().then(persist);
   try {
-    await Promise.race([persistence, aborted.promise]);
+    const result = await Promise.race([persistence, aborted.promise]);
     signal.throwIfAborted();
+    return result;
   } finally {
     signal.removeEventListener("abort", onAbort);
     // The channel notifies cancelled callers independently. Keep the original
@@ -195,12 +238,16 @@ async function acknowledgePersistence(
  * cannot be represented by that contract and refuse hosted dispatch.
  * The broker's local call sequence is not a new durable event field.
  */
-function createContextEvent(call: ExecutorModelDispatch): AgentRunModelCallContextEvent {
+function createContextEvent(
+  call: ExecutorModelDispatch,
+  projectBound: boolean,
+): AgentRunModelCallContextEvent {
   const options = call.options;
   const modelProvider = resolveModelCallProvider(call.model);
   const request = buildModelCallContextRequest(call.model, options);
   const event: AgentRunModelCallContextEvent = {
     type: "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED",
+    ...(projectBound ? { modelCallId: call.identity.modelCallId } : {}),
     ...(call.model.modelId
       ? {
         model: { id: call.model.modelId, ...(modelProvider ? { modelProvider } : {}) },

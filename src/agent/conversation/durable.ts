@@ -21,6 +21,7 @@ import type {
   FinalizeConversationAgentRunInput,
   TerminalConversationRunStatus,
 } from "./durable-contracts.ts";
+import type { AgentRunModelCallCaptureReceipt } from "#veryfront/runtime/model-call-capture-receipt.ts";
 import {
   AppendConversationRunEventsError,
   isCursorMismatchConversationRunAppendError,
@@ -81,6 +82,8 @@ export type {
 
 const AGENT_RUN_API_TIMEOUT_MS = 15_000;
 type ConversationRunApiFetch = typeof globalThis.fetch;
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED_EVENT_TYPE = "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED";
 
 /**
  * Wrap a trusted transport so durable run persistence stays in the active
@@ -180,6 +183,105 @@ function backfillPurePrivateEventResponseCursor(
     result.run = runResult;
   }
   return result;
+}
+
+function readSubmittedModelCallCaptureIds(events: unknown[]): string[] {
+  const modelCallIds: string[] = [];
+
+  for (const event of events) {
+    if (!isPrivateConversationRunEvent(event) || !event || typeof event !== "object") {
+      continue;
+    }
+    const record = event as Record<string, unknown>;
+    if (record.type !== AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED_EVENT_TYPE) {
+      continue;
+    }
+    if (typeof record.modelCallId === "string" && UUID_PATTERN.test(record.modelCallId)) {
+      modelCallIds.push(record.modelCallId);
+    }
+  }
+
+  return modelCallIds;
+}
+
+function requireUniqueSubmittedModelCallCaptureIds(modelCallIds: string[]): void {
+  const seen = new Set<string>();
+  for (const modelCallId of modelCallIds) {
+    const key = modelCallId.toLowerCase();
+    if (seen.has(key)) {
+      throw new DurableRunEventPersistenceError(
+        "Duplicate model call capture identity in run event append",
+      );
+    }
+    seen.add(key);
+  }
+}
+
+function validateAppendModelCallCaptureReceipts(input: {
+  response: AppendConversationRunEventsResponse;
+  submittedModelCallIds: string[];
+  canonicalRunId: string;
+}): void {
+  const expectedIds = new Set(input.submittedModelCallIds.map((id) => id.toLowerCase()));
+  const receipts = input.response.modelCallCaptures ?? [];
+
+  if (expectedIds.size === 0) {
+    if (receipts.length > 0) {
+      throw new DurableRunEventPersistenceError(
+        "Append receipt returned model call captures for an append without submitted captures",
+      );
+    }
+    return;
+  }
+
+  if (input.response.modelCallCaptures === undefined) {
+    throw new DurableRunEventPersistenceError(
+      "Append receipt is missing model call capture acknowledgements",
+    );
+  }
+
+  if (receipts.length !== expectedIds.size) {
+    throw new DurableRunEventPersistenceError(
+      "Append receipt model call capture acknowledgement count does not match the submitted captures",
+    );
+  }
+
+  const receivedIds = new Set<string>();
+  const receivedEventIds = new Set<string>();
+  const canonicalRunId = input.canonicalRunId.toLowerCase();
+  for (const receipt of receipts) {
+    const modelCallId = receipt.modelCallId.toLowerCase();
+    if (receivedEventIds.has(receipt.eventId)) {
+      throw new DurableRunEventPersistenceError(
+        "Append receipt returned duplicate model call capture event identifiers",
+      );
+    }
+    receivedEventIds.add(receipt.eventId);
+    if (receipt.runId.toLowerCase() !== canonicalRunId) {
+      throw new DurableRunEventPersistenceError(
+        "Append receipt model call capture identifies a different canonical run",
+      );
+    }
+    if (!expectedIds.has(modelCallId)) {
+      throw new DurableRunEventPersistenceError(
+        "Append receipt model call capture does not match a submitted capture",
+      );
+    }
+    if (receivedIds.has(modelCallId)) {
+      throw new DurableRunEventPersistenceError(
+        "Append receipt returned duplicate model call capture acknowledgements",
+      );
+    }
+    receivedIds.add(modelCallId);
+  }
+
+  for (const modelCallId of expectedIds) {
+    if (!receivedIds.has(modelCallId)) {
+      throw new DurableRunEventPersistenceError(
+        "Append receipt is missing a submitted model call capture acknowledgement",
+      );
+    }
+  }
 }
 
 /** Error shape for conversation run terminal state. */
@@ -623,6 +725,7 @@ export async function flushConversationRunEventBatches(input: {
   maxCursorResyncsPerFlush: number;
   abortSignal?: AbortSignal;
   onAppendRequest?: () => void;
+  onModelCallCaptureReceipts?: (receipts: AgentRunModelCallCaptureReceipt[]) => void;
   /** Host-owned transport used by trusted capability-backed callers. */
   fetch?: ConversationRunApiFetch;
 }): Promise<
@@ -686,6 +789,9 @@ export async function flushConversationRunEventBatches(input: {
         abortSignal: input.abortSignal,
         fetch: input.fetch,
       });
+      if (response.modelCallCaptures && response.modelCallCaptures.length > 0) {
+        input.onModelCallCaptureReceipts?.(response.modelCallCaptures);
+      }
       latestEventId = response.latestEventId;
       latestExternalEventSequence = response.latestExternalEventSequence;
     } catch (error) {
@@ -756,6 +862,7 @@ export async function flushConversationRunEventQueue(input: {
   consecutiveFailures?: number;
   abortSignal?: AbortSignal;
   onAppendRequest?: () => void;
+  onModelCallCaptureReceipts?: (receipts: AgentRunModelCallCaptureReceipt[]) => void;
   /** Host-owned transport used by trusted capability-backed callers. */
   fetch?: ConversationRunApiFetch;
 }): Promise<
@@ -814,6 +921,7 @@ export async function flushConversationRunEventQueue(input: {
       maxCursorResyncsPerFlush: input.maxCursorResyncsPerFlush,
       abortSignal: input.abortSignal,
       onAppendRequest: input.onAppendRequest,
+      onModelCallCaptureReceipts: input.onModelCallCaptureReceipts,
       fetch: input.fetch,
     });
 
@@ -881,10 +989,31 @@ export function createConversationRunEventQueueController(input: {
   let disabled = false;
   let disposed = false;
   let appendRequestCount = 0;
+  const modelCallCaptureReceipts = new Map<string, AgentRunModelCallCaptureReceipt>();
   let disableReason: ReturnType<
     ConversationRunEventQueueController["getSnapshot"]
   >["disableReason"];
   let flushTail: Promise<unknown> | null = null;
+
+  function storeModelCallCaptureReceipts(receipts: AgentRunModelCallCaptureReceipt[]): void {
+    for (const receipt of receipts) {
+      const key = receipt.modelCallId.toLowerCase();
+      const existing = modelCallCaptureReceipts.get(key);
+      if (existing) {
+        if (
+          existing.eventId === receipt.eventId &&
+          existing.projectId.toLowerCase() === receipt.projectId.toLowerCase() &&
+          existing.runId.toLowerCase() === receipt.runId.toLowerCase()
+        ) {
+          continue;
+        }
+        throw new DurableRunEventPersistenceError(
+          "Conflicting model call capture acknowledgement for already acknowledged call",
+        );
+      }
+      modelCallCaptureReceipts.set(key, receipt);
+    }
+  }
 
   async function flushOnce(abortSignal?: AbortSignal) {
     abortSignal?.throwIfAborted();
@@ -933,6 +1062,7 @@ export function createConversationRunEventQueueController(input: {
         onAppendRequest: () => {
           appendRequestCount += 1;
         },
+        onModelCallCaptureReceipts: storeModelCallCaptureReceipts,
       });
     } catch (error) {
       if (!disposed) {
@@ -1004,6 +1134,14 @@ export function createConversationRunEventQueueController(input: {
 
       pendingEvents.push(...events);
     },
+    takeModelCallCaptureReceipt(modelCallId) {
+      const key = modelCallId.toLowerCase();
+      const receipt = modelCallCaptureReceipts.get(key);
+      if (receipt) {
+        modelCallCaptureReceipts.delete(key);
+      }
+      return receipt;
+    },
     flush(options) {
       // Serialize overlapping flushes: a second call while one is still
       // awaiting the network would read stale cursors and burn resync budget
@@ -1037,6 +1175,7 @@ export function createConversationRunEventQueueController(input: {
       disposed = true;
       disabled = true;
       pendingEvents = [];
+      modelCallCaptureReceipts.clear();
     },
   };
 }
@@ -1239,7 +1378,7 @@ export async function appendConversationRunEvents(input: {
   }
 
   const canonicalRunId = input.canonicalRunId ?? input.runId;
-  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(canonicalRunId)) {
+  if (!UUID_PATTERN.test(canonicalRunId)) {
     throw new DurableRunEventPersistenceError(
       "Canonical run identity is required for event append",
     );
@@ -1248,6 +1387,8 @@ export async function appendConversationRunEvents(input: {
   const normalizedEvents = normalizeConversationRunEvents(
     input.events as Parameters<typeof normalizeConversationRunEvents>[0],
   );
+  const submittedModelCallCaptureIds = readSubmittedModelCallCaptureIds(normalizedEvents);
+  requireUniqueSubmittedModelCallCaptureIds(submittedModelCallCaptureIds);
   const requiresDurableCursor = normalizedEvents.some(isPrivateConversationRunEvent);
   const isPurePrivateEventBatch = normalizedEvents.length > 0 &&
     normalizedEvents.every(isPrivateConversationRunEvent);
@@ -1316,16 +1457,39 @@ export async function appendConversationRunEvents(input: {
 
     let responseBody = await response.json();
     if (typeof responseBody === "object" && responseBody !== null && "run_id" in responseBody) {
-      if (responseBody.run_id !== canonicalRunId) {
+      if (
+        typeof responseBody.run_id !== "string" ||
+        responseBody.run_id.toLowerCase() !== canonicalRunId.toLowerCase()
+      ) {
         throw new DurableRunEventPersistenceError(
           "Append receipt identifies a different canonical run",
         );
       }
+      const hasRawModelCallCaptures = Object.hasOwn(responseBody, "model_call_captures");
+      const rawModelCallCaptures = responseBody.model_call_captures;
       responseBody = {
         latestEventId: responseBody.latest_event_id,
         latestExternalEventSequence: responseBody.latest_external_event_sequence ??
           input.expectedPreviousExternalEventSequence,
         appendedCount: responseBody.appended_count,
+        ...(hasRawModelCallCaptures
+          ? {
+            modelCallCaptures: Array.isArray(rawModelCallCaptures)
+              ? rawModelCallCaptures.map((receipt) => {
+                if (!receipt || typeof receipt !== "object" || Array.isArray(receipt)) {
+                  return receipt;
+                }
+                const rawReceipt = receipt as Record<string, unknown>;
+                return {
+                  eventId: rawReceipt.event_id,
+                  projectId: rawReceipt.project_id,
+                  runId: rawReceipt.run_id,
+                  modelCallId: rawReceipt.model_call_id,
+                };
+              })
+              : rawModelCallCaptures,
+          }
+          : {}),
         run: {
           runId: input.runId,
           conversationId: input.conversationId,
@@ -1344,7 +1508,13 @@ export async function appendConversationRunEvents(input: {
         input.expectedPreviousExternalEventSequence,
       );
     }
-    return AppendConversationRunEventsResponseSchema.parse(responseBody);
+    const parsed = AppendConversationRunEventsResponseSchema.parse(responseBody);
+    validateAppendModelCallCaptureReceipts({
+      response: parsed,
+      submittedModelCallIds: submittedModelCallCaptureIds,
+      canonicalRunId,
+    });
+    return parsed;
   } catch (error) {
     if (
       timedAbort.signal.aborted &&

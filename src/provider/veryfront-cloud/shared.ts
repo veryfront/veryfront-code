@@ -20,6 +20,7 @@ import {
 } from "#veryfront/platform/compat/http/native-request-init.ts";
 import {
   getCurrentVeryfrontCloudContext,
+  getCurrentVeryfrontCloudModelCallCapture,
   markCurrentVeryfrontCloudBillingGroupUsed,
 } from "./context.ts";
 import {
@@ -753,10 +754,24 @@ export function createVeryfrontCloudFetch(
     IntrinsicReflectApply(HeadersDelete, headers, ["x-goog-api-key"]);
     IntrinsicReflectApply(HeadersDelete, headers, ["x-veryfront-project-slug"]);
     IntrinsicReflectApply(HeadersDelete, headers, ["x-veryfront-billing-group-id"]);
+    IntrinsicReflectApply(HeadersDelete, headers, ["x-veryfront-model-call-id"]);
+    IntrinsicReflectApply(HeadersDelete, headers, ["x-veryfront-model-call-capture-event-id"]);
     IntrinsicReflectApply(HeadersSet, headers, ["Authorization", `Bearer ${trustedApiToken}`]);
 
     if (projectSlug) {
       IntrinsicReflectApply(HeadersSet, headers, ["x-veryfront-project-slug", projectSlug]);
+    }
+
+    const modelCallCapture = getCurrentVeryfrontCloudModelCallCapture();
+    if (modelCallCapture) {
+      IntrinsicReflectApply(HeadersSet, headers, [
+        "x-veryfront-model-call-id",
+        modelCallCapture.modelCallId,
+      ]);
+      IntrinsicReflectApply(HeadersSet, headers, [
+        "x-veryfront-model-call-capture-event-id",
+        modelCallCapture.eventId,
+      ]);
     }
 
     const cloudContext = getCurrentVeryfrontCloudContext();
