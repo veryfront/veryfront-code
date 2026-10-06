@@ -21,7 +21,6 @@ const UNSUPPORTED_CHMOD_ERROR_CODES = new Set([
   "EOPNOTSUPP",
 ]);
 const getOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
-const ObjectPrototype = Object.prototype;
 const createObject = Object.create;
 const defineProperty = Object.defineProperty;
 const hasOwnProperty = Object.prototype.hasOwnProperty;
@@ -39,11 +38,11 @@ const Uint8ArrayByteOffsetGet = getOwnPropertyDescriptor(TypedArrayPrototype, "b
   ?.get as
     | ((this: Uint8Array) => number)
     | undefined;
-const ReadableStreamGetReader = ReadableStream.prototype.getReader;
-const ReadableStreamDefaultReaderCancel = ReadableStreamDefaultReader.prototype.cancel;
-const ReadableStreamDefaultReaderRead = ReadableStreamDefaultReader.prototype.read;
-const ReadableStreamDefaultReaderReleaseLock = ReadableStreamDefaultReader.prototype.releaseLock;
+const ReadableStreamCancel = ReadableStream.prototype.cancel;
+const ReadableStreamPipeTo = ReadableStream.prototype.pipeTo;
+const NativeWritableStream = WritableStream;
 const NativePromise = Promise;
+const NativePromiseResolve = Promise.resolve;
 const NativePromiseThen = Promise.prototype.then;
 
 function createDataDescriptor<T>(
@@ -95,18 +94,28 @@ function bindNativePromiseConstructor<T>(promise: Promise<T>): Promise<T> {
   return promise;
 }
 
+function resolveNativePromise(): Promise<void> {
+  return bindNativePromiseConstructor(
+    reflectApply(NativePromiseResolve, NativePromise, []) as Promise<void>,
+  );
+}
+
+function observeNativePromise(promise: Promise<unknown>): Promise<void> {
+  const observed = new NativePromise<void>((resolve, reject) => {
+    void reflectApply(NativePromiseThen, bindNativePromiseConstructor(promise), [
+      () => resolve(),
+      reject,
+    ]);
+  });
+  return bindNativePromiseConstructor(observed);
+}
+
 function observeCancellation(promise: Promise<unknown>): Promise<void> {
   const observed = new NativePromise<void>((resolve) => {
     const settle = () => resolve();
     void reflectApply(NativePromiseThen, bindNativePromiseConstructor(promise), [settle, settle]);
   });
   return bindNativePromiseConstructor(observed);
-}
-
-function assertNoInheritedThenHook(): void {
-  if (getOwnPropertyDescriptor(ObjectPrototype, "then") !== undefined) {
-    throw new TypeError("Refused to stream private bytes with an inherited then hook installed");
-  }
 }
 
 /** Stable native identity for one filesystem object. */
@@ -789,60 +798,84 @@ export async function writeStreamExclusive(
   open: () => Promise<{ write(chunk: Uint8Array): Promise<number>; close(): void | Promise<void> }>,
   remove: () => Promise<void>,
 ): Promise<number> {
-  const reader = reflectApply(ReadableStreamGetReader, source, []) as ReadableStreamDefaultReader<
-    Uint8Array
-  >;
-  let cancellation: Promise<void> | undefined;
-  const abort = () => {
-    cancellation = observeCancellation(reflectApply(ReadableStreamDefaultReaderCancel, reader, [
-      signal?.reason,
-    ]) as Promise<void>);
-  };
   let handle: Awaited<ReturnType<typeof open>> | undefined;
+  let closed = false;
   let failed = true;
   let bytes = 0;
-  signal?.addEventListener("abort", abort, { once: true });
-  try {
-    signal?.throwIfAborted();
-    handle = await bindNativePromiseConstructor(open());
-    while (true) {
-      signal?.throwIfAborted();
-      assertNoInheritedThenHook();
-      const chunk = await bindNativePromiseConstructor(
-        reflectApply(ReadableStreamDefaultReaderRead, reader, []) as Promise<
-          ReadableStreamReadResult<Uint8Array>
-        >,
+
+  const closeHandle = (): Promise<void> => {
+    if (!handle || closed) return resolveNativePromise();
+    closed = true;
+    const closing = reflectApply(NativePromiseResolve, NativePromise, [handle.close()]) as Promise<
+      unknown
+    >;
+    return observeNativePromise(closing);
+  };
+
+  const cancelSource = (): Promise<void> => {
+    try {
+      return observeCancellation(
+        reflectApply(ReadableStreamCancel, source, [signal?.reason]) as Promise<void>,
       );
+    } catch {
+      return resolveNativePromise();
+    }
+  };
+
+  const writeChunk = (chunk: Uint8Array): Promise<void> => {
+    const writing = (async () => {
       signal?.throwIfAborted();
-      if (chunk.done) break;
+      const current = handle;
+      if (!current) throw new Error("Upload file stream handle unavailable");
       let offset = 0;
-      const byteLength = getByteLength(chunk.value);
+      const byteLength = getByteLength(chunk);
       while (offset < byteLength) {
         signal?.throwIfAborted();
-        const written = await handle.write(createByteWriteView(chunk.value, offset)); // NOSONAR: partial writes must be sequenced to preserve byte order and backpressure.
+        const written = await bindNativePromiseConstructor(
+          current.write(createByteWriteView(chunk, offset)), // NOSONAR: partial writes must be sequenced to preserve byte order and backpressure.
+        );
         if (written <= 0) throw new Error("Upload file write made no progress");
         offset += written;
       }
       bytes += byteLength;
+    })();
+    return bindNativePromiseConstructor(writing);
+  };
+
+  let pipeStarted = false;
+  try {
+    signal?.throwIfAborted();
+    handle = await bindNativePromiseConstructor(open());
+    const sink = createObject(null) as UnderlyingSink<Uint8Array>;
+    sink.write = writeChunk;
+    sink.close = closeHandle;
+    sink.abort = closeHandle;
+    const options = createObject(null) as StreamPipeOptions;
+    if (signal) options.signal = signal;
+    const strategy = createObject(null) as QueuingStrategy<Uint8Array>;
+    strategy.highWaterMark = 1;
+    const writable = new NativeWritableStream<Uint8Array>(sink, strategy);
+    try {
+      pipeStarted = true;
+      await bindNativePromiseConstructor(
+        reflectApply(ReadableStreamPipeTo, source, [writable, options]) as Promise<void>,
+      );
+    } catch (error) {
+      if (signal?.aborted && signal.reason instanceof Error) throw signal.reason;
+      throw error;
     }
-    await handle.close();
     failed = false;
     return bytes;
   } finally {
-    signal?.removeEventListener("abort", abort);
     if (failed) {
-      await (cancellation ??
-        observeCancellation(
-          reflectApply(ReadableStreamDefaultReaderCancel, reader, []) as Promise<void>,
-        ));
+      if (!pipeStarted) await cancelSource();
       if (handle) {
         try {
-          await handle.close();
+          await closeHandle();
         } finally {
           await remove();
         }
       }
     }
-    reflectApply(ReadableStreamDefaultReaderReleaseLock, reader, []);
   }
 }

@@ -167,6 +167,74 @@ describe("filesystem stream intrinsic boundary", () => {
     }
   });
 
+  it("closes through captured promise intrinsics", async () => {
+    const nativeThen = Promise.prototype.then;
+    let hooked = false;
+    const source = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new Uint8Array([1]));
+        controller.close();
+      },
+    });
+    const writing = writeStreamExclusive(
+      source,
+      undefined,
+      async () => ({
+        write(chunk: Uint8Array) {
+          return Promise.resolve(chunk.byteLength);
+        },
+        close() {
+          Promise.prototype.then = function () {
+            hooked = true;
+            Promise.prototype.then = nativeThen;
+            return new Promise(() => {});
+          };
+        },
+      }),
+      async () => {},
+    );
+    let timeoutReached!: () => void;
+    const timeoutPromise = new Promise<"timeout">((resolve) => {
+      timeoutReached = () => resolve("timeout");
+    });
+    const timeout = setTimeout(() => timeoutReached(), 30);
+    try {
+      const result = await Promise.race([writing, timeoutPromise]);
+      assertEquals(result, 1);
+      assertEquals(hooked, false);
+      assertEquals(source.locked, false);
+    } finally {
+      clearTimeout(timeout);
+      Promise.prototype.then = nativeThen;
+    }
+  });
+
+  it("cancels the source when opening fails before piping", async () => {
+    let cancelled = false;
+    const source = new ReadableStream<Uint8Array>({
+      cancel() {
+        cancelled = true;
+      },
+    });
+
+    await assertRejects(
+      () =>
+        writeStreamExclusive(
+          source,
+          undefined,
+          async () => {
+            throw new Error("open failed");
+          },
+          async () => {},
+        ),
+      Error,
+      "open failed",
+    );
+
+    assertEquals(cancelled, true);
+    assertEquals(source.locked, false);
+  });
+
   it("discards thenable cancellation rejection reasons during cleanup", async () => {
     const controller = new AbortController();
     let notifyRead!: () => void;
@@ -199,9 +267,34 @@ describe("filesystem stream intrinsic boundary", () => {
     assertEquals(removed, true);
   });
 
-  it("refuses inherited then hooks before reading private chunks", async () => {
+  it("keeps pending stream chunks out of inherited then hooks", async () => {
     const objectThen = Object.getOwnPropertyDescriptor(Object.prototype, "then");
     let observed = "";
+    let controller!: ReadableStreamDefaultController<Uint8Array>;
+    let notifyPull!: () => void;
+    const pulled = new Promise<void>((resolve) => {
+      notifyPull = resolve;
+    });
+    const source = new ReadableStream<Uint8Array>({
+      start(stream) {
+        controller = stream;
+      },
+      pull() {
+        notifyPull();
+      },
+    });
+    const writing = writeStreamExclusive(
+      source,
+      undefined,
+      async () => ({
+        write(chunk: Uint8Array) {
+          return Promise.resolve(chunk.byteLength);
+        },
+        close() {},
+      }),
+      async () => {},
+    );
+    await pulled;
     Object.defineProperty(Object.prototype, "then", {
       configurable: true,
       get() {
@@ -217,28 +310,9 @@ describe("filesystem stream intrinsic boundary", () => {
       },
     });
     try {
-      const source = new ReadableStream<Uint8Array>({
-        start(controller) {
-          controller.enqueue(new TextEncoder().encode("private-inherited-then"));
-          controller.close();
-        },
-      });
-      await assertRejects(
-        () =>
-          writeStreamExclusive(
-            source,
-            undefined,
-            async () => ({
-              write(chunk: Uint8Array) {
-                return Promise.resolve(chunk.byteLength);
-              },
-              close() {},
-            }),
-            async () => {},
-          ),
-        TypeError,
-        "inherited then hook",
-      );
+      controller.enqueue(new TextEncoder().encode("private-inherited-then"));
+      controller.close();
+      assertEquals(await writing, 22);
     } finally {
       if (objectThen) Object.defineProperty(Object.prototype, "then", objectThen);
       else delete (Object.prototype as { then?: unknown }).then;
@@ -344,6 +418,44 @@ describe("filesystem stream intrinsic boundary", () => {
     }
     await new Promise((resolve) => setTimeout(resolve, 0));
     assertEquals(exposed, false);
+  });
+
+  it("keeps chunks out of inherited writable strategy hooks", async () => {
+    const strategySize = Object.getOwnPropertyDescriptor(Object.prototype, "size");
+    let observed = "";
+    const source = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode("private-strategy-hook"));
+        controller.close();
+      },
+    });
+    Object.defineProperty(Object.prototype, "size", {
+      configurable: true,
+      value(chunk: Uint8Array) {
+        observed = new TextDecoder().decode(chunk);
+        return 1;
+      },
+    });
+    try {
+      assertEquals(
+        await writeStreamExclusive(
+          source,
+          undefined,
+          async () => ({
+            write(chunk: Uint8Array) {
+              return Promise.resolve(chunk.byteLength);
+            },
+            close() {},
+          }),
+          async () => {},
+        ),
+        21,
+      );
+    } finally {
+      if (strategySize) Object.defineProperty(Object.prototype, "size", strategySize);
+      else delete (Object.prototype as { size?: unknown }).size;
+    }
+    assertEquals(observed, "");
   });
 
   it("writes partial chunks without project subarray hooks", async () => {
