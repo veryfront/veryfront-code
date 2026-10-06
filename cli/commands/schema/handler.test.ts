@@ -2,7 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { parseCliArgs } from "#cli/shared/args";
-import { parseSchemaArgs } from "./handler.ts";
+import { handleSchemaCommand, parseSchemaArgs } from "./handler.ts";
 import { generateCommandSchema, generateSchema } from "./command.ts";
 
 describe("Schema Command", () => {
@@ -118,6 +118,57 @@ describe("Schema Command", () => {
     it("returns empty options for commands without them", () => {
       const schema = generateCommandSchema("mcp");
       assertEquals(Array.isArray(schema?.options), true);
+    });
+  });
+
+  describe("handleSchemaCommand", () => {
+    const originalLog = console.log;
+
+    async function withCapturedOutput(fn: () => Promise<void>): Promise<string[]> {
+      const output: string[] = [];
+      console.log = (...args: unknown[]) => output.push(args.map(String).join(" "));
+      try {
+        await fn();
+      } finally {
+        console.log = originalLog;
+      }
+      return output;
+    }
+
+    it("prints a known command schema", async () => {
+      const output = await withCapturedOutput(() =>
+        handleSchemaCommand(parseCliArgs(["schema", "deploy", "--json"]))
+      );
+
+      assertEquals(output.length, 1);
+      const schema = JSON.parse(output[0]!);
+      assertEquals(schema.name, "deploy");
+      assertEquals(schema.category, "deploy");
+    });
+
+    it("throws a typed usage error for unknown command schemas", async () => {
+      const error = await handleSchemaCommand(parseCliArgs(["schema", "does-not-exist", "--json"]))
+        .then(
+          () => null,
+          (caught) => caught,
+        );
+
+      assertEquals(error?.slug, "invalid-argument");
+      assertEquals(error?.context.command, "schema");
+      assertEquals(error?.context.requestedCommand, "does-not-exist");
+    });
+
+    it("prints the category-filtered schema", async () => {
+      const output = await withCapturedOutput(() =>
+        handleSchemaCommand(parseCliArgs(["schema", "--category", "auth", "--json"]))
+      );
+
+      assertEquals(output.length, 1);
+      const schema = JSON.parse(output[0]!);
+      assertEquals(
+        schema.commands.every((command: { category: string }) => command.category === "auth"),
+        true,
+      );
     });
   });
 });
