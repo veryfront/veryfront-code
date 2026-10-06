@@ -265,27 +265,29 @@ export async function downloadUploadToFile(
 ): Promise<{ uploadPath: string; localPath: string; bytes: number }> {
   const fs = createFileSystem();
   signal?.throwIfAborted();
-  const signedUrl = await client.get<SignedUrlResponse>(
-    buildUploadSignedUrlPath(projectSlug, uploadPath),
-    undefined,
+  if (!client.getStream) throw new Error("API client does not support upload downloads");
+  const response = await client.getStream(
+    `${buildUploadsListUrl(projectSlug)}/${encodeURIComponent(normalizeUploadPath(uploadPath))}`,
     { signal },
   );
-  signal?.throwIfAborted();
-  const response = await fetch(signedUrl.signed_url, { signal });
-
-  if (!response.ok) {
-    throw new Error(`Failed to download upload: ${uploadPath}`);
-  }
-
-  const bytes = new Uint8Array(await response.arrayBuffer());
-  signal?.throwIfAborted();
   const localPath = resolveUploadOutputPath(uploadPath, outputDir);
-  await fs.mkdir(dirname(localPath), { recursive: true });
-  signal?.throwIfAborted();
-  await fs.writeFile(localPath, bytes);
-  signal?.throwIfAborted();
-
-  return { uploadPath: normalizeUploadPath(uploadPath), localPath, bytes: bytes.byteLength };
+  const temporaryPath = join(dirname(localPath), `.vf-download-${crypto.randomUUID()}`);
+  let created = false;
+  try {
+    await fs.mkdir(dirname(localPath), { recursive: true });
+    if (!fs.writeFileStream || !fs.rename) {
+      throw new Error("Filesystem does not support streaming upload downloads");
+    }
+    const bytes = await fs.writeFileStream(temporaryPath, response, signal);
+    created = true;
+    signal?.throwIfAborted();
+    await fs.rename(temporaryPath, localPath);
+    created = false;
+    return { uploadPath: normalizeUploadPath(uploadPath), localPath, bytes };
+  } finally {
+    await response.cancel().catch(() => {});
+    if (created) await fs.remove(temporaryPath);
+  }
 }
 
 export async function uploadLocalFileToUploads(

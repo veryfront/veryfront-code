@@ -1,3 +1,4 @@
+import { createVeryfrontApiDownloadOutboundFetch } from "#veryfront/security/http/outbound-fetch.ts";
 import { createWorkflowAgentNodeRunner } from "./workflow-agent-child.ts";
 import { adaptManagedEvalRunStream } from "./managed-eval-run-stream.ts";
 import { RunStopRegistry } from "#veryfront/internal-agents/run-stop-registry.ts";
@@ -2224,6 +2225,7 @@ async function destroyWorkflowClient(
 }
 
 interface RuntimeApiClient {
+  getStream(path: string, options?: { signal?: AbortSignal }): Promise<ReadableStream<Uint8Array>>;
   get<T>(
     path: string,
     params?: Record<string, string>,
@@ -2895,6 +2897,7 @@ function createRuntimeApiClient(
   }
   // Not the global fetch, which project code loaded for the run can replace.
   const send = createVeryfrontApiOriginBoundOutboundFetch(apiUrl);
+  const download = createVeryfrontApiDownloadOutboundFetch(apiUrl);
 
   async function requestJson<T>(
     method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE",
@@ -2934,6 +2937,30 @@ function createRuntimeApiClient(
   }
 
   return {
+    async getStream(
+      path: string,
+      options?: { signal?: AbortSignal },
+    ): Promise<ReadableStream<Uint8Array>> {
+      const response = await download(
+        `${apiUrl}${path}`,
+        createNativeRequestInit(undefined, {
+          method: "GET",
+          redirect: "error",
+          signal: options?.signal ?? defaultSignal,
+          headers: { Authorization: `Bearer ${token}`, Accept: "application/octet-stream" },
+        }),
+      );
+      if (
+        !response.ok || !response.body ||
+        response.headers.get("content-type")?.split(";")[0] !== "application/octet-stream"
+      ) {
+        await response.body?.cancel();
+        throw API_CLIENT_ERROR.create({
+          detail: `Veryfront API upload download failed: ${response.status}`,
+        });
+      }
+      return response.body;
+    },
     get<T>(
       path: string,
       params?: Record<string, string>,

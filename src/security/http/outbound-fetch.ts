@@ -1,3 +1,5 @@
+import { primordialArraySet } from "#veryfront/platform/compat/primordials/array.ts";
+import { primordialPromiseAllSettled } from "#veryfront/platform/compat/primordials/promise.ts";
 /**
  * Host-owned outbound HTTP boundary.
  *
@@ -11,7 +13,7 @@ import { getHostEnvExcludingEnvFile } from "#veryfront/platform/compat/process/e
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { fetchWithPinnedAddresses } from "#veryfront/platform/compat/http/pinned-fetch.ts";
 import { createNativeRequestInit } from "#veryfront/platform/compat/http/native-request-init.ts";
-import { isBun } from "#veryfront/platform/compat/runtime.ts";
+import { isBun, isNode } from "#veryfront/platform/compat/runtime.ts";
 import {
   guardedEgressFetch,
   isInternalEgressOverrideEnabled,
@@ -420,6 +422,7 @@ function createOriginBoundFetchWithTransport(
   transport: OutboundFetchTransport,
   allowHostInternalEgress = false,
   allowOperatorVeryfrontApiOrigin = false,
+  retainTransportSettlement = false,
 ): typeof fetch {
   const base = new NativeURL(baseUrl);
   const baseProtocol = readNativeURLString(base, URLProtocolGet);
@@ -448,21 +451,49 @@ function createOriginBoundFetchWithTransport(
     // Keep a Request input intact so provider SDKs do not lose its method,
     // headers, body, signal, or other request-level semantics at this boundary.
     const guardedInput: RequestInfo | URL = isRequestInput ? (input as Request) : target;
-    return await fetchWithBoundaryErrors(
-      guardedInput,
-      createNativeRequestInit(init, { redirect: "error" }),
-      {
-        authorizeUrl(url) {
-          if (readNativeURLString(url, URLOriginGet) !== baseOrigin) {
-            throw new OutboundRequestBlockedError(
-              "Provider request blocked: destination origin is not authorized",
-            );
+    const operations: Promise<Response>[] = [];
+    const track = (operation: Promise<Response>): Promise<Response> => {
+      primordialArraySet(operations, operations.length, operation);
+      return operation;
+    };
+    const pinnedFetch = transport.pinnedFetch ??
+      ((isNode || isBun) ? fetchWithPinnedAddresses : undefined);
+    const requestTransport = retainTransportSettlement
+      ? {
+        ...transport,
+        fetch: ((fetchInput: RequestInfo | URL, fetchInit?: RequestInit) =>
+          track(transport.fetch(fetchInput, fetchInit))) as typeof transport.fetch,
+        ...(pinnedFetch
+          ? {
+            pinnedFetch: ((url, addresses, requestInit) =>
+              track(
+                pinnedFetch(url, addresses, requestInit),
+              )) as WorkerEgressPinnedFetch,
           }
+          : {}),
+      }
+      : transport;
+    try {
+      return await fetchWithBoundaryErrors(
+        guardedInput,
+        createNativeRequestInit(init, { redirect: "error" }),
+        {
+          authorizeUrl(url) {
+            if (readNativeURLString(url, URLOriginGet) !== baseOrigin) {
+              throw new OutboundRequestBlockedError(
+                "Provider request blocked: destination origin is not authorized",
+              );
+            }
+          },
         },
-      },
-      transport,
-      allowInternalEgress,
-    );
+        requestTransport,
+        allowInternalEgress,
+      );
+    } finally {
+      // Aborting the guard does not prove a non-cooperative transport has stopped.
+      // Keep the download pending until every started host transport settles.
+      if (retainTransportSettlement) await primordialPromiseAllSettled(operations);
+    }
   };
 }
 
@@ -633,6 +664,11 @@ export function createOriginBoundOutboundFetch(baseUrl: string): typeof fetch {
  */
 export function createVeryfrontApiOriginBoundOutboundFetch(baseUrl: string): typeof fetch {
   return createOriginBoundFetchWithTransport(baseUrl, getTrustedHostTransport(), false, true);
+}
+
+/** Authenticated API download boundary. Retains actual transport settlement after cancellation. */
+export function createVeryfrontApiDownloadOutboundFetch(baseUrl: string): typeof fetch {
+  return createOriginBoundFetchWithTransport(baseUrl, getTrustedHostTransport(), false, true, true);
 }
 
 /** @internal Bind a host-selected sandbox runtime origin while allowing private service DNS. */

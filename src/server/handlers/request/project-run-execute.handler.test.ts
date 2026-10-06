@@ -2222,17 +2222,18 @@ describe("server/handlers/request/project-run-execute.handler", () => {
           : input instanceof Request
           ? input.url
           : input.toString();
-        if (url.endsWith("/projects/demo-project/uploads/uploads%2Fguide.md/url")) {
-          return new Response(
-            JSON.stringify({
-              signed_url: "https://signed.example.test/guide.md",
-              expires_at: "2026-09-30T23:00:00.000Z",
-            }),
-            { status: 200, headers: { "Content-Type": "application/json" } },
+        if (url.endsWith("/projects/demo-project/uploads/uploads%2Fguide.md")) {
+          const observed = observeFetchRequestInit(init);
+          assertEquals(new Headers(observed.headers).get("authorization"), "Bearer test-token");
+          assertEquals(new Headers(observed.headers).get("accept"), "application/octet-stream");
+          assertEquals(
+            observed.redirect,
+            "manual",
+            "the guard inspects redirects before following",
           );
-        }
-        if (url === "https://signed.example.test/guide.md") {
-          return new Response("# Guide\n\nCancellation-safe knowledge.", { status: 200 });
+          return new Response("# Guide\n\nCancellation-safe knowledge.", {
+            headers: { "Content-Type": "application/octet-stream" },
+          });
         }
         assertStringIncludes(url, "/projects/demo-project/files/knowledge%2Fguide.md");
         uploads.push({ url, body: requestJsonBody(init) ?? {} });
@@ -9706,15 +9707,11 @@ describe("server/handlers/request/project-run-execute.handler cancellation", () 
           acknowledgements.push(siblingSettled);
           return Response.json({ acknowledged: true });
         }
-        for (const name of ["first", "sibling"]) {
-          if (url.endsWith(`/uploads/uploads%2F${name}.md/url`)) {
-            return Response.json({ signed_url: `https://signed.example.test/${name}.md` });
-          }
-        }
-        assertStringIncludes(url, "https://signed.example.test/");
+        assertStringIncludes(url, "/uploads/uploads%2F");
+        assertEquals(url.endsWith("/url"), false, "downloads use authenticated API content");
         downloads++;
         if (downloads === 2) started.resolve();
-        if (url.endsWith("/first.md")) return await first.promise;
+        if (url.endsWith("%2Ffirst.md")) return await first.promise;
         try {
           return await sibling.promise;
         } finally {

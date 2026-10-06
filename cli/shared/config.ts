@@ -848,6 +848,8 @@ export interface ApiReadOptions {
 }
 
 export interface ApiClient {
+  /** Authenticated binary GET. Redirects are rejected. */
+  getStream?(path: string, options?: ApiReadOptions): Promise<ReadableStream<Uint8Array>>;
   get<T>(
     path: string,
     params?: Record<string, string>,
@@ -893,14 +895,16 @@ export function createApiClient(config: ResolvedConfig): ApiClient {
     url: string,
     body?: unknown,
     signal?: AbortSignal,
+    binary = false,
   ): Promise<T> {
     const response = await fetch(url, {
       method,
+      ...(binary ? { redirect: "error" as const } : {}),
       ...(signal ? { signal } : {}),
       headers: {
         Authorization: `Bearer ${apiToken}`,
         "Content-Type": "application/json",
-        Accept: "application/json",
+        Accept: binary ? "application/octet-stream" : "application/json",
         "x-veryfront-client-version": VERSION,
       },
       body: body ? JSON.stringify(body) : undefined,
@@ -926,6 +930,16 @@ export function createApiClient(config: ResolvedConfig): ApiClient {
 
     if (response.status === 204) return undefined as T;
 
+    if (binary) {
+      if (
+        !response.body ||
+        response.headers.get("content-type")?.split(";")[0] !== "application/octet-stream"
+      ) {
+        await response.body?.cancel();
+        throw new Error("API did not return upload content");
+      }
+      return response.body as T;
+    }
     return response.json() as Promise<T>;
   }
 
@@ -940,6 +954,7 @@ export function createApiClient(config: ResolvedConfig): ApiClient {
     body?: unknown,
     params?: Record<string, string>,
     options: ApiReadOptions = {},
+    binary = false,
   ): Promise<T> {
     const url = new URL(`${apiUrl}${path}`);
 
@@ -953,7 +968,7 @@ export function createApiClient(config: ResolvedConfig): ApiClient {
 
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
       try {
-        return await requestOnce<T>(method, urlStr, body, options.signal);
+        return await requestOnce<T>(method, urlStr, body, options.signal, binary);
       } catch (error) {
         lastError = error;
 
@@ -979,6 +994,9 @@ export function createApiClient(config: ResolvedConfig): ApiClient {
   }
 
   return {
+    getStream(path: string, options?: ApiReadOptions): Promise<ReadableStream<Uint8Array>> {
+      return request<ReadableStream<Uint8Array>>("GET", path, undefined, undefined, options, true);
+    },
     get<T>(
       path: string,
       params?: Record<string, string>,

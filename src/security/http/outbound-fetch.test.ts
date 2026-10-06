@@ -16,6 +16,7 @@ import {
   __runWithOutboundFetchTransportForTests,
   createOriginBoundOutboundFetch,
   createOutboundFetchBoundary,
+  createVeryfrontApiDownloadOutboundFetch,
   createVeryfrontApiOriginBoundOutboundFetch,
   guardedOutboundFetch,
   HOST_ALLOWED_INTERNAL_PROVIDER_ORIGINS_ENV,
@@ -808,5 +809,43 @@ describe("createVeryfrontApiOriginBoundOutboundFetch", () => {
         });
       });
     }
+  });
+});
+
+describe("authenticated download transport settlement", () => {
+  it("retains the host promise without invoking an inherited indexed setter", async () => {
+    const responsePromise = Promise.resolve(new Response("content"));
+    let exposed = false;
+    const original = Object.getOwnPropertyDescriptor(Array.prototype, "0");
+    const fetchImpl = (() => {
+      Object.defineProperty(Array.prototype, "0", {
+        configurable: true,
+        set(value: unknown) {
+          if (value === responsePromise) exposed = true;
+          Object.defineProperty(this, "0", {
+            value,
+            configurable: true,
+            writable: true,
+            enumerable: true,
+          });
+        },
+      });
+      return responsePromise;
+    }) as typeof fetch;
+    try {
+      await __runWithOutboundFetchTransportForTests({
+        fetch: fetchImpl,
+        pinnedFetch: () => fetchImpl("https://api.example.test/file"),
+        resolveHost: () => Promise.resolve(["93.184.216.34"]),
+      }, async () => {
+        const download = createVeryfrontApiDownloadOutboundFetch("https://api.example.test");
+        const response = await download("https://api.example.test/file");
+        await response.body?.cancel();
+      });
+    } finally {
+      if (original) Object.defineProperty(Array.prototype, "0", original);
+      else delete (Array.prototype as unknown as Record<string, unknown>)["0"];
+    }
+    assertEquals(exposed, false);
   });
 });

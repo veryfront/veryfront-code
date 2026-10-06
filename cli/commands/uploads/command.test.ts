@@ -23,11 +23,13 @@ import type { ApiClient } from "#cli/shared/config";
 import type { ParsedArgs } from "#cli/shared/types";
 
 function createMockClient(overrides: {
+  getStream?: (path: string) => Promise<ReadableStream<Uint8Array>>;
   get?: (path: string, params?: Record<string, string>) => Promise<unknown>;
   post?: (path: string, body?: unknown) => Promise<unknown>;
   delete?: (path: string) => Promise<unknown>;
 } = {}): ApiClient {
   return {
+    getStream: overrides.getStream,
     get: async <T>(path: string, params?: Record<string, string>): Promise<T> => {
       const result = await (overrides.get?.(path, params) ?? Promise.resolve({ data: [] }));
       return result as T;
@@ -150,38 +152,64 @@ describe("uploadsCommand", () => {
 });
 
 describe("downloadUploadToFile", () => {
-  it("downloads signed-url content into the output directory", async () => {
-    const originalFetch = globalThis.fetch;
+  it("downloads authenticated API content into the output directory", async () => {
     const tempDir = await Deno.makeTempDir();
-
-    globalThis.fetch = async (input: string | URL | Request) => {
-      const url = typeof input === "string"
-        ? input
-        : input instanceof URL
-        ? input.toString()
-        : input.url;
-      if (url === "https://signed.example.test/contracts/q1.pdf") {
-        return new Response("quarterly report", { status: 200 });
-      }
-      throw new Error(`Unexpected fetch: ${url}`);
-    };
-
+    let requestedPath = "";
     try {
       const client = createMockClient({
-        get: () =>
-          Promise.resolve({
-            signed_url: "https://signed.example.test/contracts/q1.pdf",
-            expires_at: "2026-03-17T12:00:00.000Z",
-          }),
+        getStream: (path) => {
+          requestedPath = path;
+          return Promise.resolve(new Response("quarterly report").body!);
+        },
       });
-
       const result = await downloadUploadToFile(client, "my-project", "contracts/q1.pdf", tempDir);
-      const text = await Deno.readTextFile(result.localPath);
-
-      assertStringIncludes(result.localPath, "/contracts/q1.pdf");
-      assertEquals(text, "quarterly report");
+      assertEquals(requestedPath, "/projects/my-project/uploads/contracts%2Fq1.pdf");
+      assertEquals(await Deno.readTextFile(result.localPath), "quarterly report");
+      assertEquals(result.bytes, 16);
     } finally {
-      globalThis.fetch = originalFetch;
+      await Deno.remove(tempDir, { recursive: true });
+    }
+  });
+  it("downloads filenames near the filesystem component length limit", async () => {
+    const tempDir = await Deno.makeTempDir();
+    const filename = `${"a".repeat(220)}.pdf`;
+    try {
+      const client = createMockClient({
+        getStream: () => Promise.resolve(new Response("content").body!),
+      });
+      const result = await downloadUploadToFile(client, "my-project", filename, tempDir);
+      assertEquals(await Deno.readTextFile(result.localPath), "content");
+    } finally {
+      await Deno.remove(tempDir, { recursive: true });
+    }
+  });
+  it("preserves the existing output and removes temporary data on a download failure", async () => {
+    const tempDir = await Deno.makeTempDir();
+    await Deno.writeTextFile(`${tempDir}/file`, "original");
+    try {
+      const client = createMockClient({
+        getStream: () =>
+          Promise.resolve(
+            new ReadableStream({
+              start(controller) {
+                controller.enqueue(new TextEncoder().encode("partial"));
+              },
+              pull(controller) {
+                controller.error(new Error("download interrupted"));
+              },
+            }),
+          ),
+      });
+      await assertRejects(
+        () => downloadUploadToFile(client, "my-project", "file", tempDir),
+        Error,
+        "download interrupted",
+      );
+      assertEquals(await Deno.readTextFile(`${tempDir}/file`), "original");
+      const names = [];
+      for await (const entry of Deno.readDir(tempDir)) names.push(entry.name);
+      assertEquals(names, ["file"]);
+    } finally {
       await Deno.remove(tempDir, { recursive: true });
     }
   });

@@ -107,6 +107,12 @@ export interface FileSystem {
   ): Promise<Uint8Array>;
   writeTextFile(path: string, data: string): Promise<void>;
   writeFile(path: string, data: Uint8Array): Promise<void>;
+  /** Create an exclusive file and stream bytes without buffering the complete input. */
+  writeFileStream?(
+    path: string,
+    source: ReadableStream<Uint8Array>,
+    signal?: AbortSignal,
+  ): Promise<number>;
   createFileBytesExclusive?(path: string, data: Uint8Array): Promise<void>;
   /** Atomically replace a path when same-filesystem rename is supported. */
   rename?(from: string, to: string): Promise<void>;
@@ -128,7 +134,8 @@ export interface FileSystem {
 }
 
 interface NodeFsPromises {
-  open(path: string, flags: "r"): Promise<{
+  open(path: string, flags: "r" | "wx", mode?: number): Promise<{
+    write(buffer: Uint8Array): Promise<{ bytesWritten: number }>;
     read(buffer: Uint8Array): Promise<{ bytesRead: number }>;
     close(): Promise<void>;
   }>;
@@ -251,6 +258,21 @@ class NodeFileSystem implements FileSystem {
   async writeFile(path: string, data: Uint8Array): Promise<void> {
     await this.ensureInitialized();
     await this.getFs().writeFile(path, data);
+  }
+
+  async writeFileStream(
+    path: string,
+    source: ReadableStream<Uint8Array>,
+    signal?: AbortSignal,
+  ): Promise<number> {
+    await this.ensureInitialized();
+    return await writeStreamExclusive(source, signal, async () => {
+      const handle = await this.getFs().open(path, "wx", 0o600);
+      return {
+        write: async (chunk: Uint8Array) => (await handle.write(chunk)).bytesWritten,
+        close: () => handle.close(),
+      };
+    }, () => this.remove(path));
   }
 
   async rename(from: string, to: string): Promise<void> {
@@ -389,6 +411,17 @@ class DenoFileSystem implements FileSystem {
 
   async writeFile(path: string, data: Uint8Array): Promise<void> {
     await denoGlobal().writeFile(path, data);
+  }
+
+  async writeFileStream(
+    path: string,
+    source: ReadableStream<Uint8Array>,
+    signal?: AbortSignal,
+  ): Promise<number> {
+    return await writeStreamExclusive(source, signal, async () => {
+      const handle = await denoGlobal().open(path, { write: true, createNew: true, mode: 0o600 });
+      return { write: (chunk: Uint8Array) => handle.write(chunk), close: () => handle.close() };
+    }, () => this.remove(path));
   }
 
   async rename(from: string, to: string): Promise<void> {
@@ -685,5 +718,55 @@ export function isAlreadyExistsError(error: unknown): boolean {
     return hasOwnDataValue(error, "code", "EEXIST");
   } catch {
     return false;
+  }
+}
+
+async function writeStreamExclusive(
+  source: ReadableStream<Uint8Array>,
+  signal: AbortSignal | undefined,
+  open: () => Promise<{ write(chunk: Uint8Array): Promise<number>; close(): void | Promise<void> }>,
+  remove: () => Promise<void>,
+): Promise<number> {
+  const reader = source.getReader();
+  const abort = () => {
+    void reader.cancel(signal?.reason).catch(() => {});
+  };
+  let handle: Awaited<ReturnType<typeof open>> | undefined;
+  let failed = true;
+  let bytes = 0;
+  signal?.addEventListener("abort", abort, { once: true });
+  try {
+    signal?.throwIfAborted();
+    handle = await open();
+    while (true) {
+      signal?.throwIfAborted();
+      const chunk = await reader.read();
+      signal?.throwIfAborted();
+      if (chunk.done) break;
+      let offset = 0;
+      while (offset < chunk.value.byteLength) {
+        signal?.throwIfAborted();
+        const written = await handle.write(chunk.value.subarray(offset));
+        if (written <= 0) throw new Error("Upload file write made no progress");
+        offset += written;
+      }
+      bytes += chunk.value.byteLength;
+    }
+    await handle.close();
+    failed = false;
+    return bytes;
+  } finally {
+    signal?.removeEventListener("abort", abort);
+    if (failed) {
+      await reader.cancel().catch(() => {});
+      if (handle) {
+        try {
+          await handle.close();
+        } finally {
+          await remove();
+        }
+      }
+    }
+    reader.releaseLock();
   }
 }
