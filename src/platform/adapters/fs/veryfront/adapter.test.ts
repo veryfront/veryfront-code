@@ -3046,6 +3046,52 @@ describe("VeryfrontFSAdapter", () => {
       assertEquals(listAllFilesCalls, 3);
     });
 
+    it("rejects already-aborted reads when initialization and source bodies are warm", async () => {
+      const adapter = createAdapter({
+        veryfront: {
+          apiBaseUrl: "https://api.example.com",
+          apiToken: "test-token",
+          projectSlug: "test-project",
+          contentSource: { type: "branch", branch: "main" },
+          cache: { enabled: true },
+        },
+      });
+      const client = (adapter as unknown as {
+        client: {
+          initialize: () => Promise<void>;
+          getProjectSlug: () => string;
+          getProjectId: () => string;
+          getCachedProject: () => { provider: string; layout: string };
+          listAllFiles: () => Promise<Array<{ path: string; content?: string }>>;
+        };
+      }).client;
+      client.initialize = () => Promise.resolve();
+      client.getProjectSlug = () => "test-project";
+      client.getProjectId = () => "project-123";
+      client.getCachedProject = () => ({ provider: "veryfront", layout: "default" });
+      client.listAllFiles = () => Promise.resolve([{ path: "cached.ts", content: "cached body" }]);
+      (adapter as unknown as { wsManager: { connect: (_projectId: string) => void } }).wsManager
+        .connect = () => {};
+      try {
+        await adapter.initialize();
+        assertEquals(await adapter.readTextFile("cached.ts"), "cached body");
+        const controller = new AbortController();
+        const reason = new Error("reader already cancelled");
+        controller.abort(reason);
+        for (
+          const read of [
+            () => adapter.readFile("cached.ts", { signal: controller.signal }),
+            () => adapter.readTextFile("cached.ts", { signal: controller.signal }),
+            () => adapter.readOptionalTextFile("cached.ts", { signal: controller.signal }),
+          ]
+        ) {
+          assertEquals(await assertRejects(read), reason);
+        }
+      } finally {
+        adapter.dispose();
+      }
+    });
+
     it("aborts the branch-miss listing when the only recovering reader aborts", async () => {
       const adapter = createAdapter({
         veryfront: {

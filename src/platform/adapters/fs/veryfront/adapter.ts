@@ -2991,6 +2991,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
   }
 
   async #ensureInitialized(signal?: AbortSignal): Promise<boolean> {
+    throwIfAborted(signal);
     if (this.initialized) return false;
     await this.initialize(signal);
     return true;
