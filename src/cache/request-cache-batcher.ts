@@ -130,13 +130,10 @@ export function runWithCacheBatching<T>(fn: () => Promise<T>): Promise<T> {
     batchTimer: null,
   };
 
-  return runWithRequestCacheContext(context, async () => {
-    try {
-      return await fn();
-    } finally {
-      if (context.batchTimer) clearBatchTimer(context.batchTimer);
-    }
-  });
+  // Shared filesystem reads can outlive the request that queued them. Keep
+  // their scheduled flush alive so ending that request cannot strand reads
+  // or retain hosted configuration source-read admission indefinitely.
+  return runWithRequestCacheContext(context, async () => await fn());
 }
 
 export function getRequestCacheContext(): RequestCacheContext | undefined {
