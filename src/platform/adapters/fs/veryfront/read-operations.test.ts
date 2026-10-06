@@ -365,6 +365,45 @@ describe("ReadOperations", () => {
       assertEquals(signals, [undefined, controller.signal]);
     });
 
+    it("cancels API extension resolution for extensionless branch reads", async () => {
+      const resolutionStarted = Promise.withResolvers<void>();
+      const controller = new AbortController();
+      let observedSignal: AbortSignal | undefined;
+      let fallbackReads = 0;
+      const client = createMockClient({
+        resolveFileWithExtension: (
+          _basePath: string,
+          _extensionPriority: string[],
+          _context: unknown,
+          options?: { signal?: AbortSignal },
+        ) => {
+          observedSignal = options?.signal;
+          resolutionStarted.resolve();
+          if (!options?.signal) return Promise.reject(new Error("missing resolution signal"));
+          return new Promise((_resolve, reject) => {
+            options.signal?.addEventListener(
+              "abort",
+              () => reject(options.signal?.reason),
+              { once: true },
+            );
+          });
+        },
+        getFileContent: () => {
+          fallbackReads += 1;
+          return Promise.resolve("unexpected fallback");
+        },
+      });
+      const readOps = createReadyReadOps(client, false, createBranchContext());
+
+      const read = readOps.readTextFile("components/Button", { signal: controller.signal });
+      await resolutionStarted.promise;
+      assertEquals(observedSignal, controller.signal);
+
+      controller.abort(new Error("caller cancelled"));
+      await assertRejects(() => read, Error, "caller cancelled");
+      assertEquals(fallbackReads, 0);
+    });
+
     it("should fetch draft content for branch context", async () => {
       let fetchedPath: string | undefined;
       const client = createMockClient({

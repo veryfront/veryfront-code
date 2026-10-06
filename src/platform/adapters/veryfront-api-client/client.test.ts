@@ -424,6 +424,59 @@ describe("VeryfrontApiClient", () => {
         "files returned with content must not be re-fetched individually",
       );
     });
+
+    it("passes abort signals through extensionless search listing and content fetches", async () => {
+      const client = createClient();
+      const controller = new AbortController();
+      const observedSignals: Array<AbortSignal | undefined> = [];
+      const mutable = client as unknown as {
+        operations: {
+          listBranchFiles: (
+            projectRef: string,
+            branchRef: string,
+            options: { signal?: AbortSignal },
+          ) => Promise<{ files: Array<{ path: string; content?: string }> }>;
+          getBranchFile: (
+            projectRef: string,
+            branchRef: string,
+            path: string,
+            options: { signal?: AbortSignal },
+          ) => Promise<{ path: string; content: string }>;
+        };
+      };
+      Object.defineProperties(mutable.operations, {
+        listBranchFiles: {
+          value: (_projectRef: string, _branchRef: string, options: { signal?: AbortSignal }) => {
+            observedSignals.push(options.signal);
+            return Promise.resolve({ files: [{ path: "components/Button.tsx" }] });
+          },
+        },
+        getBranchFile: {
+          value: (
+            _projectRef: string,
+            _branchRef: string,
+            path: string,
+            options: { signal?: AbortSignal },
+          ) => {
+            observedSignals.push(options.signal);
+            return Promise.resolve({ path, content: "export default Button;" });
+          },
+        },
+      });
+
+      assertEquals(
+        await client.resolveFileWithExtension(
+          "components/Button",
+          [".tsx"],
+          { type: "branch", name: "main" },
+          { signal: controller.signal },
+        ),
+        { path: "components/Button.tsx", content: "export default Button;" },
+      );
+      assertEquals(observedSignals, [controller.signal, controller.signal]);
+      controller.abort();
+      assertEquals(observedSignals.every((signal) => signal?.aborted === true), true);
+    });
   });
 
   describe("context management", () => {

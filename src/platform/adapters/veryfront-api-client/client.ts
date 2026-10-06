@@ -682,8 +682,13 @@ export class VeryfrontApiClient {
   async searchFilesWithContent(
     pattern: string,
     context: FileContext = this.getContext(),
+    options: { signal?: AbortSignal } = {},
   ): Promise<Array<{ path: string; content: string }>> {
-    const result = await this.listFiles({ pattern, limit: DEFAULT_SEARCH_LIMIT }, context);
+    throwIfAborted(options.signal);
+    const result = await this.listFiles(
+      { pattern, limit: DEFAULT_SEARCH_LIMIT, signal: options.signal },
+      context,
+    );
 
     const filesWithContent: Array<{ path: string; content: string }> = [];
     const filesNeedingContent: string[] = [];
@@ -701,9 +706,10 @@ export class VeryfrontApiClient {
     const fetched = await Promise.all(
       filesNeedingContent.map(async (path) => {
         try {
-          const content = await this.getFileContent(path, {}, context);
+          const content = await this.getFileContent(path, { signal: options.signal }, context);
           return { path, content };
         } catch (error) {
+          throwIfAborted(options.signal);
           logger.debug("Failed to fetch file content during search", { path, error });
           return null;
         }
@@ -744,8 +750,9 @@ export class VeryfrontApiClient {
     basePath: string,
     extensionPriority = [".tsx", ".ts", ".jsx", ".js", ".mdx", ".md"],
     context: FileContext = this.getContext(),
+    options: { signal?: AbortSignal } = {},
   ): Promise<{ path: string; content: string } | null> {
-    const matches = await this.searchFilesWithContent(`${basePath}.*`, context);
+    const matches = await this.searchFilesWithContent(`${basePath}.*`, context, options);
     if (matches.length === 0) return null;
 
     matches.sort((a, b) => {

@@ -24,6 +24,7 @@ import { requireBoundedFileReadLimit } from "../../bounded-file-read.ts";
 import { buildFileCacheKeyPrefix, buildFileListCacheKey } from "./cache-keys.ts";
 import { toClientContext } from "./adapter-content-context.ts";
 import { currentRequestContext } from "#veryfront/platform/request-context-access.ts";
+import { throwIfAborted } from "#veryfront/utils/abort.ts";
 import {
   getRequestAuthorityCacheVariant,
   requestAuthorityFingerprint,
@@ -491,6 +492,7 @@ export class ReadOperations {
     isProduction: boolean,
     skipPersistentCaches: boolean,
     contentContext: ResolvedContentContext | null,
+    signal?: AbortSignal,
   ): Promise<string | null> {
     // Check extension resolution cache first to skip the API call entirely.
     // Reuse known mappings while they remain in the bounded cache.
@@ -515,6 +517,7 @@ export class ReadOperations {
         apiPath,
         [...EXTENSION_PRIORITY],
         contentContext ? toClientContext(contentContext) : undefined,
+        { signal },
       );
       if (!resolved) return null;
 
@@ -529,6 +532,7 @@ export class ReadOperations {
         logMessage: "Resolved extension for base path",
       });
     } catch (error) {
+      throwIfAborted(signal);
       logger.debug("resolveFileWithExtension failed", {
         basePath: apiPath,
         error: error instanceof Error ? error.message : String(error),
@@ -853,6 +857,7 @@ export class ReadOperations {
         isProduction,
         skipPersistentCaches,
         effectiveContentContext,
+        signal,
       );
       if (resolved !== null) return resolved;
     }
@@ -970,7 +975,12 @@ export class ReadOperations {
     });
 
     try {
-      const result = await this.client.resolveFileWithExtension(basePath, [...EXTENSION_PRIORITY]);
+      const result = await this.client.resolveFileWithExtension(
+        basePath,
+        [...EXTENSION_PRIORITY],
+        undefined,
+        { signal },
+      );
       if (!result) return null;
 
       logger.debug("Pattern search found file", {
@@ -981,6 +991,7 @@ export class ReadOperations {
 
       return this.storeFetchedContent(cacheKey, result.content, shouldCache);
     } catch (error) {
+      throwIfAborted(signal);
       logger.debug("Pattern search failed, trying sequential fallback", {
         originalPath: apiPath,
         error: error instanceof Error ? error.message : String(error),
