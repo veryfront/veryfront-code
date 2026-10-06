@@ -17,6 +17,7 @@ import { ragStore } from "#veryfront/embedding/index.ts";
 import { INPUT_VALIDATION_FAILED } from "#veryfront/errors";
 import { base64urlEncodeBytes } from "#veryfront/utils";
 import type {
+  RagDocumentMeta,
   RagSearchOptions,
   RagSearchResult,
   RagStore,
@@ -547,12 +548,12 @@ function applyKnowledgeScope(
   return scopedManifest;
 }
 
-function getRagResultManifestPath(
-  result: RagSearchResult,
+function getRagSourceManifestPath(
+  source: string,
   config: ProjectKnowledgeConfig,
 ): string {
-  if (isAbsolute(result.source)) return buildManifestPath(config, result.source);
-  const normalizedSource = normalizeManifestPath(result.source);
+  if (isAbsolute(source)) return buildManifestPath(config, source);
+  const normalizedSource = normalizeManifestPath(source);
   const contentDir = config.contentDir ?? DEFAULT_CONTENT_DIR;
   const normalizedContentDir = replaceString(
     stripTrailingSlash(trimLeadingSlash(contentDir)),
@@ -589,6 +590,20 @@ function getRagResultManifestPath(
   return normalizedSource;
 }
 
+function getRagResultManifestPath(
+  result: RagSearchResult,
+  config: ProjectKnowledgeConfig,
+): string {
+  return getRagSourceManifestPath(result.source, config);
+}
+
+function getRagDocumentManifestPath(
+  document: RagDocumentMeta,
+  config: ProjectKnowledgeConfig,
+): string {
+  return getRagSourceManifestPath(document.source, config);
+}
+
 function filterRagResultsByScope(
   results: RagSearchResult[],
   config: ProjectKnowledgeConfig,
@@ -603,6 +618,18 @@ function filterRagResultsByScope(
     }
   }
   return scopedResults;
+}
+
+function createRagDocumentScopePredicate(
+  config: ProjectKnowledgeConfig,
+  optionPredicate: ((document: RagDocumentMeta) => boolean) | undefined,
+): ((document: RagDocumentMeta) => boolean) | undefined {
+  if (config.scope === undefined) return optionPredicate;
+  const isInScope = createKnowledgeScopeMatcher(config.scope);
+  return (document: RagDocumentMeta): boolean => {
+    if (!isInScope(getRagDocumentManifestPath(document, config))) return false;
+    return optionPredicate === undefined || optionPredicate(document);
+  };
 }
 
 function buildHostedManifestPath(contentDir: string, filePath: string): string | null {
@@ -1285,6 +1312,7 @@ export function projectKnowledge(config: ProjectKnowledgeConfig = {}): ProjectKn
     const results = await store.search(normalizedQuery, {
       topK: storeTopK,
       threshold: options?.threshold ?? config.threshold,
+      filterDocument: createRagDocumentScopePredicate(config, options?.filterDocument),
     });
     return filterRagResultsByScope(results, config).slice(0, requestedTopK);
   }

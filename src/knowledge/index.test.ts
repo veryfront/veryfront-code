@@ -248,6 +248,68 @@ describe("projectKnowledge", () => {
     });
   });
 
+  it("filters scoped RAG documents before ranking chunks", async () => {
+    registerTestEmbeddingProvider();
+
+    await withTempDir(async (projectDir) => {
+      const storagePath = join(projectDir, "data", "knowledge-index.json");
+      await mkdir(join(projectDir, "data"), { recursive: true });
+      const privateChunks = Array.from({ length: 51 }, (_, index) => ({
+        id: `private-overranked-chunk-${index}`,
+        documentId: "private-overranked",
+        text: `Private login content ${index}.`,
+        embedding: [1, 0],
+        index,
+      }));
+      await writeTextFile(
+        storagePath,
+        JSON.stringify({
+          documents: [
+            {
+              id: "private-overranked",
+              title: "Private overranked",
+              source: "knowledge/private/overranked.md",
+              type: "md",
+              createdAt: 1,
+            },
+            {
+              id: "public-answer",
+              title: "Public answer",
+              source: "knowledge/public/answer.md",
+              type: "md",
+              createdAt: 2,
+            },
+          ],
+          chunks: [
+            ...privateChunks,
+            {
+              id: "public-answer-chunk",
+              documentId: "public-answer",
+              text: "Public login content.",
+              embedding: [1, 0],
+              index: 0,
+            },
+          ],
+        }),
+      );
+
+      const knowledge = projectKnowledge({
+        projectDir,
+        storagePath,
+        model: "test/demo",
+        scope: {
+          "knowledge/**": true,
+          "knowledge/private/**": false,
+        },
+      });
+
+      const result = await knowledge.retrieve("login", { topK: 1 });
+
+      assertEquals(result.matches.map((match) => match.source), ["knowledge/public/answer.md"]);
+      assertStringIncludes(result.context, "Public login content.");
+    });
+  });
+
   it("does not validate candidate paths for false knowledge scopes", async () => {
     registerTestEmbeddingProvider();
 

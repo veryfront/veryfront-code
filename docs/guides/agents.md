@@ -182,12 +182,17 @@ with a 4 KiB preview; the framework supplies `get_tool_result` for reads of up t
 16 KiB per section. The result identifies its total size and next cursor.
 
 ```ts
-toolResultContext: {
-  maxInlineBytes: 8192,
-  previewBytes: 2048,
-  maxSectionBytes: 8192,
-  maxStoredResults: 256,
-}
+import { agent } from "veryfront";
+
+export default agent({
+  instructions: "Use tools to answer the user's questions.",
+  toolResultContext: {
+    maxInlineBytes: 8192,
+    previewBytes: 2048,
+    maxSectionBytes: 8192,
+    maxStoredResults: 256,
+  },
+});
 ```
 
 Persisted messages, result events, and callbacks retain the original data. Small

@@ -118,6 +118,8 @@ export interface RagSearchResult {
 export interface RagSearchOptions {
   topK?: number; // default 5
   threshold?: number; // minimum similarity score
+  /** Optional pre-ranking document predicate for authorization-scoped local search. */
+  filterDocument?: (document: RagDocumentMeta) => boolean;
 }
 
 /** Options accepted when refreshing an existing rag document. */
