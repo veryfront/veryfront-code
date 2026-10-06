@@ -59,7 +59,7 @@ import { ExecutorAgentError } from "#veryfront/agent/hosted/executor-agent-schem
 import { __runWithOutboundFetchTransportForTests } from "#veryfront/security/http/outbound-fetch.ts";
 
 const modelId = "veryfront-cloud/openai/synthetic";
-const owner = { scopeKind: "project" as const, projectId: "project-test" };
+const owner = { scopeKind: "project" as const, projectId: "11111111-1111-4111-8111-111111111111" };
 const source = { type: "release" as const, releaseId: "release-test" };
 const image = `registry.example.test/executor@sha256:${"a".repeat(64)}`;
 const tick = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
@@ -1178,7 +1178,7 @@ function trustedFixture(
   projectAliases?: { name: string; shortName: string }[],
   scope: { owner: HostedExecutorSessionOptions["request"]["owner"]; projectId: string | null } = {
     owner,
-    projectId: "project-test",
+    projectId: owner.projectId,
   },
   agentOptions: { knowledge?: true } = {},
 ) {
@@ -1187,6 +1187,21 @@ function trustedFixture(
   const steeringEntered = Promise.withResolvers<void>();
   configureCanonical(f.input, () => Promise.resolve(), () => {});
   f.input.installation.grant.execution.projectId = scope.projectId;
+  if (scope.projectId !== null) f.input.model.modelCallCaptureReceipts = true;
+  let captureEventId = 0;
+  f.input.model.runEventSink = async (event) => {
+    if (scope.projectId === null) {
+      assertEquals(event.modelCallId, undefined);
+      return;
+    }
+    assert(typeof event.modelCallId === "string");
+    return {
+      eventId: String(++captureEventId),
+      projectId: scope.projectId,
+      runId: canonicalTestRunId,
+      modelCallId: event.modelCallId,
+    };
+  };
   if (scope.projectId !== null) f.input.installation.capabilities.projectSteering = "steering";
   f.input.installation.grant.allowedToolNames = ["inspect"];
   f.input.installation.grant.remoteToolSourceIds = ["project"];
@@ -1450,7 +1465,7 @@ describe("broker-local trusted runtime", () => {
     assertEquals(observed[0]?.runId, "run-1");
     assertEquals(observed[0]?.authToken, undefined);
     assertEquals(f.projectWire.includes(f.privateMarker), false);
-    assertEquals(f.projectWire.includes('"projectId":"project-test"'), false);
+    assertEquals(f.projectWire.includes(`"projectId":"${owner.projectId}"`), false);
     assert(f.projectWire.includes('"projectId":null'));
   });
 
@@ -1614,7 +1629,7 @@ describe("broker-local trusted runtime", () => {
     assertEquals(requestedUrls.length, 1);
     assertStringIncludes(
       requestedUrls[0] ?? "",
-      "/projects/project-test/releases/release-test/files",
+      `/projects/${owner.projectId}/releases/release-test/files`,
     );
     assertEquals(f.projectWire.includes("broker-knowledge-token"), false);
     assertEquals(f.projectWire.includes('"authToken"'), false);

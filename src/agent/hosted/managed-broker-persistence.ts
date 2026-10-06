@@ -16,8 +16,10 @@ import {
 } from "../conversation/durable.ts";
 import { createDurableRunEventSink } from "./durable-run-event-sink.ts";
 import {
+  bindHostedToolCallAdmissionWriter,
   createHostedConversationRunChunkMirrorFromCapability,
   createHostedRunEventWriterCapability,
+  hostedRunCanonicalId,
   type HostedRunEventWriterCapability,
 } from "./child-run-event-writer-token.ts";
 import {
@@ -32,6 +34,23 @@ import type { AgentRunEventSink } from "#veryfront/runtime/model-call-context.ts
 import type { HostedLifecycleTerminalState } from "./lifecycle.ts";
 import type { HostedExecutorOwnedWork } from "./executor-session.ts";
 import { createPrivateWeakStore } from "#veryfront/security/private-weak-store.ts";
+import { createPrivateMap } from "#veryfront/security/private-map.ts";
+import { getToolCallOccurrence } from "#veryfront/runtime/tool-call-occurrence.ts";
+import { isObservedToolResultStart } from "#veryfront/runtime/tool-call-occurrence-carrier.ts";
+import {
+  type AgentRunToolCallAdmissionReceipt,
+  getToolCallAdmissionReceiptSchema,
+} from "#veryfront/runtime/tool-call-admission-receipt.ts";
+import {
+  type AdmitExecutorToolCall,
+  bindToolCallAdmissionOwner,
+} from "#veryfront/runtime/tool-call-admission-dispatch.ts";
+import { defineSchema } from "#veryfront/schemas/index.ts";
+import { DurableRunEventPersistenceError } from "../conversation/private-run-event.ts";
+
+const getAdmissionScopeSchema = defineSchema((v) =>
+  v.object({ projectId: v.string().uuid() }).strict()
+);
 
 /** Acknowledging output writes and terminal finalization for a canonical run. */
 export interface ManagedBrokerOutput {
@@ -109,6 +128,8 @@ export function createManagedBrokerPersistence(input: {
   modelId: string;
   resolveProvider(modelId: string): string;
   fetch?: typeof globalThis.fetch;
+  /** Trusted migration opt-in. Requires API support and a project-bound generation writer. */
+  toolCallAdmissions?: { projectId: string };
 }) {
   const run = getConversationRunProjectionSchema().parse(input.run);
   if (
@@ -128,6 +149,7 @@ export function createManagedBrokerPersistence(input: {
     }),
     run,
     terminal,
+    ...(input.toolCallAdmissions ? { toolCallAdmissions: input.toolCallAdmissions } : {}),
   });
 }
 
@@ -136,6 +158,7 @@ export function createManagedBrokerPersistenceFromCapability(input: {
   capability: HostedRunEventWriterCapability;
   run: ConversationRunProjection;
   terminal: ManagedBrokerTerminal;
+  toolCallAdmissions?: { projectId: string };
 }) {
   const run = getConversationRunProjectionSchema().parse(input.run);
   if (run.status !== "pending" && run.status !== "running" && run.status !== "waiting_for_tool") {
@@ -146,6 +169,24 @@ export function createManagedBrokerPersistenceFromCapability(input: {
     throw new TypeError("Managed broker terminal authority is not bound to this run");
   }
   const dispatchTerminal = terminalState.dispatch;
+  const admissionScope = input.toolCallAdmissions === undefined
+    ? undefined
+    : getAdmissionScopeSchema().parse(input.toolCallAdmissions);
+  const canonicalRunId = hostedRunCanonicalId(input.capability, run.runId);
+  if (admissionScope && !canonicalRunId) {
+    throw new TypeError("Tool-call admissions require an exact canonical run writer");
+  }
+  const toolAdmissions = createPrivateMap<string, {
+    receipt?: AgentRunToolCallAdmissionReceipt;
+    waiter?: {
+      resolve(receipt: AgentRunToolCallAdmissionReceipt): void;
+      reject(error: unknown): void;
+    };
+    claimed?: true;
+  }>();
+  const rejectToolAdmissions = (error: unknown) => {
+    for (const admission of toolAdmissions.values()) admission.waiter?.reject(error);
+  };
   let sessionOwnedWork: HostedExecutorOwnedWork | undefined;
   let retainedPersistenceTail = Promise.resolve();
   let cleaned = false;
@@ -165,6 +206,7 @@ export function createManagedBrokerPersistenceFromCapability(input: {
     latestEventId: run.latestEventId,
     latestExternalEventSequence: run.latestExternalEventSequence,
     runQueueFlush,
+    ...(admissionScope ? { toolCallAdmissions: true } : {}),
   });
   if (!mirror) throw new TypeError("Managed broker run-event capability is not bound");
   const durableMirror = mirror;
@@ -196,6 +238,7 @@ export function createManagedBrokerPersistenceFromCapability(input: {
         if (priorFailure.failed) throw priorFailure.error;
         failure = error;
         failed = true;
+        rejectToolAdmissions(error);
         throw error;
       }
     });
@@ -221,6 +264,32 @@ export function createManagedBrokerPersistenceFromCapability(input: {
       return queue(async () => {
         await durableMirror.handleChunk(chunk);
         await flush();
+        if (
+          admissionScope && chunk.type === "tool-input-start" &&
+          !isObservedToolResultStart(chunk)
+        ) {
+          const occurrenceId = getToolCallOccurrence(chunk);
+          const acknowledged = occurrenceId &&
+            durableMirror.takeToolCallAdmissionReceipt?.(occurrenceId);
+          const parsed = getToolCallAdmissionReceiptSchema().safeParse(acknowledged);
+          if (
+            !parsed.success || parsed.data.toolCallId !== chunk.toolCallId ||
+            parsed.data.projectId.toLowerCase() !== admissionScope.projectId.toLowerCase() ||
+            parsed.data.runId.toLowerCase() !== canonicalRunId!.toLowerCase() ||
+            parsed.data.occurrenceId !== occurrenceId
+          ) {
+            throw new DurableRunEventPersistenceError("Tool start admission is missing or invalid");
+          }
+          const admission = toolAdmissions.get(occurrenceId!) ?? {};
+          if (admission.receipt) {
+            throw new DurableRunEventPersistenceError(
+              "Tool start occurrence was already persisted",
+            );
+          }
+          admission.receipt = Object.freeze(parsed.data);
+          toolAdmissions.set(occurrenceId!, admission);
+          admission.waiter?.resolve(admission.receipt);
+        }
       });
     },
     finish(result) {
@@ -289,6 +358,8 @@ export function createManagedBrokerPersistenceFromCapability(input: {
   async function cleanup(): Promise<void> {
     if (cleaned) return;
     cleaned = true;
+    rejectToolAdmissions(new DurableRunEventPersistenceError("Tool-call admission owner closed"));
+    toolAdmissions.clear();
     await tail;
     await retainedPersistenceTail;
     durableMirror.dispose();
@@ -303,9 +374,57 @@ export function createManagedBrokerPersistenceFromCapability(input: {
     }
     sessionOwnedWork = owner;
   }
+  const admitToolCall: AdmitExecutorToolCall | undefined = admissionScope
+    ? async (call, signal) => {
+      signal.throwIfAborted();
+      if (cleaned || finished || failed || !sessionOwnedWork) {
+        throw new DurableRunEventPersistenceError("Tool-call admission owner is inactive");
+      }
+      const occurrenceId = call.occurrenceId.toLowerCase();
+      const admission = toolAdmissions.get(occurrenceId) ?? {};
+      if (admission.claimed) {
+        throw new DurableRunEventPersistenceError("Tool-call occurrence was already dispatched");
+      }
+      admission.claimed = true;
+      toolAdmissions.set(occurrenceId, admission);
+      const receipt = admission.receipt ?? await new Promise<AgentRunToolCallAdmissionReceipt>(
+        (resolve, reject) => {
+          const abort = () => reject(signal.reason);
+          const settle = (operation: () => void) => {
+            signal.removeEventListener("abort", abort);
+            operation();
+          };
+          admission.waiter = {
+            resolve: (value) => settle(() => resolve(value)),
+            reject: (error) => settle(() => reject(error)),
+          };
+          signal.addEventListener("abort", abort, { once: true });
+          if (signal.aborted) abort();
+        },
+      );
+      signal.throwIfAborted();
+      if (cleaned || finished || failed || receipt.toolCallId !== call.toolCallId) {
+        throw new DurableRunEventPersistenceError("Tool-call admission no longer matches dispatch");
+      }
+      return receipt;
+    }
+    : undefined;
+  if (admitToolCall) {
+    bindHostedToolCallAdmissionWriter(admitToolCall, {
+      capability: input.capability,
+      expectedRunId: run.runId,
+      projectId: admissionScope!.projectId,
+    });
+    bindToolCallAdmissionOwner(admitToolCall, {
+      runId: run.runId,
+      canonicalRunId: canonicalRunId!,
+      projectId: admissionScope!.projectId,
+    });
+  }
   return {
     bindSessionOwnedWork,
     modelRunEventSink,
+    ...(admitToolCall ? { admitToolCall } : {}),
     publishParentRunEvents: persistEvents,
     persistToolExposureCheckpoint: (checkpoint: ToolExposureCheckpoint) =>
       persistEvents([createToolExposureCheckpointEvent(checkpoint)]),

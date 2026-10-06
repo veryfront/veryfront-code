@@ -1,4 +1,5 @@
 import { type ConversationRunEventQueueController } from "./durable.ts";
+import type { ConversationRunToolCallAdmissionStart } from "./durable-contracts.ts";
 import { TIMEOUT_ERROR } from "#veryfront/errors";
 import { agentLogger } from "#veryfront/utils";
 
@@ -62,7 +63,10 @@ export type ConversationRunQueueFlush = <T>(operation: () => Promise<T>) => Prom
 
 /** Public API contract for conversation run mirror. */
 export interface ConversationRunMirror {
-  enqueue(events: unknown[]): void;
+  enqueue(
+    events: unknown[],
+    options?: { toolCallStarts?: ConversationRunToolCallAdmissionStart[] },
+  ): void;
   flush(options?: {
     abortSignal?: AbortSignal;
     throwOnTimeoutRetry?: boolean;
@@ -301,13 +305,13 @@ export function createConversationRunMirror(input: {
   }
 
   return {
-    enqueue(events) {
+    enqueue(events, options) {
       const snapshot = getSnapshot();
       if (disposed || snapshot.disabled || events.length === 0) {
         return;
       }
 
-      input.queueController.enqueue(events);
+      input.queueController.enqueue(events, options);
       const nextSnapshot = getSnapshot();
       if (nextSnapshot.pendingEventCount >= input.immediateFlushEventCount) {
         scheduleFlush(0);

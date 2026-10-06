@@ -1,4 +1,8 @@
 import {
+  type AdmitExecutorToolCall,
+  getToolCallAdmissionOwner,
+} from "#veryfront/runtime/tool-call-admission-dispatch.ts";
+import {
   activateHostedAgentPauseCapability,
   inheritHostedAgentPauseCapability,
 } from "./manual-pause-credential.ts";
@@ -139,6 +143,8 @@ export interface ManagedExecutorStartInput {
     resolver: AgentModelRuntimeResolver;
     grant: ExecutorModelGrant;
     runEventSink?: AgentRunEventSink;
+    /** Trusted API rollout opt-in, never selected by executor or project payloads. */
+    modelCallCaptureReceipts?: true;
   };
   tools: {
     /** Complete trusted inventory, including project-local tools, before selector resolution. */
@@ -147,6 +153,7 @@ export interface ManagedExecutorStartInput {
     maxCalls: number;
     maxConcurrent: number;
     limits?: Parameters<typeof createExecutorToolBroker>[0]["limits"];
+    admitToolCall?: AdmitExecutorToolCall;
   };
   persistence: PersistenceInput;
   state: StateInput;
@@ -216,6 +223,23 @@ export function createManagedExecutorBroker(
       ? undefined
       : snapshotTrustedRuntime(input.trustedRuntime, installation, operationInput);
     const bindSessionOwnedWork = input.bindSessionOwnedWork;
+    if (
+      operationInput.tools.admitToolCall &&
+      (installation.grant.execution.kind !== "canonical" ||
+        installation.grant.execution.projectId === null || trusted)
+    ) {
+      throw new TypeError("Tool-call admissions require a project-bound remote canonical runtime");
+    }
+    if (operationInput.tools.admitToolCall) {
+      const owner = getToolCallAdmissionOwner(operationInput.tools.admitToolCall);
+      const execution = installation.grant.execution;
+      if (
+        !owner || execution.kind !== "canonical" || owner.runId !== execution.runId ||
+        owner.projectId.toLowerCase() !== execution.projectId?.toLowerCase()
+      ) {
+        throw new TypeError("Tool-call admission writer does not match its execution grant");
+      }
+    }
     if (
       installation.grant.execution.kind === "ephemeral" &&
       operationInput.model.runEventSink !== undefined
@@ -393,6 +417,7 @@ export function createManagedExecutorBroker(
       const remoteAgent = createExecutorHostedChatRuntimeAgent({
         channel: executionChannel,
         preparedRuntimeHandle: prepared.value.preparedRuntimeHandle,
+        ...(operationInput.tools.admitToolCall ? { toolCallAdmissions: true } : {}),
       });
       const agent: HostedChatRuntimeAgent = {
         async stream(streamInput) {
@@ -637,11 +662,13 @@ function buildBrokerOperations(
   const scope = { binding, signal, assertActive: () => signal.throwIfAborted() };
   const model = installation.grant.execution.kind === "canonical"
     ? createHostedExecutorModelBroker({
+      projectId: installation.grant.execution.projectId,
       resolveModelRuntime: input.model.resolver,
       allowedModelIds,
       scope,
       grant: input.model.grant,
       runEventSink: input.model.runEventSink,
+      ...(input.model.modelCallCaptureReceipts ? { modelCallCaptureReceipts: true } : {}),
     })
     : createEphemeralHostedExecutorModelBroker({
       resolveModelRuntime: input.model.resolver,
@@ -685,6 +712,10 @@ function buildBrokerOperations(
 }
 
 function snapshotOperationInput(input: ManagedExecutorStartInput): ManagedExecutorOperationInput {
+  const modelCallCaptureReceipts = input.model.modelCallCaptureReceipts;
+  if (modelCallCaptureReceipts !== undefined && modelCallCaptureReceipts !== true) {
+    throw new TypeError("Hosted model capture activation must be explicit");
+  }
   if (input.tools.catalog === undefined) {
     throw new TypeError("Managed executor tool catalog is required");
   }
@@ -733,6 +764,7 @@ function snapshotOperationInput(input: ManagedExecutorStartInput): ManagedExecut
         }])),
       },
       ...(input.model.runEventSink ? { runEventSink: input.model.runEventSink } : {}),
+      ...(modelCallCaptureReceipts ? { modelCallCaptureReceipts: true } : {}),
     },
     tools: {
       catalog,
@@ -740,6 +772,7 @@ function snapshotOperationInput(input: ManagedExecutorStartInput): ManagedExecut
       maxCalls: input.tools.maxCalls,
       maxConcurrent: input.tools.maxConcurrent,
       limits: executorToolLimits(input.tools.limits),
+      ...(input.tools.admitToolCall ? { admitToolCall: input.tools.admitToolCall } : {}),
     },
     persistence: {
       ...(input.persistence.initialToolExposureCheckpoint

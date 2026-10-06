@@ -46,16 +46,13 @@ async function bounded(promise, label, ms = 25_000) {
 }
 
 async function scenario(kind, trusted = false) {
-  const privateRuntimeMarker =
-    `synthetic-broker-private-runtime-${randomUUID()}`;
+  const privateRuntimeMarker = `synthetic-broker-private-runtime-${randomUUID()}`;
   const steering = kind === "steering";
   const directAgUi = kind === "direct-ag-ui";
   const directDurable = kind === "direct-durable";
   const direct = directAgUi || directDurable;
   const providerToolNames = steering ? ["web_search"] : [];
-  const mode = kind === "sse" || kind === "disconnect" || directAgUi
-    ? "sse"
-    : "detached";
+  const mode = kind === "sse" || kind === "disconnect" || directAgUi ? "sse" : "detached";
   const project = new URL(
     `./project-${kind}-${trusted ? "trusted" : "remote"}/`,
     import.meta.url,
@@ -195,8 +192,7 @@ export default tool({ id: "project_probe", description: "Inspect approved data",
         },
       },
   );
-  const encode = (value) =>
-    Buffer.from(JSON.stringify(value)).toString("base64url");
+  const encode = (value) => Buffer.from(JSON.stringify(value)).toString("base64url");
   const nowSeconds = Math.floor(Date.now() / 1000);
   const signed = `${encode({ alg: "EdDSA", typ: "JWT" })}.${
     encode({
@@ -231,6 +227,8 @@ export default tool({ id: "project_probe", description: "Inspect approved data",
   const ingressControls = [];
   const releases = [];
   const persisted = [];
+  const persistedRows = new Map();
+  const modelCaptureReceipts = [];
   const completions = [];
   const modelCalls = [];
   const steeringRefreshes = [];
@@ -272,13 +270,30 @@ export default tool({ id: "project_probe", description: "Inspect approved data",
           request.url,
           `/runs/${canonicalRunId}/events`,
         );
-        persisted.push(...data.events);
-        cursor += data.events.length;
+        const acceptedRows = data.events.map((event) => {
+          const eventId = String(++cursor);
+          persisted.push(event);
+          persistedRows.set(eventId, event);
+          return { eventId, event };
+        });
+        const captures = acceptedRows.flatMap(({ eventId, event }) =>
+          event.type === "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED" &&
+            typeof event.modelCallId === "string"
+            ? [{
+              event_id: eventId,
+              project_id: projectId,
+              run_id: canonicalRunId,
+              model_call_id: event.modelCallId,
+            }]
+            : []
+        );
+        modelCaptureReceipts.push(...captures);
         response.end(JSON.stringify({
           run_id: canonicalRunId,
           latest_event_id: cursor,
           latest_external_event_sequence: cursor,
           appended_count: data.events.length,
+          model_call_captures: captures,
           run: {
             run_id: runId,
             conversation_id: conversationId,
@@ -295,9 +310,7 @@ export default tool({ id: "project_probe", description: "Inspect approved data",
           request.headers["x-veryfront-run-terminal-token"],
           terminalToken,
         );
-        const terminalStatus = request.url.endsWith("/cancel")
-          ? "cancelled"
-          : data.status;
+        const terminalStatus = request.url.endsWith("/cancel") ? "cancelled" : data.status;
         completions.push({ ...data, status: terminalStatus });
         terminalEntered.resolve();
         if (kind === "delayed-persistence") await terminalRelease.promise;
@@ -375,8 +388,7 @@ export default tool({ id: "project_probe", description: "Inspect approved data",
               });
               secondModelCall.resolve();
               if (kind === "kill" || kind === "disconnect") {
-                const abort = () =>
-                  controller.error(new Error("Synthetic provider cancelled"));
+                const abort = () => controller.error(new Error("Synthetic provider cancelled"));
                 if (options.abortSignal.aborted) abort();
                 else {options.abortSignal.addEventListener("abort", abort, {
                     once: true,
@@ -468,9 +480,7 @@ export default tool({ id: "project_probe", description: "Inspect approved data",
         const persistence = createManagedBrokerPersistence({
           terminalAuthToken: terminalToken,
           apiUrl,
-          runEventToken: direct
-            ? secrets.events
-            : ingress.privateAuthority.runEventToken,
+          runEventToken: direct ? secrets.events : ingress.privateAuthority.runEventToken,
           completionAuthToken: direct
             ? ingress.broker.getParsedRequest().authToken
             : ingress.privateAuthority.apiAuthToken,
@@ -631,11 +641,7 @@ export default tool({ id: "project_probe", description: "Inspect approved data",
                   ? ["host_probe", "update_file"]
                   : ["host_probe"],
                 hostToolFacadeIds: ["host"],
-                remoteToolSourceIds: trusted
-                  ? ["project"]
-                  : steering
-                  ? ["state-tools"]
-                  : [],
+                remoteToolSourceIds: trusted ? ["project"] : steering ? ["state-tools"] : [],
                 execution: {
                   kind: "canonical",
                   projectId: steering || trusted ? projectId : null,
@@ -657,6 +663,7 @@ export default tool({ id: "project_probe", description: "Inspect approved data",
             model: {
               resolver: () => model,
               runEventSink: persistence.modelRunEventSink,
+              ...(steering || trusted ? { modelCallCaptureReceipts: true } : {}),
               grant: {
                 maxCalls: 3,
                 maxConcurrentCalls: 1,
@@ -699,9 +706,7 @@ export default tool({ id: "project_probe", description: "Inspect approved data",
                       tools.push(name);
                       return Promise.resolve({
                         text: "host-ok",
-                        ...(trusted
-                          ? { privateValue: privateRuntimeMarker }
-                          : {}),
+                        ...(trusted ? { privateValue: privateRuntimeMarker } : {}),
                       });
                     },
                   },
@@ -736,8 +741,7 @@ export default tool({ id: "project_probe", description: "Inspect approved data",
             },
             persistence: {
               publishParentRunEvents: persistence.publishParentRunEvents,
-              persistToolExposureCheckpoint:
-                persistence.persistToolExposureCheckpoint,
+              persistToolExposureCheckpoint: persistence.persistToolExposureCheckpoint,
               initialProviderReplayCheckpoints: [],
             },
             state: trusted
@@ -747,13 +751,11 @@ export default tool({ id: "project_probe", description: "Inspect approved data",
                     agent: definition,
                     initialProjectInstructions: privateRuntimeMarker,
                   }),
-                refreshProjectSteering: () =>
-                  Promise.resolve(privateRuntimeMarker),
+                refreshProjectSteering: () => Promise.resolve(privateRuntimeMarker),
               }
               : steering
               ? {
-                prepareProjectSteering: ({ definition }) =>
-                  Promise.resolve({ agent: definition }),
+                prepareProjectSteering: ({ definition }) => Promise.resolve({ agent: definition }),
                 refreshProjectSteering(_signal, names) {
                   steeringRefreshes.push(
                     [...names].sort((left, right) => left.localeCompare(right)),
@@ -886,6 +888,26 @@ export default tool({ id: "project_probe", description: "Inspect approved data",
       steering ? ["host_probe", "update_file"] : ["host_probe"],
     );
     assertEquals(modelCalls.length, 2);
+    if (steering || trusted) {
+      assertEquals(modelCaptureReceipts.length, modelCalls.length);
+      assertEquals(
+        new Set(modelCaptureReceipts.map((receipt) => receipt.event_id)).size,
+        modelCalls.length,
+      );
+      assertEquals(
+        new Set(modelCaptureReceipts.map((receipt) => receipt.model_call_id)).size,
+        modelCalls.length,
+      );
+      for (const receipt of modelCaptureReceipts) {
+        const event = persistedRows.get(receipt.event_id);
+        assertEquals(event?.type, "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED");
+        assertEquals(event?.modelCallId, receipt.model_call_id);
+        assertEquals(receipt.run_id, canonicalRunId);
+        assertEquals(receipt.project_id, projectId);
+      }
+    } else {
+      assertEquals(modelCaptureReceipts, []);
+    }
     assert(
       JSON.stringify(modelCalls[0].prompt).includes("Run the host probe."),
     );

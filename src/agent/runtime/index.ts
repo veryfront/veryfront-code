@@ -1,3 +1,4 @@
+import { runWithToolCallOccurrenceDispatch } from "#veryfront/runtime/tool-call-occurrence.ts";
 import {
   observeAdmittedAgentToolCalls,
   observeGeneratedAgentMessage,
@@ -4457,22 +4458,26 @@ export class AgentRuntime {
           );
           callbacks?.onToolCall?.(toolCall);
           const startTime = Date.now();
-          const result = await traceConfiguredToolExecution({
-            mode: "stream",
-            agentId: this.id,
-            toolName: resumeToolCall.name,
-            toolCallId: resumeToolCall.id,
-            args: toolCall.args,
-            admittedTurn,
-            owner: currentMessages,
-            prepareTerminalDispatch,
-            toolsConfig: this.config.tools,
-            context: executionContext,
-            allowedRemoteToolNames,
-            remoteToolSources,
-            sourceIntegrationPolicy,
-            frameworkLocalTools,
-          });
+          const result = await runWithToolCallOccurrenceDispatch(
+            streamedCall,
+            () =>
+              traceConfiguredToolExecution({
+                mode: "stream",
+                agentId: this.id,
+                toolName: resumeToolCall.name,
+                toolCallId: resumeToolCall.id,
+                args: toolCall.args,
+                admittedTurn,
+                owner: currentMessages,
+                prepareTerminalDispatch,
+                toolsConfig: this.config.tools,
+                context: executionContext,
+                allowedRemoteToolNames,
+                remoteToolSources,
+                sourceIntegrationPolicy,
+                frameworkLocalTools,
+              }),
+          );
           throwIfAborted(abortSignal);
           await this.notifyToolResult({
             mode: "stream",
@@ -5492,22 +5497,26 @@ export class AgentRuntime {
           callbacks?.onToolCall?.(toolCall);
 
           const executionContext = applicationExecutionContext(toolContext);
-          const result = await traceConfiguredToolExecution({
-            mode: "stream",
-            agentId: this.id,
-            toolName: tc.name,
-            toolCallId: tc.id,
-            args: toolCall.args,
-            admittedTurn,
-            owner: currentMessages,
-            prepareTerminalDispatch,
-            toolsConfig: this.config.tools,
-            context: executionContext,
-            allowedRemoteToolNames,
-            remoteToolSources,
-            sourceIntegrationPolicy,
-            frameworkLocalTools,
-          });
+          const result = await runWithToolCallOccurrenceDispatch(
+            tc,
+            () =>
+              traceConfiguredToolExecution({
+                mode: "stream",
+                agentId: this.id,
+                toolName: tc.name,
+                toolCallId: tc.id,
+                args: toolCall.args,
+                admittedTurn,
+                owner: currentMessages,
+                prepareTerminalDispatch,
+                toolsConfig: this.config.tools,
+                context: executionContext,
+                allowedRemoteToolNames,
+                remoteToolSources,
+                sourceIntegrationPolicy,
+                frameworkLocalTools,
+              }),
+          );
           throwIfAborted(abortSignal);
           await this.notifyToolResult({
             mode: "stream",

@@ -1,3 +1,5 @@
+import type { AgentRunModelCallCaptureReceipt } from "./model-call-capture-receipt.ts";
+
 /** Provider-agnostic message supplied to a model runtime. */
 export type ModelCallMessage =
   | { role: "system"; content: string; providerOptions?: Record<string, unknown> }
@@ -76,6 +78,8 @@ export interface ModelCallRequest {
  */
 export type AgentRunModelCallContextEvent = {
   type: "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED";
+  /** Broker-owned logical identity; this field alone grants no receipt or read authority. */
+  modelCallId?: string;
   model?: ModelCallModel;
   request?: ModelCallRequest;
   messages: ModelCallMessage[];
@@ -88,7 +92,9 @@ export type AgentRunModelCallContextEvent = {
 export type AgentRunEvent = AgentRunModelCallContextEvent;
 
 /** Receives events produced within one scoped agent run execution. */
-export type AgentRunEventSink = (event: AgentRunEvent) => void | Promise<void>;
+export type AgentRunEventSink = (
+  event: AgentRunEvent,
+) => void | AgentRunModelCallCaptureReceipt | Promise<void | AgentRunModelCallCaptureReceipt>;
 
 /** Shared run clock used by public and private event producers. */
 export interface AgentRunEventTimingOptions {

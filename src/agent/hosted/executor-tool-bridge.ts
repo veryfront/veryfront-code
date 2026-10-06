@@ -9,6 +9,12 @@ import {
   resolvePrivatePromise,
 } from "#veryfront/security/private-promise.ts";
 import type { RemoteToolSource, ToolExecutionContext } from "#veryfront/tool/types.ts";
+import {
+  type AdmitExecutorToolCall,
+  runWithToolCallAdmissionReceipt,
+} from "#veryfront/runtime/tool-call-admission-dispatch.ts";
+import { getToolCallAdmissionReceiptSchema } from "#veryfront/runtime/tool-call-admission-receipt.ts";
+import { DurableRunEventPersistenceError } from "../conversation/private-run-event.ts";
 import type {
   ExecutorOperation,
   ExecutorOperationContext,
@@ -69,8 +75,14 @@ export function createExecutorToolBroker(options: {
   maxCalls: number;
   maxConcurrent: number;
   limits?: Partial<ExecutorToolLimits>;
+  /** Trusted private writer hook; absent preserves the released tool path. */
+  admitToolCall?: AdmitExecutorToolCall;
 }): ReadonlyMap<string, ExecutorOperation> {
   const limits = executorToolLimits(options.limits);
+  const admitToolCall = options.admitToolCall;
+  if (admitToolCall !== undefined && typeof admitToolCall !== "function") {
+    throw new TypeError("Invalid tool-call admission hook");
+  }
   const maxCalls = executorToolLimit(options.maxCalls, 4096);
   const maxConcurrent = executorToolLimit(options.maxConcurrent, 32);
   const binding = parseExecutorToolData(getExecutorBindingSchema(), options.scope.binding);
@@ -205,10 +217,33 @@ export function createExecutorToolBroker(options: {
         async invoke(context) {
           remoteRetirement = capability.retired;
           try {
-            const result = await observePrivatePromise(
+            let receipt;
+            if (call && admitToolCall) {
+              if (!call.occurrenceId || !call.toolCallId) {
+                throw new DurableRunEventPersistenceError("Tool call has no private occurrence");
+              }
+              const acknowledged = await admitToolCall({
+                occurrenceId: call.occurrenceId,
+                toolCallId: call.toolCallId,
+              }, context.abortSignal!);
+              const parsed = getToolCallAdmissionReceiptSchema().safeParse(acknowledged);
+              if (
+                !parsed.success || parsed.data.occurrenceId !== call.occurrenceId.toLowerCase() ||
+                parsed.data.toolCallId !== call.toolCallId
+              ) {
+                throw new DurableRunEventPersistenceError("Tool-call admission receipt is invalid");
+              }
+              receipt = parsed.data;
+              assertCall();
+            }
+            const execute = () =>
               call
                 ? apply(capability.execute, capability.source, [call.toolName, call.args, context])
-                : apply(capability.list, capability.source, [context]),
+                : apply(capability.list, capability.source, [context]);
+            const result = await observePrivatePromise(
+              receipt
+                ? runWithToolCallAdmissionReceipt(receipt, assertCall, execute, admitToolCall)
+                : execute(),
             );
             remoteRetirement = undefined;
             return result;
