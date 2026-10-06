@@ -183,13 +183,22 @@ export function parseRequestCachedValue<T>(
   return value;
 }
 
+/** Return a read promise, preserving synchronous backend failures as rejections. */
 export function getCachedWithBatching(
   backend: CacheBackend,
   key: string,
   options?: CacheReadOptions,
 ): Promise<string | null> {
   const ctx = getRequestCacheContextStore();
-  if (!ctx) return backend.get(key, options);
+  if (!ctx) {
+    try {
+      return backend.get(key, options);
+    } catch (error) {
+      const completion = createPrivateDeferred<string | null>();
+      completion.reject(error);
+      return completion.promise;
+    }
+  }
 
   if (mapHas(ctx.cache, key)) {
     return IntrinsicReflectApply(PromiseResolve, IntrinsicPromise, [

@@ -50,6 +50,18 @@ function createMockBackend(
 }
 
 describe("cache/request-cache-batcher", () => {
+  it("returns a rejected promise when a backend throws outside batching", async () => {
+    assertEquals(getRequestCacheContext(), undefined);
+    const reason = new Error("synchronous backend failure");
+    const backend = createMockBackend();
+    backend.get = () => {
+      throw reason;
+    };
+    const read = getCachedWithBatching(backend, "key");
+    const rejection = await assertRejects(() => read, Error, "synchronous backend failure");
+    assertEquals(rejection, reason);
+  });
+
   it("reuses parsed values while the request-local raw value is unchanged", async () => {
     let parseCalls = 0;
     await runWithCacheBatching(async () => {
