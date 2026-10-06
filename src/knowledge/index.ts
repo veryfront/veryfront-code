@@ -58,6 +58,22 @@ const FRONTMATTER_FIELD_PRIORITY = [
   "added",
 ] as const;
 
+const reflectApply = Reflect.apply;
+const arrayIsArray = Array.isArray;
+const objectFreeze = Object.freeze;
+const objectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const objectGetOwnPropertyNames = Object.getOwnPropertyNames;
+const objectGetPrototypeOf = Object.getPrototypeOf;
+const objectHasOwn = Object.hasOwn;
+const stringCharCodeAt = String.prototype.charCodeAt;
+const stringEndsWith = String.prototype.endsWith;
+const stringIncludes = String.prototype.includes;
+const stringReplace = String.prototype.replace;
+const stringSlice = String.prototype.slice;
+const stringSplit = String.prototype.split;
+const stringStartsWith = String.prototype.startsWith;
+const stringTrim = String.prototype.trim;
+
 /** Configuration for project knowledge indexing and retrieval. */
 export interface ProjectKnowledgeConfig {
   /**
@@ -277,41 +293,77 @@ function resolveProjectPath(projectDir: string | undefined, path: string): strin
   return join(projectDir, path);
 }
 
+function replaceString(value: string, searchValue: string | RegExp, replaceValue: string): string {
+  return reflectApply(stringReplace, value, [searchValue, replaceValue]) as string;
+}
+
+function trimString(value: string): string {
+  return reflectApply(stringTrim, value, []) as string;
+}
+
+function stringContains(value: string, search: string): boolean {
+  return reflectApply(stringIncludes, value, [search]) as boolean;
+}
+
+function stringHasPrefix(value: string, prefix: string): boolean {
+  return reflectApply(stringStartsWith, value, [prefix]) as boolean;
+}
+
+function stringHasSuffix(value: string, suffix: string): boolean {
+  return reflectApply(stringEndsWith, value, [suffix]) as boolean;
+}
+
+function sliceString(value: string, start: number, end?: number): string {
+  return reflectApply(stringSlice, value, end === undefined ? [start] : [start, end]) as string;
+}
+
+function stringSegmentsContain(value: string, separator: string, needle: string): boolean {
+  const segments = reflectApply(stringSplit, value, [separator]) as string[];
+  for (let index = 0; index < segments.length; index += 1) {
+    if (segments[index] === needle) return true;
+  }
+  return false;
+}
+
+function appendArrayElement<T>(target: T[], value: T): void {
+  target[target.length] = value;
+}
+
 function toPosixPath(path: string): string {
-  return path.replace(/\\/g, "/");
+  return replaceString(path, /\\/g, "/");
 }
 
 function stripTrailingSlash(path: string): string {
-  return toPosixPath(path).replace(/\/+$/, "");
+  return replaceString(toPosixPath(path), /\/+$/, "");
 }
 
 function trimLeadingSlash(path: string): string {
-  return toPosixPath(path).replace(/^\/+/, "");
+  return replaceString(toPosixPath(path), /^\/+/, "");
 }
 
 function normalizeManifestPath(path: string): string {
-  return trimLeadingSlash(path).replace(/^\.\//, "");
+  return replaceString(trimLeadingSlash(path), /^\.\//, "");
 }
 
 function hasControlCharacters(value: string): boolean {
   for (let index = 0; index < value.length; index += 1) {
-    const code = value.charCodeAt(index);
+    const code = reflectApply(stringCharCodeAt, value, [index]) as number;
     if (code <= 0x1f || (code >= 0x7f && code <= 0x9f)) return true;
   }
   return false;
 }
 
 function validateRelativeKnowledgePath(path: string, errorDetail: string): string {
-  const normalizedPath = normalizeManifestPath(path.trim());
+  const normalizedPath = normalizeManifestPath(trimString(path));
   if (
     !normalizedPath ||
     path.length > MAX_KNOWLEDGE_PATH_LENGTH ||
     hasControlCharacters(path) ||
-    path.includes("\\") ||
+    stringContains(path, "\\") ||
     isAbsolute(path) ||
-    normalizedPath.startsWith("../") ||
+    stringHasPrefix(normalizedPath, "../") ||
     normalizedPath === ".." ||
-    normalizedPath.split("/").includes("..")
+    stringSegmentsContain(normalizedPath, "/", "..")
   ) {
     throw INPUT_VALIDATION_FAILED.create({ detail: errorDetail });
   }
@@ -321,7 +373,9 @@ function validateRelativeKnowledgePath(path: string, errorDetail: string): strin
 
 function validateKnowledgeScopePattern(pattern: string): string {
   const normalizedPattern = validateRelativeKnowledgePath(pattern, "Invalid knowledge scope path");
-  if (normalizedPattern.startsWith("!") || normalizedPattern.startsWith("collection:")) {
+  if (
+    stringHasPrefix(normalizedPattern, "!") || stringHasPrefix(normalizedPattern, "collection:")
+  ) {
     throw INPUT_VALIDATION_FAILED.create({ detail: "Invalid knowledge scope selector" });
   }
 
@@ -336,7 +390,7 @@ function appendKnowledgeScopePattern(
   target: string[],
   pattern: string,
 ): void {
-  target.push(validateKnowledgeScopePattern(pattern));
+  appendArrayElement(target, validateKnowledgeScopePattern(pattern));
 }
 
 function assertKnowledgeScopeEntryCount(count: number): void {
@@ -348,10 +402,10 @@ function assertKnowledgeScopeEntryCount(count: number): void {
 function assertPlainKnowledgeScopeMap(
   selector: unknown,
 ): asserts selector is Record<string, boolean> {
-  if (selector === null || typeof selector !== "object" || Array.isArray(selector)) {
+  if (selector === null || typeof selector !== "object" || arrayIsArray(selector)) {
     throw INPUT_VALIDATION_FAILED.create({ detail: "Invalid knowledge scope selector" });
   }
-  const prototype = Object.getPrototypeOf(selector);
+  const prototype = objectGetPrototypeOf(selector);
   if (prototype !== Object.prototype && prototype !== null) {
     throw INPUT_VALIDATION_FAILED.create({ detail: "Invalid knowledge scope selector" });
   }
@@ -361,55 +415,55 @@ export function normalizeProjectKnowledgeScopeSelector(
   selector: ProjectKnowledgeScopeSelector,
 ): NormalizedProjectKnowledgeScopeSelector {
   if (selector === true) {
-    return Object.freeze({
-      includes: Object.freeze([]),
-      excludes: Object.freeze([]),
+    return objectFreeze({
+      includes: objectFreeze([]),
+      excludes: objectFreeze([]),
       includeAll: true,
     });
   }
   if (selector === false) {
-    return Object.freeze({
-      includes: Object.freeze([]),
-      excludes: Object.freeze([]),
+    return objectFreeze({
+      includes: objectFreeze([]),
+      excludes: objectFreeze([]),
       includeAll: false,
     });
   }
   if (typeof selector === "string") {
-    return Object.freeze({
-      includes: Object.freeze([validateKnowledgeScopePattern(selector)]),
-      excludes: Object.freeze([]),
+    return objectFreeze({
+      includes: objectFreeze([validateKnowledgeScopePattern(selector)]),
+      excludes: objectFreeze([]),
       includeAll: false,
     });
   }
-  if (Array.isArray(selector)) {
+  if (arrayIsArray(selector)) {
     assertKnowledgeScopeEntryCount(selector.length);
     const includes: string[] = [];
     for (let index = 0; index < selector.length; index += 1) {
-      const descriptor = Object.getOwnPropertyDescriptor(selector, index);
-      if (!descriptor || !Object.hasOwn(descriptor, "value")) {
+      const descriptor = objectGetOwnPropertyDescriptor(selector, index);
+      if (!descriptor || !objectHasOwn(descriptor, "value")) {
         throw INPUT_VALIDATION_FAILED.create({ detail: "Invalid knowledge scope selector" });
       }
       appendKnowledgeScopePattern(includes, descriptor.value);
     }
-    return Object.freeze({
-      includes: Object.freeze(includes),
-      excludes: Object.freeze([]),
+    return objectFreeze({
+      includes: objectFreeze(includes),
+      excludes: objectFreeze([]),
       includeAll: false,
     });
   }
 
   assertPlainKnowledgeScopeMap(selector);
-  const patterns = Object.getOwnPropertyNames(selector);
+  const patterns = objectGetOwnPropertyNames(selector);
   assertKnowledgeScopeEntryCount(patterns.length);
   const includes: string[] = [];
   const excludes: string[] = [];
   for (let index = 0; index < patterns.length; index += 1) {
     const pattern = patterns[index]!;
-    const descriptor = Object.getOwnPropertyDescriptor(selector, pattern);
+    const descriptor = objectGetOwnPropertyDescriptor(selector, pattern);
     if (
       !descriptor ||
       !descriptor.enumerable ||
-      !Object.hasOwn(descriptor, "value") ||
+      !objectHasOwn(descriptor, "value") ||
       typeof descriptor.value !== "boolean"
     ) {
       throw INPUT_VALIDATION_FAILED.create({ detail: "Invalid knowledge scope selector" });
@@ -422,9 +476,9 @@ export function normalizeProjectKnowledgeScopeSelector(
     }
   }
 
-  return Object.freeze({
-    includes: Object.freeze(includes),
-    excludes: Object.freeze(excludes),
+  return objectFreeze({
+    includes: objectFreeze(includes),
+    excludes: objectFreeze(excludes),
     includeAll: false,
   });
 }
@@ -447,8 +501,14 @@ function createKnowledgeScopeMatcher(
   selector: ProjectKnowledgeScopeSelector,
 ): (path: string) => boolean {
   const scope = normalizeProjectKnowledgeScopeSelector(selector);
-  const includeMatchers = scope.includes.map(compileGlobMatcher);
-  const excludeMatchers = scope.excludes.map(compileGlobMatcher);
+  const includeMatchers: ((path: string) => boolean)[] = [];
+  for (let index = 0; index < scope.includes.length; index += 1) {
+    appendArrayElement(includeMatchers, compileGlobMatcher(scope.includes[index]!));
+  }
+  const excludeMatchers: ((path: string) => boolean)[] = [];
+  for (let index = 0; index < scope.excludes.length; index += 1) {
+    appendArrayElement(excludeMatchers, compileGlobMatcher(scope.excludes[index]!));
+  }
 
   return (path: string): boolean => {
     if (selector === false) return false;
@@ -460,11 +520,16 @@ function createKnowledgeScopeMatcher(
       return false;
     }
 
-    const included = scope.includeAll ||
-      includeMatchers.some((matches) => matches(normalizedPath));
+    let included = scope.includeAll;
+    for (let index = 0; !included && index < includeMatchers.length; index += 1) {
+      included = includeMatchers[index]!(normalizedPath);
+    }
     if (!included) return false;
 
-    return !excludeMatchers.some((matches) => matches(normalizedPath));
+    for (let index = 0; index < excludeMatchers.length; index += 1) {
+      if (excludeMatchers[index]!(normalizedPath)) return false;
+    }
+    return true;
   };
 }
 
@@ -474,7 +539,12 @@ function applyKnowledgeScope(
 ): ProjectKnowledgeManifestEntry[] {
   if (selector === undefined) return manifest;
   const isInScope = createKnowledgeScopeMatcher(selector);
-  return manifest.filter((entry) => isInScope(entry.path));
+  const scopedManifest: ProjectKnowledgeManifestEntry[] = [];
+  for (let index = 0; index < manifest.length; index += 1) {
+    const entry = manifest[index]!;
+    if (isInScope(entry.path)) appendArrayElement(scopedManifest, entry);
+  }
+  return scopedManifest;
 }
 
 function getRagResultManifestPath(
@@ -484,30 +554,32 @@ function getRagResultManifestPath(
   if (isAbsolute(result.source)) return buildManifestPath(config, result.source);
   const normalizedSource = normalizeManifestPath(result.source);
   const contentDir = config.contentDir ?? DEFAULT_CONTENT_DIR;
-  const normalizedContentDir = stripTrailingSlash(trimLeadingSlash(contentDir)).replace(
+  const normalizedContentDir = replaceString(
+    stripTrailingSlash(trimLeadingSlash(contentDir)),
     /^\.\//,
     "",
   );
   if (
     normalizedSource === normalizedContentDir ||
-    normalizedSource.startsWith(`${normalizedContentDir}/`)
+    stringHasPrefix(normalizedSource, `${normalizedContentDir}/`)
   ) {
     return normalizedSource;
   }
 
   if (config.projectDir && !isAbsolute(config.projectDir)) {
-    const normalizedProjectDir = stripTrailingSlash(trimLeadingSlash(config.projectDir)).replace(
+    const normalizedProjectDir = replaceString(
+      stripTrailingSlash(trimLeadingSlash(config.projectDir)),
       /^\.\//,
       "",
     );
     if (
       normalizedProjectDir &&
-      normalizedSource.startsWith(`${normalizedProjectDir}/`)
+      stringHasPrefix(normalizedSource, `${normalizedProjectDir}/`)
     ) {
-      const projectRelativeSource = normalizedSource.slice(normalizedProjectDir.length + 1);
+      const projectRelativeSource = sliceString(normalizedSource, normalizedProjectDir.length + 1);
       if (
         projectRelativeSource === normalizedContentDir ||
-        projectRelativeSource.startsWith(`${normalizedContentDir}/`)
+        stringHasPrefix(projectRelativeSource, `${normalizedContentDir}/`)
       ) {
         return projectRelativeSource;
       }
@@ -523,25 +595,34 @@ function filterRagResultsByScope(
 ): RagSearchResult[] {
   if (config.scope === undefined) return results;
   const isInScope = createKnowledgeScopeMatcher(config.scope);
-  return results.filter((result) => isInScope(getRagResultManifestPath(result, config)));
+  const scopedResults: RagSearchResult[] = [];
+  for (let index = 0; index < results.length; index += 1) {
+    const result = results[index]!;
+    if (isInScope(getRagResultManifestPath(result, config))) {
+      appendArrayElement(scopedResults, result);
+    }
+  }
+  return scopedResults;
 }
 
 function buildHostedManifestPath(contentDir: string, filePath: string): string | null {
   const normalizedPath = trimLeadingSlash(filePath);
-  const normalizedContentDir = stripTrailingSlash(trimLeadingSlash(contentDir)).replace(
+  const normalizedContentDir = replaceString(
+    stripTrailingSlash(trimLeadingSlash(contentDir)),
     /^\.\//,
     "",
   );
 
   if (
-    normalizedPath === normalizedContentDir || !normalizedPath.startsWith(
+    normalizedPath === normalizedContentDir || !stringHasPrefix(
+      normalizedPath,
       `${normalizedContentDir}/`,
     )
   ) {
     return null;
   }
 
-  if (!normalizedPath.endsWith(".md")) return null;
+  if (!stringHasSuffix(normalizedPath, ".md")) return null;
   return normalizedPath;
 }
 
@@ -551,7 +632,7 @@ function buildManifestPath(config: ProjectKnowledgeConfig, absolutePath: string)
   const relativeToContent = toPosixPath(relative(contentDirPath, absolutePath));
 
   if (!isAbsolute(contentDir)) {
-    const normalizedContentDir = stripTrailingSlash(contentDir).replace(/^\.\//, "");
+    const normalizedContentDir = replaceString(stripTrailingSlash(contentDir), /^\.\//, "");
     return `${normalizedContentDir}/${relativeToContent}`;
   }
 
@@ -703,17 +784,17 @@ function toSearchableEntry(
 }
 
 function getLookupTargetPath(lookupTarget: unknown): string | null {
-  if (typeof lookupTarget === "string" && lookupTarget.trim()) {
+  if (typeof lookupTarget === "string" && trimString(lookupTarget)) {
     return validateKnowledgeLookupTargetPath(lookupTarget);
   }
-  if (!lookupTarget || typeof lookupTarget !== "object" || Array.isArray(lookupTarget)) {
+  if (!lookupTarget || typeof lookupTarget !== "object" || arrayIsArray(lookupTarget)) {
     return null;
   }
 
   const record = lookupTarget as Record<string, unknown>;
   for (const key of ["path", "source", "id", "documentCode", "document_code"]) {
     const value = record[key];
-    if (typeof value === "string" && value.trim()) {
+    if (typeof value === "string" && trimString(value)) {
       return validateKnowledgeLookupTargetPath(value);
     }
   }
@@ -1108,7 +1189,7 @@ function lookupKnowledgeManifest(
 function coerceSearchKnowledgeInput(
   input: ProjectKnowledgeLookupInput,
 ): ProjectKnowledgeLookupInput {
-  if (input === null || typeof input !== "object" || Array.isArray(input)) {
+  if (input === null || typeof input !== "object" || arrayIsArray(input)) {
     throw INPUT_VALIDATION_FAILED.create({ detail: "search_knowledge input must be an object" });
   }
 
