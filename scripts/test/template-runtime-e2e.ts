@@ -61,6 +61,20 @@ const DEFAULT_RUNTIMES: RuntimeName[] = VALID_RUNTIMES;
 const TEMPLATE_ROUTE_EXPECTATIONS: Partial<
   Record<TemplateName, Array<{ route: string; contains?: string[] }>>
 > = {
+  minimal: [
+    { route: "/", contains: ["Welcome to Veryfront"] },
+    { route: "/about", contains: ["About", "Features"] },
+  ],
+  "docs-agent": [
+    { route: "/" },
+    { route: "/uploads", contains: ["No files uploaded"] },
+    { route: "/api/uploads" },
+  ],
+  "saas-starter": [
+    { route: "/", contains: ["Your AI-powered platform"] },
+    { route: "/login", contains: ["Welcome back"] },
+    { route: "/dashboard" },
+  ],
   "agentic-workflow": [
     { route: "/", contains: ["Content Pipeline", "Recent Runs"] },
     { route: "/workflows/test-run" },

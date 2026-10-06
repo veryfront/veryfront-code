@@ -17,7 +17,7 @@ const randomUUID = crypto.randomUUID.bind(crypto);
 
 export function createVeryfrontCloudEmbeddingModel(modelId: string): EmbeddingRuntime {
   const { provider, modelId: upstreamModelId } = parseVeryfrontCloudModelId(modelId, "embedding");
-  const { apiBaseUrl, apiToken } = requireVeryfrontCloudBootstrap();
+  const { apiBaseUrl, apiToken, projectSlug } = requireVeryfrontCloudBootstrap();
   const { baseURL, neutral, wireModelProvider } = resolveVeryfrontCloudGatewayRoute(
     apiBaseUrl,
     provider,
@@ -25,7 +25,7 @@ export function createVeryfrontCloudEmbeddingModel(modelId: string): EmbeddingRu
   const fetch = createVeryfrontCloudFetch(
     apiToken,
     baseURL,
-    undefined,
+    projectSlug,
     neutral
       ? { neutralRoute: true, ...(wireModelProvider ? { wireModelProvider } : {}) }
       : undefined,

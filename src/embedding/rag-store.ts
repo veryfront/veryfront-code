@@ -15,12 +15,16 @@ import {
 } from "#veryfront/platform/compat/path/basic-operations.ts";
 import { resolve } from "#veryfront/platform/compat/path/resolution.ts";
 import { serverLogger } from "#veryfront/utils";
-import { isVeryfrontCloudEnabled } from "#veryfront/platform/cloud/resolver.ts";
+import {
+  getVeryfrontCloudProjectSlug,
+  isVeryfrontCloudEnabled,
+} from "#veryfront/platform/cloud/resolver.ts";
 import { getEnv } from "#veryfront/platform/compat/process.ts";
 import { embedding } from "./embedding.ts";
 import { chunk } from "./chunk.ts";
 import { createVeryfrontCloudRagStore } from "./veryfront-cloud/rag-store.ts";
 import { resolveConfiguredEmbeddingModel } from "./model-resolution.ts";
+import { validateRagDocumentSize } from "./rag-document-size.ts";
 import type {
   RagChunk,
   RagDocumentMeta,
@@ -55,7 +59,7 @@ import {
   RAG_STORE_UNAVAILABLE,
 } from "#veryfront/errors";
 
-type ResolvedRagStoreConfig = RagStoreConfig & { model: string };
+type ResolvedRagStoreConfig = Omit<RagStoreConfig, "cloudModel"> & { model: string };
 
 /** Default number of top results returned by similarity search. */
 const DEFAULT_TOP_K = 5;
@@ -111,6 +115,7 @@ function isRagDocumentMeta(value: unknown): value is RagDocumentMeta {
     typeof value.source === "string" &&
     typeof value.type === "string" &&
     isFiniteNumber(value.createdAt) &&
+    (value.size === undefined || isNonNegativeInteger(value.size)) &&
     (value.url === undefined || typeof value.url === "string");
 }
 
@@ -213,8 +218,8 @@ export function ragStore(config: RagStoreConfig): RagStore {
   const storeCache = new Map<string, RagStore>();
 
   function getStore(): RagStore {
-    const resolvedConfig = resolveRagStoreConfig(config);
     const backend = resolveRagStoreBackend(config);
+    const resolvedConfig = resolveRagStoreConfig(config);
     const cacheKey = JSON.stringify({ backend, config: resolvedConfig });
     const cached = storeCache.get(cacheKey);
     if (cached) return cached;
@@ -227,8 +232,9 @@ export function ragStore(config: RagStoreConfig): RagStore {
   }
 
   return {
-    ingest(title, text, meta) {
-      return getStore().ingest(title, text, meta);
+    async ingest(title, text, meta) {
+      validateRagDocumentSize(meta?.size);
+      return await getStore().ingest(title, text, meta);
     },
     refreshDocument(id, text, meta) {
       const store = getStore();
@@ -253,9 +259,12 @@ export function ragStore(config: RagStoreConfig): RagStore {
 }
 
 function resolveRagStoreConfig(config: RagStoreConfig): ResolvedRagStoreConfig {
+  const { cloudModel: _cloudModel, ...rest } = config;
+  const model = config.model ??
+    (isVeryfrontCloudEnabled() && getVeryfrontCloudProjectSlug() ? config.cloudModel : undefined);
   return {
-    ...config,
-    model: resolveConfiguredEmbeddingModel(config.model),
+    ...rest,
+    model: resolveConfiguredEmbeddingModel(model),
   };
 }
 
@@ -291,7 +300,9 @@ function resolveRagStoreBackend(config: RagStoreConfig): Exclude<RagStoreBackend
   const envOverride = normalizeRagStoreBackend(getEnv("VERYFRONT_RAG_BACKEND"));
   if (envOverride && envOverride !== "auto") return envOverride;
 
-  return isVeryfrontCloudEnabled() ? "veryfront-cloud" : "local-json";
+  return isVeryfrontCloudEnabled() && getVeryfrontCloudProjectSlug()
+    ? "veryfront-cloud"
+    : "local-json";
 }
 
 function createLocalJsonRagStore(config: ResolvedRagStoreConfig): RagStore {
@@ -651,7 +662,7 @@ function createLocalJsonRagStore(config: ResolvedRagStoreConfig): RagStore {
     async ingest(
       title: string,
       text: string,
-      meta?: { source?: string; type?: string },
+      meta?: { source?: string; type?: string; size?: number },
     ): Promise<string> {
       return withLock(async (lease) => {
         const loaded = await load();
@@ -675,6 +686,7 @@ function createLocalJsonRagStore(config: ResolvedRagStoreConfig): RagStore {
           source: meta?.source ?? "",
           type: meta?.type ?? "",
           createdAt: Date.now(),
+          ...(meta?.size === undefined ? {} : { size: meta.size }),
         };
 
         const chunkRecords: RagChunk[] = chunks.map((chunkText, i) => ({

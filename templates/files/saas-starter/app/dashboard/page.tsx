@@ -1,95 +1,70 @@
 "use client";
 
-import { useState } from "react";
-import { Chat } from "veryfront/chat";
+import {
+  AppShell,
+  Chat,
+  ChatSidebar,
+  ChatThemeScope,
+  ConversationsProvider,
+} from "veryfront/chat";
 import { MarkdownRendererProvider } from "veryfront/markdown";
 import { MarkdownRenderer } from "../markdown-renderer.tsx";
 
-interface Conversation {
-  id: string;
-  title: string;
-  updatedAt: string;
-}
-
-const INITIAL_CONVERSATIONS: Conversation[] = [
-  { id: "1", title: "Getting started", updatedAt: "Just now" },
-];
-
 export default function Dashboard(): React.JSX.Element {
-  const [conversations] = useState<Conversation[]>(INITIAL_CONVERSATIONS);
-  const [activeId, setActiveId] = useState("1");
-
   return (
-    <div className="flex h-screen bg-white dark:bg-neutral-950">
-      {/* Sidebar */}
-      <aside className="w-64 border-r border-neutral-200 dark:border-neutral-800 flex flex-col bg-neutral-50 dark:bg-neutral-900">
-        <div className="p-4 border-b border-neutral-200 dark:border-neutral-800">
-          <button type="button" className="w-full flex items-center gap-2 px-3 py-2 text-sm font-medium text-neutral-700 dark:text-neutral-300 bg-white dark:bg-neutral-800 border border-neutral-200 dark:border-neutral-700 rounded-lg hover:bg-neutral-50 dark:hover:bg-neutral-700 transition-colors">
-            <svg
-              className="w-4 h-4"
-              fill="none"
-              viewBox="0 0 24 24"
-              stroke="currentColor"
-              strokeWidth={2}
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                d="M12 4.5v15m7.5-7.5h-15"
-              />
-            </svg>
-            New chat
-          </button>
-        </div>
+    <ChatThemeScope className="flex h-screen bg-white dark:bg-neutral-950">
+      <ConversationsProvider storageKey="saas-conversations">
+        <AppShell className="flex-1 min-h-0">
+          <AppShell.Sidebar
+            side="left"
+            width={256}
+            className="border-r border-[var(--outline-border)] bg-neutral-50 dark:bg-neutral-900"
+          >
+            <AppShell.SidebarContent className="p-0">
+              <ChatSidebar.Root>
+                <ChatSidebar.NewButton />
+                <ChatSidebar.List />
+              </ChatSidebar.Root>
+            </AppShell.SidebarContent>
+            <AppShell.SidebarFooter border className="p-4">
+              <div className="flex items-center gap-2">
+                <div className="flex size-8 items-center justify-center rounded-full bg-neutral-200 text-xs font-medium text-neutral-600 dark:bg-neutral-700 dark:text-neutral-300">
+                  U
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm font-medium text-neutral-900 dark:text-white">
+                    User
+                  </p>
+                  <p className="truncate text-xs text-neutral-500">
+                    user@example.com
+                  </p>
+                </div>
+              </div>
+            </AppShell.SidebarFooter>
+          </AppShell.Sidebar>
 
-        <nav className="flex-1 overflow-y-auto p-2 space-y-0.5">
-          {conversations.map((conv) => (
-            <button
-              key={conv.id}
-              type="button"
-              onClick={() => setActiveId(conv.id)}
-              className={`w-full text-left px-3 py-2 rounded-lg text-sm transition-colors ${
-                activeId === conv.id
-                  ? "bg-neutral-200 dark:bg-neutral-800 text-neutral-900 dark:text-white"
-                  : "text-neutral-600 dark:text-neutral-400 hover:bg-neutral-100 dark:hover:bg-neutral-800/50"
-              }`}
-            >
-              <p className="truncate">{conv.title}</p>
-              <p className="text-xs text-neutral-400 mt-0.5">
-                {conv.updatedAt}
-              </p>
-            </button>
-          ))}
-        </nav>
-
-        <div className="p-4 border-t border-neutral-200 dark:border-neutral-800">
-          <div className="flex items-center gap-2">
-            <div className="w-8 h-8 rounded-full bg-neutral-200 dark:bg-neutral-700 flex items-center justify-center text-xs font-medium text-neutral-600 dark:text-neutral-300">
-              U
-            </div>
-            <div className="flex-1 min-w-0">
-              <p className="text-sm font-medium text-neutral-900 dark:text-white truncate">
-                User
-              </p>
-              <p className="text-xs text-neutral-500 truncate">
-                user@example.com
-              </p>
-            </div>
-          </div>
-        </div>
-      </aside>
-
-      {/* Chat */}
-      <main className="flex-1 flex flex-col">
-        <MarkdownRendererProvider renderer={MarkdownRenderer}>
-          <Chat
-            agentId="assistant"
-            api="/api/ag-ui"
-            className="flex-1 min-h-0"
-            placeholder="Message..."
-          />
-        </MarkdownRendererProvider>
-      </main>
-    </div>
+          <AppShell.Main>
+            <AppShell.Header border className="h-14 gap-3 px-3">
+              <AppShell.Trigger side="left" />
+              <div className="min-w-0">
+                <p className="truncate text-sm font-medium text-neutral-900 dark:text-white">
+                  AI SaaS Assistant
+                </p>
+              </div>
+            </AppShell.Header>
+            <AppShell.Content className="flex min-h-0 flex-col">
+              <MarkdownRendererProvider renderer={MarkdownRenderer}>
+                <Chat
+                  agentId="assistant"
+                  api="/api/ag-ui"
+                  className="flex-1 min-h-0"
+                  placeholder="Message..."
+                />
+              </MarkdownRendererProvider>
+            </AppShell.Content>
+          </AppShell.Main>
+        </AppShell>
+      </ConversationsProvider>
+    </ChatThemeScope>
   );
 }

@@ -7,6 +7,7 @@ import { cwd } from "veryfront/platform";
 import { routesCommand } from "./command.ts";
 import { showHeader } from "#cli/utils";
 import { CommonArgs, createArgParser, parseArgsOrThrow } from "#cli/shared/args";
+import { isJsonMode } from "../../shared/json-output.ts";
 import type { ParsedArgs } from "#cli/shared/types";
 
 const getRoutesArgsSchema = defineSchema((v) =>
@@ -20,12 +21,12 @@ const RoutesArgsSchema = lazySchema(getRoutesArgsSchema);
 
 export const parseRoutesArgs = createArgParser(RoutesArgsSchema, {
   projectDir: CommonArgs.projectDir,
-  json: { keys: ["json"], type: "boolean" },
-});
+  json: { keys: ["json", "j"], type: "boolean" },
+}, { rejectUnknown: true });
 
 export async function handleRoutesCommand(args: ParsedArgs): Promise<void> {
-  showHeader();
   const data = parseArgsOrThrow(parseRoutesArgs, "routes", args);
+  if (!isJsonMode()) showHeader();
   const projectDir = data.projectDir || cwd();
   await routesCommand(projectDir, { json: data.json });
 }

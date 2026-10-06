@@ -46,16 +46,13 @@ async function bounded(promise, label, ms = 25_000) {
 }
 
 async function scenario(kind, trusted = false) {
-  const privateRuntimeMarker =
-    `synthetic-broker-private-runtime-${randomUUID()}`;
+  const privateRuntimeMarker = `synthetic-broker-private-runtime-${randomUUID()}`;
   const steering = kind === "steering";
   const directAgUi = kind === "direct-ag-ui";
   const directDurable = kind === "direct-durable";
   const direct = directAgUi || directDurable;
   const providerToolNames = steering ? ["web_search"] : [];
-  const mode = kind === "sse" || kind === "disconnect" || directAgUi
-    ? "sse"
-    : "detached";
+  const mode = kind === "sse" || kind === "disconnect" || directAgUi ? "sse" : "detached";
   const project = new URL(
     `./project-${kind}-${trusted ? "trusted" : "remote"}/`,
     import.meta.url,
@@ -195,8 +192,7 @@ export default tool({ id: "project_probe", description: "Inspect approved data",
         },
       },
   );
-  const encode = (value) =>
-    Buffer.from(JSON.stringify(value)).toString("base64url");
+  const encode = (value) => Buffer.from(JSON.stringify(value)).toString("base64url");
   const nowSeconds = Math.floor(Date.now() / 1000);
   const signed = `${encode({ alg: "EdDSA", typ: "JWT" })}.${
     encode({
@@ -314,9 +310,7 @@ export default tool({ id: "project_probe", description: "Inspect approved data",
           request.headers["x-veryfront-run-terminal-token"],
           terminalToken,
         );
-        const terminalStatus = request.url.endsWith("/cancel")
-          ? "cancelled"
-          : data.status;
+        const terminalStatus = request.url.endsWith("/cancel") ? "cancelled" : data.status;
         completions.push({ ...data, status: terminalStatus });
         terminalEntered.resolve();
         if (kind === "delayed-persistence") await terminalRelease.promise;
@@ -394,8 +388,7 @@ export default tool({ id: "project_probe", description: "Inspect approved data",
               });
               secondModelCall.resolve();
               if (kind === "kill" || kind === "disconnect") {
-                const abort = () =>
-                  controller.error(new Error("Synthetic provider cancelled"));
+                const abort = () => controller.error(new Error("Synthetic provider cancelled"));
                 if (options.abortSignal.aborted) abort();
                 else {options.abortSignal.addEventListener("abort", abort, {
                     once: true,
@@ -487,9 +480,7 @@ export default tool({ id: "project_probe", description: "Inspect approved data",
         const persistence = createManagedBrokerPersistence({
           terminalAuthToken: terminalToken,
           apiUrl,
-          runEventToken: direct
-            ? secrets.events
-            : ingress.privateAuthority.runEventToken,
+          runEventToken: direct ? secrets.events : ingress.privateAuthority.runEventToken,
           completionAuthToken: direct
             ? ingress.broker.getParsedRequest().authToken
             : ingress.privateAuthority.apiAuthToken,
@@ -650,11 +641,7 @@ export default tool({ id: "project_probe", description: "Inspect approved data",
                   ? ["host_probe", "update_file"]
                   : ["host_probe"],
                 hostToolFacadeIds: ["host"],
-                remoteToolSourceIds: trusted
-                  ? ["project"]
-                  : steering
-                  ? ["state-tools"]
-                  : [],
+                remoteToolSourceIds: trusted ? ["project"] : steering ? ["state-tools"] : [],
                 execution: {
                   kind: "canonical",
                   projectId: steering || trusted ? projectId : null,
@@ -676,6 +663,7 @@ export default tool({ id: "project_probe", description: "Inspect approved data",
             model: {
               resolver: () => model,
               runEventSink: persistence.modelRunEventSink,
+              ...(steering || trusted ? { modelCallCaptureReceipts: true } : {}),
               grant: {
                 maxCalls: 3,
                 maxConcurrentCalls: 1,
@@ -718,9 +706,7 @@ export default tool({ id: "project_probe", description: "Inspect approved data",
                       tools.push(name);
                       return Promise.resolve({
                         text: "host-ok",
-                        ...(trusted
-                          ? { privateValue: privateRuntimeMarker }
-                          : {}),
+                        ...(trusted ? { privateValue: privateRuntimeMarker } : {}),
                       });
                     },
                   },
@@ -755,8 +741,7 @@ export default tool({ id: "project_probe", description: "Inspect approved data",
             },
             persistence: {
               publishParentRunEvents: persistence.publishParentRunEvents,
-              persistToolExposureCheckpoint:
-                persistence.persistToolExposureCheckpoint,
+              persistToolExposureCheckpoint: persistence.persistToolExposureCheckpoint,
               initialProviderReplayCheckpoints: [],
             },
             state: trusted
@@ -766,13 +751,11 @@ export default tool({ id: "project_probe", description: "Inspect approved data",
                     agent: definition,
                     initialProjectInstructions: privateRuntimeMarker,
                   }),
-                refreshProjectSteering: () =>
-                  Promise.resolve(privateRuntimeMarker),
+                refreshProjectSteering: () => Promise.resolve(privateRuntimeMarker),
               }
               : steering
               ? {
-                prepareProjectSteering: ({ definition }) =>
-                  Promise.resolve({ agent: definition }),
+                prepareProjectSteering: ({ definition }) => Promise.resolve({ agent: definition }),
                 refreshProjectSteering(_signal, names) {
                   steeringRefreshes.push(
                     [...names].sort((left, right) => left.localeCompare(right)),

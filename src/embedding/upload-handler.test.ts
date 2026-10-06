@@ -297,8 +297,10 @@ describe("createUploadHandler", () => {
   });
 
   it("returns chat upload registry fields for docs-agent uploads", async () => {
+    let ingestMeta: { source?: string; type?: string; size?: number } | undefined;
     const store = createStubStore({
-      async ingest(): Promise<string> {
+      async ingest(_title, _text, meta): Promise<string> {
+        ingestMeta = meta;
         return "doc-123";
       },
       async listDocuments() {
@@ -309,6 +311,7 @@ describe("createUploadHandler", () => {
             source: "upload:guide.txt",
             type: "txt",
             createdAt: 1,
+            size: 11,
           },
         ];
       },
@@ -337,11 +340,12 @@ describe("createUploadHandler", () => {
     assertEquals(postBody.name, "guide.txt");
     assertEquals(postBody.mediaType, "text/plain");
     assertEquals(postBody.size, 11);
+    assertEquals(ingestMeta?.size, 11);
     assertEquals(getBody.items[0], {
       id: "doc-123",
       name: "guide.txt",
       mediaType: "text/plain",
-      size: 0,
+      size: 11,
     });
   });
 
@@ -750,6 +754,46 @@ describe("createUploadHandler", () => {
       // Document is removed even though blob cleanup failed (best-effort)
       assertEquals(response.status, 200);
       assertEquals(removed, ["doc-123"]);
+    });
+  });
+
+  it("keeps local uploads when cloud service-layer auth has no project slug", async () => {
+    setEnv("VERYFRONT_API_TOKEN", "vf_test_uploads");
+    setEnv("VERYFRONT_SERVICE_LAYER", "cloud");
+    setEnv("VERYFRONT_API_BASE_URL", TEST_PUBLIC_API_ORIGIN);
+
+    let ingestCalls = 0;
+    const removed: string[] = [];
+    const store = createStubStore({
+      async ingest(): Promise<string> {
+        ingestCalls++;
+        return "doc-123";
+      },
+      async removeDocument(id: string): Promise<void> {
+        removed.push(id);
+      },
+    });
+    const { POST } = createUploadHandler(store, EXPLICIT_UNAUTHENTICATED);
+
+    await withMockFetch(async () => {
+      throw new Error("fetch should not be called");
+    }, async () => {
+      const formData = new FormData();
+      formData.append(
+        "file",
+        new File(["hello world"], "guide.txt", { type: "text/plain" }),
+      );
+
+      const response = await POST(
+        new Request("http://test/uploads", {
+          method: "POST",
+          body: formData,
+        }),
+      );
+
+      assertEquals(response.status, 200);
+      assertEquals(ingestCalls, 1);
+      assertEquals(removed, []);
     });
   });
 
