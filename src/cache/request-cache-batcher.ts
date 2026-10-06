@@ -39,6 +39,7 @@ const MapPrototypeSet = Map.prototype.set;
 const MapSizeGetter = Object.getOwnPropertyDescriptor(Map.prototype, "size")!.get!;
 const NumberPrototypeToFixed = Number.prototype.toFixed;
 const PromiseAll = IntrinsicPromise.all;
+const PromisePrototypeThen = IntrinsicPromise.prototype.then;
 const AsyncLocalStoragePrototype = AsyncLocalStorage.prototype;
 const AsyncLocalStorageEnterWith = AsyncLocalStoragePrototype.enterWith;
 const AsyncLocalStorageGetStore = AsyncLocalStoragePrototype.getStore;
@@ -156,7 +157,18 @@ export function parseRequestCachedValue<T>(
   return value;
 }
 
-export async function getCachedWithBatching(
+export function getCachedWithBatching(
+  backend: CacheBackend,
+  key: string,
+  options?: CacheReadOptions,
+): Promise<string | null> {
+  const read = readCachedWithBatching(backend, key, options);
+  // Observe detached failures without changing the promise callers await.
+  void IntrinsicReflectApply(PromisePrototypeThen, read, [undefined, () => undefined]);
+  return read;
+}
+
+async function readCachedWithBatching(
   backend: CacheBackend,
   key: string,
   options?: CacheReadOptions,

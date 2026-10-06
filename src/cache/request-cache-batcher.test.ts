@@ -67,6 +67,21 @@ describe("cache/request-cache-batcher", () => {
     });
   });
 
+  it("preserves a backend rejection for callers awaiting a read", async () => {
+    const failure = new Error("backend failure");
+    const backend = createMockBackend();
+    backend.get = () => Promise.reject(failure);
+    let observed: unknown;
+    await runWithCacheBatching(async () => {
+      try {
+        await getCachedWithBatching(backend, "admitted");
+      } catch (error) {
+        observed = error;
+      }
+    });
+    assertEquals(observed, failure);
+  });
+
   describe("runWithCacheBatching", () => {
     it("returns a rejected promise when its callback throws synchronously", async () => {
       const reason = new Error("synchronous cache callback failure");
