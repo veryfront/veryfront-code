@@ -77,7 +77,7 @@ export const getModelCallCompletedPayloadSchema = defineRunEventSchema((v) =>
     // Preserve the API decimal amount as a string without floating-point rounding.
     costCredits: requiredString(v),
     latencyMs: v.number().int().nonnegative().nullable(),
-    usageCaptureStatus: v.enum(["complete", "missing"]),
+    usageCaptureStatus: v.enum(["complete", "partial", "missing"]),
     providerRequestId: nullableString(v),
     modelCallContextEventId: v.number().int().positive().nullable(),
   })

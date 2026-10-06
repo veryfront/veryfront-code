@@ -6,8 +6,13 @@ import {
   assertThrows,
 } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { isDeno } from "#veryfront/platform/compat/runtime.ts";
 import { withEnv } from "#veryfront/testing/deno-compat.ts";
 import { observeFetchRequestInit, withMockFetch } from "#veryfront/testing/mock-fetch.ts";
+import {
+  HEADER_METHODS,
+  installCredentialProbes,
+} from "#veryfront/security/http/credential-probes.test-helpers.ts";
 import {
   createRemoteMCPToolSource,
   createRemoteMCPToolSourceFactoryWithTransport,
@@ -206,6 +211,46 @@ describe("tool/remote-mcp", () => {
       );
     }
     assertEquals(transportCalls, 0);
+  });
+
+  // The probes pin what Deno's own Headers and init processing call; Node's
+  // undici takes different internal paths.
+  it("keeps a source's bearer away from patched Headers members and inherited getters", {
+    ignore: !isDeno,
+  }, async () => {
+    const BEARER = "Bearer vf-remote-mcp-run-token-canary-4b8e";
+    const authorizations: (string | undefined)[] = [];
+    const createSource = createRemoteMCPToolSourceFactoryWithTransport({
+      trustedEndpoints: ["http://veryfront-api/mcp"],
+      // Stands in for the native send: it reads the null-prototype record.
+      requestFetch: (_input, init) => {
+        const headers = init?.headers as Record<string, string> | undefined;
+        authorizations.push(
+          headers && Object.hasOwn(headers, "authorization") ? headers.authorization : undefined,
+        );
+        const body = JSON.parse(String(init?.body)) as { id: string };
+        return Promise.resolve(
+          Response.json({ jsonrpc: "2.0", id: body.id, result: { tools: [] } }),
+        );
+      },
+    });
+    const source = createSource({
+      endpoint: "http://veryfront-api/mcp",
+      headers: { Authorization: BEARER },
+    });
+    // Project code loaded in the isolate: every Headers member native fetch
+    // does not call itself, and the init getters, are replaced.
+    const probes = installCredentialProbes({
+      headerMethods: HEADER_METHODS.filter((name) => name !== "has" && name !== "append"),
+    });
+    try {
+      assertEquals(await source.listTools(), []);
+    } finally {
+      probes.restore();
+    }
+
+    assertEquals(authorizations, [BEARER]);
+    assertEquals(probes.saw(BEARER), false);
   });
 
   it("uses host transport for dynamic project-scoped endpoints with query parameters", async () => {

@@ -800,6 +800,7 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
 
     const protectionError = await checkProtectedProxyAccess({
       url,
+      requestHost: resolveProxyRequestHost(req, url),
       matchingEnv,
       projectId: lookupResult.id,
       userToken,
@@ -929,6 +930,7 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
 
         const protectionError = await checkProtectedProxyAccess({
           url,
+          requestHost: resolveProxyRequestHost(req, url),
           matchingEnv: accessEnv,
           projectId: routingResult.id,
           userToken,

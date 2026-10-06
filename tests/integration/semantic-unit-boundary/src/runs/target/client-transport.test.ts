@@ -22,6 +22,40 @@ import {
 import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
 
 describe("Runs SDK canonical transport", () => {
+  it("exposes the typed schedule admission cause from the public Problem", async () => {
+    for (const cause of ["schedule_concurrency_forbidden", "schedule_fire_in_progress"] as const) {
+      const problem = {
+        type: "https://api.example.test/problems/state-conflict",
+        title: "Run conflict",
+        status: 409,
+        code: "RUN_CONFLICT",
+        cause,
+      };
+      await withMockFetch(
+        () => Promise.resolve(Response.json(problem, { status: 409 })),
+        async () => {
+          const sdk = createRunsSdk({
+            transport: createVeryfrontApiTransport({
+              baseUrl: "https://api.example.test",
+              getToken: () => "test-token",
+              retry: { maxRetries: 0, initialDelay: 0, maxDelay: 0 },
+            }),
+          });
+          const error = await assertRejects(
+            () => sdk.getRun({ path: { run_id: "run-1" } }),
+            VeryfrontError,
+          );
+          const observed:
+            | "schedule_concurrency_forbidden"
+            | "schedule_fire_in_progress"
+            | undefined = runsProblemOf(error)?.cause;
+          assertEquals(observed, cause);
+          assertEquals(runsProblemOf(error), problem);
+        },
+      );
+    }
+  });
+
   it("uses the canonical transport and bounds oversized error bodies", async () => {
     let cancelled = false;
     let chunks = 0;

@@ -1,8 +1,9 @@
-import { getEnv } from "#veryfront/platform/compat/process.ts";
+import { getEnv, getHostEnvExcludingEnvFile } from "#veryfront/platform/compat/process.ts";
 import type { AuthProvider } from "../extensions/auth/index.ts";
 import { resolve as resolveContract } from "../extensions/contracts.ts";
 import { INITIALIZATION_ERROR } from "#veryfront/errors";
 import { normalizeProxyOriginFormPath } from "./request-path.ts";
+import { normalizeProxyRequestHost } from "./request-host.ts";
 
 export interface ProxyAccessControlLogger {
   debug: (msg: string, extra?: Record<string, unknown>) => void;
@@ -244,28 +245,139 @@ function resolveSignInApex(hostname: string, isHostedProductionDeployment: boole
   if (isHostedProductionDeployment) return DEFAULT_SIGN_IN_APEX;
 
   for (const apex of SIGN_IN_APEX_DOMAINS) {
-    if (hostname === apex || hostname.endsWith(`.${apex}`)) return apex;
+    if (hostname === apex || stringEndsWith(hostname, `.${apex}`)) return apex;
   }
   return DEFAULT_SIGN_IN_APEX;
 }
 
-export function buildProxyAuthRedirectUrl(url: URL): string {
-  const safePath = normalizeProxyOriginFormPath(url.pathname);
-  const returnPath = safePath + url.search;
+/**
+ * Build the Studio sign-in URL for a protected proxy request.
+ *
+ * Customer proxy deployments may configure a trusted Studio origin. Matching
+ * project hosts receive an absolute HTTPS return URL bound to that configured
+ * hostname; untrusted request hosts receive only a sanitized path and query.
+ */
+const NativeURL = URL;
+const NativeEncodeURIComponent = encodeURIComponent;
+const IntrinsicReflectApply = Reflect.apply;
+const StringPrototypeEndsWith = String.prototype.endsWith;
+const URLProtocolGetter = Object.getOwnPropertyDescriptor(NativeURL.prototype, "protocol")!.get!;
+const URLUsernameGetter = Object.getOwnPropertyDescriptor(NativeURL.prototype, "username")!.get!;
+const URLPasswordGetter = Object.getOwnPropertyDescriptor(NativeURL.prototype, "password")!.get!;
+const URLHostnameGetter = Object.getOwnPropertyDescriptor(NativeURL.prototype, "hostname")!.get!;
+const URLPortGetter = Object.getOwnPropertyDescriptor(NativeURL.prototype, "port")!.get!;
+const URLPathnameGetter = Object.getOwnPropertyDescriptor(NativeURL.prototype, "pathname")!.get!;
+const URLSearchGetter = Object.getOwnPropertyDescriptor(NativeURL.prototype, "search")!.get!;
+const URLHashGetter = Object.getOwnPropertyDescriptor(NativeURL.prototype, "hash")!.get!;
 
-  const isHostedProductionDeployment = url.hostname.endsWith(".production.veryfront.org") ||
-    url.hostname.endsWith(".production.veryfront.com");
-  // For hosted production, preserve the absolute origin so the user returns to
-  // the correct subdomain — but rebuild it from the allowlisted hostname and the
-  // already-sanitized path instead of the raw request URL. This prevents
-  // userinfo/port/other components of the inbound URL from smuggling a foreign
-  // target into the `from` param (open-redirect hardening).
-  const returnTarget = isHostedProductionDeployment
-    ? `https://${url.hostname}${returnPath}`
-    : returnPath;
+function stringEndsWith(value: string, search: string): boolean {
+  return IntrinsicReflectApply(StringPrototypeEndsWith, value, [search]) as boolean;
+}
 
-  const signInApex = resolveSignInApex(url.hostname, isHostedProductionDeployment);
-  return `https://${signInApex}/sign-in?from=${encodeURIComponent(returnTarget)}`;
+function urlProtocol(url: URL): string {
+  return IntrinsicReflectApply(URLProtocolGetter, url, []) as string;
+}
+
+function urlUsername(url: URL): string {
+  return IntrinsicReflectApply(URLUsernameGetter, url, []) as string;
+}
+
+function urlPassword(url: URL): string {
+  return IntrinsicReflectApply(URLPasswordGetter, url, []) as string;
+}
+
+function urlHostname(url: URL): string {
+  return IntrinsicReflectApply(URLHostnameGetter, url, []) as string;
+}
+
+function urlPort(url: URL): string {
+  return IntrinsicReflectApply(URLPortGetter, url, []) as string;
+}
+
+function urlPathname(url: URL): string {
+  return IntrinsicReflectApply(URLPathnameGetter, url, []) as string;
+}
+
+function urlSearch(url: URL): string {
+  return IntrinsicReflectApply(URLSearchGetter, url, []) as string;
+}
+
+function urlHash(url: URL): string {
+  return IntrinsicReflectApply(URLHashGetter, url, []) as string;
+}
+
+function isTrustedProxyReturnHost(requestHostname: string, configuredHostname: string): boolean {
+  return requestHostname === configuredHostname ||
+    stringEndsWith(requestHostname, `.${configuredHostname}`);
+}
+
+function isHostedProductionHostname(hostname: string): boolean {
+  return stringEndsWith(hostname, ".production.veryfront.org") ||
+    stringEndsWith(hostname, ".production.veryfront.com");
+}
+
+/** Parse operator configuration once; request handling retains only immutable strings. */
+export function createProxyAuthRedirectBuilder(configuredOrigin?: string) {
+  let origin: string | undefined;
+  let hostname = "";
+  let port = "";
+  if (configuredOrigin) {
+    let signInOrigin: URL;
+    try {
+      signInOrigin = new NativeURL(configuredOrigin);
+    } catch {
+      throw INITIALIZATION_ERROR.create({
+        detail: "VERYFRONT_PROXY_SIGN_IN_ORIGIN must be an HTTPS origin",
+      });
+    }
+    if (
+      urlProtocol(signInOrigin) !== "https:" || urlUsername(signInOrigin) ||
+      urlPassword(signInOrigin) ||
+      urlPathname(signInOrigin) !== "/" || urlSearch(signInOrigin) || urlHash(signInOrigin)
+    ) {
+      throw INITIALIZATION_ERROR.create({
+        detail:
+          "VERYFRONT_PROXY_SIGN_IN_ORIGIN must be an HTTPS origin without credentials, path, query or fragment",
+      });
+    }
+    hostname = normalizeProxyRequestHost(urlHostname(signInOrigin));
+    port = urlPort(signInOrigin);
+    origin = `https://${hostname}${port ? `:${port}` : ""}`;
+  }
+  return (url: URL, routedHost?: string): string => {
+    const requestHostname = normalizeProxyRequestHost(routedHost ?? urlHostname(url));
+    const safePath = normalizeProxyOriginFormPath(urlPathname(url));
+    const returnPath = safePath + urlSearch(url);
+    if (origin) {
+      const trustedHost = isTrustedProxyReturnHost(requestHostname, hostname);
+      const projectOrigin = trustedHost
+        ? `https://${requestHostname}${port ? `:${port}` : ""}`
+        : "";
+      const returnTarget = projectOrigin + returnPath;
+      return `${origin}/sign-in?from=${NativeEncodeURIComponent(returnTarget)}`;
+    }
+
+    const isHostedProductionDeployment = isHostedProductionHostname(requestHostname);
+    // For hosted production, preserve the absolute origin so the user returns to
+    // the correct subdomain — but rebuild it from the allowlisted hostname and the
+    // already-sanitized path instead of the raw request URL. This prevents
+    // userinfo/port/other components of the inbound URL from smuggling a foreign
+    // target into the `from` param (open-redirect hardening).
+    const returnTarget = isHostedProductionDeployment
+      ? `https://${requestHostname}${returnPath}`
+      : returnPath;
+
+    const signInApex = resolveSignInApex(requestHostname, isHostedProductionDeployment);
+    return `https://${signInApex}/sign-in?from=${NativeEncodeURIComponent(returnTarget)}`;
+  };
+}
+
+const operatorRedirectBuilder = createProxyAuthRedirectBuilder(
+  getHostEnvExcludingEnvFile("VERYFRONT_PROXY_SIGN_IN_ORIGIN"),
+);
+
+export function buildProxyAuthRedirectUrl(url: URL, routedHost?: string): string {
+  return operatorRedirectBuilder(url, routedHost);
 }
 
 export function isProjectMember(
@@ -278,6 +390,8 @@ export function isProjectMember(
 
 export async function checkProtectedProxyAccess(input: {
   url: URL;
+  /** Canonical hostname used for project routing and authorization. */
+  requestHost?: string;
   matchingEnv: ProtectedProxyEnvironment | undefined;
   /** The project the matching environment belongs to, for bound tokens. */
   projectId?: string;
@@ -318,7 +432,7 @@ export async function checkProtectedProxyAccess(input: {
   }
 
   if (!userToken) {
-    const redirectUrl = buildProxyAuthRedirectUrl(url);
+    const redirectUrl = buildProxyAuthRedirectUrl(url, input.requestHost);
     logger?.info("Protected environment requires authentication", {
       ...logContext,
       environmentName: matchingEnv.name,
@@ -334,7 +448,7 @@ export async function checkProtectedProxyAccess(input: {
     logger,
   );
   if (!principal) {
-    const redirectUrl = buildProxyAuthRedirectUrl(url);
+    const redirectUrl = buildProxyAuthRedirectUrl(url, input.requestHost);
     logger?.info("Could not extract userId from token", {
       ...logContext,
       environmentName: matchingEnv.name,

@@ -123,6 +123,21 @@ export function buildDirCacheKeyPrefix(ctx: FileOperationContext | null | undefi
   return buildApiFileOperationPrefix(CacheKeyPrefix.DIR, ctx, "dir:unknown");
 }
 
+/**
+ * Project prefix shared by every file-list key of one source type, for broad
+ * publish invalidations that know the project but not the exact source.
+ */
+export function buildFileListProjectPrefix(
+  sourceType: "branch" | "release" | "env",
+  projectSlug: string,
+): string {
+  // A delimiter in the slug could forge another project's fallback segments.
+  const project = !projectSlug.includes(":") && isCacheKeyPassThroughSafe(`${projectSlug}:`)
+    ? projectSlug
+    : encodeCacheKeySegment(projectSlug);
+  return `${CacheKeyPrefix.FILES}:${sourceType}:${project}:`;
+}
+
 export function buildFileListCacheKey(ctx: FileOperationContext | null | undefined): string {
   const sourceKey = buildFileOperationPrefix(CacheKeyPrefix.FILES, ctx, "files:unknown");
   if (
@@ -135,18 +150,13 @@ export function buildFileListCacheKey(ctx: FileOperationContext | null | undefin
   // Keep the project prefix used by broad publish invalidation. Reserve extra
   // segments so encoded identities cannot alias an ordinary source.
   const sourceType = ctx.sourceType === "environment" ? "env" : ctx.sourceType;
-  // A delimiter in the slug could forge another project's fallback segments.
-  const project = !ctx.projectSlug.includes(":") &&
-      isCacheKeyPassThroughSafe(`${ctx.projectSlug}:`)
-    ? ctx.projectSlug
-    : encodeCacheKeySegment(ctx.projectSlug);
-  const prefix = `${CacheKeyPrefix.FILES}:${sourceType}:${project}`;
-  const encoded = `${prefix}:encoded:${encodeCacheKeySegment(sourceKey)}:source:value`;
+  const prefix = buildFileListProjectPrefix(sourceType, ctx.projectSlug);
+  const encoded = `${prefix}encoded:${encodeCacheKeySegment(sourceKey)}:source:value`;
   if (encoded.length <= MAX_FILE_LIST_SOURCE_KEY_LENGTH) return encoded;
 
   // Match the bounded, domain-separated 128-bit source identities used by
   // other synchronous cache-key builders for inputs too long to inline.
-  return `${prefix}:hashed:${hashString(`file-list-source:a:${sourceKey}`)}:${
+  return `${prefix}hashed:${hashString(`file-list-source:a:${sourceKey}`)}:${
     hashString(`file-list-source:b:${sourceKey}`)
   }:source:value`;
 }

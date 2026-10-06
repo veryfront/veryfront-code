@@ -1,4 +1,9 @@
 import {
+  createHostedChildInferenceModelResolver,
+  type HostedInferenceAuthorityOwner,
+  inheritHostedChildInferenceAuthority,
+} from "../hosted/inference-credential.ts";
+import {
   createToolsFromHostDefinitions,
   type HostToolSet,
   type HostToolTraceAttributes,
@@ -204,7 +209,7 @@ export function startAgentRuntimeForkWithHostTools<
   );
 
   return {
-    streamResult: startAgentRuntimeFork({
+    streamResult: startAgentRuntimeFork(inheritForkInference({
       createModelRuntimeResolver: input.createModelRuntimeResolver,
       apiUrl: input.apiUrl,
       authToken: input.authToken,
@@ -228,7 +233,7 @@ export function startAgentRuntimeForkWithHostTools<
       logger: input.logger,
       prepareStep: input.prepareStep,
       runStep: input.runStep,
-    }),
+    }, input)),
     forkToolNames,
   };
 }
@@ -314,15 +319,12 @@ export async function runAgentRuntimeForkStep(input: RunAgentRuntimeForkStepInpu
   stream: ReadableStream<Uint8Array>;
   responsePromise: Promise<AgentResponse>;
 }> {
-  let resolveResponsePromise: (response: AgentResponse) => void;
-  let rejectResponsePromise: (error: Error) => void;
-  const responsePromise = new Promise<AgentResponse>((resolve, reject) => {
-    resolveResponsePromise = resolve;
-    rejectResponsePromise = reject;
-  });
-  // Callers may never await responsePromise (e.g. Stop during a fork). Mark its
-  // rejection as observed so an abort does not surface as an unhandled rejection.
-  responsePromise.catch(() => {});
+  // The shared deferred marks rejection observed even when Stop prevents the caller awaiting it.
+  const {
+    promise: responsePromise,
+    resolve: resolveResponsePromise,
+    reject: rejectResponsePromise,
+  } = createForkRuntimeDeferred<AgentResponse>();
   const abortHandler = (): Error => {
     const error = createAgentRuntimeForkAbortError(input.abortSignal);
     rejectResponsePromise(error);
@@ -340,40 +342,43 @@ export async function runAgentRuntimeForkStep(input: RunAgentRuntimeForkStepInpu
         }),
         responsePromise,
       };
-    } else {
-      input.abortSignal.addEventListener("abort", abortHandler, { once: true });
     }
   }
 
-  const runtimeConfig = {
-    model: input.model,
-    ...(input.temperature === undefined ? {} : { temperature: input.temperature }),
-    system: input.system,
-    tools: input.runtimeTools,
-    providerTools: input.providerToolNames ?? [],
-    maxSteps: 1,
-    ...(input.providerOptions || input.reasoning
-      ? {
-        resolveModelTransport: () => ({
-          providerOptions: input.providerOptions,
-          reasoning: input.reasoning,
-        }),
-      }
-      : {}),
-    __vfAllowedRemoteTools: getForkRuntimeAuthorizationToolNames(
-      input.forkToolNames,
-      input.runtimeTools,
-    ),
-    ...(input.sourceIntegrationPolicy
-      ? { __vfSourceIntegrationPolicy: input.sourceIntegrationPolicy }
-      : {}),
-  };
-  const runtime = new AgentRuntime("invoke-agent-child-runtime", runtimeConfig, {
-    resolveModelRuntime: input.resolveModelRuntime,
-  });
-
   let stream: ReadableStream<Uint8Array>;
   try {
+    input.abortSignal?.addEventListener("abort", abortHandler, { once: true });
+    const runtimeConfig = {
+      model: input.model,
+      ...(input.temperature === undefined ? {} : { temperature: input.temperature }),
+      system: input.system,
+      tools: input.runtimeTools,
+      providerTools: input.providerToolNames ?? [],
+      maxSteps: 1,
+      ...(input.providerOptions || input.reasoning
+        ? {
+          resolveModelTransport: () => ({
+            providerOptions: input.providerOptions,
+            reasoning: input.reasoning,
+          }),
+        }
+        : {}),
+      __vfAllowedRemoteTools: getForkRuntimeAuthorizationToolNames(
+        input.forkToolNames,
+        input.runtimeTools,
+      ),
+      ...(input.sourceIntegrationPolicy
+        ? { __vfSourceIntegrationPolicy: input.sourceIntegrationPolicy }
+        : {}),
+    };
+    const resolveModelRuntime = input.resolveModelRuntime ??
+      createHostedChildInferenceModelResolver(input);
+    const runtime = new AgentRuntime(
+      "invoke-agent-child-runtime",
+      runtimeConfig,
+      resolveModelRuntime ? { resolveModelRuntime } : undefined,
+    );
+
     stream = await runWithVeryfrontCloudContextAsync(
       {
         apiBaseUrl: input.apiUrl,
@@ -396,9 +401,10 @@ export async function runAgentRuntimeForkStep(input: RunAgentRuntimeForkStepInpu
         ),
     );
   } catch (error) {
-    // stream() failed before onFinish ran; drop the abort listener so it does
+    // Setup or stream() failed before onFinish ran; drop the abort listener so it does
     // not leak on the signal for the lifetime of the request.
     input.abortSignal?.removeEventListener("abort", abortHandler);
+    rejectResponsePromise(error);
     throw error;
   }
 
@@ -552,7 +558,7 @@ export function startAgentRuntimeFork(input: StartAgentRuntimeForkInput): ForkRu
           const effectiveForkToolNames: string[] = [
             ...(prepared.forkToolNames ?? input.forkToolNames),
           ];
-          const { stream, responsePromise } = await runStep({
+          const { stream, responsePromise } = await runStep(inheritForkInference({
             apiUrl: input.apiUrl,
             authToken: input.authToken,
             projectId: input.projectId,
@@ -570,7 +576,7 @@ export function startAgentRuntimeFork(input: StartAgentRuntimeForkInput): ForkRu
               : {}),
             ...(input.providerOptions ? { providerOptions: input.providerOptions } : {}),
             ...(input.reasoning ? { reasoning: input.reasoning } : {}),
-          });
+          }, input));
 
           for await (const event of streamDataStreamEvents(stream)) {
             const parts = mapAgUiRuntimeEventToForkParts(event, state);
@@ -620,4 +626,12 @@ export function startAgentRuntimeFork(input: StartAgentRuntimeForkInput): ForkRu
     steps: stepsDeferred.promise,
     totalUsage: totalUsageDeferred.promise,
   };
+}
+
+function inheritForkInference<T extends HostedInferenceAuthorityOwner>(
+  target: T,
+  source: HostedInferenceAuthorityOwner,
+): T {
+  inheritHostedChildInferenceAuthority(target, source);
+  return target;
 }

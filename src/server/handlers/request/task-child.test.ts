@@ -1,4 +1,4 @@
-import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { createTaskChildRunner } from "./task-child.ts";
 const parentId = "11111111-1111-4111-8111-111111111111";
@@ -199,6 +199,7 @@ describe("Task durable child capability", () => {
     const error = await assertRejects(() =>
       runner({ target: { type: "task", id: "child-task" }, idempotencyKey: "child" })
     );
+    assert(error instanceof Error);
     assertEquals(error.message.includes("Task child failed"), true);
     assertEquals(error.message.includes("synthetic-secret"), false);
     assertEquals(error.message.includes("/Users/example/private/file.ts"), false);

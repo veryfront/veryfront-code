@@ -43,13 +43,21 @@ import {
 } from "#veryfront/platform/compat/primordials/promise.ts";
 import { primordialArrayMap } from "#veryfront/platform/compat/primordials/array.ts";
 import { getRequestTransportLifetime } from "#veryfront/platform/adapters/runtime/shared/request-peer.ts";
-import { createVeryfrontApiOriginBoundOutboundFetch } from "#veryfront/security/http/outbound-fetch.ts";
+import {
+  createVeryfrontApiOriginBoundOutboundFetch,
+  trustedHostFetch,
+} from "#veryfront/security/http/outbound-fetch.ts";
+import {
+  createNativeRequestInit,
+  readOwnInitField,
+} from "#veryfront/platform/compat/http/native-request-init.ts";
 import {
   ControlPlaneRequestError,
   verifyControlPlaneRequest,
 } from "#veryfront/internal-agents/control-plane-auth.ts";
 import {
   INGRESS_API_TOKEN_HEADER,
+  INGRESS_AUTHORIZATION_HEADER,
   INGRESS_INFERENCE_TOKEN_HEADER,
   INGRESS_RUN_EVENT_TOKEN_HEADER,
   INGRESS_RUN_STOP_TOKEN_HEADER,
@@ -360,6 +368,7 @@ interface WorkflowClientView {
     options?: { runId?: string; [CONTROL_PLANE_OWNED_START]?: true },
   ): Promise<WorkflowStartHandle>;
   getRun(runId: string): Promise<WorkflowRunView | null>;
+  getBackend?(): { isLocked?(runId: string): Promise<boolean> };
   /** Continue a durable run that paused at a safe boundary. */
   resume?(runId: string): Promise<void>;
   getPendingEventWaits?(runId: string): Promise<WorkflowEventWaitView[]>;
@@ -1694,8 +1703,27 @@ async function resumeManuallyPausedRun(
     waitForWorkflowResult(client, runId, signal, deps, undefined, pollingStopped, cancelRun);
   let current = await client.getRun(runId);
   if (!current) return { failure: "Workflow run was not found" };
-  for (let attempt = 1;; attempt++) {
+  let attempt = 1;
+  for (;;) {
+    if (isAbortSignalAborted(signal) || isAbortSignalAborted(pollingStopped)) {
+      return { run: await settle() };
+    }
     const parked = await readPendingWaits(client, runId, current);
+    if (
+      isRecoverableManualPauseBoundary(current, parked) &&
+      await client.getBackend?.().isLocked?.(runId)
+    ) {
+      // A live execution can have the same durable boundary as a post-ack crash.
+      // Keep observing it until it advances, parks, or its lease expires.
+      await sleepUntilAborted(
+        (ms) => deps.sleep(ms),
+        DEFAULT_WORKFLOW_STATUS_POLL_INTERVAL_MS,
+        [signal, pollingStopped],
+      );
+      current = await client.getRun(runId);
+      if (!current) return { failure: "Workflow run was not found" };
+      continue;
+    }
     if (!isManualPause(current, parked) && !isRecoverableManualPauseBoundary(current, parked)) {
       current = await settle();
       if (!isManualPause(current, await readPendingWaits(client, runId, current))) {
@@ -1721,7 +1749,7 @@ async function resumeManuallyPausedRun(
       await client.resume(runId);
       break;
     } catch (error) {
-      if (attempt >= WORKFLOW_MANUAL_RESUME_ATTEMPTS) throw error;
+      if (attempt++ >= WORKFLOW_MANUAL_RESUME_ATTEMPTS) throw error;
       await deps.sleep(DEFAULT_WORKFLOW_STATUS_POLL_INTERVAL_MS);
       current = await client.getRun(runId);
       if (!current) return { failure: "Workflow run was not found" };
@@ -2358,6 +2386,25 @@ function createRunStopAcknowledger(
   };
 }
 
+const StringSlice = String.prototype.slice;
+
+/**
+ * The bearer token of the `Authorization` the control plane sent, which the
+ * ingress seal took off this run route. Parsed with captured methods: the
+ * value is a credential and project code may have patched `String.prototype`.
+ */
+function readSealedBearerToken(req: Request): string | undefined {
+  const authorization = readIngressCredential(req, INGRESS_AUTHORIZATION_HEADER);
+  if (authorization === null || authorization.length <= 7) return undefined;
+  const scheme = IntrinsicReflectApply(
+    StringToLowerCase,
+    IntrinsicReflectApply(StringSlice, authorization, [0, 7]) as string,
+    [],
+  );
+  if (scheme !== "bearer ") return undefined;
+  return IntrinsicReflectApply(StringSlice, authorization, [7]) as string;
+}
+
 /**
  * Ask the control plane whether this attempt should stop at a safe boundary.
  * A `{ "stop": true }` reply means the API confirmed a requested pause for this
@@ -2440,8 +2487,8 @@ function createRunPauseAcknowledger(
 }
 
 function getRuntimeApiToken(req: Request, ctx: HandlerContext): string {
-  return readIngressCredential(req, INGRESS_API_TOKEN_HEADER) ?? ctx.proxyToken ??
-    ctx.requestContext?.token ?? "";
+  return readIngressCredential(req, INGRESS_API_TOKEN_HEADER) ?? readSealedBearerToken(req) ??
+    ctx.proxyToken ?? ctx.requestContext?.token ?? "";
 }
 
 function getHeaderFirstValue(value: string | null): string | undefined {
@@ -2596,6 +2643,23 @@ async function readLocalEvalRuntimeRestrictions(
   };
 }
 
+/**
+ * The eval adapter's init without its `Authorization` and `x-token`. The local
+ * AG-UI handler runs the project's agent in this isolate and reads no
+ * credential from its request, so the request it gets carries none. The
+ * headers become a null-prototype record first (the adapter sends one), so
+ * removing the two is a plain own-property delete.
+ */
+function withoutLocalEvalCredentials(init: RequestInit | undefined): RequestInit {
+  const local = createNativeRequestInit(init);
+  const headers = readOwnInitField(local, "headers") as Record<string, string> | undefined;
+  if (headers !== undefined) {
+    delete headers["authorization"];
+    delete headers[INGRESS_API_TOKEN_HEADER];
+  }
+  return local;
+}
+
 function createLocalEvalAgentFetch(input: {
   endpoint: string;
   agentId?: string;
@@ -2607,8 +2671,13 @@ function createLocalEvalAgentFetch(input: {
   if (!agent) return undefined;
 
   return async (requestInput, init) => {
-    const request = new NativeRequest(requestInput, init);
-    if (!isLocalAgUiEndpoint(request.url)) return fetch(request);
+    const request = new NativeRequest(requestInput, withoutLocalEvalCredentials(init));
+    // Not local: the adapter's credentials are minted for the local endpoint
+    // only, so the request goes without them, through the host transport
+    // captured at load rather than a global fetch project code may replace.
+    if (!isLocalAgUiEndpoint(request.url)) {
+      return trustedHostFetch(requestInput, withoutLocalEvalCredentials(init));
+    }
     const runtimeRestrictions = input.runtimeRestrictions ??
       await readLocalEvalRuntimeRestrictions(request);
     const handler = createAgUiHandler({
@@ -2733,21 +2802,28 @@ function resolveCanonicalEvalParentRunId(request: ProjectRunExecuteRequest): str
 function createDurableEvalAgentFetch(
   input: DurableEvalAgentFetchInput,
 ): NonNullable<AgentServiceEvalAdapterConfig["fetch"]> {
-  const headers = {
-    Authorization: `Bearer ${input.authToken}`,
-    Accept: "application/json",
-    "Content-Type": "application/json",
-  };
+  // The bearer goes out through the Veryfront API transport, captured before
+  // project code loaded, in null-prototype inits: the eval module that runs
+  // around this fetch can replace the global fetch or Object.prototype getters.
+  const send = createVeryfrontApiOriginBoundOutboundFetch(input.apiBaseUrl);
 
   return async (_requestInput, init) => {
     const requestBody = parseEvalAgentRequestBody(init);
     const createRunUrl = createApiUrl(input.apiBaseUrl, "/runs");
-    const createResponse = await fetch(createRunUrl, {
-      method: "POST",
-      headers: { ...headers, "Idempotency-Key": `eval:${input.parentRunId}:${requestBody.runId}` },
-      body: JSON.stringify(createDurableEvalAgentRunBody(input, requestBody)),
-      signal: init?.signal,
-    });
+    const createResponse = await send(
+      createRunUrl,
+      createNativeRequestInit(undefined, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${input.authToken}`,
+          Accept: "application/json",
+          "Content-Type": "application/json",
+          "Idempotency-Key": `eval:${input.parentRunId}:${requestBody.runId}`,
+        },
+        body: JSON.stringify(createDurableEvalAgentRunBody(input, requestBody)),
+        signal: init?.signal,
+      }),
+    );
     if (!createResponse.ok) {
       throw API_CLIENT_ERROR.create({
         detail:
@@ -2770,14 +2846,17 @@ function createDurableEvalAgentFetch(
       input.apiBaseUrl,
       `/runs/${encodeURIComponent(runId)}/stream`,
     );
-    const streamResponse = await fetch(streamUrl, {
-      method: "GET",
-      headers: {
-        Authorization: `Bearer ${input.authToken}`,
-        Accept: "text/event-stream",
-      },
-      signal: init?.signal,
-    });
+    const streamResponse = await send(
+      streamUrl,
+      createNativeRequestInit(undefined, {
+        method: "GET",
+        headers: {
+          Authorization: `Bearer ${input.authToken}`,
+          Accept: "text/event-stream",
+        },
+        signal: init?.signal,
+      }),
+    );
     if (!streamResponse.ok) {
       throw API_CLIENT_ERROR.create({
         detail:
@@ -2817,6 +2896,8 @@ function createRuntimeApiClient(
   if (!token) {
     throw INVALID_ARGUMENT.create({ detail: "Missing project runtime API token" });
   }
+  // Not the global fetch, which project code loaded for the run can replace.
+  const send = createVeryfrontApiOriginBoundOutboundFetch(apiUrl);
 
   async function requestJson<T>(
     method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE",
@@ -2830,16 +2911,19 @@ function createRuntimeApiClient(
       url.searchParams.set(key, value);
     }
 
-    const response = await fetch(url.toString(), {
-      method,
-      headers: {
-        Authorization: `Bearer ${token}`,
-        Accept: "application/json",
-        "Content-Type": "application/json",
-      },
-      body: body === undefined ? undefined : capturedArtifactJsonStringify(body),
-      signal,
-    });
+    const response = await send(
+      url.toString(),
+      createNativeRequestInit(undefined, {
+        method,
+        headers: {
+          Authorization: `Bearer ${token}`,
+          Accept: "application/json",
+          "Content-Type": "application/json",
+        },
+        body: body === undefined ? undefined : capturedArtifactJsonStringify(body),
+        signal,
+      }),
+    );
 
     if (!response.ok) {
       throw API_CLIENT_ERROR.create({
@@ -3520,9 +3604,7 @@ async function executeReleaseAssetBuildRun(input: {
     );
 
     const apiBaseUrl = getEnvironmentConfig().apiBaseUrl;
-    const token = readIngressCredential(input.req, INGRESS_API_TOKEN_HEADER) ??
-      input.ctx.proxyToken ??
-      input.ctx.requestContext?.token ?? "";
+    const token = getRuntimeApiToken(input.req, input.ctx);
     if (!token) throw INVALID_ARGUMENT.create({ detail: "Missing project runtime API token" });
 
     const apiClient = new VeryfrontApiClient({
@@ -3751,15 +3833,25 @@ function resolveStyleArtifactBuildSelector(
   config: Record<string, unknown>,
   ctx: HandlerContext,
 ): StyleArtifactBuildSelector {
-  const selector: StyleArtifactBuildSelector = {
-    branch: getStringConfig(config, ["branch"]) ?? optionalString(ctx.parsedDomain?.branch),
-    environmentName: getStringConfig(config, ["environment_name", "environmentName"]) ??
-      optionalString(ctx.environmentName),
-    releaseId: getStringConfig(config, ["release_id", "releaseId"]) ??
-      optionalString(ctx.releaseId),
+  const explicitSelector: StyleArtifactBuildSelector = {
+    branch: getStringConfig(config, ["branch"]),
+    environmentName: getStringConfig(config, ["environment_name", "environmentName"]),
+    releaseId: getStringConfig(config, ["release_id", "releaseId"]),
   };
-  const count = [selector.branch, selector.environmentName, selector.releaseId]
-    .filter((value) => typeof value === "string" && value.length > 0).length;
+  const hasExplicitSelector = ReflectApply(ArraySome, ObjectValues(explicitSelector), [
+    (value: unknown) => typeof value === "string" && value.length > 0,
+  ]) as boolean;
+  const selector: StyleArtifactBuildSelector = hasExplicitSelector ? explicitSelector : {
+    branch: optionalString(ctx.parsedDomain?.branch),
+    environmentName: optionalString(ctx.environmentName),
+    releaseId: optionalString(ctx.releaseId),
+  };
+  let count = 0;
+  if (typeof selector.branch === "string" && selector.branch.length > 0) count += 1;
+  if (typeof selector.environmentName === "string" && selector.environmentName.length > 0) {
+    count += 1;
+  }
+  if (typeof selector.releaseId === "string" && selector.releaseId.length > 0) count += 1;
 
   if (count !== 1) {
     throw INVALID_ARGUMENT.create({ detail: "Exactly one style artifact selector is required" });
@@ -3886,9 +3978,7 @@ async function executeStyleArtifactBuildRun(input: {
       "#veryfront/html/styles-builder/style-scope-profile.ts"
     );
 
-    const token = readIngressCredential(input.req, INGRESS_API_TOKEN_HEADER) ??
-      input.ctx.proxyToken ??
-      input.ctx.requestContext?.token ?? "";
+    const token = getRuntimeApiToken(input.req, input.ctx);
     if (!token) throw INVALID_ARGUMENT.create({ detail: "Missing project runtime API token" });
 
     apiClient = new VeryfrontApiClient({

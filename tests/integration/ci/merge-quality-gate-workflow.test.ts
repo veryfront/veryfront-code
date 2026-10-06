@@ -11,7 +11,7 @@ const WORKFLOW_PATH = new URL(
 );
 // Cancellation runs from an immutable main commit, never the queued revision.
 const TRUSTED_CANCELLATION_WORKFLOW =
-  "veryfront/veryfront-code/.github/workflows/cancel-failed-merge-group.yml@867aebc7ea8040f3215c4aacd737f1056a10a9aa";
+  "veryfront/veryfront-code/.github/workflows/cancel-failed-merge-group.yml@03903775fbf92852f23cccc1ba6243192042ff64";
 const REQUIRED_DEPENDENCIES = [
   "ci",
   "coverage",
@@ -221,6 +221,27 @@ async function runSonarGate(
 }
 
 describe("merge quality gate workflow", () => {
+  it("runs fixture generator regressions in the script task and required source checks", async () => {
+    const config = JSON.parse(await readRepoFile("deno.json"));
+    assertStringIncludes(
+      config.tasks["test:scripts"],
+      " scripts/generate-runs-fixtures.test.ts",
+    );
+    const jobs = asRecord((await readWorkflow()).jobs, "workflow jobs");
+    const sourceChecks = asRecord(jobs.ci, "source checks");
+    const steps = sourceChecks.steps as YamlRecord[];
+    const fixtureStep = steps.find((step) =>
+      step.run === "deno task test:file scripts/generate-runs-fixtures.test.ts"
+    );
+    assert(
+      fixtureStep,
+      "source checks must execute the fixture generator suite",
+    );
+    assertEquals(fixtureStep.if, "${{ matrix.check == 'typecheck' }}");
+    const gate = asRecord(jobs["quality-gate-merge"], "merge quality gate");
+    assert((gate.needs as string[]).includes("ci"));
+  });
+
   it("runs all integration and CLI files across three duration-balanced shards", async () => {
     const workflow = await readWorkflow();
     const jobs = asRecord(workflow.jobs, "jobs");
