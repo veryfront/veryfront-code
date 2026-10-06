@@ -1,5 +1,6 @@
 import {
   createHostedChildInferenceModelResolver,
+  type HostedInferenceAuthorityOwner,
   inheritHostedChildInferenceAuthority,
 } from "../hosted/inference-credential.ts";
 import {
@@ -621,7 +622,10 @@ export function startAgentRuntimeFork(input: StartAgentRuntimeForkInput): ForkRu
   };
 }
 
-function inheritForkInference<T extends object>(target: T, source: object): T {
+function inheritForkInference<T extends HostedInferenceAuthorityOwner>(
+  target: T,
+  source: HostedInferenceAuthorityOwner,
+): T {
   inheritHostedChildInferenceAuthority(target, source);
   return target;
 }

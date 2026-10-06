@@ -1,8 +1,9 @@
-import { runWithHostedRequestPreparationSignal } from "../service/request-preparation-context.ts";
-import { createAgentRuntime } from "./cloud-agent-chat-execution.ts";
-import type { NodeVeryfrontCloudAgentServiceContext } from "./cloud-agent-config.ts";
-import { createDefaultHostedChatRuntime } from "./default-chat-runtime.ts";
-import { createDefaultHostedInvokeAgentTool } from "./default-invoke-agent-tool.ts";
+import { resolveVeryfrontCloudModelId } from "#veryfront/provider/veryfront-cloud/model-catalog.ts";
+import { runWithHostedRequestPreparationSignal } from "#veryfront/agent/service/request-preparation-context.ts";
+import { createAgentRuntime } from "#veryfront/agent/hosted/cloud-agent-chat-execution.ts";
+import type { NodeVeryfrontCloudAgentServiceContext } from "#veryfront/agent/hosted/cloud-agent-config.ts";
+import { createDefaultHostedChatRuntime } from "#veryfront/agent/hosted/default-chat-runtime.ts";
+import { createDefaultHostedInvokeAgentTool } from "#veryfront/agent/hosted/default-invoke-agent-tool.ts";
 import "#veryfront/schemas/_test-setup.ts";
 import {
   assertEquals,
@@ -14,17 +15,18 @@ import { it } from "#veryfront/testing/bdd.ts";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { useServedCatalogForTests } from "#veryfront/provider/veryfront-cloud/catalog-client.test-helpers.ts";
 import { clearModelProviders, type ModelRuntime } from "#veryfront/provider";
-import { startHostedChildForkRuntimeWithHostTools } from "./child-fork-runtime-start.ts";
+import { startHostedChildForkRuntimeWithHostTools } from "#veryfront/agent/hosted/child-fork-runtime-start.ts";
 import {
   bindHostedChildInferenceAuthority,
   createHostedChildInferenceModelResolver,
   createHostedInferenceModelResolver,
   createHostedRuntimeWithChildInferenceAuthority,
+  type HostedInferenceAuthorityOwner,
   inheritHostedChildInferenceAuthority,
   registerHostedInferenceCredential,
   scopeHostedChildInferenceAuthority,
-} from "./inference-credential.ts";
-import type { ParsedHostedChatRequest } from "./chat-request-parser.ts";
+} from "#veryfront/agent/hosted/inference-credential.ts";
+import type { ParsedHostedChatRequest } from "#veryfront/agent/hosted/chat-request-parser.ts";
 
 it("a default hosted child uses verified inference authority instead of its API execution credential", async () => {
   using _catalog = useServedCatalogForTests();
@@ -62,7 +64,7 @@ it("a default hosted child uses verified inference authority instead of its API 
       authToken: request.authToken,
       projectId: null,
       provider: "mistral",
-      forkModel: "veryfront-cloud/mistral/mistral-small-2503",
+      forkModel: "mistral/mistral-small-2503",
       hostedModel: true,
       maxSteps: 1,
       prompt: "Finish this delegated request.",
@@ -99,7 +101,7 @@ it("root runtime assembly carries private inference authority through the defaul
   };
   let controlPlaneCalls = 0;
   let invoke: ReturnType<typeof createDefaultHostedInvokeAgentTool> | undefined;
-  let retainedContext: object | undefined;
+  let retainedContext: HostedInferenceAuthorityOwner | undefined;
   await withMockFetch(async (input, init) => {
     const outgoing = new Request(input, init);
     if (new URL(outgoing.url).pathname.endsWith("/mcp")) {
@@ -146,7 +148,7 @@ it("root runtime assembly carries private inference authority through the defaul
               enableDurableInvokeAgent: false,
             }),
             hostedModel: true,
-            resolveModelId: () => "veryfront-cloud/mistral/mistral-small-2503",
+            resolveModelId: resolveVeryfrontCloudModelId,
             resolveProvider: () => "mistral",
             createBashTool: () => Promise.resolve({ tools: {} }),
             createAgentServiceSandboxTools: () =>
@@ -408,7 +410,7 @@ it("cloud root authority survives the ended preparation request and expires on e
     authToken: request.authToken,
     projectId: null,
     provider: "mistral",
-    forkModel: "veryfront-cloud/mistral/mistral-small-2503",
+    forkModel: "mistral/mistral-small-2503",
     hostedModel: true,
     maxSteps: 1,
     prompt: "Complete the delegated request.",

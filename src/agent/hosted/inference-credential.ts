@@ -6,6 +6,27 @@ import {
   registerModelRuntimeResolverRevoker,
 } from "../runtime/model-transport.ts";
 import type { ParsedHostedChatRequest } from "./chat-request-parser.ts";
+import type {
+  DefaultHostedChatRuntimeCreationOptions,
+  DefaultHostedChatRuntimeTaskContext,
+} from "./default-chat-runtime.ts";
+import type { DefaultHostedInvokeAgentContext } from "./default-invoke-agent-tool.ts";
+import type { HostedChildForkInstructionsContext } from "./child-fork-instructions.ts";
+import type {
+  RunAgentRuntimeForkStepInput,
+  StartAgentRuntimeForkInput,
+  StartAgentRuntimeForkWithHostToolsInput,
+} from "../streaming/fork-runtime-stream.ts";
+
+/** @internal Host-owned execution objects across which private inference authority is inherited. */
+export type HostedInferenceAuthorityOwner =
+  | DefaultHostedChatRuntimeCreationOptions
+  | DefaultHostedChatRuntimeTaskContext
+  | DefaultHostedInvokeAgentContext
+  | HostedChildForkInstructionsContext
+  | RunAgentRuntimeForkStepInput
+  | StartAgentRuntimeForkInput
+  | StartAgentRuntimeForkWithHostToolsInput;
 
 const inferenceCredentials = createPrivateWeakStore<object, string>();
 const VERYFRONT_CLOUD_MODEL_PREFIX = "veryfront-cloud/";
@@ -68,13 +89,13 @@ export function createHostedInferenceModelResolver(
 }
 
 const inheritedInferenceFactories = createPrivateWeakStore<
-  object,
+  HostedInferenceAuthorityOwner,
   (assertOwnerActive?: () => void) => AgentModelRuntimeResolver
 >();
 
 /** @internal Bind verified root inference authority to an owned runtime creation object. */
 export function bindHostedChildInferenceAuthority(
-  target: object,
+  target: HostedInferenceAuthorityOwner,
   request: ParsedHostedChatRequest,
   options: { apiBaseUrl: string; signal?: AbortSignal },
 ): () => void {
@@ -109,22 +130,25 @@ export function bindHostedChildInferenceAuthority(
 }
 
 /** @internal Preserve private inference authority across owned context copies. */
-export function inheritHostedChildInferenceAuthority(target: object, source: object): void {
+export function inheritHostedChildInferenceAuthority(
+  target: HostedInferenceAuthorityOwner,
+  source: HostedInferenceAuthorityOwner,
+): void {
   const factory = inheritedInferenceFactories.get(source);
   if (factory) inheritedInferenceFactories.set(target, factory);
 }
 
 /** @internal Create independent, single-call inference authority for a default child step. */
 export function createHostedChildInferenceModelResolver(
-  target: object,
+  target: HostedInferenceAuthorityOwner,
 ): AgentModelRuntimeResolver | undefined {
   return inheritedInferenceFactories.get(target)?.();
 }
 
 /** @internal Restrict inherited authority to an immediate child's execution lifetime. */
 export function scopeHostedChildInferenceAuthority(
-  target: object,
-  source: object,
+  target: HostedInferenceAuthorityOwner,
+  source: HostedInferenceAuthorityOwner,
   signal?: AbortSignal,
 ): () => void {
   const factory = inheritedInferenceFactories.get(source);
@@ -153,7 +177,7 @@ export function scopeHostedChildInferenceAuthority(
 export async function createHostedRuntimeWithChildInferenceAuthority<
   T extends { cleanup: () => Promise<void> },
 >(
-  target: object,
+  target: HostedInferenceAuthorityOwner,
   request: ParsedHostedChatRequest | undefined,
   options: { apiBaseUrl: string; signal?: AbortSignal },
   create: () => Promise<T>,
