@@ -503,6 +503,57 @@ Deno.test("prepareHostedChatRuntimeToolAssembly rejects local search_knowledge w
   );
 });
 
+Deno.test("prepareHostedChatRuntimeToolAssembly ignores unselected local search_knowledge when framework knowledge is excluded", async () => {
+  const taskContext: HostedChatRuntimeToolAssemblyContext = {
+    authToken: "token",
+    projectId: "project-1",
+    model: "anthropic/claude-sonnet-4-6",
+  };
+
+  const toolAssembly = await prepareHostedChatRuntimeToolAssembly({
+    sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
+    taskContext,
+    instructions: "Base instructions",
+    localTools: { search_knowledge: localTool("Unselected local knowledge search") },
+    apiUrl: "https://api.example.com",
+    apiMcpUrl: "https://api.example.com/mcp",
+    allowedToolNames: [],
+    knowledge: true,
+    createRemoteToolSource: remoteSourceFromConfig,
+    preloadLatestConversationUserText: false,
+  });
+
+  assertEquals(toolAssembly.localToolNames.includes("search_knowledge"), false);
+  assertEquals(toolAssembly.remoteToolNames.includes("search_knowledge"), false);
+  assertEquals(toolAssembly.availableToolNames.includes("search_knowledge"), false);
+});
+
+Deno.test("prepareHostedChatRuntimeToolAssembly allows denied local knowledge collisions to stay denied", async () => {
+  const taskContext: HostedChatRuntimeToolAssemblyContext = {
+    authToken: "token",
+    projectId: "project-1",
+    model: "anthropic/claude-sonnet-4-6",
+  };
+
+  const toolAssembly = await prepareHostedChatRuntimeToolAssembly({
+    sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
+    taskContext,
+    instructions: "Base instructions",
+    localTools: { search_knowledge: localTool("Denied local knowledge search") },
+    apiUrl: "https://api.example.com",
+    apiMcpUrl: "https://api.example.com/mcp",
+    allowedToolNames: null,
+    deniedToolNames: ["search_knowledge"],
+    knowledge: true,
+    createRemoteToolSource: remoteSourceFromConfig,
+    preloadLatestConversationUserText: false,
+  });
+
+  assertEquals(toolAssembly.localToolNames.includes("search_knowledge"), false);
+  assertEquals(toolAssembly.remoteToolNames.includes("search_knowledge"), false);
+  assertEquals(toolAssembly.availableToolNames.includes("search_knowledge"), false);
+});
+
 Deno.test("prepareHostedChatRuntimeToolAssembly supplies authored framework knowledge as a scoped remote tool", async () => {
   const taskContext: HostedChatRuntimeToolAssemblyContext = {
     authToken: "token",

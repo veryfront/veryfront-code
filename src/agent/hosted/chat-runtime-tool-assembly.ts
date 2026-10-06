@@ -661,10 +661,6 @@ async function prepareHostedChatRuntimeToolAssemblyInternal<
     input.deniedToolNames,
     projectToolNames,
   );
-  assertNoLocalFrameworkKnowledgeToolShadow({
-    knowledgeSource,
-    localTools: authorizedLocalTools,
-  });
   const ownerScopedAllowedToolNames = resolveOwnerScopedToolNames({
     toolNames: input.allowedToolNames,
     agentId: input.taskContext.agentId,
@@ -831,6 +827,12 @@ async function prepareHostedChatRuntimeToolAssemblyInternal<
     filteredConfiguredRemoteToolSources,
     remoteToolListOptions,
   );
+  if (includesValue(knowledgeRemoteToolNames, FRAMEWORK_KNOWLEDGE_TOOL_NAME)) {
+    assertNoLocalFrameworkKnowledgeToolShadow({
+      knowledgeSource,
+      localTools: sortedLocalTools,
+    });
+  }
   if (
     includesValue(knowledgeRemoteToolNames, FRAMEWORK_KNOWLEDGE_TOOL_NAME) &&
     includesValue(configuredRemoteToolNames, FRAMEWORK_KNOWLEDGE_TOOL_NAME)
