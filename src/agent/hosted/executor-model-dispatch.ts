@@ -54,6 +54,8 @@ export function createHostedExecutorModelBroker(
     /** Canonical authenticated grant scope; null preserves the legacy projectless lane. */
     projectId: string | null;
     runEventSink: AgentRunEventSink | undefined;
+    /** Trusted API rollout opt-in. Enable only when append returns exact capture receipts. */
+    modelCallCaptureReceipts?: true;
   },
 ): ReadonlyMap<string, ExecutorOperation> {
   const sink = input.runEventSink;
@@ -64,15 +66,24 @@ export function createHostedExecutorModelBroker(
   if (typeof sink !== "function") {
     throw new DurableRunEventPersistenceError("Hosted model dispatch requires a run event sink");
   }
+  if (input.modelCallCaptureReceipts !== undefined && input.modelCallCaptureReceipts !== true) {
+    throw new TypeError("Hosted model capture activation must be explicit");
+  }
+  if (input.modelCallCaptureReceipts && projectId === null) {
+    throw new TypeError("Hosted model capture receipts require a project scope");
+  }
+  const captureEnabled = input.modelCallCaptureReceipts === true;
   return createScopedHostedModelBroker(input, async (request, context) => {
     const acknowledgement = await acknowledgePersistence(
-      () => sink(createContextEvent(request, projectId !== null)),
+      () => sink(createContextEvent(request, captureEnabled)),
       context.signal,
     );
-    if (projectId === null) {
+    if (projectId === null || !captureEnabled) {
       if (acknowledgement !== undefined) {
         throw new DurableRunEventPersistenceError(
-          "Projectless model dispatch cannot accept a project capture receipt",
+          projectId === null
+            ? "Projectless model dispatch cannot accept a project capture receipt"
+            : "Legacy model dispatch cannot accept a project capture receipt",
         );
       }
       return undefined;
@@ -240,14 +251,14 @@ async function acknowledgePersistence<T>(
  */
 function createContextEvent(
   call: ExecutorModelDispatch,
-  projectBound: boolean,
+  captureEnabled: boolean,
 ): AgentRunModelCallContextEvent {
   const options = call.options;
   const modelProvider = resolveModelCallProvider(call.model);
   const request = buildModelCallContextRequest(call.model, options);
   const event: AgentRunModelCallContextEvent = {
     type: "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED",
-    ...(projectBound ? { modelCallId: call.identity.modelCallId } : {}),
+    ...(captureEnabled ? { modelCallId: call.identity.modelCallId } : {}),
     ...(call.model.modelId
       ? {
         model: { id: call.model.modelId, ...(modelProvider ? { modelProvider } : {}) },
