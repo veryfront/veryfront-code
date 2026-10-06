@@ -367,6 +367,7 @@ interface WorkflowClientView {
     options?: { runId?: string; [CONTROL_PLANE_OWNED_START]?: true },
   ): Promise<WorkflowStartHandle>;
   getRun(runId: string): Promise<WorkflowRunView | null>;
+  getBackend?(): { isLocked?(runId: string): Promise<boolean> };
   /** Continue a durable run that paused at a safe boundary. */
   resume?(runId: string): Promise<void>;
   getPendingEventWaits?(runId: string): Promise<WorkflowEventWaitView[]>;
@@ -1699,8 +1700,27 @@ async function resumeManuallyPausedRun(
     waitForWorkflowResult(client, runId, signal, deps, undefined, pollingStopped, cancelRun);
   let current = await client.getRun(runId);
   if (!current) return { failure: "Workflow run was not found" };
-  for (let attempt = 1;; attempt++) {
+  let attempt = 1;
+  for (;;) {
+    if (isAbortSignalAborted(signal) || isAbortSignalAborted(pollingStopped)) {
+      return { run: await settle() };
+    }
     const parked = await readPendingWaits(client, runId, current);
+    if (
+      isRecoverableManualPauseBoundary(current, parked) &&
+      await client.getBackend?.().isLocked?.(runId)
+    ) {
+      // A live execution can have the same durable boundary as a post-ack crash.
+      // Keep observing it until it advances, parks, or its lease expires.
+      await sleepUntilAborted(
+        (ms) => deps.sleep(ms),
+        DEFAULT_WORKFLOW_STATUS_POLL_INTERVAL_MS,
+        [signal, pollingStopped],
+      );
+      current = await client.getRun(runId);
+      if (!current) return { failure: "Workflow run was not found" };
+      continue;
+    }
     if (!isManualPause(current, parked) && !isRecoverableManualPauseBoundary(current, parked)) {
       current = await settle();
       if (!isManualPause(current, await readPendingWaits(client, runId, current))) {
@@ -1726,7 +1746,7 @@ async function resumeManuallyPausedRun(
       await client.resume(runId);
       break;
     } catch (error) {
-      if (attempt >= WORKFLOW_MANUAL_RESUME_ATTEMPTS) throw error;
+      if (attempt++ >= WORKFLOW_MANUAL_RESUME_ATTEMPTS) throw error;
       await deps.sleep(DEFAULT_WORKFLOW_STATUS_POLL_INTERVAL_MS);
       current = await client.getRun(runId);
       if (!current) return { failure: "Workflow run was not found" };

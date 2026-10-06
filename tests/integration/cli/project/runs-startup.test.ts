@@ -5,10 +5,13 @@ Deno.test("canonical CLI entry preserves machine and human usage errors", async 
   const root = new URL("../../../../", import.meta.url);
   const coverage = Deno.env.get("VF_RUNS_CLI_COVERAGE_DIR");
   for (
-    const { command, flags } of [
+    const { command, flags, action = "list" } of [
       { command: "project", flags: ["--ndjson"] },
       { command: "projects", flags: ["--ndjson"] },
       { command: "project", flags: [] },
+      { command: "project", action: "stream", flags: ["--json"] },
+      { command: "project", action: "get", flags: ["--follow", "--json"] },
+      { command: "project", action: "get", flags: ["--json"] },
     ]
   ) {
     const result = await new Deno.Command(Deno.execPath(), {
@@ -20,10 +23,9 @@ Deno.test("canonical CLI entry preserves machine and human usage errors", async 
         fileURLToPath(new URL("cli/main.ts", root)),
         command,
         "runs",
-        "list",
+        action,
         ...flags,
-        "--query",
-        "[]",
+        ...(action === "list" ? ["--query", "[]"] : []),
       ],
       cwd: fileURLToPath(root),
       env: { LOG_LEVEL: "INFO", VERYFRONT_NO_UPDATE_CHECK: "1", VF_DISABLE_LRU_INTERVAL: "1" },
@@ -37,10 +39,13 @@ Deno.test("canonical CLI entry preserves machine and human usage errors", async 
       continue;
     }
     const lines = new TextDecoder().decode(result.stdout).trim().split("\n");
-    if (flags[0] === "--ndjson") assertEquals(lines.length, 1);
+    const streaming = flags.includes("--ndjson") || flags.includes("--follow") ||
+      action === "stream";
+    if (streaming) assertEquals(lines.length, 1);
+    else assertEquals(lines.length > 1, true);
     const envelope = JSON.parse(lines.join("\n"));
     assertEquals(envelope.success, false);
-    assertEquals(envelope.command, "project runs");
+    assertEquals(envelope.command, streaming ? "project runs" : "project");
     assertEquals(envelope.error.code, "USAGE_ERROR");
   }
 });
