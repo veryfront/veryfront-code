@@ -2982,6 +2982,67 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     assertEquals(recorder.upserts.length, 0);
   });
 
+  it("rejects multiple explicit style selectors with a poisoned Array filter", async () => {
+    const body = {
+      runId: "run_style_artifact_ambiguous_poisoned_filter",
+      kind: "task",
+      target: "task:style-artifact-build",
+      projectId: "proj-1",
+      config: { release_id: "release-1", environment_name: "Preview" },
+    };
+    const { request, publicKeyPem } = await signedRequest(
+      "/api/control-plane/runs/run_style_artifact_ambiguous_poisoned_filter/execute",
+      body,
+      { "x-token": "test-token" },
+    );
+    const { ctx, readCalls, sourceFileCalls } = createStyleArtifactCtx(publicKeyPem, {
+      files: [{
+        path: "pages/index.tsx",
+        content:
+          'export default function Page() { return <main className="px-4 text-red-500">Hi</main>; }',
+      }],
+      stylesheet: "@tailwind utilities; .from-css { color: red; }",
+      stylesheetPath: "src/styles.css",
+      contentContext: {
+        sourceType: "release",
+        projectSlug: "demo-project",
+        releaseId: "release-1",
+      },
+    });
+    const recorder = createStyleArtifactFetchRecorder();
+
+    const result = await withMockFetch(
+      recorder.fetch,
+      async () => {
+        const filter = Array.prototype.filter;
+        Array.prototype.filter = function (...args: Parameters<typeof filter>) {
+          let hasRelease = false;
+          let hasPreview = false;
+          for (let index = 0; index < this.length; index++) {
+            hasRelease ||= this[index] === "release-1";
+            hasPreview ||= this[index] === "Preview";
+          }
+          if (hasRelease && hasPreview) return ["release-1"];
+          return Reflect.apply(filter, this, args);
+        };
+        try {
+          return await new ProjectRunExecuteHandler().handle(request, ctx);
+        } finally {
+          Array.prototype.filter = filter;
+        }
+      },
+    );
+
+    assertExists(result.response);
+    assertEquals(result.response.status, 200);
+    const json = await result.response.json();
+    assertEquals(json.success, false);
+    assertEquals(json.error.includes("Exactly one style artifact selector is required"), true);
+    assertEquals(sourceFileCalls.count, 0);
+    assertEquals(readCalls, []);
+    assertEquals(recorder.upserts.length, 0);
+  });
+
   it("rejects mismatched style profile hashes before scanning source files", async () => {
     const body = {
       runId: "run_style_artifact_hash_mismatch",

@@ -3843,8 +3843,12 @@ function resolveStyleArtifactBuildSelector(
     environmentName: optionalString(ctx.environmentName),
     releaseId: optionalString(ctx.releaseId),
   };
-  const count = [selector.branch, selector.environmentName, selector.releaseId]
-    .filter((value) => typeof value === "string" && value.length > 0).length;
+  let count = 0;
+  if (typeof selector.branch === "string" && selector.branch.length > 0) count += 1;
+  if (typeof selector.environmentName === "string" && selector.environmentName.length > 0) {
+    count += 1;
+  }
+  if (typeof selector.releaseId === "string" && selector.releaseId.length > 0) count += 1;
 
   if (count !== 1) {
     throw INVALID_ARGUMENT.create({ detail: "Exactly one style artifact selector is required" });
