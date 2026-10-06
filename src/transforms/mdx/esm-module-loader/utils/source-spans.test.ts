@@ -153,6 +153,37 @@ describe("transforms/mdx/esm-module-loader/utils/source-spans", () => {
     }
   });
 
+  it("keeps repeated trivia lookups linear on minified lines across import scanners", () => {
+    const matchRelative = (specifier: string) => specifier.startsWith("./") ? specifier : null;
+    // Each non-null assertion asks for the significant token before its trivia.
+    // Static declarations also enter findFromSpan at every statement boundary.
+    const minified = 'import/* trivia */"pkg";value /* trivia */ ! / 2;' +
+      'import/* trivia */("pkg");';
+    const cases = [
+      {
+        name: "static minified trivia",
+        tail: 'import real from "./real.js";',
+        scan: (source: string) => findStaticImportFromSpans(source, matchRelative, UNBOUNDED),
+      },
+      {
+        name: "side-effect minified trivia",
+        tail: 'import "./real.js";',
+        scan: (source: string) => findStaticSideEffectImportSpans(source, matchRelative, UNBOUNDED),
+      },
+      {
+        name: "dynamic minified trivia",
+        tail: 'import("./real.js");',
+        scan: (source: string) => findDynamicImportSpans(source, matchRelative, UNBOUNDED),
+      },
+    ];
+
+    for (const scanner of cases) {
+      const makeSource = (count: number) => `${minified.repeat(count)}${scanner.tail}`;
+      assertEquals(scanner.scan(makeSource(51_600)).map((span) => span.path), ["./real.js"]);
+      assertLinearScan(scanner.name, scanner.scan, makeSource, 12_900);
+    }
+  });
+
   it("keeps single-line statement scans linear", () => {
     // Generated and minified modules put every statement on one line; each
     // statement boundary asks whether it sits inside a line comment.
