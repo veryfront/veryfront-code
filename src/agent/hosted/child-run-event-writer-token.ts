@@ -506,7 +506,7 @@ export function createHostedConversationRunChunkMirrorFromCapability(
   if (!barrier) return mirror;
   const confirm = async (toolCallId: string) => {
     try {
-      const snapshot = await mirror.flush({ throwOnTimeoutRetry: true });
+      const snapshot = await mirror.flush();
       if (snapshot.disabled) throw new Error("Parent event persistence is closed");
       if (snapshot.pendingEventCount === 0 && !snapshot.inFlight) {
         barrier.commit(toolCallId);

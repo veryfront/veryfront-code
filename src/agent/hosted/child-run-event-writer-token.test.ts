@@ -1,4 +1,5 @@
 import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
+import { TIMEOUT_ERROR } from "#veryfront/errors";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { installMockFetch, restoreMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import {
@@ -1007,7 +1008,7 @@ function tokenReceipt(token: unknown, run_id = "22222222-2222-4222-8222-22222222
   };
 }
 
-function inheritedAdmissionFixture(timeoutMs = 1000, retryOnce = false) {
+function inheritedAdmissionFixture(timeoutMs = 1000, retryOnce = false, timeoutOnce = false) {
   const runId = "44444444-4444-4444-8444-444444444444";
   let admissionCount = 0;
   let attempts = 0;
@@ -1027,6 +1028,9 @@ function inheritedAdmissionFixture(timeoutMs = 1000, retryOnce = false) {
     },
     fetch: (async (_url, init) => {
       await acknowledgement;
+      if (timeoutOnce && attempts++ === 0) {
+        throw TIMEOUT_ERROR.create({ detail: "Synthetic retryable append timeout" });
+      }
       if (retryOnce && attempts++ === 0) {
         return Response.json({ error: "temporarily unavailable" }, { status: 503 });
       }
@@ -1112,6 +1116,30 @@ Deno.test("inherited admission recovers after an unrelated tool append retries",
       toolCallId: "other-tool",
       toolName: "load_skill",
     }).catch(() => {});
+    assertEquals(fixture.count(), 0);
+    await fixture.mirror.handleChunk({
+      type: "tool-input-start",
+      toolCallId: "child-tool",
+      toolName: "invoke_agent",
+    });
+    assertEquals(await outcome, true);
+    assertEquals(fixture.count(), 1);
+  } finally {
+    fixture.mirror.dispose();
+    await outcome;
+  }
+});
+
+Deno.test("an unrelated tool append timeout retries without failing child execution", async () => {
+  const fixture = inheritedAdmissionFixture(5000, false, true);
+  const outcome = fixture.admit({} as never).then(() => true, () => false);
+  try {
+    fixture.acknowledge();
+    await fixture.mirror.handleChunk({
+      type: "tool-input-start",
+      toolCallId: "other-tool",
+      toolName: "load_skill",
+    });
     assertEquals(fixture.count(), 0);
     await fixture.mirror.handleChunk({
       type: "tool-input-start",
