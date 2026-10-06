@@ -1,79 +1,79 @@
-import type { JsonObject } from "../types.ts";
+import type { JsonObject } from "#veryfront/events/types.ts";
 import type {
   AgUiContentNativeRecord,
   AgUiContentProfileContext,
   AgUiContentProfileSupportedEvent,
   AgUiContentProjectionCommand,
-} from "./native-content-profile.ts";
+} from "#veryfront/events/ag-ui/native-content-profile.ts";
 import {
   parseNativeContentRecord,
   projectAgUiContentEvent,
   projectNativeContentEvent,
-} from "./native-content-profile.ts";
+} from "#veryfront/events/ag-ui/native-content-profile.ts";
 import type {
   AgUiInvocationProjectionCommand,
   AgUiInvocationProjectionContext,
   AgUiInvocationSupportedEvent,
-} from "./native-invocation.ts";
+} from "#veryfront/events/ag-ui/native-invocation.ts";
 import {
   parseNativeInvocationEvent,
   projectAgUiInvocationEvent,
   projectNativeInvocationEvent,
-} from "./native-invocation.ts";
+} from "#veryfront/events/ag-ui/native-invocation.ts";
 import type {
   AgUiReasoningProjectionCommand,
   AgUiReasoningProjectionContext,
   AgUiReasoningSupportedEvent,
-} from "./native-reasoning.ts";
+} from "#veryfront/events/ag-ui/native-reasoning.ts";
 import {
   parseNativeReasoningEvent,
   projectAgUiReasoningEvent,
   projectNativeReasoningEvent,
-} from "./native-reasoning.ts";
+} from "#veryfront/events/ag-ui/native-reasoning.ts";
 import type {
   AgUiRunCanonicalEvent,
   AgUiRunProfileProjectionCommand,
   AgUiRunProfileStoredRunContext,
   AgUiRunProfileSupportedEvent,
-} from "./native-run-profile.ts";
+} from "#veryfront/events/ag-ui/native-run-profile.ts";
 import {
   parseNativeRunProfileEvent,
   projectAgUiRunProfileEvent,
   projectNativeRunProfileEvent,
-} from "./native-run-profile.ts";
+} from "#veryfront/events/ag-ui/native-run-profile.ts";
 import type {
   AgUiSignalProjectionCommand,
   AgUiSignalProjectionContext,
   AgUiSignalSupportedEvent,
-} from "./native-signal.ts";
+} from "#veryfront/events/ag-ui/native-signal.ts";
 import {
   parseNativeSignalEvent,
   projectAgUiSignalEvent,
   projectNativeSignalEvent,
-} from "./native-signal.ts";
+} from "#veryfront/events/ag-ui/native-signal.ts";
 import type {
   AgUiNativeSynchronizationEvent,
   AgUiSynchronizationOccurrence,
   AgUiSynchronizationSupportedEvent,
-} from "./native-synchronization.ts";
+} from "#veryfront/events/ag-ui/native-synchronization.ts";
 import type {
   AgUiToolNativeRecord,
   AgUiToolProfileContext,
   AgUiToolProfileSupportedEvent,
   AgUiToolProjectionCommand,
-} from "./native-tool-profile.ts";
+} from "#veryfront/events/ag-ui/native-tool-profile.ts";
 import {
   parseNativeToolRecord,
   projectAgUiToolEvent,
   projectNativeToolEvent,
-} from "./native-tool-profile.ts";
+} from "#veryfront/events/ag-ui/native-tool-profile.ts";
 import {
   parseNativeSynchronizationEvent,
   projectAgUiSynchronizationEvent,
   projectNativeSynchronizationEvent,
-} from "./native-synchronization.ts";
-import { parseAgUiEvent } from "./parser.ts";
-import type { AgUiEvent } from "./types.ts";
+} from "#veryfront/events/ag-ui/native-synchronization.ts";
+import { parseAgUiEvent } from "#veryfront/events/ag-ui/parser.ts";
+import type { AgUiEvent } from "#veryfront/events/ag-ui/types.ts";
 
 export type AgUiNativeProfileFamily =
   | "run"

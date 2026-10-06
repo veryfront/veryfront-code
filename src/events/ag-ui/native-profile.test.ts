@@ -1,13 +1,13 @@
 import "#veryfront/schemas/_test-setup.ts";
-import "../test-setup.ts";
+import "#veryfront/events/test-setup.ts";
 import { assert, assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import type { AgUiNativeProfileContext } from "./native-profile.ts";
+import type { AgUiNativeProfileContext } from "#veryfront/events/ag-ui/native-profile.ts";
 import {
   parseNativeProfileRecord,
   projectAgUiNativeProfileEvent,
   projectNativeProfileEvent,
-} from "./native-profile.ts";
+} from "#veryfront/events/ag-ui/native-profile.ts";
 
 const occurrence = {
   source: "https://example.test/ag-ui/profile",
@@ -149,6 +149,40 @@ function canonical(event: unknown, context: AgUiNativeProfileContext) {
 }
 
 describe("events/ag-ui/native-profile", () => {
+  it("rejects conflicting content and tool protocol headers at the parser boundary", () => {
+    const cases = [
+      {
+        event: { type: "TEXT_MESSAGE_START", messageId: "agui-message-1" },
+        context: textContentContext,
+        extension: "urn:veryfront:ag-ui:protocol:content:1",
+      },
+      {
+        event: { type: "TOOL_CALL_START", toolCallId: "agui-tool-1", toolCallName: "search" },
+        context: toolCallContext,
+        extension: "urn:veryfront:ag-ui:protocol:tool:1",
+      },
+    ];
+    for (const fixture of cases) {
+      const record = canonical(fixture.event, fixture.context).event;
+      for (
+        const invalidHeader of [
+          { name: "other", version: "1.0", eventType: fixture.event.type },
+          { name: "ag-ui", version: "invalid", eventType: fixture.event.type },
+          { name: "ag-ui", version: "1.0", eventType: "RUN_ERROR" },
+        ]
+      ) {
+        assertThrows(
+          () =>
+            parseNativeProfileRecord({
+              ...record,
+              data: { ...record.data, extensions: { [fixture.extension]: invalidHeader } },
+            }),
+          TypeError,
+        );
+      }
+    }
+  });
+
   it("dispatches all completed run lifecycle variants including paused", () => {
     const cases = [
       {

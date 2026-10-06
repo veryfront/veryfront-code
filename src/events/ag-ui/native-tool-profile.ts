@@ -1,11 +1,21 @@
 import { snapshotBoundedJsonValue } from "#veryfront/schemas/json-value.ts";
-import { parseEvent } from "../parser.ts";
-import type { Extensions } from "../payload-types.generated.ts";
-import type { EventRecord, JsonObject, JsonValue } from "../types.ts";
-import { EVENT_SCHEMA_BY_TYPE } from "../types.ts";
-import { parseAgUiEvent, safeParseAgUiEvent } from "./parser.ts";
-import { AG_UI_PROTOCOL_VERSION } from "./schema.ts";
-import type { AgUiEventOf, AgUiProducerOccurrence } from "./types.ts";
+import {
+  aguiBase,
+  optionalString,
+  protocolMetadataFields,
+  requireLiteral,
+  requireRecord,
+  requireString,
+  requireStringValue,
+  toJsonObject,
+} from "#veryfront/events/ag-ui/native-profile-helpers.ts";
+import { parseEvent } from "#veryfront/events/parser.ts";
+import type { Extensions } from "#veryfront/events/payload-types.generated.ts";
+import type { EventRecord, JsonObject, JsonValue } from "#veryfront/events/types.ts";
+import { EVENT_SCHEMA_BY_TYPE } from "#veryfront/events/types.ts";
+import { parseAgUiEvent, safeParseAgUiEvent } from "#veryfront/events/ag-ui/parser.ts";
+import { AG_UI_PROTOCOL_VERSION } from "#veryfront/events/ag-ui/schema.ts";
+import type { AgUiEventOf, AgUiProducerOccurrence } from "#veryfront/events/ag-ui/types.ts";
 
 const AG_UI_PROTOCOL_NAME = "ag-ui";
 export const AG_UI_TOOL_PROTOCOL_EXTENSION_URI = "urn:veryfront:ag-ui:protocol:tool:1";
@@ -129,56 +139,9 @@ const RESULT_FIELDS = new Set([
   "role",
 ]);
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return !!value && typeof value === "object" && !Array.isArray(value);
-}
-
-function requireRecord(value: unknown, label: string): Record<string, unknown> {
-  if (!isRecord(value)) throw new TypeError(`${label} must be an object`);
-  return value;
-}
-
-function requireString(value: unknown, label: string): string {
-  if (typeof value !== "string" || value.length === 0) {
-    throw new TypeError(`${label} must be a non-empty string`);
-  }
-  return value;
-}
-
-function requireStringValue(value: unknown, label: string): string {
-  if (typeof value !== "string") throw new TypeError(`${label} must be a string`);
-  return value;
-}
-
-function optionalString(value: unknown, label: string): string | undefined {
-  if (value === undefined) return undefined;
-  return requireString(value, label);
-}
-
-function optionalNumber(value: unknown, label: string): number | undefined {
-  if (value === undefined) return undefined;
-  if (typeof value !== "number") throw new TypeError(`${label} must be a number`);
-  return value;
-}
-
-function requireLiteral<TLiteral extends string>(
-  value: unknown,
-  expected: TLiteral,
-  label: string,
-): TLiteral {
-  if (value !== expected) throw new TypeError(`${label} must be ${expected}`);
-  return expected;
-}
-
 function toJsonValue(value: unknown): JsonValue | undefined {
   const snapshot = snapshotBoundedJsonValue(value);
   return snapshot.success ? snapshot.value : undefined;
-}
-
-function toJsonObject(value: unknown): JsonObject | undefined {
-  const snapshot = snapshotBoundedJsonValue(value);
-  if (!snapshot.success) return undefined;
-  return isRecord(snapshot.value) ? snapshot.value : undefined;
 }
 
 function validateContext(context: AgUiToolProfileContext): AgUiToolProfileContext {
@@ -241,14 +204,6 @@ function validateAgUiToolMapping(
   }
 }
 
-function extensionFields(
-  event: AgUiToolProfileSupportedEvent,
-  knownFields: ReadonlySet<string>,
-): Record<string, unknown> | undefined {
-  const entries = Object.entries(event).filter(([key]) => !knownFields.has(key));
-  return entries.length === 0 ? undefined : Object.fromEntries(entries);
-}
-
 function identityMetadata(event: AgUiToolProfileSupportedEvent): JsonObject {
   const identity: Record<string, string> = {
     toolCallId: event.toolCallId,
@@ -268,19 +223,12 @@ function baseProtocolMetadata(
   event: AgUiToolProfileSupportedEvent,
   knownFields: ReadonlySet<string>,
 ): JsonObject | undefined {
-  const extensionData = extensionFields(event, knownFields);
   return toJsonObject({
     name: AG_UI_PROTOCOL_NAME,
     version: AG_UI_PROTOCOL_VERSION,
     eventType: event.type,
     identity: identityMetadata(event),
-    ...(event.timestamp === undefined ? {} : { timestamp: event.timestamp }),
-    ...(event.rawEvent === undefined ? {} : { rawEvent: event.rawEvent }),
-    ...(event.metadata === undefined ? {} : { metadata: event.metadata }),
-    ...(extensionData === undefined ? {} : { extensions: extensionData }),
-    ...(event.subagentRunId === undefined
-      ? {}
-      : { attribution: { invocation: { subagentRunId: event.subagentRunId } } }),
+    ...protocolMetadataFields(event, knownFields),
   });
 }
 
@@ -301,6 +249,13 @@ function protocolExtensions(protocol: JsonObject): { readonly extensions: Extens
   return { extensions: { [AG_UI_TOOL_PROTOCOL_EXTENSION_URI]: protocol } };
 }
 
+const AG_UI_TOOL_TYPE_BY_NATIVE = {
+  "com.veryfront.tool-call.started": "TOOL_CALL_START",
+  "com.veryfront.tool-call.arguments.delta.emitted": "TOOL_CALL_ARGS",
+  "com.veryfront.tool-call.arguments.ended": "TOOL_CALL_END",
+  "com.veryfront.tool-call.result.recorded": "TOOL_CALL_RESULT",
+} satisfies Record<AgUiToolNativeType, AgUiToolProfileSupportedEvent["type"]>;
+
 export function parseNativeToolRecord(input: unknown): AgUiToolNativeRecord {
   const parsed = parseEvent(input);
   switch (parsed.type) {
@@ -308,6 +263,7 @@ export function parseNativeToolRecord(input: unknown): AgUiToolNativeRecord {
     case "com.veryfront.tool-call.arguments.delta.emitted":
     case "com.veryfront.tool-call.arguments.ended":
     case "com.veryfront.tool-call.result.recorded":
+      requireProtocolHeader(protocolFromNative(parsed), AG_UI_TOOL_TYPE_BY_NATIVE[parsed.type]);
       return parsed;
     default:
       throw new TypeError(`${parsed.type} is not an AG-UI native tool profile event`);
@@ -516,52 +472,6 @@ function validateResultIdentity(
     requireLiteral(identity.role, "tool", "protocol.agui.identity.role");
   }
   return true;
-}
-
-function invocationSubagentRunId(record: Record<string, unknown>): string | undefined {
-  const attribution = record.attribution;
-  if (attribution === undefined) return undefined;
-  const attributionRecord = requireRecord(attribution, "protocol.agui.attribution");
-  const invocation = attributionRecord.invocation;
-  if (invocation === undefined) return undefined;
-  const invocationRecord = requireRecord(invocation, "protocol.agui.attribution.invocation");
-  return requireStringValue(
-    invocationRecord.subagentRunId,
-    "protocol.agui.attribution.invocation.subagentRunId",
-  );
-}
-
-function reservedExtensions(
-  record: Record<string, unknown> | undefined,
-  knownFields: ReadonlySet<string>,
-): Record<string, unknown> | undefined {
-  if (record === undefined) return undefined;
-  const extensions = record.extensions;
-  if (extensions === undefined) return undefined;
-  const extensionRecord = requireRecord(extensions, "protocol.agui.extensions");
-  for (const key of Object.keys(extensionRecord)) {
-    if (knownFields.has(key)) {
-      throw new TypeError(`protocol.agui.extensions must not contain reserved AG-UI field ${key}`);
-    }
-  }
-  return extensionRecord;
-}
-
-function aguiBase(record: Record<string, unknown> | undefined, knownFields: ReadonlySet<string>) {
-  if (record === undefined) return {};
-  return {
-    ...(reservedExtensions(record, knownFields) ?? {}),
-    ...(record.timestamp === undefined
-      ? {}
-      : { timestamp: optionalNumber(record.timestamp, "protocol.agui.timestamp") }),
-    ...(record.rawEvent === undefined ? {} : { rawEvent: record.rawEvent }),
-    ...(record.metadata === undefined
-      ? {}
-      : { metadata: requireRecord(record.metadata, "protocol.agui.metadata") }),
-    ...(invocationSubagentRunId(record) === undefined
-      ? {}
-      : { subagentRunId: invocationSubagentRunId(record) }),
-  };
 }
 
 function validateProjectedAgUi(event: Record<string, unknown>): AgUiToolProfileSupportedEvent {

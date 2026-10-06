@@ -1,11 +1,11 @@
 import "#veryfront/schemas/_test-setup.ts";
-import "../test-setup.ts";
+import "#veryfront/events/test-setup.ts";
 import { assert, assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { agUiNegativeFixtures, agUiPositiveFixtures } from "./fixtures.mjs";
-import type { EventRecord, EventType } from "../types.ts";
-import { EVENT_SCHEMA_BY_TYPE } from "../types.ts";
-import { parseEvent } from "../parser.ts";
+import type { EventRecord, EventType } from "#veryfront/events/types.ts";
+import { EVENT_SCHEMA_BY_TYPE } from "#veryfront/events/types.ts";
+import { parseEvent } from "#veryfront/events/parser.ts";
 import {
   acceptAgUiEvent,
   acceptNativeEvent,
@@ -22,7 +22,7 @@ import {
   projectNativeEvent,
   projectNativeProfileEvent,
   safeParseAgUiEvent,
-} from "./index.ts";
+} from "#veryfront/events/ag-ui/index.ts";
 
 function nativeEvent(
   id: string,

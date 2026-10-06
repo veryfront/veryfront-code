@@ -3,23 +3,26 @@ import type {
   JsonSchemaValidationResult,
 } from "#veryfront/extensions/schema/index.ts";
 import { snapshotBoundedJsonValue } from "#veryfront/schemas/json-value.ts";
-import { assertEventSchemaValidator, getEventSchemaValidatorVersion } from "../schema-validator.ts";
-import { AG_UI_NATIVE_RUN_PAUSED_RECORD_SCHEMA } from "./native-run-paused-contract.ts";
-import type { AgUiNativeRunPausedRecord } from "./native-run-paused-types.generated.ts";
+import {
+  assertEventSchemaValidator,
+  getEventSchemaValidatorVersion,
+} from "#veryfront/events/schema-validator.ts";
+import { AG_UI_NATIVE_RUN_PAUSED_RECORD_SCHEMA } from "#veryfront/events/ag-ui/native-run-paused-contract.ts";
+import type { AgUiNativeRunPausedRecord } from "#veryfront/events/ag-ui/native-run-paused-types.generated.ts";
 export {
   AG_UI_NATIVE_RUN_PAUSED_DATASCHEMA,
   AG_UI_NATIVE_RUN_PAUSED_RECORD_SCHEMA,
   AG_UI_NATIVE_RUN_PAUSED_SCHEMA_ID,
   AG_UI_NATIVE_RUN_PAUSED_TYPE,
   AG_UI_PROTOCOL_EXTENSION_URI,
-} from "./native-run-paused-contract.ts";
+} from "#veryfront/events/ag-ui/native-run-paused-contract.ts";
 export type {
   AgUiNativeRunPausedDataschema,
   AgUiNativeRunPausedPayload,
   AgUiNativeRunPausedProtocolMetadata,
   AgUiNativeRunPausedRecord,
   AgUiNativeRunPausedType,
-} from "./native-run-paused-types.generated.ts";
+} from "#veryfront/events/ag-ui/native-run-paused-types.generated.ts";
 
 let compiledValidator: JsonSchemaValidationFunction<AgUiNativeRunPausedRecord> | undefined;
 let compiledValidatorVersion = -1;

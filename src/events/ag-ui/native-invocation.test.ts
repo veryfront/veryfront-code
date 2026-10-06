@@ -1,8 +1,8 @@
 import "#veryfront/schemas/_test-setup.ts";
-import "../test-setup.ts";
+import "#veryfront/events/test-setup.ts";
 import { assert, assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import type { AgUiEventOf } from "./types.ts";
+import type { AgUiEventOf } from "#veryfront/events/ag-ui/types.ts";
 import {
   AG_UI_NATIVE_INVOCATION_SCHEMA_BY_TYPE,
   createGeneratedInvocationFrame,
@@ -10,8 +10,8 @@ import {
   parseNativeInvocationRecord,
   projectAgUiInvocationEvent,
   projectNativeInvocationEvent,
-} from "./native-invocation.ts";
-import type { AgUiInvocationProjectionContext } from "./native-invocation.ts";
+} from "#veryfront/events/ag-ui/native-invocation.ts";
+import type { AgUiInvocationProjectionContext } from "#veryfront/events/ag-ui/native-invocation.ts";
 
 const context: AgUiInvocationProjectionContext = {
   occurrence: {

@@ -5,7 +5,7 @@
  * Regenerate with: deno run -A src/events/ag-ui/generate-native-reasoning-types.ts
  */
 
-import type { AgUiEventOf, AgUiProtocolExtensionFields } from "./types.ts";
+import type { AgUiEventOf, AgUiProtocolExtensionFields } from "#veryfront/events/ag-ui/types.ts";
 
 export type AgUiNativeReasoningType =
   | "com.veryfront.reasoning.context.started"

@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import "../test-setup.ts";
+import "#veryfront/events/test-setup.ts";
 import { assert, assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { createZodAdapter } from "../../../extensions/ext-schema-zod/src/adapter.ts";
@@ -8,20 +8,24 @@ import {
   registerEventSchemaValidator,
   tryResolveEventSchemaValidator,
   unregisterEventSchemaValidator,
-} from "../schema-validator.ts";
-import { EVENT_SCHEMA_BY_TYPE } from "../types.ts";
-import type { AgUiEvent, AgUiEventOf, AgUiRunProfileStoredRunContext } from "./index.ts";
+} from "#veryfront/events/schema-validator.ts";
+import { EVENT_SCHEMA_BY_TYPE } from "#veryfront/events/types.ts";
+import type {
+  AgUiEvent,
+  AgUiEventOf,
+  AgUiRunProfileStoredRunContext,
+} from "#veryfront/events/ag-ui/index.ts";
 import {
   AG_UI_NATIVE_RUN_PAUSED_DATASCHEMA,
   AG_UI_NATIVE_RUN_PAUSED_TYPE,
   parseNativeRunPausedRecord,
-} from "./native-run-paused.ts";
+} from "#veryfront/events/ag-ui/native-run-paused.ts";
 import {
   createGeneratedRunProfileFrame,
   parseNativeRunProfileEvent,
   projectAgUiRunProfileEvent,
   projectNativeRunProfileEvent,
-} from "./native-run-profile.ts";
+} from "#veryfront/events/ag-ui/native-run-profile.ts";
 
 const context: AgUiRunProfileStoredRunContext = {
   occurrence: {

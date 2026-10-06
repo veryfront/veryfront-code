@@ -1,6 +1,10 @@
 import "#veryfront/schemas/_test-setup.ts";
-import "../test-setup.ts";
-import { type AgUiEvent, type AgUiEventOf, safeParseAgUiEvent } from "./index.ts";
+import "#veryfront/events/test-setup.ts";
+import {
+  type AgUiEvent,
+  type AgUiEventOf,
+  safeParseAgUiEvent,
+} from "#veryfront/events/ag-ui/index.ts";
 
 const textContent: AgUiEventOf<"TEXT_MESSAGE_CONTENT"> = {
   type: "TEXT_MESSAGE_CONTENT",
@@ -87,5 +91,6 @@ if (parseResult.success && parseResult.data.type === "TOOL_CALL_START") {
   const toolCallName: string = parseResult.data.toolCallName;
   void toolCallName;
   // @ts-expect-error Parser output is narrowed to TOOL_CALL_START, not a loose field bag.
-  parseResult.data.messageId;
+  const invalidMessageId = parseResult.data.messageId;
+  void invalidMessageId;
 }

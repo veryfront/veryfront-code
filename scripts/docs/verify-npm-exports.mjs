@@ -118,7 +118,7 @@ function collectTransitiveDntImporters(entryFile) {
     }
   }
 
-  return [...importers].sort();
+  return [...importers].sort((left, right) => left < right ? -1 : left > right ? 1 : 0);
 }
 
 const errors = [];

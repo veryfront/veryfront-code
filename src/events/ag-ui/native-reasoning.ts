@@ -1,29 +1,42 @@
 import { snapshotBoundedJsonValue } from "#veryfront/schemas/json-value.ts";
+import {
+  aguiBase,
+  baseProtocolMetadata,
+  nativeContextFields,
+  nativeOccurrenceFields,
+  optionalString,
+  requireLiteral,
+  requireString,
+  toJsonObject,
+} from "#veryfront/events/ag-ui/native-profile-helpers.ts";
 import type {
   JsonSchemaValidationFunction,
   JsonSchemaValidationResult,
 } from "#veryfront/extensions/schema/index.ts";
-import { assertEventSchemaValidator, getEventSchemaValidatorVersion } from "../schema-validator.ts";
-import type { JsonObject } from "../types.ts";
-import { parseAgUiEvent, safeParseAgUiEvent } from "./parser.ts";
+import {
+  assertEventSchemaValidator,
+  getEventSchemaValidatorVersion,
+} from "#veryfront/events/schema-validator.ts";
+import type { JsonObject } from "#veryfront/events/types.ts";
+import { parseAgUiEvent, safeParseAgUiEvent } from "#veryfront/events/ag-ui/parser.ts";
 import {
   AG_UI_NATIVE_REASONING_RECORD_SCHEMA,
   AG_UI_NATIVE_REASONING_SCHEMA_BY_TYPE,
-} from "./native-reasoning-contract.ts";
+} from "#veryfront/events/ag-ui/native-reasoning-contract.ts";
 import type {
   AgUiNativeReasoningAnyRecord,
   AgUiNativeReasoningRecord,
   AgUiNativeReasoningType,
   AgUiReasoningEventType,
-} from "./native-reasoning-types.generated.ts";
-import type { AgUiEventOf } from "./types.ts";
+} from "#veryfront/events/ag-ui/native-reasoning-types.generated.ts";
+import type { AgUiEventOf } from "#veryfront/events/ag-ui/types.ts";
 export {
   AG_UI_NATIVE_REASONING_JSON_SCHEMA,
   AG_UI_NATIVE_REASONING_RECORD_SCHEMA,
   AG_UI_NATIVE_REASONING_SCHEMA_BY_TYPE,
   AG_UI_NATIVE_REASONING_SCHEMA_ID,
   AG_UI_NATIVE_REASONING_TYPES,
-} from "./native-reasoning-contract.ts";
+} from "#veryfront/events/ag-ui/native-reasoning-contract.ts";
 export type {
   AgUiNativeReasoningAnyPayload,
   AgUiNativeReasoningAnyRecord,
@@ -36,7 +49,7 @@ export type {
   AgUiReasoningEventByType,
   AgUiReasoningEventType,
   AgUiReasoningProtocolMetadata,
-} from "./native-reasoning-types.generated.ts";
+} from "#veryfront/events/ag-ui/native-reasoning-types.generated.ts";
 
 const AG_UI_PROTOCOL_NAME = "ag-ui";
 const AG_UI_PROTOCOL_VERSION = "1.0";
@@ -120,54 +133,6 @@ const KNOWN_REASONING_ENCRYPTED_VALUE_FIELDS = new Set([
 let compiledValidator: JsonSchemaValidationFunction<AgUiNativeReasoningAnyRecord> | undefined;
 let compiledValidatorVersion = -1;
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return !!value && typeof value === "object" && !Array.isArray(value);
-}
-
-function requireRecord(value: unknown, label: string): Record<string, unknown> {
-  if (!isRecord(value)) throw new TypeError(`${label} must be an object`);
-  return value;
-}
-
-function requireString(value: unknown, label: string): string {
-  if (typeof value !== "string" || value.length === 0) {
-    throw new TypeError(`${label} must be a non-empty string`);
-  }
-  return value;
-}
-
-function requireStringValue(value: unknown, label: string): string {
-  if (typeof value !== "string") throw new TypeError(`${label} must be a string`);
-  return value;
-}
-
-function requireLiteral<TLiteral extends string>(
-  value: unknown,
-  expected: TLiteral,
-  label: string,
-): TLiteral {
-  if (value !== expected) throw new TypeError(`${label} must be ${expected}`);
-  return expected;
-}
-
-function optionalString(value: unknown, label: string): string | undefined {
-  if (value === undefined) return undefined;
-  return requireString(value, label);
-}
-
-function optionalNumber(value: unknown, label: string): number | undefined {
-  if (value === undefined) return undefined;
-  if (typeof value !== "number") throw new TypeError(`${label} must be a number`);
-  return value;
-}
-
-function toJsonObject(value: unknown): JsonObject | undefined {
-  const snapshot = snapshotBoundedJsonValue(value);
-  if (!snapshot.success) return undefined;
-  const { value: snapshotValue } = snapshot;
-  return isRecord(snapshotValue) ? snapshotValue : undefined;
-}
-
 function isPromiseLikeValidationResult(
   value:
     | JsonSchemaValidationResult<AgUiNativeReasoningAnyRecord>
@@ -227,33 +192,6 @@ function supportedAgUiEvent(input: unknown): AgUiReasoningSupportedEvent {
   }
 }
 
-function extensionFields(
-  event: AgUiReasoningSupportedEvent,
-  knownFields: ReadonlySet<string>,
-): Record<string, unknown> | undefined {
-  const entries = Object.entries(event).filter(([key]) => !knownFields.has(key));
-  return entries.length === 0 ? undefined : Object.fromEntries(entries);
-}
-
-function baseProtocolMetadata(
-  event: AgUiReasoningSupportedEvent,
-  knownFields: ReadonlySet<string>,
-): Record<string, unknown> {
-  const extensionData = extensionFields(event, knownFields);
-  return {
-    name: AG_UI_PROTOCOL_NAME,
-    version: AG_UI_PROTOCOL_VERSION,
-    eventType: event.type,
-    ...(event.timestamp === undefined ? {} : { timestamp: event.timestamp }),
-    ...(event.rawEvent === undefined ? {} : { rawEvent: event.rawEvent }),
-    ...(event.metadata === undefined ? {} : { metadata: event.metadata }),
-    ...(extensionData === undefined ? {} : { extensions: extensionData }),
-    ...(event.subagentRunId === undefined
-      ? {}
-      : { attribution: { invocation: { subagentRunId: event.subagentRunId } } }),
-  };
-}
-
 function protocolMetadata(event: AgUiReasoningSupportedEvent): JsonObject | undefined {
   switch (event.type) {
     case "REASONING_START":
@@ -296,11 +234,7 @@ function recordEnvelope(
     ...(context.occurrence.recordedat === undefined
       ? {}
       : { recordedat: context.occurrence.recordedat }),
-    ...(context.runkind === undefined ? {} : { runkind: context.runkind }),
-    ...(context.conversationid === undefined ? {} : { conversationid: context.conversationid }),
-    ...(context.subject === undefined ? {} : { subject: context.subject }),
-    ...(context.traceparent === undefined ? {} : { traceparent: context.traceparent }),
-    ...(context.tracestate === undefined ? {} : { tracestate: context.tracestate }),
+    ...nativeContextFields(context),
   };
   const parsed = parseNativeReasoningRecord(candidate);
   if (parsed.type !== type) {
@@ -368,47 +302,6 @@ function protocolFromNative(event: AgUiNativeReasoningAnyRecord): JsonObject {
     throw new TypeError("native reasoning event has non-JSON AG-UI protocol metadata");
   }
   return jsonProtocol;
-}
-
-function invocationSubagentRunId(record: Record<string, unknown>): string | undefined {
-  const attribution = record.attribution;
-  if (attribution === undefined) return undefined;
-  const attributionRecord = requireRecord(attribution, "protocol.agui.attribution");
-  const invocation = attributionRecord.invocation;
-  if (invocation === undefined) return undefined;
-  const invocationRecord = requireRecord(invocation, "protocol.agui.attribution.invocation");
-  return requireStringValue(
-    invocationRecord.subagentRunId,
-    "protocol.agui.attribution.invocation.subagentRunId",
-  );
-}
-
-function reservedExtensions(record: Record<string, unknown>, knownFields: ReadonlySet<string>) {
-  const extensions = record.extensions;
-  if (extensions === undefined) return undefined;
-  const extensionRecord = requireRecord(extensions, "protocol.agui.extensions");
-  for (const key of Object.keys(extensionRecord)) {
-    if (knownFields.has(key)) {
-      throw new TypeError(`protocol.agui.extensions must not contain reserved AG-UI field ${key}`);
-    }
-  }
-  return extensionRecord;
-}
-
-function aguiBase(record: Record<string, unknown>, knownFields: ReadonlySet<string>) {
-  return {
-    ...(reservedExtensions(record, knownFields) ?? {}),
-    ...(record.timestamp === undefined
-      ? {}
-      : { timestamp: optionalNumber(record.timestamp, "protocol.agui.timestamp") }),
-    ...(record.rawEvent === undefined ? {} : { rawEvent: record.rawEvent }),
-    ...(record.metadata === undefined
-      ? {}
-      : { metadata: requireRecord(record.metadata, "protocol.agui.metadata") }),
-    ...(invocationSubagentRunId(record) === undefined
-      ? {}
-      : { subagentRunId: invocationSubagentRunId(record) }),
-  };
 }
 
 function requireProtocolHeader(
@@ -484,18 +377,9 @@ export function parseNativeReasoningEvent(input: unknown): AgUiNativeReasoningAn
   const projected = projectAgUiReasoningEvent({
     event: agui,
     context: {
-      occurrence: {
-        source: event.source,
-        id: event.id,
-        ...(event.time === undefined ? {} : { time: event.time }),
-        ...(event.recordedat === undefined ? {} : { recordedat: event.recordedat }),
-      },
+      occurrence: nativeOccurrenceFields(event),
       ...(event.runid === undefined ? {} : { runid: event.runid }),
-      ...(event.runkind === undefined ? {} : { runkind: event.runkind }),
-      ...(event.conversationid === undefined ? {} : { conversationid: event.conversationid }),
-      ...(event.subject === undefined ? {} : { subject: event.subject }),
-      ...(event.traceparent === undefined ? {} : { traceparent: event.traceparent }),
-      ...(event.tracestate === undefined ? {} : { tracestate: event.tracestate }),
+      ...nativeContextFields(event),
     },
   });
   if (projected.kind !== "canonical-event") throw new TypeError(projected.message);

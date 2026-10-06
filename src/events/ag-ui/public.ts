@@ -10,13 +10,17 @@
  * @module events/ag-ui
  */
 
-export { acceptAgUiEvent, projectAgUiEvent } from "./normalization.ts";
-export { createAgUiParser, parseAgUiEvent, safeParseAgUiEvent } from "./parser.ts";
+export { acceptAgUiEvent, projectAgUiEvent } from "#veryfront/events/ag-ui/normalization.ts";
+export {
+  createAgUiParser,
+  parseAgUiEvent,
+  safeParseAgUiEvent,
+} from "#veryfront/events/ag-ui/parser.ts";
 export {
   parseNativeProfileRecord,
   projectAgUiNativeProfileEvent,
   projectNativeProfileEvent,
-} from "./native-profile.ts";
+} from "#veryfront/events/ag-ui/native-profile.ts";
 export {
   AG_UI_CORE_PACKAGE,
   AG_UI_CORE_VERSION,
@@ -26,7 +30,7 @@ export {
   AG_UI_RELEASE,
   AG_UI_RELEASE_COMMIT,
   type AgUiEventType,
-} from "./schema.ts";
+} from "#veryfront/events/ag-ui/schema.ts";
 export type {
   AcceptAgUiEventInput,
   AcceptAgUiEventResult,
@@ -47,7 +51,7 @@ export type {
   AgUiPendingStream,
   AgUiProducerOccurrence,
   ProjectAgUiEventInput,
-} from "./types.ts";
+} from "#veryfront/events/ag-ui/types.ts";
 export type {
   AgUiNativeProfileContext,
   AgUiNativeProfileFamily,
@@ -56,4 +60,4 @@ export type {
   AgUiNativeProfileSupportedEvent,
   ProjectAgUiNativeProfileInput,
   ProjectNativeProfileInput,
-} from "./native-profile.ts";
+} from "#veryfront/events/ag-ui/native-profile.ts";

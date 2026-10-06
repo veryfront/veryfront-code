@@ -5,7 +5,7 @@
  * Regenerate with: deno run -A src/events/ag-ui/generate-types.ts
  */
 
-import type { AgUiEventType } from "./schema.ts";
+import type { AgUiEventType } from "#veryfront/events/ag-ui/schema.ts";
 
 export type AgUiJsonValue =
   | null

@@ -1,4 +1,9 @@
-import { AG_UI_EVENT_SCHEMA, AG_UI_EVENT_TYPES, type AgUiEventType } from "./schema.ts";
+import { writeGeneratedTypes } from "#veryfront/events/ag-ui/generator.ts";
+import {
+  AG_UI_EVENT_SCHEMA,
+  AG_UI_EVENT_TYPES,
+  type AgUiEventType,
+} from "#veryfront/events/ag-ui/schema.ts";
 
 const OUTPUT_PATH = new URL("./types.generated.ts", import.meta.url);
 const COMMON_EVENT_FIELDS = new Set(["type", "timestamp", "rawEvent", "metadata", "subagentRunId"]);
@@ -152,7 +157,7 @@ function generatedSource(): string {
     " * Regenerate with: deno run -A src/events/ag-ui/generate-types.ts",
     " */",
     "",
-    'import type { AgUiEventType } from "./schema.ts";',
+    'import type { AgUiEventType } from "#veryfront/events/ag-ui/schema.ts";',
     "",
     "export type AgUiJsonValue =",
     "  | null",
@@ -207,36 +212,11 @@ function generatedSource(): string {
   return lines.join("\n");
 }
 
-async function formattedSource(source: string): Promise<string> {
-  const path = await Deno.makeTempFile({ prefix: "ag-ui-types-", suffix: ".ts" });
-  try {
-    await Deno.writeTextFile(path, source);
-    const status = await new Deno.Command(Deno.execPath(), {
-      args: ["fmt", "--config=deno.json", path],
-      stdout: "null",
-      stderr: "inherit",
-    }).spawn().status;
-    if (!status.success) Deno.exit(status.code);
-    return await Deno.readTextFile(path);
-  } finally {
-    await Deno.remove(path).catch(() => undefined);
-  }
-}
-
-async function writeGenerated(): Promise<void> {
-  await Deno.writeTextFile(OUTPUT_PATH, await formattedSource(generatedSource()));
-}
-
-async function checkGenerated(): Promise<void> {
-  const expected = await formattedSource(generatedSource());
-  const actual = await Deno.readTextFile(OUTPUT_PATH);
-  if (actual !== expected) {
-    console.error(
-      "src/events/ag-ui/types.generated.ts is out of date; run deno run -A src/events/ag-ui/generate-types.ts",
-    );
-    Deno.exit(1);
-  }
-}
-
-if (Deno.args.includes("--check")) await checkGenerated();
-else await writeGenerated();
+await writeGeneratedTypes({
+  source: generatedSource(),
+  outputPath: OUTPUT_PATH,
+  tempPrefix: "ag-ui-types-",
+  outdatedMessages: [
+    "src/events/ag-ui/types.generated.ts is out of date; run deno run -A src/events/ag-ui/generate-types.ts",
+  ],
+});

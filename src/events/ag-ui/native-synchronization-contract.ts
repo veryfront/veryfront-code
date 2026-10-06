@@ -1,5 +1,5 @@
 import type { JsonSchema } from "#veryfront/extensions/schema/index.ts";
-import { AG_UI_EVENT_SCHEMA } from "./schema.ts";
+import { AG_UI_EVENT_SCHEMA } from "#veryfront/events/ag-ui/schema.ts";
 
 export const AG_UI_NATIVE_SYNCHRONIZATION_TYPES = [
   "com.veryfront.synchronization.state.snapshot.recorded",

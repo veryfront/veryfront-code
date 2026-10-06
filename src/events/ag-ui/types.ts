@@ -1,12 +1,12 @@
 import type { JsonSchemaValidationIssue } from "#veryfront/extensions/schema/index.ts";
-import type { EventRecord } from "../types.ts";
-import type { AG_UI_PROTOCOL_VERSION } from "./schema.ts";
+import type { EventRecord } from "#veryfront/events/types.ts";
+import type { AG_UI_PROTOCOL_VERSION } from "#veryfront/events/ag-ui/schema.ts";
 import type {
   AgUiNativeProfileContext,
   AgUiNativeProfileFamily,
   AgUiNativeProfileRecord,
-} from "./native-profile.ts";
-import type { AgUiEvent, AgUiEventOf } from "./types.generated.ts";
+} from "#veryfront/events/ag-ui/native-profile.ts";
+import type { AgUiEvent, AgUiEventOf } from "#veryfront/events/ag-ui/types.generated.ts";
 
 export type {
   AgUiBaseEvent,
@@ -18,7 +18,7 @@ export type {
   AgUiMetadata,
   AgUiProtocolExtensionFields,
   AgUiRunAgentInput,
-} from "./types.generated.ts";
+} from "#veryfront/events/ag-ui/types.generated.ts";
 
 export type AgUiParseIssue = JsonSchemaValidationIssue;
 

@@ -1,30 +1,45 @@
+import { snapshotBoundedJsonValue } from "#veryfront/schemas/json-value.ts";
+import {
+  aguiEnvelopeBase as aguiBase,
+  extensionFields,
+  isRecord,
+  nativeContextFields,
+  nativeOccurrenceFields,
+  optionalString,
+  requireLiteral,
+  requireRecord,
+  requireString,
+  requireStringValue,
+} from "#veryfront/events/ag-ui/native-profile-helpers.ts";
 import type {
   JsonSchemaValidationFunction,
   JsonSchemaValidationResult,
 } from "#veryfront/extensions/schema/index.ts";
-import { snapshotBoundedJsonValue } from "#veryfront/schemas/json-value.ts";
-import { assertEventSchemaValidator, getEventSchemaValidatorVersion } from "../schema-validator.ts";
-import type { JsonObject, JsonValue } from "../types.ts";
-import { parseAgUiEvent, safeParseAgUiEvent } from "./parser.ts";
+import {
+  assertEventSchemaValidator,
+  getEventSchemaValidatorVersion,
+} from "#veryfront/events/schema-validator.ts";
+import type { JsonObject, JsonValue } from "#veryfront/events/types.ts";
+import { parseAgUiEvent, safeParseAgUiEvent } from "#veryfront/events/ag-ui/parser.ts";
 import {
   AG_UI_NATIVE_INVOCATION_RECORD_SCHEMA,
   AG_UI_NATIVE_INVOCATION_SCHEMA_BY_TYPE,
-} from "./native-invocation-contract.ts";
+} from "#veryfront/events/ag-ui/native-invocation-contract.ts";
 import type {
   AgUiInvocationEventType,
   AgUiInvocationProtocolMetadata,
   AgUiNativeInvocationAnyRecord,
   AgUiNativeInvocationRecord,
   AgUiNativeInvocationType,
-} from "./native-invocation-types.generated.ts";
-import type { AgUiEventOf } from "./types.ts";
+} from "#veryfront/events/ag-ui/native-invocation-types.generated.ts";
+import type { AgUiEventOf } from "#veryfront/events/ag-ui/types.ts";
 export {
   AG_UI_NATIVE_INVOCATION_JSON_SCHEMA,
   AG_UI_NATIVE_INVOCATION_RECORD_SCHEMA,
   AG_UI_NATIVE_INVOCATION_SCHEMA_BY_TYPE,
   AG_UI_NATIVE_INVOCATION_SCHEMA_ID,
   AG_UI_NATIVE_INVOCATION_TYPES,
-} from "./native-invocation-contract.ts";
+} from "#veryfront/events/ag-ui/native-invocation-contract.ts";
 export type {
   AgUiInvocationEventByType,
   AgUiInvocationEventType,
@@ -37,7 +52,7 @@ export type {
   AgUiNativeInvocationPayloadByType,
   AgUiNativeInvocationRecord,
   AgUiNativeInvocationType,
-} from "./native-invocation-types.generated.ts";
+} from "#veryfront/events/ag-ui/native-invocation-types.generated.ts";
 
 const AG_UI_PROTOCOL_NAME = "ag-ui";
 const AG_UI_PROTOCOL_VERSION = "1.0";
@@ -132,47 +147,6 @@ const KNOWN_SUBAGENT_ERROR_FIELDS = new Set([
 let compiledValidator: JsonSchemaValidationFunction<AgUiNativeInvocationAnyRecord> | undefined;
 let compiledValidatorVersion = -1;
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return !!value && typeof value === "object" && !Array.isArray(value);
-}
-
-function requireRecord(value: unknown, label: string): Record<string, unknown> {
-  if (!isRecord(value)) throw new TypeError(`${label} must be an object`);
-  return value;
-}
-
-function requireString(value: unknown, label: string): string {
-  if (typeof value !== "string" || value.length === 0) {
-    throw new TypeError(`${label} must be a non-empty string`);
-  }
-  return value;
-}
-
-function requireStringValue(value: unknown, label: string): string {
-  if (typeof value !== "string") throw new TypeError(`${label} must be a string`);
-  return value;
-}
-
-function requireLiteral<TLiteral extends string>(
-  value: unknown,
-  expected: TLiteral,
-  label: string,
-): TLiteral {
-  if (value !== expected) throw new TypeError(`${label} must be ${expected}`);
-  return expected;
-}
-
-function optionalString(value: unknown, label: string): string | undefined {
-  if (value === undefined) return undefined;
-  return requireString(value, label);
-}
-
-function optionalNumber(value: unknown, label: string): number | undefined {
-  if (value === undefined) return undefined;
-  if (typeof value !== "number") throw new TypeError(`${label} must be a number`);
-  return value;
-}
-
 function jsonValue(value: unknown): value is JsonValue {
   if (value === null) return true;
   switch (typeof value) {
@@ -255,14 +229,6 @@ function supportedAgUiEvent(input: unknown): AgUiInvocationSupportedEvent {
     default:
       throw new TypeError(`${event.type} is not an AG-UI invocation event`);
   }
-}
-
-function extensionFields(
-  event: AgUiInvocationSupportedEvent,
-  knownFields: ReadonlySet<string>,
-): Record<string, unknown> | undefined {
-  const entries = Object.entries(event).filter(([key]) => !knownFields.has(key));
-  return entries.length === 0 ? undefined : Object.fromEntries(entries);
 }
 
 function parentAttribution(
@@ -361,11 +327,7 @@ function recordEnvelope<TType extends AgUiNativeInvocationType>(
     ...(context.occurrence.recordedat === undefined
       ? {}
       : { recordedat: context.occurrence.recordedat }),
-    ...(context.runkind === undefined ? {} : { runkind: context.runkind }),
-    ...(context.conversationid === undefined ? {} : { conversationid: context.conversationid }),
-    ...(context.subject === undefined ? {} : { subject: context.subject }),
-    ...(context.traceparent === undefined ? {} : { traceparent: context.traceparent }),
-    ...(context.tracestate === undefined ? {} : { tracestate: context.tracestate }),
+    ...nativeContextFields(context),
   };
   const parsed = parseNativeInvocationRecord(candidate);
   if (parsed.type !== type) {
@@ -474,18 +436,6 @@ function requireProtocolHeader(
   return record;
 }
 
-function reservedExtensions(record: Record<string, unknown>, knownFields: ReadonlySet<string>) {
-  const extensions = record.extensions;
-  if (extensions === undefined) return undefined;
-  const extensionRecord = requireRecord(extensions, "protocol.agui.extensions");
-  for (const key of Object.keys(extensionRecord)) {
-    if (knownFields.has(key)) {
-      throw new TypeError(`protocol.agui.extensions must not contain reserved AG-UI field ${key}`);
-    }
-  }
-  return extensionRecord;
-}
-
 function startedParentFields(record: Record<string, unknown>): Record<string, string> {
   const attribution = record.attribution;
   if (attribution === undefined) return {};
@@ -521,22 +471,6 @@ function startedParentFields(record: Record<string, unknown>): Record<string, st
         "protocol.agui.attribution.parent.message.messageId",
       ),
     }),
-  };
-}
-
-function aguiBase(
-  record: Record<string, unknown>,
-  knownFields: ReadonlySet<string>,
-): Record<string, unknown> {
-  return {
-    ...(reservedExtensions(record, knownFields) ?? {}),
-    ...(record.timestamp === undefined
-      ? {}
-      : { timestamp: optionalNumber(record.timestamp, "protocol.agui.timestamp") }),
-    ...(record.rawEvent === undefined ? {} : { rawEvent: record.rawEvent }),
-    ...(record.metadata === undefined
-      ? {}
-      : { metadata: requireRecord(record.metadata, "protocol.agui.metadata") }),
   };
 }
 
@@ -622,18 +556,9 @@ export function parseNativeInvocationEvent(input: unknown): AgUiNativeInvocation
   const projected = projectAgUiInvocationEvent({
     event: agui,
     context: {
-      occurrence: {
-        source: event.source,
-        id: event.id,
-        ...(event.time === undefined ? {} : { time: event.time }),
-        ...(event.recordedat === undefined ? {} : { recordedat: event.recordedat }),
-      },
+      occurrence: nativeOccurrenceFields(event),
       ...(event.runid === undefined ? {} : { runid: event.runid }),
-      ...(event.runkind === undefined ? {} : { runkind: event.runkind }),
-      ...(event.conversationid === undefined ? {} : { conversationid: event.conversationid }),
-      ...(event.subject === undefined ? {} : { subject: event.subject }),
-      ...(event.traceparent === undefined ? {} : { traceparent: event.traceparent }),
-      ...(event.tracestate === undefined ? {} : { tracestate: event.tracestate }),
+      ...nativeContextFields(event),
     },
   });
   if (projected.kind !== "canonical-event") throw new TypeError(projected.message);

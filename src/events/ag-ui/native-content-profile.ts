@@ -1,11 +1,21 @@
-import { snapshotBoundedJsonValue } from "#veryfront/schemas/json-value.ts";
-import { parseEvent } from "../parser.ts";
-import type { Extensions } from "../payload-types.generated.ts";
-import type { EventRecord, JsonObject } from "../types.ts";
-import { EVENT_SCHEMA_BY_TYPE } from "../types.ts";
-import { parseAgUiEvent, safeParseAgUiEvent } from "./parser.ts";
-import { AG_UI_PROTOCOL_VERSION } from "./schema.ts";
-import type { AgUiEventOf, AgUiProducerOccurrence } from "./types.ts";
+import {
+  aguiBase,
+  optionalString,
+  optionalStringValue,
+  protocolMetadataFields,
+  requireLiteral,
+  requireRecord,
+  requireString,
+  requireStringValue,
+  toJsonObject,
+} from "#veryfront/events/ag-ui/native-profile-helpers.ts";
+import { parseEvent } from "#veryfront/events/parser.ts";
+import type { Extensions } from "#veryfront/events/payload-types.generated.ts";
+import type { EventRecord, JsonObject } from "#veryfront/events/types.ts";
+import { EVENT_SCHEMA_BY_TYPE } from "#veryfront/events/types.ts";
+import { parseAgUiEvent, safeParseAgUiEvent } from "#veryfront/events/ag-ui/parser.ts";
+import { AG_UI_PROTOCOL_VERSION } from "#veryfront/events/ag-ui/schema.ts";
+import type { AgUiEventOf, AgUiProducerOccurrence } from "#veryfront/events/ag-ui/types.ts";
 
 const AG_UI_PROTOCOL_NAME = "ag-ui";
 export const AG_UI_CONTENT_PROTOCOL_EXTENSION_URI = "urn:veryfront:ag-ui:protocol:content:1";
@@ -160,58 +170,6 @@ const STEP_FIELDS = new Set([
   "stepName",
 ]);
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return !!value && typeof value === "object" && !Array.isArray(value);
-}
-
-function requireRecord(value: unknown, label: string): Record<string, unknown> {
-  if (!isRecord(value)) throw new TypeError(`${label} must be an object`);
-  return value;
-}
-
-function requireString(value: unknown, label: string): string {
-  if (typeof value !== "string" || value.length === 0) {
-    throw new TypeError(`${label} must be a non-empty string`);
-  }
-  return value;
-}
-
-function requireStringValue(value: unknown, label: string): string {
-  if (typeof value !== "string") throw new TypeError(`${label} must be a string`);
-  return value;
-}
-
-function optionalString(value: unknown, label: string): string | undefined {
-  if (value === undefined) return undefined;
-  return requireString(value, label);
-}
-
-function optionalStringValue(value: unknown, label: string): string | undefined {
-  if (value === undefined) return undefined;
-  return requireStringValue(value, label);
-}
-
-function optionalNumber(value: unknown, label: string): number | undefined {
-  if (value === undefined) return undefined;
-  if (typeof value !== "number") throw new TypeError(`${label} must be a number`);
-  return value;
-}
-
-function requireLiteral<TLiteral extends string>(
-  value: unknown,
-  expected: TLiteral,
-  label: string,
-): TLiteral {
-  if (value !== expected) throw new TypeError(`${label} must be ${expected}`);
-  return expected;
-}
-
-function toJsonObject(value: unknown): JsonObject | undefined {
-  const snapshot = snapshotBoundedJsonValue(value);
-  if (!snapshot.success) return undefined;
-  return isRecord(snapshot.value) ? snapshot.value : undefined;
-}
-
 function validateOccurrence(occurrence: AgUiContentOccurrence): AgUiContentOccurrence {
   requireString(occurrence.source, "content occurrence source");
   requireString(occurrence.id, "content occurrence id");
@@ -251,30 +209,15 @@ function validateContextOccurrenceMatchesRecord(
   }
 }
 
-function extensionFields(
-  event: AgUiContentProfileSupportedEvent,
-  knownFields: ReadonlySet<string>,
-): Record<string, unknown> | undefined {
-  const entries = Object.entries(event).filter(([key]) => !knownFields.has(key));
-  return entries.length === 0 ? undefined : Object.fromEntries(entries);
-}
-
 function baseProtocolMetadata(
   event: AgUiContentProfileSupportedEvent,
   knownFields: ReadonlySet<string>,
 ): JsonObject | undefined {
-  const extensionData = extensionFields(event, knownFields);
   return toJsonObject({
     name: AG_UI_PROTOCOL_NAME,
     version: AG_UI_PROTOCOL_VERSION,
     eventType: event.type,
-    ...(event.timestamp === undefined ? {} : { timestamp: event.timestamp }),
-    ...(event.rawEvent === undefined ? {} : { rawEvent: event.rawEvent }),
-    ...(event.metadata === undefined ? {} : { metadata: event.metadata }),
-    ...(extensionData === undefined ? {} : { extensions: extensionData }),
-    ...(event.subagentRunId === undefined
-      ? {}
-      : { attribution: { invocation: { subagentRunId: event.subagentRunId } } }),
+    ...protocolMetadataFields(event, knownFields),
   });
 }
 
@@ -329,6 +272,17 @@ function protocolExtensions(protocol: JsonObject): { readonly extensions: Extens
   return { extensions: { [AG_UI_CONTENT_PROTOCOL_EXTENSION_URI]: protocol } };
 }
 
+const AG_UI_CONTENT_TYPE_BY_NATIVE = {
+  "com.veryfront.message.text.started": "TEXT_MESSAGE_START",
+  "com.veryfront.message.text.delta.emitted": "TEXT_MESSAGE_CONTENT",
+  "com.veryfront.message.text.ended": "TEXT_MESSAGE_END",
+  "com.veryfront.message.reasoning.started": "REASONING_MESSAGE_START",
+  "com.veryfront.message.reasoning.delta.emitted": "REASONING_MESSAGE_CONTENT",
+  "com.veryfront.message.reasoning.ended": "REASONING_MESSAGE_END",
+  "com.veryfront.step.started": "STEP_STARTED",
+  "com.veryfront.step.ended": "STEP_FINISHED",
+} satisfies Record<AgUiContentNativeType, AgUiContentProfileSupportedEvent["type"]>;
+
 export function parseNativeContentRecord(input: unknown): AgUiContentNativeRecord {
   const parsed = parseEvent(input);
   switch (parsed.type) {
@@ -340,6 +294,7 @@ export function parseNativeContentRecord(input: unknown): AgUiContentNativeRecor
     case "com.veryfront.message.reasoning.ended":
     case "com.veryfront.step.started":
     case "com.veryfront.step.ended":
+      requireProtocolHeader(protocolFromNative(parsed), AG_UI_CONTENT_TYPE_BY_NATIVE[parsed.type]);
       return parsed;
     default:
       throw new TypeError(`${parsed.type} is not an AG-UI native content profile event`);
@@ -617,35 +572,6 @@ function requireProtocolHeader(
   return protocol;
 }
 
-function invocationSubagentRunId(record: Record<string, unknown>): string | undefined {
-  const attribution = record.attribution;
-  if (attribution === undefined) return undefined;
-  const attributionRecord = requireRecord(attribution, "protocol.agui.attribution");
-  const invocation = attributionRecord.invocation;
-  if (invocation === undefined) return undefined;
-  const invocationRecord = requireRecord(invocation, "protocol.agui.attribution.invocation");
-  return requireStringValue(
-    invocationRecord.subagentRunId,
-    "protocol.agui.attribution.invocation.subagentRunId",
-  );
-}
-
-function reservedExtensions(
-  record: Record<string, unknown> | undefined,
-  knownFields: ReadonlySet<string>,
-): Record<string, unknown> | undefined {
-  if (record === undefined) return undefined;
-  const extensions = record.extensions;
-  if (extensions === undefined) return undefined;
-  const extensionRecord = requireRecord(extensions, "protocol.agui.extensions");
-  for (const key of Object.keys(extensionRecord)) {
-    if (knownFields.has(key)) {
-      throw new TypeError(`protocol.agui.extensions must not contain reserved AG-UI field ${key}`);
-    }
-  }
-  return extensionRecord;
-}
-
 function protocolIdentity(
   record: Record<string, unknown> | undefined,
 ): Record<string, unknown> | undefined {
@@ -703,26 +629,6 @@ function protocolTextName(record: Record<string, unknown> | undefined): string |
   return optionalStringValue(messageRecord.name, "protocol.agui.message.name");
 }
 
-function aguiBase(
-  record: Record<string, unknown> | undefined,
-  knownFields: ReadonlySet<string>,
-) {
-  if (record === undefined) return {};
-  return {
-    ...(reservedExtensions(record, knownFields) ?? {}),
-    ...(record.timestamp === undefined
-      ? {}
-      : { timestamp: optionalNumber(record.timestamp, "protocol.agui.timestamp") }),
-    ...(record.rawEvent === undefined ? {} : { rawEvent: record.rawEvent }),
-    ...(record.metadata === undefined
-      ? {}
-      : { metadata: requireRecord(record.metadata, "protocol.agui.metadata") }),
-    ...(invocationSubagentRunId(record) === undefined
-      ? {}
-      : { subagentRunId: invocationSubagentRunId(record) }),
-  };
-}
-
 function validateProjectedAgUi(event: Record<string, unknown>): AgUiContentProfileSupportedEvent {
   const result = safeParseAgUiEvent(event);
   if (!result.success) {
@@ -763,6 +669,19 @@ function assertNativeReasoningMapping(
   ) {
     throw new TypeError("native reasoning message/content IDs must match persisted mapping");
   }
+}
+
+function projectedContentCommand(input: {
+  readonly family: AgUiContentProfileFamily;
+  readonly occurrence: Pick<AgUiContentNativeRecord, "source" | "id">;
+  readonly candidate: Record<string, unknown>;
+}): AgUiContentProjectionCommand {
+  return {
+    kind: "ag-ui-event",
+    family: input.family,
+    producerOccurrence: { source: input.occurrence.source, id: input.occurrence.id },
+    event: validateProjectedAgUi(input.candidate),
+  };
 }
 
 function projectedText(
@@ -819,11 +738,10 @@ function projectedText(
           ...(protocol === undefined ? {} : { protocol: { agui: protocol } }),
         };
       }
-      return {
-        kind: "ag-ui-event",
+      return projectedContentCommand({
         family: "text",
-        producerOccurrence: { source: event.source, id: event.id },
-        event: validateProjectedAgUi({
+        occurrence: event,
+        candidate: {
           ...base,
           type: eventType,
           messageId: context.message.agUiMessageId,
@@ -831,31 +749,29 @@ function projectedText(
           ...(protocolTextName(protocolRecord) === undefined
             ? {}
             : { name: protocolTextName(protocolRecord) }),
-        }),
-      };
+        },
+      });
     case "com.veryfront.message.text.delta.emitted":
-      return {
-        kind: "ag-ui-event",
+      return projectedContentCommand({
         family: "text",
-        producerOccurrence: { source: event.source, id: event.id },
-        event: validateProjectedAgUi({
+        occurrence: event,
+        candidate: {
           ...base,
           type: eventType,
           messageId: context.message.agUiMessageId,
           delta: event.data.delta,
-        }),
-      };
+        },
+      });
     case "com.veryfront.message.text.ended":
-      return {
-        kind: "ag-ui-event",
+      return projectedContentCommand({
         family: "text",
-        producerOccurrence: { source: event.source, id: event.id },
-        event: validateProjectedAgUi({
+        occurrence: event,
+        candidate: {
           ...base,
           type: eventType,
           messageId: context.message.agUiMessageId,
-        }),
-      };
+        },
+      });
   }
 }
 
@@ -905,40 +821,37 @@ function projectedReasoning(
   );
   switch (event.type) {
     case "com.veryfront.message.reasoning.started":
-      return {
-        kind: "ag-ui-event",
+      return projectedContentCommand({
         family: "reasoning",
-        producerOccurrence: { source: event.source, id: event.id },
-        event: validateProjectedAgUi({
+        occurrence: event,
+        candidate: {
           ...base,
           type: eventType,
           messageId: context.message.agUiMessageId,
           role: "reasoning",
-        }),
-      };
+        },
+      });
     case "com.veryfront.message.reasoning.delta.emitted":
-      return {
-        kind: "ag-ui-event",
+      return projectedContentCommand({
         family: "reasoning",
-        producerOccurrence: { source: event.source, id: event.id },
-        event: validateProjectedAgUi({
+        occurrence: event,
+        candidate: {
           ...base,
           type: eventType,
           messageId: context.message.agUiMessageId,
           delta: event.data.delta,
-        }),
-      };
+        },
+      });
     case "com.veryfront.message.reasoning.ended":
-      return {
-        kind: "ag-ui-event",
+      return projectedContentCommand({
         family: "reasoning",
-        producerOccurrence: { source: event.source, id: event.id },
-        event: validateProjectedAgUi({
+        occurrence: event,
+        candidate: {
           ...base,
           type: eventType,
           messageId: context.message.agUiMessageId,
-        }),
-      };
+        },
+      });
   }
 }
 

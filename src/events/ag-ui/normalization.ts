@@ -1,9 +1,9 @@
-import { parseEvent } from "../parser.ts";
-import type { EventRecord } from "../types.ts";
-import { projectAgUiNativeProfileEvent } from "./native-profile.ts";
-import type { AgUiNativeProfileContext } from "./native-profile.ts";
-import { parseAgUiEvent } from "./parser.ts";
-import { AG_UI_PROTOCOL_VERSION } from "./schema.ts";
+import { parseEvent } from "#veryfront/events/parser.ts";
+import type { EventRecord } from "#veryfront/events/types.ts";
+import { projectAgUiNativeProfileEvent } from "#veryfront/events/ag-ui/native-profile.ts";
+import type { AgUiNativeProfileContext } from "#veryfront/events/ag-ui/native-profile.ts";
+import { parseAgUiEvent } from "#veryfront/events/ag-ui/parser.ts";
+import { AG_UI_PROTOCOL_VERSION } from "#veryfront/events/ag-ui/schema.ts";
 import type {
   AcceptAgUiEventInput,
   AcceptAgUiEventResult,
@@ -22,7 +22,7 @@ import type {
   AgUiProducerOccurrence,
   ProjectAgUiEventInput,
   ProjectNativeEventInput,
-} from "./types.ts";
+} from "#veryfront/events/ag-ui/types.ts";
 
 function validateProducerOccurrence(occurrence: AgUiProducerOccurrence): void {
   if (typeof occurrence.source !== "string" || occurrence.source.length === 0) {
@@ -1035,7 +1035,20 @@ function nativeProfileCommands(
     });
   }
 
-  return [nativeProfileCommandForEvent(event, producerOccurrence, context)];
+  const closureRequirements = expansionCommands.flatMap((command) => {
+    if (command.kind !== "expanded-ag-ui-event") return [];
+    return [
+      missingRequirement(
+        { source: command.producerOccurrence.source, id: command.expansionId },
+        "native-ag-ui-projection-context",
+        "Expanded boundary closure requires exact native profile context for its own persisted identity.",
+      ),
+    ];
+  });
+  return [
+    ...closureRequirements,
+    nativeProfileCommandForEvent(event, producerOccurrence, context),
+  ];
 }
 
 /** Validate an occurrence, normalize its frames and return the next stream state. */

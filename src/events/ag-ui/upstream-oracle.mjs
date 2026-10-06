@@ -4,9 +4,9 @@
 // AG_UI_ORACLE_INSTALL_DIR, or a temp directory, and installs @ag-ui/core/client 1.0.2 there.
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { createRequire } from "node:module";
 import { agUiNegativeFixtures, agUiPositiveFixtures } from "./fixtures.mjs";
 
@@ -20,12 +20,29 @@ function resolveDenoCommand() {
 function installOraclePackages(installDir) {
   mkdirSync(installDir, { recursive: true });
   const packageJsonPath = join(installDir, "package.json");
-  if (!existsSync(packageJsonPath)) {
-    writeFileSync(packageJsonPath, JSON.stringify({ private: true, type: "module" }) + "\n");
+  try {
+    writeFileSync(packageJsonPath, JSON.stringify({ private: true, type: "module" }) + "\n", {
+      flag: "wx",
+      mode: 0o600,
+    });
+  } catch (error) {
+    if (error.code !== "EEXIST") throw error;
+  }
+  const nodeDirectory = dirname(process.execPath);
+  const npmCliCandidates = [
+    join(nodeDirectory, "../lib/node_modules/npm/bin/npm-cli.js"),
+    join(nodeDirectory, "node_modules/npm/bin/npm-cli.js"),
+  ];
+  const npmCli = npmCliCandidates.find((candidate) => existsSync(candidate));
+  if (!npmCli) {
+    throw new Error(
+      "npm is missing beside Node; set AG_UI_ORACLE_NODE_MODULES to an existing install",
+    );
   }
   execFileSync(
-    "npm",
+    process.execPath,
     [
+      npmCli,
       "install",
       "--package-lock=false",
       "--ignore-scripts",
@@ -42,7 +59,10 @@ function resolveOracleNodeModules() {
   if (process.env.AG_UI_ORACLE_NODE_MODULES) return process.env.AG_UI_ORACLE_NODE_MODULES;
 
   const installDir = process.env.AG_UI_ORACLE_INSTALL_DIR ??
-    join(tmpdir(), `veryfront-ag-ui-oracle-${UPSTREAM_PACKAGE_VERSION}`);
+    mkdtempSync(join(tmpdir(), "veryfront-ag-ui-oracle-"));
+  if (!process.env.AG_UI_ORACLE_INSTALL_DIR) {
+    process.once("exit", () => rmSync(installDir, { recursive: true, force: true }));
+  }
   const nodeModules = join(installDir, "node_modules");
   if (
     !existsSync(join(nodeModules, "@ag-ui/core/package.json")) ||
@@ -68,8 +88,13 @@ assert.equal(clientPackageJson.version, UPSTREAM_PACKAGE_VERSION);
 assert.equal(packageJson.agui.protocolVersion, UPSTREAM_PROTOCOL_VERSION);
 assert.equal(schemas.PROTOCOL_VERSION, UPSTREAM_PROTOCOL_VERSION);
 
-const upstreamEventTypes = Object.values(core.EventType).sort();
-const fixtureTypes = [...new Set(agUiPositiveFixtures.map((event) => event.type))].sort();
+function compareEventTypes(left, right) {
+  return left < right ? -1 : left > right ? 1 : 0;
+}
+const upstreamEventTypes = Object.values(core.EventType).sort(compareEventTypes);
+const fixtureTypes = [...new Set(agUiPositiveFixtures.map((event) => event.type))].sort(
+  compareEventTypes,
+);
 assert.equal(upstreamEventTypes.length, 31);
 assert.deepEqual(fixtureTypes, upstreamEventTypes);
 

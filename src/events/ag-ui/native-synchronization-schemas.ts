@@ -3,18 +3,21 @@ import type {
   JsonSchemaValidationResult,
 } from "#veryfront/extensions/schema/index.ts";
 import { snapshotBoundedJsonValue } from "#veryfront/schemas/json-value.ts";
-import { assertEventSchemaValidator, getEventSchemaValidatorVersion } from "../schema-validator.ts";
-import { AG_UI_NATIVE_SYNCHRONIZATION_RECORD_SCHEMA } from "./native-synchronization-contract.ts";
+import {
+  assertEventSchemaValidator,
+  getEventSchemaValidatorVersion,
+} from "#veryfront/events/schema-validator.ts";
+import { AG_UI_NATIVE_SYNCHRONIZATION_RECORD_SCHEMA } from "#veryfront/events/ag-ui/native-synchronization-contract.ts";
 import type {
   AgUiNativeSynchronizationAnyRecord,
-} from "./native-synchronization-types.generated.ts";
+} from "#veryfront/events/ag-ui/native-synchronization-types.generated.ts";
 export {
   AG_UI_NATIVE_SYNCHRONIZATION_JSON_SCHEMA,
   AG_UI_NATIVE_SYNCHRONIZATION_RECORD_SCHEMA,
   AG_UI_NATIVE_SYNCHRONIZATION_SCHEMA_BY_TYPE,
   AG_UI_NATIVE_SYNCHRONIZATION_SCHEMA_ID,
   AG_UI_NATIVE_SYNCHRONIZATION_TYPES,
-} from "./native-synchronization-contract.ts";
+} from "#veryfront/events/ag-ui/native-synchronization-contract.ts";
 export type {
   AgUiNativeSynchronizationAnyPayload,
   AgUiNativeSynchronizationAnyRecord,
@@ -25,7 +28,7 @@ export type {
   AgUiNativeSynchronizationType,
   AgUiSynchronizationAttribution,
   AgUiSynchronizationProtocolMetadata,
-} from "./native-synchronization-types.generated.ts";
+} from "#veryfront/events/ag-ui/native-synchronization-types.generated.ts";
 
 let compiledValidator:
   | JsonSchemaValidationFunction<AgUiNativeSynchronizationAnyRecord>

@@ -1,26 +1,34 @@
-import { parseAgUiEvent, safeParseAgUiEvent } from "./parser.ts";
+import {
+  extensionFields,
+  optionalNumber,
+  requireLiteral,
+  requireRecord,
+  requireString,
+  requireStringValue,
+} from "#veryfront/events/ag-ui/native-profile-helpers.ts";
+import { parseAgUiEvent, safeParseAgUiEvent } from "#veryfront/events/ag-ui/parser.ts";
 import {
   AG_UI_NATIVE_SYNCHRONIZATION_SCHEMA_BY_TYPE,
   parseNativeSynchronizationRecord,
-} from "./native-synchronization-schemas.ts";
+} from "#veryfront/events/ag-ui/native-synchronization-schemas.ts";
 import type {
   AgUiNativeSynchronizationDataschema,
   AgUiNativeSynchronizationType,
-} from "./native-synchronization-schemas.ts";
+} from "#veryfront/events/ag-ui/native-synchronization-schemas.ts";
 export {
   AG_UI_NATIVE_SYNCHRONIZATION_JSON_SCHEMA,
   AG_UI_NATIVE_SYNCHRONIZATION_SCHEMA_BY_TYPE,
   AG_UI_NATIVE_SYNCHRONIZATION_SCHEMA_ID,
   AG_UI_NATIVE_SYNCHRONIZATION_TYPES,
   parseNativeSynchronizationRecord,
-} from "./native-synchronization-schemas.ts";
+} from "#veryfront/events/ag-ui/native-synchronization-schemas.ts";
 export type {
   AgUiNativeSynchronizationAnyRecord,
   AgUiNativeSynchronizationDataschema,
   AgUiNativeSynchronizationRecord,
   AgUiNativeSynchronizationType,
-} from "./native-synchronization-schemas.ts";
-import type { AgUiEvent, AgUiEventOf } from "./types.ts";
+} from "#veryfront/events/ag-ui/native-synchronization-schemas.ts";
+import type { AgUiEvent, AgUiEventOf } from "#veryfront/events/ag-ui/types.ts";
 
 const AG_UI_PROTOCOL_NAME = "ag-ui";
 const AG_UI_PROTOCOL_VERSION = "1.0";
@@ -235,36 +243,6 @@ const ACTIVITY_DELTA_FIELDS = new Set([
   "patch",
 ]);
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return !!value && typeof value === "object" && !Array.isArray(value);
-}
-
-function requireRecord(value: unknown, label: string): Record<string, unknown> {
-  if (!isRecord(value)) throw new TypeError(`${label} must be an object`);
-  return value;
-}
-
-function requireString(value: unknown, label: string): string {
-  if (typeof value !== "string" || value.length === 0) {
-    throw new TypeError(`${label} must be a non-empty string`);
-  }
-  return value;
-}
-
-function requireStringValue(value: unknown, label: string): string {
-  if (typeof value !== "string") throw new TypeError(`${label} must be a string`);
-  return value;
-}
-
-function requireLiteral<TLiteral extends string>(
-  value: unknown,
-  expected: TLiteral,
-  label: string,
-): TLiteral {
-  if (value !== expected) throw new TypeError(`${label} must be ${expected}`);
-  return expected;
-}
-
 function validateOccurrence(
   occurrence: AgUiSynchronizationOccurrence,
 ): AgUiSynchronizationOccurrence {
@@ -272,14 +250,6 @@ function validateOccurrence(
     source: requireString(occurrence.source, "synchronization occurrence source"),
     id: requireString(occurrence.id, "synchronization occurrence id"),
   };
-}
-
-function extensionFields(
-  event: AgUiSynchronizationSupportedEvent,
-  knownFields: ReadonlySet<string>,
-): Record<string, unknown> | undefined {
-  const entries = Object.entries(event).filter(([key]) => !knownFields.has(key));
-  return entries.length === 0 ? undefined : Object.fromEntries(entries);
 }
 
 type AgUiProtocolBaseMetadata = Omit<AgUiSynchronizationProtocolMetadata, "eventType">;
@@ -478,12 +448,6 @@ function aguiProtocol(value: unknown): AgUiSynchronizationProtocolMetadata {
 function optionalRecord(value: unknown, label: string): Record<string, unknown> | undefined {
   if (value === undefined) return undefined;
   return requireRecord(value, label);
-}
-
-function optionalNumber(value: unknown, label: string): number | undefined {
-  if (value === undefined) return undefined;
-  if (typeof value !== "number") throw new TypeError(`${label} must be a number`);
-  return value;
 }
 
 function optionalAttribution(value: unknown): AgUiSynchronizationAttribution | undefined {

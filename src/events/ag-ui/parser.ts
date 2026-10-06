@@ -3,9 +3,17 @@ import type {
   JsonSchemaValidationResult,
   SchemaValidator,
 } from "#veryfront/extensions/schema/index.ts";
-import { assertEventSchemaValidator, getEventSchemaValidatorVersion } from "../schema-validator.ts";
-import { AG_UI_EVENT_SCHEMA } from "./schema.ts";
-import type { AgUiEvent, AgUiParser, AgUiParseResult, AgUiRunAgentInput } from "./types.ts";
+import {
+  assertEventSchemaValidator,
+  getEventSchemaValidatorVersion,
+} from "#veryfront/events/schema-validator.ts";
+import { AG_UI_EVENT_SCHEMA } from "#veryfront/events/ag-ui/schema.ts";
+import type {
+  AgUiEvent,
+  AgUiParser,
+  AgUiParseResult,
+  AgUiRunAgentInput,
+} from "#veryfront/events/ag-ui/types.ts";
 
 let compiledAgUiEventValidator: JsonSchemaValidationFunction<AgUiEvent> | undefined;
 let compiledAgUiEventValidatorVersion = -1;

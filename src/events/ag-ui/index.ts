@@ -3,8 +3,12 @@ export {
   acceptNativeEvent,
   projectAgUiEvent,
   projectNativeEvent,
-} from "./normalization.ts";
-export { createAgUiParser, parseAgUiEvent, safeParseAgUiEvent } from "./parser.ts";
+} from "#veryfront/events/ag-ui/normalization.ts";
+export {
+  createAgUiParser,
+  parseAgUiEvent,
+  safeParseAgUiEvent,
+} from "#veryfront/events/ag-ui/parser.ts";
 export {
   AG_UI_NATIVE_SYNCHRONIZATION_JSON_SCHEMA,
   AG_UI_NATIVE_SYNCHRONIZATION_SCHEMA_BY_TYPE,
@@ -15,7 +19,7 @@ export {
   parseNativeSynchronizationRecord,
   projectAgUiSynchronizationEvent,
   projectNativeSynchronizationEvent,
-} from "./native-synchronization.ts";
+} from "#veryfront/events/ag-ui/native-synchronization.ts";
 export {
   AG_UI_NATIVE_RUN_PAUSED_DATASCHEMA,
   AG_UI_NATIVE_RUN_PAUSED_RECORD_SCHEMA,
@@ -23,30 +27,30 @@ export {
   AG_UI_NATIVE_RUN_PAUSED_TYPE,
   AG_UI_PROTOCOL_EXTENSION_URI,
   parseNativeRunPausedRecord,
-} from "./native-run-paused.ts";
+} from "#veryfront/events/ag-ui/native-run-paused.ts";
 export {
   parseNativeProfileRecord,
   projectAgUiNativeProfileEvent,
   projectNativeProfileEvent,
-} from "./native-profile.ts";
+} from "#veryfront/events/ag-ui/native-profile.ts";
 export {
   AG_UI_CONTENT_PROTOCOL_EXTENSION_URI,
   parseNativeContentRecord,
   projectAgUiContentEvent,
   projectNativeContentEvent,
-} from "./native-content-profile.ts";
+} from "#veryfront/events/ag-ui/native-content-profile.ts";
 export {
   AG_UI_TOOL_PROTOCOL_EXTENSION_URI,
   parseNativeToolRecord,
   projectAgUiToolEvent,
   projectNativeToolEvent,
-} from "./native-tool-profile.ts";
+} from "#veryfront/events/ag-ui/native-tool-profile.ts";
 export {
   createGeneratedRunProfileFrame,
   parseNativeRunProfileEvent,
   projectAgUiRunProfileEvent,
   projectNativeRunProfileEvent,
-} from "./native-run-profile.ts";
+} from "#veryfront/events/ag-ui/native-run-profile.ts";
 export type {
   AgUiContentNativeRecord,
   AgUiContentNativeType,
@@ -57,7 +61,7 @@ export type {
   AgUiContentProjectionCommand,
   ProjectAgUiContentInput,
   ProjectNativeContentInput,
-} from "./native-content-profile.ts";
+} from "#veryfront/events/ag-ui/native-content-profile.ts";
 export type {
   AgUiToolCallMapping,
   AgUiToolMessageMapping,
@@ -69,7 +73,7 @@ export type {
   AgUiToolProjectionCommand,
   ProjectAgUiToolInput,
   ProjectNativeToolInput,
-} from "./native-tool-profile.ts";
+} from "#veryfront/events/ag-ui/native-tool-profile.ts";
 export type {
   AgUiNativeProfileContext,
   AgUiNativeProfileFamily,
@@ -78,7 +82,7 @@ export type {
   AgUiNativeProfileSupportedEvent,
   ProjectAgUiNativeProfileInput,
   ProjectNativeProfileInput,
-} from "./native-profile.ts";
+} from "#veryfront/events/ag-ui/native-profile.ts";
 export type {
   AgUiGeneratedRunProfileFrame,
   AgUiRunCanonicalEvent,
@@ -90,14 +94,14 @@ export type {
   AgUiRunProfileSupportedEvent,
   ProjectAgUiRunProfileInput,
   ProjectNativeRunProfileInput,
-} from "./native-run-profile.ts";
+} from "#veryfront/events/ag-ui/native-run-profile.ts";
 export type {
   AgUiNativeRunPausedDataschema,
   AgUiNativeRunPausedPayload,
   AgUiNativeRunPausedProtocolMetadata,
   AgUiNativeRunPausedRecord,
   AgUiNativeRunPausedType,
-} from "./native-run-paused.ts";
+} from "#veryfront/events/ag-ui/native-run-paused.ts";
 export type {
   AgUiGeneratedSynchronizationFrame,
   AgUiNativeSynchronizationAnyRecord,
@@ -112,7 +116,7 @@ export type {
   AgUiSynchronizationSupportedEvent,
   ProjectAgUiSynchronizationInput,
   ProjectNativeSynchronizationInput,
-} from "./native-synchronization.ts";
+} from "#veryfront/events/ag-ui/native-synchronization.ts";
 export {
   AG_UI_CORE_PACKAGE,
   AG_UI_CORE_VERSION,
@@ -122,7 +126,7 @@ export {
   AG_UI_RELEASE,
   AG_UI_RELEASE_COMMIT,
   type AgUiEventType,
-} from "./schema.ts";
+} from "#veryfront/events/ag-ui/schema.ts";
 export type {
   AcceptAgUiEventInput,
   AcceptAgUiEventResult,
@@ -150,4 +154,4 @@ export type {
   AgUiProducerOccurrence,
   ProjectAgUiEventInput,
   ProjectNativeEventInput,
-} from "./types.ts";
+} from "#veryfront/events/ag-ui/types.ts";

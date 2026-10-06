@@ -1,5 +1,5 @@
 import type { JsonSchema } from "#veryfront/extensions/schema/index.ts";
-import { agUiEventPropertySchema } from "./native-synchronization-contract.ts";
+import { agUiEventPropertySchema } from "#veryfront/events/ag-ui/native-synchronization-contract.ts";
 
 export const AG_UI_NATIVE_SIGNAL_TYPES = [
   "com.veryfront.signal.raw.recorded",

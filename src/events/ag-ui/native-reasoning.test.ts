@@ -1,8 +1,8 @@
 import "#veryfront/schemas/_test-setup.ts";
-import "../test-setup.ts";
+import "#veryfront/events/test-setup.ts";
 import { assert, assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import type { AgUiEventOf } from "./types.ts";
+import type { AgUiEventOf } from "#veryfront/events/ag-ui/types.ts";
 import {
   AG_UI_NATIVE_REASONING_SCHEMA_BY_TYPE,
   createGeneratedReasoningFrame,
@@ -10,8 +10,8 @@ import {
   parseNativeReasoningRecord,
   projectAgUiReasoningEvent,
   projectNativeReasoningEvent,
-} from "./native-reasoning.ts";
-import type { AgUiReasoningProjectionContext } from "./native-reasoning.ts";
+} from "#veryfront/events/ag-ui/native-reasoning.ts";
+import type { AgUiReasoningProjectionContext } from "#veryfront/events/ag-ui/native-reasoning.ts";
 
 const context: AgUiReasoningProjectionContext = {
   occurrence: {

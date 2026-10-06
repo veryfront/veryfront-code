@@ -1,17 +1,33 @@
 import { snapshotBoundedJsonValue } from "#veryfront/schemas/json-value.ts";
-import { parseEvent } from "../parser.ts";
-import type { Extensions } from "../payload-types.generated.ts";
-import type { EventRecord, JsonObject } from "../types.ts";
-import { EVENT_SCHEMA_BY_TYPE } from "../types.ts";
+import {
+  aguiBase,
+  baseProtocolMetadata,
+  isRecord,
+  nativeContextFields,
+  nativeOccurrenceFields,
+  optionalString,
+  requireLiteral,
+  requireRecord,
+  requireString,
+  requireStringValue,
+  toJsonObject,
+} from "#veryfront/events/ag-ui/native-profile-helpers.ts";
+import { parseEvent } from "#veryfront/events/parser.ts";
+import type { Extensions } from "#veryfront/events/payload-types.generated.ts";
+import type { EventRecord, JsonObject } from "#veryfront/events/types.ts";
+import { EVENT_SCHEMA_BY_TYPE } from "#veryfront/events/types.ts";
 import {
   AG_UI_NATIVE_RUN_PAUSED_DATASCHEMA,
   AG_UI_NATIVE_RUN_PAUSED_TYPE,
   AG_UI_PROTOCOL_EXTENSION_URI,
   parseNativeRunPausedRecord,
-} from "./native-run-paused.ts";
-import type { AgUiNativeRunPausedRecord, AgUiNativeRunPausedType } from "./native-run-paused.ts";
-import { parseAgUiEvent, safeParseAgUiEvent } from "./parser.ts";
-import type { AgUiEventOf } from "./types.ts";
+} from "#veryfront/events/ag-ui/native-run-paused.ts";
+import type {
+  AgUiNativeRunPausedRecord,
+  AgUiNativeRunPausedType,
+} from "#veryfront/events/ag-ui/native-run-paused.ts";
+import { parseAgUiEvent, safeParseAgUiEvent } from "#veryfront/events/ag-ui/parser.ts";
+import type { AgUiEventOf } from "#veryfront/events/ag-ui/types.ts";
 
 const AG_UI_PROTOCOL_NAME = "ag-ui";
 const AG_UI_PROTOCOL_VERSION = "1.0";
@@ -124,54 +140,6 @@ const RUN_ERROR_FIELDS = new Set([
   "usage",
 ]);
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return !!value && typeof value === "object" && !Array.isArray(value);
-}
-
-function requireRecord(value: unknown, label: string): Record<string, unknown> {
-  if (!isRecord(value)) throw new TypeError(`${label} must be an object`);
-  return value;
-}
-
-function requireString(value: unknown, label: string): string {
-  if (typeof value !== "string" || value.length === 0) {
-    throw new TypeError(`${label} must be a non-empty string`);
-  }
-  return value;
-}
-
-function requireStringValue(value: unknown, label: string): string {
-  if (typeof value !== "string") throw new TypeError(`${label} must be a string`);
-  return value;
-}
-
-function requireLiteral<TLiteral extends string>(
-  value: unknown,
-  expected: TLiteral,
-  label: string,
-): TLiteral {
-  if (value !== expected) throw new TypeError(`${label} must be ${expected}`);
-  return expected;
-}
-
-function optionalString(value: unknown, label: string): string | undefined {
-  if (value === undefined) return undefined;
-  return requireString(value, label);
-}
-
-function optionalNumber(value: unknown, label: string): number | undefined {
-  if (value === undefined) return undefined;
-  if (typeof value !== "number") throw new TypeError(`${label} must be a number`);
-  return value;
-}
-
-function toJsonObject(value: unknown): JsonObject | undefined {
-  const snapshot = snapshotBoundedJsonValue(value);
-  if (!snapshot.success) return undefined;
-  const { value: snapshotValue } = snapshot;
-  return isRecord(snapshotValue) ? snapshotValue : undefined;
-}
-
 function supportedAgUiEvent(input: unknown): AgUiRunProfileSupportedEvent {
   const event = parseAgUiEvent(input);
   switch (event.type) {
@@ -182,33 +150,6 @@ function supportedAgUiEvent(input: unknown): AgUiRunProfileSupportedEvent {
     default:
       throw new TypeError(`${event.type} is not an AG-UI run lifecycle event`);
   }
-}
-
-function extensionFields(
-  event: AgUiRunProfileSupportedEvent,
-  knownFields: ReadonlySet<string>,
-): Record<string, unknown> | undefined {
-  const entries = Object.entries(event).filter(([key]) => !knownFields.has(key));
-  return entries.length === 0 ? undefined : Object.fromEntries(entries);
-}
-
-function baseProtocolMetadata(
-  event: AgUiRunProfileSupportedEvent,
-  knownFields: ReadonlySet<string>,
-): Record<string, unknown> {
-  const extensionData = extensionFields(event, knownFields);
-  return {
-    name: AG_UI_PROTOCOL_NAME,
-    version: AG_UI_PROTOCOL_VERSION,
-    eventType: event.type,
-    ...(event.timestamp === undefined ? {} : { timestamp: event.timestamp }),
-    ...(event.rawEvent === undefined ? {} : { rawEvent: event.rawEvent }),
-    ...(event.metadata === undefined ? {} : { metadata: event.metadata }),
-    ...(extensionData === undefined ? {} : { extensions: extensionData }),
-    ...(event.subagentRunId === undefined
-      ? {}
-      : { attribution: { invocation: { subagentRunId: event.subagentRunId } } }),
-  };
 }
 
 function protocolMetadata(event: AgUiRunProfileSupportedEvent): JsonObject | undefined {
@@ -311,11 +252,7 @@ function canonicalEnvelope<TType extends AgUiRunCoreCanonicalEventType>(
     ...(context.occurrence.recordedat === undefined
       ? {}
       : { recordedat: context.occurrence.recordedat }),
-    ...(context.runkind === undefined ? {} : { runkind: context.runkind }),
-    ...(context.conversationid === undefined ? {} : { conversationid: context.conversationid }),
-    ...(context.subject === undefined ? {} : { subject: context.subject }),
-    ...(context.traceparent === undefined ? {} : { traceparent: context.traceparent }),
-    ...(context.tracestate === undefined ? {} : { tracestate: context.tracestate }),
+    ...nativeContextFields(context),
   };
   const parsed = parseEvent(candidate);
   if (parsed.type !== type) {
@@ -352,11 +289,7 @@ function pausedEnvelope(
     ...(context.occurrence.recordedat === undefined
       ? {}
       : { recordedat: context.occurrence.recordedat }),
-    ...(context.runkind === undefined ? {} : { runkind: context.runkind }),
-    ...(context.conversationid === undefined ? {} : { conversationid: context.conversationid }),
-    ...(context.subject === undefined ? {} : { subject: context.subject }),
-    ...(context.traceparent === undefined ? {} : { traceparent: context.traceparent }),
-    ...(context.tracestate === undefined ? {} : { tracestate: context.tracestate }),
+    ...nativeContextFields(context),
   });
 }
 
@@ -497,47 +430,6 @@ function protocolFromNative(event: AgUiRunCanonicalEvent): JsonObject {
 
 function protocolRecord(protocol: JsonObject): Record<string, unknown> {
   return protocol;
-}
-
-function invocationSubagentRunId(record: Record<string, unknown>): string | undefined {
-  const attribution = record.attribution;
-  if (attribution === undefined) return undefined;
-  const attributionRecord = requireRecord(attribution, "protocol.agui.attribution");
-  const invocation = attributionRecord.invocation;
-  if (invocation === undefined) return undefined;
-  const invocationRecord = requireRecord(invocation, "protocol.agui.attribution.invocation");
-  return requireStringValue(
-    invocationRecord.subagentRunId,
-    "protocol.agui.attribution.invocation.subagentRunId",
-  );
-}
-
-function reservedExtensions(record: Record<string, unknown>, knownFields: ReadonlySet<string>) {
-  const extensions = record.extensions;
-  if (extensions === undefined) return undefined;
-  const extensionRecord = requireRecord(extensions, "protocol.agui.extensions");
-  for (const key of Object.keys(extensionRecord)) {
-    if (knownFields.has(key)) {
-      throw new TypeError(`protocol.agui.extensions must not contain reserved AG-UI field ${key}`);
-    }
-  }
-  return extensionRecord;
-}
-
-function aguiBase(record: Record<string, unknown>, knownFields: ReadonlySet<string>) {
-  return {
-    ...(reservedExtensions(record, knownFields) ?? {}),
-    ...(record.timestamp === undefined
-      ? {}
-      : { timestamp: optionalNumber(record.timestamp, "protocol.agui.timestamp") }),
-    ...(record.rawEvent === undefined ? {} : { rawEvent: record.rawEvent }),
-    ...(record.metadata === undefined
-      ? {}
-      : { metadata: requireRecord(record.metadata, "protocol.agui.metadata") }),
-    ...(invocationSubagentRunId(record) === undefined
-      ? {}
-      : { subagentRunId: invocationSubagentRunId(record) }),
-  };
 }
 
 function requireProtocolHeader(
@@ -696,19 +588,10 @@ export function parseNativeRunProfileEvent(input: unknown): AgUiRunCanonicalEven
   const projected = projectAgUiRunProfileEvent({
     event: agui,
     context: {
-      occurrence: {
-        source: event.source,
-        id: event.id,
-        ...(event.time === undefined ? {} : { time: event.time }),
-        ...(event.recordedat === undefined ? {} : { recordedat: event.recordedat }),
-      },
+      occurrence: nativeOccurrenceFields(event),
       runid: event.runid,
       agui: protocolAgUiIdentity(protocol),
-      ...(event.runkind === undefined ? {} : { runkind: event.runkind }),
-      ...(event.conversationid === undefined ? {} : { conversationid: event.conversationid }),
-      ...(event.subject === undefined ? {} : { subject: event.subject }),
-      ...(event.traceparent === undefined ? {} : { traceparent: event.traceparent }),
-      ...(event.tracestate === undefined ? {} : { tracestate: event.tracestate }),
+      ...nativeContextFields(event),
       ...(event.type === "com.veryfront.run.cancelled" && event.data.reason !== undefined
         ? { cancellationReason: event.data.reason }
         : {}),

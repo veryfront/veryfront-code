@@ -1,15 +1,15 @@
 import "#veryfront/schemas/_test-setup.ts";
-import "../test-setup.ts";
+import "#veryfront/events/test-setup.ts";
 import { assert, assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { parseEvent } from "../parser.ts";
+import { parseEvent } from "#veryfront/events/parser.ts";
 import {
   AG_UI_TOOL_PROTOCOL_EXTENSION_URI,
   type AgUiToolProfileContext,
   parseNativeToolRecord,
   projectAgUiToolEvent,
   projectNativeToolEvent,
-} from "./native-tool-profile.ts";
+} from "#veryfront/events/ag-ui/native-tool-profile.ts";
 
 const occurrence = {
   source: "https://example.test/ag-ui/tool",
@@ -245,6 +245,9 @@ describe("events/ag-ui/native-tool-profile", () => {
       toolCallName: "search",
       parentMessageId: "agui-parent-message-1",
     }, callContext);
+    if (parentedNative.type !== "com.veryfront.tool-call.started") {
+      throw new Error("expected native tool start");
+    }
     const { messageId: _droppedParentMessageId, ...nativeStartWithoutParent } = parentedNative.data;
     assertThrows(
       () =>

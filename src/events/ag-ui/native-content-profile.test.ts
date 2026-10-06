@@ -1,15 +1,15 @@
 import "#veryfront/schemas/_test-setup.ts";
-import "../test-setup.ts";
+import "#veryfront/events/test-setup.ts";
 import { assert, assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { parseEvent } from "../parser.ts";
+import { parseEvent } from "#veryfront/events/parser.ts";
 import {
   AG_UI_CONTENT_PROTOCOL_EXTENSION_URI,
   type AgUiContentProfileContext,
   parseNativeContentRecord,
   projectAgUiContentEvent,
   projectNativeContentEvent,
-} from "./native-content-profile.ts";
+} from "#veryfront/events/ag-ui/native-content-profile.ts";
 
 const occurrence = {
   source: "https://example.test/ag-ui/content",

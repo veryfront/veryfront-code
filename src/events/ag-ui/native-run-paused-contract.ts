@@ -1,5 +1,5 @@
 import type { JsonSchema } from "#veryfront/extensions/schema/index.ts";
-import { agUiEventPropertySchema } from "./native-synchronization-contract.ts";
+import { agUiEventPropertySchema } from "#veryfront/events/ag-ui/native-synchronization-contract.ts";
 
 export const AG_UI_NATIVE_RUN_PAUSED_TYPE = "com.veryfront.run.paused" as const;
 export type AgUiNativeRunPausedType = typeof AG_UI_NATIVE_RUN_PAUSED_TYPE;

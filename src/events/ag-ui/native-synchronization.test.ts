@@ -1,8 +1,8 @@
 import "#veryfront/schemas/_test-setup.ts";
-import "../test-setup.ts";
+import "#veryfront/events/test-setup.ts";
 import { assert, assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import type { AgUiEvent, AgUiEventOf } from "./index.ts";
+import type { AgUiEvent, AgUiEventOf } from "#veryfront/events/ag-ui/index.ts";
 import {
   AG_UI_NATIVE_SYNCHRONIZATION_JSON_SCHEMA,
   AG_UI_NATIVE_SYNCHRONIZATION_SCHEMA_BY_TYPE,
@@ -11,7 +11,7 @@ import {
   parseNativeSynchronizationRecord,
   projectAgUiSynchronizationEvent,
   projectNativeSynchronizationEvent,
-} from "./native-synchronization.ts";
+} from "#veryfront/events/ag-ui/native-synchronization.ts";
 
 const occurrence = { source: "https://example.test/ag-ui", id: "sync-1" } as const;
 

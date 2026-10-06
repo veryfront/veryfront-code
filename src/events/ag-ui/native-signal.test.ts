@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import "../test-setup.ts";
+import "#veryfront/events/test-setup.ts";
 import { assert, assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
@@ -9,9 +9,9 @@ import {
   parseNativeSignalRecord,
   projectAgUiSignalEvent,
   projectNativeSignalEvent,
-} from "./native-signal.ts";
-import type { AgUiSignalProjectionContext } from "./native-signal.ts";
-import type { AgUiEventOf } from "./types.ts";
+} from "#veryfront/events/ag-ui/native-signal.ts";
+import type { AgUiSignalProjectionContext } from "#veryfront/events/ag-ui/native-signal.ts";
+import type { AgUiEventOf } from "#veryfront/events/ag-ui/types.ts";
 
 const context: AgUiSignalProjectionContext = {
   occurrence: {

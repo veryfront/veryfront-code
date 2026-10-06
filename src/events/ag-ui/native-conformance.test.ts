@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import "../test-setup.ts";
+import "#veryfront/events/test-setup.ts";
 import { assert, assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { agUiPositiveFixtures } from "./fixtures.mjs";
@@ -16,7 +16,7 @@ import {
   parseAgUiEvent,
   parseNativeProfileRecord,
   projectNativeProfileEvent,
-} from "./index.ts";
+} from "#veryfront/events/ag-ui/index.ts";
 
 const SOURCE = "https://example.test/ag-ui/conformance";
 
