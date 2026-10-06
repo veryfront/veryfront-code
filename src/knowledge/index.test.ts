@@ -7,7 +7,13 @@ import {
   assertThrows,
 } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
-import { exists, mkdir, withTempDir, writeTextFile } from "#veryfront/testing/deno-compat.ts";
+import {
+  exists,
+  mkdir,
+  remove,
+  withTempDir,
+  writeTextFile,
+} from "#veryfront/testing/deno-compat.ts";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { join } from "#veryfront/compat/path";
 import { clearEmbeddingProviders, registerEmbeddingProvider } from "#veryfront/embedding/index.ts";
@@ -173,45 +179,43 @@ describe("projectKnowledge", () => {
   it("normalizes relative projectDir RAG sources before scoped filtering", async () => {
     registerTestEmbeddingProvider();
 
-    await withTempDir(async (workspaceDir) => {
-      const previousCwd = Deno.cwd();
-      try {
-        Deno.chdir(workspaceDir);
-        await mkdir(join("my-project", "docs", "knowledge", "public"), { recursive: true });
-        await mkdir(join("my-project", "docs", "knowledge", "private"), { recursive: true });
-        await writeTextFile(
-          join("my-project", "docs", "knowledge", "public", "login.md"),
-          "Public login SSO runbook.",
-        );
-        await writeTextFile(
-          join("my-project", "docs", "knowledge", "private", "login.md"),
-          "Private login SSO runbook.",
-        );
+    const workspaceDir = join(".tmp", `knowledge-relative-${crypto.randomUUID()}`);
+    const projectDir = join(workspaceDir, "my-project");
+    try {
+      await mkdir(join(projectDir, "docs", "knowledge", "public"), { recursive: true });
+      await mkdir(join(projectDir, "docs", "knowledge", "private"), { recursive: true });
+      await writeTextFile(
+        join(projectDir, "docs", "knowledge", "public", "login.md"),
+        "Public login SSO runbook.",
+      );
+      await writeTextFile(
+        join(projectDir, "docs", "knowledge", "private", "login.md"),
+        "Private login SSO runbook.",
+      );
 
-        const knowledge = projectKnowledge({
-          projectDir: "my-project",
-          contentDir: "docs/knowledge",
-          model: "test/demo",
-          scope: {
-            "docs/knowledge/public/**": true,
-            "docs/knowledge/private/**": false,
-          },
-        });
+      const knowledge = projectKnowledge({
+        projectDir,
+        contentDir: "docs/knowledge",
+        model: "test/demo",
+        scope: {
+          "docs/knowledge/public/**": true,
+          "docs/knowledge/private/**": false,
+        },
+      });
 
-        await knowledge.index();
-        const result = await knowledge.retrieve("login SSO", { topK: 10 });
+      await knowledge.index();
+      const result = await knowledge.retrieve("login SSO", { topK: 10 });
 
-        assertEquals(result.matches.length, 1);
-        assertEquals(
-          result.matches[0]?.source,
-          join("my-project", "docs", "knowledge", "public", "login.md"),
-        );
-        assertStringIncludes(result.context, "[public/login]");
-        assertStringIncludes(result.context, "Public login SSO runbook.");
-      } finally {
-        Deno.chdir(previousCwd);
-      }
-    });
+      assertEquals(result.matches.length, 1);
+      assertEquals(
+        result.matches[0]?.source,
+        join(projectDir, "docs", "knowledge", "public", "login.md"),
+      );
+      assertStringIncludes(result.context, "[public/login]");
+      assertStringIncludes(result.context, "Public login SSO runbook.");
+    } finally {
+      await remove(workspaceDir, { recursive: true }).catch(() => {});
+    }
   });
 
   it("keeps indexing explicit on non-blank retrieval", async () => {
