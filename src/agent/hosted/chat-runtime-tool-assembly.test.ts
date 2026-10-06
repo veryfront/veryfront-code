@@ -1,5 +1,6 @@
 import { markTrustedPlatformSource } from "#veryfront/tool/platform-source-provenance.ts";
 import { markTrustedHostToolSet } from "#veryfront/tool/host-tool-provenance.ts";
+import { toolToProviderDefinition } from "#veryfront/tool/registry.ts";
 import "#veryfront/schemas/_test-setup.ts";
 import {
   assertEquals,
@@ -16,6 +17,10 @@ import type {
   ToolExecutionContext,
 } from "#veryfront/tool";
 import { defineSchema } from "../../schemas/define.ts";
+import {
+  createToolExposurePlan,
+  createToolExposureState,
+} from "#veryfront/agent/runtime/tool-exposure.ts";
 import {
   augmentVeryfrontApiMcpServerPolicy,
   filterHostedChatRuntimeLocalTools,
@@ -442,6 +447,83 @@ Deno.test("prepareHostedChatRuntimeToolAssembly defers an unrestricted tools tru
   });
 
   assertEquals(toolAssembly.toolLoadingMode, "deferred");
+  assertEquals(taskContext.availableToolNames, ["tool_search"]);
+});
+
+Deno.test("prepareHostedChatRuntimeToolAssembly honors authored deferred loading before legacy allowlist eager mode", async () => {
+  const taskContext: HostedChatRuntimeToolAssemblyContext = {
+    authToken: "token",
+    projectId: "project-1",
+    model: "anthropic/claude-sonnet-4-6",
+  };
+
+  const toolAssembly = await prepareHostedChatRuntimeToolAssembly({
+    sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
+    taskContext,
+    instructions: "Base instructions",
+    localTools: { sleep: localTool("Sleep") },
+    apiUrl: "https://api.example.com",
+    apiMcpUrl: "https://api.example.com/mcp",
+    allowedToolNames: ["sleep"],
+    toolLoading: "deferred",
+    createRemoteToolSource: remoteSourceFromConfig,
+    preloadLatestConversationUserText: false,
+  });
+
+  assertEquals(toolAssembly.toolLoadingMode, "deferred");
+  assertEquals(toolAssembly.availableToolNames, ["sleep"]);
+  assertEquals(taskContext.availableToolNames, ["tool_search"]);
+});
+
+Deno.test("prepareHostedChatRuntimeToolAssembly rejects local search_knowledge when authored knowledge is enabled", async () => {
+  const taskContext: HostedChatRuntimeToolAssemblyContext = {
+    authToken: "token",
+    projectId: "project-1",
+    model: "anthropic/claude-sonnet-4-6",
+  };
+
+  await assertRejects(
+    () =>
+      prepareHostedChatRuntimeToolAssembly({
+        sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
+        taskContext,
+        instructions: "Base instructions",
+        localTools: { search_knowledge: localTool("Unscoped knowledge search") },
+        apiUrl: "https://api.example.com",
+        apiMcpUrl: "https://api.example.com/mcp",
+        allowedToolNames: null,
+        knowledge: "knowledge/**/*.md",
+        createRemoteToolSource: remoteSourceFromConfig,
+        preloadLatestConversationUserText: false,
+      }),
+    Error,
+    'Local tool "search_knowledge" conflicts with the agent knowledge scope',
+  );
+});
+
+Deno.test("prepareHostedChatRuntimeToolAssembly supplies authored framework knowledge as a scoped remote tool", async () => {
+  const taskContext: HostedChatRuntimeToolAssemblyContext = {
+    authToken: "token",
+    projectId: "project-1",
+    model: "anthropic/claude-sonnet-4-6",
+  };
+
+  const toolAssembly = await prepareHostedChatRuntimeToolAssembly({
+    sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
+    taskContext,
+    instructions: "Base instructions",
+    localTools: {},
+    apiUrl: "https://api.example.com",
+    apiMcpUrl: "https://api.example.com/mcp",
+    allowedToolNames: null,
+    knowledge: "knowledge/**/*.md",
+    createRemoteToolSource: remoteSourceFromConfig,
+    preloadLatestConversationUserText: false,
+  });
+
+  assertEquals(toolAssembly.toolLoadingMode, "deferred");
+  assertEquals(toolAssembly.remoteToolNames.includes("search_knowledge"), true);
+  assertEquals(toolAssembly.availableToolNames.includes("search_knowledge"), true);
   assertEquals(taskContext.availableToolNames, ["tool_search"]);
 });
 
@@ -1112,6 +1194,45 @@ describe("denial-aware eager tool compatibility", () => {
     );
     assertEquals(taskContext.availableToolNames?.includes("web_search") ?? false, false);
     assertEquals(taskContext.availableToolNames?.includes("tool_search") ?? false, false);
+  });
+
+  it("prepareHostedChatRuntimeToolAssembly keeps tool_search denied when authored deferred loading is requested", async () => {
+    const taskContext: HostedChatRuntimeToolAssemblyContext = {
+      authToken: "token",
+      projectId: "project-1",
+      model: "anthropic/claude-sonnet-4-6",
+    };
+
+    const toolAssembly = await prepareHostedChatRuntimeToolAssembly({
+      sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
+      taskContext,
+      instructions: "Base instructions",
+      localTools: { lookup: localTool("Look up project data") },
+      apiUrl: "https://api.example.com",
+      apiMcpUrl: "https://api.example.com/mcp",
+      allowedToolNames: null,
+      deniedToolNames: ["tool_search"],
+      toolLoading: "deferred",
+      createRemoteToolSource: remoteSourceFromConfig,
+      preloadLatestConversationUserText: false,
+    });
+
+    assertEquals(toolAssembly.toolLoadingMode, "eager");
+    assertEquals(taskContext.availableToolNames?.includes("lookup") ?? false, true);
+    assertEquals(taskContext.availableToolNames?.includes("tool_search") ?? false, false);
+    const exposurePlan = createToolExposurePlan({
+      authorized: Object.values(toolAssembly.runtimeTools).map(toolToProviderDefinition),
+      mode: toolAssembly.toolLoadingMode,
+      state: createToolExposureState(),
+    });
+    assertEquals(
+      exposurePlan.visible.map((tool) => tool.name),
+      ["lookup"],
+    );
+    assertEquals(
+      exposurePlan.visible.some((tool) => tool.name === "tool_search"),
+      false,
+    );
   });
 
   it("prepareHostedChatRuntimeToolAssembly caps eager local runtime schemas", async () => {

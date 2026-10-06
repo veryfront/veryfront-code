@@ -359,6 +359,44 @@ describe("agent/default-hosted-project-steering-refresh", () => {
     assertEquals(explicitInput.taskContext.availableSkillIds, ["build"]);
   });
 
+  it("preserves rules selector policies during refresh", async () => {
+    const refresh = createDefaultHostedProjectSteeringRefresh({
+      fetchProjectInstructions: () => Promise.resolve("Fresh instructions"),
+      fetchSkills: () =>
+        Promise.resolve([
+          createSkill("support-triage"),
+          createSkill("support-private"),
+          createSkill("billing"),
+        ]),
+      buildInstructions: (input) =>
+        `${input.instructions}:${input.skills.map((skill) => skill.id).join(",")}`,
+    });
+
+    const input = createRefreshInput();
+    input.taskContext.skillSelectorPolicy = {
+      kind: "rules",
+      entries: [
+        { pattern: "support-*", allow: true },
+        { pattern: "support-private", allow: false },
+      ],
+    };
+    input.taskContext.availableSkillIds = ["support-triage"];
+
+    const system = systemText(await refresh(input));
+
+    assertStringIncludes(system, "Fresh instructions:support-triage");
+    assertEquals(system.includes("support-private"), false);
+    assertEquals(system.includes("billing"), false);
+    assertEquals(input.taskContext.availableSkillIds, ["support-triage"]);
+    assertEquals(input.taskContext.skillSelectorPolicy, {
+      kind: "rules",
+      entries: [
+        { pattern: "support-*", allow: true },
+        { pattern: "support-private", allow: false },
+      ],
+    });
+  });
+
   it("rejects deleted explicit skill selections during refresh without narrowing state", async () => {
     const refresh = createDefaultHostedProjectSteeringRefresh({
       fetchProjectInstructions: () => Promise.resolve("Fresh instructions"),

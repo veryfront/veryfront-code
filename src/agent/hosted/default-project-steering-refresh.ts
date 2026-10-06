@@ -22,6 +22,7 @@ import {
   assertResolvedSkillSelector,
   createNoneSkillSelectorSnapshot,
   type ResolvedSkillSelectorPolicy,
+  type SkillSelector,
 } from "#veryfront/skill/selector.ts";
 import { compareStrings } from "#veryfront/utils/compare.ts";
 
@@ -175,7 +176,7 @@ async function fetchSkillsWithFallback(input: {
 function resolveRefreshedSkillSnapshot(input: {
   skills: readonly RuntimeSkillDefinition[];
   agentId: string;
-  selector: true | false | readonly string[] | undefined;
+  selector: SkillSelector;
   policy: ResolvedSkillSelectorPolicy | undefined;
 }) {
   if (
@@ -208,8 +209,24 @@ function resolveRefreshedSkillSnapshot(input: {
   return resolveRuntimeSkillSelectorSnapshotForAgent({
     skills: input.skills,
     agentId: input.agentId,
-    selector: input.policy.entries,
+    selector: skillSelectorPolicyToSelector(input.policy),
   });
+}
+
+function skillSelectorPolicyToSelector(
+  policy: Extract<ResolvedSkillSelectorPolicy, { kind: "allowlist" | "rules" }>,
+): SkillSelector {
+  if (policy.kind === "allowlist") return policy.entries;
+  const selector: Record<string, boolean> = {};
+  for (const entry of policy.entries) {
+    Object.defineProperty(selector, entry.pattern, {
+      configurable: true,
+      enumerable: true,
+      value: entry.allow,
+      writable: true,
+    });
+  }
+  return selector;
 }
 
 /** Create default hosted project steering refresh. */

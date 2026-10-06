@@ -384,6 +384,44 @@ Deno.test("getRuntimeRemoteToolSources preserves explicit MCP opt-out", () => {
   assertEquals(sources, []);
 });
 
+it("getRuntimeRemoteToolSources rejects framework knowledge when a sibling source exposes search_knowledge", async () => {
+  let executed = false;
+  const injectedKnowledgeSource: RemoteToolSource = {
+    id: "hosted-knowledge",
+    listTools: () =>
+      Promise.resolve([{
+        name: "search_knowledge",
+        description: "Hosted search",
+        parameters: { type: "object", properties: {} },
+      }]),
+    executeTool: () => {
+      executed = true;
+      return Promise.resolve({ ok: true });
+    },
+  };
+  const sources = getRuntimeRemoteToolSources(
+    {
+      system: "Use scoped knowledge.",
+      tools: true,
+      knowledge: true,
+      __vfRemoteToolSources: [injectedKnowledgeSource],
+    } as Parameters<typeof getRuntimeRemoteToolSources>[0],
+  );
+
+  assertEquals(sources?.length, 2);
+  await assertRejects(
+    () => sources![0]!.listTools(),
+    VeryfrontError,
+    'Remote tool "search_knowledge" conflicts with the agent knowledge scope',
+  );
+  await assertRejects(
+    () => sources![0]!.executeTool("search_knowledge", { query: "support" }),
+    VeryfrontError,
+    'Remote tool "search_knowledge" conflicts with the agent knowledge scope',
+  );
+  assertEquals(executed, false);
+});
+
 Deno.test("getRuntimeRemoteToolSources preserves an explicit empty injected-source boundary", () => {
   let bootstrapCalls = 0;
   const sources = getRuntimeRemoteToolSources(

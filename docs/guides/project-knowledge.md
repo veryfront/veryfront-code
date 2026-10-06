@@ -15,12 +15,53 @@ project's `knowledge/` directory. Choose one of two paths:
 For turning PDFs, Office documents, and uploads into Markdown first, see
 [CLI-first knowledge ingestion](./cli-knowledge-ingestion.md).
 
+## Give an agent controlled access
+
+Select knowledge in the TypeScript agent definition. The framework supplies
+`search_knowledge`; no separate `tools` binding is required.
+
+```ts
+import { agent } from "veryfront/agent";
+
+export default agent({
+  id: "support",
+  system: "Use knowledge as evidence when answering support questions.",
+  skills: { "support-*": true, "support-internal": false },
+  knowledge: { "knowledge/support/**": true, "knowledge/support/private/**": false },
+  toolLoading: "deferred",
+  toolResultContext: true,
+});
+```
+
+`knowledge: true` grants the project's knowledge directory. A string or array
+selects project-relative paths or globs. A boolean map grants positive matches
+and subtracts exclusions. Omission, `false`, empty selections, and exclusion-only
+maps disable the framework capability. A selection limits browsing, search,
+counts, and exact document reads; guessing an excluded path does not grant access.
+Broad filesystem tools remain separate capabilities.
+
+The initial prompt does not include document bodies or the full file catalog.
+Search returns compact metadata pages, and an exact lookup retrieves content.
+Collection selectors are not supported yet. Manifest lookup filters the selected
+scope before pagination. Scoped semantic retrieval currently uses bounded
+overscan and filters matches afterward; exact ranking within a scope requires
+store support for filtering before ranking.
+
 ## Add knowledge files
 
 Create Markdown files under `knowledge/`. Write YAML frontmatter as a mapping:
 
+Knowledge documents follow the [Open Knowledge Format](https://github.com/GoogleCloudPlatform/knowledge-catalog/blob/main/okf/SPEC.md).
+Agent configuration stays in TypeScript; OKF document metadata uses the standard's
+frontmatter format. Concept documents require a non-empty `type`; `index.md` and
+`log.md` are reserved bundle files.
+The current manifest reader accepts existing Markdown files without enforcing
+every OKF requirement. Validate document metadata during ingestion before
+treating an existing catalog as OKF compliant.
+
 ```md
 ---
+type: Playbook
 title: SSO recovery
 description: Restore access after an identity-provider configuration change.
 owner: support-platform

@@ -4,6 +4,7 @@ import {
   assertInstanceOf,
   assertRejects,
   assertStringIncludes,
+  assertThrows,
 } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { exists, mkdir, withTempDir, writeTextFile } from "#veryfront/testing/deno-compat.ts";
@@ -14,6 +15,7 @@ import { runWithRequestContext } from "#veryfront/platform/adapters/fs/veryfront
 import {
   createSearchKnowledgeTool,
   formatKnowledgeContext,
+  normalizeProjectKnowledgeScopeSelector,
   projectKnowledge,
   searchProjectKnowledge,
 } from "./index.ts";
@@ -93,6 +95,78 @@ describe("projectKnowledge", () => {
 
       assertEquals(result, { query: "", matches: [], context: "" });
       assertEquals(await exists(join(projectDir, "data", "knowledge-index.json")), false);
+    });
+  });
+
+  it("applies retrieve maxQueryChars overrides to the RAG query once", async () => {
+    const embeddedValues: string[] = [];
+    registerEmbeddingProvider("capture", () =>
+      ({
+        specificationVersion: "v2",
+        provider: "capture",
+        modelId: "capture/demo",
+        maxEmbeddingsPerCall: undefined,
+        supportsParallelCalls: true,
+        async doEmbed({ values }: { values: string[] }) {
+          embeddedValues.push(...values);
+          return {
+            embeddings: values.map((value) => {
+              const vector = new Array<number>(1536).fill(0);
+              vector[0] = value === "login" ? 10 : value.length;
+              return vector;
+            }),
+          };
+        },
+      }) as never);
+
+    await withTempDir(async (projectDir) => {
+      await mkdir(join(projectDir, "knowledge"), { recursive: true });
+      await writeTextFile(join(projectDir, "knowledge", "login.md"), "login");
+
+      const knowledge = projectKnowledge({
+        projectDir,
+        model: "capture/demo",
+        maxQueryChars: 1,
+      });
+      await knowledge.index();
+      embeddedValues.length = 0;
+
+      const result = await knowledge.retrieve("login failed", { maxQueryChars: 5 });
+
+      assertEquals(result.query, "login");
+      assertEquals(embeddedValues.includes("login"), true);
+      assertEquals(embeddedValues.includes("l"), false);
+    });
+  });
+
+  it("overscans scoped RAG search before filtering to the requested topK", async () => {
+    registerTestEmbeddingProvider();
+
+    await withTempDir(async (projectDir) => {
+      await mkdir(join(projectDir, "knowledge", "public"), { recursive: true });
+      await mkdir(join(projectDir, "knowledge", "private"), { recursive: true });
+      await writeTextFile(
+        join(projectDir, "knowledge", "private", "sso.md"),
+        "Private login SSO runbook.",
+      );
+      await writeTextFile(
+        join(projectDir, "knowledge", "public", "login.md"),
+        "Public login runbook.",
+      );
+
+      const knowledge = projectKnowledge({
+        projectDir,
+        model: "test/demo",
+        scope: "knowledge/public/**",
+      });
+
+      await knowledge.index();
+      const result = await knowledge.retrieve("login SSO", { topK: 1 });
+
+      assertEquals(result.matches.length, 1);
+      assertEquals(result.matches[0]?.source, join(projectDir, "knowledge", "public", "login.md"));
+      assertStringIncludes(result.context, "[public/login]");
+      assertStringIncludes(result.context, "Public login runbook.");
     });
   });
 
@@ -295,6 +369,322 @@ describe("projectKnowledge", () => {
         "Check identity provider metadata and callback URL changes.",
       );
     });
+  });
+
+  it("limits local knowledge lookup results and explicit content targets by scope", async () => {
+    await withTempDir(async (projectDir) => {
+      await mkdir(join(projectDir, "knowledge", "public"), { recursive: true });
+      await mkdir(join(projectDir, "knowledge", "private"), { recursive: true });
+      await writeTextFile(
+        join(projectDir, "knowledge", "public", "billing.md"),
+        [
+          "---",
+          "type: runbook",
+          "title: Billing escalation",
+          "---",
+          "",
+          "Billing content.",
+        ].join("\n"),
+      );
+      await writeTextFile(
+        join(projectDir, "knowledge", "private", "payroll.md"),
+        [
+          "---",
+          "type: runbook",
+          "title: Payroll escalation",
+          "---",
+          "",
+          "Payroll content.",
+        ].join("\n"),
+      );
+
+      const knowledge = projectKnowledge({
+        projectDir,
+        scope: "knowledge/public/**",
+      });
+      const browse = await knowledge.lookup({ query: "zxqv yjkp", limit: 10 });
+      const deniedTarget = await knowledge.lookup({
+        query: "payroll",
+        lookup_target: { path: "knowledge/private/payroll.md" },
+      });
+
+      assertEquals(browse.mode, "browse");
+      assertEquals(browse.total_matches, 1);
+      assertEquals(browse.shard.total_items, 1);
+      assertEquals(browse.data.map((item) => item.path), ["knowledge/public/billing.md"]);
+      assertEquals(deniedTarget.returned, 0);
+      assertEquals(deniedTarget.data, []);
+    });
+  });
+
+  it("applies knowledge scope map exclusions after inclusions", async () => {
+    await withTempDir(async (projectDir) => {
+      await mkdir(join(projectDir, "knowledge", "support"), { recursive: true });
+      await mkdir(join(projectDir, "knowledge", "support", "drafts"), { recursive: true });
+      await writeTextFile(
+        join(projectDir, "knowledge", "support", "published.md"),
+        [
+          "---",
+          "type: runbook",
+          "title: Published support",
+          "---",
+          "",
+          "Published support content.",
+        ].join("\n"),
+      );
+      await writeTextFile(
+        join(projectDir, "knowledge", "support", "drafts", "internal.md"),
+        [
+          "---",
+          "type: runbook",
+          "title: Internal draft",
+          "---",
+          "",
+          "Draft content.",
+        ].join("\n"),
+      );
+
+      const result = await searchProjectKnowledge(
+        { query: "support", limit: 10 },
+        {
+          projectDir,
+          scope: {
+            "knowledge/support/**": true,
+            "knowledge/support/drafts/**": false,
+          },
+        },
+      );
+
+      assertEquals(result.data.map((item) => item.path), [
+        "knowledge/support/published.md",
+      ]);
+      assertEquals(result.shard.total_items, 1);
+    });
+  });
+
+  it("uses the shared glob grammar for scoped knowledge access", async () => {
+    await withTempDir(async (projectDir) => {
+      await mkdir(join(projectDir, "knowledge", "support"), { recursive: true });
+      await mkdir(join(projectDir, "knowledge", "other"), { recursive: true });
+      await writeTextFile(
+        join(projectDir, "knowledge", "login.md"),
+        [
+          "---",
+          "type: runbook",
+          "title: Root login",
+          "---",
+          "",
+          "Root login content.",
+        ].join("\n"),
+      );
+      await writeTextFile(
+        join(projectDir, "knowledge", "support", "login.md"),
+        [
+          "---",
+          "type: runbook",
+          "title: Support login",
+          "---",
+          "",
+          "Support login content.",
+        ].join("\n"),
+      );
+      await writeTextFile(
+        join(projectDir, "knowledge", "other", "faq-a.md"),
+        [
+          "---",
+          "type: runbook",
+          "title: FAQ A",
+          "---",
+          "",
+          "FAQ content.",
+        ].join("\n"),
+      );
+      await writeTextFile(
+        join(projectDir, "knowledge", "other", "faq-ab.md"),
+        [
+          "---",
+          "type: runbook",
+          "title: FAQ AB",
+          "---",
+          "",
+          "FAQ content.",
+        ].join("\n"),
+      );
+
+      const result = await searchProjectKnowledge(
+        { query: "zxqv yjkp", limit: 10 },
+        {
+          projectDir,
+          scope: [
+            "knowledge/**/login.md",
+            "knowledge/other/faq-?.md",
+          ],
+        },
+      );
+
+      assertEquals(result.data.map((item) => item.path), [
+        "knowledge/login.md",
+        "knowledge/other/faq-a.md",
+        "knowledge/support/login.md",
+      ]);
+      assertEquals(result.shard.total_items, 3);
+    });
+  });
+
+  it("supports false, empty, and exclusion-only knowledge scopes as empty grants", async () => {
+    await withTempDir(async (projectDir) => {
+      await mkdir(join(projectDir, "knowledge"), { recursive: true });
+      await writeTextFile(
+        join(projectDir, "knowledge", "public.md"),
+        [
+          "---",
+          "type: runbook",
+          "title: Public",
+          "---",
+          "",
+          "Public content.",
+        ].join("\n"),
+      );
+      await writeTextFile(
+        join(projectDir, "knowledge", "private.md"),
+        [
+          "---",
+          "type: runbook",
+          "title: Private",
+          "---",
+          "",
+          "Private content.",
+        ].join("\n"),
+      );
+
+      const disabled = await searchProjectKnowledge(
+        { query: "zxqv yjkp", limit: 10 },
+        { projectDir, scope: false },
+      );
+      const excluded = await searchProjectKnowledge(
+        { query: "zxqv yjkp", limit: 10 },
+        { projectDir, scope: { "knowledge/private.md": false } },
+      );
+      const emptyArray = await searchProjectKnowledge(
+        { query: "zxqv yjkp", limit: 10 },
+        { projectDir, scope: [] },
+      );
+      const emptyMap = await searchProjectKnowledge(
+        { query: "zxqv yjkp", limit: 10 },
+        { projectDir, scope: {} },
+      );
+
+      assertEquals(disabled.total_matches, 0);
+      assertEquals(disabled.shard.total_items, 0);
+      assertEquals(excluded.total_matches, 0);
+      assertEquals(excluded.shard.total_items, 0);
+      assertEquals(emptyArray.total_matches, 0);
+      assertEquals(emptyArray.shard.total_items, 0);
+      assertEquals(emptyMap.total_matches, 0);
+      assertEquals(emptyMap.shard.total_items, 0);
+    });
+  });
+
+  it("does not read hosted knowledge files when scope cannot grant access", async () => {
+    const requestedUrls: string[] = [];
+
+    const result = await withMockFetch(async (input: RequestInfo | URL) => {
+      requestedUrls.push(input instanceof Request ? input.url : String(input));
+      return new Response(JSON.stringify({ error: "unexpected request" }), {
+        status: 500,
+        headers: { "Content-Type": "application/json" },
+      });
+    }, () =>
+      runWithRequestContext(
+        {
+          projectSlug: "acme",
+          projectId: "project-1",
+          token: "tenant-token",
+          productionMode: true,
+          releaseId: "release-1",
+        },
+        () =>
+          createSearchKnowledgeTool({
+            scope: { "knowledge/private.md": false },
+          }).execute({ query: "zxqv yjkp", limit: 10 }),
+      ));
+
+    assertEquals(result.total_matches, 0);
+    assertEquals(result.shard.total_items, 0);
+    assertEquals(requestedUrls, []);
+  });
+
+  it("rejects unsupported knowledge scope objects and unsafe scoped paths", async () => {
+    const unsupportedCollectionScope = await assertRejects(() =>
+      searchProjectKnowledge(
+        { query: "billing" },
+        {
+          projectDir: ".",
+          scope: { collections: ["support"] } as unknown as Record<string, boolean>,
+        },
+      )
+    );
+    const unsupportedCollectionNamespace = await assertRejects(() =>
+      searchProjectKnowledge(
+        { query: "billing" },
+        { projectDir: ".", scope: "collection:support" },
+      )
+    );
+    const escapingScope = await assertRejects(() =>
+      searchProjectKnowledge({ query: "billing" }, { projectDir: ".", scope: "../secrets/**" })
+    );
+    const escapingTarget = await assertRejects(() =>
+      searchProjectKnowledge(
+        { query: "billing", lookup_target: { path: "../secrets.md" } },
+        { projectDir: "." },
+      )
+    );
+
+    assertInstanceOf(unsupportedCollectionScope, Error);
+    assertEquals(unsupportedCollectionScope.message, "Invalid knowledge scope selector");
+    assertInstanceOf(unsupportedCollectionNamespace, Error);
+    assertEquals(unsupportedCollectionNamespace.message, "Invalid knowledge scope selector");
+    assertInstanceOf(escapingScope, Error);
+    assertEquals(escapingScope.message, "Invalid knowledge scope path");
+    assertInstanceOf(escapingTarget, Error);
+    assertEquals(escapingTarget.message, "Invalid knowledge lookup target path");
+  });
+
+  it("normalizes knowledge scopes with bounded plain data selectors", () => {
+    const normalized = normalizeProjectKnowledgeScopeSelector({
+      "knowledge/support/**": true,
+      "knowledge/support/drafts/**": false,
+    });
+
+    assertEquals(normalized, {
+      includes: ["knowledge/support/**"],
+      excludes: ["knowledge/support/drafts/**"],
+      includeAll: false,
+    });
+    assertEquals(Object.isFrozen(normalized.includes), true);
+    assertThrows(
+      () => normalizeProjectKnowledgeScopeSelector(["knowledge/**", ...Array(1_024).fill("x")]),
+      Error,
+      "Invalid knowledge scope selector",
+    );
+    assertThrows(
+      () => normalizeProjectKnowledgeScopeSelector("knowledge/" + "x".repeat(4_097)),
+      Error,
+      "Invalid knowledge scope path",
+    );
+
+    const accessorScope: Record<string, boolean> = {};
+    Object.defineProperty(accessorScope, "knowledge/private.md", {
+      enumerable: true,
+      get() {
+        return true;
+      },
+    });
+    assertThrows(
+      () => normalizeProjectKnowledgeScopeSelector(accessorScope),
+      Error,
+      "Invalid knowledge scope selector",
+    );
   });
 
   it("falls back to browse order and paginates local knowledge lookups", async () => {

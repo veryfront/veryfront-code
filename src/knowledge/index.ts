@@ -29,6 +29,7 @@ import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 import { getRuntimeRequestContext } from "#veryfront/platform/runtime-request-context.ts";
 import { VeryfrontApiClient } from "#veryfront/platform/adapters/veryfront-api-client/client.ts";
 import { tool } from "#veryfront/tool/factory.ts";
+import { compileGlobMatcher } from "#veryfront/utils/glob-matcher.ts";
 import type { JsonSchema } from "#veryfront/tool/schema/index.ts";
 import type { Tool, ToolExecutionContext } from "#veryfront/tool/types.ts";
 
@@ -38,8 +39,14 @@ const DEFAULT_TOP_K = 3;
 const DEFAULT_QUERY_MAX_CHARS = 500;
 const DEFAULT_LOOKUP_LIMIT = 8;
 const MAX_LOOKUP_LIMIT = 12;
+// Scoped RAG search cannot pre-filter before vector ranking with the current
+// store API. Overscan reduces false negatives, but exact scoped ranking needs
+// store-level filtering.
+const SCOPED_RAG_SEARCH_MIN_TOP_K = 50;
 const MAX_FRONTMATTER_FIELDS = 6;
 const MAX_FRONTMATTER_VALUE_LENGTH = 240;
+const MAX_KNOWLEDGE_SCOPE_ENTRIES = 1_024;
+const MAX_KNOWLEDGE_PATH_LENGTH = 4_096;
 const KNOWLEDGE_LOOKUP_CURSOR_VERSION = 1;
 const FRONTMATTER_FIELD_PRIORITY = [
   "title",
@@ -74,12 +81,34 @@ export interface ProjectKnowledgeConfig {
    */
   storagePath?: string;
   contentExtensions?: string[];
+  /**
+   * Authorized knowledge files for lookup and retrieval.
+   *
+   * Omit this to preserve the existing helper behavior and expose all files
+   * under `contentDir`. Use `false` to expose no files. Strings and string
+   * arrays match manifest paths. Boolean maps include `true` paths and exclude
+   * `false` paths, with exclusions taking precedence. Empty and exclusion-only
+   * selectors expose no files.
+   */
+  scope?: ProjectKnowledgeScopeSelector;
   model?: string;
   backend?: RagStoreBackend;
   branch?: string;
   topK?: number;
   threshold?: number;
   maxQueryChars?: number;
+}
+
+export type ProjectKnowledgeScopeSelector =
+  | boolean
+  | string
+  | string[]
+  | Record<string, boolean>;
+
+export interface NormalizedProjectKnowledgeScopeSelector {
+  readonly includes: readonly string[];
+  readonly excludes: readonly string[];
+  readonly includeAll: boolean;
 }
 
 /** Per-call options for project knowledge retrieval. */
@@ -239,7 +268,7 @@ export interface ProjectKnowledge {
     query: string,
     options?: ProjectKnowledgeRetrieveOptions,
   ): Promise<ProjectKnowledgeResult>;
-  search(query: string, options?: RagSearchOptions): Promise<RagSearchResult[]>;
+  search(query: string, options?: ProjectKnowledgeRetrieveOptions): Promise<RagSearchResult[]>;
 }
 
 function resolveProjectPath(projectDir: string | undefined, path: string): string {
@@ -261,6 +290,201 @@ function trimLeadingSlash(path: string): string {
 
 function normalizeManifestPath(path: string): string {
   return trimLeadingSlash(path).replace(/^\.\//, "");
+}
+
+function hasControlCharacters(value: string): boolean {
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index);
+    if (code <= 0x1f || (code >= 0x7f && code <= 0x9f)) return true;
+  }
+  return false;
+}
+
+function validateRelativeKnowledgePath(path: string, errorDetail: string): string {
+  const normalizedPath = normalizeManifestPath(path.trim());
+  if (
+    !normalizedPath ||
+    path.length > MAX_KNOWLEDGE_PATH_LENGTH ||
+    hasControlCharacters(path) ||
+    path.includes("\\") ||
+    isAbsolute(path) ||
+    normalizedPath.startsWith("../") ||
+    normalizedPath === ".." ||
+    normalizedPath.split("/").includes("..")
+  ) {
+    throw INPUT_VALIDATION_FAILED.create({ detail: errorDetail });
+  }
+
+  return normalizedPath;
+}
+
+function validateKnowledgeScopePattern(pattern: string): string {
+  const normalizedPattern = validateRelativeKnowledgePath(pattern, "Invalid knowledge scope path");
+  if (normalizedPattern.startsWith("collection:")) {
+    throw INPUT_VALIDATION_FAILED.create({ detail: "Invalid knowledge scope selector" });
+  }
+
+  return normalizedPattern;
+}
+
+function validateKnowledgeLookupTargetPath(path: string): string {
+  return validateRelativeKnowledgePath(path, "Invalid knowledge lookup target path");
+}
+
+function appendKnowledgeScopePattern(
+  target: string[],
+  pattern: string,
+): void {
+  target.push(validateKnowledgeScopePattern(pattern));
+}
+
+function assertKnowledgeScopeEntryCount(count: number): void {
+  if (count > MAX_KNOWLEDGE_SCOPE_ENTRIES) {
+    throw INPUT_VALIDATION_FAILED.create({ detail: "Invalid knowledge scope selector" });
+  }
+}
+
+function assertPlainKnowledgeScopeMap(
+  selector: unknown,
+): asserts selector is Record<string, boolean> {
+  if (selector === null || typeof selector !== "object" || Array.isArray(selector)) {
+    throw INPUT_VALIDATION_FAILED.create({ detail: "Invalid knowledge scope selector" });
+  }
+  const prototype = Object.getPrototypeOf(selector);
+  if (prototype !== Object.prototype && prototype !== null) {
+    throw INPUT_VALIDATION_FAILED.create({ detail: "Invalid knowledge scope selector" });
+  }
+}
+
+export function normalizeProjectKnowledgeScopeSelector(
+  selector: ProjectKnowledgeScopeSelector,
+): NormalizedProjectKnowledgeScopeSelector {
+  if (selector === true) {
+    return Object.freeze({
+      includes: Object.freeze([]),
+      excludes: Object.freeze([]),
+      includeAll: true,
+    });
+  }
+  if (selector === false) {
+    return Object.freeze({
+      includes: Object.freeze([]),
+      excludes: Object.freeze([]),
+      includeAll: false,
+    });
+  }
+  if (typeof selector === "string") {
+    return Object.freeze({
+      includes: Object.freeze([validateKnowledgeScopePattern(selector)]),
+      excludes: Object.freeze([]),
+      includeAll: false,
+    });
+  }
+  if (Array.isArray(selector)) {
+    assertKnowledgeScopeEntryCount(selector.length);
+    const includes: string[] = [];
+    for (let index = 0; index < selector.length; index += 1) {
+      const descriptor = Object.getOwnPropertyDescriptor(selector, index);
+      if (!descriptor || !Object.hasOwn(descriptor, "value")) {
+        throw INPUT_VALIDATION_FAILED.create({ detail: "Invalid knowledge scope selector" });
+      }
+      appendKnowledgeScopePattern(includes, descriptor.value);
+    }
+    return Object.freeze({
+      includes: Object.freeze(includes),
+      excludes: Object.freeze([]),
+      includeAll: false,
+    });
+  }
+
+  assertPlainKnowledgeScopeMap(selector);
+  const patterns = Object.getOwnPropertyNames(selector);
+  assertKnowledgeScopeEntryCount(patterns.length);
+  const includes: string[] = [];
+  const excludes: string[] = [];
+  for (let index = 0; index < patterns.length; index += 1) {
+    const pattern = patterns[index]!;
+    const descriptor = Object.getOwnPropertyDescriptor(selector, pattern);
+    if (
+      !descriptor ||
+      !descriptor.enumerable ||
+      !Object.hasOwn(descriptor, "value") ||
+      typeof descriptor.value !== "boolean"
+    ) {
+      throw INPUT_VALIDATION_FAILED.create({ detail: "Invalid knowledge scope selector" });
+    }
+
+    if (descriptor.value) {
+      appendKnowledgeScopePattern(includes, pattern);
+    } else {
+      appendKnowledgeScopePattern(excludes, pattern);
+    }
+  }
+
+  return Object.freeze({
+    includes: Object.freeze(includes),
+    excludes: Object.freeze(excludes),
+    includeAll: false,
+  });
+}
+
+export function projectKnowledgeScopeSelectorGrantsAnyPath(
+  selector: ProjectKnowledgeScopeSelector | undefined,
+): boolean {
+  if (selector === undefined) return true;
+  const scope = normalizeProjectKnowledgeScopeSelector(selector);
+  return scope.includeAll || scope.includes.length > 0;
+}
+
+export function normalizedProjectKnowledgeScopeGrantsAnyPath(
+  scope: NormalizedProjectKnowledgeScopeSelector,
+): boolean {
+  return scope.includeAll || scope.includes.length > 0;
+}
+
+function createKnowledgeScopeMatcher(
+  selector: ProjectKnowledgeScopeSelector,
+): (path: string) => boolean {
+  const scope = normalizeProjectKnowledgeScopeSelector(selector);
+  const includeMatchers = scope.includes.map(compileGlobMatcher);
+  const excludeMatchers = scope.excludes.map(compileGlobMatcher);
+
+  return (path: string): boolean => {
+    const normalizedPath = validateRelativeKnowledgePath(path, "Invalid knowledge path");
+    if (selector === false) return false;
+
+    const included = scope.includeAll ||
+      includeMatchers.some((matches) => matches(normalizedPath));
+    if (!included) return false;
+
+    return !excludeMatchers.some((matches) => matches(normalizedPath));
+  };
+}
+
+function applyKnowledgeScope(
+  manifest: ProjectKnowledgeManifestEntry[],
+  selector: ProjectKnowledgeScopeSelector | undefined,
+): ProjectKnowledgeManifestEntry[] {
+  if (selector === undefined) return manifest;
+  const isInScope = createKnowledgeScopeMatcher(selector);
+  return manifest.filter((entry) => isInScope(entry.path));
+}
+
+function getRagResultManifestPath(
+  result: RagSearchResult,
+  config: ProjectKnowledgeConfig,
+): string {
+  if (isAbsolute(result.source)) return buildManifestPath(config, result.source);
+  return normalizeManifestPath(result.source);
+}
+
+function filterRagResultsByScope(
+  results: RagSearchResult[],
+  config: ProjectKnowledgeConfig,
+): RagSearchResult[] {
+  if (config.scope === undefined) return results;
+  const isInScope = createKnowledgeScopeMatcher(config.scope);
+  return results.filter((result) => isInScope(getRagResultManifestPath(result, config)));
 }
 
 function buildHostedManifestPath(contentDir: string, filePath: string): string | null {
@@ -441,7 +665,7 @@ function toSearchableEntry(
 
 function getLookupTargetPath(lookupTarget: unknown): string | null {
   if (typeof lookupTarget === "string" && lookupTarget.trim()) {
-    return normalizeManifestPath(lookupTarget);
+    return validateKnowledgeLookupTargetPath(lookupTarget);
   }
   if (!lookupTarget || typeof lookupTarget !== "object" || Array.isArray(lookupTarget)) {
     return null;
@@ -450,7 +674,9 @@ function getLookupTargetPath(lookupTarget: unknown): string | null {
   const record = lookupTarget as Record<string, unknown>;
   for (const key of ["path", "source", "id", "documentCode", "document_code"]) {
     const value = record[key];
-    if (typeof value === "string" && value.trim()) return normalizeManifestPath(value);
+    if (typeof value === "string" && value.trim()) {
+      return validateKnowledgeLookupTargetPath(value);
+    }
   }
 
   return null;
@@ -884,8 +1110,12 @@ export async function searchProjectKnowledge(
   config: ProjectKnowledgeConfig = {},
   context?: ToolExecutionContext,
 ): Promise<ProjectKnowledgeLookupOutput> {
+  if (!projectKnowledgeScopeSelectorGrantsAnyPath(config.scope)) {
+    return lookupKnowledgeManifest([], input);
+  }
+
   const manifest = await getProjectKnowledgeManifest(config, context);
-  return lookupKnowledgeManifest(manifest, input);
+  return lookupKnowledgeManifest(applyKnowledgeScope(manifest, config.scope), input);
 }
 
 /** Create a local tool with the same id and response shape as hosted `search_knowledge`. */
@@ -919,16 +1149,32 @@ export function projectKnowledge(config: ProjectKnowledgeConfig = {}): ProjectKn
     await store.indexContentDir();
   }
 
-  async function search(
-    query: string,
+  async function searchNormalized(
+    normalizedQuery: string,
     options?: RagSearchOptions,
   ): Promise<RagSearchResult[]> {
-    const normalizedQuery = normalizeKnowledgeQuery(query, config.maxQueryChars);
     if (!normalizedQuery) return [];
-    return store.search(normalizedQuery, {
-      topK: options?.topK ?? config.topK ?? DEFAULT_TOP_K,
+    if (!projectKnowledgeScopeSelectorGrantsAnyPath(config.scope)) return [];
+    const requestedTopK = options?.topK ?? config.topK ?? DEFAULT_TOP_K;
+    const storeTopK = config.scope === undefined
+      ? requestedTopK
+      : Math.max(requestedTopK, SCOPED_RAG_SEARCH_MIN_TOP_K);
+    const results = await store.search(normalizedQuery, {
+      topK: storeTopK,
       threshold: options?.threshold ?? config.threshold,
     });
+    return filterRagResultsByScope(results, config).slice(0, requestedTopK);
+  }
+
+  async function search(
+    query: string,
+    options?: ProjectKnowledgeRetrieveOptions,
+  ): Promise<RagSearchResult[]> {
+    const normalizedQuery = normalizeKnowledgeQuery(
+      query,
+      options?.maxQueryChars ?? config.maxQueryChars,
+    );
+    return searchNormalized(normalizedQuery, options);
   }
 
   return {
@@ -946,10 +1192,7 @@ export function projectKnowledge(config: ProjectKnowledgeConfig = {}): ProjectKn
       );
       if (!normalizedQuery) return { query: "", matches: [], context: "" };
 
-      const matches = await store.search(normalizedQuery, {
-        topK: options?.topK ?? config.topK ?? DEFAULT_TOP_K,
-        threshold: options?.threshold ?? config.threshold,
-      });
+      const matches = await searchNormalized(normalizedQuery, options);
 
       return {
         query: normalizedQuery,

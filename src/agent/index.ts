@@ -114,6 +114,8 @@ export type {
 
 export { runWithRunEventSink } from "../runtime/run-event-sink-context.ts";
 
+export type { ToolResultContextLimits } from "./runtime/tool-result-context.ts";
+
 export type {
   Agent,
   AgentConfig,

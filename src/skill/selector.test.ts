@@ -110,6 +110,137 @@ Deno.test("skill selector construction ignores inherited numeric array setters",
   assertEquals(snapshot.unresolvedEntries, [{ index: 1 }]);
 });
 
+Deno.test("skill selector string shorthand resolves like a single allowlist entry", () => {
+  const definitions = [
+    { id: "global", shortName: undefined },
+    { id: "agent--cite", shortName: "cite" },
+    { id: "cite", shortName: undefined },
+  ];
+
+  const snapshot = resolveSkillSelector({
+    definitions,
+    selector: "cite",
+    getId: (definition) => definition.id,
+    isVisible: () => true,
+    getShortName: (definition) => definition.shortName,
+    isOwnShortNameCandidate: (definition) => definition.id === "agent--cite",
+  });
+
+  assertEquals(snapshot.policy, { kind: "allowlist", entries: ["cite"] });
+  assertEquals(snapshot.allowedSkillIds, ["agent--cite"]);
+});
+
+Deno.test("skill selector string and array allowlist entries can use globs after exact lookup", () => {
+  const definitions = [
+    { id: "support-*", shortName: undefined },
+    { id: "support-triage", shortName: undefined },
+    { id: "support-public", shortName: undefined },
+    { id: "billing", shortName: undefined },
+  ];
+
+  const exactSnapshot = resolveSkillSelector({
+    definitions,
+    selector: "support-*",
+    getId: (definition) => definition.id,
+    isVisible: () => true,
+    getShortName: (definition) => definition.shortName,
+  });
+  const globSnapshot = resolveSkillSelector({
+    definitions,
+    selector: ["support-?ri*", "billing"],
+    getId: (definition) => definition.id,
+    isVisible: () => true,
+    getShortName: (definition) => definition.shortName,
+  });
+
+  assertEquals(exactSnapshot.allowedSkillIds, ["support-*"]);
+  assertEquals(globSnapshot.allowedSkillIds, ["support-triage", "billing"]);
+});
+
+Deno.test("skill selector object rules grant exact and glob matches with exclusions winning", () => {
+  const definitions = [
+    { id: "global-howto" },
+    { id: "support-triage" },
+    { id: "support-private" },
+    { id: "agent--cite", shortName: "cite" },
+  ];
+
+  const snapshot = resolveSkillSelector({
+    definitions,
+    selector: {
+      "support-*": true,
+      "support-private": false,
+      cite: true,
+    },
+    getId: (definition) => definition.id,
+    isVisible: () => true,
+    getShortName: (definition) => "shortName" in definition ? definition.shortName : undefined,
+    isOwnShortNameCandidate: (definition) => definition.id === "agent--cite",
+  });
+
+  assertEquals(snapshot.policy, {
+    kind: "rules",
+    entries: [
+      { pattern: "support-*", allow: true },
+      { pattern: "support-private", allow: false },
+      { pattern: "cite", allow: true },
+    ],
+  });
+  assertEquals(snapshot.allowedSkillIds, ["support-triage", "agent--cite"]);
+});
+
+Deno.test("skill selector rules use the shared glob grammar", () => {
+  const definitions = [
+    { id: "skills/triage" },
+    { id: "skills/support/triage" },
+    { id: "support-a" },
+    { id: "support-aa" },
+  ];
+
+  const snapshot = resolveSkillSelector({
+    definitions,
+    selector: {
+      "skills/**/triage": true,
+      "support-?": true,
+    },
+    getId: (definition) => definition.id,
+    isVisible: () => true,
+  });
+
+  assertEquals(snapshot.allowedSkillIds, [
+    "skills/triage",
+    "skills/support/triage",
+    "support-a",
+  ]);
+});
+
+Deno.test("skill selector deny-only object rules do not grant all visible skills", () => {
+  const snapshot = resolveSkillSelector({
+    definitions: [{ id: "a" }, { id: "b" }],
+    selector: { b: false },
+    getId: (definition) => definition.id,
+    isVisible: () => true,
+  });
+
+  assertEquals(snapshot.policy, {
+    kind: "rules",
+    entries: [{ pattern: "b", allow: false }],
+  });
+  assertEquals(snapshot.allowedSkillIds, []);
+});
+
+Deno.test("skill selector false resolves to none", () => {
+  const snapshot = resolveSkillSelector({
+    definitions: [{ id: "a" }],
+    selector: false,
+    getId: (definition) => definition.id,
+    isVisible: () => true,
+  });
+
+  assertEquals(snapshot.policy, { kind: "none" });
+  assertEquals(snapshot.allowedSkillIds, []);
+});
+
 Deno.test("skill selector visibility does not depend on mutable Array methods", () => {
   const originalFilter = Object.getOwnPropertyDescriptor(
     Array.prototype,
@@ -237,6 +368,12 @@ Deno.test("skill selector rejects sparse, malformed, proxied, and over-limit inp
           ...base,
           definitions: [definition],
           selector: new Proxy(["one"], {}),
+        }),
+      () =>
+        resolveSkillSelector({
+          ...base,
+          definitions: [definition],
+          selector: { one: "yes" } as never,
         }),
       () =>
         resolveSkillSelector({

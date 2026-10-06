@@ -410,3 +410,58 @@ Coordinate.
     'produces an invalid tool name "agent_data.fetcher"',
   );
 });
+
+it("runtime definitions retain structured discovery and access settings", () => {
+  const settings = {
+    skills: { "support-*": true, "support-internal": false },
+    knowledge: { "support/**": true, "support/private/**": false },
+    toolLoading: "deferred" as const,
+    toolResultContext: { maxInlineBytes: 8192, previewBytes: 2048 },
+  };
+  const result = getRuntimeAgentMarkdownDefinitionSchema().parse({
+    id: "support",
+    name: "Support",
+    description: "Support",
+    instructions: "Help users.",
+    ...settings,
+  });
+  for (const key of Object.keys(settings) as (keyof typeof settings)[]) {
+    assertEquals(result[key], settings[key]);
+  }
+});
+
+it("legacy markdown parsing retains structured selectors and context options", () => {
+  const result = parseRuntimeAgentMarkdownDefinition({
+    id: "support",
+    content: `---
+skills:
+  support-*: true
+  support-internal: false
+knowledge:
+  support/**: true
+  support/private/**: false
+tool-loading: deferred
+tool-result-context:
+  maxInlineBytes: 8192
+---
+Help users.`,
+  });
+  assertEquals(result.skills, { "support-*": true, "support-internal": false });
+  assertEquals(result.knowledge, { "support/**": true, "support/private/**": false });
+  assertEquals(result.toolLoading, "deferred");
+  assertEquals(result.toolResultContext, { maxInlineBytes: 8192 });
+});
+
+it("legacy markdown boolean tool maps retain positive bindings and explicit denials", () => {
+  const definition = parseRuntimeAgentMarkdownDefinition({
+    id: "support",
+    content: `---
+tools:
+  search_tickets: true
+  delete_ticket: false
+---
+Help users.`,
+  });
+  assertEquals(definition.tools, ["search_tickets"]);
+  assertEquals(definition.deniedTools, ["delete_ticket"]);
+});

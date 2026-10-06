@@ -72,6 +72,7 @@ import {
   buildAgentCallContextPreservingRuntimeMarker,
 } from "./runtime/call-context.ts";
 import type { RuntimeSkillDefinition } from "./runtime/skill-metadata.ts";
+import { createAgentKnowledgeTool } from "./runtime/knowledge-tools.ts";
 
 const IntrinsicReflectApply = Reflect.apply;
 const IntrinsicStringTrim = String.prototype.trim;
@@ -590,6 +591,27 @@ function createAgent<TOutput = never>(
       skillTools: resolveSkillToolDisposition(config, id),
       resolveSkillSnapshot,
     });
+  }
+
+  // Hosted callers already assembled the catalog under their authorization
+  // ceiling. Feature configuration must not re-add a filtered capability.
+  const knowledgeTool = preserveToolCatalog ? undefined : createAgentKnowledgeTool(config);
+  if (knowledgeTool && mergedToolsConfig === true && toolRegistry.has("search_knowledge")) {
+    throw INVALID_ARGUMENT.create({
+      detail: "A registered search_knowledge tool conflicts with the agent knowledge scope. " +
+        "Use an explicit tool selection or rename the custom tool.",
+    });
+  }
+  if (knowledgeTool && mergedToolsConfig !== true) {
+    if (mergedToolsConfig?.search_knowledge && mergedToolsConfig.search_knowledge !== true) {
+      throw INVALID_ARGUMENT.create({
+        detail: "A custom search_knowledge tool conflicts with the agent knowledge scope. " +
+          "Rename the custom tool or remove the knowledge selector.",
+      });
+    }
+    if (mergedToolsConfig?.search_knowledge !== false) {
+      mergedToolsConfig = { ...mergedToolsConfig, search_knowledge: knowledgeTool };
+    }
   }
 
   const augmentedSystem = createAugmentedSystem({

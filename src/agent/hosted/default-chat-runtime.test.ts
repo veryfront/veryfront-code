@@ -146,6 +146,13 @@ function createMockModel(): ModelRuntime {
   };
 }
 
+function promptFromRuntimeOptions(options: unknown): unknown {
+  if (typeof options !== "object" || options === null || !("prompt" in options)) {
+    return undefined;
+  }
+  return options.prompt;
+}
+
 function restoreEnv(key: string, value: string | undefined): void {
   if (value === undefined) {
     deleteEnv(key);
@@ -185,6 +192,125 @@ it("caps eager hosted tools when tool_search is denied", async () => {
   assertExists(capturedContext);
   assertEquals(capturedContext.availableToolNames?.length, 128);
   assertEquals(capturedContext.availableToolNames?.includes("tool_search"), false);
+});
+
+it("honors authored eager tool loading in the default hosted runtime", async () => {
+  let capturedContext: DefaultHostedChatRuntimeTaskContext | undefined;
+  await createDefaultHostedChatRuntime({
+    sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
+    options: {
+      projectId: "project-1",
+      authToken: "token-1",
+      instructions: "Use eager schemas.",
+      model: "openai/gpt-5.4",
+      toolLoading: "eager",
+    },
+    config: {
+      apiUrl: "https://api.example.com",
+      apiMcpUrl: "https://api.example.com/mcp",
+    },
+    buildLocalTools: (taskContext) => {
+      capturedContext = taskContext;
+      return {
+        beta: localTool("Beta"),
+        alpha: localTool("Alpha"),
+      };
+    },
+    createRemoteToolSource: emptyRemoteSource,
+    preloadLatestConversationUserText: false,
+  });
+
+  assertExists(capturedContext);
+  assertEquals(capturedContext.availableToolNames, ["alpha", "beta"]);
+});
+
+it("forwards authored tool result context to default hosted model dispatch", async () => {
+  clearModelProviders();
+  let modelCallCount = 0;
+  let secondPrompt: unknown;
+  const largeResult = { payload: "x".repeat(200) };
+
+  registerModelProvider("test", () => ({
+    provider: "test",
+    modelId: "test/hosted-tool-result-context",
+    doGenerate: () => Promise.reject(new Error("unused")),
+    doStream(options: unknown) {
+      modelCallCount += 1;
+      if (modelCallCount === 2) secondPrompt = promptFromRuntimeOptions(options);
+      return Promise.resolve({
+        stream: new ReadableStream<unknown>({
+          start(controller) {
+            if (modelCallCount === 1) {
+              controller.enqueue({
+                type: "tool-call",
+                toolCallId: "large-result-call",
+                toolName: "large_result",
+                input: {},
+              });
+              controller.enqueue({
+                type: "finish",
+                finishReason: "tool-calls",
+                usage: { inputTokens: 1, outputTokens: 1 },
+              });
+            } else {
+              controller.enqueue({ type: "text-delta", text: "done" });
+              controller.enqueue({
+                type: "finish",
+                finishReason: "stop",
+                usage: { inputTokens: 1, outputTokens: 1 },
+              });
+            }
+            controller.close();
+          },
+        }),
+      });
+    },
+  }));
+
+  try {
+    const runtime = await createDefaultHostedChatRuntime({
+      sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
+      options: {
+        projectId: "project-1",
+        authToken: "token-1",
+        instructions: "Use bounded tool results.",
+        model: "test/hosted-tool-result-context",
+        allowedTools: ["large_result"],
+        toolResultContext: { maxInlineBytes: 32, previewBytes: 24 },
+      },
+      config: {
+        apiUrl: "https://api.example.com",
+        apiMcpUrl: "https://api.example.com/mcp",
+      },
+      buildLocalTools: () => ({
+        large_result: {
+          ...localTool("Return a large result"),
+          execute: () => largeResult,
+        },
+      }),
+      createRemoteToolSource: emptyRemoteSource,
+      preloadLatestConversationUserText: false,
+    });
+
+    await withMockFetch(
+      () => Promise.resolve(Response.json({ tools: [] })),
+      async () => {
+        const result = await runtime.agent.stream({
+          messages: [],
+          abortSignal: new AbortController().signal,
+        });
+        for await (const _chunk of result.toUIMessageStream()) {
+          // Consume the tool-call continuation so the second model prompt is built.
+        }
+      },
+    );
+
+    const promptJson = JSON.stringify(secondPrompt);
+    assertStringIncludes(promptJson, "tool_result_reference");
+    assertEquals(promptJson.includes(largeResult.payload), false);
+  } finally {
+    clearModelProviders();
+  }
 });
 
 it("preserves layered cache metadata through hosted provider dispatch", async () => {

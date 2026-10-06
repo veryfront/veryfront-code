@@ -38,6 +38,8 @@ import type {
   ToolCallPartWithInput,
 } from "./schemas/index.ts";
 import type { RuntimeAgentThinkingConfig } from "./runtime/agent-definition.ts";
+import type { SkillSelector } from "#veryfront/skill/selector.ts";
+import type { ToolResultContextLimits } from "./runtime/tool-result-context.ts";
 
 /**
  * Model configuration string format: "provider/model-name"
@@ -207,6 +209,21 @@ export interface AgentConfig<TOutput = any> {
    * schemas immediately.
    */
   tools?: true | Record<string, Tool | boolean>;
+  /** Load selected tool schemas immediately or discover them through tool_search. */
+  toolLoading?: "eager" | "deferred";
+  /**
+   * Return references for oversized model-facing tool results, with bounded
+   * get_tool_result reads. Raw results remain available to events and callbacks.
+   * Omit or false to preserve inline result behavior.
+   */
+  toolResultContext?: boolean | ToolResultContextLimits;
+  /**
+   * Enable framework knowledge retrieval and select project-relative files.
+   * true selects all knowledge; strings and arrays select paths or globs;
+   * map entries grant or exclude paths, with exclusions taking precedence.
+   * Omission, false, and empty selections do not enable the framework tool.
+   */
+  knowledge?: boolean | string | string[] | Record<string, boolean>;
   /**
    * Exact registered agent ids this agent may call through scoped
    * `agent_<id>` tools. Each delegate keeps its own model, skills, and tools.
@@ -284,14 +301,14 @@ export interface AgentConfig<TOutput = any> {
    * Select visible skill IDs or this agent's own skill short names advertised
    * in this agent's system prompt and authorized for `load_skill`.
    * - omitted or true: include every discovered skill visible to this agent
-   * - string[]: include and authorize only listed visible skill IDs or this
-   *   agent's own skill short names
-   * - [] or false: advertise no skills and do not authorize project or
+   * - string or string[]: select visible IDs, own short names, or glob patterns
+   * - boolean map: positive grants minus exclusions; exclusions win
+   * - empty selections, exclusion-only maps, or false: advertise no skills and do not authorize project or
    *   configured skills for `load_skill`
    *
    * Discovery happens at startup via discoverAll().
    */
-  skills?: true | false | string[];
+  skills?: SkillSelector;
   /**
    * Prompt starters shown on an empty chat.
    *

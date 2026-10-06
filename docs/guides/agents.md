@@ -168,6 +168,37 @@ The `tools` selector controls both authorization and initial schema exposure:
 A successful search makes matching authorized schemas visible on the next model
 step.
 
+Set `toolLoading: "deferred"` to use the same lookup flow with an explicit tool
+map. Authorization stays limited to the selected tools; lookup cannot enable a
+denied tool. Set `toolLoading: "eager"` to load schemas upfront. Omission preserves
+the existing defaults above. Deferred inventories show up to 20 descriptions;
+`tool_search` also finds authorized tools omitted from that initial inventory.
+
+### Bound large tool results
+
+Set `toolResultContext: true` to keep oversized results out of later model calls.
+The default inline limit is 16 KiB. Larger results become a run-scoped reference
+with a 4 KiB preview; the framework supplies `get_tool_result` for reads of up to
+16 KiB per section. The result identifies its total size and next cursor.
+
+```ts
+toolResultContext: {
+  maxInlineBytes: 8192,
+  previewBytes: 2048,
+  maxSectionBytes: 8192,
+  maxStoredResults: 256,
+}
+```
+
+Persisted messages, result events, and callbacks retain the original data. Small
+results remain inline. Skill instructions, schema lookup results, and retrieved
+sections remain visible rather than being wrapped in another reference.
+Exceeding the stored-result limit fails explicitly instead of evicting a live
+reference. Storage also has hard limits of 16 MiB per serialized result and 64 MiB
+per run. Byte options are limited to 1 MiB and the result count to 1,024.
+Omission or `false` preserves inline results. Per-call replacement tools opt out
+of this framework behavior.
+
 ```ts
 const assistant = agent({
   name: "release-assistant",
@@ -281,8 +312,9 @@ export default agent({
 ## Use skills
 
 Skills are reusable instruction packs discovered from your project's `skills/`
-directory. Every agent receives the visible skill catalog and `load_skill`
-automatically.
+directory. Agents with enabled skill access receive the visible skill catalog
+and `load_skill` automatically. Omitted `skills` uses the visible catalog when
+one exists; `skills: false` and `skills: []` remove skill access.
 
 ```ts
 // agents/assistant.ts

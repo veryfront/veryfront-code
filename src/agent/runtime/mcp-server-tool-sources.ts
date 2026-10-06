@@ -44,6 +44,7 @@ import { wrapRemoteToolSourceWithMcpPolicy } from "../mcp-tool-policy.ts";
 import { getActiveRuntimeRemoteToolSources } from "./remote-tool-source-context.ts";
 import { createPrivateWeakStore } from "#veryfront/security/private-weak-store.ts";
 import { compareStrings } from "#veryfront/utils/compare.ts";
+import { createAgentKnowledgeSource } from "./knowledge-tools.ts";
 
 export type RuntimeRemoteToolConfig = {
   __vfRemoteToolSources?: RemoteToolSource[];
@@ -57,6 +58,7 @@ export const VERYFRONT_API_MCP_SOURCE_ID = "veryfront-platform-mcp";
 export const VERYFRONT_STUDIO_MCP_SOURCE_ID = "studio-mcp";
 
 const RUNTIME_PROVIDED_BOOLEAN_TOOL_NAMES = new Set(["bash", "invoke_agent"]);
+const FRAMEWORK_KNOWLEDGE_TOOL_NAME = "search_knowledge";
 const hasOwn = Object.hasOwn;
 const isArray = Array.isArray;
 const applyIntrinsic = Reflect.apply;
@@ -398,6 +400,55 @@ function getFirstPartyMcpSourceId(server: AgentVeryfrontMcpServerConfig): string
       : VERYFRONT_STUDIO_MCP_SOURCE_ID);
 }
 
+async function assertNoRemoteToolNameCollision(input: {
+  sources: readonly RemoteToolSource[];
+  toolName: string;
+  context?: ToolExecutionContext;
+}): Promise<void> {
+  for (let index = 0; index < input.sources.length; index++) {
+    if (!hasOwn(input.sources, index)) continue;
+    const source = input.sources[index]!;
+    const tools = await source.listTools(input.context);
+    for (let toolIndex = 0; toolIndex < tools.length; toolIndex++) {
+      if (!hasOwn(tools, toolIndex)) continue;
+      if (tools[toolIndex]?.name === input.toolName) {
+        throw CONFIG_INVALID.create({
+          detail: `Remote tool "${input.toolName}" conflicts with the agent knowledge scope. ` +
+            "Rename the remote tool or remove the knowledge selector.",
+        });
+      }
+    }
+  }
+}
+
+function guardFrameworkKnowledgeSource(
+  source: RemoteToolSource,
+  siblingSources: readonly RemoteToolSource[],
+): RemoteToolSource {
+  // Recheck dynamic catalogs at each read: a host can refresh its source or
+  // switch project/branch during a run. Caching a prior absence would silently
+  // restore first-match shadowing after that change.
+  return {
+    id: source.id,
+    async listTools(context) {
+      await assertNoRemoteToolNameCollision({
+        sources: siblingSources,
+        toolName: FRAMEWORK_KNOWLEDGE_TOOL_NAME,
+        context,
+      });
+      return await source.listTools(context);
+    },
+    async executeTool(name, input, context) {
+      await assertNoRemoteToolNameCollision({
+        sources: siblingSources,
+        toolName: FRAMEWORK_KNOWLEDGE_TOOL_NAME,
+        context,
+      });
+      return await source.executeTool(name, input, context);
+    },
+  };
+}
+
 /** Return remote tool sources for direct agent runtime config. */
 export function getRuntimeRemoteToolSources(
   config: AgentConfig,
@@ -532,9 +583,11 @@ export function getRuntimeRemoteToolSources(
       );
     },
   );
+  const nonKnowledgeSources = concatPrivateArrays(policyWrappedInjectedSources, configuredSources);
+  const knowledgeSource = createAgentKnowledgeSource(config);
   const remoteToolSources = concatPrivateArrays(
-    policyWrappedInjectedSources,
-    configuredSources,
+    knowledgeSource ? [guardFrameworkKnowledgeSource(knowledgeSource, nonKnowledgeSources)] : [],
+    nonKnowledgeSources,
   );
 
   if (remoteToolSources.length > 0) {

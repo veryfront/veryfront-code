@@ -735,3 +735,19 @@ Help from configured markdown.
     await assertMultiAgentProjectDiscoveryWithoutServiceEntrypoint();
   },
 });
+
+Deno.test("project agent settings survive code to hosted definition roundtrip", async () => {
+  const settings = {
+    skills: false,
+    knowledge: { "support/**": true, "support/private/**": false },
+    toolLoading: "deferred" as const,
+    toolResultContext: { maxInlineBytes: 8192, previewBytes: 2048 },
+  };
+  const codeAgent = agent({ id: "scoped-support", system: "Help users.", ...settings });
+  const definition = await createRuntimeAgentDefinitionFromAgent(codeAgent);
+  const hostedAgent = createRuntimeAgentFromMarkdownDefinition(definition);
+  for (const key of Object.keys(settings) as (keyof typeof settings)[]) {
+    assertEquals(definition[key], settings[key]);
+    assertEquals(hostedAgent.config[key], settings[key]);
+  }
+});

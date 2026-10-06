@@ -39,6 +39,7 @@ import {
 import {
   ExecutorRuntimePreparationError,
   getExecutorRuntimePrepareRequestSchema,
+  getExecutorRuntimeSteeringSchema,
   parseRuntimePreparationData,
 } from "#veryfront/agent/hosted/executor-runtime-prepare-schema.ts";
 import { createExecutorChannel } from "#veryfront/agent/executor/channel.ts";
@@ -183,6 +184,32 @@ async function prepare(
 describe("executor runtime preparation", () => {
   beforeEach(seedServedCatalogForTests);
   afterEach(__resetVeryfrontCloudCatalogForTests);
+  it("accepts rules skill selector policies in serialized steering", () => {
+    const steering = parseRuntimePreparationData(getExecutorRuntimeSteeringSchema(), {
+      agent: {
+        id: "coder",
+        name: "Coder",
+        description: "Codes",
+        instructions: "Work",
+      },
+      skillSelectorPolicy: {
+        kind: "rules",
+        entries: [
+          { pattern: "support-*", allow: true },
+          { pattern: "support-private", allow: false },
+        ],
+      },
+    });
+
+    assertEquals(steering.skillSelectorPolicy, {
+      kind: "rules",
+      entries: [
+        { pattern: "support-*", allow: true },
+        { pattern: "support-private", allow: false },
+      ],
+    });
+  });
+
   it("carries a verified resume call through preparation into runtime execution", async () => {
     const executions: unknown[] = [];
     const lookup = tool({
