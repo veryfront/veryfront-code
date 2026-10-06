@@ -176,6 +176,7 @@ export type HostedDurableChildTerminalFailure = {
 
 /** Public API contract for hosted durable child setup failure. */
 export type HostedDurableChildSetupFailure = {
+  childCanonicalRunId?: string | null;
   targets: ConversationRunTargets;
   childConversationId: string | null;
   childRunId: string | null;
@@ -391,6 +392,9 @@ export function createHostedDurableChildInvokeTraceRecorder(input: {
         targets: failure.targets,
         childConversationId: failure.childConversationId,
         childRunId: failure.childRunId,
+        ...(failure.childCanonicalRunId
+          ? { childCanonicalRunId: failure.childCanonicalRunId }
+          : {}),
         childMessageId: failure.childMessageId,
       });
     },
@@ -1074,6 +1078,9 @@ async function executeHostedDurableChildForkWithCapability<
       targets,
       childConversationId: identifiers.childConversationId,
       childRunId: identifiers.childRunId,
+      ...(identifiers.childCanonicalRunId
+        ? { childCanonicalRunId: identifiers.childCanonicalRunId }
+        : {}),
       childMessageId: identifiers.childMessageId,
       terminalErrorCode: terminalState.terminalErrorCode,
       terminalErrorMessage: terminalState.terminalErrorMessage,
