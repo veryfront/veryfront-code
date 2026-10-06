@@ -1,4 +1,4 @@
-import { join } from "#std/path";
+import { fromFileUrl, join } from "#std/path";
 import { parse } from "#std/yaml/parse";
 import { assert, assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
@@ -58,41 +58,65 @@ async function expectGit(
 
 describe("test migration baseline workflow", () => {
   it("keeps baseline-resolution failures machine-readable in JSON mode", async () => {
-    const result = await new Deno.Command(Deno.execPath(), {
-      args: [
-        "run",
-        "--config=scripts/test.deno.json",
-        "--no-check",
-        "--allow-read",
-        "--allow-run=git",
-        "--allow-env=TEST_SEMANTIC_AUDIT_BASE_REF",
-        "scripts/lint/audit-test-semantic-dispositions.ts",
-        "--json",
-      ],
-      cwd: new URL("../../../", import.meta.url),
-      env: {
-        TEST_SEMANTIC_AUDIT_BASE_REF: "refs/heads/missing-semantic-baseline",
-      },
-      stdout: "piped",
-      stderr: "piped",
-    }).output();
+    const repository = new URL("../../../", import.meta.url);
+    const fixture = await makeTempDir({ prefix: "semantic-baseline-json-" });
+    try {
+      await expectGit(fixture, ["init", "--initial-branch=main"]);
+      await Deno.mkdir(join(fixture, "src"));
+      await Deno.writeTextFile(
+        join(fixture, "src", "fixture.test.ts"),
+        'Deno.test("baseline fixture", () => {});\n',
+      );
+      await expectGit(fixture, ["config", "user.email", "test@example.invalid"]);
+      await expectGit(fixture, ["config", "user.name", "Test"]);
+      await expectGit(fixture, ["add", "src/fixture.test.ts"]);
+      await expectGit(fixture, ["commit", "--message", "baseline fixture"]);
+      await expectGit(fixture, ["update-ref", "refs/remotes/origin/main", "HEAD"]);
+      const missingBaseline = "refs/heads/missing-semantic-baseline";
+      const result = await new Deno.Command(Deno.execPath(), {
+        args: [
+          "run",
+          "--quiet",
+          `--config=${fromFileUrl(new URL("scripts/test.deno.json", repository))}`,
+          "--no-check",
+          "--allow-read",
+          "--allow-run=git",
+          "--allow-env=TEST_SEMANTIC_AUDIT_BASE_REF",
+          fromFileUrl(new URL("scripts/lint/audit-test-semantic-dispositions.ts", repository)),
+          "--json",
+        ],
+        cwd: fixture,
+        env: {
+          TEST_SEMANTIC_AUDIT_BASE_REF: missingBaseline,
+        },
+        stdout: "piped",
+        stderr: "piped",
+      }).output();
 
-    assertEquals(result.code, 1, "an unresolved baseline must fail the audit");
-    const stdout = new TextDecoder().decode(result.stdout).trim();
-    const report = JSON.parse(stdout) as { errors?: unknown };
-    assert(
-      Array.isArray(report.errors) &&
-        report.errors.some((error) =>
-          typeof error === "string" &&
-          error.includes("semantic audit baseline resolution failed")
-        ),
-      `the JSON report must contain the baseline failure, got: ${stdout}`,
-    );
-    assertEquals(
-      new TextDecoder().decode(result.stderr),
-      "",
-      "JSON mode must not mix prose or an uncaught stack trace into stderr",
-    );
+      assertEquals(result.code, 1, "an unresolved baseline must fail the audit");
+      const stdout = new TextDecoder().decode(result.stdout).trim();
+      assert(
+        stdout.length > 0,
+        `the audit must emit JSON, stderr: ${new TextDecoder().decode(result.stderr)}`,
+      );
+      const report = JSON.parse(stdout) as { errors?: unknown };
+      assert(
+        Array.isArray(report.errors) &&
+          report.errors.some((error) =>
+            typeof error === "string" &&
+            error.includes("semantic audit baseline resolution failed") &&
+            error.includes(missingBaseline)
+          ),
+        `the JSON report must contain the baseline failure, got: ${stdout}`,
+      );
+      assertEquals(
+        new TextDecoder().decode(result.stderr),
+        "",
+        "JSON mode must not mix prose or an uncaught stack trace into stderr",
+      );
+    } finally {
+      await remove(fixture, { recursive: true });
+    }
   });
 
   it("creates origin/main before resolving a shallow fallback baseline", async () => {

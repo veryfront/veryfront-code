@@ -16,7 +16,10 @@ import {
   buildFileListCacheKey,
   buildStatCacheKeyPrefix,
 } from "./cache-keys.ts";
-import { buildVersionedFileOperationProjectPrefix } from "#veryfront/cache/keys/builders/file.ts";
+import {
+  buildFileListProjectPrefix,
+  buildVersionedFileOperationProjectPrefix,
+} from "#veryfront/cache/keys/builders/file.ts";
 import {
   addPendingInvalidation,
   getPendingInvalidationsCount,
@@ -778,7 +781,12 @@ export class WebSocketManager {
     const addBroadPrefixes = (sourceType: "release" | "environment"): void => {
       const sourceKey = sourceType === "release" ? "release" : "env";
       const base = `${sourceKey}:${this.deps.projectSlug}:`;
-      addPrefixes([`file:${base}`, `stat:${base}`, `dir:${base}`, `files:${base}`]);
+      addPrefixes([
+        `file:${base}`,
+        `stat:${base}`,
+        `dir:${base}`,
+        buildFileListProjectPrefix(sourceKey, this.deps.projectSlug),
+      ]);
       addPrefixes(
         OPERATION_CACHE_TYPES.map((cacheType) =>
           buildVersionedFileOperationProjectPrefix(cacheType, sourceKey, this.deps.projectSlug)

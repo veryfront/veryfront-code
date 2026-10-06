@@ -560,6 +560,18 @@ export async function __runWithOutboundFetchTransportForTests<T>(
  * enable the explicit override; project environment overlays cannot change
  * `getHostEnv()`.
  */
+/**
+ * The host transport's fetch, captured before project code loaded (a test
+ * transport when one is installed), with no egress policy of its own. For
+ * credential-bearing callers that already target a configured origin and
+ * must not go through a global `fetch` project code could replace.
+ *
+ * @internal
+ */
+export function trustedHostFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+  return getTrustedHostTransport().fetch(input, init);
+}
+
 export async function guardedOutboundFetch(
   input: RequestInfo | URL,
   init?: RequestInit,

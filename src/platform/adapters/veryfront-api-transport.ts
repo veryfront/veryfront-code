@@ -13,7 +13,12 @@ import {
 } from "#veryfront/utils/config-resource-limits.ts";
 import { serverLogger } from "#veryfront/utils/logger/logger.ts";
 import { sanitizeUrlCredentials, sanitizeUrlForSpan } from "#veryfront/utils/logger/redact.ts";
-import { guardedOutboundFetch } from "#veryfront/security/http/outbound-fetch.ts";
+import { guardedOutboundFetch, trustedHostFetch } from "#veryfront/security/http/outbound-fetch.ts";
+import {
+  assertNativeRequestProcessing,
+  createNativeRequestInit,
+  nativeFetchArguments,
+} from "#veryfront/platform/compat/http/native-request-init.ts";
 import {
   InvalidResponseBodyUtf8Error,
   JsonStringValueTooLargeError,
@@ -212,7 +217,9 @@ function createValidatedVeryfrontApiTransport<T>(
             injectContext(headers);
             // Attach the credential last: tracing may use the public Headers
             // prototype, and a replaced method must never receive a container
-            // that already holds the host-private token.
+            // that already holds the host-private token. From here to the send
+            // nothing yields, and the native header handling is checked first.
+            assertNativeRequestProcessing();
             if (authMode === "bearer") {
               deleteHeader(headers, "X-API-Key");
               setHeader(headers, "Authorization", `Bearer ${token}`);
@@ -222,18 +229,29 @@ function createValidatedVeryfrontApiTransport<T>(
               else deleteHeader(headers, "X-API-Key");
             }
             const start = performance.now();
-            const requestInit: RequestInit = {
+            // A null-prototype init and header record, sent through the host
+            // transport captured at load rather than a global `fetch` project
+            // code may have replaced.
+            const requestInit = createNativeRequestInit(undefined, {
               method,
               headers,
               body,
               signal,
               redirect,
-            };
-            const res = config.outboundPolicy
-              ? await guardedOutboundFetch(url, { ...requestInit, redirect: "error" }, {
-                authorizeUrl: config.outboundPolicy.authorizeUrl,
-              })
-              : await fetch(url, requestInit);
+            });
+            let res: Response;
+            if (config.outboundPolicy) {
+              res = await guardedOutboundFetch(
+                url,
+                createNativeRequestInit(requestInit, { redirect: "error" }),
+                { authorizeUrl: config.outboundPolicy.authorizeUrl },
+              );
+            } else {
+              // Indexed, not destructured: destructuring runs Array.prototype's
+              // iterator over a tuple that holds the credential-bearing init.
+              const fetchArguments = nativeFetchArguments(url, requestInit);
+              res = await trustedHostFetch(fetchArguments[0], fetchArguments[1]);
+            }
             afterFetch?.(res.status, performance.now() - start);
             try {
               return await (responseInit.onResponse ?? onResponse)(

@@ -1,3 +1,4 @@
+import { inheritHostedChildInferenceAuthority } from "./inference-credential.ts";
 /**
  * Hosted child tool assembly — MCP server resolution, delegation binding,
  * invoke-agent tool, and project steering/skill accessors for the cloud agent service.
@@ -305,7 +306,7 @@ export function buildHostedChildToolContext(
   childConfig: DefaultHostedChildAgentExecutionConfig | undefined,
   durableChildRun?: HostedChildRunIdentifiers,
 ): ChildRunContext {
-  return {
+  const childContext: ChildRunContext = {
     ...globalToolContext,
     agentId: childAgentId,
     ...(childConfig
@@ -326,6 +327,8 @@ export function buildHostedChildToolContext(
       }
       : {}),
   };
+  inheritHostedChildInferenceAuthority(childContext, globalToolContext);
+  return childContext;
 }
 
 /** Fetches project steering for a given project / auth / branch combination. */
