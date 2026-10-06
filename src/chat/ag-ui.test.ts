@@ -473,6 +473,36 @@ describe("chat/ag-ui", () => {
     assertEquals(state.activeFallbackReasoningPartId, null);
   });
 
+  it("keeps legacy message reasoning ids stable when later frames add content ids", async () => {
+    const state = createAgUiChatEventDecoderState();
+    const mixed = decodeAgUiSseChunk(
+      state,
+      [
+        "event: ReasoningMessageStart",
+        'data: {"messageId":"assistant-1","role":"reasoning"}',
+        "",
+        "event: ReasoningMessageContent",
+        'data: {"messageId":"assistant-1","contentId":"segment-a","delta":"First"}',
+        "",
+        "event: ReasoningMessageEnd",
+        'data: {"messageId":"assistant-1","contentId":"segment-a"}',
+        "",
+        "",
+      ].join("\n"),
+    );
+
+    const chatEvents = mixed.events.flatMap((entry) => entry.chatEvents);
+    const expected: ChatStreamEvent[] = [
+      { type: "reasoning-start", id: "agui-reasoning:assistant-1" },
+      { type: "reasoning-delta", id: "agui-reasoning:assistant-1", delta: "First" },
+      { type: "reasoning-end", id: "agui-reasoning:assistant-1" },
+    ];
+
+    assertEquals(chatEvents, expected);
+    assertEquals(await collect(dedupeChatUiMessageChunks(toStream(chatEvents))), expected);
+    assertEquals(state.activeFallbackReasoningPartId, null);
+  });
+
   it("keeps fallback reasoning ids stable when later frames add content ids", async () => {
     const state = createAgUiChatEventDecoderState();
     const mixed = decodeAgUiSseChunk(

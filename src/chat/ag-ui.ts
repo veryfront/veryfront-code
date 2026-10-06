@@ -669,7 +669,13 @@ function getReasoningPartId(
   }
 
   if (typeof payload.messageId === "string" && payload.messageId.length > 0) {
-    return `agui-reasoning:${encodeReasoningPartIdComponent(payload.messageId)}`;
+    const messageReasoningPartId = `agui-reasoning:${
+      encodeReasoningPartIdComponent(payload.messageId)
+    }`;
+    if (phase === "start") {
+      state.activeFallbackReasoningPartId = messageReasoningPartId;
+    }
+    return messageReasoningPartId;
   }
 
   if (state.activeFallbackReasoningPartId) {
