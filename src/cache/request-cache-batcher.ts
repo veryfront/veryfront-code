@@ -133,7 +133,7 @@ export function runWithCacheBatching<T>(fn: () => Promise<T>): Promise<T> {
   // Shared filesystem reads can outlive the request that queued them. Keep
   // their scheduled flush alive so ending that request cannot strand reads
   // or retain hosted configuration source-read admission indefinitely.
-  return runWithRequestCacheContext(context, fn);
+  return runWithRequestCacheContext(context, async () => await fn());
 }
 
 export function getRequestCacheContext(): RequestCacheContext | undefined {

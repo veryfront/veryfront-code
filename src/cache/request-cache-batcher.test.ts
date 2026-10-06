@@ -1,6 +1,11 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { AsyncLocalStorage } from "node:async_hooks";
-import { assertEquals, assertExists, assertNotEquals } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertExists,
+  assertNotEquals,
+  assertRejects,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { CacheBackend } from "./backend.ts";
 import {
@@ -63,6 +68,14 @@ describe("cache/request-cache-batcher", () => {
   });
 
   describe("runWithCacheBatching", () => {
+    it("returns a rejected promise when its callback throws synchronously", async () => {
+      const reason = new Error("synchronous cache callback failure");
+      const result = runWithCacheBatching(() => {
+        throw reason;
+      });
+      await assertRejects(() => result, Error, "synchronous cache callback failure");
+    });
+
     it("settles a queued shared read after its creating request aborts", async () => {
       const backend = createMockBackend({ source: "published configuration" });
       let sharedRead: Promise<string | null> | undefined;
