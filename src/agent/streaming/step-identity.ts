@@ -3,7 +3,8 @@ import type { ChatMessageMetadata, ChatUiMessageChunk } from "#veryfront/chat/pr
 type StepStartChunk = Extract<ChatUiMessageChunk<ChatMessageMetadata>, { type: "start-step" }>;
 
 const stepIds = new WeakMap<object, string>();
-const readStepId = stepIds.get.bind(stepIds);
+/** @internal Read the private projection identity without trusting public fields. */
+export const getStepIdentity = stepIds.get.bind(stepIds);
 const storeStepId = stepIds.set.bind(stepIds);
 
 /**
@@ -20,14 +21,9 @@ export function createMirroredStepChunk(
   return prepared;
 }
 
-/** @internal Read the private projection identity without trusting public fields. */
-export function getStepIdentity(chunk: object): string | undefined {
-  return readStepId(chunk);
-}
-
 /** @internal Keep a projection identity when normalizing the same occurrence. */
-export function retainStepIdentity<T extends object>(source: object, target: T): T {
-  const stepId = readStepId(source);
+export function retainStepIdentity<T extends object>(source: StepStartChunk, target: T): T {
+  const stepId = getStepIdentity(source);
   if (stepId !== undefined) storeStepId(target, stepId);
   return target;
 }

@@ -70,6 +70,9 @@ describe("mirrored-tool-chunk-state", () => {
       rootStreamWatchdog: { observe() {}, dispose() {} },
       mirroredToolChunkState: createMirroredToolChunkState(),
       appendChunk: (chunk) => {
+        if (chunk.type !== "start-step" && chunk.type !== "finish-step") {
+          throw new Error("Expected a mirrored step boundary");
+        }
         durableEvents.push(...durable.encode(chunk));
       },
     });
@@ -119,6 +122,9 @@ describe("mirrored-tool-chunk-state", () => {
         rootStreamWatchdog: { observe() {}, dispose() {} },
         mirroredToolChunkState: createMirroredToolChunkState(),
         appendChunk: (chunk) => {
+          if (chunk.type !== "start-step" && chunk.type !== "finish-step") {
+            throw new Error("Expected a mirrored step boundary");
+          }
           stored.push(...durable.encode(chunk));
         },
       });
