@@ -1,6 +1,6 @@
 import { assert, assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { createTaskChildRunner } from "./task-child.ts";
+import { createTaskChildRunner } from "#veryfront/server/handlers/request/task-child.ts";
 const parentId = "11111111-1111-4111-8111-111111111111";
 const projectId = "22222222-2222-4222-8222-222222222222";
 const eventToken = `test.${

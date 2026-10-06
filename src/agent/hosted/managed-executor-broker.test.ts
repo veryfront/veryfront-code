@@ -21,7 +21,12 @@ const terminalTestToken = `header.${
     }),
   )
 }.signature`;
-import { assert, assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import {
+  assert,
+  assertEquals,
+  assertRejects,
+  assertStringIncludes,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { createExecutorChannel, type ExecutorOperation } from "../executor/channel.ts";
 import type { ModelRuntime } from "#veryfront/provider/types.ts";
@@ -51,12 +56,28 @@ import type { Tool, ToolExecutionContext } from "#veryfront/tool/types.ts";
 import { createTrustedManagedRuntime } from "#veryfront/agent/hosted/trusted-managed-runtime.ts";
 import type { ExecutorBinding } from "#veryfront/agent/executor/protocol.ts";
 import { ExecutorAgentError } from "#veryfront/agent/hosted/executor-agent-schema.ts";
+import { __runWithOutboundFetchTransportForTests } from "#veryfront/security/http/outbound-fetch.ts";
 
 const modelId = "veryfront-cloud/openai/synthetic";
-const owner = { scopeKind: "project" as const, projectId: "project-test" };
+const owner = { scopeKind: "project" as const, projectId: "11111111-1111-4111-8111-111111111111" };
 const source = { type: "release" as const, releaseId: "release-test" };
 const image = `registry.example.test/executor@sha256:${"a".repeat(64)}`;
 const tick = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
+
+function runWithKnowledgeApiTransport<T>(
+  handler: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>,
+  callback: () => Promise<T>,
+): Promise<T> {
+  return __runWithOutboundFetchTransportForTests(
+    {
+      fetch: handler,
+      pinnedFetch: (url, _addresses, init) => handler(url, init),
+      resolveHost: () => Promise.resolve(["192.0.2.1"]),
+    },
+    callback,
+    { allowedResolvedAddresses: ["192.0.2.1"] },
+  );
+}
 
 function runtimeModel(): ModelRuntime {
   return {
@@ -1157,14 +1178,30 @@ function trustedFixture(
   projectAliases?: { name: string; shortName: string }[],
   scope: { owner: HostedExecutorSessionOptions["request"]["owner"]; projectId: string | null } = {
     owner,
-    projectId: "project-test",
+    projectId: owner.projectId,
   },
+  agentOptions: { knowledge?: true } = {},
 ) {
   const f = fixture({ owner: scope.owner, allocationLifetimeMs: 120_000, hardDeadlineMs: 120_000 });
   const privateMarker = "synthetic-private-broker-runtime";
   const steeringEntered = Promise.withResolvers<void>();
   configureCanonical(f.input, () => Promise.resolve(), () => {});
   f.input.installation.grant.execution.projectId = scope.projectId;
+  if (scope.projectId !== null) f.input.model.modelCallCaptureReceipts = true;
+  let captureEventId = 0;
+  f.input.model.runEventSink = async (event) => {
+    if (scope.projectId === null) {
+      assertEquals(event.modelCallId, undefined);
+      return;
+    }
+    assert(typeof event.modelCallId === "string");
+    return {
+      eventId: String(++captureEventId),
+      projectId: scope.projectId,
+      runId: canonicalTestRunId,
+      modelCallId: event.modelCallId,
+    };
+  };
   if (scope.projectId !== null) f.input.installation.capabilities.projectSteering = "steering";
   f.input.installation.grant.allowedToolNames = ["inspect"];
   f.input.installation.grant.remoteToolSourceIds = ["project"];
@@ -1261,6 +1298,9 @@ function trustedFixture(
                     system: "Use the project tool",
                     tools: includeHost ? { inspect: true, "host-private": true } : true,
                     skills: false,
+                    ...(agentOptions.knowledge === undefined
+                      ? {}
+                      : { knowledge: agentOptions.knowledge }),
                   }),
                 ]]),
                 tools: new Map([["inspect", registered]]),
@@ -1425,7 +1465,7 @@ describe("broker-local trusted runtime", () => {
     assertEquals(observed[0]?.runId, "run-1");
     assertEquals(observed[0]?.authToken, undefined);
     assertEquals(f.projectWire.includes(f.privateMarker), false);
-    assertEquals(f.projectWire.includes('"projectId":"project-test"'), false);
+    assertEquals(f.projectWire.includes(`"projectId":"${owner.projectId}"`), false);
     assert(f.projectWire.includes('"projectId":null'));
   });
 
@@ -1534,6 +1574,104 @@ describe("broker-local trusted runtime", () => {
     });
     assertEquals(Object.hasOwn(observed[0]!, "authToken"), false);
     assert(f.projectWire.includes('"projectContext"'));
+  });
+
+  it("uses broker-owned credentials for managed hosted knowledge without sending them to the project executor", async () => {
+    const requestedUrls: string[] = [];
+    const authorizationHeaders: string[] = [];
+    const f = trustedFixture(undefined, false, undefined, undefined, undefined, {
+      knowledge: true,
+    });
+    assert(f.input.trustedRuntime);
+    f.input.trustedRuntime.projectToolNames = [];
+    f.input.trustedRuntime.hostedKnowledgeAuthToken = "broker-knowledge-token";
+    f.input.installation.grant.allowedToolNames = ["search_knowledge"];
+    f.input.installation.grant.execution.branchId = "feature-x";
+    f.input.tools.catalog = new Map([["search_knowledge", {}]]);
+    f.input.model.resolver = () =>
+      scriptedModel([
+        {
+          toolCalls: [{
+            id: "knowledge-call",
+            name: "search_knowledge",
+            input: { query: "managed needle" },
+          }],
+        },
+        { text: "done" },
+      ], { only: "stream" });
+
+    await runWithKnowledgeApiTransport(
+      async (input: RequestInfo | URL, init?: RequestInit) => {
+        const request = input instanceof Request ? input : new Request(input, init);
+        requestedUrls.push(request.url);
+        authorizationHeaders.push(request.headers.get("authorization") ?? "");
+        return Response.json({
+          data: [{
+            id: "file-1",
+            version_id: "version-1",
+            path: "knowledge/support.md",
+            content: "Managed hosted knowledge needle.",
+            type: "file",
+            size: 32,
+            updated_at: "2026-01-01T00:00:00.000Z",
+          }],
+          page_info: { self: null, first: null, next: null, prev: null },
+        });
+      },
+      async () => {
+        const events = await drainTrustedFixture(f);
+        assert(events.some((event) => event.type === "finish"));
+      },
+    );
+
+    assertEquals(f.executions, 0);
+    assertEquals(authorizationHeaders, ["Bearer broker-knowledge-token"]);
+    assertEquals(requestedUrls.length, 1);
+    assertStringIncludes(
+      requestedUrls[0] ?? "",
+      `/projects/${owner.projectId}/releases/release-test/files`,
+    );
+    assertEquals(f.projectWire.includes("broker-knowledge-token"), false);
+    assertEquals(f.projectWire.includes('"authToken"'), false);
+  });
+
+  it("fails closed for managed hosted knowledge without a broker-owned credential", async () => {
+    let requests = 0;
+    const f = trustedFixture(undefined, false, undefined, undefined, undefined, {
+      knowledge: true,
+    });
+    assert(f.input.trustedRuntime);
+    f.input.trustedRuntime.projectToolNames = [];
+    f.input.installation.grant.allowedToolNames = ["search_knowledge"];
+    f.input.tools.catalog = new Map([["search_knowledge", {}]]);
+    f.input.model.resolver = () =>
+      scriptedModel([
+        {
+          toolCalls: [{
+            id: "knowledge-call",
+            name: "search_knowledge",
+            input: { query: "managed needle" },
+          }],
+        },
+        { text: "done" },
+      ], { only: "stream" });
+
+    await runWithKnowledgeApiTransport(
+      async () => {
+        requests++;
+        return Response.json({
+          data: [],
+          page_info: { self: null, first: null, next: null, prev: null },
+        });
+      },
+      async () => {
+        await assertRejects(() => drainTrustedFixture(f));
+      },
+    );
+
+    assertEquals(requests, 0);
+    assertEquals(f.executions, 0);
+    assertEquals(f.projectWire.includes('"authToken"'), false);
   });
 
   it("reserves project aliases within the combined host and project metadata budget", async () => {

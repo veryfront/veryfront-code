@@ -9,6 +9,8 @@ export interface InferenceEnvironment {
 }
 
 const CLOUD_GATEWAY_LABEL = "Veryfront Cloud AI Gateway";
+const CLOUD_GATEWAY_PROJECT_REQUIRED_LABEL =
+  "Veryfront Cloud AI Gateway (project required: set VERYFRONT_PROJECT_SLUG or add projectSlug to veryfront.config.ts)";
 
 function isSet(value: string | undefined): boolean {
   return Boolean(value?.trim());
@@ -20,18 +22,23 @@ function isSet(value: string | undefined): boolean {
  * option whose credential the CLI can check itself.
  */
 export function advertisesCloudGateway(options: readonly string[]): boolean {
-  return options.includes(CLOUD_GATEWAY_LABEL);
+  return options.some((option) =>
+    option === CLOUD_GATEWAY_LABEL || option.startsWith(`${CLOUD_GATEWAY_LABEL} (`)
+  );
 }
 
 /** Return the inference paths the current dev process can use without exposing credentials. */
 export function listInferenceOptions(environment: InferenceEnvironment): string[] {
   const options: string[] = [];
 
-  // The gateway authenticates on the token alone. A freshly scaffolded project
-  // has no linked slug yet and its chat route still answers, so gating this on
-  // `projectSlug` hid the one inference path `veryfront login` sets up.
+  // The gateway can validate the login token without a project, but model
+  // requests need a project for billing. Name the missing setup in the Ready
+  // banner so a freshly scaffolded, unlinked app does not fail only after the
+  // first chat message.
   if (isSet(environment.apiToken)) {
-    options.push(CLOUD_GATEWAY_LABEL);
+    options.push(
+      isSet(environment.projectSlug) ? CLOUD_GATEWAY_LABEL : CLOUD_GATEWAY_PROJECT_REQUIRED_LABEL,
+    );
   }
   if (isSet(environment.openaiApiKey)) {
     options.push(

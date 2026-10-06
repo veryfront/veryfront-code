@@ -4,7 +4,7 @@ import "#veryfront/schemas/_test-setup.ts";
  * @module cli/commands/deploy.test
  */
 
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { setJsonMode } from "../../shared/json-output.ts";
@@ -174,6 +174,121 @@ describe("deploy command adapters", () => {
       success: true,
       data: sentinelResult,
     });
+
+    let nestedJson: { result: DeployResult | null; output: string[] };
+    try {
+      setJsonMode(true);
+      nestedJson = await withMockFetch(
+        () => {
+          throw new Error("adapter performed fetch orchestration");
+        },
+        () =>
+          captureConsole(() =>
+            deployCommand({
+              ...options,
+              deployProject: createFakeDeployment(),
+              suppressJsonOutput: true,
+            })
+          ),
+      );
+    } finally {
+      setJsonMode(false);
+    }
+
+    assertEquals(nestedJson.result, sentinelResult);
+    assertEquals(nestedJson.output, []);
+
+    const failingOutput: string[] = [];
+    const originalLog = console.log;
+    const originalWarn = console.warn;
+    try {
+      setJsonMode(true);
+      console.log = (...args: unknown[]) => {
+        failingOutput.push(args.map(String).join(" "));
+      };
+      console.warn = (...args: unknown[]) => {
+        failingOutput.push(args.map(String).join(" "));
+      };
+      await assertRejects(
+        () =>
+          deployCommand({
+            ...options,
+            deployProject: {
+              async execute() {
+                throw new Error("sentinel deploy failure");
+              },
+            },
+            suppressJsonOutput: true,
+          }),
+        Error,
+        "sentinel deploy failure",
+      );
+    } finally {
+      console.log = originalLog;
+      console.warn = originalWarn;
+      setJsonMode(false);
+    }
+    assertEquals(failingOutput, []);
+  });
+
+  it("suppresses nested JSON output for dry-run outcomes without dropping the plan", async () => {
+    const dryRunDeployment: DeployProject = {
+      execute(request) {
+        return Promise.resolve({
+          kind: "dry-run",
+          plan: {
+            branch: request.branch ?? "main",
+            projectId: "project-dry-run",
+            projectSlug: request.projectSlug ?? "dry-run-project",
+            environment: request.environment,
+            environmentId: "environment-dry-run",
+            controlPlane: "https://control.example.test/api",
+            plannedActions: ["create-release", "deploy"],
+          },
+        });
+      },
+    };
+
+    let emitted: string[];
+    try {
+      setJsonMode(true);
+      const unsuppressed = await captureConsole(() =>
+        deployCommand({
+          projectDir: UNRELATED_PROJECT_DIR,
+          branch: "main",
+          env: "preview",
+          dryRun: true,
+          force: false,
+          deployProject: dryRunDeployment,
+          quiet: false,
+        })
+      );
+      assertEquals(unsuppressed.result, null);
+      const resultRecord = JSON.parse(unsuppressed.output.at(-1) ?? "{}");
+      assertEquals(resultRecord.type, "result");
+      assertEquals(resultRecord.success, true);
+      assertEquals(resultRecord.data.dryRun, true);
+      assertEquals(resultRecord.data.projectSlug, "dry-run-project");
+
+      const suppressed = await captureConsole(() =>
+        deployCommand({
+          projectDir: UNRELATED_PROJECT_DIR,
+          branch: "main",
+          env: "preview",
+          dryRun: true,
+          force: false,
+          deployProject: dryRunDeployment,
+          quiet: false,
+          suppressJsonOutput: true,
+        })
+      );
+      assertEquals(suppressed.result, null);
+      emitted = suppressed.output;
+    } finally {
+      setJsonMode(false);
+    }
+
+    assertEquals(emitted, []);
   });
 });
 

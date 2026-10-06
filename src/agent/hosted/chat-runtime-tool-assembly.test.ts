@@ -1,5 +1,6 @@
 import { markTrustedPlatformSource } from "#veryfront/tool/platform-source-provenance.ts";
 import { markTrustedHostToolSet } from "#veryfront/tool/host-tool-provenance.ts";
+import { toolToProviderDefinition } from "#veryfront/tool/registry.ts";
 import "#veryfront/schemas/_test-setup.ts";
 import {
   assertEquals,
@@ -9,6 +10,7 @@ import {
   assertStringIncludes,
 } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import type {
   RemoteMCPToolSourceConfig,
   RemoteToolSource,
@@ -17,6 +19,10 @@ import type {
 } from "#veryfront/tool";
 import { defineSchema } from "../../schemas/define.ts";
 import {
+  createToolExposurePlan,
+  createToolExposureState,
+} from "#veryfront/agent/runtime/tool-exposure.ts";
+import {
   augmentVeryfrontApiMcpServerPolicy,
   filterHostedChatRuntimeLocalTools,
   type HostedChatRuntimeToolAssemblyContext,
@@ -24,6 +30,7 @@ import {
   prepareFacadedHostedChatRuntimeToolAssembly,
   prepareHostedChatRuntimeToolAssembly,
 } from "#veryfront/agent/hosted/chat-runtime-tool-assembly.ts";
+import { createDefaultResearchRunArtifactMirrorHandler } from "#veryfront/agent/artifacts/default-research-artifact-support.ts";
 
 describe("private host tool metadata", () => {
   it("keeps trusted platform tools and removes spoofed names under integration restrictions", async () => {
@@ -443,6 +450,491 @@ Deno.test("prepareHostedChatRuntimeToolAssembly defers an unrestricted tools tru
 
   assertEquals(toolAssembly.toolLoadingMode, "deferred");
   assertEquals(taskContext.availableToolNames, ["tool_search"]);
+});
+
+Deno.test("prepareHostedChatRuntimeToolAssembly honors authored deferred loading before legacy allowlist eager mode", async () => {
+  const taskContext: HostedChatRuntimeToolAssemblyContext = {
+    authToken: "token",
+    projectId: "project-1",
+    model: "anthropic/claude-sonnet-4-6",
+  };
+
+  const toolAssembly = await prepareHostedChatRuntimeToolAssembly({
+    sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
+    taskContext,
+    instructions: "Base instructions",
+    localTools: { sleep: localTool("Sleep") },
+    apiUrl: "https://api.example.com",
+    apiMcpUrl: "https://api.example.com/mcp",
+    allowedToolNames: ["sleep"],
+    toolLoading: "deferred",
+    createRemoteToolSource: remoteSourceFromConfig,
+    preloadLatestConversationUserText: false,
+  });
+
+  assertEquals(toolAssembly.toolLoadingMode, "deferred");
+  assertEquals(toolAssembly.availableToolNames, ["sleep"]);
+  assertEquals(taskContext.availableToolNames, ["tool_search"]);
+});
+
+Deno.test("prepareHostedChatRuntimeToolAssembly rejects local search_knowledge when authored knowledge is enabled", async () => {
+  const taskContext: HostedChatRuntimeToolAssemblyContext = {
+    authToken: "token",
+    projectId: "project-1",
+    model: "anthropic/claude-sonnet-4-6",
+  };
+
+  await assertRejects(
+    () =>
+      prepareHostedChatRuntimeToolAssembly({
+        sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
+        taskContext,
+        instructions: "Base instructions",
+        localTools: { search_knowledge: localTool("Unscoped knowledge search") },
+        apiUrl: "https://api.example.com",
+        apiMcpUrl: "https://api.example.com/mcp",
+        allowedToolNames: null,
+        knowledge: "knowledge/**/*.md",
+        createRemoteToolSource: remoteSourceFromConfig,
+        preloadLatestConversationUserText: false,
+      }),
+    Error,
+    'Local tool "search_knowledge" conflicts with the agent knowledge scope',
+  );
+});
+
+Deno.test("prepareHostedChatRuntimeToolAssembly ignores unselected local search_knowledge when framework knowledge is excluded", async () => {
+  const taskContext: HostedChatRuntimeToolAssemblyContext = {
+    authToken: "token",
+    projectId: "project-1",
+    model: "anthropic/claude-sonnet-4-6",
+  };
+
+  const toolAssembly = await prepareHostedChatRuntimeToolAssembly({
+    sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
+    taskContext,
+    instructions: "Base instructions",
+    localTools: { search_knowledge: localTool("Unselected local knowledge search") },
+    apiUrl: "https://api.example.com",
+    apiMcpUrl: "https://api.example.com/mcp",
+    allowedToolNames: [],
+    knowledge: true,
+    createRemoteToolSource: remoteSourceFromConfig,
+    preloadLatestConversationUserText: false,
+  });
+
+  assertEquals(toolAssembly.localToolNames.includes("search_knowledge"), false);
+  assertEquals(toolAssembly.remoteToolNames.includes("search_knowledge"), false);
+  assertEquals(toolAssembly.availableToolNames.includes("search_knowledge"), false);
+});
+
+Deno.test("prepareHostedChatRuntimeToolAssembly allows denied local knowledge collisions to stay denied", async () => {
+  const taskContext: HostedChatRuntimeToolAssemblyContext = {
+    authToken: "token",
+    projectId: "project-1",
+    model: "anthropic/claude-sonnet-4-6",
+  };
+
+  const toolAssembly = await prepareHostedChatRuntimeToolAssembly({
+    sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
+    taskContext,
+    instructions: "Base instructions",
+    localTools: { search_knowledge: localTool("Denied local knowledge search") },
+    apiUrl: "https://api.example.com",
+    apiMcpUrl: "https://api.example.com/mcp",
+    allowedToolNames: null,
+    deniedToolNames: ["search_knowledge"],
+    knowledge: true,
+    createRemoteToolSource: remoteSourceFromConfig,
+    preloadLatestConversationUserText: false,
+  });
+
+  assertEquals(toolAssembly.localToolNames.includes("search_knowledge"), false);
+  assertEquals(toolAssembly.remoteToolNames.includes("search_knowledge"), false);
+  assertEquals(toolAssembly.availableToolNames.includes("search_knowledge"), false);
+});
+
+Deno.test("prepareHostedChatRuntimeToolAssembly supplies authored framework knowledge as a scoped remote tool", async () => {
+  const taskContext: HostedChatRuntimeToolAssemblyContext = {
+    authToken: "token",
+    projectId: "project-1",
+    model: "anthropic/claude-sonnet-4-6",
+  };
+
+  const toolAssembly = await prepareHostedChatRuntimeToolAssembly({
+    sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
+    taskContext,
+    instructions: "Base instructions",
+    localTools: {},
+    apiUrl: "https://api.example.com",
+    apiMcpUrl: "https://api.example.com/mcp",
+    allowedToolNames: null,
+    knowledge: "knowledge/**/*.md",
+    createRemoteToolSource: remoteSourceFromConfig,
+    preloadLatestConversationUserText: false,
+  });
+
+  assertEquals(toolAssembly.toolLoadingMode, "deferred");
+  assertEquals(toolAssembly.remoteToolNames.includes("search_knowledge"), true);
+  assertEquals(toolAssembly.availableToolNames.includes("search_knowledge"), true);
+  assertEquals(taskContext.availableToolNames, ["tool_search"]);
+});
+
+Deno.test("prepareHostedChatRuntimeToolAssembly rejects remote search_knowledge when authored knowledge is enabled", async () => {
+  await assertRejects(
+    () =>
+      prepareHostedChatRuntimeToolAssembly({
+        sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
+        taskContext: {
+          authToken: "token",
+          projectId: "project-1",
+          model: "anthropic/claude-sonnet-4-6",
+        },
+        instructions: "Base instructions",
+        localTools: {},
+        apiUrl: "https://api.example.com",
+        apiMcpUrl: "https://api.example.com/mcp",
+        allowedToolNames: null,
+        knowledge: true,
+        createRemoteToolSource: (config) => ({
+          id: config.id ?? "source",
+          listTools: () => Promise.resolve([remoteTool("search_knowledge", "Remote search")]),
+          executeTool: () => Promise.resolve({ ok: true }),
+        }),
+        preloadLatestConversationUserText: false,
+      }),
+    Error,
+    'Remote tool "search_knowledge" conflicts with the agent knowledge scope',
+  );
+});
+
+Deno.test("prepareHostedChatRuntimeToolAssembly allows denied knowledge collisions to stay denied", async () => {
+  const toolAssembly = await prepareHostedChatRuntimeToolAssembly({
+    sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
+    taskContext: {
+      authToken: "token",
+      projectId: "project-1",
+      model: "anthropic/claude-sonnet-4-6",
+    },
+    instructions: "Base instructions",
+    localTools: {},
+    apiUrl: "https://api.example.com",
+    apiMcpUrl: "https://api.example.com/mcp",
+    allowedToolNames: null,
+    deniedToolNames: ["search_knowledge"],
+    knowledge: true,
+    createRemoteToolSource: (config) => ({
+      id: config.id ?? "source",
+      listTools: () => Promise.resolve([remoteTool("search_knowledge", "Remote search")]),
+      executeTool: () => Promise.resolve({ ok: true }),
+    }),
+    preloadLatestConversationUserText: false,
+  });
+
+  assertEquals(toolAssembly.remoteToolNames.includes("search_knowledge"), false);
+});
+
+Deno.test("prepareHostedChatRuntimeToolAssembly binds trusted project-id credentials to hosted knowledge", async () => {
+  const requestedUrls: string[] = [];
+  const authorizationPresent: boolean[] = [];
+  const toolAssembly = await prepareHostedChatRuntimeToolAssembly({
+    sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
+    taskContext: {
+      authToken: "tenant-token",
+      projectId: "project-1",
+      model: "anthropic/claude-sonnet-4-6",
+    },
+    instructions: "Base instructions",
+    localTools: {},
+    apiUrl: "https://api.example.com",
+    apiMcpUrl: "https://api.example.com/mcp",
+    allowedToolNames: null,
+    knowledge: true,
+    createRemoteToolSource: remoteSourceFromConfig,
+    preloadLatestConversationUserText: false,
+  });
+
+  const knowledgeSource = toolAssembly.remoteToolSources.find((source) =>
+    source.id === "framework-knowledge"
+  );
+  assertExists(knowledgeSource);
+  const result = await withMockFetch(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const request = input instanceof Request ? input : new Request(input, init);
+    requestedUrls.push(request.url);
+    authorizationPresent.push((request.headers.get("authorization") ?? "").length > 0);
+    return Response.json({
+      data: [{
+        id: "file-1",
+        version_id: "version-1",
+        path: "knowledge/support.md",
+        content: [
+          "---",
+          "title: Support guide",
+          "---",
+          "",
+          "Project credential lookup needle.",
+        ].join("\n"),
+        type: "file",
+        size: 96,
+        updated_at: "2026-01-01T00:00:00.000Z",
+      }],
+      page_info: { self: null, first: null, next: null, prev: null },
+    });
+  }, () => knowledgeSource.executeTool("search_knowledge", { query: "credential needle" }));
+  const returned = typeof result === "object" && result !== null && "returned" in result
+    ? result.returned
+    : undefined;
+
+  assertEquals(returned, 1);
+  assertEquals(requestedUrls.length, 1);
+  assertStringIncludes(requestedUrls[0] ?? "", "/projects/project-1/files");
+  assertEquals(authorizationPresent, [true]);
+});
+
+Deno.test("prepareFacadedHostedChatRuntimeToolAssembly binds broker-owned hosted knowledge context", async () => {
+  const requestedUrls: string[] = [];
+  const authorizationHeaders: string[] = [];
+  const toolAssembly = await prepareFacadedHostedChatRuntimeToolAssembly({
+    sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
+    taskContext: {
+      projectId: "project-1",
+      branchId: "executor-branch",
+      model: "anthropic/claude-sonnet-4-6",
+    },
+    hostedKnowledgeContext: {
+      authToken: "broker-knowledge-token",
+      apiUrl: "https://staging-api.example.test/custom-api",
+      projectId: "project-1",
+      branch: "feature-x",
+    },
+    instructions: "Base instructions",
+    localTools: {},
+    remoteToolSources: [],
+    signal: new AbortController().signal,
+    allowedToolNames: null,
+    knowledge: true,
+  });
+
+  const knowledgeSource = toolAssembly.remoteToolSources.find((source) =>
+    source.id === "framework-knowledge"
+  );
+  assertExists(knowledgeSource);
+  const result = await withMockFetch(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const request = input instanceof Request ? input : new Request(input, init);
+    requestedUrls.push(request.url);
+    authorizationHeaders.push(request.headers.get("authorization") ?? "");
+    return Response.json({
+      data: [{
+        id: "file-1",
+        version_id: "version-1",
+        path: "knowledge/support.md",
+        content: "Broker managed lookup needle.",
+        type: "file",
+        size: 32,
+        updated_at: "2026-01-01T00:00:00.000Z",
+      }],
+      page_info: { self: null, first: null, next: null, prev: null },
+    });
+  }, () =>
+    knowledgeSource.executeTool("search_knowledge", { query: "managed needle" }, {
+      projectId: "forged-project",
+      projectSlug: "forged-slug",
+      branch: "forged-branch",
+    }));
+  const returned = typeof result === "object" && result !== null && "returned" in result
+    ? result.returned
+    : undefined;
+
+  assertEquals(returned, 1);
+  assertEquals(authorizationHeaders, ["Bearer broker-knowledge-token"]);
+  assertEquals(requestedUrls.length, 1);
+  assertEquals(new URL(requestedUrls[0] ?? "").origin, "https://staging-api.example.test");
+  assertStringIncludes(requestedUrls[0] ?? "", "/projects/project-1/files");
+  assertStringIncludes(requestedUrls[0] ?? "", "branch=feature-x");
+});
+
+Deno.test("prepareHostedChatRuntimeToolAssembly forwards the active branch to hosted knowledge", async () => {
+  const requestedUrls: string[] = [];
+  const toolAssembly = await prepareHostedChatRuntimeToolAssembly({
+    sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
+    taskContext: {
+      authToken: "tenant-token",
+      projectId: "project-1",
+      branchId: "feature-x",
+      model: "anthropic/claude-sonnet-4-6",
+    },
+    instructions: "Base instructions",
+    localTools: {},
+    apiUrl: "https://api.example.com",
+    apiMcpUrl: "https://api.example.com/mcp",
+    allowedToolNames: null,
+    knowledge: true,
+    createRemoteToolSource: remoteSourceFromConfig,
+    preloadLatestConversationUserText: false,
+  });
+
+  const knowledgeSource = toolAssembly.remoteToolSources.find((source) =>
+    source.id === "framework-knowledge"
+  );
+  assertExists(knowledgeSource);
+  const result = await withMockFetch(async (input: RequestInfo | URL) => {
+    const url = input instanceof Request ? input.url : String(input);
+    requestedUrls.push(url);
+    return Response.json({
+      data: [{
+        id: "file-1",
+        version_id: "version-1",
+        path: "knowledge/branch.md",
+        content: [
+          "---",
+          "title: Branch guide",
+          "---",
+          "",
+          "Feature branch lookup needle.",
+        ].join("\n"),
+        type: "file",
+        size: 92,
+        updated_at: "2026-01-01T00:00:00.000Z",
+      }],
+      page_info: { self: null, first: null, next: null, prev: null },
+    });
+  }, () => knowledgeSource.executeTool("search_knowledge", { query: "branch needle" }));
+  const returned = typeof result === "object" && result !== null && "returned" in result
+    ? result.returned
+    : undefined;
+
+  assertEquals(returned, 1);
+  assertEquals(requestedUrls.length, 1);
+  assertStringIncludes(requestedUrls[0] ?? "", "/projects/project-1/files");
+  assertStringIncludes(requestedUrls[0] ?? "", "branch=feature-x");
+});
+
+Deno.test("prepareHostedChatRuntimeToolAssembly reads live project context for hosted knowledge", async () => {
+  const requestedUrls: string[] = [];
+  const taskContext: HostedChatRuntimeToolAssemblyContext = {
+    authToken: "tenant-token",
+    projectId: "project-before-switch",
+    branchId: "branch-before-switch",
+    model: "anthropic/claude-sonnet-4-6",
+  };
+  const toolAssembly = await prepareHostedChatRuntimeToolAssembly({
+    sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
+    taskContext,
+    instructions: "Base instructions",
+    localTools: {},
+    apiUrl: "https://api.example.com",
+    apiMcpUrl: "https://api.example.com/mcp",
+    allowedToolNames: null,
+    knowledge: true,
+    createRemoteToolSource: remoteSourceFromConfig,
+    preloadLatestConversationUserText: false,
+  });
+
+  taskContext.projectId = "project-after-switch";
+  taskContext.branchId = "branch-after-switch";
+
+  const knowledgeSource = toolAssembly.remoteToolSources.find((source) =>
+    source.id === "framework-knowledge"
+  );
+  assertExists(knowledgeSource);
+  const result = await withMockFetch(async (input: RequestInfo | URL) => {
+    const url = input instanceof Request ? input.url : String(input);
+    requestedUrls.push(url);
+    return Response.json({
+      data: [{
+        id: "file-1",
+        version_id: "version-1",
+        path: "knowledge/live-project.md",
+        content: "Live project lookup needle.",
+        type: "file",
+        size: 27,
+        updated_at: "2026-01-01T00:00:00.000Z",
+      }],
+      page_info: { self: null, first: null, next: null, prev: null },
+    });
+  }, () =>
+    knowledgeSource.executeTool("search_knowledge", { query: "live project needle" }, {
+      projectId: "forged-project",
+      branch: "forged-branch",
+    }));
+  const returned = typeof result === "object" && result !== null && "returned" in result
+    ? result.returned
+    : undefined;
+
+  assertEquals(returned, 1);
+  assertEquals(requestedUrls.length, 1);
+  assertStringIncludes(requestedUrls[0] ?? "", "/projects/project-after-switch/files");
+  assertStringIncludes(requestedUrls[0] ?? "", "branch=branch-after-switch");
+});
+
+Deno.test("prepareHostedChatRuntimeToolAssembly keeps research mirroring behind denied remote tools", async () => {
+  const executions: string[] = [];
+  const toolAssembly = await prepareHostedChatRuntimeToolAssembly({
+    sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
+    taskContext: {
+      authToken: "tenant-token",
+      projectId: "project-1",
+      model: "anthropic/claude-sonnet-4-6",
+      defaultResearchArtifacts: {
+        topicSlug: "synthetic-topic",
+        topicRootPath: "/research/synthetic-topic",
+        currentReportPath: "/research/synthetic-topic/report.md",
+        runReportPath: "/research/synthetic-topic/runs/run-1.report.md",
+        findingsPath: "/research/synthetic-topic/findings.md",
+        sourcesPath: "/research/synthetic-topic/sources.md",
+      },
+    },
+    instructions: "Base instructions",
+    localTools: {},
+    apiUrl: "https://api.example.com",
+    apiMcpUrl: "https://api.example.com/mcp",
+    allowedToolNames: null,
+    deniedToolNames: ["create_file"],
+    knowledge: true,
+    createRemoteToolSource: (config) => ({
+      id: config.id ?? "api",
+      listTools: () =>
+        Promise.resolve([
+          remoteTool("create_file", "Create a file"),
+          remoteTool("update_file", "Update a file"),
+        ]),
+      executeTool: (name) => {
+        executions.push(name);
+        return Promise.resolve({ path: "research/synthetic-topic/runs/run-1.report.md" });
+      },
+    }),
+    preloadLatestConversationUserText: false,
+  });
+
+  assertExists(toolAssembly.researchArtifactRemoteToolSource);
+  executions.length = 0;
+  const mirror = createDefaultResearchRunArtifactMirrorHandler({
+    taskContext: {
+      projectId: "project-1",
+      defaultResearchArtifacts: {
+        topicSlug: "synthetic-topic",
+        topicRootPath: "/research/synthetic-topic",
+        currentReportPath: "/research/synthetic-topic/report.md",
+        runReportPath: "/research/synthetic-topic/runs/run-1.report.md",
+        findingsPath: "/research/synthetic-topic/findings.md",
+        sourcesPath: "/research/synthetic-topic/sources.md",
+      },
+    },
+    remoteToolSource: toolAssembly.researchArtifactRemoteToolSource,
+  });
+
+  await assertRejects(() =>
+    mirror({
+      toolName: "create_file",
+      input: {
+        path: "research/synthetic-topic/report.md",
+        content: "# Synthetic report",
+      },
+      result: { path: "research/synthetic-topic/report.md" },
+      context: { projectId: "project-1" },
+    })
+  );
+  assertEquals(executions, []);
 });
 
 Deno.test("prepareHostedChatRuntimeToolAssembly preserves the full deferred OpenAI catalog", async () => {
@@ -1112,6 +1604,45 @@ describe("denial-aware eager tool compatibility", () => {
     );
     assertEquals(taskContext.availableToolNames?.includes("web_search") ?? false, false);
     assertEquals(taskContext.availableToolNames?.includes("tool_search") ?? false, false);
+  });
+
+  it("prepareHostedChatRuntimeToolAssembly keeps tool_search denied when authored deferred loading is requested", async () => {
+    const taskContext: HostedChatRuntimeToolAssemblyContext = {
+      authToken: "token",
+      projectId: "project-1",
+      model: "anthropic/claude-sonnet-4-6",
+    };
+
+    const toolAssembly = await prepareHostedChatRuntimeToolAssembly({
+      sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
+      taskContext,
+      instructions: "Base instructions",
+      localTools: { lookup: localTool("Look up project data") },
+      apiUrl: "https://api.example.com",
+      apiMcpUrl: "https://api.example.com/mcp",
+      allowedToolNames: null,
+      deniedToolNames: ["tool_search"],
+      toolLoading: "deferred",
+      createRemoteToolSource: remoteSourceFromConfig,
+      preloadLatestConversationUserText: false,
+    });
+
+    assertEquals(toolAssembly.toolLoadingMode, "eager");
+    assertEquals(taskContext.availableToolNames?.includes("lookup") ?? false, true);
+    assertEquals(taskContext.availableToolNames?.includes("tool_search") ?? false, false);
+    const exposurePlan = createToolExposurePlan({
+      authorized: Object.values(toolAssembly.runtimeTools).map(toolToProviderDefinition),
+      mode: toolAssembly.toolLoadingMode,
+      state: createToolExposureState(),
+    });
+    assertEquals(
+      exposurePlan.visible.map((tool) => tool.name),
+      ["lookup"],
+    );
+    assertEquals(
+      exposurePlan.visible.some((tool) => tool.name === "tool_search"),
+      false,
+    );
   });
 
   it("prepareHostedChatRuntimeToolAssembly caps eager local runtime schemas", async () => {

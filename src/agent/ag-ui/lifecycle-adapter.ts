@@ -36,6 +36,7 @@ const AG_UI_USAGE_METADATA_TAIL_FIELDS = [
 export interface LifecycleAgUiState {
   messageId: string;
   activeStepName: string | null;
+  activeStepId: string | null;
   stepCount: number;
   streamedToolInputIds: Set<string>;
   sawVisibleOutput: boolean;
@@ -89,6 +90,7 @@ export function createLifecycleAgUiAdapter(input: {
   const state: LifecycleAgUiState = {
     messageId: input.messageId,
     activeStepName: null,
+    activeStepId: null,
     stepCount: 0,
     streamedToolInputIds: new Set(),
     sawVisibleOutput: false,
@@ -148,9 +150,10 @@ export function createLifecycleAgUiAdapter(input: {
       case "step_start": {
         state.stepCount += 1;
         state.activeStepName = `step-${state.stepCount}`;
+        state.activeStepId = crypto.randomUUID();
         return [{
           event: "StepStarted",
-          payload: { stepName: state.activeStepName },
+          payload: { stepName: state.activeStepName, stepId: state.activeStepId },
         }];
       }
       case "text_start":
@@ -187,6 +190,7 @@ export function createLifecycleAgUiAdapter(input: {
           event: "ReasoningMessageStart",
           payload: {
             messageId: startReasoning(),
+            contentId: event.id,
             role: "reasoning",
           },
         }];
@@ -199,13 +203,18 @@ export function createLifecycleAgUiAdapter(input: {
         if (activeReasoningMessageId === null) {
           events.push({
             event: "ReasoningMessageStart",
-            payload: { messageId: startReasoning(), role: "reasoning" },
+            payload: {
+              messageId: startReasoning(),
+              contentId: event.id,
+              role: "reasoning",
+            },
           });
         }
         events.push({
           event: "ReasoningMessageContent",
           payload: {
             messageId: continueReasoning(),
+            contentId: event.id,
             delta: event.delta,
           },
         });
@@ -215,7 +224,7 @@ export function createLifecycleAgUiAdapter(input: {
         const messageId = endReasoning();
         return messageId === null ? [] : [{
           event: "ReasoningMessageEnd",
-          payload: { messageId },
+          payload: { messageId, contentId: event.id },
         }];
       }
       case "tool_input_start":
@@ -303,13 +312,19 @@ export function createLifecycleAgUiAdapter(input: {
             isError: true,
           },
         }];
-      case "step_finish":
+      case "step_finish": {
+        const stepName = state.activeStepName ?? `step-${state.stepCount || 1}`;
+        const stepId = state.activeStepId ?? undefined;
+        state.activeStepName = null;
+        state.activeStepId = null;
         return [{
           event: "StepFinished",
           payload: {
-            stepName: state.activeStepName ?? `step-${state.stepCount || 1}`,
+            stepName,
+            ...(stepId !== undefined ? { stepId } : {}),
           },
         }];
+      }
       case "custom": {
         state.sawVisibleOutput = true;
         const value = safeJson(event.data);

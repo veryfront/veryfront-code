@@ -161,6 +161,7 @@ export const getExecutorAgentStreamInputSchema = defineSchema((v) => {
   ]);
   return v.object({
     preparedRuntimeHandle: getExecutorPreparedRuntimeHandleSchema(),
+    toolCallAdmissions: v.literal(true).optional(),
     messages: v.array(
       v.object({
         id: v.string(),

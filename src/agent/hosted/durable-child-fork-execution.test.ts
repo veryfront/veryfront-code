@@ -21,6 +21,7 @@ import {
   executeHostedLocalChildInvoke,
   getHostedDurableChildInvokeResultSchema,
   HostedChildRunFinalizationError,
+  type HostedDurableChildRuntimeDependencies,
   type HostedDurableChildSetupFailure,
   type HostedDurableChildSuccess,
   type HostedDurableChildTerminalFailure,
@@ -91,6 +92,8 @@ type InjectedRunLifecycle = NonNullable<
 
 function runForkWithInjectedLifecycle(input: {
   replay?: BootstrapHostedChildRunResult;
+  childCanonicalRunId?: string;
+  createLifecycleAdapter?: HostedDurableChildRuntimeDependencies["createLifecycleAdapter"];
   runLifecycle: () => ReturnType<InjectedRunLifecycle>;
   buildTerminalFailureResult: (failure: HostedDurableChildTerminalFailure) => DurableChildResult;
   onLifecycleFinalized?: Parameters<
@@ -106,7 +109,7 @@ function runForkWithInjectedLifecycle(input: {
       return Promise.resolve(Response.json(
         {
           token: CHILD_RUN_EVENT_TOKEN,
-          run_id: "88888888-8888-4888-8888-888888888888",
+          run_id: input.childCanonicalRunId ?? INJECTED_CHILD_IDENTIFIERS.childRunId,
           token_type: "Bearer",
           expires_at: "2026-10-04T00:00:00Z",
           permissions: ["run.events.append"],
@@ -145,8 +148,16 @@ function runForkWithInjectedLifecycle(input: {
         onLifecycleFinalized: input.onLifecycleFinalized,
         runtime: {
           bootstrapChildRun: () =>
-            Promise.resolve(input.replay ?? { ...INJECTED_CHILD_IDENTIFIERS, status: "running" }),
-          createLifecycleAdapter: () => ({}),
+            Promise.resolve(
+              input.replay ?? {
+                ...INJECTED_CHILD_IDENTIFIERS,
+                ...(input.childCanonicalRunId !== undefined
+                  ? { childCanonicalRunId: input.childCanonicalRunId }
+                  : {}),
+                status: "running",
+              },
+            ),
+          createLifecycleAdapter: input.createLifecycleAdapter ?? (() => ({})),
           runLifecycle: input.runLifecycle as InjectedRunLifecycle,
         },
       }),
@@ -157,6 +168,41 @@ describe("agent/hosted-durable-child-fork-execution", () => {
   afterEach(() => {
     globalThis.fetch = originalFetch;
   });
+
+  for (const childCanonicalRunId of ["99999999-9999-4999-8999-999999999999", undefined]) {
+    it(`forwards only admitted canonical identity into lifecycle progress (${childCanonicalRunId ?? "absent"})`, async () => {
+      let adapterCalls = 0;
+      const localResult = baseSuccessResult();
+      const result = await runForkWithInjectedLifecycle({
+        childCanonicalRunId,
+        createLifecycleAdapter: ({ progress }) => {
+          adapterCalls += 1;
+          assertEquals(progress.childRunId, INJECTED_CHILD_IDENTIFIERS.childRunId);
+          assertEquals(progress.childCanonicalRunId, childCanonicalRunId);
+          assertEquals(
+            Object.hasOwn(progress, "childCanonicalRunId"),
+            childCanonicalRunId !== undefined,
+          );
+          return {};
+        },
+        runLifecycle: () =>
+          Promise.resolve({
+            status: "completed" as const,
+            result: localResult,
+            snapshot: buildChildRunExecutionSnapshot(localResult),
+            terminalState: {
+              status: "completed" as const,
+              terminalErrorCode: null,
+              terminalErrorMessage: null,
+            },
+          }),
+        buildTerminalFailureResult: (failure) => ({ status: "terminal_failed", failure }),
+      });
+
+      assertEquals(adapterCalls, 1);
+      assertEquals(result.status, "completed");
+    });
+  }
 
   it("builds standard hosted invoke failure, terminal failure, and success results", () => {
     const identifiers = {

@@ -1,7 +1,7 @@
 ---
 title: "veryfront/skill"
 description: "Agent skills. Public API for the agent skills system. Skills are project-level capabilities defined as SKILL.md files following the agentskills.io specification."
-order: 38
+order: 39
 ---
 
 ## Import
@@ -88,6 +88,7 @@ validateSkillMetadata(parsed.frontmatter, "review");
 | `SkillScriptResult`        | Result from executing a skill script.                                    | [source](https://github.com/veryfront/veryfront-code/blob/main/src/skill/types.ts)           |
 | `SkillScriptSnapshot`      | Bounded, validated script tree used to preserve same-directory imports.  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/skill/types.ts)           |
 | `SkillScriptSnapshotFile`  | One validated text file retained in an executable skill-script snapshot. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/skill/types.ts)           |
+| `SkillSelector`            |                                                                          | [source](https://github.com/veryfront/veryfront-code/blob/main/src/skill/selector.ts)        |
 
 ### Constants
 

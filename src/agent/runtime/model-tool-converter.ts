@@ -32,6 +32,7 @@ import {
 export interface ConvertToolsToRuntimeToolsOptions {
   model?: string;
   providerTools?: string[];
+  requiredToolNames?: readonly string[];
 }
 
 const intrinsicReflectApply = Reflect.apply;
@@ -121,6 +122,7 @@ export function convertToolsToRuntimeTools(
   );
   const compatibleTools = selectProviderCompatibleTools(tools, {
     model: options?.model,
+    requiredToolNames: options?.requiredToolNames,
   });
   // One budget for the whole tool set: a per-schema cap bounds each tool in isolation,
   // but a source advertising hundreds of admissible schemas would otherwise multiply

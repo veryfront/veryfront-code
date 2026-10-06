@@ -420,6 +420,14 @@ Deno.test("resolveRuntimeSkillsForAgent applies owner visibility and short-name 
     }).map((skill) => skill.id),
     ["cite", "researcher--helper"],
   );
+  assertEquals(
+    resolveRuntimeSkillsForAgent({
+      skills: [globalCite, ownedCite, otherOwned],
+      agentId: "researcher",
+      selector: { "*": true, "writer--*": false },
+    }).map((skill) => skill.id),
+    ["cite", "researcher--helper"],
+  );
 });
 
 Deno.test("resolveRuntimeSkillSelectorForAgent returns a deterministic strict snapshot", () => {
@@ -522,7 +530,7 @@ Deno.test("resolveRuntimeSkillSelectorForAgent matches the canonical selector ma
 
   const skills = [global, bundled, ownCite, otherStyle, globalCite];
   const cases: Array<{
-    selector: true | string[] | undefined;
+    selector: Parameters<typeof resolveRuntimeSkillSelectorForAgent>[0]["selector"];
     expectedPolicy: object;
     expectedIds: string[];
   }> = [
@@ -545,6 +553,28 @@ Deno.test("resolveRuntimeSkillSelectorForAgent matches the canonical selector ma
       selector: ["bundled", "cite", "global", "bundled"],
       expectedPolicy: { kind: "allowlist", entries: ["bundled", "cite", "global", "bundled"] },
       expectedIds: ["bundled", "agent--cite", "global"],
+    },
+    {
+      selector: "cite",
+      expectedPolicy: { kind: "allowlist", entries: ["cite"] },
+      expectedIds: ["agent--cite"],
+    },
+    {
+      selector: { "*": true, "other-*": false, cite: true },
+      expectedPolicy: {
+        kind: "rules",
+        entries: [
+          { pattern: "*", allow: true },
+          { pattern: "other-*", allow: false },
+          { pattern: "cite", allow: true },
+        ],
+      },
+      expectedIds: ["global", "bundled", "agent--cite", "cite"],
+    },
+    {
+      selector: { global: false },
+      expectedPolicy: { kind: "rules", entries: [{ pattern: "global", allow: false }] },
+      expectedIds: [],
     },
   ];
 

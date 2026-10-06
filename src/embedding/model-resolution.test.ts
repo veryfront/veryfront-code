@@ -81,6 +81,16 @@ describe("embedding/model-resolution", () => {
       );
     });
 
+    it("uses the local default when cloud bootstrap lacks a project slug", () => {
+      setEnv("VERYFRONT_API_TOKEN", "vf_embedding_test");
+      setEnv("VERYFRONT_SERVICE_LAYER", "cloud");
+
+      assertEquals(
+        resolveConfiguredEmbeddingModel(),
+        "local/all-MiniLM-L6-v2",
+      );
+    });
+
     it("uses VERYFRONT_DEFAULT_EMBEDDING_MODEL as an override", () => {
       setEnv("VERYFRONT_API_TOKEN", "vf_embedding_test");
       setEnv("VERYFRONT_PROJECT_SLUG", "embedding-test-project");

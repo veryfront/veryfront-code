@@ -4,6 +4,7 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { join, toFileUrl } from "#veryfront/compat/path";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
+import { waitFor } from "#veryfront/testing/deno-compat.ts";
 import {
   __clearInFlightHttpFetches,
   __injectCachesForTests,
@@ -21,13 +22,12 @@ import { ModuleSourceCapture } from "#veryfront/transforms/esm/module-source-cap
 const limits = { maxEntries: 8, maxBytes: 16_384 };
 const code = 'export const load = () => import("https://example.invalid/entry.mjs");';
 
-async function waitForSharedCall(cacheDir: string): Promise<void> {
-  const fs = createFileSystem();
-  for (let turn = 0; turn < 200; turn++) {
-    if (__getMaxInFlightHttpFetchWaiterCountForTests() === 2) return;
-    await fs.stat(cacheDir);
-  }
-  throw new Error("Both callers must join the shared fetch before it completes");
+function waitForSharedCall(): Promise<void> {
+  return waitFor(() => __getMaxInFlightHttpFetchWaiterCountForTests() === 2, {
+    timeout: 1000,
+    interval: 1,
+    message: "Both callers must join the shared fetch before it completes",
+  });
 }
 
 async function withCache(run: (cacheDir: string) => Promise<void>): Promise<void> {
@@ -130,7 +130,7 @@ describe("HTTP module source capture", () => {
         await started.promise;
         const normal = cacheHttpImportsToLocal(code, options);
         try {
-          await waitForSharedCall(cacheDir);
+          await waitForSharedCall();
           release.resolve();
           const [result] = await Promise.all([normal, rejected]);
           assertEquals(fetches, 1, "capture failure must not poison the shared publication");
@@ -168,7 +168,7 @@ describe("HTTP module source capture", () => {
         await started.promise;
         const normal = cacheHttpImportsToLocal(code, options);
         try {
-          await waitForSharedCall(cacheDir);
+          await waitForSharedCall();
           abort.abort(new Error("capture cancelled"));
           release.resolve();
           const [result] = await Promise.all([normal, rejected]);

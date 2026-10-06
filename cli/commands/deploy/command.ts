@@ -53,6 +53,8 @@ export const DeployArgsSchema = lazySchema(getDeployArgsSchema);
 type ParsedDeployOptions = InferSchema<ReturnType<typeof getDeployArgsSchema>>;
 export type DeployOptions = Omit<ParsedDeployOptions, "skipSourcePush"> & {
   skipSourcePush?: boolean;
+  /** Internal option for composed commands that own their surrounding JSON envelope. */
+  suppressJsonOutput?: boolean;
   /** Deploy Execution override for tests; production uses createDeployProject(). */
   deployProject?: DeployProject;
 };
@@ -224,8 +226,10 @@ async function deployCommandHuman(options: DeployOptions): Promise<DeployResult 
 
 async function deployCommandJson(options: DeployOptions): Promise<DeployResult | null> {
   try {
+    const emit = !options.suppressJsonOutput;
     const outcome = await deployRunner(options).execute(toDeployRequest(options), {
       onEvent(event) {
+        if (!emit) return;
         if (event.kind === "warning") {
           streamJsonLine({
             type: "warning",
@@ -243,33 +247,42 @@ async function deployCommandJson(options: DeployOptions): Promise<DeployResult |
     });
 
     if (outcome.kind === "dry-run") {
-      streamJsonLine({
-        type: "result",
-        success: true,
-        data: { dryRun: true, ...outcome.plan },
-      });
+      if (emit) {
+        streamJsonLine({
+          type: "result",
+          success: true,
+          data: { dryRun: true, ...outcome.plan },
+        });
+      }
       return null;
     }
 
     const result = deployedResult(outcome);
-    streamJsonLine({
-      type: "result",
-      success: true,
-      data: result,
-    });
+    if (emit) {
+      streamJsonLine({
+        type: "result",
+        success: true,
+        data: result,
+      });
+    }
     return result;
   } catch (error) {
     const vfErr = error instanceof VeryfrontError ? error : UNKNOWN_ERROR.create({
       detail: error instanceof Error ? error.message : String(error),
       cause: error instanceof Error ? error : undefined,
     });
-    streamJsonLine(
-      createStreamErrorResult({
-        code: "RUNTIME_ERROR",
-        slug: vfErr.slug,
-        message: vfErr.detail ?? vfErr.message,
-      }),
-    );
+    if (options.suppressJsonOutput) {
+      throw vfErr;
+    }
+    if (!options.suppressJsonOutput) {
+      streamJsonLine(
+        createStreamErrorResult({
+          code: "RUNTIME_ERROR",
+          slug: vfErr.slug,
+          message: vfErr.detail ?? vfErr.message,
+        }),
+      );
+    }
     exitProcess(1);
     return null;
   }

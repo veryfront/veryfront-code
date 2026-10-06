@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertMatch, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   createStreamTransformState,
@@ -8,6 +8,13 @@ import {
   mapRuntimeEventToAgUi,
   parseSseJsonEvents,
 } from "./ag-ui-sse.ts";
+import { createAgUiChatEventDecoderState, decodeAgUiSseChunk } from "#veryfront/chat/ag-ui.ts";
+
+function requireStepId(value: unknown): string {
+  if (typeof value !== "string") throw new Error("expected stepId");
+  assertMatch(value, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
+  return value;
+}
 
 describe("internal-agents/ag-ui-sse", () => {
   const CANONICAL_TOOL_CALL_ID = "tool-call-1";
@@ -159,13 +166,13 @@ describe("internal-agents/ag-ui-sse", () => {
         payload: { toolCallId: "tool-2", content: { ok: true }, isError: false },
       }],
     );
-    assertEquals(
-      mapRuntimeEventToAgUi(state, { type: "step-start" }),
-      [{ event: "StepStarted", payload: { stepName: "step-1" } }],
-    );
+    const stepStart = mapRuntimeEventToAgUi(state, { type: "step-start" });
+    assertEquals(stepStart[0]?.event, "StepStarted");
+    assertEquals(stepStart[0]?.payload.stepName, "step-1");
+    const stepId = requireStepId(stepStart[0]?.payload.stepId);
     assertEquals(
       mapRuntimeEventToAgUi(state, { type: "step-end" }),
-      [{ event: "StepFinished", payload: { stepName: "step-1" } }],
+      [{ event: "StepFinished", payload: { stepName: "step-1", stepId } }],
     );
     assertEquals(
       mapRuntimeEventToAgUi(state, {
@@ -281,7 +288,11 @@ describe("internal-agents/ag-ui-sse", () => {
       mapRuntimeEventToAgUi(state, { type: "reasoning-start", id: "reasoning-1" }),
       [{
         event: "ReasoningMessageStart",
-        payload: { messageId: "assistant-3:reasoning:0", role: "reasoning" },
+        payload: {
+          messageId: "assistant-3:reasoning:0",
+          contentId: "reasoning-1",
+          role: "reasoning",
+        },
       }],
     );
     assertEquals(
@@ -292,16 +303,73 @@ describe("internal-agents/ag-ui-sse", () => {
       }),
       [{
         event: "ReasoningMessageContent",
-        payload: { messageId: "assistant-3:reasoning:0", delta: "thinking..." },
+        payload: {
+          messageId: "assistant-3:reasoning:0",
+          contentId: "reasoning-1",
+          delta: "thinking...",
+        },
       }],
     );
     assertEquals(
       mapRuntimeEventToAgUi(state, { type: "reasoning-end", id: "reasoning-1" }),
       [{
         event: "ReasoningMessageEnd",
-        payload: { messageId: "assistant-3:reasoning:0" },
+        payload: { messageId: "assistant-3:reasoning:0", contentId: "reasoning-1" },
       }],
     );
+  });
+
+  it("preserves runtime reasoning ids through AG-UI formatting and public decoding", () => {
+    const state = createStreamTransformState({ nowMs: null, epochMs: null });
+    const decoderState = createAgUiChatEventDecoderState();
+
+    mapRuntimeEventToAgUi(state, { type: "message-start", messageId: "assistant-runtime" });
+    const encoded = [
+      { type: "reasoning-start", id: "producer-segment-a" } as const,
+      { type: "reasoning-delta", id: "producer-segment-a", delta: "First" } as const,
+      { type: "reasoning-end", id: "producer-segment-a" } as const,
+      { type: "reasoning-start", id: "producer-segment-b" } as const,
+      { type: "reasoning-delta", id: "producer-segment-b", delta: "Second" } as const,
+      { type: "reasoning-end", id: "producer-segment-b" } as const,
+    ].flatMap((event) => mapRuntimeEventToAgUi(state, event));
+    const sse = encoded.map((entry) =>
+      new TextDecoder().decode(
+        formatAgUiEvent(entry.event, entry.payload),
+      )
+    ).join("");
+
+    const decoded = decodeAgUiSseChunk(decoderState, sse).events.flatMap((entry) =>
+      entry.chatEvents
+    );
+
+    assertEquals(decoded, [
+      {
+        type: "reasoning-start",
+        id: "agui-reasoning:assistant-runtime%3Areasoning%3A0:producer-segment-a",
+      },
+      {
+        type: "reasoning-delta",
+        id: "agui-reasoning:assistant-runtime%3Areasoning%3A0:producer-segment-a",
+        delta: "First",
+      },
+      {
+        type: "reasoning-end",
+        id: "agui-reasoning:assistant-runtime%3Areasoning%3A0:producer-segment-a",
+      },
+      {
+        type: "reasoning-start",
+        id: "agui-reasoning:assistant-runtime%3Areasoning%3A1:producer-segment-b",
+      },
+      {
+        type: "reasoning-delta",
+        id: "agui-reasoning:assistant-runtime%3Areasoning%3A1:producer-segment-b",
+        delta: "Second",
+      },
+      {
+        type: "reasoning-end",
+        id: "agui-reasoning:assistant-runtime%3Areasoning%3A1:producer-segment-b",
+      },
+    ]);
   });
 
   it("finalizes open assistant text with usage metadata", () => {
@@ -386,6 +454,24 @@ describe("internal-agents/ag-ui-sse", () => {
       new TextDecoder().decode(payload),
       'event: RunStarted\ndata: {"runId":"run_1","threadId":"thread-1","agentId":"assistant-1","emittedAt":8}\n\n',
     );
+  });
+
+  it("keeps legacy reasoning frames valid and rejects invalid segment ids", () => {
+    const payloads = [
+      { event: "ReasoningMessageStart", fields: { role: "reasoning" } },
+      { event: "ReasoningMessageContent", fields: { delta: "Thinking" } },
+      { event: "ReasoningMessageEnd", fields: {} },
+    ];
+    for (const { event, fields } of payloads) {
+      const legacy = { messageId: "message-a", ...fields, emittedAt: 0 };
+      assertEquals(
+        new TextDecoder().decode(formatAgUiEvent(event, legacy)),
+        `event: ${event}\ndata: ${JSON.stringify(legacy)}\n\n`,
+      );
+      for (const contentId of ["", 42]) {
+        assertThrows(() => formatAgUiEvent(event, { ...legacy, contentId }));
+      }
+    }
   });
 
   it("declares RuntimeEventRecorded in the payload allow-list with extra fields intact", () => {
@@ -485,12 +571,17 @@ describe("internal-agents/ag-ui-sse", () => {
     // missing through two releases after it was already being stamped, so
     // both halves are pinned: the field survives, and nothing else does.
     const stamped = new TextDecoder().decode(
-      formatAgUiEvent("StepStarted", { stepName: "step-1", elapsedMs: 42 }),
+      formatAgUiEvent("StepStarted", { stepName: "step-1", stepId: "step-exact", elapsedMs: 42 }),
     );
     assertEquals(
       stamped.includes('"elapsedMs":42'),
       true,
       `elapsedMs must reach the wire, got ${JSON.stringify(stamped)}`,
+    );
+    assertEquals(
+      stamped.includes('"stepId":"step-exact"'),
+      true,
+      `stepId must reach the wire, got ${JSON.stringify(stamped)}`,
     );
     assertEquals(
       /"emittedAt":\d+/.test(stamped),

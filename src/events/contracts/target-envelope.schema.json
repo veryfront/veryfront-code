@@ -1,0 +1,1150 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:veryfront:run-events:target:envelope:1",
+  "title": "Agent Events Protocol target CloudEvent",
+  "type": "object",
+  "properties": {
+    "specversion": {
+      "const": "1.0"
+    },
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "format": "ce-string"
+    },
+    "source": {
+      "type": "string",
+      "minLength": 1,
+      "format": "uri-reference"
+    },
+    "type": {
+      "enum": [
+        "com.veryfront.run.requested",
+        "com.veryfront.run.enqueued",
+        "com.veryfront.run.started",
+        "com.veryfront.run.succeeded",
+        "com.veryfront.run.failed",
+        "com.veryfront.run.cancelled",
+        "com.veryfront.run.log.captured",
+        "com.veryfront.child-run.reported",
+        "com.veryfront.step.started",
+        "com.veryfront.step.succeeded",
+        "com.veryfront.step.failed",
+        "com.veryfront.step.cancelled",
+        "com.veryfront.step.ended",
+        "com.veryfront.tool-call.started",
+        "com.veryfront.tool-call.arguments.delta.emitted",
+        "com.veryfront.tool-call.arguments.ended",
+        "com.veryfront.tool-call.refused",
+        "com.veryfront.tool-call.status.reported",
+        "com.veryfront.tool-call.result.recorded",
+        "com.veryfront.tool-call.result.submitted",
+        "com.veryfront.tool-call.result.delivery.failed",
+        "com.veryfront.model-call.input.captured",
+        "com.veryfront.model-call.usage.recorded",
+        "com.veryfront.input-request.created",
+        "com.veryfront.input-request.updated",
+        "com.veryfront.message.text.started",
+        "com.veryfront.message.text.delta.emitted",
+        "com.veryfront.message.text.ended",
+        "com.veryfront.message.reasoning.started",
+        "com.veryfront.message.reasoning.delta.emitted",
+        "com.veryfront.message.reasoning.ended",
+        "com.veryfront.message.url.referenced",
+        "com.veryfront.message.document.referenced",
+        "com.veryfront.message.file.attached",
+        "com.veryfront.stream.heartbeat.emitted",
+        "com.veryfront.stream.closed"
+      ]
+    },
+    "datacontenttype": {
+      "const": "application/json"
+    },
+    "dataschema": {
+      "type": "string",
+      "minLength": 1,
+      "format": "uri"
+    },
+    "data": {
+      "type": "object"
+    },
+    "subject": {
+      "type": "string",
+      "minLength": 1,
+      "format": "ce-string"
+    },
+    "time": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "recordedat": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "runid": {
+      "type": "string",
+      "minLength": 1,
+      "format": "ce-string"
+    },
+    "runkind": {
+      "enum": [
+        "agent",
+        "workflow",
+        "task"
+      ]
+    },
+    "conversationid": {
+      "type": "string",
+      "minLength": 1,
+      "format": "ce-string"
+    },
+    "modelcallid": {
+      "type": "string",
+      "minLength": 1,
+      "format": "ce-string"
+    },
+    "attemptid": {
+      "type": "string",
+      "minLength": 1,
+      "format": "ce-string"
+    },
+    "traceparent": {
+      "type": "string",
+      "pattern": "^00-(?!0{32}-)[0-9a-f]{32}-(?!0{16}-)[0-9a-f]{16}-[0-9a-f]{2}$"
+    },
+    "tracestate": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512,
+      "format": "w3c-tracestate"
+    }
+  },
+  "required": [
+    "specversion",
+    "id",
+    "source",
+    "type",
+    "datacontenttype",
+    "dataschema",
+    "data"
+  ],
+  "propertyNames": {
+    "pattern": "^[a-z0-9]+$"
+  },
+  "additionalProperties": {
+    "anyOf": [
+      {
+        "type": "string",
+        "format": "ce-string"
+      },
+      {
+        "type": "boolean"
+      },
+      {
+        "type": "integer",
+        "minimum": -2147483648,
+        "maximum": 2147483647
+      }
+    ]
+  },
+  "dependentRequired": {
+    "runkind": [
+      "runid"
+    ],
+    "attemptid": [
+      "modelcallid"
+    ],
+    "tracestate": [
+      "traceparent"
+    ]
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "com.veryfront.run.requested"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "dataschema": {
+            "const": "urn:veryfront:run-events:target:payloads:1#/$defs/RunRequested"
+          },
+          "data": {
+            "$ref": "urn:veryfront:run-events:target:payloads:1#/$defs/RunRequested"
+          }
+        },
+        "required": [
+          "runid"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "com.veryfront.run.enqueued"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "dataschema": {
+            "const": "urn:veryfront:run-events:target:payloads:1#/$defs/RunEnqueued"
+          },
+          "data": {
+            "$ref": "urn:veryfront:run-events:target:payloads:1#/$defs/RunEnqueued"
+          }
+        },
+        "required": [
+          "runid"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "com.veryfront.run.started"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "dataschema": {
+            "const": "urn:veryfront:run-events:target:payloads:1#/$defs/RunStarted"
+          },
+          "data": {
+            "$ref": "urn:veryfront:run-events:target:payloads:1#/$defs/RunStarted"
+          }
+        },
+        "required": [
+          "runid"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "com.veryfront.run.succeeded"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "dataschema": {
+            "const": "urn:veryfront:run-events:target:payloads:1#/$defs/RunSucceeded"
+          },
+          "data": {
+            "$ref": "urn:veryfront:run-events:target:payloads:1#/$defs/RunSucceeded"
+          }
+        },
+        "required": [
+          "runid"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "com.veryfront.run.failed"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "dataschema": {
+            "const": "urn:veryfront:run-events:target:payloads:1#/$defs/RunFailed"
+          },
+          "data": {
+            "$ref": "urn:veryfront:run-events:target:payloads:1#/$defs/RunFailed"
+          }
+        },
+        "required": [
+          "runid"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "com.veryfront.run.cancelled"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "dataschema": {
+            "const": "urn:veryfront:run-events:target:payloads:1#/$defs/RunCancelled"
+          },
+          "data": {
+            "$ref": "urn:veryfront:run-events:target:payloads:1#/$defs/RunCancelled"
+          }
+        },
+        "required": [
+          "runid"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "com.veryfront.run.log.captured"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "dataschema": {
+            "const": "urn:veryfront:run-events:target:payloads:1#/$defs/RunLogCaptured"
+          },
+          "data": {
+            "$ref": "urn:veryfront:run-events:target:payloads:1#/$defs/RunLogCaptured"
+          }
+        },
+        "required": [
+          "runid"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "com.veryfront.child-run.reported"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "dataschema": {
+            "const": "urn:veryfront:run-events:target:payloads:1#/$defs/ChildRunReported"
+          },
+          "data": {
+            "$ref": "urn:veryfront:run-events:target:payloads:1#/$defs/ChildRunReported"
+          }
+        },
+        "required": [
+          "runid"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "com.veryfront.step.started"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "dataschema": {
+            "const": "urn:veryfront:run-events:target:payloads:1#/$defs/StepStarted"
+          },
+          "data": {
+            "$ref": "urn:veryfront:run-events:target:payloads:1#/$defs/StepStarted"
+          }
+        },
+        "required": [
+          "runid"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "com.veryfront.step.succeeded"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "dataschema": {
+            "const": "urn:veryfront:run-events:target:payloads:1#/$defs/StepSucceeded"
+          },
+          "data": {
+            "$ref": "urn:veryfront:run-events:target:payloads:1#/$defs/StepSucceeded"
+          }
+        },
+        "required": [
+          "runid"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "com.veryfront.step.failed"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "dataschema": {
+            "const": "urn:veryfront:run-events:target:payloads:1#/$defs/StepFailed"
+          },
+          "data": {
+            "$ref": "urn:veryfront:run-events:target:payloads:1#/$defs/StepFailed"
+          }
+        },
+        "required": [
+          "runid"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "com.veryfront.step.cancelled"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "dataschema": {
+            "const": "urn:veryfront:run-events:target:payloads:1#/$defs/StepCancelled"
+          },
+          "data": {
+            "$ref": "urn:veryfront:run-events:target:payloads:1#/$defs/StepCancelled"
+          }
+        },
+        "required": [
+          "runid"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "com.veryfront.step.ended"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "dataschema": {
+            "const": "urn:veryfront:run-events:target:payloads:1#/$defs/StepEnded"
+          },
+          "data": {
+            "$ref": "urn:veryfront:run-events:target:payloads:1#/$defs/StepEnded"
+          }
+        },
+        "required": [
+          "runid"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "com.veryfront.tool-call.started"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "dataschema": {
+            "const": "urn:veryfront:run-events:target:payloads:1#/$defs/ToolCallStarted"
+          },
+          "data": {
+            "$ref": "urn:veryfront:run-events:target:payloads:1#/$defs/ToolCallStarted"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "com.veryfront.tool-call.arguments.delta.emitted"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "dataschema": {
+            "const": "urn:veryfront:run-events:target:payloads:1#/$defs/ToolCallArgumentsDeltaEmitted"
+          },
+          "data": {
+            "$ref": "urn:veryfront:run-events:target:payloads:1#/$defs/ToolCallArgumentsDeltaEmitted"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "com.veryfront.tool-call.arguments.ended"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "dataschema": {
+            "const": "urn:veryfront:run-events:target:payloads:1#/$defs/ToolCallArgumentsEnded"
+          },
+          "data": {
+            "$ref": "urn:veryfront:run-events:target:payloads:1#/$defs/ToolCallArgumentsEnded"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "com.veryfront.tool-call.refused"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "dataschema": {
+            "const": "urn:veryfront:run-events:target:payloads:1#/$defs/ToolCallRefused"
+          },
+          "data": {
+            "$ref": "urn:veryfront:run-events:target:payloads:1#/$defs/ToolCallRefused"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "com.veryfront.tool-call.status.reported"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "dataschema": {
+            "const": "urn:veryfront:run-events:target:payloads:1#/$defs/ToolCallStatusReported"
+          },
+          "data": {
+            "$ref": "urn:veryfront:run-events:target:payloads:1#/$defs/ToolCallStatusReported"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "com.veryfront.tool-call.result.recorded"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "dataschema": {
+            "const": "urn:veryfront:run-events:target:payloads:1#/$defs/ToolCallResultRecorded"
+          },
+          "data": {
+            "$ref": "urn:veryfront:run-events:target:payloads:1#/$defs/ToolCallResultRecorded"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "com.veryfront.tool-call.result.submitted"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "dataschema": {
+            "const": "urn:veryfront:run-events:target:payloads:1#/$defs/ToolCallResultSubmitted"
+          },
+          "data": {
+            "$ref": "urn:veryfront:run-events:target:payloads:1#/$defs/ToolCallResultSubmitted"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "com.veryfront.tool-call.result.delivery.failed"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "dataschema": {
+            "const": "urn:veryfront:run-events:target:payloads:1#/$defs/ToolCallResultDeliveryFailed"
+          },
+          "data": {
+            "$ref": "urn:veryfront:run-events:target:payloads:1#/$defs/ToolCallResultDeliveryFailed"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "com.veryfront.model-call.input.captured"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "dataschema": {
+            "const": "urn:veryfront:run-events:target:payloads:1#/$defs/ModelCallInputCaptured"
+          },
+          "data": {
+            "$ref": "urn:veryfront:run-events:target:payloads:1#/$defs/ModelCallInputCaptured"
+          }
+        },
+        "required": [
+          "modelcallid"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "com.veryfront.model-call.usage.recorded"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "dataschema": {
+            "const": "urn:veryfront:run-events:target:payloads:1#/$defs/ModelCallUsageRecorded"
+          },
+          "data": {
+            "$ref": "urn:veryfront:run-events:target:payloads:1#/$defs/ModelCallUsageRecorded"
+          }
+        },
+        "required": [
+          "modelcallid"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "com.veryfront.input-request.created"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "dataschema": {
+            "const": "urn:veryfront:run-events:target:payloads:1#/$defs/InputRequestCreated"
+          },
+          "data": {
+            "$ref": "urn:veryfront:run-events:target:payloads:1#/$defs/InputRequestCreated"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "com.veryfront.input-request.updated"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "dataschema": {
+            "const": "urn:veryfront:run-events:target:payloads:1#/$defs/InputRequestUpdated"
+          },
+          "data": {
+            "$ref": "urn:veryfront:run-events:target:payloads:1#/$defs/InputRequestUpdated"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "com.veryfront.message.text.started"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "dataschema": {
+            "const": "urn:veryfront:run-events:target:payloads:1#/$defs/MessageTextStarted"
+          },
+          "data": {
+            "$ref": "urn:veryfront:run-events:target:payloads:1#/$defs/MessageTextStarted"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "com.veryfront.message.text.delta.emitted"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "dataschema": {
+            "const": "urn:veryfront:run-events:target:payloads:1#/$defs/MessageTextDeltaEmitted"
+          },
+          "data": {
+            "$ref": "urn:veryfront:run-events:target:payloads:1#/$defs/MessageTextDeltaEmitted"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "com.veryfront.message.text.ended"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "dataschema": {
+            "const": "urn:veryfront:run-events:target:payloads:1#/$defs/MessageTextEnded"
+          },
+          "data": {
+            "$ref": "urn:veryfront:run-events:target:payloads:1#/$defs/MessageTextEnded"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "com.veryfront.message.reasoning.started"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "dataschema": {
+            "const": "urn:veryfront:run-events:target:payloads:1#/$defs/MessageReasoningStarted"
+          },
+          "data": {
+            "$ref": "urn:veryfront:run-events:target:payloads:1#/$defs/MessageReasoningStarted"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "com.veryfront.message.reasoning.delta.emitted"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "dataschema": {
+            "const": "urn:veryfront:run-events:target:payloads:1#/$defs/MessageReasoningDeltaEmitted"
+          },
+          "data": {
+            "$ref": "urn:veryfront:run-events:target:payloads:1#/$defs/MessageReasoningDeltaEmitted"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "com.veryfront.message.reasoning.ended"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "dataschema": {
+            "const": "urn:veryfront:run-events:target:payloads:1#/$defs/MessageReasoningEnded"
+          },
+          "data": {
+            "$ref": "urn:veryfront:run-events:target:payloads:1#/$defs/MessageReasoningEnded"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "com.veryfront.message.url.referenced"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "dataschema": {
+            "const": "urn:veryfront:run-events:target:payloads:1#/$defs/MessageUrlReferenced"
+          },
+          "data": {
+            "$ref": "urn:veryfront:run-events:target:payloads:1#/$defs/MessageUrlReferenced"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "com.veryfront.message.document.referenced"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "dataschema": {
+            "const": "urn:veryfront:run-events:target:payloads:1#/$defs/MessageDocumentReferenced"
+          },
+          "data": {
+            "$ref": "urn:veryfront:run-events:target:payloads:1#/$defs/MessageDocumentReferenced"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "com.veryfront.message.file.attached"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "dataschema": {
+            "const": "urn:veryfront:run-events:target:payloads:1#/$defs/MessageFileAttached"
+          },
+          "data": {
+            "$ref": "urn:veryfront:run-events:target:payloads:1#/$defs/MessageFileAttached"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "com.veryfront.stream.heartbeat.emitted"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "dataschema": {
+            "const": "urn:veryfront:run-events:target:payloads:1#/$defs/StreamHeartbeatEmitted"
+          },
+          "data": {
+            "$ref": "urn:veryfront:run-events:target:payloads:1#/$defs/StreamHeartbeatEmitted"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "com.veryfront.stream.closed"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "dataschema": {
+            "const": "urn:veryfront:run-events:target:payloads:1#/$defs/StreamClosed"
+          },
+          "data": {
+            "$ref": "urn:veryfront:run-events:target:payloads:1#/$defs/StreamClosed"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "com.veryfront.model-call.usage.recorded"
+          },
+          "data": {
+            "properties": {
+              "scope": {
+                "const": "attempt"
+              }
+            },
+            "required": [
+              "scope"
+            ]
+          }
+        },
+        "required": [
+          "type",
+          "data"
+        ]
+      },
+      "then": {
+        "required": [
+          "attemptid"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "com.veryfront.model-call.usage.recorded"
+          },
+          "data": {
+            "properties": {
+              "scope": {
+                "const": "call"
+              }
+            },
+            "required": [
+              "scope"
+            ]
+          }
+        },
+        "required": [
+          "type",
+          "data"
+        ]
+      },
+      "then": {
+        "not": {
+          "required": [
+            "attemptid"
+          ]
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "enum": [
+              "com.veryfront.stream.heartbeat.emitted",
+              "com.veryfront.stream.closed"
+            ]
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "not": {
+          "required": [
+            "recordedat"
+          ]
+        }
+      }
+    },
+    {
+      "not": {
+        "required": [
+          "vfversion"
+        ]
+      }
+    },
+    {
+      "not": {
+        "required": [
+          "extensions"
+        ]
+      }
+    },
+    {
+      "not": {
+        "required": [
+          "data_base64"
+        ]
+      }
+    },
+    {
+      "not": {
+        "required": [
+          "metadata"
+        ]
+      }
+    },
+    {
+      "not": {
+        "required": [
+          "event_id"
+        ]
+      }
+    },
+    {
+      "not": {
+        "required": [
+          "event_type"
+        ]
+      }
+    },
+    {
+      "not": {
+        "required": [
+          "payload"
+        ]
+      }
+    },
+    {
+      "not": {
+        "required": [
+          "kind"
+        ]
+      }
+    },
+    {
+      "not": {
+        "required": [
+          "legacy"
+        ]
+      }
+    },
+    {
+      "not": {
+        "required": [
+          "modelcontextid"
+        ]
+      }
+    }
+  ]
+}

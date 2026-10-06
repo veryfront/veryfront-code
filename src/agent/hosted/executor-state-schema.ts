@@ -72,6 +72,15 @@ const getSkillSelectorPolicySchema = defineSchema((v) =>
       kind: v.literal("allowlist"),
       entries: v.array(getExecutorDiscoveryIdSchema()).max(1_000),
     }).strict(),
+    v.object({
+      kind: v.literal("rules"),
+      entries: v.array(
+        v.object({
+          pattern: v.string().min(1).max(256),
+          allow: v.boolean(),
+        }).strict(),
+      ).max(1_000),
+    }).strict(),
   ])
 );
 const getRuntimeSkillDefinitionSchema = defineSchema((v) =>

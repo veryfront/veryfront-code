@@ -16,6 +16,10 @@ import {
 } from "../../../src/integrations/source-policy.ts";
 import { deleteHostSecret, getHostEnv } from "#cli/process-env";
 import { saveToken } from "../../auth/token-store.ts";
+import {
+  _resetEnvironmentConfig,
+  createTestEnvironmentConfig,
+} from "#veryfront/config/environment-config.ts";
 import { formatWorkflowDiscoveryErrors, runWorkflowCommand } from "./command.ts";
 
 const originalRedisUrl = Deno.env.get("REDIS_URL");
@@ -55,6 +59,7 @@ function restoreEnv() {
   } else {
     Deno.env.set("XDG_CONFIG_HOME", originalXdgConfigHome);
   }
+  _resetEnvironmentConfig();
 }
 
 function createEmptyDiscoveryResult(
@@ -185,8 +190,9 @@ describe("workflow command", () => {
       Deno.env.delete("VERYFRONT_PROJECT_SLUG");
       Deno.env.delete("REDIS_URL");
       Deno.env.set("XDG_CONFIG_HOME", configHome);
+      _resetEnvironmentConfig();
       Deno.env.set("VERYFRONT_RUN_RESULT_PATH", resultPath);
-      await saveToken("stored-token");
+      await saveToken("stored-token", createTestEnvironmentConfig({ xdgConfigHome: configHome }));
       await Deno.writeTextFile(
         `${projectDir}/veryfront.config.ts`,
         'export default { projectSlug: "configured-workflow-project" };\n',
