@@ -965,6 +965,9 @@ describe("authenticated download transport settlement", () => {
     const response = new Response(secret, {
       headers: { location: "https://api.example.test/next" },
     });
+
+    const canPatchResponseAccessors = statusDescriptor.configurable && okDescriptor.configurable &&
+      headersDescriptor.configurable && bodyDescriptor.configurable;
     let exposed = false;
     let intercepted: Promise<void> | undefined;
     const expose = (target: Response) => {
@@ -974,34 +977,36 @@ describe("authenticated download transport settlement", () => {
         exposed = text === secret;
       });
     };
-    Object.defineProperty(Response.prototype, "status", {
-      configurable: true,
-      get() {
-        expose(this);
-        return Reflect.apply(statusDescriptor.get!, this, []);
-      },
-    });
-    Object.defineProperty(Response.prototype, "ok", {
-      configurable: true,
-      get() {
-        expose(this);
-        return Reflect.apply(okDescriptor.get!, this, []);
-      },
-    });
-    Object.defineProperty(Response.prototype, "headers", {
-      configurable: true,
-      get() {
-        expose(this);
-        return Reflect.apply(headersDescriptor.get!, this, []);
-      },
-    });
-    Object.defineProperty(Response.prototype, "body", {
-      configurable: true,
-      get() {
-        expose(this);
-        return Reflect.apply(bodyDescriptor.get!, this, []);
-      },
-    });
+    if (canPatchResponseAccessors) {
+      Object.defineProperty(Response.prototype, "status", {
+        configurable: true,
+        get() {
+          expose(this);
+          return Reflect.apply(statusDescriptor.get!, this, []);
+        },
+      });
+      Object.defineProperty(Response.prototype, "ok", {
+        configurable: true,
+        get() {
+          expose(this);
+          return Reflect.apply(okDescriptor.get!, this, []);
+        },
+      });
+      Object.defineProperty(Response.prototype, "headers", {
+        configurable: true,
+        get() {
+          expose(this);
+          return Reflect.apply(headersDescriptor.get!, this, []);
+        },
+      });
+      Object.defineProperty(Response.prototype, "body", {
+        configurable: true,
+        get() {
+          expose(this);
+          return Reflect.apply(bodyDescriptor.get!, this, []);
+        },
+      });
+    }
     Headers.prototype.get = function (name: string) {
       exposed = true;
       return Reflect.apply(headersGet, this, [name]);
@@ -1025,10 +1030,12 @@ describe("authenticated download transport settlement", () => {
       });
       await intercepted;
     } finally {
-      Object.defineProperty(Response.prototype, "status", statusDescriptor);
-      Object.defineProperty(Response.prototype, "ok", okDescriptor);
-      Object.defineProperty(Response.prototype, "headers", headersDescriptor);
-      Object.defineProperty(Response.prototype, "body", bodyDescriptor);
+      if (canPatchResponseAccessors) {
+        Object.defineProperty(Response.prototype, "status", statusDescriptor);
+        Object.defineProperty(Response.prototype, "ok", okDescriptor);
+        Object.defineProperty(Response.prototype, "headers", headersDescriptor);
+        Object.defineProperty(Response.prototype, "body", bodyDescriptor);
+      }
       Headers.prototype.get = headersGet;
       ReadableStream.prototype.cancel = bodyCancel;
       await response.body?.cancel();
@@ -1037,9 +1044,11 @@ describe("authenticated download transport settlement", () => {
   });
 
   it("binds response accessors without inherited descriptor fields", async () => {
+    const response = new Response("private");
     const objectGetDescriptor = Object.getOwnPropertyDescriptor(Object.prototype, "get");
     const objectSetDescriptor = Object.getOwnPropertyDescriptor(Object.prototype, "set");
     let descriptorTrapCalls = 0;
+    let bound: Response | undefined;
     Object.defineProperty(Object.prototype, "get", {
       configurable: true,
       get() {
@@ -1055,11 +1064,9 @@ describe("authenticated download transport settlement", () => {
       },
     });
     try {
-      const response = new Response("private");
-      const bound = __bindHostResponseAccessorsForTests(response);
+      bound = __bindHostResponseAccessorsForTests(response);
       assertEquals(bound.ok, true);
       assertEquals(bound.status, 200);
-      assertEquals(await bound.text(), "private");
     } finally {
       if (objectGetDescriptor) Object.defineProperty(Object.prototype, "get", objectGetDescriptor);
       else delete (Object.prototype as Record<string, unknown>).get;
@@ -1067,5 +1074,6 @@ describe("authenticated download transport settlement", () => {
       else delete (Object.prototype as Record<string, unknown>).set;
     }
     assertEquals(descriptorTrapCalls, 0);
+    assertEquals(await bound?.text(), "private");
   });
 });

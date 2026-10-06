@@ -83,7 +83,7 @@ function createByteWriteView(value: Uint8Array, offset: number): Uint8Array {
 }
 
 function bindNativePromiseConstructor<T>(promise: Promise<T>): Promise<T> {
-  defineProperty(promise, "constructor", createDataDescriptor(NativePromise, false));
+  void defineProperty(promise, "constructor", createDataDescriptor(NativePromise, false));
   return promise;
 }
 
@@ -795,7 +795,7 @@ async function writeStreamExclusive(
       const byteLength = getByteLength(chunk.value);
       while (offset < byteLength) {
         signal?.throwIfAborted();
-        const written = await handle.write(createByteWriteView(chunk.value, offset));
+        const written = await handle.write(createByteWriteView(chunk.value, offset)); // NOSONAR: partial writes must be sequenced to preserve byte order and backpressure.
         if (written <= 0) throw new Error("Upload file write made no progress");
         offset += written;
       }
