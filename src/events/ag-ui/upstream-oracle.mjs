@@ -592,11 +592,24 @@ const chunkSequences = [
   },
 ];
 
-for (const [kind, chunkType, idKey, startType, contentType, extra] of [
-  ["text", "TEXT_MESSAGE_CHUNK", "messageId", "TEXT_MESSAGE_START", "TEXT_MESSAGE_CONTENT", { role: "assistant" }],
-  ["reasoning", "REASONING_MESSAGE_CHUNK", "messageId", "REASONING_MESSAGE_START", "REASONING_MESSAGE_CONTENT", { role: "reasoning" }],
-  ["tool", "TOOL_CALL_CHUNK", "toolCallId", "TOOL_CALL_START", "TOOL_CALL_ARGS", { toolCallName: "lookup" }],
-]) {
+for (
+  const [kind, chunkType, idKey, startType, contentType, extra] of [
+    ["text", "TEXT_MESSAGE_CHUNK", "messageId", "TEXT_MESSAGE_START", "TEXT_MESSAGE_CONTENT", {
+      role: "assistant",
+    }],
+    [
+      "reasoning",
+      "REASONING_MESSAGE_CHUNK",
+      "messageId",
+      "REASONING_MESSAGE_START",
+      "REASONING_MESSAGE_CONTENT",
+      { role: "reasoning" },
+    ],
+    ["tool", "TOOL_CALL_CHUNK", "toolCallId", "TOOL_CALL_START", "TOOL_CALL_ARGS", {
+      toolCallName: "lookup",
+    }],
+  ]
+) {
   const identity = { [idKey]: `${kind}-child` };
   const chunkFields = kind === "tool" ? extra : {};
   chunkSequences.push({

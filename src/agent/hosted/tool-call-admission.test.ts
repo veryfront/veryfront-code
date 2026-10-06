@@ -1,6 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assert, assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { isNode } from "#veryfront/platform/compat/runtime.ts";
 import { defineSchema, type JsonValue } from "#veryfront/schemas/index.ts";
 import {
   getCurrentToolCallOccurrence,
@@ -523,11 +524,8 @@ describe("private tool-call admission", () => {
     await runWithToolCallAdmissionReceipt(receipt, () => {}, async () => {
       const dispatch = getHostedToolCallAdmissionRequestFetch(endpoint);
       assert(dispatch);
-      const probes = installCredentialProbes({
-        headerMethods: HEADER_METHODS.filter((name) => name !== "has" && name !== "append"),
-      });
-      try {
-        await dispatch(endpoint, {
+      const send = () =>
+        dispatch(endpoint, {
           method: "POST",
           body: JSON.stringify({
             jsonrpc: "2.0",
@@ -536,11 +534,33 @@ describe("private tool-call admission", () => {
             params: { name: "lookup", arguments: {} },
           }),
         });
+      await send();
+      assertEquals(delivered, [token]);
+      delivered.length = 0;
+      const probes = installCredentialProbes({
+        headerMethods: HEADER_METHODS.filter((name) => name !== "has" && name !== "append"),
+      });
+      try {
+        // Node exposes a replaceable Request inspection hook. The probes patch
+        // it, so the native-processing guard must refuse before transport.
+        if (isNode) {
+          await assertRejects(
+            send,
+            TypeError,
+            "Request.prototype[Symbol(nodejs.util.inspect.custom)] was replaced",
+          );
+          assertEquals(delivered, []);
+        } else {
+          await send();
+          assertEquals(delivered, [token]);
+        }
       } finally {
         probes.restore();
       }
-      assertEquals(delivered, [token]);
       assertEquals(probes.saw(token), false);
+      delivered.length = 0;
+      await send();
+      assertEquals(delivered, [token]);
     }, callback);
   });
 
