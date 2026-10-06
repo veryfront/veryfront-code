@@ -56,13 +56,28 @@ import type { Tool, ToolExecutionContext } from "#veryfront/tool/types.ts";
 import { createTrustedManagedRuntime } from "#veryfront/agent/hosted/trusted-managed-runtime.ts";
 import type { ExecutorBinding } from "#veryfront/agent/executor/protocol.ts";
 import { ExecutorAgentError } from "#veryfront/agent/hosted/executor-agent-schema.ts";
-import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
+import { __runWithOutboundFetchTransportForTests } from "#veryfront/security/http/outbound-fetch.ts";
 
 const modelId = "veryfront-cloud/openai/synthetic";
 const owner = { scopeKind: "project" as const, projectId: "project-test" };
 const source = { type: "release" as const, releaseId: "release-test" };
 const image = `registry.example.test/executor@sha256:${"a".repeat(64)}`;
 const tick = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
+
+function runWithKnowledgeApiTransport<T>(
+  handler: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>,
+  callback: () => Promise<T>,
+): Promise<T> {
+  return __runWithOutboundFetchTransportForTests(
+    {
+      fetch: handler,
+      pinnedFetch: (url, _addresses, init) => handler(url, init),
+      resolveHost: () => Promise.resolve(["192.0.2.1"]),
+    },
+    callback,
+    { allowedResolvedAddresses: ["192.0.2.1"] },
+  );
+}
 
 function runtimeModel(): ModelRuntime {
   return {
@@ -1570,26 +1585,29 @@ describe("broker-local trusted runtime", () => {
         { text: "done" },
       ], { only: "stream" });
 
-    await withMockFetch(async (input: RequestInfo | URL, init?: RequestInit) => {
-      const request = input instanceof Request ? input : new Request(input, init);
-      requestedUrls.push(request.url);
-      authorizationHeaders.push(request.headers.get("authorization") ?? "");
-      return Response.json({
-        data: [{
-          id: "file-1",
-          version_id: "version-1",
-          path: "knowledge/support.md",
-          content: "Managed hosted knowledge needle.",
-          type: "file",
-          size: 32,
-          updated_at: "2026-01-01T00:00:00.000Z",
-        }],
-        page_info: { self: null, first: null, next: null, prev: null },
-      });
-    }, async () => {
-      const events = await drainTrustedFixture(f);
-      assert(events.some((event) => event.type === "finish"));
-    });
+    await runWithKnowledgeApiTransport(
+      async (input: RequestInfo | URL, init?: RequestInit) => {
+        const request = input instanceof Request ? input : new Request(input, init);
+        requestedUrls.push(request.url);
+        authorizationHeaders.push(request.headers.get("authorization") ?? "");
+        return Response.json({
+          data: [{
+            id: "file-1",
+            version_id: "version-1",
+            path: "knowledge/support.md",
+            content: "Managed hosted knowledge needle.",
+            type: "file",
+            size: 32,
+            updated_at: "2026-01-01T00:00:00.000Z",
+          }],
+          page_info: { self: null, first: null, next: null, prev: null },
+        });
+      },
+      async () => {
+        const events = await drainTrustedFixture(f);
+        assert(events.some((event) => event.type === "finish"));
+      },
+    );
 
     assertEquals(f.executions, 0);
     assertEquals(authorizationHeaders, ["Bearer broker-knowledge-token"]);
@@ -1623,15 +1641,18 @@ describe("broker-local trusted runtime", () => {
         { text: "done" },
       ], { only: "stream" });
 
-    await withMockFetch(async () => {
-      requests++;
-      return Response.json({
-        data: [],
-        page_info: { self: null, first: null, next: null, prev: null },
-      });
-    }, async () => {
-      await assertRejects(() => drainTrustedFixture(f));
-    });
+    await runWithKnowledgeApiTransport(
+      async () => {
+        requests++;
+        return Response.json({
+          data: [],
+          page_info: { self: null, first: null, next: null, prev: null },
+        });
+      },
+      async () => {
+        await assertRejects(() => drainTrustedFixture(f));
+      },
+    );
 
     assertEquals(requests, 0);
     assertEquals(f.executions, 0);
