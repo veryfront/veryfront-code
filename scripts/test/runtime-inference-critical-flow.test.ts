@@ -32,6 +32,8 @@ const VALID_WIRE_MODEL = "claude-haiku-4-5-20251001";
 const VALID_KEY = "vf-runtime-critical-flow-key";
 const FLOW_TEST_PATH = "scripts/test/runtime-inference-critical-flow.test.ts";
 const FLOW_HARNESS_PATH = "scripts/test/runtime-inference-critical-flow.ts";
+const PUSH_MERGE_GROUP_UBUNTU_RUNNER =
+  "${{ (github.event_name == 'push' || github.event_name == 'merge_group') && 'ubuntu-latest-m' || 'ubuntu-latest' }}";
 const REPO_ROOT = new URL("../../", import.meta.url);
 
 function anthropicRequest(overrides: {
@@ -837,8 +839,8 @@ describe("runtime inference critical-flow CI contract", () => {
     );
     assertEquals(
       job["runs-on"],
-      "ubuntu-latest",
-      "Runtime critical-flow job should run on Ubuntu",
+      PUSH_MERGE_GROUP_UBUNTU_RUNNER,
+      "Runtime critical-flow job should use the standard Ubuntu runner expression",
     );
     assertEquals(
       job["timeout-minutes"],

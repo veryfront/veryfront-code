@@ -190,6 +190,7 @@ export function createLifecycleAgUiAdapter(input: {
           event: "ReasoningMessageStart",
           payload: {
             messageId: startReasoning(),
+            contentId: event.id,
             role: "reasoning",
           },
         }];
@@ -202,13 +203,18 @@ export function createLifecycleAgUiAdapter(input: {
         if (activeReasoningMessageId === null) {
           events.push({
             event: "ReasoningMessageStart",
-            payload: { messageId: startReasoning(), role: "reasoning" },
+            payload: {
+              messageId: startReasoning(),
+              contentId: event.id,
+              role: "reasoning",
+            },
           });
         }
         events.push({
           event: "ReasoningMessageContent",
           payload: {
             messageId: continueReasoning(),
+            contentId: event.id,
             delta: event.delta,
           },
         });
@@ -218,7 +224,7 @@ export function createLifecycleAgUiAdapter(input: {
         const messageId = endReasoning();
         return messageId === null ? [] : [{
           event: "ReasoningMessageEnd",
-          payload: { messageId },
+          payload: { messageId, contentId: event.id },
         }];
       }
       case "tool_input_start":

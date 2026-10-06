@@ -117,6 +117,10 @@ import {
   getRuntimeRemoteToolSources,
 } from "./mcp-server-tool-sources.ts";
 import { runWithRuntimeRemoteToolSources } from "./remote-tool-source-context.ts";
+import {
+  hasRuntimeObservationCapability,
+  type RuntimeObservationCapability,
+} from "#veryfront/runtime/runtime-observation-carrier.ts";
 
 import {
   announceStreamedToolCallInput,
@@ -1997,6 +2001,8 @@ export type AgentRuntimeInternalOptions = {
   onStreamCompletion?: (completion: Promise<void>) => void;
   /** Exact pending tool invocation trusted by the hosted control plane. */
   resumeToolCall?: { id: string; name: string; input: Record<string, unknown> };
+  /** Host-owned authority required before context can request private runtime observations. */
+  runtimeObservationCapability?: RuntimeObservationCapability;
 };
 
 type AgentRuntimeGenerateArgs = [
@@ -2089,6 +2095,7 @@ export class AgentRuntime {
   #modelCallThinking: AgentRuntimeInternalOptions["modelCallThinking"];
   #onStreamCompletion: AgentRuntimeInternalOptions["onStreamCompletion"];
   #resumeToolCall: AgentRuntimeInternalOptions["resumeToolCall"];
+  #runtimeObservationCapability: AgentRuntimeInternalOptions["runtimeObservationCapability"];
   private id: string;
   private config: AgentConfig;
   private memory: Memory<Message>;
@@ -2114,6 +2121,7 @@ export class AgentRuntime {
     this.#manualPause = internalOptions.manualPause;
     this.#onStreamCompletion = internalOptions.onStreamCompletion;
     this.#resumeToolCall = internalOptions.resumeToolCall;
+    this.#runtimeObservationCapability = internalOptions.runtimeObservationCapability;
     this.#modelResolverState = internalOptions.resolveModelRuntime
       ? { status: "available", resolver: internalOptions.resolveModelRuntime }
       : { status: "absent" };
@@ -2853,6 +2861,8 @@ export class AgentRuntime {
     );
     abortSignal = terminalControl.signal;
     const runRuntimeContext = captureAgentRunRuntimeContext();
+    const runtimeObservationsEnabled = context?.runtimeObservations === true &&
+      hasRuntimeObservationCapability(this.#runtimeObservationCapability);
     setOtelActiveSpanAttributes({
       "run.started_at_utc": runRuntimeContext.runStartedAtUtc,
       "run.current_date_utc": runRuntimeContext.currentDateUtc,
@@ -2975,6 +2985,15 @@ export class AgentRuntime {
             sendSSE(controller, encoder, {
               type: "data-veryfront.runtime_context",
               data: runRuntimeContext,
+              ...(runtimeObservationsEnabled
+                ? {
+                  privateRuntimeObservation: {
+                    version: 1,
+                    kind: "execution_entry",
+                    occurrenceId: crypto.randomUUID(),
+                  },
+                }
+                : {}),
             });
             const streamingCallbacks: AgentRuntimeStreamCallbacks = {
               ...callbacks,
@@ -3005,6 +3024,7 @@ export class AgentRuntime {
                       toolContext,
                       context,
                       runRuntimeContext,
+                      runtimeObservationsEnabled,
                       supportsToolCalling,
                       providerReplayCheckpointEmission,
                       resolvedModelString,
@@ -3949,6 +3969,7 @@ export class AgentRuntime {
     toolContextBase: Record<string, unknown> | undefined,
     runtimeContext: Record<string, unknown> | undefined,
     runRuntimeContext: AgentRunRuntimeContext,
+    runtimeObservationsEnabled: boolean,
     supportsToolCalling: boolean,
     providerReplayCheckpointEmission: RuntimeProviderReplayCheckpointEmission,
     modelString?: string,
@@ -4112,7 +4133,22 @@ export class AgentRuntime {
       step++
     ) {
       throwIfAborted(abortSignal);
-      sendSSE(controller, encoder, { type: "step-start" });
+      const runtimeObservationStepId = runtimeObservationsEnabled ? crypto.randomUUID() : undefined;
+      const runtimeObservationMessageSpanId = runtimeObservationStepId !== undefined
+        ? crypto.randomUUID()
+        : undefined;
+      sendSSE(controller, encoder, {
+        type: "step-start",
+        ...(runtimeObservationStepId
+          ? {
+            privateRuntimeObservation: {
+              version: 1,
+              kind: "step_started",
+              stepId: runtimeObservationStepId,
+            },
+          }
+          : {}),
+      });
       const currentStepToolResults = createPrivateMap<string, ToolResultPart>();
       const stepRuntimeContext = skillState.hasSubmittedFormInput
         ? markSubmittedFormInputRuntimeContext(currentRuntimeContext)
@@ -4607,6 +4643,12 @@ export class AgentRuntime {
           }
           releaseDeferredRecoveryOutputAfterDivergence();
         },
+        ...(runtimeObservationStepId !== undefined && runtimeObservationMessageSpanId !== undefined
+          ? {
+            runtimeObservationStepId,
+            runtimeObservationMessageSpanId,
+          }
+          : {}),
         onUsage: (usage) => {
           accumulateUsage(totalUsage, usage);
           // Snapshot, not the live object: a later step must not mutate a total
@@ -4828,7 +4870,18 @@ export class AgentRuntime {
       });
 
       if (stoppedEmptyAfterCompletedTool) {
-        sendSSE(controller, encoder, { type: "step-end" });
+        sendSSE(controller, encoder, {
+          type: "step-end",
+          ...(runtimeObservationStepId
+            ? {
+              privateRuntimeObservation: {
+                version: 1,
+                kind: "step_ended",
+                stepId: runtimeObservationStepId,
+              },
+            }
+            : {}),
+        });
         if (recoveredEmptyResponse || step + 1 >= maxSteps) {
           throw new RuntimeEmptyResponseError();
         }
@@ -4941,7 +4994,18 @@ export class AgentRuntime {
           // surfaced upstream.
           await recordIncompleteLocalToolError(toolCall, { announceInput: true });
         }
-        sendSSE(controller, encoder, { type: "step-end" });
+        sendSSE(controller, encoder, {
+          type: "step-end",
+          ...(runtimeObservationStepId
+            ? {
+              privateRuntimeObservation: {
+                version: 1,
+                kind: "step_ended",
+                stepId: runtimeObservationStepId,
+              },
+            }
+            : {}),
+        });
         completedWithinStepBudget = !exhaustedStepBudgetDuringInterruptedLocalToolRecovery;
         if (!completedWithinStepBudget) await pauseAtBoundary(step + 1);
         break;
@@ -5344,7 +5408,18 @@ export class AgentRuntime {
       }
 
       throwIfAborted(abortSignal);
-      sendSSE(controller, encoder, { type: "step-end" });
+      sendSSE(controller, encoder, {
+        type: "step-end",
+        ...(runtimeObservationStepId
+          ? {
+            privateRuntimeObservation: {
+              version: 1,
+              kind: "step_ended",
+              stepId: runtimeObservationStepId,
+            },
+          }
+          : {}),
+      });
       await pauseAtBoundary(step + 1);
       this.status = "thinking";
     }

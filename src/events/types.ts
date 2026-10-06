@@ -9,21 +9,21 @@
  */
 
 import type {
-  AgentEventAttemptScopeEnvelopeRequiredByType,
-  AgentEventEnvelopeRequiredByType,
-  AgentEventJsonObject,
-  AgentEventJsonValue,
-  AgentEventPayload,
-  AgentEventPayloadByType,
+  EventAttemptScopeEnvelopeRequiredByType,
+  EventEnvelopeRequiredByType,
+  EventJsonObject,
+  EventJsonValue,
+  EventPayload,
+  EventPayloadByType,
 } from "./payload-types.generated.ts";
 
 /** Any JSON value carried in an Agent Events Protocol payload. */
-export type JsonValue = AgentEventJsonValue;
+export type JsonValue = EventJsonValue;
 
 /** Any JSON object carried in an Agent Events Protocol payload. */
-export type JsonObject = AgentEventJsonObject;
+export type JsonObject = EventJsonObject;
 
-export const AGENT_EVENT_TYPES = [
+export const EVENT_TYPES = [
   "com.veryfront.run.requested",
   "com.veryfront.run.enqueued",
   "com.veryfront.run.started",
@@ -62,9 +62,9 @@ export const AGENT_EVENT_TYPES = [
   "com.veryfront.stream.closed",
 ] as const;
 
-export type AgentEventType = typeof AGENT_EVENT_TYPES[number];
+export type EventType = typeof EVENT_TYPES[number];
 
-export const AGENT_EVENT_SCHEMA_BY_TYPE = {
+export const EVENT_SCHEMA_BY_TYPE = {
   "com.veryfront.run.requested": "urn:veryfront:run-events:target:payloads:1#/$defs/RunRequested",
   "com.veryfront.run.enqueued": "urn:veryfront:run-events:target:payloads:1#/$defs/RunEnqueued",
   "com.veryfront.run.started": "urn:veryfront:run-events:target:payloads:1#/$defs/RunStarted",
@@ -125,15 +125,15 @@ export const AGENT_EVENT_SCHEMA_BY_TYPE = {
   "com.veryfront.stream.heartbeat.emitted":
     "urn:veryfront:run-events:target:payloads:1#/$defs/StreamHeartbeatEmitted",
   "com.veryfront.stream.closed": "urn:veryfront:run-events:target:payloads:1#/$defs/StreamClosed",
-} as const satisfies Record<AgentEventType, string>;
+} as const satisfies Record<EventType, string>;
 
-export type AgentEventDataschema<T extends AgentEventType> = typeof AGENT_EVENT_SCHEMA_BY_TYPE[T];
+export type EventDataschema<T extends EventType> = typeof EVENT_SCHEMA_BY_TYPE[T];
 
 export type CloudEventsExtensionAttribute = string | boolean | number;
 
-interface AgentEventEnvelopeCore<
-  TType extends AgentEventType,
-  TDataschema extends string,
+interface EventEnvelopeCore<
+  TType extends EventType,
+  TDataschema extends EventDataschema<TType>,
 > {
   readonly specversion: "1.0";
   readonly id: string;
@@ -141,7 +141,7 @@ interface AgentEventEnvelopeCore<
   readonly type: TType;
   readonly datacontenttype: "application/json";
   readonly dataschema: TDataschema;
-  readonly data: AgentEventPayload<TType>;
+  readonly data: EventPayload<TType>;
   readonly subject?: string;
   readonly time?: string;
   readonly recordedat?: string;
@@ -154,105 +154,108 @@ interface AgentEventEnvelopeCore<
   readonly tracestate?: string;
 }
 
-export type AgentEventExtensionAttributes<
+export type EventExtensionAttributes<
   TAttributes extends Record<string, CloudEventsExtensionAttribute> = Record<never, never>,
 > = {
   readonly [K in keyof TAttributes]: TAttributes[K];
 };
 
-export type AgentEventEnvelope<
-  TType extends AgentEventType,
-  TDataschema extends string,
+/** An event envelope with the schema, payload, and identifiers required by its event type. */
+export type EventEnvelope<
+  TType extends EventType,
+  TDataschema extends EventDataschema<TType>,
+  TExtensionAttributes extends Record<string, CloudEventsExtensionAttribute> = Record<
+    never,
+    never
+  >,
+> = TType extends EventType
+  ? EventForType<TType, TExtensionAttributes> & { readonly dataschema: TDataschema }
+  : never;
+
+type EventBase<
+  TType extends EventType,
   TExtensionAttributes extends Record<string, CloudEventsExtensionAttribute> = Record<
     never,
     never
   >,
 > =
-  & AgentEventEnvelopeCore<TType, TDataschema>
-  & AgentEventExtensionAttributes<TExtensionAttributes>;
+  & EventEnvelopeCore<TType, EventDataschema<TType>>
+  & EventExtensionAttributes<TExtensionAttributes>;
 
-type AgentEventBase<
-  TType extends AgentEventType,
-  TExtensionAttributes extends Record<string, CloudEventsExtensionAttribute> = Record<
-    never,
-    never
-  >,
-> = AgentEventEnvelope<TType, AgentEventDataschema<TType>, TExtensionAttributes>;
-
-type AgentEventCoreBase<TType extends AgentEventType> = AgentEventEnvelopeCore<
+type EventCoreBase<TType extends EventType> = EventEnvelopeCore<
   TType,
-  AgentEventDataschema<TType>
+  EventDataschema<TType>
 >;
 
-interface AgentEventEnvelopeFieldTypes {
+interface EventEnvelopeFieldTypes {
   readonly runid: string;
   readonly modelcallid: string;
   readonly attemptid: string;
 }
 
-type AgentEventEnvelopeRequiredKey<TType extends AgentEventType> = TType extends
-  keyof AgentEventEnvelopeRequiredByType ? AgentEventEnvelopeRequiredByType[TType]
+type EventEnvelopeRequiredKey<TType extends EventType> = TType extends
+  keyof EventEnvelopeRequiredByType ? EventEnvelopeRequiredByType[TType]
   : never;
 
-type AgentEventEnvelopeRequirements<TType extends AgentEventType> =
-  [AgentEventEnvelopeRequiredKey<TType>] extends [never] ? unknown
-    : Pick<AgentEventEnvelopeFieldTypes, AgentEventEnvelopeRequiredKey<TType>>;
+type EventEnvelopeRequirements<TType extends EventType> = [EventEnvelopeRequiredKey<TType>] extends
+  [never] ? unknown
+  : Pick<EventEnvelopeFieldTypes, EventEnvelopeRequiredKey<TType>>;
 
 type ModelCallUsageAttemptEnvelopeKey =
-  AgentEventAttemptScopeEnvelopeRequiredByType["com.veryfront.model-call.usage.recorded"];
+  EventAttemptScopeEnvelopeRequiredByType["com.veryfront.model-call.usage.recorded"];
 
 type ModelCallUsagePayload<TScope extends "attempt" | "call"> =
-  & Omit<AgentEventPayloadByType["com.veryfront.model-call.usage.recorded"], "scope">
+  & Omit<EventPayloadByType["com.veryfront.model-call.usage.recorded"], "scope">
   & {
     readonly scope: TScope;
   };
 
-type ModelCallUsageAgentEvent<
+type ModelCallUsageEvent<
   TExtensionAttributes extends Record<string, CloudEventsExtensionAttribute> = Record<
     never,
     never
   >,
 > =
-  | Omit<AgentEventCoreBase<"com.veryfront.model-call.usage.recorded">, "data" | "attemptid">
-    & AgentEventExtensionAttributes<TExtensionAttributes>
-    & Pick<AgentEventEnvelopeFieldTypes, ModelCallUsageAttemptEnvelopeKey>
+  | Omit<EventCoreBase<"com.veryfront.model-call.usage.recorded">, "data" | "attemptid">
+    & EventExtensionAttributes<TExtensionAttributes>
+    & Pick<EventEnvelopeFieldTypes, ModelCallUsageAttemptEnvelopeKey>
     & {
       readonly modelcallid: string;
       readonly data: ModelCallUsagePayload<"attempt">;
     }
-  | Omit<AgentEventCoreBase<"com.veryfront.model-call.usage.recorded">, "data" | "attemptid">
-    & AgentEventExtensionAttributes<TExtensionAttributes>
+  | Omit<EventCoreBase<"com.veryfront.model-call.usage.recorded">, "data" | "attemptid">
+    & EventExtensionAttributes<TExtensionAttributes>
     & {
       readonly modelcallid: string;
       readonly attemptid?: never;
       readonly data: ModelCallUsagePayload<"call">;
     };
 
-type AgentEventForType<
-  TType extends AgentEventType,
+type EventForType<
+  TType extends EventType,
   TExtensionAttributes extends Record<string, CloudEventsExtensionAttribute> = Record<
     never,
     never
   >,
 > = TType extends "com.veryfront.model-call.usage.recorded"
-  ? ModelCallUsageAgentEvent<TExtensionAttributes>
-  : AgentEventBase<TType, TExtensionAttributes> & AgentEventEnvelopeRequirements<TType>;
+  ? ModelCallUsageEvent<TExtensionAttributes>
+  : EventBase<TType, TExtensionAttributes> & EventEnvelopeRequirements<TType>;
 
-export type AgentEvent<TType extends AgentEventType = AgentEventType> = TType extends AgentEventType
-  ? AgentEventForType<TType>
+export type EventRecord<TType extends EventType = EventType> = TType extends EventType
+  ? EventForType<TType>
   : never;
 
-export type AgentEventWithExtensions<
-  TType extends AgentEventType = AgentEventType,
+export type EventWithExtensions<
+  TType extends EventType = EventType,
   TExtensionAttributes extends Record<string, CloudEventsExtensionAttribute> = Record<
     never,
     never
   >,
-> = TType extends AgentEventType ? AgentEventForType<TType, TExtensionAttributes> : never;
+> = TType extends EventType ? EventForType<TType, TExtensionAttributes> : never;
 
-export type { AgentEventPayload, AgentEventPayloadByType };
+export type { EventPayload, EventPayloadByType };
 
-export interface AgentEventParseIssue {
+export interface EventParseIssue {
   readonly instancePath: string;
   readonly schemaPath: string;
   readonly keyword: string;
@@ -260,9 +263,9 @@ export interface AgentEventParseIssue {
   readonly params: Readonly<Record<string, unknown>>;
 }
 
-export type AgentEventParseResult =
-  | { readonly success: true; readonly data: AgentEvent }
+export type EventParseResult =
+  | { readonly success: true; readonly data: EventRecord }
   | {
     readonly success: false;
-    readonly issues: readonly AgentEventParseIssue[];
+    readonly issues: readonly EventParseIssue[];
   };

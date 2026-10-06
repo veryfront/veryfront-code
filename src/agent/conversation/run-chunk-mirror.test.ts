@@ -10,6 +10,7 @@ import {
   type HostedConversationRunChunkMirrorTraceAttributes,
 } from "./run-chunk-mirror.ts";
 import { createDurableRunEventSink } from "../hosted/durable-run-event-sink.ts";
+import { bindRuntimeObservation } from "#veryfront/runtime/runtime-observation-carrier.ts";
 
 type ConversationRunEventQueueFlushResult = Awaited<
   ReturnType<ConversationRunEventQueueController["flush"]>
@@ -77,6 +78,154 @@ describe("agent/conversation-run-chunk-mirror", () => {
     assertEquals(queueController.enqueued, [
       { type: "TEXT_MESSAGE_CONTENT", messageId: "m1", contentId: "text:0", delta: "hello" },
     ]);
+    mirror.dispose();
+  });
+
+  it("binds trusted runtime observations to exact prepared event indexes", async () => {
+    const stepId = "11111111-1111-4111-8111-111111111111";
+    const messageSpanId = "22222222-2222-4222-8222-222222222222";
+    const enqueued: Array<{ events: unknown[]; options: unknown }> = [];
+    const queueController: ConversationRunEventQueueController = {
+      enqueue(events, options) {
+        enqueued.push({ events, options });
+      },
+      async flush(): Promise<ConversationRunEventQueueFlushResult> {
+        return {
+          outcome: "flushed",
+          latestEventId: 0,
+          latestExternalEventSequence: 0,
+          pendingEventCount: 0,
+          consecutiveFailures: 0,
+          disabled: false,
+        };
+      },
+      getSnapshot(): ConversationRunEventQueueSnapshot {
+        return {
+          latestEventId: 0,
+          latestExternalEventSequence: 0,
+          pendingEventCount: 0,
+          consecutiveFailures: 0,
+          disabled: false,
+        };
+      },
+    };
+    const mirror = createConversationRunChunkMirror({
+      queueController,
+      encoder: new ConversationRunEventEncoder(),
+      runtimeObservations: true,
+      immediateFlushEventCount: 99,
+      flushDelayMs: 10_000,
+    });
+    const start = { type: "start-step" as const };
+    bindRuntimeObservation(start, { version: 1, kind: "step_started", stepId });
+    const delta = { type: "text-delta" as const, id: "outer-message", delta: "hello" };
+    bindRuntimeObservation(delta, { version: 1, kind: "step_message", stepId, messageSpanId });
+
+    await mirror.handleChunk(start);
+    await mirror.handleChunk(delta);
+
+    assertEquals(enqueued[0], {
+      events: [{ type: "STEP_STARTED", stepName: "step-1", stepId }],
+      options: {
+        runtimeObservations: [{
+          observation: { version: 1, kind: "step_started", stepId },
+          eventIndex: 0,
+        }],
+      },
+    });
+    assertEquals(enqueued[1], {
+      events: [{
+        type: "TEXT_MESSAGE_CONTENT",
+        messageId: "outer-message",
+        contentId: "text:0",
+        delta: "hello",
+      }],
+      options: {
+        runtimeObservations: [{
+          observation: { version: 1, kind: "step_message", stepId, messageSpanId },
+          eventIndex: 0,
+        }],
+      },
+    });
+    mirror.dispose();
+  });
+
+  it("normalizes oversized observed message chunks before assigning runtime sidecars", async () => {
+    const stepId = "11111111-1111-4111-8111-111111111111";
+    const textSpanId = "22222222-2222-4222-8222-222222222222";
+    const reasoningSpanId = "33333333-3333-4333-8333-333333333333";
+    const enqueued: Array<
+      { events: unknown[]; options: { runtimeObservations?: unknown[] } | undefined }
+    > = [];
+    const queueController: ConversationRunEventQueueController = {
+      enqueue(events, options) {
+        enqueued.push({ events, options });
+      },
+      async flush(): Promise<ConversationRunEventQueueFlushResult> {
+        return {
+          outcome: "flushed",
+          latestEventId: 0,
+          latestExternalEventSequence: 0,
+          pendingEventCount: 0,
+          consecutiveFailures: 0,
+          disabled: false,
+        };
+      },
+      getSnapshot(): ConversationRunEventQueueSnapshot {
+        return {
+          latestEventId: 0,
+          latestExternalEventSequence: 0,
+          pendingEventCount: 0,
+          consecutiveFailures: 0,
+          disabled: false,
+        };
+      },
+    };
+    const mirror = createConversationRunChunkMirror({
+      queueController,
+      encoder: new ConversationRunEventEncoder(),
+      runtimeObservations: true,
+      immediateFlushEventCount: 99,
+      flushDelayMs: 10_000,
+    });
+    const text = {
+      type: "text-delta" as const,
+      id: "outer-message",
+      delta: "x".repeat(250 * 1024),
+    };
+    bindRuntimeObservation(text, {
+      version: 1,
+      kind: "step_message",
+      stepId,
+      messageSpanId: textSpanId,
+    });
+    const reasoning = {
+      type: "reasoning-delta" as const,
+      id: "reasoning",
+      delta: "y".repeat(250 * 1024),
+    };
+    bindRuntimeObservation(reasoning, {
+      version: 1,
+      kind: "step_message",
+      stepId,
+      messageSpanId: reasoningSpanId,
+    });
+
+    await mirror.handleChunk(text);
+    await mirror.handleChunk(reasoning);
+
+    for (const [entryIndex, expectedSpanId] of [textSpanId, reasoningSpanId].entries()) {
+      const entry = enqueued[entryIndex];
+      assertEquals((entry?.events.length ?? 0) > 1, true);
+      assertEquals(entry?.options?.runtimeObservations?.length, entry?.events.length);
+      assertEquals(
+        entry?.options?.runtimeObservations,
+        entry?.events.map((_event, eventIndex) => ({
+          observation: { version: 1, kind: "step_message", stepId, messageSpanId: expectedSpanId },
+          eventIndex,
+        })),
+      );
+    }
     mirror.dispose();
   });
 

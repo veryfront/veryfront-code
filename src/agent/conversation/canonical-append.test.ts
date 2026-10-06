@@ -6,6 +6,7 @@ import {
   createConversationRunEventQueueController,
   flushConversationRunEventQueue,
 } from "./durable.ts";
+import { prepareConversationRunExternalEvents } from "./run-event-preparation.ts";
 
 const canonicalRunId = "11111111-1111-4111-8111-111111111111";
 const conversationId = "22222222-2222-4222-8222-222222222222";
@@ -15,6 +16,9 @@ const otherModelCallId = "55555555-5555-4555-8555-555555555555";
 const exactReceiptEventId = "9007199254740993";
 const toolOccurrenceId = "66666666-6666-4666-8666-666666666666";
 const otherToolOccurrenceId = "77777777-7777-4777-8777-777777777777";
+const runtimeOccurrenceId = "88888888-8888-4888-8888-888888888888";
+const runtimeStepId = "99999999-9999-4999-8999-999999999999";
+const runtimeMessageSpanId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const toolCallId = "toolu_exact_raw";
 const admissionEventId = "9007199254740994";
 const startEventId = "9007199254740995";
@@ -278,6 +282,128 @@ it("submits tool call admission sidecars and parses exact admission receipts", a
   }]);
 });
 
+it("submits runtime observation sidecars with exact event indexes", async () => {
+  let request: Request | undefined;
+  await appendConversationRunEvents({
+    authToken: "writer",
+    apiUrl: "https://api.example.test",
+    runId: "runtime-run-id",
+    canonicalRunId,
+    conversationId,
+    events: [
+      { type: "RUNTIME_EVENT_RECORDED", runtime: "veryfront", kind: "runtime_context" },
+      { type: "STEP_STARTED", stepId: runtimeStepId },
+      { type: "TEXT_MESSAGE_CONTENT", messageId: "outer-message", delta: "hello" },
+    ],
+    runtimeObservations: [
+      {
+        observation: { version: 1, kind: "execution_entry", occurrenceId: runtimeOccurrenceId },
+        eventIndex: 0,
+      },
+      {
+        observation: { version: 1, kind: "step_started", stepId: runtimeStepId },
+        eventIndex: 1,
+      },
+      {
+        observation: {
+          version: 1,
+          kind: "step_message",
+          stepId: runtimeStepId,
+          messageSpanId: runtimeMessageSpanId,
+        },
+        eventIndex: 2,
+      },
+    ],
+    fetch: (_input, init) => {
+      request = new Request(_input, init);
+      return Promise.resolve(Response.json(appendResponse({ appendedCount: 3 })));
+    },
+  });
+
+  assertEquals((await request!.json()).runtime_observations, {
+    version: 1,
+    observations: [
+      { kind: "execution_entry", occurrence_id: runtimeOccurrenceId, event_index: 0 },
+      { kind: "step_started", step_id: runtimeStepId, event_index: 1 },
+      {
+        kind: "step_message",
+        step_id: runtimeStepId,
+        message_span_id: runtimeMessageSpanId,
+        event_index: 2,
+      },
+    ],
+  });
+});
+
+it("submits runtime observation sidecars for each normalized oversized fragment", async () => {
+  let request: Request | undefined;
+  const preparedEvents = prepareConversationRunExternalEvents([{
+    type: "TEXT_MESSAGE_CONTENT",
+    messageId: "outer-message",
+    contentId: "text:0",
+    delta: "x".repeat(250 * 1024),
+  }]);
+  assertEquals(preparedEvents.length > 1, true);
+  await appendConversationRunEvents({
+    authToken: "writer",
+    apiUrl: "https://api.example.test",
+    runId: "runtime-run-id",
+    canonicalRunId,
+    conversationId,
+    events: preparedEvents,
+    runtimeObservations: preparedEvents.map((_event, eventIndex) => ({
+      observation: {
+        version: 1,
+        kind: "step_message",
+        stepId: runtimeStepId,
+        messageSpanId: runtimeMessageSpanId,
+      },
+      eventIndex,
+    })),
+    fetch: (_input, init) => {
+      request = new Request(_input, init);
+      return Promise.resolve(
+        Response.json(appendResponse({ appendedCount: preparedEvents.length })),
+      );
+    },
+  });
+
+  const body = await request!.json();
+  assertEquals(body.events.length, preparedEvents.length);
+  assertEquals(body.runtime_observations, {
+    version: 1,
+    observations: preparedEvents.map((_event, eventIndex) => ({
+      kind: "step_message",
+      step_id: runtimeStepId,
+      message_span_id: runtimeMessageSpanId,
+      event_index: eventIndex,
+    })),
+  });
+});
+
+it("rejects runtime observation sidecar event indexes outside the wire contract", async () => {
+  await assertRejects(() =>
+    appendConversationRunEvents({
+      authToken: "writer",
+      apiUrl: "https://api.example.test",
+      runId: "runtime-run-id",
+      canonicalRunId,
+      conversationId,
+      events: [{ type: "TEXT_MESSAGE_CONTENT", messageId: "outer-message", delta: "hello" }],
+      runtimeObservations: [{
+        observation: {
+          version: 1,
+          kind: "step_message",
+          stepId: runtimeStepId,
+          messageSpanId: runtimeMessageSpanId,
+        },
+        eventIndex: 100,
+      }],
+      fetch: () => Promise.resolve(Response.json(appendResponse())),
+    })
+  );
+});
+
 it("accepts distinct canonical public tool call ids while preserving raw tool call matching", async () => {
   const response = await appendConversationRunEvents({
     authToken: "writer",
@@ -507,6 +633,37 @@ it("stores queue tool call admissions by occurrence id and preserves sidecar ind
     projectId,
   });
   assertEquals(queue.takeToolCallAdmissionReceipt?.(toolOccurrenceId), undefined);
+});
+
+it("preserves queue runtime observation indexes across prior pending events", async () => {
+  let body: Record<string, unknown> | undefined;
+  const queue = createConversationRunEventQueueController({
+    authToken: "writer",
+    apiUrl: "https://api.example.test",
+    runId: "runtime-run-id",
+    canonicalRunId,
+    conversationId,
+    latestEventId: 1,
+    latestExternalEventSequence: 4,
+    maxEventsPerBatch: 100,
+    fetch: (_input, init) => {
+      body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      return Promise.resolve(Response.json(appendResponse({ appendedCount: 2 })));
+    },
+  });
+
+  queue.enqueue([{ type: "STATE_SNAPSHOT", snapshot: {} }]);
+  queue.enqueue([{ type: "STEP_STARTED", stepId: runtimeStepId }], {
+    runtimeObservations: [{
+      observation: { version: 1, kind: "step_started", stepId: runtimeStepId },
+      eventIndex: 0,
+    }],
+  });
+  await queue.flush();
+  assertEquals(body?.runtime_observations, {
+    version: 1,
+    observations: [{ kind: "step_started", step_id: runtimeStepId, event_index: 1 }],
+  });
 });
 
 it("keeps tool call admission sidecars pending after retryable append failures", async () => {

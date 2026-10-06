@@ -75,6 +75,8 @@ export type HostedChatRuntimeToUiMessageStreamOptions<TMessageMetadata = Message
 export type HostedChatRuntimeStreamInput = {
   messages: AgentRuntimeMessage[];
   abortSignal: AbortSignal;
+  /** @internal Trusted executor-only runtime provenance sidecar opt-in. */
+  runtimeObservations?: true;
 };
 
 /** Result returned from hosted chat runtime stream. */

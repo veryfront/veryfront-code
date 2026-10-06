@@ -15,26 +15,26 @@ You need an existing Veryfront project with `veryfront` installed. Browser and S
 Use validator injection for browser code and shared SDK code. It avoids global validator registration for that parser instance. The entrypoint also exports registry helpers for server processes that want module-level parsing.
 
 ```ts
-import { createAgentEventParser } from "veryfront/events";
+import { createEventParser } from "veryfront/events";
 import { createZodAdapter } from "@veryfront/ext-schema-zod";
 
-const events = createAgentEventParser(createZodAdapter());
+const events = createEventParser(createZodAdapter());
 
 export function parseEvent(rawEvent: unknown) {
-  return events.parseAgentEvent(rawEvent);
+  return events.parseEvent(rawEvent);
 }
 ```
 
 If your server process wants module-level helpers, register the validator once at startup:
 
 ```ts
-import { parseAgentEvent, registerAgentEventSchemaValidator } from "veryfront/events";
+import { parseEvent as parseEventRecord, registerEventSchemaValidator } from "veryfront/events";
 import { createZodAdapter } from "@veryfront/ext-schema-zod";
 
-registerAgentEventSchemaValidator(createZodAdapter());
+registerEventSchemaValidator(createZodAdapter());
 
 export function parseEvent(rawEvent: unknown) {
-  return parseAgentEvent(rawEvent);
+  return parseEventRecord(rawEvent);
 }
 ```
 
@@ -44,12 +44,12 @@ The project-agent encoder emits reasoning segment events with `messageId` set to
 
 ## Read typed payloads
 
-`AgentEvent` narrows by `type`, so `data` has the fields for the selected event.
+`EventRecord` narrows by `type`, so `data` has the fields for the selected event.
 
 ```ts
-import type { AgentEvent } from "veryfront/events";
+import type { EventRecord } from "veryfront/events";
 
-export function textFromEvent(event: AgentEvent): string | undefined {
+export function textFromEvent(event: EventRecord): string | undefined {
   switch (event.type) {
     case "com.veryfront.message.text.delta.emitted":
       return event.data.contentRedacted === true ? undefined : event.data.delta;
@@ -79,18 +79,28 @@ A missing, malformed, or ambiguous receipt refuses dispatch. An oversized input 
 
 This SDK bridge requires matching API support. Projectless canonical runs keep their supported legacy capture and dispatch behavior without new project correlation; target projectless provenance remains unsupported. The bridge does not create provider-attempt evidence or infer usage from accounting. The gateway owns actual HTTP-attempt IDs and must retain failed attempts independently of billing. Publish usage only when the provider reports the required counters.
 
+## Runtime execution and step provenance
+
+The hosted runtime observes execution entry, step start, step end, and the message spans produced within each step. A run's registration or queue admission cannot supply these runtime observations.
+
+The host enables this path for an authenticated project-bound canonical run. The private append request carries `runtime_observations` with an exact `event_index` for each submitted observation. The matching API must validate the writer's execution generation and persist the observation with that accepted event. Retries retain the same observation identities and event associations.
+
+Runtime observations travel through private carriers and are removed from public chunks and messages. Application context fields cannot enable this authority. A mirrored step reuses the runtime's observed step identity; it does not allocate a competing identity.
+
+Enable this path only with matching API and writer-generation support. Legacy history without these proofs remains readable through the existing run-event surface, but cannot supply missing target execution, step, or message provenance.
+
 ## Validate producer output
 
 Parse each outgoing event with the shared validator before publishing it:
 
 ```ts
-import { createAgentEventParser } from "veryfront/events";
+import { createEventParser } from "veryfront/events";
 import { createZodAdapter } from "@veryfront/ext-schema-zod";
 
-const events = createAgentEventParser(createZodAdapter());
+const events = createEventParser(createZodAdapter());
 
 export function validateOutgoingEvent(outgoingEvent: unknown) {
-  const result = events.safeParseAgentEvent(outgoingEvent);
+  const result = events.safeParseEvent(outgoingEvent);
   if (!result.success) {
     throw new TypeError(result.issues[0]?.message ?? "Invalid Agent Events Protocol event");
   }
@@ -98,7 +108,7 @@ export function validateOutgoingEvent(outgoingEvent: unknown) {
 }
 ```
 
-Use `AGENT_EVENT_TYPES` and `AGENT_EVENT_SCHEMA_BY_TYPE` when a producer needs to inspect the protocol surface instead of hard-coding protocol strings.
+Use `EVENT_TYPES` and `EVENT_SCHEMA_BY_TYPE` when a producer needs to inspect the protocol surface instead of hard-coding protocol strings.
 
 ## Verify it worked
 

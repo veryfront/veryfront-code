@@ -1,5 +1,6 @@
 import { type ConversationRunEventQueueController } from "./durable.ts";
 import type { ConversationRunToolCallAdmissionStart } from "./durable-contracts.ts";
+import type { ConversationRunRuntimeObservation } from "#veryfront/runtime/runtime-observation-carrier.ts";
 import { TIMEOUT_ERROR } from "#veryfront/errors";
 import { agentLogger } from "#veryfront/utils";
 
@@ -65,7 +66,10 @@ export type ConversationRunQueueFlush = <T>(operation: () => Promise<T>) => Prom
 export interface ConversationRunMirror {
   enqueue(
     events: unknown[],
-    options?: { toolCallStarts?: ConversationRunToolCallAdmissionStart[] },
+    options?: {
+      toolCallStarts?: ConversationRunToolCallAdmissionStart[];
+      runtimeObservations?: ConversationRunRuntimeObservation[];
+    },
   ): void;
   flush(options?: {
     abortSignal?: AbortSignal;

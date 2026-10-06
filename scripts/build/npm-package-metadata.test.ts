@@ -495,9 +495,10 @@ const ROOT_BUNDLED_EXTENSIONS = new Set([
 ]);
 
 // The framework and ext-dev-ui-react both consume the application's React
-// generation. These remain root dependencies so npm resolves one React graph
-// instead of treating the extension's use as private implementation detail.
-const ROOT_SHARED_EXTENSION_DEPENDENCIES = new Set(["react", "react-dom"]);
+// generation. The framework also provides zod for project schema imports. These
+// remain root dependencies so npm resolves one shared dependency graph instead
+// of treating the extension's use as private implementation detail.
+const ROOT_SHARED_EXTENSION_DEPENDENCIES = new Set(["react", "react-dom", "zod"]);
 
 it("EXTENSION_OWNED_DEPENDENCIES stays in sync with extension manifests", async () => {
   const denoConfig = JSON.parse(

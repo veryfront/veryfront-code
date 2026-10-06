@@ -114,6 +114,7 @@ export async function createHostedChatRuntimeDataStream(
             ...(input.conversationId ? { conversationId: input.conversationId } : {}),
             ...(projectContext?.projectId ? { projectId: projectContext.projectId } : {}),
             ...(projectContext?.projectSlug ? { projectSlug: projectContext.projectSlug } : {}),
+            ...(streamInput.runtimeObservations ? { runtimeObservations: true } : {}),
             abortSignal: streamInput.abortSignal,
             publishDataEvent: (event: ToolExecutionDataEvent) => publishDataEvent(event),
           },

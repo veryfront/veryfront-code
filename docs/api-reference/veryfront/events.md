@@ -8,12 +8,12 @@ order: 9
 
 ```ts
 import {
-  assertAgentEventSchemaValidator,
-  createAgentEventParser,
-  parseAgentEvent,
-  registerAgentEventSchemaValidator,
-  safeParseAgentEvent,
-  tryResolveAgentEventSchemaValidator,
+  assertEventSchemaValidator,
+  createEventParser,
+  parseEvent,
+  registerEventSchemaValidator,
+  safeParseEvent,
+  tryResolveEventSchemaValidator,
 } from "veryfront/events";
 ```
 
@@ -22,13 +22,13 @@ import {
 ### Validate one event with an injected JSON Schema validator.
 
 ```ts
-import { createAgentEventParser } from "veryfront/events";
+import { createEventParser } from "veryfront/events";
 import { createZodAdapter } from "@veryfront/ext-schema-zod";
 
-const parser = createAgentEventParser(createZodAdapter());
+const parser = createEventParser(createZodAdapter());
 
 export function parseEvent(rawEvent: unknown) {
-  const event = parser.parseAgentEvent(rawEvent);
+  const event = parser.parseEvent(rawEvent);
   console.log(event.type, event.data);
   return event;
 }
@@ -38,50 +38,50 @@ export function parseEvent(rawEvent: unknown) {
 
 ### Components
 
-| Name                                    | Description | Source                                                                                         |
-| --------------------------------------- | ----------- | ---------------------------------------------------------------------------------------------- |
-| `AGENT_EVENT_SCHEMA_BY_TYPE`            |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/events/types.ts)            |
-| `AGENT_EVENT_SCHEMA_VALIDATOR_CONTRACT` |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/events/schema-validator.ts) |
-| `AGENT_EVENT_SCHEMA_VALIDATOR_PACKAGE`  |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/events/schema-validator.ts) |
-| `AGENT_EVENT_TARGET_CATALOG`            |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/events/contracts.ts)        |
-| `AGENT_EVENT_TARGET_ENVELOPE_SCHEMA`    |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/events/contracts.ts)        |
-| `AGENT_EVENT_TARGET_PAYLOAD_EXAMPLES`   |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/events/contracts.ts)        |
-| `AGENT_EVENT_TARGET_PAYLOAD_SCHEMAS`    |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/events/contracts.ts)        |
-| `AGENT_EVENT_TYPES`                     |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/events/types.ts)            |
+| Name                              | Description | Source                                                                                         |
+| --------------------------------- | ----------- | ---------------------------------------------------------------------------------------------- |
+| `EVENT_SCHEMA_BY_TYPE`            |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/events/types.ts)            |
+| `EVENT_SCHEMA_VALIDATOR_CONTRACT` |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/events/schema-validator.ts) |
+| `EVENT_SCHEMA_VALIDATOR_PACKAGE`  |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/events/schema-validator.ts) |
+| `EVENT_TARGET_CATALOG`            |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/events/contracts.ts)        |
+| `EVENT_TARGET_ENVELOPE_SCHEMA`    |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/events/contracts.ts)        |
+| `EVENT_TARGET_PAYLOAD_EXAMPLES`   |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/events/contracts.ts)        |
+| `EVENT_TARGET_PAYLOAD_SCHEMAS`    |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/events/contracts.ts)        |
+| `EVENT_TYPES`                     |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/events/types.ts)            |
 
 ### Functions
 
-| Name                                  | Description | Source                                                                                         |
-| ------------------------------------- | ----------- | ---------------------------------------------------------------------------------------------- |
-| `assertAgentEventSchemaValidator`     |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/events/schema-validator.ts) |
-| `createAgentEventParser`              |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/events/parser.ts)           |
-| `parseAgentEvent`                     |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/events/parser.ts)           |
-| `registerAgentEventSchemaValidator`   |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/events/schema-validator.ts) |
-| `safeParseAgentEvent`                 |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/events/parser.ts)           |
-| `tryResolveAgentEventSchemaValidator` |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/events/schema-validator.ts) |
-| `unregisterAgentEventSchemaValidator` |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/events/schema-validator.ts) |
+| Name                             | Description | Source                                                                                         |
+| -------------------------------- | ----------- | ---------------------------------------------------------------------------------------------- |
+| `assertEventSchemaValidator`     |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/events/schema-validator.ts) |
+| `createEventParser`              |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/events/parser.ts)           |
+| `parseEvent`                     |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/events/parser.ts)           |
+| `registerEventSchemaValidator`   |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/events/schema-validator.ts) |
+| `safeParseEvent`                 |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/events/parser.ts)           |
+| `tryResolveEventSchemaValidator` |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/events/schema-validator.ts) |
+| `unregisterEventSchemaValidator` |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/events/schema-validator.ts) |
 
 ### Types
 
 | Name                            | Description                                                                                                                                                                                                                                                                                                                               | Source                                                                                                |
 | ------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
-| `AgentEvent`                    |                                                                                                                                                                                                                                                                                                                                           | [source](https://github.com/veryfront/veryfront-code/blob/main/src/events/types.ts)                   |
-| `AgentEventDataschema`          |                                                                                                                                                                                                                                                                                                                                           | [source](https://github.com/veryfront/veryfront-code/blob/main/src/events/types.ts)                   |
-| `AgentEventEnvelope`            |                                                                                                                                                                                                                                                                                                                                           | [source](https://github.com/veryfront/veryfront-code/blob/main/src/events/types.ts)                   |
-| `AgentEventExtensionAttributes` |                                                                                                                                                                                                                                                                                                                                           | [source](https://github.com/veryfront/veryfront-code/blob/main/src/events/types.ts)                   |
-| `AgentEventJsonObject`          |                                                                                                                                                                                                                                                                                                                                           | [source](https://github.com/veryfront/veryfront-code/blob/main/src/events/payload-types.generated.ts) |
-| `AgentEventJsonValue`           |                                                                                                                                                                                                                                                                                                                                           | [source](https://github.com/veryfront/veryfront-code/blob/main/src/events/payload-types.generated.ts) |
-| `AgentEventParseIssue`          |                                                                                                                                                                                                                                                                                                                                           | [source](https://github.com/veryfront/veryfront-code/blob/main/src/events/types.ts)                   |
-| `AgentEventParser`              |                                                                                                                                                                                                                                                                                                                                           | [source](https://github.com/veryfront/veryfront-code/blob/main/src/events/parser.ts)                  |
-| `AgentEventParseResult`         |                                                                                                                                                                                                                                                                                                                                           | [source](https://github.com/veryfront/veryfront-code/blob/main/src/events/types.ts)                   |
-| `AgentEventPayload`             |                                                                                                                                                                                                                                                                                                                                           | [source](https://github.com/veryfront/veryfront-code/blob/main/src/events/payload-types.generated.ts) |
-| `AgentEventPayloadByType`       |                                                                                                                                                                                                                                                                                                                                           | [source](https://github.com/veryfront/veryfront-code/blob/main/src/events/payload-types.generated.ts) |
-| `AgentEventType`                |                                                                                                                                                                                                                                                                                                                                           | [source](https://github.com/veryfront/veryfront-code/blob/main/src/events/types.ts)                   |
-| `AgentEventWithExtensions`      |                                                                                                                                                                                                                                                                                                                                           | [source](https://github.com/veryfront/veryfront-code/blob/main/src/events/types.ts)                   |
 | `ChildRun`                      |                                                                                                                                                                                                                                                                                                                                           | [source](https://github.com/veryfront/veryfront-code/blob/main/src/events/payload-types.generated.ts) |
 | `ChildRunReported`              |                                                                                                                                                                                                                                                                                                                                           | [source](https://github.com/veryfront/veryfront-code/blob/main/src/events/payload-types.generated.ts) |
 | `CloudEventsExtensionAttribute` |                                                                                                                                                                                                                                                                                                                                           | [source](https://github.com/veryfront/veryfront-code/blob/main/src/events/types.ts)                   |
 | `ErrorInfo`                     |                                                                                                                                                                                                                                                                                                                                           | [source](https://github.com/veryfront/veryfront-code/blob/main/src/events/payload-types.generated.ts) |
+| `EventDataschema`               |                                                                                                                                                                                                                                                                                                                                           | [source](https://github.com/veryfront/veryfront-code/blob/main/src/events/types.ts)                   |
+| `EventEnvelope`                 | An event envelope with the schema, payload, and identifiers required by its event type.                                                                                                                                                                                                                                                   | [source](https://github.com/veryfront/veryfront-code/blob/main/src/events/types.ts)                   |
+| `EventExtensionAttributes`      |                                                                                                                                                                                                                                                                                                                                           | [source](https://github.com/veryfront/veryfront-code/blob/main/src/events/types.ts)                   |
+| `EventJsonObject`               |                                                                                                                                                                                                                                                                                                                                           | [source](https://github.com/veryfront/veryfront-code/blob/main/src/events/payload-types.generated.ts) |
+| `EventJsonValue`                |                                                                                                                                                                                                                                                                                                                                           | [source](https://github.com/veryfront/veryfront-code/blob/main/src/events/payload-types.generated.ts) |
+| `EventParseIssue`               |                                                                                                                                                                                                                                                                                                                                           | [source](https://github.com/veryfront/veryfront-code/blob/main/src/events/types.ts)                   |
+| `EventParser`                   |                                                                                                                                                                                                                                                                                                                                           | [source](https://github.com/veryfront/veryfront-code/blob/main/src/events/parser.ts)                  |
+| `EventParseResult`              |                                                                                                                                                                                                                                                                                                                                           | [source](https://github.com/veryfront/veryfront-code/blob/main/src/events/types.ts)                   |
+| `EventPayload`                  |                                                                                                                                                                                                                                                                                                                                           | [source](https://github.com/veryfront/veryfront-code/blob/main/src/events/payload-types.generated.ts) |
+| `EventPayloadByType`            |                                                                                                                                                                                                                                                                                                                                           | [source](https://github.com/veryfront/veryfront-code/blob/main/src/events/payload-types.generated.ts) |
+| `EventRecord`                   |                                                                                                                                                                                                                                                                                                                                           | [source](https://github.com/veryfront/veryfront-code/blob/main/src/events/types.ts)                   |
+| `EventType`                     |                                                                                                                                                                                                                                                                                                                                           | [source](https://github.com/veryfront/veryfront-code/blob/main/src/events/types.ts)                   |
+| `EventWithExtensions`           |                                                                                                                                                                                                                                                                                                                                           | [source](https://github.com/veryfront/veryfront-code/blob/main/src/events/types.ts)                   |
 | `Extensions`                    | Optional producer-owned absolute URI namespaces, such as https://example.test/extensions or urn:org.example:telemetry. Each value is a JSON object; core fields remain closed. Publishing extensions still requires authorization.                                                                                                        | [source](https://github.com/veryfront/veryfront-code/blob/main/src/events/payload-types.generated.ts) |
 | `InputField`                    |                                                                                                                                                                                                                                                                                                                                           | [source](https://github.com/veryfront/veryfront-code/blob/main/src/events/payload-types.generated.ts) |
 | `InputRequestChanges`           |                                                                                                                                                                                                                                                                                                                                           | [source](https://github.com/veryfront/veryfront-code/blob/main/src/events/payload-types.generated.ts) |

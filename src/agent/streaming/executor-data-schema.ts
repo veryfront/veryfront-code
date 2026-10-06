@@ -61,35 +61,68 @@ export const getExecutorDataEventSchema = defineSchema((v) => {
       totalUsage: getUsageSchema().optional(),
       object: json.optional(),
     }).strict(),
-    v.object({ type: v.enum(["step-start", "step-end"] as const) }).strict(),
+    v.object({
+      type: v.literal("step-start"),
+      privateRuntimeObservation: v.object({
+        version: v.literal(1),
+        kind: v.literal("step_started"),
+        stepId: v.string().uuid().transform((value) => value.toLowerCase()),
+      }).strict().optional(),
+    }).strict(),
+    v.object({
+      type: v.literal("step-end"),
+      privateRuntimeObservation: v.object({
+        version: v.literal(1),
+        kind: v.literal("step_ended"),
+        stepId: v.string().uuid().transform((value) => value.toLowerCase()),
+      }).strict().optional(),
+    }).strict(),
     v.object({
       type: v.enum(["text-start", "text-end", "reasoning-start"] as const),
       id: id.optional(),
+      privateRuntimeObservation: v.object({
+        version: v.literal(1),
+        kind: v.literal("step_message"),
+        stepId: v.string().uuid().transform((value) => value.toLowerCase()),
+        messageSpanId: v.string().uuid().transform((value) => value.toLowerCase()),
+      }).strict().optional(),
     }).strict(),
     v.object({
       type: v.literal("reasoning-end"),
       id: id.optional(),
       signature: v.string().optional(),
       redactedData: v.string().optional(),
+      privateRuntimeObservation: v.object({
+        version: v.literal(1),
+        kind: v.literal("step_message"),
+        stepId: v.string().uuid().transform((value) => value.toLowerCase()),
+        messageSpanId: v.string().uuid().transform((value) => value.toLowerCase()),
+      }).strict().optional(),
     }).strict(),
     v.object({
       type: v.enum(["text-delta", "reasoning-delta"] as const),
       id: id.optional(),
       delta: v.string(),
+      privateRuntimeObservation: v.object({
+        version: v.literal(1),
+        kind: v.literal("step_message"),
+        stepId: v.string().uuid().transform((value) => value.toLowerCase()),
+        messageSpanId: v.string().uuid().transform((value) => value.toLowerCase()),
+      }).strict().optional(),
     }).strict(),
     v.object({
       type: v.literal("tool-input-start"),
       toolCallId: id,
       toolName: id,
       privateToolCallOccurrenceId: v.string().uuid().optional(),
-      privateObservedProviderToolResult: v.literal(true).optional(),
+      privateObservedToolResult: v.literal(true).optional(),
       ...flags,
     })
       .strict().refine(
         (event) =>
-          event.privateObservedProviderToolResult !== true ||
-          (event.providerExecuted === true && event.privateToolCallOccurrenceId === undefined),
-        "Observed provider results cannot carry dispatch admission",
+          event.privateObservedToolResult !== true ||
+          event.privateToolCallOccurrenceId === undefined,
+        "Observed tool results cannot carry dispatch admission",
       ),
     v.object({
       type: v.literal("tool-input-delta"),
@@ -132,6 +165,15 @@ export const getExecutorDataEventSchema = defineSchema((v) => {
     }).strict(),
     v.object({ type: v.literal("error"), error: v.string(), code: v.string().optional() }).strict(),
     v.object({ type: v.literal("data"), data: v.record(v.string(), json) }).strict(),
+    v.object({
+      type: v.literal("data-veryfront.runtime_context"),
+      data: json.optional(),
+      privateRuntimeObservation: v.object({
+        version: v.literal(1),
+        kind: v.literal("execution_entry"),
+        occurrenceId: v.string().uuid().transform((value) => value.toLowerCase()),
+      }).strict().optional(),
+    }).strict(),
     v.object({ type: v.string().regex(/^data-.+$/), data: json.optional() }).strict(),
     v.object({
       type: v.literal("source-url"),

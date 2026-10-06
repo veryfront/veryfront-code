@@ -28,6 +28,10 @@ import {
   getToolCallAdmissionWireReceiptSchema,
 } from "#veryfront/runtime/tool-call-admission-receipt.ts";
 import {
+  type ConversationRunRuntimeObservation,
+  toWireRuntimeObservation,
+} from "#veryfront/runtime/runtime-observation-carrier.ts";
+import {
   AppendConversationRunEventsError,
   isCursorMismatchConversationRunAppendError,
   isIgnorableConversationRunAppendError,
@@ -375,6 +379,55 @@ function toWireToolCallAdmissionStarts(
   }));
 }
 
+function readSubmittedRuntimeObservations(input: {
+  events: unknown[];
+  runtimeObservations?: ConversationRunRuntimeObservation[];
+}): ConversationRunRuntimeObservation[] {
+  if (!input.runtimeObservations || input.runtimeObservations.length === 0) {
+    return [];
+  }
+  const seenEventIndexes = new Set<number>();
+  const submitted: ConversationRunRuntimeObservation[] = [];
+  for (const item of input.runtimeObservations) {
+    if (!Number.isInteger(item.eventIndex) || item.eventIndex < 0) {
+      throw new DurableRunEventPersistenceError(
+        "Runtime observation sidecar event_index must select an event in the append",
+      );
+    }
+    if (item.eventIndex >= input.events.length) {
+      throw new DurableRunEventPersistenceError(
+        "Runtime observation sidecar event_index must select an event in the append",
+      );
+    }
+    if (seenEventIndexes.has(item.eventIndex)) {
+      throw new DurableRunEventPersistenceError(
+        "Runtime observation sidecar references the same event more than once",
+      );
+    }
+    seenEventIndexes.add(item.eventIndex);
+    submitted.push({
+      observation: item.observation,
+      eventIndex: item.eventIndex,
+    });
+  }
+  return submitted;
+}
+
+function toWireRuntimeObservations(
+  observations: ConversationRunRuntimeObservation[],
+): { version: 1; observations: ReturnType<typeof toWireRuntimeObservation>[] } | undefined {
+  if (observations.length === 0) return undefined;
+  if (observations.length > 100) {
+    throw new DurableRunEventPersistenceError(
+      "Runtime observation sidecar supports at most 100 observations",
+    );
+  }
+  return {
+    version: 1,
+    observations: observations.map((observation) => toWireRuntimeObservation(observation)),
+  };
+}
+
 function validateAppendToolCallAdmissionReceipts(input: {
   response: AppendConversationRunEventsResponse;
   submittedStarts: SubmittedToolCallAdmissionStart[];
@@ -469,6 +522,19 @@ function shiftToolCallAdmissionStarts(
   }));
 }
 
+function shiftRuntimeObservations(
+  observations: ConversationRunRuntimeObservation[] | undefined,
+  offset: number,
+): ConversationRunRuntimeObservation[] {
+  if (!observations || observations.length === 0) {
+    return [];
+  }
+  return observations.map((observation) => ({
+    observation: observation.observation,
+    eventIndex: observation.eventIndex + offset,
+  }));
+}
+
 function selectToolCallAdmissionStartsForRange(input: {
   starts?: ConversationRunToolCallAdmissionStart[];
   startIndex: number;
@@ -486,11 +552,30 @@ function selectToolCallAdmissionStartsForRange(input: {
     }));
 }
 
+function selectRuntimeObservationsForRange(input: {
+  observations?: ConversationRunRuntimeObservation[];
+  startIndex: number;
+  eventCount: number;
+}): ConversationRunRuntimeObservation[] {
+  if (!input.observations || input.observations.length === 0) {
+    return [];
+  }
+  const endIndex = input.startIndex + input.eventCount;
+  return input.observations
+    .filter((observation) =>
+      observation.eventIndex >= input.startIndex && observation.eventIndex < endIndex
+    )
+    .map((observation) => ({
+      observation: observation.observation,
+      eventIndex: observation.eventIndex - input.startIndex,
+    }));
+}
+
 function normalizeAppendEvents(input: {
   events: unknown[];
-  hasToolCallAdmissionStarts: boolean;
+  hasPrivateSidecars: boolean;
 }): unknown[] {
-  if (!input.hasToolCallAdmissionStarts) {
+  if (!input.hasPrivateSidecars) {
     return normalizeConversationRunEvents(
       input.events as Parameters<typeof normalizeConversationRunEvents>[0],
     );
@@ -814,6 +899,8 @@ export async function recoverConversationRunAppendExecution(input: {
   pendingEvents: unknown[];
   remainingToolCallStarts?: ConversationRunToolCallAdmissionStart[];
   pendingToolCallStarts?: ConversationRunToolCallAdmissionStart[];
+  remainingRuntimeObservations?: ConversationRunRuntimeObservation[];
+  pendingRuntimeObservations?: ConversationRunRuntimeObservation[];
   cursorResyncsThisFlush: number;
   consecutiveFailures: number;
   maxCursorResyncsPerFlush: number;
@@ -828,6 +915,7 @@ export async function recoverConversationRunAppendExecution(input: {
     latestExternalEventSequence: number;
     pendingEvents: unknown[];
     pendingToolCallStarts?: ConversationRunToolCallAdmissionStart[];
+    pendingRuntimeObservations?: ConversationRunRuntimeObservation[];
     consecutiveFailures: number;
   }
   | {
@@ -849,6 +937,7 @@ export async function recoverConversationRunAppendExecution(input: {
     latestExternalEventSequence: number;
     pendingEvents: unknown[];
     pendingToolCallStarts?: ConversationRunToolCallAdmissionStart[];
+    pendingRuntimeObservations?: ConversationRunRuntimeObservation[];
     consecutiveFailures: number;
     errorMessage: string;
     retryCause?: "timeout";
@@ -873,6 +962,10 @@ export async function recoverConversationRunAppendExecution(input: {
     ...(input.remainingToolCallStarts ?? []),
     ...shiftToolCallAdmissionStarts(input.pendingToolCallStarts, input.remainingEvents.length),
   ];
+  const pendingRuntimeObservations = [
+    ...(input.remainingRuntimeObservations ?? []),
+    ...shiftRuntimeObservations(input.pendingRuntimeObservations, input.remainingEvents.length),
+  ];
 
   if (recovered.outcome === "resumed") {
     return {
@@ -881,6 +974,7 @@ export async function recoverConversationRunAppendExecution(input: {
       latestExternalEventSequence: recovered.latestExternalEventSequence,
       pendingEvents: [...input.remainingEvents, ...input.pendingEvents],
       ...(pendingToolCallStarts.length > 0 ? { pendingToolCallStarts } : {}),
+      ...(pendingRuntimeObservations.length > 0 ? { pendingRuntimeObservations } : {}),
       consecutiveFailures: 0,
     };
   }
@@ -900,6 +994,7 @@ export async function recoverConversationRunAppendExecution(input: {
     latestExternalEventSequence: recovered.latestExternalEventSequence,
     pendingEvents: [...input.remainingEvents, ...input.pendingEvents],
     ...(pendingToolCallStarts.length > 0 ? { pendingToolCallStarts } : {}),
+    ...(pendingRuntimeObservations.length > 0 ? { pendingRuntimeObservations } : {}),
     consecutiveFailures: input.consecutiveFailures + 1,
     errorMessage: recovered.errorMessage ?? "Conversation run append failed",
     ...(recovered.retryCause ? { retryCause: recovered.retryCause } : {}),
@@ -956,8 +1051,10 @@ export async function flushConversationRunEventBatches(input: {
   latestExternalEventSequence: number;
   events: unknown[];
   toolCallStarts?: ConversationRunToolCallAdmissionStart[];
+  runtimeObservations?: ConversationRunRuntimeObservation[];
   pendingEvents?: unknown[];
   pendingToolCallStarts?: ConversationRunToolCallAdmissionStart[];
+  pendingRuntimeObservations?: ConversationRunRuntimeObservation[];
   maxEventsPerBatch: number;
   maxBatchPayloadBytes?: number;
   cursorResyncsThisFlush?: number;
@@ -981,6 +1078,7 @@ export async function flushConversationRunEventBatches(input: {
     latestExternalEventSequence: number;
     pendingEvents: unknown[];
     pendingToolCallStarts?: ConversationRunToolCallAdmissionStart[];
+    pendingRuntimeObservations?: ConversationRunRuntimeObservation[];
     consecutiveFailures: number;
     errorMessage?: string;
     retryCause?: "timeout";
@@ -1023,6 +1121,11 @@ export async function flushConversationRunEventBatches(input: {
       startIndex: batchStartIndex,
       eventCount: batch.length,
     });
+    const batchRuntimeObservations = selectRuntimeObservationsForRange({
+      observations: input.runtimeObservations,
+      startIndex: batchStartIndex,
+      eventCount: batch.length,
+    });
     try {
       input.onAppendRequest?.();
       const response = await appendConversationRunEvents({
@@ -1035,6 +1138,7 @@ export async function flushConversationRunEventBatches(input: {
         expectedPreviousExternalEventSequence: latestExternalEventSequence,
         events: batch,
         toolCallStarts: batchToolCallStarts,
+        runtimeObservations: batchRuntimeObservations,
         abortSignal: input.abortSignal,
         fetch: input.fetch,
       });
@@ -1055,6 +1159,11 @@ export async function flushConversationRunEventBatches(input: {
         startIndex: batchStartIndex,
         eventCount: remainingEvents.length,
       });
+      const remainingRuntimeObservations = selectRuntimeObservationsForRange({
+        observations: input.runtimeObservations,
+        startIndex: batchStartIndex,
+        eventCount: remainingEvents.length,
+      });
       const recovered = await recoverConversationRunAppendExecution({
         error,
         authToken: input.authToken,
@@ -1067,6 +1176,8 @@ export async function flushConversationRunEventBatches(input: {
         pendingEvents: input.pendingEvents ?? [],
         remainingToolCallStarts,
         pendingToolCallStarts: input.pendingToolCallStarts,
+        remainingRuntimeObservations,
+        pendingRuntimeObservations: input.pendingRuntimeObservations,
         cursorResyncsThisFlush: input.cursorResyncsThisFlush ?? 0,
         consecutiveFailures: input.consecutiveFailures ?? 0,
         maxCursorResyncsPerFlush: input.maxCursorResyncsPerFlush,
@@ -1091,6 +1202,9 @@ export async function flushConversationRunEventBatches(input: {
         pendingEvents: recovered.pendingEvents,
         ...(recovered.pendingToolCallStarts && recovered.pendingToolCallStarts.length > 0
           ? { pendingToolCallStarts: recovered.pendingToolCallStarts }
+          : {}),
+        ...(recovered.pendingRuntimeObservations && recovered.pendingRuntimeObservations.length > 0
+          ? { pendingRuntimeObservations: recovered.pendingRuntimeObservations }
           : {}),
         consecutiveFailures: recovered.consecutiveFailures,
         ...(recovered.outcome === "retry_scheduled"
@@ -1121,6 +1235,7 @@ export async function flushConversationRunEventQueue(input: {
   latestExternalEventSequence: number;
   events: unknown[];
   toolCallStarts?: ConversationRunToolCallAdmissionStart[];
+  runtimeObservations?: ConversationRunRuntimeObservation[];
   maxEventsPerBatch: number;
   maxBatchPayloadBytes?: number;
   maxCursorResyncsPerFlush: number;
@@ -1156,6 +1271,7 @@ export async function flushConversationRunEventQueue(input: {
     latestExternalEventSequence: number;
     pendingEvents: unknown[];
     pendingToolCallStarts?: ConversationRunToolCallAdmissionStart[];
+    pendingRuntimeObservations?: ConversationRunRuntimeObservation[];
     consecutiveFailures: number;
     errorMessage: string;
     retryCause?: "timeout";
@@ -1165,14 +1281,17 @@ export async function flushConversationRunEventQueue(input: {
   let latestExternalEventSequence = input.latestExternalEventSequence;
   let pendingEvents = [...input.events];
   let pendingToolCallStarts = input.toolCallStarts ?? [];
+  let pendingRuntimeObservations = input.runtimeObservations ?? [];
   let cursorResyncsThisFlush = 0;
   let consecutiveFailures = input.consecutiveFailures ?? 0;
 
   while (pendingEvents.length > 0) {
     const events = pendingEvents;
     const toolCallStarts = pendingToolCallStarts;
+    const runtimeObservations = pendingRuntimeObservations;
     pendingEvents = [];
     pendingToolCallStarts = [];
+    pendingRuntimeObservations = [];
 
     const flushed = await flushConversationRunEventBatches({
       authToken: input.authToken,
@@ -1184,8 +1303,10 @@ export async function flushConversationRunEventQueue(input: {
       latestExternalEventSequence,
       events,
       toolCallStarts,
+      runtimeObservations,
       pendingEvents,
       pendingToolCallStarts,
+      pendingRuntimeObservations,
       maxEventsPerBatch: input.maxEventsPerBatch,
       maxBatchPayloadBytes: input.maxBatchPayloadBytes,
       cursorResyncsThisFlush,
@@ -1209,6 +1330,7 @@ export async function flushConversationRunEventQueue(input: {
     if (flushed.outcome === "resumed") {
       pendingEvents = flushed.pendingEvents;
       pendingToolCallStarts = flushed.pendingToolCallStarts ?? [];
+      pendingRuntimeObservations = flushed.pendingRuntimeObservations ?? [];
       consecutiveFailures = flushed.consecutiveFailures;
       cursorResyncsThisFlush += 1;
       continue;
@@ -1230,6 +1352,9 @@ export async function flushConversationRunEventQueue(input: {
       pendingEvents: flushed.pendingEvents,
       ...(flushed.pendingToolCallStarts && flushed.pendingToolCallStarts.length > 0
         ? { pendingToolCallStarts: flushed.pendingToolCallStarts }
+        : {}),
+      ...(flushed.pendingRuntimeObservations && flushed.pendingRuntimeObservations.length > 0
+        ? { pendingRuntimeObservations: flushed.pendingRuntimeObservations }
         : {}),
       consecutiveFailures: flushed.consecutiveFailures,
       errorMessage: flushed.errorMessage ?? "Conversation run append failed",
@@ -1263,6 +1388,7 @@ export function createConversationRunEventQueueController(input: {
   let latestExternalEventSequence = input.latestExternalEventSequence;
   let pendingEvents: unknown[] = [];
   let pendingToolCallStarts: ConversationRunToolCallAdmissionStart[] = [];
+  let pendingRuntimeObservations: ConversationRunRuntimeObservation[] = [];
   let consecutiveFailures = 0;
   let disabled = false;
   let disposed = false;
@@ -1343,8 +1469,10 @@ export function createConversationRunEventQueueController(input: {
 
     const queuedEvents = pendingEvents;
     const queuedToolCallStarts = pendingToolCallStarts;
+    const queuedRuntimeObservations = pendingRuntimeObservations;
     pendingEvents = [];
     pendingToolCallStarts = [];
+    pendingRuntimeObservations = [];
 
     let flushed;
     try {
@@ -1358,6 +1486,7 @@ export function createConversationRunEventQueueController(input: {
         latestExternalEventSequence,
         events: queuedEvents,
         toolCallStarts: queuedToolCallStarts,
+        runtimeObservations: queuedRuntimeObservations,
         maxEventsPerBatch: input.maxEventsPerBatch,
         maxBatchPayloadBytes: input.maxBatchPayloadBytes,
         maxCursorResyncsPerFlush: input.maxCursorResyncsPerFlush ?? 3,
@@ -1376,6 +1505,10 @@ export function createConversationRunEventQueueController(input: {
         pendingToolCallStarts = [
           ...queuedToolCallStarts,
           ...shiftToolCallAdmissionStarts(pendingToolCallStarts, queuedEvents.length),
+        ];
+        pendingRuntimeObservations = [
+          ...queuedRuntimeObservations,
+          ...shiftRuntimeObservations(pendingRuntimeObservations, queuedEvents.length),
         ];
       }
       throw error;
@@ -1410,6 +1543,7 @@ export function createConversationRunEventQueueController(input: {
     if (flushed.outcome === "stopped") {
       pendingEvents = [];
       pendingToolCallStarts = [];
+      pendingRuntimeObservations = [];
       disabled = true;
       disableReason = flushed.disableReason;
       return {
@@ -1427,6 +1561,10 @@ export function createConversationRunEventQueueController(input: {
     pendingToolCallStarts = [
       ...(flushed.pendingToolCallStarts ?? []),
       ...shiftToolCallAdmissionStarts(pendingToolCallStarts, flushed.pendingEvents.length),
+    ];
+    pendingRuntimeObservations = [
+      ...(flushed.pendingRuntimeObservations ?? []),
+      ...shiftRuntimeObservations(pendingRuntimeObservations, flushed.pendingEvents.length),
     ];
     consecutiveFailures = flushed.consecutiveFailures;
     return {
@@ -1450,6 +1588,10 @@ export function createConversationRunEventQueueController(input: {
       pendingToolCallStarts = [
         ...pendingToolCallStarts,
         ...shiftToolCallAdmissionStarts(options?.toolCallStarts, pendingEvents.length),
+      ];
+      pendingRuntimeObservations = [
+        ...pendingRuntimeObservations,
+        ...shiftRuntimeObservations(options?.runtimeObservations, pendingEvents.length),
       ];
       pendingEvents.push(...events);
     },
@@ -1699,6 +1841,7 @@ export async function appendConversationRunEvents(input: {
   expectedPreviousExternalEventSequence?: number;
   events: unknown[];
   toolCallStarts?: ConversationRunToolCallAdmissionStart[];
+  runtimeObservations?: ConversationRunRuntimeObservation[];
   abortSignal?: AbortSignal;
   /** Host-owned transport used by trusted capability-backed callers. */
   fetch?: ConversationRunApiFetch;
@@ -1718,9 +1861,14 @@ export async function appendConversationRunEvents(input: {
     events: input.events,
     toolCallStarts: input.toolCallStarts,
   });
+  const submittedRuntimeObservations = readSubmittedRuntimeObservations({
+    events: input.events,
+    runtimeObservations: input.runtimeObservations,
+  });
   const normalizedEvents = normalizeAppendEvents({
     events: input.events,
-    hasToolCallAdmissionStarts: submittedToolCallAdmissionStarts.length > 0,
+    hasPrivateSidecars: submittedToolCallAdmissionStarts.length > 0 ||
+      submittedRuntimeObservations.length > 0,
   });
   for (const start of submittedToolCallAdmissionStarts) {
     const normalizedEvent = normalizedEvents[start.eventIndex];
@@ -1730,6 +1878,13 @@ export async function appendConversationRunEvents(input: {
     ) {
       throw new DurableRunEventPersistenceError(
         "Tool call admission sidecar event_index changed during normalization",
+      );
+    }
+  }
+  for (const observation of submittedRuntimeObservations) {
+    if (normalizedEvents[observation.eventIndex] === undefined) {
+      throw new DurableRunEventPersistenceError(
+        "Runtime observation sidecar event_index changed during normalization",
       );
     }
   }
@@ -1768,6 +1923,9 @@ export async function appendConversationRunEvents(input: {
         : {}),
       ...(submittedToolCallAdmissionStarts.length > 0
         ? { tool_call_starts: toWireToolCallAdmissionStarts(submittedToolCallAdmissionStarts) }
+        : {}),
+      ...(submittedRuntimeObservations.length > 0
+        ? { runtime_observations: toWireRuntimeObservations(submittedRuntimeObservations) }
         : {}),
       events: normalizedEvents,
     });

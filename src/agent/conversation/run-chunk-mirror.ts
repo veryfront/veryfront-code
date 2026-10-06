@@ -3,8 +3,13 @@ import type { AgentRunModelCallCaptureReceipt } from "#veryfront/runtime/model-c
 import type { AgentRunToolCallAdmissionReceipt } from "#veryfront/runtime/tool-call-admission-receipt.ts";
 import {
   getToolCallOccurrence,
-  isObservedProviderToolStart,
+  isObservedToolResultStart,
 } from "#veryfront/runtime/tool-call-occurrence-carrier.ts";
+import {
+  type ConversationRunRuntimeObservation,
+  getRuntimeObservation,
+  type PrivateRuntimeObservation,
+} from "#veryfront/runtime/runtime-observation-carrier.ts";
 import {
   type AgentRunEventTimingOptions,
   createAgentRunEventTimingAnchor,
@@ -22,6 +27,7 @@ import {
 import {
   prepareConversationRunChunkEvents,
   prepareConversationRunExternalEvents,
+  toConversationRunStreamEvent,
 } from "./run-event-preparation.ts";
 import {
   type ConversationRunEventQueueController,
@@ -75,6 +81,8 @@ export interface ConversationRunChunkMirrorPrepareExternalEventsInput {
 interface ConversationRunChunkMirrorSharedOptions {
   /** Trusted hosted mode; normal start chunks must carry a private occurrence sidecar. */
   toolCallAdmissions?: true;
+  /** Trusted hosted mode; runtime-observation sidecars select exact durable events. */
+  runtimeObservations?: true;
   immediateFlushEventCount?: number;
   encoder?: ConversationRunEventEncoder;
   flushDelayMs?: number;
@@ -142,6 +150,8 @@ export interface HostedConversationRunChunkMirrorInstrumentation {
 export interface HostedConversationRunChunkMirrorOptions {
   /** Trusted opt-in using the normal private append transport. */
   toolCallAdmissions?: true;
+  /** Trusted opt-in using the normal private append transport. */
+  runtimeObservations?: true;
   authToken: string;
   apiUrl: string;
   conversationId: string;
@@ -178,6 +188,50 @@ function resolveQueueController(
       DEFAULT_MAX_CURSOR_RESYNCS_PER_FLUSH,
     fetch: input.fetch,
   });
+}
+
+function isRuntimeObservationEvent(
+  event: ConversationRunEvent,
+  observation: PrivateRuntimeObservation,
+): boolean {
+  switch (observation.kind) {
+    case "execution_entry":
+      return event.type === "RUNTIME_EVENT_RECORDED";
+    case "step_started":
+      return event.type === "STEP_STARTED" && event.stepId === observation.stepId;
+    case "step_ended":
+      return event.type === "STEP_FINISHED" && event.stepId === observation.stepId;
+    case "step_message":
+      return event.type === "TEXT_MESSAGE_START" ||
+        event.type === "TEXT_MESSAGE_CONTENT" ||
+        event.type === "TEXT_MESSAGE_END" ||
+        event.type === "REASONING_MESSAGE_START" ||
+        event.type === "REASONING_MESSAGE_CONTENT" ||
+        event.type === "REASONING_MESSAGE_END";
+    default: {
+      const _exhaustive: never = observation;
+      return _exhaustive;
+    }
+  }
+}
+
+function selectRuntimeObservations(input: {
+  events: ConversationRunEvent[];
+  observation?: PrivateRuntimeObservation;
+}): ConversationRunRuntimeObservation[] {
+  if (!input.observation) return [];
+  const observations = input.events.flatMap((event, eventIndex) =>
+    isRuntimeObservationEvent(event, input.observation!)
+      ? [{ observation: input.observation!, eventIndex }]
+      : []
+  );
+  if (observations.length === 0) {
+    throw new TypeError("Hosted runtime observation has no exact durable event");
+  }
+  if (input.observation.kind !== "step_message" && observations.length !== 1) {
+    throw new TypeError("Hosted runtime observation must select one exact durable event");
+  }
+  return observations;
 }
 
 /** Create conversation run chunk mirror. */
@@ -224,18 +278,30 @@ export function createConversationRunChunkMirror(
         return;
       }
 
+      const runtimeObservation = input.runtimeObservations
+        ? getRuntimeObservation(chunk)
+        : undefined;
+      const defaultPrepare = () =>
+        runtimeObservation
+          ? prepareConversationRunExternalEvents(
+            encoder.encodeObserved(toConversationRunStreamEvent(chunk), runtimeObservation),
+          )
+          : prepareConversationRunChunkEvents([chunk], encoder);
       const events = await (input.prepareChunkEvents?.({
         chunk,
-        defaultPrepare: () => prepareConversationRunChunkEvents([chunk], encoder),
-      }) ?? prepareConversationRunChunkEvents([chunk], encoder));
+        defaultPrepare,
+      }) ?? defaultPrepare());
       await input.onChunkPrepared?.({ chunk, events });
       if (events.length === 0) {
         return;
       }
 
+      const runtimeObservations = input.runtimeObservations
+        ? selectRuntimeObservations({ events, observation: runtimeObservation })
+        : [];
       if (
         input.toolCallAdmissions && chunk.type === "tool-input-start" &&
-        !isObservedProviderToolStart(chunk)
+        !isObservedToolResultStart(chunk)
       ) {
         const occurrenceId = getToolCallOccurrence(chunk);
         const startIndices = events.flatMap((event, eventIndex) =>
@@ -248,7 +314,10 @@ export function createConversationRunChunkMirror(
         }
         mirror.enqueue(events, {
           toolCallStarts: [{ occurrenceId, eventIndex: startIndices[0]! }],
+          ...(runtimeObservations.length > 0 ? { runtimeObservations } : {}),
         });
+      } else if (runtimeObservations.length > 0) {
+        mirror.enqueue(events, { runtimeObservations });
       } else {
         mirror.enqueue(events);
       }
@@ -463,6 +532,7 @@ export function createHostedConversationRunChunkMirror(
     maxCursorResyncsPerFlush: DEFAULT_MAX_CURSOR_RESYNCS_PER_FLUSH,
     immediateFlushEventCount: batchSize,
     ...(input.toolCallAdmissions ? { toolCallAdmissions: true } : {}),
+    ...(input.runtimeObservations ? { runtimeObservations: true } : {}),
     highBacklogEventCount,
     fetch: input.fetch,
     ...(input.runQueueFlush ? { runQueueFlush: input.runQueueFlush } : {}),

@@ -35,6 +35,9 @@ import {
 } from "#veryfront/agent/streaming/lifecycle/index.ts";
 import { shouldContinueAfterStreamStep } from "./tool-result-continuation.ts";
 import { createChatUiMessageStreamFromDataStream } from "#veryfront/agent/streaming/chat-ui-message-stream.ts";
+import { createConversationRunChunkMirror } from "#veryfront/agent/conversation/run-chunk-mirror.ts";
+import { createConversationRunEventQueueController } from "#veryfront/agent/conversation/durable.ts";
+import { ConversationRunEventEncoder } from "#veryfront/agent/conversation/run-events.ts";
 import {
   hasIncompleteToolParts,
   isToolUiPart,
@@ -3210,6 +3213,178 @@ describe("chat-stream-handler provider-executed tool finalization", () => {
       },
     });
   }
+
+  it("carries real runtime step message observations through decode, mirror, and durable batching", async () => {
+    const firstStepId = "11111111-1111-4111-8111-111111111111";
+    const secondStepId = "22222222-2222-4222-8222-222222222222";
+    const firstMessageSpanId = "33333333-3333-4333-8333-333333333333";
+    const secondMessageSpanId = "44444444-4444-4444-8444-444444444444";
+    const canonicalRunId = "55555555-5555-4555-8555-555555555555";
+    const { events, controller, encoder } = createSSECollector();
+
+    events.push({ type: "message-start", messageId: "outer-message" });
+    events.push({
+      type: "step-start",
+      privateRuntimeObservation: { version: 1, kind: "step_started", stepId: firstStepId },
+    });
+    await processStream(
+      createMockResult([
+        { type: "text-delta", text: "first" },
+        { type: "finish", finishReason: "stop", totalUsage: null },
+      ]),
+      createStreamState(),
+      controller,
+      encoder,
+      "outer-message",
+      {
+        runtimeObservationStepId: firstStepId,
+        runtimeObservationMessageSpanId: firstMessageSpanId,
+      },
+    );
+    events.push({
+      type: "step-end",
+      privateRuntimeObservation: { version: 1, kind: "step_ended", stepId: firstStepId },
+    });
+    events.push({
+      type: "step-start",
+      privateRuntimeObservation: { version: 1, kind: "step_started", stepId: secondStepId },
+    });
+    await processStream(
+      createMockResult([
+        { type: "reasoning-start", id: "reasoning" },
+        { type: "reasoning-delta", id: "reasoning", delta: "think" },
+        { type: "reasoning-end", id: "reasoning" },
+        { type: "text-delta", text: "second" },
+        { type: "finish", finishReason: "stop", totalUsage: null },
+      ]),
+      createStreamState(),
+      controller,
+      encoder,
+      "outer-message",
+      {
+        runtimeObservationStepId: secondStepId,
+        runtimeObservationMessageSpanId: secondMessageSpanId,
+      },
+    );
+    events.push({
+      type: "step-end",
+      privateRuntimeObservation: { version: 1, kind: "step_ended", stepId: secondStepId },
+    });
+    events.push({ type: "message-finish", finishReason: "stop" });
+
+    const runtimeObservationEventTypes = (stepId: string, messageSpanId: string) =>
+      events.filter((event) => {
+        const observation = event.privateRuntimeObservation;
+        return typeof observation === "object" && observation !== null &&
+          "kind" in observation && observation.kind === "step_message" &&
+          "stepId" in observation && observation.stepId === stepId &&
+          "messageSpanId" in observation && observation.messageSpanId === messageSpanId;
+      }).map((event) => event.type);
+    // The chat stream encoder consumes text-start as block registration and does
+    // not emit a UI/durable chunk for it. Provenance starts on the first visible
+    // delta; if normalization must synthesize a public start chunk from that
+    // delta, it intentionally retains the delta's observation on the synthetic
+    // boundary.
+    assertEquals(runtimeObservationEventTypes(firstStepId, firstMessageSpanId), [
+      "text-delta",
+      "text-end",
+    ]);
+    assertEquals(runtimeObservationEventTypes(secondStepId, secondMessageSpanId), [
+      "reasoning-start",
+      "reasoning-delta",
+      "reasoning-end",
+      "text-delta",
+      "text-end",
+    ]);
+
+    const appendBodies: Array<
+      {
+        events: Array<Record<string, unknown>>;
+        runtime_observations?: { observations: Array<Record<string, unknown>> };
+      }
+    > = [];
+    const queueController = createConversationRunEventQueueController({
+      authToken: "writer",
+      apiUrl: "https://api.example.test",
+      conversationId: "66666666-6666-4666-8666-666666666666",
+      runId: "runtime-run",
+      canonicalRunId,
+      latestEventId: 0,
+      latestExternalEventSequence: 0,
+      maxEventsPerBatch: 100,
+      fetch: (_input, init) => {
+        const bodyText = typeof init?.body === "string" ? init.body : "{}";
+        const body = JSON.parse(bodyText);
+        appendBodies.push(body);
+        return Promise.resolve(Response.json({
+          run_id: canonicalRunId,
+          latest_event_id: 7,
+          latest_external_event_sequence: 5,
+          appended_count: Array.isArray(body.events) ? body.events.length : 0,
+        }));
+      },
+    });
+    const mirror = createConversationRunChunkMirror({
+      queueController,
+      encoder: new ConversationRunEventEncoder(),
+      runtimeObservations: true,
+      immediateFlushEventCount: 1000,
+      flushDelayMs: 60_000,
+    });
+
+    const uiStream = createChatUiMessageStreamFromDataStream(
+      { stream: createSseStream(events) },
+      {
+        generateMessageId: () => "outer-message",
+        sendReasoning: true,
+        privateRuntimeObservations: true,
+      },
+    );
+    for await (const chunk of uiStream) {
+      await mirror.handleChunk(chunk);
+    }
+    const flushed = await queueController.flush();
+    mirror.dispose();
+
+    assertEquals(flushed.outcome, "flushed");
+    assertEquals(appendBodies.length, 1);
+    const body = appendBodies[0]!;
+    const durableTextEvents = body.events.filter((event) =>
+      event.type === "TEXT_MESSAGE_START" || event.type === "TEXT_MESSAGE_CONTENT" ||
+      event.type === "TEXT_MESSAGE_END"
+    );
+    assertEquals(
+      durableTextEvents.every((event) => event.messageId === "outer-message"),
+      true,
+    );
+    assertEquals(
+      body.runtime_observations?.observations.filter((observation) =>
+        observation.kind === "step_message" && observation.step_id === firstStepId &&
+        observation.message_span_id === firstMessageSpanId
+      ).length,
+      2,
+    );
+    assertEquals(
+      body.runtime_observations?.observations.filter((observation) =>
+        observation.kind === "step_message" && observation.step_id === secondStepId &&
+        observation.message_span_id === secondMessageSpanId
+      ).length,
+      6,
+    );
+    const firstStepEndObservation = body.runtime_observations?.observations.find((observation) =>
+      observation.kind === "step_ended" && observation.step_id === firstStepId
+    );
+    const firstStepEndIndex = firstStepEndObservation?.event_index;
+    assertEquals(typeof firstStepEndIndex, "number");
+    if (typeof firstStepEndIndex !== "number") {
+      throw new Error("expected delayed first step end observation");
+    }
+    assertEquals(body.events[firstStepEndIndex], {
+      type: "STEP_FINISHED",
+      stepName: "step-1",
+      stepId: firstStepId,
+    });
+  });
 
   it("leaves a local web_fetch input-available tool unresolved (regression guard for #3043)", async () => {
     const { events, controller, encoder } = createSSECollector();

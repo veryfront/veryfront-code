@@ -2,6 +2,7 @@ import { tryGetVeryfrontCloudProviderFromModelId } from "#veryfront/provider/ver
 import type { ChatMessageMetadata, ChatUiMessageChunk } from "#veryfront/chat/protocol.ts";
 import type { AgUiChunkEncoder } from "./chunk-encoder.ts";
 import { createAgUiFinalizeTracker } from "./finalize-tracker.ts";
+import { retainStepIdentity } from "../streaming/step-identity.ts";
 import {
   type AgUiEncoderStateOptions,
   type AgUiRunFinishedMetadata,
@@ -244,7 +245,7 @@ export function normalizeChatUiMessageChunkToAgUiRuntimeEvent(
       };
 
     case "start-step":
-      return { type: "step-start" };
+      return retainStepIdentity(chunk, { type: "step-start" });
 
     case "finish-step":
       return { type: "step-end" };

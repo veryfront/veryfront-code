@@ -1,23 +1,21 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { join } from "#std/path";
+import { withTempDir } from "#veryfront/testing/deno-compat.ts";
 import { pruneUnreachableExtensionDirectories } from "../../../scripts/build/npm-extension-reachability.ts";
 
 async function withPackage(
   files: Record<string, string>,
   test: (outDir: string) => Promise<void>,
 ): Promise<void> {
-  const outDir = await Deno.makeTempDir();
-  try {
+  await withTempDir(async (outDir) => {
     for (const [name, source] of Object.entries(files)) {
       const path = join(outDir, "esm", name);
       await Deno.mkdir(join(path, ".."), { recursive: true });
       await Deno.writeTextFile(path, source);
     }
     await test(outDir);
-  } finally {
-    await Deno.remove(outDir, { recursive: true });
-  }
+  }, { prefix: "npm-extension-reachability-" });
 }
 
 async function exists(outDir: string, path: string): Promise<boolean> {

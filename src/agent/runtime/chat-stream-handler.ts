@@ -442,6 +442,40 @@ export interface ChatStreamCallbacks {
   clearTimeoutFn?: typeof clearTimeout;
   traceSpanName?: string;
   traceAttributes?: Record<string, TraceAttributeValue>;
+  /** @internal Trusted runtime observation step id for exact durable provenance. */
+  runtimeObservationStepId?: string;
+  /** @internal Trusted runtime observation message span id for this step. */
+  runtimeObservationMessageSpanId?: string;
+}
+
+function withRuntimeStepMessageObservation(
+  event: Record<string, unknown>,
+  callbacks: ChatStreamCallbacks | undefined,
+): Record<string, unknown> {
+  if (
+    callbacks?.runtimeObservationStepId === undefined ||
+    callbacks.runtimeObservationMessageSpanId === undefined
+  ) {
+    return event;
+  }
+  switch (event.type) {
+    case "text-delta":
+    case "text-end":
+    case "reasoning-start":
+    case "reasoning-delta":
+    case "reasoning-end":
+      return {
+        ...event,
+        privateRuntimeObservation: {
+          version: 1,
+          kind: "step_message",
+          stepId: callbacks.runtimeObservationStepId,
+          messageSpanId: callbacks.runtimeObservationMessageSpanId,
+        },
+      };
+    default:
+      return event;
+  }
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -795,7 +829,13 @@ async function processActiveStream(
       }
       const events = live.encode(frame);
       for (let index = 0; index < events.length; index++) {
-        if (hasOwn(events, index)) sendSSE(controller, encoder, events[index]!);
+        if (hasOwn(events, index)) {
+          sendSSE(
+            controller,
+            encoder,
+            withRuntimeStepMessageObservation(events[index]!, callbacks),
+          );
+        }
       }
     }
   } catch (error) {
@@ -1019,10 +1059,14 @@ export function processStreamInternal(
         ? textPartId
         : `${textPartId}:${nextTextSegmentIndex}`;
       nextTextSegmentIndex += 1;
-      sendSSE(controller, encoder, {
-        type: "text-start",
-        id: activeTextPartId,
-      });
+      sendSSE(
+        controller,
+        encoder,
+        withRuntimeStepMessageObservation({
+          type: "text-start",
+          id: activeTextPartId,
+        }, callbacks),
+      );
     };
 
     const closeTextSegment = () => {
@@ -1031,10 +1075,14 @@ export function processStreamInternal(
       }
 
       textOpen = false;
-      sendSSE(controller, encoder, {
-        type: "text-end",
-        id: activeTextPartId,
-      });
+      sendSSE(
+        controller,
+        encoder,
+        withRuntimeStepMessageObservation({
+          type: "text-end",
+          id: activeTextPartId,
+        }, callbacks),
+      );
       activeTextPartId = undefined;
     };
 
@@ -1044,10 +1092,14 @@ export function processStreamInternal(
       }
 
       if (activeReasoningId !== null) {
-        sendSSE(controller, encoder, {
-          type: "reasoning-end",
-          id: activeReasoningId,
-        });
+        sendSSE(
+          controller,
+          encoder,
+          withRuntimeStepMessageObservation({
+            type: "reasoning-end",
+            id: activeReasoningId,
+          }, callbacks),
+        );
       }
 
       activeReasoningId = reasoningId;
@@ -1056,10 +1108,14 @@ export function processStreamInternal(
         reasoningParts.set(reasoningId, part);
         pushPrivateArray(state.reasoningParts, part);
       }
-      sendSSE(controller, encoder, {
-        type: "reasoning-start",
-        id: reasoningId,
-      });
+      sendSSE(
+        controller,
+        encoder,
+        withRuntimeStepMessageObservation({
+          type: "reasoning-start",
+          id: reasoningId,
+        }, callbacks),
+      );
     };
 
     const closeReasoningSegment = () => {
@@ -1068,12 +1124,16 @@ export function processStreamInternal(
       }
 
       const reasoningPart = reasoningParts.get(activeReasoningId);
-      sendSSE(controller, encoder, {
-        type: "reasoning-end",
-        id: activeReasoningId,
-        ...(reasoningPart?.signature ? { signature: reasoningPart.signature } : {}),
-        ...(reasoningPart?.redactedData ? { redactedData: reasoningPart.redactedData } : {}),
-      });
+      sendSSE(
+        controller,
+        encoder,
+        withRuntimeStepMessageObservation({
+          type: "reasoning-end",
+          id: activeReasoningId,
+          ...(reasoningPart?.signature ? { signature: reasoningPart.signature } : {}),
+          ...(reasoningPart?.redactedData ? { redactedData: reasoningPart.redactedData } : {}),
+        }, callbacks),
+      );
       activeReasoningId = null;
     };
 
@@ -1131,7 +1191,7 @@ export function processStreamInternal(
 
       if (!existing) {
         const normalizedInput = parseToolInputObject(part.input);
-        const observationOnly = providerExecuted === true && isToolCallOccurrenceScopeEnabled();
+        const observationOnly = isToolCallOccurrenceScopeEnabled();
         state.toolCalls.set(part.toolCallId, {
           id: part.toolCallId,
           name: part.toolName,
@@ -1146,7 +1206,10 @@ export function processStreamInternal(
           toolCallId: part.toolCallId,
           toolName: part.toolName,
           ...(observationOnly
-            ? { privateObservedProviderToolResult: true, providerExecuted: true }
+            ? {
+              privateObservedToolResult: true,
+              ...(providerExecuted !== undefined ? { providerExecuted } : {}),
+            }
             : {}),
           ...(dynamic ? { dynamic: true } : {}),
         });
@@ -1324,11 +1387,15 @@ export function processStreamInternal(
             closeReasoningSegment();
             openTextSegment();
             state.accumulatedText += typedPart.text;
-            sendSSE(controller, encoder, {
-              type: "text-delta",
-              id: activeTextPartId,
-              delta: typedPart.text,
-            });
+            sendSSE(
+              controller,
+              encoder,
+              withRuntimeStepMessageObservation({
+                type: "text-delta",
+                id: activeTextPartId,
+                delta: typedPart.text,
+              }, callbacks),
+            );
             callbacks?.onChunk?.(typedPart.text);
             break;
           }
@@ -1347,11 +1414,15 @@ export function processStreamInternal(
             if (reasoningPart) {
               reasoningPart.text += typeof typedPart.delta === "string" ? typedPart.delta : "";
             }
-            sendSSE(controller, encoder, {
-              type: "reasoning-delta",
-              id: reasoningId,
-              delta: typeof typedPart.delta === "string" ? typedPart.delta : "",
-            });
+            sendSSE(
+              controller,
+              encoder,
+              withRuntimeStepMessageObservation({
+                type: "reasoning-delta",
+                id: reasoningId,
+                delta: typeof typedPart.delta === "string" ? typedPart.delta : "",
+              }, callbacks),
+            );
             break;
           }
 

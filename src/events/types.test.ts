@@ -1,13 +1,16 @@
 import type {
-  AgentEvent,
-  AgentEventPayloadByType,
-  AgentEventWithExtensions,
   CloudEventsExtensionAttribute,
   ErrorInfo,
+  EventDataschema,
+  EventEnvelope,
+  EventPayloadByType,
+  EventRecord,
+  EventType,
+  EventWithExtensions,
   ModelInput,
 } from "./index.ts";
 
-function readNarrowedEvent(event: AgentEvent): string {
+function readNarrowedEvent(event: EventRecord): string {
   switch (event.type) {
     case "com.veryfront.message.text.delta.emitted":
       if (event.data.delta !== undefined) {
@@ -38,19 +41,19 @@ function readNarrowedEvent(event: AgentEvent): string {
   }
 }
 
-const textDelta: AgentEventPayloadByType["com.veryfront.message.text.delta.emitted"] = {
+const textDelta: EventPayloadByType["com.veryfront.message.text.delta.emitted"] = {
   messageId: "message-a",
   contentId: "text-a",
   delta: "hello",
 };
 
-const textRedacted: AgentEventPayloadByType["com.veryfront.message.text.delta.emitted"] = {
+const textRedacted: EventPayloadByType["com.veryfront.message.text.delta.emitted"] = {
   messageId: "message-a",
   contentId: "text-a",
   contentRedacted: true,
 };
 
-const eventWithExtension: AgentEventWithExtensions<
+const eventWithExtension: EventWithExtensions<
   "com.veryfront.run.started",
   { customtag: boolean }
 > = {
@@ -70,7 +73,7 @@ if (typeof eventWithExtension.customtag === "boolean") {
   void extensionAttribute;
 }
 
-const runStartedWithoutExtensions: AgentEventWithExtensions<"com.veryfront.run.started"> = {
+const runStartedWithoutExtensions: EventWithExtensions<"com.veryfront.run.started"> = {
   specversion: "1.0",
   id: "event-a",
   source: "https://example.test/events",
@@ -82,7 +85,71 @@ const runStartedWithoutExtensions: AgentEventWithExtensions<"com.veryfront.run.s
 };
 void runStartedWithoutExtensions;
 
-const eventWithObjectExtension: AgentEventWithExtensions<
+const runStartedEnvelope: EventEnvelope<
+  "com.veryfront.run.started",
+  EventDataschema<"com.veryfront.run.started">
+> = runStartedWithoutExtensions;
+void runStartedEnvelope;
+
+const { runid: omittedRunId, ...runStartedEnvelopeWithoutId } = runStartedEnvelope;
+// @ts-expect-error the public envelope requires the selected event's runid
+const runStartedEnvelopeMissingRunId: EventEnvelope<
+  "com.veryfront.run.started",
+  EventDataschema<"com.veryfront.run.started">
+> = runStartedEnvelopeWithoutId;
+void omittedRunId;
+void runStartedEnvelopeMissingRunId;
+
+function readNarrowedEnvelope(
+  event: EventEnvelope<EventType, EventDataschema<EventType>>,
+): string {
+  switch (event.type) {
+    case "com.veryfront.run.started": {
+      const runId: string = event.runid;
+      const schema: EventDataschema<"com.veryfront.run.started"> = event.dataschema;
+      return `${runId}:${schema}`;
+    }
+    case "com.veryfront.model-call.usage.recorded": {
+      const modelCallId: string = event.modelcallid;
+      const inputTokens: number = event.data.tokens.input;
+      return `${modelCallId}:${inputTokens}`;
+    }
+    default:
+      return event.id;
+  }
+}
+void readNarrowedEnvelope;
+
+const runStartedEnvelopeWithExtensions: EventEnvelope<
+  "com.veryfront.run.started",
+  EventDataschema<"com.veryfront.run.started">,
+  { customtag: boolean }
+> = eventWithExtension;
+void runStartedEnvelopeWithExtensions;
+
+const runStartedEnvelopeWithUnknownSchema: EventEnvelope<
+  "com.veryfront.run.started",
+  // @ts-expect-error an envelope schema must match its event type
+  "urn:example:wrong-schema"
+> = {
+  ...runStartedWithoutExtensions,
+  // @ts-expect-error an invalid schema parameter cannot replace the canonical schema
+  dataschema: "urn:example:wrong-schema",
+};
+void runStartedEnvelopeWithUnknownSchema;
+
+const runStartedEnvelopeWithOtherEventSchema: EventEnvelope<
+  "com.veryfront.run.started",
+  // @ts-expect-error another catalog event's schema cannot describe run.started
+  EventDataschema<"com.veryfront.run.succeeded">
+> = {
+  ...runStartedWithoutExtensions,
+  // @ts-expect-error another event's schema cannot replace the canonical schema
+  dataschema: "urn:veryfront:run-events:target:payloads:1#/$defs/RunSucceeded",
+};
+void runStartedEnvelopeWithOtherEventSchema;
+
+const eventWithObjectExtension: EventWithExtensions<
   "com.veryfront.run.started",
   { customtag: boolean }
 > = {
@@ -98,7 +165,7 @@ const eventWithObjectExtension: AgentEventWithExtensions<
   customtag: {},
 };
 
-const textBoth: AgentEventPayloadByType["com.veryfront.message.text.delta.emitted"] = {
+const textBoth: EventPayloadByType["com.veryfront.message.text.delta.emitted"] = {
   messageId: "message-a",
   contentId: "text-a",
   delta: "hello",
@@ -131,14 +198,14 @@ const errorInfoWithUndefinedCode: ErrorInfo = {
 };
 void errorInfoWithUndefinedCode;
 
-const createdSnapshot: AgentEventPayloadByType["com.veryfront.input-request.created"] = {
+const createdSnapshot: EventPayloadByType["com.veryfront.input-request.created"] = {
   inputRequest: {
     id: "request-a",
     status: "open",
   },
 };
 
-const createdSubmitted: AgentEventPayloadByType["com.veryfront.input-request.created"] = {
+const createdSubmitted: EventPayloadByType["com.veryfront.input-request.created"] = {
   inputRequest: {
     id: "request-a",
     // @ts-expect-error created snapshots must be open
@@ -146,7 +213,7 @@ const createdSubmitted: AgentEventPayloadByType["com.veryfront.input-request.cre
   },
 };
 
-const createdWithToolCall: AgentEventPayloadByType["com.veryfront.input-request.created"] = {
+const createdWithToolCall: EventPayloadByType["com.veryfront.input-request.created"] = {
   inputRequest: {
     id: "request-a",
     status: "open",
@@ -154,17 +221,16 @@ const createdWithToolCall: AgentEventPayloadByType["com.veryfront.input-request.
   },
 };
 
-const createdMixedReferenceSnapshot:
-  AgentEventPayloadByType["com.veryfront.input-request.created"] = {
-    inputRequest: {
-      id: "request-a",
-      uri: "https://example.test/input-requests/request-a",
-      // @ts-expect-error input request references cannot also carry snapshot status
-      status: "open",
-    },
-  };
+const createdMixedReferenceSnapshot: EventPayloadByType["com.veryfront.input-request.created"] = {
+  inputRequest: {
+    id: "request-a",
+    uri: "https://example.test/input-requests/request-a",
+    // @ts-expect-error input request references cannot also carry snapshot status
+    status: "open",
+  },
+};
 
-const updatedReference: AgentEventPayloadByType["com.veryfront.input-request.updated"] = {
+const updatedReference: EventPayloadByType["com.veryfront.input-request.updated"] = {
   inputRequest: {
     id: "request-a",
     uri: "https://example.test/input-requests/request-a",
@@ -175,16 +241,15 @@ const updatedReference: AgentEventPayloadByType["com.veryfront.input-request.upd
 };
 
 // @ts-expect-error reference-based updates require typed changes
-const updatedReferenceWithoutChanges:
-  AgentEventPayloadByType["com.veryfront.input-request.updated"] = {
-    inputRequest: {
-      id: "request-a",
-      uri: "https://example.test/input-requests/request-a",
-    },
-  };
+const updatedReferenceWithoutChanges: EventPayloadByType["com.veryfront.input-request.updated"] = {
+  inputRequest: {
+    id: "request-a",
+    uri: "https://example.test/input-requests/request-a",
+  },
+};
 
 // @ts-expect-error snapshot-based updates cannot also carry changes
-const updatedSnapshotWithChanges: AgentEventPayloadByType["com.veryfront.input-request.updated"] = {
+const updatedSnapshotWithChanges: EventPayloadByType["com.veryfront.input-request.updated"] = {
   inputRequest: {
     id: "request-a",
     status: "submitted",
@@ -194,17 +259,16 @@ const updatedSnapshotWithChanges: AgentEventPayloadByType["com.veryfront.input-r
   },
 };
 
-const updatedMixedSnapshotReference:
-  AgentEventPayloadByType["com.veryfront.input-request.updated"] = {
-    // @ts-expect-error input request snapshots cannot also carry reference uri
-    inputRequest: {
-      id: "request-a",
-      status: "submitted",
-      uri: "https://example.test/input-requests/request-a",
-    },
-  };
+const updatedMixedSnapshotReference: EventPayloadByType["com.veryfront.input-request.updated"] = {
+  // @ts-expect-error input request snapshots cannot also carry reference uri
+  inputRequest: {
+    id: "request-a",
+    status: "submitted",
+    uri: "https://example.test/input-requests/request-a",
+  },
+};
 
-const updatedChangesWithToolCall: AgentEventPayloadByType["com.veryfront.input-request.updated"] = {
+const updatedChangesWithToolCall: EventPayloadByType["com.veryfront.input-request.updated"] = {
   inputRequest: {
     id: "request-a",
     uri: "https://example.test/input-requests/request-a",
@@ -216,29 +280,27 @@ const updatedChangesWithToolCall: AgentEventPayloadByType["com.veryfront.input-r
   },
 };
 
-const updatedReferenceEmptyChanges: AgentEventPayloadByType["com.veryfront.input-request.updated"] =
-  {
-    inputRequest: {
-      id: "request-a",
-      uri: "https://example.test/input-requests/request-a",
-    },
-    // @ts-expect-error input request reference updates must include at least one typed change
-    changes: {},
-  };
+const updatedReferenceEmptyChanges: EventPayloadByType["com.veryfront.input-request.updated"] = {
+  inputRequest: {
+    id: "request-a",
+    uri: "https://example.test/input-requests/request-a",
+  },
+  // @ts-expect-error input request reference updates must include at least one typed change
+  changes: {},
+};
 
-const updatedReferenceUndefinedStatus:
-  AgentEventPayloadByType["com.veryfront.input-request.updated"] = {
-    inputRequest: {
-      id: "request-a",
-      uri: "https://example.test/input-requests/request-a",
-    },
-    // @ts-expect-error undefined does not satisfy the required changed field
-    changes: { status: undefined },
-  };
+const updatedReferenceUndefinedStatus: EventPayloadByType["com.veryfront.input-request.updated"] = {
+  inputRequest: {
+    id: "request-a",
+    uri: "https://example.test/input-requests/request-a",
+  },
+  // @ts-expect-error undefined does not satisfy the required changed field
+  changes: { status: undefined },
+};
 void updatedReferenceUndefinedStatus;
 
 // @ts-expect-error run lifecycle events require the envelope runid
-const runStartedWithoutRunId: AgentEvent<"com.veryfront.run.started"> = {
+const runStartedWithoutRunId: EventRecord<"com.veryfront.run.started"> = {
   specversion: "1.0",
   id: "event-a",
   source: "https://example.test/events",
@@ -248,7 +310,7 @@ const runStartedWithoutRunId: AgentEvent<"com.veryfront.run.started"> = {
   data: {},
 };
 
-const modelCallUsageAttempt: AgentEvent<"com.veryfront.model-call.usage.recorded"> = {
+const modelCallUsageAttempt: EventRecord<"com.veryfront.model-call.usage.recorded"> = {
   specversion: "1.0",
   id: "event-a",
   source: "https://example.test/events",
@@ -265,7 +327,7 @@ const modelCallUsageAttempt: AgentEvent<"com.veryfront.model-call.usage.recorded
 };
 
 // @ts-expect-error attempt-scoped model usage requires envelope attemptid
-const modelCallUsageAttemptWithoutAttemptId: AgentEvent<
+const modelCallUsageAttemptWithoutAttemptId: EventRecord<
   "com.veryfront.model-call.usage.recorded"
 > = {
   specversion: "1.0",
@@ -282,7 +344,7 @@ const modelCallUsageAttemptWithoutAttemptId: AgentEvent<
   },
 };
 
-const modelCallUsageCall: AgentEvent<"com.veryfront.model-call.usage.recorded"> = {
+const modelCallUsageCall: EventRecord<"com.veryfront.model-call.usage.recorded"> = {
   specversion: "1.0",
   id: "event-a",
   source: "https://example.test/events",
@@ -297,8 +359,55 @@ const modelCallUsageCall: AgentEvent<"com.veryfront.model-call.usage.recorded"> 
   },
 };
 
+type ModelCallUsageEnvelope = EventEnvelope<
+  "com.veryfront.model-call.usage.recorded",
+  EventDataschema<"com.veryfront.model-call.usage.recorded">
+>;
+
+const modelCallUsageAttemptEnvelope: ModelCallUsageEnvelope = modelCallUsageAttempt;
+const modelCallUsageCallEnvelope: ModelCallUsageEnvelope = modelCallUsageCall;
+void modelCallUsageAttemptEnvelope;
+void modelCallUsageCallEnvelope;
+
+// @ts-expect-error attempt-scoped public envelopes require attemptid
+const modelCallUsageEnvelopeWithoutAttemptId: ModelCallUsageEnvelope = {
+  ...modelCallUsageAttempt,
+  attemptid: undefined,
+};
+void modelCallUsageEnvelopeWithoutAttemptId;
+
+const { modelcallid: omittedModelCallId, ...modelCallUsageWithoutLogicalId } =
+  modelCallUsageAttempt;
+// @ts-expect-error model usage public envelopes require modelcallid
+const modelCallUsageEnvelopeWithoutModelCallId: ModelCallUsageEnvelope =
+  modelCallUsageWithoutLogicalId;
+void omittedModelCallId;
+void modelCallUsageEnvelopeWithoutModelCallId;
+
+// @ts-expect-error call-scoped public envelopes cannot carry attemptid
+const modelCallUsageEnvelopeCallWithAttemptId: ModelCallUsageEnvelope = {
+  ...modelCallUsageCall,
+  attemptid: "attempt-a",
+};
+void modelCallUsageEnvelopeCallWithAttemptId;
+
+// @ts-expect-error captured input public envelopes require modelcallid
+const modelInputEnvelopeWithoutModelCallId: EventEnvelope<
+  "com.veryfront.model-call.input.captured",
+  EventDataschema<"com.veryfront.model-call.input.captured">
+> = {
+  specversion: "1.0",
+  id: "event-a",
+  source: "https://example.test/events",
+  type: "com.veryfront.model-call.input.captured",
+  datacontenttype: "application/json",
+  dataschema: "urn:veryfront:run-events:target:payloads:1#/$defs/ModelCallInputCaptured",
+  data: { model: { provider: "openai", name: "gpt-5" }, input: { redacted: true } },
+};
+void modelInputEnvelopeWithoutModelCallId;
+
 // @ts-expect-error call-scoped model usage omits envelope attemptid
-const modelCallUsageCallWithAttemptId: AgentEvent<"com.veryfront.model-call.usage.recorded"> = {
+const modelCallUsageCallWithAttemptId: EventRecord<"com.veryfront.model-call.usage.recorded"> = {
   specversion: "1.0",
   id: "event-a",
   source: "https://example.test/events",
@@ -315,7 +424,7 @@ const modelCallUsageCallWithAttemptId: AgentEvent<"com.veryfront.model-call.usag
 };
 
 // @ts-expect-error model call input events require the envelope modelcallid
-const modelInputWithoutModelCallId: AgentEvent<"com.veryfront.model-call.input.captured"> = {
+const modelInputWithoutModelCallId: EventRecord<"com.veryfront.model-call.input.captured"> = {
   specversion: "1.0",
   id: "event-a",
   source: "https://example.test/events",

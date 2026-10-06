@@ -36,7 +36,7 @@ import type { HostedExecutorOwnedWork } from "./executor-session.ts";
 import { createPrivateWeakStore } from "#veryfront/security/private-weak-store.ts";
 import { createPrivateMap } from "#veryfront/security/private-map.ts";
 import { getToolCallOccurrence } from "#veryfront/runtime/tool-call-occurrence.ts";
-import { isObservedProviderToolStart } from "#veryfront/runtime/tool-call-occurrence-carrier.ts";
+import { isObservedToolResultStart } from "#veryfront/runtime/tool-call-occurrence-carrier.ts";
 import {
   type AgentRunToolCallAdmissionReceipt,
   getToolCallAdmissionReceiptSchema,
@@ -130,6 +130,8 @@ export function createManagedBrokerPersistence(input: {
   fetch?: typeof globalThis.fetch;
   /** Trusted migration opt-in. Requires API support and a project-bound generation writer. */
   toolCallAdmissions?: { projectId: string };
+  /** Trusted migration opt-in. Disabled until the API accepts runtime_observations. */
+  runtimeObservations?: { projectId: string };
 }) {
   const run = getConversationRunProjectionSchema().parse(input.run);
   if (
@@ -150,6 +152,7 @@ export function createManagedBrokerPersistence(input: {
     run,
     terminal,
     ...(input.toolCallAdmissions ? { toolCallAdmissions: input.toolCallAdmissions } : {}),
+    ...(input.runtimeObservations ? { runtimeObservations: input.runtimeObservations } : {}),
   });
 }
 
@@ -159,6 +162,7 @@ export function createManagedBrokerPersistenceFromCapability(input: {
   run: ConversationRunProjection;
   terminal: ManagedBrokerTerminal;
   toolCallAdmissions?: { projectId: string };
+  runtimeObservations?: { projectId: string };
 }) {
   const run = getConversationRunProjectionSchema().parse(input.run);
   if (run.status !== "pending" && run.status !== "running" && run.status !== "waiting_for_tool") {
@@ -172,9 +176,15 @@ export function createManagedBrokerPersistenceFromCapability(input: {
   const admissionScope = input.toolCallAdmissions === undefined
     ? undefined
     : getAdmissionScopeSchema().parse(input.toolCallAdmissions);
+  const runtimeObservationScope = input.runtimeObservations === undefined
+    ? undefined
+    : getAdmissionScopeSchema().parse(input.runtimeObservations);
   const canonicalRunId = hostedRunCanonicalId(input.capability, run.runId);
   if (admissionScope && !canonicalRunId) {
     throw new TypeError("Tool-call admissions require an exact canonical run writer");
+  }
+  if (runtimeObservationScope && !canonicalRunId) {
+    throw new TypeError("Runtime observations require an exact canonical run writer");
   }
   const toolAdmissions = createPrivateMap<string, {
     receipt?: AgentRunToolCallAdmissionReceipt;
@@ -207,6 +217,7 @@ export function createManagedBrokerPersistenceFromCapability(input: {
     latestExternalEventSequence: run.latestExternalEventSequence,
     runQueueFlush,
     ...(admissionScope ? { toolCallAdmissions: true } : {}),
+    ...(runtimeObservationScope ? { runtimeObservations: true } : {}),
   });
   if (!mirror) throw new TypeError("Managed broker run-event capability is not bound");
   const durableMirror = mirror;
@@ -266,7 +277,7 @@ export function createManagedBrokerPersistenceFromCapability(input: {
         await flush();
         if (
           admissionScope && chunk.type === "tool-input-start" &&
-          !isObservedProviderToolStart(chunk)
+          !isObservedToolResultStart(chunk)
         ) {
           const occurrenceId = getToolCallOccurrence(chunk);
           const acknowledged = occurrenceId &&

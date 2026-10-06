@@ -1,49 +1,49 @@
 import type { SchemaValidator } from "#veryfront/extensions/schema/index.ts";
 
-export const AGENT_EVENT_SCHEMA_VALIDATOR_CONTRACT = "SchemaValidator";
-export const AGENT_EVENT_SCHEMA_VALIDATOR_PACKAGE = "@veryfront/ext-schema-zod";
+export const EVENT_SCHEMA_VALIDATOR_CONTRACT = "SchemaValidator";
+export const EVENT_SCHEMA_VALIDATOR_PACKAGE = "@veryfront/ext-schema-zod";
 
-let registeredAgentEventSchemaValidator: SchemaValidator | undefined;
-let agentEventSchemaValidatorVersion = 0;
+let registeredEventSchemaValidator: SchemaValidator | undefined;
+let eventSchemaValidatorVersion = 0;
 
 const REGISTRATION_GUIDANCE = [
-  `veryfront/events needs a ${AGENT_EVENT_SCHEMA_VALIDATOR_CONTRACT} implementation to validate Agent Events Protocol data,`,
+  `veryfront/events needs a ${EVENT_SCHEMA_VALIDATOR_CONTRACT} implementation to validate Agent Events Protocol data,`,
   "and none has been registered for the events entrypoint.",
-  `Add ${AGENT_EVENT_SCHEMA_VALIDATOR_PACKAGE} and register it once at startup:`,
-  `import { registerAgentEventSchemaValidator } from "veryfront/events";`,
-  `import { createZodAdapter } from "${AGENT_EVENT_SCHEMA_VALIDATOR_PACKAGE}";`,
-  "registerAgentEventSchemaValidator(createZodAdapter());",
+  `Add ${EVENT_SCHEMA_VALIDATOR_PACKAGE} and register it once at startup:`,
+  `import { registerEventSchemaValidator } from "veryfront/events";`,
+  `import { createZodAdapter } from "${EVENT_SCHEMA_VALIDATOR_PACKAGE}";`,
+  "registerEventSchemaValidator(createZodAdapter());",
 ].join(" ");
 
-export function registerAgentEventSchemaValidator(validator: SchemaValidator): void {
+export function registerEventSchemaValidator(validator: SchemaValidator): void {
   if (validator === undefined || validator === null) {
     throw new TypeError("Agent Events Protocol schema validator must not be null or undefined");
   }
-  registeredAgentEventSchemaValidator = validator;
-  agentEventSchemaValidatorVersion += 1;
+  registeredEventSchemaValidator = validator;
+  eventSchemaValidatorVersion += 1;
 }
 
-export function unregisterAgentEventSchemaValidator(): void {
-  registeredAgentEventSchemaValidator = undefined;
-  agentEventSchemaValidatorVersion += 1;
+export function unregisterEventSchemaValidator(): void {
+  registeredEventSchemaValidator = undefined;
+  eventSchemaValidatorVersion += 1;
 }
 
-export function tryResolveAgentEventSchemaValidator(): SchemaValidator | undefined {
-  return registeredAgentEventSchemaValidator;
+export function tryResolveEventSchemaValidator(): SchemaValidator | undefined {
+  return registeredEventSchemaValidator;
 }
 
-export function getAgentEventSchemaValidatorVersion(): number {
-  return agentEventSchemaValidatorVersion;
+export function getEventSchemaValidatorVersion(): number {
+  return eventSchemaValidatorVersion;
 }
 
-export function assertAgentEventSchemaValidator(): SchemaValidator {
-  const validator = registeredAgentEventSchemaValidator;
+export function assertEventSchemaValidator(): SchemaValidator {
+  const validator = registeredEventSchemaValidator;
   if (!validator) {
     throw new TypeError(REGISTRATION_GUIDANCE);
   }
   if (!validator.compileJsonSchema) {
     throw new TypeError(
-      `veryfront/events needs a ${AGENT_EVENT_SCHEMA_VALIDATOR_CONTRACT} implementation with compileJsonSchema support. Use ${AGENT_EVENT_SCHEMA_VALIDATOR_PACKAGE} or another validator that implements compileJsonSchema.`,
+      `veryfront/events needs a ${EVENT_SCHEMA_VALIDATOR_CONTRACT} implementation with compileJsonSchema support. Use ${EVENT_SCHEMA_VALIDATOR_PACKAGE} or another validator that implements compileJsonSchema.`,
     );
   }
   return validator;

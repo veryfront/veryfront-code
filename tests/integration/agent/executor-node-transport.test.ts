@@ -9,9 +9,10 @@ import { getEventListeners } from "node:events";
 import { connect as connectTcp, createServer as createTcpServer } from "node:net";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { setImmediate } from "node:timers/promises";
+import { setImmediate, setTimeout as delay } from "node:timers/promises";
 import { assert, assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { waitFor } from "#veryfront/testing/deno-compat.ts";
 import {
   connectExecutorTransport,
   type ExecutorNodeTransport,
@@ -320,6 +321,7 @@ if (typeof Deno !== "undefined") {
     it("keeps an unauthenticated socket open after early delivery and expires at the five-second cap", async () => {
       let now = 0;
       const scheduled = new Map<object, { callback: () => void; delayMs: number }>();
+      const pendingSocketTimerScheduled = Promise.withResolvers<void>();
       const listener = await listenExecutorTransport({
         host,
         port: 0,
@@ -331,6 +333,7 @@ if (typeof Deno !== "undefined") {
           schedule(callback, delayMs) {
             const handle = {};
             scheduled.set(handle, { callback, delayMs });
+            if (delayMs === 5_000) pendingSocketTimerScheduled.resolve();
             return handle;
           },
           cancel: (handle) => {
@@ -342,7 +345,12 @@ if (typeof Deno !== "undefined") {
       const closed = new Promise<string>((resolve) => raw.once("close", () => resolve("closed")));
       try {
         await new Promise<void>((resolve) => raw.once("connect", resolve));
-        await setImmediate();
+        await Promise.race([
+          pendingSocketTimerScheduled.promise,
+          delay(1_000).then(() => {
+            throw new Error("pending socket guarded deadline was not scheduled");
+          }),
+        ]);
         const entry = [...scheduled.entries()].find(([, wake]) => wake.delayMs === 5_000);
         assert(entry, "unauthenticated socket must use the guarded clock");
         scheduled.delete(entry[0]);
@@ -568,16 +576,56 @@ if (typeof Deno !== "undefined") {
 
     it("writable abort interrupts an active blocked write", async () => {
       const { listener, client } = await pair();
+      const socketWrites = mock.method(tls.TLSSocket.prototype, "write");
       try {
         const writer = client.writable.getWriter();
         const chunk = new Uint8Array(1024 * 1024);
         const queued = Array.from({ length: 64 }, () => writer.write(chunk));
         const writes = Promise.allSettled(queued);
-        await queued[0];
+        await waitFor(() => socketWrites.mock.calls.some((call) => call.result === false), {
+          timeout: 1_000,
+          interval: 5,
+          message: "Native socket write did not reach backpressure",
+        });
+        assertEquals(
+          await Promise.race([writes.then(() => "settled"), setImmediate("pending")]),
+          "pending",
+        );
         await writer.abort(new Error("synthetic-private-reason"));
         assert((await writes).some((result) => result.status === "rejected"));
         await assertRejects(() => client.readable.getReader().read(), Error);
       } finally {
+        socketWrites.mock.restore();
+        listener.close();
+        client.close();
+      }
+    });
+
+    it("writable abort interrupts a write before its first native callback", async () => {
+      const { listener, client } = await pair();
+      const pendingWrite = mock.method(tls.TLSSocket.prototype, "write", () => false);
+      try {
+        const writer = client.writable.getWriter();
+        const write = writer.write(new Uint8Array(1024 * 1024));
+        const rejectedWrite = assertRejects(() => write, Error, "Executor transport aborted");
+        await waitFor(() => pendingWrite.mock.callCount() > 0, {
+          timeout: 1_000,
+          interval: 5,
+          message: "Native socket write did not begin",
+        });
+        assertEquals(
+          await Promise.race([write.then(() => "settled"), setImmediate("pending")]),
+          "pending",
+        );
+        await writer.abort(new Error("synthetic-private-reason"));
+        await rejectedWrite;
+        await assertRejects(
+          () => client.readable.getReader().read(),
+          Error,
+          "Executor transport aborted",
+        );
+      } finally {
+        pendingWrite.mock.restore();
         listener.close();
         client.close();
       }
