@@ -114,6 +114,8 @@ interface ResolvedLimits {
 
 const HIGH_SURROGATE_MIN = 0xd800;
 const HIGH_SURROGATE_MAX = 0xdbff;
+const LOW_SURROGATE_MIN = 0xdc00;
+const LOW_SURROGATE_MAX = 0xdfff;
 
 function positiveInteger(name: string, value: number | undefined, fallback: number): number {
   if (value === undefined) {
@@ -234,7 +236,11 @@ function adjustSurrogateBoundary(value: string, end: number): number {
     return end;
   }
   const previous = privateTextCharCodeAt(value, end - 1);
-  if (previous >= HIGH_SURROGATE_MIN && previous <= HIGH_SURROGATE_MAX) {
+  const next = privateTextCharCodeAt(value, end);
+  if (
+    previous >= HIGH_SURROGATE_MIN && previous <= HIGH_SURROGATE_MAX &&
+    next >= LOW_SURROGATE_MIN && next <= LOW_SURROGATE_MAX
+  ) {
     return end - 1;
   }
   return end;

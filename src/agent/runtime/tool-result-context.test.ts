@@ -323,6 +323,39 @@ describe("agent runtime tool result context", () => {
     assertEquals(second.text, "b🙂");
   });
 
+  it("advances through unpaired high surrogates", () => {
+    const context = createToolResultContext({
+      limits: { maxInlineBytes: 1, maxSectionBytes: 4 },
+    });
+    const original = "\uD800界abcdef";
+    const disclosure = context.disclose({
+      toolCallId: "call-unpaired-surrogate",
+      toolName: "read",
+      result: original,
+    });
+
+    assertEquals(disclosure.kind, "reference");
+    if (disclosure.kind !== "reference") {
+      throw new Error("expected referenced tool result disclosure");
+    }
+
+    let cursor: string | undefined;
+    let text = "";
+    for (let index = 0; index < 10; index++) {
+      const section = context.read({
+        ref: disclosure.modelResult.ref,
+        cursor,
+        maxBytes: 4,
+      });
+      assertEquals(section.nextCursor === section.cursor, false);
+      text += section.text;
+      cursor = section.nextCursor;
+      if (section.done) break;
+    }
+
+    assertEquals(text, original);
+  });
+
   it("rejects invalid limits instead of silently falling back", () => {
     assertThrows(
       () => createToolResultContext({ limits: { maxInlineBytes: -1 } }),
