@@ -990,6 +990,97 @@ describe("agent/ag-ui-handler", () => {
     assertEquals(observedToolNames.includes("search_knowledge"), false);
   });
 
+  it("keeps admitted restricted knowledge outside an AG-UI allowlist", async () => {
+    let observedToolNames: string[] = [];
+    let admissions = 0;
+    let finalized: string | undefined;
+    const model: ModelRuntime<ModelRuntimeCallOptions> = {
+      provider: "test",
+      modelId: "test/private-restricted-tools",
+      doGenerate: () => {
+        throw new Error("Expected the streaming path");
+      },
+      doStream: (options) => {
+        observedToolNames = (options.tools ?? []).map((definition) => definition.name).toSorted();
+        return Promise.resolve({
+          stream: new ReadableStream<unknown>({
+            start(controller) {
+              controller.enqueue({
+                type: "text-delta",
+                id: "text-1",
+                delta: "private knowledge filtered",
+              });
+              controller.enqueue({ type: "finish", finishReason: "stop" });
+              controller.close();
+            },
+          }),
+        });
+      },
+    };
+
+    const knowledgeAgent = createEphemeralAgent({
+      id: "ag-ui-private-knowledge-filtered",
+      model: "admitted-alias",
+      system: "Use project knowledge only when available.",
+      tools: {
+        private_allowed_lookup: tool({
+          id: "private_allowed_lookup",
+          description: "Allowed by the private runtime ceiling.",
+          inputSchema: defineSchema((v) => v.object({}))(),
+          execute: () => Promise.resolve({ ok: true }),
+        }),
+      },
+      knowledge: true,
+      skills: [],
+      resolveModelTransport: () => Promise.resolve({ model }),
+    });
+    const handler = createAgUiHandler({
+      agent: knowledgeAgent,
+      runtimeRestrictions: { allowedTools: ["private_allowed_lookup"] },
+    });
+
+    const response = await runWithApplicationInferenceAdmission(
+      async (agentId) => {
+        admissions += 1;
+        assertEquals(agentId, knowledgeAgent.id);
+        return {
+          runId: "550e8400-e29b-41d4-a716-446655440001",
+          inferenceToken: "vf_inference_private_restricted_tools",
+          expiresAt: new Date(Date.now() + 60_000).toISOString(),
+          finalize: (status) => {
+            finalized = status;
+          },
+        };
+      },
+      () =>
+        handler(
+          new Request("http://localhost/api/ag-ui", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              runId: "run_private_restricted_knowledge_filtered_1",
+              threadId: crypto.randomUUID(),
+              messages: [{
+                id: "msg-1",
+                role: "user",
+                parts: [{ type: "text", text: "hello" }],
+              }],
+            }),
+          }),
+        ),
+    );
+
+    assertEquals(response.status, 200);
+    const body = await response.text();
+    assertStringIncludes(body, "private knowledge filtered");
+    assertStringIncludes(body, "event: RunFinished");
+    assertEquals(admissions, 1);
+    assertEquals(finalized, "completed");
+    assertEquals(observedToolNames.includes("private_allowed_lookup"), true);
+    assertEquals(observedToolNames.includes("search_knowledge"), false);
+    assertEquals(observedToolNames, ["private_allowed_lookup"]);
+  });
+
   it("keeps framework knowledge on a maxSteps-only AG-UI rebuild", async () => {
     let observedToolNames: string[] = [];
     const model: ModelRuntime<ModelRuntimeCallOptions> = {

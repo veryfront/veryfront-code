@@ -464,13 +464,17 @@ async function createDirectAgentUpstream(options: {
   toolDataEvents: ReturnType<typeof createToolDataEventBridge>;
   onFinish: (response: AgentResponse) => void;
   privateRuntime?: PrivateApplicationInferenceRuntime;
+  preserveRestrictedToolCatalog?: boolean;
 }): Promise<DirectAgentUpstream> {
   const privateRuntime = options.privateRuntime;
   if (privateRuntime) {
+    const runtimeOptions = options.preserveRestrictedToolCatalog
+      ? { ...privateRuntime.runtimeOptions, preserveToolCatalog: true }
+      : privateRuntime.runtimeOptions;
     const inferenceAgent = await privateRuntime.prepareAgent(() =>
       createEphemeralAgentWithRuntimeOptions(
         { ...getAgentExecutionConfig(options.streamAgent.config), id: options.agent.id },
-        privateRuntime.runtimeOptions,
+        runtimeOptions,
       )
     );
     const result = await inferenceAgent.stream({
@@ -564,6 +568,8 @@ async function createAgUiDirectStreamResponse(
     // the skill catalog only when the loader survives the ceiling), security
     // middleware, resolved skill-selector context, and private runtime dispatch.
     const streamAgent = createRestrictedDirectStreamAgent(agent, request, restrictions);
+    const preserveRestrictedToolCatalog = hasAgUiRuntimeRestrictions(restrictions) &&
+      restrictions.allowedTools !== undefined;
 
     // A restricted run uses a fresh ephemeral agent, so it has no prior memory
     // to clear. Do not call mutable methods on the source agent before the
@@ -581,6 +587,7 @@ async function createAgUiDirectStreamResponse(
         toolDataEvents,
         onFinish,
         privateRuntime,
+        preserveRestrictedToolCatalog,
       });
     } catch (error) {
       privateRuntime?.onAbandon();
