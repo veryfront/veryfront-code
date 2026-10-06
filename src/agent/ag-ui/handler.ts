@@ -1,3 +1,4 @@
+import { defineOwnDataProperty } from "#veryfront/security/own-data-property.ts";
 import { getAgentExecutionConfig } from "../runtime/execution-config.ts";
 import { resolveRuntimeModel } from "../runtime/model-resolution.ts";
 import { isResponseLike } from "../service/response-like.ts";
@@ -471,12 +472,14 @@ async function createDirectAgentUpstream(options: {
     const runtimeOptions = options.preserveRestrictedToolCatalog
       ? { ...privateRuntime.runtimeOptions, preserveToolCatalog: true }
       : privateRuntime.runtimeOptions;
-    const inferenceAgent = await privateRuntime.prepareAgent(() =>
-      createEphemeralAgentWithRuntimeOptions(
+    const inferenceAgent = await privateRuntime.prepareAgent(() => {
+      const admittedAgent = createEphemeralAgentWithRuntimeOptions(
         { ...getAgentExecutionConfig(options.streamAgent.config), id: options.agent.id },
         runtimeOptions,
-      )
-    );
+      );
+      defineOwnDataProperty(admittedAgent, "then", undefined);
+      return admittedAgent;
+    });
     const result = await inferenceAgent.stream({
       messages: options.messages,
       context: options.context,
@@ -705,12 +708,14 @@ async function createAgUiInjectedToolsStreamResponse(
       tools: buildMergedAgUiTools(agent, effectiveRunId, request.tools, sessionManager),
     };
     const inferenceAgent = privateRuntime
-      ? await privateRuntime.prepareAgent(() =>
-        createEphemeralAgentWithRuntimeOptions(
+      ? await privateRuntime.prepareAgent(() => {
+        const admittedAgent = createEphemeralAgentWithRuntimeOptions(
           { ...runtimeConfig, id: agent.id },
           privateRuntime.runtimeOptions,
-        )
-      )
+        );
+        defineOwnDataProperty(admittedAgent, "then", undefined);
+        return admittedAgent;
+      })
       : undefined;
     // A ceiling-bound run must not reach the model through the mutable
     // `AgentRuntime.prototype.stream`: project code can replace that method and

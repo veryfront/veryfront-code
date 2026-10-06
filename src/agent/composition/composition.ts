@@ -9,6 +9,13 @@
 
 import { executeLocalChild, type LocalChildInvocation } from "./local-child-execution.ts";
 import type { Agent, AgentResponse } from "../types.ts";
+import { createEphemeralAgentWithRuntimeOptions } from "../factory.ts";
+import { getAgentExecutionConfig } from "../runtime/execution-config.ts";
+import {
+  getPrivateApplicationInferenceRuntimeOptions,
+  hasApplicationInferenceAdmission,
+} from "../runtime/application-inference-admission.ts";
+import { defineOwnDataProperty } from "#veryfront/security/own-data-property.ts";
 import type { Tool, ToolExecutionContext } from "#veryfront/tool";
 import { AGENT_ERROR } from "#veryfront/errors";
 import { setActiveSpanAttributes } from "#veryfront/observability/tracing/otlp-setup.ts";
@@ -44,42 +51,64 @@ async function runAgentAsStreamingTool(
   };
   const execute = async (): Promise<AgentResponse> => {
     let finalResponse: AgentResponse | undefined;
-    const stream = await agent.stream({
-      input,
-      abortSignal: control?.signal ?? context?.abortSignal,
-      onFinish: (response) => {
-        finalResponse = response;
-      },
-    });
-    let streamError: string | undefined;
-    const response = stream.toDataStreamResponse();
-    if (response.body) {
-      for await (const event of streamDataStreamEvents(response.body)) {
-        await control?.onEvent?.(event);
-        if (publishChildStream && context?.toolCallId && context.publishDataEvent) {
-          await context.publishDataEvent(buildInvokeAgentStreamDataEvent({
-            toolCallId: context.toolCallId,
-            agentId: agent.id,
-            ...childIdentity,
-            event,
-          }));
-        }
-        if (event.type === "error") {
-          streamError = typeof event.errorText === "string"
-            ? event.errorText
-            : typeof event.error === "string"
-            ? event.error
-            : "Child agent stream failed";
+    const signal = control?.signal ?? context?.abortSignal;
+    const privateRuntime = hasApplicationInferenceAdmission()
+      ? await getPrivateApplicationInferenceRuntimeOptions(agent.id, signal)
+      : undefined;
+    try {
+      const streamAgent = privateRuntime
+        ? await privateRuntime.prepareAgent(() => {
+          const admittedAgent = createEphemeralAgentWithRuntimeOptions(
+            { ...getAgentExecutionConfig(agent.config), id: agent.id },
+            privateRuntime.runtimeOptions,
+          );
+          defineOwnDataProperty(admittedAgent, "then", undefined);
+          return admittedAgent;
+        })
+        : agent;
+      const stream = await streamAgent.stream({
+        input,
+        abortSignal: privateRuntime?.signal ?? signal,
+        onFinish: (response) => {
+          finalResponse = response;
+        },
+      });
+      let streamError: string | undefined;
+      const response = stream.toDataStreamResponse();
+      if (response.body) {
+        for await (const event of streamDataStreamEvents(response.body)) {
+          await control?.onEvent?.(event);
+          if (publishChildStream && context?.toolCallId && context.publishDataEvent) {
+            await context.publishDataEvent(buildInvokeAgentStreamDataEvent({
+              toolCallId: context.toolCallId,
+              agentId: agent.id,
+              ...childIdentity,
+              event,
+            }));
+          }
+          if (event.type === "error") {
+            streamError = typeof event.errorText === "string"
+              ? event.errorText
+              : typeof event.error === "string"
+              ? event.error
+              : "Child agent stream failed";
+          }
         }
       }
-    }
 
-    if (!finalResponse) {
-      throw AGENT_ERROR.create({
-        detail: streamError ?? `Agent "${agent.id}" stream completed without a final response.`,
-      });
+      if (!finalResponse) {
+        throw AGENT_ERROR.create({
+          detail: streamError ?? `Agent "${agent.id}" stream completed without a final response.`,
+        });
+      }
+      privateRuntime?.finish(
+        streamError || finalResponse.status === "error" ? "failed" : "completed",
+      );
+      return finalResponse;
+    } catch (error) {
+      privateRuntime?.onAbandon();
+      throw error;
     }
-    return finalResponse;
   };
 
   return sourceIntegrationPolicy

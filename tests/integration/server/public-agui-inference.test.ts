@@ -10,6 +10,7 @@ import { getCurrentVeryfrontCloudContext } from "#veryfront/provider/veryfront-c
 import { deleteEnv, getEnv, setEnv } from "#veryfront/platform/compat/process.ts";
 import { resetHostApiOriginSnapshot } from "#veryfront/platform/compat/process/env.ts";
 import { RunResumeSessionManager } from "#veryfront/agent/index.ts";
+import { agentAsTool } from "#veryfront/agent/composition/index.ts";
 import { createEphemeralAgent } from "#veryfront/agent/factory.ts";
 import { createAgUiHandler } from "#veryfront/agent/ag-ui/handler.ts";
 import { tool } from "#veryfront/tool/factory.ts";
@@ -180,6 +181,7 @@ async function exercise(
   configuredBinding?: boolean,
   interceptInheritedThen = false,
   injectedDescription = "First synthetic client tool description",
+  delegated = false,
 ) {
   const { ctx, wrapper } = fixture();
   const pendingTool = mode === "pending-tool-cancelled" || mode === "pending-tool-ingress";
@@ -201,6 +203,9 @@ async function exercise(
     return result;
   };
   const runId = crypto.randomUUID();
+  const childRunId = crypto.randomUUID();
+  const childCredential = `${INFERENCE_CREDENTIAL}-child`;
+  const admissionRequestIds: string[] = [];
   const returned = deferred();
   const finalized = deferred();
   const enteredProvider = deferred();
@@ -212,6 +217,7 @@ async function exercise(
   const originalPromiseResolve = Promise.resolve;
   const originalInheritedThen = Object.getOwnPropertyDescriptor(Object.prototype, "then");
   let inheritedThenCalls = 0;
+  let inheritedThenCapturedAuthority = false;
   let inheritedThenObservedCredential = false;
   let inheritedThenObservedCredentialSource = "";
   const inheritedThenProbes: Promise<void>[] = [];
@@ -241,11 +247,23 @@ async function exercise(
           id: "probe",
           description: "Return a synthetic result.",
           inputSchema: defineSchema((v) => v.object({}))(),
-          execute: (_input, context) => {
+          execute: async (_input, context) => {
             assertEquals(context?.runId, runId);
             assertEquals(context?.runIdBindsToolAuthorization, configuredBinding ?? true);
             inspectSource();
             toolCount++;
+            if (delegated) {
+              const child = createEphemeralAgent({
+                id: "child",
+                model: "veryfront-cloud/mistral/mistral-small-2503",
+                system: "Reply briefly.",
+                skills: [],
+              });
+              return await agentAsTool(child, "Invoke child").execute(
+                { input: "Reply briefly." },
+                context,
+              );
+            }
             return { ok: true };
           },
         }),
@@ -283,6 +301,13 @@ async function exercise(
           configurable: true,
           get() {
             inheritedThenCalls++;
+            if (
+              Object.hasOwn(this, "runtimeOptions") ||
+              (Object.hasOwn(this, "stream") && Object.hasOwn(this, "config") &&
+                Object.hasOwn(this, "id"))
+            ) {
+              inheritedThenCapturedAuthority = true;
+            }
             const credential = Object.getOwnPropertyDescriptor(this, "inferenceToken");
             if (credential?.value === INFERENCE_CREDENTIAL) {
               inheritedThenObservedCredential = true;
@@ -357,35 +382,49 @@ async function exercise(
           releaseId: ctx.releaseId,
           routePath: "/api/ag-ui",
           requestId: "request",
-          agentId: "assistant",
+          agentId: delegated && admissionCount === 2 ? "child" : "assistant",
           inferencePublicKey: body.inferencePublicKey,
         });
         assert(typeof body.requestId === "string" && body.requestId.length > 0);
         assertEquals(JSON.stringify(body).includes(INFERENCE_CREDENTIAL), false);
+        admissionRequestIds.push(body.requestId);
+        const admittedRunId = delegated && admissionCount === 2 ? childRunId : runId;
+        const credential = delegated && admissionCount === 2
+          ? childCredential
+          : INFERENCE_CREDENTIAL;
         const expiresAt = new Date(Date.now() + 300_000).toISOString();
         return Response.json({
-          runId,
+          runId: admittedRunId,
           expiresAt,
           encryptedInferenceToken: encryptApplicationInferenceToken({
             publicKey: body.inferencePublicKey,
-            runId,
+            runId: admittedRunId,
             expiresAt,
-            inferenceToken: INFERENCE_CREDENTIAL,
+            inferenceToken: credential,
           }),
         });
       }
-      if (path === `/internal/application-agui-inference/runs/${runId}/finalize`) {
+      if (
+        path === `/internal/application-agui-inference/runs/${runId}/finalize` ||
+        (delegated && path === `/internal/application-agui-inference/runs/${childRunId}/finalize`)
+      ) {
         finalizationOrigins.push(new URL(outgoing.url).origin);
         assertEquals(outgoing.method, "POST");
         assertEquals(outgoing.headers.get("authorization"), BASIC_AUTH);
         const body = JSON.parse(await outgoing.text());
-        assertEquals(body.inferenceToken, INFERENCE_CREDENTIAL);
+        assertEquals(
+          body.inferenceToken,
+          path.includes(childRunId) ? childCredential : INFERENCE_CREDENTIAL,
+        );
         finalizations.push(body);
-        finalized.resolve();
+        if (!path.includes(childRunId)) finalized.resolve();
         return Response.json({ finalized: true });
       }
       if (path === "/ai/models") {
-        assertEquals(outgoing.headers.get("authorization"), `Bearer ${INFERENCE_CREDENTIAL}`);
+        assert(
+          [`Bearer ${INFERENCE_CREDENTIAL}`, ...(delegated ? [`Bearer ${childCredential}`] : [])]
+            .includes(outgoing.headers.get("authorization") ?? ""),
+        );
         const catalog = servedCatalogPayload();
         const models = catalog.models;
         assert(Array.isArray(models));
@@ -415,7 +454,11 @@ async function exercise(
         modelCredentials.push(outgoing.headers.get("authorization") ?? "");
         // Preserve the gateway's denial: a generic file/deploy token must never
         // gain inference authority merely because the runtime dispatches it.
-        if (outgoing.headers.get("authorization") !== `Bearer ${INFERENCE_CREDENTIAL}`) {
+        if (
+          ![INFERENCE_CREDENTIAL, ...(delegated ? [childCredential] : [])].some((token) =>
+            outgoing.headers.get("authorization") === `Bearer ${token}`
+          )
+        ) {
           return Response.json({
             error: {
               message: "Credential is not authorized for managed AI inference",
@@ -522,34 +565,49 @@ async function exercise(
         );
         if (mode === "completed") {
           assertEquals(toolCount, 1);
-          assertEquals(modelCredentials.length, 2);
+          assertEquals(modelCredentials.length, delegated ? 3 : 2);
         }
       }
       await bounded(finalized.promise);
       await Promise.all(inheritedThenProbes);
       assertEquals(observedAdmissionCredential, false);
+      assertEquals(inheritedThenCapturedAuthority, false);
       assertEquals(inheritedThenObservedCredential, false, inheritedThenObservedCredentialSource);
       if (interceptInheritedThen) assert(inheritedThenCalls > 0);
       if (interceptPromise) assert(interceptedPromiseCount > 0);
-      assertEquals(admissionCount, 1);
-      assertEquals(admissionOrigins, [API_URL]);
-      assertEquals(finalizationOrigins, [API_URL]);
-      assertEquals(finalizations, [{
-        status: mode === "blocked"
-          ? "failed"
-          : (mode === "ingress-cancelled" || pendingTool)
-          ? "cancelled"
-          : mode,
-        inferenceToken: INFERENCE_CREDENTIAL,
-      }]);
+      assertEquals(admissionCount, delegated ? 2 : 1);
+      assertEquals(new Set(admissionRequestIds).size, admissionCount);
+      assertEquals(admissionOrigins, delegated ? [API_URL, API_URL] : [API_URL]);
+      assertEquals(finalizationOrigins, delegated ? [API_URL, API_URL] : [API_URL]);
+      assertEquals(finalizations, [
+        ...(delegated ? [{ status: "completed", inferenceToken: childCredential }] : []),
+        {
+          status: mode === "blocked"
+            ? "failed"
+            : (mode === "ingress-cancelled" || pendingTool)
+            ? "cancelled"
+            : mode,
+          inferenceToken: INFERENCE_CREDENTIAL,
+        },
+      ]);
       if (mode === "blocked") {
         assertEquals(modelCredentials.length, 0);
         assertEquals(toolCount, 0);
       }
       assertEquals(
-        modelCredentials.every((credential) => credential === `Bearer ${INFERENCE_CREDENTIAL}`),
+        modelCredentials.every((credential) =>
+          credential === `Bearer ${INFERENCE_CREDENTIAL}` ||
+          (delegated && credential === `Bearer ${childCredential}`)
+        ),
         true,
       );
+      if (delegated) {
+        assertEquals(modelCredentials, [
+          `Bearer ${INFERENCE_CREDENTIAL}`,
+          `Bearer ${childCredential}`,
+          `Bearer ${INFERENCE_CREDENTIAL}`,
+        ]);
+      }
       assertEquals(sourceViews.some((view) => view.includes(INFERENCE_CREDENTIAL)), false);
     });
   } finally {
@@ -569,6 +627,8 @@ async function exercise(
 }
 
 describe("public authored AG-UI inference", () => {
+  it("admits delegated agents with separate private inference credentials", () =>
+    exercise("completed", false, "pinned", false, false, undefined, false, undefined, true));
   it("rejects a pending injected tool wait when the response reader cancels", () =>
     exercise("pending-tool-cancelled", true));
   it("rejects a pending injected tool wait when the ingress request aborts", () =>

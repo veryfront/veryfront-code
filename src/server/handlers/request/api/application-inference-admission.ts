@@ -130,7 +130,6 @@ export function createHostApplicationInferenceAdmission(
     environmentName: context.environmentName,
     releaseId: context.releaseId,
     routePath: new NativeURL(request.url).pathname,
-    requestId: randomUUID(),
   };
   const signal = request.signal;
   const headers = Object.freeze({ authorization, "content-type": "application/json" });
@@ -139,7 +138,12 @@ export function createHostApplicationInferenceAdmission(
     const response = await transport(`${origin}/internal/application-agui-inference/admissions`, {
       method: "POST",
       headers,
-      body: encodePayload({ ...source, agentId, inferencePublicKey: keyPair.publicKey }),
+      body: encodePayload({
+        ...source,
+        requestId: randomUUID(),
+        agentId,
+        inferencePublicKey: keyPair.publicKey,
+      }),
       redirect: "error",
       signal,
     });
