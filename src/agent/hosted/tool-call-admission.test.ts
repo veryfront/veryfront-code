@@ -2,7 +2,6 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assert, assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { defineSchema, type JsonValue } from "#veryfront/schemas/index.ts";
-import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import {
   getCurrentToolCallOccurrence,
   getToolCallOccurrence,
@@ -229,7 +228,7 @@ describe("private tool-call admission", () => {
           appended_count: body.events.length,
         });
       };
-      await withMockFetch(fetch, async () => {
+      {
         const persistence = managedPersistenceFixture(fetch);
         const state = createStreamState();
         const stream = runWithToolCallOccurrences(() =>
@@ -286,7 +285,7 @@ describe("private tool-call admission", () => {
         assertEquals(storedStarts[0]?.providerExecuted, true);
         assert(!JSON.stringify({ chunks, finished }).includes("privateObservedProviderToolResult"));
         await persistence.cleanup();
-      });
+      }
     }
   });
 
@@ -619,7 +618,7 @@ describe("private tool-call admission", () => {
         }],
       });
     };
-    await withMockFetch(fetch, async () => {
+    {
       const terminalToken = `header.${
         btoa(
           JSON.stringify({
@@ -684,6 +683,6 @@ describe("private tool-call admission", () => {
         "already dispatched",
       );
       await persistence.cleanup();
-    });
+    }
   });
 });

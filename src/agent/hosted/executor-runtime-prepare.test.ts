@@ -2674,7 +2674,11 @@ Synthetic source instructions.`,
           assertEquals(captured.maxOutputTokens, expectedOutput);
           assertEquals(
             admission.normalize({
-              identity: { binding, sequence: 1 },
+              identity: {
+                binding,
+                sequence: 1,
+                modelCallId: "11111111-1111-4111-8111-111111111111",
+              },
               mode: "stream",
               model: {
                 id: selectedModel,
@@ -2686,7 +2690,7 @@ Synthetic source instructions.`,
             expectedOutput,
           );
           assertPersistedModelOptions({
-            identity: { binding, sequence: 1 },
+            identity: { binding, sequence: 1, modelCallId: "11111111-1111-4111-8111-111111111111" },
             mode: "stream",
             model: {
               id: selectedModel,
