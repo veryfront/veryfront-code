@@ -398,7 +398,8 @@ function createRuntimeAgentConfig(input: PreparedHostedRuntimeAgentOptions): Age
     },
     onToolResult: createDefaultResearchRunArtifactMirrorHandler({
       taskContext: input.taskContext,
-      remoteToolSource: input.toolAssembly.remoteToolSources[0],
+      remoteToolSource: input.toolAssembly.researchArtifactRemoteToolSource ??
+        input.toolAssembly.remoteToolSources[0],
     }),
   };
   objectSetPrototypeOf(runtimeConfig, null);

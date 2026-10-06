@@ -674,6 +674,12 @@ describe("projectKnowledge", () => {
         { projectDir: ".", scope: "collection:support" },
       )
     );
+    const unsupportedBangScope = await assertRejects(() =>
+      searchProjectKnowledge(
+        { query: "billing" },
+        { projectDir: ".", scope: ["knowledge/**", "!knowledge/private/**"] },
+      )
+    );
     const escapingScope = await assertRejects(() =>
       searchProjectKnowledge({ query: "billing" }, { projectDir: ".", scope: "../secrets/**" })
     );
@@ -688,6 +694,8 @@ describe("projectKnowledge", () => {
     assertEquals(unsupportedCollectionScope.message, "Invalid knowledge scope selector");
     assertInstanceOf(unsupportedCollectionNamespace, Error);
     assertEquals(unsupportedCollectionNamespace.message, "Invalid knowledge scope selector");
+    assertInstanceOf(unsupportedBangScope, Error);
+    assertEquals(unsupportedBangScope.message, "Invalid knowledge scope selector");
     assertInstanceOf(escapingScope, Error);
     assertEquals(escapingScope.message, "Invalid knowledge scope path");
     assertInstanceOf(escapingTarget, Error);
@@ -705,6 +713,9 @@ describe("projectKnowledge", () => {
       excludes: ["knowledge/support/drafts/**"],
       includeAll: false,
     });
+    assertEquals(normalizeProjectKnowledgeScopeSelector(["knowledge/support/**"]).includes, [
+      "knowledge/support/**",
+    ]);
     assertEquals(Object.isFrozen(normalized.includes), true);
     assertThrows(
       () => normalizeProjectKnowledgeScopeSelector(["knowledge/**", ...Array(1_024).fill("x")]),
@@ -715,6 +726,16 @@ describe("projectKnowledge", () => {
       () => normalizeProjectKnowledgeScopeSelector("knowledge/" + "x".repeat(4_097)),
       Error,
       "Invalid knowledge scope path",
+    );
+    assertThrows(
+      () => normalizeProjectKnowledgeScopeSelector(["knowledge/**", "!knowledge/private/**"]),
+      Error,
+      "Invalid knowledge scope selector",
+    );
+    assertThrows(
+      () => normalizeProjectKnowledgeScopeSelector({ "!knowledge/private/**": false }),
+      Error,
+      "Invalid knowledge scope selector",
     );
 
     const accessorScope: Record<string, boolean> = {};

@@ -16,6 +16,7 @@ import {
   type ProjectScopedRemoteToolOptions,
   type RemoteMCPToolSourceConfig,
   type RemoteToolSource,
+  type ToolExecutionContext,
   type ToolSet,
   traceHostTools,
   type TraceHostToolsOptions,
@@ -173,6 +174,8 @@ export type HostedChatRuntimeToolAssemblyResult = {
   readonly sourceIntegrationPolicy: SourceIntegrationPolicyManifest;
   runtimeTools: ToolSet;
   remoteToolSources: RemoteToolSource[];
+  /** API-backed source used for framework research artifact mirroring. */
+  researchArtifactRemoteToolSource?: RemoteToolSource;
   localToolNames: string[];
   remoteToolNames: string[];
   providerToolNames: string[];
@@ -515,14 +518,45 @@ function shouldIncludeHostedWebFetchFallback(input: {
   return input.sourceProviderToolNames.has("web_fetch");
 }
 
+type HostedKnowledgeSourceTaskContext = Omit<HostedChatRuntimeToolAssemblyContext, "authToken"> & {
+  authToken?: string;
+};
+
+function withHostedKnowledgeExecutionContext(
+  context: ToolExecutionContext | undefined,
+  taskContext: HostedKnowledgeSourceTaskContext,
+): ToolExecutionContext {
+  return {
+    ...(context ?? {}),
+    ...(typeof taskContext.authToken === "string" && taskContext.authToken
+      ? { authToken: taskContext.authToken }
+      : {}),
+    projectId: typeof context?.projectId === "string" && context.projectId
+      ? context.projectId
+      : taskContext.projectId ?? undefined,
+    branch: typeof context?.branch === "string" || context?.branch === null
+      ? context.branch
+      : taskContext.branchId ?? null,
+  };
+}
+
 function createHostedKnowledgeSource(
   knowledge: AgentConfig["knowledge"] | undefined,
+  taskContext: HostedKnowledgeSourceTaskContext,
 ): RemoteToolSource | undefined {
-  return createAgentKnowledgeSource({
+  const source = createAgentKnowledgeSource({
     system: "",
     tools: true,
     knowledge,
   });
+  if (source === undefined) return undefined;
+  return {
+    ...source,
+    listTools: (context) =>
+      source.listTools(withHostedKnowledgeExecutionContext(context, taskContext)),
+    executeTool: (name, input, context) =>
+      source.executeTool(name, input, withHostedKnowledgeExecutionContext(context, taskContext)),
+  };
 }
 
 function assertNoLocalFrameworkKnowledgeToolShadow(input: {
@@ -567,7 +601,7 @@ async function prepareHostedChatRuntimeToolAssemblyInternal<
       ) projectToolNames.add(shortName);
     }
   }
-  const knowledgeSource = createHostedKnowledgeSource(input.knowledge);
+  const knowledgeSource = createHostedKnowledgeSource(input.knowledge, input.taskContext);
   const authorizedLocalTools = withoutDeniedHostTools(
     applyHostedHostToolPolicy(input.localTools, input.hostToolPolicy),
     input.deniedToolNames,
@@ -698,8 +732,13 @@ async function prepareHostedChatRuntimeToolAssemblyInternal<
       onSteeringMutation: input.onSteeringMutation,
       onStudioProjectSwitch: input.onStudioProjectSwitch,
     });
-  const remoteToolSources = withoutDeniedRemoteTools(
-    knowledgeSource === undefined ? configuredRemoteToolSources : [
+  const filteredConfiguredRemoteToolSources = withoutDeniedRemoteTools(
+    configuredRemoteToolSources,
+    input.deniedToolNames,
+    projectToolNames,
+  );
+  const knowledgeRemoteToolSources = knowledgeSource === undefined ? [] : withoutDeniedRemoteTools(
+    [
       createHostedProjectRemoteToolSource({
         source: wrapRemoteToolSourceWithMcpPolicy(
           knowledgeSource,
@@ -714,11 +753,17 @@ async function prepareHostedChatRuntimeToolAssemblyInternal<
         onProjectSwitch: input.onStudioProjectSwitch,
         onSteeringMutation: input.onSteeringMutation,
       }),
-      ...configuredRemoteToolSources,
     ],
     input.deniedToolNames,
     projectToolNames,
   );
+  const researchArtifactRemoteToolSource =
+    filteredConfiguredRemoteToolSources.find(hasTrustedPlatformSource) ??
+      filteredConfiguredRemoteToolSources[0];
+  const remoteToolSources = [
+    ...knowledgeRemoteToolSources,
+    ...filteredConfiguredRemoteToolSources,
+  ];
   const remoteToolNames = await listProjectScopedRemoteToolNames(remoteToolSources, {
     sourceIntegrationPolicy: input.sourceIntegrationPolicy,
     projectId: activeProjectId(input.taskContext),
@@ -849,6 +894,7 @@ async function prepareHostedChatRuntimeToolAssemblyInternal<
     sourceIntegrationPolicy: input.sourceIntegrationPolicy,
     runtimeTools: compatibleLocalRuntimeTools,
     remoteToolSources,
+    ...(researchArtifactRemoteToolSource === undefined ? {} : { researchArtifactRemoteToolSource }),
     localToolNames: compatibleLocalToolNames,
     remoteToolNames,
     providerToolNames: compatibleProviderToolNames,

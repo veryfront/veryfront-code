@@ -10,6 +10,7 @@ import {
   assertStringIncludes,
 } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import type {
   RemoteMCPToolSourceConfig,
   RemoteToolSource,
@@ -29,6 +30,7 @@ import {
   prepareFacadedHostedChatRuntimeToolAssembly,
   prepareHostedChatRuntimeToolAssembly,
 } from "#veryfront/agent/hosted/chat-runtime-tool-assembly.ts";
+import { createDefaultResearchRunArtifactMirrorHandler } from "#veryfront/agent/artifacts/default-research-artifact-support.ts";
 
 describe("private host tool metadata", () => {
   it("keeps trusted platform tools and removes spoofed names under integration restrictions", async () => {
@@ -525,6 +527,189 @@ Deno.test("prepareHostedChatRuntimeToolAssembly supplies authored framework know
   assertEquals(toolAssembly.remoteToolNames.includes("search_knowledge"), true);
   assertEquals(toolAssembly.availableToolNames.includes("search_knowledge"), true);
   assertEquals(taskContext.availableToolNames, ["tool_search"]);
+});
+
+Deno.test("prepareHostedChatRuntimeToolAssembly binds trusted project-id credentials to hosted knowledge", async () => {
+  const requestedUrls: string[] = [];
+  const authorizationPresent: boolean[] = [];
+  const toolAssembly = await prepareHostedChatRuntimeToolAssembly({
+    sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
+    taskContext: {
+      authToken: "tenant-token",
+      projectId: "project-1",
+      model: "anthropic/claude-sonnet-4-6",
+    },
+    instructions: "Base instructions",
+    localTools: {},
+    apiUrl: "https://api.example.com",
+    apiMcpUrl: "https://api.example.com/mcp",
+    allowedToolNames: null,
+    knowledge: true,
+    createRemoteToolSource: remoteSourceFromConfig,
+    preloadLatestConversationUserText: false,
+  });
+
+  const knowledgeSource = toolAssembly.remoteToolSources.find((source) =>
+    source.id === "framework-knowledge"
+  );
+  assertExists(knowledgeSource);
+  const result = await withMockFetch(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const request = input instanceof Request ? input : new Request(input, init);
+    requestedUrls.push(request.url);
+    authorizationPresent.push((request.headers.get("authorization") ?? "").length > 0);
+    return Response.json({
+      data: [{
+        id: "file-1",
+        version_id: "version-1",
+        path: "knowledge/support.md",
+        content: [
+          "---",
+          "title: Support guide",
+          "---",
+          "",
+          "Project credential lookup needle.",
+        ].join("\n"),
+        type: "file",
+        size: 96,
+        updated_at: "2026-01-01T00:00:00.000Z",
+      }],
+      page_info: { self: null, first: null, next: null, prev: null },
+    });
+  }, () => knowledgeSource.executeTool("search_knowledge", { query: "credential needle" }));
+  const returned = typeof result === "object" && result !== null && "returned" in result
+    ? result.returned
+    : undefined;
+
+  assertEquals(returned, 1);
+  assertEquals(requestedUrls.length, 1);
+  assertStringIncludes(requestedUrls[0] ?? "", "/projects/project-1/files");
+  assertEquals(authorizationPresent, [true]);
+});
+
+Deno.test("prepareHostedChatRuntimeToolAssembly forwards the active branch to hosted knowledge", async () => {
+  const requestedUrls: string[] = [];
+  const toolAssembly = await prepareHostedChatRuntimeToolAssembly({
+    sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
+    taskContext: {
+      authToken: "tenant-token",
+      projectId: "project-1",
+      branchId: "feature-x",
+      model: "anthropic/claude-sonnet-4-6",
+    },
+    instructions: "Base instructions",
+    localTools: {},
+    apiUrl: "https://api.example.com",
+    apiMcpUrl: "https://api.example.com/mcp",
+    allowedToolNames: null,
+    knowledge: true,
+    createRemoteToolSource: remoteSourceFromConfig,
+    preloadLatestConversationUserText: false,
+  });
+
+  const knowledgeSource = toolAssembly.remoteToolSources.find((source) =>
+    source.id === "framework-knowledge"
+  );
+  assertExists(knowledgeSource);
+  const result = await withMockFetch(async (input: RequestInfo | URL) => {
+    const url = input instanceof Request ? input.url : String(input);
+    requestedUrls.push(url);
+    return Response.json({
+      data: [{
+        id: "file-1",
+        version_id: "version-1",
+        path: "knowledge/branch.md",
+        content: [
+          "---",
+          "title: Branch guide",
+          "---",
+          "",
+          "Feature branch lookup needle.",
+        ].join("\n"),
+        type: "file",
+        size: 92,
+        updated_at: "2026-01-01T00:00:00.000Z",
+      }],
+      page_info: { self: null, first: null, next: null, prev: null },
+    });
+  }, () => knowledgeSource.executeTool("search_knowledge", { query: "branch needle" }));
+  const returned = typeof result === "object" && result !== null && "returned" in result
+    ? result.returned
+    : undefined;
+
+  assertEquals(returned, 1);
+  assertEquals(requestedUrls.length, 1);
+  assertStringIncludes(requestedUrls[0] ?? "", "/projects/project-1/files");
+  assertStringIncludes(requestedUrls[0] ?? "", "branch=feature-x");
+});
+
+Deno.test("prepareHostedChatRuntimeToolAssembly keeps research mirroring behind denied remote tools", async () => {
+  const executions: string[] = [];
+  const toolAssembly = await prepareHostedChatRuntimeToolAssembly({
+    sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
+    taskContext: {
+      authToken: "tenant-token",
+      projectId: "project-1",
+      model: "anthropic/claude-sonnet-4-6",
+      defaultResearchArtifacts: {
+        topicSlug: "synthetic-topic",
+        topicRootPath: "/research/synthetic-topic",
+        currentReportPath: "/research/synthetic-topic/report.md",
+        runReportPath: "/research/synthetic-topic/runs/run-1.report.md",
+        findingsPath: "/research/synthetic-topic/findings.md",
+        sourcesPath: "/research/synthetic-topic/sources.md",
+      },
+    },
+    instructions: "Base instructions",
+    localTools: {},
+    apiUrl: "https://api.example.com",
+    apiMcpUrl: "https://api.example.com/mcp",
+    allowedToolNames: null,
+    deniedToolNames: ["create_file"],
+    knowledge: true,
+    createRemoteToolSource: (config) => ({
+      id: config.id ?? "api",
+      listTools: () =>
+        Promise.resolve([
+          remoteTool("create_file", "Create a file"),
+          remoteTool("update_file", "Update a file"),
+        ]),
+      executeTool: (name) => {
+        executions.push(name);
+        return Promise.resolve({ path: "research/synthetic-topic/runs/run-1.report.md" });
+      },
+    }),
+    preloadLatestConversationUserText: false,
+  });
+
+  assertExists(toolAssembly.researchArtifactRemoteToolSource);
+  executions.length = 0;
+  const mirror = createDefaultResearchRunArtifactMirrorHandler({
+    taskContext: {
+      projectId: "project-1",
+      defaultResearchArtifacts: {
+        topicSlug: "synthetic-topic",
+        topicRootPath: "/research/synthetic-topic",
+        currentReportPath: "/research/synthetic-topic/report.md",
+        runReportPath: "/research/synthetic-topic/runs/run-1.report.md",
+        findingsPath: "/research/synthetic-topic/findings.md",
+        sourcesPath: "/research/synthetic-topic/sources.md",
+      },
+    },
+    remoteToolSource: toolAssembly.researchArtifactRemoteToolSource,
+  });
+
+  await assertRejects(() =>
+    mirror({
+      toolName: "create_file",
+      input: {
+        path: "research/synthetic-topic/report.md",
+        content: "# Synthetic report",
+      },
+      result: { path: "research/synthetic-topic/report.md" },
+      context: { projectId: "project-1" },
+    })
+  );
+  assertEquals(executions, []);
 });
 
 Deno.test("prepareHostedChatRuntimeToolAssembly preserves the full deferred OpenAI catalog", async () => {

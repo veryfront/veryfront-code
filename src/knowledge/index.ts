@@ -320,7 +320,7 @@ function validateRelativeKnowledgePath(path: string, errorDetail: string): strin
 
 function validateKnowledgeScopePattern(pattern: string): string {
   const normalizedPattern = validateRelativeKnowledgePath(pattern, "Invalid knowledge scope path");
-  if (normalizedPattern.startsWith("collection:")) {
+  if (normalizedPattern.startsWith("!") || normalizedPattern.startsWith("collection:")) {
     throw INPUT_VALIDATION_FAILED.create({ detail: "Invalid knowledge scope selector" });
   }
 

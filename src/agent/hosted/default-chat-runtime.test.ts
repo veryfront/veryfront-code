@@ -16,6 +16,7 @@ import { getCurrentVeryfrontCloudContext } from "#veryfront/provider/veryfront-c
 import type {
   RemoteMCPToolSourceConfig,
   RemoteToolSource,
+  ToolDefinition,
   ToolExecutionContext,
 } from "#veryfront/tool";
 import { toolRegistry } from "#veryfront/tool";
@@ -308,6 +309,131 @@ it("forwards authored tool result context to default hosted model dispatch", asy
     const promptJson = JSON.stringify(secondPrompt);
     assertStringIncludes(promptJson, "tool_result_reference");
     assertEquals(promptJson.includes(largeResult.payload), false);
+  } finally {
+    clearModelProviders();
+  }
+});
+
+it("mirrors default research artifacts through the API source when knowledge is prepended", async () => {
+  clearModelProviders();
+  const executions: Array<{ name: string; path: unknown }> = [];
+  let modelCallCount = 0;
+  const reportContent = "# Synthetic report\n\nResearch findings.";
+  const apiTools: ToolDefinition[] = ["create_file", "update_file"].map((name) => ({
+    name,
+    description: `${name} fixture`,
+    parameters: {
+      type: "object",
+      properties: {
+        path: { type: "string" },
+        content: { type: "string" },
+        project_reference: { type: "string" },
+      },
+      required: ["path", "content", "project_reference"],
+    },
+  }));
+
+  registerModelProvider("test", () => ({
+    provider: "test",
+    modelId: "test/default-research-mirror-source",
+    doGenerate: () => Promise.reject(new Error("unused")),
+    doStream() {
+      modelCallCount += 1;
+      return Promise.resolve({
+        stream: new ReadableStream<unknown>({
+          start(controller) {
+            if (modelCallCount === 1) {
+              controller.enqueue({
+                type: "tool-call",
+                toolCallId: "create-report",
+                toolName: "create_file",
+                input: { path: "report.md", content: reportContent },
+              });
+              controller.enqueue({
+                type: "finish",
+                finishReason: "tool-calls",
+                usage: { inputTokens: 1, outputTokens: 1 },
+              });
+            } else {
+              controller.enqueue({ type: "text-delta", text: "done" });
+              controller.enqueue({
+                type: "finish",
+                finishReason: "stop",
+                usage: { inputTokens: 1, outputTokens: 1 },
+              });
+            }
+            controller.close();
+          },
+        }),
+      });
+    },
+  }));
+
+  try {
+    const runtime = await createDefaultHostedChatRuntime({
+      sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
+      options: {
+        projectId: "project-1",
+        authToken: "token-1",
+        instructions: "Write the default research report.",
+        model: "test/default-research-mirror-source",
+        allowedTools: ["create_file", "update_file", "search_knowledge"],
+        knowledge: true,
+        runId: "run-1",
+      },
+      config: {
+        apiUrl: "https://api.example.com",
+        apiMcpUrl: "https://api.example.com/mcp",
+      },
+      createTaskContext: ({ options, modelId }) => ({
+        authToken: options.authToken,
+        runId: options.runId,
+        projectId: options.projectId ?? "",
+        branchId: options.branchId ?? null,
+        model: modelId,
+        defaultResearchArtifacts: {
+          topicSlug: "synthetic-topic",
+          topicRootPath: "/research/synthetic-topic",
+          currentReportPath: "/research/synthetic-topic/report.md",
+          runReportPath: "/research/synthetic-topic/runs/run-1.report.md",
+          findingsPath: "/research/synthetic-topic/findings.md",
+          sourcesPath: "/research/synthetic-topic/sources.md",
+        },
+      }),
+      buildLocalTools: () => ({}),
+      createRemoteToolSource: (config) => ({
+        id: config.id ?? "api",
+        listTools: () => Promise.resolve(apiTools),
+        executeTool: (name, input) => {
+          const path = typeof input === "object" && input !== null && "path" in input
+            ? input.path
+            : undefined;
+          if (name === "create_file" || name === "update_file") {
+            executions.push({ name, path });
+          }
+          return Promise.resolve({ path });
+        },
+      }),
+      preloadLatestConversationUserText: false,
+    });
+
+    await withMockFetch(
+      () => Promise.resolve(Response.json({ tools: [] })),
+      async () => {
+        const result = await runtime.agent.stream({
+          messages: [],
+          abortSignal: new AbortController().signal,
+        });
+        for await (const _chunk of result.toUIMessageStream()) {
+          // Consume the original write and the mirror callback.
+        }
+      },
+    );
+
+    assertEquals(executions, [
+      { name: "create_file", path: "research/synthetic-topic/report.md" },
+      { name: "create_file", path: "research/synthetic-topic/runs/run-1.report.md" },
+    ]);
   } finally {
     clearModelProviders();
   }
