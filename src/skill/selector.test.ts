@@ -189,6 +189,32 @@ Deno.test("skill selector object rules grant exact and glob matches with exclusi
   assertEquals(snapshot.allowedSkillIds, ["support-triage", "agent--cite"]);
 });
 
+Deno.test("skill selector glob exclusions resist mutable string prototypes", () => {
+  const startsWithDescriptor = Object.getOwnPropertyDescriptor(String.prototype, "startsWith");
+  if (!startsWithDescriptor) throw new Error("expected String.prototype.startsWith descriptor");
+
+  try {
+    Object.defineProperty(String.prototype, "startsWith", {
+      ...startsWithDescriptor,
+      value: () => false,
+    });
+
+    const snapshot = resolveSkillSelector({
+      definitions: [{ id: "support-internal" }],
+      selector: {
+        "support-internal": true,
+        "support-*": false,
+      },
+      getId: (definition) => definition.id,
+      isVisible: () => true,
+    });
+
+    assertEquals(snapshot.allowedSkillIds, []);
+  } finally {
+    Object.defineProperty(String.prototype, "startsWith", startsWithDescriptor);
+  }
+});
+
 Deno.test("skill selector rules use the shared glob grammar", () => {
   const definitions = [
     { id: "skills/triage" },
