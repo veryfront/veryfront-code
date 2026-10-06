@@ -480,6 +480,35 @@ description: Excluded skill
     assertEquals(assistant.config.skills, false);
   });
 
+  it("treats empty and exclusion-only skill maps as explicit none selectors", () => {
+    const skillSelectors: AgentConfig["skills"][] = [{}, { "support-*": false }];
+    for (const skills of skillSelectors) {
+      const assistant = agent({
+        id: "map-disabled-skill-tools",
+        system: "Do not use skills.",
+        skills,
+      });
+
+      assertEquals(assistant.config.tools, undefined);
+      assertEquals(resolveSkillToolDisposition(assistant.config, assistant.id), "disable");
+    }
+  });
+
+  it("keeps skill tools for maps with positive grants", () => {
+    const assistant = agent({
+      id: "map-enabled-skill-tools",
+      system: "Use support skills, but not internal ones.",
+      skills: { "support-*": true, "support-internal": false },
+    });
+
+    assertEquals(Object.keys(assistant.config.tools ?? {}).sort(), [
+      "execute_skill_script",
+      "load_skill",
+      "load_skill_reference",
+    ]);
+    assertEquals(resolveSkillToolDisposition(assistant.config, assistant.id), "inject");
+  });
+
   it("preserves explicit skill tool denials when skills are omitted", () => {
     const assistant = agent({
       id: "disabled-skill-tools",
