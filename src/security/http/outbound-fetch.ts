@@ -85,8 +85,24 @@ const capturedHostFetch = globalThis.fetch.bind(globalThis);
 // Captured like capturedHostFetch: origin-bound provider transports read URL/Request properties on every credentialed request.
 const NativeURL = URL;
 const NativeRequest = Request;
+const NativeResponse = Response;
+const NativeHeaders = Headers;
+const NativeReadableStream = ReadableStream;
 const IntrinsicReflectApply = Reflect.apply;
 const nativeHasInstance = Function.prototype[Symbol.hasInstance];
+const HeadersGet = NativeHeaders.prototype.get;
+const ReadableStreamCancel = NativeReadableStream.prototype.cancel;
+const ReadableStreamGetReader = NativeReadableStream.prototype.getReader;
+const ResponseBodyGet = Object.getOwnPropertyDescriptor(NativeResponse.prototype, "body")?.get;
+const ResponseHeadersGet = Object.getOwnPropertyDescriptor(NativeResponse.prototype, "headers")
+  ?.get;
+const ResponseOkGet = Object.getOwnPropertyDescriptor(NativeResponse.prototype, "ok")?.get;
+const ResponseStatusGet = Object.getOwnPropertyDescriptor(NativeResponse.prototype, "status")?.get;
+const ResponseStatusTextGet = Object.getOwnPropertyDescriptor(
+  NativeResponse.prototype,
+  "statusText",
+)
+  ?.get;
 const URLProtocolGet = Object.getOwnPropertyDescriptor(NativeURL.prototype, "protocol")?.get;
 const URLUsernameGet = Object.getOwnPropertyDescriptor(NativeURL.prototype, "username")?.get;
 const URLPasswordGet = Object.getOwnPropertyDescriptor(NativeURL.prototype, "password")?.get;
@@ -101,21 +117,34 @@ const StringPrototypeIndexOf = String.prototype.indexOf;
 const StringPrototypeSlice = String.prototype.slice;
 const StringPrototypeTrim = String.prototype.trim;
 const NativeSet = Set;
+const ObjectCreate = Object.create;
 const SetPrototypeAdd = NativeSet.prototype.add;
 const SetPrototypeHas = NativeSet.prototype.has;
 const ObjectDefineProperty = Object.defineProperty;
+
+function createValueDescriptor<T>(
+  value: T,
+  enumerable: boolean,
+  writable = true,
+): PropertyDescriptor {
+  const descriptor = IntrinsicReflectApply(ObjectCreate, Object, [null]) as PropertyDescriptor;
+  descriptor.configurable = true;
+  descriptor.enumerable = enumerable;
+  descriptor.value = value;
+  descriptor.writable = writable;
+  return descriptor;
+}
 
 // Indexed assignment (parts[parts.length] = ...) still isn't safe: with no own
 // property at that index yet, [[Set]] walks the prototype chain and invokes an
 // inherited accessor there instead of creating an own property. Object.defineProperty
 // uses [[DefineOwnProperty]], which never consults the prototype chain.
 function appendEntry(parts: string[], value: string): void {
-  IntrinsicReflectApply(ObjectDefineProperty, Object, [parts, parts.length, {
-    value,
-    writable: true,
-    enumerable: true,
-    configurable: true,
-  }]);
+  IntrinsicReflectApply(ObjectDefineProperty, Object, [
+    parts,
+    parts.length,
+    createValueDescriptor(value, true),
+  ]);
 }
 
 // String.prototype.split(sep) looks up sep[Symbol.split] even for a string
@@ -147,6 +176,86 @@ function readNativeURLString<T>(target: T, getter: ((this: T) => string) | undef
     throw new TypeError("URL/Request accessors are unavailable");
   }
   return IntrinsicReflectApply(getter, target, []) as string;
+}
+
+/** @internal Exported for boundary tests. */
+export function __bindHostResponseAccessorsForTests(response: Response): Response {
+  return bindHostResponseAccessors(response);
+}
+
+function bindHostResponseAccessors(response: Response): Response {
+  const bodyGet = ResponseBodyGet;
+  const headersGet = ResponseHeadersGet;
+  const okGet = ResponseOkGet;
+  const statusGet = ResponseStatusGet;
+  const statusTextGet = ResponseStatusTextGet;
+  if (!bodyGet || !headersGet || !okGet || !statusGet || !statusTextGet) {
+    throw new TypeError("Response accessors are unavailable");
+  }
+  const body = IntrinsicReflectApply(bodyGet, response, []) as
+    | ReadableStream<Uint8Array>
+    | null;
+  const headers = IntrinsicReflectApply(headersGet, response, []) as Headers;
+  const ok = IntrinsicReflectApply(okGet, response, []) as boolean;
+  const status = IntrinsicReflectApply(statusGet, response, []) as number;
+  const statusText = IntrinsicReflectApply(statusTextGet, response, []) as string;
+  IntrinsicReflectApply(ObjectDefineProperty, Object, [
+    headers,
+    "get",
+    createValueDescriptor(function (this: Headers, name: string): string | null {
+      return IntrinsicReflectApply(HeadersGet, this, [name]) as string | null;
+    }, false),
+  ]);
+  if (body !== null) {
+    IntrinsicReflectApply(ObjectDefineProperty, Object, [
+      body,
+      "cancel",
+      createValueDescriptor(
+        function (this: ReadableStream<Uint8Array>, reason?: unknown): Promise<void> {
+          return IntrinsicReflectApply(ReadableStreamCancel, this, [reason]) as Promise<void>;
+        },
+        false,
+      ),
+    ]);
+    IntrinsicReflectApply(ObjectDefineProperty, Object, [
+      body,
+      "getReader",
+      createValueDescriptor(function (
+        this: ReadableStream<Uint8Array>,
+        options?: ReadableStreamGetReaderOptions,
+      ): ReadableStreamReader<Uint8Array> {
+        return IntrinsicReflectApply(ReadableStreamGetReader, this, [
+          options,
+        ]) as ReadableStreamReader<Uint8Array>;
+      }, false),
+    ]);
+  }
+  IntrinsicReflectApply(ObjectDefineProperty, Object, [
+    response,
+    "body",
+    createValueDescriptor(body, true),
+  ]);
+  IntrinsicReflectApply(ObjectDefineProperty, Object, [
+    response,
+    "headers",
+    createValueDescriptor(headers, true),
+  ]);
+  IntrinsicReflectApply(ObjectDefineProperty, Object, [
+    response,
+    "ok",
+    createValueDescriptor(ok, true),
+  ]);
+  IntrinsicReflectApply(ObjectDefineProperty, Object, [
+    response,
+    "status",
+    createValueDescriptor(status, true),
+  ]);
+  IntrinsicReflectApply(ObjectDefineProperty, Object, [
+    response,
+    "statusText",
+    createValueDescriptor(statusText, true),
+  ]);
+  return response;
 }
 
 // Runs the un-replaceable %Function.prototype%[Symbol.hasInstance] against the
@@ -457,10 +566,15 @@ function createOriginBoundFetchWithTransport(
       signal?: AbortSignal | null,
     ): Promise<Response> => {
       const settled = chainPrivatePromise(operation, (response) => {
-        if (signal?.aborted && response.body) {
-          return chainPrivatePromise(response.body.cancel(), () => response, () => response);
+        const boundResponse = bindHostResponseAccessors(response);
+        if (signal?.aborted && boundResponse.body) {
+          return chainPrivatePromise(
+            boundResponse.body.cancel(),
+            () => boundResponse,
+            () => boundResponse,
+          );
         }
-        return response;
+        return boundResponse;
       });
       primordialArraySet(
         operations,

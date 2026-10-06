@@ -12,6 +12,7 @@ import {
   markEnvFileValue,
 } from "#veryfront/platform/compat/process/env.ts";
 import {
+  __bindHostResponseAccessorsForTests,
   __resetOperatorVeryfrontApiOriginsForTests,
   __runWithOutboundFetchTransportForTests,
   createOriginBoundOutboundFetch,
@@ -951,5 +952,120 @@ describe("authenticated download transport settlement", () => {
       else delete (Array.prototype as unknown as Record<string, unknown>)["0"];
     }
     assertEquals(exposed, false);
+  });
+
+  it("does not expose authenticated response internals to patched accessors", async () => {
+    const statusDescriptor = Object.getOwnPropertyDescriptor(Response.prototype, "status")!;
+    const okDescriptor = Object.getOwnPropertyDescriptor(Response.prototype, "ok")!;
+    const headersDescriptor = Object.getOwnPropertyDescriptor(Response.prototype, "headers")!;
+    const bodyDescriptor = Object.getOwnPropertyDescriptor(Response.prototype, "body")!;
+    const headersGet = Headers.prototype.get;
+    const bodyCancel = ReadableStream.prototype.cancel;
+    const secret = "sentinel-private-download";
+    const response = new Response(secret, {
+      headers: { location: "https://api.example.test/next" },
+    });
+    let exposed = false;
+    let intercepted: Promise<void> | undefined;
+    const expose = (target: Response) => {
+      if (target !== response) return;
+      exposed = true;
+      intercepted = target.clone().text().then((text) => {
+        exposed = text === secret;
+      });
+    };
+    Object.defineProperty(Response.prototype, "status", {
+      configurable: true,
+      get() {
+        expose(this);
+        return Reflect.apply(statusDescriptor.get!, this, []);
+      },
+    });
+    Object.defineProperty(Response.prototype, "ok", {
+      configurable: true,
+      get() {
+        expose(this);
+        return Reflect.apply(okDescriptor.get!, this, []);
+      },
+    });
+    Object.defineProperty(Response.prototype, "headers", {
+      configurable: true,
+      get() {
+        expose(this);
+        return Reflect.apply(headersDescriptor.get!, this, []);
+      },
+    });
+    Object.defineProperty(Response.prototype, "body", {
+      configurable: true,
+      get() {
+        expose(this);
+        return Reflect.apply(bodyDescriptor.get!, this, []);
+      },
+    });
+    Headers.prototype.get = function (name: string) {
+      exposed = true;
+      return Reflect.apply(headersGet, this, [name]);
+    };
+    ReadableStream.prototype.cancel = function (reason?: unknown) {
+      exposed = true;
+      return Reflect.apply(bodyCancel, this, [reason]);
+    };
+    try {
+      await __runWithOutboundFetchTransportForTests({
+        fetch: () => Promise.resolve(response),
+        pinnedFetch: () => Promise.resolve(response),
+        resolveHost: () => Promise.resolve(["93.184.216.34"]),
+      }, async () => {
+        const download = createVeryfrontApiDownloadOutboundFetch("https://api.example.test");
+        const downloaded = await download("https://api.example.test/file", {
+          redirect: "error",
+        });
+        assertEquals(downloaded.ok, true);
+        assertEquals(downloaded.status, 200);
+      });
+      await intercepted;
+    } finally {
+      Object.defineProperty(Response.prototype, "status", statusDescriptor);
+      Object.defineProperty(Response.prototype, "ok", okDescriptor);
+      Object.defineProperty(Response.prototype, "headers", headersDescriptor);
+      Object.defineProperty(Response.prototype, "body", bodyDescriptor);
+      Headers.prototype.get = headersGet;
+      ReadableStream.prototype.cancel = bodyCancel;
+      await response.body?.cancel();
+    }
+    assertEquals(exposed, false);
+  });
+
+  it("binds response accessors without inherited descriptor fields", async () => {
+    const objectGetDescriptor = Object.getOwnPropertyDescriptor(Object.prototype, "get");
+    const objectSetDescriptor = Object.getOwnPropertyDescriptor(Object.prototype, "set");
+    let descriptorTrapCalls = 0;
+    Object.defineProperty(Object.prototype, "get", {
+      configurable: true,
+      get() {
+        descriptorTrapCalls++;
+        return undefined;
+      },
+    });
+    Object.defineProperty(Object.prototype, "set", {
+      configurable: true,
+      get() {
+        descriptorTrapCalls++;
+        return undefined;
+      },
+    });
+    try {
+      const response = new Response("private");
+      const bound = __bindHostResponseAccessorsForTests(response);
+      assertEquals(bound.ok, true);
+      assertEquals(bound.status, 200);
+      assertEquals(await bound.text(), "private");
+    } finally {
+      if (objectGetDescriptor) Object.defineProperty(Object.prototype, "get", objectGetDescriptor);
+      else delete (Object.prototype as Record<string, unknown>).get;
+      if (objectSetDescriptor) Object.defineProperty(Object.prototype, "set", objectSetDescriptor);
+      else delete (Object.prototype as Record<string, unknown>).set;
+    }
+    assertEquals(descriptorTrapCalls, 0);
   });
 });

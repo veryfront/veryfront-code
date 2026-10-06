@@ -24,6 +24,24 @@ const createObject = Object.create;
 const defineProperty = Object.defineProperty;
 const hasOwnProperty = Object.prototype.hasOwnProperty;
 const reflectApply = Reflect.apply;
+const NativeUint8Array = Uint8Array;
+const TypedArrayPrototype = Object.getPrototypeOf(NativeUint8Array.prototype);
+const Uint8ArrayBufferGet = getOwnPropertyDescriptor(TypedArrayPrototype, "buffer")?.get as
+  | ((this: Uint8Array) => ArrayBufferLike)
+  | undefined;
+const Uint8ArrayByteLengthGet = getOwnPropertyDescriptor(TypedArrayPrototype, "byteLength")
+  ?.get as
+    | ((this: Uint8Array) => number)
+    | undefined;
+const Uint8ArrayByteOffsetGet = getOwnPropertyDescriptor(TypedArrayPrototype, "byteOffset")
+  ?.get as
+    | ((this: Uint8Array) => number)
+    | undefined;
+const ReadableStreamGetReader = ReadableStream.prototype.getReader;
+const ReadableStreamDefaultReaderCancel = ReadableStreamDefaultReader.prototype.cancel;
+const ReadableStreamDefaultReaderRead = ReadableStreamDefaultReader.prototype.read;
+const ReadableStreamDefaultReaderReleaseLock = ReadableStreamDefaultReader.prototype.releaseLock;
+const NativePromise = Promise;
 
 function createDataDescriptor<T>(
   value: T,
@@ -46,6 +64,27 @@ function hasOwnDataValue(
   return descriptor !== undefined &&
     reflectApply(hasOwnProperty, descriptor, ["value"]) === true &&
     descriptor.value === expected;
+}
+
+function getByteLength(value: Uint8Array): number {
+  if (!Uint8ArrayByteLengthGet) throw new TypeError("Uint8Array byteLength accessor unavailable");
+  return reflectApply(Uint8ArrayByteLengthGet, value, []) as number;
+}
+
+function createByteWriteView(value: Uint8Array, offset: number): Uint8Array {
+  if (offset === 0) return value;
+  if (!Uint8ArrayBufferGet || !Uint8ArrayByteOffsetGet) {
+    throw new TypeError("Uint8Array buffer accessors unavailable");
+  }
+  const buffer = reflectApply(Uint8ArrayBufferGet, value, []) as ArrayBufferLike;
+  const byteOffset = reflectApply(Uint8ArrayByteOffsetGet, value, []) as number;
+  const byteLength = getByteLength(value);
+  return new NativeUint8Array(buffer, byteOffset + offset, byteLength - offset);
+}
+
+function bindNativePromiseConstructor<T>(promise: Promise<T>): Promise<T> {
+  defineProperty(promise, "constructor", createDataDescriptor(NativePromise, false));
+  return promise;
 }
 
 /** Stable native identity for one filesystem object. */
@@ -727,10 +766,14 @@ async function writeStreamExclusive(
   open: () => Promise<{ write(chunk: Uint8Array): Promise<number>; close(): void | Promise<void> }>,
   remove: () => Promise<void>,
 ): Promise<number> {
-  const reader = source.getReader();
+  const reader = reflectApply(ReadableStreamGetReader, source, []) as ReadableStreamDefaultReader<
+    Uint8Array
+  >;
   let cancellation: Promise<void> | undefined;
   const abort = () => {
-    cancellation = reader.cancel(signal?.reason).catch(() => {});
+    cancellation = (reflectApply(ReadableStreamDefaultReaderCancel, reader, [
+      signal?.reason,
+    ]) as Promise<void>).catch(() => {});
   };
   let handle: Awaited<ReturnType<typeof open>> | undefined;
   let failed = true;
@@ -741,17 +784,22 @@ async function writeStreamExclusive(
     handle = await open();
     while (true) {
       signal?.throwIfAborted();
-      const chunk = await reader.read();
+      const chunk = await bindNativePromiseConstructor(
+        reflectApply(ReadableStreamDefaultReaderRead, reader, []) as Promise<
+          ReadableStreamReadResult<Uint8Array>
+        >,
+      );
       signal?.throwIfAborted();
       if (chunk.done) break;
       let offset = 0;
-      while (offset < chunk.value.byteLength) {
+      const byteLength = getByteLength(chunk.value);
+      while (offset < byteLength) {
         signal?.throwIfAborted();
-        const written = await handle.write(chunk.value.subarray(offset));
+        const written = await handle.write(createByteWriteView(chunk.value, offset));
         if (written <= 0) throw new Error("Upload file write made no progress");
         offset += written;
       }
-      bytes += chunk.value.byteLength;
+      bytes += byteLength;
     }
     await handle.close();
     failed = false;
@@ -759,7 +807,10 @@ async function writeStreamExclusive(
   } finally {
     signal?.removeEventListener("abort", abort);
     if (failed) {
-      await (cancellation ?? reader.cancel().catch(() => {}));
+      await (cancellation ??
+        (reflectApply(ReadableStreamDefaultReaderCancel, reader, []) as Promise<void>).catch(
+          () => {},
+        ));
       if (handle) {
         try {
           await handle.close();
@@ -768,6 +819,6 @@ async function writeStreamExclusive(
         }
       }
     }
-    reader.releaseLock();
+    reflectApply(ReadableStreamDefaultReaderReleaseLock, reader, []);
   }
 }
