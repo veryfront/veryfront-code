@@ -258,6 +258,17 @@ function resolveSignInApex(hostname: string, isHostedProductionDeployment: boole
  * hostname; untrusted request hosts receive only a sanitized path and query.
  */
 const NativeURL = URL;
+const IntrinsicReflectApply = Reflect.apply;
+const StringPrototypeEndsWith = String.prototype.endsWith;
+
+function stringEndsWith(value: string, search: string): boolean {
+  return IntrinsicReflectApply(StringPrototypeEndsWith, value, [search]) as boolean;
+}
+
+function isTrustedProxyReturnHost(requestHostname: string, configuredHostname: string): boolean {
+  return requestHostname === configuredHostname ||
+    stringEndsWith(requestHostname, `.${configuredHostname}`);
+}
 
 /** Parse operator configuration once; request handling retains only immutable strings. */
 export function createProxyAuthRedirectBuilder(configuredOrigin?: string) {
@@ -292,8 +303,7 @@ export function createProxyAuthRedirectBuilder(configuredOrigin?: string) {
     const safePath = normalizeProxyOriginFormPath(url.pathname);
     const returnPath = safePath + url.search;
     if (origin) {
-      const trustedHost = requestHostname === hostname ||
-        requestHostname.endsWith(`.${hostname}`);
+      const trustedHost = isTrustedProxyReturnHost(requestHostname, hostname);
       const projectOrigin = trustedHost
         ? `https://${requestHostname}${port ? `:${port}` : ""}`
         : "";

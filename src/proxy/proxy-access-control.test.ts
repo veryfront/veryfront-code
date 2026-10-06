@@ -114,6 +114,29 @@ describe("proxy/proxy-access-control", () => {
     }
   });
 
+  it("keeps configured-origin host trust stable after String.prototype.endsWith is patched", () => {
+    const originalDescriptor = Object.getOwnPropertyDescriptor(String.prototype, "endsWith");
+    const buildRedirect = createProxyAuthRedirectBuilder("https://platform.example.test");
+    try {
+      Object.defineProperty(String.prototype, "endsWith", {
+        configurable: true,
+        writable: true,
+        value: () => true,
+      });
+
+      assertEquals(
+        buildRedirect(new URL("https://platform.example.test.evil.test/dashboard")),
+        "https://platform.example.test/sign-in?from=%2Fdashboard",
+      );
+    } finally {
+      if (originalDescriptor) {
+        Object.defineProperty(String.prototype, "endsWith", originalDescriptor);
+      } else {
+        delete (String.prototype as { endsWith?: unknown }).endsWith;
+      }
+    }
+  });
+
   it("rejects unsafe configured sign-in origins", () => {
     const previous = Deno.env.get("VERYFRONT_PROXY_SIGN_IN_ORIGIN");
     try {
