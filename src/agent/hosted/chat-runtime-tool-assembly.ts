@@ -281,6 +281,7 @@ export type PrepareFacadedHostedChatRuntimeToolAssemblyInput<
     remoteToolSources: readonly RemoteToolSource[];
     signal: AbortSignal;
     loadLatestConversationUserText?: (signal: AbortSignal) => Promise<string | null>;
+    hostedKnowledgeContext?: HostedKnowledgeExecutionContext;
   };
 
 type FacadedHostedChatRuntimeToolAssemblyResult = HostedChatRuntimeToolAssemblyResult & {
@@ -518,31 +519,63 @@ function shouldIncludeHostedWebFetchFallback(input: {
   return input.sourceProviderToolNames.has("web_fetch");
 }
 
+export type HostedKnowledgeExecutionContext = Pick<
+  ToolExecutionContext,
+  | "authToken"
+  | "projectId"
+  | "projectSlug"
+  | "productionMode"
+  | "releaseId"
+  | "branch"
+  | "environmentName"
+>;
+
 type HostedKnowledgeSourceTaskContext = Omit<HostedChatRuntimeToolAssemblyContext, "authToken"> & {
   authToken?: string;
 };
 
+type HostedKnowledgeSourceContext =
+  | HostedKnowledgeSourceTaskContext
+  | HostedKnowledgeExecutionContext;
+
+function knowledgeContextValue<K extends keyof ToolExecutionContext>(
+  context: HostedKnowledgeSourceContext,
+  key: K,
+): ToolExecutionContext[K] | undefined {
+  const descriptor = Object.getOwnPropertyDescriptor(context, key);
+  return descriptor && Object.hasOwn(descriptor, "value") ? descriptor.value : undefined;
+}
+
 function withHostedKnowledgeExecutionContext(
   context: ToolExecutionContext | undefined,
-  taskContext: HostedKnowledgeSourceTaskContext,
+  taskContext: HostedKnowledgeSourceContext,
 ): ToolExecutionContext {
+  const branch = "branchId" in taskContext
+    ? taskContext.branchId
+    : knowledgeContextValue(taskContext, "branch");
+  const authToken = knowledgeContextValue(taskContext, "authToken");
+  const projectId = knowledgeContextValue(taskContext, "projectId");
+  const projectSlug = knowledgeContextValue(taskContext, "projectSlug");
+  const productionMode = knowledgeContextValue(taskContext, "productionMode");
+  const releaseId = knowledgeContextValue(taskContext, "releaseId");
+  const environmentName = knowledgeContextValue(taskContext, "environmentName");
   return {
     ...(context ?? {}),
-    ...(typeof taskContext.authToken === "string" && taskContext.authToken
-      ? { authToken: taskContext.authToken }
-      : {}),
-    projectId: typeof context?.projectId === "string" && context.projectId
-      ? context.projectId
-      : taskContext.projectId ?? undefined,
-    branch: typeof context?.branch === "string" || context?.branch === null
-      ? context.branch
-      : taskContext.branchId ?? null,
+    authToken: typeof authToken === "string" && authToken ? authToken : undefined,
+    projectId: projectId ?? undefined,
+    projectSlug: typeof projectSlug === "string" && projectSlug ? projectSlug : undefined,
+    productionMode: typeof productionMode === "boolean" ? productionMode : undefined,
+    releaseId: typeof releaseId === "string" || releaseId === null ? releaseId : undefined,
+    environmentName: typeof environmentName === "string" || environmentName === null
+      ? environmentName
+      : undefined,
+    branch: branch ?? null,
   };
 }
 
 function createHostedKnowledgeSource(
   knowledge: AgentConfig["knowledge"] | undefined,
-  taskContext: HostedKnowledgeSourceTaskContext,
+  taskContext: HostedKnowledgeSourceContext,
 ): RemoteToolSource | undefined {
   const source = createAgentKnowledgeSource({
     system: "",
@@ -601,7 +634,12 @@ async function prepareHostedChatRuntimeToolAssemblyInternal<
       ) projectToolNames.add(shortName);
     }
   }
-  const knowledgeSource = createHostedKnowledgeSource(input.knowledge, input.taskContext);
+  const knowledgeContext = "hostedKnowledgeContext" in input
+    ? input.hostedKnowledgeContext
+    : input.taskContext;
+  const knowledgeSource = knowledgeContext === undefined
+    ? undefined
+    : createHostedKnowledgeSource(input.knowledge, knowledgeContext);
   const authorizedLocalTools = withoutDeniedHostTools(
     applyHostedHostToolPolicy(input.localTools, input.hostToolPolicy),
     input.deniedToolNames,

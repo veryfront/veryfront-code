@@ -680,7 +680,11 @@ adapter's owner in trusted service configuration; project owners reject requests
 for other projects before preparation or allocation. Their `prepare` callbacks
 receive private broker authority and bounded executor data separately. Resolve
 immutable sources and capabilities in the broker before returning the executor
-start input.
+start input. For signed control-plane managed brokers, when the returned start
+input includes `trustedRuntime`, the handler binds the broker-admitted
+`privateAuthority.apiAuthToken` as `trustedRuntime.hostedKnowledgeAuthToken` so
+framework knowledge retrieval stays broker-owned and outside executor wire data.
+Without that trusted-runtime credential, managed framework knowledge is denied.
 
 These adapters share admission, duplicate handling, and retirement
 with the signed adapter.

@@ -882,6 +882,70 @@ async function handler(
 }
 
 describe("managed broker handler", () => {
+  it("binds signed broker authority to trusted managed hosted knowledge", async () => {
+    const first = await request();
+    const fixture = runtimeFixture();
+    const execution = new AbortController();
+    let started: ManagedExecutorStartInput | undefined;
+    const managed = createManagedBrokerHandler({
+      responseMode: "detached",
+      broker: {
+        start: (input) => {
+          started = input;
+          return Promise.resolve(fixture.runtime);
+        },
+      },
+      resolveIngressOptions: () => ({
+        publicKeyPem: first.publicKeyPem,
+        audience: "demo-project",
+        projectId,
+        expectedSurface: "studio",
+        boundSource: { type: "release", releaseId: "release-1" },
+        expectedOwner: { scopeKind: "project", projectId },
+        authorizeScope: ({ apiAuthToken }) => {
+          assertEquals(apiAuthToken, "api-token");
+          return { userId };
+        },
+      }),
+      prepare: ({ ingress }) => {
+        assertEquals(JSON.stringify(ingress.executor).includes("api-token"), false);
+        assertEquals(JSON.stringify(ingress.executor).includes("broker-token"), false);
+        const start = managedStart({ agentId: "builder" });
+        start.trustedRuntime = {
+          projectToolNames: [],
+          sourceIntegrationPolicy: { schemaVersion: 1, mode: "unrestricted" },
+          hostedKnowledgeAuthToken: "prepared-foreign-token",
+        };
+        return Promise.resolve({
+          start,
+          messages: [],
+          executionSignal: execution.signal,
+          output: {
+            write: () => Promise.resolve(),
+            finish: () => Promise.resolve(),
+          },
+        });
+      },
+    });
+    try {
+      const response = await managed.handle(first.request);
+      assertEquals(response.status, 202, await response.clone().text());
+      assertEquals(started?.trustedRuntime?.hostedKnowledgeAuthToken, "api-token");
+      assertEquals(
+        JSON.stringify({
+          installation: started?.installation,
+          prepare: started?.prepare,
+          session: started?.session,
+        }).includes("api-token"),
+        false,
+      );
+      execution.abort();
+    } finally {
+      fixture.release();
+      await managed.close();
+    }
+  });
+
   it("accepts encoded run IDs while verifying the original signed path", async () => {
     const encodedPath = "/api/control-plane/runs/%72un%2D1/stream";
     const f = await handler("detached", { requestPath: encodedPath });

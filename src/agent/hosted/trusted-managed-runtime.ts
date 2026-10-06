@@ -143,7 +143,12 @@ export async function createTrustedManagedRuntime(
         listTools: projectFacade.listTools.bind(projectFacade),
         executeTool: projectFacade.executeTool.bind(projectFacade),
       },
-      facades,
+      facades: {
+        ...facades,
+        ...(options.hostedKnowledgeContext === undefined
+          ? {}
+          : { hostedKnowledgeContext: options.hostedKnowledgeContext }),
+      },
       signal,
       sourceIntegrationPolicy: options.sourceIntegrationPolicy,
       grant: {

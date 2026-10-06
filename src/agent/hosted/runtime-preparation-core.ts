@@ -65,6 +65,7 @@ import {
   scopeHostedRuntimeToolResults,
 } from "#veryfront/agent/hosted/default-chat-runtime.ts";
 import {
+  type HostedKnowledgeExecutionContext,
   prepareFacadedHostedChatRuntimeToolAssembly,
   resolveOwnerScopedToolNames,
 } from "#veryfront/agent/hosted/chat-runtime-tool-assembly.ts";
@@ -208,6 +209,8 @@ export interface ExecutorRuntimeFacades {
     initial?: CreationOptions["serverResolvedProviderReplayCheckpoints"];
     persist: NonNullable<CreationOptions["persistProviderReplayCheckpoint"]>;
   };
+  /** Broker-owned hosted project credentials for framework knowledge retrieval. */
+  hostedKnowledgeContext?: HostedKnowledgeExecutionContext;
   /** Own partial facade setup and prepared runtime resources, not the channel/allocation. */
   cleanup(): Promise<void>;
 }
@@ -389,6 +392,7 @@ export function createRuntimePreparationCore(input: RuntimePreparationCoreOption
     remoteToolSources: new Map(input.facades.remoteToolSources),
     toolExposureCheckpoint: snapshotCheckpointFacade(input.facades.toolExposureCheckpoint),
     providerReplayCheckpoint: snapshotCheckpointFacade(input.facades.providerReplayCheckpoint),
+    hostedKnowledgeContext: input.facades.hostedKnowledgeContext,
   };
   if (input.projectTools) {
     facades.remoteToolSources = new Map(facades.remoteToolSources).set(
@@ -787,6 +791,7 @@ export function createRuntimePreparationCore(input: RuntimePreparationCoreOption
         allowedProviderToolNames: providerToolNames,
         toolLoading: definition.toolLoading,
         knowledge: definition.knowledge,
+        hostedKnowledgeContext: facades.hostedKnowledgeContext,
         // Executor models run through Veryfront Cloud whatever their id form.
         providerNativeToolNames: withServedFacts(() =>
           getProviderNativeToolNames({ model: modelId, hosted: true })

@@ -640,6 +640,66 @@ Deno.test("prepareHostedChatRuntimeToolAssembly binds trusted project-id credent
   assertEquals(authorizationPresent, [true]);
 });
 
+Deno.test("prepareFacadedHostedChatRuntimeToolAssembly binds broker-owned hosted knowledge context", async () => {
+  const requestedUrls: string[] = [];
+  const authorizationHeaders: string[] = [];
+  const toolAssembly = await prepareFacadedHostedChatRuntimeToolAssembly({
+    sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
+    taskContext: {
+      projectId: "project-1",
+      branchId: "executor-branch",
+      model: "anthropic/claude-sonnet-4-6",
+    },
+    hostedKnowledgeContext: {
+      authToken: "broker-knowledge-token",
+      projectId: "project-1",
+      branch: "feature-x",
+    },
+    instructions: "Base instructions",
+    localTools: {},
+    remoteToolSources: [],
+    signal: new AbortController().signal,
+    allowedToolNames: null,
+    knowledge: true,
+  });
+
+  const knowledgeSource = toolAssembly.remoteToolSources.find((source) =>
+    source.id === "framework-knowledge"
+  );
+  assertExists(knowledgeSource);
+  const result = await withMockFetch(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const request = input instanceof Request ? input : new Request(input, init);
+    requestedUrls.push(request.url);
+    authorizationHeaders.push(request.headers.get("authorization") ?? "");
+    return Response.json({
+      data: [{
+        id: "file-1",
+        version_id: "version-1",
+        path: "knowledge/support.md",
+        content: "Broker managed lookup needle.",
+        type: "file",
+        size: 32,
+        updated_at: "2026-01-01T00:00:00.000Z",
+      }],
+      page_info: { self: null, first: null, next: null, prev: null },
+    });
+  }, () =>
+    knowledgeSource.executeTool("search_knowledge", { query: "managed needle" }, {
+      projectId: "forged-project",
+      projectSlug: "forged-slug",
+      branch: "forged-branch",
+    }));
+  const returned = typeof result === "object" && result !== null && "returned" in result
+    ? result.returned
+    : undefined;
+
+  assertEquals(returned, 1);
+  assertEquals(authorizationHeaders, ["Bearer broker-knowledge-token"]);
+  assertEquals(requestedUrls.length, 1);
+  assertStringIncludes(requestedUrls[0] ?? "", "/projects/project-1/files");
+  assertStringIncludes(requestedUrls[0] ?? "", "branch=feature-x");
+});
+
 Deno.test("prepareHostedChatRuntimeToolAssembly forwards the active branch to hosted knowledge", async () => {
   const requestedUrls: string[] = [];
   const toolAssembly = await prepareHostedChatRuntimeToolAssembly({

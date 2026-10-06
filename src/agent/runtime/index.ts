@@ -139,7 +139,7 @@ import {
   type TurnProviderRequestValidator,
 } from "#veryfront/agent/middleware/turn-validation.ts";
 import { tryGetCacheKeyContext } from "#veryfront/cache/cache-key-builder.ts";
-import type { ToolDefinition, ToolExecutionContext } from "#veryfront/tool";
+import type { Tool, ToolDefinition, ToolExecutionContext } from "#veryfront/tool";
 import {
   isLocalModelRuntime,
   supportsModelRuntimeToolCalling,
@@ -388,6 +388,7 @@ import {
 import { compareStrings } from "#veryfront/utils/compare.ts";
 import { createToolResultContext, type ToolResultContext } from "./tool-result-context.ts";
 import { createModelToolResultContextMessages } from "./tool-result-context-messages.ts";
+import { createAgentKnowledgeTool } from "#veryfront/agent/runtime/knowledge-tools.ts";
 import {
   createToolResultReadDefinition,
   GET_TOOL_RESULT_TOOL_NAME,
@@ -1887,6 +1888,11 @@ function findAdmittedToolResult(
   return undefined;
 }
 
+function createRuntimeFrameworkLocalTools(config: AgentConfig): Record<string, Tool> | undefined {
+  const knowledgeTool = config.tools === true ? createAgentKnowledgeTool(config) : undefined;
+  return knowledgeTool === undefined ? undefined : { search_knowledge: knowledgeTool };
+}
+
 async function traceConfiguredToolExecution(input: {
   mode: "generate" | "stream";
   agentId: string;
@@ -1902,6 +1908,7 @@ async function traceConfiguredToolExecution(input: {
   remoteToolSources: ReturnType<typeof getRuntimeRemoteToolSources>;
   sourceIntegrationPolicy: SourceIntegrationPolicyManifest | undefined;
   strictConfiguredToolsOnly?: boolean;
+  frameworkLocalTools?: Record<string, Tool>;
 }): Promise<unknown> {
   admitTerminalDispatch(input.context, {
     callId: input.toolCallId,
@@ -1945,7 +1952,10 @@ async function traceConfiguredToolExecution(input: {
               input.allowedRemoteToolNames,
               input.remoteToolSources,
               input.sourceIntegrationPolicy,
-              { strictConfiguredToolsOnly: input.strictConfiguredToolsOnly },
+              {
+                strictConfiguredToolsOnly: input.strictConfiguredToolsOnly,
+                frameworkLocalTools: input.frameworkLocalTools,
+              },
             ),
         );
         const resultError = getToolResultError(result);
@@ -3317,6 +3327,9 @@ export class AgentRuntime {
         ? false
         : isRuntimeToolExposureCheckpointPersistenceRequired(this.config);
       const runtimeToolsConfig = hasToolReplacements ? toolReplacements : this.config.tools;
+      const frameworkLocalTools = hasToolReplacements
+        ? undefined
+        : createRuntimeFrameworkLocalTools(this.config);
       const toolLoadingResolution = resolveRuntimeToolLoading(this.config);
       const runConfig: RuntimeToolFilterConfig = {
         ...this.config,
@@ -3402,6 +3415,7 @@ export class AgentRuntime {
           systemPrompt: currentSystemPrompt,
           toolContextBase: { ...toolContextBase, abortSignal },
           strictConfiguredToolsOnly: hasToolReplacements,
+          frameworkLocalTools,
           toolExposureState,
           toolExposureCheckpoint: step === 0 ? initialToolExposureCheckpoint : undefined,
         });
@@ -3982,6 +3996,7 @@ export class AgentRuntime {
                 remoteToolSources,
                 sourceIntegrationPolicy,
                 strictConfiguredToolsOnly: hasToolReplacements,
+                frameworkLocalTools,
               });
               await this.notifyToolResult({
                 mode: "generate",
@@ -4197,6 +4212,7 @@ export class AgentRuntime {
     const forwardedRemoteToolDefinitions = getRuntimeForwardedIntegrationToolDefs(this.config);
     const remoteToolSources = getRuntimeRemoteToolSources(this.config, undefined, this.id);
     const sourceIntegrationPolicy = getRuntimeSourceIntegrationPolicy(this.config);
+    const frameworkLocalTools = createRuntimeFrameworkLocalTools(this.config);
     const configuredProviderTools = getRuntimeProviderTools(this.config);
     const toolResultContext = createActiveToolResultContext({
       config: this.config,
@@ -4323,6 +4339,7 @@ export class AgentRuntime {
         step,
         systemPrompt: currentSystemPrompt,
         toolContextBase,
+        frameworkLocalTools,
         toolExposureState,
         toolExposureCheckpoint: step === (checkpoint?.nextStep ?? 0)
           ? initialToolExposureCheckpoint
@@ -4454,6 +4471,7 @@ export class AgentRuntime {
             allowedRemoteToolNames,
             remoteToolSources,
             sourceIntegrationPolicy,
+            frameworkLocalTools,
           });
           throwIfAborted(abortSignal);
           await this.notifyToolResult({
@@ -5488,6 +5506,7 @@ export class AgentRuntime {
             allowedRemoteToolNames,
             remoteToolSources,
             sourceIntegrationPolicy,
+            frameworkLocalTools,
           });
           throwIfAborted(abortSignal);
           await this.notifyToolResult({

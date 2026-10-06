@@ -518,6 +518,11 @@ describe("executor runtime preparation", () => {
         }),
         hostTools: new Map(),
         remoteToolSources: new Map(),
+        hostedKnowledgeContext: {
+          authToken: "broker-knowledge-token",
+          projectId: "project-1",
+          branch: "branch-1",
+        },
         projectSteering: {
           prepare: ({ definition }) =>
             Promise.resolve({
