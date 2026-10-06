@@ -10,6 +10,10 @@ import {
 } from "#cli/process-env";
 import { saveToken } from "../auth/token-store.ts";
 import {
+  _resetEnvironmentConfig,
+  createTestEnvironmentConfig,
+} from "#veryfront/config/environment-config.ts";
+import {
   deleteEnv,
   getEnv,
   makeTempDir,
@@ -46,6 +50,7 @@ function restoreEnv(): void {
     }
   }
   deleteHostSecret("VERYFRONT_API_TOKEN");
+  _resetEnvironmentConfig();
 }
 
 describe("getProxyProjectSourceContext", () => {
@@ -132,7 +137,8 @@ describe("project source runtime auth", () => {
       deleteEnv("VERYFRONT_PROJECT_SLUG");
       deleteEnv("VERYFRONT_SERVICE_LAYER");
       setEnv("XDG_CONFIG_HOME", configHome);
-      await saveToken("stored-token");
+      _resetEnvironmentConfig();
+      await saveToken("stored-token", createTestEnvironmentConfig({ xdgConfigHome: configHome }));
 
       const config = {
         fs: { veryfront: { projectSlug: "configured-fs-project" } },
@@ -161,7 +167,8 @@ describe("project source runtime auth", () => {
       deleteEnv("VERYFRONT_PROJECT_SLUG");
       deleteEnv("VERYFRONT_SERVICE_LAYER");
       setEnv("XDG_CONFIG_HOME", configHome);
-      await saveToken("stored-token");
+      _resetEnvironmentConfig();
+      await saveToken("stored-token", createTestEnvironmentConfig({ xdgConfigHome: configHome }));
       await writeTextFile(
         `${projectDir}/veryfront.config.ts`,
         'export default { projectSlug: "configured-source-project" };\n',
@@ -186,7 +193,8 @@ describe("project source runtime auth", () => {
       deleteEnv("VERYFRONT_API_TOKEN");
       setEnv("VERYFRONT_API_URL", "https://trusted-api.example");
       setEnv("XDG_CONFIG_HOME", configHome);
-      await saveToken("stored-token");
+      _resetEnvironmentConfig();
+      await saveToken("stored-token", createTestEnvironmentConfig({ xdgConfigHome: configHome }));
       await writeTextFile(
         `${projectDir}/veryfront.config.ts`,
         `${["Deno", "env", "set"].join(".")}(` +

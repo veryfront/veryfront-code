@@ -1,4 +1,7 @@
-import { isVeryfrontCloudEnabled } from "#veryfront/platform/cloud/resolver.ts";
+import {
+  getVeryfrontCloudProjectSlug,
+  isVeryfrontCloudEnabled,
+} from "#veryfront/platform/cloud/resolver.ts";
 import { CONFIG_INVALID } from "#veryfront/errors";
 import { VeryfrontCloudBlobStorage } from "#veryfront/workflow/blob/veryfront-cloud-storage.ts";
 import { serverLogger } from "#veryfront/utils";
@@ -185,7 +188,7 @@ async function enrichUploadsWithSourceUrls(
 }
 
 function getSourceBlobStorage(): VeryfrontCloudBlobStorage | null {
-  return isVeryfrontCloudEnabled()
+  return isVeryfrontCloudEnabled() && getVeryfrontCloudProjectSlug()
     ? new VeryfrontCloudBlobStorage({ prefix: CLOUD_UPLOAD_PREFIX })
     : null;
 }
@@ -203,7 +206,7 @@ function toUploadRegistryItem(upload: RagDocumentMeta): UploadRegistryItem {
     id: upload.id,
     name: upload.title,
     mediaType: typeToMime(upload.type),
-    size: 0,
+    size: upload.size ?? 0,
     ...(upload.url ? { url: upload.url } : {}),
   };
 }
@@ -336,6 +339,7 @@ export function createUploadHandler(
       const id = await store.ingest(safeName, text, {
         source: `upload:${safeName}`,
         type: fileType,
+        size: file.size,
       });
 
       const sourceBlobStorage = getSourceBlobStorage();
