@@ -68,6 +68,14 @@ describe("agent/conversation/private-run-event", () => {
     assertEquals(
       isPrivateConversationRunEvent({
         type: "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED",
+        modelCallId: "11111111-1111-4111-8111-111111111111",
+        messages: [],
+      }),
+      true,
+    );
+    assertEquals(
+      isPrivateConversationRunEvent({
+        type: "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED",
         messages: [],
       }),
       true,
@@ -101,6 +109,16 @@ describe("agent/conversation/private-run-event", () => {
     for (
       const value of [
         [],
+        {
+          type: "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED",
+          modelCallId: "caller-selected",
+          messages: [],
+        },
+        Object.defineProperty(
+          { type: "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED", messages: [] },
+          "modelCallId",
+          { enumerable: true, get: () => "11111111-1111-4111-8111-111111111111" },
+        ),
         { type: "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED" },
         { type: "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED", messages: {} },
         { type: "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED", messages: [], tools: {} },

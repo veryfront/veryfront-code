@@ -233,4 +233,64 @@ describe("agent/durable-contracts", () => {
       },
     );
   });
+
+  it("normalizes append-event tool admission receipts from canonical snake_case payloads", () => {
+    assertEquals(
+      AppendConversationRunEventsResponseSchema.parse({
+        latest_event_id: 11,
+        latest_external_event_sequence: 13,
+        appended_count: 2,
+        tool_call_admissions: [{
+          occurrence_id: "66666666-6666-4666-8666-666666666666",
+          admission_event_id: "9007199254740994",
+          start_event_id: "9007199254740993",
+          tool_call_id: "toolu_raw",
+          public_tool_call_id: "toolu_public",
+          project_id: PROJECT_ID,
+          run_id: "77777777-7777-4777-8777-777777777777",
+        }],
+        run: {
+          run_id: "run_events_1",
+          conversation_id: CONVERSATION_ID,
+          latest_event_id: 11,
+          latest_external_event_sequence: 13,
+        },
+      }).toolCallAdmissions,
+      [{
+        occurrenceId: "66666666-6666-4666-8666-666666666666",
+        admissionEventId: "9007199254740994",
+        startEventId: "9007199254740993",
+        toolCallId: "toolu_raw",
+        publicToolCallId: "toolu_public",
+        projectId: PROJECT_ID,
+        runId: "77777777-7777-4777-8777-777777777777",
+      }],
+    );
+  });
+
+  it("rejects unknown wire fields in append-event tool admission receipts", () => {
+    assertThrows(() =>
+      AppendConversationRunEventsResponseSchema.parse({
+        latest_event_id: 11,
+        latest_external_event_sequence: 13,
+        appended_count: 2,
+        tool_call_admissions: [{
+          occurrence_id: "66666666-6666-4666-8666-666666666666",
+          admission_event_id: "9007199254740994",
+          start_event_id: "9007199254740993",
+          tool_call_id: "toolu_raw",
+          public_tool_call_id: "toolu_public",
+          project_id: PROJECT_ID,
+          run_id: "77777777-7777-4777-8777-777777777777",
+          can_read_input: true,
+        }],
+        run: {
+          run_id: "run_events_1",
+          conversation_id: CONVERSATION_ID,
+          latest_event_id: 11,
+          latest_external_event_sequence: 13,
+        },
+      })
+    );
+  });
 });

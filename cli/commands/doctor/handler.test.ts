@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { parseCliArgs } from "#cli/shared/args";
 import { handleDoctorCommand, parseDoctorArgs } from "./handler.ts";
@@ -44,6 +44,16 @@ describe("commands/doctor/handler", () => {
       if (result.success) assertEquals(result.data.strict, true);
     });
 
+    it("parses strict mode together with an explicit port from raw argv", () => {
+      const result = parseDoctorArgs(parseCliArgs(["doctor", "--strict", "--port", "9876"]));
+
+      assertEquals(result.success, true);
+      if (result.success) {
+        assertEquals(result.data.strict, true);
+        assertEquals(result.data.port, 9876);
+      }
+    });
+
     it("parses -s as alias for --strict", () => {
       const result = parseDoctorArgs({ _: ["doctor"], s: true });
       assertEquals(result.success, true);
@@ -56,11 +66,33 @@ describe("commands/doctor/handler", () => {
       if (result.success) assertEquals(result.data.strict, false);
     });
 
-    it("does not use --project flag (always uses cwd)", () => {
+    it("rejects --project instead of silently ignoring it", () => {
       const args: ParsedArgs = { _: ["doctor"], project: "/some/path" };
       const result = parseDoctorArgs(args);
+
+      assertEquals(result.success, false);
+      if (!result.success) assertStringIncludes(result.error.message, "Unknown option --project");
+    });
+
+    it("rejects invalid ports", () => {
+      const result = parseDoctorArgs(parseCliArgs(["doctor", "--port", "-1"]));
+
+      assertEquals(result.success, false);
+      if (!result.success) assertStringIncludes(result.error.message, "Too small");
+    });
+
+    it("rejects unknown options instead of silently ignoring them", () => {
+      const result = parseDoctorArgs(parseCliArgs(["doctor", "--totally-bogus-flag", "--json"]));
+
+      assertEquals(result.success, false);
+      if (!result.success) assertStringIncludes(result.error.message, "Unknown option");
+    });
+
+    it("tolerates global --json while preserving command-specific strict options", () => {
+      const result = parseDoctorArgs(parseCliArgs(["doctor", "--json", "--strict"]));
+
       assertEquals(result.success, true);
-      if (result.success) assertEquals("projectDir" in result.data, false);
+      if (result.success) assertEquals(result.data.strict, true);
     });
   });
 });

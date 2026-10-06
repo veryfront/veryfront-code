@@ -221,6 +221,7 @@ export function createLifecycleRunEventAdapter(input: {
           toolCallId: event.toolCallId,
           toolName: event.toolName,
           messageId: input.messageId,
+          parentMessageId: input.messageId,
         });
         return;
       case "tool_input_content":
@@ -280,6 +281,7 @@ export function createLifecycleRunEventAdapter(input: {
           type: conversationRunEventTypes.toolCallResult,
           toolCallId: event.toolCallId,
           toolName: openToolCalls.get(event.toolCallId),
+          parentMessageId: input.messageId,
           content: "Tool input was rejected before handoff",
           isError: true,
         });
@@ -297,6 +299,7 @@ export function createLifecycleRunEventAdapter(input: {
           type: conversationRunEventTypes.toolCallResult,
           toolCallId: event.toolCallId,
           toolName: event.toolName,
+          parentMessageId: input.messageId,
           ...serializeConversationToolResultContent(event.output),
           isError: event.isError,
           providerExecuted: true,
@@ -314,6 +317,7 @@ export function createLifecycleRunEventAdapter(input: {
           type: conversationRunEventTypes.toolCallResult,
           toolCallId: event.toolCallId,
           toolName: event.toolName,
+          parentMessageId: input.messageId,
           content: event.type === "provider_tool_denied"
             ? "Tool output denied"
             : "Provider tool execution was cancelled",

@@ -1,4 +1,8 @@
 import {
+  type AdmitExecutorToolCall,
+  getToolCallAdmissionOwner,
+} from "#veryfront/runtime/tool-call-admission-dispatch.ts";
+import {
   activateHostedAgentPauseCapability,
   inheritHostedAgentPauseCapability,
 } from "./manual-pause-credential.ts";
@@ -27,6 +31,7 @@ import {
 } from "#veryfront/agent/hosted/executor-runtime-install-schema.ts";
 import type { AgentRunEventSink } from "#veryfront/runtime/model-call-context.ts";
 import type { RuntimeAgentMarkdownDefinition } from "../runtime/agent-definition.ts";
+import type { HostedKnowledgeExecutionContext } from "#veryfront/agent/hosted/chat-runtime-tool-assembly.ts";
 import type { AgentModelRuntimeResolver } from "../runtime/model-transport.ts";
 import {
   createExecutorOperationGate,
@@ -124,6 +129,10 @@ export interface ManagedExecutorStartInput {
   trustedRuntime?: {
     projectToolNames: readonly string[];
     sourceIntegrationPolicy: SourceIntegrationPolicyManifest;
+    /** Broker-owned token for hosted framework knowledge retrieval. Never sent to the executor. */
+    hostedKnowledgeAuthToken?: string;
+    /** Broker-owned Veryfront API origin for hosted framework knowledge retrieval. */
+    hostedKnowledgeApiUrl?: string;
   };
   /** Bind canonical persistence to the admitted session before readiness work starts. */
   bindSessionOwnedWork?: (owner: HostedExecutorOwnedWork) => void;
@@ -134,6 +143,8 @@ export interface ManagedExecutorStartInput {
     resolver: AgentModelRuntimeResolver;
     grant: ExecutorModelGrant;
     runEventSink?: AgentRunEventSink;
+    /** Trusted API rollout opt-in, never selected by executor or project payloads. */
+    modelCallCaptureReceipts?: true;
   };
   tools: {
     /** Complete trusted inventory, including project-local tools, before selector resolution. */
@@ -142,6 +153,7 @@ export interface ManagedExecutorStartInput {
     maxCalls: number;
     maxConcurrent: number;
     limits?: Parameters<typeof createExecutorToolBroker>[0]["limits"];
+    admitToolCall?: AdmitExecutorToolCall;
   };
   persistence: PersistenceInput;
   state: StateInput;
@@ -211,6 +223,23 @@ export function createManagedExecutorBroker(
       ? undefined
       : snapshotTrustedRuntime(input.trustedRuntime, installation, operationInput);
     const bindSessionOwnedWork = input.bindSessionOwnedWork;
+    if (
+      operationInput.tools.admitToolCall &&
+      (installation.grant.execution.kind !== "canonical" ||
+        installation.grant.execution.projectId === null || trusted)
+    ) {
+      throw new TypeError("Tool-call admissions require a project-bound remote canonical runtime");
+    }
+    if (operationInput.tools.admitToolCall) {
+      const owner = getToolCallAdmissionOwner(operationInput.tools.admitToolCall);
+      const execution = installation.grant.execution;
+      if (
+        !owner || execution.kind !== "canonical" || owner.runId !== execution.runId ||
+        owner.projectId.toLowerCase() !== execution.projectId?.toLowerCase()
+      ) {
+        throw new TypeError("Tool-call admission writer does not match its execution grant");
+      }
+    }
     if (
       installation.grant.execution.kind === "ephemeral" &&
       operationInput.model.runEventSink !== undefined
@@ -318,6 +347,7 @@ export function createManagedExecutorBroker(
           projectToolNames: trusted.projectInstallation.allowedToolNames,
           toolLimits: operationInput.tools.limits,
           sourceIntegrationPolicy: trusted.sourceIntegrationPolicy,
+          hostedKnowledgeContext: trusted.hostedKnowledgeContext,
           createGate(projectTools) {
             const localOperations = buildBrokerOperations(
               channelBinding,
@@ -387,6 +417,7 @@ export function createManagedExecutorBroker(
       const remoteAgent = createExecutorHostedChatRuntimeAgent({
         channel: executionChannel,
         preparedRuntimeHandle: prepared.value.preparedRuntimeHandle,
+        ...(operationInput.tools.admitToolCall ? { toolCallAdmissions: true } : {}),
       });
       const agent: HostedChatRuntimeAgent = {
         async stream(streamInput) {
@@ -449,6 +480,7 @@ function snapshotTrustedRuntime(
 ): {
   projectInstallation: ExecutorProjectToolInstall;
   sourceIntegrationPolicy: SourceIntegrationPolicyManifest;
+  hostedKnowledgeContext?: HostedKnowledgeExecutionContext;
 } {
   const execution = installation.grant.execution;
   if (
@@ -499,11 +531,31 @@ function snapshotTrustedRuntime(
   ) {
     throw new TypeError("Project tool authority exceeds the normalized invocation grant");
   }
+  const hostedKnowledgeContext = typeof input.hostedKnowledgeAuthToken === "string" &&
+      input.hostedKnowledgeAuthToken
+    ? {
+      authToken: input.hostedKnowledgeAuthToken,
+      ...(typeof input.hostedKnowledgeApiUrl === "string" && input.hostedKnowledgeApiUrl
+        ? { apiUrl: input.hostedKnowledgeApiUrl }
+        : {}),
+      ...(execution.projectId === null ? {} : { projectId: execution.projectId }),
+      ...(execution.projectSlug === undefined ? {} : { projectSlug: execution.projectSlug }),
+      ...(execution.branchId === undefined ? {} : { branch: execution.branchId }),
+      ...(installation.source.type === "release"
+        ? { productionMode: true, releaseId: installation.source.releaseId }
+        : {
+          productionMode: true,
+          releaseId: installation.source.releaseId,
+          environmentName: installation.source.environmentName,
+        }),
+    }
+    : undefined;
   return {
     projectInstallation,
     sourceIntegrationPolicy: parseSourceIntegrationPolicyManifest(
       snapshotOwnDataRecords(input.sourceIntegrationPolicy),
     ),
+    ...(hostedKnowledgeContext === undefined ? {} : { hostedKnowledgeContext }),
   };
 }
 
@@ -610,11 +662,13 @@ function buildBrokerOperations(
   const scope = { binding, signal, assertActive: () => signal.throwIfAborted() };
   const model = installation.grant.execution.kind === "canonical"
     ? createHostedExecutorModelBroker({
+      projectId: installation.grant.execution.projectId,
       resolveModelRuntime: input.model.resolver,
       allowedModelIds,
       scope,
       grant: input.model.grant,
       runEventSink: input.model.runEventSink,
+      ...(input.model.modelCallCaptureReceipts ? { modelCallCaptureReceipts: true } : {}),
     })
     : createEphemeralHostedExecutorModelBroker({
       resolveModelRuntime: input.model.resolver,
@@ -658,6 +712,10 @@ function buildBrokerOperations(
 }
 
 function snapshotOperationInput(input: ManagedExecutorStartInput): ManagedExecutorOperationInput {
+  const modelCallCaptureReceipts = input.model.modelCallCaptureReceipts;
+  if (modelCallCaptureReceipts !== undefined && modelCallCaptureReceipts !== true) {
+    throw new TypeError("Hosted model capture activation must be explicit");
+  }
   if (input.tools.catalog === undefined) {
     throw new TypeError("Managed executor tool catalog is required");
   }
@@ -706,6 +764,7 @@ function snapshotOperationInput(input: ManagedExecutorStartInput): ManagedExecut
         }])),
       },
       ...(input.model.runEventSink ? { runEventSink: input.model.runEventSink } : {}),
+      ...(modelCallCaptureReceipts ? { modelCallCaptureReceipts: true } : {}),
     },
     tools: {
       catalog,
@@ -713,6 +772,7 @@ function snapshotOperationInput(input: ManagedExecutorStartInput): ManagedExecut
       maxCalls: input.tools.maxCalls,
       maxConcurrent: input.tools.maxConcurrent,
       limits: executorToolLimits(input.tools.limits),
+      ...(input.tools.admitToolCall ? { admitToolCall: input.tools.admitToolCall } : {}),
     },
     persistence: {
       ...(input.persistence.initialToolExposureCheckpoint

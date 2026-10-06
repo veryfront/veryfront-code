@@ -1,8 +1,17 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertExists,
+  assertRejects,
+  assertStringIncludes,
+} from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { deleteHostSecret, getHostEnv } from "#cli/process-env";
 import { saveToken } from "../../auth/token-store.ts";
+import {
+  _resetEnvironmentConfig,
+  createTestEnvironmentConfig,
+} from "#veryfront/config/environment-config.ts";
 import {
   createGlobalErrorLogContext,
   hasProxyCredentials,
@@ -10,6 +19,7 @@ import {
   selectStartProject,
   shouldSkipProjectDirectory,
   startCommand,
+  trySetupProxy,
 } from "./command.ts";
 import { startHelp } from "./command-help.ts";
 import type { StartOptions } from "./command.ts";
@@ -19,6 +29,9 @@ const ENV_KEYS = [
   "VERYFRONT_PROJECT_SLUG",
   "VERYFRONT_SERVICE_LAYER",
   "XDG_CONFIG_HOME",
+  "VERYFRONT_PROXY_API_CLIENT_ID",
+  "VERYFRONT_PROXY_API_CLIENT_SECRET",
+  "VERYFRONT_PROXY_SIGN_IN_ORIGIN",
 ] as const;
 const originalEnv = new Map(ENV_KEYS.map((key) => [key, Deno.env.get(key)]));
 let tempDirs: string[] = [];
@@ -30,6 +43,7 @@ function restoreEnv(): void {
     else Deno.env.set(key, value);
   }
   deleteHostSecret("VERYFRONT_API_TOKEN");
+  _resetEnvironmentConfig();
 }
 
 describe("commands/start/command", () => {
@@ -179,7 +193,8 @@ describe("commands/start/command", () => {
       tempDirs.push(projectDir, configHome);
       for (const key of ENV_KEYS) Deno.env.delete(key);
       Deno.env.set("XDG_CONFIG_HOME", configHome);
-      await saveToken("stored-token");
+      _resetEnvironmentConfig();
+      await saveToken("stored-token", createTestEnvironmentConfig({ xdgConfigHome: configHome }));
       return projectDir;
     }
 
@@ -292,6 +307,25 @@ describe("commands/start/command", () => {
           VERYFRONT_API_TOKEN: "vf_login_token",
         })),
         true,
+      );
+    });
+    it("propagates proxy initialization errors from invalid operator configuration", async () => {
+      Deno.env.set("VERYFRONT_PROXY_API_CLIENT_ID", "id");
+      Deno.env.set("VERYFRONT_PROXY_API_CLIENT_SECRET", "secret");
+      Deno.env.set("VERYFRONT_PROXY_SIGN_IN_ORIGIN", "http://unsafe.example.test");
+
+      const error = await assertRejects(() => trySetupProxy(new Map()));
+
+      const structured = error as {
+        detail?: unknown;
+        slug?: unknown;
+        toRFC9457?: () => { detail?: unknown };
+      };
+      assertEquals(structured.slug, "initialization-error");
+      assertStringIncludes(String(structured.detail), "VERYFRONT_PROXY_SIGN_IN_ORIGIN");
+      assertStringIncludes(
+        String(structured.toRFC9457?.().detail),
+        "VERYFRONT_PROXY_SIGN_IN_ORIGIN",
       );
     });
   });

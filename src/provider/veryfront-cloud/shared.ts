@@ -18,7 +18,10 @@ import {
   createNativeRequest,
   createNativeRequestInit,
 } from "#veryfront/platform/compat/http/native-request-init.ts";
-import { getCurrentVeryfrontCloudContext } from "./context.ts";
+import {
+  getCurrentVeryfrontCloudContext,
+  getCurrentVeryfrontCloudModelCallCapture,
+} from "./context.ts";
 import {
   canVeryfrontCloudCatalogRefuse,
   createRetiredVeryfrontCloudModelError,
@@ -755,10 +758,13 @@ export function createVeryfrontCloudFetch(
     IntrinsicReflectApply(HeadersDelete, headers, ["x-goog-api-key"]);
     IntrinsicReflectApply(HeadersDelete, headers, ["x-veryfront-project-slug"]);
     IntrinsicReflectApply(HeadersDelete, headers, ["x-veryfront-billing-group-id"]);
+    IntrinsicReflectApply(HeadersDelete, headers, ["x-veryfront-model-call-id"]);
+    IntrinsicReflectApply(HeadersDelete, headers, ["x-veryfront-model-call-capture-event-id"]);
 
     // Everything that can reach project code (the cloud context store, the
     // caller's init) is read before the bearer joins the headers, so nothing
     // can replace an array intrinsic between the check below and the send.
+    const modelCallCapture = getCurrentVeryfrontCloudModelCallCapture();
     const cloudContext = getCurrentVeryfrontCloudContext();
     const billingGroup = cloudContext?.billingGroupId;
     const billingGroupId = billingGroup === undefined
@@ -777,6 +783,16 @@ export function createVeryfrontCloudFetch(
     IntrinsicReflectApply(HeadersSet, headers, ["Authorization", `Bearer ${trustedApiToken}`]);
     if (projectSlug) {
       IntrinsicReflectApply(HeadersSet, headers, ["x-veryfront-project-slug", projectSlug]);
+    }
+    if (modelCallCapture) {
+      IntrinsicReflectApply(HeadersSet, headers, [
+        "x-veryfront-model-call-id",
+        modelCallCapture.modelCallId,
+      ]);
+      IntrinsicReflectApply(HeadersSet, headers, [
+        "x-veryfront-model-call-capture-event-id",
+        modelCallCapture.eventId,
+      ]);
     }
     if (billingGroupId) {
       IntrinsicReflectApply(HeadersSet, headers, [

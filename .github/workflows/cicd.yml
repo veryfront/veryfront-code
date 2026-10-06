@@ -172,6 +172,10 @@ jobs:
             typecheck) deno task typecheck ;;
             test-typecheck) deno task lint:test-typecheck ;;
           esac
+      # test:scripts is a local task; CI needs this focused generator lane.
+      - name: Run Runs fixture generator regression tests
+        if: ${{ matrix.check == 'typecheck' }}
+        run: deno task test:file scripts/generate-runs-fixtures.test.ts
 
   # ============================================
   # CI: Tests
@@ -696,7 +700,13 @@ jobs:
     runs-on: ${{ (github.event_name == 'push' || github.event_name == 'merge_group') && 'ubuntu-latest-m' || 'ubuntu-latest' }}
     timeout-minutes: 10
     name: Sonar coverage report
-    needs: [tested-run, version-check, coverage-shards, coverage-node-executor, coverage-integration-client]
+    needs: [
+      tested-run,
+      version-check,
+      coverage-shards,
+      coverage-node-executor,
+      coverage-integration-client,
+    ]
     if: ${{ !cancelled() && (needs.tested-run.outputs.reuse != 'true' || needs.version-check.outputs.is_stable != 'false') && (needs.tested-run.outputs.reuse == 'true' || (needs.coverage-shards.result == 'success' && needs.coverage-node-executor.result == 'success' && needs.coverage-integration-client.result == 'success')) && ((github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && (github.event_name != 'pull_request' || github.event.pull_request.user.login != 'dependabot[bot]')) }}
     permissions:
       actions: read

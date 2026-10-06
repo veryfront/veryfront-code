@@ -1,6 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { parseCliArgs } from "#cli/shared/args";
 import { handleRoutesCommand, parseRoutesArgs } from "./handler.ts";
 
 describe("commands/routes/handler", () => {
@@ -46,6 +47,12 @@ describe("commands/routes/handler", () => {
       if (result.success) assertEquals(result.data.json, true);
     });
 
+    it("parses -j as the JSON alias", () => {
+      const result = parseRoutesArgs(parseCliArgs(["routes", "-j"]));
+      assertEquals(result.success, true);
+      if (result.success) assertEquals(result.data.json, true);
+    });
+
     it("defaults --json to false", () => {
       const result = parseRoutesArgs({ _: ["routes"] });
       assertEquals(result.success, true);
@@ -56,6 +63,13 @@ describe("commands/routes/handler", () => {
       const result = parseRoutesArgs({ _: ["routes"], json: false });
       assertEquals(result.success, true);
       if (result.success) assertEquals(result.data.json, false);
+    });
+
+    it("rejects unknown options instead of silently ignoring them", () => {
+      const result = parseRoutesArgs(parseCliArgs(["routes", "--totally-bogus-flag", "--json"]));
+
+      assertEquals(result.success, false);
+      if (!result.success) assertStringIncludes(result.error.message, "Unknown option");
     });
   });
 });

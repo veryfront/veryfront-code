@@ -77,8 +77,20 @@ export const getExecutorDataEventSchema = defineSchema((v) => {
       id: id.optional(),
       delta: v.string(),
     }).strict(),
-    v.object({ type: v.literal("tool-input-start"), toolCallId: id, toolName: id, ...flags })
-      .strict(),
+    v.object({
+      type: v.literal("tool-input-start"),
+      toolCallId: id,
+      toolName: id,
+      privateToolCallOccurrenceId: v.string().uuid().optional(),
+      privateObservedToolResult: v.literal(true).optional(),
+      ...flags,
+    })
+      .strict().refine(
+        (event) =>
+          event.privateObservedToolResult !== true ||
+          event.privateToolCallOccurrenceId === undefined,
+        "Observed tool results cannot carry dispatch admission",
+      ),
     v.object({
       type: v.literal("tool-input-delta"),
       toolCallId: id,

@@ -4,6 +4,7 @@ import {
   filterPrivateArray,
   joinPrivateArray,
   mapPrivateArray,
+  slicePrivateArray,
   somePrivateArray,
 } from "#veryfront/security/private-array.ts";
 import {
@@ -27,6 +28,8 @@ const RUNTIME_DEFERRED_TOOL_HEADER =
   "Authorized but not loaded. You cannot call these until they are loaded:";
 const RUNTIME_DEFERRED_TOOL_FOOTER =
   "Load one by calling tool_search with its exact name. It becomes callable on the next model step. You must not call a deferred tool directly.";
+const MAX_DEFERRED_TOOL_SUMMARIES = 20;
+const MAX_DEFERRED_TOOL_DESCRIPTION_LENGTH = 240;
 
 /** A tool the model may load but cannot yet call. */
 export interface DeferredToolSummary {
@@ -50,20 +53,31 @@ function getRuntimeToolInventoryFooter(toolNames: readonly string[]): string {
  * the whole reason an unloaded tool is worth mentioning at all.
  */
 function createDeferredToolSection(deferredTools: readonly DeferredToolSummary[]): string {
+  const displayedToolCount = Math.min(deferredTools.length, MAX_DEFERRED_TOOL_SUMMARIES);
   const entries = joinPrivateArray(
     mapPrivateArray(
-      deferredTools,
-      (tool) =>
-        tool.description === undefined || tool.description.length === 0
+      slicePrivateArray(deferredTools, 0, displayedToolCount),
+      (tool) => {
+        const description = tool.description === undefined
+          ? undefined
+          : tool.description.length > MAX_DEFERRED_TOOL_DESCRIPTION_LENGTH
+          ? `${privateTextSlice(tool.description, 0, MAX_DEFERRED_TOOL_DESCRIPTION_LENGTH)}...`
+          : tool.description;
+        return description === undefined || description.length === 0
           ? `- ${tool.name}`
-          : `- ${tool.name}: ${tool.description}`,
+          : `- ${tool.name}: ${description}`;
+      },
     ),
     "\n",
   );
+  const omittedCount = deferredTools.length - displayedToolCount;
+  const omittedGuidance = omittedCount > 0
+    ? `\n\n${omittedCount} additional authorized deferred tools are omitted from this prompt. Use tool_search with exact names or capability phrases to load omitted tools.`
+    : "";
 
   return `\n\n${RUNTIME_DEFERRED_TOOL_HEADER}
 
-${entries}
+${entries}${omittedGuidance}
 
 ${RUNTIME_DEFERRED_TOOL_FOOTER}`;
 }

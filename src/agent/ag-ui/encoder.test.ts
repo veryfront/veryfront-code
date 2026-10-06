@@ -1,5 +1,10 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertMatch,
+  assertNotEquals,
+  assertThrows,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   buildAgUiFinalizeResponse,
@@ -8,6 +13,12 @@ import {
   mapRuntimeStreamEventToAgUiEvents,
   stampAgUiEventTiming,
 } from "./encoder.ts";
+
+function requireStepId(value: unknown): string {
+  if (typeof value !== "string") throw new Error("expected stepId");
+  assertMatch(value, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
+  return value;
+}
 
 describe("agent/ag-ui-encoder", () => {
   it("maps text, reasoning, step, and tool lifecycle events into AG-UI payloads", () => {
@@ -27,7 +38,11 @@ describe("agent/ag-ui-encoder", () => {
       }),
       [{
         event: "ReasoningMessageStart",
-        payload: { messageId: "assistant-1:reasoning:0", role: "reasoning" },
+        payload: {
+          messageId: "assistant-1:reasoning:0",
+          contentId: "reasoning-1",
+          role: "reasoning",
+        },
       }],
     );
     assertEquals(
@@ -38,20 +53,24 @@ describe("agent/ag-ui-encoder", () => {
       }),
       [{
         event: "ReasoningMessageContent",
-        payload: { messageId: "assistant-1:reasoning:0", delta: "Thinking" },
+        payload: {
+          messageId: "assistant-1:reasoning:0",
+          contentId: "reasoning-1",
+          delta: "Thinking",
+        },
       }],
     );
     assertEquals(
       mapRuntimeStreamEventToAgUiEvents(state, { type: "reasoning-end", id: "reasoning-1" }),
       [{
         event: "ReasoningMessageEnd",
-        payload: { messageId: "assistant-1:reasoning:0" },
+        payload: { messageId: "assistant-1:reasoning:0", contentId: "reasoning-1" },
       }],
     );
-    assertEquals(
-      mapRuntimeStreamEventToAgUiEvents(state, { type: "step-start" }),
-      [{ event: "StepStarted", payload: { stepName: "step-1" } }],
-    );
+    const stepStart = mapRuntimeStreamEventToAgUiEvents(state, { type: "step-start" });
+    assertEquals(stepStart[0]?.event, "StepStarted");
+    assertEquals(stepStart[0]?.payload.stepName, "step-1");
+    const stepId = requireStepId(stepStart[0]?.payload.stepId);
     assertEquals(
       mapRuntimeStreamEventToAgUiEvents(state, { type: "text-delta", delta: "hello" }),
       [
@@ -117,7 +136,25 @@ describe("agent/ag-ui-encoder", () => {
     );
     assertEquals(
       mapRuntimeStreamEventToAgUiEvents(state, { type: "step-end" }),
+      [{ event: "StepFinished", payload: { stepName: "step-1", stepId } }],
+    );
+  });
+
+  it("omits stepId on orphan finish events and keeps reset states distinct", () => {
+    const orphan = createAgUiEncoderState({ nowMs: null, epochMs: null });
+    assertEquals(
+      mapRuntimeStreamEventToAgUiEvents(orphan, { type: "step-end" }),
       [{ event: "StepFinished", payload: { stepName: "step-1" } }],
+    );
+
+    const first = createAgUiEncoderState({ nowMs: null, epochMs: null });
+    const second = createAgUiEncoderState({ nowMs: null, epochMs: null });
+    const firstStart = mapRuntimeStreamEventToAgUiEvents(first, { type: "step-start" })[0];
+    const secondStart = mapRuntimeStreamEventToAgUiEvents(second, { type: "step-start" })[0];
+    assertNotEquals(
+      requireStepId(firstStart?.payload.stepId),
+      requireStepId(secondStart?.payload.stepId),
+      "reset encoders must not reuse deterministic step ids",
     );
   });
 
@@ -327,6 +364,31 @@ describe("agent/ag-ui-encoder", () => {
         payload: { toolCallId: "tool-3", content: { error: "Tool output denied" }, isError: true },
       }],
     );
+  });
+
+  it("uses the active message owner for live references instead of record-supplied IDs", () => {
+    const state = createAgUiEncoderState({ nowMs: null, epochMs: null });
+    mapRuntimeStreamEventToAgUiEvents(state, { type: "message-start", messageId: "message-owner" });
+    const references = [
+      { type: "source-url", sourceId: "source-url", url: "https://example.test/reference" },
+      {
+        type: "source-document",
+        sourceId: "source-document",
+        mediaType: "text/plain",
+        title: "Notes",
+      },
+      { type: "file", mediaType: "text/plain", url: "https://example.test/output.txt" },
+    ] as const;
+    for (const reference of references) {
+      const events = mapRuntimeStreamEventToAgUiEvents(state, {
+        ...reference,
+        parentMessageId: "forged-parent",
+        messageId: "forged-message",
+      });
+      assertEquals(events.length, 1);
+      assertEquals(events[0]?.payload.parentMessageId, "message-owner");
+      assertEquals(events[0]?.payload.messageId, undefined);
+    }
   });
 
   it("emits native frames for citations, attachments, and lifecycle names", () => {
@@ -652,6 +714,7 @@ describe("agent/ag-ui-encoder", () => {
         event: "ReasoningMessageStart",
         payload: {
           messageId: "assistant-orphan-reasoning:reasoning:0",
+          contentId: "reasoning-orphan",
           role: "reasoning",
         },
       }],
@@ -666,6 +729,7 @@ describe("agent/ag-ui-encoder", () => {
         event: "ReasoningMessageContent",
         payload: {
           messageId: "assistant-orphan-reasoning:reasoning:0",
+          contentId: "reasoning-orphan",
           delta: "I should gather one more source before calling the tool.",
         },
       }],
@@ -681,6 +745,7 @@ describe("agent/ag-ui-encoder", () => {
           event: "ReasoningMessageEnd",
           payload: {
             messageId: "assistant-orphan-reasoning:reasoning:0",
+            contentId: "reasoning-orphan",
           },
         },
         {
@@ -711,7 +776,11 @@ describe("agent/ag-ui-encoder", () => {
       }),
       [{
         event: "ReasoningMessageStart",
-        payload: { messageId: "assistant-3:reasoning:0", role: "reasoning" },
+        payload: {
+          messageId: "assistant-3:reasoning:0",
+          contentId: "reasoning-1",
+          role: "reasoning",
+        },
       }],
     );
     assertEquals(
@@ -722,7 +791,11 @@ describe("agent/ag-ui-encoder", () => {
       }),
       [{
         event: "ReasoningMessageContent",
-        payload: { messageId: "assistant-3:reasoning:0", delta: "thinking" },
+        payload: {
+          messageId: "assistant-3:reasoning:0",
+          contentId: "reasoning-1",
+          delta: "thinking",
+        },
       }],
     );
     assertEquals(
@@ -734,7 +807,7 @@ describe("agent/ag-ui-encoder", () => {
       [
         {
           event: "ReasoningMessageEnd",
-          payload: { messageId: "assistant-3:reasoning:0" },
+          payload: { messageId: "assistant-3:reasoning:0", contentId: "reasoning-1" },
         },
         {
           event: "ToolCallStart",
@@ -936,7 +1009,7 @@ describe("agent/ag-ui-encoder", () => {
       [
         {
           event: "ReasoningMessageEnd",
-          payload: { messageId: "assistant-4:reasoning:0" },
+          payload: { messageId: "assistant-4:reasoning:0", contentId: "reasoning-2" },
         },
         {
           event: "RunFinished",
@@ -968,13 +1041,13 @@ describe("agent/ag-ui-encoder", () => {
   it("does not treat step lifecycle events as assistant-visible output", () => {
     const state = createAgUiEncoderState({ nowMs: null, epochMs: null });
 
-    assertEquals(
-      mapRuntimeStreamEventToAgUiEvents(state, { type: "step-start" }),
-      [{ event: "StepStarted", payload: { stepName: "step-1" } }],
-    );
+    const stepStart = mapRuntimeStreamEventToAgUiEvents(state, { type: "step-start" });
+    assertEquals(stepStart[0]?.event, "StepStarted");
+    assertEquals(stepStart[0]?.payload.stepName, "step-1");
+    const stepId = requireStepId(stepStart[0]?.payload.stepId);
     assertEquals(
       mapRuntimeStreamEventToAgUiEvents(state, { type: "step-end" }),
-      [{ event: "StepFinished", payload: { stepName: "step-1" } }],
+      [{ event: "StepFinished", payload: { stepName: "step-1", stepId } }],
     );
 
     assertEquals(
@@ -1176,6 +1249,43 @@ describe("buildAgUiFinalizeResponse", () => {
     );
   });
 
+  it("does not add a reasoning contentId after a span opened without one", () => {
+    const state = createAgUiEncoderState({ nowMs: null, epochMs: null });
+    mapRuntimeStreamEventToAgUiEvents(state, {
+      type: "message-start",
+      messageId: "assistant-late-reasoning-id",
+    });
+
+    assertEquals(
+      mapRuntimeStreamEventToAgUiEvents(state, { type: "reasoning-start" }),
+      [{
+        event: "ReasoningMessageStart",
+        payload: { messageId: "assistant-late-reasoning-id:reasoning:0", role: "reasoning" },
+      }],
+    );
+    assertEquals(
+      mapRuntimeStreamEventToAgUiEvents(state, {
+        type: "reasoning-delta",
+        id: "late-producer-id",
+        delta: "late",
+      }),
+      [{
+        event: "ReasoningMessageContent",
+        payload: { messageId: "assistant-late-reasoning-id:reasoning:0", delta: "late" },
+      }],
+    );
+    assertEquals(
+      mapRuntimeStreamEventToAgUiEvents(state, {
+        type: "reasoning-end",
+        id: "late-producer-id",
+      }),
+      [{
+        event: "ReasoningMessageEnd",
+        payload: { messageId: "assistant-late-reasoning-id:reasoning:0" },
+      }],
+    );
+  });
+
   it("keeps delta and end on the messageId opened by their reasoning span", () => {
     const state = createAgUiEncoderState({ nowMs: null, epochMs: null });
     mapRuntimeStreamEventToAgUiEvents(state, {
@@ -1239,7 +1349,11 @@ describe("buildAgUiFinalizeResponse", () => {
     });
     assertEquals(started, [{
       event: "ReasoningMessageStart",
-      payload: { messageId: "assistant-unmatched-end:reasoning:0", role: "reasoning" },
+      payload: {
+        messageId: "assistant-unmatched-end:reasoning:0",
+        contentId: "reasoning-0",
+        role: "reasoning",
+      },
     }]);
   });
 });
@@ -1366,9 +1480,9 @@ describe("agent/ag-ui-encoder tool-input lifecycle", () => {
       events.at(-1),
       {
         event: "ReasoningMessageEnd",
-        payload: { messageId: "assistant-signed:reasoning:0" },
+        payload: { messageId: "assistant-signed:reasoning:0", contentId: "reasoning-signed" },
       },
-      "reasoning end carries only its message anchor",
+      "reasoning end carries only its message anchor and public content id",
     );
   });
 });

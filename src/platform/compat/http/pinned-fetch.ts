@@ -35,6 +35,7 @@ const RequestHeadersGetter = Object.getOwnPropertyDescriptor(NativeRequest.proto
 const RequestArrayBuffer = NativeRequest.prototype.arrayBuffer;
 const ReflectGetPrototypeOf = Reflect.getPrototypeOf;
 const ReflectOwnKeys = Reflect.ownKeys;
+const ObjectDefineProperty = Object.defineProperty;
 const ObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 const ObjectHasOwn = Object.hasOwn;
 const URLHrefGetter = Object.getOwnPropertyDescriptor(URL.prototype, "href")!.get!;
@@ -45,6 +46,10 @@ const NativeFormData = typeof FormData === "undefined" ? undefined : FormData;
 const BlobTypeGetter = Object.getOwnPropertyDescriptor(Blob.prototype, "type")!.get!;
 
 type NodeRequestFunction = typeof import("node:http").request;
+const capturedClientRequestDestroy = nodeHttp.ClientRequest.prototype.destroy;
+const capturedIncomingMessageDestroy = nodeHttp.IncomingMessage.prototype.destroy;
+const capturedNetCreateConnection = nodeNet.createConnection;
+const capturedTlsConnect = nodeTls.connect;
 
 /**
  * `node:http` and `node:https` `request`, copied into constants while this
@@ -80,6 +85,24 @@ function copyAgentOptions(agent: nodeHttp.Agent): nodeHttp.AgentOptions | undefi
 }
 const privateHttpAgent = new nodeHttp.Agent(copyAgentOptions(nodeHttp.globalAgent));
 const privateHttpsAgent = new nodeHttps.Agent(copyAgentOptions(nodeHttps.globalAgent));
+IntrinsicReflectApply(ObjectDefineProperty, Object, [
+  privateHttpAgent,
+  "createConnection",
+  {
+    configurable: false,
+    writable: false,
+    value: createPinnedPlainSocket,
+  },
+]);
+IntrinsicReflectApply(ObjectDefineProperty, Object, [
+  privateHttpsAgent,
+  "createConnection",
+  {
+    configurable: false,
+    writable: false,
+    value: createPinnedTlsSocket,
+  },
+]);
 
 interface MemberSnapshot {
   readonly target: object;
@@ -87,6 +110,14 @@ interface MemberSnapshot {
   readonly keys: readonly PropertyKey[];
   readonly descriptors: readonly (PropertyDescriptor | undefined)[];
 }
+
+interface ChangedNodeRequestMember {
+  readonly target: object;
+  readonly key: PropertyKey | undefined;
+  readonly member: string;
+}
+
+type PrototypeTarget = NonNullable<ReturnType<typeof ReflectGetPrototypeOf>>;
 
 /**
  * Every prototype node:http calls into while it builds and sends a request:
@@ -163,12 +194,29 @@ function isFunctionOrAccessor(descriptor: PropertyDescriptor | undefined): boole
  * would receive the request and its headers.
  */
 export function assertNodeRequestMembersUnchanged(): void {
+  const changed = findChangedNodeRequestMember();
+  if (changed) throw changedNodeRequestMemberError(changed.member);
+}
+
+function changedNodeRequestMemberError(member: string): TypeError {
+  return new TypeError(
+    `Refused a credential-bearing request to protect its token: the node:http member ${member} ` +
+      "was replaced, added or removed after load, and node:http calls it with the request " +
+      "headers in reach. Do not patch node:http, node:net, node:tls, streams or EventEmitter.",
+  );
+}
+
+function findChangedNodeRequestMember(
+  allowChangedMember?: (changed: ChangedNodeRequestMember) => boolean,
+): ChangedNodeRequestMember | undefined {
   for (let index = 0; index < NODE_REQUEST_MEMBERS.length; index++) {
     const snapshot = NODE_REQUEST_MEMBERS[index]!;
-    let changed = ReflectGetPrototypeOf(snapshot.target) !== snapshot.prototype;
+    if (ReflectGetPrototypeOf(snapshot.target) !== snapshot.prototype) {
+      const changed = { target: snapshot.target, key: undefined, member: "its prototype" };
+      if (!allowChangedMember?.(changed)) return changed;
+    }
     const keys = ReflectOwnKeys(snapshot.target);
-    let member = "its prototype";
-    for (let key = 0; !changed && key < keys.length; key++) {
+    for (let key = 0; key < keys.length; key++) {
       // A loop, not indexOf: Array.prototype methods are project-replaceable.
       let position = -1;
       for (let known = 0; known < snapshot.keys.length; known++) {
@@ -182,27 +230,106 @@ export function assertNodeRequestMembersUnchanged(): void {
       if (
         position === -1 ? isFunctionOrAccessor(current) : !isSameMember(current, original)
       ) {
-        changed = true;
-        member = String(keys[key]);
+        const changed = {
+          target: snapshot.target,
+          key: keys[key]!,
+          member: String(keys[key]),
+        };
+        if (!allowChangedMember?.(changed)) return changed;
       }
     }
-    for (let key = 0; !changed && key < snapshot.keys.length; key++) {
+    for (let key = 0; key < snapshot.keys.length; key++) {
       if (
         isFunctionOrAccessor(snapshot.descriptors[key]) &&
         ObjectGetOwnPropertyDescriptor(snapshot.target, snapshot.keys[key]!) === undefined
       ) {
-        changed = true;
-        member = String(snapshot.keys[key]);
+        const changed = {
+          target: snapshot.target,
+          key: snapshot.keys[key]!,
+          member: String(snapshot.keys[key]),
+        };
+        if (!allowChangedMember?.(changed)) return changed;
       }
     }
-    if (changed) {
-      throw new TypeError(
-        `Refused a credential-bearing request to protect its token: the node:http member ${member} ` +
-          "was replaced, added or removed after load, and node:http calls it with the request " +
-          "headers in reach. Do not patch node:http, node:net, node:tls, streams or EventEmitter.",
-      );
+  }
+  return undefined;
+}
+
+function isNativeDestroyChange(changed: ChangedNodeRequestMember): boolean {
+  return changed.key === "destroy" &&
+    (changed.target === nodeHttp.ClientRequest.prototype ||
+      changed.target === nodeHttp.IncomingMessage.prototype);
+}
+
+function assertNodeRequestMembersUnchangedExceptNativeDestroy(): void {
+  const changed = findChangedNodeRequestMember(isNativeDestroyChange);
+  if (changed) throw changedNodeRequestMemberError(changed.member);
+}
+
+function isInPrototypeChain(value: PrototypeTarget, prototype: PrototypeTarget): boolean {
+  for (
+    let target = ReflectGetPrototypeOf(value);
+    target !== null && target !== Object.prototype;
+    target = ReflectGetPrototypeOf(target)
+  ) {
+    if (target === prototype) return true;
+  }
+  return false;
+}
+
+function isCredentialSocketLockKey(key: PropertyKey): boolean {
+  return key === "write" || key === "end" || key === "destroy" || key === "emit" ||
+    key === "_write" || key === "_writev" || key === "_final" || key === "_destroy";
+}
+
+function lockCredentialSocketInstance(socket: nodeNet.Socket): void {
+  for (let snapshotIndex = 0; snapshotIndex < NODE_REQUEST_MEMBERS.length; snapshotIndex++) {
+    const snapshot = NODE_REQUEST_MEMBERS[snapshotIndex]!;
+    if (!isInPrototypeChain(socket, snapshot.target)) continue;
+    for (let index = 0; index < snapshot.keys.length; index++) {
+      const key = snapshot.keys[index]!;
+      if (!isCredentialSocketLockKey(key)) continue;
+      const descriptor = snapshot.descriptors[index];
+      if (!isFunctionOrAccessor(descriptor)) continue;
+      if (IntrinsicReflectApply(ObjectHasOwn, undefined, [socket, key])) continue;
+      const locked = hasOwnField(descriptor!, "value")
+        ? {
+          configurable: false,
+          enumerable: descriptor!.enumerable,
+          writable: true,
+          value: descriptorField(descriptor!, "value"),
+        }
+        : {
+          configurable: false,
+          enumerable: descriptor!.enumerable,
+          get: descriptorField(descriptor!, "get"),
+          set: descriptorField(descriptor!, "set"),
+        };
+      IntrinsicReflectApply(ObjectDefineProperty, Object, [socket, key, locked]);
     }
   }
+}
+
+function createPinnedPlainSocket(
+  options: nodeNet.NetConnectOpts,
+  callback?: () => void,
+): nodeNet.Socket {
+  const socket = callback === undefined
+    ? capturedNetCreateConnection(options)
+    : capturedNetCreateConnection(options, callback);
+  lockCredentialSocketInstance(socket);
+  return socket;
+}
+
+function createPinnedTlsSocket(
+  options: nodeTls.ConnectionOptions,
+  callback?: () => void,
+): nodeTls.TLSSocket {
+  const socket = callback === undefined
+    ? capturedTlsConnect(options)
+    : capturedTlsConnect(options, callback);
+  lockCredentialSocketInstance(socket);
+  return socket;
 }
 
 function isInstance(value: unknown, constructor: unknown): boolean {
@@ -585,7 +712,31 @@ function teardownDeferredNodeRequest(
     request?.destroy(error);
     return undefined;
   } catch (teardownError) {
+    const capturedDestroyError = teardownDeferredNodeRequestWithCapturedDestroy(
+      request,
+      response,
+      error,
+    );
+    if (capturedDestroyError !== undefined) return capturedDestroyError;
     return teardownError;
+  }
+}
+
+function teardownDeferredNodeRequestWithCapturedDestroy(
+  request: ClientRequest | undefined,
+  response: IncomingMessage | undefined,
+  error: Error | undefined,
+): unknown | undefined {
+  try {
+    assertNodeRequestMembersUnchangedExceptNativeDestroy();
+    if (response) {
+      IntrinsicReflectApply(capturedIncomingMessageDestroy, response, [error]);
+      assertNodeRequestMembersUnchangedExceptNativeDestroy();
+    }
+    if (request) IntrinsicReflectApply(capturedClientRequestDestroy, request, [error]);
+    return undefined;
+  } catch (capturedDestroyError) {
+    return capturedDestroyError;
   }
 }
 
@@ -673,6 +824,7 @@ export async function fetchWithPinnedAddresses(
       method,
       headers: outgoingHeaders,
       agent: url.protocol === "https:" ? privateHttpsAgent : privateHttpAgent,
+      createConnection: url.protocol === "https:" ? createPinnedTlsSocket : createPinnedPlainSocket,
 
       ...(url.protocol === "https:"
         ? {
@@ -781,13 +933,15 @@ export async function fetchWithPinnedAddresses(
           rejectBeforeResponse(error);
           return;
         }
+        if (request.socket) lockCredentialSocketInstance(request.socket);
 
         // node:http writes the header block once a socket is assigned, a later
         // turn than the check above: check again when the socket arrives, and
         // destroy the request before anything is written if a member changed.
-        request.once("socket", () => {
+        request.once("socket", (socket: nodeNet.Socket) => {
           try {
             assertNodeRequestMembersUnchanged();
+            lockCredentialSocketInstance(socket);
           } catch (error) {
             const teardownError = teardownDeferredNodeRequest(
               request,

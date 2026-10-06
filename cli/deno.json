@@ -22,6 +22,11 @@
     "#cli/shared/server-startup": "./shared/server-startup.ts",
     "#cli/ui": "./ui/index.ts",
     "#cli/ui/box": "./ui/box.ts",
-    "#cli/utils": "./utils/index.ts"
+    "#cli/utils": "./utils/index.ts",
+    "#cli/auth/token-store": "./auth/token-store.ts",
+    "#cli/shared/json-output": "./shared/json-output.ts",
+    "#cli/commands/init/handler": "./commands/init/handler.ts",
+    "#cli/commands/init/init-command": "./commands/init/init-command.ts",
+    "#cli/commands/routes/handler": "./commands/routes/handler.ts"
   }
 }

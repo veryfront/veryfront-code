@@ -39,6 +39,7 @@ const NativeString = String;
 const NativeURL = URL;
 const dateGetTime = Date.prototype.getTime;
 const objectHasOwnProperty = Object.prototype.hasOwnProperty;
+const numberIsInteger = Number.isInteger;
 const regExpExec = RegExp.prototype.exec;
 const setAdd = Set.prototype.add;
 const setHas = Set.prototype.has;
@@ -610,6 +611,9 @@ export interface LoggedErrorCause {
   /** True when the cause had a message that was withheld because it may carry untrusted content. */
   messageRedacted?: true;
   code?: string;
+  provider?: string;
+  status?: number;
+  retryable?: boolean;
 }
 
 /**
@@ -640,11 +644,64 @@ function isLoggableCauseMessage(message: string): boolean {
   return apply(setHas, LOGGABLE_CAUSE_MESSAGES, [message]) === true;
 }
 
+const LOGGABLE_PROVIDER_ERROR_NAMES = new NativeSet<string>([
+  "ProviderError",
+  "ProviderOverloadedError",
+  "ProviderRateLimitError",
+  "ProviderQuotaError",
+  "ProviderRequestError",
+  "ProviderOutputTruncatedError",
+]);
+
+const LOGGABLE_PROVIDER_NAMES = new NativeSet<string>([
+  "anthropic",
+  "google",
+  "mistral",
+  "moonshotai",
+  "openai",
+]);
+
+function readHttpStatusForLog(error: Error): number | undefined {
+  const status = readOwnErrorDataField(error, "status");
+  if (typeof status === "number" && numberIsInteger(status) && status >= 100 && status <= 599) {
+    return status;
+  }
+  const statusCode = readOwnErrorDataField(error, "statusCode");
+  if (
+    typeof statusCode === "number" && numberIsInteger(statusCode) && statusCode >= 100 &&
+    statusCode <= 599
+  ) {
+    return statusCode;
+  }
+  return undefined;
+}
+
+function addBoundedProviderDiagnostics(error: Error, entry: LoggedErrorCause): void {
+  const rawName = readNativeErrorNameWithoutHooks(error);
+  if (apply(setHas, LOGGABLE_PROVIDER_ERROR_NAMES, [rawName]) === true) {
+    entry.name = rawName;
+  }
+
+  const provider = readOwnErrorDataField(error, "provider");
+  if (
+    typeof provider === "string" &&
+    apply(setHas, LOGGABLE_PROVIDER_NAMES, [provider]) === true
+  ) {
+    entry.provider = provider;
+  }
+
+  const status = readHttpStatusForLog(error);
+  if (status !== undefined) entry.status = status;
+
+  const retryable = readOwnErrorDataField(error, "retryable");
+  if (typeof retryable === "boolean") entry.retryable = retryable;
+}
+
 /**
  * Summarize the failures an error wraps for a server log: name, a
- * credential-redacted and bounded message, and `code` when present. Stacks are
- * omitted, the chain is capped, and accessors are never run. Returns undefined
- * when the error wraps nothing.
+ * exact allowlisted diagnostics when present. Stacks and arbitrary messages
+ * are omitted, the chain is capped, and accessors are never run. Returns
+ * undefined when the error wraps nothing.
  */
 export function summarizeErrorCausesForLog(error: unknown): LoggedErrorCause[] | undefined {
   const causes: LoggedErrorCause[] = [];
@@ -667,6 +724,7 @@ export function summarizeErrorCausesForLog(error: unknown): LoggedErrorCause[] |
         const code = readOwnErrorDataField(cause, "code");
         const knownCode = typeof code === "string" ? matchTransientErrorCode(code) : undefined;
         if (knownCode !== undefined) entry.code = knownCode;
+        addBoundedProviderDiagnostics(cause, entry);
       }
       if (isLoggableCauseMessage(snapshot.message)) {
         entry.message = snapshot.message;

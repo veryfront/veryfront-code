@@ -1,4 +1,10 @@
 import type { ChatMessageMetadata, ChatUiMessageChunk } from "#veryfront/chat/protocol.ts";
+import type { AgentRunModelCallCaptureReceipt } from "#veryfront/runtime/model-call-capture-receipt.ts";
+import type { AgentRunToolCallAdmissionReceipt } from "#veryfront/runtime/tool-call-admission-receipt.ts";
+import {
+  getToolCallOccurrence,
+  isObservedToolResultStart,
+} from "#veryfront/runtime/tool-call-occurrence-carrier.ts";
 import {
   type AgentRunEventTimingOptions,
   createAgentRunEventTimingAnchor,
@@ -32,6 +38,9 @@ export interface ConversationRunChunkMirror {
   readonly timing?: AgentRunEventTimingOptions;
   handleChunk(chunk: ChatUiMessageChunk<ChatMessageMetadata>): Promise<void>;
   appendEvents(events: ConversationRunEvent[]): Promise<void>;
+  /** Consume an exact persisted capture receipt, independently of batch cursors. */
+  takeModelCallCaptureReceipt?(modelCallId: string): AgentRunModelCallCaptureReceipt | undefined;
+  takeToolCallAdmissionReceipt?(occurrenceId: string): AgentRunToolCallAdmissionReceipt | undefined;
   flush(options?: {
     abortSignal?: AbortSignal;
     throwOnTimeoutRetry?: boolean;
@@ -64,6 +73,8 @@ export interface ConversationRunChunkMirrorPrepareExternalEventsInput {
 }
 
 interface ConversationRunChunkMirrorSharedOptions {
+  /** Trusted hosted mode; normal start chunks must carry a private occurrence sidecar. */
+  toolCallAdmissions?: true;
   immediateFlushEventCount?: number;
   encoder?: ConversationRunEventEncoder;
   flushDelayMs?: number;
@@ -129,6 +140,8 @@ export interface HostedConversationRunChunkMirrorInstrumentation {
 
 /** Options accepted by hosted conversation run chunk mirror. */
 export interface HostedConversationRunChunkMirrorOptions {
+  /** Trusted opt-in using the normal private append transport. */
+  toolCallAdmissions?: true;
   authToken: string;
   apiUrl: string;
   conversationId: string;
@@ -183,8 +196,9 @@ export function createConversationRunChunkMirror(
   const encoder = input.encoder ?? new ConversationRunEventEncoder(timing);
   const immediateFlushEventCount = input.immediateFlushEventCount ??
     DEFAULT_IMMEDIATE_FLUSH_EVENT_COUNT;
+  const queueController = resolveQueueController(input);
   const mirror = createConversationRunMirror({
-    queueController: resolveQueueController(input),
+    queueController,
     immediateFlushEventCount,
     ...(input.flushDelayMs !== undefined ? { flushDelayMs: input.flushDelayMs } : {}),
     ...(input.getRetryDelayMs ? { getRetryDelayMs: input.getRetryDelayMs } : {}),
@@ -199,6 +213,12 @@ export function createConversationRunChunkMirror(
 
   return {
     timing,
+    takeModelCallCaptureReceipt(modelCallId) {
+      return queueController.takeModelCallCaptureReceipt?.(modelCallId);
+    },
+    takeToolCallAdmissionReceipt(occurrenceId) {
+      return queueController.takeToolCallAdmissionReceipt?.(occurrenceId);
+    },
     async handleChunk(chunk) {
       if (mirror.getSnapshot().disabled) {
         return;
@@ -213,7 +233,25 @@ export function createConversationRunChunkMirror(
         return;
       }
 
-      mirror.enqueue(events);
+      if (
+        input.toolCallAdmissions && chunk.type === "tool-input-start" &&
+        !isObservedToolResultStart(chunk)
+      ) {
+        const occurrenceId = getToolCallOccurrence(chunk);
+        const startIndices = events.flatMap((event, eventIndex) =>
+          event.type === "TOOL_CALL_START" && event.toolCallId === chunk.toolCallId
+            ? [eventIndex]
+            : []
+        );
+        if (!occurrenceId || startIndices.length !== 1) {
+          throw new TypeError("Hosted tool start has no exact private occurrence");
+        }
+        mirror.enqueue(events, {
+          toolCallStarts: [{ occurrenceId, eventIndex: startIndices[0]! }],
+        });
+      } else {
+        mirror.enqueue(events);
+      }
     },
     async appendEvents(events) {
       if (mirror.getSnapshot().disabled || events.length === 0) {
@@ -424,6 +462,7 @@ export function createHostedConversationRunChunkMirror(
     maxEventsPerBatch: batchSize,
     maxCursorResyncsPerFlush: DEFAULT_MAX_CURSOR_RESYNCS_PER_FLUSH,
     immediateFlushEventCount: batchSize,
+    ...(input.toolCallAdmissions ? { toolCallAdmissions: true } : {}),
     highBacklogEventCount,
     fetch: input.fetch,
     ...(input.runQueueFlush ? { runQueueFlush: input.runQueueFlush } : {}),

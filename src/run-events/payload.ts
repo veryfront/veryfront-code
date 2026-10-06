@@ -242,22 +242,29 @@ export const getReasoningStartPayloadSchema = defineRunEventSchema((v) =>
   variant(v, "REASONING_START", { messageId: optionalString(v) })
 );
 
-/** Payload that opens a reasoning message. */
+/** Payload that opens a reasoning message. `contentId` carries the optional segment id. */
 export const getReasoningMessageStartPayloadSchema = defineRunEventSchema((v) =>
-  variant(v, "REASONING_MESSAGE_START", { messageId: requiredString(v) })
+  variant(v, "REASONING_MESSAGE_START", {
+    messageId: requiredString(v),
+    contentId: optionalString(v),
+  })
 );
 
-/** Payload carrying one reasoning delta. */
+/** Payload carrying one reasoning delta. `contentId` carries the optional segment id. */
 export const getReasoningMessageContentPayloadSchema = defineRunEventSchema((v) =>
   variant(v, "REASONING_MESSAGE_CONTENT", {
     messageId: requiredString(v),
+    contentId: optionalString(v),
     delta: v.string(),
   })
 );
 
-/** Payload that closes a reasoning message. */
+/** Payload that closes a reasoning message. `contentId` carries the optional segment id. */
 export const getReasoningMessageEndPayloadSchema = defineRunEventSchema((v) =>
-  variant(v, "REASONING_MESSAGE_END", { messageId: requiredString(v) })
+  variant(v, "REASONING_MESSAGE_END", {
+    messageId: requiredString(v),
+    contentId: optionalString(v),
+  })
 );
 
 /** Payload carrying one reasoning content delta. */

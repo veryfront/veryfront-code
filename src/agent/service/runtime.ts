@@ -303,6 +303,9 @@ export function createAgentServiceRuntime<
       ),
       skills: failClosedUnrestrictedSelector ? false : agentConfig.skills,
       tools: normalizeAgentServiceTools(agentConfig.tools, agentConfig.deniedTools),
+      toolLoading: agentConfig.toolLoading,
+      toolResultContext: agentConfig.toolResultContext,
+      knowledge: agentConfig.knowledge,
     }),
     server: {
       port: config.PORT,

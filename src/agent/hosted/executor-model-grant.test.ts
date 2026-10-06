@@ -79,7 +79,11 @@ function fixture(options: {
       ...input,
       prepared: { conversationId: null, canonicalRootRun: null },
     })
-    : createHostedExecutorModelBroker({ ...input, runEventSink: options.persist ?? (() => {}) });
+    : createHostedExecutorModelBroker({
+      ...input,
+      projectId: null,
+      runEventSink: options.persist ?? (() => {}),
+    });
   const generate = operations.get("model.generate")!;
   const stream = operations.get("model.stream")!;
   assert(generate.mode === "unary" && stream.mode === "stream");

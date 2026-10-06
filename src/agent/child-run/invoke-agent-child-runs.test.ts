@@ -149,6 +149,33 @@ describe("agent/invoke-agent-child-runs", () => {
     );
   });
 
+  it("preserves an admitted canonical child identity through lifecycle publication", () => {
+    const input = {
+      ...BASE_INPUT,
+      childCanonicalRunId: "99999999-9999-4999-8999-999999999999",
+    };
+    const [stateDelta, lifecycle] = buildInvokeAgentChildRunProgressEvents(input);
+
+    assertEquals(stateDelta.delta[0]?.value, input);
+    assertEquals(lifecycle.value, input);
+    assertEquals(getInvokeAgentChildRunLifecycleCustomEventSchema().parse(lifecycle), lifecycle);
+    assertEquals(prepareConversationRunExternalEvents([lifecycle]), [{
+      ...input,
+      type: "CHILD_RUN_STATUS_CHANGED",
+    }]);
+  });
+
+  it("omits canonical identity when child admission supplies none", () => {
+    const [stateDelta, lifecycle] = buildInvokeAgentChildRunProgressEvents({
+      ...BASE_INPUT,
+      childCanonicalRunId: undefined,
+    });
+
+    assertEquals(Object.hasOwn(stateDelta.delta[0]?.value ?? {}, "childCanonicalRunId"), false);
+    assertEquals(Object.hasOwn(lifecycle.value, "childCanonicalRunId"), false);
+    assertEquals(lifecycle.value.childRunId, BASE_INPUT.childRunId);
+  });
+
   it("converts a public child-run event to native form at external publication", () => {
     const event = {
       type: "CUSTOM",

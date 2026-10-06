@@ -14,6 +14,7 @@ import {
 import { isVeryfrontGatewayResponse } from "#veryfront/provider/runtime-loader/provider-http.ts";
 import {
   runWithVeryfrontCloudContext,
+  runWithVeryfrontCloudModelCallCapture,
   type VeryfrontCloudContext,
 } from "#veryfront/provider/veryfront-cloud/context.ts";
 import {
@@ -249,6 +250,8 @@ describe("provider/veryfront-cloud/shared", () => {
             "x-goog-api-key": "google-key",
             "x-veryfront-project-slug": "spoofed-project",
             "x-veryfront-billing-group-id": "spoofed-billing-group",
+            "x-veryfront-model-call-id": "spoofed-call",
+            "x-veryfront-model-call-capture-event-id": "spoofed-capture",
             "x-extra-header": "kept",
           },
         }),
@@ -260,6 +263,44 @@ describe("provider/veryfront-cloud/shared", () => {
     assertEquals(capturedRequest?.headers.get("x-extra-header"), "kept");
     assertEquals(capturedRequest?.headers.get("x-veryfront-project-slug"), null);
     assertEquals(capturedRequest?.headers.get("x-veryfront-billing-group-id"), null);
+    assertEquals(capturedRequest?.headers.get("x-veryfront-model-call-id"), null);
+    assertEquals(capturedRequest?.headers.get("x-veryfront-model-call-capture-event-id"), null);
+  });
+
+  it("replaces caller correlation headers only from the exact trusted capture scope", async () => {
+    const receipt = {
+      eventId: "9007199254740993",
+      projectId: "11111111-1111-4111-8111-111111111111",
+      runId: "22222222-2222-4222-8222-222222222222",
+      modelCallId: "33333333-3333-4333-8333-333333333333",
+    };
+    const requests: Request[] = [];
+    const wrappedFetch = createVeryfrontCloudFetch(
+      "synthetic-token",
+      "https://93.184.216.34/ai/v1",
+    );
+    const send = () =>
+      wrappedFetch("https://93.184.216.34/ai/v1/chat/completions", {
+        headers: {
+          "x-veryfront-model-call-id": "caller-forged-call",
+          "x-veryfront-model-call-capture-event-id": "caller-forged-event",
+        },
+      });
+    await withMockFetch(async (input, init) => {
+      requests.push(new Request(input, init));
+      return new Response(null, { status: 204 });
+    }, async () => {
+      const ambient = { apiToken: "synthetic-ambient-token", modelCallCapture: receipt };
+      await runWithVeryfrontCloudContext(ambient, send);
+      await runWithVeryfrontCloudModelCallCapture({ receipt, assertActive() {} }, send);
+    });
+    assertEquals(requests[0]?.headers.get("x-veryfront-model-call-id"), null);
+    assertEquals(requests[0]?.headers.get("x-veryfront-model-call-capture-event-id"), null);
+    assertEquals(requests[1]?.headers.get("x-veryfront-model-call-id"), receipt.modelCallId);
+    assertEquals(
+      requests[1]?.headers.get("x-veryfront-model-call-capture-event-id"),
+      receipt.eventId,
+    );
   });
 
   it(

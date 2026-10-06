@@ -16,6 +16,7 @@ import * as React from "react";
 import { flushSync } from "react-dom";
 import { createRoot } from "react-dom/client";
 import { JSDOM } from "npm:jsdom@28.0.0";
+import { unmountReactRoot } from "#veryfront/react/react-root.test-helpers.ts";
 import { assert, assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { installComponentDom } from "#veryfront/testing/dom-globals.ts";
@@ -34,7 +35,7 @@ function render(element: React.ReactElement): {
   host: HTMLElement;
   doc: Document;
   click: (el: Element) => void;
-  unmount: () => void;
+  unmount: () => Promise<void>;
 } {
   const dom = new JSDOM(
     `<!doctype html><html><body><div id="root"></div></body></html>`,
@@ -49,9 +50,9 @@ function render(element: React.ReactElement): {
     doc: dom.window.document,
     click: (el: Element) =>
       flushSync(() => el.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }))),
-    unmount: () => {
+    unmount: async () => {
       try {
-        root.unmount();
+        await unmountReactRoot(root);
       } finally {
         restore();
       }
@@ -60,7 +61,7 @@ function render(element: React.ReactElement): {
 }
 
 describe("DatePicker behaviour", () => {
-  it("returns focus to the trigger after selecting a day", () => {
+  it("returns focus to the trigger after selecting a day", async () => {
     const { host, doc, click, unmount } = render(
       <DatePicker defaultOpen defaultMonth={new Date(2026, 0, 1)}>
         <DatePickerTrigger />
@@ -82,11 +83,11 @@ describe("DatePicker behaviour", () => {
       assertEquals(doc.querySelector('[role="grid"]'), null, "the surface closed after picking");
       assertEquals(doc.activeElement, trigger, "selecting a day restores focus to the trigger");
     } finally {
-      unmount();
+      await unmount();
     }
   });
 
-  it("opens the Calendar; picking a day fires onChange with that day and closes", () => {
+  it("opens the Calendar; picking a day fires onChange with that day and closes", async () => {
     let picked: Date | undefined;
     const { host, doc, click, unmount } = render(
       <DatePicker
@@ -135,11 +136,11 @@ describe("DatePicker behaviour", () => {
         "the trigger label is produced by the format prop",
       );
     } finally {
-      unmount();
+      await unmount();
     }
   });
 
-  it("honours a controlled value: the parent owns the label, the picker only reports", () => {
+  it("honours a controlled value: the parent owns the label, the picker only reports", async () => {
     const picks: Date[] = [];
     const controlled = new Date(2026, 0, 20);
     const { host, doc, click, unmount } = render(
@@ -183,7 +184,7 @@ describe("DatePicker behaviour", () => {
         "a controlled DatePicker must not move its own value - the parent still owns it",
       );
     } finally {
-      unmount();
+      await unmount();
     }
   });
 });

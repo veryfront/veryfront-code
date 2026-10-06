@@ -359,6 +359,21 @@ describe("src/skill/registry", () => {
       assertEquals(resolved.has("b"), false);
     });
 
+    it("accepts string shorthand and object rule selectors", () => {
+      registerSkill("support-triage", createTestSkill("support-triage"));
+      registerSkill("support-private", createTestSkill("support-private"));
+      registerSkill("writer", createTestSkill("writer"));
+
+      const shorthand = skillRegistry.resolveForAgent("writer");
+      assertEquals([...shorthand.keys()], ["writer"]);
+
+      const rules = skillRegistry.resolveForAgent({
+        "support-*": true,
+        "support-private": false,
+      });
+      assertEquals([...rules.keys()], ["support-triage"]);
+    });
+
     it("should skip missing IDs silently", () => {
       registerSkill("a", createTestSkill("a"));
       const resolved = skillRegistry.resolveForAgent(["a", "nonexistent"]);
@@ -590,7 +605,7 @@ describe("src/skill/registry", () => {
       registerSkill("cite", createScopedTestSkill({ id: "cite" }));
 
       const cases: Array<{
-        selector: true | string[] | undefined;
+        selector: Parameters<typeof skillRegistryInternal.resolveSelectorForAgent>[0];
         expectedPolicy: object;
         expectedIds: string[];
       }> = [
@@ -613,6 +628,28 @@ describe("src/skill/registry", () => {
           selector: ["bundled", "cite", "global", "bundled"],
           expectedPolicy: { kind: "allowlist", entries: ["bundled", "cite", "global", "bundled"] },
           expectedIds: ["bundled", "agent--cite", "global"],
+        },
+        {
+          selector: "cite",
+          expectedPolicy: { kind: "allowlist", entries: ["cite"] },
+          expectedIds: ["agent--cite"],
+        },
+        {
+          selector: { "*": true, "other-*": false, cite: true },
+          expectedPolicy: {
+            kind: "rules",
+            entries: [
+              { pattern: "*", allow: true },
+              { pattern: "other-*", allow: false },
+              { pattern: "cite", allow: true },
+            ],
+          },
+          expectedIds: ["global", "bundled", "agent--cite", "cite"],
+        },
+        {
+          selector: { global: false },
+          expectedPolicy: { kind: "rules", entries: [{ pattern: "global", allow: false }] },
+          expectedIds: [],
         },
       ];
 

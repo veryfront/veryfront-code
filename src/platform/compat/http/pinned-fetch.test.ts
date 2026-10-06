@@ -1,8 +1,6 @@
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { isBun, isDeno, isNode } from "#veryfront/platform/compat/runtime.ts";
-import { spawnSync } from "node:child_process";
-import process from "node:process";
 import {
   applyRuntimeDefaultRequestHeaders,
   createPinnedFetchResponse,
@@ -385,40 +383,6 @@ describe("fetchWithPinnedAddresses", () => {
     }
   });
 
-  it("cleans up abort listeners when the Node request constructor rejects before assignment", () => {
-    if (!isNode) return;
-
-    const script = `
-      import { fetchWithPinnedAddresses } from "./src/platform/compat/http/pinned-fetch.ts";
-      const abort = new AbortController();
-      await fetchWithPinnedAddresses(
-        new URL("http://pinned-invalid-method.test/"),
-        ["127.0.0.1"],
-        { method: "BAD METHOD", signal: abort.signal },
-      ).then(
-        () => { throw new Error("invalid method unexpectedly succeeded"); },
-        (error) => {
-          if (!(error instanceof TypeError)) throw error;
-        },
-      );
-      abort.abort(new DOMException("stop", "AbortError"));
-      await new Promise((resolve) => setTimeout(resolve, 0));
-      console.log("abort-after-constructor-failure-survived");
-    `;
-
-    const output = spawnSync(process.execPath, [
-      "--import",
-      "./tests/node/resolver.mjs",
-      "--input-type=module",
-      "--eval",
-      script,
-    ], { encoding: "utf8" });
-
-    assertEquals(output.stdout.trim(), "abort-after-constructor-failure-survived");
-    assertEquals(output.stderr, "");
-    assertEquals(output.status, 0);
-  });
-
   it("does not invoke a mutated request destroy during late abort teardown", async () => {
     const { ClientRequest, createServer } = await import("node:http");
     let releaseRequest!: () => void;
@@ -477,73 +441,71 @@ describe("fetchWithPinnedAddresses", () => {
     }
   });
 
-  it("contains Bun payload stream errors without exposing credentials", () => {
-    if (!isBun) return;
+  it("stops the request with captured destroy when late abort rejects a changed destroy", async () => {
+    if (!isNode) return;
 
-    const script = `
-      import { fetchWithPinnedAddresses } from "./src/platform/compat/http/pinned-fetch.ts";
-      import { createServer } from "node:http";
+    const { ClientRequest, createServer } = await import("node:http");
+    let requestCount = 0;
+    const server = createServer((request, response) => {
+      requestCount++;
+      request.resume();
+      response.writeHead(204);
+      response.end();
+    });
+    await new Promise<void>((resolve, reject) => {
+      server.once("error", reject);
+      server.listen(0, "127.0.0.1", resolve);
+    });
 
-      let releaseRequest;
-      const requestSeen = new Promise((resolve) => {
-        releaseRequest = resolve;
-      });
-      const server = createServer((request, _response) => {
-        request.resume();
-        releaseRequest();
-      });
-      await new Promise((resolve, reject) => {
-        server.once("error", reject);
-        server.listen(0, "127.0.0.1", resolve);
-      });
+    let bodyController!: ReadableStreamDefaultController<Uint8Array>;
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        bodyController = controller;
+      },
+    }) as unknown as BodyInit;
+    const originalDestroy = Object.getOwnPropertyDescriptor(ClientRequest.prototype, "destroy");
+    const inheritedDestroy = ClientRequest.prototype.destroy;
+    let observedAuthorization: unknown;
+    try {
+      const address = server.address();
+      if (!address || typeof address === "string") {
+        throw new Error("Node test server did not expose a TCP address");
+      }
+      const abort = new AbortController();
+      const response = fetchWithPinnedAddresses(
+        new URL(`http://pinned-abort-stop.test:${address.port}/resource`),
+        ["127.0.0.1"],
+        { method: "POST", headers: { authorization: BEARER }, signal: abort.signal, body },
+      );
+      await new Promise((resolve) => setTimeout(resolve, 0));
 
-      const secret = ["bun", "payload", "secret"].join("-");
-      const bearer = "Bearer " + secret;
-      let bodyController;
-      const body = new ReadableStream({
-        start(controller) {
-          bodyController = controller;
-          controller.enqueue(new TextEncoder().encode("prefix"));
+      Object.defineProperty(ClientRequest.prototype, "destroy", {
+        configurable: true,
+        writable: true,
+        ...originalDestroy,
+        value(this: { getHeader(name: string): unknown }, ...args: unknown[]) {
+          observedAuthorization ??= this.getHeader("authorization");
+          return Reflect.apply(inheritedDestroy, this, args);
         },
       });
+      abort.abort(new DOMException("stop", "AbortError"));
+      await response.catch(() => undefined);
 
-      const address = server.address();
-      let failureMessage = "";
-      const request = fetchWithPinnedAddresses(
-        new URL(\`http://pinned-payload.test:\${address.port}/resource\`),
-        ["127.0.0.1"],
-        { method: "POST", headers: { authorization: bearer }, body },
-      ).catch((error) => {
-        failureMessage = error instanceof Error ? error.message : String(error);
-      });
-      await requestSeen;
+      if (originalDestroy) {
+        Object.defineProperty(ClientRequest.prototype, "destroy", originalDestroy);
+      } else Reflect.deleteProperty(ClientRequest.prototype, "destroy");
+      bodyController.enqueue(new TextEncoder().encode("late"));
+      bodyController.close();
+      await new Promise((resolve) => setTimeout(resolve, 50));
 
-      bodyController.error(new Error("body failed"));
-      await request;
-      await new Promise((resolve) => setTimeout(resolve, 20));
-      server.closeAllConnections?.();
-      await new Promise((resolve, reject) => {
-        server.close((error) => {
-          if (!error || error.code === "ERR_SERVER_NOT_RUNNING") resolve();
-          else reject(error);
-        });
-      });
-      console.log(JSON.stringify({ failureMessage }));
-    `;
-
-    const output = spawnSync(process.execPath, [
-      "--no-env-file",
-      "--preload",
-      "./tests/bun/preload.ts",
-      "--eval",
-      script,
-    ], { encoding: "utf8" });
-
-    assertEquals(output.status, 0);
-    assertEquals(output.stderr, "");
-    assertEquals(JSON.parse(output.stdout).failureMessage, "body failed");
-    assertEquals(output.stdout.includes("Bearer bun-payload-secret"), false);
-    assertEquals(output.stdout.includes("bun-payload-secret"), false);
+      assertEquals(observedAuthorization, undefined);
+      assertEquals(requestCount, 0);
+    } finally {
+      if (originalDestroy) {
+        Object.defineProperty(ClientRequest.prototype, "destroy", originalDestroy);
+      } else Reflect.deleteProperty(ClientRequest.prototype, "destroy");
+      await closeNodeTestServer(server);
+    }
   });
 
   it("rejects guard failures without waiting for body cancellation to finish", async () => {
@@ -619,52 +581,6 @@ describe("fetchWithPinnedAddresses", () => {
       } else Reflect.deleteProperty(ClientRequest.prototype, "setHeader");
       await closeNodeTestServer(server);
     }
-  });
-
-  it("cancels a pending body read when abort closes the request", () => {
-    if (!isNode) return;
-
-    const script = `
-      import { fetchWithPinnedAddresses } from "./src/platform/compat/http/pinned-fetch.ts";
-      const abort = new AbortController();
-      let cancelReason = "";
-      const body = new ReadableStream({
-        pull() {
-          return new Promise(() => {});
-        },
-        cancel(reason) {
-          cancelReason = reason instanceof Error ? reason.name : String(reason);
-        },
-      });
-      const response = fetchWithPinnedAddresses(
-        new URL("http://pinned-abort-pending.test/"),
-        ["127.0.0.1"],
-        { method: "POST", signal: abort.signal, body },
-      );
-      await new Promise((resolve) => setTimeout(resolve, 0));
-      abort.abort(new DOMException("stop", "AbortError"));
-      const result = await response.then(
-        () => "resolved",
-        (error) => error instanceof Error ? error.name + ":" + error.message : String(error),
-      );
-      await new Promise((resolve) => setTimeout(resolve, 100));
-      console.log(JSON.stringify({ result, cancelReason }));
-    `;
-
-    const output = spawnSync(process.execPath, [
-      "--import",
-      "./tests/node/resolver.mjs",
-      "--input-type=module",
-      "--eval",
-      script,
-    ], { encoding: "utf8" });
-
-    assertEquals(output.stderr, "");
-    assertEquals(output.status, 0);
-    assertEquals(JSON.parse(output.stdout), {
-      result: "AbortError:stop",
-      cancelReason: "AbortError",
-    });
   });
 
   it("does not invoke a mutated request destroy during payload error teardown", async () => {

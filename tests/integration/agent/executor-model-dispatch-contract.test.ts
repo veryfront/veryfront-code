@@ -37,6 +37,7 @@ async function connected(provider: string, build: Builder, maxOutputTokens = 409
   const bodies: Record<string, unknown>[] = [];
   const calls: ModelRuntimeCallOptions[] = [];
   const operations = createHostedExecutorModelBroker({
+    projectId: null,
     grant: {
       maxCalls: 64,
       maxConcurrentCalls: 2,
