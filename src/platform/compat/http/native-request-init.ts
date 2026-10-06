@@ -101,8 +101,18 @@ function isSameDescriptor(
   original: PropertyDescriptor | undefined,
 ): boolean {
   if (current === undefined || original === undefined) return current === original;
-  return current.value === original.value && current.get === original.get &&
-    current.set === original.set;
+  // Own fields only: a data descriptor has no `get`, and reading it would run
+  // an Object.prototype getter project code installed, with the descriptor
+  // (and its value) as `this`.
+  return descriptorField(current, "value") === descriptorField(original, "value") &&
+    descriptorField(current, "get") === descriptorField(original, "get") &&
+    descriptorField(current, "set") === descriptorField(original, "set");
+}
+
+function descriptorField(descriptor: PropertyDescriptor, field: "value" | "get" | "set"): unknown {
+  return IntrinsicReflectApply(ObjectHasOwn, undefined, [descriptor, field])
+    ? descriptor[field]
+    : undefined;
 }
 
 /**
