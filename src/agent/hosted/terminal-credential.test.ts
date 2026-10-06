@@ -21,7 +21,7 @@ const request = () =>
   }) as ParsedHostedChatRequest;
 
 function recorder() {
-  const calls: Array<{ endpoint: unknown; headers: Headers; name: string }> = [];
+  const calls: Array<{ endpoint: unknown; headers: Headers; name: string; args: unknown }> = [];
   const fallback = (config: RemoteMCPToolSourceConfig): RemoteToolSource => ({
     id: config.id ?? "platform",
     listTools: async () => [{
@@ -29,14 +29,14 @@ function recorder() {
       description: "ordinary",
       parameters: { type: "object", properties: {} },
     }],
-    executeTool: async (name, _args, context) => {
+    executeTool: async (name, args, context) => {
       const headers = typeof config.headers === "function"
         ? await config.headers(context)
         : config.headers;
       const endpoint = typeof config.endpoint === "function"
         ? await config.endpoint(context)
         : config.endpoint;
-      calls.push({ endpoint, headers: new Headers(headers), name });
+      calls.push({ endpoint, headers: new Headers(headers), name, args });
       return { accepted: true };
     },
   });
@@ -183,6 +183,57 @@ describe("private terminal credential routing", () => {
       assertEquals(calls.at(-1)!.headers.get(RUN_TERMINAL_TOKEN_HEADER), null);
       await source.executeTool(name, {}, root);
       assertEquals(calls.at(-1)!.headers.get(RUN_TERMINAL_TOKEN_HEADER), "test-authority");
+    }
+  });
+
+  it("binds canonical run admission to the current durable parent and tool invocation", async () => {
+    const value = request();
+    const canonicalRunId = "33333333-3333-4333-8333-333333333333";
+    const token = `header.${
+      btoa(JSON.stringify({
+        tokenUse: "run_event_writer",
+        writerPurpose: "current_run_terminal",
+        runId: "run-1",
+        canonicalRunId,
+        dispatchNonce: "dispatch-1",
+      }))
+    }.signature`;
+    registerHostedTerminalCredential(value, token);
+    const { calls, fallback } = recorder();
+    const source = hostedTerminalToolSourceFactory(value, "https://api.example/mcp", fallback)(
+      { endpoint: "https://active.example/mcp" },
+      { kind: "veryfront-api" },
+    );
+    const args = {
+      input: {
+        project_id: "project-1",
+        target: { type: "task", id: "echo" },
+        input: { marker: "ok" },
+      },
+      idempotency_key: "task-once",
+    };
+    for (const name of ["create_run", "veryfront__create_run"]) {
+      await source.executeTool(name, args, { ...rootContext(), toolCallId: "call-task" });
+      assertEquals(calls.at(-1)!.args, {
+        ...args,
+        input: { ...args.input, parent_run_id: canonicalRunId, tool_call_id: "call-task" },
+      });
+      assertEquals(calls.at(-1)!.headers.get(RUN_TERMINAL_TOKEN_HEADER), null);
+    }
+    assertEquals(args.input, {
+      project_id: "project-1",
+      target: { type: "task", id: "echo" },
+      input: { marker: "ok" },
+    });
+    for (
+      const context of [{ runId: "run-1", toolCallId: "unowned" }, {
+        ...rootContext(),
+        runId: "run-other",
+        toolCallId: "other",
+      }]
+    ) {
+      await source.executeTool("create_run", args, context);
+      assertEquals(calls.at(-1)!.args, args);
     }
   });
 

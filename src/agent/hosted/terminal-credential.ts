@@ -176,10 +176,33 @@ export function hostedTerminalToolSourceFactory(
     return {
       id: ordinary.id,
       listTools: (context) => ordinary.listTools(context),
-      executeTool: (name, args, context) =>
-        isTerminalRunToolName(name)
-          ? terminal.executeTool(name, args, context)
-          : ordinary.executeTool(name, args, context),
+      executeTool: (name, args, context) => {
+        if (isTerminalRunToolName(name)) return terminal.executeTool(name, args, context);
+        if (
+          (name === "create_run" || name === "veryfront__create_run") &&
+          context?.runId === authority.runId && hasCurrentTerminalRunCredentialAuthority(context) &&
+          terminalToolCallIdHeaderValue(context) &&
+          typeof args === "object" && args !== null && !Array.isArray(args) && "input" in args &&
+          typeof args.input === "object" && args.input !== null && !Array.isArray(args.input) &&
+          "target" in args.input
+        ) {
+          // Runtime-owned invocation identity reaches ordinary admission; the API
+          // still verifies the authenticated parent and its recorded tool start.
+          const parentRunId = terminalRoute(authority.token, authority.runId).id;
+          const input = args.input as Record<string, unknown>;
+          return ordinary.executeTool(name, {
+            ...args,
+            input: {
+              ...input,
+              ...(input.parent_run_id === undefined ? { parent_run_id: parentRunId } : {}),
+              ...(input.tool_call_id === undefined
+                ? { tool_call_id: terminalToolCallIdHeaderValue(context) }
+                : {}),
+            },
+          }, context);
+        }
+        return ordinary.executeTool(name, args, context);
+      },
     };
   };
 }
