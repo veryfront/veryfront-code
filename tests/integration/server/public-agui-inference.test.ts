@@ -13,6 +13,7 @@ import { RunResumeSessionManager } from "#veryfront/agent/index.ts";
 import { createEphemeralAgent } from "#veryfront/agent/factory.ts";
 import { createAgUiHandler } from "#veryfront/agent/ag-ui/handler.ts";
 import { tool } from "#veryfront/tool/factory.ts";
+import { toolRegistry } from "#veryfront/tool/registry.ts";
 import { defineSchema } from "#veryfront/schemas/index.ts";
 import { ApiHandlerWrapper } from "#veryfront/server/handlers/request/api/api-handler-wrapper.ts";
 import { resetApiHandler } from "#veryfront/server/handlers/request/api/pages-api-handler.ts";
@@ -40,7 +41,7 @@ function deferred() {
   return { promise, resolve };
 }
 
-async function bounded(promise: Promise<void>): Promise<void> {
+async function bounded(promise: Promise<void>, timeoutMs = 2_000): Promise<void> {
   let timeout: ReturnType<typeof setTimeout> | undefined;
   try {
     await Promise.race([
@@ -48,7 +49,7 @@ async function bounded(promise: Promise<void>): Promise<void> {
       new Promise<never>((_, reject) => {
         timeout = setTimeout(
           () => reject(new Error("Expected private inference lifecycle did not complete")),
-          2_000,
+          timeoutMs,
         );
       }),
     ]);
@@ -57,7 +58,7 @@ async function bounded(promise: Promise<void>): Promise<void> {
   }
 }
 
-function providerStream(toolCall: boolean): string {
+function providerStream(toolCall: boolean, toolName = "probe"): string {
   const chunks = toolCall
     ? [
       {
@@ -68,7 +69,7 @@ function providerStream(toolCall: boolean): string {
               index: 0,
               id: "synthetic-tool-call",
               type: "function",
-              function: { name: "probe", arguments: "{}" },
+              function: { name: toolName, arguments: "{}" },
             }],
           },
         }],
@@ -132,6 +133,7 @@ function request(
   injected = false,
   auto = false,
   omitClientRunId = false,
+  injectedDescription = "First synthetic client tool description",
 ): Request {
   return new Request("https://public-agui-probe.example.test/api/ag-ui", {
     method: "POST",
@@ -149,7 +151,11 @@ function request(
         }],
       }],
       tools: injected
-        ? [{ name: "clientProbe", parameters: { type: "object", properties: {} } }]
+        ? [{
+          name: "clientProbe",
+          description: injectedDescription,
+          parameters: { type: "object", properties: {} },
+        }]
         : [],
       context: [],
       ...(auto ? { model: "auto" } : {}),
@@ -158,15 +164,41 @@ function request(
 }
 
 async function exercise(
-  mode: "completed" | "failed" | "cancelled" | "ingress-cancelled" | "blocked",
+  mode:
+    | "completed"
+    | "failed"
+    | "cancelled"
+    | "ingress-cancelled"
+    | "pending-tool-cancelled"
+    | "pending-tool-ingress"
+    | "blocked",
   injected = false,
   model: "pinned" | "omitted" | "alias" | "catalog-alias" | "auto" = "pinned",
   interceptPromise = false,
   omitClientRunId = false,
   configuredBinding?: boolean,
   interceptInheritedThen = false,
+  injectedDescription = "First synthetic client tool description",
 ) {
   const { ctx, wrapper } = fixture();
+  const pendingTool = mode === "pending-tool-cancelled" || mode === "pending-tool-ingress";
+  const enteredToolWait = deferred();
+  const settledToolWait = deferred();
+  let toolWaitRejected = false;
+  const sessionManager = new RunResumeSessionManager<{ result: unknown; isError: boolean }>();
+  const originalWaitForSignal = sessionManager.waitForSignal.bind(sessionManager);
+  sessionManager.waitForSignal = (runId, waitKey) => {
+    const result = originalWaitForSignal(runId, waitKey);
+    enteredToolWait.resolve();
+    void result.then(
+      () => settledToolWait.resolve(),
+      () => {
+        toolWaitRejected = true;
+        settledToolWait.resolve();
+      },
+    );
+    return result;
+  };
   const runId = crypto.randomUUID();
   const returned = deferred();
   const finalized = deferred();
@@ -222,9 +254,7 @@ async function exercise(
       ...(configuredBinding === undefined
         ? {}
         : { context: { runIdBindsToolAuthorization: configuredBinding } }),
-      ...(injected
-        ? { sessionManager: new RunResumeSessionManager<{ result: unknown; isError: boolean }>() }
-        : {}),
+      ...(injected ? { sessionManager } : {}),
     });
   __injectDepsForTests({
     loadHandlerModule: () => {
@@ -257,9 +287,12 @@ async function exercise(
         });
       }
       return Promise.resolve({
-        POST: (req: Request) => {
+        POST: async (req: Request) => {
           inspectSource();
-          return POST(req);
+          if (injected) assertEquals(toolRegistry.has("clientProbe"), false);
+          const response = await POST(req);
+          if (injected) assertEquals(toolRegistry.has("clientProbe"), false);
+          return response;
         },
       });
     },
@@ -374,7 +407,9 @@ async function exercise(
                 );
                 return;
               }
-              controller.enqueue(encoder.encode(providerStream(toolCall)));
+              controller.enqueue(
+                encoder.encode(providerStream(toolCall, pendingTool ? "clientProbe" : "probe")),
+              );
               controller.close();
             },
           }),
@@ -385,7 +420,14 @@ async function exercise(
     }, async () => {
       const controller = new AbortController();
       const handled = await wrapper.handle(
-        request(controller.signal, mode === "blocked", injected, model === "auto", omitClientRunId),
+        request(
+          controller.signal,
+          mode === "blocked",
+          injected,
+          model === "auto",
+          omitClientRunId,
+          injectedDescription,
+        ),
         ctx,
       );
       assert(handled.response);
@@ -395,7 +437,18 @@ async function exercise(
         handled.response.status === 200 ? undefined : await handled.response.clone().text(),
       );
       returned.resolve();
-      if (mode === "cancelled" || mode === "ingress-cancelled") {
+      if (pendingTool) {
+        const reader = handled.response.body!.getReader();
+        await reader.read();
+        await bounded(enteredToolWait.promise, 500);
+        if (mode === "pending-tool-cancelled") await reader.cancel();
+        else controller.abort();
+        await bounded(settledToolWait.promise, 500);
+        assertEquals(toolWaitRejected, true);
+        await bounded(finalized.promise, 500);
+        assertEquals(modelCredentials.length, 1);
+        if (mode === "pending-tool-ingress") await reader.cancel();
+      } else if (mode === "cancelled" || mode === "ingress-cancelled") {
         const reader = handled.response.body!.getReader();
         await reader.read();
         await bounded(enteredProvider.promise);
@@ -441,7 +494,11 @@ async function exercise(
       assertEquals(admissionOrigins, [API_URL]);
       assertEquals(finalizationOrigins, [API_URL]);
       assertEquals(finalizations, [{
-        status: mode === "blocked" ? "failed" : mode === "ingress-cancelled" ? "cancelled" : mode,
+        status: mode === "blocked"
+          ? "failed"
+          : (mode === "ingress-cancelled" || pendingTool)
+          ? "cancelled"
+          : mode,
         inferenceToken: INFERENCE_CREDENTIAL,
       }]);
       if (mode === "blocked") {
@@ -460,6 +517,7 @@ async function exercise(
       Object.defineProperty(Object.prototype, "then", originalInheritedThen);
     } else Reflect.deleteProperty(Object.prototype, "then");
     returned.resolve();
+    if (pendingTool) sessionManager.cancelRun(runId);
     __injectDepsForTests(null);
     await resetApiHandler();
     clearModelProviders();
@@ -470,6 +528,23 @@ async function exercise(
 }
 
 describe("public authored AG-UI inference", () => {
+  it("rejects a pending injected tool wait when the response reader cancels", () =>
+    exercise("pending-tool-cancelled", true));
+  it("rejects a pending injected tool wait when the ingress request aborts", () =>
+    exercise("pending-tool-ingress", true));
+  it("keeps injected tools request-local across runs with changed descriptions", async () => {
+    await exercise("completed", true);
+    await exercise(
+      "completed",
+      true,
+      "pinned",
+      false,
+      false,
+      undefined,
+      false,
+      "Updated synthetic client tool description",
+    );
+  });
   it("keeps admission credentials out of a tenant inherited then getter", () =>
     exercise("completed", false, "pinned", false, false, undefined, true));
   it("binds direct tool authorization to the admitted run when the client omits runId", () =>

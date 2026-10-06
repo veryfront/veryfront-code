@@ -560,6 +560,11 @@ async function createAgUiInjectedToolsStreamResponse(
     try {
       sessionManager.startRun({ runId: effectiveRunId, threadId });
       sessionStarted = true;
+      if (privateRuntime) {
+        const cancelSession = () => sessionManager.cancelRun(effectiveRunId);
+        if (privateRuntime.signal.aborted) cancelSession();
+        else privateRuntime.signal.addEventListener("abort", cancelSession, { once: true });
+      }
     } catch (error) {
       privateRuntime?.onAbandon();
       if (error instanceof RunAlreadyExistsError) {
@@ -657,16 +662,16 @@ async function createAgUiInjectedToolsStreamResponse(
       upstreamStatus: 200,
       getCompletedResponse: () => completedResponse,
       onFinish: () => {
-        privateRuntime?.finish("completed");
         sessionManager.completeRun(effectiveRunId);
+        privateRuntime?.finish("completed");
       },
       onError: () => {
         privateRuntime?.finish("failed");
         sessionManager.failRun(effectiveRunId);
       },
       onCancel: () => {
+        sessionManager.cancelRun(effectiveRunId);
         privateRuntime?.finish("cancelled");
-        sessionManager.failRun(effectiveRunId);
       },
       onComplete: onComplete
         ? (response) =>
