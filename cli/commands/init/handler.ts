@@ -10,7 +10,7 @@ import { cliLogger, exitProcess } from "#cli/utils";
 import { CommonArgs, createArgParser, parseArgsOrThrow } from "#cli/shared/args";
 import { resolvePath } from "./path-utils.ts";
 import { relative } from "veryfront/platform/path";
-import { initCommand, type InitCommandResult } from "./init-command.ts";
+import { initCommand, type InitCommandResult } from "#cli/commands/init/init-command";
 import type { ParsedArgs } from "#cli/shared/types";
 import type { InitRuntime, InitTemplate } from "./types.ts";
 import { parseRuntime } from "./runtime.ts";
@@ -20,7 +20,7 @@ import {
   createSuccessEnvelope,
   isJsonMode,
   outputJson,
-} from "../../shared/json-output.ts";
+} from "#cli/shared/json-output";
 import { DEFAULT_TEMPLATE } from "./catalog.ts";
 
 const getInitArgsSchema = defineSchema((v) =>
