@@ -133,7 +133,7 @@ export type CloudEventsExtensionAttribute = string | boolean | number;
 
 interface EventEnvelopeCore<
   TType extends EventType,
-  TDataschema extends string,
+  TDataschema extends EventDataschema<TType>,
 > {
   readonly specversion: "1.0";
   readonly id: string;
@@ -160,16 +160,17 @@ export type EventExtensionAttributes<
   readonly [K in keyof TAttributes]: TAttributes[K];
 };
 
+/** An event envelope with the schema, payload, and identifiers required by its event type. */
 export type EventEnvelope<
   TType extends EventType,
-  TDataschema extends string,
+  TDataschema extends EventDataschema<TType>,
   TExtensionAttributes extends Record<string, CloudEventsExtensionAttribute> = Record<
     never,
     never
   >,
-> =
-  & EventEnvelopeCore<TType, TDataschema>
-  & EventExtensionAttributes<TExtensionAttributes>;
+> = TType extends EventType
+  ? EventForType<TType, TExtensionAttributes> & { readonly dataschema: TDataschema }
+  : never;
 
 type EventBase<
   TType extends EventType,
@@ -177,7 +178,9 @@ type EventBase<
     never,
     never
   >,
-> = EventEnvelope<TType, EventDataschema<TType>, TExtensionAttributes>;
+> =
+  & EventEnvelopeCore<TType, EventDataschema<TType>>
+  & EventExtensionAttributes<TExtensionAttributes>;
 
 type EventCoreBase<TType extends EventType> = EventEnvelopeCore<
   TType,

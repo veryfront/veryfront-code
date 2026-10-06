@@ -6,6 +6,7 @@ import { buildNativeRunEventFrame, nativeRunEventTypes } from "../ag-ui/native-r
 import type { AgentRunEventTimingOptions } from "../../runtime/model-call-context.ts";
 import { normalizeConversationRunEvents } from "./run-event-normalization.ts";
 import { isToolResultErrorOutput } from "#veryfront/tool/result.ts";
+import { getStepIdentity } from "../streaming/step-identity.ts";
 
 /** Shared conversation run event types value. */
 export const conversationRunEventTypes = {
@@ -168,10 +169,12 @@ export class ConversationRunEventEncoder {
     };
   }
 
-  private nextStep(): { stepName: string; stepId: string } {
+  private nextStep(
+    chunk: Extract<ChatStreamEvent, { type: "start-step" }>,
+  ): { stepName: string; stepId: string } {
     this.stepCount += 1;
     this.activeStepName = `step-${this.stepCount}`;
-    this.activeStepId = crypto.randomUUID();
+    this.activeStepId = getStepIdentity(chunk) ?? crypto.randomUUID();
     return { stepName: this.activeStepName, stepId: this.activeStepId };
   }
 
@@ -456,7 +459,7 @@ export class ConversationRunEventEncoder {
       case "start-step":
         return [{
           type: conversationRunEventTypes.stepStarted,
-          ...this.nextStep(),
+          ...this.nextStep(chunk),
         }];
 
       case "finish-step":

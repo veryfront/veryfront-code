@@ -2,6 +2,8 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { ChatMessageMetadata, ChatUiMessageChunk } from "../../chat/protocol.ts";
+import { createAgUiChatUiChunkEncoder } from "../ag-ui/chat-ui-chunk-encoder.ts";
+import { ConversationRunEventEncoder } from "../conversation/run-events.ts";
 import {
   cloneMirroredToolChunkState,
   closeHostedMirroredOpenToolCalls,
@@ -51,6 +53,94 @@ async function collectChunks(stream: AsyncIterable<Chunk>): Promise<Chunk[]> {
 }
 
 describe("mirrored-tool-chunk-state", () => {
+  it("shares each hosted step identity between live output and durable records", async () => {
+    const durable = new ConversationRunEventEncoder();
+    const live = createAgUiChatUiChunkEncoder();
+    const durableEvents: ReturnType<typeof durable.encode> = [];
+    const liveEvents: ReturnType<typeof live.encode> = [];
+    const emittedChunks: Chunk[] = [];
+    const sharedStart: Extract<Chunk, { type: "start-step" }> = { type: "start-step" };
+    const output = createHostedMirroredUiStream({
+      sourceStream: streamChunks([
+        sharedStart,
+        { type: "finish-step" },
+        sharedStart,
+        { type: "finish-step" },
+      ]),
+      rootStreamWatchdog: { observe() {}, dispose() {} },
+      mirroredToolChunkState: createMirroredToolChunkState(),
+      appendChunk: (chunk) => {
+        if (chunk.type !== "start-step" && chunk.type !== "finish-step") {
+          throw new Error("Expected a mirrored step boundary");
+        }
+        durableEvents.push(...durable.encode(chunk));
+      },
+    });
+    for await (const chunk of output) {
+      emittedChunks.push(chunk);
+      liveEvents.push(...live.encode(chunk));
+    }
+
+    assertEquals(
+      liveEvents.map((event) => event.payload.stepId),
+      durableEvents.map((event) => event.stepId),
+      "live and durable projections of one emitted step must share its exact identity",
+    );
+    const starts = liveEvents.filter((event) => event.event === "StepStarted")
+      .map((event) => event.payload.stepId);
+    assertEquals(starts.length, 2);
+    assertEquals(new Set(starts).size, 2, "reused source objects still represent distinct steps");
+    assertEquals(
+      liveEvents.map((event) => event.payload.stepId),
+      [starts[0], starts[0], starts[1], starts[1]],
+      "each finish preserves the identity allocated for its own start",
+    );
+    assertEquals(emittedChunks[0] === sharedStart, false);
+    assertEquals(emittedChunks[2] === sharedStart, false);
+    assertEquals(emittedChunks[0] === emittedChunks[2], false);
+    assertEquals(
+      JSON.stringify(emittedChunks),
+      JSON.stringify([
+        { type: "start-step" },
+        { type: "finish-step" },
+        { type: "start-step" },
+        { type: "finish-step" },
+      ]),
+      "private identities do not add fields to public chunks",
+    );
+  });
+
+  it("keeps concurrent mirrored step occurrences distinct with the same source object", async () => {
+    const sharedStart: Extract<Chunk, { type: "start-step" }> = { type: "start-step" };
+    const encodeStream = async () => {
+      const durable = new ConversationRunEventEncoder();
+      const live = createAgUiChatUiChunkEncoder();
+      const stored: ReturnType<typeof durable.encode> = [];
+      const emitted: ReturnType<typeof live.encode> = [];
+      const output = createHostedMirroredUiStream({
+        sourceStream: streamChunks([sharedStart, { type: "finish-step" }]),
+        rootStreamWatchdog: { observe() {}, dispose() {} },
+        mirroredToolChunkState: createMirroredToolChunkState(),
+        appendChunk: (chunk) => {
+          if (chunk.type !== "start-step" && chunk.type !== "finish-step") {
+            throw new Error("Expected a mirrored step boundary");
+          }
+          stored.push(...durable.encode(chunk));
+        },
+      });
+      for await (const chunk of output) emitted.push(...live.encode(chunk));
+      assertEquals(
+        emitted.map((event) => event.payload.stepId),
+        stored.map((event) => event.stepId),
+      );
+      assertEquals(emitted[0]?.payload.stepId, emitted[1]?.payload.stepId);
+      return emitted[0]?.payload.stepId;
+    };
+    const ids = await Promise.all([encodeStream(), encodeStream()]);
+    assertEquals(ids.every((id) => typeof id === "string"), true);
+    assertEquals(new Set(ids).size, 2, "separate streams cannot borrow a source object's identity");
+  });
+
   it("keeps preliminary tool output open for final durable recovery", () => {
     const state = createMirroredToolChunkState();
     const progress: Chunk = {

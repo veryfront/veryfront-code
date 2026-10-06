@@ -1,8 +1,11 @@
 import type {
   CloudEventsExtensionAttribute,
   ErrorInfo,
+  EventDataschema,
+  EventEnvelope,
   EventPayloadByType,
   EventRecord,
+  EventType,
   EventWithExtensions,
   ModelInput,
 } from "./index.ts";
@@ -81,6 +84,70 @@ const runStartedWithoutExtensions: EventWithExtensions<"com.veryfront.run.starte
   data: {},
 };
 void runStartedWithoutExtensions;
+
+const runStartedEnvelope: EventEnvelope<
+  "com.veryfront.run.started",
+  EventDataschema<"com.veryfront.run.started">
+> = runStartedWithoutExtensions;
+void runStartedEnvelope;
+
+const { runid: omittedRunId, ...runStartedEnvelopeWithoutId } = runStartedEnvelope;
+// @ts-expect-error the public envelope requires the selected event's runid
+const runStartedEnvelopeMissingRunId: EventEnvelope<
+  "com.veryfront.run.started",
+  EventDataschema<"com.veryfront.run.started">
+> = runStartedEnvelopeWithoutId;
+void omittedRunId;
+void runStartedEnvelopeMissingRunId;
+
+function readNarrowedEnvelope(
+  event: EventEnvelope<EventType, EventDataschema<EventType>>,
+): string {
+  switch (event.type) {
+    case "com.veryfront.run.started": {
+      const runId: string = event.runid;
+      const schema: EventDataschema<"com.veryfront.run.started"> = event.dataschema;
+      return `${runId}:${schema}`;
+    }
+    case "com.veryfront.model-call.usage.recorded": {
+      const modelCallId: string = event.modelcallid;
+      const inputTokens: number = event.data.tokens.input;
+      return `${modelCallId}:${inputTokens}`;
+    }
+    default:
+      return event.id;
+  }
+}
+void readNarrowedEnvelope;
+
+const runStartedEnvelopeWithExtensions: EventEnvelope<
+  "com.veryfront.run.started",
+  EventDataschema<"com.veryfront.run.started">,
+  { customtag: boolean }
+> = eventWithExtension;
+void runStartedEnvelopeWithExtensions;
+
+const runStartedEnvelopeWithUnknownSchema: EventEnvelope<
+  "com.veryfront.run.started",
+  // @ts-expect-error an envelope schema must match its event type
+  "urn:example:wrong-schema"
+> = {
+  ...runStartedWithoutExtensions,
+  // @ts-expect-error an invalid schema parameter cannot replace the canonical schema
+  dataschema: "urn:example:wrong-schema",
+};
+void runStartedEnvelopeWithUnknownSchema;
+
+const runStartedEnvelopeWithOtherEventSchema: EventEnvelope<
+  "com.veryfront.run.started",
+  // @ts-expect-error another catalog event's schema cannot describe run.started
+  EventDataschema<"com.veryfront.run.succeeded">
+> = {
+  ...runStartedWithoutExtensions,
+  // @ts-expect-error another event's schema cannot replace the canonical schema
+  dataschema: "urn:veryfront:run-events:target:payloads:1#/$defs/RunSucceeded",
+};
+void runStartedEnvelopeWithOtherEventSchema;
 
 const eventWithObjectExtension: EventWithExtensions<
   "com.veryfront.run.started",
@@ -291,6 +358,53 @@ const modelCallUsageCall: EventRecord<"com.veryfront.model-call.usage.recorded">
     scope: "call",
   },
 };
+
+type ModelCallUsageEnvelope = EventEnvelope<
+  "com.veryfront.model-call.usage.recorded",
+  EventDataschema<"com.veryfront.model-call.usage.recorded">
+>;
+
+const modelCallUsageAttemptEnvelope: ModelCallUsageEnvelope = modelCallUsageAttempt;
+const modelCallUsageCallEnvelope: ModelCallUsageEnvelope = modelCallUsageCall;
+void modelCallUsageAttemptEnvelope;
+void modelCallUsageCallEnvelope;
+
+// @ts-expect-error attempt-scoped public envelopes require attemptid
+const modelCallUsageEnvelopeWithoutAttemptId: ModelCallUsageEnvelope = {
+  ...modelCallUsageAttempt,
+  attemptid: undefined,
+};
+void modelCallUsageEnvelopeWithoutAttemptId;
+
+const { modelcallid: omittedModelCallId, ...modelCallUsageWithoutLogicalId } =
+  modelCallUsageAttempt;
+// @ts-expect-error model usage public envelopes require modelcallid
+const modelCallUsageEnvelopeWithoutModelCallId: ModelCallUsageEnvelope =
+  modelCallUsageWithoutLogicalId;
+void omittedModelCallId;
+void modelCallUsageEnvelopeWithoutModelCallId;
+
+// @ts-expect-error call-scoped public envelopes cannot carry attemptid
+const modelCallUsageEnvelopeCallWithAttemptId: ModelCallUsageEnvelope = {
+  ...modelCallUsageCall,
+  attemptid: "attempt-a",
+};
+void modelCallUsageEnvelopeCallWithAttemptId;
+
+// @ts-expect-error captured input public envelopes require modelcallid
+const modelInputEnvelopeWithoutModelCallId: EventEnvelope<
+  "com.veryfront.model-call.input.captured",
+  EventDataschema<"com.veryfront.model-call.input.captured">
+> = {
+  specversion: "1.0",
+  id: "event-a",
+  source: "https://example.test/events",
+  type: "com.veryfront.model-call.input.captured",
+  datacontenttype: "application/json",
+  dataschema: "urn:veryfront:run-events:target:payloads:1#/$defs/ModelCallInputCaptured",
+  data: { model: { provider: "openai", name: "gpt-5" }, input: { redacted: true } },
+};
+void modelInputEnvelopeWithoutModelCallId;
 
 // @ts-expect-error call-scoped model usage omits envelope attemptid
 const modelCallUsageCallWithAttemptId: EventRecord<"com.veryfront.model-call.usage.recorded"> = {
