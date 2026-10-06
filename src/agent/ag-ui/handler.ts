@@ -255,6 +255,14 @@ function enqueueEvent(
   }
 }
 
+function hasFinalizedAssistantOutput(response: AgentResponse | null): boolean {
+  if (!response) return false;
+  if (response.text.length > 0) return true;
+  if (response.messages.length > 0) return true;
+  if (response.toolCalls.length > 0) return true;
+  return response.object !== undefined;
+}
+
 async function createAgUiStreamResponse(
   options: {
     agentId: string;
@@ -337,15 +345,27 @@ async function createAgUiStreamResponse(
       // flipped, and the error path leaves it false.
       let succeeded = false;
       let failed = false;
+      const recordRunError = (event: string) => {
+        if (event !== "RunError") return;
+        failed = true;
+        onError?.(new Error("Agent run failed"));
+      };
       try {
         if (!upstreamBody) {
-          for (const event of finalizeRunEvents(state, null)) {
+          const completedResponse = getCompletedResponse?.() ?? null;
+          if (hasFinalizedAssistantOutput(completedResponse)) {
+            state.sawVisibleOutput = true;
+          }
+          for (const event of finalizeRunEvents(state, completedResponse)) {
+            recordRunError(event.event);
             if (!enqueueEvent(controller, event.event, event.payload)) {
               return;
             }
           }
-          onFinish?.();
-          succeeded = true;
+          if (!failed) {
+            onFinish?.();
+            succeeded = true;
+          }
           return;
         }
 
@@ -353,10 +373,7 @@ async function createAgUiStreamResponse(
           const event of streamDataStreamEvents(upstreamBody) as AsyncIterable<AgUiRuntimePart>
         ) {
           for (const mapped of mapRuntimeEventToAgUi(state, event)) {
-            if (mapped.event === "RunError") {
-              failed = true;
-              onError?.(new Error("Agent run failed"));
-            }
+            recordRunError(mapped.event);
             prepareToolResultIfNeeded(mapped.event, mapped.payload);
             if (!enqueueEvent(controller, mapped.event, mapped.payload)) {
               return;
@@ -365,6 +382,7 @@ async function createAgUiStreamResponse(
         }
 
         for (const event of finalizeRunEvents(state, getCompletedResponse?.() ?? null)) {
+          recordRunError(event.event);
           if (!enqueueEvent(controller, event.event, event.payload)) {
             return;
           }

@@ -1608,6 +1608,13 @@ const FINALIZED_RESPONSE: AgentResponse = {
   status: "completed",
 };
 
+const EMPTY_FINALIZED_RESPONSE: AgentResponse = {
+  text: "",
+  messages: [],
+  toolCalls: [],
+  status: "completed",
+};
+
 /** A test agent whose stream reports a finalized response via `onFinish`. */
 function createFinishingAgent(
   options: { response?: AgentResponse | null; failMidStream?: boolean } = {},
@@ -1657,6 +1664,53 @@ function createFinishingAgent(
     }),
     clearMemory: async () => {},
   } as Agent;
+}
+
+function createCompletionAgent(
+  response: AgentResponse,
+  options: { bodyless?: boolean } = {},
+): Agent {
+  return {
+    id: "assistant-1",
+    config: {
+      id: "assistant-1",
+      system: "You are helpful.",
+      model: "anthropic/claude-sonnet-4-6",
+    } as Agent["config"],
+    generate: async () => {
+      throw new Error("not used");
+    },
+    stream: async (input) => {
+      input.onFinish?.(response);
+      return {
+        toDataStreamResponse: () =>
+          options.bodyless
+            ? new Response(null, { headers: { "Content-Type": "text/event-stream" } })
+            : new Response(
+              new ReadableStream<Uint8Array>({
+                start(controller) {
+                  controller.close();
+                },
+              }),
+              { headers: { "Content-Type": "text/event-stream" } },
+            ),
+      };
+    },
+    respond: async () => new Response("not used"),
+    getMemory: () => {
+      throw new Error("not used");
+    },
+    getMemoryStats: async () => ({
+      totalMessages: 0,
+      estimatedTokens: 0,
+      type: "conversation",
+    }),
+    clearMemory: async () => {},
+  } as Agent;
+}
+
+function createEmptyCompletionAgent(options: { bodyless?: boolean } = {}): Agent {
+  return createCompletionAgent(EMPTY_FINALIZED_RESPONSE, options);
 }
 
 function agUiRequest(text = "hello"): Request {
@@ -1720,6 +1774,63 @@ describe("agent/ag-ui-handler onComplete (server-side persistence)", () => {
     );
   });
 
+  it("does not complete when finalization emits RunError for empty assistant output", async () => {
+    let calls = 0;
+    const handler = createAgUiHandler({
+      agent: createEmptyCompletionAgent(),
+      onComplete: () => {
+        calls += 1;
+      },
+    });
+
+    const response = await handler(agUiRequest());
+    const body = await response.text();
+
+    assertStringIncludes(body, "event: RunError");
+    assertStringIncludes(body, "EMPTY_ASSISTANT_OUTPUT");
+    assertEquals(body.includes("event: RunFinished"), false);
+    assertEquals(calls, 0);
+  });
+
+  it("completes a bodyless finalized assistant response", async () => {
+    const seen: AgUiCompletion[] = [];
+    const done = deferred();
+    const handler = createAgUiHandler({
+      agent: createCompletionAgent(FINALIZED_RESPONSE, { bodyless: true }),
+      onComplete: (completion) => {
+        seen.push(completion);
+        done.resolve();
+      },
+    });
+
+    const response = await handler(agUiRequest());
+    const body = await response.text();
+    await done.promise;
+
+    assertStringIncludes(body, "event: RunFinished");
+    assertEquals(body.includes("event: RunError"), false);
+    assertEquals(seen.length, 1);
+    assertEquals(seen[0]?.response, FINALIZED_RESPONSE);
+  });
+
+  it("does not complete a bodyless empty assistant response", async () => {
+    let calls = 0;
+    const handler = createAgUiHandler({
+      agent: createEmptyCompletionAgent({ bodyless: true }),
+      onComplete: () => {
+        calls += 1;
+      },
+    });
+
+    const response = await handler(agUiRequest());
+    const body = await response.text();
+
+    assertStringIncludes(body, "event: RunError");
+    assertStringIncludes(body, "EMPTY_ASSISTANT_OUTPUT");
+    assertEquals(body.includes("event: RunFinished"), false);
+    assertEquals(calls, 0);
+  });
+
   it("does not fire when the run produced no finalized response", async () => {
     let calls = 0;
     const handler = createAgUiHandler({
@@ -1754,6 +1865,79 @@ describe("agent/ag-ui-handler onComplete (server-side persistence)", () => {
     // The stream still delivered a well-formed successful run.
     assertEquals(response.status, 200);
     assertStringIncludes(body, "event: RunFinished");
+  });
+
+  it("fails an injected-tool session when finalization emits RunError for empty output", async () => {
+    const sessionManager = new RunResumeSessionManager<{
+      result: unknown;
+      isError: boolean;
+    }>();
+    const completedRunIds: string[] = [];
+    const failedRunIds: string[] = [];
+    const completeRun = sessionManager.completeRun.bind(sessionManager);
+    const failRun = sessionManager.failRun.bind(sessionManager);
+    sessionManager.completeRun = ((runId, signal) => {
+      completedRunIds.push(runId);
+      completeRun(runId, signal);
+    }) as typeof sessionManager.completeRun;
+    sessionManager.failRun = ((runId, signal) => {
+      failedRunIds.push(runId);
+      failRun(runId, signal);
+    }) as typeof sessionManager.failRun;
+
+    const originalStream = AgentRuntime.prototype.stream;
+    AgentRuntime.prototype.stream = async function (
+      _messages,
+      _context,
+      callbacks,
+    ): Promise<ReadableStream<Uint8Array>> {
+      callbacks?.onFinish?.(EMPTY_FINALIZED_RESPONSE);
+      return new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.close();
+        },
+      });
+    };
+
+    let calls = 0;
+    try {
+      const handler = createAgUiHandler({
+        agent: createTestAgent().agent,
+        sessionManager,
+        onComplete: () => {
+          calls += 1;
+        },
+      });
+
+      const response = await handler(
+        new Request("http://localhost/api/ag-ui", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            runId: "run_empty_injected_1",
+            threadId: crypto.randomUUID(),
+            messages: [{
+              id: "msg-1",
+              role: "user",
+              parts: [{ type: "text", text: "hello" }],
+            }],
+            tools: [{ name: "client_confirm" }],
+          }),
+        }),
+      );
+
+      const body = await response.text();
+
+      assertStringIncludes(body, "event: RunError");
+      assertStringIncludes(body, "EMPTY_ASSISTANT_OUTPUT");
+      assertEquals(body.includes("event: RunFinished"), false);
+      assertEquals(calls, 0);
+      assertEquals(completedRunIds, []);
+      assertEquals(failedRunIds, ["run_empty_injected_1"]);
+      assertEquals(sessionManager.getRunStatus("run_empty_injected_1"), null);
+    } finally {
+      AgentRuntime.prototype.stream = originalStream;
+    }
   });
 
   it("fires once for a resumable injected-tool run after the tool round-trip", async () => {
