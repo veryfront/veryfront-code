@@ -705,3 +705,42 @@ it("reserved platform inventory requires provenance under every source policy", 
     }
   }
 });
+
+for (const name of ["get_integration", "veryfront__get_integration"]) {
+  it(`keeps ${name} catalog discovery separate from private selected readiness`, () => {
+    const definition = toolDefinition({ name });
+    definition.parameters = {
+      type: "object",
+      properties: {
+        name: { type: "string" },
+        project_reference: { type: "string" },
+        tool_name: { type: "string" },
+      },
+      required: ["name"],
+    };
+    assertEquals(
+      hydrateProjectScopedRemoteToolInput({
+        toolDefinition: definition,
+        activeProjectId: "project-1",
+        toolInput: { name: "gmail" },
+      }),
+      { name: "gmail" },
+    );
+    assertEquals(
+      hydrateProjectScopedRemoteToolInput({
+        toolDefinition: definition,
+        activeProjectId: "project-1",
+        toolInput: { name: "gmail", tool_name: "gmail__list_emails" },
+      }),
+      { name: "gmail", tool_name: "gmail__list_emails", project_reference: "project-1" },
+    );
+    assertEquals(
+      hydrateProjectScopedRemoteToolInput({
+        toolDefinition: definition,
+        activeProjectId: "project-1",
+        toolInput: { name: "gmail", project_reference: "foreign" },
+      }),
+      { name: "gmail", project_reference: "project-1" },
+    );
+  });
+}
