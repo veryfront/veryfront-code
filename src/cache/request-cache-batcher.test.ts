@@ -63,6 +63,36 @@ describe("cache/request-cache-batcher", () => {
   });
 
   describe("runWithCacheBatching", () => {
+    it("settles a queued shared read after its creating request aborts", async () => {
+      const backend = createMockBackend({ source: "published configuration" });
+      let sharedRead: Promise<string | null> | undefined;
+      const aborted = new DOMException("Request aborted", "AbortError");
+
+      try {
+        await runWithCacheBatching(async () => {
+          sharedRead = getCachedWithBatching(backend, "source");
+          throw aborted;
+        });
+      } catch (error) {
+        assertEquals(error, aborted);
+      }
+
+      assertExists(sharedRead);
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      try {
+        const result = await Promise.race([
+          sharedRead,
+          new Promise<string>((resolve) => {
+            timer = setTimeout(() => resolve("unsettled cache read"), 100);
+          }),
+        ]);
+        assertEquals(result, "published configuration");
+        assertEquals(backend.getCalls, ["source"]);
+      } finally {
+        if (timer !== undefined) clearTimeout(timer);
+      }
+    });
+
     it("should execute the wrapped function and return its result", async () => {
       const result = await runWithCacheBatching(() => Promise.resolve(42));
       assertEquals(result, 42);
