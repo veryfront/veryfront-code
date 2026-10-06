@@ -1,9 +1,20 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { parseCliArgs } from "#cli/shared/args";
+import { parseSchemaArgs } from "./handler.ts";
 import { generateCommandSchema, generateSchema } from "./command.ts";
 
 describe("Schema Command", () => {
+  describe("parseSchemaArgs", () => {
+    it("rejects unknown options instead of silently ignoring them", () => {
+      const result = parseSchemaArgs(parseCliArgs(["schema", "--totally-bogus-flag", "--json"]));
+
+      assertEquals(result.success, false);
+      if (!result.success) assertStringIncludes(result.error.message, "Unknown option");
+    });
+  });
+
   describe("generateSchema", () => {
     it("returns object with version and commands array", () => {
       const schema = generateSchema();

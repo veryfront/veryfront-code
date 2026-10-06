@@ -23,6 +23,20 @@ describe("commands/dev/handler", () => {
   });
 
   describe("ParsedArgs for dev command", () => {
+    it("rejects misspelled options instead of silently using defaults", () => {
+      assertEquals(parseDevArgs(parseCliArgs(["dev", "--por", "123"])).success, false);
+    });
+
+    it("rejects invalid explicit ports before starting the server", () => {
+      for (const port of [-1, 3.5, 65536]) {
+        const result = parseDevArgs({ _: ["dev"], port });
+        assertEquals(result.success, false, `port ${port} must be rejected`);
+      }
+      for (const port of [0, 1, 65535]) {
+        assertEquals(parseDevArgs({ _: ["dev"], port }).success, true);
+      }
+    });
+
     it("parses the documented no-hmr and open flags from raw argv", () => {
       const args = parseCliArgs(["dev", "--no-hmr", "--open"]);
       const result = parseDevArgs(args);

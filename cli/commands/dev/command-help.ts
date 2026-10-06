@@ -8,8 +8,12 @@ export const devHelp: CommandHelp = {
   options: [
     {
       flag: "--port <number>",
-      description: "Port to run on (also reads PORT env var)",
+      description: "TCP port from 1 to 65535; 0 selects a free port (also reads PORT env var)",
       default: "3000",
+    },
+    {
+      flag: "--project <directory>",
+      description: "Run a local project directory (defaults to the current directory)",
     },
     {
       flag: "--no-hmr",
@@ -23,6 +27,7 @@ export const devHelp: CommandHelp = {
   examples: [
     "veryfront dev",
     "veryfront dev --port 8080",
+    "veryfront dev --project ./my-app",
     "PORT=3001 veryfront dev",
     "veryfront dev --open",
     "veryfront dev --no-hmr",

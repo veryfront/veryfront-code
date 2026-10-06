@@ -94,6 +94,43 @@ describe("InitCommand Types", () => {
       }
     });
 
+    it("reports deployment failure while preserving the created project", async () => {
+      const parentDir = await makeTempDir({ prefix: "veryfront-init-deploy-failed-" });
+      const name = `deploy-failed-target-${crypto.randomUUID()}`;
+
+      try {
+        const result = await initCommand(
+          {
+            name,
+            parentDir,
+            template: "minimal",
+            skipInstall: true,
+            skipEnvPrompt: true,
+            deploy: true,
+            quiet: true,
+          },
+          {
+            deployProject: () => {
+              throw new Error("sentinel deploy failure");
+            },
+          },
+        );
+
+        assertEquals(result.cancelled, false);
+        if (!result.cancelled) {
+          assertEquals(result.deployedUrl, undefined);
+          assertEquals(result.deployment, {
+            status: "failed",
+            message:
+              "Deployment failed. Your project was created locally; run veryfront deploy from the project directory after reviewing your credentials and deployment settings.",
+          });
+        }
+        assertEquals(await exists(join(parentDir, name, "app")), true);
+      } finally {
+        await remove(parentDir, { recursive: true }).catch(() => {});
+      }
+    });
+
     it("should allow empty options", () => {
       const options: InitOptions = {};
       assertExists(options);
@@ -152,6 +189,47 @@ describe("InitCommand Types", () => {
       assertEquals(node.runtime, "node");
       assertEquals(bun.runtime, "bun");
       assertEquals(deno.runtime, "deno");
+    });
+
+    it("rejects names that cannot be used as clean package slugs", async () => {
+      await assertRejects(
+        () =>
+          initCommand({
+            name: "Bad_Name",
+            template: "minimal",
+            skipInstall: true,
+            skipEnvPrompt: true,
+            quiet: true,
+          }),
+        Error,
+        "Project name must use lowercase letters, numbers, dots, and hyphens",
+      );
+    });
+
+    it("rejects invalid project names returned by the interactive wizard", async () => {
+      await assertRejects(
+        () =>
+          initCommand(
+            {
+              skipInstall: true,
+              skipEnvPrompt: true,
+              quiet: true,
+            },
+            {
+              shouldRunWizard: () => true,
+              runWizard: async () => ({
+                projectName: "Bad_Name",
+                template: "minimal",
+                runtime: "node",
+                initGit: false,
+                skipped: false,
+                cancelled: false,
+              }),
+            },
+          ),
+        Error,
+        "Project name must use lowercase letters, numbers, dots, and hyphens",
+      );
     });
   });
 
