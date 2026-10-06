@@ -40,7 +40,10 @@ import { type RuntimeClientProfile } from "../runtime/client-profile.ts";
 import { selectProviderCompatibleToolNames } from "../runtime/provider-tool-compat.ts";
 import { getProviderNativeToolNames } from "../runtime/provider-native-tool-inventory.ts";
 import { flattenSystemInstructions, withRuntimeToolInventory } from "../runtime/tool-inventory.ts";
-import { createAgentKnowledgeSource } from "../runtime/knowledge-tools.ts";
+import {
+  createAgentKnowledgeSource,
+  inheritAgentKnowledgeSource,
+} from "#veryfront/agent/runtime/knowledge-tools.ts";
 import {
   type HostedRuntimeAllowedToolNames,
   normalizeHostedRuntimeAllowedToolNames,
@@ -586,7 +589,7 @@ function createHostedKnowledgeSource(
     knowledge,
   });
   if (source === undefined) return undefined;
-  return {
+  return inheritAgentKnowledgeSource(source, {
     ...source,
     listTools: (context) =>
       source.listTools(withHostedKnowledgeExecutionContext(context, getTaskContext())),
@@ -596,7 +599,7 @@ function createHostedKnowledgeSource(
         input,
         withHostedKnowledgeExecutionContext(context, getTaskContext()),
       ),
-  };
+  });
 }
 
 function assertNoLocalFrameworkKnowledgeToolShadow(input: {
@@ -790,20 +793,23 @@ async function prepareHostedChatRuntimeToolAssemblyInternal<
   );
   const knowledgeRemoteToolSources = knowledgeSource === undefined ? [] : withoutDeniedRemoteTools(
     [
-      createHostedProjectRemoteToolSource({
-        source: wrapRemoteToolSourceWithMcpPolicy(
-          knowledgeSource,
-          allowedToolNames === null ? undefined : { allow: [...allowedToolNames] },
-        ),
-        defaultProjectId: () => activeProjectId(input.taskContext),
-        getActiveBranchId: () => activeBranchId(input.taskContext),
-        allowedToolNames,
-        projectScopedRemoteToolOptions: input.projectScopedRemoteToolOptions,
-        prepareToolInput: input.prepareRemoteToolInput,
-        shouldRetryWithTool: input.shouldRetryWithRemoteTool,
-        onProjectSwitch: input.onStudioProjectSwitch,
-        onSteeringMutation: input.onSteeringMutation,
-      }),
+      inheritAgentKnowledgeSource(
+        knowledgeSource,
+        createHostedProjectRemoteToolSource({
+          source: wrapRemoteToolSourceWithMcpPolicy(
+            knowledgeSource,
+            allowedToolNames === null ? undefined : { allow: [...allowedToolNames] },
+          ),
+          defaultProjectId: () => activeProjectId(input.taskContext),
+          getActiveBranchId: () => activeBranchId(input.taskContext),
+          allowedToolNames,
+          projectScopedRemoteToolOptions: input.projectScopedRemoteToolOptions,
+          prepareToolInput: input.prepareRemoteToolInput,
+          shouldRetryWithTool: input.shouldRetryWithRemoteTool,
+          onProjectSwitch: input.onStudioProjectSwitch,
+          onSteeringMutation: input.onSteeringMutation,
+        }),
+      ),
     ],
     input.deniedToolNames,
     projectToolNames,

@@ -44,7 +44,11 @@ import { wrapRemoteToolSourceWithMcpPolicy } from "../mcp-tool-policy.ts";
 import { getActiveRuntimeRemoteToolSources } from "./remote-tool-source-context.ts";
 import { createPrivateWeakStore } from "#veryfront/security/private-weak-store.ts";
 import { compareStrings } from "#veryfront/utils/compare.ts";
-import { createAgentKnowledgeSource } from "./knowledge-tools.ts";
+import {
+  createAgentKnowledgeSource,
+  inheritAgentKnowledgeSource,
+  isAgentKnowledgeSource,
+} from "#veryfront/agent/runtime/knowledge-tools.ts";
 
 export type RuntimeRemoteToolConfig = {
   __vfRemoteToolSources?: RemoteToolSource[];
@@ -151,10 +155,13 @@ function createMcpToolPolicySource(
   source: RemoteToolSource,
   policy: AgentMcpServerConfig["toolPolicy"],
 ): RemoteToolSource {
-  return wrapRemoteToolSourceWithMcpPolicy(source, policy, {
-    deniedDetail: (toolName, sourceId) =>
-      `Tool "${toolName}" is not allowed for MCP server "${sourceId}"`,
-  });
+  return inheritAgentKnowledgeSource(
+    source,
+    wrapRemoteToolSourceWithMcpPolicy(source, policy, {
+      deniedDetail: (toolName, sourceId) =>
+        `Tool "${toolName}" is not allowed for MCP server "${sourceId}"`,
+    }),
+  );
 }
 
 /** Carry an explicit remote-tool ceiling into nested execution. */
@@ -428,7 +435,7 @@ function guardFrameworkKnowledgeSource(
   // Recheck dynamic catalogs at each read: a host can refresh its source or
   // switch project/branch during a run. Caching a prior absence would silently
   // restore first-match shadowing after that change.
-  return {
+  return inheritAgentKnowledgeSource(source, {
     id: source.id,
     async listTools(context) {
       await assertNoRemoteToolNameCollision({
@@ -446,7 +453,7 @@ function guardFrameworkKnowledgeSource(
       });
       return await source.executeTool(name, input, context);
     },
-  };
+  });
 }
 
 /** Return remote tool sources for direct agent runtime config. */
@@ -583,12 +590,32 @@ export function getRuntimeRemoteToolSources(
       );
     },
   );
-  const nonKnowledgeSources = concatPrivateArrays(policyWrappedInjectedSources, configuredSources);
-  const knowledgeSource = createAgentKnowledgeSource(config);
-  const remoteToolSources = concatPrivateArrays(
-    knowledgeSource ? [guardFrameworkKnowledgeSource(knowledgeSource, nonKnowledgeSources)] : [],
-    nonKnowledgeSources,
+  const policyWrappedInjectedKnowledgeSources = filterPrivateArray(
+    policyWrappedInjectedSources,
+    isAgentKnowledgeSource,
   );
+  const nonKnowledgeSources = concatPrivateArrays(
+    filterPrivateArray(policyWrappedInjectedSources, (source) => !isAgentKnowledgeSource(source)),
+    configuredSources,
+  );
+  const localKnowledgeSource = policyWrappedInjectedKnowledgeSources.length > 0
+    ? undefined
+    : createAgentKnowledgeSource(config);
+  const selectedKnowledgeSources = localKnowledgeSource === undefined
+    ? policyWrappedInjectedKnowledgeSources
+    : [localKnowledgeSource];
+  const guardedKnowledgeSources = mapPrivateArray(
+    selectedKnowledgeSources,
+    (source, sourceIndex, sources) =>
+      guardFrameworkKnowledgeSource(
+        source,
+        concatPrivateArrays(
+          nonKnowledgeSources,
+          filterPrivateArray(sources, (_sibling, siblingIndex) => siblingIndex !== sourceIndex),
+        ),
+      ),
+  );
+  const remoteToolSources = concatPrivateArrays(guardedKnowledgeSources, nonKnowledgeSources);
 
   if (remoteToolSources.length > 0) {
     return remoteToolSources;
