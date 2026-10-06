@@ -11,6 +11,39 @@ import {
 const runId = "11111111-1111-4111-8111-111111111111";
 
 describe("runs explicit outcome commands", () => {
+  it("rejects terminal authority for non-terminal commands and malformed file options", () => {
+    assertThrows(
+      () =>
+        parseRunsInvocation(parseCliArgs([
+          "project",
+          "runs",
+          "get",
+          "--run-id",
+          runId,
+          "--terminal-token-file",
+          "token-file",
+        ])),
+      Error,
+      "Only finalize, succeed and fail",
+    );
+    assertThrows(
+      () =>
+        parseRunsInvocation(parseCliArgs([
+          "project",
+          "runs",
+          "succeed",
+          "--run-id",
+          runId,
+          "--terminal-token-file",
+          "--idempotency-key",
+          "key",
+          "--body",
+          '{"output":null}',
+        ])),
+      Error,
+      "Supply --terminal-token-file with a value",
+    );
+  });
   for (
     const [action, body] of [
       ["succeed", { output: null }],

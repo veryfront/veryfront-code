@@ -205,7 +205,11 @@ which owns the origin, credentials, retries, body limits and telemetry. Set
 hosted API switches to the target contract, set `baseUrl` to an origin that
 serves it. The legacy client at
 `veryfront/runs` uses the canonical wire contract and adapts the grouped Run
-resource for existing framework callers. Its `run_id` is the canonical UUID.
+resource for existing framework callers. Creation returns either this full
+resource or a compact receipt with only `run_id` and `status`. Both variants
+use `run_id` as the canonical UUID. Narrow with `"output" in accepted.run`
+before reading full-resource fields, or call `runs.get(accepted.run.run_id)`
+to read the current run.
 Caller-selected aliases and workflow `startMode` are rejected; retries use
 `Idempotency-Key`. Use the target SDK for the complete grouped resource.
 
@@ -412,7 +416,9 @@ Supply explicit `null` when there is no output.
 For these terminal actions, your user token or API key requires project run write
 permission and editor access to any bound conversation. Execution credentials
 require matching current-run terminal authority; an unrelated or stale execution
-credential cannot finalize the run. A terminal token is not required for ordinary
+credential cannot finalize the run. Supply that authority through
+`--terminal-token-file <TERMINAL_TOKEN_FILE>` when you use an execution credential.
+The CLI reads the file without printing its token. A terminal token is not required for ordinary
 user or API-key requests. The API enforces the same rules for agent, workflow and
 task runs.
 

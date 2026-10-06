@@ -134,6 +134,7 @@ const GLOBAL_OPTIONS = [
   "v",
   "project-dir",
   "credential-file",
+  "terminal-token-file",
   "credential-mode",
   "all",
   "ndjson",
@@ -258,6 +259,12 @@ export function parseRunsInvocation(args: ParsedArgs) {
     name,
     stringOption(args, name.replaceAll("_", "-"), true),
   ]));
+  if (args["terminal-token-file"] !== undefined) {
+    stringOption(args, "terminal-token-file", true);
+    if (!["finalizeRun", "succeedRun", "failRun"].includes(operationId)) {
+      usage("Only finalize, succeed and fail accept --terminal-token-file.");
+    }
+  }
   const headers = parseHeaders(args, operationId);
   const body = parseBody(args, operationId);
   const query = parseQuery(args, operationId);
