@@ -7,6 +7,7 @@ import { hasToolExecutionErrorMarker } from "./result.ts";
 import type { RemoteToolSource, ToolDefinition, ToolExecutionContext } from "./types.ts";
 import { readResponseTextPrefix } from "#veryfront/utils/response-body.ts";
 import { guardedOutboundFetch } from "#veryfront/security/http/outbound-fetch.ts";
+import { getHostedToolCallAdmissionRequestFetch } from "#veryfront/agent/hosted/child-run-event-writer-token.ts";
 import {
   assertNativeRequestProcessing,
   copyNativeHeaders,
@@ -43,6 +44,7 @@ const NativeURL = URL;
 // captured before project code loaded.
 const HeadersPrototypeSet = Headers.prototype.set;
 const HeadersPrototypeGet = Headers.prototype.get;
+const HeadersPrototypeDelete = Headers.prototype.delete;
 const nativeEncodeURIComponent = encodeURIComponent;
 const reflectApply = Reflect.apply;
 const urlHrefGetter = Object.getOwnPropertyDescriptor(
@@ -688,6 +690,7 @@ async function resolveHeaders(
 ): Promise<Headers> {
   const resolvedHeaders = headers ? await resolveValue(headers, context) : undefined;
   const finalHeaders = copyNativeHeaders(resolvedHeaders);
+  reflectApply(HeadersPrototypeDelete, finalHeaders, ["X-Veryfront-Run-Event-Writer-Token"]);
   reflectApply(HeadersPrototypeSet, finalHeaders, ["Content-Type", "application/json"]);
   const accept = reflectApply(HeadersPrototypeGet, finalHeaders, ["Accept"]) as string | null;
   // The merge works on the Accept value alone, outside the credential headers.
@@ -1029,6 +1032,9 @@ function createRemoteMCPToolSourceWithFetch(
     async listTools(context) {
       const endpoint = validateEndpoint(await resolveValue(config.endpoint, context));
       const headers = await resolveHeaders(config.headers, context);
+      const listMeta = config.listMeta === undefined ? undefined : Object.fromEntries(
+        Object.entries(config.listMeta).filter(([key]) => key !== "tool_call_admission"),
+      );
 
       const definitions: ToolDefinition[] = [];
       const definitionNames = new Set<string>();
@@ -1043,11 +1049,11 @@ function createRemoteMCPToolSourceWithFetch(
             jsonrpc: "2.0",
             id: requestId,
             method: listMethod,
-            ...(cursor !== undefined || config.listMeta !== undefined
+            ...(cursor !== undefined || listMeta !== undefined
               ? {
                 params: {
                   ...(cursor !== undefined ? { cursor } : {}),
-                  ...(config.listMeta !== undefined ? { _meta: config.listMeta } : {}),
+                  ...(listMeta !== undefined ? { _meta: listMeta } : {}),
                 },
               }
               : {}),
@@ -1120,7 +1126,7 @@ function createRemoteMCPToolSourceWithFetch(
               ...(meta ? { _meta: meta } : {}),
             },
           },
-          getRequestFetch(endpoint),
+          getHostedToolCallAdmissionRequestFetch(endpoint) ?? getRequestFetch(endpoint),
           context?.abortSignal,
           MAX_REMOTE_MCP_CALL_RESPONSE_BYTES,
         );

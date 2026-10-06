@@ -6,6 +6,7 @@ import type { HostedExecutorOwnedWork } from "#veryfront/agent/hosted/executor-s
 import type { ExecutorRuntimeInstall } from "#veryfront/agent/hosted/executor-runtime-install-schema.ts";
 import type { ExecutorProjectToolSource } from "#veryfront/agent/hosted/executor-project-tools.ts";
 import type { ExecutorToolLimits } from "#veryfront/agent/hosted/executor-tool-schema.ts";
+import type { HostedKnowledgeExecutionContext } from "#veryfront/agent/hosted/chat-runtime-tool-assembly.ts";
 
 /** Internal trusted-process composition, supplied only at broker construction. */
 export interface TrustedManagedRuntimeOptions {
@@ -16,6 +17,7 @@ export interface TrustedManagedRuntimeOptions {
   projectToolNames: readonly string[];
   toolLimits: ExecutorToolLimits;
   sourceIntegrationPolicy: SourceIntegrationPolicyManifest;
+  hostedKnowledgeContext?: HostedKnowledgeExecutionContext;
   createGate(projectTools: ExecutorProjectToolSource): ExecutorOperationGate;
   signal: AbortSignal;
   runOwned: HostedExecutorOwnedWork;

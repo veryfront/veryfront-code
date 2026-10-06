@@ -15,7 +15,10 @@ import type { JsonValue } from "#veryfront/schemas/index.ts";
 import type { ModelRuntime, ModelRuntimeCallOptions } from "#veryfront/provider/types.ts";
 import { defineSchema } from "#veryfront/schemas/index.ts";
 import type { AgentConfig } from "#veryfront/agent/types.ts";
-import { parseRuntimeAgentMarkdownDefinition } from "#veryfront/agent/runtime/agent-definition.ts";
+import {
+  parseRuntimeAgentMarkdownDefinition,
+  type RuntimeAgentMarkdownDefinition,
+} from "#veryfront/agent/runtime/agent-definition.ts";
 import { createRuntimeAgentFromMarkdownDefinition } from "#veryfront/agent/runtime/agent-markdown-adapter.ts";
 import type {
   HostToolDefinition,
@@ -36,9 +39,13 @@ import {
   type ExecutorRuntimeFacades,
   type ExecutorRuntimePreparationGrant,
 } from "./executor-runtime-prepare.ts";
+import { createRuntimePreparationCore } from "#veryfront/agent/hosted/runtime-preparation-core.ts";
+import { createPreparedHostedRuntimeAgent } from "#veryfront/agent/hosted/default-chat-runtime.ts";
+import { discoverySuccess } from "#veryfront/agent/hosted/executor-discovery-schema.ts";
 import {
   ExecutorRuntimePreparationError,
   getExecutorRuntimePrepareRequestSchema,
+  getExecutorRuntimeSteeringSchema,
   parseRuntimePreparationData,
 } from "#veryfront/agent/hosted/executor-runtime-prepare-schema.ts";
 import { createExecutorChannel } from "#veryfront/agent/executor/channel.ts";
@@ -183,6 +190,32 @@ async function prepare(
 describe("executor runtime preparation", () => {
   beforeEach(seedServedCatalogForTests);
   afterEach(__resetVeryfrontCloudCatalogForTests);
+  it("accepts rules skill selector policies in serialized steering", () => {
+    const steering = parseRuntimePreparationData(getExecutorRuntimeSteeringSchema(), {
+      agent: {
+        id: "coder",
+        name: "Coder",
+        description: "Codes",
+        instructions: "Work",
+      },
+      skillSelectorPolicy: {
+        kind: "rules",
+        entries: [
+          { pattern: "support-*", allow: true },
+          { pattern: "support-private", allow: false },
+        ],
+      },
+    });
+
+    assertEquals(steering.skillSelectorPolicy, {
+      kind: "rules",
+      entries: [
+        { pattern: "support-*", allow: true },
+        { pattern: "support-private", allow: false },
+      ],
+    });
+  });
+
   it("carries a verified resume call through preparation into runtime execution", async () => {
     const executions: unknown[] = [];
     const lookup = tool({
@@ -433,6 +466,130 @@ describe("executor runtime preparation", () => {
       }
     });
   }
+
+  it("passes authored knowledge, tool loading, and result context through managed executor preparation", async () => {
+    const visibleTools: string[][] = [];
+    const providerInputs: ModelRuntimeCallOptions[] = [];
+    const knowledgeSelector = {
+      "knowledge/public/**": true,
+      "knowledge/private/**": false,
+    };
+    const resultContextLimits = {
+      maxInlineBytes: 4,
+      previewBytes: 4,
+      maxSectionBytes: 8,
+    };
+    const definition = {
+      id: "coder",
+      name: "Coder",
+      description: "Codes",
+      instructions: "Synthetic source instructions.",
+      model: modelId,
+      tools: ["large_result"],
+      toolLoading: "eager",
+      toolResultContext: resultContextLimits,
+      knowledge: knowledgeSelector,
+    } satisfies RuntimeAgentMarkdownDefinition;
+    const largeResultTool = tool({
+      id: "large_result",
+      description: "Return an oversized result",
+      inputSchema: defineSchema((v) => v.object({}))(),
+      execute: () => "synthetic-large-result",
+    });
+    let capturedInput: Parameters<typeof createPreparedHostedRuntimeAgent>[0] | undefined;
+    const owner = createRuntimePreparationCore({
+      binding,
+      source,
+      grant: {
+        ...grant,
+        allowedToolNames: ["large_result", "search_knowledge"],
+        execution: { kind: "ephemeral", projectId: "project-1", branchId: "branch-1" },
+      },
+      facades: {
+        resolveModelRuntime: () => ({
+          ...model,
+          doStream(options: ModelRuntimeCallOptions) {
+            providerInputs.push(options);
+            visibleTools.push(options.tools?.map((toolDefinition) => toolDefinition.name) ?? []);
+            return visibleTools.length === 1
+              ? finishStream("large_result")
+              : finishStream(undefined, {}, "Synthetic answer");
+          },
+        }),
+        hostTools: new Map(),
+        remoteToolSources: new Map(),
+        hostedKnowledgeContext: {
+          authToken: "broker-knowledge-token",
+          projectId: "project-1",
+          branch: "branch-1",
+        },
+        projectSteering: {
+          prepare: ({ definition }) =>
+            Promise.resolve({
+              agent: definition,
+              initialProjectInstructions: "Synthetic source instructions.",
+            }),
+          refresh: () => "Synthetic source instructions.",
+        },
+        cleanup: () => Promise.resolve(),
+      },
+      project: {
+        signal: new AbortController().signal,
+        prepare: () =>
+          Promise.resolve({
+            description: discoverySuccess({ source, definition }),
+            localTools: { large_result: largeResultTool },
+            sourceIntegrationPolicy: { schemaVersion: 1, mode: "unrestricted" },
+          }),
+        instantiate: (options, runtimeOptions) => {
+          capturedInput = options;
+          return createPreparedHostedRuntimeAgent(options, runtimeOptions);
+        },
+        retainTask: () => {},
+        close: () => Promise.resolve(),
+      },
+    });
+
+    try {
+      const prepared = await prepare(owner);
+      assert(prepared && typeof prepared === "object" && !Array.isArray(prepared));
+      assertEquals(prepared.ok, true);
+      assertEquals(capturedInput?.options.knowledge, knowledgeSelector);
+      assertEquals(capturedInput?.options.toolLoading, "eager");
+      assertEquals(capturedInput?.options.toolResultContext, resultContextLimits);
+
+      const preparedValue = prepared.value;
+      assert(
+        preparedValue !== null && typeof preparedValue === "object" &&
+          !Array.isArray(preparedValue),
+      );
+      const handle = preparedValue.preparedRuntimeHandle;
+      assert(typeof handle === "string");
+      const operation = owner.operations.get("agent.stream");
+      assert(operation?.mode === "stream");
+      const events = await Array.fromAsync(operation.handle({
+        preparedRuntimeHandle: handle,
+        messages: [{
+          id: "synthetic-message",
+          role: "user",
+          parts: [{ type: "text", text: "Synthetic question" }],
+          timestamp: 1,
+        }],
+      }, {
+        binding,
+        signal: new AbortController().signal,
+        deadline: Date.now() + 30_000,
+      }));
+
+      assertCleanCompletion(events);
+      assertEquals(visibleTools[0]?.includes("large_result"), true);
+      assertEquals(visibleTools[0]?.includes("search_knowledge"), true);
+      assert(providerInputs[1] !== undefined);
+      assertEquals(JSON.stringify(providerInputs[1]).includes("tool_result_reference"), true);
+    } finally {
+      await owner.close();
+    }
+  });
 
   it("keeps skill references and scripts outside a loader-only grant after loading a skill", async () => {
     const visible: string[][] = [];
@@ -2674,7 +2831,11 @@ Synthetic source instructions.`,
           assertEquals(captured.maxOutputTokens, expectedOutput);
           assertEquals(
             admission.normalize({
-              identity: { binding, sequence: 1 },
+              identity: {
+                binding,
+                sequence: 1,
+                modelCallId: "11111111-1111-4111-8111-111111111111",
+              },
               mode: "stream",
               model: {
                 id: selectedModel,
@@ -2686,7 +2847,7 @@ Synthetic source instructions.`,
             expectedOutput,
           );
           assertPersistedModelOptions({
-            identity: { binding, sequence: 1 },
+            identity: { binding, sequence: 1, modelCallId: "11111111-1111-4111-8111-111111111111" },
             mode: "stream",
             model: {
               id: selectedModel,

@@ -14,14 +14,12 @@ describe("commands/dev/inference-status", () => {
     );
   });
 
-  it("reports the gateway for a logged-in developer whose project is not linked yet", () => {
-    // `veryfront login` alone is enough to serve inference through the gateway:
-    // a freshly scaffolded project has no linked slug, and its chat route still
-    // answers. Requiring a slug here left the banner silent on exactly the path
-    // the quickstart tells a developer to use.
+  it("reports actionable project setup when a logged-in project is not linked yet", () => {
     assertEquals(
       listInferenceOptions({ apiToken: "<TOKEN>" }),
-      ["Veryfront Cloud AI Gateway"],
+      [
+        "Veryfront Cloud AI Gateway (project required: set VERYFRONT_PROJECT_SLUG or add projectSlug to veryfront.config.ts)",
+      ],
     );
   });
 

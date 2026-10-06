@@ -4,7 +4,12 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { createExecutorChannel, type ExecutorOperation } from "../executor/channel.ts";
 import type { ExecutorRuntimeFacades } from "./executor-runtime-prepare.ts";
 import { createExecutorStateBroker, createExecutorStateFacades } from "./executor-state-bridge.ts";
-import { executorStateJson, executorStateOperations } from "./executor-state-schema.ts";
+import {
+  executorStateJson,
+  executorStateOperations,
+  getExecutorProjectSteeringResultSchema,
+  parseExecutorStateData,
+} from "./executor-state-schema.ts";
 
 const binding = {
   allocationId: "allocation-state",
@@ -43,6 +48,27 @@ function pair(operations: ReadonlyMap<string, ExecutorOperation>) {
 }
 
 describe("executor state bridge", () => {
+  it("accepts rules skill selector policies in serialized project steering", () => {
+    const steering = parseExecutorStateData(getExecutorProjectSteeringResultSchema(), {
+      agent: definition,
+      skillSelectorPolicy: {
+        kind: "rules",
+        entries: [
+          { pattern: "support-*", allow: true },
+          { pattern: "support-private", allow: false },
+        ],
+      },
+    });
+
+    assertEquals(steering.skillSelectorPolicy, {
+      kind: "rules",
+      entries: [
+        { pattern: "support-*", allow: true },
+        { pattern: "support-private", allow: false },
+      ],
+    });
+  });
+
   it("forwards a narrowed tool selection and rejects names outside the installed grant", async () => {
     const seen: unknown[] = [];
     const channels = pair(createExecutorStateBroker({

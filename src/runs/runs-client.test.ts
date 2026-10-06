@@ -16,6 +16,8 @@ import {
   type VeryfrontRunsClientConfig,
 } from "./runs-client.ts";
 
+import type { CreateRunResponse } from "./schemas.ts";
+
 let fetchCalls: Array<{ url: string; init?: RequestInit }> = [];
 let fetchResponses: Array<Response | (() => Response)> = [];
 
@@ -189,7 +191,10 @@ describe("VeryfrontRunsClient", () => {
   });
 
   it("preserves a private task creation receipt without an extra read", async () => {
-    const receipt = { run_id: "11111111-1111-4111-8111-111111111111", status: "pending" };
+    const receipt = {
+      run_id: "11111111-1111-4111-8111-111111111111",
+      status: "pending",
+    } satisfies CreateRunResponse["run"];
     mockFetch([jsonResponse(receipt, 202)]);
     const result = await createTestClient().createTaskRun({ projectId, target: "task:sync-data" });
     assertEquals(result, { accepted: true, run: receipt });

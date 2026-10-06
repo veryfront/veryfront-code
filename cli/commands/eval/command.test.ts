@@ -9,6 +9,10 @@ import {
 } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { deleteEnv, makeTempDir, setEnv, withTempDir } from "#veryfront/testing/deno-compat.ts";
+import {
+  _resetEnvironmentConfig,
+  createTestEnvironmentConfig,
+} from "#veryfront/config/environment-config.ts";
 import { VeryfrontError } from "veryfront/errors";
 import { type Agent, agent as createAgent, type AgentResponse } from "veryfront/agent";
 import { defineSchema } from "veryfront/schemas";
@@ -2320,7 +2324,8 @@ describe("eval CLI command helpers", () => {
       Deno.env.delete("VERYFRONT_PROJECT_SLUG");
       Deno.env.delete("VERYFRONT_SERVICE_LAYER");
       Deno.env.set("XDG_CONFIG_HOME", configHome);
-      await saveToken("stored-token");
+      _resetEnvironmentConfig();
+      await saveToken("stored-token", createTestEnvironmentConfig({ xdgConfigHome: configHome }));
 
       await hydrateEvalRuntimeAuth(projectDir, {
         projectSlug: "configured-eval-project",
@@ -2362,7 +2367,8 @@ describe("eval CLI command helpers", () => {
     try {
       Deno.env.delete("VERYFRONT_API_TOKEN");
       Deno.env.set("XDG_CONFIG_HOME", configHome);
-      await saveToken("stored-token");
+      _resetEnvironmentConfig();
+      await saveToken("stored-token", createTestEnvironmentConfig({ xdgConfigHome: configHome }));
       await hydrateEvalRuntimeAuth(projectDir, { projectSlug: "eval-project" });
 
       assertEquals(getHostEnv("VERYFRONT_API_TOKEN"), "stored-token");

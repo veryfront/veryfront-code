@@ -116,6 +116,32 @@ describe("executor discovery operations", () => {
     assertEquals(parsed.tools, undefined);
   });
 
+  it("accepts hosted skill selector forms at the executor boundary", () => {
+    const glob256 = `${"s".repeat(254)}-*`;
+    assertEquals(glob256.length, 256);
+    const selectorCases = [
+      true,
+      false,
+      ["legacy-one", "legacy-two"],
+      "support-*",
+      glob256,
+      { "support-*": true, "legacy-*": false },
+      { [glob256]: true },
+    ];
+
+    for (const skills of selectorCases) {
+      const parsed = parseDiscoveryData(getExecutorAgentDefinitionSchema(), {
+        id: "writer",
+        name: "Writer",
+        description: "Synthetic",
+        instructions: "Synthetic instructions",
+        skills,
+      }, true);
+
+      assertEquals(parsed.skills, skills);
+    }
+  });
+
   it("is lazy, exposes only metadata operations, and retains the runtime locally", async () => {
     const f = fixture();
     try {

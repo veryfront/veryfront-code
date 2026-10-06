@@ -11,7 +11,7 @@ import {
   privateTextTrimEnd,
   privateTextTrimStart,
 } from "#veryfront/security/private-text.ts";
-import type { RemoteToolSource, ToolDefinition, ToolExecutionContext } from "#veryfront/tool";
+import type { RemoteToolSource, Tool, ToolDefinition, ToolExecutionContext } from "#veryfront/tool";
 import type { ModelRuntime } from "#veryfront/provider";
 import type { AgentConfig, AgentSystem, Message } from "../types.ts";
 import type { ChatSystemMessage } from "#veryfront/chat/types.ts";
@@ -75,6 +75,7 @@ export type RuntimeStepToolLoader = (
     onIntegrationToolDiscovery?: (result: RemoteIntegrationToolDiscoveryResult) => void;
     sourceIntegrationPolicy?: SourceIntegrationPolicyManifest;
     strictConfiguredToolsOnly?: boolean;
+    frameworkLocalTools?: Record<string, Tool>;
     callerAgentId?: string;
   },
 ) => Promise<ToolDefinition[]>;
@@ -117,6 +118,7 @@ export interface PrepareAgentRuntimeStepInput {
   systemPrompt: AgentSystem;
   toolContextBase: ToolExecutionContext | undefined;
   strictConfiguredToolsOnly?: boolean;
+  frameworkLocalTools?: Record<string, Tool>;
   toolExposureState?: ToolExposureState;
   toolExposureCheckpoint?: ToolExposureCheckpoint;
 }
@@ -271,6 +273,7 @@ export async function prepareAgentRuntimeStep(
       },
       sourceIntegrationPolicy: input.sourceIntegrationPolicy,
       strictConfiguredToolsOnly: input.strictConfiguredToolsOnly,
+      frameworkLocalTools: input.frameworkLocalTools,
     })
     : [];
 

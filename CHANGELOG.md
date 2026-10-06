@@ -15,6 +15,24 @@ Use `result.run.run_id` and `result.run.status` in either variant. Narrow with
 or use `runs.get(result.run.run_id)` to read the current resource. Do not
 assume every creation response includes those fields.
 
+### Breaking: init project names and options are validated
+
+Project names passed to `veryfront init`, provided by its wizard, or set in its
+config must use lowercase letters, numbers, dots, and hyphens. Names such as
+`MyApp` and `my_app` now fail with `INVALID_ARGUMENT`. Rename affected projects
+before you upgrade.
+
+The `init`, `dev`, `doctor`, `routes`, and `schema` commands now reject unknown
+options. Remove misspelled or unsupported flags from your scripts.
+
+### Changed: init and routes JSON use a single result envelope
+
+`veryfront init --json` runs without prompts and returns one JSON envelope,
+including when you combine it with `--deploy`. A deployment failure exits with
+code 1 and retains the created project in `error.context.localProject`.
+`veryfront routes --json` returns pages and APIs under `data`. Update scripts
+that read these commands' previous output.
+
 ### Breaking: `run_<uuid>` run ids are reserved for control-plane runs
 
 `WorkflowClient.start()` and `WorkflowExecutor.start()` now throw

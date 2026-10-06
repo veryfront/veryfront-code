@@ -386,6 +386,7 @@ Deno.test("refreshProjectSkillIds keeps a none skill selector policy at zero ski
             ? {
               path,
               content: `---
+name: ${path.split("/").at(-2)}
 description: ${path}
 ---
 Body.`,
@@ -418,6 +419,66 @@ Body.`,
       { kind: "none" },
       "none policy must survive refresh unchanged",
     );
+  });
+});
+
+Deno.test("refreshProjectSkillIds preserves rules skill selector policies", async () => {
+  await withSkillsDir(async (skillsDir) => {
+    const adapter = createHostedProjectSteeringAdapter({
+      apiUrl: "https://api.example.test",
+      skillsDir,
+      skillDocumentParserProvider,
+      builtinSkills: [
+        {
+          id: "support-triage",
+          name: "support-triage",
+          description: "Support triage",
+          instructions: "",
+          allowedTools: [],
+        },
+        {
+          id: "support-private",
+          name: "support-private",
+          description: "Support private",
+          instructions: "",
+          allowedTools: [],
+        },
+        {
+          id: "billing",
+          name: "billing",
+          description: "Billing",
+          instructions: "",
+          allowedTools: [],
+        },
+      ],
+      projectFilesClient: createProjectFilesClient(),
+    });
+
+    const context: HostedProjectSkillIdsContext = {
+      projectId: "project-1",
+      authToken: "token-1",
+      branchId: null,
+      availableSkillIds: ["support-triage"],
+      skillSelectorPolicy: {
+        kind: "rules",
+        entries: [
+          { pattern: "support-*", allow: true },
+          { pattern: "support-private", allow: false },
+        ],
+      },
+    };
+
+    await adapter.refreshProjectSkillIds(context);
+
+    assertEquals(context.availableSkillIds, ["support-triage"]);
+    assertEquals(context.skillSelectorPolicy, {
+      kind: "rules",
+      entries: [
+        { pattern: "support-*", allow: true },
+        { pattern: "support-private", allow: false },
+      ],
+    });
+    assertEquals(context.skillSourcePaths, undefined);
   });
 });
 

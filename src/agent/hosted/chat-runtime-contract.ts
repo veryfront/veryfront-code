@@ -12,6 +12,7 @@ import type { ToolExposureCheckpoint } from "../runtime/tool-exposure.ts";
 import type { ProviderReplayCheckpoint } from "../runtime/provider-replay.ts";
 import type { RuntimeSkillDefinition } from "../runtime/skill-metadata.ts";
 import type { ResolvedSkillSelectorPolicy } from "#veryfront/skill/selector.ts";
+import type { AgentConfig } from "../types.ts";
 
 /** Public API contract for hosted chat runtime finish part. */
 export type HostedChatRuntimeFinishPart = {
@@ -146,6 +147,12 @@ export type HostedChatRuntimeCreationOptions<TRuntimeAgentDefinition, TThinkingC
   serverResolvedIntegrationToolNames?: readonly string[];
   /** Provider-native selection kept separate from local and MCP tool bindings. */
   allowedProviderTools?: string[];
+  /** Authored tool schema loading mode. Request overrides cannot set this. */
+  toolLoading?: AgentConfig["toolLoading"];
+  /** Authored model-visible tool result context budget. Request overrides cannot set this. */
+  toolResultContext?: AgentConfig["toolResultContext"];
+  /** Authored framework knowledge selection. Request overrides cannot set this. */
+  knowledge?: AgentConfig["knowledge"];
   /**
    * Marks `allowedTools` as config-derived (no request-level override):
    * skill runtime infrastructure is preserved for empty selectors and skill

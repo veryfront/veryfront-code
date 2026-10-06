@@ -1,4 +1,5 @@
 import { AsyncLocalStorage } from "node:async_hooks";
+import type { AgentRunModelCallCaptureReceipt } from "#veryfront/runtime/model-call-capture-receipt.ts";
 
 /** Context for Veryfront Cloud. */
 export interface VeryfrontCloudContext {
@@ -23,6 +24,32 @@ export interface VeryfrontCloudContext {
 }
 
 const veryfrontCloudContextStorage = new AsyncLocalStorage<VeryfrontCloudContext>();
+const modelCallCaptureStorage = new AsyncLocalStorage<{
+  readonly receipt: Readonly<AgentRunModelCallCaptureReceipt> | undefined;
+  readonly assertActive: () => void;
+}>();
+
+/** Internal dispatch scope, independent of caller-set Cloud context and model options. */
+export function runWithVeryfrontCloudModelCallCapture<T>(
+  scope: { receipt: AgentRunModelCallCaptureReceipt | undefined; assertActive: () => void },
+  operation: () => T,
+): T {
+  scope.assertActive();
+  return modelCallCaptureStorage.run({
+    receipt: scope.receipt === undefined ? undefined : Object.freeze({ ...scope.receipt }),
+    assertActive: scope.assertActive,
+  }, operation);
+}
+
+/** Read only the capture scope installed by the acknowledged hosted dispatch permit. */
+export function getCurrentVeryfrontCloudModelCallCapture():
+  | Readonly<AgentRunModelCallCaptureReceipt>
+  | undefined {
+  const scope = modelCallCaptureStorage.getStore();
+  if (!scope) return undefined;
+  scope.assertActive();
+  return scope.receipt;
+}
 
 /** Context for run with Veryfront Cloud. */
 export function runWithVeryfrontCloudContext<T>(

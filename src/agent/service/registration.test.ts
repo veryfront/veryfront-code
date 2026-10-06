@@ -704,6 +704,8 @@ describe("agent/agent-service-registration heartbeat retry", () => {
   it("floors a short heartbeat attempt timeout at five seconds", async () => {
     using time = new FakeTime();
     let aborts = 0;
+    // A real in-flight fetch retains its signal until the request settles.
+    const activeSignals = new Set<AbortSignal>();
     const fetch: typeof globalThis.fetch = (input, init) => {
       if (!input.toString().endsWith("/heartbeat")) {
         return Promise.resolve(jsonResponse(serviceResponse));
@@ -711,8 +713,10 @@ describe("agent/agent-service-registration heartbeat retry", () => {
       const requestInit: RequestInit | undefined = init;
       const signal = requestInit?.signal;
       assert(signal, "heartbeat requests must carry an abort signal");
+      activeSignals.add(signal);
       return new Promise<Response>((_resolve, reject) => {
         signal.addEventListener("abort", () => {
+          activeSignals.delete(signal);
           aborts++;
           reject(signal.reason);
         }, { once: true });
@@ -726,8 +730,10 @@ describe("agent/agent-service-registration heartbeat retry", () => {
 
     await time.tickAsync(4_999);
     assertEquals(aborts, 0, "a short interval must not abort before the five-second floor");
+    assertEquals(activeSignals.size, 1, "the pending fetch must retain its abort signal");
     await time.tickAsync(1);
     assertEquals(aborts, 1, "the first attempt must abort at the five-second floor");
+    assertEquals(activeSignals.size, 0, "the timed-out fetch must release its abort signal");
 
     lifecycle.stop();
     await time.tickAsync(0);
@@ -737,6 +743,8 @@ describe("agent/agent-service-registration heartbeat retry", () => {
   it("keeps a configured heartbeat attempt timeout above five seconds", async () => {
     using time = new FakeTime();
     let aborts = 0;
+    // A real in-flight fetch retains its signal until the request settles.
+    const activeSignals = new Set<AbortSignal>();
     const fetch: typeof globalThis.fetch = (input, init) => {
       if (!input.toString().endsWith("/heartbeat")) {
         return Promise.resolve(jsonResponse(serviceResponse));
@@ -744,8 +752,10 @@ describe("agent/agent-service-registration heartbeat retry", () => {
       const requestInit: RequestInit | undefined = init;
       const signal = requestInit?.signal;
       assert(signal, "heartbeat requests must carry an abort signal");
+      activeSignals.add(signal);
       return new Promise<Response>((_resolve, reject) => {
         signal.addEventListener("abort", () => {
+          activeSignals.delete(signal);
           aborts++;
           reject(signal.reason);
         }, { once: true });
@@ -759,8 +769,10 @@ describe("agent/agent-service-registration heartbeat retry", () => {
 
     await time.tickAsync(29_999);
     assertEquals(aborts, 0, "a higher configured interval must remain the attempt timeout");
+    assertEquals(activeSignals.size, 1, "the pending fetch must retain its abort signal");
     await time.tickAsync(1);
     assertEquals(aborts, 1, "the first attempt must abort at the configured higher interval");
+    assertEquals(activeSignals.size, 0, "the timed-out fetch must release its abort signal");
 
     lifecycle.stop();
     await time.tickAsync(0);

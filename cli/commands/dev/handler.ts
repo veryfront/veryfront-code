@@ -17,7 +17,7 @@ import type { ParsedArgs } from "#cli/shared/types";
 
 const getDevArgsSchema = defineSchema((v) =>
   v.object({
-    port: v.number().default(DEFAULT_DEV_SERVER_PORT),
+    port: v.number().int().min(0).max(65535).default(DEFAULT_DEV_SERVER_PORT),
     project: v.string().optional(),
     hmr: v.boolean().default(true),
     noHmr: v.boolean().default(false),
@@ -35,7 +35,7 @@ const parseDevArgsBase = createArgParser(DevArgsSchema, {
   noHmr: { keys: ["no-hmr"], type: "boolean" },
   open: { keys: ["open"], type: "boolean" },
   debug: { keys: ["debug", "d"], type: "boolean" },
-});
+}, { rejectUnknown: true });
 
 /**
  * Parses dev command arguments, honouring `PORT` / `VERYFRONT_PORT` as

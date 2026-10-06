@@ -9,6 +9,7 @@ import {
 } from "#veryfront/provider/veryfront-cloud/shared.ts";
 import { chunk } from "../chunk.ts";
 import { embedding } from "../embedding.ts";
+import { validateRagDocumentSize } from "../rag-document-size.ts";
 import {
   activeDocumentPaths,
   buildChunkFilePaths,
@@ -203,6 +204,10 @@ function toStringValue(value: unknown, fallback = ""): string {
   return typeof value === "string" ? value : fallback;
 }
 
+function toOptionalSize(value: unknown): number | undefined {
+  return Number.isInteger(value) && Number(value) >= 0 ? Number(value) : undefined;
+}
+
 function toPublicRagDocumentMeta(document: CloudRagDocumentMeta): RagDocumentMeta {
   return {
     id: document.id,
@@ -210,6 +215,7 @@ function toPublicRagDocumentMeta(document: CloudRagDocumentMeta): RagDocumentMet
     source: document.source,
     type: document.type,
     createdAt: document.createdAt,
+    size: document.size,
     url: document.url,
   };
 }
@@ -400,6 +406,7 @@ async function listRagDocuments(
     source: doc.source,
     type: doc.type,
     createdAt: new Date(doc.created_at).getTime(),
+    size: toOptionalSize(doc.metadata?.size),
     filePath: typeof doc.metadata?.filePath === "string" ? doc.metadata.filePath : undefined,
     filePaths: readPartPaths(doc.metadata?.filePaths),
     cleanupFilePaths: readPartPaths(doc.metadata?.cleanupFilePaths),
@@ -540,8 +547,9 @@ async function ingestDocument(
   config: ResolvedCloudRagStoreConfig,
   title: string,
   text: string,
-  meta?: { source?: string; type?: string },
+  meta?: { source?: string; type?: string; size?: number },
 ): Promise<string> {
+  validateRagDocumentSize(meta?.size);
   const documentId = crypto.randomUUID();
   await writeDocumentContent(context, config, documentId, title, text, meta);
   return documentId;
@@ -587,6 +595,7 @@ async function refreshCloudDocument(
     {
       source: meta?.source ?? existing.source,
       type,
+      size: existing.size,
     },
     { filePath, previousFilePaths, inheritedCleanupPaths, expectedRevision },
   );
@@ -632,7 +641,7 @@ async function writeDocumentContent(
   documentId: string,
   title: string,
   text: string,
-  meta?: { source?: string; type?: string },
+  meta?: { source?: string; type?: string; size?: number },
   options?: {
     filePath?: string;
     previousFilePaths?: string[];
@@ -698,7 +707,10 @@ async function writeDocumentContent(
       title,
       source: meta?.source ?? "",
       type: meta?.type ?? "",
-      metadata: documentPartsMetadata(filePaths, pendingCleanupPaths),
+      metadata: {
+        ...documentPartsMetadata(filePaths, pendingCleanupPaths),
+        ...(meta?.size === undefined ? {} : { size: meta.size }),
+      },
       expectedRevision: options?.expectedRevision ?? null,
     });
   } catch (error) {
@@ -874,7 +886,7 @@ export function createVeryfrontCloudRagStore(config: ResolvedCloudRagStoreConfig
     async ingest(
       title: string,
       text: string,
-      meta?: { source?: string; type?: string },
+      meta?: { source?: string; type?: string; size?: number },
     ): Promise<string> {
       const context = getCloudStoreContext(config);
       return ingestDocument(context, config, title, text, meta);
