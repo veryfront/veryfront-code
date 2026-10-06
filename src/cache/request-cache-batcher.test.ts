@@ -106,6 +106,48 @@ describe("cache/request-cache-batcher", () => {
       }
     });
 
+    it("drains rejected detached reads after their request stops waiting", async () => {
+      const backendError = new Error("backend failed after request finished");
+      const backend: CacheBackend = {
+        type: "memory",
+        get() {
+          return Promise.reject(backendError);
+        },
+        set() {
+          return Promise.resolve();
+        },
+        del() {
+          return Promise.resolve();
+        },
+      };
+      const unhandled = Promise.withResolvers<unknown>();
+      const onUnhandled = (event: PromiseRejectionEvent) => {
+        event.preventDefault();
+        unhandled.resolve(event.reason);
+      };
+
+      globalThis.addEventListener("unhandledrejection", onUnhandled);
+      try {
+        let read: Promise<string | null> | undefined;
+        await runWithCacheBatching(async () => {
+          read = getCachedWithBatching(backend, "admitted");
+          await Promise.resolve();
+        });
+
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        const leaked = await Promise.race([
+          unhandled.promise,
+          Promise.resolve(undefined),
+        ]);
+        assertEquals(leaked, undefined);
+        assertExists(read);
+        const detachedRead = read;
+        await assertRejects(() => detachedRead, Error, "backend failed after request finished");
+      } finally {
+        globalThis.removeEventListener("unhandledrejection", onUnhandled);
+      }
+    });
+
     it("should execute the wrapped function and return its result", async () => {
       const result = await runWithCacheBatching(() => Promise.resolve(42));
       assertEquals(result, 42);
