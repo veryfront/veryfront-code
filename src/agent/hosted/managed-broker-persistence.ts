@@ -47,6 +47,7 @@ import {
 } from "#veryfront/runtime/tool-call-admission-dispatch.ts";
 import { defineSchema } from "#veryfront/schemas/index.ts";
 import { DurableRunEventPersistenceError } from "../conversation/private-run-event.ts";
+import { bindRuntimeObservationWriterScope } from "#veryfront/runtime/runtime-observation-carrier.ts";
 
 const getAdmissionScopeSchema = defineSchema((v) =>
   v.object({ projectId: v.string().uuid() }).strict()
@@ -269,6 +270,13 @@ export function createManagedBrokerPersistenceFromCapability(input: {
     });
   const modelRunEventSink: AgentRunEventSink = (event) =>
     queue(async () => await durableSink(event));
+  if (runtimeObservationScope) {
+    bindRuntimeObservationWriterScope(modelRunEventSink, {
+      runId: run.runId,
+      canonicalRunId: canonicalRunId!,
+      projectId: runtimeObservationScope.projectId,
+    });
+  }
   const output: ManagedBrokerOutput = {
     write(chunk) {
       if (finished) return Promise.reject(new TypeError("Managed broker output is finished"));

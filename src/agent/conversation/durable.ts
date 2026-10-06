@@ -29,6 +29,7 @@ import {
 } from "#veryfront/runtime/tool-call-admission-receipt.ts";
 import {
   type ConversationRunRuntimeObservation,
+  RUNTIME_OBSERVATION_MAX_EVENTS_PER_APPEND,
   toWireRuntimeObservation,
 } from "#veryfront/runtime/runtime-observation-carrier.ts";
 import {
@@ -417,7 +418,7 @@ function toWireRuntimeObservations(
   observations: ConversationRunRuntimeObservation[],
 ): { version: 1; observations: ReturnType<typeof toWireRuntimeObservation>[] } | undefined {
   if (observations.length === 0) return undefined;
-  if (observations.length > 100) {
+  if (observations.length > RUNTIME_OBSERVATION_MAX_EVENTS_PER_APPEND) {
     throw new DurableRunEventPersistenceError(
       "Runtime observation sidecar supports at most 100 observations",
     );
@@ -1099,7 +1100,9 @@ export async function flushConversationRunEventBatches(input: {
 > {
   const batches = buildConversationRunEventBatches({
     events: input.events,
-    maxEventsPerBatch: input.maxEventsPerBatch,
+    maxEventsPerBatch: input.runtimeObservations?.length
+      ? Math.min(input.maxEventsPerBatch, RUNTIME_OBSERVATION_MAX_EVENTS_PER_APPEND)
+      : input.maxEventsPerBatch,
     maxBatchPayloadBytes: input.maxBatchPayloadBytes,
   });
 

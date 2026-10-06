@@ -2,8 +2,46 @@ import { createPrivateWeakStore } from "#veryfront/security/private-weak-store.t
 import { defineSchema } from "#veryfront/schemas/index.ts";
 import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
 import type { ChatUiMessageChunk } from "#veryfront/chat/protocol.ts";
+import type { AgentRunEventSink } from "./model-call-context.ts";
 
 const freezeRuntimeObservationCapability = Object.freeze;
+export const RUNTIME_OBSERVATION_MAX_EVENTS_PER_APPEND = 100;
+
+const getRuntimeObservationWriterScopeSchema = defineSchema((v) => {
+  const uuid = v.string().uuid().transform((value) => value.toLowerCase());
+  return v.object({
+    runId: v.string().min(1),
+    canonicalRunId: uuid,
+    projectId: uuid,
+  }).strict();
+});
+
+type RuntimeObservationWriterScope = InferSchema<
+  ReturnType<typeof getRuntimeObservationWriterScopeSchema>
+>;
+
+const runtimeObservationWriterScopes = createPrivateWeakStore<
+  AgentRunEventSink,
+  Readonly<RuntimeObservationWriterScope>
+>();
+
+/** @internal Bind the real canonical persistence sink to the host's validated opt-in. */
+export function bindRuntimeObservationWriterScope(
+  sink: AgentRunEventSink,
+  scope: RuntimeObservationWriterScope,
+): void {
+  runtimeObservationWriterScopes.set(
+    sink,
+    freezeRuntimeObservationCapability(getRuntimeObservationWriterScopeSchema().parse(scope)),
+  );
+}
+
+/** @internal Public callback fields cannot supply runtime-observation writer authority. */
+export function getRuntimeObservationWriterScope(
+  sink: AgentRunEventSink | undefined,
+): Readonly<RuntimeObservationWriterScope> | undefined {
+  return sink === undefined ? undefined : runtimeObservationWriterScopes.get(sink);
+}
 
 export const getPrivateRuntimeObservationSchema = defineSchema((v) => {
   const uuid = v.string().uuid().transform((value) => value.toLowerCase());
@@ -38,7 +76,7 @@ export type PrivateRuntimeObservation = InferSchema<
 
 export const getRuntimeObservationWireEntrySchema = defineSchema((v) => {
   const uuid = v.string().uuid().transform((value) => value.toLowerCase());
-  const eventIndex = v.number().int().min(0).max(99);
+  const eventIndex = v.number().int().min(0).max(RUNTIME_OBSERVATION_MAX_EVENTS_PER_APPEND - 1);
   return v.discriminatedUnion("kind", [
     v.object({
       kind: v.literal("execution_entry"),

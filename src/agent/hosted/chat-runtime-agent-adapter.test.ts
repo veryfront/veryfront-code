@@ -8,6 +8,7 @@ import {
   type HostedChatRuntimeAgentAdapterInput,
 } from "./chat-runtime-agent-adapter.ts";
 import { createAgUiChatUiTrackedResponse } from "../ag-ui/chat-ui-chunk-encoder.ts";
+import { getRuntimeObservation } from "#veryfront/runtime/runtime-observation-carrier.ts";
 
 const encoder = new TextEncoder();
 const unrestrictedSourceIntegrationPolicy = {
@@ -51,6 +52,45 @@ function publishDataEventFrom(
 }
 
 describe("createHostedChatRuntimeAgentAdapter", () => {
+  it("retains private runtime observations only for the trusted stream opt-in", async () => {
+    const observation = {
+      version: 1,
+      kind: "step_started",
+      stepId: "11111111-1111-4111-8111-111111111111",
+    } as const;
+    for (const enabled of [true, false]) {
+      let context: Record<string, unknown> | undefined;
+      const adapter = createHostedChatRuntimeAgentAdapter({
+        sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
+        runtimeAgent: {
+          stream(input) {
+            context = input.context;
+            return Promise.resolve({
+              toDataStreamResponse: () =>
+                createSseResponse([
+                  { type: "step-start", privateRuntimeObservation: observation },
+                  { type: "message-finish" },
+                ]),
+            });
+          },
+        },
+      });
+      const result = await adapter.stream({
+        messages: [],
+        abortSignal: new AbortController().signal,
+        ...(enabled ? { runtimeObservations: true } : {}),
+      });
+      const chunks = await collectChunks(result.toUIMessageStream());
+      assertEquals(context?.runtimeObservations, enabled ? true : undefined);
+      assertEquals(
+        chunks.map(getRuntimeObservation).filter((value) => value !== undefined),
+        enabled ? [observation] : [],
+      );
+      assertEquals(JSON.stringify(chunks).includes("privateRuntimeObservation"), false);
+      assertEquals(JSON.stringify(chunks).includes(observation.stepId), false);
+    }
+  });
+
   it("keeps the source policy active through lazy stream construction and consumption", async () => {
     const observedPolicies: Array<ReturnType<typeof getActiveSourceIntegrationPolicy>> = [];
     const runtimeAgent: HostedChatRuntimeAgentAdapterInput["runtimeAgent"] = {

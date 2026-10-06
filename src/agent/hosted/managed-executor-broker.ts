@@ -30,6 +30,7 @@ import {
   getExecutorProjectToolInstallSchema,
 } from "#veryfront/agent/hosted/executor-runtime-install-schema.ts";
 import type { AgentRunEventSink } from "#veryfront/runtime/model-call-context.ts";
+import { getRuntimeObservationWriterScope } from "#veryfront/runtime/runtime-observation-carrier.ts";
 import type { RuntimeAgentMarkdownDefinition } from "../runtime/agent-definition.ts";
 import type { AgentModelRuntimeResolver } from "../runtime/model-transport.ts";
 import {
@@ -216,6 +217,19 @@ export function createManagedExecutorBroker(
       ? undefined
       : snapshotTrustedRuntime(input.trustedRuntime, installation, operationInput);
     const bindSessionOwnedWork = input.bindSessionOwnedWork;
+    const runtimeObservationWriter = getRuntimeObservationWriterScope(
+      operationInput.model.runEventSink,
+    );
+    if (runtimeObservationWriter) {
+      const execution = installation.grant.execution;
+      if (
+        execution.kind !== "canonical" ||
+        runtimeObservationWriter.runId !== execution.runId ||
+        runtimeObservationWriter.projectId !== execution.projectId?.toLowerCase()
+      ) {
+        throw new TypeError("Runtime observation writer does not match its execution grant");
+      }
+    }
     if (
       operationInput.tools.admitToolCall &&
       (installation.grant.execution.kind !== "canonical" ||
@@ -410,6 +424,7 @@ export function createManagedExecutorBroker(
         channel: executionChannel,
         preparedRuntimeHandle: prepared.value.preparedRuntimeHandle,
         ...(operationInput.tools.admitToolCall ? { toolCallAdmissions: true } : {}),
+        ...(runtimeObservationWriter ? { runtimeObservations: true } : {}),
       });
       const agent: HostedChatRuntimeAgent = {
         async stream(streamInput) {

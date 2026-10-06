@@ -71,6 +71,7 @@ export function createHostedChatRuntimeAgentAdapter(
               onError: options.onError,
               messageMetadata: options.messageMetadata,
               onFinish: options.onFinish,
+              privateRuntimeObservations: streamInput.runtimeObservations === true,
               onOrphanedToolInput: ({ toolCallId, inputText }) => {
                 input.warnOrphanedToolInput?.(
                   "Dropping orphan AG-UI runtime tool-input-delta stream without a matching lifecycle",

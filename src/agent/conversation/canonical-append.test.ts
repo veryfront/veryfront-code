@@ -4,6 +4,7 @@ import { it } from "#veryfront/testing/bdd.ts";
 import {
   appendConversationRunEvents,
   createConversationRunEventQueueController,
+  flushConversationRunEventBatches,
   flushConversationRunEventQueue,
 } from "./durable.ts";
 import { prepareConversationRunExternalEvents } from "./run-event-preparation.ts";
@@ -22,6 +23,68 @@ const runtimeMessageSpanId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const toolCallId = "toolu_exact_raw";
 const admissionEventId = "9007199254740994";
 const startEventId = "9007199254740995";
+
+for (const density of ["dense", "sparse", "unobserved"] as const) {
+  it(`bounds ${density} runtime observation batches while retaining exact indexes`, async () => {
+    const events = Array.from({ length: 125 }, (_, index) => ({
+      type: "TEXT_MESSAGE_CONTENT",
+      messageId: "message",
+      delta: String(index),
+    }));
+    const observations = events.flatMap((_event, eventIndex) =>
+      density === "unobserved" || (density === "sparse" && eventIndex !== 124) ? [] : [{
+        observation: {
+          version: 1 as const,
+          kind: "step_message" as const,
+          stepId: runtimeStepId,
+          messageSpanId: runtimeMessageSpanId,
+        },
+        eventIndex,
+      }]
+    );
+    const batches: number[] = [];
+    const observedDeltas: string[] = [];
+    let cursor = 0;
+    const result = await flushConversationRunEventBatches({
+      authToken: "writer",
+      apiUrl: "https://api.example.test",
+      runId: "runtime-run-id",
+      canonicalRunId,
+      conversationId,
+      events,
+      runtimeObservations: observations,
+      latestEventId: 0,
+      latestExternalEventSequence: 0,
+      maxEventsPerBatch: 125,
+      maxCursorResyncsPerFlush: 2,
+      fetch: async (_input, init) => {
+        const body = await new Request(_input, init).json();
+        batches.push(body.events.length);
+        for (const entry of body.runtime_observations?.observations ?? []) {
+          assertEquals(entry.event_index < 100, true);
+          observedDeltas.push(body.events[entry.event_index].delta);
+        }
+        cursor += body.events.length;
+        return Response.json({
+          run_id: canonicalRunId,
+          latest_event_id: cursor,
+          latest_external_event_sequence: cursor,
+          appended_count: body.events.length,
+        });
+      },
+    });
+    assertEquals(result.outcome, "flushed");
+    assertEquals(batches, density === "unobserved" ? [125] : [100, 25]);
+    assertEquals(
+      observedDeltas,
+      density === "dense"
+        ? events.map((event) => event.delta)
+        : density === "sparse"
+        ? ["124"]
+        : [],
+    );
+  });
+}
 
 function modelCallCaptureEvent(id = modelCallId) {
   return {
