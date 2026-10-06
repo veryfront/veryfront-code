@@ -14,16 +14,16 @@ function deepFreeze<T>(value: T): T {
 const PARSER_ENVELOPE_SCHEMA = deepFreeze(structuredClone(envelopeSchema)) as JsonSchema;
 const PARSER_PAYLOAD_SCHEMAS = deepFreeze(structuredClone(payloadSchemas)) as JsonSchema;
 
-export const AGENT_EVENT_TARGET_CATALOG = deepFreeze(structuredClone(catalog));
-export const AGENT_EVENT_TARGET_ENVELOPE_SCHEMA = deepFreeze(
+export const EVENT_TARGET_CATALOG = deepFreeze(structuredClone(catalog));
+export const EVENT_TARGET_ENVELOPE_SCHEMA = deepFreeze(
   structuredClone(envelopeSchema),
 ) as JsonSchema;
-export const AGENT_EVENT_TARGET_PAYLOAD_SCHEMAS = deepFreeze(
+export const EVENT_TARGET_PAYLOAD_SCHEMAS = deepFreeze(
   structuredClone(payloadSchemas),
 ) as JsonSchema;
-export const AGENT_EVENT_TARGET_PAYLOAD_EXAMPLES = deepFreeze(structuredClone(payloadExamples));
+export const EVENT_TARGET_PAYLOAD_EXAMPLES = deepFreeze(structuredClone(payloadExamples));
 
-export function cloneAgentEventTargetParserSchemas(): {
+export function cloneEventTargetParserSchemas(): {
   envelopeSchema: JsonSchema;
   payloadSchemas: JsonSchema;
 } {

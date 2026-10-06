@@ -15,26 +15,26 @@ You need an existing Veryfront project with `veryfront` installed. Browser and S
 Use validator injection for browser code and shared SDK code. It avoids global validator registration for that parser instance. The entrypoint also exports registry helpers for server processes that want module-level parsing.
 
 ```ts
-import { createAgentEventParser } from "veryfront/events";
+import { createEventParser } from "veryfront/events";
 import { createZodAdapter } from "@veryfront/ext-schema-zod";
 
-const events = createAgentEventParser(createZodAdapter());
+const events = createEventParser(createZodAdapter());
 
 export function parseEvent(rawEvent: unknown) {
-  return events.parseAgentEvent(rawEvent);
+  return events.parseEvent(rawEvent);
 }
 ```
 
 If your server process wants module-level helpers, register the validator once at startup:
 
 ```ts
-import { parseAgentEvent, registerAgentEventSchemaValidator } from "veryfront/events";
+import { parseEvent as parseEventRecord, registerEventSchemaValidator } from "veryfront/events";
 import { createZodAdapter } from "@veryfront/ext-schema-zod";
 
-registerAgentEventSchemaValidator(createZodAdapter());
+registerEventSchemaValidator(createZodAdapter());
 
 export function parseEvent(rawEvent: unknown) {
-  return parseAgentEvent(rawEvent);
+  return parseEventRecord(rawEvent);
 }
 ```
 
@@ -44,12 +44,12 @@ The project-agent encoder emits reasoning segment events with `messageId` set to
 
 ## Read typed payloads
 
-`AgentEvent` narrows by `type`, so `data` has the fields for the selected event.
+`EventRecord` narrows by `type`, so `data` has the fields for the selected event.
 
 ```ts
-import type { AgentEvent } from "veryfront/events";
+import type { EventRecord } from "veryfront/events";
 
-export function textFromEvent(event: AgentEvent): string | undefined {
+export function textFromEvent(event: EventRecord): string | undefined {
   switch (event.type) {
     case "com.veryfront.message.text.delta.emitted":
       return event.data.contentRedacted === true ? undefined : event.data.delta;
@@ -98,13 +98,13 @@ This bridge requires matching worker-generation API support. Projectless admissi
 Parse each outgoing event with the shared validator before publishing it:
 
 ```ts
-import { createAgentEventParser } from "veryfront/events";
+import { createEventParser } from "veryfront/events";
 import { createZodAdapter } from "@veryfront/ext-schema-zod";
 
-const events = createAgentEventParser(createZodAdapter());
+const events = createEventParser(createZodAdapter());
 
 export function validateOutgoingEvent(outgoingEvent: unknown) {
-  const result = events.safeParseAgentEvent(outgoingEvent);
+  const result = events.safeParseEvent(outgoingEvent);
   if (!result.success) {
     throw new TypeError(result.issues[0]?.message ?? "Invalid Agent Events Protocol event");
   }
@@ -112,7 +112,7 @@ export function validateOutgoingEvent(outgoingEvent: unknown) {
 }
 ```
 
-Use `AGENT_EVENT_TYPES` and `AGENT_EVENT_SCHEMA_BY_TYPE` when a producer needs to inspect the protocol surface instead of hard-coding protocol strings.
+Use `EVENT_TYPES` and `EVENT_SCHEMA_BY_TYPE` when a producer needs to inspect the protocol surface instead of hard-coding protocol strings.
 
 ## Verify it worked
 

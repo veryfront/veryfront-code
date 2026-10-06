@@ -21,8 +21,8 @@ function refName(ref) {
     ? ref.slice(absolutePrefix.length)
     : undefined;
   if (!name) throw new Error(`Unsupported ref ${ref}`);
-  if (name === "JsonValue") return "AgentEventJsonValue";
-  if (name === "JsonObject") return "AgentEventJsonObject";
+  if (name === "JsonValue") return "EventJsonValue";
+  if (name === "JsonObject") return "EventJsonObject";
   return name;
 }
 
@@ -54,7 +54,7 @@ function propertyType(schema) {
   if (schema.type === "object" || schema.properties || schema.additionalProperties) {
     return objectType(schema);
   }
-  return "AgentEventJsonValue";
+  return "EventJsonValue";
 }
 
 function parenthesize(value) {
@@ -64,7 +64,7 @@ function parenthesize(value) {
 function resolveRef(schema) {
   if (!schema.$ref) return schema;
   const name = refName(schema.$ref);
-  if (name === "AgentEventJsonValue" || name === "AgentEventJsonObject") return undefined;
+  if (name === "EventJsonValue" || name === "EventJsonObject") return undefined;
   return DEFINITIONS[name];
 }
 
@@ -91,7 +91,7 @@ function oneOfType(branches) {
 }
 
 function objectType(schema) {
-  if (schema === DEFINITIONS.JsonObject) return "AgentEventJsonObject";
+  if (schema === DEFINITIONS.JsonObject) return "EventJsonObject";
   if (schema === DEFINITIONS.Extensions) return "Extensions";
   const properties = schema.properties ?? {};
   const required = new Set(schema.required ?? []);
@@ -111,7 +111,7 @@ function objectType(schema) {
     schema.additionalProperties === false &&
     Object.keys(properties).length > 0
   ) {
-    return `AgentEventAtLeastOne<${shape}>`;
+    return `EventAtLeastOne<${shape}>`;
   }
   return shape;
 }
@@ -187,22 +187,22 @@ function inputRequestUpdatedType(schema) {
 function definitionType(name, schema) {
   if (name === "JsonValue") {
     return [
-      "export type AgentEventJsonValue =",
+      "export type EventJsonValue =",
       "  | null",
       "  | boolean",
       "  | number",
       "  | string",
-      "  | readonly AgentEventJsonValue[]",
-      "  | AgentEventJsonObject;",
+      "  | readonly EventJsonValue[]",
+      "  | EventJsonObject;",
     ].join("\n");
   }
   if (name === "JsonObject") {
-    return "export type AgentEventJsonObject = { readonly [key: string]: AgentEventJsonValue };";
+    return "export type EventJsonObject = { readonly [key: string]: EventJsonValue };";
   }
   if (name === "Extensions") {
     return [
       ...tsDoc(schema),
-      "export type Extensions = { readonly [namespace: string]: AgentEventJsonObject };",
+      "export type Extensions = { readonly [namespace: string]: EventJsonObject };",
     ].join("\n");
   }
   if (name === "InputRequestCreated") return inputRequestCreatedType(schema);
@@ -243,25 +243,25 @@ const output = [
   " * Regenerate with: deno run -A src/events/generate-payload-types.mjs",
   " */",
   "",
-  "type AgentEventAtLeastOne<T extends object> = {",
+  "type EventAtLeastOne<T extends object> = {",
   "  readonly [K in keyof T]-?: T & { readonly [P in K]-?: T[P] };",
   "}[keyof T];",
   "",
   names.map((name) => definitionType(name, DEFINITIONS[name])).join("\n\n"),
   "",
-  envelopeRequiredByTypeInterface("AgentEventEnvelopeRequiredByType", "x-envelope-required"),
+  envelopeRequiredByTypeInterface("EventEnvelopeRequiredByType", "x-envelope-required"),
   "",
   envelopeRequiredByTypeInterface(
-    "AgentEventAttemptScopeEnvelopeRequiredByType",
+    "EventAttemptScopeEnvelopeRequiredByType",
     "x-attempt-scope-envelope-required",
   ),
   "",
-  "export interface AgentEventPayloadByType {",
+  "export interface EventPayloadByType {",
   ...roots.map(([name, schema]) => `  readonly ${literal(schema["x-event-type"])}: ${name};`),
   "}",
   "",
-  "export type AgentEventPayload<TType extends keyof AgentEventPayloadByType> =",
-  "  AgentEventPayloadByType[TType];",
+  "export type EventPayload<TType extends keyof EventPayloadByType> =",
+  "  EventPayloadByType[TType];",
   "",
 ].join("\n");
 

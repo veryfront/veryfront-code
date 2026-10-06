@@ -7,13 +7,13 @@
  *
  * @example Validate one event with an injected JSON Schema validator.
  * ```ts
- * import { createAgentEventParser } from "veryfront/events";
+ * import { createEventParser } from "veryfront/events";
  * import { createZodAdapter } from "@veryfront/ext-schema-zod";
  *
- * const parser = createAgentEventParser(createZodAdapter());
+ * const parser = createEventParser(createZodAdapter());
  *
  * export function parseEvent(rawEvent: unknown) {
- *   const event = parser.parseAgentEvent(rawEvent);
+ *   const event = parser.parseEvent(rawEvent);
  *   console.log(event.type, event.data);
  *   return event;
  * }
@@ -23,21 +23,21 @@
  */
 
 export {
-  AGENT_EVENT_TARGET_CATALOG,
-  AGENT_EVENT_TARGET_ENVELOPE_SCHEMA,
-  AGENT_EVENT_TARGET_PAYLOAD_EXAMPLES,
-  AGENT_EVENT_TARGET_PAYLOAD_SCHEMAS,
+  EVENT_TARGET_CATALOG,
+  EVENT_TARGET_ENVELOPE_SCHEMA,
+  EVENT_TARGET_PAYLOAD_EXAMPLES,
+  EVENT_TARGET_PAYLOAD_SCHEMAS,
 } from "./contracts.ts";
-export { createAgentEventParser, parseAgentEvent, safeParseAgentEvent } from "./parser.ts";
-export type { AgentEventParser } from "./parser.ts";
+export { createEventParser, parseEvent, safeParseEvent } from "./parser.ts";
+export type { EventParser } from "./parser.ts";
 export type {
-  AgentEventJsonObject,
-  AgentEventJsonValue,
-  AgentEventPayload,
-  AgentEventPayloadByType,
   ChildRun,
   ChildRunReported,
   ErrorInfo,
+  EventJsonObject,
+  EventJsonValue,
+  EventPayload,
+  EventPayloadByType,
   Extensions,
   InputField,
   InputRequestChanges,
@@ -83,25 +83,25 @@ export type {
   ToolCallStatusReported,
 } from "./payload-types.generated.ts";
 export {
-  AGENT_EVENT_SCHEMA_VALIDATOR_CONTRACT,
-  AGENT_EVENT_SCHEMA_VALIDATOR_PACKAGE,
-  assertAgentEventSchemaValidator,
-  registerAgentEventSchemaValidator,
-  tryResolveAgentEventSchemaValidator,
-  unregisterAgentEventSchemaValidator,
+  assertEventSchemaValidator,
+  EVENT_SCHEMA_VALIDATOR_CONTRACT,
+  EVENT_SCHEMA_VALIDATOR_PACKAGE,
+  registerEventSchemaValidator,
+  tryResolveEventSchemaValidator,
+  unregisterEventSchemaValidator,
 } from "./schema-validator.ts";
 export {
-  AGENT_EVENT_SCHEMA_BY_TYPE,
-  AGENT_EVENT_TYPES,
-  type AgentEvent,
-  type AgentEventDataschema,
-  type AgentEventEnvelope,
-  type AgentEventExtensionAttributes,
-  type AgentEventParseIssue,
-  type AgentEventParseResult,
-  type AgentEventType,
-  type AgentEventWithExtensions,
   type CloudEventsExtensionAttribute,
+  EVENT_SCHEMA_BY_TYPE,
+  EVENT_TYPES,
+  type EventDataschema,
+  type EventEnvelope,
+  type EventExtensionAttributes,
+  type EventParseIssue,
+  type EventParseResult,
+  type EventRecord,
+  type EventType,
+  type EventWithExtensions,
   type JsonObject,
   type JsonValue,
 } from "./types.ts";
