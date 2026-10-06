@@ -647,6 +647,14 @@ function getReasoningPartId(
   payload: { id?: string; messageId?: string; contentId?: string },
   phase: "start" | "content" | "end",
 ): string {
+  if (phase !== "start" && state.activeFallbackReasoningPartId) {
+    const fallbackId = state.activeFallbackReasoningPartId;
+    if (phase === "end") {
+      state.activeFallbackReasoningPartId = null;
+    }
+    return fallbackId;
+  }
+
   if (typeof payload.id === "string" && payload.id.length > 0) {
     return payload.id;
   }

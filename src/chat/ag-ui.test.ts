@@ -473,6 +473,49 @@ describe("chat/ag-ui", () => {
     assertEquals(state.activeFallbackReasoningPartId, null);
   });
 
+  it("keeps fallback reasoning ids stable when later frames add content ids", async () => {
+    const state = createAgUiChatEventDecoderState();
+    const mixed = decodeAgUiSseChunk(
+      state,
+      [
+        "event: ReasoningMessageStart",
+        'data: {"role":"reasoning"}',
+        "",
+        "event: ReasoningMessageContent",
+        'data: {"contentId":"segment-a","delta":"First"}',
+        "",
+        "event: ReasoningMessageEnd",
+        'data: {"contentId":"segment-a"}',
+        "",
+        "event: ReasoningMessageStart",
+        'data: {"role":"reasoning"}',
+        "",
+        "event: ReasoningMessageContent",
+        'data: {"id":"segment-b","delta":"Second"}',
+        "",
+        "event: ReasoningMessageEnd",
+        'data: {"id":"segment-b"}',
+
+        "",
+        "",
+      ].join("\n"),
+    );
+
+    const chatEvents = mixed.events.flatMap((entry) => entry.chatEvents);
+    const expected: ChatStreamEvent[] = [
+      { type: "reasoning-start", id: "agui-reasoning:1" },
+      { type: "reasoning-delta", id: "agui-reasoning:1", delta: "First" },
+      { type: "reasoning-end", id: "agui-reasoning:1" },
+      { type: "reasoning-start", id: "agui-reasoning:2" },
+      { type: "reasoning-delta", id: "agui-reasoning:2", delta: "Second" },
+      { type: "reasoning-end", id: "agui-reasoning:2" },
+    ];
+
+    assertEquals(chatEvents, expected);
+    assertEquals(await collect(dedupeChatUiMessageChunks(toStream(chatEvents))), expected);
+    assertEquals(state.activeFallbackReasoningPartId, null);
+  });
+
   it("keeps reasoning content ids distinct within the same message", () => {
     const state = createAgUiChatEventDecoderState();
     const result = decodeAgUiSseChunk(
