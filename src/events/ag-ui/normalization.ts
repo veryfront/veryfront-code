@@ -353,7 +353,10 @@ function resolveLane(
     return { success: true, lane };
   }
 
-  const candidates = matchingPendingStreams(state, kind, lane);
+  const inLane = matchingPendingStreams(state, kind, lane);
+  const candidates = lane === undefined && inLane.length === 0
+    ? state.pendingStreams.filter((pending) => pending.kind === kind)
+    : inLane;
   const onlyCandidate = candidates[0];
   if (candidates.length === 1 && onlyCandidate) {
     return { success: true, lane: onlyCandidate.lane };
@@ -363,7 +366,7 @@ function resolveLane(
     command: missingRequirement(
       producerOccurrence,
       "unambiguous-shorthand-context",
-      `${chunkType} without an entity id needs exactly one open ${kind} stream in the invocation lane before it can expand durably.`,
+      `${chunkType} without an entity id needs one open ${kind} stream in its lane, or one unambiguous stream when attribution is absent.`,
     ),
   };
 }

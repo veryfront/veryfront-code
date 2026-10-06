@@ -187,6 +187,93 @@ function canonicalRecordFor(
 }
 
 describe("events/ag-ui/normalization native profile integration", () => {
+  for (
+    const event of [
+      { type: "TEXT_MESSAGE_CHUNK", messageId: "child", delta: "text" },
+      { type: "REASONING_MESSAGE_CHUNK", messageId: "child", delta: "reasoning" },
+      { type: "TOOL_CALL_CHUNK", toolCallId: "child", toolCallName: "read_file", delta: "{}" },
+    ] satisfies Parameters<typeof acceptAgUiEvent>[0]["event"][]
+  ) {
+    it(`preserves ${event.type} ownership when a sole child omits context`, () => {
+      const child = acceptAgUiEvent({
+        event: { ...event, subagentRunId: "a" },
+        producerOccurrence: { source: "test", id: "child-open" },
+      });
+      const omitted = acceptAgUiEvent({
+        event: { type: event.type, delta: "continued" },
+        producerOccurrence: { source: "test", id: "child-continued" },
+        normalizationState: child.normalizationState,
+      });
+      assertEquals(missingCommands(omitted.commands), []);
+      assertEquals(expandedCommands(omitted.commands).length, 1);
+      assertEquals(expandedCommands(omitted.commands)[0]?.event.subagentRunId, "a");
+      assertEquals(
+        omitted.normalizationState.pendingStreams,
+        child.normalizationState.pendingStreams,
+      );
+
+      const repeatedId = acceptAgUiEvent({
+        event,
+        producerOccurrence: { source: "test", id: "child-repeated-id" },
+        normalizationState: child.normalizationState,
+      });
+      assertEquals(missingCommands(repeatedId.commands), []);
+      assertEquals(expandedCommands(repeatedId.commands)[0]?.event.subagentRunId, "a");
+
+      const conflicting = acceptAgUiEvent({
+        event: { ...event, subagentRunId: "b" },
+        producerOccurrence: { source: "test", id: "wrong-owner" },
+        normalizationState: child.normalizationState,
+      });
+      assertEquals(
+        missingCommands(conflicting.commands)[0]?.requirement,
+        "conflicting-shorthand-context",
+      );
+      assertEquals(expandedCommands(conflicting.commands), []);
+
+      const sibling = acceptAgUiEvent({
+        event: {
+          ...event,
+          ...("toolCallId" in event ? { toolCallId: "sibling" } : { messageId: "sibling" }),
+          subagentRunId: "b",
+        },
+        producerOccurrence: { source: "test", id: "sibling-open" },
+        normalizationState: child.normalizationState,
+      });
+      const ambiguous = acceptAgUiEvent({
+        event: { type: event.type, delta: "ambiguous" },
+        producerOccurrence: { source: "test", id: "ambiguous" },
+        normalizationState: sibling.normalizationState,
+      });
+      assertEquals(
+        missingCommands(ambiguous.commands)[0]?.requirement,
+        "unambiguous-shorthand-context",
+      );
+      assertEquals(expandedCommands(ambiguous.commands), []);
+
+      const parent = acceptAgUiEvent({
+        event: {
+          ...event,
+          ...("toolCallId" in event ? { toolCallId: "parent" } : { messageId: "parent" }),
+        },
+        producerOccurrence: { source: "test", id: "parent-open" },
+        normalizationState: sibling.normalizationState,
+      });
+      const parentContinued = acceptAgUiEvent({
+        event: { type: event.type, delta: "parent continued" },
+        producerOccurrence: { source: "test", id: "parent-continued" },
+        normalizationState: parent.normalizationState,
+      });
+      assertEquals(missingCommands(parentContinued.commands), []);
+      assertEquals(expandedCommands(parentContinued.commands).length, 1);
+      assertEquals(expandedCommands(parentContinued.commands)[0]?.event.subagentRunId, undefined);
+      assertEquals(
+        parentContinued.normalizationState.pendingStreams,
+        parent.normalizationState.pendingStreams,
+      );
+    });
+  }
+
   it("keeps parent and sibling shorthand streams open at child run boundaries", () => {
     const boundaries = [
       { type: "RUN_STARTED", threadId: "thread-1", runId: "child", subagentRunId: "child" },
