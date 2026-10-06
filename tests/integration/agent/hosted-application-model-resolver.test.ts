@@ -393,6 +393,7 @@ describe("hosted ordinary application model resolver", () => {
         for (const failWrite of [false, true]) {
           const operations = createHostedExecutorModelBroker({
             projectId: "11111111-1111-4111-8111-111111111111",
+            modelCallCaptureReceipts: true,
             grant: {
               maxCalls: 1,
               maxConcurrentCalls: 1,
@@ -524,6 +525,7 @@ describe("hosted ordinary application model resolver", () => {
       transport: { readable: forward.readable, writable: backward.writable },
       operations: createHostedExecutorModelBroker({
         projectId,
+        modelCallCaptureReceipts: true,
         grant: {
           maxCalls: 2,
           maxConcurrentCalls: 2,

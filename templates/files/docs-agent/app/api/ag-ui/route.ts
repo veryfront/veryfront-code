@@ -8,7 +8,24 @@ export const POST = createAgUiHandler("rag", {
 
     try {
       const results = await store.search(query, { topK: 5 });
-      if (results.length === 0) return;
+      if (results.length === 0) {
+        return {
+          prepend: [
+            {
+              role: "system",
+              trusted: true,
+              parts: [
+                {
+                  type: "text",
+                  text:
+                    "No relevant uploaded documents were found for this question. " +
+                    "Say that the uploaded documents do not contain enough information to answer, and do not cite a document title.",
+                },
+              ],
+            },
+          ],
+        };
+      }
 
       const contextBlock = results
         .map(
@@ -36,7 +53,7 @@ export const POST = createAgUiHandler("rag", {
       };
     } catch (e) {
       console.error("[RAG] Retrieval failed:", e);
-      return;
+      throw new Error("Document retrieval failed. Please try again after checking uploads.");
     }
   },
 });

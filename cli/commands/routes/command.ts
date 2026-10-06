@@ -4,6 +4,7 @@ import { getConfig } from "veryfront/config";
 import { cliLogger } from "#cli/utils";
 import { ApiRouteMatcher, discoverAppRoutes, discoverPagesRoutes } from "veryfront/routing";
 import { RouteDiscovery } from "veryfront/server";
+import { createSuccessEnvelope, outputJson } from "../../shared/json-output.ts";
 
 export interface RoutesOptions {
   projectDir: string;
@@ -60,7 +61,7 @@ export async function routesCommand(
     .sort((a, b) => a.pattern.localeCompare(b.pattern));
 
   if (options.json) {
-    console.log(JSON.stringify({ pages, apis }, null, 2));
+    await outputJson(createSuccessEnvelope("routes", { pages, apis }));
     return;
   }
 
