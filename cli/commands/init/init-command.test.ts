@@ -205,6 +205,32 @@ describe("InitCommand Types", () => {
         "Project name must use lowercase letters, numbers, dots, and hyphens",
       );
     });
+
+    it("rejects invalid project names returned by the interactive wizard", async () => {
+      await assertRejects(
+        () =>
+          initCommand(
+            {
+              skipInstall: true,
+              skipEnvPrompt: true,
+              quiet: true,
+            },
+            {
+              shouldRunWizard: () => true,
+              runWizard: async () => ({
+                projectName: "Bad_Name",
+                template: "minimal",
+                runtime: "node",
+                initGit: false,
+                skipped: false,
+                cancelled: false,
+              }),
+            },
+          ),
+        Error,
+        "Project name must use lowercase letters, numbers, dots, and hyphens",
+      );
+    });
   });
 
   describe("Default behaviors", () => {

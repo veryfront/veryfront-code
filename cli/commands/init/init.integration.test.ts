@@ -216,8 +216,6 @@ describe("init command integration", () => {
     it("prints only a JSON success envelope for --json --yes", async () => {
       const name = `json-success-${randomSuffix()}`;
       const dir = join(TEST_DIR, name);
-      const expectedDir = await Deno.realPath(TEST_DIR).then((root) => join(root, name));
-
       try {
         const result = await runInitCommand([
           name,
@@ -245,7 +243,8 @@ describe("init command integration", () => {
         assertEquals(data.success, true);
         assertEquals(data.command, "init");
         assertEquals(data.data.cancelled, false);
-        assertEquals(data.data.projectDir, expectedDir);
+        assertEquals(data.data.projectDir, name);
+        assertEquals(stdout.includes(TEST_DIR), false);
         assertEquals(data.data.projectName, name);
         assertEquals(data.data.template, "ai-agent");
         assertEquals(data.data.runtime, "node");
@@ -292,6 +291,7 @@ describe("init command integration", () => {
             message: string;
             context?: {
               localProject?: {
+                projectDir: string;
                 projectName: string;
                 deployment: { status: string; message: string };
               };
@@ -308,7 +308,9 @@ describe("init command integration", () => {
         assertEquals(parsed.error.code, "DEPLOYMENT_FAILED");
         assertEquals(parsed.error.slug, "deployment-failed");
         assertEquals(parsed.error.message, "Authentication required for --deploy.");
+        assertEquals(parsed.error.context?.localProject?.projectDir, name);
         assertEquals(parsed.error.context?.localProject?.projectName, name);
+        assertEquals(stdout.includes(parentDir), false);
         assertEquals(parsed.error.context?.localProject?.deployment, {
           status: "failed",
           message: "Authentication required for --deploy.",
@@ -1165,7 +1167,10 @@ describe("init command integration", () => {
         const stdoutJson = JSON.parse(stdout) as {
           success: boolean;
           command: string;
-          error: { code: string; context?: { localProject?: { projectName: string } } };
+          error: {
+            code: string;
+            context?: { localProject?: { projectDir: string; projectName: string } };
+          };
         };
         const fileJson = JSON.parse(await readTextFile(outputPath)) as typeof stdoutJson;
 
@@ -1173,7 +1178,9 @@ describe("init command integration", () => {
         assertEquals(stdoutJson.success, false);
         assertEquals(stdoutJson.command, "init");
         assertEquals(stdoutJson.error.code, "DEPLOYMENT_FAILED");
+        assertEquals(stdoutJson.error.context?.localProject?.projectDir, name);
         assertEquals(stdoutJson.error.context?.localProject?.projectName, name);
+        assertEquals(stdout.includes(parentDir), false);
         assertEquals(fileJson, stdoutJson);
         assertEquals(await exists(outputPath), true);
         assertEquals(await exists(nestedOutputPath), false);

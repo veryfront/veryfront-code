@@ -5,7 +5,7 @@ import { deleteEnv, env, getEnv, setEnv } from "#veryfront/compat/process.ts";
 import { deleteHostSecret, getHostEnv } from "#cli/process-env";
 import { join } from "veryfront/platform/path";
 import { makeTempDir } from "#veryfront/testing/deno-compat.ts";
-import { readToken, saveToken } from "../../../../../cli/auth/token-store.ts";
+import { readToken, saveToken } from "#cli/auth/token-store";
 import {
   _resetEnvironmentConfig,
   _setEnvironmentConfigForTesting,
@@ -17,7 +17,7 @@ import {
   applyRuntimeAuthContext,
   resolveLinkedProjectSlug,
   resolveRuntimeAuthContext,
-} from "../../../../../cli/shared/runtime-auth.ts";
+} from "#cli/shared/runtime-auth";
 
 const ENV_KEYS = [
   "VERYFRONT_API_TOKEN",

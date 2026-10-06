@@ -230,6 +230,64 @@ describe("deploy command adapters", () => {
     }
     assertEquals(failingOutput, []);
   });
+
+  it("suppresses nested JSON output for dry-run outcomes without dropping the plan", async () => {
+    const dryRunDeployment: DeployProject = {
+      execute(request) {
+        return Promise.resolve({
+          kind: "dry-run",
+          plan: {
+            branch: request.branch ?? "main",
+            projectId: "project-dry-run",
+            projectSlug: request.projectSlug ?? "dry-run-project",
+            environment: request.environment,
+            environmentId: "environment-dry-run",
+            controlPlane: "https://control.example.test/api",
+            plannedActions: ["create-release", "deploy"],
+          },
+        });
+      },
+    };
+
+    let emitted: string[];
+    try {
+      setJsonMode(true);
+      const unsuppressed = await captureConsole(() =>
+        deployCommand({
+          projectDir: UNRELATED_PROJECT_DIR,
+          branch: "main",
+          env: "preview",
+          dryRun: true,
+          force: false,
+          deployProject: dryRunDeployment,
+        })
+      );
+      assertEquals(unsuppressed.result, null);
+      const resultRecord = JSON.parse(unsuppressed.output.at(-1) ?? "{}");
+      assertEquals(resultRecord.type, "result");
+      assertEquals(resultRecord.success, true);
+      assertEquals(resultRecord.data.dryRun, true);
+      assertEquals(resultRecord.data.projectSlug, "dry-run-project");
+
+      const suppressed = await captureConsole(() =>
+        deployCommand({
+          projectDir: UNRELATED_PROJECT_DIR,
+          branch: "main",
+          env: "preview",
+          dryRun: true,
+          force: false,
+          deployProject: dryRunDeployment,
+          suppressJsonOutput: true,
+        })
+      );
+      assertEquals(suppressed.result, null);
+      emitted = suppressed.output;
+    } finally {
+      setJsonMode(false);
+    }
+
+    assertEquals(emitted, []);
+  });
 });
 
 describe("DeployArgsSchema", () => {

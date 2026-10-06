@@ -27,6 +27,8 @@ type StructureNode = {
 
 interface InitCommandDependencies {
   deployProject?: (projectDir: string) => Promise<string>;
+  runWizard?: typeof runInteractiveWizard;
+  shouldRunWizard?: typeof shouldRunWizard;
 }
 
 const AUTH_REQUIRED_DEPLOY_MESSAGE = "Authentication required for --deploy.";
@@ -188,8 +190,10 @@ export async function initCommand(
   }
 
   let wizardRuntime: InitRuntime = "node";
-  if (shouldRunWizard(options)) {
-    const wizardResult = await runInteractiveWizard(name, options.runtime);
+  const shouldStartWizard = dependencies.shouldRunWizard ?? shouldRunWizard;
+  const runWizard = dependencies.runWizard ?? runInteractiveWizard;
+  if (shouldStartWizard(options)) {
+    const wizardResult = await runWizard(name, options.runtime);
     if (wizardResult.cancelled) {
       return { cancelled: true };
     }
@@ -201,6 +205,13 @@ export async function initCommand(
     wizardRuntime = wizardResult.runtime;
   } else {
     template = options.template ?? DEFAULT_TEMPLATE;
+  }
+
+  if (projectName) {
+    const nameError = validateInitProjectName(projectName);
+    if (nameError) {
+      throw INVALID_ARGUMENT.create({ detail: nameError });
+    }
   }
 
   const runtime: InitRuntime = options.runtime ?? wizardRuntime;

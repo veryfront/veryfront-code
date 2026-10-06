@@ -1,4 +1,7 @@
-import { isVeryfrontCloudEnabled } from "#veryfront/platform/cloud/resolver.ts";
+import {
+  getVeryfrontCloudProjectSlug,
+  isVeryfrontCloudEnabled,
+} from "#veryfront/platform/cloud/resolver.ts";
 import { CONFIG_INVALID } from "#veryfront/errors";
 import { VeryfrontCloudBlobStorage } from "#veryfront/workflow/blob/veryfront-cloud-storage.ts";
 import { serverLogger } from "#veryfront/utils";
@@ -185,7 +188,7 @@ async function enrichUploadsWithSourceUrls(
 }
 
 function getSourceBlobStorage(): VeryfrontCloudBlobStorage | null {
-  return isVeryfrontCloudEnabled()
+  return isVeryfrontCloudEnabled() && getVeryfrontCloudProjectSlug()
     ? new VeryfrontCloudBlobStorage({ prefix: CLOUD_UPLOAD_PREFIX })
     : null;
 }

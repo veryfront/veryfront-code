@@ -44,6 +44,16 @@ describe("commands/doctor/handler", () => {
       if (result.success) assertEquals(result.data.strict, true);
     });
 
+    it("parses strict mode together with an explicit port from raw argv", () => {
+      const result = parseDoctorArgs(parseCliArgs(["doctor", "--strict", "--port", "9876"]));
+
+      assertEquals(result.success, true);
+      if (result.success) {
+        assertEquals(result.data.strict, true);
+        assertEquals(result.data.port, 9876);
+      }
+    });
+
     it("parses -s as alias for --strict", () => {
       const result = parseDoctorArgs({ _: ["doctor"], s: true });
       assertEquals(result.success, true);
@@ -76,6 +86,13 @@ describe("commands/doctor/handler", () => {
 
       assertEquals(result.success, false);
       if (!result.success) assertStringIncludes(result.error.message, "Unknown option");
+    });
+
+    it("tolerates global --json while preserving command-specific strict options", () => {
+      const result = parseDoctorArgs(parseCliArgs(["doctor", "--json", "--strict"]));
+
+      assertEquals(result.success, true);
+      if (result.success) assertEquals(result.data.strict, true);
     });
   });
 });

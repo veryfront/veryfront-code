@@ -4,12 +4,13 @@
  * Handles argument parsing and config file loading for the init command.
  */
 
-import { createFileSystem } from "veryfront/platform";
+import { createFileSystem, cwd } from "veryfront/platform";
 import { defineSchema, lazySchema } from "veryfront/schemas";
 import { cliLogger, exitProcess } from "#cli/utils";
 import { CommonArgs, createArgParser, parseArgsOrThrow } from "#cli/shared/args";
 import { resolvePath } from "./path-utils.ts";
-import { initCommand } from "./init-command.ts";
+import { relative } from "veryfront/platform/path";
+import { initCommand, type InitCommandResult } from "./init-command.ts";
 import type { ParsedArgs } from "#cli/shared/types";
 import type { InitRuntime, InitTemplate } from "./types.ts";
 import { parseRuntime } from "./runtime.ts";
@@ -38,6 +39,29 @@ const getInitArgsSchema = defineSchema((v) =>
 
 const InitArgsSchema = lazySchema(getInitArgsSchema);
 
+interface InitHandlerDependencies {
+  initCommand?: typeof initCommand;
+  exitProcess?: typeof exitProcess;
+  cwd?: () => string;
+}
+
+function toSafeRelativeProjectDir(projectDir: string, invocationDir: string): string {
+  const relativePath = relative(invocationDir, projectDir).replaceAll("\\", "/");
+  return relativePath === "" ? "." : relativePath;
+}
+
+function sanitizeInitResultForJson(
+  result: InitCommandResult,
+  invocationDir: string,
+): InitCommandResult {
+  if (result.cancelled) return result;
+
+  return {
+    ...result,
+    projectDir: toSafeRelativeProjectDir(result.projectDir, invocationDir),
+  };
+}
+
 export const parseInitArgs = createArgParser(InitArgsSchema, {
   name: { keys: ["name"], type: "string", positional: 0 },
   template: { keys: ["template", "t"], type: "string" },
@@ -53,8 +77,14 @@ export const parseInitArgs = createArgParser(InitArgsSchema, {
 /**
  * Handle the init command with argument parsing and config file support
  */
-export async function handleInitCommand(args: ParsedArgs): Promise<void> {
+export async function handleInitCommand(
+  args: ParsedArgs,
+  dependencies: InitHandlerDependencies = {},
+): Promise<void> {
   const parsedArgs = parseArgsOrThrow(parseInitArgs, "init", args);
+  const runInitCommand = dependencies.initCommand ?? initCommand;
+  const runExitProcess = dependencies.exitProcess ?? exitProcess;
+  const invocationDir = (dependencies.cwd ?? cwd)();
   const jsonOutput = isJsonMode();
   const nonInteractive = args.yes === true || args.y === true || args["no-input"] === true ||
     jsonOutput;
@@ -119,7 +149,7 @@ export async function handleInitCommand(args: ParsedArgs): Promise<void> {
     template = DEFAULT_TEMPLATE;
   }
 
-  const result = await initCommand({
+  const result = await runInitCommand({
     name,
     template,
     skipInstall,
@@ -139,12 +169,14 @@ export async function handleInitCommand(args: ParsedArgs): Promise<void> {
         code: "DEPLOYMENT_FAILED",
         slug: "deployment-failed",
         message: result.deployment.message,
-        context: { localProject: result },
+        context: { localProject: sanitizeInitResultForJson(result, invocationDir) },
       }));
-      exitProcess(1);
+      runExitProcess(1);
       return;
     }
 
-    await outputJson(createSuccessEnvelope("init", result));
+    await outputJson(
+      createSuccessEnvelope("init", sanitizeInitResultForJson(result, invocationDir)),
+    );
   }
 }
