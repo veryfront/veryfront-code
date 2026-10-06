@@ -2,7 +2,7 @@ import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts
 import { describe, it } from "#veryfront/testing/bdd.ts";
 
 const DASHBOARD_SOURCE = new URL(
-  "./files/saas-starter/app/dashboard/page.tsx",
+  "../../../../templates/files/saas-starter/app/dashboard/page.tsx",
   import.meta.url,
 );
 
