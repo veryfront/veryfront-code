@@ -647,9 +647,14 @@ type ReasoningIdentity = Pick<
   "id" | "messageId" | "contentId"
 >;
 
+type ReasoningPartBinding = {
+  identity: ReasoningIdentity;
+  origin: "start" | "content" | "retained";
+};
+
 const activeReasoningPartsByDecoder = new WeakMap<
   AgUiChatEventDecoderState,
-  Map<string, ReasoningIdentity>
+  Map<string, ReasoningPartBinding>
 >();
 
 function getReasoningPartId(
@@ -659,9 +664,9 @@ function getReasoningPartId(
 ): string | null {
   let activeParts = activeReasoningPartsByDecoder.get(state);
   if (!activeParts) {
-    activeParts = new Map<string, ReasoningIdentity>();
+    activeParts = new Map<string, ReasoningPartBinding>();
     if (state.activeFallbackReasoningPartId) {
-      activeParts.set(state.activeFallbackReasoningPartId, {});
+      activeParts.set(state.activeFallbackReasoningPartId, { identity: {}, origin: "retained" });
     }
     activeReasoningPartsByDecoder.set(state, activeParts);
   }
@@ -675,7 +680,7 @@ function getReasoningPartId(
 
   if (phase !== "start" && activeParts.size > 0) {
     const hasIdentity = identityKeys.some((key) => identity[key] !== undefined);
-    const compatible = [...activeParts.entries()].filter(([, start]) =>
+    const compatible = [...activeParts.entries()].filter(([, { identity: start }]) =>
       identityKeys.every((key) =>
         identity[key] === undefined || start[key] === undefined || identity[key] === start[key]
       ) && (!hasIdentity ||
@@ -683,17 +688,21 @@ function getReasoningPartId(
         identityKeys.some((key) => identity[key] !== undefined && identity[key] === start[key]))
     );
     const match = compatible.length === 1 ? compatible[0] : undefined;
-    if (!match) {
-      return null;
+    if (match) {
+      const [partId] = match;
+      if (phase === "end") {
+        activeParts.delete(partId);
+        state.activeFallbackReasoningPartId = activeParts.size === 1
+          ? activeParts.keys().next().value ?? null
+          : null;
+      }
+      return partId;
     }
-    const [partId] = match;
-    if (phase === "end") {
-      activeParts.delete(partId);
-      state.activeFallbackReasoningPartId = activeParts.size === 1
-        ? activeParts.keys().next().value ?? null
-        : null;
-    }
-    return partId;
+    // A content-only stream can establish another independently identified part.
+    if (
+      phase !== "content" || !hasIdentity || compatible.length !== 0 ||
+      [...activeParts.values()].some((part) => part.origin !== "content")
+    ) return null;
   }
 
   let partId: string;
@@ -712,15 +721,12 @@ function getReasoningPartId(
     partId = `agui-reasoning:${state.reasoningFallbackIndex}`;
   }
 
-  if (
-    phase === "start" ||
-    (phase === "content" && identityKeys.every((key) => identity[key] === undefined))
-  ) {
+  if (phase !== "end") {
     const existing = activeParts.get(partId);
-    if (existing && identityKeys.some((key) => existing[key] !== identity[key])) {
+    if (existing && identityKeys.some((key) => existing.identity[key] !== identity[key])) {
       return null;
     }
-    activeParts.set(partId, identity);
+    activeParts.set(partId, { identity, origin: phase });
     state.activeFallbackReasoningPartId = activeParts.size === 1 ? partId : null;
   }
   return partId;
