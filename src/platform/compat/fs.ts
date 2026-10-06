@@ -10,6 +10,7 @@ import {
 import { isProxyWithoutHooks } from "./error-introspection.ts";
 import { isNotFoundError } from "./not-found-error.ts";
 import { primordialPromiseAll, primordialPromiseCatch } from "./primordials/promise.ts";
+import { openNativeStreamFile, removeNativeStreamFile } from "./native-stream-file.ts";
 
 export { isNotFoundError };
 
@@ -42,6 +43,7 @@ const ReadableStreamDefaultReaderCancel = ReadableStreamDefaultReader.prototype.
 const ReadableStreamDefaultReaderRead = ReadableStreamDefaultReader.prototype.read;
 const ReadableStreamDefaultReaderReleaseLock = ReadableStreamDefaultReader.prototype.releaseLock;
 const NativePromise = Promise;
+const NativePromiseThen = Promise.prototype.then;
 
 function createDataDescriptor<T>(
   value: T,
@@ -72,19 +74,32 @@ function getByteLength(value: Uint8Array): number {
 }
 
 function createByteWriteView(value: Uint8Array, offset: number): Uint8Array {
-  if (offset === 0) return value;
   if (!Uint8ArrayBufferGet || !Uint8ArrayByteOffsetGet) {
     throw new TypeError("Uint8Array buffer accessors unavailable");
   }
   const buffer = reflectApply(Uint8ArrayBufferGet, value, []) as ArrayBufferLike;
   const byteOffset = reflectApply(Uint8ArrayByteOffsetGet, value, []) as number;
   const byteLength = getByteLength(value);
-  return new NativeUint8Array(buffer, byteOffset + offset, byteLength - offset);
+  const view = new NativeUint8Array(buffer, byteOffset + offset, byteLength - offset);
+  // Node's native fs.write wrapper reads these properties before entering the
+  // binding. Keep mutable typed-array getters away from confidential chunks.
+  void defineProperty(view, "buffer", createDataDescriptor(buffer, false));
+  void defineProperty(view, "byteOffset", createDataDescriptor(byteOffset + offset, false));
+  void defineProperty(view, "byteLength", createDataDescriptor(byteLength - offset, false));
+  return view;
 }
 
 function bindNativePromiseConstructor<T>(promise: Promise<T>): Promise<T> {
   void defineProperty(promise, "constructor", createDataDescriptor(NativePromise, false));
   return promise;
+}
+
+function observeCancellation(promise: Promise<unknown>): Promise<void> {
+  const observed = new NativePromise<void>((resolve) => {
+    const settle = () => resolve();
+    void reflectApply(NativePromiseThen, bindNativePromiseConstructor(promise), [settle, settle]);
+  });
+  return bindNativePromiseConstructor(observed);
 }
 
 /** Stable native identity for one filesystem object. */
@@ -304,14 +319,12 @@ class NodeFileSystem implements FileSystem {
     source: ReadableStream<Uint8Array>,
     signal?: AbortSignal,
   ): Promise<number> {
-    await this.ensureInitialized();
-    return await writeStreamExclusive(source, signal, async () => {
-      const handle = await this.getFs().open(path, "wx", 0o600);
-      return {
-        write: async (chunk: Uint8Array) => (await handle.write(chunk)).bytesWritten,
-        close: () => handle.close(),
-      };
-    }, () => this.remove(path));
+    return await writeStreamExclusive(
+      source,
+      signal,
+      () => openNativeStreamFile(path),
+      () => removeNativeStreamFile(path),
+    );
   }
 
   async rename(from: string, to: string): Promise<void> {
@@ -457,10 +470,12 @@ class DenoFileSystem implements FileSystem {
     source: ReadableStream<Uint8Array>,
     signal?: AbortSignal,
   ): Promise<number> {
-    return await writeStreamExclusive(source, signal, async () => {
-      const handle = await denoGlobal().open(path, { write: true, createNew: true, mode: 0o600 });
-      return { write: (chunk: Uint8Array) => handle.write(chunk), close: () => handle.close() };
-    }, () => this.remove(path));
+    return await writeStreamExclusive(
+      source,
+      signal,
+      () => openNativeStreamFile(path),
+      () => removeNativeStreamFile(path),
+    );
   }
 
   async rename(from: string, to: string): Promise<void> {
@@ -760,7 +775,8 @@ export function isAlreadyExistsError(error: unknown): boolean {
   }
 }
 
-async function writeStreamExclusive(
+/** @internal Stream sequencing is exported only for focused backend regressions. */
+export async function writeStreamExclusive(
   source: ReadableStream<Uint8Array>,
   signal: AbortSignal | undefined,
   open: () => Promise<{ write(chunk: Uint8Array): Promise<number>; close(): void | Promise<void> }>,
@@ -771,9 +787,9 @@ async function writeStreamExclusive(
   >;
   let cancellation: Promise<void> | undefined;
   const abort = () => {
-    cancellation = (reflectApply(ReadableStreamDefaultReaderCancel, reader, [
+    cancellation = observeCancellation(reflectApply(ReadableStreamDefaultReaderCancel, reader, [
       signal?.reason,
-    ]) as Promise<void>).catch(() => {});
+    ]) as Promise<void>);
   };
   let handle: Awaited<ReturnType<typeof open>> | undefined;
   let failed = true;
@@ -781,7 +797,7 @@ async function writeStreamExclusive(
   signal?.addEventListener("abort", abort, { once: true });
   try {
     signal?.throwIfAborted();
-    handle = await open();
+    handle = await bindNativePromiseConstructor(open());
     while (true) {
       signal?.throwIfAborted();
       const chunk = await bindNativePromiseConstructor(
@@ -808,8 +824,8 @@ async function writeStreamExclusive(
     signal?.removeEventListener("abort", abort);
     if (failed) {
       await (cancellation ??
-        (reflectApply(ReadableStreamDefaultReaderCancel, reader, []) as Promise<void>).catch(
-          () => {},
+        observeCancellation(
+          reflectApply(ReadableStreamDefaultReaderCancel, reader, []) as Promise<void>,
         ));
       if (handle) {
         try {
