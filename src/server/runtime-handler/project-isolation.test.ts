@@ -240,24 +240,34 @@ describe("server/runtime-handler/project-isolation", () => {
   });
 
   describe("circuit breaker reset", () => {
-    it("should reset circuit after reset time elapses", async () => {
+    it("should reset circuit at the exact reset time boundary", () => {
+      using time = new FakeTime();
       const manager = createManager({
         circuitBreakerThreshold: 1,
         circuitResetTimeMs: 50,
       });
 
-      manager.startRequest("proj");
-      manager.completeRequest("proj", true); // opens circuit
+      try {
+        manager.startRequest("proj");
+        manager.completeRequest("proj", true); // opens circuit
 
-      const beforeReset = manager.checkRequest("proj");
-      assertEquals(beforeReset.allowed, false);
-      assertEquals(beforeReset.reason, "circuit_open");
+        const beforeReset = manager.checkRequest("proj");
+        assertEquals(beforeReset.allowed, false);
+        assertEquals(beforeReset.reason, "circuit_open");
+        assertEquals(beforeReset.waitTimeMs, 50);
 
-      await new Promise((resolve) => setTimeout(resolve, 80));
+        time.tick(49);
+        const justBeforeReset = manager.checkRequest("proj");
+        assertEquals(justBeforeReset.allowed, false);
+        assertEquals(justBeforeReset.reason, "circuit_open");
+        assertEquals(justBeforeReset.waitTimeMs, 1);
 
-      const afterReset = manager.checkRequest("proj");
-      assertEquals(afterReset.allowed, true);
-      manager.shutdown();
+        time.tick(1);
+        const afterReset = manager.checkRequest("proj");
+        assertEquals(afterReset.allowed, true);
+      } finally {
+        manager.shutdown();
+      }
     });
   });
 });
