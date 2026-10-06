@@ -928,7 +928,7 @@ export function createApiClient(config: ResolvedConfig): ApiClient {
       throw err;
     }
 
-    if (response.status === 204) return undefined as T;
+    if (response.status === 204 && !binary) return undefined as T;
 
     if (binary) {
       if (

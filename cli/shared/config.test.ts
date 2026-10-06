@@ -1936,6 +1936,57 @@ describe("nonprompting management configuration", () => {
 });
 
 describe("authenticated binary API downloads", () => {
+  it("preserves no-content responses for JSON API actions", async () => {
+    await withMockFetch(() => Promise.resolve(new Response(null, { status: 204 })), async () => {
+      const client = createApiClient(makeConfig());
+      assertEquals(await client.delete("/projects/my-project/uploads/file"), undefined);
+    });
+  });
+
+  it("rejects successful responses that omit the binary body", async () => {
+    for (const status of [200, 204]) {
+      await withMockFetch(() =>
+        Promise.resolve(
+          new Response(null, {
+            status,
+            headers: { "content-type": "application/octet-stream" },
+          }),
+        ), async () => {
+        const getStream = createApiClient(makeConfig()).getStream;
+        if (!getStream) throw new Error("Missing binary download client");
+        await assertRejects(
+          () => getStream("/projects/my-project/uploads/file"),
+          Error,
+          "API did not return upload content",
+        );
+      });
+    }
+  });
+
+  it("cancels metadata responses instead of treating them as file bytes", async () => {
+    let cancelled = false;
+    const body = new ReadableStream<Uint8Array>({
+      cancel() {
+        cancelled = true;
+      },
+    });
+    await withMockFetch(() =>
+      Promise.resolve(
+        new Response(body, {
+          headers: { "content-type": "application/json" },
+        }),
+      ), async () => {
+      const getStream = createApiClient(makeConfig()).getStream;
+      if (!getStream) throw new Error("Missing binary download client");
+      await assertRejects(
+        () => getStream("/projects/my-project/uploads/file"),
+        Error,
+        "API did not return upload content",
+      );
+      assertEquals(cancelled, true);
+    });
+  });
+
   it("requests binary bytes with auth and rejects redirects", async () => {
     let init: RequestInit | undefined;
     await withMockFetch(

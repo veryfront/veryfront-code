@@ -831,13 +831,13 @@ describe("authenticated download transport settlement", () => {
     const pendingResponse = new Promise<Response>((resolve) => {
       resolveTransport = resolve;
     });
-    const fetchImpl = (() => {
+    const fetchImpl: typeof fetch = (_input, _init) => {
       startTransport();
       return pendingResponse;
-    }) as typeof fetch;
+    };
     await __runWithOutboundFetchTransportForTests({
       fetch: fetchImpl,
-      pinnedFetch: () => fetchImpl("https://api.example.test/file"),
+      pinnedFetch: (url, _addresses, init) => fetchImpl(url, init),
       resolveHost: () => Promise.resolve(["93.184.216.34"]),
     }, async () => {
       const download = createVeryfrontApiDownloadOutboundFetch("https://api.example.test");
@@ -874,7 +874,7 @@ describe("authenticated download transport settlement", () => {
     const responsePromise = Promise.resolve(new Response("content"));
     let exposed = false;
     const original = Object.getOwnPropertyDescriptor(Array.prototype, "0");
-    const fetchImpl = (() => {
+    const fetchImpl: typeof fetch = (_input, _init) => {
       Object.defineProperty(Array.prototype, "0", {
         configurable: true,
         set(value: unknown) {
@@ -888,11 +888,11 @@ describe("authenticated download transport settlement", () => {
         },
       });
       return responsePromise;
-    }) as typeof fetch;
+    };
     try {
       await __runWithOutboundFetchTransportForTests({
         fetch: fetchImpl,
-        pinnedFetch: () => fetchImpl("https://api.example.test/file"),
+        pinnedFetch: (url, _addresses, init) => fetchImpl(url, init),
         resolveHost: () => Promise.resolve(["93.184.216.34"]),
       }, async () => {
         const download = createVeryfrontApiDownloadOutboundFetch("https://api.example.test");
