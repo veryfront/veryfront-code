@@ -53,7 +53,10 @@ The OpenTelemetry extension pins the experimental SDK packages to 0.221 and
 the stable SDK packages to 2.10. Keep this family aligned when updating exporters
 and automatic instrumentation. Regenerate both the workspace lock and the proxy
 lock with the repository's pinned Deno version, then verify exporter startup and
-the published dependency graph.
+the published dependency graph. Lock refreshes must retain the explicit CI warm-up
+entrypoints and subprocess helpers, including the Redis module and profiling DOM
+viewer. Cache those entrypoints with the pinned Deno version, then verify them
+with the frozen lock before pushing. Workspace imports alone do not include them.
 
 Container package scans do not enumerate dependencies embedded in compiled
 framework executables. Release qualification also scans the framework's published
