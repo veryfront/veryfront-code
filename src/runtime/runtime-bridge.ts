@@ -769,6 +769,14 @@ function hasUnsupportedExactCapturePromptProviderOptions(
   });
 }
 
+function hasUnsupportedExactCaptureAssistantProviderMetadata(
+  directOptions: DirectModelOptions,
+): boolean {
+  return directOptions.prompt.some((message) => {
+    return message.role === "assistant" && message.providerMetadata !== undefined;
+  });
+}
+
 function assertExactModelCallCaptureControlsSupported(
   directOptions: DirectModelOptions,
 ): void {
@@ -781,6 +789,9 @@ function assertExactModelCallCaptureControlsSupported(
   ].filter((field) => directOptions[field] !== undefined);
   if (hasUnsupportedExactCapturePromptProviderOptions(directOptions)) {
     unsupportedControls.push("system.providerOptions");
+  }
+  if (hasUnsupportedExactCaptureAssistantProviderMetadata(directOptions)) {
+    unsupportedControls.push("assistant.providerMetadata");
   }
   if (unsupportedControls.length === 0) return;
   throw new DurableRunEventPersistenceError(

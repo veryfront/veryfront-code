@@ -1039,6 +1039,113 @@ describe("runtime-bridge", () => {
     assertEquals(dispatches, 0);
   });
 
+  it("refuses exact capture when assistant provider metadata is not represented", async () => {
+    const projectId = "11111111-1111-4111-8111-111111111111";
+    const canonicalRunId = "22222222-2222-4222-8222-222222222222";
+    let sinkCalls = 0;
+    let dispatches = 0;
+    const sink: AgentRunEventSink = (event) => {
+      sinkCalls += 1;
+      return {
+        eventId: "9007199254740993",
+        projectId,
+        runId: canonicalRunId,
+        modelCallId: event.modelCallId ?? "33333333-3333-4333-8333-333333333333",
+      };
+    };
+    bindTestRuntimeObservationWriter({
+      sink,
+      runId: "33333333-3333-4333-8333-333333333333",
+      canonicalRunId,
+      projectId,
+    });
+    const model = registerVeryfrontCloudTestModel(
+      createGenerateModel(
+        "veryfront-cloud",
+        "veryfront-cloud/google/gemini-test",
+        async () => {
+          dispatches += 1;
+          return { content: [], finishReason: "stop", usage: {} };
+        },
+      ),
+    );
+
+    await assertRejects(
+      async () =>
+        await runWithMandatoryRunEventSink(
+          sink,
+          async () =>
+            await generateText({
+              model,
+              messages: [{
+                role: "assistant",
+                content: [{ type: "text", text: "Prior answer" }],
+                providerMetadata: {
+                  google: { rawAssistantParts: [{ thoughtSignature: "test-signature" }] },
+                },
+              }, { role: "user", content: "Continue" }],
+            }),
+        ),
+      DurableRunEventPersistenceError,
+      "Exact model call capture does not support these provider controls: assistant.providerMetadata",
+    );
+    assertEquals(sinkCalls, 0);
+    assertEquals(dispatches, 0);
+  });
+
+  it("keeps legacy assistant provider metadata default-off outside exact capture", async () => {
+    let recordedEvent: AgentRunEvent | undefined;
+    let dispatches = 0;
+    let dispatchedPrompt: unknown;
+    const providerMetadata = {
+      anthropic: {
+        rawAssistantMessages: [[{
+          type: "thinking",
+          thinking: "private chain",
+          signature: "test-signature",
+        }]],
+      },
+    };
+    const model = registerVeryfrontCloudTestModel(
+      createGenerateModel(
+        "veryfront-cloud",
+        "veryfront-cloud/anthropic/claude-test",
+        async (options) => {
+          dispatches += 1;
+          dispatchedPrompt = options.prompt;
+          return { content: [], finishReason: "stop", usage: {} };
+        },
+      ),
+    );
+
+    await runWithRunEventSink(
+      (event) => {
+        recordedEvent = event;
+      },
+      () =>
+        generateText({
+          model,
+          messages: [{
+            role: "assistant",
+            content: [{ type: "text", text: "Prior answer" }],
+            providerMetadata,
+          }, { role: "user", content: "Continue" }],
+        }),
+    );
+
+    assertEquals(dispatches, 1);
+    assertEquals((recordedEvent as { modelCallId?: string } | undefined)?.modelCallId, undefined);
+    assertEquals(
+      (recordedEvent?.messages[0] as { providerMetadata?: unknown } | undefined)
+        ?.providerMetadata,
+      undefined,
+    );
+    assertEquals(
+      (dispatchedPrompt as Array<{ providerMetadata?: unknown }>)[0]?.providerMetadata,
+      providerMetadata,
+    );
+  });
+
   it("revalidates exact capture authority before provider dispatch", async () => {
     const projectId = "11111111-1111-4111-8111-111111111111";
     const canonicalRunId = "22222222-2222-4222-8222-222222222222";
