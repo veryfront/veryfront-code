@@ -53,6 +53,12 @@ export type RunsSdkTypeChecks = [
   Expect<Equal<RunsInput<"createRun">["headers"], { "Idempotency-Key": string }>>,
   Expect<
     Equal<
+      RunsInput<"createRunHeartbeat">["headers"],
+      { "x-veryfront-run-dispatch-acceptance"?: "true" } | undefined
+    >
+  >,
+  Expect<
+    Equal<
       RunsPaginatedOperationId,
       | "listRuns"
       | "listProjectRuns"
@@ -129,6 +135,31 @@ function streamResponse(chunks: string[]): Response {
 }
 
 describe("Runs target SDK", () => {
+  it("sends dispatch acceptance using execution authority and case-insensitive headers", async () => {
+    const { transport, requests } = createFixtureTransport([
+      fixtureResponse("createRunHeartbeat"),
+      fixtureResponse("createRunHeartbeat"),
+    ], () => "execution-renewal-token");
+    const sdk = createRunsSdk({ transport });
+    const input: RunsInput<"createRunHeartbeat"> = {
+      ...RUNS_OPERATION_FIXTURES.createRunHeartbeat.input,
+      headers: { "x-veryfront-run-dispatch-acceptance": "true" },
+    };
+    await sdk.createRunHeartbeat(input);
+    // JavaScript runtime consumers use the documented HTTP header spelling.
+    await sdk.createRunHeartbeat({
+      ...input,
+      headers: Object.fromEntries([
+        ["X-Veryfront-Run-Dispatch-Acceptance", "true"],
+      ]),
+    });
+    for (const request of requests) {
+      assertEquals(request.headers.get("X-Veryfront-Run-Dispatch-Acceptance"), "true");
+      assertEquals(request.headers.get("Authorization"), "Bearer execution-renewal-token");
+      assertEquals(await request.json(), input.body);
+    }
+  });
+
   it("sends explicit terminal outcomes using ordinary caller credentials", async () => {
     const succeeded = RUNS_OPERATION_FIXTURES.succeedRun.response.body;
     const failed = RUNS_OPERATION_FIXTURES.failRun.response.body;

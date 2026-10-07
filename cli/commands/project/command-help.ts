@@ -44,6 +44,7 @@ export const projectHelp: CommandHelp = {
     "Subcommands: delete, runs",
     `Runs commands: ${Object.values(RUNS_COMMANDS).join(", ")}`,
     "Runs: supply route identifiers with --run-id, --event-id, --project-reference, --conversation-id, --webhook-definition-id, --eval-id, or --input-request-id.",
+    "Runs: heartbeat --accept-dispatch atomically accepts the detached dispatch before execution. A duplicate returns 409.",
     "Runs: --body and --query accept contract JSON; --idempotency-key, --if-match and --last-event-id map to request headers.",
     "Runs: --ndjson follows SDK pagination and writes one success envelope per item to stdout with bounded memory; --output is not supported.",
     "Runs: --all follows SDK pagination; get/create --follow streams events. JSON streams use NDJSON on stdout.",

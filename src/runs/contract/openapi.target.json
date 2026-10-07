@@ -6536,6 +6536,7 @@
               "description": "Relative timeframe preset."
             },
             "required": false,
+            "description": "Relative timeframe preset.",
             "name": "preset",
             "in": "query"
           },
@@ -6546,6 +6547,7 @@
               "description": "IANA timezone for daily bucket boundaries."
             },
             "required": false,
+            "description": "IANA timezone for daily bucket boundaries.",
             "name": "timezone",
             "in": "query"
           },
@@ -6558,9 +6560,10 @@
               "items": {
                 "type": "string"
               },
-              "description": "Label filters as key or key=value, repeated or comma-separated. Example: ?label=team=platform&label=criticality=high"
+              "description": "Project label filters as key or key=value, repeated or comma-separated."
             },
             "required": false,
+            "description": "Project label filters as key or key=value, repeated or comma-separated.",
             "name": "label",
             "in": "query"
           },
@@ -6570,6 +6573,7 @@
               "description": "Optional project UUID or slug to scope analytics to a single project."
             },
             "required": false,
+            "description": "Optional project UUID or slug to scope analytics to a single project.",
             "name": "project_reference",
             "in": "query"
           }
@@ -11841,6 +11845,18 @@
             "example": "11111111-1111-4111-8111-111111111111",
             "name": "run_id",
             "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "true"
+              ]
+            },
+            "required": false,
+            "description": "Atomically accept this detached dispatch before starting execution. A duplicate returns 409.",
+            "name": "x-veryfront-run-dispatch-acceptance",
+            "in": "header"
           }
         ],
         "security": [
@@ -14085,7 +14101,8 @@
           "tool_call_id": {
             "type": "string",
             "minLength": 1,
-            "maxLength": 128
+            "maxLength": 128,
+            "description": "Tool invocation to request input for. Defaults to the run’s current waiting invocation."
           },
           "requested_responder_type": {
             "type": "string",

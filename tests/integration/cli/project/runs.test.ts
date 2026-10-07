@@ -47,6 +47,24 @@ async function execute(args: string[], responses: Response[], token = "user-toke
 }
 
 describe("project runs CLI fixture mapping", () => {
+  it("accepts a detached dispatch only with the heartbeat flag", async () => {
+    const { requests } = await execute(
+      [...argv("createRunHeartbeat"), "--accept-dispatch"],
+      [fixtureResponse("createRunHeartbeat")],
+      "execution-token",
+    );
+    assertEquals(requests[0]!.headers.get("X-Veryfront-Run-Dispatch-Acceptance"), "true");
+    const ordinary = await execute(argv("createRunHeartbeat"), [
+      fixtureResponse("createRunHeartbeat"),
+    ]);
+    assertEquals(ordinary.requests[0]!.headers.has("X-Veryfront-Run-Dispatch-Acceptance"), false);
+    await assertRejects(
+      () => execute([...argv("getRun"), "--accept-dispatch"], [fixtureResponse("getRun")]),
+      VeryfrontError,
+      "Only heartbeat accepts --accept-dispatch.",
+    );
+  });
+
   it("maps all 33 target operations through the SDK with exact wire bodies and headers", async () => {
     assertEquals(Object.keys(RUNS_COMMANDS).sort(), Object.keys(RUNS_OPERATIONS).sort());
     assertEquals(new Set(Object.values(RUNS_COMMANDS)).size, 33);
