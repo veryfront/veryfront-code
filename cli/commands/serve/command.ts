@@ -56,6 +56,14 @@ type ProductionSentryModule = {
   initializeSentryFromEnv: () => Promise<unknown>;
 };
 
+/** Clear generated startup state while retaining a declared dependency seed. @internal */
+export async function clearProductionStartupCaches(
+  cacheSeed = getEnv("VERYFRONT_RUNTIME_CACHE_SEED"),
+): Promise<void> {
+  const { clearAllLocalCaches } = await import("veryfront/transforms/mdx-cache");
+  await clearAllLocalCaches({ preserveHttpBundles: Boolean(cacheSeed?.trim()) });
+}
+
 export interface ServeOptions {
   mode: "combined" | "proxy" | "production";
   port: number;
@@ -285,11 +293,7 @@ export async function runProductionServer(
           if (dependencies.initializeRuntime) {
             await dependencies.initializeRuntime();
           } else {
-            const { clearAllLocalCaches } = await import(
-              "veryfront/transforms/mdx-cache"
-            );
-            // Keep the dependency graph materialized before startup for offline rendering.
-            await clearAllLocalCaches({ preserveHttpBundles: true });
+            await clearProductionStartupCaches();
 
             const { initializeOTLPWithApis } = await import(
               "veryfront/observability/otlp-setup"
