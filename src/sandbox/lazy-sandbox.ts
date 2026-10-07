@@ -589,6 +589,9 @@ export class LazySandbox {
         if (this.deleteOnClose) {
           await this.deleteSession(currentSessionId);
         }
+        if (!this.deleteOnClose) {
+          this.retainedSession = { id: currentSessionId, projectReference: this.sessionProjectId };
+        }
         this.resetSessionState(currentSessionId);
       })(),
     };

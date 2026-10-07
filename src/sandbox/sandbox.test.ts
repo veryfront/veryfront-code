@@ -2057,6 +2057,42 @@ describe("Sandbox", () => {
       await sandbox.close();
     });
 
+    it("reconnects to the same always-on workspace after closing its lazy client", async () => {
+      mockFetch([
+        jsonResponse({
+          id: "persistent-workspace",
+          endpoint: "https://sb.test",
+          status: "running",
+        }),
+        jsonResponse({ ok: true }),
+        jsonResponse({
+          id: "persistent-workspace",
+          endpoint: "https://sb.test",
+          status: "running",
+        }),
+        jsonResponse({ ok: true }),
+      ]);
+      const sandbox = Sandbox.createLazy({
+        authToken: "token",
+        apiUrl: "https://api.test.com",
+        projectReference: "project",
+        ttlMode: "always_on",
+      });
+      await sandbox.ensure();
+      await sandbox.close();
+      assertEquals(sandbox.id, "persistent-workspace");
+      assertEquals(sandbox.isActive, false);
+      await sandbox.ensure();
+      assertEquals(sandbox.id, "persistent-workspace");
+      await sandbox.close();
+      assertEquals(
+        fetchCalls.filter((call) => call.url.endsWith("/sandboxes") && call.init?.method === "POST")
+          .length,
+        1,
+      );
+      assertEquals(fetchCalls.some((call) => call.init?.method === "DELETE"), false);
+    });
+
     it("allows synchronous command completion beyond the metadata request timeout", async () => {
       let commandSignal: AbortSignal | undefined;
       mockFetch([jsonResponse({ ok: true }), async (_input, init) => {
