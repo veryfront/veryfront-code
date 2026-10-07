@@ -16,6 +16,7 @@ import {
   writeTextFile,
 } from "#veryfront/testing/deno-compat.ts";
 import { installMockFetch, restoreMockFetch } from "#veryfront/testing/mock-fetch.ts";
+import { createFileSystem } from "veryfront/platform";
 import { VeryfrontError } from "veryfront/errors";
 import {
   buildUploadCreateUrl,
@@ -165,6 +166,11 @@ describe("downloadUploadToFile", () => {
     const tempDir = await makeTempDir();
     const nodeFs = (await import("node:fs")).default;
     const nodePromises = (await import("node:fs/promises")).default;
+    const prototype = Object.getPrototypeOf(createFileSystem());
+    const privateMethods = ["writeFileStream", "promoteStreamFile", "removeStreamFile"] as const;
+    const originalMethods = privateMethods.map((name) =>
+      Object.getOwnPropertyDescriptor(prototype, name)!
+    );
     const originalRandomUUID = crypto.randomUUID;
     const originalNodeRename = nodeFs.rename;
     const originalNodeUnlink = nodeFs.unlink;
@@ -184,6 +190,7 @@ describe("downloadUploadToFile", () => {
         hookCalls++;
         return "x/../../known-file" as ReturnType<typeof crypto.randomUUID>;
       };
+      for (const name of privateMethods) Reflect.set(prototype, name, untrustedHook);
       Reflect.set(nodeFs, "rename", untrustedHook);
       Reflect.set(nodeFs, "unlink", untrustedHook);
       nodePromises.rename = untrustedHook;
@@ -204,6 +211,9 @@ describe("downloadUploadToFile", () => {
       assertEquals(names, ["blocked", "file"]);
       assertEquals(hookCalls, 0);
     } finally {
+      privateMethods.forEach((name, index) =>
+        Object.defineProperty(prototype, name, originalMethods[index]!)
+      );
       crypto.randomUUID = originalRandomUUID;
       nodeFs.rename = originalNodeRename;
       nodeFs.unlink = originalNodeUnlink;

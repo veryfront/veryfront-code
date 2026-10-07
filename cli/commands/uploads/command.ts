@@ -17,6 +17,17 @@ import type { ParsedArgs } from "#cli/shared/types";
 import { printJson } from "../../shared/json-output.ts";
 import { getBooleanArg, getStringArg } from "../../shared/parsed-args.ts";
 
+const privateDownloadFileSystem = createFileSystem();
+const writePrivateDownload = privateDownloadFileSystem.writeFileStream?.bind(
+  privateDownloadFileSystem,
+);
+const promotePrivateDownload = privateDownloadFileSystem.promoteStreamFile?.bind(
+  privateDownloadFileSystem,
+);
+const removePrivateDownload = privateDownloadFileSystem.removeStreamFile?.bind(
+  privateDownloadFileSystem,
+);
+
 const createDownloadNonce = crypto.randomUUID.bind(crypto);
 const downloadNoncePattern =
   /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -269,7 +280,7 @@ export async function downloadUploadToFile(
   outputDir: string,
   signal?: AbortSignal,
 ): Promise<{ uploadPath: string; localPath: string; bytes: number }> {
-  const fs = createFileSystem();
+  const fs = privateDownloadFileSystem;
   signal?.throwIfAborted();
   if (!client.getStream) throw new Error("API client does not support upload downloads");
   const localPath = resolveUploadOutputPath(uploadPath, outputDir);
@@ -285,18 +296,18 @@ export async function downloadUploadToFile(
   let created = false;
   try {
     await fs.mkdir(dirname(localPath), { recursive: true });
-    if (!fs.writeFileStream || !fs.promoteStreamFile || !fs.removeStreamFile) {
+    if (!writePrivateDownload || !promotePrivateDownload || !removePrivateDownload) {
       throw new Error("Filesystem does not support streaming upload downloads");
     }
-    const bytes = await fs.writeFileStream(temporaryPath, response, signal);
+    const bytes = await writePrivateDownload(temporaryPath, response, signal);
     created = true;
     signal?.throwIfAborted();
-    await fs.promoteStreamFile(temporaryPath, localPath);
+    await promotePrivateDownload(temporaryPath, localPath);
     created = false;
     return { uploadPath: normalizeUploadPath(uploadPath), localPath, bytes };
   } finally {
     await response.cancel().catch(() => {});
-    if (created) await fs.removeStreamFile!(temporaryPath);
+    if (created) await removePrivateDownload!(temporaryPath);
   }
 }
 
