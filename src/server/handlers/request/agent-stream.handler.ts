@@ -89,6 +89,7 @@ import {
 } from "#veryfront/internal-agents/schema.ts";
 import {
   AUTHENTICATION_REQUIRED,
+  CONFIG_INVALID,
   errorToResponse,
   INVALID_ARGUMENT,
   isVeryfrontError,
@@ -684,6 +685,20 @@ function isExplicitStudioMcpServer(
   return server.kind === "veryfront-studio";
 }
 
+function withoutOptionalStudioMcpServers(agent: Agent): Agent {
+  const mcpServers = agent.config.mcpServers?.filter((server) =>
+    !isExplicitStudioMcpServer(server) || server.required !== false
+  );
+  if (mcpServers?.length === agent.config.mcpServers?.length) return agent;
+  return {
+    ...agent,
+    config: {
+      ...agent.config,
+      ...(mcpServers === undefined ? {} : { mcpServers }),
+    },
+  };
+}
+
 async function withExplicitVeryfrontStudioRemoteTools(input: {
   agent: Agent;
   token?: string | null;
@@ -695,15 +710,25 @@ async function withExplicitVeryfrontStudioRemoteTools(input: {
   const configuredServers = input.agent.config.mcpServers?.filter(isExplicitStudioMcpServer) ?? [];
   if (configuredServers.length === 0) return input.agent;
 
+  const required = configuredServers.some((server) => server.required !== false);
   const clientProfile = resolveRuntimeClientProfile(input.forwardedProps);
+  const studioMcpUrl = getHostEnv("VERYFRONT_STUDIO_MCP_URL")?.trim();
   if (!clientAllowsStudioMcp(clientProfile)) {
+    if (!required) return withoutOptionalStudioMcpServers(input.agent);
     throw PERMISSION_DENIED.create({
       detail: "Studio MCP tools require an authorized Studio client profile.",
     });
   }
+  if (!studioMcpUrl && !required) return withoutOptionalStudioMcpServers(input.agent);
   if (!input.token) {
     throw AUTHENTICATION_REQUIRED.create({
       detail: "Studio MCP tools require a request-scoped API token.",
+    });
+  }
+
+  if (!studioMcpUrl) {
+    throw CONFIG_INVALID.create({
+      detail: "Required Studio MCP tools require a configured Studio transport.",
     });
   }
 
@@ -714,9 +739,6 @@ async function withExplicitVeryfrontStudioRemoteTools(input: {
   }).filter((toolName) =>
     configuredServers.some((server) => createMcpToolPolicyGate(server.toolPolicy).allows(toolName))
   );
-
-  const studioMcpUrl = getHostEnv("VERYFRONT_STUDIO_MCP_URL")?.trim();
-  if (!studioMcpUrl) return input.agent;
 
   const runtimeConfig = input.agent.config as Agent["config"] & RuntimeRemoteToolConfig;
   const remoteTools = runtimeConfig.__vfRemoteToolSources ?? [];
