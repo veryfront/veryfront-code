@@ -1125,7 +1125,7 @@ describe("trusted merge-group cancellation workflow", () => {
       if (name === "version-check") {
         assertEquals(
           asRecord(jobs[name], name).if,
-          "${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && github.ref == 'refs/heads/main' }}",
+          "${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && (github.ref == 'refs/heads/main' || (github.event_name == 'workflow_dispatch' && inputs.maintenance_release_number != '')) }}",
         );
         continue; // The merge queue ref is never refs/heads/main.
       }
