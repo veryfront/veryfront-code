@@ -120,7 +120,14 @@ export async function POST(request: Request): Promise<Response> {
     },
   }, { "Idempotency-Key": admissionKey });
   const run = await client.claimRun({ workerId: worker.id, leaseDurationSeconds: 60 });
-  if (!run) throw new Error("The runtime did not receive its queued run");
+  if (!run) {
+    return Response.json({
+      error: "The admitted run is not currently claimable; inspect it before resuming this worker",
+      worker_id: worker.id,
+      run_id: accepted.id,
+      conversation_id: conversation.id,
+    }, { status: 502 });
+  }
 
   let output: string;
   try {

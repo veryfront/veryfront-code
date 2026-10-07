@@ -620,6 +620,17 @@ describe("Guide: agent-service-runtime.md", () => {
 });
 
 describe("Guide: connect-runtime.md", () => {
+  it("keeps admission identifiers visible when the claim is empty", async () => {
+    const guide = await readGuide("connect-runtime.md");
+    const claim = guide.indexOf("const run = await client.claimRun(");
+    const execution = guide.indexOf("  let output: string;", claim);
+    const emptyClaim = guide.slice(claim, execution);
+    assertStringIncludes(emptyClaim, "return Response.json(");
+    assertStringIncludes(emptyClaim, "worker_id: worker.id");
+    assertStringIncludes(emptyClaim, "run_id: accepted.id");
+    assertStringIncludes(emptyClaim, "conversation_id: conversation.id");
+  });
+
   it("does not retry an ambiguous successful finalization as failed", async () => {
     const guide = await readGuide("connect-runtime.md");
     const completed = guide.indexOf(
