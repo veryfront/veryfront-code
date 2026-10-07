@@ -1,5 +1,5 @@
 import { assertEquals, assertRejects } from "#std/assert";
-import { join } from "#std/path.ts";
+import { dirname, join } from "#std/path.ts";
 import { describe, it } from "#std/testing/bdd";
 import { prepareFrameworkSources } from "./prepare-framework-sources.ts";
 import { ROOT_BUNDLED_EXTENSION_SOURCES } from "../../src/extensions/root-bundled-sources.ts";
@@ -33,7 +33,7 @@ describe("prepareFrameworkSources", () => {
       await Deno.mkdir(sourceRoot, { recursive: true });
       for (const entry of Object.values(ROOT_BUNDLED_EXTENSION_SOURCES)) {
         const path = join(temporaryRoot, entry);
-        await Deno.mkdir(path.slice(0, path.lastIndexOf("/")), {
+        await Deno.mkdir(dirname(path), {
           recursive: true,
         });
         await Deno.writeTextFile(
