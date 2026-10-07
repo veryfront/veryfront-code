@@ -80,10 +80,12 @@ export function buildFinalizedMessageState(
     : appendMissingFallbackTextPart([
       ...persistedMessage.parts,
       ...finalStepFallbackParts.filter((fallbackPart) =>
-        isToolUiPart(fallbackPart) &&
-        !persistedMessage.parts.some((part) =>
-          isToolUiPart(part) && part.toolCallId === fallbackPart.toolCallId
-        )
+        (fallbackPart.type === "reasoning" &&
+          !persistedMessage.parts.some((part) => part.type === "reasoning")) ||
+        (isToolUiPart(fallbackPart) &&
+          !persistedMessage.parts.some((part) =>
+            isToolUiPart(part) && part.toolCallId === fallbackPart.toolCallId
+          ))
       ),
     ], input.finalStep);
   const finalizedMessage = fallbackParts.length !== persistedMessage.parts.length

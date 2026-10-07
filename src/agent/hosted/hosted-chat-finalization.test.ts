@@ -268,6 +268,49 @@ describe("agent/hosted-chat-finalization", () => {
     assertEquals(terminalStates.at(0)!.status, "completed");
   });
 
+  it("completes runtime-metadata-only response output with final-step reasoning fallback", async () => {
+    const calls: string[] = [];
+    const terminalStates: HostedLifecycleTerminalState[] = [];
+
+    await finalizeHostedChatRun({
+      kind: "response",
+      responseMessage: createResponseMessage({
+        parts: [{
+          type: "data-veryfront.runtime_context",
+          data: { currentDateUtc: "2026-10-07" },
+        }],
+      }),
+      isAborted: false,
+      streamResult: createStreamResult({
+        response: {
+          messages: [{
+            role: "assistant",
+            content: [{ type: "reasoning", text: "Checking the retained state." }],
+          }],
+        },
+      }),
+      lifecycleAdapter: createLifecycleAdapter({
+        calls,
+        terminalStates,
+        mirror: createDurableRunMirror({ calls }),
+      }),
+      mirroredToolChunkState: createMirroredToolChunkState(),
+      capturedMessageId: "assistant-message-1",
+      incompleteToolCallsPartErrorText: "Tool call did not complete",
+      cleanup: async () => {
+        calls.push("cleanup");
+      },
+      streamError: null,
+    });
+
+    assertEquals(calls, ["flush", "terminal:completed:", "cleanup"]);
+    assertEquals(terminalStates.at(0)!.status, "completed");
+    assertEquals((terminalStates.at(0)!.output as ChatUiMessage).parts, [
+      { type: "data-veryfront.runtime_context", data: { currentDateUtc: "2026-10-07" } },
+      { type: "reasoning", text: "Checking the retained state." },
+    ]);
+  });
+
   it("fails runtime-metadata-only response output with unfinished final-step tool fallback", async () => {
     const calls: string[] = [];
     const chunks: ChatUiMessageChunk<MessageMetadata>[] = [];

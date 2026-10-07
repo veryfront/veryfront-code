@@ -49,6 +49,40 @@ Deno.test("buildFinalizedMessageState preserves tool-before-text fallback orderi
   assertEquals(result.hasIncompleteFinalizedToolParts, false);
 });
 
+Deno.test("buildFinalizedMessageState preserves reasoning fallback after runtime metadata", () => {
+  const result = buildFinalizedMessageState({
+    responseMessage: {
+      id: "assistant-1",
+      role: "assistant",
+      parts: [{ type: "data-veryfront.runtime_context", data: { currentDateUtc: "2026-10-07" } }],
+    },
+    isAborted: false,
+    finalStep: {
+      response: {
+        messages: [{
+          role: "assistant",
+          content: [{
+            type: "reasoning",
+            text: "Checking the retained state.",
+            signature: "sig_123",
+          }],
+        }],
+      },
+    },
+    incompleteToolCallsPartErrorText: "tool error",
+  });
+
+  assertEquals(result.sanitizedFinalizedMessage.parts, [
+    { type: "data-veryfront.runtime_context", data: { currentDateUtc: "2026-10-07" } },
+    {
+      type: "reasoning",
+      text: "Checking the retained state.",
+      signature: "sig_123",
+    },
+  ]);
+  assertEquals(result.hasIncompleteFinalizedToolParts, false);
+});
+
 Deno.test("buildFinalizedMessageState does not fail provider-owned input-available tools", () => {
   const result = buildFinalizedMessageState({
     responseMessage: {
