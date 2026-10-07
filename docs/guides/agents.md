@@ -558,7 +558,13 @@ the run, including long-running, scheduled, API-started, and browser-originated
 runs. Browser environment context can add a display timezone, but it does not
 replace the UTC snapshot. Non-streaming results expose the exact values at
 `result.metadata?.runtimeContext`; streaming runs emit them in the initial data
-event named `veryfront.runtime_context` for durable replay and diagnostics. Runtime context does not count as assistant output. A detached stream that ends without cancellation, assistant output, or a reported stream error fails with `EMPTY_RESPONSE`. Cancellation and reported stream errors retain their existing terminal outcomes.
+event named `veryfront.runtime_context` for durable replay and diagnostics.
+
+Runtime context does not count as assistant output.
+A detached stream that ends without cancellation, assistant output, or a reported
+stream error fails with `EMPTY_RESPONSE`.
+This check does not replace cancellation or a reported stream error with
+`EMPTY_RESPONSE`.
 
 ## Dynamic system prompts
 
