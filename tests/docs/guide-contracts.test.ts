@@ -70,6 +70,7 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
       "registerWorker",
       "claimRun",
       "ConversationRunEventEncoder",
+      "x-csrf-token",
       "VERYFRONT_PROJECT_ID",
       "veryfront dev",
       "worker_key",

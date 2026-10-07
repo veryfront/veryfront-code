@@ -176,10 +176,21 @@ Use the registered worker's implementation kind and worker key. A bare
 2. In another terminal with `VERYFRONT_API_TOKEN` set, execute the agent:
 
    ```bash
+   RUNTIME_URL=http://localhost:3000
+   RUNTIME_COOKIE_JAR=$(mktemp)
    curl --fail-with-body --silent --show-error \
-     -X POST http://localhost:3000/api/runtime \
+     -H "Accept: text/html" -c "$RUNTIME_COOKIE_JAR" "$RUNTIME_URL/" > /dev/null
+   RUNTIME_CSRF_TOKEN=$(awk '$6 == "__Host-vf_csrf" { print $7 }' "$RUNTIME_COOKIE_JAR")
+   curl --fail-with-body --silent --show-error \
+     -X POST "$RUNTIME_URL/api/runtime" \
+     -b "$RUNTIME_COOKIE_JAR" \
+     -H "x-csrf-token: $RUNTIME_CSRF_TOKEN" \
      -H "Authorization: Bearer $VERYFRONT_API_TOKEN"
+   rm "$RUNTIME_COOKIE_JAR"
    ```
+
+   Veryfront checks CSRF in local development. The initial GET obtains the
+   runtime cookie; the POST sends its matching `x-csrf-token` header.
 
    The response contains `worker_id`, `conversation_id`, and the canonical `run_id`. It contains no
    worker token or run credential. Keep the returned run ID for verification.
