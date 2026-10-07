@@ -1077,6 +1077,27 @@ Deno.test("getRuntimeRemoteToolSources enforces policy on injected Veryfront API
   assertEquals(executeCalls, ["get_file"]);
 });
 
+it("getRuntimeRemoteToolSources omits unavailable optional Studio while retaining required rejection", () => {
+  assertEquals(
+    getRuntimeRemoteToolSources({
+      system: "Use available tools.",
+      tools: {},
+      mcpServers: [{ kind: "veryfront-studio", required: false }],
+    }),
+    [],
+  );
+  assertThrows(
+    () =>
+      getRuntimeRemoteToolSources({
+        system: "Require Studio tools.",
+        tools: {},
+        mcpServers: [{ kind: "veryfront-studio", required: true }],
+      }),
+    VeryfrontError,
+    "trusted host-injected control-plane source",
+  );
+});
+
 Deno.test("getRuntimeRemoteToolSources requires injected control-plane source for explicit Studio MCP", () => {
   const error = assertThrows(
     () =>
