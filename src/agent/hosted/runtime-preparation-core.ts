@@ -1,6 +1,6 @@
 import { getHostedAgentPauseCreationOptions } from "./manual-pause-credential.ts";
 import { getPrivateAsyncIterator } from "#veryfront/security/private-iterator.ts";
-import { mapPrivateArray } from "#veryfront/security/private-array.ts";
+import { forEachPrivateArray, mapPrivateArray } from "#veryfront/security/private-array.ts";
 import { createPrivateSet } from "#veryfront/security/private-set.ts";
 import { defineOwnDataProperty } from "#veryfront/security/own-data-property.ts";
 import {
@@ -179,7 +179,7 @@ async function pruneUnavailableOptionalStudioToolNames(
       continue;
     }
     unavailableNames.add("studio_open_project");
-    for (const toolName of allowedNames) unavailableNames.add(toolName);
+    forEachPrivateArray(allowedNames, (toolName) => unavailableNames.add(toolName));
   }
   if (unavailableNames.size === 0 && unavailablePrefixes.size === 0) return [...names];
   const remoteCandidates = filter(

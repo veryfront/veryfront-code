@@ -188,6 +188,37 @@ async function prepare(
 }
 
 describe("executor runtime preparation", () => {
+  it("prunes optional Studio policy names without the mutable array iterator", async () => {
+    let iteratorCalls = 0;
+    const studioPolicyAllow = ["studio_open_project", "studio_suggestions"];
+    Object.defineProperty(studioPolicyAllow, Symbol.iterator, {
+      configurable: true,
+      value() {
+        iteratorCalls += 1;
+        throw new Error("patched Studio policy iterator must not run");
+      },
+    });
+    const f = fixture({
+      config: {
+        tools: { studio_open_project: true, studio_suggestions: true },
+        mcpServers: [{
+          kind: "veryfront-studio",
+          required: false,
+          toolPolicy: { allow: studioPolicyAllow },
+        }],
+      },
+      grant: { ...grant, allowedToolNames: ["studio_open_project", "studio_suggestions"] },
+    });
+    try {
+      const result = await prepare(f.owner);
+      assert(result && typeof result === "object" && !Array.isArray(result));
+      assertEquals(result.ok, true);
+    } finally {
+      await f.owner.close();
+    }
+    assertEquals(iteratorCalls, 0);
+  });
+
   it("prepares without absent optional Studio but rejects required or granted missing facades", async () => {
     for (const required of [false, true, undefined]) {
       const f = fixture({
