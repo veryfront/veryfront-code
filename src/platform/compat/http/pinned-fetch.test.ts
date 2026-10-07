@@ -1,4 +1,5 @@
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { createRequire } from "node:module";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { isBun, isDeno, isNode } from "#veryfront/platform/compat/runtime.ts";
 import {
@@ -19,6 +20,7 @@ import {
 // Probe tests pin what Deno 2.7.7's own Request and fetch call through the
 // live prototypes; Node's undici and Bun take different internal paths.
 const DENO_INTERNALS = { ignore: !isDeno };
+const requireNode = createRequire(import.meta.url);
 
 const PINNED_ABORT_TEST_CERTIFICATE = {
   cert: `-----BEGIN CERTIFICATE-----
@@ -88,6 +90,41 @@ async function closeNodeTestServer(server: ClosableNodeTestServer): Promise<void
       reject(error);
     });
   });
+}
+
+type ClientRequestMutationMember = "off" | "removeListener" | "emit";
+
+async function mutateClientRequestMemberWhileRequestHoldsCredential(
+  member: ClientRequestMutationMember,
+  runRequest: (mutate: () => void) => Promise<void>,
+): Promise<unknown> {
+  const { ClientRequest } = await import("node:http");
+  const original = Object.getOwnPropertyDescriptor(ClientRequest.prototype, member);
+  const inherited = ClientRequest.prototype[member];
+  if (typeof inherited !== "function") {
+    throw new Error(`Missing ClientRequest.${member} for cleanup leak test`);
+  }
+  let observedAuthorization: unknown;
+  const mutate = () => {
+    Object.defineProperty(ClientRequest.prototype, member, {
+      configurable: true,
+      writable: true,
+      value(this: { getHeader?: (name: string) => unknown }, ...args: unknown[]) {
+        if (typeof this.getHeader === "function") {
+          observedAuthorization ??= this.getHeader("authorization");
+        }
+        return Reflect.apply(inherited, this, args);
+      },
+    });
+  };
+
+  try {
+    await runRequest(mutate);
+    return observedAuthorization;
+  } finally {
+    if (original) Object.defineProperty(ClientRequest.prototype, member, original);
+    else Reflect.deleteProperty(ClientRequest.prototype, member);
+  }
 }
 
 describe("fetchWithPinnedAddresses", () => {
@@ -553,6 +590,119 @@ describe("fetchWithPinnedAddresses", () => {
     }
   });
 
+  it("does not pass credential-bearing responses through a mutated Readable.toWeb", async () => {
+    if (isBun) return;
+
+    const { createServer } = await import("node:http");
+    const { Readable } = await import("node:stream");
+    const originalToWeb = Object.getOwnPropertyDescriptor(Readable, "toWeb");
+    const inheritedToWeb = Readable.toWeb;
+    let observedAuthorization: unknown;
+    let factoryWasCalled = false;
+    const server = createServer((_request, response) => {
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end('{"ok":true}');
+    });
+    await new Promise<void>((resolve, reject) => {
+      server.once("error", reject);
+      server.listen(0, "127.0.0.1", resolve);
+    });
+
+    try {
+      Object.defineProperty(Readable, "toWeb", {
+        configurable: true,
+        writable: true,
+        value(source: { req?: { getHeader(name: string): unknown } }, ...args: unknown[]) {
+          factoryWasCalled = true;
+          observedAuthorization ??= source.req?.getHeader("authorization");
+          return Reflect.apply(inheritedToWeb, this, [source, ...args]);
+        },
+      });
+
+      const address = server.address();
+      if (!address || typeof address === "string") {
+        throw new Error("Node test server did not expose a TCP address");
+      }
+      const response = await fetchWithPinnedAddresses(
+        new URL(`http://pinned-to-web.test:${address.port}/resource`),
+        ["127.0.0.1"],
+        { headers: { authorization: BEARER } },
+      );
+
+      assertEquals(await response.text(), '{"ok":true}');
+      assertEquals(factoryWasCalled, false);
+      assertEquals(observedAuthorization, undefined);
+    } finally {
+      if (originalToWeb) Object.defineProperty(Readable, "toWeb", originalToWeb);
+      await closeNodeTestServer(server);
+    }
+  });
+
+  it("does not pipe credential-bearing compressed responses through a mutated zlib factory", async () => {
+    if (!isNode) return;
+
+    const { createServer } = await import("node:http");
+    const zlib = requireNode("node:zlib") as typeof import("node:zlib");
+    const originalCreateGunzip = Object.getOwnPropertyDescriptor(zlib, "createGunzip");
+    const inheritedCreateGunzip = zlib.createGunzip;
+    let observedAuthorization: unknown;
+    let factoryWasCalled = false;
+    const compressed = zlib.gzipSync(new TextEncoder().encode('{"ok":true}'));
+    const server = createServer((_request, response) => {
+      response.writeHead(200, {
+        "content-encoding": "gzip",
+        "content-type": "application/json",
+      });
+      response.end(compressed);
+    });
+    await new Promise<void>((resolve, reject) => {
+      server.once("error", reject);
+      server.listen(0, "127.0.0.1", resolve);
+    });
+
+    try {
+      Object.defineProperty(zlib, "createGunzip", {
+        configurable: true,
+        writable: true,
+        value(...args: unknown[]) {
+          factoryWasCalled = true;
+          const decoder = Reflect.apply(inheritedCreateGunzip, this, args);
+          const originalEmit = decoder.emit;
+          decoder.emit = function (
+            event: string | symbol,
+            source: unknown,
+            ...emitArgs: unknown[]
+          ) {
+            if (event === "pipe" && typeof source === "object" && source !== null) {
+              observedAuthorization ??= (source as {
+                req?: { getHeader(name: string): unknown };
+              }).req?.getHeader("authorization");
+            }
+            return Reflect.apply(originalEmit, this, [event, source, ...emitArgs]);
+          };
+          return decoder;
+        },
+      });
+
+      const address = server.address();
+      if (!address || typeof address === "string") {
+        throw new Error("Node test server did not expose a TCP address");
+      }
+      const response = await fetchWithPinnedAddresses(
+        new URL(`http://pinned-gzip.test:${address.port}/resource`),
+        ["127.0.0.1"],
+        { headers: { authorization: BEARER } },
+      );
+
+      assertEquals(await response.text(), '{"ok":true}');
+      assertEquals(factoryWasCalled, false);
+      assertEquals(observedAuthorization, undefined);
+    } finally {
+      if (originalCreateGunzip) Object.defineProperty(zlib, "createGunzip", originalCreateGunzip);
+      await closeNodeTestServer(server);
+    }
+  });
+
   it("does not invoke a mutated request destroy during late abort teardown", async () => {
     const { ClientRequest, createServer } = await import("node:http");
     let releaseRequest!: () => void;
@@ -675,6 +825,90 @@ describe("fetchWithPinnedAddresses", () => {
         Object.defineProperty(ClientRequest.prototype, "destroy", originalDestroy);
       } else Reflect.deleteProperty(ClientRequest.prototype, "destroy");
       await closeNodeTestServer(server);
+    }
+  });
+
+  it("does not expose credentials to mutated request cleanup members after a stream pull", async () => {
+    if (isBun) return;
+
+    for (const member of ["off", "removeListener", "emit"] as const) {
+      const { createServer } = await import("node:http");
+      const encoder = new TextEncoder();
+      let releaseFirstReceipt!: () => void;
+      const firstReceipt = new Promise<void>((resolve) => {
+        releaseFirstReceipt = resolve;
+      });
+      const server = createServer((request, _response) => {
+        request.once("data", () => releaseFirstReceipt());
+        request.resume();
+      });
+      await new Promise<void>((resolve, reject) => {
+        server.once("error", reject);
+        server.listen(0, "127.0.0.1", resolve);
+      });
+
+      let continueSecondPull!: () => void;
+      const secondPullReady = new Promise<void>((resolve) => {
+        continueSecondPull = resolve;
+      });
+      const body = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(encoder.encode("first"));
+        },
+        async pull(controller) {
+          await firstReceipt;
+          await secondPullReady;
+          controller.enqueue(encoder.encode("second"));
+          controller.close();
+        },
+      }) as unknown as BodyInit;
+
+      try {
+        const address = server.address();
+        if (!address || typeof address === "string") {
+          throw new Error("Node test server did not expose a TCP address");
+        }
+        const observedAuthorization = await mutateClientRequestMemberWhileRequestHoldsCredential(
+          member,
+          async (mutate) => {
+            const response = fetchWithPinnedAddresses(
+              new URL(`http://pinned-cleanup-${member}.test:${address.port}/upload`),
+              ["127.0.0.1"],
+              { method: "POST", headers: { authorization: BEARER }, body },
+            );
+            await firstReceipt;
+            mutate();
+            continueSecondPull();
+            let timeout: ReturnType<typeof setTimeout> | undefined;
+            try {
+              const result = await Promise.race([
+                response.then(
+                  async (response) => {
+                    await response.body?.cancel();
+                    return "resolved";
+                  },
+                  (error) => error instanceof Error ? error.message : String(error),
+                ),
+                new Promise<string>((resolve) => {
+                  timeout = setTimeout(() => resolve("timeout"), 1_500);
+                }),
+              ]);
+              assertEquals(result.includes(member), true);
+              await response.then(
+                async (response) => {
+                  await response.text();
+                },
+                () => undefined,
+              );
+            } finally {
+              if (timeout !== undefined) clearTimeout(timeout);
+            }
+          },
+        );
+        assertEquals(observedAuthorization, undefined);
+      } finally {
+        await closeNodeTestServer(server);
+      }
     }
   });
 

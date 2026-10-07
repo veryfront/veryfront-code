@@ -9,6 +9,8 @@ import * as nodeHttp from "node:http";
 import * as nodeHttps from "node:https";
 import * as nodeNet from "node:net";
 import * as nodeTls from "node:tls";
+import * as nodeStream from "node:stream";
+import * as nodeZlib from "node:zlib";
 import type { Readable } from "node:stream";
 import { VERSION } from "#veryfront/utils/version-constant.ts";
 import { isErrorAcrossRealms } from "../error-introspection.ts";
@@ -51,6 +53,11 @@ const capturedClientRequestOff = nodeHttp.ClientRequest.prototype.off;
 const capturedIncomingMessageDestroy = nodeHttp.IncomingMessage.prototype.destroy;
 const capturedNetCreateConnection = nodeNet.createConnection;
 const capturedTlsConnect = nodeTls.connect;
+const capturedReadableToWeb = nodeStream.Readable.toWeb;
+const capturedReadablePipe = nodeStream.Readable.prototype.pipe;
+const capturedCreateGunzip = nodeZlib.createGunzip;
+const capturedCreateInflate = nodeZlib.createInflate;
+const capturedCreateBrotliDecompress = nodeZlib.createBrotliDecompress;
 
 /**
  * `node:http` and `node:https` `request`, copied into constants while this
@@ -265,6 +272,48 @@ function isNativeDestroyChange(changed: ChangedNodeRequestMember): boolean {
 function assertNodeRequestMembersUnchangedExceptNativeDestroy(): void {
   const changed = findChangedNodeRequestMember(isNativeDestroyChange);
   if (changed) throw changedNodeRequestMemberError(changed.member);
+}
+
+function isCredentialRequestLockKey(key: PropertyKey): boolean {
+  return key === "off" || key === "removeListener" || key === "emit";
+}
+
+function lockCredentialRequestInstance(request: ClientRequest): void {
+  for (
+    let target = ReflectGetPrototypeOf(request);
+    target !== null && target !== Object.prototype;
+    target = ReflectGetPrototypeOf(target)
+  ) {
+    let snapshot: MemberSnapshot | undefined;
+    for (let index = 0; index < NODE_REQUEST_MEMBERS.length; index++) {
+      if (NODE_REQUEST_MEMBERS[index]!.target === target) {
+        snapshot = NODE_REQUEST_MEMBERS[index];
+        break;
+      }
+    }
+    if (snapshot === undefined) continue;
+    for (let index = 0; index < snapshot.keys.length; index++) {
+      const key = snapshot.keys[index]!;
+      if (!isCredentialRequestLockKey(key)) continue;
+      const descriptor = snapshot.descriptors[index];
+      if (!isFunctionOrAccessor(descriptor)) continue;
+      if (IntrinsicReflectApply(ObjectHasOwn, undefined, [request, key])) continue;
+      const locked = hasOwnField(descriptor!, "value")
+        ? {
+          configurable: false,
+          enumerable: descriptor!.enumerable,
+          writable: true,
+          value: descriptorField(descriptor!, "value"),
+        }
+        : {
+          configurable: false,
+          enumerable: descriptor!.enumerable,
+          get: descriptorField(descriptor!, "get"),
+          set: descriptorField(descriptor!, "set"),
+        };
+      IntrinsicReflectApply(ObjectDefineProperty, Object, [request, key, locked]);
+    }
+  }
 }
 
 function isCredentialSocketLockKey(key: PropertyKey): boolean {
@@ -780,24 +829,23 @@ async function decodeResponseBody(
   const encoding = headers.get("content-encoding")?.trim().toLowerCase();
   if (!encoding || encoding === "identity") return response;
 
-  const zlib = await import("node:zlib");
   let decoder:
-    | ReturnType<typeof zlib.createGunzip>
-    | ReturnType<typeof zlib.createInflate>
-    | ReturnType<typeof zlib.createBrotliDecompress>;
+    | ReturnType<typeof capturedCreateGunzip>
+    | ReturnType<typeof capturedCreateInflate>
+    | ReturnType<typeof capturedCreateBrotliDecompress>;
   if (encoding === "gzip" || encoding === "x-gzip") {
-    decoder = zlib.createGunzip();
+    decoder = capturedCreateGunzip();
   } else if (encoding === "deflate") {
-    decoder = zlib.createInflate();
+    decoder = capturedCreateInflate();
   } else if (encoding === "br") {
-    decoder = zlib.createBrotliDecompress();
+    decoder = capturedCreateBrotliDecompress();
   } else {
     return response;
   }
   headers.delete("content-encoding");
   headers.delete("content-length");
   assertNodeRequestMembersUnchanged();
-  return response.pipe(decoder);
+  return IntrinsicReflectApply(capturedReadablePipe, response, [decoder]) as Readable;
 }
 
 /** @internal Used by the central egress guard after DNS policy validation. */
@@ -954,10 +1002,11 @@ export async function fetchWithPinnedAddresses(
               decoded.once("end", cleanupAbortListener);
               decoded.once("close", cleanupAbortListener);
               decoded.once("error", cleanupAbortListener);
-              const { Readable } = await import("node:stream");
               assertNodeRequestMembersUnchanged();
               const statusMessage = message.statusMessage ?? "";
-              const webBody = Readable.toWeb(decoded) as globalThis.ReadableStream<Uint8Array>;
+              const webBody = IntrinsicReflectApply(capturedReadableToWeb, nodeStream.Readable, [
+                decoded,
+              ]) as globalThis.ReadableStream<Uint8Array>;
               settled = true;
               resolve(createPinnedFetchResponse(
                 status,
@@ -970,6 +1019,7 @@ export async function fetchWithPinnedAddresses(
               rejectBeforeResponse(error);
             }
           });
+          lockCredentialRequestInstance(request);
         } catch (error) {
           rejectBeforeResponse(error);
           return;
