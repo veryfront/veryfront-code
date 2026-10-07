@@ -812,13 +812,13 @@ export async function writeStreamExclusive(
     return observeNativePromise(closing);
   };
 
-  const cancelSource = (): Promise<void> => {
+  const cancelSource = async (): Promise<void> => {
     try {
-      return observeCancellation(
+      await observeCancellation(
         reflectApply(ReadableStreamCancel, source, [signal?.reason]) as Promise<void>,
       );
     } catch {
-      return resolveNativePromise();
+      await resolveNativePromise();
     }
   };
 

@@ -121,6 +121,40 @@ describe("Filesystem Compat", () => {
   });
 
   describe("stream cancellation", () => {
+    it("writes ordered stream chunks and refuses to overwrite an existing file", async () => {
+      const fs = createFileSystem();
+      assertExists(fs.writeFileStream);
+      const target = join(testDir, "exclusive-stream.bin");
+      const source = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new Uint8Array([1, 2]));
+          controller.enqueue(new Uint8Array([3, 4, 5]));
+          controller.close();
+        },
+      });
+      assertEquals(await fs.writeFileStream(target, source), 5);
+      assertEquals([...await fs.readFile(target)], [1, 2, 3, 4, 5]);
+      await assertRejects(() => fs.writeFileStream!(target, new ReadableStream()), Error);
+      assertEquals([...await fs.readFile(target)], [1, 2, 3, 4, 5]);
+    });
+
+    it("removes an incomplete stream file when its source fails", async () => {
+      const fs = createFileSystem();
+      assertExists(fs.writeFileStream);
+      const target = join(testDir, "failed-stream.bin");
+      const source = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.error(new Error("download source failed"));
+        },
+      });
+      await assertRejects(
+        () => fs.writeFileStream!(target, source),
+        Error,
+        "download source failed",
+      );
+      assertEquals(await fs.exists(target), false);
+    });
+
     it("waits for asynchronous source cancellation before settling", async () => {
       const fs = createFileSystem();
       assertExists(fs.writeFileStream);

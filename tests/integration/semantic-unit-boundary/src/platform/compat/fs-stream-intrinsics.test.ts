@@ -9,13 +9,14 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { makeTempDir } from "#veryfront/testing/deno-compat.ts";
 import { createFileSystem, writeStreamExclusive } from "#veryfront/platform/compat/fs.ts";
 
 describe("filesystem stream intrinsic boundary", () => {
   it("keeps private bytes behind captured native file operations", async () => {
     const fs = createFileSystem();
     assertExists(fs.writeFileStream);
-    const directory = await Deno.makeTempDir();
+    const directory = await makeTempDir();
     const target = `${directory}/private.bin`;
     const open = Deno.open;
     const remove = Deno.remove;
@@ -64,7 +65,7 @@ describe("filesystem stream intrinsic boundary", () => {
   it("cleans up a cancelled real file through captured host operations", async () => {
     const fs = createFileSystem();
     assertExists(fs.writeFileStream);
-    const directory = await Deno.makeTempDir();
+    const directory = await makeTempDir();
     const target = `${directory}/cancelled.bin`;
     const open = Deno.open;
     const remove = Deno.remove;
@@ -323,7 +324,7 @@ describe("filesystem stream intrinsic boundary", () => {
   it("streams through captured reader intrinsics", async () => {
     const fs = createFileSystem();
     assertExists(fs.writeFileStream);
-    const directory = await Deno.makeTempDir();
+    const directory = await makeTempDir();
     const getReader = ReadableStream.prototype.getReader;
     const read = ReadableStreamDefaultReader.prototype.read;
     const cancel = ReadableStreamDefaultReader.prototype.cancel;
@@ -370,7 +371,7 @@ describe("filesystem stream intrinsic boundary", () => {
   it("keeps reader chunks out of promise constructor hooks", async () => {
     const fs = createFileSystem();
     assertExists(fs.writeFileStream);
-    const directory = await Deno.makeTempDir();
+    const directory = await makeTempDir();
     const promiseConstructor = Object.getOwnPropertyDescriptor(Promise.prototype, "constructor");
     const then = Promise.prototype.then;
     let exposed = false;

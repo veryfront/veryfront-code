@@ -59,7 +59,7 @@ const node = captureNodeFileOperations();
 function protectPromise<T>(promise: Promise<T>): Promise<T> {
   const descriptor = createObject(null) as PropertyDescriptor;
   descriptor.value = NativePromise;
-  defineProperty(promise, "constructor", descriptor);
+  void defineProperty(promise, "constructor", descriptor);
   return promise;
 }
 
