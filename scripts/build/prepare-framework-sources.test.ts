@@ -3,10 +3,11 @@ import { dirname, join } from "#std/path.ts";
 import { describe, it } from "#std/testing/bdd";
 import { prepareFrameworkSources } from "./prepare-framework-sources.ts";
 import { ROOT_BUNDLED_EXTENSION_SOURCES } from "../../src/extensions/root-bundled-sources.ts";
+import { makeTempDir } from "#veryfront/testing/deno-compat.ts";
 
 describe("prepareFrameworkSources", () => {
   it("fails if an explicitly selected distribution lacks required bundled sources", async () => {
-    const root = await Deno.makeTempDir();
+    const root = await makeTempDir();
     try {
       const srcRoot = join(root, "src");
       await Deno.mkdir(srcRoot);
@@ -25,7 +26,7 @@ describe("prepareFrameworkSources", () => {
   });
 
   it("excludes tests and test helpers from binary framework sources", async () => {
-    const temporaryRoot = await Deno.makeTempDir();
+    const temporaryRoot = await makeTempDir();
     const sourceRoot = join(temporaryRoot, "src");
     const outputRoot = join(temporaryRoot, "dist");
 

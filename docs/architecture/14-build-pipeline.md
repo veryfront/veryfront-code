@@ -51,6 +51,10 @@ Set `frameworkRoot` explicitly to include required root-bundled entries from a
 custom distribution. The default production build includes them automatically
 and fails if an entry is missing.
 
+The npm distribution build also exercises the emitted SSR graph in an installed
+consumer. Its probe refuses remote dependency requests and verifies that the
+bundled exporter registers and unregisters through the SDK registry contract.
+
 ## Change checks
 
 - Add tests for route collection, manifest output, generated assets, and
