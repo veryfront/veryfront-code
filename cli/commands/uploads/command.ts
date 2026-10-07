@@ -31,7 +31,7 @@ const removePrivateDownload = privateDownloadFileSystem.removeStreamFile?.bind(
 const createDownloadNonce = crypto.randomUUID.bind(crypto);
 const downloadNoncePattern =
   /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-const validateDownloadNonce = downloadNoncePattern.test.bind(downloadNoncePattern);
+const validateDownloadNonce = RegExp.prototype.exec.bind(downloadNoncePattern);
 
 export interface UploadItem {
   type: "file" | "folder";
@@ -285,7 +285,7 @@ export async function downloadUploadToFile(
   if (!client.getStream) throw new Error("API client does not support upload downloads");
   const localPath = resolveUploadOutputPath(uploadPath, outputDir);
   const nonce = createDownloadNonce();
-  if (typeof nonce !== "string" || !validateDownloadNonce(nonce)) {
+  if (typeof nonce !== "string" || validateDownloadNonce(nonce) === null) {
     throw new Error("Invalid private download nonce");
   }
   const temporaryPath = join(dirname(localPath), `.vf-download-${nonce}`);

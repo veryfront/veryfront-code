@@ -171,6 +171,7 @@ describe("downloadUploadToFile", () => {
     const originalMethods = privateMethods.map((name) =>
       Object.getOwnPropertyDescriptor(prototype, name)!
     );
+    const originalRegExpExec = RegExp.prototype.exec;
     const originalRandomUUID = crypto.randomUUID;
     const originalNodeRename = nodeFs.rename;
     const originalNodeUnlink = nodeFs.unlink;
@@ -186,6 +187,10 @@ describe("downloadUploadToFile", () => {
     };
     try {
       await mkdir(`${tempDir}/blocked`);
+      RegExp.prototype.exec = function (input: string) {
+        if (input.length === 36) hookCalls++;
+        return Reflect.apply(originalRegExpExec, this, [input]);
+      };
       crypto.randomUUID = () => {
         hookCalls++;
         return "x/../../known-file" as ReturnType<typeof crypto.randomUUID>;
@@ -214,6 +219,7 @@ describe("downloadUploadToFile", () => {
       privateMethods.forEach((name, index) =>
         Object.defineProperty(prototype, name, originalMethods[index]!)
       );
+      RegExp.prototype.exec = originalRegExpExec;
       crypto.randomUUID = originalRandomUUID;
       nodeFs.rename = originalNodeRename;
       nodeFs.unlink = originalNodeUnlink;
