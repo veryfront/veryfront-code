@@ -12,7 +12,9 @@ import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { withEnv } from "#veryfront/testing";
 import {
   agent,
+  ConversationRunEventEncoder,
   createAgUiHandler,
+  createExternalAgentWorkerClient,
   startNodeVeryfrontCloudAgentService,
   veryfrontApiMcpServer,
   veryfrontStudioMcpServer,
@@ -116,6 +118,7 @@ const THIS_GUIDE_EXAMPLE_SUITE = [
   "coding-agents.md",
   "cloud-environment-access.md",
   "cloud-quickstart.md",
+  "connect-runtime.md",
   "create-agent.md",
   "deploy-from-ci.md",
   "deploying.md",
@@ -613,6 +616,32 @@ describe("Guide: agent-service-runtime.md", () => {
 
     const handler = createAgUiHandler("assistant");
     assertEquals(typeof handler, "function");
+  });
+});
+
+describe("Guide: connect-runtime.md", () => {
+  it("encodes the demonstrated output with matching message boundaries", () => {
+    assertEquals(typeof createExternalAgentWorkerClient, "function");
+    const messageId = "runtime-demo-message";
+    const result = { text: "Hello from the connected runtime." };
+    const encoder = new ConversationRunEventEncoder();
+    const events = [
+      ...encoder.encode({ type: "start", messageId }),
+      ...encoder.encode({ type: "text-start", id: messageId }),
+      ...encoder.encode({ type: "text-delta", id: messageId, delta: result.text }),
+      ...encoder.encode({ type: "text-end", id: messageId }),
+    ];
+    assertEquals(events.map((event) => event.type), [
+      "TEXT_MESSAGE_START",
+      "TEXT_MESSAGE_CONTENT",
+      "TEXT_MESSAGE_END",
+    ]);
+    assert(events.every((event) => event.messageId === messageId));
+    const [start, content] = events;
+    assertExists(start);
+    assertExists(content);
+    assert(events.every((event) => event.contentId === start.contentId));
+    assertEquals(content.delta, result.text);
   });
 });
 
