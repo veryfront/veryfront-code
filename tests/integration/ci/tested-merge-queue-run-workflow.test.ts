@@ -13,7 +13,7 @@ const TRUSTED =
 const MAIN = "github.ref == 'refs/heads/main'";
 const MAIN_WITHOUT_MAINTENANCE = `${MAIN} && inputs.maintenance_release_number == ''`;
 const MAINTENANCE =
-  "(github.event_name == 'workflow_dispatch' && inputs.maintenance_release_number != '' && github.ref != 'refs/heads/main')";
+  "(github.event_name == 'workflow_dispatch' && inputs.maintenance_release_number != '' && startsWith(github.ref, 'refs/heads/maintenance/rc.'))";
 const MAIN_OR_MAINTENANCE = `(${MAIN_WITHOUT_MAINTENANCE}) || ${MAINTENANCE}`;
 const SKIP_ON_REUSE = "!cancelled() && needs.tested-run.outputs.reuse != 'true'";
 const REUSED_RUN_ID_EXPRESSION =
@@ -190,25 +190,62 @@ describe("tested merge-queue run workflow", () => {
     );
   });
 
-  it("rejects maintenance RC publication from main before recording a release number", async () => {
+  it("rejects maintenance RC publication from untrusted refs before recording a release number", async () => {
     const tested = job(await readJobs(), "tested-run");
     const validation = String(namedStep(tested, "Validate maintenance release number").run);
-    const output = await new Deno.Command("bash", {
-      args: ["-c", validation],
-      env: {
-        GITHUB_OUTPUT: "/dev/null",
-        GITHUB_REF: "refs/heads/main",
-        RELEASE_NUMBER: "21996",
-      },
-      stdout: "piped",
-      stderr: "piped",
-    }).output();
+    for (
+      const [githubRef, message] of [
+        [
+          "refs/heads/main",
+          "Maintenance RC publication must be dispatched from a protected maintenance/rc.<number> branch.",
+        ],
+        [
+          "refs/heads/fix/maintenance-rc-publication",
+          "Maintenance RC publication must be dispatched from a protected maintenance/rc.<number> branch.",
+        ],
+        [
+          "refs/heads/maintenance/rc.21995",
+          "maintenance_release_number must match the maintenance branch suffix.",
+        ],
+      ] as const
+    ) {
+      const output = await new Deno.Command("bash", {
+        args: ["-c", validation],
+        env: {
+          GITHUB_OUTPUT: "/dev/null",
+          GITHUB_REF: githubRef,
+          RELEASE_NUMBER: "21996",
+        },
+        stdout: "piped",
+        stderr: "piped",
+      }).output();
 
-    assertEquals(output.code, 1);
-    assertStringIncludes(
-      new TextDecoder().decode(output.stderr),
-      "Maintenance RC publication must be dispatched from the maintenance branch, not main.",
-    );
+      assertEquals(output.code, 1, githubRef);
+      assertStringIncludes(new TextDecoder().decode(output.stderr), message);
+    }
+  });
+
+  it("accepts maintenance RC publication only from the matching maintenance branch", async () => {
+    const tested = job(await readJobs(), "tested-run");
+    const validation = String(namedStep(tested, "Validate maintenance release number").run);
+    const outputPath = await Deno.makeTempFile();
+    try {
+      const output = await new Deno.Command("bash", {
+        args: ["-c", validation],
+        env: {
+          GITHUB_OUTPUT: outputPath,
+          GITHUB_REF: "refs/heads/maintenance/rc.21996",
+          RELEASE_NUMBER: "21996",
+        },
+        stdout: "piped",
+        stderr: "piped",
+      }).output();
+
+      assertEquals(output.code, 0, new TextDecoder().decode(output.stderr));
+      assertEquals(await Deno.readTextFile(outputPath), "release_number=21996\n");
+    } finally {
+      await Deno.remove(outputPath);
+    }
   });
 
   it("requires every artifact a reused run consumes", async () => {

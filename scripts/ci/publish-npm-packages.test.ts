@@ -2678,7 +2678,7 @@ describe("RC metadata verification order", () => {
         "canonical_tarball_for_package_dir() { echo package.tgz; }",
         'jq() { echo "$PACKAGE_DIR"; }',
         'rc_tag_for_package() { if [ "$1" = extension ]; then echo rc-history; else echo rc; fi; }',
-        "npm() { return 1; }",
+        'npm() { printf "%s\n" "npm error code E404" >&2; return 1; }',
         'rc_publish_package_dir() { echo "UNSAFE-PUBLISH"; }',
         "run_rc_publish",
       ].join("\n"),
@@ -2706,7 +2706,7 @@ describe("RC metadata verification order", () => {
         "canonical_tarball_for_package_dir() { echo package.tgz; }",
         'jq() { echo "$PACKAGE_DIR"; }',
         "rc_tag_for_package() { echo rc-history; }",
-        'npm() { case "$*" in "view npm@0.1.0-rc.1 version") echo 0.1.0-rc.1 ;; "view npm@0.1.0-rc.1 gitHead") echo other-head ;; "view "*" version") return 1 ;; *) return 90 ;; esac; }',
+        'npm() { case "$*" in "view npm@0.1.0-rc.1 version") echo 0.1.0-rc.1 ;; "view npm@0.1.0-rc.1 gitHead") echo other-head ;; "view "*" version") printf "%s\n" "npm error code E404" >&2; return 1 ;; *) return 90 ;; esac; }',
         'rc_publish_package_dir() { echo "UNSAFE-PUBLISH"; }',
         "run_rc_publish",
       ].join("\n"),
@@ -2721,6 +2721,38 @@ describe("RC metadata verification order", () => {
     assertStringIncludes(
       decoder.decode(output.stderr),
       "npm@0.1.0-rc.1 already exists, but its gitHead does not match this commit.",
+    );
+    assertEquals(
+      decoder.decode(output.stdout).includes("UNSAFE-PUBLISH"),
+      false,
+    );
+  });
+
+  it("refuses a maintenance batch before any publish if an immutable version lookup fails", async () => {
+    const output = await runBash(
+      [
+        "set -euo pipefail",
+        'source "$SCRIPT_PATH"',
+        "verify_npm_compatibility_artifact() { :; }",
+        "package_dirs() { printf '%s\n' extension npm; }",
+        "canonical_tarball_for_package_dir() { echo package.tgz; }",
+        'jq() { echo "$PACKAGE_DIR"; }',
+        "rc_tag_for_package() { echo rc-history; }",
+        'npm() { case "$*" in "view extension@0.1.0-rc.1 version") printf "%s\n" "npm error code E503" >&2; printf "%s\n" "npm error 503 Service Unavailable" >&2; return 1 ;; "view npm@0.1.0-rc.1 version") printf "%s\n" "npm error code E404" >&2; return 1 ;; *) return 90 ;; esac; }',
+        'rc_publish_package_dir() { echo "UNSAFE-PUBLISH"; }',
+        "run_rc_publish",
+      ].join("\n"),
+      {
+        VERSION: "0.1.0-rc.1",
+        GITHUB_SHA: "expected-head",
+        NPM_PACK_DIR: "artifact",
+        NPM_MAINTENANCE_RELEASE: "true",
+      },
+    );
+    assertEquals(output.code, 1);
+    assertStringIncludes(
+      decoder.decode(output.stderr),
+      "npm registry version lookup failed for extension@0.1.0-rc.1",
     );
     assertEquals(
       decoder.decode(output.stdout).includes("UNSAFE-PUBLISH"),

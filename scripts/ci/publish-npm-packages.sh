@@ -405,9 +405,25 @@ wait_for_npm_git_head() {
 
 ensure_rc_version_absent_or_matches_commit() {
   local package_name="$1"
+  local version_lookup_mode="${2:-recover}"
   PUBLISHED_GIT_HEAD=""
-  if ! npm view "${package_name}@${VERSION}" version >/dev/null 2>&1; then
-    return 0
+  set +e
+  NPM_VERSION_LOOKUP_OUTPUT="$(npm view "${package_name}@${VERSION}" version 2>&1)"
+  NPM_VERSION_LOOKUP_STATUS=$?
+  set -e
+  if [[ "${NPM_VERSION_LOOKUP_STATUS}" -ne 0 ]]; then
+    if is_npm_package_not_found "${NPM_VERSION_LOOKUP_OUTPUT}"; then
+      return 0
+    fi
+    if [[ "${version_lookup_mode}" != "fail-closed" ]]; then
+      return 0
+    fi
+    echo "::error::npm registry version lookup failed for ${package_name}@${VERSION} (status ${NPM_VERSION_LOOKUP_STATUS})." >&2
+    SANITIZED_NPM_LOOKUP_OUTPUT="$(sanitize_npm_lookup_output "${NPM_VERSION_LOOKUP_OUTPUT}")"
+    if [[ -n "${SANITIZED_NPM_LOOKUP_OUTPUT}" ]]; then
+      printf '%s\n' "${SANITIZED_NPM_LOOKUP_OUTPUT}" >&2
+    fi
+    return "${NPM_VERSION_LOOKUP_STATUS}"
   fi
 
   set +e
@@ -531,7 +547,7 @@ run_rc_publish() {
         echo "::error::Maintenance versions must be older than every current rc tag." >&2
         return 1
       fi
-      ensure_rc_version_absent_or_matches_commit "${PACKAGE_NAME}" || return $?
+      ensure_rc_version_absent_or_matches_commit "${PACKAGE_NAME}" fail-closed || return $?
     done
   fi
 

@@ -45,7 +45,7 @@ const SONAR_JOB_EXPRESSION =
 const MAIN = "github.ref == 'refs/heads/main'";
 const MAIN_WITHOUT_MAINTENANCE = `${MAIN} && inputs.maintenance_release_number == ''`;
 const MAINTENANCE =
-  "(github.event_name == 'workflow_dispatch' && inputs.maintenance_release_number != '' && github.ref != 'refs/heads/main')";
+  "(github.event_name == 'workflow_dispatch' && inputs.maintenance_release_number != '' && startsWith(github.ref, 'refs/heads/maintenance/rc.'))";
 const MAIN_OR_MAINTENANCE = `(${MAIN_WITHOUT_MAINTENANCE}) || ${MAINTENANCE}`;
 const REUSED_RUN_ID_EXPRESSION =
   "${{ needs.tested-run.outputs.reuse == 'true' && needs.tested-run.outputs.run_id || '' }}";
