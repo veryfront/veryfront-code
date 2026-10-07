@@ -426,10 +426,11 @@ export async function finalizeHostedChatRun(
     fallbackChunks = state.fallbackChunks;
     hasIncompleteToolParts = state.hasIncompleteToolParts;
     metadata = state.metadata;
-    emptyFailure = shouldFailEmptyHostedFinalizedMessage({
-      isAborted: input.isAborted,
-      message: state.finalizedMessage,
-    });
+    emptyFailure = state.fallbackChunks.length === 0 &&
+      shouldFailEmptyHostedFinalizedMessage({
+        isAborted: input.isAborted,
+        message: state.finalizedMessage,
+      });
     hasOutput = true;
   } else {
     const state = createHostedChatFinalizeDetachedBuildState(input)(finalStep);
