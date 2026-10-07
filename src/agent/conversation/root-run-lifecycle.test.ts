@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   prepareConversationRootRunLifecycle,
@@ -10,7 +10,11 @@ import {
   runWithHostedRunEventWriterCapability,
 } from "../hosted/child-run-event-writer-token.ts";
 import { installMockFetch, restoreMockFetch } from "#veryfront/testing/mock-fetch.ts";
-import { createRuntimeObservationCaptureOptIn } from "#veryfront/runtime/runtime-observation-carrier.ts";
+import {
+  bindRuntimeObservationWriterCapability,
+  createRuntimeObservationCaptureOptIn,
+  getRuntimeObservationWriterScope,
+} from "#veryfront/runtime/runtime-observation-carrier.ts";
 
 describe("agent/conversation-root-run-lifecycle", () => {
   it("starts a run and derives root-run lineage plus a mirror in one helper", async () => {
@@ -186,6 +190,50 @@ describe("agent/conversation-root-run-lifecycle", () => {
       }
     } finally {
       restoreMockFetch();
+    }
+  });
+
+  it("binds exact capture to admitted UUIDv6-v8 run and project scopes", async () => {
+    for (const version of [6, 7, 8]) {
+      const runId = `22222222-2222-${version}222-a222-222222222222`;
+      const canonicalRunId = `33333333-3333-${version}333-8333-333333333333`;
+      const projectId = `44444444-4444-${version}444-8444-444444444444`;
+      const context = await runWithHostedRunEventWriterCapability(
+        createHostedRunEventWriterCapability({
+          apiUrl: "https://api.example.test",
+          runId,
+          canonicalRunId,
+          runEventAppendToken: "run-event-service-token",
+        }),
+        () =>
+          prepareHostedConversationRootRunContext({
+            authToken: "user-api-token",
+            apiUrl: "https://api.example.test",
+            conversationId: "11111111-1111-4111-a111-111111111111",
+            projectId,
+            agentId: "agent-1",
+            messages: [],
+            providedRun: {
+              runId,
+              messageId: "msg-1",
+              latestEventId: 0,
+              latestExternalEventSequence: 0,
+            },
+            persistLatestUserMessageBeforeRun: false,
+            runtimeObservationCaptureOptIn: createRuntimeObservationCaptureOptIn(),
+          }, { abortSignal: new AbortController().signal }),
+      );
+      try {
+        assertExists(context.privateRuntimeObservationWriterCapability);
+        const sink = () => {};
+        bindRuntimeObservationWriterCapability(
+          sink,
+          context.privateRuntimeObservationWriterCapability,
+        );
+        assertEquals(getRuntimeObservationWriterScope(sink), { runId, canonicalRunId, projectId });
+      } finally {
+        context.durableRunMirror?.dispose();
+      }
     }
   });
 

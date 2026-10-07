@@ -21,6 +21,7 @@ import {
 } from "#veryfront/runtime/runtime-observation-carrier.ts";
 import type { ConversationRunProjection } from "./durable.ts";
 import type { ChatUiMessage } from "#veryfront/chat/types.ts";
+import { getUuidSchema } from "#veryfront/schemas/common.ts";
 import { DurableRunEventPersistenceError } from "./private-run-event.ts";
 import {
   createHostedConversationRunChunkMirrorFromCapability,
@@ -140,8 +141,7 @@ function toHostedConversationRootRunState(
 }
 
 function isUuid(value: string | null | undefined): value is string {
-  return typeof value === "string" &&
-    /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+  return typeof value === "string" && getUuidSchema().safeParse(value).success;
 }
 
 function revokeRuntimeObservationWriterOnMirrorDispose(
