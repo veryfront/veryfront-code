@@ -1127,8 +1127,11 @@ export async function fetchWithPinnedAddresses(
             reason = abortReason();
             destroyError = errorForNodeDestroy(reason);
           } catch (error) {
-            rejectBeforeResponse(error);
-            return;
+            // Reading a project-controlled reason must not prevent native
+            // transport cleanup. Reject with the thrown value without passing
+            // it through Error introspection or stream teardown.
+            reason = error;
+            destroyError = undefined;
           }
           const teardownError = teardownDeferredNodeRequest(
             intrinsics,
