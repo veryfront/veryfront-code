@@ -1,5 +1,6 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { withEnv } from "#veryfront/testing/index.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { clearProductionStartupCaches } from "../../../cli/commands/serve/command.ts";
 
@@ -20,10 +21,13 @@ describe("production startup dependency seed", () => {
         const derived = join(await getMdxEsmSsrCacheDir("19.2.4", "source"), "stale.mjs");
         await getLocalFs().mkdir(join(derived, ".."), { recursive: true });
         await writeTextFile(derived, "export const stale = true;");
-        await clearProductionStartupCaches("materialized-dependencies");
+        await withEnv(
+          { VERYFRONT_RUNTIME_CACHE_SEED: "materialized-dependencies" },
+          () => clearProductionStartupCaches(),
+        );
         assertEquals(await exists(derived), false);
         assertEquals(await readTextFile(dependency), "export const seeded = true;");
-        await clearProductionStartupCaches("");
+        await withEnv({ VERYFRONT_RUNTIME_CACHE_SEED: "" }, () => clearProductionStartupCaches());
         assertEquals(await exists(dependency), false);
       });
     } finally {
