@@ -401,11 +401,10 @@ describe(
       // network round trip and break the identity comparisons the schema and
       // element registries make against the framework's own objects.
       //
-      // `playwright` is the fixture because the framework embeds it at two
-      // versions at once, which is the case a name-only membership test cannot
-      // decide, and because both the bare and the pinned specifier are already
-      // in deno.lock -- so leaving them external, which is the whole point,
-      // cannot make this test rewrite the lock it is asserting about.
+      // `playwright` is the declared browser fixture already pinned in the
+      // framework lock. Its exact constraint lets both forms stay external
+      // without this test rewriting the lock it is asserting about. Multiple
+      // embedded-version decisions have separate unit coverage.
       const name = "playwright";
       const versions = EMBEDDED_NPM_PACKAGES[name];
       assert(

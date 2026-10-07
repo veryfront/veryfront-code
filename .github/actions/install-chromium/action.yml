@@ -10,7 +10,7 @@ inputs:
   install-command:
     description: Command that performs the Playwright Chromium install
     required: false
-    default: deno run -A npm:playwright install --with-deps chromium
+    default: deno run -A npm:playwright@1.60.0 install --with-deps chromium
 
 runs:
   using: composite

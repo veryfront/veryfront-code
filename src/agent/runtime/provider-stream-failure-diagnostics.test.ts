@@ -4,12 +4,12 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { __subscribeLogRecordEmitter, type LogEntry } from "#veryfront/utils/logger/logger.ts";
 import type { ModelRuntime } from "#veryfront/provider";
 import * as otelApi from "npm:@opentelemetry/api@1.9.1";
-import { AsyncLocalStorageContextManager } from "npm:@opentelemetry/context-async-hooks@2.9.0";
+import { AsyncLocalStorageContextManager } from "npm:@opentelemetry/context-async-hooks@2.10.0";
 import {
   BasicTracerProvider,
   InMemorySpanExporter,
   SimpleSpanProcessor,
-} from "npm:@opentelemetry/sdk-trace-base@2.9.0";
+} from "npm:@opentelemetry/sdk-trace-base@2.10.0";
 import {
   _resetShimForTests,
   setGlobalActiveSpanAccessor,
