@@ -45,7 +45,11 @@ describe("production server shutdown admission", () => {
         interceptorCalls++;
         return request;
       },
-    }, { bootstrap: () => Promise.reject(new Error("unexpected bootstrap")) });
+    }, {
+      bootstrap: () => Promise.reject(new Error("unexpected bootstrap")),
+      // The CLI's local combined mode, the one setup the interceptor is for.
+      isLocalCliProxyMode: () => true,
+    });
 
     try {
       if (!servedHandler) throw new Error("production listener did not receive a handler");

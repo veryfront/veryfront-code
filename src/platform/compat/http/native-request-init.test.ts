@@ -1,13 +1,18 @@
 import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { isDeno } from "#veryfront/platform/compat/runtime.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { installCredentialProbes } from "#veryfront/security/http/credential-probes.test-helpers.ts";
+import {
+  ARRAY_WRITE_ROUTES,
+  installArrayWriteProbe,
+  installCredentialProbes,
+} from "#veryfront/security/http/credential-probes.test-helpers.ts";
 import {
   isCheckedNativeRequestProperty,
   recordNativePrototypeUse,
   replaceRequestSignalGetter,
 } from "./native-request-use.test-helpers.ts";
 import {
+  assertArrayWritesUnobserved,
   assertNativeRequestProcessing,
   copyNativeHeaders,
   createNativeRequest,
@@ -26,6 +31,33 @@ const BEARER = "Bearer vf-outbound-secret-5c8e";
 const DENO_INTERNALS = { ignore: !isDeno };
 
 describe("platform/compat/http/native-request-init", () => {
+  for (const route of ARRAY_WRITE_ROUTES) {
+    it(`refuses a credential-bearing call while ${route} observes array writes`, () => {
+      assertNativeRequestProcessing();
+      const probe = installArrayWriteProbe(route);
+      let exposed: boolean;
+      try {
+        assertThrows(() => assertArrayWritesUnobserved(), TypeError, "Refused");
+        assertThrows(() => assertNativeRequestProcessing(), TypeError, "Refused");
+        // The helpers check at the fill and the read themselves.
+        assertThrows(() => copyNativeHeaders({ authorization: BEARER }), TypeError, "Refused");
+        assertThrows(() => toNativeHeaderRecord(new Headers()), TypeError, "Refused");
+        // What the refusal prevents: the runtime's own header handling,
+        // through captured methods alone, hands the bearer to the probe.
+        const headers = new Headers();
+        Reflect.apply(Headers.prototype.append, headers, ["authorization", BEARER]);
+        Reflect.apply(Headers.prototype.get, headers, ["authorization"]);
+        Reflect.apply(Headers.prototype.delete, headers, ["authorization"]);
+        exposed = probe.saw(BEARER);
+      } finally {
+        probe.restore();
+      }
+      // Pinned to Deno 2.7.7's header list; Node's undici and Bun store it differently.
+      if (isDeno) assertEquals(exposed, true);
+      assertNativeRequestProcessing();
+    });
+  }
+
   it(
     "builds the headers and init without a patched intrinsic seeing the bearer",
     DENO_INTERNALS,

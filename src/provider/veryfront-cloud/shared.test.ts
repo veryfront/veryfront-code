@@ -7,7 +7,9 @@ import { __resetVeryfrontCloudCatalogForTests } from "./catalog-client.ts";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import {
   HEADER_METHODS,
+  installArrayWriteProbe,
   installCredentialProbes,
+  installObjectToJsonHook,
 } from "#veryfront/security/http/credential-probes.test-helpers.ts";
 import { isVeryfrontGatewayResponse } from "#veryfront/provider/runtime-loader/provider-http.ts";
 import {
@@ -386,6 +388,145 @@ describe("provider/veryfront-cloud/shared", () => {
 
     assertEquals(transportCalls, 0);
     assertEquals(probes.saw(bearer), false);
+  });
+
+  it("refuses a model call while an Array.prototype index accessor observes array writes", async () => {
+    const bearer = "vf_model_call_array_bearer_8e42";
+    const wrappedFetch = createVeryfrontCloudFetch(bearer, "https://93.184.216.34/ai/v1");
+    let transportCalls = 0;
+    const probe = installArrayWriteProbe("Array.prototype index");
+    try {
+      await withMockFetch(
+        () => {
+          transportCalls++;
+          return Promise.resolve(new Response(null, { status: 204 }));
+        },
+        () =>
+          assertRejects(
+            async () =>
+              await wrappedFetch("https://93.184.216.34/ai/v1/chat/completions", {
+                method: "POST",
+                body: '{"model":"gpt-test"}',
+              }),
+            TypeError,
+            "Refused a credential-bearing request",
+          ),
+      );
+    } finally {
+      probe.restore();
+    }
+
+    assertEquals(transportCalls, 0);
+    assertEquals(probe.saw(bearer), false);
+  });
+
+  it("reads the cloud context before the bearer joins the headers", async () => {
+    const bearer = "vf_model_call_context_bearer_5a19";
+    const wrappedFetch = createVeryfrontCloudFetch(bearer, "https://93.184.216.34/ai/v1");
+    let transportCalls = 0;
+    let probe: ReturnType<typeof installArrayWriteProbe> | undefined;
+    // Project-controlled context whose read installs an array species probe.
+    const context = {
+      get billingGroupId() {
+        probe ??= installArrayWriteProbe("Array[Symbol.species]");
+        return "evalrun_context_probe";
+      },
+    } as VeryfrontCloudContext;
+    try {
+      await withMockFetch(
+        () => {
+          transportCalls++;
+          return Promise.resolve(new Response(null, { status: 204 }));
+        },
+        () =>
+          assertRejects(
+            async () =>
+              await runWithVeryfrontCloudContext(context, () =>
+                wrappedFetch("https://93.184.216.34/ai/v1/chat/completions", {
+                  method: "POST",
+                  body: '{"model":"gpt-test"}',
+                })),
+            TypeError,
+            "Refused a credential-bearing request",
+          ),
+      );
+    } finally {
+      probe?.restore();
+    }
+
+    assertEquals(transportCalls, 0);
+    assertEquals(probe?.saw(bearer), false);
+  });
+
+  it("does not undo shared billing usage when a concurrent call is refused", async () => {
+    const context: VeryfrontCloudContext = { billingGroupId: "evalrun_concurrent" };
+    const wrappedFetch = createVeryfrontCloudFetch(
+      "vf_test_provider",
+      "https://93.184.216.34/ai/v1",
+    );
+    let complete!: (response: Response) => void;
+    const pending = new Promise<Response>((resolve) => {
+      complete = resolve;
+    });
+    await withMockFetch(() => pending, async () => {
+      const sent = runWithVeryfrontCloudContext(
+        context,
+        () => wrappedFetch("https://93.184.216.34/ai/v1/chat/completions"),
+      );
+      const refused = assertRejects(() =>
+        runWithVeryfrontCloudContext(
+          context,
+          () => wrappedFetch("https://93.184.216.35/ai/v1/chat/completions"),
+        )
+      );
+      complete(new Response(null, { status: 200 }));
+      await Promise.all([sent, refused]);
+      assertEquals(context.billingGroupUsed, true);
+      assertEquals(context.billingGroupRequestAdmitted, true);
+    });
+  });
+
+  it("leaves the billing group unused when a neutral-route call is refused", async () => {
+    const bearer = "vf_model_call_neutral_bearer_7c20";
+    const wrappedFetch = createVeryfrontCloudFetch(
+      bearer,
+      "https://93.184.216.34/ai/v1",
+      undefined,
+      { wireModelProvider: "openai" },
+    );
+    const context: VeryfrontCloudContext = { billingGroupId: "evalrun_neutral_refused" };
+    let transportCalls = 0;
+    let probe: ReturnType<typeof installArrayWriteProbe> | undefined;
+    // Project code hooks the body rewrite and installs an array species probe.
+    const restoreHook = installObjectToJsonHook(() => {
+      probe = installArrayWriteProbe("Array[Symbol.species]");
+    });
+    try {
+      await withMockFetch(
+        () => {
+          transportCalls++;
+          return Promise.resolve(new Response(null, { status: 204 }));
+        },
+        () =>
+          assertRejects(
+            async () =>
+              await runWithVeryfrontCloudContext(context, () =>
+                wrappedFetch("https://93.184.216.34/ai/v1/chat/completions", {
+                  method: "POST",
+                  body: '{"model":"gpt-test"}',
+                })),
+            TypeError,
+            "Refused a credential-bearing request",
+          ),
+      );
+    } finally {
+      restoreHook();
+      probe?.restore();
+    }
+
+    assertEquals(transportCalls, 0);
+    assertEquals(probe?.saw(bearer), false);
+    assertEquals(context.billingGroupUsed, undefined);
   });
 
   it("aborts an in-flight gateway request when the caller signal aborts (#1815)", async () => {
