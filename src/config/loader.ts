@@ -69,8 +69,8 @@ import {
   DECLARATIVE_CONFIG_WORKER_ADMISSION_LIMITS,
   evaluatePreparedDeclarativeConfigInWorker,
 } from "./declarative-evaluator-worker-runner.ts";
-import { createDeclarativeConfigWorkerInfrastructureError } from "./declarative-evaluator-worker-protocol.ts";
-import { createHostedConfigRequestCancellation } from "./request-cancellation.ts";
+import { createDeclarativeConfigWorkerInfrastructureError } from "#veryfront/config/declarative-evaluator-worker-protocol.ts";
+import { createHostedConfigRequestCancellation } from "#veryfront/config/request-cancellation.ts";
 import { describeHostedConfigRejection } from "./hosted-compatibility.ts";
 import {
   type ImportMetaResolveArgumentRewriter,

@@ -4,8 +4,8 @@ import { it } from "#veryfront/testing/bdd.ts";
 import {
   createHostedConfigRequestCancellation,
   isHostedConfigRequestCancellation,
-} from "./request-cancellation.ts";
-import { createDeclarativeConfigWorkerInfrastructureError } from "./declarative-evaluator-worker-protocol.ts";
+} from "#veryfront/config/request-cancellation.ts";
+import { createDeclarativeConfigWorkerInfrastructureError } from "#veryfront/config/declarative-evaluator-worker-protocol.ts";
 import { withRequestTimeout } from "#veryfront/server/runtime-handler/timeout-manager.ts";
 
 it("retains the worker-aborted error contract without granting unrelated errors cancellation ownership", () => {
