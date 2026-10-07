@@ -8009,6 +8009,7 @@ describe("project run execution span", () => {
         () => handler.handle(request, createCtx(publicKeyPem)),
       );
       assertEquals(result.response?.status, 200);
+      await provider.forceFlush();
       return { spans: exporter.getFinishedSpans(), body: await result.response!.json() };
     } finally {
       // InMemorySpanExporter completes export callbacks on setTimeout(0) while
