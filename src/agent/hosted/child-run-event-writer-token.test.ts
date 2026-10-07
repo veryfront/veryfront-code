@@ -1,4 +1,5 @@
 import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
+import { TIMEOUT_ERROR } from "#veryfront/errors";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { installMockFetch, restoreMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import {
@@ -12,6 +13,7 @@ import {
   createHostedRunEventWriterCapabilityForRequest,
   getActiveHostedRunEventWriterCapability,
   HostedChildRunEventWriterTokenExchangeError,
+  inheritedChildAdmitter,
   registerHostedRunEventWriterToken,
   runWithHostedRunEventWriterCapability,
   runWithVerifiedHostedRunEventWriterRequest,
@@ -1005,3 +1007,149 @@ function tokenReceipt(token: unknown, run_id = "22222222-2222-4222-8222-22222222
     permissions: ["run.events.append"],
   };
 }
+
+function inheritedAdmissionFixture(timeoutMs = 1000, retryOnce = false, timeoutOnce = false) {
+  const runId = "44444444-4444-4444-8444-444444444444";
+  let admissionCount = 0;
+  let attempts = 0;
+  let cursor = 0;
+  let acknowledge!: () => void;
+  const acknowledgement = new Promise<void>((resolve) => {
+    acknowledge = resolve;
+  });
+  const capability = createHostedRunEventWriterCapability({
+    apiUrl: "https://trusted.example.test",
+    runId,
+    runEventAppendToken: "synthetic-parent-token",
+    timeoutMs,
+    inheritedAdmitter: () => async () => {
+      admissionCount++;
+      return {} as never;
+    },
+    fetch: (async (_url, init) => {
+      await acknowledgement;
+      if (timeoutOnce && attempts++ === 0) {
+        throw TIMEOUT_ERROR.create({ detail: "Synthetic retryable append timeout" });
+      }
+      if (retryOnce && attempts++ === 0) {
+        return Response.json({ error: "temporarily unavailable" }, { status: 503 });
+      }
+      const count = JSON.parse(String(init?.body)).events.length;
+      cursor += count;
+      return Response.json({
+        run_id: runId,
+        latest_event_id: cursor,
+        latest_external_event_sequence: cursor,
+        appended_count: count,
+      });
+    }) as typeof fetch,
+  });
+  const mirror = createHostedConversationRunChunkMirrorFromCapability(capability, {
+    expectedRunId: runId,
+    conversationId: "11111111-1111-4111-8111-111111111111",
+    latestEventId: 0,
+    latestExternalEventSequence: 0,
+  })!;
+  return {
+    mirror,
+    acknowledge,
+    count: () => admissionCount,
+    admit: inheritedChildAdmitter(capability, runId, "child-tool", "prompt"),
+  };
+}
+
+for (const differentTool of [false, true]) {
+  Deno.test(`inherited child admission ${differentTool ? "ignores a different persisted tool start" : "waits for its durable parent tool start"}`, async () => {
+    const fixture = inheritedAdmissionFixture();
+    const admission = fixture.admit({} as never);
+    try {
+      await Promise.resolve();
+      assertEquals(fixture.count(), 0);
+      if (differentTool) {
+        fixture.acknowledge();
+        await fixture.mirror.handleChunk({
+          type: "tool-input-start",
+          toolCallId: "other-tool",
+          toolName: "load_skill",
+        });
+        assertEquals(fixture.count(), 0);
+      }
+      const persist = fixture.mirror.handleChunk({
+        type: "tool-input-start",
+        toolCallId: "child-tool",
+        toolName: "invoke_agent",
+      });
+      await Promise.resolve();
+      assertEquals(fixture.count(), 0);
+      fixture.acknowledge();
+      await persist;
+      await admission;
+      assertEquals(fixture.count(), 1);
+    } finally {
+      fixture.acknowledge();
+      fixture.mirror.dispose();
+      await admission.catch(() => {});
+    }
+  });
+}
+
+for (const close of [false, true]) {
+  Deno.test(`inherited admission fails closed when parent persistence ${close ? "closes" : "times out"}`, async () => {
+    const fixture = inheritedAdmissionFixture(1);
+    const message = close ? "persistence is closed" : "not durably persisted";
+    const pending = assertRejects(() => fixture.admit({} as never), Error, message);
+    const duplicate = assertRejects(() => fixture.admit({} as never), Error, message);
+    if (close) fixture.mirror.dispose();
+    await Promise.all([pending, duplicate]);
+    fixture.mirror.dispose();
+    assertEquals(fixture.count(), 0);
+  });
+}
+
+Deno.test("inherited admission recovers after an unrelated tool append retries", async () => {
+  const fixture = inheritedAdmissionFixture(5000, true);
+  const outcome = fixture.admit({} as never).then(() => true, () => false);
+  try {
+    fixture.acknowledge();
+    await fixture.mirror.handleChunk({
+      type: "tool-input-start",
+      toolCallId: "other-tool",
+      toolName: "load_skill",
+    }).catch(() => {});
+    assertEquals(fixture.count(), 0);
+    await fixture.mirror.handleChunk({
+      type: "tool-input-start",
+      toolCallId: "child-tool",
+      toolName: "invoke_agent",
+    });
+    assertEquals(await outcome, true);
+    assertEquals(fixture.count(), 1);
+  } finally {
+    fixture.mirror.dispose();
+    await outcome;
+  }
+});
+
+Deno.test("an unrelated tool append timeout retries without failing child execution", async () => {
+  const fixture = inheritedAdmissionFixture(5000, false, true);
+  const outcome = fixture.admit({} as never).then(() => true, () => false);
+  try {
+    fixture.acknowledge();
+    await fixture.mirror.handleChunk({
+      type: "tool-input-start",
+      toolCallId: "other-tool",
+      toolName: "load_skill",
+    });
+    assertEquals(fixture.count(), 0);
+    await fixture.mirror.handleChunk({
+      type: "tool-input-start",
+      toolCallId: "child-tool",
+      toolName: "invoke_agent",
+    });
+    assertEquals(await outcome, true);
+    assertEquals(fixture.count(), 1);
+  } finally {
+    fixture.mirror.dispose();
+    await outcome;
+  }
+});

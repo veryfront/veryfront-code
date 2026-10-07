@@ -1,3 +1,4 @@
+import { createTaskChildRunner } from "./task-child.ts";
 import { createWorkflowAgentNodeRunner } from "./workflow-agent-child.ts";
 import { adaptManagedEvalRunStream } from "./managed-eval-run-stream.ts";
 import { RunStopRegistry } from "#veryfront/internal-agents/run-stop-registry.ts";
@@ -1085,6 +1086,7 @@ async function executeDiscoveredTaskRun(
   signal: AbortSignal,
   deps: ProjectRunExecuteHandlerDeps,
   control?: TaskDeadlineControl,
+  runChild?: ReturnType<typeof createTaskChildRunner>,
 ): Promise<ProjectRunExecuteResponse> {
   const taskId = stripTargetPrefix(request.target, "task:");
   if (taskId === "knowledge-ingest") {
@@ -1108,6 +1110,7 @@ async function executeDiscoveredTaskRun(
   control?.throwIfExpired();
   const result = await deps.runTask({
     task,
+    ...(runChild === undefined ? {} : { runChild }),
     ...(request.attempt === undefined ? {} : { attempt: request.attempt }),
     config: request.config ?? {},
     input: request.input,
@@ -4138,7 +4141,27 @@ function executeProjectRun(
             case "task:style-artifact-build":
               return await deps.executeStyleArtifactBuild({ request, ctx, req, signal });
             default:
-              return await executeDiscoveredTaskRun(request, ctx, req.signal, deps, control);
+              return await executeDiscoveredTaskRun(
+                request,
+                ctx,
+                req.signal,
+                deps,
+                control,
+                async (child) => {
+                  const apiUrl = requireHostPrivateApiHttps(resolveHostOwnedSourceApiBaseUrl());
+                  return await createTaskChildRunner({
+                    runId: request.runId,
+                    projectId: request.projectId,
+                    apiUrl,
+                    eventToken: readIngressCredential(req, INGRESS_RUN_EVENT_TOKEN_HEADER) ??
+                      undefined,
+                    authToken: getRuntimeApiToken(req, ctx),
+                    signal,
+                    fetch: createVeryfrontApiOriginBoundOutboundFetch(apiUrl),
+                    sleep: deps.sleep,
+                  })(child);
+                },
+              );
           }
         } finally {
           await acknowledgeStop?.();

@@ -3,45 +3,11 @@ import type { StepExecutorConfig } from "#veryfront/workflow/executor/step-execu
 import { acceptWorkflowInheritedRunAdmission } from "#veryfront/agent/hosted/terminal-credential.ts";
 import { runInheritedLocalAgent } from "./inherited-local-agent.ts";
 import { computeHash } from "#veryfront/utils/hash-utils.ts";
-import { UUID_PATTERN } from "#veryfront/chat/conversation.ts";
+import { readProjectExecutionParent } from "./project-run-parent.ts";
 import { ORCHESTRATION_ERROR } from "#veryfront/errors";
 
 const hostFetch = globalThis.fetch;
-const parse = JSON.parse;
 const stringify = JSON.stringify;
-const decode = atob;
-const split = String.prototype.split;
-const replaceAll = String.prototype.replaceAll;
-const apply = Reflect.apply;
-const uuid = new RegExp(`^(?:${UUID_PATTERN.source})$`, UUID_PATTERN.flags);
-
-/** Routing hints only: the API validates the unchanged issuer token and its current execution lease. */
-function parentIdentity(token: string, runId: string, projectId: string): string {
-  try {
-    if (!token || token.length > 16384) throw new Error();
-    const encoded = apply(split, token, ["."])[1];
-    if (typeof encoded !== "string" || !encoded) throw new Error();
-    const value = parse(
-      decode(apply(replaceAll, apply(replaceAll, encoded, ["-", "+"]), ["_", "/"])),
-    );
-    if (
-      value.tokenUse !== "run_event_writer" || value.runId !== runId ||
-      value.projectId !== projectId ||
-      typeof value.projectExecutionAttempt?.canonicalRunId !== "string" ||
-      !uuid.test(value.projectExecutionAttempt.canonicalRunId) ||
-      typeof value.projectExecutionAttempt?.attemptId !== "string" ||
-      !value.projectExecutionAttempt.attemptId ||
-      typeof value.projectExecutionAttempt?.workerId !== "string" ||
-      !value.projectExecutionAttempt.workerId
-    ) throw new Error();
-    return value.projectExecutionAttempt.canonicalRunId;
-  } catch {
-    throw ORCHESTRATION_ERROR.create({
-      detail: "Workflow child execution requires current run authority",
-    });
-  }
-}
-
 /** Trusted ingress owns these credentials; neither workflow context nor the local agent receives them. */
 export function createWorkflowAgentNodeRunner(binding: {
   runId: string;
@@ -53,7 +19,11 @@ export function createWorkflowAgentNodeRunner(binding: {
 }): NonNullable<StepExecutorConfig["runAgentNode"]> {
   const send = instrumentConversationRunFetch(binding.fetch ?? hostFetch);
   return async (invocation) => {
-    const parentId = parentIdentity(binding.eventToken ?? "", binding.runId, binding.projectId);
+    const { canonicalRunId: parentId, attemptId } = readProjectExecutionParent(
+      binding.eventToken ?? "",
+      binding.runId,
+      binding.projectId,
+    );
     if (invocation.runId !== binding.runId || !invocation.nodeId || !binding.authToken) {
       throw ORCHESTRATION_ERROR.create({ detail: "Workflow child invocation binding mismatch" });
     }
@@ -63,6 +33,7 @@ export function createWorkflowAgentNodeRunner(binding: {
       ? `workflow-node:${await computeHash(stringify([path, invocation.nodeId]))}`
       : invocation.nodeId;
     const key = await computeHash(`${parentId}:${nodeId}`);
+    const startKey = await computeHash(`${parentId}:${attemptId}:${nodeId}`);
     const signal = invocation.signal
       ? AbortSignal.any([invocation.signal, AbortSignal.timeout(15000)])
       : AbortSignal.timeout(15000);
@@ -71,7 +42,7 @@ export function createWorkflowAgentNodeRunner(binding: {
       headers: {
         Authorization: `Bearer ${binding.eventToken}`,
         "Content-Type": "application/json",
-        "Idempotency-Key": `workflow-node-start:${key}`,
+        "Idempotency-Key": `workflow-node-start:${startKey}`,
       },
       body: stringify({ events: [{ type: "STEP_STARTED", stepId: nodeId }] }),
       signal,
