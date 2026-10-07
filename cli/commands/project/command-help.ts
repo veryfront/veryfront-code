@@ -9,6 +9,10 @@ export const projectHelp: CommandHelp = {
   usage: "veryfront project <command> [options]",
   options: [
     {
+      flag: "--accept-dispatch",
+      description: "Accept a detached dispatch with heartbeat and its execution credential",
+    },
+    {
       flag: "--ndjson",
       description: "Stream paginated runs items as NDJSON envelopes on stdout",
     },
