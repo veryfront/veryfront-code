@@ -11,9 +11,13 @@ Command output retains the 30,000-character limit for each output stream.
 
 ## Supply-chain boundary
 
-This extension is a sensitive sandbox execution boundary. Keep AI SDK, Zod,
-`just-bash`, and related shell execution dependencies in this extension instead
-of importing them from core, CLI, React, or unrelated extensions.
+This extension is a sensitive sandbox execution boundary. Keep AI SDK and Zod
+in this extension instead of importing them from core, CLI, React, or unrelated
+extensions.
+
+Commands and file operations delegate to the supplied Sandbox contract. This
+extension does not run an embedded shell interpreter. Audit the selected sandbox
+implementation separately when qualifying shell execution.
 
 ## Capabilities
 

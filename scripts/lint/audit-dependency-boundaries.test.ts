@@ -14,15 +14,10 @@ function sensitiveExtensionManifests() {
     {
       sourceLocation: "extensions/ext-sandbox-shell-tools/deno.json",
       group: "extension" as const,
-      componentCount: 3,
+      componentCount: 2,
       components: [
         { name: "ai", version: "7.0.41", purl: "pkg:npm/ai@7.0.41" },
         { name: "zod", version: "4.3.6", purl: "pkg:npm/zod@4.3.6" },
-        {
-          name: "just-bash",
-          version: "2.14.5",
-          purl: "pkg:npm/just-bash@2.14.5",
-        },
       ],
     },
     {

@@ -139,8 +139,3 @@ and downloadable artifacts without making timing deltas a merge requirement.
 ## Related reference
 
 - [`veryfront/observability`](../api-reference/veryfront/observability.md)
-
-The sandbox shell tools extension delegates commands and file operations to the
-supplied Sandbox contract. It does not run an embedded shell interpreter. Its
-dependency boundary contains AI SDK tool schemas and Zod; audit the selected
-sandbox implementation separately when qualifying shell execution.

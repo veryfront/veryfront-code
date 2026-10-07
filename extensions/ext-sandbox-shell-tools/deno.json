@@ -5,17 +5,10 @@
   "veryfront": {
     "extension": true,
     "contracts": {
-      "provides": [
-        "SandboxShellToolsProvider"
-      ]
+      "provides": ["SandboxShellToolsProvider"]
     },
     "capabilities": [
-      {
-        "type": "sandbox:execute",
-        "tools": [
-          "bash"
-        ]
-      }
+      { "type": "sandbox:execute", "tools": ["bash"] }
     ]
   },
   "imports": {
