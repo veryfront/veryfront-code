@@ -129,6 +129,21 @@ Deno.test("shouldFailEmptyHostedFinalizedMessage fails runtime-metadata-only res
   );
 });
 
+Deno.test("shouldFailEmptyHostedFinalizedMessage ignores stream framing beside runtime metadata", () => {
+  assertEquals(
+    shouldFailEmptyHostedFinalizedMessage({
+      isAborted: false,
+      message: {
+        parts: [
+          { type: "step-start" },
+          { type: "data-veryfront.runtime_context", data: { currentDateUtc: "2026-10-07" } },
+        ],
+      },
+    }),
+    true,
+  );
+});
+
 Deno.test("shouldFailEmptyHostedFinalizedMessage keeps aborted empty assistant responses cancellable", () => {
   assertEquals(
     shouldFailEmptyHostedFinalizedMessage({
@@ -158,6 +173,42 @@ Deno.test("shouldFailEmptyHostedFinalizedMessage keeps form data responses succe
           type: "data-form_input",
           data: { requestId: "input-request-1" },
         }],
+      },
+    }),
+    false,
+  );
+});
+
+Deno.test("shouldFailEmptyHostedFinalizedMessage keeps text beside runtime metadata successful", () => {
+  assertEquals(
+    shouldFailEmptyHostedFinalizedMessage({
+      isAborted: false,
+      message: {
+        parts: [
+          { type: "data-veryfront.runtime_context", data: { currentDateUtc: "2026-10-07" } },
+          { type: "text", text: "Done" },
+        ],
+      },
+    }),
+    false,
+  );
+});
+
+Deno.test("shouldFailEmptyHostedFinalizedMessage keeps tool output beside runtime metadata successful", () => {
+  assertEquals(
+    shouldFailEmptyHostedFinalizedMessage({
+      isAborted: false,
+      message: {
+        parts: [
+          { type: "data-veryfront.runtime_context", data: { currentDateUtc: "2026-10-07" } },
+          {
+            type: "dynamic-tool",
+            toolName: "search",
+            toolCallId: "tool-call-1",
+            state: "output-available",
+            output: { result: "found" },
+          },
+        ],
       },
     }),
     false,

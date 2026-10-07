@@ -149,6 +149,7 @@ export function shouldFailEmptyHostedFinalizedMessage(input: {
 }): boolean {
   return !input.isAborted &&
     input.message.parts.every((part) =>
-      isRecord(part) && part.type === "data-veryfront.runtime_context"
+      isRecord(part) &&
+      (part.type === "data-veryfront.runtime_context" || part.type === "step-start")
     );
 }

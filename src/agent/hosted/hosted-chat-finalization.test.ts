@@ -177,21 +177,24 @@ describe("agent/hosted-chat-finalization", () => {
     assertEquals(terminalStates.at(0)!.terminalErrorCode, "EMPTY_RESPONSE");
   });
 
-  it("fails runtime-metadata-only response output as EMPTY_RESPONSE", async () => {
+  it("fails response output with only runtime metadata and stream framing", async () => {
     const calls: string[] = [];
     const terminalStates: HostedLifecycleTerminalState[] = [];
 
     await finalizeHostedChatRun({
       kind: "response",
       responseMessage: createResponseMessage({
-        parts: [{
-          type: "data-veryfront.runtime_context",
-          data: {
-            currentDateUtc: "2026-10-07",
-            currentTimeUtc: "09:30:41",
-            runStartedAtUtc: "2026-10-07T09:30:40.526Z",
+        parts: [
+          { type: "step-start" },
+          {
+            type: "data-veryfront.runtime_context",
+            data: {
+              currentDateUtc: "2026-10-07",
+              currentTimeUtc: "09:30:41",
+              runStartedAtUtc: "2026-10-07T09:30:40.526Z",
+            },
           },
-        }],
+        ],
       }),
       isAborted: false,
       streamResult: createStreamResult({}),
