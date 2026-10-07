@@ -33,6 +33,19 @@ Primary source areas:
 - Runtime adapters describe host capabilities, not build graph semantics.
 - Extension-provided bundler contracts belong in [extension system](./12-extension-system.md).
 
+## Framework sources for SSR
+
+Compiled runtime images embed pristine framework sources with a `.src` suffix.
+The SSR transform compiles these sources into the project module graph. The
+embedded sources include root-bundled extension entries that have no standalone
+npm publication. These entries resolve from the framework distribution, before
+remote package resolution.
+
+Public and internal imports of the same SDK source use one transformed module
+URL. This preserves shared environment readers and registry state. The source
+resolver accepts only exact root-bundled package entries. It does not expose
+extension subpaths or permit paths outside the framework source boundaries.
+
 ## Change checks
 
 - Add tests for route collection, manifest output, generated assets, and

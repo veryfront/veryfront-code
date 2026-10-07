@@ -18,6 +18,7 @@
 
 import { walk } from "#std/fs";
 import { dirname, fromFileUrl, join, relative } from "#std/path.ts";
+import { ROOT_BUNDLED_EXTENSION_SOURCES } from "../../src/extensions/root-bundled-sources.ts";
 
 const FRAMEWORK_ROOT = fromFileUrl(new URL("../..", import.meta.url));
 const SRC_ROOT = join(FRAMEWORK_ROOT, "src");
@@ -29,6 +30,7 @@ const SOURCE_EXTENSIONS = [".tsx", ".ts", ".jsx", ".js"];
 export interface PrepareFrameworkSourcesOptions {
   srcRoot?: string;
   outputDir?: string;
+  frameworkRoot?: string;
 }
 
 export interface PrepareFrameworkSourcesResult {
@@ -42,6 +44,8 @@ export async function prepareFrameworkSources(
 ): Promise<PrepareFrameworkSourcesResult> {
   const srcRoot = options.srcRoot ?? SRC_ROOT;
   const outputDir = options.outputDir ?? OUTPUT_DIR;
+  const frameworkRoot = options.frameworkRoot ??
+    (options.srcRoot ? dirname(srcRoot) : FRAMEWORK_ROOT);
 
   // Clean output directory
   try {
@@ -78,6 +82,15 @@ export async function prepareFrameworkSources(
     await Deno.mkdir(dirname(outputPath), { recursive: true });
     await Deno.writeTextFile(outputPath, content);
 
+    fileCount++;
+    totalBytes += encoder.encode(content).byteLength;
+  }
+
+  for (const entry of Object.values(ROOT_BUNDLED_EXTENSION_SOURCES)) {
+    const content = await Deno.readTextFile(join(frameworkRoot, entry));
+    const outputPath = join(outputDir, "root-bundled", entry + ".src");
+    await Deno.mkdir(dirname(outputPath), { recursive: true });
+    await Deno.writeTextFile(outputPath, content);
     fileCount++;
     totalBytes += encoder.encode(content).byteLength;
   }

@@ -2,6 +2,7 @@ import { assertEquals } from "#std/assert";
 import { join } from "#std/path.ts";
 import { describe, it } from "#std/testing/bdd";
 import { prepareFrameworkSources } from "./prepare-framework-sources.ts";
+import { ROOT_BUNDLED_EXTENSION_SOURCES } from "../../src/extensions/root-bundled-sources.ts";
 
 describe("prepareFrameworkSources", () => {
   it("excludes tests and test helpers from binary framework sources", async () => {
@@ -11,6 +12,16 @@ describe("prepareFrameworkSources", () => {
 
     try {
       await Deno.mkdir(sourceRoot, { recursive: true });
+      for (const entry of Object.values(ROOT_BUNDLED_EXTENSION_SOURCES)) {
+        const path = join(temporaryRoot, entry);
+        await Deno.mkdir(path.slice(0, path.lastIndexOf("/")), {
+          recursive: true,
+        });
+        await Deno.writeTextFile(
+          path,
+          "export default () => ({ name: 'fixture' });\n",
+        );
+      }
       await Promise.all([
         Deno.writeTextFile(
           join(sourceRoot, "runtime.ts"),
@@ -31,7 +42,18 @@ describe("prepareFrameworkSources", () => {
         outputDir: outputRoot,
       });
 
-      assertEquals(result.fileCount, 1);
+      assertEquals(
+        result.fileCount,
+        1 + Object.keys(ROOT_BUNDLED_EXTENSION_SOURCES).length,
+      );
+      for (const entry of Object.values(ROOT_BUNDLED_EXTENSION_SOURCES)) {
+        assertEquals(
+          await Deno.readTextFile(
+            join(outputRoot, "root-bundled", entry + ".src"),
+          ),
+          "export default () => ({ name: 'fixture' });\n",
+        );
+      }
       assertEquals(
         await Deno.readTextFile(join(outputRoot, "runtime.ts.src")),
         "export const runtime = true;\n",

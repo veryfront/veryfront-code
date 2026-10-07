@@ -83,6 +83,8 @@ export function createFrameworkSpecifierResolver(
   const reactImportMap = input.reactImportMap ?? getReactImportMap(input.reactVersion);
 
   return (specifier: string): string | null => {
+    const frameworkReplacement = input.veryfrontReplacements.get(specifier);
+    if (frameworkReplacement) return frameworkReplacement;
     if (specifier === "#deno-config") {
       return input.denoConfigStubUrl;
     }
