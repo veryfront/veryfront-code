@@ -165,6 +165,7 @@ describe("downloadUploadToFile", () => {
     const tempDir = await makeTempDir();
     const nodeFs = (await import("node:fs")).default;
     const nodePromises = (await import("node:fs/promises")).default;
+    const originalRandomUUID = crypto.randomUUID;
     const originalNodeRename = nodeFs.rename;
     const originalNodeUnlink = nodeFs.unlink;
     const originalPromiseRename = nodePromises.rename;
@@ -179,6 +180,10 @@ describe("downloadUploadToFile", () => {
     };
     try {
       await mkdir(`${tempDir}/blocked`);
+      crypto.randomUUID = () => {
+        hookCalls++;
+        return "x/../../known-file" as ReturnType<typeof crypto.randomUUID>;
+      };
       Reflect.set(nodeFs, "rename", untrustedHook);
       Reflect.set(nodeFs, "unlink", untrustedHook);
       nodePromises.rename = untrustedHook;
@@ -199,6 +204,7 @@ describe("downloadUploadToFile", () => {
       assertEquals(names, ["blocked", "file"]);
       assertEquals(hookCalls, 0);
     } finally {
+      crypto.randomUUID = originalRandomUUID;
       nodeFs.rename = originalNodeRename;
       nodeFs.unlink = originalNodeUnlink;
       nodePromises.rename = originalPromiseRename;

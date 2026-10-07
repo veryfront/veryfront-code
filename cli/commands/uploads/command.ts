@@ -17,6 +17,11 @@ import type { ParsedArgs } from "#cli/shared/types";
 import { printJson } from "../../shared/json-output.ts";
 import { getBooleanArg, getStringArg } from "../../shared/parsed-args.ts";
 
+const createDownloadNonce = crypto.randomUUID.bind(crypto);
+const downloadNoncePattern =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const validateDownloadNonce = downloadNoncePattern.test.bind(downloadNoncePattern);
+
 export interface UploadItem {
   type: "file" | "folder";
   path: string;
@@ -268,7 +273,11 @@ export async function downloadUploadToFile(
   signal?.throwIfAborted();
   if (!client.getStream) throw new Error("API client does not support upload downloads");
   const localPath = resolveUploadOutputPath(uploadPath, outputDir);
-  const temporaryPath = join(dirname(localPath), `.vf-download-${crypto.randomUUID()}`);
+  const nonce = createDownloadNonce();
+  if (typeof nonce !== "string" || !validateDownloadNonce(nonce)) {
+    throw new Error("Invalid private download nonce");
+  }
+  const temporaryPath = join(dirname(localPath), `.vf-download-${nonce}`);
   const response = await client.getStream(
     `${buildUploadsListUrl(projectSlug)}/${encodeURIComponent(normalizeUploadPath(uploadPath))}`,
     { signal },
