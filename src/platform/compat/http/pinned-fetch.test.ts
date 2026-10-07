@@ -471,6 +471,57 @@ describe("fetchWithPinnedAddresses", () => {
     }
   });
 
+  for (
+    const scenario of [
+      "already aborted",
+      "before registration",
+      "after registration",
+      "throwing reason",
+      "throwing cleanup",
+    ] as const
+  ) {
+    it(`preserves the cancellation failure with ${scenario}`, async () => {
+      const controller = new AbortController();
+      const reason = scenario === "throwing reason"
+        ? new Error("reason unavailable")
+        : new DOMException("registration stopped", "AbortError");
+      if (scenario === "throwing reason") {
+        Object.defineProperty(controller.signal, "reason", {
+          get() {
+            throw reason;
+          },
+        });
+      }
+      if (scenario === "throwing cleanup") {
+        controller.signal.removeEventListener = () => {
+          throw new Error("cleanup unavailable");
+        };
+      }
+      if (scenario === "already aborted") {
+        controller.abort(reason);
+      } else {
+        const registerListener = controller.signal.addEventListener.bind(controller.signal);
+        controller.signal.addEventListener = (
+          ...args: Parameters<AbortSignal["addEventListener"]>
+        ) => {
+          if (scenario === "before registration") controller.abort(reason);
+          registerListener(...args);
+          if (scenario !== "before registration") controller.abort(reason);
+        };
+      }
+      const rejected = await assertRejects(
+        () =>
+          fetchWithPinnedAddresses(new URL("http://pinned-abort.test:1/resource"), ["127.0.0.1"], {
+            headers: { authorization: BEARER },
+            signal: controller.signal,
+          }),
+        Error,
+        reason.message,
+      );
+      assertEquals(rejected, reason, "Cancellation must preserve the original failure");
+    });
+  }
+
   for (const timing of ["before", "after"] as const) {
     it(`does not create a credential request when registration aborts ${timing} installing the listener`, async () => {
       if (!isNode) return;
