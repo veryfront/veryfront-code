@@ -73,6 +73,7 @@ describe("agent/agent-service-runtime", () => {
   it("assembles agent service auth, routes, lifecycle, and runtime shell", async () => {
     const bundle = createHostedAgentServiceRuntime({
       serviceName: "test-agent-service",
+      deploymentArtifact: "20261007183045-a1b2c3d4e5f6",
       getConfig: () => ({
         VERYFRONT_API_URL: "https://api.example.test",
         NODE_ENV: "test",
@@ -97,6 +98,7 @@ describe("agent/agent-service-runtime", () => {
     assertEquals(bundle.runtime.contract.serviceName, "test-agent-service");
     assertEquals(bundle.runtime.contract.defaultAgentId, "assistant");
     assertEquals(bundle.routes.map((route) => route.path), [
+      "/version",
       "/api/ag-ui",
       "/api/runs/:runId",
       "/api/runs/:runId/resume",
@@ -105,8 +107,99 @@ describe("agent/agent-service-runtime", () => {
       "/api/control-plane/runs/:runId/stream",
     ]);
 
+    const version = await bundle.runtime.request("/version");
+    assertEquals(version.status, 200);
+    assertEquals(version.headers.get("Cache-Control"), "no-store");
+    assertEquals(await version.json(), { artifact: "20261007183045-a1b2c3d4e5f6" });
+
     const ready = await bundle.runtime.request("/readiness");
     assertEquals(ready.status, 200);
+  });
+
+  it("serves null for unknown deployment artifact", async () => {
+    const bundle = createHostedAgentServiceRuntime({
+      serviceName: "test-agent-service",
+      deploymentArtifact: null,
+      getConfig: () => ({
+        VERYFRONT_API_URL: "https://api.example.test",
+        NODE_ENV: "test",
+        PORT: 3180,
+        ALLOWED_ORIGINS: ["https://studio.example.test"],
+      }),
+      getAgentConfig: () => ({
+        id: "assistant",
+        name: "Assistant",
+        description: "",
+        instructions: "You are a test assistant.",
+      }),
+      logger: createLogger(),
+      prepareExecution: async () => ({ ok: true }),
+      streamExecutionToAgUiResponse: () => new Response("streamed"),
+      startDetachedExecution: async () => {},
+    });
+
+    const version = await bundle.runtime.request("/version");
+
+    assertEquals(version.status, 200);
+    assertEquals(version.headers.get("Cache-Control"), "no-store");
+    assertEquals(await version.json(), { artifact: null });
+  });
+
+  it("snapshots deployment artifact at runtime startup", async () => {
+    const options = {
+      serviceName: "test-agent-service",
+      deploymentArtifact: "20261007183045-a1b2c3d4e5f6",
+      getConfig: () => ({
+        VERYFRONT_API_URL: "https://api.example.test",
+        NODE_ENV: "test",
+        PORT: 3180,
+        ALLOWED_ORIGINS: ["https://studio.example.test"],
+      }),
+      getAgentConfig: () => ({
+        id: "assistant",
+        name: "Assistant",
+        description: "",
+        instructions: "You are a test assistant.",
+      }),
+      logger: createLogger(),
+      prepareExecution: async () => ({ ok: true }),
+      streamExecutionToAgUiResponse: () => new Response("streamed"),
+      startDetachedExecution: async () => {},
+    };
+    const bundle = createHostedAgentServiceRuntime(options);
+    options.deploymentArtifact = "20261007183100-bbbbbbbbbbbb";
+
+    const version = await bundle.runtime.request("/version");
+
+    assertEquals(await version.json(), { artifact: "20261007183045-a1b2c3d4e5f6" });
+  });
+
+  it("rejects invalid deployment artifact tags during startup", () => {
+    assertThrows(
+      () =>
+        createHostedAgentServiceRuntime({
+          serviceName: "test-agent-service",
+          deploymentArtifact: "latest",
+          getConfig: () => ({
+            VERYFRONT_API_URL: "https://api.example.test",
+            NODE_ENV: "test",
+            PORT: 3180,
+            ALLOWED_ORIGINS: ["https://studio.example.test"],
+          }),
+          getAgentConfig: () => ({
+            id: "assistant",
+            name: "Assistant",
+            description: "",
+            instructions: "You are a test assistant.",
+          }),
+          logger: createLogger(),
+          prepareExecution: async () => ({ ok: true }),
+          streamExecutionToAgUiResponse: () => new Response("streamed"),
+          startDetachedExecution: async () => {},
+        }),
+      TypeError,
+      "deploymentArtifact must be null or an immutable artifact tag",
+    );
   });
 
   it("preserves configured skills and tools on the service agent", () => {
@@ -196,6 +289,7 @@ describe("agent/agent-service-runtime", () => {
   it("starts the node agent service server from the assembled runtime", async () => {
     const service = await startNodeAgentService({
       serviceName: "node-test-agent-service",
+      deploymentArtifact: "20261007183045-a1b2c3d4e5f6",
       getConfig: () => ({
         VERYFRONT_API_URL: "https://api.example.test",
         NODE_ENV: "test",
@@ -219,6 +313,11 @@ describe("agent/agent-service-runtime", () => {
     try {
       assertEquals(service.runtime.contract.serviceName, "node-test-agent-service");
       assertEquals(typeof service.nodeServer.port, "number");
+
+      const response = await fetch(`http://127.0.0.1:${service.nodeServer.port}/version`);
+      assertEquals(response.status, 200);
+      assertEquals(response.headers.get("Cache-Control"), "no-store");
+      assertEquals(await response.json(), { artifact: "20261007183045-a1b2c3d4e5f6" });
     } finally {
       await service.nodeServer.stop();
     }

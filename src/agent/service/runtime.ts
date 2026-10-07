@@ -37,6 +37,20 @@ import {
 import type { VeryfrontServiceServerLogger } from "../../server/service-server.ts";
 import type { HostedRuntimeSourceIdentity } from "../hosted/runtime-source-binding.ts";
 
+const DEPLOYMENT_ARTIFACT_PATTERN = /^\d{14}-[a-f0-9]{12,40}$/;
+
+function normalizeDeploymentArtifact(deploymentArtifact: string | null | undefined): string | null {
+  if (deploymentArtifact === undefined || deploymentArtifact === null) return null;
+  if (
+    !DEPLOYMENT_ARTIFACT_PATTERN.test(deploymentArtifact)
+  ) {
+    throw new TypeError(
+      "Agent service deploymentArtifact must be null or an immutable artifact tag formatted as yyyymmddHHMMSS-hex.",
+    );
+  }
+  return deploymentArtifact;
+}
+
 /** Configuration used by hosted agent service runtime. */
 export type HostedAgentServiceRuntimeConfig = AgentServiceAuthConfig & {
   PORT: number;
@@ -70,6 +84,8 @@ export type CreateHostedAgentServiceRuntimeOptions<
   TConfig extends HostedAgentServiceRuntimeConfig = HostedAgentServiceRuntimeConfig,
 > = {
   serviceName: string;
+  /** Exact immutable deployment artifact tag served by GET /version. Pass null when unknown. */
+  deploymentArtifact?: string | null;
   /** Exact immutable source snapshot served by control-plane runtime invocations. */
   runtimeSource?: HostedRuntimeSourceIdentity;
   getConfig: () => TConfig;
@@ -256,6 +272,7 @@ export function createAgentServiceRuntime<
   options: CreateAgentServiceRuntimeOptions<TExecution, TConfig>,
 ): AgentServiceRuntimeBundle<TExecution, TConfig> {
   const config = options.getConfig();
+  const deploymentArtifact = normalizeDeploymentArtifact(options.deploymentArtifact);
   const tracker = options.tracker ?? createDetachedRunTracker<AgUiResumeValue>();
   const trace = options.trace ?? defaultTrace;
   const auth = createAgentServiceAuth({
@@ -265,6 +282,7 @@ export function createAgentServiceRuntime<
   });
   const routeSet = createAgentServiceRouteSet({
     forwardedConfigNamespace: options.forwardedConfigNamespace,
+    deploymentArtifact,
     runtimeSource: options.runtimeSource,
     authenticateRequest: auth.authenticateRequest,
     verifyProjectAccess: (projectId, authToken) => auth.verifyProjectAccess(projectId, authToken),

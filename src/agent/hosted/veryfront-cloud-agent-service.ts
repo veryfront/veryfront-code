@@ -110,6 +110,8 @@ export type NodeVeryfrontCloudAgentServiceOptions = {
    * Mutable branch sources are not supported by standalone agent services.
    */
   runtimeSource?: HostedRuntimeSourceIdentity;
+  /** Exact immutable deployment artifact tag served by GET /version. Pass null when unknown. */
+  deploymentArtifact?: string | null;
   agentSource?: NodeVeryfrontCloudAgentServiceAgentSource;
   /**
    * Remote MCP servers available to the runtime. Defaults to the Veryfront API

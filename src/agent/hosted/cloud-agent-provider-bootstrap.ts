@@ -60,6 +60,7 @@ export type ResolvedNodeVeryfrontCloudAgentServiceOptions = {
   projectDir?: string;
   entrypointUrl?: AgentServicePathOption;
   runtimeSource?: HostedRuntimeSourceIdentity;
+  deploymentArtifact?: string | null;
   agentSource?: ProjectAgentRuntimeAgentSource;
   mcpServers?: readonly AgentServiceMcpServerConfig[];
   forwardedConfigNamespace?: string;

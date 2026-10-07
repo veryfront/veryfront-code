@@ -147,6 +147,8 @@ export type AgentServiceDetachedCleanupInput<TExecution extends object> =
 /** Options accepted by hosted agent service route set. */
 export type HostedAgentServiceRouteSetOptions<TExecution extends object> = {
   forwardedConfigNamespace?: string;
+  /** Exact immutable deployment artifact tag served by GET /version. */
+  deploymentArtifact?: string | null;
   /** Exact immutable source snapshot served by control-plane runtime invocations. */
   runtimeSource?: HostedRuntimeSourceIdentity;
   authenticateRequest: (
@@ -313,6 +315,7 @@ export function createHostedAgentServiceRouteSet<TExecution extends object>(
 ): HostedAgentServiceRouteSet<TExecution> {
   const trace = options.trace ?? defaultTrace;
   const forwardedConfigNamespace = options.forwardedConfigNamespace ?? "veryfront";
+  const deploymentArtifact = options.deploymentArtifact ?? null;
   const runtimeSource = options.runtimeSource
     ? snapshotHostedRuntimeSourceIdentity(options.runtimeSource)
     : undefined;
@@ -599,6 +602,15 @@ export function createHostedAgentServiceRouteSet<TExecution extends object>(
   ) => handleDurableChatRunControlRequest(input, "cancel");
 
   const routes: AgentServiceRoute[] = [
+    {
+      method: "GET",
+      path: "/version",
+      handler: () =>
+        Response.json(
+          { artifact: deploymentArtifact },
+          { headers: { "Cache-Control": "no-store" } },
+        ),
+    },
     {
       method: "POST",
       path: "/api/ag-ui",
