@@ -1,6 +1,12 @@
 import { isToolAllowedBySourcePolicy } from "#veryfront/tool/platform-tool-policy.ts";
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertRejects, assertStrictEquals, assertThrows } from "@std/assert";
+import {
+  assertEquals,
+  assertRejects,
+  assertStrictEquals,
+  assertThrows,
+} from "#veryfront/testing/assert.ts";
+import { describe, it } from "#veryfront/testing/bdd.ts";
 import type {
   AgentServiceSandboxToolsOptions,
   AgentServiceSandboxToolsResult,
@@ -470,6 +476,8 @@ Deno.test("prepareDefaultHostedChildForkToolSources reports Studio setup failure
     authToken: "token-1",
     apiMcpUrl: "https://api.example/mcp",
     mcpServers: [{ kind: "veryfront-studio" }],
+    studioMcpUrl: "https://studio.example/mcp",
+    clientProfile: trustedStudioProfile,
     getProjectId: () => "project-1",
     createLiveStudioTools: () => {
       throw new Error("studio unavailable");
@@ -521,6 +529,8 @@ Deno.test("prepareDefaultHostedChildForkToolSources rethrows aborts raised durin
         authToken: "token-1",
         apiMcpUrl: "https://api.example/mcp",
         mcpServers: [{ kind: "veryfront-studio" }],
+        studioMcpUrl: "https://studio.example/mcp",
+        clientProfile: trustedStudioProfile,
         getProjectId: () => "project-1",
         abortSignal: abortController.signal,
         isAbortError: (error) => error === abortError,
@@ -550,6 +560,8 @@ Deno.test("prepareDefaultHostedChildForkToolSources rethrows setup errors once t
         authToken: "token-1",
         apiMcpUrl: "https://api.example/mcp",
         mcpServers: [{ kind: "veryfront-studio" }],
+        studioMcpUrl: "https://studio.example/mcp",
+        clientProfile: trustedStudioProfile,
         getProjectId: () => "project-1",
         abortSignal: abortController.signal,
         createLiveStudioTools: () => {
@@ -641,6 +653,8 @@ Deno.test("prepareDefaultHostedChildForkSandboxToolSources closes sandbox when s
     apiUrl: "https://api.example",
     apiMcpUrl: "https://api.example/mcp",
     mcpServers: [{ kind: "veryfront-studio" }],
+    studioMcpUrl: "https://studio.example/mcp",
+    clientProfile: trustedStudioProfile,
     getProjectId: () => "project-1",
     createBashTool,
     createLiveStudioTools: () => {
@@ -708,6 +722,8 @@ Deno.test("prepareDefaultHostedChildForkSandboxToolSources sanitizes cleanup fai
     apiUrl: "https://api.example",
     apiMcpUrl: "https://api.example/mcp",
     mcpServers: [{ kind: "veryfront-studio" }],
+    studioMcpUrl: "https://studio.example/mcp",
+    clientProfile: trustedStudioProfile,
     getProjectId: () => "project-1",
     createBashTool,
     createLiveStudioTools: () => {
@@ -891,4 +907,67 @@ Deno.test("child sandbox keeps canonical platform bash distinct from project bas
     true,
   );
   await result.closeRuntime?.();
+});
+
+describe("child-fork Studio MCP eligibility", () => {
+  for (const required of [undefined, true]) {
+    it(`rejects an unavailable required Studio source (required=${required})`, async () => {
+      for (const studioMcpUrl of [undefined, "https://studio.example/mcp"]) {
+        let calls = 0;
+        const result = await prepareDefaultHostedChildForkToolSources({
+          authToken: "token-1",
+          apiMcpUrl: "https://api.example/mcp",
+          getProjectId: () => "project-1",
+          studioMcpUrl,
+          clientProfile: { id: "veryfront-api", type: "api", trusted: true, capabilities: [] },
+          mcpServers: [{ kind: "veryfront-studio", required }],
+          createLiveStudioTools: () => {
+            calls++;
+            return Promise.resolve({ tools: {}, close: () => Promise.resolve() });
+          },
+        });
+        assertEquals(result.ok, false);
+        assertEquals(calls, 0);
+      }
+    });
+  }
+  it("skips optional unavailable Studio without calling its transport", async () => {
+    for (const studioMcpUrl of [undefined, "https://studio.example/mcp"]) {
+      let calls = 0;
+      const result = await prepareDefaultHostedChildForkToolSources({
+        authToken: "token-1",
+        apiMcpUrl: "https://api.example/mcp",
+        getProjectId: () => "project-1",
+        studioMcpUrl,
+        clientProfile: { id: "veryfront-api", type: "api", trusted: true, capabilities: [] },
+        mcpServers: [{ kind: "veryfront-studio", required: false }],
+        createLiveStudioTools: () => {
+          calls++;
+          return Promise.resolve({ tools: {}, close: () => Promise.resolve() });
+        },
+      });
+      assertEquals(result.ok, true);
+      assertEquals(calls, 0);
+    }
+  });
+  it("retains optional trusted Studio and reports configured transport errors", async () => {
+    for (const fail of [false, true]) {
+      let calls = 0;
+      const result = await prepareDefaultHostedChildForkToolSources({
+        authToken: "token-1",
+        apiMcpUrl: "https://api.example/mcp",
+        getProjectId: () => "project-1",
+        studioMcpUrl: "https://studio.example/mcp",
+        clientProfile: trustedStudioProfile,
+        mcpServers: [{ kind: "veryfront-studio", required: false }],
+        createLiveStudioTools: () => {
+          calls++;
+          if (fail) throw new Error("configured transport failed");
+          return Promise.resolve({ tools: {}, close: () => Promise.resolve() });
+        },
+      });
+      assertEquals(result.ok, !fail);
+      assertEquals(calls, 1);
+    }
+  });
 });

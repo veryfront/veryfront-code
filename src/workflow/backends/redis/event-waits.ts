@@ -74,6 +74,13 @@ local function clearTerminalRunEvents(runKey,runId)
 end
 `;
 
+const RECONCILE_EVENT_MAILBOXES_SCRIPT = `-- reconcile-event-mailboxes
+${UPDATE_EVENT_MAILBOX_ELIGIBILITY_LUA}
+local ids=cjson.decode(ARGV[2])
+for _,id in ipairs(ids) do updateEventMailboxEligibility(ARGV[1] .. 'run:' .. id,id) end
+return #ids
+`;
+
 // Payloads remain opaque JSON strings inside Redis state. Lua only interprets
 // envelope metadata, so an empty array in a user payload never becomes {}.
 const EVENT_STATE_SCRIPT = `-- workflow-event-state
@@ -120,6 +127,9 @@ local function reserveMailbox()
   if redis.call('zcard',KEYS[6]) >= tonumber(ARGV[7]) then
     local eligible=nil
     local id=redis.call('zrange',KEYS[6] .. ':evictable',0,0)[1]
+    if id and not redis.call('zscore',KEYS[6],id) then
+      redis.call('zrem',KEYS[6] .. ':evictable',id); id=nil
+    end
     if id then
       local stateKey=ARGV[8] .. 'event-state:' .. id
       local otherRaw=redis.call('get',stateKey)
@@ -291,7 +301,12 @@ interface StoredState {
 }
 function eventValue(event: StoredEvent): RunEventEnvelope {
   const value = JSON.parse(event.value);
-  return { ...value, payload: value.payload, publishedAt: new Date(value.publishedAt) };
+  const { payloadAbsent, ...envelope } = value;
+  return {
+    ...envelope,
+    ...(payloadAbsent === true ? { payload: undefined } : {}),
+    publishedAt: new Date(value.publishedAt),
+  };
 }
 function waitValue(wait: StoredWait): PersistedPendingEventWait {
   const value = JSON.parse(wait.value);
@@ -326,7 +341,12 @@ export class RedisEventWaitStore {
   indexKey(): string {
     return `${this.prefix}index:event-state`;
   }
-  private async command<T>(runId: string, operation: string, payload: unknown = {}): Promise<T> {
+  private async command<T>(
+    runId: string,
+    operation: string,
+    payload: unknown = {},
+    reconciled = false,
+  ): Promise<T> {
     try {
       const result = await this.client.eval(EVENT_STATE_SCRIPT, [
         this.stateKey(runId),
@@ -349,6 +369,20 @@ export class RedisEventWaitStore {
       if (typeof result !== "string") throw new Error("Invalid Redis event-state result");
       return JSON.parse(result) as T;
     } catch (cause) {
+      if (
+        !reconciled && cause instanceof Error &&
+        cause.message.includes("Run event mailbox capacity reached")
+      ) {
+        try {
+          await this.reconcileExistingMailboxes();
+        } catch (reconciliationCause) {
+          throw ORCHESTRATION_ERROR.create({
+            detail: "Redis workflow mailbox reconciliation failed",
+            cause: reconciliationCause,
+          });
+        }
+        return await this.command<T>(runId, operation, payload, true);
+      }
       if (cause instanceof Error && cause.message.includes("Workflow run not found")) {
         throw RESOURCE_NOT_FOUND.create({ detail: `Run not found: ${runId}`, cause });
       }
@@ -356,6 +390,23 @@ export class RedisEventWaitStore {
         detail: "Redis workflow event-state operation failed",
         cause,
       });
+    }
+  }
+  private async reconcileExistingMailboxes(): Promise<void> {
+    const ids = await this.client.eval(
+      "return redis.call('zrange',KEYS[1],0,ARGV[1])",
+      [`${this.prefix}index:event-mailboxes`],
+      [String(MAX_WORKFLOW_RUN_EVENT_MAILBOXES - 1)],
+    );
+    if (!Array.isArray(ids) || !ids.every((id): id is string => typeof id === "string")) {
+      throw new Error("Invalid Redis mailbox index result");
+    }
+    await this.client.del(`${this.prefix}index:event-mailboxes:evictable`);
+    for (let offset = 0; offset < ids.length; offset += 50) {
+      await this.client.eval(RECONCILE_EVENT_MAILBOXES_SCRIPT, [], [
+        this.prefix,
+        JSON.stringify(ids.slice(offset, offset + 50)),
+      ]);
     }
   }
   private async state(runId: string): Promise<StoredState> {
@@ -398,15 +449,14 @@ export class RedisEventWaitStore {
   private storedEvent(runId: string, event: RunEventEnvelope): StoredEvent {
     const publishedAt = event.publishedAt.toISOString();
     const payload = event.payload === undefined
-      ? ""
-      : `,"payload":${
-        serializeWorkflowJson(event.payload, "workflow event payload", runId, {
-          strictContext: this.strictContext,
-        })
-      }`;
+      ? undefined
+      : serializeWorkflowJson(event.payload, "workflow event payload", runId, {
+        strictContext: this.strictContext,
+      });
+    const payloadFragment = payload === undefined ? `"payloadAbsent":true` : `"payload":${payload}`;
     const value = `{"id":${JSON.stringify(event.id)},"eventName":${
       JSON.stringify(event.eventName)
-    }${payload},"publishedAt":${JSON.stringify(publishedAt)}}`;
+    },${payloadFragment},"publishedAt":${JSON.stringify(publishedAt)}}`;
     const order = (event as RunEventEnvelope & { _publicationOrder?: number })._publicationOrder;
     return { value, id: event.id, name: event.eventName, at: event.publishedAt.getTime(), order };
   }

@@ -14,6 +14,23 @@ const storedEvent = {
   at: at.getTime(),
   order: 7,
 };
+const payloadFreeEvent = {
+  id: "payload-free",
+  eventName: "ready",
+  payload: undefined,
+  publishedAt: at,
+};
+const payloadFreeStoredEvent = {
+  value: JSON.stringify({
+    id: payloadFreeEvent.id,
+    eventName: payloadFreeEvent.eventName,
+    payloadAbsent: true,
+    publishedAt: at,
+  }),
+  id: payloadFreeEvent.id,
+  name: payloadFreeEvent.eventName,
+  at: at.getTime(),
+};
 const wait: PersistedPendingEventWait = {
   id: "wait",
   runId: "run",
@@ -141,6 +158,17 @@ describe("Redis event-wait transport boundary", () => {
     assertEquals(restored.order, 7);
     assertEquals(JSON.parse(restored.value).payload, { items: [] });
     assertEquals(await store.claimRunEventForWait("run", "wait", "ready", at), event);
+
+    const payloadFree = boundary(payloadFreeStoredEvent);
+    assertEquals(await payloadFree.store.peekRunEvent("run", "ready"), payloadFreeEvent);
+    await payloadFree.store.appendRunEvent("run", payloadFreeEvent);
+    const encoded = JSON.parse(recordedPayload(payloadFree.calls.at(-1)).event.value);
+    assertEquals("payload" in encoded, false);
+    assertEquals(encoded.payloadAbsent, true);
+    await payloadFree.store.restoreRunEvent("run", payloadFreeEvent);
+    const restoredPayloadFree = JSON.parse(recordedPayload(payloadFree.calls.at(-1)).event.value);
+    assertEquals(restoredPayloadFree.payloadAbsent, true);
+
     const empty = boundary(null).store;
     assertEquals(await empty.peekRunEvent("run", "ready"), null);
     assertEquals(await empty.takeRunEvent("run", "ready"), null);
@@ -176,13 +204,5 @@ describe("Redis event-wait transport boundary", () => {
     await assertRejects(() => store.appendRunEvent("run", event));
     client.eval = () => Promise.resolve("not-json");
     await assertRejects(() => store.removeRunEvent("run", "event"));
-  });
-  it("round-trips absent payloads without converting them to null or rejecting publication", async () => {
-    const empty = { ...event, payload: undefined };
-    const { store, calls } = boundary({ ...storedEvent, value: JSON.stringify(empty) });
-    await store.appendRunEvent("run", empty);
-    const encoded = JSON.parse(recordedPayload(calls[0]).event.value);
-    assertEquals(Object.hasOwn(encoded, "payload"), false);
-    assertEquals(await store.peekRunEvent("run", "ready"), empty);
   });
 });

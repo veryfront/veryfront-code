@@ -545,6 +545,7 @@ export function getRuntimeRemoteToolSources(
       ) {
         return [];
       }
+      if (server.required === false) return [];
       requiresInjectedStudioMcpServerToolSource(server);
     }
     return [];

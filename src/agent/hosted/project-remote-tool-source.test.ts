@@ -1545,3 +1545,69 @@ for (const canonicalCatalog of [false, true]) {
     }
   }
 }
+
+describe("optional Studio MCP eligibility", () => {
+  it("optional Studio MCP keeps API sources for clients without Studio access", () => {
+    const profiles: (import("../runtime/client-profile.ts").RuntimeClientProfile | null)[] = [
+      null,
+      { id: "veryfront-api", type: "api", trusted: true, capabilities: [] },
+      { id: "veryfront-studio", type: "web", trusted: false, capabilities: ["ui_panels"] },
+    ];
+    for (const clientProfile of profiles) {
+      const configs: RemoteMCPToolSourceConfig[] = [];
+      const sources = createHostedProjectRemoteToolSources({
+        getProjectId: () => "project-1",
+        authToken: "token-1",
+        apiMcpUrl: "https://api.example/mcp",
+        studioMcpUrl: "https://studio.example/mcp",
+        mcpServers: [{ kind: "veryfront-api" }, { kind: "veryfront-studio", required: false }],
+        clientProfile,
+        createRemoteToolSource: (config) => {
+          configs.push(config);
+          return createRemoteSource({ id: config.id, tools: [simpleTool("get_file")] });
+        },
+      });
+      assertEquals(sources.map((source) => source.id), ["veryfront-mcp"]);
+      assertEquals(configs.length, 1);
+    }
+  });
+
+  it("optional Studio MCP skips missing transport and retains trusted available Studio", () => {
+    for (const studioMcpUrl of [undefined, "https://studio.example/mcp"]) {
+      const sources = createHostedProjectRemoteToolSources({
+        getProjectId: () => "project-1",
+        authToken: "token-1",
+        apiMcpUrl: "https://api.example/mcp",
+        studioMcpUrl,
+        mcpServers: [{ kind: "veryfront-api" }, { kind: "veryfront-studio", required: false }],
+        clientProfile: {
+          id: "veryfront-studio",
+          type: "web",
+          trusted: true,
+          capabilities: ["ui_panels"],
+        },
+        createRemoteToolSource: (config) =>
+          createRemoteSource({ id: config.id, tools: [simpleTool("get_file")] }),
+      });
+      assertEquals(
+        sources.map((source) => source.id),
+        studioMcpUrl ? ["veryfront-mcp", "studio-mcp"] : ["veryfront-mcp"],
+      );
+    }
+  });
+
+  it("required Studio MCP still rejects a REST client", () => {
+    const error = assertThrows(() =>
+      createHostedProjectRemoteToolSources({
+        getProjectId: () => "project-1",
+        authToken: "token-1",
+        apiMcpUrl: "https://api.example/mcp",
+        studioMcpUrl: "https://studio.example/mcp",
+        mcpServers: [{ kind: "veryfront-studio", required: true }],
+        clientProfile: { id: "veryfront-api", type: "api", trusted: true, capabilities: [] },
+        createRemoteToolSource: (config) => createRemoteSource({ id: config.id, tools: [] }),
+      }), VeryfrontError);
+    assertInstanceOf(error, VeryfrontError);
+    assertEquals(error.slug, "permission-denied");
+  });
+});

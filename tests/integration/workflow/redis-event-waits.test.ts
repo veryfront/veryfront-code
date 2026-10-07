@@ -649,17 +649,26 @@ describe("Redis durable event waits", () => {
       const overflow = crypto.randomUUID();
       await assertRejects(() => a.appendRunEvent(overflow, event));
       const capacityLookupCalls = await getCalls() - beforeGetCalls;
-      assertEquals(capacityLookupCalls <= 2, true, `Capacity used ${capacityLookupCalls} GETs`);
+      assertEquals(capacityLookupCalls <= 3, true, `Capacity used ${capacityLookupCalls} GETs`);
       assertEquals(await b.peekRunEvent(overflow, "ready"), null);
       assertEquals((await b.peekRunEvent(retryable, "ready"))?.id, event.id);
       const last = ids.at(-1);
       assertExists(last);
       assertEquals(await b.updateRunIfStatus(last, ["running"], { status: "completed" }), true);
+      const runKeys = await observer.keys(`*run:${runId}`);
+      assertEquals(runKeys.length, 1);
+      const runKey = runKeys[0];
+      assertExists(runKey);
+      const prefix = runKey.slice(0, -`run:${runId}`.length);
+      // Older receivers maintain the global index without the new eligibility index.
+      await observer.del([`${prefix}index:event-mailboxes:evictable`]);
       await a.appendRunEvent(overflow, event);
       assertEquals(await b.peekRunEvent(last, "ready"), null);
       assertEquals((await b.peekRunEvent(overflow, "ready"))?.id, event.id);
       cleanup.push(() => a.deleteRun(overflow));
       await b.updateRun(retryable, { status: "cancelled" });
+      // A later legacy mutation must be repaired even after an earlier reconciliation.
+      await observer.del([`${prefix}index:event-mailboxes:evictable`]);
       const afterCancellation = crypto.randomUUID();
       cleanup.push(() => a.deleteRun(afterCancellation));
       await a.appendRunEvent(afterCancellation, event);

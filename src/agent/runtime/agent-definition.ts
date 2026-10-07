@@ -41,6 +41,7 @@ export const getRuntimeAgentMcpServerConfigSchema = defineSchema((v) =>
   v.object({
     kind: v.union([v.literal("veryfront-api"), v.literal("veryfront-studio")]),
     id: v.string().min(1).optional(),
+    required: v.boolean().optional(),
     toolPolicy: getRuntimeAgentMcpToolPolicySchema().optional(),
   })
 );
