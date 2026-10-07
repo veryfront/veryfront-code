@@ -457,7 +457,11 @@ rc_publish_package_dir() {
   PACKAGE_DIR="$1"
   PUBLISH_SPEC="${2:-${PACKAGE_DIR}}"
   PACKAGE_NAME="$(jq -r '.name' "${PACKAGE_DIR}/package.json")"
-  ensure_rc_version_absent_or_matches_commit "${PACKAGE_NAME}" || return $?
+  local version_lookup_mode=recover
+  if [[ "${NPM_MAINTENANCE_RELEASE:-false}" == "true" ]]; then
+    version_lookup_mode=fail-closed
+  fi
+  ensure_rc_version_absent_or_matches_commit "${PACKAGE_NAME}" "${version_lookup_mode}" || return $?
   if [[ "${PUBLISHED_GIT_HEAD}" == "${GITHUB_SHA}" ]]; then
     echo "::notice::${PACKAGE_NAME}@${VERSION} already published for this commit; skipping npm publish"
     return 0

@@ -2760,6 +2760,20 @@ describe("RC metadata verification order", () => {
     );
   });
 
+  it("keeps the maintenance publish lookup fail-closed after batch preflight", async () => {
+    const output = await runBash([
+      "set -euo pipefail",
+      'source "$SCRIPT_PATH"',
+      "jq() { echo veryfront; }",
+      'npm() { echo "npm error code ETIMEDOUT" >&2; return 1; }',
+      'publish_npm_package_with_retry() { echo "UNSAFE-PUBLISH"; }',
+      "rc_publish_package_dir package",
+    ].join("\n"), { VERSION: "0.1.0-rc.1", GITHUB_SHA: "expected-head", NPM_MAINTENANCE_RELEASE: "true" });
+    assertEquals(output.code, 1);
+    assertEquals(decoder.decode(output.stdout).includes("UNSAFE-PUBLISH"), false);
+    assertStringIncludes(decoder.decode(output.stderr), "npm registry version lookup failed");
+  });
+
   it("keeps maintenance dispatch disabled while retaining the release gates", async () => {
     const workflow = parse(
       await Deno.readTextFile(
