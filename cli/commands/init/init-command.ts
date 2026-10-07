@@ -10,7 +10,11 @@ import { INVALID_ARGUMENT } from "veryfront/errors";
 import type { InitOptions, InitRuntime, InitTemplate } from "./types.ts";
 import { cwd } from "veryfront/platform";
 import { getDlxCommand, getInstallCommand, getRunCommand } from "../../utils/package-manager.ts";
-import { createProject, type ProjectCreationObserver } from "../../shared/project-creation.ts";
+import {
+  createProject,
+  type CreateProjectResult,
+  type ProjectCreationObserver,
+} from "../../shared/project-creation.ts";
 import { validateProjectName } from "../../shared/project-name.ts";
 import { promptForEnvVars } from "../../utils/env-prompt.ts";
 import { runInteractiveWizard, shouldRunWizard } from "./interactive-wizard.ts";
@@ -23,7 +27,36 @@ type StructureNode = {
 
 interface InitCommandDependencies {
   deployProject?: (projectDir: string) => Promise<string>;
+  runWizard?: typeof runInteractiveWizard;
+  shouldRunWizard?: typeof shouldRunWizard;
 }
+
+const AUTH_REQUIRED_DEPLOY_MESSAGE = "Authentication required for --deploy.";
+const DEPLOYMENT_FAILED_MESSAGE =
+  "Deployment failed. Your project was created locally; run veryfront deploy from the project directory after reviewing your credentials and deployment settings.";
+
+function safeDeploymentFailureMessage(error: unknown): string {
+  if (error instanceof Error && error.message === AUTH_REQUIRED_DEPLOY_MESSAGE) {
+    return AUTH_REQUIRED_DEPLOY_MESSAGE;
+  }
+
+  return DEPLOYMENT_FAILED_MESSAGE;
+}
+
+export type InitDeploymentStatus =
+  | { status: "skipped" }
+  | { status: "deployed"; url: string }
+  | { status: "failed"; message: string };
+
+export type InitCommandResult =
+  | { cancelled: true }
+  | ({
+    cancelled: false;
+    template: InitTemplate;
+    runtime: InitRuntime;
+    deployedUrl?: string;
+    deployment: InitDeploymentStatus;
+  } & CreateProjectResult);
 
 const STRUCTURE_ORDER = [
   "app",
@@ -118,13 +151,24 @@ function renderProjectStructure(rootName: string, paths: string[], maxLines = 22
   return lines;
 }
 
+function validateInitProjectName(name: string): string | null {
+  const pathError = validateProjectName(name);
+  if (pathError) return pathError;
+
+  if (!/^[a-z0-9.-]+$/.test(name)) {
+    return "Project name must use lowercase letters, numbers, dots, and hyphens";
+  }
+
+  return null;
+}
+
 /**
  * Initializes a new Veryfront project with the specified template
  */
 export async function initCommand(
   options: InitOptions,
   dependencies: InitCommandDependencies = {},
-): Promise<void> {
+): Promise<InitCommandResult> {
   const { name, quiet = false } = options;
   const { integrations = [] } = options;
   const parentDir = options.parentDir ?? cwd();
@@ -139,17 +183,19 @@ export async function initCommand(
 
   // Validate project name before doing anything else
   if (name) {
-    const nameError = validateProjectName(name);
+    const nameError = validateInitProjectName(name);
     if (nameError) {
       throw INVALID_ARGUMENT.create({ detail: nameError });
     }
   }
 
   let wizardRuntime: InitRuntime = "node";
-  if (shouldRunWizard(options)) {
-    const wizardResult = await runInteractiveWizard(name, options.runtime);
+  const shouldStartWizard = dependencies.shouldRunWizard ?? shouldRunWizard;
+  const runWizard = dependencies.runWizard ?? runInteractiveWizard;
+  if (shouldStartWizard(options)) {
+    const wizardResult = await runWizard(name, options.runtime);
     if (wizardResult.cancelled) {
-      return;
+      return { cancelled: true };
     }
     template = wizardResult.template;
     if (wizardResult.projectName) {
@@ -159,6 +205,13 @@ export async function initCommand(
     wizardRuntime = wizardResult.runtime;
   } else {
     template = options.template ?? DEFAULT_TEMPLATE;
+  }
+
+  if (projectName) {
+    const nameError = validateInitProjectName(projectName);
+    if (nameError) {
+      throw INVALID_ARGUMENT.create({ detail: nameError });
+    }
   }
 
   const runtime: InitRuntime = options.runtime ?? wizardRuntime;
@@ -201,7 +254,7 @@ export async function initCommand(
       conflictPolicy: options.force ? "overwrite" : "fail",
       installDependencies: !options.skipInstall,
       initializeGit: initGit,
-      includePackageMetadata: !quiet,
+      includePackageMetadata: options.includePackageMetadata ?? !quiet,
     },
     {
       observer: installObserver,
@@ -221,6 +274,7 @@ export async function initCommand(
 
   // Deploy to cloud if --deploy flag is set
   let deployedUrl: string | undefined;
+  let deployment: InitDeploymentStatus = { status: "skipped" };
   const manualDeployCommand = quiet
     ? `${getDlxCommand(result.packageManager)} veryfront deploy`
     : getRunCommand(result.packageManager, "deploy");
@@ -233,8 +287,10 @@ export async function initCommand(
         if (!deployedUrl) {
           throw new Error("Deploy completed without a verified result.");
         }
+        deployment = { status: "deployed", url: deployedUrl };
       } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
+        const message = safeDeploymentFailureMessage(error);
+        deployment = { status: "failed", message };
         if (!quiet) console.log();
         log(`  Deploy failed: ${message}`);
         log(`  Your project was created locally. ${manualDeployHint}`);
@@ -246,33 +302,40 @@ export async function initCommand(
       const authResult = await ensureAuthenticated(undefined, createdProjectDir);
 
       if (!authResult) {
+        deployment = { status: "failed", message: AUTH_REQUIRED_DEPLOY_MESSAGE };
         if (!quiet) console.log();
         log(`  Authentication required for --deploy. ${manualDeployHint}`);
       } else {
         if (!quiet) console.log();
         log(`  Deploying project...`);
 
+        const previousDir = cwd();
         try {
           chdir(createdProjectDir);
 
-          const deployment = await deployCommand({
+          const deployResult = await deployCommand({
             projectDir: createdProjectDir,
             branch: "main",
             env: "production",
             force: true,
             dryRun: false,
             quiet: true,
+            suppressJsonOutput: true,
           });
 
-          if (!deployment) {
+          if (!deployResult) {
             throw new Error("Deploy completed without a verified result.");
           }
-          deployedUrl = deployment.url;
+          deployedUrl = deployResult.url;
+          deployment = { status: "deployed", url: deployedUrl };
         } catch (error) {
-          const message = error instanceof Error ? error.message : String(error);
+          const message = safeDeploymentFailureMessage(error);
+          deployment = { status: "failed", message };
           if (!quiet) console.log();
           log(`  Deploy failed: ${message}`);
           log(`  Your project was created locally. ${manualDeployHint}`);
+        } finally {
+          chdir(previousDir);
         }
       }
     }
@@ -337,4 +400,13 @@ export async function initCommand(
 
     console.log();
   }
+
+  return {
+    cancelled: false,
+    ...result,
+    template,
+    runtime,
+    deployedUrl,
+    deployment,
+  };
 }

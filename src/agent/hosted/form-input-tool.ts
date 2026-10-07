@@ -12,7 +12,7 @@ import {
   buildInputRequestLifecycleDataEvent,
   createInputRequest,
   type FormInputToolInput,
-  getFormInputToolInputSchema,
+  getDurableFormInputToolInputSchema,
   getInputRequest,
   type InputRequestOutput,
 } from "../input/request-protocol.ts";
@@ -51,7 +51,7 @@ export function createHostedFormInputTool(
   return tool<FormInputToolInput, unknown>({
     description:
       "Display a durable structured form to collect user input. Use this when you need a concrete choice or structured values before continuing. The request is persisted as an input_request and the tool waits until the user submits or the request expires.",
-    inputSchema: getFormInputToolInputSchema(),
+    inputSchema: getDurableFormInputToolInputSchema(),
     execute: async (input, execOptions) => {
       if (inheritedExecution) {
         throw INVALID_ARGUMENT.create({

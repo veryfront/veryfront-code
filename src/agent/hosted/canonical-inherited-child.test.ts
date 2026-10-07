@@ -1,11 +1,18 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { it } from "#veryfront/testing/bdd.ts";
+import {
+  type AgentModelRuntimeResolver,
+  revokeModelRuntimeResolver,
+} from "../runtime/model-transport.ts";
+import { startHostedChildForkRuntimeWithHostTools } from "./child-fork-runtime-start.ts";
 import { FakeTime } from "#std/testing/time";
 import {
+  hostedInheritedInferenceModelResolver,
   hostedInheritedRunAdmitter,
   hostedTerminalRunFinalizer,
   registerHostedTerminalCredential,
+  transferHostedTerminalAuthority,
 } from "./terminal-credential.ts";
 import type { ParsedHostedChatRequest } from "./chat-request-parser.ts";
 const parentId = "11111111-1111-4111-8111-111111111111";
@@ -44,6 +51,7 @@ it("admits one inherited child with the parent's capability and binds exact-chil
           }, {
             headers: {
               "Cache-Control": "no-store",
+              "X-Veryfront-Inference-Token": "child-inference",
               "X-Veryfront-Run-Invocation-Token": "child-invocation",
               "X-Veryfront-Run-Terminal-Token": token("child", childId),
               "X-Veryfront-Run-Renewal-Token": "child-renewal",
@@ -64,6 +72,64 @@ it("admits one inherited child with the parent's capability and binds exact-chil
     agentId: "agent",
     projectId: parentId,
   });
+  const resolverFactory = hostedInheritedInferenceModelResolver;
+  assertEquals(typeof resolverFactory, "function");
+  const resolver = resolverFactory(run)!;
+  assertEquals(typeof resolver, "function");
+  assertEquals(resolver("openai/gpt-5.5"), undefined);
+  assertEquals(resolver("veryfront-cloud/openai/gpt-5.5")!.modelId, "gpt-5.5");
+  assertEquals(resolverFactory({ runId: run.runId }), undefined);
+  assertEquals(JSON.stringify(run).includes("child-inference"), false);
+  const identifiers = {
+    childRunId: run.runId,
+    childCanonicalRunId: run.canonicalRunId!,
+    childConversationId: run.conversationId,
+    childMessageId: run.messageId,
+    latestEventId: run.latestEventId,
+    latestExternalEventSequence: run.latestExternalEventSequence,
+  };
+  transferHostedTerminalAuthority(run, identifiers);
+  let childSteps = 0;
+  let previousResolver: AgentModelRuntimeResolver | undefined;
+  const started = startHostedChildForkRuntimeWithHostTools({
+    apiUrl: "https://wrong.example.test",
+    authToken: "parent-invocation",
+    projectId: parentId,
+    provider: "openai",
+    forkModel: "veryfront-cloud/openai/gpt-5.5",
+    prompt: "child prompt",
+    maxSteps: 1,
+    maxContinuationSteps: 1,
+    onBeforeStop: ({ stepIndex }) => stepIndex === 0 ? "Continue child execution" : null,
+    forkTools: {},
+    buildInstructions: () => "Reply briefly",
+    durableChildRun: identifiers,
+    monitorChildRunStatus: async () => {},
+    runStep: async (input) => {
+      assertEquals(typeof input.resolveModelRuntime, "function");
+      assertEquals(input.resolveModelRuntime!(input.model)!.modelId, "gpt-5.5");
+      assertEquals(input.resolveModelRuntime === previousResolver, false);
+      previousResolver = input.resolveModelRuntime;
+      revokeModelRuntimeResolver(input.resolveModelRuntime);
+      childSteps++;
+      return {
+        stream: new ReadableStream({
+          start(controller) {
+            controller.close();
+          },
+        }),
+        responsePromise: Promise.resolve({
+          text: "result",
+          messages: [],
+          toolCalls: [],
+          status: "completed",
+          metadata: { finishReason: "stop" },
+        }),
+      };
+    },
+  });
+  for await (const _part of started.streamResult.fullStream) { /* Drain the child execution. */ }
+  assertEquals(childSteps, 2);
   assertEquals(run.latestEventId, 7);
   assertEquals(run.latestExternalEventSequence, 3);
   assertEquals(calls[0]!.headers.get("X-Veryfront-Run-Execution-Mode"), "inherited");
@@ -121,6 +187,7 @@ for (
             }, {
               headers: {
                 "Cache-Control": "no-store",
+                "X-Veryfront-Inference-Token": "child-inference",
                 "X-Veryfront-Run-Invocation-Token": "child-invocation",
                 "X-Veryfront-Run-Terminal-Token": token("child", childId),
                 "X-Veryfront-Run-Event-Token": "child-event",
@@ -225,6 +292,7 @@ for (const failure of ["network", 503, 429] as const) {
           }, {
             headers: {
               "Cache-Control": "no-store",
+              "X-Veryfront-Inference-Token": "child-inference",
               "X-Veryfront-Run-Invocation-Token": "child-invocation",
               "X-Veryfront-Run-Terminal-Token": token("child", childId),
               "X-Veryfront-Run-Event-Token": "child-event",
@@ -288,6 +356,7 @@ it("keeps local work running across transient renewal failures while the lease i
           }, {
             headers: {
               "Cache-Control": "no-store",
+              "X-Veryfront-Inference-Token": "child-inference",
               "X-Veryfront-Run-Invocation-Token": "child-invocation",
               "X-Veryfront-Run-Terminal-Token": token("child", childId),
               "X-Veryfront-Run-Event-Token": "child-event",

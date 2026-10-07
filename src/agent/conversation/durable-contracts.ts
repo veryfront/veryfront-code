@@ -1,5 +1,15 @@
 import { defineSchema, lazySchema } from "#veryfront/schemas/index.ts";
 import { INPUT_VALIDATION_FAILED } from "#veryfront/errors";
+import {
+  type AgentRunModelCallCaptureReceipt,
+  getModelCallCaptureReceiptSchema,
+} from "#veryfront/runtime/model-call-capture-receipt.ts";
+import {
+  type AgentRunToolCallAdmissionReceipt,
+  getToolCallAdmissionReceiptSchema,
+  getToolCallAdmissionWireReceiptSchema,
+} from "#veryfront/runtime/tool-call-admission-receipt.ts";
+import type { ConversationRunRuntimeObservation } from "#veryfront/runtime/runtime-observation-carrier.ts";
 
 /** Zod schema for get conversation run targets. */
 export const getConversationRunTargetsSchema = defineSchema((v) =>
@@ -227,9 +237,27 @@ export type ConversationRunQueueFlushOutcome =
   | "stopped"
   | "retry_scheduled";
 
+/** Private append sidecar binding one generated occurrence to one event in the same request. */
+export interface ConversationRunToolCallAdmissionStart {
+  occurrenceId: string;
+  eventIndex: number;
+}
+
 /** Public API contract for conversation run event queue controller. */
 export interface ConversationRunEventQueueController {
-  enqueue(events: unknown[]): void;
+  enqueue(
+    events: unknown[],
+    options?: {
+      toolCallStarts?: ConversationRunToolCallAdmissionStart[];
+      runtimeObservations?: ConversationRunRuntimeObservation[];
+    },
+  ): void;
+  /** Consume the exact append acknowledgement for one submitted capture. */
+  takeModelCallCaptureReceipt?(modelCallId: string): AgentRunModelCallCaptureReceipt | undefined;
+  /** Consume the exact append acknowledgement for one admitted tool-call start. */
+  takeToolCallAdmissionReceipt?(
+    occurrenceId: string,
+  ): AgentRunToolCallAdmissionReceipt | undefined;
   flush(options?: { abortSignal?: AbortSignal }): Promise<
     | {
       outcome: "idle" | "flushed";
@@ -348,6 +376,8 @@ export interface AppendConversationRunEventsResponse {
   latestEventId: number;
   latestExternalEventSequence: number;
   appendedCount: number;
+  modelCallCaptures?: AgentRunModelCallCaptureReceipt[];
+  toolCallAdmissions?: AgentRunToolCallAdmissionReceipt[];
   run: {
     runId: string;
     conversationId: string;
@@ -364,6 +394,8 @@ export const getAppendConversationRunEventsResponseSchema = defineSchema((v) =>
       latestEventId: v.number().int().nonnegative(),
       latestExternalEventSequence: v.number().int().nonnegative(),
       appendedCount: v.number().int().nonnegative(),
+      modelCallCaptures: v.array(getModelCallCaptureReceiptSchema()).optional(),
+      toolCallAdmissions: v.array(getToolCallAdmissionReceiptSchema()).optional(),
       run: v.object({
         runId: v.string().min(1),
         conversationId: v.string().uuid(),
@@ -375,6 +407,17 @@ export const getAppendConversationRunEventsResponseSchema = defineSchema((v) =>
       latest_event_id: v.number().int().nonnegative(),
       latest_external_event_sequence: v.number().int().nonnegative(),
       appended_count: v.number().int().nonnegative(),
+      model_call_captures: v.array(
+        v.object({
+          event_id: v.string().min(1),
+          project_id: v.string().uuid(),
+          run_id: v.string().uuid(),
+          model_call_id: v.string().uuid(),
+        }).strict(),
+      ).optional(),
+      tool_call_admissions: v.array(
+        getToolCallAdmissionWireReceiptSchema(),
+      ).optional(),
       run: v.object({
         run_id: v.string().min(1),
         conversation_id: v.string().uuid(),
@@ -388,6 +431,24 @@ export const getAppendConversationRunEventsResponseSchema = defineSchema((v) =>
         latestEventId: d.latest_event_id as number,
         latestExternalEventSequence: d.latest_external_event_sequence as number,
         appendedCount: d.appended_count as number,
+        ...("model_call_captures" in d
+          ? {
+            modelCallCaptures: (d.model_call_captures as Array<Record<string, unknown>>).map(
+              (receipt) =>
+                getModelCallCaptureReceiptSchema().parse({
+                  eventId: receipt.event_id,
+                  projectId: receipt.project_id,
+                  runId: receipt.run_id,
+                  modelCallId: receipt.model_call_id,
+                }),
+            ),
+          }
+          : {}),
+        ...("tool_call_admissions" in d
+          ? {
+            toolCallAdmissions: d.tool_call_admissions as AgentRunToolCallAdmissionReceipt[],
+          }
+          : {}),
         run: {
           ...run,
           runId: run.run_id as string,

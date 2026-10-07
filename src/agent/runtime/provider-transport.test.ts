@@ -218,6 +218,63 @@ describe("agent provider transport hooks", () => {
     assertEquals(generateOptions.temperature, 0.2);
   });
 
+  it("does not let public stream context enable private runtime observations", async () => {
+    const assistant = agent({
+      model: "host/test-model",
+      system: "You are a helpful assistant.",
+      resolveModelTransport: () => ({
+        model: scriptedModel([{ text: "public stream" }], {
+          modelId: "hosted/gateway-model",
+          only: "stream",
+        }),
+      }),
+    });
+
+    const result = await assistant.stream({
+      input: "Hello",
+      context: { runtimeObservations: true },
+    });
+    const body = await result.toDataStreamResponse().text();
+
+    assertEquals(body.includes("privateRuntimeObservation"), false);
+    assertEquals(body.includes("occurrenceId"), false);
+    assertStringIncludes(body, "public stream");
+  });
+
+  it("does not let public respond request context enable private runtime observations", async () => {
+    const assistant = agent({
+      model: "host/test-model",
+      system: "You are a helpful assistant.",
+      resolveModelTransport: () => ({
+        model: scriptedModel([{ text: "public respond" }], {
+          modelId: "hosted/gateway-model",
+          only: "stream",
+        }),
+      }),
+    });
+
+    const response = await assistant.respond(
+      new Request("https://agent.example.test/respond", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          messages: [{
+            id: "user-message",
+            role: "user",
+            parts: [{ type: "text", text: "Hello" }],
+          }],
+          context: { runtimeObservations: true },
+        }),
+      }),
+    );
+    const body = await response.text();
+
+    assertEquals(response.status, 200);
+    assertEquals(body.includes("privateRuntimeObservation"), false);
+    assertEquals(body.includes("occurrenceId"), false);
+    assertStringIncludes(body, "public respond");
+  });
+
   it("omits temperature for Claude Opus 4.8 generate requests", async () => {
     const transportModel = scriptedModel([{ text: "opus generate" }], {
       modelId: "hosted/gateway-model",

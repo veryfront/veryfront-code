@@ -1,7 +1,7 @@
 ---
 title: "veryfront/llm"
 description: "One-shot model calls."
-order: 16
+order: 17
 ---
 
 ## Import

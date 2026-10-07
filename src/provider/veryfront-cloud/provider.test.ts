@@ -1568,12 +1568,20 @@ describe("provider/veryfront-cloud vendor-neutral routes", () => {
 
   it("sends OpenAI embeddings to the vendor-neutral route", async () => {
     setCloudBootstrap();
-    async function captureEmbeddingRequest(): Promise<{ url: string; model: unknown }> {
-      let captured: { url: string; model: unknown } | undefined;
+    async function captureEmbeddingRequest(): Promise<{
+      url: string;
+      model: unknown;
+      projectSlug: string | null;
+    }> {
+      let captured: { url: string; model: unknown; projectSlug: string | null } | undefined;
       installMockFetch(
         (async (input: URL | Request | string, init?: RequestInit) => {
           const request = new Request(input, init);
-          captured ??= { url: request.url, model: (await request.json()).model };
+          captured ??= {
+            url: request.url,
+            model: (await request.json()).model,
+            projectSlug: request.headers.get("x-veryfront-project-slug"),
+          };
           return Response.json({
             data: [{ embedding: [0.1, 0.2], index: 0 }],
             usage: { prompt_tokens: 1, total_tokens: 1 },
@@ -1594,16 +1602,21 @@ describe("provider/veryfront-cloud vendor-neutral routes", () => {
     assertEquals(await captureEmbeddingRequest(), {
       url: "https://api.veryfront.com/ai/v1/embeddings",
       model: "openai/text-embedding-3-small",
+      projectSlug: "provider-test-project",
     });
   });
 
   it("sends Google embeddings to the vendor-neutral route", async () => {
     setCloudBootstrap();
-    async function captureEmbeddingUrl(): Promise<string> {
-      let captured: string | undefined;
+    async function captureEmbeddingRequest(): Promise<{ url: string; projectSlug: string | null }> {
+      let captured: { url: string; projectSlug: string | null } | undefined;
       installMockFetch(
         ((input: URL | Request | string, init?: RequestInit) => {
-          captured ??= new Request(input, init).url;
+          const request = new Request(input, init);
+          captured ??= {
+            url: request.url,
+            projectSlug: request.headers.get("x-veryfront-project-slug"),
+          };
           return Promise.resolve(Response.json({ embedding: { values: [0.1, 0.2] } }));
         }) as typeof fetch,
       );
@@ -1619,8 +1632,11 @@ describe("provider/veryfront-cloud vendor-neutral routes", () => {
     }
 
     assertEquals(
-      await captureEmbeddingUrl(),
-      "https://api.veryfront.com/ai/v1beta/models/gemini-embedding-001:embedContent",
+      await captureEmbeddingRequest(),
+      {
+        url: "https://api.veryfront.com/ai/v1beta/models/gemini-embedding-001:embedContent",
+        projectSlug: "provider-test-project",
+      },
     );
   });
 

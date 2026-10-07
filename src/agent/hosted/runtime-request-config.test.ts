@@ -586,7 +586,7 @@ Deno.test("resolveHostedRuntimeRequestConfig only lets request tool overrides na
 });
 
 Deno.test("resolveHostedRuntimeRequestConfig preserves explicitly requested legacy delegation", () => {
-  const resolve = (skills: boolean | string[] | undefined) =>
+  const resolve = (skills: RuntimeAgentMarkdownDefinition["skills"]) =>
     resolveHostedRuntimeRequestConfig({
       request: {
         runtimeOverrides: { allowedTools: ["get_file", "invoke_agent"] },
@@ -599,10 +599,13 @@ Deno.test("resolveHostedRuntimeRequestConfig preserves explicitly requested lega
     }).requestedAllowedTools;
 
   assertEquals(resolve(["plan"]), ["get_file", "invoke_agent"]);
+  assertEquals(resolve("plan"), ["get_file", "invoke_agent"]);
+  assertEquals(resolve({ plan: true }), ["get_file", "invoke_agent"]);
   assertEquals(resolve(true), ["get_file", "invoke_agent"]);
   assertEquals(resolve(undefined), ["get_file", "invoke_agent"]);
   assertEquals(resolve(false), ["get_file"]);
   assertEquals(resolve([]), ["get_file"]);
+  assertEquals(resolve({ plan: false }), ["get_file"]);
 });
 
 describe("resolveHostedRuntimeRequestConfig", () => {
@@ -639,4 +642,24 @@ describe("resolveHostedRuntimeRequestConfig", () => {
       includeRuntimeEssentialToolsWhenEmpty: true,
     });
   });
+});
+
+it("authored knowledge supplies its loader independently and client overrides only narrow", () => {
+  const input = {
+    configuredTools: undefined,
+    configuredDelegates: undefined,
+    configuredSkills: false as const,
+    configuredKnowledge: { "knowledge/support/**": true },
+  };
+  assertEquals(resolveHostedRuntimeAllowedTools({ ...input, requestedTools: undefined }), [
+    "search_knowledge",
+  ]);
+  assertEquals(resolveHostedRuntimeAllowedTools({ ...input, requestedTools: [] }), []);
+  assertEquals(
+    resolveHostedRuntimeAllowedTools({
+      ...input,
+      requestedTools: ["search_knowledge", "get_file"],
+    }),
+    ["search_knowledge"],
+  );
 });

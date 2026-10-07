@@ -313,7 +313,7 @@ it("npm publish version bump pins first-party extension peers to the publish ver
           },
           peerDependencies: {
             "@veryfront/ext-content-mdx": "0.1.1240",
-            "@huggingface/transformers": "^4.2.0",
+            "@huggingface/transformers": "^4.3.0",
             react: "^19.0.0",
           },
           peerDependenciesMeta: {
@@ -349,7 +349,7 @@ it("npm publish version bump pins first-party extension peers to the publish ver
     assertEquals(pkg.peerDependencies, {
       "@veryfront/ext-content-mdx": publishVersion,
       // Third-party optional peers keep their compatibility ranges.
-      "@huggingface/transformers": "^4.2.0",
+      "@huggingface/transformers": "^4.3.0",
       react: "^19.0.0",
     });
     assertEquals(pkg.peerDependenciesMeta, {
@@ -495,9 +495,9 @@ const ROOT_BUNDLED_EXTENSIONS = new Set([
 ]);
 
 // The framework and ext-dev-ui-react both consume the application's React
-// generation. These remain root dependencies so npm resolves one React graph
-// instead of treating the extension's use as private implementation detail.
-const ROOT_SHARED_EXTENSION_DEPENDENCIES = new Set(["react", "react-dom"]);
+// generation. The root-bundled schema adapter also owns Zod. These remain
+// root dependencies when another extension uses them.
+const ROOT_SHARED_EXTENSION_DEPENDENCIES = new Set(["react", "react-dom", "zod"]);
 
 it("EXTENSION_OWNED_DEPENDENCIES stays in sync with extension manifests", async () => {
   const denoConfig = JSON.parse(
@@ -654,14 +654,14 @@ describe("normalizeNpmPackageMetadata", () => {
         "zod": "4.3.6",
       },
       optionalDependencies: {
-        "@huggingface/transformers": "^4.2.0",
+        "@huggingface/transformers": "^4.3.0",
       },
     });
 
     assertEquals(pkg.dependencies, { zod: "4.3.6" });
     assertEquals(pkg.optionalDependencies, undefined);
     assertEquals(pkg.peerDependencies, {
-      "@huggingface/transformers": "^4.2.0",
+      "@huggingface/transformers": "^4.3.0",
     });
     assertEquals(pkg.peerDependenciesMeta, {
       "@huggingface/transformers": { optional: true },
@@ -680,7 +680,7 @@ describe("normalizeNpmPackageMetadata", () => {
     assertEquals(pkg.dependencies, { zod: "4.3.6" });
     assertEquals(pkg.optionalDependencies, undefined);
     assertEquals(pkg.peerDependencies, {
-      "@huggingface/transformers": "^4.2.0",
+      "@huggingface/transformers": "^4.3.0",
     });
     assertEquals(pkg.peerDependenciesMeta, {
       "@huggingface/transformers": { optional: true },
@@ -695,7 +695,7 @@ describe("normalizeNpmPackageMetadata", () => {
       dependencies: { zod: "4.3.6" },
     });
 
-    assertEquals(pkg.peerDependencies?.["@huggingface/transformers"], "^4.2.0");
+    assertEquals(pkg.peerDependencies?.["@huggingface/transformers"], "^4.3.0");
     assertEquals(pkg.peerDependenciesMeta?.["@huggingface/transformers"], {
       optional: true,
     });
@@ -718,7 +718,7 @@ describe("normalizeNpmPackageMetadata", () => {
 
     assertEquals(pkg.dependencies, { zod: "4.3.6" });
     assertEquals(pkg.peerDependencies, {
-      "@huggingface/transformers": "^4.2.0",
+      "@huggingface/transformers": "^4.3.0",
     });
     assertEquals(pkg.peerDependenciesMeta, {
       "@huggingface/transformers": { optional: true },
@@ -735,7 +735,7 @@ describe("normalizeNpmPackageMetadata", () => {
 
     assertEquals(pkg.dependencies, { zod: "4.3.6" });
     assertEquals(pkg.peerDependencies, {
-      "@huggingface/transformers": "^4.2.0",
+      "@huggingface/transformers": "^4.3.0",
     });
     assertEquals(pkg.peerDependenciesMeta, {
       "@huggingface/transformers": { optional: true },
@@ -783,7 +783,7 @@ describe("normalizeNpmPackageMetadata", () => {
       "@types/node": "20.9.0",
     });
     assertEquals(pkg.peerDependencies, {
-      "@huggingface/transformers": "^4.2.0",
+      "@huggingface/transformers": "^4.3.0",
       react: "^19.0.0",
     });
     assertEquals(pkg.overrides, {
@@ -796,9 +796,13 @@ describe("npm supply-chain policy", () => {
   it("exports Studio AG-UI package entrypoints", async () => {
     const denoConfig = JSON.parse(await Deno.readTextFile("deno.json"));
     const exports = denoConfig.exports as Record<string, string>;
+    const imports = denoConfig.imports as Record<string, string>;
 
     assertEquals(exports["./chat/ag-ui"], "./src/chat/ag-ui.ts");
     assertEquals(exports["./chat/protocol"], "./src/chat/protocol.ts");
+    assertEquals(exports["./events/ag-ui"], "./src/events/ag-ui/public.ts");
+    assertEquals(imports["veryfront/events/ag-ui"], "./src/events/ag-ui/public.ts");
+    assertEquals(imports["#veryfront/events/ag-ui"], "./src/events/ag-ui/public.ts");
   });
 
   it("exports agent-service evals without legacy agent testing", async () => {

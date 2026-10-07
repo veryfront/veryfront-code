@@ -1,4 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
+import { runWithProjectEnv } from "#veryfront/server/project-env";
 import { assertEquals, assertNotEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { HandlerContext } from "#veryfront/types";
@@ -495,6 +496,83 @@ describe("ApiHandlerWrapper", () => {
     assertEquals(primitiveDiscoveryChecks, 0);
     assertEquals(apiRouteChecks, 0);
     assertEquals(sourceSnapshotRefreshes, 0);
+  });
+
+  it("routes page GET without constructing malformed host inference admission", async () => {
+    let pageReads = 0;
+    let apiRouteChecks = 0;
+    const ctx = createCtx({});
+    ctx.allowHostProjectCodeExecution = true;
+    ctx.config = { router: "pages" };
+    const fs = ctx.adapter.fs as unknown as {
+      runWithContext: (
+        slug: string,
+        token: string,
+        fn: () => Promise<unknown>,
+      ) => Promise<unknown>;
+      exists: (path: string) => Promise<boolean>;
+      readDir: (path: string) => AsyncIterable<{
+        name: string;
+        isFile: boolean;
+        isDirectory: boolean;
+        isSymlink: boolean;
+      }>;
+      resolveFile: (path: string) => Promise<string | null>;
+      symlinkSemantics: "none";
+      readFile: (path: string) => Promise<string>;
+      readFileBytesWithinLimit: (path: string, byteLimit: number) => Promise<Uint8Array>;
+    };
+    fs.runWithContext = async (_slug, _token, fn) => await fn();
+    fs.exists = (path) => {
+      if (path.endsWith("/pages/api") || path.endsWith("/app")) {
+        apiRouteChecks += 1;
+      }
+      return Promise.resolve(false);
+    };
+    fs.readDir = async function* () {};
+    fs.resolveFile = (path) =>
+      Promise.resolve(
+        path === "/tmp/project/pages/review" ? "/tmp/project/pages/review.tsx" : null,
+      );
+    fs.symlinkSemantics = "none";
+    fs.readFile = (path) => {
+      if (path === "/tmp/project/pages/review.tsx" || path === "pages/review.tsx") {
+        return Promise.resolve("export default function Review() { return null; }");
+      }
+      return Promise.reject(new Error("File not found"));
+    };
+    fs.readFileBytesWithinLimit = (path, byteLimit) => {
+      if (path === "/tmp/project/pages/review.tsx" || path === "pages/review.tsx") {
+        pageReads += 1;
+        const source = new TextEncoder().encode(
+          "export default function Review() { return null; }",
+        );
+        if (source.byteLength > byteLimit) {
+          return Promise.reject(new Error("File exceeds byte limit"));
+        }
+        return Promise.resolve(source);
+      }
+      return Promise.reject(new Error("File not found"));
+    };
+
+    await runWithProjectEnv(
+      {
+        VERYFRONT_API_INTERNAL_USER: "internal-user",
+        VERYFRONT_API_INTERNAL_PASS: "internal-pass",
+        VERYFRONT_API_INTERNAL_URL: "not a url",
+      },
+      async () => {
+        const result = await new ApiHandlerWrapper("/tmp/project", ctx.adapter).handle(
+          new Request("http://localhost/review"),
+          ctx,
+        );
+
+        assertEquals(result, { continue: true });
+      },
+    );
+
+    assertEquals(pageReads, 1);
+    assertEquals(apiRouteChecks, 0);
   });
 
   it("checks preview source freshness before resolving page ownership", async () => {

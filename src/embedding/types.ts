@@ -69,6 +69,7 @@ export interface RagDocumentMeta {
   source: string;
   type: string;
   createdAt: number;
+  size?: number;
   url?: string;
 }
 
@@ -93,6 +94,8 @@ export type RagStoreBackend = "auto" | "local-json" | "veryfront-cloud";
 /** Configuration used by rag store. */
 export interface RagStoreConfig {
   model?: string;
+  /** Model used when Veryfront Cloud inference is available for a project. */
+  cloudModel?: string;
   backend?: RagStoreBackend;
   branch?: string; // optional branch override for cloud-backed stores
   storagePath?: string; // default "data/index.json"
@@ -118,6 +121,8 @@ export interface RagSearchResult {
 export interface RagSearchOptions {
   topK?: number; // default 5
   threshold?: number; // minimum similarity score
+  /** Optional pre-ranking document predicate for authorization-scoped local search. */
+  filterDocument?: (document: RagDocumentMeta) => boolean;
 }
 
 /** Options accepted when refreshing an existing rag document. */
@@ -129,7 +134,11 @@ export interface RagRefreshOptions {
 
 /** Public API contract for rag store. */
 export interface RagStore {
-  ingest(title: string, text: string, meta?: { source?: string; type?: string }): Promise<string>;
+  ingest(
+    title: string,
+    text: string,
+    meta?: { source?: string; type?: string; size?: number },
+  ): Promise<string>;
   refreshDocument?(id: string, text: string, meta?: RagRefreshOptions): Promise<void>;
   search(query: string, options?: RagSearchOptions): Promise<RagSearchResult[]>;
   listDocuments(): Promise<RagDocumentMeta[]>;

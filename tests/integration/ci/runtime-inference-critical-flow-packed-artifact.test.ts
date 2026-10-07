@@ -11,6 +11,7 @@ import {
   loadPackedArtifactDirectory,
   runRuntimeInferenceCriticalFlow,
 } from "../../../scripts/test/runtime-inference-critical-flow.ts";
+import { scaffoldProject } from "../../../scripts/test/runtime-e2e-helpers.ts";
 
 async function sha256File(path: string): Promise<string> {
   const bytes = await Deno.readFile(path);
@@ -24,7 +25,11 @@ async function sha256File(path: string): Promise<string> {
 async function writePackageTarball(
   artifactDir: string,
   filename: string,
-  manifest: { readonly name: string; readonly version: string },
+  manifest: {
+    readonly name: string;
+    readonly version: string;
+    readonly bin?: Record<string, string>;
+  },
   body: string,
 ): Promise<string> {
   const stagingDir = `${artifactDir}/staging-${crypto.randomUUID()}`;
@@ -32,7 +37,10 @@ async function writePackageTarball(
   const tarball = `${artifactDir}/${filename}`;
   await Deno.mkdir(packageDir, { recursive: true });
   try {
-    await Deno.writeTextFile(`${packageDir}/package.json`, JSON.stringify(manifest));
+    await Deno.writeTextFile(
+      `${packageDir}/package.json`,
+      JSON.stringify(manifest),
+    );
     await Deno.writeTextFile(`${packageDir}/index.js`, body);
     const output = await new Deno.Command("tar", {
       args: ["-czf", tarball, "package"],
@@ -89,6 +97,65 @@ async function writePackedArtifactFixture(
 }
 
 describe("runtime inference critical-flow packed artifact integration", () => {
+  it("keeps Bun framework peer resolution inside the packed consumer cohort", async () => {
+    const artifactDir = await makeTempDirWithOptions({
+      prefix: ".runtime-bun-cohort-",
+    });
+    try {
+      const root = await writePackageTarball(
+        artifactDir,
+        "veryfront-0.1.0.tgz",
+        { name: "veryfront", version: "0.1.0", bin: { veryfront: "index.js" } },
+        `#!/usr/bin/env node
+const fs = require("node:fs");
+const name = process.argv[3];
+fs.mkdirSync(name);
+fs.writeFileSync(name + "/package.json", JSON.stringify({
+  name,
+  private: true,
+  dependencies: { veryfront: "^0.1.0", "@veryfront/ext-schema-zod": "^0.1.0" },
+  overrides: { "existing-package": "1.0.0" }
+}));
+`,
+      );
+      const extension = await writePackageTarball(
+        artifactDir,
+        "schema-zod-0.1.0.tgz",
+        { name: "@veryfront/ext-schema-zod", version: "0.1.0" },
+        "module.exports = {};",
+      );
+      const project = await scaffoldProject(
+        artifactDir,
+        {
+          root,
+          rootExtensionNames: [],
+          extensions: [{
+            name: "@veryfront/ext-schema-zod",
+            tarball: extension,
+          }],
+        },
+        "agentic-workflow",
+        "bun",
+        ["@veryfront/ext-schema-zod"],
+      );
+      const manifest = JSON.parse(
+        await Deno.readTextFile(`${project}/package.json`),
+      );
+      assertEquals(manifest.dependencies.veryfront, `file:${root}`);
+      assertEquals(
+        manifest.overrides.veryfront,
+        manifest.dependencies.veryfront,
+      );
+      assertEquals(
+        manifest.overrides["@veryfront/ext-schema-zod"],
+        manifest.dependencies["@veryfront/ext-schema-zod"],
+      );
+      assertEquals(manifest.overrides["existing-package"], "1.0.0");
+    } finally {
+      await remove(artifactDir, { recursive: true }).catch(() => {});
+    }
+  });
+
   it("redacts the requested packed directory when artifact loading fails", async () => {
     const privateDirectory = "../vf-private-packed-artifact";
     const error = await assertRejects(
@@ -111,7 +178,6 @@ describe("runtime inference critical-flow packed artifact integration", () => {
 
   it("loads packed artifact tarballs as absolute paths before scaffold cwd changes", async () => {
     const artifactDir = await makeTempDirWithOptions({
-      dir: Deno.cwd(),
       prefix: ".runtime-packed-artifact-",
     });
     try {
@@ -150,7 +216,10 @@ describe("runtime inference critical-flow packed artifact integration", () => {
         "Extension tarball paths must be absolute",
       );
       assertEquals((await Deno.stat(loaded.root)).isFile, true);
-      assertEquals((await Deno.stat(loaded.extensions[0]?.tarball ?? "")).isFile, true);
+      assertEquals(
+        (await Deno.stat(loaded.extensions[0]?.tarball ?? "")).isFile,
+        true,
+      );
     } finally {
       await remove(artifactDir, { recursive: true }).catch(() => {});
     }
@@ -158,7 +227,6 @@ describe("runtime inference critical-flow packed artifact integration", () => {
 
   it("redacts paths when a checksum-valid packed artifact is not a tarball", async () => {
     const artifactDir = await makeTempDirWithOptions({
-      dir: Deno.cwd(),
       prefix: ".runtime-invalid-packed-artifact-",
     });
     try {

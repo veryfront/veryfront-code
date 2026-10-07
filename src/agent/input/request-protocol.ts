@@ -3,7 +3,11 @@ import { defineSchema } from "#veryfront/schemas/index.ts";
 import { INVALID_ARGUMENT, NETWORK_ERROR } from "#veryfront/errors";
 import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
 import type { ToolExecutionDataEvent } from "#veryfront/tool/types.ts";
-import { getHumanInputFieldSchema, humanInputRequestBaseFields } from "./human-input.ts";
+import {
+  getHumanInputFieldSchema,
+  getHumanInputOptionSchema,
+  humanInputRequestBaseFields,
+} from "./human-input.ts";
 
 // `formInputToolInputSchema` is `HumanInputRequestSchema` minus its `metadata`
 // field. The contract DSL doesn't expose `.omit(...)`, so we share the base
@@ -11,6 +15,57 @@ import { getHumanInputFieldSchema, humanInputRequestBaseFields } from "./human-i
 /** Zod schema for get form input tool input. */
 export const getFormInputToolInputSchema = defineSchema((v) =>
   v.object(humanInputRequestBaseFields(v))
+);
+
+// The hosted model must not request presentation controls that the durable API rejects.
+// Keep local form schemas and their public inferred types unchanged.
+const getDurableHumanInputFieldSchema = defineSchema((v) => {
+  const base = {
+    name: v.string().min(1).max(128),
+    label: v.string().min(1).max(256),
+    description: v.string().max(1024).optional(),
+    required: v.boolean().optional().default(false),
+    secret: v.boolean().optional().default(false),
+  };
+  return v.discriminatedUnion("type", [
+    v.object({
+      ...base,
+      type: v.enum(["text", "email", "url", "password", "number"] as const),
+      defaultValue: v.string().optional(),
+    }),
+    v.object({ ...base, type: v.literal("textarea"), defaultValue: v.string().optional() }),
+    v.object({
+      ...base,
+      type: v.literal("select"),
+      options: v.array(getHumanInputOptionSchema()).min(1),
+      defaultValue: v.string().optional(),
+    }),
+    v.object({
+      ...base,
+      type: v.literal("checkbox"),
+      defaultValue: v.boolean().optional().default(false),
+    }),
+    v.object({
+      ...base,
+      type: v.literal("radio"),
+      options: v.array(getHumanInputOptionSchema()).min(1),
+      defaultValue: v.string().optional(),
+    }),
+    v.object({ ...base, type: v.literal("confirm") }),
+  ]).transform((field) => {
+    // Existing renderers consume these defaults; they are not advertised to the model.
+    if (field.type === "textarea") return { ...field, rows: 3 };
+    if (field.type === "confirm") return { ...field, confirmLabel: "Yes", denyLabel: "No" };
+    return field;
+  });
+});
+
+/** Form controls supported by the owning Runs API for hosted execution. */
+export const getDurableFormInputToolInputSchema = defineSchema((v) =>
+  v.object({
+    ...humanInputRequestBaseFields(v),
+    fields: v.array(getDurableHumanInputFieldSchema()).min(1),
+  })
 );
 
 /** Zod schema for get input response values. */

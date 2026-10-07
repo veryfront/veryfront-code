@@ -1,4 +1,5 @@
 import type { JsonValue } from "#veryfront/schemas/index.ts";
+import { getCurrentToolCallOccurrenceIdentity } from "#veryfront/runtime/tool-call-occurrence.ts";
 import type {
   RemoteToolSource,
   ToolDefinition,
@@ -171,11 +172,13 @@ export async function createExecutorRemoteToolSources(options: {
         const projectContext = projectContextSources.has(sourceId)
           ? captureExecutorProjectCallContext(context)
           : undefined;
+        const occurrence = getCurrentToolCallOccurrenceIdentity();
         const request = parseExecutorToolData(getExecutorToolCallSchema(), {
           sourceId,
           toolName,
           args: executorToolJson(args, limits.maxArgumentBytes),
           ...callerCorrelation(context),
+          ...(occurrence ?? {}),
           ...(projectContext === undefined ? {} : { projectContext }),
         });
         return await consume("tool.execute", request, () => {

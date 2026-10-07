@@ -1,5 +1,10 @@
+import { createVeryfrontCloudInferenceModelResolver } from "./inference-credential.ts";
 import { computeHash } from "#veryfront/utils/hash-utils.ts";
-import { createHostedRunEventWriterCapability } from "./child-run-event-writer-token.ts";
+import {
+  createHostedRunEventWriterCapability,
+  getActiveHostedRunEventWriterCapability,
+  waitForHostedParentToolStart,
+} from "./child-run-event-writer-token.ts";
 import type {
   BoundConversationAgentRunFinalizer,
   ConversationRunProjection,
@@ -41,6 +46,7 @@ const credentials = createPrivateWeakStore<
     token: string;
     renewalToken?: string;
     eventToken?: string;
+    inferenceToken?: string;
     leaseExpiresAt?: number;
     projectId: string;
     runId: string;
@@ -137,6 +143,7 @@ export function hostedTerminalToolSourceFactory(
   const authority = request ? credentials.get(request) : undefined;
   if (!authority) return fallback;
   const expectedEndpoint = createProjectScopedMcpUrl(apiMcpUrl, authority.projectId);
+  const parentEventWriter = getActiveHostedRunEventWriterCapability();
   return (config, server) => {
     if (server?.kind !== "veryfront-api") return fallback(config);
     const ordinary = fallback(config);
@@ -174,10 +181,38 @@ export function hostedTerminalToolSourceFactory(
     return {
       id: ordinary.id,
       listTools: (context) => ordinary.listTools(context),
-      executeTool: (name, args, context) =>
-        isTerminalRunToolName(name)
-          ? terminal.executeTool(name, args, context)
-          : ordinary.executeTool(name, args, context),
+      executeTool: async (name, args, context) => {
+        if (isTerminalRunToolName(name)) return terminal.executeTool(name, args, context);
+        if (
+          (name === "create_run" || name === "veryfront__create_run") &&
+          context?.runId === authority.runId && hasCurrentTerminalRunCredentialAuthority(context) &&
+          terminalToolCallIdHeaderValue(context) &&
+          typeof args === "object" && args !== null && !Array.isArray(args) && "input" in args &&
+          typeof args.input === "object" && args.input !== null && !Array.isArray(args.input) &&
+          "target" in args.input
+        ) {
+          // Runtime-owned invocation identity reaches ordinary admission; the API
+          // still verifies the authenticated parent and its recorded tool start.
+          await waitForHostedParentToolStart(
+            parentEventWriter,
+            authority.runId,
+            terminalToolCallIdHeaderValue(context)!,
+          );
+          const parentRunId = terminalRoute(authority.token, authority.runId).id;
+          const input = args.input as Record<string, unknown>;
+          return ordinary.executeTool(name, {
+            ...args,
+            input: {
+              ...input,
+              ...(input.parent_run_id === undefined ? { parent_run_id: parentRunId } : {}),
+              ...(input.tool_call_id === undefined
+                ? { tool_call_id: terminalToolCallIdHeaderValue(context) }
+                : {}),
+            },
+          }, context);
+        }
+        return ordinary.executeTool(name, args, context);
+      },
     };
   };
 }
@@ -287,6 +322,7 @@ export async function acceptInheritedRunAdmission(
   const row = await response.json();
   const token = response.headers.get(RUN_TERMINAL_TOKEN_HEADER);
   const authToken = response.headers.get("X-Veryfront-Run-Invocation-Token");
+  const inferenceToken = response.headers.get("X-Veryfront-Inference-Token");
   const renewalToken = response.headers.get("X-Veryfront-Run-Renewal-Token");
   const eventToken = response.headers.get("X-Veryfront-Run-Event-Token");
   if (!token || !authToken || !renewalToken || !eventToken) {
@@ -335,6 +371,7 @@ export async function acceptInheritedRunAdmission(
     authToken,
     renewalToken,
     eventToken,
+    ...(inferenceToken ? { inferenceToken } : {}),
     leaseExpiresAt: Date.parse(response.headers.get("X-Veryfront-Run-Lease-Expires-At") ?? ""),
     runId: run.runId,
     projectId: binding.projectId,
@@ -342,6 +379,18 @@ export async function acceptInheritedRunAdmission(
     fetch: binding.fetch,
   });
   return run;
+}
+
+/** Create inference transport only from this inherited child's private admission authority. */
+export function hostedInheritedInferenceModelResolver(descriptor: HostedTerminalDescriptor) {
+  const authority = credentials.get(descriptor);
+  if (!authority) return undefined;
+  if (!authority.inferenceToken || !authority.apiUrl) {
+    throw new Error("Inherited child inference authority is required");
+  }
+  return createVeryfrontCloudInferenceModelResolver(authority.inferenceToken, {
+    apiBaseUrl: authority.apiUrl,
+  });
 }
 
 /** Preserve exact private authority when a trusted adapter projects its descriptor. */

@@ -177,6 +177,18 @@ function readRecord(value: unknown): Record<string, unknown> | null {
     : null;
 }
 
+function trustedParentMessagePayload(parentMessageId: string | null | undefined): {
+  parentMessageId?: string;
+} {
+  const readParentMessageId = readString(parentMessageId);
+  return readParentMessageId ? { parentMessageId: readParentMessageId } : {};
+}
+
+function omitMessageAssociation(rest: Record<string, unknown>): Record<string, unknown> {
+  const { parentMessageId: _parentMessageId, messageId: _messageId, ...payload } = rest;
+  return payload;
+}
+
 /**
  * Drop the listed keys from `rest` unless their value is a non-empty string.
  * The API catalog declares `title`/`filename`/`url` as
@@ -223,14 +235,14 @@ export interface ToolCallStatusChangedInput extends Record<string, unknown> {
 export function buildToolCallStatusChangedEvent(
   input: ToolCallStatusChangedInput,
 ): NativeRunEventFrame {
-  const { toolCallId, status, toolCallName, parentMessageId, ...rest } = input;
-  const readParentMessageId = readString(parentMessageId);
+  const { toolCallId, status, toolCallName, parentMessageId, messageId: _messageId, ...rest } =
+    input;
   return toFrame(TOOL_CALL_STATUS_CHANGED, {
     ...rest,
     toolCallId,
     status,
     toolCallName: readString(toolCallName),
-    ...(readParentMessageId ? { parentMessageId: readParentMessageId } : {}),
+    ...trustedParentMessagePayload(parentMessageId),
   });
 }
 
@@ -277,13 +289,18 @@ export function buildChildRunStatusChangedEvent(
  * citation's own resolved source id when title is absent, so the citation
  * still renders with something.
  */
-export function buildUrlCitedEvent(source: Record<string, unknown>): NativeRunEventFrame {
+export function buildUrlCitedEvent(
+  source: Record<string, unknown>,
+  options: { parentMessageId?: string | null } = {},
+): NativeRunEventFrame {
   const { type: _type, ...rest } = source;
+  const safeRest = omitMessageAssociation(rest);
   const url = readString(rest.url) ?? "";
   const payload = {
-    ...omitInvalidOptionalStrings(rest, ["title"]),
+    ...omitInvalidOptionalStrings(safeRest, ["title"]),
     url,
-    sourceId: readString(rest.sourceId) ?? url,
+    sourceId: readString(safeRest.sourceId) ?? url,
+    ...trustedParentMessagePayload(options.parentMessageId),
   };
   return toFrame(URL_CITED, payload);
 }
@@ -304,13 +321,18 @@ export function buildUrlCitedEvent(source: Record<string, unknown>): NativeRunEv
  * keeps the citation renderable without this builder needing to fake a
  * non-empty title into a payload the API also receives.
  */
-export function buildDocumentCitedEvent(source: Record<string, unknown>): NativeRunEventFrame {
+export function buildDocumentCitedEvent(
+  source: Record<string, unknown>,
+  options: { parentMessageId?: string | null } = {},
+): NativeRunEventFrame {
   const { type: _type, ...rest } = source;
-  const mediaType = readString(rest.mediaType) ?? "";
+  const safeRest = omitMessageAssociation(rest);
+  const mediaType = readString(safeRest.mediaType) ?? "";
   const payload = {
-    ...omitInvalidOptionalStrings(rest, ["title", "filename"]),
+    ...omitInvalidOptionalStrings(safeRest, ["title", "filename"]),
     mediaType,
-    sourceId: readString(rest.sourceId) ?? mediaType,
+    sourceId: readString(safeRest.sourceId) ?? mediaType,
+    ...trustedParentMessagePayload(options.parentMessageId),
   };
   return toFrame(DOCUMENT_CITED, payload);
 }
@@ -330,11 +352,16 @@ export function buildDocumentCitedEvent(source: Record<string, unknown>): Native
  * safe non-empty placeholder for a url -- a fake one would be an actively
  * misleading, possibly broken link.
  */
-export function buildFileAttachedEvent(source: Record<string, unknown>): NativeRunEventFrame {
+export function buildFileAttachedEvent(
+  source: Record<string, unknown>,
+  options: { parentMessageId?: string | null } = {},
+): NativeRunEventFrame {
   const { type: _type, ...rest } = source;
+  const safeRest = omitMessageAssociation(rest);
   const payload = {
-    ...omitInvalidOptionalStrings(rest, ["filename", "url"]),
-    mediaType: readString(rest.mediaType) ?? "",
+    ...omitInvalidOptionalStrings(safeRest, ["filename", "url"]),
+    mediaType: readString(safeRest.mediaType) ?? "",
+    ...trustedParentMessagePayload(options.parentMessageId),
   };
   return toFrame(FILE_ATTACHED, payload);
 }
@@ -401,7 +428,7 @@ export function buildNativeRunEventFrame(
         toolCallId,
         status,
         toolCallName: readString(record.toolCallName),
-        parentMessageId: input.parentMessageId ?? readString(record.parentMessageId),
+        parentMessageId: input.parentMessageId,
       });
     }
     case "veryfront.input_request.lifecycle": {
@@ -419,17 +446,20 @@ export function buildNativeRunEventFrame(
       return buildChildRunStatusChangedEvent({ ...record, toolCallId, childRunId, status });
     }
     case "source-url":
-      return readString(record.url) ? buildUrlCitedEvent(record) : null;
+      return readString(record.url)
+        ? buildUrlCitedEvent(record, { parentMessageId: input.parentMessageId })
+        : null;
     case "source-document":
-      return readString(record.mediaType) ? buildDocumentCitedEvent(record) : null;
+      return readString(record.mediaType)
+        ? buildDocumentCitedEvent(record, { parentMessageId: input.parentMessageId })
+        : null;
     case "file":
       // The API projector routes a `file-change` value to FILES_CHANGED and
       // quarantines any other type, so a value that is not a plain file must
       // not become FileAttached here either. Nothing writes `file-change` in
       // this runtime today; the guard keeps the two sides twins anyway.
-      return (record.type === "file" || record.type === undefined) &&
-          readString(record.mediaType)
-        ? buildFileAttachedEvent(record)
+      return (record.type === "file" || record.type === undefined) && readString(record.mediaType)
+        ? buildFileAttachedEvent(record, { parentMessageId: input.parentMessageId })
         : null;
     case "veryfront.runtime_context":
       // The one producer (runtime/index.ts's #streamWithinTurn) always sends

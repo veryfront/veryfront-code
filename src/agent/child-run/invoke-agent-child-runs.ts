@@ -13,6 +13,7 @@ export const getInvokeAgentChildRunLifecycleValueSchema = defineSchema((v) =>
     toolCallId: v.string().min(1),
     childConversationId: v.string().uuid(),
     childRunId: v.string().min(1),
+    childCanonicalRunId: v.string().uuid().optional(),
     childMessageId: v.string().uuid(),
     childAgentId: v.string().min(1),
     description: v.string().min(1).optional(),
@@ -90,6 +91,8 @@ export type InvokeAgentChildRunProgressInput = {
   toolCallId: string;
   childConversationId: string;
   childRunId: string;
+  /** Canonical routing UUID supplied by the child admission owner. */
+  childCanonicalRunId?: string;
   childMessageId: string;
   childAgentId: string;
   description?: string;
@@ -112,6 +115,9 @@ function buildInvokeAgentChildRunLifecycleValue(
     toolCallId: input.toolCallId,
     childConversationId: input.childConversationId,
     childRunId: input.childRunId,
+    ...(input.childCanonicalRunId !== undefined
+      ? { childCanonicalRunId: input.childCanonicalRunId }
+      : {}),
     childMessageId: input.childMessageId,
     childAgentId: input.childAgentId,
     ...(input.description ? { description: input.description } : {}),

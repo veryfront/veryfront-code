@@ -408,19 +408,10 @@ export const RUNS_OPERATION_FIXTURES: { [K in RunsOperationId]: RunsOperationFix
       "body": {
         "events": [
           {
-            "type": "MODEL_CALL_COMPLETED",
-            "provider": "example-provider",
-            "model": "example-model",
-            "inputTokens": 120,
-            "outputTokens": 30,
-            "cacheCreationTokens": 0,
-            "cacheReadTokens": 0,
-            "totalTokens": 150,
-            "costCredits": "0.001",
-            "latencyMs": 800,
-            "usageCaptureStatus": "complete",
-            "providerRequestId": "request_example",
-            "modelCallContextEventId": null,
+            "type": "TEXT_MESSAGE_START",
+            "messageId": "message_example",
+            "contentId": "content_example",
+            "role": "assistant",
           },
         ],
       },
@@ -1131,6 +1122,95 @@ export const RUNS_OPERATION_FIXTURES: { [K in RunsOperationId]: RunsOperationFix
         "page_info": {
           "next": null,
         },
+      },
+    },
+  },
+  "succeedRun": {
+    input: {
+      "path": {
+        "run_id": "11111111-1111-4111-8111-111111111111",
+      },
+      "headers": {
+        "Idempotency-Key": "example-request-1",
+      },
+      "body": {
+        "output": {
+          "summary": "A short summary.",
+        },
+      },
+    },
+    url: "/runs/11111111-1111-4111-8111-111111111111/succeed",
+    response: {
+      status: 200,
+      body: {
+        "id": "11111111-1111-4111-8111-111111111111",
+        "status": "completed",
+        "project_id": "00000000-0000-4000-8000-000000000001",
+        "target": {
+          "type": "task",
+          "id": "summarize",
+        },
+        "input": {
+          "text": "A short document.",
+        },
+        "output": {
+          "summary": "A short summary.",
+        },
+        "title": "Summarize text",
+        "created_at": "2026-10-02T10:00:00Z",
+        "updated_at": "2026-10-02T10:00:02Z",
+        "trigger": {
+          "type": "api_key",
+          "id": "key_example",
+        },
+        "started_at": "2026-10-02T10:00:00Z",
+        "finished_at": "2026-10-02T10:00:02Z",
+      },
+    },
+  },
+  "failRun": {
+    input: {
+      "path": {
+        "run_id": "11111111-1111-4111-8111-111111111111",
+      },
+      "headers": {
+        "Idempotency-Key": "example-request-1",
+      },
+      "body": {
+        "error": {
+          "code": "TASK_FAILED",
+          "message": "The task could not be completed.",
+        },
+      },
+    },
+    url: "/runs/11111111-1111-4111-8111-111111111111/fail",
+    response: {
+      status: 200,
+      body: {
+        "id": "11111111-1111-4111-8111-111111111111",
+        "status": "failed",
+        "project_id": "00000000-0000-4000-8000-000000000001",
+        "target": {
+          "type": "task",
+          "id": "summarize",
+        },
+        "input": {
+          "text": "A short document.",
+        },
+        "output": null,
+        "error": {
+          "code": "TASK_FAILED",
+          "message": "The task could not be completed.",
+        },
+        "title": "Summarize text",
+        "created_at": "2026-10-02T10:00:00Z",
+        "updated_at": "2026-10-02T10:00:02Z",
+        "trigger": {
+          "type": "api_key",
+          "id": "key_example",
+        },
+        "started_at": "2026-10-02T10:00:00Z",
+        "finished_at": "2026-10-02T10:00:02Z",
       },
     },
   },

@@ -46,6 +46,7 @@ import {
   assertResolvedSkillSelector,
   createNoneSkillSelectorSnapshot,
   type ResolvedSkillSelectorPolicy,
+  skillSelectorPolicyToSelector,
 } from "#veryfront/skill/selector.ts";
 
 /** Public API contract for hosted project steering logger. */
@@ -168,7 +169,7 @@ function resolveRefreshedSkillSnapshot(input: {
   return resolveRuntimeSkillSelectorSnapshotForAgent({
     skills: input.skills,
     agentId: input.context.agentId ?? "",
-    selector: policy.entries,
+    selector: skillSelectorPolicyToSelector(policy),
   });
 }
 

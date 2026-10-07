@@ -1,6 +1,6 @@
 import { acceptWorkflowInheritedRunAdmission } from "#veryfront/agent/hosted/terminal-credential.ts";
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { agent } from "#veryfront/agent/factory.ts";
 import { tool } from "#veryfront/tool";
@@ -97,6 +97,42 @@ const invocation = {
 };
 
 describe("workflow agent child protocol", () => {
+  it("binds node start replay to the attempt while retaining one child invocation key", async () => {
+    const starts: string[] = [];
+    const children: string[] = [];
+    const encodedClaims = eventToken.split(".")[1];
+    assertExists(encodedClaims);
+    const claims = JSON.parse(atob(encodedClaims));
+    for (const [attemptId, issuedAt] of [["attempt", 1], ["attempt", 2], ["next-attempt", 3]]) {
+      const token = encode({
+        ...claims,
+        iat: issuedAt,
+        projectExecutionAttempt: { ...claims.projectExecutionAttempt, attemptId },
+      });
+      const send: typeof fetch = (url, init) => {
+        const key = new Headers(init?.headers).get("Idempotency-Key")!;
+        if (String(url).endsWith("/events")) {
+          starts.push(key);
+          return Promise.resolve(json({}));
+        }
+        children.push(key);
+        return Promise.resolve(admission("completed", { result: 42 }));
+      };
+      assertEquals(
+        await runner(send, token)({
+          ...invocation,
+          execute: () => {
+            throw new Error("Completed child must not execute again");
+          },
+        }),
+        { success: true, output: { result: 42 }, executionTime: 0 },
+      );
+    }
+    assertEquals(starts[0], starts[1]);
+    assertEquals(starts[0] === starts[2], false);
+    assertEquals(children, [children[0], children[0], children[0]]);
+  });
+
   it("acknowledges node start then admits, executes locally once and finalizes with exact child authority", async () => {
     const order: string[] = [];
     const send: typeof fetch = (_url, init) => {

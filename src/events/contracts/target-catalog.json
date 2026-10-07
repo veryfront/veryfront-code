@@ -1,0 +1,327 @@
+{
+  "version": "1",
+  "revision": "0.1-draft.1",
+  "status": "working-draft",
+  "title": "Agent Events Protocol",
+  "scope": "Portable execution facts and optional delivery signals. No legacy aliases or private Veryfront runtime protocol.",
+  "events": [
+    {
+      "type": "com.veryfront.run.requested",
+      "family": "Run",
+      "meaning": "An execution request for the run was accepted.",
+      "profile": "stored",
+      "schema": "urn:veryfront:run-events:target:payloads:1#/$defs/RunRequested",
+      "envelopeRequired": [
+        "runid"
+      ]
+    },
+    {
+      "type": "com.veryfront.run.enqueued",
+      "family": "Run",
+      "meaning": "The run was admitted to an execution queue.",
+      "profile": "stored",
+      "schema": "urn:veryfront:run-events:target:payloads:1#/$defs/RunEnqueued",
+      "envelopeRequired": [
+        "runid"
+      ]
+    },
+    {
+      "type": "com.veryfront.run.started",
+      "family": "Run",
+      "meaning": "The run started execution.",
+      "profile": "stored",
+      "schema": "urn:veryfront:run-events:target:payloads:1#/$defs/RunStarted",
+      "envelopeRequired": [
+        "runid"
+      ]
+    },
+    {
+      "type": "com.veryfront.run.succeeded",
+      "family": "Run",
+      "meaning": "The run completed successfully.",
+      "profile": "stored",
+      "schema": "urn:veryfront:run-events:target:payloads:1#/$defs/RunSucceeded",
+      "envelopeRequired": [
+        "runid"
+      ]
+    },
+    {
+      "type": "com.veryfront.run.failed",
+      "family": "Run",
+      "meaning": "The run failed.",
+      "profile": "stored",
+      "schema": "urn:veryfront:run-events:target:payloads:1#/$defs/RunFailed",
+      "envelopeRequired": [
+        "runid"
+      ]
+    },
+    {
+      "type": "com.veryfront.run.cancelled",
+      "family": "Run",
+      "meaning": "The run was cancelled.",
+      "profile": "stored",
+      "schema": "urn:veryfront:run-events:target:payloads:1#/$defs/RunCancelled",
+      "envelopeRequired": [
+        "runid"
+      ]
+    },
+    {
+      "type": "com.veryfront.run.log.captured",
+      "family": "Run",
+      "meaning": "Runtime execution logs were captured for the run.",
+      "profile": "stored",
+      "schema": "urn:veryfront:run-events:target:payloads:1#/$defs/RunLogCaptured",
+      "envelopeRequired": [
+        "runid"
+      ]
+    },
+    {
+      "type": "com.veryfront.child-run.reported",
+      "family": "Child run",
+      "meaning": "A child run's status was reported to a bound recipient run.",
+      "profile": "stored",
+      "schema": "urn:veryfront:run-events:target:payloads:1#/$defs/ChildRunReported",
+      "envelopeRequired": [
+        "runid"
+      ]
+    },
+    {
+      "type": "com.veryfront.step.started",
+      "family": "Step",
+      "meaning": "An execution step started.",
+      "profile": "stored",
+      "schema": "urn:veryfront:run-events:target:payloads:1#/$defs/StepStarted",
+      "envelopeRequired": [
+        "runid"
+      ]
+    },
+    {
+      "type": "com.veryfront.step.succeeded",
+      "family": "Step",
+      "meaning": "The execution step succeeded.",
+      "profile": "stored",
+      "schema": "urn:veryfront:run-events:target:payloads:1#/$defs/StepSucceeded",
+      "envelopeRequired": [
+        "runid"
+      ]
+    },
+    {
+      "type": "com.veryfront.step.failed",
+      "family": "Step",
+      "meaning": "The execution step failed.",
+      "profile": "stored",
+      "schema": "urn:veryfront:run-events:target:payloads:1#/$defs/StepFailed",
+      "envelopeRequired": [
+        "runid"
+      ]
+    },
+    {
+      "type": "com.veryfront.step.cancelled",
+      "family": "Step",
+      "meaning": "The execution step was cancelled.",
+      "profile": "stored",
+      "schema": "urn:veryfront:run-events:target:payloads:1#/$defs/StepCancelled",
+      "envelopeRequired": [
+        "runid"
+      ]
+    },
+    {
+      "type": "com.veryfront.step.ended",
+      "family": "Step",
+      "meaning": "The execution step ended without a classified outcome.",
+      "profile": "stored",
+      "schema": "urn:veryfront:run-events:target:payloads:1#/$defs/StepEnded",
+      "envelopeRequired": [
+        "runid"
+      ]
+    },
+    {
+      "type": "com.veryfront.tool-call.started",
+      "family": "Tool call",
+      "meaning": "A logical tool call was introduced.",
+      "profile": "stored",
+      "schema": "urn:veryfront:run-events:target:payloads:1#/$defs/ToolCallStarted",
+      "envelopeRequired": []
+    },
+    {
+      "type": "com.veryfront.tool-call.arguments.delta.emitted",
+      "family": "Tool call",
+      "meaning": "A tool call argument delta was emitted.",
+      "profile": "stored",
+      "schema": "urn:veryfront:run-events:target:payloads:1#/$defs/ToolCallArgumentsDeltaEmitted",
+      "envelopeRequired": []
+    },
+    {
+      "type": "com.veryfront.tool-call.arguments.ended",
+      "family": "Tool call",
+      "meaning": "Tool call argument assembly ended.",
+      "profile": "stored",
+      "schema": "urn:veryfront:run-events:target:payloads:1#/$defs/ToolCallArgumentsEnded",
+      "envelopeRequired": []
+    },
+    {
+      "type": "com.veryfront.tool-call.refused",
+      "family": "Tool call",
+      "meaning": "A tool call was refused.",
+      "profile": "stored",
+      "schema": "urn:veryfront:run-events:target:payloads:1#/$defs/ToolCallRefused",
+      "envelopeRequired": []
+    },
+    {
+      "type": "com.veryfront.tool-call.status.reported",
+      "family": "Tool call",
+      "meaning": "A tool call's current status was reported.",
+      "profile": "stored",
+      "schema": "urn:veryfront:run-events:target:payloads:1#/$defs/ToolCallStatusReported",
+      "envelopeRequired": []
+    },
+    {
+      "type": "com.veryfront.tool-call.result.recorded",
+      "family": "Tool call",
+      "meaning": "A tool-call result was recorded.",
+      "profile": "stored",
+      "schema": "urn:veryfront:run-events:target:payloads:1#/$defs/ToolCallResultRecorded",
+      "envelopeRequired": []
+    },
+    {
+      "type": "com.veryfront.tool-call.result.submitted",
+      "family": "Tool call",
+      "meaning": "A tool-call result was submitted to its receiver.",
+      "profile": "stored",
+      "schema": "urn:veryfront:run-events:target:payloads:1#/$defs/ToolCallResultSubmitted",
+      "envelopeRequired": []
+    },
+    {
+      "type": "com.veryfront.tool-call.result.delivery.failed",
+      "family": "Tool call",
+      "meaning": "Delivery of a tool-call result failed.",
+      "profile": "stored",
+      "schema": "urn:veryfront:run-events:target:payloads:1#/$defs/ToolCallResultDeliveryFailed",
+      "envelopeRequired": []
+    },
+    {
+      "type": "com.veryfront.model-call.input.captured",
+      "family": "Model call",
+      "meaning": "Prepared model input was captured before dispatch.",
+      "profile": "stored",
+      "schema": "urn:veryfront:run-events:target:payloads:1#/$defs/ModelCallInputCaptured",
+      "envelopeRequired": [
+        "modelcallid"
+      ]
+    },
+    {
+      "type": "com.veryfront.model-call.usage.recorded",
+      "family": "Model call",
+      "meaning": "Token usage was recorded for a model call or attempt.",
+      "profile": "stored",
+      "schema": "urn:veryfront:run-events:target:payloads:1#/$defs/ModelCallUsageRecorded",
+      "envelopeRequired": [
+        "modelcallid"
+      ]
+    },
+    {
+      "type": "com.veryfront.input-request.created",
+      "family": "Input request",
+      "meaning": "An input request was created.",
+      "profile": "stored",
+      "schema": "urn:veryfront:run-events:target:payloads:1#/$defs/InputRequestCreated",
+      "envelopeRequired": []
+    },
+    {
+      "type": "com.veryfront.input-request.updated",
+      "family": "Input request",
+      "meaning": "An input request was updated.",
+      "profile": "stored",
+      "schema": "urn:veryfront:run-events:target:payloads:1#/$defs/InputRequestUpdated",
+      "envelopeRequired": []
+    },
+    {
+      "type": "com.veryfront.message.text.started",
+      "family": "Message",
+      "meaning": "A text segment started within a message.",
+      "profile": "stored",
+      "schema": "urn:veryfront:run-events:target:payloads:1#/$defs/MessageTextStarted",
+      "envelopeRequired": []
+    },
+    {
+      "type": "com.veryfront.message.text.delta.emitted",
+      "family": "Message",
+      "meaning": "A text delta was emitted for a message segment.",
+      "profile": "stored",
+      "schema": "urn:veryfront:run-events:target:payloads:1#/$defs/MessageTextDeltaEmitted",
+      "envelopeRequired": []
+    },
+    {
+      "type": "com.veryfront.message.text.ended",
+      "family": "Message",
+      "meaning": "A streamed text segment ended within a message.",
+      "profile": "stored",
+      "schema": "urn:veryfront:run-events:target:payloads:1#/$defs/MessageTextEnded",
+      "envelopeRequired": []
+    },
+    {
+      "type": "com.veryfront.message.reasoning.started",
+      "family": "Message",
+      "meaning": "A reasoning segment started within a message.",
+      "profile": "stored",
+      "schema": "urn:veryfront:run-events:target:payloads:1#/$defs/MessageReasoningStarted",
+      "envelopeRequired": []
+    },
+    {
+      "type": "com.veryfront.message.reasoning.delta.emitted",
+      "family": "Message",
+      "meaning": "A reasoning delta was emitted for a message segment.",
+      "profile": "stored",
+      "schema": "urn:veryfront:run-events:target:payloads:1#/$defs/MessageReasoningDeltaEmitted",
+      "envelopeRequired": []
+    },
+    {
+      "type": "com.veryfront.message.reasoning.ended",
+      "family": "Message",
+      "meaning": "A streamed reasoning segment ended within a message.",
+      "profile": "stored",
+      "schema": "urn:veryfront:run-events:target:payloads:1#/$defs/MessageReasoningEnded",
+      "envelopeRequired": []
+    },
+    {
+      "type": "com.veryfront.message.url.referenced",
+      "family": "Message",
+      "meaning": "A URL reference was added to a message.",
+      "profile": "stored",
+      "schema": "urn:veryfront:run-events:target:payloads:1#/$defs/MessageUrlReferenced",
+      "envelopeRequired": []
+    },
+    {
+      "type": "com.veryfront.message.document.referenced",
+      "family": "Message",
+      "meaning": "A document reference was added to a message.",
+      "profile": "stored",
+      "schema": "urn:veryfront:run-events:target:payloads:1#/$defs/MessageDocumentReferenced",
+      "envelopeRequired": []
+    },
+    {
+      "type": "com.veryfront.message.file.attached",
+      "family": "Message",
+      "meaning": "A file attachment was added to a message.",
+      "profile": "stored",
+      "schema": "urn:veryfront:run-events:target:payloads:1#/$defs/MessageFileAttached",
+      "envelopeRequired": []
+    },
+    {
+      "type": "com.veryfront.stream.heartbeat.emitted",
+      "family": "Stream",
+      "meaning": "A stream heartbeat was emitted.",
+      "profile": "live",
+      "schema": "urn:veryfront:run-events:target:payloads:1#/$defs/StreamHeartbeatEmitted",
+      "envelopeRequired": []
+    },
+    {
+      "type": "com.veryfront.stream.closed",
+      "family": "Stream",
+      "meaning": "The event stream was closed with a stated reason.",
+      "profile": "live",
+      "schema": "urn:veryfront:run-events:target:payloads:1#/$defs/StreamClosed",
+      "envelopeRequired": []
+    }
+  ]
+}

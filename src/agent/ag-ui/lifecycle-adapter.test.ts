@@ -1,5 +1,10 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertExists,
+  assertMatch,
+  assertNotEquals,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { StreamLifecycleFrame } from "#veryfront/agent/streaming/lifecycle/index.ts";
 import fixture from "../conversation/fixtures/legacy-content-after-end.json" with {
@@ -22,7 +27,44 @@ function frames(
   } as StreamLifecycleFrame));
 }
 
+function frame(
+  entry: { class?: StreamLifecycleFrame["class"]; event: unknown },
+): StreamLifecycleFrame {
+  const [result] = frames([entry]);
+  assertExists(result);
+  return result;
+}
+
+function requireStepId(value: unknown): string {
+  if (typeof value !== "string") throw new Error("expected stepId");
+  assertMatch(value, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
+  return value;
+}
+
 describe("lifecycle AG-UI adapter", () => {
+  it("emits producer-owned step ids only for matched lifecycle steps", () => {
+    const adapter = createLifecycleAgUiAdapter({ messageId: "message-steps" });
+    const orphan = adapter.encode(frame({ event: { type: "step_finish" } }));
+    assertEquals(orphan, [{ event: "StepFinished", payload: { stepName: "step-1" } }]);
+
+    const firstStart = adapter.encode(frame({ event: { type: "step_start" } }))[0];
+    assertEquals(firstStart?.event, "StepStarted");
+    assertEquals(firstStart?.payload.stepName, "step-1");
+    const firstStepId = requireStepId(firstStart?.payload.stepId);
+    assertEquals(
+      adapter.encode(frame({ event: { type: "step_finish" } })),
+      [{ event: "StepFinished", payload: { stepName: "step-1", stepId: firstStepId } }],
+    );
+
+    const secondStart = adapter.encode(frame({ event: { type: "step_start" } }))[0];
+    const secondStepId = requireStepId(secondStart?.payload.stepId);
+    assertNotEquals(secondStepId, firstStepId, "repeated lifecycle steps need distinct ids");
+    assertEquals(
+      adapter.encode(frame({ event: { type: "step_finish" } })),
+      [{ event: "StepFinished", payload: { stepName: "step-2", stepId: secondStepId } }],
+    );
+  });
+
   it("assigns stable text identities when protocol events omit IDs", () => {
     const adapter = createLifecycleAgUiAdapter({
       messageId: "message-1",
@@ -81,6 +123,66 @@ describe("lifecycle AG-UI adapter", () => {
       [starts[0], starts[0], starts[0], starts[1], starts[1], starts[1]],
       "each span's start, content and end must share one messageId",
     );
+    assertEquals(
+      events.filter((entry) => entry.event.startsWith("ReasoningMessage"))
+        .map((entry) => entry.payload.contentId),
+      Array.from({ length: 6 }, () => "reasoning-0"),
+      "part IDs remain exact while ordinal message IDs distinguish repeated spans",
+    );
+  });
+
+  it("preserves durable reasoning content IDs through the v2 reader and AG-UI replay", () => {
+    const storedEvents = [
+      { type: "REASONING_MESSAGE_START", contentId: "durable:reasoning:0" },
+      {
+        type: "REASONING_MESSAGE_CONTENT",
+        contentId: "durable:reasoning:0",
+        delta: "first",
+      },
+      { type: "REASONING_MESSAGE_END", contentId: "durable:reasoning:0" },
+      { type: "REASONING_MESSAGE_START", contentId: "durable:reasoning:%1" },
+      {
+        type: "REASONING_MESSAGE_CONTENT",
+        contentId: "durable:reasoning:%1",
+        delta: "second",
+      },
+      { type: "REASONING_MESSAGE_END", contentId: "durable:reasoning:%1" },
+    ].map((event, index) => ({
+      ...event,
+      stream_protocol_version: 2,
+      logical_sequence: index + 1,
+      idempotency_key: `reasoning:${index + 1}`,
+    }));
+    const read = readConversationRunLifecycleFrames({
+      streamProtocolVersion: 2,
+      events: storedEvents,
+    });
+    assertEquals(read.status, "ok");
+    if (read.status !== "ok") return;
+
+    const adapter = createLifecycleAgUiAdapter({ messageId: "replay-message" });
+    const events = read.frames.flatMap((entry) => adapter.encode(entry));
+    assertEquals(events.map((entry) => entry.event), [
+      "ReasoningMessageStart",
+      "ReasoningMessageContent",
+      "ReasoningMessageEnd",
+      "ReasoningMessageStart",
+      "ReasoningMessageContent",
+      "ReasoningMessageEnd",
+    ]);
+    assertEquals(
+      events.map((entry) => entry.payload.contentId),
+      storedEvents.map((entry) => entry.contentId),
+      "replay must forward each exact stored contentId on start, content, and end",
+    );
+    assertEquals(events.map((entry) => entry.payload.messageId), [
+      "replay-message:reasoning:0",
+      "replay-message:reasoning:0",
+      "replay-message:reasoning:0",
+      "replay-message:reasoning:1",
+      "replay-message:reasoning:1",
+      "replay-message:reasoning:1",
+    ]);
   });
 
   it("projects a balanced canonical sequence with matched identities", () => {
@@ -466,7 +568,11 @@ describe("lifecycle AG-UI adapter", () => {
     ]).flatMap((frame) => adapter.encode(frame));
     assertEquals(started, [{
       event: "ReasoningMessageStart",
-      payload: { messageId: "message-unmatched-end:reasoning:0", role: "reasoning" },
+      payload: {
+        messageId: "message-unmatched-end:reasoning:0",
+        contentId: "reasoning-0",
+        role: "reasoning",
+      },
     }]);
   });
 
@@ -482,15 +588,23 @@ describe("lifecycle AG-UI adapter", () => {
     assertEquals(events, [
       {
         event: "ReasoningMessageStart",
-        payload: { messageId: "message-orphan-delta:reasoning:0", role: "reasoning" },
+        payload: {
+          messageId: "message-orphan-delta:reasoning:0",
+          contentId: "reasoning-0",
+          role: "reasoning",
+        },
       },
       {
         event: "ReasoningMessageContent",
-        payload: { messageId: "message-orphan-delta:reasoning:0", delta: "thinking" },
+        payload: {
+          messageId: "message-orphan-delta:reasoning:0",
+          contentId: "reasoning-0",
+          delta: "thinking",
+        },
       },
       {
         event: "ReasoningMessageEnd",
-        payload: { messageId: "message-orphan-delta:reasoning:0" },
+        payload: { messageId: "message-orphan-delta:reasoning:0", contentId: "reasoning-0" },
       },
     ]);
   });
@@ -534,7 +648,11 @@ describe("lifecycle AG-UI adapter", () => {
       }),
       [{
         event: "UrlCited",
-        payload: { sourceId: "web-1", url: "https://example.com/a" },
+        payload: {
+          sourceId: "web-1",
+          url: "https://example.com/a",
+          parentMessageId: "assistant-1",
+        },
       }],
     );
 

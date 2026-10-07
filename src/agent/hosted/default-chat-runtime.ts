@@ -27,6 +27,7 @@ import {
 } from "#veryfront/provider/veryfront-cloud/context.ts";
 import { createEphemeralAgentWithRuntimeOptions } from "../factory.ts";
 import type { AgentRuntimeInternalOptions } from "../runtime/index.ts";
+import { createRuntimeObservationCapability } from "#veryfront/runtime/runtime-observation-carrier.ts";
 import { getHostedAgentPauseCreationOptions } from "./manual-pause-credential.ts";
 import { markRuntimeLocalTool } from "../runtime/local-tool.ts";
 import { isVeryfrontCloudRuntimeModel } from "../runtime/model-resolution.ts";
@@ -273,6 +274,8 @@ async function buildToolAssembly(
       }
       : {}),
     allowedProviderToolNames: input.options.allowedProviderTools,
+    toolLoading: input.options.toolLoading,
+    knowledge: input.options.knowledge,
     providerNativeToolNames: input.providerNativeToolNames,
     includeRuntimeEssentialToolsWhenEmpty: input.options.includeRuntimeEssentialToolsWhenEmpty,
     sourceProviderToolNames: input.options.liveProjectSteering?.agent.providerTools,
@@ -353,6 +356,11 @@ function createRuntimeAgentConfig(input: PreparedHostedRuntimeAgentOptions): Age
     system: input.toolAssembly.systemMessages ?? input.toolAssembly.systemInstructions,
     tools: runtimeTools,
     __vfToolLoadingMode: input.toolAssembly.toolLoadingMode,
+    ...(input.options.toolLoading !== undefined ? { toolLoading: input.options.toolLoading } : {}),
+    ...(input.options.toolResultContext !== undefined
+      ? { toolResultContext: input.options.toolResultContext }
+      : {}),
+    ...(input.options.knowledge !== undefined ? { knowledge: input.options.knowledge } : {}),
     providerTools: input.toolAssembly.providerToolNames,
     __vfRemoteToolSources: input.toolAssembly.remoteToolSources,
     __vfAllowedRemoteTools: input.toolAssembly.compatibleRemoteToolNames,
@@ -391,7 +399,8 @@ function createRuntimeAgentConfig(input: PreparedHostedRuntimeAgentOptions): Age
     },
     onToolResult: createDefaultResearchRunArtifactMirrorHandler({
       taskContext: input.taskContext,
-      remoteToolSource: input.toolAssembly.remoteToolSources[0],
+      remoteToolSource: input.toolAssembly.researchArtifactRemoteToolSource ??
+        input.toolAssembly.remoteToolSources[0],
     }),
   };
   objectSetPrototypeOf(runtimeConfig, null);
@@ -666,6 +675,8 @@ export function createPreparedHostedRuntimeAgent(
     ...runtimeOptions,
     manualPause: runtimeOptions.manualPause ?? getHostedAgentPauseCreationOptions(input.options),
     modelCallThinking: runtimeOptions.modelCallThinking ?? input.options.thinking,
+    runtimeObservationCapability: runtimeOptions.runtimeObservationCapability ??
+      createRuntimeObservationCapability(),
     ...(input.options.serverResolvedResumeToolCall
       ? { resumeToolCall: input.options.serverResolvedResumeToolCall }
       : {}),

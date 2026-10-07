@@ -549,6 +549,82 @@ describe("agent/ag-ui-native-run-events", () => {
     );
   });
 
+  it("stamps only trusted parent message context on native reference frames", () => {
+    const hostile = {
+      type: "source-url",
+      sourceId: "web-1",
+      url: "https://example.com/a",
+      parentMessageId: "forged-parent",
+      messageId: "forged-message",
+    };
+
+    assertEquals(
+      buildNativeRunEventFrame({
+        name: "source-url",
+        value: hostile,
+        parentMessageId: "assistant-1",
+      })?.durable,
+      {
+        type: "URL_CITED",
+        sourceId: "web-1",
+        url: "https://example.com/a",
+        parentMessageId: "assistant-1",
+      },
+      "trusted context must override forged record association",
+    );
+    assertEquals(
+      buildNativeRunEventFrame({ name: "source-url", value: hostile })?.durable,
+      { type: "URL_CITED", sourceId: "web-1", url: "https://example.com/a" },
+      "unknown context must omit association instead of trusting the record",
+    );
+    assertEquals(
+      buildNativeRunEventFrame({
+        name: "source-document",
+        value: {
+          type: "source-document",
+          sourceId: "doc-1",
+          mediaType: "text/markdown",
+          parentMessageId: "forged-parent",
+        },
+        parentMessageId: "assistant-1",
+      })?.durable.parentMessageId,
+      "assistant-1",
+    );
+    assertEquals(
+      buildNativeRunEventFrame({
+        name: "file",
+        value: {
+          type: "file",
+          url: "https://cdn.example.com/a.pdf",
+          mediaType: "application/pdf",
+          messageId: "forged-message",
+        },
+        parentMessageId: "assistant-1",
+      })?.durable.parentMessageId,
+      "assistant-1",
+    );
+  });
+
+  it("does not trust record-supplied parent message context on tool status frames", () => {
+    assertEquals(
+      buildNativeRunEventFrame({
+        name: "tool-call-status",
+        value: {
+          toolCallId: "tool-1",
+          status: "pending_input",
+          parentMessageId: "forged-parent",
+          messageId: "forged-message",
+        },
+      })?.durable,
+      {
+        type: "TOOL_CALL_STATUS_CHANGED",
+        toolCallId: "tool-1",
+        status: "pending_input",
+        toolCallName: null,
+      },
+    );
+  });
+
   it("returns null for a name or value that has no native frame", () => {
     // A null return is how the caller keeps the Custom wrapper, which is what
     // state deltas, state snapshots, and unknown names must still get.

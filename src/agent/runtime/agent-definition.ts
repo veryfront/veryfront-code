@@ -74,8 +74,32 @@ export const getRuntimeAgentMarkdownDefinitionSchema = defineSchema((v) =>
     temperature: v.number().min(0).max(2).optional(),
     maxSteps: v.number().optional(),
     providerTools: v.array(v.string().min(1)).optional(),
-    skills: v.union([v.literal(true), v.literal(false), v.array(v.string().min(1))]).optional(),
+    skills: v.union([
+      v.boolean(),
+      v.string().min(1),
+      v.array(v.string().min(1)),
+      v.record(v.string().min(1), v.boolean()),
+    ]).optional(),
     tools: v.union([v.literal(true), v.array(v.string().min(1))]).optional(),
+    toolLoading: v.union([v.literal("eager"), v.literal("deferred")]).optional(),
+    toolResultContext: v.union([
+      v.boolean(),
+      v.object({
+        maxInlineBytes: v.number().int().positive().max(1_048_576).optional(),
+        previewBytes: v.number().int().positive().max(1_048_576).optional(),
+        maxSectionBytes: v.number().int().min(4).max(1_048_576).optional(),
+        maxStoredResults: v.number().int().positive().max(1_024).optional(),
+      }).strict(),
+    ]).optional(),
+    knowledge: v.union([
+      v.boolean(),
+      v.string().min(1).max(4_096),
+      v.array(v.string().min(1).max(4_096)).max(1_024),
+      v.record(v.string().min(1).max(4_096), v.boolean()).refine(
+        (selector) => Object.keys(selector).length <= 1_024,
+        "Knowledge selector exceeds 1024 entries",
+      ),
+    ]).optional(),
     /**
      * Tool names an agent author explicitly switched off with `false`. The
      * positive `tools` selector cannot express a denial, so hosted preparation
@@ -171,15 +195,34 @@ function parseCapabilitySelector(value: unknown, field: string): true | string[]
   return parseStringArray(value, field);
 }
 
-function parseSkillSelector(value: unknown): true | false | string[] {
-  if (value === false) {
-    return false;
+function parseToolSelector(value: unknown): { tools: true | string[]; deniedTools: string[] } {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    return { tools: parseCapabilitySelector(value, "tools"), deniedTools: [] };
   }
-  return parseCapabilitySelector(value, "skills");
+  const tools: string[] = [];
+  const deniedTools: string[] = [];
+  for (const [name, enabled] of Object.entries(value)) {
+    if (!name.trim() || typeof enabled !== "boolean") {
+      throw CONFIG_INVALID.create({
+        detail: 'Agent frontmatter "tools" must contain boolean bindings.',
+      });
+    }
+    (enabled ? tools : deniedTools).push(name.trim());
+  }
+  return { tools, deniedTools };
 }
 
 function parseDelegates(value: unknown): string[] {
   return parseStringArray(value, "delegates");
+}
+
+function readOptionalAlias(attrs: Record<string, unknown>, kebab: string, camel: string): unknown {
+  if (Object.hasOwn(attrs, kebab) && Object.hasOwn(attrs, camel)) {
+    throw CONFIG_INVALID.create({
+      detail: `Agent frontmatter must use only one of "${kebab}" or "${camel}".`,
+    });
+  }
+  return Object.hasOwn(attrs, kebab) ? attrs[kebab] : attrs[camel];
 }
 
 function parseMcpServers(value: unknown): RuntimeAgentMcpServerConfig[] {
@@ -213,20 +256,27 @@ export function parseRuntimeAgentMarkdownDefinition(
   const providerTools = Object.hasOwn(attrs, "provider-tools")
     ? parseStringArray(attrs["provider-tools"], "provider-tools")
     : undefined;
-  const skills = Object.hasOwn(attrs, "skills") ? parseSkillSelector(attrs.skills) : undefined;
-  const tools = Object.hasOwn(attrs, "tools")
-    ? parseCapabilitySelector(attrs.tools, "tools")
+  const skills = Object.hasOwn(attrs, "skills")
+    ? Array.isArray(attrs.skills) ? parseStringArray(attrs.skills, "skills") : attrs.skills
     : undefined;
+  const knowledge = Object.hasOwn(attrs, "knowledge") ? attrs.knowledge : undefined;
+  const toolLoading = readOptionalAlias(attrs, "tool-loading", "toolLoading");
+  const toolResultContext = readOptionalAlias(attrs, "tool-result-context", "toolResultContext");
+  const toolSelection = Object.hasOwn(attrs, "tools") ? parseToolSelector(attrs.tools) : undefined;
+  const tools = toolSelection?.tools;
   if (Object.hasOwn(attrs, "denied-tools") && Object.hasOwn(attrs, "deniedTools")) {
     throw CONFIG_INVALID.create({
       detail: 'Agent frontmatter must use only one of "denied-tools" or "deniedTools".',
     });
   }
-  const deniedTools = Object.hasOwn(attrs, "denied-tools")
+  const explicitDeniedTools = Object.hasOwn(attrs, "denied-tools")
     ? parseStringArray(attrs["denied-tools"], "denied-tools")
     : Object.hasOwn(attrs, "deniedTools")
     ? parseStringArray(attrs.deniedTools, "deniedTools")
     : undefined;
+  const deniedTools = toolSelection?.deniedTools.length
+    ? [...new Set([...(explicitDeniedTools ?? []), ...toolSelection.deniedTools])]
+    : explicitDeniedTools;
   const delegates = normalizeAgentDelegateIds(
     parsedInput.id,
     Object.hasOwn(attrs, "delegates") ? parseDelegates(attrs.delegates) : undefined,
@@ -261,6 +311,9 @@ export function parseRuntimeAgentMarkdownDefinition(
     ...(maxSteps === undefined ? {} : { maxSteps }),
     ...(providerTools ? { providerTools } : {}),
     ...(skills === undefined ? {} : { skills }),
+    ...(knowledge === undefined ? {} : { knowledge }),
+    ...(toolLoading === undefined ? {} : { toolLoading }),
+    ...(toolResultContext === undefined ? {} : { toolResultContext }),
     ...(tools === undefined ? {} : { tools }),
     ...(deniedTools === undefined ? {} : { deniedTools }),
     ...(delegates === undefined ? {} : { delegates }),

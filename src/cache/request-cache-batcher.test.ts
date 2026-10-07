@@ -1,6 +1,11 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { AsyncLocalStorage } from "node:async_hooks";
-import { assertEquals, assertExists, assertNotEquals } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertExists,
+  assertNotEquals,
+  assertRejects,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { CacheBackend } from "./backend.ts";
 import {
@@ -45,6 +50,18 @@ function createMockBackend(
 }
 
 describe("cache/request-cache-batcher", () => {
+  it("returns a rejected promise when a backend throws outside batching", async () => {
+    assertEquals(getRequestCacheContext(), undefined);
+    const reason = new Error("synchronous backend failure");
+    const backend = createMockBackend();
+    backend.get = () => {
+      throw reason;
+    };
+    const read = getCachedWithBatching(backend, "key");
+    const rejection = await assertRejects(() => read, Error, "synchronous backend failure");
+    assertEquals(rejection, reason);
+  });
+
   it("reuses parsed values while the request-local raw value is unchanged", async () => {
     let parseCalls = 0;
     await runWithCacheBatching(async () => {
@@ -63,6 +80,89 @@ describe("cache/request-cache-batcher", () => {
   });
 
   describe("runWithCacheBatching", () => {
+    it("returns a rejected promise when its callback throws synchronously", async () => {
+      const reason = new Error("synchronous cache callback failure");
+      const result = runWithCacheBatching(() => {
+        throw reason;
+      });
+      await assertRejects(() => result, Error, "synchronous cache callback failure");
+    });
+
+    it("settles a queued shared read after its creating request aborts", async () => {
+      const backend = createMockBackend({ source: "published configuration" });
+      let sharedRead: Promise<string | null> | undefined;
+      const aborted = new DOMException("Request aborted", "AbortError");
+
+      try {
+        await runWithCacheBatching(async () => {
+          sharedRead = getCachedWithBatching(backend, "source");
+          throw aborted;
+        });
+      } catch (error) {
+        assertEquals(error, aborted);
+      }
+
+      assertExists(sharedRead);
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      try {
+        const result = await Promise.race([
+          sharedRead,
+          new Promise<string>((resolve) => {
+            timer = setTimeout(() => resolve("unsettled cache read"), 100);
+          }),
+        ]);
+        assertEquals(result, "published configuration");
+        assertEquals(backend.getCalls, ["source"]);
+      } finally {
+        if (timer !== undefined) clearTimeout(timer);
+      }
+    });
+
+    it("observes detached read rejection while its request continues", async () => {
+      const backendError = new Error("backend failed after request finished");
+      const backend: CacheBackend = {
+        type: "memory",
+        get() {
+          return Promise.reject(backendError);
+        },
+        set() {
+          return Promise.resolve();
+        },
+        del() {
+          return Promise.resolve();
+        },
+      };
+      const unhandled = Promise.withResolvers<unknown>();
+      const onUnhandled = (event: PromiseRejectionEvent) => {
+        event.preventDefault();
+        unhandled.resolve(event.reason);
+      };
+
+      const supportsRejectionEvents = typeof globalThis.addEventListener === "function";
+      if (supportsRejectionEvents) globalThis.addEventListener("unhandledrejection", onUnhandled);
+      try {
+        let read: Promise<string | null> | undefined;
+        await runWithCacheBatching(async () => {
+          read = getCachedWithBatching(backend, "admitted");
+          await new Promise((resolve) => setTimeout(resolve, 20));
+        });
+
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        const leaked = await Promise.race([
+          unhandled.promise,
+          Promise.resolve(undefined),
+        ]);
+        assertEquals(leaked, undefined);
+        assertExists(read);
+        const detachedRead = read;
+        await assertRejects(() => detachedRead, Error, "backend failed after request finished");
+      } finally {
+        if (supportsRejectionEvents) {
+          globalThis.removeEventListener("unhandledrejection", onUnhandled);
+        }
+      }
+    });
+
     it("should execute the wrapped function and return its result", async () => {
       const result = await runWithCacheBatching(() => Promise.resolve(42));
       assertEquals(result, 42);

@@ -18,6 +18,10 @@ import {
   setEnv,
 } from "#veryfront/platform/compat/process/env.ts";
 import { withTempDir } from "#veryfront/testing/deno-compat.ts";
+import {
+  _resetEnvironmentConfig,
+  createTestEnvironmentConfig,
+} from "#veryfront/config/environment-config.ts";
 
 import { saveToken } from "../../../../../cli/auth/token-store.ts";
 import { applyRuntimeAuthContext } from "../../../../../cli/shared/runtime-auth.ts";
@@ -33,7 +37,8 @@ describe("runtime-auth credential intrinsic boundary", () => {
   it("keeps the stored login token away from replaced trim and Reflect.apply", async () => {
     await withTempDir(async (configHome) => {
       setEnv("XDG_CONFIG_HOME", configHome);
-      await saveToken(TOKEN);
+      _resetEnvironmentConfig();
+      await saveToken(TOKEN, createTestEnvironmentConfig({ xdgConfigHome: configHome }));
 
       const nativeTrim = String.prototype.trim;
       const nativeApply = Reflect.apply;
@@ -74,6 +79,7 @@ describe("runtime-auth credential intrinsic boundary", () => {
             // expected: env may already be unset
           }
         }
+        _resetEnvironmentConfig();
       }
     }, { prefix: "vf-runtime-auth-intrinsics-" });
   });

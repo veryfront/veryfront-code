@@ -90,9 +90,11 @@ import {
 } from "#veryfront/security/http/credential-probes.test-helpers.ts";
 import {
   BasicTracerProvider,
-  InMemorySpanExporter,
+  type ReadableSpan,
   SimpleSpanProcessor,
+  type SpanExporter,
 } from "npm:@opentelemetry/sdk-trace-base@2.9.0";
+import { ExportResultCode } from "npm:@opentelemetry/core@2.9.0";
 import {
   _resetShimForTests,
   setGlobalActiveSpanAccessor,
@@ -102,6 +104,31 @@ import {
 } from "#veryfront/observability/tracing/api-shim.ts";
 
 const encoder = new TextEncoder();
+
+class SynchronousInMemorySpanExporter implements SpanExporter {
+  private finishedSpans: ReadableSpan[] = [];
+
+  export(
+    spans: ReadableSpan[],
+    resultCallback: (result: { code: ExportResultCode }) => void,
+  ): void {
+    this.finishedSpans.push(...spans);
+    resultCallback({ code: ExportResultCode.SUCCESS });
+  }
+
+  shutdown(): Promise<void> {
+    this.finishedSpans = [];
+    return Promise.resolve();
+  }
+
+  forceFlush(): Promise<void> {
+    return Promise.resolve();
+  }
+
+  getFinishedSpans(): ReadableSpan[] {
+    return this.finishedSpans;
+  }
+}
 
 /**
  * A model transport that streams one fixed answer.
@@ -7935,10 +7962,10 @@ describe("project run execution span", () => {
     lineage: { parentRunId?: string; rootRunId?: string } = {},
     caller: { headers?: Record<string, string>; baggage?: Record<string, string> } = {},
   ): Promise<{
-    spans: ReturnType<InMemorySpanExporter["getFinishedSpans"]>;
+    spans: ReadableSpan[];
     body: Record<string, unknown>;
   }> {
-    const exporter = new InMemorySpanExporter();
+    const exporter = new SynchronousInMemorySpanExporter();
     const provider = new BasicTracerProvider({
       spanProcessors: [new SimpleSpanProcessor(exporter)],
     });
@@ -7982,8 +8009,13 @@ describe("project run execution span", () => {
         () => handler.handle(request, createCtx(publicKeyPem)),
       );
       assertEquals(result.response?.status, 200);
+      await provider.forceFlush();
       return { spans: exporter.getFinishedSpans(), body: await result.response!.json() };
     } finally {
+      // InMemorySpanExporter completes export callbacks on setTimeout(0) while
+      // forceFlush() is a no-op. Let that callback settle inside this test so
+      // the parallel suite does not inherit an exporter timer.
+      await delay(0);
       _resetShimForTests();
       contextManager.disable();
       otelApi.context.disable();
