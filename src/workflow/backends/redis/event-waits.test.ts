@@ -212,8 +212,9 @@ describe("Redis event-wait transport boundary", () => {
     const ids = Array.from({ length: 51 }, (_, i) => `legacy-${i}`);
     const replies: unknown[] = [
       new Error("Run event mailbox capacity reached"),
-      ids,
+      ["7", ids.slice(0, 50)],
       50,
+      ["0", ids.slice(50)],
       1,
       "true",
     ];
@@ -228,14 +229,17 @@ describe("Redis event-wait transport boundary", () => {
       return Promise.resolve(1);
     };
     await store.appendRunEvent("run", event);
-    assertEquals(calls.length, 5);
-    const [initial, snapshot, first, second, retry] = calls;
+    assertEquals(calls.length, 6);
+    const [initial, snapshot, first, nextPage, second, retry] = calls;
     assertExists(initial);
     assertExists(snapshot);
     assertExists(first);
     assertExists(second);
+    assertExists(nextPage);
     assertExists(retry);
     assertEquals(snapshot.keys, [initial.keys[5]]);
+    assertEquals(snapshot.args, ["0"]);
+    assertEquals(nextPage.args, ["7"]);
     assertEquals(deleted, [`${initial.keys[5]}:evictable`]);
     assertEquals(recordedPayload(first), ids.slice(0, 50));
     assertEquals(recordedPayload(second), ids.slice(50));
@@ -265,7 +269,7 @@ describe("Redis event-wait transport boundary", () => {
     let calls = 0;
     client.eval = () =>
       ++calls === 2
-        ? Promise.resolve([])
+        ? Promise.resolve(["0", []])
         : Promise.reject(new Error("Run event mailbox capacity reached"));
     const error = await assertRejects(() => store.appendRunEvent("run", event));
     if (!isVeryfrontError(error)) throw new Error("Capacity error lost registered identity");

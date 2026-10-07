@@ -393,22 +393,30 @@ export class RedisEventWaitStore {
     }
   }
   private async reconcileExistingMailboxes(): Promise<void> {
-    const ids = await this.client.eval(
-      "return redis.call('zrange',KEYS[1],0,ARGV[1])",
-      [`${this.prefix}index:event-mailboxes`],
-      [String(MAX_WORKFLOW_RUN_EVENT_MAILBOXES - 1)],
-    );
-    if (!Array.isArray(ids) || !ids.every((id): id is string => typeof id === "string")) {
-      throw new Error("Invalid Redis mailbox index result");
-    }
     await this.client.del(`${this.prefix}index:event-mailboxes:evictable`);
-    for (let offset = 0; offset < ids.length; offset += 50) {
-      await this.client.eval(RECONCILE_EVENT_MAILBOXES_SCRIPT, [], [
-        this.prefix,
-        JSON.stringify(ids.slice(offset, offset + 50)),
-      ]);
-    }
+    let cursor = "0";
+    do {
+      const page = await this.client.eval(
+        "local page=redis.call('zscan',KEYS[1],ARGV[1],'COUNT',50); local ids={}; for i=1,#page[2],2 do table.insert(ids,page[2][i]) end; return {page[1],ids}",
+        [`${this.prefix}index:event-mailboxes`],
+        [cursor],
+      );
+      if (
+        !Array.isArray(page) || page.length !== 2 || typeof page[0] !== "string" ||
+        !/^\d+$/.test(page[0]) || !Array.isArray(page[1]) ||
+        !page[1].every((id): id is string => typeof id === "string")
+      ) throw new Error("Invalid Redis mailbox index result");
+      cursor = page[0];
+      const ids: string[] = page[1];
+      for (let offset = 0; offset < ids.length; offset += 50) {
+        await this.client.eval(RECONCILE_EVENT_MAILBOXES_SCRIPT, [], [
+          this.prefix,
+          JSON.stringify(ids.slice(offset, offset + 50)),
+        ]);
+      }
+    } while (cursor !== "0");
   }
+
   private async state(runId: string): Promise<StoredState> {
     try {
       const raw = await this.client.get(this.stateKey(runId));

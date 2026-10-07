@@ -90,6 +90,63 @@ async function withReceivers(
 
 describe("Redis durable event waits", () => {
   it({
+    name: "Redis reconciliation visits mailboxes beyond the legacy take-and-restore capacity bound",
+    ignore: !Deno.env.get("WORKFLOW_EVENT_TEST_REDIS_URL"),
+  }, () =>
+    withReceivers(async (a, b, runId, cleanup) => {
+      const base = await a.getRun(runId);
+      assertExists(base);
+      const event = { id: "over-bound", eventName: "ready", payload: {}, publishedAt: new Date() };
+      const ids = Array.from(
+        { length: MAX_WORKFLOW_RUN_EVENT_MAILBOXES },
+        () => crypto.randomUUID(),
+      );
+      const first = ids[0];
+      assertExists(first);
+      const orphan = crypto.randomUUID(), next = crypto.randomUUID();
+      cleanup.push(async () => {
+        for (let offset = 0; offset < ids.length; offset += 50) {
+          await Promise.all(ids.slice(offset, offset + 50).map((id) => a.deleteRun(id)));
+        }
+        await a.deleteRun(orphan);
+        await a.deleteRun(next);
+      });
+      for (let offset = 0; offset < ids.length; offset += 50) {
+        await Promise.all(
+          ids.slice(offset, offset + 50).map(async (id) => {
+            await a.createRun({ ...base, id });
+            await a.appendRunEvent(id, event);
+          }),
+        );
+      }
+      const taken = await a.takeRunEvent(first, "ready");
+      assertExists(taken);
+      await b.appendRunEvent(orphan, event);
+      await a.restoreRunEvent(first, taken);
+      const module = await createRedisRuntimeProvider().loadModule();
+      const observer = module.createClient({ url: Deno.env.get("WORKFLOW_EVENT_TEST_REDIS_URL") });
+      await observer.connect();
+      cleanup.push(() => observer.close());
+      const keys = await observer.keys(`*run:${runId}`);
+      const key = keys[0];
+      assertExists(key);
+      const index = `${key.slice(0, -`run:${runId}`.length)}index:event-mailboxes`;
+      assertEquals(
+        await observer.eval("return redis.call('zcard',KEYS[1])", {
+          keys: [index],
+          arguments: [],
+        }),
+        MAX_WORKFLOW_RUN_EVENT_MAILBOXES + 1,
+      );
+      // Earlier receivers do not maintain the additive eligibility index.
+      await observer.del([`${index}:evictable`]);
+      await b.appendRunEvent(next, event);
+      assertEquals(await a.peekRunEvent(orphan, "ready"), null);
+      assertEquals(await a.peekRunEvent(next, "ready"), event);
+      assertEquals(await a.peekRunEvent(first, "ready"), event);
+    }));
+
+  it({
     name: "Redis terminal transitions discard buffered mail and settle delivery claims",
     ignore: !Deno.env.get("WORKFLOW_EVENT_TEST_REDIS_URL"),
   }, () =>
