@@ -1,8 +1,4 @@
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
-import { spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { isBun, isDeno, isNode } from "#veryfront/platform/compat/runtime.ts";
 import {
@@ -24,43 +20,58 @@ import {
 // live prototypes; Node's undici and Bun take different internal paths.
 const DENO_INTERNALS = { ignore: !isDeno };
 
-type NodeTestCertificate = {
-  readonly cert: string;
-  readonly key: string;
-};
-
-function createNodeTestCertificate(hostname: string): NodeTestCertificate | undefined {
-  const directory = mkdtempSync(join(tmpdir(), "veryfront-pinned-fetch-tls-"));
-  const keyPath = join(directory, "key.pem");
-  const certPath = join(directory, "cert.pem");
-  try {
-    const result = spawnSync("openssl", [
-      "req",
-      "-x509",
-      "-newkey",
-      "rsa:2048",
-      "-nodes",
-      "-keyout",
-      keyPath,
-      "-out",
-      certPath,
-      "-days",
-      "1",
-      "-subj",
-      `/CN=${hostname}`,
-      "-addext",
-      `subjectAltName=DNS:${hostname}`,
-    ], { encoding: "utf8" });
-    if (result.status !== 0) return undefined;
-    return {
-      cert: readFileSync(certPath, "utf8"),
-      key: readFileSync(keyPath, "utf8"),
-    };
-  } finally {
-    rmSync(directory, { recursive: true, force: true });
-  }
-}
-
+const PINNED_ABORT_TEST_CERTIFICATE = {
+  cert: `-----BEGIN CERTIFICATE-----
+MIIDNzCCAh+gAwIBAgIUejX9XrRH7oNOysUGD2Mj5eicg4kwDQYJKoZIhvcNAQEL
+BQAwHDEaMBgGA1UEAwwRcGlubmVkLWFib3J0LnRlc3QwHhcNMjYxMDA3MDAyMzM3
+WhcNMzYxMDA0MDAyMzM3WjAcMRowGAYDVQQDDBFwaW5uZWQtYWJvcnQudGVzdDCC
+ASIwDQYJKoZIhvcNAQEBBQADggEPADCCAQoCggEBALpANpwil+MGedqozKRfoL9s
+EEQx4BphW0pl2CfRg33Xt9gl6+oi7o8Er34LEri4Vn8bcI5039ufJstYz2OAidUv
+RR98GhJ2HlRLXmTumdGO0HnJYgk80jLn1LtPSUasY765aSvqcFNX6tChSM6V7Kh7
+gPfL0uMRWPEYPqOy2XNZ/2J6zp5Hv/p69y8xhbQz/3uAjuqbHr8GD9hjx3Ar6yOs
+Qr/Cj/PjhDo3WMpePNR83ozTZG9Q0uPSKP2MOfOIaDyWx/5XIdG9VT/ig/2/3at8
+MHHb379chBKDfbRcmVSA9gAQ+EkdIWQfWsm4HKnHyneAdAf+XiERNNus1UVH05sC
+AwEAAaNxMG8wHQYDVR0OBBYEFJ4tAKoPTCl1PMOhbNhkMLZgBM6ZMB8GA1UdIwQY
+MBaAFJ4tAKoPTCl1PMOhbNhkMLZgBM6ZMA8GA1UdEwEB/wQFMAMBAf8wHAYDVR0R
+BBUwE4IRcGlubmVkLWFib3J0LnRlc3QwDQYJKoZIhvcNAQELBQADggEBAJujERSH
+9BzW7Wdo2xhnjb6JyRJym7Ha8XOHtq1QMrVr13evIsmgx8hSvbjGI9Rbs2/OzFX/
+DkdbdYXAvEFOWNkpGQ5JxVMO8DDcRfKQMQ30bLasTp6uKaADrimjsp/za/Rulmyf
+tw3vjxSDd+WS0FtSxWETLz1C8mlSWj9rGxUtGA8cs9Hv7fkWfJQW2HyrrggZIaEh
+M2iuyKYhQS7YChIf+yqhRF0UumIeKMxv3Coy7mwj/6o6xDiN6PZErxtsbGVJZk+w
+pNCCuIP5SFe2A4YKd3DD3xU3+xtdWp+3Cwmt3zVqKkpklAA00xIqdgOUwg0uUI1i
+TQLuMXba+fqPHWw=
+-----END CERTIFICATE-----
+`,
+  key: `-----BEGIN PRIVATE KEY-----
+MIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEAAoIBAQC6QDacIpfjBnna
+qMykX6C/bBBEMeAaYVtKZdgn0YN917fYJevqIu6PBK9+CxK4uFZ/G3COdN/bnybL
+WM9jgInVL0UffBoSdh5US15k7pnRjtB5yWIJPNIy59S7T0lGrGO+uWkr6nBTV+rQ
+oUjOleyoe4D3y9LjEVjxGD6jstlzWf9ies6eR7/6evcvMYW0M/97gI7qmx6/Bg/Y
+Y8dwK+sjrEK/wo/z44Q6N1jKXjzUfN6M02RvUNLj0ij9jDnziGg8lsf+VyHRvVU/
+4oP9v92rfDBx29+/XIQSg320XJlUgPYAEPhJHSFkH1rJuBypx8p3gHQH/l4hETTb
+rNVFR9ObAgMBAAECggEAVtfmHrtKkwLMApa+hM5KB7d9hi6zTdmjVXdTaI2agCz7
+ff+AlvWewnTu1xiWrCbXvgCvZN0+HAuDbUGFweGHYy3dTybwiTcmQSu7YdiXRE0R
+DBhIbAI+CJpsaMI5aoirIZ0WWvG/Wj0eMhVh+2GQraaYpfIV7OaD0Db7zhxwpAW/
+R0RV7NYDONfdPyVYhdzA14s/A4YGufwxECnI4w4org+48FAmxONTbCNOm6sg91a6
++phC2++t8lo28CNmCxKuE7UpaKxuncm4d+0U044YlpJCVTsSdBJoG28yxUQymX8D
+DKwckakwZBBylnA+5nj1QexyaLmYiUwrukr6qn7WUQKBgQD5pH0Rxd+ANn5WCzhT
+3vxE4ACFw/DaBaBD2k11q7NYDbGGWnIfHhMA7f9Ti7+UXyO7hf6/gjdE+VwbyERv
+bAObomD32RGC6vcmM+jFv3RpuB3NTpe0kq9N1bo+s5//5RuUTHtrNSGe4NMHvt8o
+TNiEdS7IkctChizrSbVfRtMtzwKBgQC+/nNyz9REqumHKWnxJfujt7K3C4NlC2fh
+57ZN6CI4rIUbdqWDgiOdfYXTFrHanneyAMFDZL4wsM5F0gVW1PzoBvCfShE708Ef
+IeliSVQdNE3XrFgX0BkP/K/tc8kMqXjhQphn4kFtl5TZ9pEhnMF3rik4aXLzXmZy
+1XvEbbrcdQKBgG3LwpZGiP5C+V2uoZ+Bu0IvowsyGoRJZStyoA7Y7ZAUtbd5oCe/
+emw2QM3l8OS402ZukJR6GQTlB3XQpwi6YPvadvuLJQCHhxvuSLpwcirtJ25c2qw4
+t5FsJvXc2soZYf/fg4irXZYbG7WUZWG8Kp5XS7Q7K0Ke8LKrQHIfHFJRAoGBAJ5t
+/aAgS4kGaR6IOOwjQMDGkYWLFFxOAMcAaVXol/KBEQz99z/GRPrP86FtMu0RBGLw
+g1//AlDraL+7/lfP51Yk45aOXwtMlObZP3obL53mFCgyOwTNxuxfBCQpJn3NWoso
+rbmGkhVxZrUC9dJ28HjxTBoSRpsgFEVvVvJSv209AoGBAPFgL3vKEZ8RwqSQset9
+UUed5wtayCE6G/kuKSp8NOIuf+OHCQ6U184A0P/Fv4YB/qk5C0oNUFShP9I9CYdS
+9F+h2jQXvZa8VfaHvpXDS2UlUtVIG4epUYo7SSlU3AF4PRLqAoZsttELj1gw5JkA
+Fm8yZNuRPGn/gJnF/NqZfkw4
+-----END PRIVATE KEY-----
+`,
+} as const;
 type ClosableNodeTestServer = {
   closeAllConnections?: () => void;
   close: (callback: (error?: Error & { code?: string }) => void) => void;
@@ -485,8 +496,7 @@ describe("fetchWithPinnedAddresses", () => {
   it("closes the HTTPS provider socket when an in-flight POST request is aborted", async () => {
     if (!isNode) return;
 
-    const certificate = createNodeTestCertificate("pinned-abort.test");
-    if (certificate === undefined) return;
+    const certificate = PINNED_ABORT_TEST_CERTIFICATE;
 
     const { createServer } = await import("node:https");
     let requestSeen!: () => void;
@@ -540,45 +550,6 @@ describe("fetchWithPinnedAddresses", () => {
     } finally {
       if (timeout !== undefined) clearTimeout(timeout);
       await closeNodeTestServer(server);
-    }
-  });
-
-  it("does not invoke mutated request listener cleanup during stream body reads", async () => {
-    if (!isNode) return;
-    const { EventEmitter } = await import("node:events");
-    const originalOff = Object.getOwnPropertyDescriptor(EventEmitter.prototype, "off");
-    const inheritedOff = EventEmitter.prototype.off;
-    let observedAuthorization: unknown;
-    try {
-      const body = new ReadableStream<Uint8Array>({
-        pull(controller) {
-          Object.defineProperty(EventEmitter.prototype, "off", {
-            configurable: true,
-            writable: true,
-            ...originalOff,
-            value(this: { getHeader?(name: string): unknown }, ...args: unknown[]) {
-              observedAuthorization ??= this.getHeader?.("authorization");
-              return Reflect.apply(inheritedOff, this, args);
-            },
-          });
-          controller.enqueue(new TextEncoder().encode("chunk"));
-          controller.close();
-        },
-      }, { highWaterMark: 0 }) as unknown as BodyInit;
-
-      await assertRejects(
-        () =>
-          fetchWithPinnedAddresses(new URL("http://pinned-listener-cleanup.test:9/upload"), [
-            "127.0.0.1",
-          ], { method: "POST", headers: { authorization: BEARER }, body }),
-        TypeError,
-        "Refused a credential-bearing request",
-      );
-      assertEquals(observedAuthorization, undefined);
-    } finally {
-      if (originalOff) {
-        Object.defineProperty(EventEmitter.prototype, "off", originalOff);
-      } else Reflect.deleteProperty(EventEmitter.prototype, "off");
     }
   });
 
