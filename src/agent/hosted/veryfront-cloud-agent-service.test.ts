@@ -2190,7 +2190,7 @@ Deno.test({
   },
 });
 
-Deno.test("Studio availability survives service intersection without weakening explicit requirements", () => {
+it("Studio availability survives service intersection without weakening explicit requirements", () => {
   for (const hostRequired of [undefined, false, true]) {
     for (const agentRequired of [undefined, false, true]) {
       const result = veryfrontCloudAgentServiceInternals.resolveMcpServers({

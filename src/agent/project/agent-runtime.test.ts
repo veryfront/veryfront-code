@@ -862,7 +862,7 @@ Deno.test("project agent settings survive code to hosted definition roundtrip", 
   }
 });
 
-Deno.test("project agent definitions preserve optional Studio MCP", async () => {
+it("project agent definitions preserve optional Studio MCP", async () => {
   const definition = await createRuntimeAgentDefinitionFromAgent(agent({
     id: "optional-studio",
     system: "Use available project tools.",
