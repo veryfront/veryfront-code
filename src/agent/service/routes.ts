@@ -52,6 +52,7 @@ import {
 const IntrinsicReflectApply = Reflect.apply;
 const NativeHeaders = Headers;
 const NativeRequest = Request;
+const NativeResponseJson = Response.json;
 const RequestClone = Request.prototype.clone;
 const RequestJson = Request.prototype.json;
 const RequestHeadersGet = Object.getOwnPropertyDescriptor(NativeRequest.prototype, "headers")?.get;
@@ -63,6 +64,17 @@ const ObjectEntries = Object.entries;
 const ObjectFromEntries = Object.fromEntries;
 const ArrayFilter = Array.prototype.filter;
 const ArrayIsArray = Array.isArray;
+
+function createVersionResponse(deploymentArtifact: string | null): Response {
+  return IntrinsicReflectApply(NativeResponseJson, Response, [
+    { artifact: deploymentArtifact },
+    {
+      status: 200,
+      statusText: "",
+      headers: { "Cache-Control": "no-store" },
+    },
+  ]) as Response;
+}
 
 function readRequestValue<T>(request: Request, getter: (() => T) | undefined): T {
   if (!getter) throw new TypeError("Request accessor is unavailable");
@@ -605,11 +617,7 @@ export function createHostedAgentServiceRouteSet<TExecution extends object>(
     {
       method: "GET",
       path: "/version",
-      handler: () =>
-        Response.json(
-          { artifact: deploymentArtifact },
-          { headers: { "Cache-Control": "no-store" } },
-        ),
+      handler: () => createVersionResponse(deploymentArtifact),
     },
     {
       method: "POST",
