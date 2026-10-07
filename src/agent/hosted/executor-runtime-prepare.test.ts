@@ -885,6 +885,166 @@ describe("executor runtime preparation", () => {
     }
   });
 
+  it("prunes named optional Studio tools omitted from the executor grant", async () => {
+    const f = fixture({
+      config: {
+        tools: { studio_open_project: true },
+        mcpServers: [{ kind: "veryfront-studio", required: false }],
+      },
+      grant: {
+        ...grant,
+        allowedToolNames: ["studio_open_project"],
+        remoteToolSourceIds: [],
+      },
+    });
+    try {
+      assertEquals((await prepare(f.owner) as { ok: boolean }).ok, true);
+    } finally {
+      await f.owner.close();
+    }
+  });
+
+  it("keeps Studio-prefixed tools from granted non-Studio facades", async () => {
+    let visible: string[] = [];
+    const executions: string[] = [];
+    let modelCalls = 0;
+    const f = fixture({
+      config: {
+        tools: { studio_suggestions: true },
+        mcpServers: [{
+          kind: "veryfront-studio",
+          required: false,
+          toolPolicy: { allow: ["studio_suggestions"] },
+        }],
+      },
+      grant: {
+        ...grant,
+        allowedToolNames: ["studio_suggestions"],
+        hostToolFacadeIds: ["local"],
+        remoteToolSourceIds: [],
+      },
+      facades: {
+        hostTools: new Map([[
+          "local",
+          {
+            studio_suggestions: {
+              ...syntheticHostTool(),
+              execute: () => {
+                executions.push("studio_suggestions");
+                return { ok: true };
+              },
+            },
+          },
+        ]]),
+        resolveModelRuntime: () => ({
+          ...model,
+          doStream(options) {
+            visible = (options as ModelRuntimeCallOptions).tools?.map((tool) => tool.name) ?? [];
+            return finishStream(modelCalls++ === 0 ? "studio_suggestions" : undefined);
+          },
+        }),
+      },
+    });
+    try {
+      const events = await Array.fromAsync(await preparedStream(f));
+      assertCleanCompletion(events);
+      assertEquals(visible.includes("studio_suggestions"), true);
+      assertEquals(executions, ["studio_suggestions"]);
+    } finally {
+      await f.owner.close();
+    }
+  });
+
+  it("keeps Studio-prefixed tools from granted non-Studio remote sources", async () => {
+    let exposedTool = false;
+    const executions: string[] = [];
+    let modelCalls = 0;
+    const f = fixture({
+      config: {
+        tools: { studio_suggestions: true },
+        toolLoading: "eager",
+        mcpServers: [{
+          kind: "veryfront-studio",
+          required: false,
+          toolPolicy: { allow: ["studio_suggestions"] },
+        }],
+      },
+      grant: {
+        ...grant,
+        allowedToolNames: ["studio_suggestions"],
+        remoteToolSourceIds: ["custom"],
+      },
+      facades: {
+        remoteToolSources: new Map([[
+          "custom",
+          {
+            id: "custom",
+            listTools: () => Promise.resolve([syntheticRemoteTool("studio_suggestions")]),
+            executeTool: (name) => {
+              executions.push(name);
+              return Promise.resolve({ ok: true });
+            },
+          },
+        ]]),
+        resolveModelRuntime: () => ({
+          ...model,
+          doStream(options) {
+            const visible = (options as ModelRuntimeCallOptions).tools?.map((tool) => tool.name) ??
+              [];
+            exposedTool ||= visible.includes("studio_suggestions");
+            return finishStream(modelCalls++ === 0 ? "studio_suggestions" : undefined);
+          },
+        }),
+      },
+    });
+    try {
+      const events = await Array.fromAsync(await preparedStream(f));
+      assertCleanCompletion(events);
+      assertEquals(exposedTool, true);
+      assertEquals(executions, ["studio_suggestions"]);
+    } finally {
+      await f.owner.close();
+    }
+  });
+
+  it("cleans facades when optional Studio remote discovery fails", async () => {
+    const f = fixture({
+      config: {
+        tools: { studio_suggestions: true },
+        mcpServers: [{
+          kind: "veryfront-studio",
+          required: false,
+          toolPolicy: { allow: ["studio_suggestions"] },
+        }],
+      },
+      grant: {
+        ...grant,
+        allowedToolNames: ["studio_suggestions"],
+        remoteToolSourceIds: ["custom"],
+      },
+      facades: {
+        remoteToolSources: new Map([[
+          "custom",
+          {
+            id: "custom",
+            listTools: () => Promise.reject(new Error("Synthetic listing failure")),
+            executeTool: () => Promise.reject(new Error("Unused")),
+          },
+        ]]),
+      },
+    });
+    try {
+      assertEquals(await prepare(f.owner), {
+        ok: false,
+        code: "EXTERNAL_SERVICE_ERROR",
+      });
+      assertEquals(f.cleanups, 1);
+    } finally {
+      await f.owner.close();
+    }
+    assertEquals(f.cleanups, 1);
+  });
+
   it("still requires non-optional Studio MCP in the executor grant", async () => {
     const f = fixture({
       config: { mcpServers: [{ kind: "veryfront-studio" }] },
