@@ -60,7 +60,14 @@ jobs:
         env:
           RELEASE_NUMBER: ${{ inputs.maintenance_release_number }}
         run: |
-          [[ "$RELEASE_NUMBER" =~ ^[1-9][0-9]*$ ]] || exit 1
+          if [ "${GITHUB_REF}" = "refs/heads/main" ]; then
+            echo "::error::Maintenance RC publication must be dispatched from the maintenance branch, not main." >&2
+            exit 1
+          fi
+          if ! [[ "$RELEASE_NUMBER" =~ ^[1-9][0-9]*$ ]]; then
+            echo "::error::maintenance_release_number must be a positive integer RC build number." >&2
+            exit 1
+          fi
           echo "release_number=$RELEASE_NUMBER" >> "$GITHUB_OUTPUT"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         if: github.ref == 'refs/heads/main' && inputs.maintenance_release_number == ''
@@ -84,14 +91,14 @@ jobs:
             coverage-shard-5 coverage-shard-6 coverage-shard-7 coverage-shard-8 \
             coverage-native-executor coverage-integration-client
       - name: Record release number
-        if: github.ref == 'refs/heads/main' || (github.event_name == 'workflow_dispatch' && inputs.maintenance_release_number != '')
+        if: (github.ref == 'refs/heads/main' && inputs.maintenance_release_number == '') || (github.event_name == 'workflow_dispatch' && inputs.maintenance_release_number != '' && github.ref != 'refs/heads/main')
         env:
           RELEASE_NUMBER: ${{ steps.maintenance.outputs.release_number || steps.decide.outputs.release_number }}
         run: |
           mkdir -p dist/release-number
           echo "${RELEASE_NUMBER}" > dist/release-number/release-number.txt
       - name: Upload release number
-        if: github.ref == 'refs/heads/main' || (github.event_name == 'workflow_dispatch' && inputs.maintenance_release_number != '')
+        if: (github.ref == 'refs/heads/main' && inputs.maintenance_release_number == '') || (github.event_name == 'workflow_dispatch' && inputs.maintenance_release_number != '' && github.ref != 'refs/heads/main')
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: release-number-${{ steps.maintenance.outputs.release_number || steps.decide.outputs.release_number }}
@@ -1250,7 +1257,7 @@ jobs:
       - npm-compatibility-artifact
       - tests-sentry-runtime-packages
       - tests-windows-localhost
-    if: ${{ always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && (github.ref == 'refs/heads/main' || (github.event_name == 'workflow_dispatch' && inputs.maintenance_release_number != '')) }}
+    if: ${{ always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && ((github.ref == 'refs/heads/main' && inputs.maintenance_release_number == '') || (github.event_name == 'workflow_dispatch' && inputs.maintenance_release_number != '' && github.ref != 'refs/heads/main')) }}
     steps:
       - name: Require release test results
         env:
@@ -1370,7 +1377,7 @@ jobs:
   # ============================================
 
   version-check:
-    if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && (github.ref == 'refs/heads/main' || (github.event_name == 'workflow_dispatch' && inputs.maintenance_release_number != '')) }}
+    if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && ((github.ref == 'refs/heads/main' && inputs.maintenance_release_number == '') || (github.event_name == 'workflow_dispatch' && inputs.maintenance_release_number != '' && github.ref != 'refs/heads/main')) }}
     runs-on: ${{ (github.event_name == 'push' || github.event_name == 'merge_group') && 'ubuntu-latest-m' || 'ubuntu-latest' }}
     outputs:
       version: ${{ steps.check.outputs.version }}
@@ -1450,7 +1457,7 @@ jobs:
         run: bash scripts/build/smoke-proxy-memory.sh ./veryfront-proxy-linux-x64
 
   build-binaries:
-    if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && (github.ref == 'refs/heads/main' || (github.event_name == 'workflow_dispatch' && inputs.maintenance_release_number != '')) }}
+    if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && ((github.ref == 'refs/heads/main' && inputs.maintenance_release_number == '') || (github.event_name == 'workflow_dispatch' && inputs.maintenance_release_number != '' && github.ref != 'refs/heads/main')) }}
     needs: [version-check, tested-run]
     runs-on: ${{ matrix.os }}
     continue-on-error: ${{ contains(matrix.os, 'windows') }}
