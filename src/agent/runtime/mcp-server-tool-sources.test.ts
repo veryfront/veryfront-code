@@ -1091,6 +1091,16 @@ Deno.test("getRuntimeRemoteToolSources requires injected control-plane source fo
   assertEquals(error.slug, "config-invalid");
 });
 
+Deno.test("getRuntimeRemoteToolSources omits optional Studio MCP without injected source", () => {
+  const sources = getRuntimeRemoteToolSources({
+    system: "Use Studio tools when available.",
+    tools: { studio_open_project: true },
+    mcpServers: [{ kind: "veryfront-studio", required: false }],
+  });
+
+  assertEquals(sources, []);
+});
+
 Deno.test("getRuntimeRemoteToolSources reuses injected Studio MCP source for explicit Studio config", () => {
   const studioSource: RemoteToolSource = {
     id: VERYFRONT_STUDIO_MCP_SOURCE_ID,
