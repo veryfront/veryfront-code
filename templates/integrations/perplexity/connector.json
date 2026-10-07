@@ -63,7 +63,7 @@
     {
       "id": "perplexity__create_chat_completion",
       "name": "Create Chat Completion",
-      "description": "Create chat completion",
+      "description": "Generate chat completion",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -102,7 +102,7 @@
     {
       "id": "perplexity__create_agent_response",
       "name": "Create Agent Response",
-      "description": "Create agent response",
+      "description": "Generate agent response",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",

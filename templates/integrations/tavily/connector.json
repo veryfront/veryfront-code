@@ -141,7 +141,7 @@
     {
       "id": "tavily__map",
       "name": "Map",
-      "description": "Map",
+      "description": "List website URLs",
       "requiresWrite": false,
       "endpoint": {
         "method": "POST",

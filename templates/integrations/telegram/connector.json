@@ -83,7 +83,7 @@
     {
       "id": "telegram__get_me",
       "name": "Get Me",
-      "description": "Get me",
+      "description": "Get bot profile",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",

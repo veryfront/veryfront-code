@@ -53,7 +53,7 @@
     {
       "id": "alphavantage__daily_time_series",
       "name": "Daily Time Series",
-      "description": "Daily time series",
+      "description": "Get daily stock prices",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -83,7 +83,7 @@
     {
       "id": "alphavantage__symbol_search",
       "name": "Symbol Search",
-      "description": "Symbol search",
+      "description": "Search stock symbols",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -107,7 +107,7 @@
     {
       "id": "alphavantage__company_overview",
       "name": "Company Overview",
-      "description": "Company overview",
+      "description": "Get company fundamentals",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -131,7 +131,7 @@
     {
       "id": "alphavantage__fx_rate",
       "name": "FX Exchange Rate",
-      "description": "Fx exchange rate",
+      "description": "Get exchange rate",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",

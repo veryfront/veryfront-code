@@ -339,7 +339,7 @@
     {
       "id": "sheets__batch_update",
       "name": "Batch Update",
-      "description": "Batch update",
+      "description": "Update spreadsheet structure and formatting",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -443,7 +443,7 @@
     {
       "id": "sheets__delete_spreadsheet",
       "name": "Delete Spreadsheet",
-      "description": "Delete spreadsheet",
+      "description": "Trash spreadsheet",
       "requiresWrite": true,
       "endpoint": {
         "method": "PATCH",

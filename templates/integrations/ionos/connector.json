@@ -200,7 +200,7 @@
     {
       "id": "ionos__reboot_server",
       "name": "Reboot Server",
-      "description": "Reboot server",
+      "description": "Hard reboot server",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",

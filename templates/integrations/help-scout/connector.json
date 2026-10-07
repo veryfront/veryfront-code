@@ -258,7 +258,7 @@
     {
       "id": "help-scout__update_tags",
       "name": "Update Tags",
-      "description": "Update tags",
+      "description": "Replace conversation tags",
       "requiresWrite": true,
       "endpoint": {
         "method": "PUT",

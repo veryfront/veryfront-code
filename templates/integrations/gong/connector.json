@@ -102,7 +102,7 @@
     {
       "id": "gong__get_calls_extensive",
       "name": "Get Calls Extensive",
-      "description": "Get calls extensive",
+      "description": "Get detailed calls",
       "requiresWrite": false,
       "endpoint": {
         "method": "POST",

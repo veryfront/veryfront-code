@@ -133,7 +133,7 @@
     {
       "id": "exa__answer",
       "name": "Answer",
-      "description": "Answer",
+      "description": "Answer question with citations",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",

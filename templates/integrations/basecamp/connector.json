@@ -356,7 +356,7 @@
     {
       "id": "basecamp__complete_todo",
       "name": "Complete To-do",
-      "description": "Complete to do",
+      "description": "Complete to-do",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",

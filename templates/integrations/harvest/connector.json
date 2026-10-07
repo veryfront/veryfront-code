@@ -1349,7 +1349,7 @@
     {
       "id": "harvest__create_invoice_payment",
       "name": "Create Invoice Payment",
-      "description": "Create invoice payment",
+      "description": "Record invoice payment",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -1398,7 +1398,7 @@
     {
       "id": "harvest__time_report_by_project",
       "name": "Time Report by Project",
-      "description": "Time report by project",
+      "description": "Get time report by project",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -1521,7 +1521,7 @@
     {
       "id": "harvest__time_report_by_team",
       "name": "Time Report by Team",
-      "description": "Time report by team",
+      "description": "Get time report by team",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -1633,7 +1633,7 @@
     {
       "id": "harvest__time_report_by_client",
       "name": "Time Report by Client",
-      "description": "Time report by client",
+      "description": "Get time report by client",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -1745,7 +1745,7 @@
     {
       "id": "harvest__time_report_by_task",
       "name": "Time Report by Task",
-      "description": "Time report by task",
+      "description": "Get time report by task",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -1857,7 +1857,7 @@
     {
       "id": "harvest__invoice_report",
       "name": "Invoice Report",
-      "description": "Invoice report",
+      "description": "Get invoice report",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",

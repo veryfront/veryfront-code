@@ -117,7 +117,7 @@
     {
       "id": "north-data__power_search",
       "name": "Power Search",
-      "description": "Power search",
+      "description": "Search companies with filters",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -164,7 +164,7 @@
     {
       "id": "north-data__suggest",
       "name": "Suggest Companies",
-      "description": "Suggest companies",
+      "description": "Suggest companies and people",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",

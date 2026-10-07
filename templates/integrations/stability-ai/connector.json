@@ -71,7 +71,7 @@
     {
       "id": "stability-ai__text_to_image",
       "name": "Text to Image",
-      "description": "Text to image",
+      "description": "Generate image",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",

@@ -28,7 +28,7 @@
     {
       "id": "unstructured__partition_document",
       "name": "Partition Document",
-      "description": "Partition document",
+      "description": "Extract document elements",
       "requiresWrite": false,
       "endpoint": {
         "method": "POST",

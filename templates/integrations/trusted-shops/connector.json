@@ -167,7 +167,7 @@
     {
       "id": "trusted-shops__create_review_invites",
       "name": "Create Review Invites",
-      "description": "Create review invites",
+      "description": "Schedule review invitations",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",

@@ -70,7 +70,7 @@
     {
       "id": "cohere__create_chat",
       "name": "Create Chat",
-      "description": "Create chat",
+      "description": "Generate chat response",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",

@@ -70,7 +70,7 @@
     {
       "id": "openai__create_response",
       "name": "Create Response",
-      "description": "Create response",
+      "description": "Generate model response",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -104,7 +104,7 @@
     {
       "id": "openai__create_chat_completion",
       "name": "Create Chat Completion",
-      "description": "Create chat completion",
+      "description": "Generate chat completion",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -390,7 +390,7 @@
     {
       "id": "openai__get_file_content",
       "name": "Get File Content",
-      "description": "Get file content",
+      "description": "Download file content",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",

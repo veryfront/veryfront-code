@@ -131,7 +131,7 @@
     {
       "id": "huggingface__whoami",
       "name": "Who Am I",
-      "description": "Who am i",
+      "description": "Get account identity",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -141,7 +141,7 @@
     {
       "id": "huggingface__create_chat_completion",
       "name": "Create Chat Completion",
-      "description": "Create chat completion",
+      "description": "Generate chat completion",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",

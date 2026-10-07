@@ -112,7 +112,7 @@
     {
       "id": "elevenlabs__text_to_speech",
       "name": "Text to Speech",
-      "description": "Text to speech",
+      "description": "Generate speech",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",

@@ -413,7 +413,7 @@
     {
       "id": "quickbooks__create_purchase",
       "name": "Create Purchase",
-      "description": "Create purchase",
+      "description": "Record expense",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",

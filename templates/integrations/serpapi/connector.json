@@ -29,7 +29,7 @@
     {
       "id": "serpapi__google_search",
       "name": "Google Search",
-      "description": "Google search",
+      "description": "Search Google",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -68,7 +68,7 @@
     {
       "id": "serpapi__google_news",
       "name": "Google News Search",
-      "description": "Google news search",
+      "description": "Search Google News",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -92,7 +92,7 @@
     {
       "id": "serpapi__google_maps",
       "name": "Google Maps Search",
-      "description": "Google maps search",
+      "description": "Search Google Maps",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -121,7 +121,7 @@
     {
       "id": "serpapi__google_shopping",
       "name": "Google Shopping Search",
-      "description": "Google shopping search",
+      "description": "Search Google Shopping",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",

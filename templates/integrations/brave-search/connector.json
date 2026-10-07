@@ -29,7 +29,7 @@
     {
       "id": "brave-search__web_search",
       "name": "Web Search",
-      "description": "Web search",
+      "description": "Search web",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -87,7 +87,7 @@
     {
       "id": "brave-search__news_search",
       "name": "News Search",
-      "description": "News search",
+      "description": "Search news",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -154,7 +154,7 @@
     {
       "id": "brave-search__image_search",
       "name": "Image Search",
-      "description": "Image search",
+      "description": "Search images",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -196,7 +196,7 @@
     {
       "id": "brave-search__video_search",
       "name": "Video Search",
-      "description": "Video search",
+      "description": "Search videos",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",

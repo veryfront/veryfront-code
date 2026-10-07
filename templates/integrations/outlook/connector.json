@@ -468,7 +468,7 @@
     {
       "id": "outlook__update_folder",
       "name": "Update Folder",
-      "description": "Update folder",
+      "description": "Rename folder",
       "requiresWrite": true,
       "endpoint": {
         "method": "PATCH",
@@ -681,7 +681,7 @@
     {
       "id": "outlook__categorize_email",
       "name": "Categorize Email",
-      "description": "Categorize email",
+      "description": "Replace email categories",
       "requiresWrite": true,
       "endpoint": {
         "method": "PATCH",

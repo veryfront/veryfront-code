@@ -240,7 +240,7 @@
     {
       "id": "billbee__update_stock",
       "name": "Update Stock",
-      "description": "Update stock",
+      "description": "Set stock quantity",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",

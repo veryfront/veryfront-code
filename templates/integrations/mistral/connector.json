@@ -70,7 +70,7 @@
     {
       "id": "mistral__create_chat_completion",
       "name": "Create Chat Completion",
-      "description": "Create chat completion",
+      "description": "Generate chat completion",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",

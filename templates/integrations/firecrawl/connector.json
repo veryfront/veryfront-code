@@ -98,7 +98,7 @@
     {
       "id": "firecrawl__map_site",
       "name": "Map Site",
-      "description": "Map site",
+      "description": "List website URLs",
       "requiresWrite": false,
       "endpoint": {
         "method": "POST",

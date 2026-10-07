@@ -174,7 +174,7 @@
     {
       "id": "hetzner__power_off_server",
       "name": "Power Off Server",
-      "description": "Power off server",
+      "description": "Hard power off server",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -295,7 +295,7 @@
     {
       "id": "hetzner__shutdown_server",
       "name": "Shutdown Server",
-      "description": "Shutdown server",
+      "description": "Gracefully shut down server",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -316,7 +316,7 @@
     {
       "id": "hetzner__reboot_server",
       "name": "Reboot Server",
-      "description": "Reboot server",
+      "description": "Gracefully reboot server",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",

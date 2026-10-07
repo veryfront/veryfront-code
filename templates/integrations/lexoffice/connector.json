@@ -324,7 +324,7 @@
     {
       "id": "lexoffice__get_invoice_document",
       "name": "Get Invoice Document",
-      "description": "Get invoice document",
+      "description": "Render invoice PDF",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",

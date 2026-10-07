@@ -382,7 +382,7 @@
     {
       "id": "servicenow__create_request",
       "name": "Create Request",
-      "description": "Create request",
+      "description": "Order catalog item",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",

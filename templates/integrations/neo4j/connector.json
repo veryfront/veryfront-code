@@ -44,7 +44,7 @@
     {
       "id": "neo4j__run_cypher_query",
       "name": "Run Cypher Query",
-      "description": "Run cypher query",
+      "description": "Run read-only Cypher query",
       "requiresWrite": false,
       "endpoint": {
         "method": "POST",
@@ -82,7 +82,7 @@
     {
       "id": "neo4j__run_cypher_write",
       "name": "Run Cypher Write",
-      "description": "Run cypher write",
+      "description": "Run Cypher write",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",

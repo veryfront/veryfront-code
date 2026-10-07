@@ -190,7 +190,7 @@
     {
       "id": "unzer__charge_authorization",
       "name": "Charge Authorization",
-      "description": "Charge authorization",
+      "description": "Capture authorized payment",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",

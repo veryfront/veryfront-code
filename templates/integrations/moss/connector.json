@@ -238,7 +238,7 @@
     {
       "id": "moss__get_file_content",
       "name": "Get File Content",
-      "description": "Get file content",
+      "description": "Download receipt file",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",

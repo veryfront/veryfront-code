@@ -156,7 +156,7 @@
     {
       "id": "azure-document-intelligence__analyze_read",
       "name": "Analyze Read (OCR)",
-      "description": "Analyze read (ocr)",
+      "description": "Extract document text",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",

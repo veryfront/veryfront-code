@@ -1314,7 +1314,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "alphavantage__daily_time_series",
       "name": "Daily Time Series",
-      "description": "Daily time series",
+      "description": "Get daily stock prices",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -1344,7 +1344,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "alphavantage__symbol_search",
       "name": "Symbol Search",
-      "description": "Symbol search",
+      "description": "Search stock symbols",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -1368,7 +1368,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "alphavantage__company_overview",
       "name": "Company Overview",
-      "description": "Company overview",
+      "description": "Get company fundamentals",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -1391,7 +1391,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "alphavantage__fx_rate",
       "name": "FX Exchange Rate",
-      "description": "Fx exchange rate",
+      "description": "Get exchange rate",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -4918,7 +4918,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "azure-document-intelligence__analyze_read",
       "name": "Analyze Read (OCR)",
-      "description": "Analyze read (ocr)",
+      "description": "Extract document text",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -5692,7 +5692,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "basecamp__complete_todo",
       "name": "Complete To-do",
-      "description": "Complete to do",
+      "description": "Complete to-do",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -6609,7 +6609,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "billbee__update_stock",
       "name": "Update Stock",
-      "description": "Update stock",
+      "description": "Set stock quantity",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -7444,7 +7444,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "brave-search__web_search",
       "name": "Web Search",
-      "description": "Web search",
+      "description": "Search web",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -7503,7 +7503,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "brave-search__news_search",
       "name": "News Search",
-      "description": "News search",
+      "description": "Search news",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -7571,7 +7571,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "brave-search__image_search",
       "name": "Image Search",
-      "description": "Image search",
+      "description": "Search images",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -7612,7 +7612,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "brave-search__video_search",
       "name": "Video Search",
-      "description": "Video search",
+      "description": "Search videos",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -11950,7 +11950,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "cohere__create_chat",
       "name": "Create Chat",
-      "description": "Create chat",
+      "description": "Generate chat response",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -16357,7 +16357,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "elevenlabs__text_to_speech",
       "name": "Text to Speech",
-      "description": "Text to speech",
+      "description": "Generate speech",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -16551,7 +16551,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "exa__answer",
       "name": "Answer",
-      "description": "Answer",
+      "description": "Answer question with citations",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -17791,7 +17791,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "firecrawl__map_site",
       "name": "Map Site",
-      "description": "Map site",
+      "description": "List website URLs",
       "requiresWrite": false,
       "endpoint": {
         "method": "POST",
@@ -18150,7 +18150,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "fireworks-ai__create_chat_completion",
       "name": "Create Chat Completion",
-      "description": "Create chat completion",
+      "description": "Generate chat completion",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -18174,7 +18174,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "fireworks-ai__create_completion",
       "name": "Create Completion",
-      "description": "Create completion",
+      "description": "Generate text completion",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -22638,7 +22638,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "gong__get_calls_extensive",
       "name": "Get Calls Extensive",
-      "description": "Get calls extensive",
+      "description": "Get detailed calls",
       "requiresWrite": false,
       "endpoint": {
         "method": "POST",
@@ -25629,7 +25629,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "groq__create_chat_completion",
       "name": "Create Chat Completion",
-      "description": "Create chat completion",
+      "description": "Generate chat completion",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -27134,7 +27134,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "harvest__create_invoice_payment",
       "name": "Create Invoice Payment",
-      "description": "Create invoice payment",
+      "description": "Record invoice payment",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -27175,7 +27175,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "harvest__time_report_by_project",
       "name": "Time Report by Project",
-      "description": "Time report by project",
+      "description": "Get time report by project",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -27247,7 +27247,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "harvest__time_report_by_team",
       "name": "Time Report by Team",
-      "description": "Time report by team",
+      "description": "Get time report by team",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -27312,7 +27312,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "harvest__time_report_by_client",
       "name": "Time Report by Client",
-      "description": "Time report by client",
+      "description": "Get time report by client",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -27377,7 +27377,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "harvest__time_report_by_task",
       "name": "Time Report by Task",
-      "description": "Time report by task",
+      "description": "Get time report by task",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -27442,7 +27442,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "harvest__invoice_report",
       "name": "Invoice Report",
-      "description": "Invoice report",
+      "description": "Get invoice report",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -27811,7 +27811,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "help-scout__update_tags",
       "name": "Update Tags",
-      "description": "Update tags",
+      "description": "Replace conversation tags",
       "requiresWrite": true,
       "endpoint": {
         "method": "PUT",
@@ -28426,7 +28426,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "hetzner__power_off_server",
       "name": "Power Off Server",
-      "description": "Power off server",
+      "description": "Hard power off server",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -28533,7 +28533,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "hetzner__shutdown_server",
       "name": "Shutdown Server",
-      "description": "Shutdown server",
+      "description": "Gracefully shut down server",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -28551,7 +28551,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "hetzner__reboot_server",
       "name": "Reboot Server",
-      "description": "Reboot server",
+      "description": "Gracefully reboot server",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -29479,13 +29479,13 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "huggingface__whoami",
       "name": "Who Am I",
-      "description": "Who am i",
+      "description": "Get account identity",
       "requiresWrite": false,
       "endpoint": { "method": "GET", "url": "https://huggingface.co/api/whoami-v2" },
     }, {
       "id": "huggingface__create_chat_completion",
       "name": "Create Chat Completion",
-      "description": "Create chat completion",
+      "description": "Generate chat completion",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -29994,7 +29994,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "ionos__reboot_server",
       "name": "Reboot Server",
-      "description": "Reboot server",
+      "description": "Hard reboot server",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -31549,7 +31549,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "langfuse__create_score",
       "name": "Create Score",
-      "description": "Create score",
+      "description": "Score trace or observation",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -32633,7 +32633,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "lexoffice__get_invoice_document",
       "name": "Get Invoice Document",
-      "description": "Get invoice document",
+      "description": "Render invoice PDF",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -33821,7 +33821,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "mistral__create_chat_completion",
       "name": "Create Chat Completion",
-      "description": "Create chat completion",
+      "description": "Generate chat completion",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -35243,7 +35243,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "moss__get_file_content",
       "name": "Get File Content",
-      "description": "Get file content",
+      "description": "Download receipt file",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -35393,7 +35393,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "neo4j__run_cypher_query",
       "name": "Run Cypher Query",
-      "description": "Run cypher query",
+      "description": "Run read-only Cypher query",
       "requiresWrite": false,
       "endpoint": {
         "method": "POST",
@@ -35430,7 +35430,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "neo4j__run_cypher_write",
       "name": "Run Cypher Write",
-      "description": "Run cypher write",
+      "description": "Run Cypher write",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -36285,7 +36285,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "north-data__power_search",
       "name": "Power Search",
-      "description": "Power search",
+      "description": "Search companies with filters",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -36331,7 +36331,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "north-data__suggest",
       "name": "Suggest Companies",
-      "description": "Suggest companies",
+      "description": "Suggest companies and people",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -37175,7 +37175,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "openai__create_response",
       "name": "Create Response",
-      "description": "Create response",
+      "description": "Generate model response",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -37205,7 +37205,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "openai__create_chat_completion",
       "name": "Create Chat Completion",
-      "description": "Create chat completion",
+      "description": "Generate chat completion",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -37468,7 +37468,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "openai__get_file_content",
       "name": "Get File Content",
-      "description": "Get file content",
+      "description": "Download file content",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -37622,7 +37622,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "openrouter__create_chat_completion",
       "name": "Create Chat Completion",
-      "description": "Create chat completion",
+      "description": "Generate chat completion",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -38015,7 +38015,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "outlook__update_folder",
       "name": "Update Folder",
-      "description": "Update folder",
+      "description": "Rename folder",
       "requiresWrite": true,
       "endpoint": {
         "method": "PATCH",
@@ -38205,7 +38205,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "outlook__categorize_email",
       "name": "Categorize Email",
-      "description": "Categorize email",
+      "description": "Replace email categories",
       "requiresWrite": true,
       "endpoint": {
         "method": "PATCH",
@@ -41064,7 +41064,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "perplexity__create_chat_completion",
       "name": "Create Chat Completion",
-      "description": "Create chat completion",
+      "description": "Generate chat completion",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -41100,7 +41100,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "perplexity__create_agent_response",
       "name": "Create Agent Response",
-      "description": "Create agent response",
+      "description": "Generate agent response",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -44717,7 +44717,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "quickbooks__create_purchase",
       "name": "Create Purchase",
-      "description": "Create purchase",
+      "description": "Record expense",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -48675,7 +48675,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "serpapi__google_search",
       "name": "Google Search",
-      "description": "Google search",
+      "description": "Search Google",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -48714,7 +48714,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "serpapi__google_news",
       "name": "Google News Search",
-      "description": "Google news search",
+      "description": "Search Google News",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -48737,7 +48737,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "serpapi__google_maps",
       "name": "Google Maps Search",
-      "description": "Google maps search",
+      "description": "Search Google Maps",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -48766,7 +48766,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "serpapi__google_shopping",
       "name": "Google Shopping Search",
-      "description": "Google shopping search",
+      "description": "Search Google Shopping",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -49117,7 +49117,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "servicenow__create_request",
       "name": "Create Request",
-      "description": "Create request",
+      "description": "Order catalog item",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -49613,7 +49613,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "sevdesk__book_invoice_amount",
       "name": "Book Invoice Amount",
-      "description": "Book invoice amount",
+      "description": "Record invoice payment",
       "requiresWrite": true,
       "endpoint": {
         "method": "PUT",
@@ -50257,7 +50257,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "sheets__batch_update",
       "name": "Batch Update",
-      "description": "Batch update",
+      "description": "Update spreadsheet structure and formatting",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -50358,7 +50358,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "sheets__delete_spreadsheet",
       "name": "Delete Spreadsheet",
-      "description": "Delete spreadsheet",
+      "description": "Trash spreadsheet",
       "requiresWrite": true,
       "endpoint": {
         "method": "PATCH",
@@ -52531,7 +52531,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "stability-ai__text_to_image",
       "name": "Text to Image",
-      "description": "Text to image",
+      "description": "Generate image",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -54112,7 +54112,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "tavily__map",
       "name": "Map",
-      "description": "Map",
+      "description": "List website URLs",
       "requiresWrite": false,
       "endpoint": {
         "method": "POST",
@@ -54518,7 +54518,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "telegram__get_me",
       "name": "Get Me",
-      "description": "Get me",
+      "description": "Get bot profile",
       "requiresWrite": false,
       "endpoint": { "method": "GET", "url": "https://api.telegram.org/bot{{auth.token}}/getMe" },
     }, {
@@ -54893,7 +54893,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "together-ai__create_chat_completion",
       "name": "Create Chat Completion",
-      "description": "Create chat completion",
+      "description": "Generate chat completion",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -55227,7 +55227,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "trusted-shops__create_review_invites",
       "name": "Create Review Invites",
-      "description": "Create review invites",
+      "description": "Schedule review invitations",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -55878,7 +55878,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "unstructured__partition_document",
       "name": "Partition Document",
-      "description": "Partition document",
+      "description": "Extract document elements",
       "requiresWrite": false,
       "endpoint": {
         "method": "POST",
@@ -56180,7 +56180,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "unzer__charge_authorization",
       "name": "Charge Authorization",
-      "description": "Charge authorization",
+      "description": "Capture authorized payment",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
