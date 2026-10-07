@@ -4271,3 +4271,28 @@ describe("resolveRelayableExecutionFailure", () => {
     assertEquals(relayed?.code, "PROVIDER_OUTPUT_TRUNCATED");
   });
 });
+
+describe("native provider authentication failures", () => {
+  it("projects private provider stream causes to curated SSE and replay errors", () => {
+    for (const status of [401, 403]) {
+      const cause = new ProviderRequestError({
+        provider: "anthropic",
+        status,
+        retryable: false,
+        message: "Private provider diagnostic <TOKEN>",
+      });
+      const error = createRuntimeProviderStreamFailure(cause);
+      assertEquals(resolveRuntimeExecutionErrorEvent(error), {
+        type: "error",
+        code: "agent-provider-auth-error",
+        error: "Agent provider authentication failed",
+      });
+      assertEquals(resolveRelayableExecutionFailure(error), {
+        code: "agent-provider-auth-error",
+        message: "Agent provider authentication failed",
+      });
+      assertEquals(Object.keys(error).includes("cause"), false);
+      assertEquals(cause.retryable, false);
+    }
+  });
+});

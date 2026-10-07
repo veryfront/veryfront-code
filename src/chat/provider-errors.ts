@@ -7,6 +7,7 @@ import {
 } from "#veryfront/provider/runtime-loader/provider-http.ts";
 import { readRuntimeCost } from "#veryfront/provider/runtime-usage.ts";
 import {
+  AGENT_PROVIDER_AUTH_ERROR,
   AI_PROVIDER_BILLING_ERROR,
   AI_PROVIDER_SPEND_LIMIT_ERROR,
   AI_PROVIDER_WORKSPACE_LIMIT_ERROR,
@@ -546,13 +547,19 @@ function parseProviderErrorInner(
     }
   }
 
-  if (isErrorRecord(error) && "lastError" in error) {
-    const nested = parseProviderErrorInner(error.lastError, seen, depth + 1);
-    if (
-      nested.code !== DEFAULT_EXTERNAL_SERVICE_ERROR.code ||
-      nested.message !== DEFAULT_EXTERNAL_SERVICE_ERROR.message
-    ) {
-      return nested;
+  if (error instanceof ProviderError && (error.status === 401 || error.status === 403)) {
+    return { ...AGENT_PROVIDER_AUTH_ERROR, status: error.status };
+  }
+
+  if (isErrorRecord(error)) {
+    for (const key of ["lastError", "cause"]) {
+      const nested = parseProviderErrorInner(getOwnDataProperty(error, key), seen, depth + 1);
+      if (
+        nested.code !== DEFAULT_EXTERNAL_SERVICE_ERROR.code ||
+        nested.message !== DEFAULT_EXTERNAL_SERVICE_ERROR.message
+      ) {
+        return nested;
+      }
     }
   }
 
