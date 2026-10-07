@@ -516,6 +516,7 @@ function extractMissingFallbackText(input: {
   const prefixCandidates = [
     existingTexts.join("\n\n").trim(),
     existingTexts.join("\n").trim(),
+    existingTexts.join(" ").trim(),
     existingTexts.join("").trim(),
   ].filter((candidate) => candidate.length > 0);
 

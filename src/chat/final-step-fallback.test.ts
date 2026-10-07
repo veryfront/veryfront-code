@@ -440,6 +440,22 @@ describe("chat/final-step-fallback", () => {
     ]);
   });
 
+  it("recognizes complete split text across space, newline, paragraph and contiguous boundaries", () => {
+    const parts = [{ type: "text" as const, text: "Hello" }, {
+      type: "text" as const,
+      text: "world",
+    }];
+    for (const separator of [" ", "\n", "\n\n", ""]) {
+      const step = { text: ["Hello", "world"].join(separator) };
+      assertEquals(appendMissingFallbackTextPart(parts, step), parts);
+      assertEquals(buildMissingFallbackTextChunks(parts, step, "m"), []);
+      assertEquals(appendMissingFallbackTextPart(parts, { text: step.text + " again" }), [
+        ...parts,
+        { type: "text", text: "again" },
+      ]);
+    }
+  });
+
   it("builds only missing tool chunks from steps and finalized parts", () => {
     const state = {
       startedToolCallIds: new Set(["tool-1"]),

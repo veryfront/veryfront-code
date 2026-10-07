@@ -472,6 +472,13 @@ Deno.test("partial text suffix precedes its following final-step tool in termina
     "dynamic-tool",
   ]);
   assertEquals(state.sanitizedFinalizedMessage.parts[1], { type: "text", text: "world" });
+  const repeated = buildFinalizedMessageState({
+    responseMessage: state.sanitizedFinalizedMessage,
+    isAborted: false,
+    finalStep,
+    incompleteToolCallsPartErrorText: "tool error",
+  });
+  assertEquals(repeated.sanitizedFinalizedMessage, state.sanitizedFinalizedMessage);
   const chunks = buildFinalizedMessageFallbackChunks({
     ...state,
     finalStep,
