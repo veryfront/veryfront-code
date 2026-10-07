@@ -1,5 +1,6 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { ensureError } from "#veryfront/errors";
+import { chainPrivatePromise, createPrivateDeferred } from "#veryfront/security/private-promise.ts";
 import { logger as baseLogger } from "#veryfront/utils";
 import { MAX_BATCH_SIZE } from "#veryfront/utils/constants/limits.ts";
 import type { CacheBackend, CacheReadOptions } from "./backend.ts";
@@ -33,12 +34,14 @@ const IntrinsicClearTimeout = globalThis.clearTimeout;
 const IntrinsicSetTimeout = globalThis.setTimeout;
 const ArrayPrototypePush = Array.prototype.push;
 const MapPrototypeDelete = Map.prototype.delete;
+const MapPrototypeForEach = Map.prototype.forEach;
 const MapPrototypeGet = Map.prototype.get;
 const MapPrototypeHas = Map.prototype.has;
 const MapPrototypeSet = Map.prototype.set;
 const MapSizeGetter = Object.getOwnPropertyDescriptor(Map.prototype, "size")!.get!;
 const NumberPrototypeToFixed = Number.prototype.toFixed;
 const PromiseAll = IntrinsicPromise.all;
+const PromiseResolve = IntrinsicPromise.resolve;
 const AsyncLocalStoragePrototype = AsyncLocalStorage.prototype;
 const AsyncLocalStorageEnterWith = AsyncLocalStoragePrototype.enterWith;
 const AsyncLocalStorageGetStore = AsyncLocalStoragePrototype.getStore;
@@ -116,6 +119,22 @@ function pushArray<T>(values: T[], value: T): void {
   IntrinsicReflectApply(ArrayPrototypePush, values, [value]);
 }
 
+function drainDetachedPendingReads(context: RequestCacheContext): void {
+  IntrinsicReflectApply(MapPrototypeForEach, context.pending, [
+    (pendingRead: Promise<string | null>) => {
+      void chainPrivatePromise(pendingRead, () => undefined, () => undefined);
+    },
+  ]);
+}
+
+function clearPendingRead(
+  ctx: RequestCacheContext,
+  key: string,
+  returnedPromise: Promise<string | null>,
+): void {
+  mapDeleteIfValue(ctx.pending, key, returnedPromise);
+}
+
 function formatRatio(value: number): string {
   return IntrinsicReflectApply(NumberPrototypeToFixed, value, [2]) as string;
 }
@@ -130,10 +149,18 @@ export function runWithCacheBatching<T>(fn: () => Promise<T>): Promise<T> {
     batchTimer: null,
   };
 
-  // Shared filesystem reads can outlive the request that queued them. Keep
-  // their scheduled flush alive so ending that request cannot strand reads
-  // or retain hosted configuration source-read admission indefinitely.
-  return runWithRequestCacheContext(context, async () => await fn());
+  return runWithRequestCacheContext(context, async () => {
+    try {
+      return await fn();
+    } finally {
+      // A cancelled request can stop waiting before its admitted reads settle.
+      // Keep their scheduled flush alive so underlying producers can retire.
+      drainDetachedPendingReads(context);
+      if (context.batchTimer && context.batchQueue.length === 0) {
+        clearBatchTimer(context.batchTimer);
+      }
+    }
+  });
 }
 
 export function getRequestCacheContext(): RequestCacheContext | undefined {
@@ -156,7 +183,7 @@ export function parseRequestCachedValue<T>(
   return value;
 }
 
-export async function getCachedWithBatching(
+export function getCachedWithBatching(
   backend: CacheBackend,
   key: string,
   options?: CacheReadOptions,
@@ -164,7 +191,11 @@ export async function getCachedWithBatching(
   const ctx = getRequestCacheContextStore();
   if (!ctx) return backend.get(key, options);
 
-  if (mapHas(ctx.cache, key)) return mapGet(ctx.cache, key) ?? null;
+  if (mapHas(ctx.cache, key)) {
+    return IntrinsicReflectApply(PromiseResolve, IntrinsicPromise, [
+      mapGet(ctx.cache, key) ?? null,
+    ]) as Promise<string | null>;
+  }
 
   // A caller joining a read another caller already started gets that read's
   // promise, and its own `options.onAuthority` is deliberately NOT attached to
@@ -174,41 +205,47 @@ export async function getCachedWithBatching(
   if (existingPending) return existingPending;
 
   const mutationVersion = mapGet(ctx.mutationVersions, key) ?? 0;
-  const backendPromise = new IntrinsicPromise<string | null>((resolve, reject) => {
-    pushArray(ctx.batchQueue, { key, resolve, reject, onAuthority: options?.onAuthority });
+  const completion = createPrivateDeferred<string | null>();
+  const backendPromise = completion.promise;
+  pushArray(ctx.batchQueue, {
+    key,
+    resolve: completion.resolve,
+    reject: completion.reject,
+    onAuthority: options?.onAuthority,
+  });
 
-    if (ctx.batchQueue.length >= MAX_BATCH_SIZE) {
-      void flushBatch(ctx, backend);
-      return;
-    }
-
-    if (ctx.batchTimer) return;
-
+  if (ctx.batchQueue.length >= MAX_BATCH_SIZE) {
+    void flushBatch(ctx, backend);
+  } else if (!ctx.batchTimer) {
     ctx.batchTimer = scheduleBatchFlush(() => {
       ctx.batchTimer = null;
       void flushBatch(ctx, backend);
     });
-  });
+  }
 
   // An explicit request-local set or delete supersedes a backend read that was
   // already in flight. Return that newer local view instead of letting the
   // pending result overwrite it when the backend eventually responds.
-  const promise = (async () => {
-    const result = await backendPromise;
+  const promise = chainPrivatePromise(backendPromise, (result) => {
     if ((mapGet(ctx.mutationVersions, key) ?? 0) !== mutationVersion) {
       return mapGet(ctx.cache, key) ?? null;
     }
     mapSet(ctx.cache, key, result);
     return result;
-  })();
+  });
 
-  mapSet(ctx.pending, key, promise);
-
-  try {
-    return await promise;
-  } finally {
-    mapDeleteIfValue(ctx.pending, key, promise);
-  }
+  const returnedPromise = chainPrivatePromise(promise, (value: string | null) => {
+    clearPendingRead(ctx, key, returnedPromise);
+    return value;
+  }, (error: unknown) => {
+    clearPendingRead(ctx, key, returnedPromise);
+    throw error;
+  });
+  // A read may reject before request teardown while its caller does other work.
+  // Observe it immediately without changing the promise returned to the caller.
+  void chainPrivatePromise(returnedPromise, () => undefined, () => undefined);
+  mapSet(ctx.pending, key, returnedPromise);
+  return returnedPromise;
 }
 
 async function flushBatch(ctx: RequestCacheContext, backend: CacheBackend): Promise<void> {
