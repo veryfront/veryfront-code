@@ -71,6 +71,29 @@ function tokenRepositories(job: YamlRecord): string[] {
   return repositories.trim().split("\n");
 }
 
+async function runCurrentRcGuard(
+  guard: YamlRecord,
+  prelude: string,
+  env: Record<string, string>,
+): Promise<{ output: Deno.CommandOutput; githubOutput: string }> {
+  return await withTempDir(async (stateDir) => {
+    const outputFile = `${stateDir}/github-output`;
+    const output = await new Deno.Command("bash", {
+      args: ["-c", prelude + String(guard.run)],
+      env: { ...env, GITHUB_OUTPUT: outputFile },
+      stdout: "piped",
+      stderr: "piped",
+    }).output();
+    let githubOutput = "";
+    try {
+      githubOutput = await Deno.readTextFile(outputFile);
+    } catch (error) {
+      if (!(error instanceof Deno.errors.NotFound)) throw error;
+    }
+    return { output, githubOutput };
+  });
+}
+
 async function runReleaseDependencyGate(
   overrides: Record<string, string> = {},
 ): Promise<Deno.CommandOutput> {
@@ -1113,6 +1136,8 @@ printf '%064d  %s\n' 0 "$1"
         GH_TOKEN: "${{ steps.release-app-token.outputs.token }}",
         VERSION: "${{ steps.version.outputs.version }}",
         IS_STABLE: "${{ needs.version-check.outputs.is_stable }}",
+        MAINTENANCE_RELEASE:
+          "${{ github.event_name == 'workflow_dispatch' && inputs.maintenance_release_number != '' }}",
       },
     );
     assert(
@@ -1666,19 +1691,17 @@ fi
       const jobs = await readJobs();
       const dispatch = asRecord(jobs["quality-gate-registry"], "dispatch release job");
       const guard = namedStep(dispatch, "Check current RC tag");
-      const output = await new Deno.Command("bash", {
-        args: ["-c", 'curl() { printf "%s\\n" "$CURRENT_TAGS"; }\n' + String(guard.run)],
-        env: {
+      const { output, githubOutput } = await runCurrentRcGuard(
+        guard,
+        'curl() { printf "%s\\n" "$CURRENT_TAGS"; }\n',
+        {
           IS_STABLE: stable,
           VERSION: candidate,
           CURRENT_TAGS: JSON.stringify(current ? { rc: current } : {}),
-          GITHUB_OUTPUT: "/dev/stdout",
         },
-        stdout: "piped",
-        stderr: "piped",
-      }).output();
+      );
       assertEquals(output.code, expectedCode, decoder.decode(output.stderr));
-      if (expectedOutput) assertStringIncludes(decoder.decode(output.stdout), expectedOutput);
+      if (expectedOutput) assertStringIncludes(githubOutput, expectedOutput);
     });
   }
 
@@ -1720,20 +1743,18 @@ fi
       const jobs = await readJobs();
       const dispatch = asRecord(jobs["quality-gate-registry"], "dispatch release job");
       const guard = namedStep(dispatch, "Check current RC tag");
-      const output = await new Deno.Command("bash", {
-        args: ["-c", 'curl() { printf "%s\\n" "$CURRENT_TAGS"; }\n' + String(guard.run)],
-        env: {
+      const { output, githubOutput } = await runCurrentRcGuard(
+        guard,
+        'curl() { printf "%s\\n" "$CURRENT_TAGS"; }\n',
+        {
           IS_STABLE: "false",
           VERSION: candidate,
           CURRENT_TAGS: JSON.stringify({ rc: current }),
-          GITHUB_OUTPUT: "/dev/stdout",
         },
-        stdout: "piped",
-        stderr: "piped",
-      }).output();
+      );
       assertEquals(output.code, expectedCode, decoder.decode(output.stderr));
-      if (expectedOutput) assertStringIncludes(decoder.decode(output.stdout), expectedOutput);
-      else assertEquals(decoder.decode(output.stdout), "");
+      if (expectedOutput) assertStringIncludes(githubOutput, expectedOutput);
+      else assertEquals(githubOutput, "");
     });
   }
 
@@ -1742,19 +1763,17 @@ fi
       const jobs = await readJobs();
       const dispatch = asRecord(jobs["quality-gate-registry"], "dispatch release job");
       const guard = namedStep(dispatch, "Check current RC tag");
-      const output = await new Deno.Command("bash", {
-        args: ["-c", 'curl() { printf "%s\\n" "$CURRENT_TAGS"; }\n' + String(guard.run)],
-        env: {
+      const { output, githubOutput } = await runCurrentRcGuard(
+        guard,
+        'curl() { printf "%s\\n" "$CURRENT_TAGS"; }\n',
+        {
           IS_STABLE: "false",
           VERSION: "0.1.2-rc.200",
           CURRENT_TAGS: tags,
-          GITHUB_OUTPUT: "/dev/stdout",
         },
-        stdout: "piped",
-        stderr: "piped",
-      }).output();
+      );
       assert(output.code !== 0);
-      assertEquals(decoder.decode(output.stdout), "");
+      assertEquals(githubOutput, "");
     });
   }
 
@@ -1763,18 +1782,16 @@ fi
     const dispatch = asRecord(jobs["quality-gate-registry"], "dispatch release job");
     const guard = namedStep(dispatch, "Check current RC tag");
     for (const stable of ["false", "true"]) {
-      const output = await new Deno.Command("bash", {
-        args: ["-c", "curl() { echo lookup >&2; return 22; }\n" + String(guard.run)],
-        env: {
+      const { output, githubOutput } = await runCurrentRcGuard(
+        guard,
+        "curl() { echo lookup >&2; return 22; }\n",
+        {
           IS_STABLE: stable,
           VERSION: stable === "true" ? "0.1.2" : "0.1.2-rc.200",
-          GITHUB_OUTPUT: "/dev/stdout",
         },
-        stdout: "piped",
-        stderr: "piped",
-      }).output();
+      );
       assertEquals(output.code, stable === "true" ? 0 : 22);
-      assertEquals(decoder.decode(output.stdout), stable === "true" ? "dispatch=true\n" : "");
+      assertEquals(githubOutput, stable === "true" ? "dispatch=true\n" : "");
       assertEquals(decoder.decode(output.stderr), stable === "true" ? "" : "lookup\n");
     }
   });

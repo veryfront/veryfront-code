@@ -59,8 +59,30 @@ jobs:
         id: maintenance
         env:
           RELEASE_NUMBER: ${{ inputs.maintenance_release_number }}
+          GH_TOKEN: ${{ github.token }}
         run: |
-          [[ "$RELEASE_NUMBER" =~ ^[1-9][0-9]*$ ]] || exit 1
+          if ! [[ "$RELEASE_NUMBER" =~ ^[1-9][0-9]*$ ]]; then
+            echo "::error::maintenance_release_number must be a positive integer RC build number." >&2
+            exit 1
+          fi
+          if ! [[ "${GITHUB_REF}" =~ ^refs/heads/maintenance/rc\.([1-9][0-9]*)$ ]]; then
+            echo "::error::Maintenance RC publication must be dispatched from a protected maintenance/rc.<number> branch." >&2
+            exit 1
+          fi
+          if [ "${BASH_REMATCH[1]}" != "$RELEASE_NUMBER" ]; then
+            echo "::error::maintenance_release_number must match the maintenance branch suffix." >&2
+            exit 1
+          fi
+          if [ "${GITHUB_REF_PROTECTED:-false}" != "true" ]; then
+            echo "::error::Maintenance source branch must be protected." >&2
+            exit 1
+          fi
+          branch_name="$(jq -rn --arg branch "${GITHUB_REF#refs/heads/}" '$branch | @uri')"
+          branch_identity="$(gh api "repos/${GITHUB_REPOSITORY}/branches/${branch_name}" --jq '{sha: .commit.sha, protected: .protected}')"
+          if ! jq -e --arg sha "${GITHUB_SHA}" '.protected == true and .sha == $sha' <<< "$branch_identity" >/dev/null; then
+            echo "::error::Maintenance source branch protection or exact commit differs." >&2
+            exit 1
+          fi
           echo "release_number=$RELEASE_NUMBER" >> "$GITHUB_OUTPUT"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         if: github.ref == 'refs/heads/main' && inputs.maintenance_release_number == ''
@@ -84,14 +106,14 @@ jobs:
             coverage-shard-5 coverage-shard-6 coverage-shard-7 coverage-shard-8 \
             coverage-native-executor coverage-integration-client
       - name: Record release number
-        if: github.ref == 'refs/heads/main' || (github.event_name == 'workflow_dispatch' && inputs.maintenance_release_number != '')
+        if: (github.ref == 'refs/heads/main' && inputs.maintenance_release_number == '') || (github.event_name == 'workflow_dispatch' && inputs.maintenance_release_number != '' && startsWith(github.ref, 'refs/heads/maintenance/rc.'))
         env:
           RELEASE_NUMBER: ${{ steps.maintenance.outputs.release_number || steps.decide.outputs.release_number }}
         run: |
           mkdir -p dist/release-number
           echo "${RELEASE_NUMBER}" > dist/release-number/release-number.txt
       - name: Upload release number
-        if: github.ref == 'refs/heads/main' || (github.event_name == 'workflow_dispatch' && inputs.maintenance_release_number != '')
+        if: (github.ref == 'refs/heads/main' && inputs.maintenance_release_number == '') || (github.event_name == 'workflow_dispatch' && inputs.maintenance_release_number != '' && startsWith(github.ref, 'refs/heads/maintenance/rc.'))
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: release-number-${{ steps.maintenance.outputs.release_number || steps.decide.outputs.release_number }}
@@ -1250,7 +1272,7 @@ jobs:
       - npm-compatibility-artifact
       - tests-sentry-runtime-packages
       - tests-windows-localhost
-    if: ${{ always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && (github.ref == 'refs/heads/main' || (github.event_name == 'workflow_dispatch' && inputs.maintenance_release_number != '')) }}
+    if: ${{ always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && ((github.ref == 'refs/heads/main' && inputs.maintenance_release_number == '') || (github.event_name == 'workflow_dispatch' && inputs.maintenance_release_number != '' && startsWith(github.ref, 'refs/heads/maintenance/rc.'))) }}
     steps:
       - name: Require release test results
         env:
@@ -1370,7 +1392,7 @@ jobs:
   # ============================================
 
   version-check:
-    if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && (github.ref == 'refs/heads/main' || (github.event_name == 'workflow_dispatch' && inputs.maintenance_release_number != '')) }}
+    if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && ((github.ref == 'refs/heads/main' && inputs.maintenance_release_number == '') || (github.event_name == 'workflow_dispatch' && inputs.maintenance_release_number != '' && startsWith(github.ref, 'refs/heads/maintenance/rc.'))) }}
     runs-on: ${{ (github.event_name == 'push' || github.event_name == 'merge_group') && 'ubuntu-latest-m' || 'ubuntu-latest' }}
     outputs:
       version: ${{ steps.check.outputs.version }}
@@ -1450,7 +1472,7 @@ jobs:
         run: bash scripts/build/smoke-proxy-memory.sh ./veryfront-proxy-linux-x64
 
   build-binaries:
-    if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && (github.ref == 'refs/heads/main' || (github.event_name == 'workflow_dispatch' && inputs.maintenance_release_number != '')) }}
+    if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && ((github.ref == 'refs/heads/main' && inputs.maintenance_release_number == '') || (github.event_name == 'workflow_dispatch' && inputs.maintenance_release_number != '' && startsWith(github.ref, 'refs/heads/maintenance/rc.'))) }}
     needs: [version-check, tested-run]
     runs-on: ${{ matrix.os }}
     continue-on-error: ${{ contains(matrix.os, 'windows') }}
@@ -1983,6 +2005,7 @@ jobs:
         env:
           VERSION: ${{ steps.version.outputs.version }}
           IS_STABLE: ${{ needs.version-check.outputs.is_stable }}
+          MAINTENANCE_RELEASE: ${{ github.event_name == 'workflow_dispatch' && inputs.maintenance_release_number != '' }}
           GH_TOKEN: ${{ steps.release-app-token.outputs.token }}
         run: |
           # Fixed workflow implementation, kept in parity with the tested helper.
@@ -2218,8 +2241,12 @@ jobs:
           ```'
             mode=--latest
           else
+            install_target="veryfront@rc"
+            if [[ "${MAINTENANCE_RELEASE}" == "true" ]]; then
+              install_target="veryfront@${VERSION}"
+            fi
             notes='```bash
-          npx veryfront@rc
+          npx '"${install_target}"'
           ```'
             mode=--prerelease
           fi

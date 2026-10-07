@@ -10,6 +10,11 @@ type YamlRecord = Record<string, unknown>;
 
 const TRUSTED =
   "(github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)";
+const MAIN = "github.ref == 'refs/heads/main'";
+const MAIN_WITHOUT_MAINTENANCE = `${MAIN} && inputs.maintenance_release_number == ''`;
+const MAINTENANCE =
+  "(github.event_name == 'workflow_dispatch' && inputs.maintenance_release_number != '' && startsWith(github.ref, 'refs/heads/maintenance/rc.'))";
+const MAIN_OR_MAINTENANCE = `(${MAIN_WITHOUT_MAINTENANCE}) || ${MAINTENANCE}`;
 const SKIP_ON_REUSE = "!cancelled() && needs.tested-run.outputs.reuse != 'true'";
 const REUSED_RUN_ID_EXPRESSION =
   "${{ needs.tested-run.outputs.reuse == 'true' && needs.tested-run.outputs.run_id || '' }}";
@@ -149,18 +154,27 @@ async function runReleaseGate(env: Record<string, string>): Promise<Deno.Command
 }
 
 describe("tested merge-queue run workflow", () => {
-  it("decides on main only, with read access to other runs", async () => {
+  it("decides tested runs on main while accepting explicit maintenance RC numbers", async () => {
     const tested = job(await readJobs(), "tested-run");
 
     assertEquals(tested.if, `\${{ ${TRUSTED} }}`);
-    for (const step of steps(tested, "tested-run")) {
-      const condition = step.name === "Validate maintenance release number"
-        ? "github.event_name == 'workflow_dispatch' && inputs.maintenance_release_number != ''"
-        : ["Record release number", "Upload release number"].includes(String(step.name))
-        ? "github.ref == 'refs/heads/main' || (github.event_name == 'workflow_dispatch' && inputs.maintenance_release_number != '')"
-        : "github.ref == 'refs/heads/main' && inputs.maintenance_release_number == ''";
-      assertEquals(step.if, condition, "reuse stays on main; maintenance only records its number");
-    }
+    assertEquals(
+      namedStep(tested, "Validate maintenance release number").if,
+      "github.event_name == 'workflow_dispatch' && inputs.maintenance_release_number != ''",
+    );
+    assertEquals(
+      namedStep(tested, "Find the tested merge-queue run").if,
+      MAIN_WITHOUT_MAINTENANCE,
+      "tested-run lookup works on main only for normal releases",
+    );
+    assertEquals(
+      namedStep(tested, "Record release number").if,
+      MAIN_OR_MAINTENANCE,
+    );
+    assertEquals(
+      namedStep(tested, "Upload release number").if,
+      MAIN_OR_MAINTENANCE,
+    );
     assertEquals(tested.permissions, { actions: "read", contents: "read" });
     assertEquals(tested.outputs, {
       reuse: "${{ steps.decide.outputs.reuse || 'false' }}",
@@ -172,6 +186,105 @@ describe("tested merge-queue run workflow", () => {
       String(namedStep(tested, "Find the tested merge-queue run").run),
       "scripts/ci/tested-merge-queue-run.ts",
     );
+  });
+
+  it("rejects maintenance RC publication from untrusted refs before recording a release number", async () => {
+    const tested = job(await readJobs(), "tested-run");
+    const validation = String(namedStep(tested, "Validate maintenance release number").run);
+    for (
+      const [githubRef, message] of [
+        [
+          "refs/heads/main",
+          "Maintenance RC publication must be dispatched from a protected maintenance/rc.<number> branch.",
+        ],
+        [
+          "refs/heads/fix/maintenance-rc-publication",
+          "Maintenance RC publication must be dispatched from a protected maintenance/rc.<number> branch.",
+        ],
+        [
+          "refs/heads/maintenance/rc.21995",
+          "maintenance_release_number must match the maintenance branch suffix.",
+        ],
+      ] as const
+    ) {
+      const output = await new Deno.Command("bash", {
+        args: ["-c", validation],
+        env: {
+          GITHUB_OUTPUT: "/dev/null",
+          GITHUB_REF: githubRef,
+          RELEASE_NUMBER: "21996",
+        },
+        stdout: "piped",
+        stderr: "piped",
+      }).output();
+
+      assertEquals(output.code, 1, githubRef);
+      assertStringIncludes(new TextDecoder().decode(output.stderr), message);
+    }
+  });
+
+  it("rejects unprotected, moved or unreadable maintenance branches before recording a release", async () => {
+    const tested = job(await readJobs(), "tested-run");
+    const validation = String(namedStep(tested, "Validate maintenance release number").run);
+    for (
+      const [protectedRef, identity, failRead] of [
+        ["false", '{"sha":"expected-head","protected":true}', "false"],
+        ["true", '{"sha":"expected-head","protected":false}', "false"],
+        ["true", '{"sha":"different-head","protected":true}', "false"],
+        ["true", '{"sha":"expected-head","protected":true}', "true"],
+      ]
+    ) {
+      const output = await new Deno.Command("bash", {
+        args: [
+          "-c",
+          'gh() { if [ "$FAIL_READ" = true ]; then return 1; fi; echo "$BRANCH_IDENTITY"; }\n' +
+          validation,
+        ],
+        env: {
+          GITHUB_OUTPUT: "/dev/null",
+          GITHUB_REF: "refs/heads/maintenance/rc.21996",
+          RELEASE_NUMBER: "21996",
+          GITHUB_REF_PROTECTED: protectedRef,
+          GITHUB_REPOSITORY: "veryfront/test",
+          GITHUB_SHA: "expected-head",
+          BRANCH_IDENTITY: identity,
+          FAIL_READ: failRead,
+        },
+        stdout: "piped",
+        stderr: "piped",
+      }).output();
+      assertEquals(output.code === 0, false);
+      assertEquals(new TextDecoder().decode(output.stdout).includes("release_number="), false);
+    }
+  });
+
+  it("accepts maintenance RC publication only from the matching maintenance branch", async () => {
+    const tested = job(await readJobs(), "tested-run");
+    const validation = String(namedStep(tested, "Validate maintenance release number").run);
+    const outputPath = await Deno.makeTempFile();
+    try {
+      const output = await new Deno.Command("bash", {
+        args: [
+          "-c",
+          'gh() { echo "{\\"sha\\":\\"expected-head\\",\\"protected\\":true}"; }\n' + validation,
+        ],
+        env: {
+          GITHUB_REF_PROTECTED: "true",
+          GITHUB_REPOSITORY: "veryfront/test",
+          GITHUB_SHA: "expected-head",
+          GITHUB_OUTPUT: outputPath,
+          GITHUB_REF: "refs/heads/maintenance/rc.21996",
+          RELEASE_NUMBER: "21996",
+        },
+        stdout: "piped",
+        stderr: "piped",
+      }).output();
+
+      assertEquals(output.code, 0, new TextDecoder().decode(output.stderr));
+      assertEquals(await Deno.readTextFile(outputPath), "release_number=21996\n");
+    } finally {
+      await Deno.remove(outputPath);
+    }
   });
 
   it("requires every artifact a reused run consumes", async () => {
@@ -348,7 +461,7 @@ describe("tested merge-queue run workflow", () => {
     assertEquals(gate.name, "quality gate (release)");
     assertEquals(
       gate.if,
-      `\${{ always() && ${TRUSTED} && (github.ref == 'refs/heads/main' || (github.event_name == 'workflow_dispatch' && inputs.maintenance_release_number != '')) }}`,
+      `\${{ always() && ${TRUSTED} && (${MAIN_OR_MAINTENANCE}) }}`,
     );
     assertEquals(
       asRecord(namedStep(gate, "Require release test results").env, "env").REUSED_RUN_ID,
