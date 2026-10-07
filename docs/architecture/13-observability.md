@@ -52,7 +52,9 @@ eval report payloads.
 The OpenTelemetry extension pins the experimental SDK packages to 0.221 and
 the stable SDK packages to 2.10. Keep this family aligned when updating exporters
 and automatic instrumentation. Align test and transport-fixture imports with this
-family so qualification exercises the same SDK as the shipped extension.
+family so qualification exercises the same SDK as the shipped extension. The
+guarded OTLP transport fixture checks the SDK delegate signature with the frozen
+lock before exercising real collector delivery and shutdown.
 Regenerate both the workspace lock and the proxy
 lock with the repository's pinned Deno version, then verify exporter startup and
 the published dependency graph. Lock refreshes must retain the explicit CI warm-up

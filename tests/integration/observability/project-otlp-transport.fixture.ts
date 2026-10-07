@@ -5,9 +5,13 @@ import { BasicTracerProvider, BatchSpanProcessor } from "npm:@opentelemetry/sdk-
 import { resourceFromAttributes } from "npm:@opentelemetry/resources@2.10.0";
 import {
   createOtlpNetworkExportDelegate,
+  ExporterMetrics,
   OTLPExporterBase,
 } from "npm:@opentelemetry/otlp-exporter-base@0.221.0";
-import { JsonTraceSerializer } from "npm:@opentelemetry/otlp-transformer@0.221.0";
+import {
+  JsonTraceSerializer,
+  TraceExporterMetricsHelper,
+} from "npm:@opentelemetry/otlp-transformer@0.221.0";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { createProjectOtlpTransport } from "#veryfront/observability/tracing/project-otlp-transport.ts";
 
@@ -44,6 +48,13 @@ const transport = createProjectOtlpTransport({
 const exporter = new OTLPExporterBase(createOtlpNetworkExportDelegate(
   { timeoutMillis: 1000, concurrencyLimit: 1, compression: "none" },
   JsonTraceSerializer,
+  new ExporterMetrics({
+    componentType: "otlp_http_span_exporter",
+    metricsHelper: TraceExporterMetricsHelper,
+    url: `${origin}/v1/traces`,
+    meterProvider: undefined,
+    responseAttributesFromError: () => ({}),
+  }),
   transport,
 ));
 const provider = new BasicTracerProvider({
