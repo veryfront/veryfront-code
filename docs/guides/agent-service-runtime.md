@@ -238,8 +238,18 @@ or npm dist tags are rejected during startup.
 import { startNodeVeryfrontCloudAgentService } from "veryfront/agent";
 
 const deploymentArtifact = process.env.VERYFRONT_DEPLOYMENT_ARTIFACT ?? null;
+const environmentName = process.env.DEPLOYED_ENVIRONMENT_NAME;
+const releaseId = process.env.DEPLOYED_RELEASE_ID;
+if (!environmentName || !releaseId) {
+  throw new Error("Missing immutable agent service deployment identity");
+}
 
 await startNodeVeryfrontCloudAgentService({
+  runtimeSource: {
+    type: "environment",
+    environmentName,
+    releaseId,
+  },
   deploymentArtifact,
 });
 ```

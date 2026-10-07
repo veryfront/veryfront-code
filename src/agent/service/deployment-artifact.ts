@@ -1,4 +1,6 @@
 const DEPLOYMENT_ARTIFACT_PATTERN = /^\d{14}-[a-f0-9]{12,40}$/;
+const RegExpPrototypeExec = RegExp.prototype.exec;
+const ReflectApply = Reflect.apply;
 const getOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 const objectHasOwn = Object.hasOwn;
 const NativeTypeError = TypeError;
@@ -18,7 +20,7 @@ export function normalizeDeploymentArtifact(deploymentArtifact: unknown): string
   if (deploymentArtifact === undefined || deploymentArtifact === null) return null;
   if (
     typeof deploymentArtifact !== "string" ||
-    !DEPLOYMENT_ARTIFACT_PATTERN.test(deploymentArtifact)
+    ReflectApply(RegExpPrototypeExec, DEPLOYMENT_ARTIFACT_PATTERN, [deploymentArtifact]) === null
   ) {
     throw new NativeTypeError(
       "Agent service deploymentArtifact must be null or an immutable artifact tag formatted as yyyymmddHHMMSS-12-to-40-lowercase-hex.",

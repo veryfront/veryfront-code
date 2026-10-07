@@ -1,6 +1,100 @@
 import { assertEquals, assertExists, assertThrows } from "#veryfront/testing/assert.ts";
 import { createHostedAgentServiceRouteSet } from "#veryfront/agent/service/routes.ts";
 import { createDetachedRunTracker } from "#veryfront/agent/service/detached-run-tracker.ts";
+import { normalizeDeploymentArtifact } from "#veryfront/agent/service/deployment-artifact.ts";
+
+Deno.test("agent deployment artifact validation uses captured regexp intrinsics", () => {
+  const artifact = "20261007183045-a1b2c3d4e5f6";
+  const originalRegExpTest = Object.getOwnPropertyDescriptor(RegExp.prototype, "test");
+  const originalRegExpExec = Object.getOwnPropertyDescriptor(RegExp.prototype, "exec");
+  let prototypeCallbacks = 0;
+  let testSpoofedLatestError: unknown;
+  let execSpoofedLatestError: unknown;
+  let falseResult: string | null | undefined;
+  let throwResult: string | null | undefined;
+  try {
+    Object.defineProperty(RegExp.prototype, "test", {
+      value() {
+        prototypeCallbacks += 1;
+        return true;
+      },
+      configurable: true,
+      writable: true,
+    });
+    try {
+      normalizeDeploymentArtifact("latest");
+    } catch (error) {
+      testSpoofedLatestError = error;
+    }
+
+    Object.defineProperty(RegExp.prototype, "exec", {
+      value() {
+        prototypeCallbacks += 1;
+        return ["latest"];
+      },
+      configurable: true,
+      writable: true,
+    });
+    try {
+      normalizeDeploymentArtifact("latest");
+    } catch (error) {
+      execSpoofedLatestError = error;
+    }
+
+    Object.defineProperty(RegExp.prototype, "test", {
+      value() {
+        prototypeCallbacks += 1;
+        return false;
+      },
+      configurable: true,
+      writable: true,
+    });
+    Object.defineProperty(RegExp.prototype, "exec", {
+      value() {
+        prototypeCallbacks += 1;
+        return null;
+      },
+      configurable: true,
+      writable: true,
+    });
+    falseResult = normalizeDeploymentArtifact(artifact);
+
+    Object.defineProperty(RegExp.prototype, "test", {
+      value() {
+        prototypeCallbacks += 1;
+        throw new Error("replaced RegExp.prototype.test reached");
+      },
+      configurable: true,
+      writable: true,
+    });
+    Object.defineProperty(RegExp.prototype, "exec", {
+      value() {
+        prototypeCallbacks += 1;
+        throw new Error("replaced RegExp.prototype.exec reached");
+      },
+      configurable: true,
+      writable: true,
+    });
+    throwResult = normalizeDeploymentArtifact(artifact);
+  } finally {
+    if (originalRegExpExec) {
+      Object.defineProperty(RegExp.prototype, "exec", originalRegExpExec);
+    } else {
+      Reflect.deleteProperty(RegExp.prototype, "exec");
+    }
+    if (originalRegExpTest) {
+      Object.defineProperty(RegExp.prototype, "test", originalRegExpTest);
+    } else {
+      Reflect.deleteProperty(RegExp.prototype, "test");
+    }
+  }
+
+  assertEquals(testSpoofedLatestError instanceof TypeError, true);
+  assertEquals(execSpoofedLatestError instanceof TypeError, true);
+  assertEquals(falseResult, artifact);
+  assertEquals(throwResult, artifact);
+  assertEquals(prototypeCallbacks, 0);
+});
 
 Deno.test("agent service version route ignores inherited response status and JSON hooks", async () => {
   const artifact = "20261007183045-a1b2c3d4e5f6";
