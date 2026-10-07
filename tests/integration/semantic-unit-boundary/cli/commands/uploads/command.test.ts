@@ -18,6 +18,7 @@ import {
 } from "#veryfront/testing/deno-compat.ts";
 import { installMockFetch, restoreMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { createFileSystem } from "veryfront/platform";
+import { writeStreamExclusive } from "#veryfront/platform/compat/fs.ts";
 import { VeryfrontError } from "veryfront/errors";
 import {
   buildUploadCreateUrl,
@@ -34,6 +35,12 @@ import type { ApiClient } from "../../../../../../cli/shared/config.ts";
 import type { ParsedArgs } from "../../../../../../cli/shared/types.ts";
 
 const denoOnlyIt = typeof Deno === "undefined" ? it.skip : it;
+const nodeOnlyIt =
+  typeof Deno === "undefined" &&
+    typeof process !== "undefined" &&
+    Boolean(process.versions?.node)
+    ? it
+    : it.skip;
 
 function createMockClient(overrides: {
   getStream?: (path: string) => Promise<ReadableStream<Uint8Array>>;
@@ -165,6 +172,48 @@ describe("uploadsCommand", () => {
 });
 
 describe("downloadUploadToFile", () => {
+  it("closes private download streams through captured promise intrinsics", async () => {
+    const nativeThen = Promise.prototype.then;
+    let hooked = false;
+    const source = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new Uint8Array([1]));
+        controller.close();
+      },
+    });
+    const writing = writeStreamExclusive(
+      source,
+      undefined,
+      async () => ({
+        write(chunk: Uint8Array) {
+          return Promise.resolve(chunk.byteLength);
+        },
+        close() {
+          Promise.prototype.then = function () {
+            hooked = true;
+            Promise.prototype.then = nativeThen;
+            return new Promise(() => {});
+          };
+        },
+      }),
+      async () => {},
+    );
+    let timeoutReached!: () => void;
+    const timeoutPromise = new Promise<"timeout">((resolve) => {
+      timeoutReached = () => resolve("timeout");
+    });
+    const timeout = setTimeout(() => timeoutReached(), 30);
+    try {
+      const result = await Promise.race([writing, timeoutPromise]);
+      assertEquals(result, 1);
+      assertEquals(hooked, false);
+      assertEquals(source.locked, false);
+    } finally {
+      clearTimeout(timeout);
+      Promise.prototype.then = nativeThen;
+    }
+  });
+
   it("promotes and cleans private downloads without project filesystem hooks", async () => {
     const tempDir = await makeTempDir();
     const nodeFs = (await import("node:fs")).default;
@@ -352,6 +401,134 @@ try {
         );
       } finally {
         await remove(script);
+      }
+    },
+  );
+  nodeOnlyIt(
+    "keeps late-imported download bytes behind the host atomic stream capability on Node",
+    async () => {
+      const tempDir = await makeTempDir();
+      const script = `${tempDir}/late-import-probe.mjs`;
+      try {
+        await writeTextFile(
+          script,
+          `import { createFileSystem } from "veryfront/platform";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+const fs = createFileSystem();
+const prototype = Object.getPrototypeOf(fs);
+const streamDescriptor = Object.getOwnPropertyDescriptor(prototype, "writeFileStream");
+const streamAtomicDescriptor = Object.getOwnPropertyDescriptor(prototype, "writeFileStreamAtomic");
+const originalRandomUUID = crypto.randomUUID;
+const originalRegExpExec = RegExp.prototype.exec;
+const nodeFs = process.getBuiltinModule("node:fs");
+const originalNodeOperations = {
+  open: nodeFs.open,
+  write: nodeFs.write,
+  close: nodeFs.close,
+  unlink: nodeFs.unlink,
+  rename: nodeFs.rename,
+};
+let interceptedPrivateBytes = false;
+let interceptedNonce = false;
+let interceptedNative = false;
+const interceptStream = async (path, source, signal) => {
+  const [privateCopy, forwarded] = source.tee();
+  interceptedPrivateBytes = await new Response(privateCopy).text() === "PRIVATE_PROBE_BYTES";
+  if (!streamDescriptor) throw new Error("writeFileStream descriptor unavailable");
+  return Reflect.apply(streamDescriptor.value, fs, [path, forwarded, signal]);
+};
+const interceptNative = (name) =>
+  function (...args) {
+    interceptedNative = true;
+    return Reflect.apply(originalNodeOperations[name], this, args);
+  };
+try {
+  if (streamDescriptor) {
+    Object.defineProperty(prototype, "writeFileStream", {
+      ...streamDescriptor,
+      value: interceptStream,
+    });
+  }
+  Object.defineProperty(prototype, "writeFileStreamAtomic", {
+    configurable: true,
+    value: interceptStream,
+  });
+  crypto.randomUUID = () => "00000000-0000-4000-8000-000000000000";
+  RegExp.prototype.exec = function (input) {
+    if (input.length === 36) interceptedNonce = true;
+    return Reflect.apply(originalRegExpExec, this, [input]);
+  };
+  for (const name of Object.keys(originalNodeOperations)) {
+    nodeFs[name] = interceptNative(name);
+  }
+  const { downloadUploadToFile } = await import("#cli/commands/uploads/command");
+  crypto.randomUUID = () => {
+    interceptedNonce = true;
+    return "00000000-0000-4000-8000-000000000000";
+  };
+  const output = await mkdtemp(join(tmpdir(), "vf-upload-node-late-import-"));
+  try {
+    const result = await downloadUploadToFile({
+      getStream: () => Promise.resolve(new Response("PRIVATE_PROBE_BYTES").body),
+    }, "probe-project", "probe.txt", output);
+    const text = await readFile(result.localPath, "utf8");
+    if (text !== "PRIVATE_PROBE_BYTES") throw new Error(\`unexpected output: \${text}\`);
+    if (interceptedPrivateBytes) throw new Error("project stream hook observed private bytes");
+    if (interceptedNonce) throw new Error("project nonce hook observed private path nonce");
+    if (interceptedNative) throw new Error("project native hook observed private fs operation");
+    console.log(JSON.stringify({ interceptedPrivateBytes, interceptedNonce, interceptedNative }));
+  } finally {
+    await rm(output, { recursive: true, force: true });
+  }
+} finally {
+  if (streamDescriptor) Object.defineProperty(prototype, "writeFileStream", streamDescriptor);
+  if (streamAtomicDescriptor) {
+    Object.defineProperty(prototype, "writeFileStreamAtomic", streamAtomicDescriptor);
+  } else {
+    delete prototype.writeFileStreamAtomic;
+  }
+  crypto.randomUUID = originalRandomUUID;
+  RegExp.prototype.exec = originalRegExpExec;
+  for (const [name, method] of Object.entries(originalNodeOperations)) {
+    nodeFs[name] = method;
+  }
+}
+`,
+        );
+        const childProcess = await import("node:child_process");
+        const currentProcess = globalThis.process;
+        const result = await new Promise<{
+          code: number | null;
+          stdout: string;
+          stderr: string;
+        }>((resolve, reject) => {
+          const child = childProcess.spawn(currentProcess.execPath, [
+            "--import",
+            "./tests/node/resolver.mjs",
+            script,
+          ], {
+            cwd: currentProcess.cwd(),
+            stdio: ["ignore", "pipe", "pipe"],
+          });
+          let stdout = "";
+          let stderr = "";
+          child.stdout.setEncoding("utf8");
+          child.stderr.setEncoding("utf8");
+          child.stdout.on("data", (chunk: string) => stdout += chunk);
+          child.stderr.on("data", (chunk: string) => stderr += chunk);
+          child.on("error", reject);
+          child.on("exit", (code) => resolve({ code, stdout, stderr }));
+        });
+        assertEquals(result.code, 0, `${result.stdout}${result.stderr}`);
+        assertStringIncludes(
+          result.stdout,
+          '{"interceptedPrivateBytes":false,"interceptedNonce":false,"interceptedNative":false}',
+        );
+      } finally {
+        await remove(tempDir, { recursive: true });
       }
     },
   );

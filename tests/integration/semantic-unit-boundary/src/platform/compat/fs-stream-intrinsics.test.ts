@@ -168,48 +168,6 @@ describe("filesystem stream intrinsic boundary", () => {
     }
   });
 
-  it("closes through captured promise intrinsics", async () => {
-    const nativeThen = Promise.prototype.then;
-    let hooked = false;
-    const source = new ReadableStream<Uint8Array>({
-      start(controller) {
-        controller.enqueue(new Uint8Array([1]));
-        controller.close();
-      },
-    });
-    const writing = writeStreamExclusive(
-      source,
-      undefined,
-      async () => ({
-        write(chunk: Uint8Array) {
-          return Promise.resolve(chunk.byteLength);
-        },
-        close() {
-          Promise.prototype.then = function () {
-            hooked = true;
-            Promise.prototype.then = nativeThen;
-            return new Promise(() => {});
-          };
-        },
-      }),
-      async () => {},
-    );
-    let timeoutReached!: () => void;
-    const timeoutPromise = new Promise<"timeout">((resolve) => {
-      timeoutReached = () => resolve("timeout");
-    });
-    const timeout = setTimeout(() => timeoutReached(), 30);
-    try {
-      const result = await Promise.race([writing, timeoutPromise]);
-      assertEquals(result, 1);
-      assertEquals(hooked, false);
-      assertEquals(source.locked, false);
-    } finally {
-      clearTimeout(timeout);
-      Promise.prototype.then = nativeThen;
-    }
-  });
-
   it("cancels the source when opening fails before piping", async () => {
     let cancelled = false;
     const source = new ReadableStream<Uint8Array>({

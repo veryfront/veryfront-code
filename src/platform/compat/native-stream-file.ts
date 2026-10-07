@@ -14,6 +14,7 @@ const freeze = Object.freeze;
 const getOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 const hasOwnProperty = Object.prototype.hasOwnProperty;
 const NativePromise = Promise;
+const NativePromiseThen = Promise.prototype.then;
 const deno = isDeno ? Deno : undefined;
 const denoOpen = deno?.open;
 const denoRemove = deno?.remove;
@@ -64,6 +65,9 @@ function protectPromise<T>(promise: Promise<T>): Promise<T> {
   const descriptor = createObject(null) as PropertyDescriptor;
   descriptor.value = NativePromise;
   void defineProperty(promise, "constructor", descriptor);
+  const thenDescriptor = createObject(null) as PropertyDescriptor;
+  thenDescriptor.value = NativePromiseThen;
+  void defineProperty(promise, "then", thenDescriptor);
   return promise;
 }
 

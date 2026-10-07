@@ -189,6 +189,7 @@ async function writeStreamAtomic(
 
 function bindNativePromiseConstructor<T>(promise: Promise<T>): Promise<T> {
   void defineProperty(promise, "constructor", createDataDescriptor(NativePromise, false));
+  void defineProperty(promise, "then", createDataDescriptor(NativePromiseThen, false));
   return promise;
 }
 
