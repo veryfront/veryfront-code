@@ -13,7 +13,7 @@ import {
   createOriginBoundOutboundFetch,
   guardedExactHttpLoopbackOutboundFetch,
 } from "#veryfront/security/http/outbound-fetch.ts";
-import type { SandboxOptions } from "./types.ts";
+import type { SandboxClientOptions } from "./types.ts";
 
 const NativeURL = URL;
 const applyIntrinsic = Reflect.apply;
@@ -53,7 +53,7 @@ export function fetchSandboxRuntimeUrl(url: string, init?: RequestInit): Promise
   return createHostInternalOriginBoundOutboundFetch(url)(url, init);
 }
 
-export function resolveSandboxApiUrl(options: SandboxOptions = {}): string {
+export function resolveSandboxApiUrl(options: SandboxClientOptions = {}): string {
   const url = options.apiUrl || getCurrentVeryfrontCloudContext()?.apiBaseUrl ||
     getHostEnv("VERYFRONT_API_URL");
   if (url) return url;
@@ -66,7 +66,7 @@ export function resolveSandboxApiUrl(options: SandboxOptions = {}): string {
   });
 }
 
-export function resolveSandboxAuthToken(options: SandboxOptions = {}): string {
+export function resolveSandboxAuthToken(options: SandboxClientOptions = {}): string {
   const explicitToken = trimString(options.authToken);
   if (explicitToken) return explicitToken;
 

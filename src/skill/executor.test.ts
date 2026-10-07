@@ -5,6 +5,7 @@ import { deleteEnv, setEnv } from "#veryfront/platform/compat/process.ts";
 import { isDeno } from "#veryfront/platform/compat/runtime.ts";
 import { runWithRequestContext } from "#veryfront/platform/adapters/fs/veryfront/multi-project-adapter.ts";
 import {
+  commandResponse,
   type FetchCall,
   installMockFetch as createSandboxFetchMock,
   jsonResponse,
@@ -376,8 +377,17 @@ describe("src/skill/executor", () => {
           endpoint: "https://sandbox.example.com",
           status: "running",
         }),
-        textResponse(""),
-        ndjsonResponse([{ type: "exit", exitCode: 0 }]),
+        (_input, init) => {
+          const body = JSON.parse(String(init?.body)) as { files: Array<{ path: string }> };
+          return jsonResponse({
+            results: body.files.map((file) => ({
+              path: file.path,
+              status: "written",
+              error: null,
+            })),
+          });
+        },
+        commandResponse([{ type: "exit", exitCode: 0 }]),
         ndjsonResponse([
           { type: "stdout", data: "cloud-snapshot\n" },
           { type: "exit", exitCode: 0 },
@@ -398,6 +408,7 @@ describe("src/skill/executor", () => {
       });
 
       assertEquals(result, { stdout: "cloud-snapshot\n", stderr: "", exitCode: 0 });
+      assertEquals(JSON.parse(String(fetchCalls[3]!.init?.body)).timeout_seconds, 60);
       const body = JSON.parse(fetchCalls[1]!.init?.body?.toString() ?? "{}") as {
         files: Array<{ path: string; content: string }>;
       };
@@ -417,10 +428,19 @@ describe("src/skill/executor", () => {
           endpoint: "https://sandbox.example.com",
           status: "running",
         }),
-        textResponse(""),
-        ndjsonResponse([{ type: "exit", exitCode: 0 }]),
+        (_input, init) => {
+          const body = JSON.parse(String(init?.body)) as { files: Array<{ path: string }> };
+          return jsonResponse({
+            results: body.files.map((file) => ({
+              path: file.path,
+              status: "written",
+              error: null,
+            })),
+          });
+        },
+        commandResponse([{ type: "exit", exitCode: 0 }]),
         pendingCommand.response,
-        ndjsonResponse([{ type: "exit", exitCode: 0 }]),
+        commandResponse([{ type: "exit", exitCode: 0 }]),
         textResponse(""),
       ]);
 

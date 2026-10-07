@@ -31,7 +31,7 @@ export function createBashTool(input: CreateSandboxShellToolsInput): { tools: To
         command: z.string().describe("The bash command to execute"),
       }),
       execute: async ({ command }) => {
-        const result = await sandbox.executeCommand(
+        const result = await sandbox.runCommand(
           `cd "${destination}" && ${command}`,
         ) as { stdout: string; stderr: string; exitCode: number };
         return {

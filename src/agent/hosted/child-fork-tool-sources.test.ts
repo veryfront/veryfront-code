@@ -122,7 +122,7 @@ function createSandboxToolsResult(input: {
     sandbox: {
       ensure: () => Promise.resolve(),
       close: () => Promise.resolve(),
-      executeCommand: () => Promise.resolve({ stdout: "", stderr: "", exitCode: 0 }),
+      runCommand: () => Promise.resolve({ stdout: "", stderr: "", exitCode: 0 }),
       startBackgroundCommand: () => Promise.resolve(commandPayload("running")),
       getBackgroundCommand: () => Promise.resolve(commandPayload("completed")),
       getBackgroundCommandOutput: () => Promise.resolve(commandPayloadOutput()),

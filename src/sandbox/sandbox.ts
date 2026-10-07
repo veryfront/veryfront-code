@@ -1,29 +1,46 @@
 /**
- * Sandbox client SDK for ephemeral compute environments.
+ * Sandbox client for isolated workspaces.
  *
- * Implements the bash-tool Sandbox interface for seamless integration
- * with AI agent tool loops.
+ * Runs commands and manages files in temporary or persistent sandboxes.
  *
  * @module
  */
 
+import {
+  assertSandboxFilesWritten,
+  parseSandboxBackgroundCommand,
+  parseSandboxCapabilities,
+  parseSandboxCommandResult,
+  parseSandboxDetails,
+  parseSandboxEnvironment,
+  parseSandboxFileList,
+  parseSandboxRuntimeCheck,
+  readSandboxCommandPages,
+} from "./response.ts";
+import { buildSandboxCommandOptions, buildSandboxCreateInput } from "./create-input.ts";
 import { INITIALIZATION_ERROR, REQUEST_ERROR, TIMEOUT_ERROR } from "#veryfront/errors";
 import { LazySandbox, type LazySandboxOptions } from "./lazy-sandbox.ts";
 import { fetchSandboxUrl, resolveSandboxApiUrl, resolveSandboxAuthToken } from "./config.ts";
 import { readSandboxFileContent, sandboxSessionRoute } from "./proxy-routes.ts";
-import { readExecStreamEvents } from "./exec-stream.ts";
+import { readCommandStreamEvents } from "./exec-stream.ts";
 import type {
   BackgroundCommand,
-  BackgroundCommandHeartbeatStatus,
   BackgroundCommandOutput,
-  BackgroundCommandStatus,
-  ExecOptions,
-  ExecResult,
-  ExecStreamEvent,
+  CommandOptions,
+  CommandResult,
+  CommandStreamEvent,
   SandboxAttachment,
+  SandboxCapabilities,
+  SandboxClientOptions,
+  SandboxDetails,
+  SandboxEnvironment,
+  SandboxFileListOptions,
+  SandboxFileListResult,
+  SandboxLifetimeInput,
   SandboxListOptions,
   SandboxListResult,
   SandboxOptions,
+  SandboxRuntimeCheck,
 } from "./types.ts";
 export { resolveSandboxApiUrl, resolveSandboxAuthToken } from "./config.ts";
 export type {
@@ -31,14 +48,26 @@ export type {
   BackgroundCommandHeartbeatStatus,
   BackgroundCommandOutput,
   BackgroundCommandStatus,
-  ExecOptions,
-  ExecResult,
-  ExecStreamEvent,
+  CommandOptions,
+  CommandResult,
+  CommandStreamEvent,
+  SandboxAccessScope,
   SandboxAttachment,
+  SandboxCapabilities,
+  SandboxClientOptions,
+  SandboxDetails,
+  SandboxEnvironment,
+  SandboxFileEntry,
+  SandboxFileListOptions,
+  SandboxFileListResult,
+  SandboxLifetimeInput,
+  SandboxLifetimeMode,
   SandboxListOptions,
   SandboxListResult,
   SandboxOptions,
-  SandboxSession,
+  SandboxRuntimeCheck,
+  SandboxStatus,
+  SandboxWorkspaceStorage,
 } from "./types.ts";
 
 interface SandboxPrivateState {
@@ -46,6 +75,7 @@ interface SandboxPrivateState {
   sessionId: string;
   authToken: string;
   apiUrl: string;
+  deleteOnClose: boolean;
 }
 
 const sandboxPrivateStates = new WeakMap<object, SandboxPrivateState>();
@@ -72,27 +102,29 @@ export class Sandbox {
     sessionId: string,
     authToken: string,
     apiUrl: string,
+    deleteOnClose = true,
   ) {
     applyIntrinsic(weakMapSet, sandboxPrivateStates, [this, {
       endpoint,
       sessionId,
       authToken,
       apiUrl,
+      deleteOnClose,
     }]);
   }
 
-  /** Create a new sandbox session. Claims a warm pod or creates a new one. */
+  /** Create an isolated sandbox. */
   static async create(options: SandboxOptions = {}): Promise<Sandbox> {
     const apiUrl = resolveSandboxApiUrl(options);
     const authToken = resolveSandboxAuthToken(options);
 
-    const res = await fetchSandboxUrl(`${apiUrl}/sandbox-sessions`, {
+    const res = await fetchSandboxUrl(`${apiUrl}/sandboxes`, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${authToken}`,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify(options.projectId ? { project_id: options.projectId } : {}),
+      body: JSON.stringify(buildSandboxCreateInput(options)),
     });
 
     if (!res.ok) {
@@ -108,15 +140,15 @@ export class Sandbox {
       await Sandbox.#waitForReady(apiUrl, id, authToken);
     }
 
-    return new Sandbox(endpoint, id, authToken, apiUrl);
+    return new Sandbox(endpoint, id, authToken, apiUrl, options.ttlMode !== "always_on");
   }
 
-  /** Reconnect to an existing sandbox session. */
-  static async get(id: string, options: SandboxOptions = {}): Promise<Sandbox> {
+  /** Connect to an existing sandbox. Closing this client leaves the sandbox available. */
+  static async get(id: string, options: SandboxClientOptions = {}): Promise<Sandbox> {
     const apiUrl = resolveSandboxApiUrl(options);
     const authToken = resolveSandboxAuthToken(options);
 
-    const res = await fetchSandboxUrl(`${apiUrl}/sandbox-sessions/${encodeURIComponent(id)}`, {
+    const res = await fetchSandboxUrl(`${apiUrl}/sandboxes/${encodeURIComponent(id)}`, {
       headers: { Authorization: `Bearer ${authToken}` },
     });
 
@@ -127,27 +159,94 @@ export class Sandbox {
     }
 
     const { endpoint } = await res.json();
-    return new Sandbox(endpoint, id, authToken, apiUrl);
+    return new Sandbox(endpoint, id, authToken, apiUrl, false);
   }
 
-  /** Attach to an already-known sandbox session and endpoint without a reconnect lookup. */
+  /** Attach to an existing sandbox. Closing detaches; use delete() to remove it. */
   static attach(attachment: SandboxAttachment): Sandbox {
     const apiUrl = resolveSandboxApiUrl(attachment);
     const authToken = resolveSandboxAuthToken(attachment);
-    return new Sandbox(attachment.endpoint, attachment.id, authToken, apiUrl);
+    return new Sandbox(attachment.endpoint, attachment.id, authToken, apiUrl, false);
   }
 
-  /** List sandbox sessions with optional pagination. */
+  /** Get sandbox capabilities, limits and defaults for the current caller. */
+  static async capabilities(options: SandboxClientOptions = {}): Promise<SandboxCapabilities> {
+    return parseSandboxCapabilities(
+      await requestSandboxControlPlane(
+        resolveSandboxApiUrl(options),
+        resolveSandboxAuthToken(options),
+        "/sandboxes/capabilities",
+      ),
+    );
+  }
+
+  /** Check runtime health without recording activity. */
+  async checkHealth(): Promise<SandboxRuntimeCheck> {
+    return parseSandboxRuntimeCheck(await this.#requestControlPlane("/healthz"));
+  }
+
+  /** Check command readiness without recording activity. */
+  async checkReadiness(): Promise<SandboxRuntimeCheck> {
+    return parseSandboxRuntimeCheck(await this.#requestControlPlane("/readyz"));
+  }
+
+  /** Get environment variable names with redacted values. */
+  async getEnvironment(): Promise<SandboxEnvironment> {
+    return parseSandboxEnvironment(await this.#requestControlPlane("/environment"));
+  }
+
+  /** Read one directory page. Supply pageInfo.next as cursor for another page. */
+  async listFiles(options: SandboxFileListOptions = {}): Promise<SandboxFileListResult> {
+    const params = new URLSearchParams({ path: options.path ?? "/workspace" });
+    if (options.cursor) params.set("cursor", options.cursor);
+    if (options.limit !== undefined) params.set("limit", String(options.limit));
+    return parseSandboxFileList(await this.#requestControlPlane(`/files?${params}`));
+  }
+
+  /** Update cleanup policy without changing access or storage. */
+  async updateLifetime(input: SandboxLifetimeInput): Promise<SandboxDetails> {
+    const policy = buildSandboxCreateInput(input);
+    const details = parseSandboxDetails(
+      await this.#requestControlPlane("", {
+        method: "PATCH",
+        body: JSON.stringify({
+          ttl_mode: policy.ttl_mode,
+          ...(policy.ttl_hours !== undefined ? { ttl_hours: policy.ttl_hours } : {}),
+        }),
+      }),
+    );
+    const state = getSandboxPrivateState(this);
+    state.deleteOnClose = state.deleteOnClose && details.workspaceStorage !== "persistent" &&
+      details.ttlMode !== "always_on";
+    return details;
+  }
+
+  #requestControlPlane(path: string, init?: RequestInit): Promise<unknown> {
+    const state = getSandboxPrivateState(this);
+    return requestSandboxControlPlane(
+      state.apiUrl,
+      getSandboxAuthToken(this),
+      `/sandboxes/${encodeURIComponent(state.sessionId)}${path}`,
+      init,
+    );
+  }
+
+  /** List sandboxes with optional pagination. */
   static async list(options: SandboxListOptions = {}): Promise<SandboxListResult> {
     const apiUrl = resolveSandboxApiUrl(options);
     const authToken = resolveSandboxAuthToken(options);
 
     const params = new URLSearchParams();
+    const projectReference = options.projectReference;
+    if (projectReference) params.set("project_reference", projectReference);
+    if (options.accessScope) params.set("access_scope", options.accessScope);
+    if (options.sortBy) params.set("sort_by", options.sortBy);
+    if (options.sortOrder) params.set("sort_order", options.sortOrder);
     if (options.cursor) params.set("cursor", options.cursor);
     if (options.limit !== undefined) params.set("limit", String(options.limit));
 
     const query = params.toString();
-    const url = `${apiUrl}/sandbox-sessions${query ? `?${query}` : ""}`;
+    const url = `${apiUrl}/sandboxes${query ? `?${query}` : ""}`;
 
     const res = await fetchSandboxUrl(url, {
       headers: { Authorization: `Bearer ${authToken}` },
@@ -162,13 +261,7 @@ export class Sandbox {
     const json = await res.json();
 
     return {
-      data: json.data.map((s: Record<string, unknown>) => ({
-        id: s.id,
-        shortId: s.short_id,
-        endpoint: s.endpoint,
-        status: s.status,
-        createdAt: s.created_at,
-      })),
+      data: json.data.map(parseSandboxDetails),
       pageInfo: {
         self: json.page_info?.self ?? null,
         first: null,
@@ -188,36 +281,26 @@ export class Sandbox {
     await waitForSandboxReady({ apiUrl, id, authToken, maxWaitMs, pollIntervalMs });
   }
 
-  /** Create a lazily-provisioned sandbox session with automatic heartbeats. */
+  /** Create a client that provisions its sandbox when first used. */
   static createLazy(options: LazySandboxOptions = {}): LazySandbox {
     return new LazySandbox(options);
   }
 
   /** Execute a bash command in the sandbox and return buffered result. */
-  async executeCommand(command: string, options?: ExecOptions): Promise<ExecResult> {
-    let stdout = "";
-    let stderr = "";
-    let exitCode = 1;
-
-    for await (const event of this.executeStream(command, options)) {
-      switch (event.type) {
-        case "stdout":
-          stdout += event.data ?? "";
-          break;
-        case "stderr":
-          stderr += event.data ?? "";
-          break;
-        case "exit":
-          exitCode = event.exitCode ?? 1;
-          break;
-      }
-    }
-
-    return { stdout, stderr, exitCode };
+  async runCommand(command: string, options?: CommandOptions): Promise<CommandResult> {
+    return parseSandboxCommandResult(
+      await this.#requestControlPlane("/commands/run", {
+        method: "POST",
+        body: JSON.stringify({ command, ...buildSandboxCommandOptions(options) }),
+      }),
+    );
   }
 
   /** Execute a bash command with streaming output (NDJSON). */
-  async *executeStream(command: string, options?: ExecOptions): AsyncGenerator<ExecStreamEvent> {
+  async *streamCommand(
+    command: string,
+    options?: CommandOptions,
+  ): AsyncGenerator<CommandStreamEvent> {
     const res = await fetchSandboxUrl(
       sandboxSessionRoute(
         getSandboxPrivateState(this).apiUrl,
@@ -230,7 +313,7 @@ export class Sandbox {
           Authorization: `Bearer ${getSandboxAuthToken(this)}`,
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ command, ...options }),
+        body: JSON.stringify({ command, ...buildSandboxCommandOptions(options) }),
       },
     );
 
@@ -241,7 +324,7 @@ export class Sandbox {
     if (!res.body) {
       throw new Error("Exec response has no body");
     }
-    yield* readExecStreamEvents(res.body);
+    yield* readCommandStreamEvents(res.body);
   }
 
   /** Read a file from the sandbox workspace. */
@@ -286,10 +369,14 @@ export class Sandbox {
         detail: `Write files failed: ${res.status} ${await res.text()}`,
       });
     }
+    assertSandboxFilesWritten(await res.json(), files.map((file) => file.path));
   }
 
   /** Start an async background command in the sandbox. */
-  async startBackgroundCommand(command: string, options?: ExecOptions): Promise<BackgroundCommand> {
+  async startBackgroundCommand(
+    command: string,
+    options?: CommandOptions,
+  ): Promise<BackgroundCommand> {
     const res = await fetchSandboxUrl(
       sandboxSessionRoute(
         getSandboxPrivateState(this).apiUrl,
@@ -302,7 +389,7 @@ export class Sandbox {
           Authorization: `Bearer ${getSandboxAuthToken(this)}`,
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ command, ...options }),
+        body: JSON.stringify({ command, ...buildSandboxCommandOptions(options) }),
       },
     );
 
@@ -361,35 +448,28 @@ export class Sandbox {
       ...Sandbox.mapBackgroundCommand(json),
       stdout: json.stdout,
       stderr: json.stderr,
-      stdoutTruncated: json.stdout_truncated,
-      stderrTruncated: json.stderr_truncated,
+      stdoutTruncated: false,
+      stderrTruncated: false,
     };
   }
 
   /** List all background commands in the sandbox. */
   async listBackgroundCommands(): Promise<BackgroundCommand[]> {
-    const res = await fetchSandboxUrl(
-      sandboxSessionRoute(
-        getSandboxPrivateState(this).apiUrl,
-        getSandboxPrivateState(this).sessionId,
-        "/commands",
-      ),
-      {
-        headers: { Authorization: `Bearer ${getSandboxAuthToken(this)}` },
-      },
-    );
-
-    if (!res.ok) {
-      throw REQUEST_ERROR.create({
-        detail: `List background commands failed: ${res.status} ${await res.text()}`,
-      });
-    }
-
-    const json = await res.json();
-    const commands = Array.isArray(json) ? json : (json.commands ?? []);
-    return commands.map((command: Record<string, unknown>) =>
-      Sandbox.mapBackgroundCommand(command)
-    );
+    const commands = await readSandboxCommandPages(async (cursor) => {
+      const state = getSandboxPrivateState(this);
+      const path = `/commands${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ""}`;
+      const response = await fetchSandboxUrl(
+        sandboxSessionRoute(state.apiUrl, state.sessionId, path),
+        { headers: { Authorization: `Bearer ${getSandboxAuthToken(this)}` } },
+      );
+      if (!response.ok) {
+        throw REQUEST_ERROR.create({
+          detail: `List background commands failed: ${response.status}`,
+        });
+      }
+      return response.json();
+    });
+    return commands.map((command) => Sandbox.mapBackgroundCommand(command));
   }
 
   /** Cancel an async background command. */
@@ -416,24 +496,13 @@ export class Sandbox {
   }
 
   private static mapBackgroundCommand(json: Record<string, unknown>): BackgroundCommand {
-    return {
-      id: json.id as string,
-      status: json.status as BackgroundCommandStatus,
-      exitCode: json.exit_code as number | null,
-      signal: json.signal as string | null,
-      startedAt: json.started_at as string,
-      finishedAt: json.finished_at as string | null,
-      heartbeatStatus: json.heartbeat_status as BackgroundCommandHeartbeatStatus,
-      lastHeartbeatAt: json.last_heartbeat_at as string | null,
-      lastHeartbeatError: json.last_heartbeat_error as string | null,
-      heartbeatFailureCount: json.heartbeat_failure_count as number,
-    };
+    return parseSandboxBackgroundCommand(json);
   }
 
   /** Send a heartbeat to prevent idle timeout. */
   async heartbeat(): Promise<void> {
     const res = await fetchSandboxUrl(
-      `${getSandboxPrivateState(this).apiUrl}/sandbox-sessions/${
+      `${getSandboxPrivateState(this).apiUrl}/sandboxes/${
         encodeURIComponent(getSandboxPrivateState(this).sessionId)
       }/heartbeat`,
       {
@@ -449,10 +518,15 @@ export class Sandbox {
     }
   }
 
-  /** Close the sandbox session and mark for deletion. */
+  /** Close this client. Always-on workspaces remain available. */
   async close(): Promise<void> {
+    if (getSandboxPrivateState(this).deleteOnClose) await this.delete();
+  }
+
+  /** Delete the sandbox and its workspace files. */
+  async delete(): Promise<void> {
     const res = await fetchSandboxUrl(
-      `${getSandboxPrivateState(this).apiUrl}/sandbox-sessions/${
+      `${getSandboxPrivateState(this).apiUrl}/sandboxes/${
         encodeURIComponent(getSandboxPrivateState(this).sessionId)
       }`,
       {
@@ -463,12 +537,12 @@ export class Sandbox {
 
     if (!res.ok) {
       throw REQUEST_ERROR.create({
-        detail: `Close sandbox failed: ${res.status} ${await res.text()}`,
+        detail: `Delete sandbox failed: ${res.status} ${await res.text()}`,
       });
     }
   }
 
-  /** Get the session ID. */
+  /** Get the sandbox ID. */
   get id(): string {
     return getSandboxPrivateState(this).sessionId;
   }
@@ -494,7 +568,7 @@ export async function waitForSandboxReady(input: {
     await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
 
     const res = await fetchSandboxUrl(
-      `${input.apiUrl}/sandbox-sessions/${encodeURIComponent(input.id)}`,
+      `${input.apiUrl}/sandboxes/${encodeURIComponent(input.id)}`,
       {
         headers: { Authorization: `Bearer ${input.authToken}` },
       },
@@ -514,4 +588,23 @@ export async function waitForSandboxReady(input: {
   }
 
   throw TIMEOUT_ERROR.create({ detail: "Sandbox did not become ready within timeout" });
+}
+
+async function requestSandboxControlPlane(
+  apiUrl: string,
+  authToken: string,
+  path: string,
+  init?: RequestInit,
+): Promise<unknown> {
+  const response = await fetchSandboxUrl(`${apiUrl}${path}`, {
+    ...init,
+    headers: {
+      Authorization: `Bearer ${authToken}`,
+      ...(init?.body ? { "Content-Type": "application/json" } : {}),
+    },
+  });
+  if (!response.ok) {
+    throw REQUEST_ERROR.create({ detail: `Sandbox request failed: ${response.status}` });
+  }
+  return response.json();
 }

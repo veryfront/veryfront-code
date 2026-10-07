@@ -416,7 +416,7 @@ class CloudScriptExecutor implements SkillScriptExecutor {
       }
 
       await sandbox.writeFiles(sandboxFiles);
-      await sandbox.executeCommand(buildShellCommand(["chmod", "+x", sandboxScriptPath]));
+      await sandbox.runCommand(buildShellCommand(["chmod", "+x", sandboxScriptPath]));
 
       const { command, args: runtimeArgs } = detectRuntime(sandboxScriptPath);
       const allArgs = [...runtimeArgs, ...(input.args ?? [])];
@@ -431,7 +431,22 @@ class CloudScriptExecutor implements SkillScriptExecutor {
       const cmdString = sandboxRoot === undefined
         ? invocation
         : `cd ${shellEscapeArg(sandboxRoot)} && ${invocation}`;
-      const commandPromise = sandbox.executeCommand(cmdString);
+      const commandPromise = (async () => {
+        let stdout = "";
+        let stderr = "";
+        let exitCode = 1;
+        for await (
+          const event of sandbox.streamCommand(cmdString, {
+            timeoutSeconds: Math.ceil(timeoutMs / 1000),
+          })
+        ) {
+          if (event.type === "stdout") stdout += event.data ?? "";
+          if (event.type === "stderr") stderr += event.data ?? "";
+          if (event.type === "exit") exitCode = event.exitCode ?? 1;
+          if (event.type === "error") throw new Error(event.data ?? "Sandbox script failed");
+        }
+        return { stdout, stderr, exitCode };
+      })();
       const result = await withTimeout(commandPromise, timeoutMs);
 
       if (result === TIMEOUT_SENTINEL) {
@@ -441,7 +456,7 @@ class CloudScriptExecutor implements SkillScriptExecutor {
         // Kill any running processes before returning — withTimeout only
         // races the timer, it doesn't terminate the sandbox command.
         try {
-          await sandbox.executeCommand("kill -9 -1 2>/dev/null || true");
+          await sandbox.runCommand("kill -9 -1 2>/dev/null || true");
         } catch {
           // expected: best-effort kill; sandbox.close() in finally will clean up
         }

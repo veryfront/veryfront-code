@@ -9,7 +9,7 @@ export function sandboxSessionRoute(
   path = "",
 ): string {
   const normalizedApiUrl = applyIntrinsic(stringReplace, apiUrl, [/\/+$/, ""]) as string;
-  const base = `${normalizedApiUrl}/sandbox-sessions/${encodeURIComponent(sessionId)}`;
+  const base = `${normalizedApiUrl}/sandboxes/${encodeURIComponent(sessionId)}`;
   return path ? `${base}${path}` : base;
 }
 

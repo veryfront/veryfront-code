@@ -8,6 +8,7 @@ import {
   setHostSecret,
 } from "#veryfront/platform/compat/process/env.ts";
 import {
+  commandResponse,
   type FetchCall,
   headerValue,
   installMockFetch as createSandboxFetchMock,
@@ -27,7 +28,7 @@ import {
 import { runWithRequestContext } from "#veryfront/platform/adapters/fs/veryfront/multi-project-adapter.ts";
 import { runWithProjectEnv } from "../server/project-env/storage.ts";
 import { VeryfrontError } from "#veryfront/errors";
-import type { ExecStreamEvent } from "./sandbox.ts";
+import type { CommandStreamEvent } from "./sandbox.ts";
 import { Sandbox, waitForSandboxReady } from "./sandbox.ts";
 import { resolveDefaultSandboxRuntimeEndpoint } from "./lazy-sandbox.ts";
 import { logger } from "#veryfront/utils/logger/logger.ts";
@@ -135,7 +136,7 @@ describe("Sandbox", () => {
     (sandbox as unknown as { apiUrl: string }).apiUrl = "https://attacker.example";
     await sandbox.heartbeat();
 
-    assertEquals(fetchCalls[1]?.url, "https://api.test.com/sandbox-sessions/session-1/heartbeat");
+    assertEquals(fetchCalls[1]?.url, "https://api.test.com/sandboxes/session-1/heartbeat");
     assertEquals(headerValue(fetchCalls, 1, "Authorization"), "Bearer stored-login-token");
   });
 
@@ -156,14 +157,14 @@ describe("Sandbox", () => {
       assertEquals(sandbox.id, "session-1");
       assertEquals(sandbox.url, "https://sandbox.example.com");
 
-      assertStringIncludes(fetchCalls[0]!.url, "/sandbox-sessions");
+      assertStringIncludes(fetchCalls[0]!.url, "/sandboxes");
       assertEquals(fetchCalls[0]!.init?.method, "POST");
       assertEquals(headerValue(fetchCalls, 0, "Authorization"), "Bearer test-token");
       assertEquals(headerValue(fetchCalls, 0, "Content-Type"), "application/json");
-      assertEquals(fetchCalls[0]!.init?.body, "{}");
+      assertEquals(jsonBody(fetchCalls, 0), { access_scope: "project", ttl_mode: "default" });
     });
 
-    it("should pass project_id when creating a project-scoped sandbox", async () => {
+    it("should pass project_reference when creating a project-scoped sandbox", async () => {
       mockFetch([
         jsonResponse({
           id: "session-project",
@@ -175,10 +176,17 @@ describe("Sandbox", () => {
       await Sandbox.create({
         authToken: "test-token",
         apiUrl: "https://api.test.com",
-        projectId: "project-123",
+        projectReference: "project-123",
       });
 
-      assertEquals(fetchCalls[0]!.init?.body, JSON.stringify({ project_id: "project-123" }));
+      assertEquals(
+        fetchCalls[0]!.init?.body,
+        JSON.stringify({
+          access_scope: "project",
+          ttl_mode: "default",
+          project_reference: "project-123",
+        }),
+      );
     });
 
     it("should use VERYFRONT_API_TOKEN when authToken is omitted", async () => {
@@ -196,7 +204,7 @@ describe("Sandbox", () => {
       const sandbox = await Sandbox.create();
       assertEquals(sandbox.id, "session-env-token");
 
-      assertStringIncludes(fetchCalls[0]!.url, "https://api.test.com/sandbox-sessions");
+      assertStringIncludes(fetchCalls[0]!.url, "https://api.test.com/sandboxes");
       assertEquals(headerValue(fetchCalls, 0, "Authorization"), "Bearer vf_env_token");
     });
 
@@ -282,7 +290,7 @@ describe("Sandbox", () => {
       const sandbox = await Sandbox.create();
 
       assertEquals(sandbox.id, "session-project-env");
-      assertEquals(fetchCalls[0]?.url, "https://project-api.example/sandbox-sessions");
+      assertEquals(fetchCalls[0]?.url, "https://project-api.example/sandboxes");
       assertEquals(headerValue(fetchCalls, 0, "Authorization"), "Bearer vf_project_token");
     });
 
@@ -425,7 +433,7 @@ describe("Sandbox", () => {
       setHostSecret("VERYFRONT_API_TOKEN", "stored-login-token");
       mockFetch([
         textResponse("attached body"),
-        ndjsonResponse([{ type: "exit", exitCode: 0 }]),
+        commandResponse([{ type: "exit", exitCode: 0 }]),
       ]);
 
       try {
@@ -452,12 +460,12 @@ describe("Sandbox", () => {
         });
         exposed.fetchExecStart = () => {
           replacementExecCalled = true;
-          return Promise.resolve(ndjsonResponse([{ type: "exit", exitCode: 0 }]));
+          return Promise.resolve(commandResponse([{ type: "exit", exitCode: 0 }]));
         };
 
         // The credential is still bound to the instance for framework use.
         assertEquals(await attached.readFile("/workspace/note.txt"), "attached body");
-        assertEquals((await attached.executeCommand("true")).exitCode, 0);
+        assertEquals((await attached.runCommand("true")).exitCode, 0);
         assertEquals(replacementExecCalled, false);
         assertEquals(headerValue(fetchCalls, 0, "Authorization"), "Bearer stored-login-token");
         assertEquals(headerValue(fetchCalls, 1, "Authorization"), "Bearer stored-login-token");
@@ -502,7 +510,7 @@ describe("Sandbox", () => {
         deleteHostSecret("VERYFRONT_API_TOKEN");
       }
 
-      assertEquals(requests, ["https://api.test.com/sandbox-sessions"]);
+      assertEquals(requests, ["https://api.test.com/sandboxes"]);
     });
 
     it("should poll until ready when not running", async () => {
@@ -526,7 +534,7 @@ describe("Sandbox", () => {
       });
       assertEquals(sandbox.id, "session-2");
       assertEquals(fetchCalls.length, 2);
-      assertStringIncludes(fetchCalls[1]!.url, "/sandbox-sessions/session-2");
+      assertStringIncludes(fetchCalls[1]!.url, "/sandboxes/session-2");
       assertEquals(headerValue(fetchCalls, 1, "Authorization"), "Bearer test-token");
     });
 
@@ -656,7 +664,7 @@ describe("Sandbox", () => {
           assertEquals(sandbox.id, "session-host-env");
         });
 
-        assertStringIncludes(fetchCalls[0]!.url, "https://internal.api.test/sandbox-sessions");
+        assertStringIncludes(fetchCalls[0]!.url, "https://internal.api.test/sandboxes");
       } finally {
         deleteEnv("VERYFRONT_API_URL");
       }
@@ -673,9 +681,15 @@ describe("Sandbox", () => {
         authToken: "test-token",
         apiUrl: "https://api.test.com",
       });
+      await sandbox.close();
+      assertEquals(
+        fetchCalls.length,
+        1,
+        "closing a reconnected client must not delete the sandbox",
+      );
       assertEquals(sandbox.id, "session-existing");
       assertEquals(sandbox.url, "https://sandbox.example.com");
-      assertStringIncludes(fetchCalls[0]!.url, "/sandbox-sessions/session-existing");
+      assertStringIncludes(fetchCalls[0]!.url, "/sandboxes/session-existing");
       assertEquals(headerValue(fetchCalls, 0, "Authorization"), "Bearer test-token");
     });
 
@@ -709,7 +723,7 @@ describe("Sandbox", () => {
   });
 
   describe("attach()", () => {
-    it("should attach to an already-known sandbox session without a reconnect lookup", async () => {
+    it("detaches an existing sandbox without deleting it or performing a reconnect lookup", async () => {
       mockFetch([
         textResponse("attached body"),
         jsonResponse({ ok: true }),
@@ -729,16 +743,16 @@ describe("Sandbox", () => {
       await sandbox.heartbeat();
       await sandbox.close();
 
-      assertEquals(fetchCalls.length, 3);
+      assertEquals(fetchCalls.length, 2);
       assertEquals(
         fetchCalls[0]!.url,
-        "https://api.test.com/sandbox-sessions/attached-1/file?path=%2Fworkspace%2Fnote.txt",
+        "https://api.test.com/sandboxes/attached-1/file?path=%2Fworkspace%2Fnote.txt",
       );
       assertEquals(
         fetchCalls[1]!.url,
-        "https://api.test.com/sandbox-sessions/attached-1/heartbeat",
+        "https://api.test.com/sandboxes/attached-1/heartbeat",
       );
-      assertEquals(fetchCalls[2]!.url, "https://api.test.com/sandbox-sessions/attached-1");
+      assertEquals(fetchCalls.some((call) => call.init?.method === "DELETE"), false);
       assertEquals(headerValue(fetchCalls, 0, "Authorization"), "Bearer attach-token");
     });
 
@@ -758,7 +772,7 @@ describe("Sandbox", () => {
       assertEquals(await sandbox.readFile("/workspace/env.txt"), "env body");
       assertEquals(
         fetchCalls[0]!.url,
-        "https://attach.api.test/sandbox-sessions/attached-env/file?path=%2Fworkspace%2Fenv.txt",
+        "https://attach.api.test/sandboxes/attached-env/file?path=%2Fworkspace%2Fenv.txt",
       );
       assertEquals(headerValue(fetchCalls, 0, "Authorization"), "Bearer vf_attach_env");
     });
@@ -778,7 +792,7 @@ describe("Sandbox", () => {
       assertEquals(await sandbox.readFile("/workspace/note.txt"), "attached body");
       assertEquals(
         fetchCalls[0]!.url,
-        "https://api.test.com/sandbox-sessions/attached-trailing-slash/file?path=%2Fworkspace%2Fnote.txt",
+        "https://api.test.com/sandboxes/attached-trailing-slash/file?path=%2Fworkspace%2Fnote.txt",
       );
     });
 
@@ -825,22 +839,23 @@ describe("Sandbox", () => {
     });
   });
 
-  describe("executeCommand()", () => {
+  describe("runCommand()", () => {
     it("should execute command and collect output", async () => {
       mockFetch([
         jsonResponse({ id: "s1", endpoint: "https://sb.test", status: "running" }),
-        ndjsonResponse([
+        commandResponse([
           { type: "stdout", data: "hello\n" },
           { type: "exit", exitCode: 0 },
         ]),
       ]);
 
       const sandbox = await Sandbox.create({ authToken: "token", apiUrl: "https://api.test.com" });
-      const result = await sandbox.executeCommand("echo hello");
+      const result = await sandbox.runCommand("echo hello");
 
       assertEquals(result.stdout, "hello\n");
       assertEquals(result.stderr, "");
       assertEquals(result.exitCode, 0);
+      assertEquals(fetchCalls[1]!.url, "https://api.test.com/sandboxes/s1/commands/run");
       assertEquals(fetchCalls[1]!.init?.method, "POST");
       assertEquals(headerValue(fetchCalls, 1, "Authorization"), "Bearer token");
       assertEquals(headerValue(fetchCalls, 1, "Content-Type"), "application/json");
@@ -850,14 +865,14 @@ describe("Sandbox", () => {
     it("should collect stderr output", async () => {
       mockFetch([
         jsonResponse({ id: "s2", endpoint: "https://sb.test", status: "running" }),
-        ndjsonResponse([
+        commandResponse([
           { type: "stderr", data: "error occurred\n" },
           { type: "exit", exitCode: 1 },
         ]),
       ]);
 
       const sandbox = await Sandbox.create({ authToken: "token", apiUrl: "https://api.test.com" });
-      const result = await sandbox.executeCommand("failing-cmd");
+      const result = await sandbox.runCommand("failing-cmd");
 
       assertEquals(result.stdout, "");
       assertEquals(result.stderr, "error occurred\n");
@@ -868,42 +883,33 @@ describe("Sandbox", () => {
     it("should fail closed when the stream ends without an exit event", async () => {
       mockFetch([
         jsonResponse({ id: "s3", endpoint: "https://sb.test", status: "running" }),
-        ndjsonResponse([
+        commandResponse([
           { type: "stdout", data: "partial" },
         ]),
       ]);
 
       const sandbox = await Sandbox.create({ authToken: "token", apiUrl: "https://api.test.com" });
-      const result = await sandbox.executeCommand("truncated-cmd");
-
-      assertEquals(
-        result.stdout,
-        "partial",
-        "output received before the stream ended is still returned",
-      );
-      assertEquals(
-        result.exitCode,
-        1,
-        "a stream that ends without an exit event must fail closed",
+      await assertRejects(
+        () => sandbox.runCommand("truncated-cmd"),
+        Error,
+        "Invalid sandbox command result",
       );
     });
 
     it("should fail closed when the exit event carries no exit code", async () => {
       mockFetch([
         jsonResponse({ id: "s4", endpoint: "https://sb.test", status: "running" }),
-        ndjsonResponse([
+        commandResponse([
           { type: "stdout", data: "done\n" },
           { type: "exit" },
         ]),
       ]);
 
       const sandbox = await Sandbox.create({ authToken: "token", apiUrl: "https://api.test.com" });
-      const result = await sandbox.executeCommand("exitless-cmd");
-
-      assertEquals(
-        result.exitCode,
-        1,
-        "an exit event without an exitCode must fail closed",
+      await assertRejects(
+        () => sandbox.runCommand("exitless-cmd"),
+        Error,
+        "Invalid sandbox command result",
       );
     });
 
@@ -915,7 +921,7 @@ describe("Sandbox", () => {
           status: "running",
         }),
         jsonResponse({ ok: true }),
-        ndjsonResponse([
+        commandResponse([
           { type: "stdout", data: "partial" },
         ]),
         jsonResponse({ ok: true }),
@@ -927,17 +933,10 @@ describe("Sandbox", () => {
       });
 
       try {
-        const result = await sandbox.executeCommand("truncated-cmd");
-
-        assertEquals(
-          result.stdout,
-          "partial",
-          "output received before the lazy stream ended is still returned",
-        );
-        assertEquals(
-          result.exitCode,
-          1,
-          "a lazy stream that ends without an exit event must fail closed",
+        await assertRejects(
+          () => sandbox.runCommand("truncated-cmd"),
+          Error,
+          "Invalid sandbox command result",
         );
       } finally {
         await sandbox.close();
@@ -945,7 +944,7 @@ describe("Sandbox", () => {
     });
   });
 
-  describe("executeStream()", () => {
+  describe("streamCommand()", () => {
     it("should stream events directly", async () => {
       mockFetch([
         jsonResponse({ id: "stream-1", endpoint: "https://sb.test", status: "running" }),
@@ -957,8 +956,8 @@ describe("Sandbox", () => {
       ]);
 
       const sandbox = await Sandbox.create({ authToken: "token", apiUrl: "https://api.test.com" });
-      const events: ExecStreamEvent[] = [];
-      for await (const event of sandbox.executeStream("cmd")) {
+      const events: CommandStreamEvent[] = [];
+      for await (const event of sandbox.streamCommand("cmd")) {
         events.push(event);
       }
 
@@ -983,7 +982,7 @@ describe("Sandbox", () => {
       const sandbox = await Sandbox.create({ authToken: "token", apiUrl: "https://api.test.com" });
       await assertRejects(
         async () => {
-          for await (const _event of sandbox.executeStream("bad-cmd")) {
+          for await (const _event of sandbox.streamCommand("bad-cmd")) {
             // consume
           }
         },
@@ -1013,8 +1012,8 @@ describe("Sandbox", () => {
       ]);
 
       const sandbox = await Sandbox.create({ authToken: "token", apiUrl: "https://api.test.com" });
-      const events: ExecStreamEvent[] = [];
-      for await (const event of sandbox.executeStream("cmd")) {
+      const events: CommandStreamEvent[] = [];
+      for await (const event of sandbox.streamCommand("cmd")) {
         events.push(event);
       }
 
@@ -1037,7 +1036,12 @@ describe("Sandbox", () => {
       ]);
 
       const sandbox = await Sandbox.create({ authToken: "token", apiUrl: "https://api.test.com" });
-      const result = await sandbox.executeCommand("cmd");
+      const events = await Array.fromAsync(sandbox.streamCommand("cmd"));
+      const result = {
+        stdout: events.filter((event) => event.type === "stdout").map((event) => event.data ?? "")
+          .join(""),
+        exitCode: events.find((event) => event.type === "exit")?.exitCode,
+      };
 
       assertEquals(result.stdout, "a\n", "buffered stdout survives a malformed NDJSON line");
       assertEquals(result.exitCode, 0, "events after a malformed line are still delivered");
@@ -1061,7 +1065,7 @@ describe("Sandbox", () => {
       ]);
 
       const sandbox = await Sandbox.create({ authToken: "token", apiUrl: "https://api.test.com" });
-      const iterator = sandbox.executeStream("cmd");
+      const iterator = sandbox.streamCommand("cmd");
       const first = await iterator.next();
 
       assertEquals(first.done, false);
@@ -1072,7 +1076,7 @@ describe("Sandbox", () => {
       assertEquals(cancelCalled, true);
       assertEquals(
         fetchCalls[1]!.url,
-        "https://api.test.com/sandbox-sessions/stream-cancel/commands/stream",
+        "https://api.test.com/sandboxes/stream-cancel/commands/stream",
       );
     });
 
@@ -1091,9 +1095,9 @@ describe("Sandbox", () => {
       ]);
 
       const sandbox = await Sandbox.create({ authToken: "token", apiUrl: "https://api.test.com" });
-      const events: ExecStreamEvent[] = [];
+      const events: CommandStreamEvent[] = [];
       const flushCount = await countTextDecoderFlushes(async () => {
-        for await (const event of sandbox.executeStream("cmd")) {
+        for await (const event of sandbox.streamCommand("cmd")) {
           events.push(event);
         }
       });
@@ -1103,22 +1107,21 @@ describe("Sandbox", () => {
     });
   });
 
-  describe("executeCommand() with ExecOptions", () => {
+  describe("runCommand() with CommandOptions", () => {
     it("should pass cwd, timeout_seconds, and env in the request body", async () => {
       mockFetch([
         jsonResponse({ id: "s1", endpoint: "https://sb.test", status: "running" }),
-        ndjsonResponse([
+        commandResponse([
           { type: "stdout", data: "ok\n" },
           { type: "exit", exitCode: 0 },
         ]),
       ]);
 
       const sandbox = await Sandbox.create({ authToken: "token", apiUrl: "https://api.test.com" });
-      const result = await sandbox.executeCommand("ls", {
+      const result = await sandbox.runCommand("ls", {
         cwd: "/workspace/app",
-        timeout_seconds: 30,
+        timeoutSeconds: 30,
         env: { NODE_ENV: "test" },
-        projectReference: "project-123",
       });
 
       assertEquals(result.stdout, "ok\n");
@@ -1128,26 +1131,25 @@ describe("Sandbox", () => {
         cwd: "/workspace/app",
         timeout_seconds: 30,
         env: { NODE_ENV: "test" },
-        projectReference: "project-123",
       });
     });
 
     it("should not include undefined options in request body", async () => {
       mockFetch([
         jsonResponse({ id: "s1", endpoint: "https://sb.test", status: "running" }),
-        ndjsonResponse([
+        commandResponse([
           { type: "exit", exitCode: 0 },
         ]),
       ]);
 
       const sandbox = await Sandbox.create({ authToken: "token", apiUrl: "https://api.test.com" });
-      await sandbox.executeCommand("pwd");
+      await sandbox.runCommand("pwd");
 
       assertEquals(jsonBody(fetchCalls, 1), { command: "pwd" });
     });
   });
 
-  describe("executeStream() with ExecOptions", () => {
+  describe("streamCommand() with CommandOptions", () => {
     it("should pass options in the request body", async () => {
       mockFetch([
         jsonResponse({ id: "s1", endpoint: "https://sb.test", status: "running" }),
@@ -1158,11 +1160,10 @@ describe("Sandbox", () => {
       ]);
 
       const sandbox = await Sandbox.create({ authToken: "token", apiUrl: "https://api.test.com" });
-      const events: ExecStreamEvent[] = [];
+      const events: CommandStreamEvent[] = [];
       for await (
-        const event of sandbox.executeStream("cmd", {
+        const event of sandbox.streamCommand("cmd", {
           cwd: "/tmp",
-          projectReference: "project-456",
         })
       ) {
         events.push(event);
@@ -1172,17 +1173,17 @@ describe("Sandbox", () => {
       assertEquals(jsonBody(fetchCalls, 1), {
         command: "cmd",
         cwd: "/tmp",
-        projectReference: "project-456",
       });
     });
   });
 
-  describe("startBackgroundCommand() with ExecOptions", () => {
+  describe("startBackgroundCommand() with CommandOptions", () => {
     it("should pass options in the request body", async () => {
       mockFetch([
         jsonResponse({ id: "s1", endpoint: "https://sb.test", status: "running" }),
         jsonResponse({
-          id: "command-opts",
+          command_id: "command-opts",
+          command: "echo test",
           status: "running",
           exit_code: null,
           signal: null,
@@ -1198,9 +1199,8 @@ describe("Sandbox", () => {
       const sandbox = await Sandbox.create({ authToken: "token", apiUrl: "https://api.test.com" });
       const command = await sandbox.startBackgroundCommand("npm test", {
         cwd: "/workspace",
-        timeout_seconds: 120,
+        timeoutSeconds: 120,
         env: { CI: "true" },
-        projectReference: "project-789",
       });
 
       assertEquals(command.id, "command-opts");
@@ -1209,7 +1209,6 @@ describe("Sandbox", () => {
         cwd: "/workspace",
         timeout_seconds: 120,
         env: { CI: "true" },
-        projectReference: "project-789",
       });
     });
   });
@@ -1245,10 +1244,86 @@ describe("Sandbox", () => {
   });
 
   describe("writeFiles()", () => {
+    it("reports a per-file failure even when HTTP succeeds", async () => {
+      mockFetch([
+        jsonResponse({ id: "write-test", endpoint: "https://sb.test", status: "running" }),
+        jsonResponse({
+          results: [{
+            path: "locked.txt",
+            status: "failed",
+            error: { code: "FILE_WRITE_FAILED", message: "Permission denied" },
+          }],
+        }),
+      ]);
+      const sandbox = await Sandbox.create({ authToken: "token", apiUrl: "https://api.test.com" });
+      await assertRejects(
+        () => sandbox.writeFiles([{ path: "locked.txt", content: "hello" }]),
+        Error,
+        "locked.txt",
+      );
+    });
+
+    it("reports per-file failures from an attached lazy sandbox", async () => {
+      mockFetch([
+        jsonResponse({ ok: true }),
+        jsonResponse({
+          results: [{
+            path: "locked.txt",
+            status: "failed",
+            error: { code: "FILE_WRITE_FAILED", message: "Permission denied" },
+          }],
+        }),
+      ]);
+      const sandbox = Sandbox.createLazy({
+        sandboxId: "attached-write",
+        sandboxEndpoint: "https://sb.test",
+        authToken: "token",
+        apiUrl: "https://api.test.com",
+      });
+      try {
+        await assertRejects(
+          () => sandbox.writeFiles([{ path: "locked.txt", content: "hello" }]),
+          Error,
+          "locked.txt",
+        );
+      } finally {
+        await sandbox.close();
+      }
+    });
+
+    it("reports per-file failures from a direct runtime", async () => {
+      mockFetch([
+        jsonResponse({ ok: true }),
+        jsonResponse({ results: [{ path: "locked.txt", ok: false, error: "Permission denied" }] }),
+      ]);
+      const sandbox = Sandbox.createLazy({
+        sandboxId: "attached-write",
+        sandboxEndpoint: "https://sb.test",
+        resolveRuntimeEndpoint: () => "https://runtime.test",
+        authToken: "token",
+        apiUrl: "https://api.test.com",
+      });
+      try {
+        await assertRejects(
+          () => sandbox.writeFiles([{ path: "locked.txt", content: "hello" }]),
+          Error,
+          "locked.txt",
+        );
+      } finally {
+        await sandbox.close();
+      }
+    });
+
     it("should write files to sandbox", async () => {
       mockFetch([
         jsonResponse({ id: "s5", endpoint: "https://sb.test", status: "running" }),
-        jsonResponse({ ok: true }),
+        jsonResponse({
+          results: [{ path: "/workspace/a.txt", status: "written", error: null }, {
+            path: "/workspace/b.txt",
+            status: "written",
+            error: null,
+          }],
+        }),
       ]);
 
       const sandbox = await Sandbox.create({ authToken: "token", apiUrl: "https://api.test.com" });
@@ -1280,7 +1355,7 @@ describe("Sandbox", () => {
       const sandbox = await Sandbox.create({ authToken: "token", apiUrl: "https://api.test.com" });
       await sandbox.heartbeat();
 
-      assertStringIncludes(fetchCalls[1]!.url, "/sandbox-sessions/s6/heartbeat");
+      assertStringIncludes(fetchCalls[1]!.url, "/sandboxes/s6/heartbeat");
       assertEquals(fetchCalls[1]!.init?.method, "POST");
       assertEquals(headerValue(fetchCalls, 1, "Authorization"), "Bearer token");
     });
@@ -1311,7 +1386,7 @@ describe("Sandbox", () => {
       const sandbox = await Sandbox.create({ authToken: "token", apiUrl: "https://api.test.com" });
       await sandbox.close();
 
-      assertStringIncludes(fetchCalls[1]!.url, "/sandbox-sessions/s7");
+      assertStringIncludes(fetchCalls[1]!.url, "/sandboxes/s7");
       assertEquals(fetchCalls[1]!.init?.method, "DELETE");
       assertEquals(headerValue(fetchCalls, 1, "Authorization"), "Bearer token");
     });
@@ -1327,7 +1402,7 @@ describe("Sandbox", () => {
       await assertRejects(
         () => sandbox.close(),
         Error,
-        "Close sandbox failed: 503 delete failed",
+        "Delete sandbox failed: 503 delete failed",
       );
     });
   });
@@ -1405,7 +1480,7 @@ describe("Sandbox", () => {
       });
 
       await assertRejects(
-        () => sandbox.executeCommand("echo safe"),
+        () => sandbox.runCommand("echo safe"),
         Error,
         "Custom sandbox runtime endpoints require an explicit authToken",
       );
@@ -1421,14 +1496,14 @@ describe("Sandbox", () => {
       const publicAddress = "192.0.2.1";
       const transportFetch: typeof fetch = (input, _init) => {
         const url = String(input);
-        if (url === "https://api.test.com/sandbox-sessions") {
+        if (url === "https://api.test.com/sandboxes") {
           return Promise.resolve(jsonResponse({
             id: "session-1",
             endpoint: "https://session-1.sandbox.veryfront.com",
             status: "running",
           }));
         }
-        if (url.startsWith("https://api.test.com/sandbox-sessions/session-1")) {
+        if (url.startsWith("https://api.test.com/sandboxes/session-1")) {
           return Promise.resolve(jsonResponse({ ok: true }));
         }
         return Promise.resolve(ndjsonResponse([{ type: "exit", exitCode: 0 }]));
@@ -1452,7 +1527,7 @@ describe("Sandbox", () => {
           });
           try {
             await assertRejects(
-              () => sandbox.executeCommand("true"),
+              () => sandbox.runCommand("true"),
               Error,
               "egress blocked",
             );
@@ -1477,7 +1552,7 @@ describe("Sandbox", () => {
             : input.url;
           fetchCalls.push({ url, init });
 
-          if (url === "https://api.test.com/sandbox-sessions" && init?.method === "POST") {
+          if (url === "https://api.test.com/sandboxes" && init?.method === "POST") {
             return Promise.resolve(jsonResponse({
               id: "sandbox-1",
               endpoint: "https://sandbox.example.com",
@@ -1486,7 +1561,7 @@ describe("Sandbox", () => {
           }
 
           if (
-            url === "https://api.test.com/sandbox-sessions/sandbox-1" &&
+            url === "https://api.test.com/sandboxes/sandbox-1" &&
             (!init?.method || init.method === "GET")
           ) {
             statusChecks += 1;
@@ -1497,21 +1572,21 @@ describe("Sandbox", () => {
           }
 
           if (
-            url === "https://api.test.com/sandbox-sessions/sandbox-1/heartbeat" &&
+            url === "https://api.test.com/sandboxes/sandbox-1/heartbeat" &&
             init?.method === "POST"
           ) {
             return Promise.resolve(jsonResponse({ ok: true }));
           }
 
           if (
-            url === "https://api.test.com/sandbox-sessions/sandbox-1/file?path=notes.txt" &&
+            url === "https://api.test.com/sandboxes/sandbox-1/file?path=notes.txt" &&
             (!init?.method || init.method === "GET")
           ) {
             return Promise.resolve(jsonResponse({ path: "notes.txt", content: "file-body" }));
           }
 
           if (
-            url === "https://api.test.com/sandbox-sessions/sandbox-1" && init?.method === "DELETE"
+            url === "https://api.test.com/sandboxes/sandbox-1" && init?.method === "DELETE"
           ) {
             return Promise.resolve(jsonResponse({ ok: true }));
           }
@@ -1533,7 +1608,7 @@ describe("Sandbox", () => {
       assertEquals(await readPromise, "file-body");
       assertEquals(statusChecks >= 85, true);
       assertEquals(
-        fetchCalls.some((call) => call.url.endsWith("/sandbox-sessions/sandbox-1/heartbeat")),
+        fetchCalls.some((call) => call.url.endsWith("/sandboxes/sandbox-1/heartbeat")),
         true,
       );
       assertEquals(
@@ -1578,14 +1653,14 @@ describe("Sandbox", () => {
       assertEquals(sandbox.isActive, true);
       assertEquals(
         fetchCalls.some((call) =>
-          call.url === "https://api.test.com/sandbox-sessions/sandbox-1" &&
+          call.url === "https://api.test.com/sandboxes/sandbox-1" &&
           call.init?.method === "DELETE"
         ),
         true,
       );
       assertEquals(
         fetchCalls.some((call) =>
-          call.url === "https://api.test.com/sandbox-sessions/sandbox-2/file?path=notes.txt"
+          call.url === "https://api.test.com/sandboxes/sandbox-2/file?path=notes.txt"
         ),
         true,
       );
@@ -1656,7 +1731,7 @@ describe("Sandbox", () => {
       await ensurePromise;
       await closePromise;
 
-      assertStringIncludes(fetchCalls[2]!.url, "/sandbox-sessions/sandbox-1");
+      assertStringIncludes(fetchCalls[2]!.url, "/sandboxes/sandbox-1");
       assertEquals(fetchCalls[2]!.init?.method, "DELETE");
       assertEquals(sandbox.isActive, false);
     });
@@ -1784,7 +1859,7 @@ describe("Sandbox", () => {
         const callsAfterClose = fetchCalls.length;
 
         const heartbeatCalls = fetchCalls.filter((call) =>
-          call.url === "https://api.test.com/sandbox-sessions/sandbox-1/heartbeat"
+          call.url === "https://api.test.com/sandboxes/sandbox-1/heartbeat"
         );
 
         assertEquals(heartbeatCalls.length, 3);
@@ -1796,7 +1871,240 @@ describe("Sandbox", () => {
       }
     });
 
-    it("forwards projectReference from lazy project context for exec and async commands", async () => {
+    it("retains always-on files after an initial heartbeat failure", async () => {
+      mockFetch([
+        jsonResponse({
+          id: "persistent-workspace",
+          endpoint: "https://sb.test",
+          status: "running",
+        }),
+        textResponse("temporarily unavailable", 503),
+        jsonResponse({
+          id: "persistent-workspace",
+          endpoint: "https://sb.test",
+          status: "running",
+        }),
+        jsonResponse({ ok: true }),
+        jsonResponse({ stdout: "same workspace", stderr: "", exit_code: 0 }),
+      ]);
+      const sandbox = Sandbox.createLazy({
+        authToken: "token",
+        apiUrl: "https://api.test.com",
+        projectReference: "project",
+        accessScope: "private",
+        ttlMode: "always_on",
+      });
+      await assertRejects(() => sandbox.ensure(), Error, "Sandbox heartbeat failed");
+      assertEquals((await sandbox.runCommand("pwd")).stdout, "same workspace");
+      assertEquals(sandbox.id, "persistent-workspace");
+      assertEquals(
+        fetchCalls.filter((call) => call.init?.method === "POST" && call.url.endsWith("/sandboxes"))
+          .length,
+        1,
+        "recovery must reconnect instead of creating a billable duplicate",
+      );
+      await sandbox.close();
+      assertEquals(
+        fetchCalls.some((call) => call.init?.method === "DELETE"),
+        false,
+        "a transient heartbeat failure must not delete persistent files",
+      );
+    });
+    it("does not reconnect a retained workspace after its selected project changes", async () => {
+      mockFetch([
+        jsonResponse({ id: "workspace-1", endpoint: "https://sb1.test", status: "running" }),
+        textResponse("temporarily unavailable", 503),
+        jsonResponse({ id: "workspace-2", endpoint: "https://sb2.test", status: "running" }),
+        jsonResponse({ ok: true }),
+        jsonResponse({ stdout: "project-2", stderr: "", exit_code: 0 }),
+      ]);
+      let project = "project-1";
+      const sandbox = Sandbox.createLazy({
+        authToken: "token",
+        apiUrl: "https://api.test.com",
+        ttlMode: "always_on",
+        accessScope: "private",
+        getProjectId: () => project,
+      });
+      await assertRejects(() => sandbox.ensure(), Error, "Sandbox heartbeat failed");
+      project = "project-2";
+      try {
+        assertEquals((await sandbox.runCommand("pwd")).stdout, "project-2");
+        assertEquals(sandbox.id, "workspace-2");
+        assertEquals(jsonBody(fetchCalls, 2), {
+          access_scope: "private",
+          ttl_mode: "always_on",
+          project_reference: "project-2",
+        });
+        assertEquals(
+          fetchCalls.some((call) =>
+            call.url.endsWith("/workspace-1") && call.init?.method !== "POST"
+          ),
+          false,
+        );
+      } finally {
+        await sandbox.close();
+      }
+    });
+    it("does not create duplicate always-on workspaces during bootstrap retries", async () => {
+      setEnv("KUBERNETES_SERVICE_HOST", "kubernetes.default.svc");
+      mockTimers({ advanceTimeByMs: true });
+      mockFetch([
+        jsonResponse({
+          id: "retained",
+          endpoint: "https://123456.sandbox.veryfront.org",
+          status: "running",
+        }),
+        textResponse("starting", 503),
+        textResponse("starting", 503),
+        textResponse("starting", 503),
+      ]);
+      const sandbox = Sandbox.createLazy({
+        authToken: "token",
+        apiUrl: "https://api.test.com",
+        projectReference: "project",
+        ttlMode: "always_on",
+        startupTimeoutMs: 3,
+        pollIntervalMs: 2,
+        resolveRuntimeEndpoint: ({ endpoint }) =>
+          resolveDefaultSandboxRuntimeEndpoint({ endpoint }),
+      });
+      await assertRejects(() => sandbox.ensure(), Error);
+      await sandbox.close();
+      assertEquals(
+        fetchCalls.filter((call) => call.init?.method === "POST" && call.url.endsWith("/sandboxes"))
+          .length,
+        1,
+      );
+      assertEquals(fetchCalls.some((call) => call.init?.method === "DELETE"), false);
+    });
+
+    it("retries synchronous commands only after a connection refusal before dispatch", async () => {
+      mockFetch([jsonResponse({ ok: true }), () => {
+        throw new TypeError("fetch failed", { cause: { code: "ECONNREFUSED" } });
+      }, jsonResponse({ stdout: "ok", stderr: "", exit_code: 0 })]);
+      const sandbox = Sandbox.createLazy({
+        sandboxId: "existing",
+        sandboxEndpoint: "https://sb.test",
+        authToken: "token",
+        apiUrl: "https://api.test.com",
+        execStartMaxAttempts: 2,
+        execStartRetryDelayMs: 0,
+      });
+      try {
+        assertEquals((await sandbox.runCommand("true")).stdout, "ok");
+      } finally {
+        await sandbox.close();
+      }
+      assertEquals(fetchCalls.filter((call) => call.url.endsWith("/commands/run")).length, 2);
+    });
+    it("does not replay synchronous commands after an uncertain server failure", async () => {
+      mockFetch([jsonResponse({ ok: true }), textResponse("upstream failure", 503)]);
+      const sandbox = Sandbox.createLazy({
+        sandboxId: "existing",
+        sandboxEndpoint: "https://sb.test",
+        authToken: "token",
+        apiUrl: "https://api.test.com",
+        execStartMaxAttempts: 3,
+        execStartRetryDelayMs: 0,
+      });
+      try {
+        await assertRejects(
+          () => sandbox.runCommand("create something"),
+          Error,
+          "Sandbox command failed",
+        );
+      } finally {
+        await sandbox.close();
+      }
+      assertEquals(
+        fetchCalls.filter((call) => call.url.endsWith("/commands/run")).length,
+        1,
+        "the command may already have run",
+      );
+    });
+
+    it("allows synchronous command completion beyond the metadata request timeout", async () => {
+      let commandSignal: AbortSignal | undefined;
+      mockFetch([jsonResponse({ ok: true }), async (_input, init) => {
+        commandSignal = init?.signal ?? undefined;
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        assertEquals(
+          commandSignal?.aborted,
+          false,
+          "command deadline must not use the short metadata timeout",
+        );
+        return jsonResponse({ stdout: "ok", stderr: "", exit_code: 0 });
+      }]);
+      const sandbox = Sandbox.createLazy({
+        sandboxId: "existing",
+        sandboxEndpoint: "https://sb.test",
+        authToken: "token",
+        apiUrl: "https://api.test.com",
+        controlRequestTimeoutMs: 1,
+      });
+      try {
+        assertEquals((await sandbox.runCommand("true", { timeoutSeconds: 1 })).exitCode, 0);
+      } finally {
+        await sandbox.close();
+      }
+    });
+
+    it("retains always-on workspaces when the selected project changes", async () => {
+      mockFetch([
+        jsonResponse({
+          id: "workspace-1",
+          endpoint: "https://sb1.test",
+          status: "running",
+          workspace_storage: "persistent",
+          ttl_mode: "always_on",
+        }),
+        jsonResponse({ ok: true }),
+        commandResponse([{ type: "exit", exitCode: 0 }]),
+        jsonResponse({
+          id: "workspace-2",
+          endpoint: "https://sb2.test",
+          status: "running",
+          workspace_storage: "persistent",
+          ttl_mode: "always_on",
+        }),
+        jsonResponse({ ok: true }),
+        commandResponse([{ type: "exit", exitCode: 0 }]),
+      ]);
+      let project = "project-1";
+      const sandbox = Sandbox.createLazy({
+        authToken: "token",
+        apiUrl: "https://api.test.com",
+        accessScope: "private",
+        ttlMode: "always_on",
+        getProjectId: () => project,
+      });
+      try {
+        await sandbox.runCommand("true");
+        project = "project-2";
+        await sandbox.runCommand("true");
+        assertEquals(sandbox.id, "workspace-2");
+      } finally {
+        await sandbox.close();
+      }
+      assertEquals(
+        fetchCalls.some((call) => call.init?.method === "DELETE"),
+        false,
+        "changing project must retain persistent workspaces",
+      );
+      assertEquals(jsonBody(fetchCalls, 0), {
+        access_scope: "private",
+        ttl_mode: "always_on",
+        project_reference: "project-1",
+      });
+      assertEquals(jsonBody(fetchCalls, 3), {
+        access_scope: "private",
+        ttl_mode: "always_on",
+        project_reference: "project-2",
+      });
+    });
+
+    it("uses sandbox project scope without forwarding project context with commands", async () => {
       mockFetch([
         jsonResponse({
           id: "sandbox-1",
@@ -1804,12 +2112,13 @@ describe("Sandbox", () => {
           status: "running",
         }),
         jsonResponse({ ok: true }),
-        ndjsonResponse([
+        commandResponse([
           { type: "stdout", data: "ok\n" },
           { type: "exit", exitCode: 0 },
         ]),
         jsonResponse({
-          id: "command-1",
+          command_id: "command-1",
+          command: "echo test",
           status: "completed",
           exit_code: 0,
           signal: null,
@@ -1830,16 +2139,14 @@ describe("Sandbox", () => {
       });
 
       try {
-        await sandbox.executeCommand("echo ok");
+        await sandbox.runCommand("echo ok");
         await sandbox.startBackgroundCommand("npm test");
 
         assertEquals(jsonBody(fetchCalls, 2), {
           command: "echo ok",
-          projectReference: "project-123",
         });
         assertEquals(jsonBody(fetchCalls, 3), {
           command: "npm test",
-          projectReference: "project-123",
         });
       } finally {
         await sandbox.close();
@@ -1859,7 +2166,8 @@ describe("Sandbox", () => {
           { type: "exit", exitCode: 0 },
         ]),
         jsonResponse({
-          id: "command-1",
+          command_id: "command-1",
+          command: "echo test",
           status: "completed",
           exit_code: 0,
           signal: null,
@@ -1881,7 +2189,7 @@ describe("Sandbox", () => {
       });
 
       try {
-        await sandbox.executeCommand("echo ok");
+        await sandbox.runCommand("echo ok");
         await sandbox.startBackgroundCommand("npm test");
 
         assertEquals(
@@ -1905,7 +2213,7 @@ describe("Sandbox", () => {
           status: "running",
         }),
         jsonResponse({ ok: true }),
-        ndjsonResponse([
+        commandResponse([
           { type: "stdout", data: "ok\n" },
           { type: "exit", exitCode: 0 },
         ]),
@@ -1919,11 +2227,11 @@ describe("Sandbox", () => {
       });
 
       try {
-        await sandbox.executeCommand("echo ok");
+        await sandbox.runCommand("echo ok");
 
         assertEquals(
           fetchCalls[2]!.url,
-          "https://api.test.com/sandbox-sessions/sandbox-1/commands/stream",
+          "https://api.test.com/sandboxes/sandbox-1/commands/run",
         );
       } finally {
         await sandbox.close();
@@ -1939,7 +2247,7 @@ describe("Sandbox", () => {
           status: "running",
         }),
         jsonResponse({ ok: true }),
-        ndjsonResponse([
+        commandResponse([
           { type: "stdout", data: "ok\n" },
           { type: "exit", exitCode: 0 },
         ]),
@@ -1952,16 +2260,16 @@ describe("Sandbox", () => {
       });
 
       try {
-        assertEquals(await sandbox.executeCommand("echo ok"), {
+        assertEquals(await sandbox.runCommand("echo ok"), {
           stdout: "ok\n",
           stderr: "",
           exitCode: 0,
         });
 
         assertEquals(fetchCalls.map((call) => call.url), [
-          "https://api.test.com/sandbox-sessions",
-          "https://api.test.com/sandbox-sessions/sandbox-1/heartbeat",
-          "https://api.test.com/sandbox-sessions/sandbox-1/commands/stream",
+          "https://api.test.com/sandboxes",
+          "https://api.test.com/sandboxes/sandbox-1/heartbeat",
+          "https://api.test.com/sandboxes/sandbox-1/commands/run",
         ]);
       } finally {
         await sandbox.close();
@@ -2000,17 +2308,17 @@ describe("Sandbox", () => {
       });
 
       try {
-        assertEquals(await sandbox.executeCommand("echo ok"), {
+        assertEquals(await sandbox.runCommand("echo ok"), {
           stdout: "ok\n",
           stderr: "",
           exitCode: 0,
         });
 
         assertEquals(fetchCalls.map((call) => call.url), [
-          "https://api.test.com/sandbox-sessions",
+          "https://api.test.com/sandboxes",
           "http://sandbox.veryfront-sandbox-3912734599.svc.cluster.local/readyz",
           "http://sandbox.veryfront-sandbox-3912734599.svc.cluster.local/readyz",
-          "https://api.test.com/sandbox-sessions/sandbox-1/heartbeat",
+          "https://api.test.com/sandboxes/sandbox-1/heartbeat",
           "http://sandbox.veryfront-sandbox-3912734599.svc.cluster.local/exec",
         ]);
       } finally {
@@ -2059,20 +2367,20 @@ describe("Sandbox", () => {
       });
 
       try {
-        assertEquals(await sandbox.executeCommand("echo ok"), {
+        assertEquals(await sandbox.runCommand("echo ok"), {
           stdout: "ok\n",
           stderr: "",
           exitCode: 0,
         });
 
         assertEquals(fetchCalls.map((call) => call.url), [
-          "https://api.test.com/sandbox-sessions",
+          "https://api.test.com/sandboxes",
           "http://sandbox.veryfront-sandbox-2826936518.svc.cluster.local/readyz",
           "http://sandbox.veryfront-sandbox-2826936518.svc.cluster.local/readyz",
-          "https://api.test.com/sandbox-sessions/stale",
-          "https://api.test.com/sandbox-sessions",
+          "https://api.test.com/sandboxes/stale",
+          "https://api.test.com/sandboxes",
           "http://sandbox.veryfront-sandbox-1373820032.svc.cluster.local/readyz",
-          "https://api.test.com/sandbox-sessions/fresh/heartbeat",
+          "https://api.test.com/sandboxes/fresh/heartbeat",
           "http://sandbox.veryfront-sandbox-1373820032.svc.cluster.local/exec",
         ]);
         assertEquals(fetchCalls[3]!.init?.method, "DELETE");
@@ -2147,15 +2455,19 @@ describe("Sandbox", () => {
       });
 
       try {
-        const result = await sandbox.executeCommand("echo ok");
+        const events = await Array.fromAsync(sandbox.streamCommand("echo ok"));
+        const result = {
+          stdout: events.filter((event) => event.type === "stdout").map((event) => event.data ?? "")
+            .join(""),
+        };
         assertEquals(result.stdout, "ok\n");
         assertEquals(
           fetchCalls[2]!.url,
-          "https://api.test.com/sandbox-sessions/sandbox-1/commands/stream",
+          "https://api.test.com/sandboxes/sandbox-1/commands/stream",
         );
         assertEquals(
           fetchCalls[3]!.url,
-          "https://api.test.com/sandbox-sessions/sandbox-1/commands/stream",
+          "https://api.test.com/sandboxes/sandbox-1/commands/stream",
         );
         assertEquals(fetchCalls[2]!.init?.signal instanceof AbortSignal, true);
       } finally {
@@ -2194,7 +2506,7 @@ describe("Sandbox", () => {
       });
 
       try {
-        const iterator = sandbox.executeStream("echo ok");
+        const iterator = sandbox.streamCommand("echo ok");
         const first = await iterator.next();
 
         assertEquals(first.done, false);
@@ -2205,7 +2517,7 @@ describe("Sandbox", () => {
         assertEquals(cancelCalled, true);
         assertEquals(
           fetchCalls[2]!.url,
-          "https://api.test.com/sandbox-sessions/sandbox-1/commands/stream",
+          "https://api.test.com/sandboxes/sandbox-1/commands/stream",
         );
       } finally {
         await sandbox.close();
@@ -2240,9 +2552,9 @@ describe("Sandbox", () => {
       });
 
       try {
-        const events: ExecStreamEvent[] = [];
+        const events: CommandStreamEvent[] = [];
         const flushCount = await countTextDecoderFlushes(async () => {
-          for await (const event of sandbox.executeStream("echo ok")) {
+          for await (const event of sandbox.streamCommand("echo ok")) {
             events.push(event);
           }
         });
@@ -2297,7 +2609,7 @@ describe("Sandbox", () => {
       });
 
       try {
-        const result = await sandbox.executeCommand("echo ok");
+        const result = await sandbox.runCommand("echo ok");
         assertEquals(result.stdout, "ok\n");
         assertEquals(
           fetchCalls.filter((call) =>
@@ -2307,7 +2619,7 @@ describe("Sandbox", () => {
         );
         assertEquals(
           fetchCalls.some((call) =>
-            call.url === "https://api.test.com/sandbox-sessions/sandbox-1" &&
+            call.url === "https://api.test.com/sandboxes/sandbox-1" &&
             call.init?.method === "DELETE"
           ),
           true,
@@ -2353,7 +2665,8 @@ describe("Sandbox", () => {
         }),
         jsonResponse({ ok: true }),
         jsonResponse({
-          id: "command-1",
+          command_id: "command-1",
+          command: "echo test",
           status: "running",
           exit_code: null,
           signal: null,
@@ -2365,7 +2678,8 @@ describe("Sandbox", () => {
           heartbeat_failure_count: 0,
         }),
         jsonResponse({
-          id: "command-1",
+          command_id: "command-1",
+          command: "echo test",
           status: "completed",
           exit_code: 0,
           signal: null,
@@ -2401,7 +2715,7 @@ describe("Sandbox", () => {
         assertEquals(intervalCallbacks.size, 1);
         assertEquals(
           fetchCalls.some((call) =>
-            call.url === "https://api.test.com/sandbox-sessions/sandbox-1/commands/command-1/output"
+            call.url === "https://api.test.com/sandboxes/sandbox-1/commands/command-1/output"
           ),
           true,
         );
@@ -2444,7 +2758,8 @@ describe("Sandbox", () => {
         jsonResponse({ status: "ok" }),
         jsonResponse({ ok: true }),
         jsonResponse({
-          id: "command-1",
+          command_id: "command-1",
+          command: "echo test",
           status: "running",
           exit_code: null,
           signal: null,
@@ -2456,7 +2771,8 @@ describe("Sandbox", () => {
           heartbeat_failure_count: 0,
         }),
         jsonResponse({
-          id: "command-1",
+          command_id: "command-1",
+          command: "echo test",
           status: "completed",
           exit_code: 0,
           signal: null,
@@ -2516,6 +2832,7 @@ describe("Sandbox", () => {
         jsonResponse({ ok: true }),
         jsonResponse({
           id: "command-1",
+          command: "echo test",
           status: "running",
           exit_code: null,
           signal: null,
@@ -2529,6 +2846,7 @@ describe("Sandbox", () => {
         textResponse("upstream timeout", 503),
         jsonResponse({
           id: "command-1",
+          command: "echo test",
           status: "completed",
           exit_code: 0,
           signal: null,
@@ -2540,7 +2858,7 @@ describe("Sandbox", () => {
           heartbeat_failure_count: 0,
           stdout: "done\n",
           stderr: "",
-          stdout_truncated: false,
+          stdout_truncated: true,
           stderr_truncated: false,
         }),
         jsonResponse({ ok: true }),
@@ -2565,6 +2883,8 @@ describe("Sandbox", () => {
         assertEquals(sandbox.isActive, true);
         const output = await sandbox.getBackgroundCommandOutput("command-1");
         assertEquals(output.status, "completed");
+        assertEquals(output.id, "command-1");
+        assertEquals(output.stdoutTruncated, true, "runtime truncation must not be lost");
         assertEquals(
           fetchCalls.some((call) =>
             call.url ===
@@ -2577,7 +2897,7 @@ describe("Sandbox", () => {
       }
     });
 
-    it("preserves the proxy session when a heartbeat fails while an async command is active", async () => {
+    it("preserves the proxy session when a heartbeat fails while a background command is pending", async () => {
       mockFetch([
         jsonResponse({
           id: "sandbox-1",
@@ -2586,8 +2906,9 @@ describe("Sandbox", () => {
         }),
         jsonResponse({ ok: true }),
         jsonResponse({
-          id: "command-1",
-          status: "running",
+          command_id: "command-1",
+          command: "echo test",
+          status: "pending",
           exit_code: null,
           signal: null,
           started_at: "2026-01-01T00:00:00Z",
@@ -2599,7 +2920,8 @@ describe("Sandbox", () => {
         }),
         textResponse("upstream timeout", 503),
         jsonResponse({
-          id: "command-1",
+          command_id: "command-1",
+          command: "echo test",
           status: "completed",
           exit_code: 0,
           signal: null,
@@ -2640,13 +2962,13 @@ describe("Sandbox", () => {
         assertEquals(
           fetchCalls.some((call) =>
             call.url ===
-              "https://api.test.com/sandbox-sessions/sandbox-1/commands/command-1/output"
+              "https://api.test.com/sandboxes/sandbox-1/commands/command-1/output"
           ),
           true,
         );
         assertEquals(
           fetchCalls.some((call) =>
-            call.url === "https://api.test.com/sandbox-sessions/sandbox-1" &&
+            call.url === "https://api.test.com/sandboxes/sandbox-1" &&
             call.init?.method === "DELETE"
           ),
           false,
@@ -2664,7 +2986,7 @@ describe("Sandbox", () => {
           status: "running",
         }),
         jsonResponse({ ok: true }),
-        ndjsonResponse([
+        commandResponse([
           { type: "stdout", data: "ok\n" },
           { type: "exit", exitCode: 0 },
         ]),
@@ -2676,7 +2998,7 @@ describe("Sandbox", () => {
         apiUrl: "https://api.test.com",
       });
 
-      assertEquals(await sandbox.executeCommand("echo ok"), {
+      assertEquals(await sandbox.runCommand("echo ok"), {
         stdout: "ok\n",
         stderr: "",
         exitCode: 0,
@@ -2684,9 +3006,9 @@ describe("Sandbox", () => {
       await sandbox.close();
 
       assertEquals(fetchCalls.map((call) => [call.url, call.init?.method ?? "GET"]), [
-        ["https://api.test.com/sandbox-sessions/existing-1", "GET"],
-        ["https://api.test.com/sandbox-sessions/existing-1/heartbeat", "POST"],
-        ["https://api.test.com/sandbox-sessions/existing-1/commands/stream", "POST"],
+        ["https://api.test.com/sandboxes/existing-1", "GET"],
+        ["https://api.test.com/sandboxes/existing-1/heartbeat", "POST"],
+        ["https://api.test.com/sandboxes/existing-1/commands/run", "POST"],
       ]);
     });
 
@@ -2699,7 +3021,8 @@ describe("Sandbox", () => {
         }),
         jsonResponse({ ok: true }),
         jsonResponse({
-          id: "command-1",
+          command_id: "command-1",
+          command: "echo test",
           status: "running",
           exit_code: null,
           signal: null,
@@ -2711,7 +3034,8 @@ describe("Sandbox", () => {
           heartbeat_failure_count: 0,
         }),
         jsonResponse({
-          id: "command-1",
+          command_id: "command-1",
+          command: "echo test",
           status: "completed",
           exit_code: 0,
           signal: null,
@@ -2727,7 +3051,8 @@ describe("Sandbox", () => {
           stderr_truncated: false,
         }),
         jsonResponse({
-          id: "command-1",
+          command_id: "command-1",
+          command: "echo test",
           status: "canceled",
           exit_code: null,
           signal: "SIGTERM",
@@ -2762,15 +3087,15 @@ describe("Sandbox", () => {
       }
 
       assertEquals(fetchCalls.map((call) => [call.url, call.init?.method ?? "GET"]), [
-        ["https://api.test.com/sandbox-sessions", "POST"],
-        ["https://api.test.com/sandbox-sessions/sandbox-1/heartbeat", "POST"],
-        ["https://api.test.com/sandbox-sessions/sandbox-1/commands/command-1", "GET"],
-        ["https://api.test.com/sandbox-sessions/sandbox-1/commands/command-1/output", "GET"],
+        ["https://api.test.com/sandboxes", "POST"],
+        ["https://api.test.com/sandboxes/sandbox-1/heartbeat", "POST"],
+        ["https://api.test.com/sandboxes/sandbox-1/commands/command-1", "GET"],
+        ["https://api.test.com/sandboxes/sandbox-1/commands/command-1/output", "GET"],
         [
-          "https://api.test.com/sandbox-sessions/sandbox-1/commands/command-1/cancel",
+          "https://api.test.com/sandboxes/sandbox-1/commands/command-1/cancel",
           "POST",
         ],
-        ["https://api.test.com/sandbox-sessions/sandbox-1", "DELETE"],
+        ["https://api.test.com/sandboxes/sandbox-1", "DELETE"],
       ]);
     });
 
@@ -2785,7 +3110,8 @@ describe("Sandbox", () => {
         jsonResponse({ status: "ok" }),
         jsonResponse({ ok: true }),
         jsonResponse({
-          id: "command-1",
+          command_id: "command-1",
+          command: "echo test",
           status: "running",
           exit_code: null,
           signal: null,
@@ -2797,7 +3123,8 @@ describe("Sandbox", () => {
           heartbeat_failure_count: 0,
         }),
         jsonResponse({
-          id: "command-1",
+          command_id: "command-1",
+          command: "echo test",
           status: "completed",
           exit_code: 0,
           signal: null,
@@ -2813,7 +3140,8 @@ describe("Sandbox", () => {
           stderr_truncated: false,
         }),
         jsonResponse({
-          id: "command-1",
+          command_id: "command-1",
+          command: "echo test",
           status: "canceled",
           exit_code: null,
           signal: "SIGTERM",
@@ -2852,14 +3180,104 @@ describe("Sandbox", () => {
         "http://sandbox.veryfront-sandbox-sandbox-1.svc.cluster.local/exec/commands";
       assertEquals(resolverCalls, 2);
       assertEquals(fetchCalls.map((call) => [call.url, call.init?.method ?? "GET"]), [
-        ["https://api.test.com/sandbox-sessions", "POST"],
+        ["https://api.test.com/sandboxes", "POST"],
         ["http://sandbox.veryfront-sandbox-sandbox-1.svc.cluster.local/readyz", "GET"],
-        ["https://api.test.com/sandbox-sessions/sandbox-1/heartbeat", "POST"],
+        ["https://api.test.com/sandboxes/sandbox-1/heartbeat", "POST"],
         [`${internalCommandsUrl}/command-1`, "GET"],
         [`${internalCommandsUrl}/command-1/output`, "GET"],
         [`${internalCommandsUrl}/command-1/cancel`, "POST"],
-        ["https://api.test.com/sandbox-sessions/sandbox-1", "DELETE"],
+        ["https://api.test.com/sandboxes/sandbox-1", "DELETE"],
       ]);
+    });
+  });
+
+  describe("target workspace contract", () => {
+    it("sends private access and always-on lifetime explicitly", async () => {
+      mockFetch([
+        jsonResponse({
+          id: "sandbox-private",
+          endpoint: "https://sandbox.example.com",
+          status: "running",
+        }),
+      ]);
+      await Sandbox.create({
+        authToken: "test-token",
+        apiUrl: "https://api.test.com",
+        projectReference: "example-project",
+        accessScope: "private",
+        ttlMode: "always_on",
+      });
+      assertEquals(jsonBody(fetchCalls, 0), {
+        project_reference: "example-project",
+        access_scope: "private",
+        ttl_mode: "always_on",
+      });
+    });
+
+    it("does not delete an always-on workspace when closing the client", async () => {
+      mockFetch([
+        jsonResponse({
+          id: "sandbox-private",
+          endpoint: "https://sandbox.example.com",
+          status: "running",
+        }),
+      ]);
+      const sandbox = await Sandbox.create({
+        authToken: "test-token",
+        apiUrl: "https://api.test.com",
+        projectReference: "example-project",
+        accessScope: "private",
+        ttlMode: "always_on",
+      });
+      await sandbox.close();
+      assertEquals(fetchCalls.length, 1);
+    });
+
+    it("keeps persistent workspace files when reconnecting with timed cleanup", async () => {
+      mockFetch([
+        jsonResponse({
+          id: "sandbox-private",
+          endpoint: "https://sandbox.example.com",
+          status: "running",
+          workspace_storage: "persistent",
+          ttl_mode: "duration",
+        }),
+      ]);
+      const sandbox = await Sandbox.get("sandbox-private", {
+        authToken: "test-token",
+        apiUrl: "https://api.test.com",
+      });
+      await sandbox.close();
+      assertEquals(fetchCalls.length, 1);
+    });
+
+    it("retains storage and lifetime metadata when listing", async () => {
+      mockFetch([jsonResponse({
+        data: [{
+          id: "sandbox-private",
+          short_id: "private1",
+          endpoint: "https://sandbox.example.com",
+          status: "running",
+          project_id: "project-1",
+          access_scope: "private",
+          workspace_storage: "persistent",
+          ttl_mode: "always_on",
+          ttl_hours: null,
+          expires_at: null,
+          created_at: "2026-01-01T00:00:00Z",
+          last_activity_at: null,
+        }],
+        page_info: { self: null, first: null, next: null, prev: null },
+      })]);
+      const result = await Sandbox.list({
+        authToken: "test-token",
+        apiUrl: "https://api.test.com",
+        projectReference: "example-project",
+      });
+      assertEquals(result.data[0]!.workspaceStorage, "persistent");
+      assertEquals(result.data[0]!.accessScope, "private");
+      assertEquals(result.data[0]!.ttlMode, "always_on");
+      assertEquals(result.pageInfo.next, null);
     });
   });
 
@@ -2879,13 +3297,13 @@ describe("Sandbox", () => {
               id: "sess-2",
               short_id: "s2",
               endpoint: "https://sb2.test",
-              status: "stopped",
+              status: "deleting",
               created_at: "2026-01-02T00:00:00Z",
             },
           ],
           page_info: {
-            self: "/sandbox-sessions?cursor=abc",
-            next: "/sandbox-sessions?cursor=def",
+            self: "/sandboxes?cursor=abc",
+            next: "/sandboxes?cursor=def",
             prev: null,
           },
         }),
@@ -2900,12 +3318,12 @@ describe("Sandbox", () => {
       assertEquals(result.data[0]!.id, "sess-1");
       assertEquals(result.data[0]!.shortId, "s1");
       assertEquals(result.data[0]!.createdAt, "2026-01-01T00:00:00Z");
-      assertEquals(result.data[1]!.status, "stopped");
-      assertEquals(result.pageInfo.next, "/sandbox-sessions?cursor=def");
+      assertEquals(result.data[1]!.status, "deleting");
+      assertEquals(result.pageInfo.next, "/sandboxes?cursor=def");
       assertEquals(result.pageInfo.prev, null);
       assertEquals(result.pageInfo.first, null);
 
-      assertStringIncludes(fetchCalls[0]!.url, "/sandbox-sessions");
+      assertStringIncludes(fetchCalls[0]!.url, "/sandboxes");
       assertEquals(headerValue(fetchCalls, 0, "Authorization"), "Bearer test-token");
     });
 
@@ -2943,7 +3361,8 @@ describe("Sandbox", () => {
       mockFetch([
         jsonResponse({ id: "s1", endpoint: "https://sb.test", status: "running" }),
         jsonResponse({
-          id: "command-1",
+          command_id: "command-1",
+          command: "echo test",
           status: "running",
           exit_code: null,
           signal: null,
@@ -2967,7 +3386,7 @@ describe("Sandbox", () => {
       assertEquals(command.heartbeatFailureCount, 0);
 
       assertEquals(fetchCalls[1]!.init?.method, "POST");
-      assertEquals(fetchCalls[1]!.url, "https://api.test.com/sandbox-sessions/s1/commands");
+      assertEquals(fetchCalls[1]!.url, "https://api.test.com/sandboxes/s1/commands");
       assertEquals(headerValue(fetchCalls, 1, "Authorization"), "Bearer token");
       assertEquals(headerValue(fetchCalls, 1, "Content-Type"), "application/json");
       assertEquals(jsonBody(fetchCalls, 1), { command: "npm test" });
@@ -2977,7 +3396,8 @@ describe("Sandbox", () => {
       mockFetch([
         jsonResponse({ id: "s1", endpoint: "https://sb.test", status: "running" }),
         jsonResponse({
-          id: "command-1",
+          command_id: "command-1",
+          command: "echo test",
           status: "running",
           exit_code: null,
           signal: null,
@@ -2995,14 +3415,14 @@ describe("Sandbox", () => {
       await sandbox.startBackgroundCommand("npm test");
 
       assertEquals(fetchCalls.length, 2);
-      assertEquals(fetchCalls[1]!.url, "https://api.test.com/sandbox-sessions/s1/commands");
+      assertEquals(fetchCalls[1]!.url, "https://api.test.com/sandboxes/s1/commands");
 
       await sandbox.heartbeat();
 
       assertEquals(fetchCalls.length, 3);
       assertEquals(
         fetchCalls[2]!.url,
-        "https://api.test.com/sandbox-sessions/s1/heartbeat",
+        "https://api.test.com/sandboxes/s1/heartbeat",
       );
       assertEquals(fetchCalls[2]!.init?.method, "POST");
     });
@@ -3027,7 +3447,8 @@ describe("Sandbox", () => {
       mockFetch([
         jsonResponse({ id: "s1", endpoint: "https://sb.test", status: "running" }),
         jsonResponse({
-          id: "command-2",
+          command_id: "command-2",
+          command: "echo test",
           status: "completed",
           exit_code: 0,
           signal: null,
@@ -3052,7 +3473,7 @@ describe("Sandbox", () => {
 
       assertEquals(
         fetchCalls[1]!.url,
-        "https://api.test.com/sandbox-sessions/s1/commands/command-2",
+        "https://api.test.com/sandboxes/s1/commands/command-2",
       );
       assertEquals(headerValue(fetchCalls, 1, "Authorization"), "Bearer token");
     });
@@ -3077,7 +3498,8 @@ describe("Sandbox", () => {
       mockFetch([
         jsonResponse({ id: "s1", endpoint: "https://sb.test", status: "running" }),
         jsonResponse({
-          id: "command-3",
+          command_id: "command-3",
+          command: "echo test",
           status: "completed",
           exit_code: 0,
           signal: null,
@@ -3106,7 +3528,7 @@ describe("Sandbox", () => {
 
       assertEquals(
         fetchCalls[1]!.url,
-        "https://api.test.com/sandbox-sessions/s1/commands/command-3/output",
+        "https://api.test.com/sandboxes/s1/commands/command-3/output",
       );
       assertEquals(headerValue(fetchCalls, 1, "Authorization"), "Bearer token");
     });
@@ -3127,13 +3549,47 @@ describe("Sandbox", () => {
   });
 
   describe("listBackgroundCommands()", () => {
+    it("reads later command pages without losing records", async () => {
+      const command = {
+        command_id: "command-1",
+        command: "echo test",
+        status: "completed",
+        exit_code: 0,
+        signal: null,
+        started_at: "2026-01-01T00:00:00Z",
+        finished_at: "2026-01-01T00:00:01Z",
+        heartbeat_status: "disabled",
+        last_heartbeat_at: null,
+        last_heartbeat_error: null,
+        heartbeat_failure_count: 0,
+      };
+      mockFetch([
+        jsonResponse({ id: "s1", endpoint: "https://sb.test", status: "running" }),
+        jsonResponse({
+          data: [command],
+          page_info: { self: null, first: null, next: "next-page", prev: null },
+        }),
+        jsonResponse({
+          data: [{ ...command, command_id: "command-2" }],
+          page_info: { self: "next-page", first: null, next: null, prev: null },
+        }),
+      ]);
+      const sandbox = await Sandbox.create({ authToken: "token", apiUrl: "https://api.test.com" });
+      assertEquals((await sandbox.listBackgroundCommands()).map((command) => command.id), [
+        "command-1",
+        "command-2",
+      ]);
+      assertStringIncludes(fetchCalls[2]!.url, "cursor=next-page");
+    });
+
     it("should list background commands", async () => {
       mockFetch([
         jsonResponse({ id: "s1", endpoint: "https://sb.test", status: "running" }),
         jsonResponse({
-          commands: [
+          data: [
             {
-              id: "command-1",
+              command_id: "command-1",
+              command: "echo test",
               status: "running",
               exit_code: null,
               signal: null,
@@ -3145,7 +3601,8 @@ describe("Sandbox", () => {
               heartbeat_failure_count: 0,
             },
             {
-              id: "command-2",
+              command_id: "command-2",
+              command: "echo test",
               status: "completed",
               exit_code: 0,
               signal: null,
@@ -3157,6 +3614,7 @@ describe("Sandbox", () => {
               heartbeat_failure_count: 0,
             },
           ],
+          page_info: { self: null, first: null, next: null, prev: null },
         }),
       ]);
 
@@ -3170,16 +3628,17 @@ describe("Sandbox", () => {
       assertEquals(commands[1]!.status, "completed");
       assertEquals(commands[1]!.exitCode, 0);
 
-      assertEquals(fetchCalls[1]!.url, "https://api.test.com/sandbox-sessions/s1/commands");
+      assertEquals(fetchCalls[1]!.url, "https://api.test.com/sandboxes/s1/commands");
       assertEquals(headerValue(fetchCalls, 1, "Authorization"), "Bearer token");
     });
 
-    it("should handle array response format", async () => {
+    it("rejects a legacy bare-array collection", async () => {
       mockFetch([
         jsonResponse({ id: "s1", endpoint: "https://sb.test", status: "running" }),
         jsonResponse([
           {
-            id: "command-1",
+            command_id: "command-1",
+            command: "echo test",
             status: "running",
             exit_code: null,
             signal: null,
@@ -3194,10 +3653,11 @@ describe("Sandbox", () => {
       ]);
 
       const sandbox = await Sandbox.create({ authToken: "token", apiUrl: "https://api.test.com" });
-      const commands = await sandbox.listBackgroundCommands();
-
-      assertEquals(commands.length, 1);
-      assertEquals(commands[0]!.id, "command-1");
+      await assertRejects(
+        () => sandbox.listBackgroundCommands(),
+        Error,
+        "Invalid sandbox command collection",
+      );
     });
 
     it("should throw on list failure", async () => {
@@ -3220,7 +3680,8 @@ describe("Sandbox", () => {
       mockFetch([
         jsonResponse({ id: "s1", endpoint: "https://sb.test", status: "running" }),
         jsonResponse({
-          id: "command-4",
+          command_id: "command-4",
+          command: "echo test",
           status: "canceled",
           exit_code: null,
           signal: "SIGTERM",
@@ -3242,7 +3703,7 @@ describe("Sandbox", () => {
 
       assertEquals(
         fetchCalls[1]!.url,
-        "https://api.test.com/sandbox-sessions/s1/commands/command-4/cancel",
+        "https://api.test.com/sandboxes/s1/commands/command-4/cancel",
       );
       assertEquals(fetchCalls[1]!.init?.method, "POST");
       assertEquals(headerValue(fetchCalls, 1, "Authorization"), "Bearer token");
@@ -3260,6 +3721,149 @@ describe("Sandbox", () => {
         Error,
         "Cancel background command failed",
       );
+    });
+  });
+
+  it("rejects malformed command metadata instead of returning typed guesses", async () => {
+    mockFetch([
+      jsonResponse({ command_id: "invalid-command", command: "true", status: "unknown" }),
+    ]);
+    const sandbox = Sandbox.attach({
+      id: "existing",
+      endpoint: "https://sb.test",
+      authToken: "token",
+      apiUrl: "https://api.test.com",
+    });
+    await assertRejects(
+      () => sandbox.getBackgroundCommand("invalid-command"),
+      Error,
+      "Invalid sandbox command status",
+    );
+  });
+
+  it("preserves unknown start time on a pending background command", async () => {
+    mockFetch([jsonResponse({
+      command_id: "pending-command",
+      command: "true",
+      status: "pending",
+      exit_code: null,
+      signal: null,
+      started_at: null,
+      finished_at: null,
+      heartbeat_status: "disabled",
+      last_heartbeat_at: null,
+      last_heartbeat_error: null,
+      heartbeat_failure_count: 0,
+    })]);
+    const sandbox = Sandbox.attach({
+      id: "existing",
+      endpoint: "https://sb.test",
+      authToken: "token",
+      apiUrl: "https://api.test.com",
+    });
+    const command = await sandbox.getBackgroundCommand("pending-command");
+    assertEquals(command.startedAt, null);
+    assertEquals(command.command, "true");
+  });
+
+  describe("control-plane operations", () => {
+    it("exposes health, readiness, redacted environment and paginated directory entries", async () => {
+      mockFetch([
+        jsonResponse({ ok: true, status: "running", reason: null }),
+        jsonResponse({ ok: false, status: "provisioning", reason: "Starting runtime" }),
+        jsonResponse({ env: { API_KEY: "[REDACTED]" } }),
+        jsonResponse({
+          data: [{ path: "/workspace/a.txt", type: "file", size_bytes: 12 }],
+          page_info: { self: null, first: null, next: "next-page", prev: null },
+        }),
+      ]);
+      const sandbox = Sandbox.attach({
+        id: "existing",
+        endpoint: "https://sb.test",
+        authToken: "token",
+        apiUrl: "https://api.test.com",
+      });
+      assertEquals(await sandbox.checkHealth(), { ok: true, status: "running", reason: null });
+      assertEquals(await sandbox.checkReadiness(), {
+        ok: false,
+        status: "provisioning",
+        reason: "Starting runtime",
+      });
+      assertEquals(await sandbox.getEnvironment(), { env: { API_KEY: "[REDACTED]" } });
+      assertEquals(await sandbox.listFiles({ path: "/workspace", limit: 10 }), {
+        data: [{ path: "/workspace/a.txt", type: "file", sizeBytes: 12 }],
+        pageInfo: { self: null, first: null, next: "next-page", prev: null },
+      });
+      assertEquals(fetchCalls.map((call) => new URL(call.url).pathname), [
+        "/sandboxes/existing/healthz",
+        "/sandboxes/existing/readyz",
+        "/sandboxes/existing/environment",
+        "/sandboxes/existing/files",
+      ]);
+      assertEquals(new URL(fetchCalls[3]!.url).searchParams.get("limit"), "10");
+    });
+    it("updates only lifetime fields and preserves an attached client", async () => {
+      mockFetch([jsonResponse({
+        id: "existing",
+        short_id: "abc",
+        endpoint: "https://sb.test",
+        status: "running",
+        created_at: "2026-10-07T12:00:00Z",
+        project_id: "project",
+        access_scope: "private",
+        workspace_storage: "persistent",
+        ttl_mode: "duration",
+        ttl_hours: 4,
+        expires_at: "2026-10-07T16:00:00Z",
+        last_activity_at: null,
+      })]);
+      const sandbox = Sandbox.attach({
+        id: "existing",
+        endpoint: "https://sb.test",
+        authToken: "token",
+        apiUrl: "https://api.test.com",
+      });
+      const details = await sandbox.updateLifetime({ ttlMode: "duration", ttlHours: 4 });
+      assertEquals(details.ttlHours, 4);
+      assertEquals(jsonBody(fetchCalls, 0), { ttl_mode: "duration", ttl_hours: 4 });
+      assertEquals(fetchCalls[0]!.init?.method, "PATCH");
+      await sandbox.close();
+      assertEquals(fetchCalls.length, 1);
+    });
+    it("reads capabilities with SDK field names", async () => {
+      mockFetch([jsonResponse({
+        private_creation: true,
+        private_always_on: true,
+        coding_agent_terminal: true,
+        limits: {
+          max_ttl_hours: 24,
+          max_command_timeout_seconds: 55,
+          max_background_timeout_seconds: 600,
+          max_command_output_bytes: 1048576,
+          max_page_size: 100,
+          max_file_bytes: 1048576,
+          max_write_files: 100,
+        },
+        defaults: { command_timeout_seconds: 30, background_timeout_seconds: 600, page_size: 20 },
+      })]);
+      const capabilities = await Sandbox.capabilities({
+        authToken: "token",
+        apiUrl: "https://api.test.com",
+      });
+      assertEquals(capabilities.privateAlwaysOn, true);
+      assertEquals(capabilities.limits.maxCommandTimeoutSeconds, 55);
+      assertEquals(capabilities.defaults.pageSize, 20);
+      assertEquals(fetchCalls[0]!.url, "https://api.test.com/sandboxes/capabilities");
+    });
+    it("rejects invalid probe payloads rather than claiming readiness", async () => {
+      mockFetch([jsonResponse({ status: "running" })]);
+      const sandbox = Sandbox.attach({
+        id: "existing",
+        endpoint: "https://sb.test",
+        authToken: "token",
+        apiUrl: "https://api.test.com",
+      });
+      await assertRejects(() => sandbox.checkReadiness(), Error, "Invalid sandbox runtime check");
     });
   });
 

@@ -1,8 +1,8 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import type { ExecStreamEvent } from "./types.ts";
-import { readExecStreamEvents } from "./exec-stream.ts";
+import type { CommandStreamEvent } from "./types.ts";
+import { readCommandStreamEvents } from "./exec-stream.ts";
 
 /** Streams `chunks` verbatim so chunk boundaries can be placed deliberately. */
 function streamOf(...chunks: string[]): ReadableStream<Uint8Array> {
@@ -15,9 +15,9 @@ function streamOf(...chunks: string[]): ReadableStream<Uint8Array> {
   });
 }
 
-async function collect(stream: ReadableStream<Uint8Array>): Promise<ExecStreamEvent[]> {
-  const events: ExecStreamEvent[] = [];
-  for await (const event of readExecStreamEvents(stream)) events.push(event);
+async function collect(stream: ReadableStream<Uint8Array>): Promise<CommandStreamEvent[]> {
+  const events: CommandStreamEvent[] = [];
+  for await (const event of readCommandStreamEvents(stream)) events.push(event);
   return events;
 }
 
@@ -87,7 +87,7 @@ describe("sandbox/exec-stream", () => {
       },
     });
 
-    for await (const _event of readExecStreamEvents(stream)) break;
+    for await (const _event of readCommandStreamEvents(stream)) break;
 
     assertEquals(cancelled, true, "abandoning the generator must not leave the body open");
   });

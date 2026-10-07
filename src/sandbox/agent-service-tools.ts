@@ -1,6 +1,6 @@
 import { defineSchema } from "#veryfront/schemas/index.ts";
 import { tool } from "#veryfront/tool";
-import type { BackgroundCommand, BackgroundCommandOutput, ExecOptions } from "./sandbox.ts";
+import type { BackgroundCommand, BackgroundCommandOutput } from "./sandbox.ts";
 import { LazySandbox, type LazySandboxOptions } from "./lazy-sandbox.ts";
 import {
   type BashToolSandboxLike,
@@ -57,13 +57,6 @@ export function unwrapSandboxWorkingDirectoryCommand(command: string): string {
   return trimmedCommand.replace(SANDBOX_WORKING_DIRECTORY_PREFIX_PATTERN, "").trim();
 }
 
-/** Options accepted by create project-scoped exec. */
-export function createProjectScopedExecOptions(
-  projectReference: string | null | undefined,
-): ExecOptions {
-  return projectReference ? { projectReference } : {};
-}
-
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -93,26 +86,22 @@ function normalizeSandboxWriteFile(file: unknown): { path: string; content: stri
 export function createAgentServiceSandboxClient(
   input: AgentServiceSandboxClientOptions = {},
 ): AgentServiceSandboxClient {
-  const getProjectId = input.getProjectId ?? (() => input.projectId);
+  const getProjectId = input.getProjectId ?? (() => input.projectReference);
   const sandbox = new LazySandbox({ ...input, getProjectId });
 
-  const getExecOptions = () => createProjectScopedExecOptions(getProjectId());
-  const getBackgroundCommandExecOptions = () => ({
-    ...getExecOptions(),
-    cwd: SANDBOX_WORKING_DIRECTORY,
-  });
+  const backgroundCommandOptions = { cwd: SANDBOX_WORKING_DIRECTORY };
 
   return {
     ensure: () => sandbox.ensure(),
-    async executeCommand(command) {
-      return await sandbox.executeCommand(command, getExecOptions());
+    async runCommand(command) {
+      return await sandbox.runCommand(command);
     },
     readFile: (path) => sandbox.readFile(path),
     writeFiles: (files) => sandbox.writeFiles(files.map((file) => normalizeSandboxWriteFile(file))),
     startBackgroundCommand: (command) =>
       sandbox.startBackgroundCommand(
         unwrapSandboxWorkingDirectoryCommand(command),
-        getBackgroundCommandExecOptions(),
+        backgroundCommandOptions,
       ),
     getBackgroundCommand: (commandId) => sandbox.getBackgroundCommand(commandId),
     getBackgroundCommandOutput: (commandId) => sandbox.getBackgroundCommandOutput(commandId),

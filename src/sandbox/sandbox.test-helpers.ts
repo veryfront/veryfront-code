@@ -91,3 +91,20 @@ export function clearSandboxEnv(): void {
     }
   }
 }
+
+/** Build a typed synchronous result from command output fixtures. */
+export function commandResponse(events: Array<Record<string, unknown>>): Response {
+  let stdout = "";
+  let stderr = "";
+  let exitCode: unknown;
+  for (const event of events) {
+    if (event.type === "stdout") stdout += event.data ?? "";
+    if (event.type === "stderr") stderr += event.data ?? "";
+    if (event.type === "exit") exitCode = event.exitCode;
+  }
+  return jsonResponse({
+    stdout,
+    stderr,
+    ...(exitCode !== undefined ? { exit_code: exitCode } : {}),
+  });
+}
