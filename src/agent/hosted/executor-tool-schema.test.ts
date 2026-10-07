@@ -2,11 +2,11 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assert, assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { CURATED_PROVIDER_FAILURE_CODES } from "#veryfront/chat/provider-error-registry.ts";
-import { createExecutorModelFailure } from "./executor-model-errors.ts";
+import { createExecutorModelFailure } from "#veryfront/agent/hosted/executor-model-errors.ts";
 import {
   executorAgentFailureCode,
   getExecutorAgentFailureCodeSchema,
-} from "./executor-agent-schema.ts";
+} from "#veryfront/agent/hosted/executor-agent-schema.ts";
 import type { JsonValue } from "#veryfront/schemas/index.ts";
 import {
   executorToolBytes,

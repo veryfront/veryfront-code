@@ -10,6 +10,7 @@ import { ExecutorAgentError } from "./executor-agent-schema.ts";
 
 const cases: Array<{ code: ConstructorParameters<typeof ExecutorAgentError>[0]; status: number }> =
   [
+    { code: "agent-provider-auth-error", status: 401 },
     { code: "PERMISSION_DENIED", status: 403 },
     { code: "CONTEXT_LENGTH_EXCEEDED", status: 413 },
     { code: "RATE_LIMITED", status: 429 },

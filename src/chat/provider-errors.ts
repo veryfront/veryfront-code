@@ -530,6 +530,15 @@ function parseProviderErrorInner(
     seen.add(error);
   }
 
+  // Native provider status has authority over response text. Gateway refusals
+  // belong to platform admission or inference policy, not vendor credentials.
+  if (
+    error instanceof ProviderError && error.viaVeryfrontGateway !== true &&
+    (error.status === 401 || error.status === 403)
+  ) {
+    return { ...AGENT_PROVIDER_AUTH_ERROR, status: error.status };
+  }
+
   const responseBody = extractResponseBody(error);
   const parseProblemBody = error instanceof ProviderError && error.viaVeryfrontGateway === true
     ? parseGatewayProblemBody
@@ -545,10 +554,6 @@ function parseProviderErrorInner(
     if (parsedError) {
       return parsedError;
     }
-  }
-
-  if (error instanceof ProviderError && (error.status === 401 || error.status === 403)) {
-    return { ...AGENT_PROVIDER_AUTH_ERROR, status: error.status };
   }
 
   if (isErrorRecord(error)) {

@@ -109,6 +109,7 @@ export const CURATED_PROVIDER_FAILURE_CODES = [
 export type CuratedProviderFailureCode = typeof CURATED_PROVIDER_FAILURE_CODES[number];
 
 const failures = {
+  // Hosted transport carries only the stable public code; 401 is its canonical status.
   "agent-provider-auth-error": { ...AGENT_PROVIDER_AUTH_ERROR, status: 401 },
   OVERLOADED_ERROR: {
     code: "OVERLOADED_ERROR",

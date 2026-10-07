@@ -57,6 +57,42 @@ describe("chat/provider-errors", () => {
     }
   });
 
+  it("does not classify unrecognized gateway 401/403 as native provider authentication", async () => {
+    for (const status of [401, 403]) {
+      const error = await buildProviderError(
+        "anthropic",
+        markVeryfrontGatewayResponse(
+          new Response("Private gateway diagnostic <TOKEN>", { status }),
+        ),
+      );
+      assertEquals(parseProviderError(error), {
+        code: "EXTERNAL_SERVICE_ERROR",
+        message: "LLM provider service error",
+      });
+    }
+  });
+
+  it("gives native 401/403 status precedence over provider api_error bodies", () => {
+    for (const status of [401, 403]) {
+      const error = new ProviderRequestError({
+        provider: "anthropic",
+        status,
+        retryable: false,
+        message: "Private provider diagnostic <TOKEN>",
+      });
+      Object.defineProperty(error, "responseBody", {
+        value: JSON.stringify({
+          error: { type: "api_error", message: "Private provider diagnostic <TOKEN>" },
+        }),
+      });
+      assertEquals(parseProviderError(error), {
+        code: "agent-provider-auth-error",
+        message: "Agent provider authentication failed",
+        status,
+      });
+    }
+  });
+
   it("requires native provider provenance for authentication status mapping", () => {
     for (const status of [401, 403]) {
       assertEquals(parseProviderError({ status, retryable: false }).code, "EXTERNAL_SERVICE_ERROR");
