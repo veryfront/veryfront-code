@@ -110,6 +110,9 @@ export type HostedChatRuntimePreparationRootRunContext = {
   publishParentRunEvents?: (events: ConversationRunEvent[]) => Promise<void>;
   durableRunMirror?: ConversationRunChunkMirror | null;
   privateDurableRunMirror?: ConversationRunChunkMirror | null;
+  privateRuntimeObservationWriterCapability?: HostedConversationRootRunContext[
+    "privateRuntimeObservationWriterCapability"
+  ];
 };
 
 /** Public API contract for hosted chat runtime preparation steering. */

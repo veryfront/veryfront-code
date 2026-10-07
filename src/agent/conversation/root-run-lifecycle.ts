@@ -17,6 +17,7 @@ import {
   revokeRuntimeObservationWriterCapability,
   type RuntimeObservationCaptureOptIn,
   type RuntimeObservationWriterCapability,
+  type RuntimeObservationWriterScope,
 } from "#veryfront/runtime/runtime-observation-carrier.ts";
 import type { ConversationRunProjection } from "./durable.ts";
 import type { ChatUiMessage } from "#veryfront/chat/types.ts";
@@ -226,9 +227,18 @@ export async function prepareHostedConversationRootRunContext(
       },
       createMirror: (run) => {
         const canonicalRunId = hostedRunCanonicalId(runEventWriterCapability, run.runId);
-        const enableRuntimeObservations = hasRuntimeObservationCaptureOptIn(
-          input.runtimeObservationCaptureOptIn,
-        ) && isUuid(canonicalRunId) && isUuid(input.projectId);
+        let runtimeObservationScope: RuntimeObservationWriterScope | undefined;
+        if (
+          hasRuntimeObservationCaptureOptIn(
+            input.runtimeObservationCaptureOptIn,
+          ) && isUuid(canonicalRunId) && isUuid(input.projectId)
+        ) {
+          runtimeObservationScope = {
+            runId: run.runId,
+            canonicalRunId,
+            projectId: input.projectId,
+          };
+        }
         const mirrorOptions = {
           conversationId: run.conversationId,
           latestEventId: run.latestEventId,
@@ -240,17 +250,13 @@ export async function prepareHostedConversationRootRunContext(
           {
             ...mirrorOptions,
             expectedRunId: run.runId,
-            ...(enableRuntimeObservations ? { runtimeObservations: true } : {}),
+            ...(runtimeObservationScope ? { runtimeObservations: true } : {}),
           },
         ) ?? null;
         privateRuntimeObservationWriterCapability =
-          privateDurableRunMirror && enableRuntimeObservations
+          privateDurableRunMirror && runtimeObservationScope
             ? createRuntimeObservationWriterCapability({
-              scope: {
-                runId: run.runId,
-                canonicalRunId,
-                projectId: input.projectId,
-              },
+              scope: runtimeObservationScope,
               assertActive: () => {
                 const snapshot = privateDurableRunMirror?.getSnapshot();
                 if (!snapshot || snapshot.disabled) {
