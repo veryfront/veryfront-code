@@ -124,19 +124,25 @@ export function buildFinalizedMessageState(
       unmatchedPersistedReasoningParts.splice(matchingIndex, 1);
       return [];
     }
-    return isToolUiPart(fallbackPart) &&
-        !persistedMessage.parts.some((part) =>
-          isToolUiPart(part) && part.toolCallId === fallbackPart.toolCallId
-        )
-      ? [fallbackPart]
-      : [];
+    if (!isToolUiPart(fallbackPart)) return [];
+    const persisted = completedParts.find((part) =>
+      isToolUiPart(part) && part.toolCallId === fallbackPart.toolCallId
+    );
+    return persisted ? input.isAborted ? [] : [persisted] : [fallbackPart];
   });
+  const retainedParts = input.isAborted
+    ? completedParts
+    : completedParts.filter((part) =>
+      !isToolUiPart(part) || !finalStepFallbackParts.some((fallback) =>
+        isToolUiPart(fallback) && fallback.toolCallId === part.toolCallId
+      )
+    );
   const fallbackParts = persistedMessage.parts.length === 0
     ? finalStepFallbackParts
     : hasPlacedMissingText
-    ? [...completedParts, ...missingFallbackParts]
+    ? [...retainedParts, ...missingFallbackParts]
     : appendMissingFallbackTextPart([
-      ...completedParts,
+      ...retainedParts,
       ...missingFallbackParts,
     ], input.finalStep);
   const finalizedMessage = fallbackParts.length !== persistedMessage.parts.length ||
@@ -196,8 +202,8 @@ export function buildFinalizedMessageFallbackChunks(
     return [];
   }
 
-  const appendedFallbackParts = input.sanitizedFinalizedMessage.parts.slice(
-    input.persistedMessage.parts.length,
+  const appendedFallbackParts = input.sanitizedFinalizedMessage.parts.filter((part) =>
+    !input.persistedMessage.parts.includes(part)
   );
   const hasOrderedFallbackContent = appendedFallbackParts.some((part) =>
     part.type === "text" || part.type === "reasoning"

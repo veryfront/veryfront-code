@@ -113,6 +113,72 @@ function getToolOutputErrorChunks(
 }
 
 describe("agent/hosted-chat-finalization", () => {
+  for (const reasoning of [true, false]) {
+    it(`orders recovered ${reasoning ? "reasoning" : "text suffix"} before an upgraded persisted tool in terminal and replay`, async () => {
+      const calls: string[] = [];
+      const terminalStates: HostedLifecycleTerminalState[] = [];
+      const chunks: ChatUiMessageChunk<MessageMetadata>[] = [];
+      const mirrored = createMirroredToolChunkState();
+      mirrored.startedToolCallIds.add("c");
+      mirrored.inputAvailableToolCallIds.add("c");
+      const tool = {
+        type: "tool-bash" as const,
+        toolCallId: "c",
+        state: "input-available" as const,
+        input: { command: "x" },
+        providerExecuted: true,
+      };
+      await finalizeHostedChatRun({
+        kind: "response",
+        responseMessage: createResponseMessage({
+          parts: [...(reasoning ? [] : [{ type: "text" as const, text: "Hello" }]), tool],
+        }),
+        isAborted: false,
+        streamResult: createStreamResult({
+          response: {
+            messages: [{
+              role: "assistant",
+              content: [
+                reasoning
+                  ? { type: "reasoning", text: "Why", signature: "sig" }
+                  : { type: "text", text: "Hello world" },
+                { type: "tool-call", toolCallId: "c", toolName: "bash", input: { command: "x" } },
+                { type: "tool-result", toolCallId: "c", toolName: "bash", output: "ok" },
+              ],
+            }],
+          },
+        }),
+        lifecycleAdapter: createLifecycleAdapter({
+          calls,
+          terminalStates,
+          mirror: createDurableRunMirror({ calls, chunks }),
+        }),
+        mirroredToolChunkState: mirrored,
+        capturedMessageId: "assistant-message-1",
+        incompleteToolCallsPartErrorText: "Tool call did not complete",
+        cleanup: async () => {
+          calls.push("cleanup");
+        },
+        streamError: null,
+      });
+      assertEquals(terminalStates[0]!.status, "completed");
+      assertEquals((terminalStates[0]!.output as ChatUiMessage).parts, [
+        ...(reasoning ? [] : [{ type: "text" as const, text: "Hello" }]),
+        reasoning
+          ? { type: "reasoning" as const, text: "Why", signature: "sig" }
+          : { type: "text" as const, text: "world" },
+        { ...tool, state: "output-available" as const, output: "ok" },
+      ]);
+      assertEquals(
+        chunks.map((chunk) => chunk.type),
+        reasoning
+          ? ["reasoning-start", "reasoning-delta", "reasoning-end", "tool-output-available"]
+          : ["text-start", "text-delta", "text-end", "tool-output-available"],
+      );
+      assertEquals(chunks.at(-1), { type: "tool-output-available", toolCallId: "c", output: "ok" });
+      assertEquals(calls.slice(-3), ["flush", "terminal:completed:", "cleanup"]);
+    });
+  }
   for (const partialTool of [true, false]) {
     it(`completes ${partialTool ? "persisted tool input" : "partial text before tool"} with coherent terminal and replay`, async () => {
       const calls: string[] = [];
