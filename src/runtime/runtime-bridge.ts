@@ -761,11 +761,35 @@ async function settleVeryfrontCloudModel(options: DirectTextOptions): Promise<vo
   }
 }
 
+/** Compare only own data fields; exact capture must retain every provider control. */
+function matchesPersistedProviderOptions(input: unknown, persisted: unknown): boolean {
+  if (input === persisted) return true;
+  if (!input || !persisted || typeof input !== "object" || typeof persisted !== "object") {
+    return false;
+  }
+  const inputKeys = ReflectApply(ReflectOwnKeys, undefined, [input]) as PropertyKey[];
+  const persistedKeys = ReflectApply(ReflectOwnKeys, undefined, [persisted]) as PropertyKey[];
+  if (inputKeys.length !== persistedKeys.length) return false;
+  for (let index = 0; index < inputKeys.length; index++) {
+    const key = inputKeys[index]!;
+    const original = readOwnEnumerableDataDescriptor(input, key);
+    const retained = readOwnEnumerableDataDescriptor(persisted, key);
+    if (
+      !original || !retained || !matchesPersistedProviderOptions(original.value, retained.value)
+    ) {
+      return false;
+    }
+  }
+  return true;
+}
+
 function hasUnsupportedExactCapturePromptProviderOptions(
   directOptions: DirectModelOptions,
 ): boolean {
   return directOptions.prompt.some((message) => {
-    return message.role === "system" && message.providerOptions !== undefined;
+    if (message.role !== "system" || message.providerOptions === undefined) return false;
+    const persisted = sanitizePersistedProviderOptions(message.providerOptions);
+    return !matchesPersistedProviderOptions(message.providerOptions, persisted);
   });
 }
 

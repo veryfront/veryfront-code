@@ -940,6 +940,62 @@ describe("runtime-bridge", () => {
     assertEquals(dispatches, 0);
   });
 
+  it("captures supported system cache controls unchanged before provider dispatch", async () => {
+    for (
+      const cacheControl of [
+        { type: "ephemeral" },
+        { type: "ephemeral", ttl: "5m" },
+        { type: "ephemeral", ttl: "1h" },
+      ]
+    ) {
+      const projectId = "11111111-1111-4111-8111-111111111111";
+      const canonicalRunId = "22222222-2222-4222-8222-222222222222";
+      const providerOptions = { anthropic: { cacheControl } };
+      let dispatches = 0;
+      let recorded: AgentRunEvent | undefined;
+      const sink: AgentRunEventSink = (event) => {
+        recorded = event;
+        return {
+          eventId: "9007199254740993",
+          projectId,
+          runId: canonicalRunId,
+          modelCallId: event.modelCallId ?? "33333333-3333-4333-8333-333333333333",
+        };
+      };
+      bindTestRuntimeObservationWriter({
+        sink,
+        runId: "33333333-3333-4333-8333-333333333333",
+        canonicalRunId,
+        projectId,
+      });
+      const model = registerVeryfrontCloudTestModel(createGenerateModel(
+        "veryfront-cloud",
+        "veryfront-cloud/anthropic/claude-test",
+        async (options) => {
+          dispatches++;
+          assertEquals(options.prompt[0], {
+            role: "system",
+            content: "Cached instructions",
+            providerOptions,
+          });
+          assertEquals(recorded?.messages?.[0], {
+            role: "system",
+            content: "Cached instructions",
+            providerOptions,
+          });
+          return { content: [], finishReason: "stop", usage: {} };
+        },
+      ));
+      await runWithMandatoryRunEventSink(sink, () =>
+        generateText({
+          model,
+          system: [{ role: "system", content: "Cached instructions", providerOptions }],
+          messages: [{ role: "user", content: "Hello" }],
+        }));
+      assertEquals(dispatches, 1);
+    }
+  });
+
   it("refuses exact capture when system provider options are not represented", async () => {
     const projectId = "11111111-1111-4111-8111-111111111111";
     const canonicalRunId = "22222222-2222-4222-8222-222222222222";

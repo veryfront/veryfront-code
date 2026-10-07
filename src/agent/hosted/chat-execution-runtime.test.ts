@@ -107,6 +107,7 @@ function withoutEventTiming(event: unknown): unknown {
 }
 
 function createLifecycleAdapter(input?: {
+  runId?: string;
   durableRunMirror?: ConversationRunChunkMirror | null;
   messageId?: string | null;
   terminalStates?: HostedLifecycleTerminalState[];
@@ -114,7 +115,7 @@ function createLifecycleAdapter(input?: {
   const terminalStates = input?.terminalStates ?? [];
   return {
     durableRootRun: {
-      runId: "10000000-0000-4000-8000-000000000006",
+      runId: input?.runId ?? "10000000-0000-4000-8000-000000000006",
       messageId: input && "messageId" in input ? input.messageId : "stream-message-1",
     },
     durableRunMirror: input?.durableRunMirror ?? null,
