@@ -178,7 +178,7 @@
     {
       "id": "google-cloud-storage__upload_object",
       "name": "Upload Object",
-      "description": "Upload object",
+      "description": "Create or overwrite object",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",

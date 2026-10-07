@@ -48,7 +48,7 @@
     {
       "id": "twilio__send_whatsapp",
       "name": "Send WhatsApp Message",
-      "description": "Send whats app message",
+      "description": "Send WhatsApp message",
       "requiresWrite": true
     },
     {

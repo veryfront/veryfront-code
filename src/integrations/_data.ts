@@ -485,7 +485,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "adyen__capture_payment",
       "name": "Capture Payment",
-      "description": "Capture payment",
+      "description": "Start payment capture",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -4529,7 +4529,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "azure-blob-storage__upload_blob",
       "name": "Upload Blob",
-      "description": "Upload blob",
+      "description": "Create or overwrite blob",
       "requiresWrite": true,
       "endpoint": {
         "method": "PUT",
@@ -19158,7 +19158,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "front__reply_to_conversation",
       "name": "Reply to Conversation",
-      "description": "Reply to conversation",
+      "description": "Reply and archive conversation by default",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -23763,7 +23763,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "google-cloud-storage__upload_object",
       "name": "Upload Object",
-      "description": "Upload object",
+      "description": "Create or overwrite object",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -48268,7 +48268,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "sendgrid__upsert_contacts",
       "name": "Upsert Contacts",
-      "description": "Upsert contacts",
+      "description": "Start contact upsert",
       "requiresWrite": true,
       "endpoint": {
         "method": "PUT",
@@ -52871,7 +52871,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "stackit__stop_server",
       "name": "Stop Server",
-      "description": "Stop server",
+      "description": "Stop server without reducing charges",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -55434,7 +55434,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "twilio__send_whatsapp",
       "name": "Send WhatsApp Message",
-      "description": "Send whats app message",
+      "description": "Send WhatsApp message",
       "requiresWrite": true,
     }, {
       "id": "twilio__list_messages",

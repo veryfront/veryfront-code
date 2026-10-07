@@ -199,7 +199,7 @@
     {
       "id": "adyen__capture_payment",
       "name": "Capture Payment",
-      "description": "Capture payment",
+      "description": "Start payment capture",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",

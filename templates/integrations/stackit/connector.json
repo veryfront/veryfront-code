@@ -239,7 +239,7 @@
     {
       "id": "stackit__stop_server",
       "name": "Stop Server",
-      "description": "Stop server",
+      "description": "Stop server without reducing charges",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",

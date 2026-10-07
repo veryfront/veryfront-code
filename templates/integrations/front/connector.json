@@ -146,7 +146,7 @@
     {
       "id": "front__reply_to_conversation",
       "name": "Reply to Conversation",
-      "description": "Reply to conversation",
+      "description": "Reply and archive conversation by default",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",

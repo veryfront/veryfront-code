@@ -109,7 +109,7 @@
     {
       "id": "sendgrid__upsert_contacts",
       "name": "Upsert Contacts",
-      "description": "Upsert contacts",
+      "description": "Start contact upsert",
       "requiresWrite": true,
       "endpoint": {
         "method": "PUT",

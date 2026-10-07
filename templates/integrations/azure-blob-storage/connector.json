@@ -163,7 +163,7 @@
     {
       "id": "azure-blob-storage__upload_blob",
       "name": "Upload Blob",
-      "description": "Upload blob",
+      "description": "Create or overwrite blob",
       "requiresWrite": true,
       "endpoint": {
         "method": "PUT",
