@@ -1705,7 +1705,7 @@
           "npm:@babel/generator@7.29.1",
           "npm:@babel/parser@7.29.2",
           "npm:@babel/traverse@7.29.0",
-          "npm:@babel/types@7.29.0"
+          "npm:@babel/types@7.29.8"
         ]
       },
       "extensions/ext-react-ssr": {
