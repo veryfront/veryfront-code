@@ -1705,66 +1705,31 @@ import real from "./real.js";`,
     });
 
     it("keeps brace-heavy division scans within a bounded runtime", () => {
-      const source = "x={a:1}/2;\n".repeat(7_200);
-      const startedAt = performance.now();
-
-      assertEquals(specifiers(source), []);
-
-      const durationMs = performance.now() - startedAt;
-      assert(
-        durationMs < 750,
-        `Expected an 86 KB brace-heavy scan to finish within 750 ms, got ${
-          durationMs.toFixed(1)
-        } ms`,
-      );
+      const makeSource = (size: number) => "x={a:1}/2;\n".repeat(size);
+      assertEquals(specifiers(makeSource(7_200)), []);
+      assertLinearScan("brace-heavy division", specifiers, makeSource, 1_800);
     });
 
     it("keeps repeated of-identifier division scans within a bounded runtime", () => {
-      const source = "let " + Array.from(
-        { length: 6_000 },
-        (_, index) => `value${index} = of / 2`,
-      ).join(", ") + ";";
-      const startedAt = performance.now();
-
-      assertEquals(specifiers(source), []);
-
-      const durationMs = performance.now() - startedAt;
-      assert(
-        durationMs < 750,
-        `Expected a ${Math.round(source.length / 1024)} KB of-identifier scan to finish within ` +
-          `750 ms, got ${durationMs.toFixed(1)} ms`,
-      );
+      const makeSource = (size: number) =>
+        "let " + Array.from(
+          { length: size },
+          (_, index) => `value${index} = of / 2`,
+        ).join(", ") + ";";
+      assertEquals(specifiers(makeSource(6_000)), []);
+      assertLinearScan("of-identifier division", specifiers, makeSource, 1_500);
     });
 
     it("keeps unmatched closing-delimiter division scans within a bounded runtime", () => {
-      const source = ") / 2;\n".repeat(12_000) + "} / 2;\n".repeat(12_000);
-      const startedAt = performance.now();
-
-      assertEquals(specifiers(source), []);
-
-      const durationMs = performance.now() - startedAt;
-      assert(
-        durationMs < 750,
-        `Expected a ${Math.round(source.length / 1024)} KB closing-delimiter scan to finish ` +
-          `within 750 ms, got ${durationMs.toFixed(1)} ms`,
-      );
+      const makeSource = (size: number) => ") / 2;\n".repeat(size) + "} / 2;\n".repeat(size);
+      assertEquals(specifiers(makeSource(12_000)), []);
+      assertLinearScan("closing-delimiter division", specifiers, makeSource, 3_000);
     });
 
     it("keeps line-broken division scans within a bounded runtime", () => {
-      const source = "x\n/2/x;\n".repeat(4_000);
-      // This guards against nonlinear scanning, not shared-host scheduling.
-      // The full repository matrix runs CPU-intensive files in parallel.
-      const maxMillis = 2_500;
-      const startedAt = performance.now();
-
-      assertEquals(specifiers(source), []);
-
-      const durationMs = performance.now() - startedAt;
-      assert(
-        durationMs < maxMillis,
-        `Expected a ${Math.round(source.length / 1024)} KB line-broken division scan to ` +
-          `finish within ${maxMillis} ms, got ${durationMs.toFixed(1)} ms`,
-      );
+      const makeSource = (size: number) => "x\n/2/x;\n".repeat(size);
+      assertEquals(specifiers(makeSource(4_000)), []);
+      assertLinearScan("line-broken division", specifiers, makeSource, 1_000);
     });
 
     it("scales line-broken division scans linearly", () => {
@@ -1777,50 +1742,26 @@ import real from "./real.js";`,
     });
 
     it("keeps shift-expression tag lookahead within a bounded runtime", () => {
-      const source = "x<<y;\n".repeat(12_000);
-      const startedAt = performance.now();
-
-      assertEquals(specifiers(source), []);
-
-      const durationMs = performance.now() - startedAt;
-      assert(
-        durationMs < 750,
-        `Expected a ${Math.round(source.length / 1024)} KB shift-expression scan to finish ` +
-          `within 750 ms, got ${durationMs.toFixed(1)} ms`,
-      );
+      const makeSource = (size: number) => "x<<y;\n".repeat(size);
+      assertEquals(specifiers(makeSource(12_000)), []);
+      assertLinearScan("shift-expression tag lookahead", specifiers, makeSource, 3_000);
     });
 
     it("keeps repeated TypeScript assertion lookahead within a bounded runtime", () => {
-      const source = `const values = [${"<T>value,".repeat(10_000)}value];`;
-      const startedAt = performance.now();
-
-      assertEquals(specifiers(source), []);
-
-      const durationMs = performance.now() - startedAt;
-      assert(
-        durationMs < 750,
-        `Expected a ${Math.round(source.length / 1024)} KB TypeScript assertion scan to finish ` +
-          `within 750 ms, got ${durationMs.toFixed(1)} ms`,
-      );
+      const makeSource = (size: number) => `const values = [${"<T>value,".repeat(size)}value];`;
+      assertEquals(specifiers(makeSource(10_000)), []);
+      assertLinearScan("TypeScript assertion lookahead", specifiers, makeSource, 2_500);
     });
 
-    // Every assertion here sits in one statement with a distinct tag name, so the
-    // closing-tag lookahead must index that statement once and answer all 8,000
-    // names from the cache. Losing the cache makes the scan quadratic. Counting
-    // the `indexOf` calls that build the index states that invariant directly:
-    // the cached scan makes one call per assertion, an uncached one makes a call
-    // per assertion per source character.
+    // Each assertion starts a new statement; lookahead must stop at its boundary.
     it("keeps per-statement TypeScript assertion lookahead within a bounded runtime", () => {
-      const source = "<T>value;\n".repeat(16_000);
-      const startedAt = performance.now();
-
-      assertEquals(specifiers(source), []);
-
-      const durationMs = performance.now() - startedAt;
-      assert(
-        durationMs < 750,
-        `Expected a ${Math.round(source.length / 1024)} KB per-statement TypeScript assertion ` +
-          `scan to finish within 750 ms, got ${durationMs.toFixed(1)} ms`,
+      const makeSource = (size: number) => "<T>value;\n".repeat(size);
+      assertEquals(specifiers(makeSource(16_000)), []);
+      assertLinearScan(
+        "per-statement TypeScript assertion lookahead",
+        specifiers,
+        makeSource,
+        4_000,
       );
     });
 
