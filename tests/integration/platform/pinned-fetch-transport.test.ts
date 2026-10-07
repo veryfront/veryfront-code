@@ -26,7 +26,7 @@ describe("pinned fetch transport integration", () => {
       console.log("abort-after-constructor-failure-survived");
     `;
 
-    const output = spawnSync(process.execPath, [
+    const output = spawnSync("node", [
       "--import",
       "./tests/node/resolver.mjs",
       "--input-type=module",
@@ -37,6 +37,55 @@ describe("pinned fetch transport integration", () => {
     assertEquals(output.stdout.trim(), "abort-after-constructor-failure-survived");
     assertEquals(output.stderr, "");
     assertEquals(output.status, 0);
+  });
+
+  it("cleans up abort listeners when an integrity check refuses before request creation", () => {
+    const script = `
+      import { getEventListeners } from "node:events";
+      import { ClientRequest } from "node:http";
+      import { fetchWithPinnedAddresses } from "./src/platform/compat/http/pinned-fetch.ts";
+
+      const abort = new AbortController();
+      const originalSetHeader = Object.getOwnPropertyDescriptor(ClientRequest.prototype, "setHeader");
+      Object.defineProperty(ClientRequest.prototype, "setHeader", {
+        configurable: true,
+        writable: true,
+        value() {},
+      });
+      try {
+        const outcome = await fetchWithPinnedAddresses(
+          new URL("http://pinned-integrity-listener.test/"),
+          ["127.0.0.1"],
+          { headers: { authorization: "Bearer vf-integrity-listener" }, signal: abort.signal },
+        ).then(
+          () => "resolved",
+          (error) => error instanceof Error ? error.message : String(error),
+        );
+        console.log(JSON.stringify({
+          refused: outcome.includes("Refused a credential-bearing request"),
+          abortListeners: getEventListeners(abort.signal, "abort").length,
+        }));
+      } finally {
+        if (originalSetHeader) {
+          Object.defineProperty(ClientRequest.prototype, "setHeader", originalSetHeader);
+        } else Reflect.deleteProperty(ClientRequest.prototype, "setHeader");
+      }
+    `;
+
+    const output = spawnSync("node", [
+      "--import",
+      "./tests/node/resolver.mjs",
+      "--input-type=module",
+      "--eval",
+      script,
+    ], { encoding: "utf8" });
+
+    assertEquals(output.stderr, "");
+    assertEquals(output.status, 0);
+    assertEquals(JSON.parse(output.stdout), {
+      refused: true,
+      abortListeners: 0,
+    });
   });
 
   it("keeps a patched array iterator from seeing private agents during socket locking", () => {
@@ -82,6 +131,81 @@ describe("pinned fetch transport integration", () => {
       leakedAgent: false,
       observedAuthorization: false,
     });
+  });
+
+  it("closes the socket when an integrity refusal interrupts a stream write", () => {
+    const script = `
+      import nodeHttp from "node:http";
+      import nodeNet from "node:net";
+      import { syncBuiltinESMExports } from "node:module";
+
+      let socket;
+      const originalCreateConnection = nodeNet.createConnection;
+      nodeNet.createConnection = () => {
+        socket = new nodeNet.Socket();
+        socket.connecting = true;
+        return socket;
+      };
+      syncBuiltinESMExports();
+
+      const { fetchWithPinnedAddresses } = await import("./src/platform/compat/http/pinned-fetch.ts");
+      let controller;
+      const body = new ReadableStream({
+        start(value) {
+          controller = value;
+          value.enqueue(new TextEncoder().encode("first"));
+        },
+      });
+      const pending = fetchWithPinnedAddresses(
+        new URL("http://pinned-integrity-close.test/upload"),
+        ["127.0.0.1"],
+        { method: "POST", headers: { authorization: "Bearer vf-integrity-close" }, body },
+      );
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      const originalWrite = Object.getOwnPropertyDescriptor(nodeHttp.ClientRequest.prototype, "write");
+      Object.defineProperty(nodeHttp.ClientRequest.prototype, "write", {
+        configurable: true,
+        writable: true,
+        value() {
+          throw new Error("patched write should not run");
+        },
+      });
+      controller.enqueue(new TextEncoder().encode("second"));
+      const outcome = await pending.then(
+        () => "resolved",
+        (error) => error instanceof Error ? error.message : String(error),
+      );
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      if (originalWrite) {
+        Object.defineProperty(nodeHttp.ClientRequest.prototype, "write", originalWrite);
+      } else Reflect.deleteProperty(nodeHttp.ClientRequest.prototype, "write");
+      nodeNet.createConnection = originalCreateConnection;
+      syncBuiltinESMExports();
+      console.log(JSON.stringify({
+        outcome,
+        requestDestroyed: socket?._httpMessage?.destroyed === true,
+        socketDestroyed: socket?.destroyed === true,
+      }));
+    `;
+
+    const output = spawnSync("node", [
+      "--import",
+      "./tests/node/resolver.mjs",
+      "--input-type=module",
+      "--eval",
+      script,
+    ], { encoding: "utf8" });
+
+    assertEquals(output.stderr, "");
+    assertEquals(output.status, 0);
+    const result = JSON.parse(output.stdout) as {
+      outcome: string;
+      requestDestroyed: boolean;
+      socketDestroyed: boolean;
+    };
+    assertEquals(result.outcome.includes("Refused a credential-bearing request"), true);
+    assertEquals(result.requestDestroyed, true);
+    assertEquals(result.socketDestroyed, true);
   });
 
   it("keeps post-assignment socket prototype patches from seeing the bearer", () => {
@@ -413,7 +537,7 @@ describe("pinned fetch transport integration", () => {
       console.log(JSON.stringify({ result, cancelReason }));
     `;
 
-    const output = spawnSync(process.execPath, [
+    const output = spawnSync("node", [
       "--import",
       "./tests/node/resolver.mjs",
       "--input-type=module",

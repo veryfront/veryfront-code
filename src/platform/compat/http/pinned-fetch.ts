@@ -710,6 +710,7 @@ function teardownDeferredNodeRequest(
   request: ClientRequest | undefined,
   response: IncomingMessage | undefined,
   error: Error | undefined,
+  socket?: nodeNet.Socket,
 ): unknown | undefined {
   try {
     assertNodeRequestMembersUnchanged();
@@ -727,8 +728,30 @@ function teardownDeferredNodeRequest(
       response,
       error,
     );
-    if (capturedDestroyError !== undefined) return capturedDestroyError;
+    if (capturedDestroyError !== undefined) {
+      const socketDestroyError = teardownLockedCredentialSocket(socket, error);
+      return socketDestroyError ?? capturedDestroyError;
+    }
     return teardownError;
+  }
+}
+
+function teardownLockedCredentialSocket(
+  socket: nodeNet.Socket | undefined,
+  _error: Error | undefined,
+): unknown | undefined {
+  if (socket === undefined) return undefined;
+  try {
+    const descriptor = ObjectGetOwnPropertyDescriptor(socket, "destroy");
+    const destroy = descriptor === undefined ? undefined : descriptorField(descriptor, "value");
+    if (typeof destroy !== "function") return undefined;
+    // Close the transport without emitting the integrity error on the socket: the
+    // fetch promise already rejects with that error, and an emitted socket
+    // error would be observable outside the request promise.
+    IntrinsicReflectApply(destroy, socket, []);
+    return undefined;
+  } catch (socketDestroyError) {
+    return socketDestroyError;
   }
 }
 
@@ -854,6 +877,7 @@ export async function fetchWithPinnedAddresses(
         const abortReason = () =>
           signal?.reason ?? new DOMException("The operation was aborted", "AbortError");
         let request: ClientRequest | undefined;
+        let activeSocket: nodeNet.Socket | undefined;
         const abort = () => {
           let reason: unknown;
           let destroyError: Error | undefined;
@@ -864,7 +888,12 @@ export async function fetchWithPinnedAddresses(
             rejectBeforeResponse(error);
             return;
           }
-          const teardownError = teardownDeferredNodeRequest(request, responseMessage, destroyError);
+          const teardownError = teardownDeferredNodeRequest(
+            request,
+            responseMessage,
+            destroyError,
+            activeSocket,
+          );
           if (!settled) rejectBeforeResponse(teardownError ?? reason);
         };
         const cleanupAbortListener = () => {
@@ -886,13 +915,14 @@ export async function fetchWithPinnedAddresses(
           return;
         }
         signal?.addEventListener("abort", abort, { once: true });
-        // Same turn as the call and every request operation below: node:http
-        // processes the headers synchronously, and nothing between here and
-        // the body write runs project code.
-        assertNativeRequestProcessing();
-        assertObjectPrototypeUnchanged();
-        assertNodeRequestMembersUnchanged();
         try {
+          // Same turn as the call and every request operation below: node:http
+          // processes the headers synchronously, and nothing between here and
+          // the body write runs project code. If a check refuses, reject through
+          // the cleanup path because the abort listener is already registered.
+          assertNativeRequestProcessing();
+          assertObjectPrototypeUnchanged();
+          assertNodeRequestMembersUnchanged();
           request = sendRequest(requestOptions, async (message) => {
             responseMessage = message;
             try {
@@ -943,12 +973,16 @@ export async function fetchWithPinnedAddresses(
           rejectBeforeResponse(error);
           return;
         }
-        if (request.socket) lockCredentialSocketInstance(request.socket);
+        if (request.socket) {
+          activeSocket = request.socket;
+          lockCredentialSocketInstance(request.socket);
+        }
 
         // node:http writes the header block once a socket is assigned, a later
         // turn than the check above: check again when the socket arrives, and
         // destroy the request before anything is written if a member changed.
         request.once("socket", (socket: nodeNet.Socket) => {
+          activeSocket = socket;
           try {
             assertNodeRequestMembersUnchanged();
             lockCredentialSocketInstance(socket);
@@ -957,6 +991,7 @@ export async function fetchWithPinnedAddresses(
               request,
               undefined,
               errorForNodeDestroy(error),
+              activeSocket,
             );
             rejectBeforeResponse(teardownError ?? error);
           }
@@ -977,6 +1012,7 @@ export async function fetchWithPinnedAddresses(
             request,
             undefined,
             errorForNodeDestroy(error),
+            activeSocket,
           );
           rejectBeforeResponse(teardownError ?? error);
         });
