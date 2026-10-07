@@ -208,7 +208,7 @@ async function compileFallbackSource(
   sourcePath: string,
 ): Promise<string> {
   const { transform } = await import("veryfront/extensions/bundler");
-  const result = await transform(await restoreRootBundledSourceSpecifiers(content, sourcePath), {
+  const result = await transform(content, {
     loader: pickFrameworkLoader(sourcePath),
     jsx: "automatic",
     jsxImportSource: "react",
@@ -216,7 +216,10 @@ async function compileFallbackSource(
     target: "es2022",
     supported: ESBUILD_SUPPORTED_FEATURES,
   });
-  return await upgradeImportAssertions(result.code);
+  return await restoreRootBundledSourceSpecifiers(
+    await upgradeImportAssertions(result.code),
+    sourcePath,
+  );
 }
 
 /**
@@ -513,7 +516,7 @@ async function transformFrameworkCodeUncoalesced(
   try {
     const { transform } = await import("veryfront/extensions/bundler");
 
-    const result = await transform(await restoreRootBundledSourceSpecifiers(content, sourcePath), {
+    const result = await transform(content, {
       loader: pickFrameworkLoader(sourcePath),
       jsx: "automatic",
       jsxImportSource: "react",
@@ -522,7 +525,10 @@ async function transformFrameworkCodeUncoalesced(
       supported: ESBUILD_SUPPORTED_FEATURES,
     });
 
-    let transformed = await upgradeImportAssertions(result.code);
+    let transformed = await restoreRootBundledSourceSpecifiers(
+      await upgradeImportAssertions(result.code),
+      sourcePath,
+    );
 
     // Collect and recursively resolve all #veryfront/ imports
     const veryfrontReplacements = new Map<string, string>();
