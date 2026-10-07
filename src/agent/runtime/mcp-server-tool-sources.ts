@@ -12,7 +12,9 @@ import {
   concatPrivateArrays,
   filterPrivateArray,
   flatMapPrivateArray,
+  forEachPrivateArray,
   mapPrivateArray,
+  pushPrivateArray,
   somePrivateArray,
 } from "#veryfront/security/private-array.ts";
 import { createPrivateMap } from "#veryfront/security/private-map.ts";
@@ -84,13 +86,13 @@ function snapshotStringArray(value: unknown): string[] {
   for (let index = 0; index < value.length; index++) {
     if (!hasOwn(value, index)) continue;
     const item = value[index];
-    if (typeof item === "string") result[result.length] = item;
+    if (typeof item === "string") pushPrivateArray(result, item);
   }
   return result;
 }
 
 function appendUnique(target: string[], value: string): void {
-  if (!applyIntrinsic(arrayIncludes, target, [value])) target[target.length] = value;
+  if (!applyIntrinsic(arrayIncludes, target, [value])) pushPrivateArray(target, value);
 }
 
 export function getRuntimeUnavailableOptionalRemoteTools(
@@ -108,7 +110,10 @@ export function getRuntimeUnavailableOptionalRemoteTools(
     if (server?.kind !== "veryfront-studio" || server.required !== false) continue;
     if (remoteSourceIds.has(getFirstPartyMcpSourceId(server))) continue;
     appendUnique(prefixes, VERYFRONT_STUDIO_TOOL_PREFIX);
-    for (const toolName of server.toolPolicy?.allow ?? []) appendUnique(names, toolName);
+    forEachPrivateArray(
+      server.toolPolicy?.allow ?? [],
+      (toolName) => appendUnique(names, toolName),
+    );
   }
   return { names, prefixes };
 }

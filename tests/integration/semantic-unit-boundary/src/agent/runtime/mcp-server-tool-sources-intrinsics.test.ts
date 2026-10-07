@@ -116,6 +116,65 @@ describe("Veryfront API MCP bootstrap intrinsic boundary", () => {
     assertEquals(result, { names: [], prefixes: ["studio_"] });
   });
 
+  it("records unavailable Studio tools without inherited numeric setters", () => {
+    const setterCalls: string[] = [];
+    Object.defineProperty(Array.prototype, "0", {
+      configurable: true,
+      set(value) {
+        setterCalls.push(String(value));
+        throw new Error("patched Array.prototype[0] must not observe unavailable tools");
+      },
+    });
+    let result: { names: string[]; prefixes: string[] } | undefined;
+    try {
+      result = getRuntimeUnavailableOptionalRemoteTools(
+        {
+          system: "Use Studio tools when available.",
+          tools: { studio_open_project: true },
+          mcpServers: [{ kind: "veryfront-studio", required: false }],
+        },
+        [],
+      );
+    } finally {
+      delete (Array.prototype as Record<string, unknown>)["0"];
+    }
+
+    assertEquals(setterCalls, []);
+    assertEquals(result, { names: [], prefixes: ["studio_"] });
+  });
+
+  it("copies optional Studio policy names without the mutable array iterator", () => {
+    const originalIterator = Array.prototype[Symbol.iterator];
+    let iteratorCalls = 0;
+    let result: { names: string[]; prefixes: string[] } | undefined;
+    Array.prototype[Symbol.iterator] = function poisonedIterator() {
+      iteratorCalls += 1;
+      throw new Error("patched Array.prototype iterator must not see Studio policy names");
+    } as typeof Array.prototype[typeof Symbol.iterator];
+    try {
+      result = getRuntimeUnavailableOptionalRemoteTools(
+        {
+          system: "Use Studio tools when available.",
+          tools: { studio_open_project: true },
+          mcpServers: [{
+            kind: "veryfront-studio",
+            required: false,
+            toolPolicy: { allow: ["studio_open_project", "studio_search"] },
+          }],
+        },
+        [],
+      );
+    } finally {
+      Array.prototype[Symbol.iterator] = originalIterator;
+    }
+
+    assertEquals(iteratorCalls, 0);
+    assertEquals(result, {
+      names: ["studio_open_project", "studio_search"],
+      prefixes: ["studio_"],
+    });
+  });
+
   it("ignores a replaced string replace method when resolving its endpoint", async () => {
     const originalReplace = String.prototype.replace;
     let remoteConfig: RemoteMCPToolSourceConfig | undefined;
