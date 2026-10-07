@@ -3,6 +3,7 @@ import { privateJsonParse, privateJsonStringify } from "#veryfront/security/priv
 import type { InferSchema, Schema } from "#veryfront/extensions/schema/index.ts";
 import { defineSchema, getJsonValueSchema, type JsonValue } from "#veryfront/schemas/index.ts";
 import { snapshotBoundedJsonValue } from "#veryfront/schemas/json-value.ts";
+import { AGENT_PROVIDER_AUTH_ERROR } from "#veryfront/chat/provider-error-registry.ts";
 import { parseProviderError } from "#veryfront/chat/provider-errors.ts";
 import { defineError, snapshotVeryfrontError, VeryfrontError } from "#veryfront/errors/types.ts";
 import { EXECUTOR_MAX_FRAME_BYTES } from "../executor/protocol.ts";
@@ -88,13 +89,16 @@ type FailureCode = InferSchema<ReturnType<typeof getExecutorAgentFailureCodeSche
 /** @internal Fixed diagnostics contain neither rejected inputs nor upstream error bodies. */
 export class ExecutorAgentError extends VeryfrontError {
   constructor(readonly code: FailureCode) {
+    const message = code === AGENT_PROVIDER_AUTH_ERROR.code
+      ? AGENT_PROVIDER_AUTH_ERROR.message
+      : code;
     const definition = defineError({
       slug: code.toLowerCase().replaceAll("_", "-"),
       category: "AGENT",
       status: failureStatus[code],
-      title: code,
+      title: message,
     });
-    super(code, definition);
+    super(message, definition);
     this.name = "ExecutorAgentError";
   }
 }

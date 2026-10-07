@@ -14,6 +14,7 @@ import {
   createExecutorHostedChatRuntimeAgent,
 } from "./executor-agent-bridge.ts";
 import { ExecutorAgentError } from "./executor-agent-schema.ts";
+import { ProviderRequestError } from "#veryfront/provider/runtime-loader/provider-http.ts";
 import { getRuntimeObservation } from "#veryfront/runtime/runtime-observation-carrier.ts";
 
 const handle = "prepared-synthetic-runtime";
@@ -543,6 +544,38 @@ describe("executor hosted agent bridge", () => {
       assertEquals(channels.broker.signal.aborted, false);
     } finally {
       await channels.close();
+    }
+  });
+
+  it("reconstructs authentication wording after a native provider startup refusal", async () => {
+    for (const status of [401, 403]) {
+      const channels = pair(createExecutorAgentOperations({
+        preparedRuntimeHandle: handle,
+        startStream: () =>
+          Promise.reject(
+            new ProviderRequestError({
+              provider: "anthropic",
+              status,
+              retryable: false,
+              message: "synthetic-private-diagnostic",
+            }),
+          ),
+        cleanup: () => Promise.resolve(),
+      }));
+      try {
+        const error = await assertRejects(() =>
+          createExecutorHostedChatRuntimeAgent({
+            channel: channels.broker,
+            preparedRuntimeHandle: handle,
+          }).stream({ messages, abortSignal: new AbortController().signal }), ExecutorAgentError);
+        assert(error instanceof ExecutorAgentError);
+        assertEquals(error.code, "agent-provider-auth-error");
+        assertEquals(error.status, 401);
+        assertEquals(error.message, "Agent provider authentication failed");
+        assertEquals(error.title, "Agent provider authentication failed");
+      } finally {
+        await channels.close();
+      }
     }
   });
 
