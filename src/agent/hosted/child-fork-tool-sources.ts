@@ -37,7 +37,10 @@ import {
 } from "./child-requested-tools.ts";
 import { createMcpToolPolicyGate, wrapHostToolSetWithMcpPolicy } from "../mcp-tool-policy.ts";
 import { filterVeryfrontApiToolDefinitionsWithAccessProfile } from "./veryfront-api-tool-access.ts";
-import { createHostedMcpToolPolicySource } from "./project-remote-tool-source.ts";
+import {
+  createHostedMcpToolPolicySource,
+  throwExplicitStudioMcpUnavailable,
+} from "./project-remote-tool-source.ts";
 
 /** Public API contract for hosted child fork tool sources logger. */
 export type HostedChildForkToolSourcesLogger = {
@@ -107,6 +110,19 @@ export async function prepareDefaultHostedChildForkToolSources(
     const mcpServers = input.mcpServers ?? defaultAgentServiceMcpServers();
     for (const server of mcpServers) {
       if (server.kind === "veryfront-studio") {
+        const remoteConfig = createAgentServiceRemoteMcpConfig({
+          server,
+          authToken: input.authToken,
+          apiMcpUrl: input.apiMcpUrl,
+          studioMcpUrl: input.studioMcpUrl,
+          clientProfile: input.clientProfile,
+          getProjectId: input.getProjectId,
+          conversationId: input.conversationId,
+        });
+        if (!remoteConfig) {
+          if (server.required !== false) throwExplicitStudioMcpUnavailable(input);
+          continue;
+        }
         const studioTools = await createLiveStudioTools({
           authToken: input.authToken,
           clientProfile: input.clientProfile,

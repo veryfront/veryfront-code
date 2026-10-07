@@ -154,7 +154,7 @@ kept separate until they are placed back into `AgentConfig.remoteTools`.
 `AgentServiceMcpServerConfig` supports:
 
 - `{ kind: "veryfront-api"; id?: string }`
-- `{ kind: "veryfront-studio"; id?: string }`
+- `{ kind: "veryfront-studio"; id?: string; required?: boolean }`
 - `{ kind?: "generic"; id?: string; endpoint; headers?; fetch?; listMethod?; callMethod? }`
 
 The default hosted server set is `[{ kind: "veryfront-api" }]`. Studio MCP is
@@ -162,12 +162,16 @@ never enabled by default and is never inferred from allowed tool names or
 client-supplied Studio metadata. Enabling it requires an explicit `mcpServers`
 entry with `{ kind: "veryfront-studio" }`.
 
-That explicit entry still depends on
-a hosted Studio MCP transport: when `studioMcpUrl` is missing or the client
-profile is not allowed to use Studio MCP, source creation fails with a config
-or permission error instead of silently skipping the server. Generic MCP
-servers can pass a static or dynamic endpoint and headers through to the
-remote MCP source adapter.
+An explicit Studio entry requires an eligible hosted Studio transport by default.
+When `studioMcpUrl` is missing or the trusted client profile does not allow Studio
+MCP, required source setup fails with a config or permission error. Set
+`required: false` to omit Studio tools for those clients, in both parent and child
+fork setup. Trusted Studio clients with a configured transport retain their
+existing tools and policies. Configured transport connection and authentication
+errors still fail setup; the optional setting does not suppress them.
+
+Generic MCP servers can pass a static or dynamic endpoint and headers through to
+the remote MCP source adapter.
 
 ## Auth handling
 

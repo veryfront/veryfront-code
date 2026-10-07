@@ -395,8 +395,9 @@ function resolveHostedProjectMcpServers(
   return input.mcpServers ?? defaultAgentServiceMcpServers();
 }
 
-function throwExplicitStudioMcpUnavailable(
-  input: CreateHostedProjectRemoteToolSourcesInput,
+/** Reject a required Studio server without an eligible transport. */
+export function throwExplicitStudioMcpUnavailable(
+  input: Pick<CreateHostedProjectRemoteToolSourcesInput, "studioMcpUrl" | "clientProfile">,
 ): never {
   const requirement =
     'Provide studioMcpUrl with a trusted Veryfront Studio client profile, or remove { kind: "veryfront-studio" } from mcpServers.';
