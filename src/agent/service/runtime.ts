@@ -45,7 +45,7 @@ function normalizeDeploymentArtifact(deploymentArtifact: string | null | undefin
     !DEPLOYMENT_ARTIFACT_PATTERN.test(deploymentArtifact)
   ) {
     throw new TypeError(
-      "Agent service deploymentArtifact must be null or an immutable artifact tag formatted as yyyymmddHHMMSS-hex.",
+      "Agent service deploymentArtifact must be null or an immutable artifact tag formatted as yyyymmddHHMMSS-12-to-40-lowercase-hex.",
     );
   }
   return deploymentArtifact;
@@ -78,7 +78,7 @@ export type HostedAgentServiceRuntimeTrace = <TResult>(
 /** Public API contract for agent service runtime trace. */
 export type AgentServiceRuntimeTrace = HostedAgentServiceRuntimeTrace;
 
-/** Options accepted by create hosted agent service runtime. */
+/** Options accepted by create hosted agent service runtime, including deploymentArtifact for GET /version. */
 export type CreateHostedAgentServiceRuntimeOptions<
   TExecution extends object,
   TConfig extends HostedAgentServiceRuntimeConfig = HostedAgentServiceRuntimeConfig,

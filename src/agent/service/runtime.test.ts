@@ -6,8 +6,6 @@ import {
   combineAgentServiceLifecycle,
   createAgentServiceRuntime,
   createHostedAgentServiceRuntime,
-  startNodeAgentService,
-  startNodeHostedAgentService,
 } from "./runtime.ts";
 
 function createLogger() {
@@ -284,74 +282,6 @@ describe("agent/agent-service-runtime", () => {
     const serviceAgent = bundle.runtime.contract.agents.assistant;
     assertEquals(serviceAgent?.config.skills, false);
     assertEquals(serviceAgent?.config.tools, { update_file: false });
-  });
-
-  it("starts the node agent service server from the assembled runtime", async () => {
-    const service = await startNodeAgentService({
-      serviceName: "node-test-agent-service",
-      deploymentArtifact: "20261007183045-a1b2c3d4e5f6",
-      getConfig: () => ({
-        VERYFRONT_API_URL: "https://api.example.test",
-        NODE_ENV: "test",
-        PORT: 0,
-        ALLOWED_ORIGINS: ["*"],
-      }),
-      getAgentConfig: () => ({
-        id: "assistant",
-        name: "Assistant",
-        description: "",
-        instructions: "You are a test assistant.",
-      }),
-      logger: createLogger(),
-      prepareExecution: async () => ({ ok: true }),
-      streamExecutionToAgUiResponse: () => new Response("streamed"),
-      startDetachedExecution: async () => {},
-      signals: [],
-      hardShutdownTimeoutMs: 50,
-    });
-
-    try {
-      assertEquals(service.runtime.contract.serviceName, "node-test-agent-service");
-      assertEquals(typeof service.nodeServer.port, "number");
-
-      const response = await fetch(`http://127.0.0.1:${service.nodeServer.port}/version`);
-      assertEquals(response.status, 200);
-      assertEquals(response.headers.get("Cache-Control"), "no-store");
-      assertEquals(await response.json(), { artifact: "20261007183045-a1b2c3d4e5f6" });
-    } finally {
-      await service.nodeServer.stop();
-    }
-  });
-
-  it("keeps the hosted-prefixed start function as a compatibility alias", async () => {
-    const service = await startNodeHostedAgentService({
-      serviceName: "node-hosted-test-agent-service",
-      getConfig: () => ({
-        VERYFRONT_API_URL: "https://api.example.test",
-        NODE_ENV: "test",
-        PORT: 0,
-        ALLOWED_ORIGINS: ["*"],
-      }),
-      getAgentConfig: () => ({
-        id: "assistant",
-        name: "Assistant",
-        description: "",
-        instructions: "You are a test assistant.",
-      }),
-      logger: createLogger(),
-      prepareExecution: async () => ({ ok: true }),
-      streamExecutionToAgUiResponse: () => new Response("streamed"),
-      startDetachedExecution: async () => {},
-      signals: [],
-      hardShutdownTimeoutMs: 50,
-    });
-
-    try {
-      assertEquals(service.runtime.contract.serviceName, "node-hosted-test-agent-service");
-      assertEquals(typeof service.nodeServer.port, "number");
-    } finally {
-      await service.nodeServer.stop();
-    }
   });
 
   it("runs secondary shutdown lifecycle even when primary stop fails", async () => {

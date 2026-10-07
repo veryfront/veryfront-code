@@ -81,7 +81,7 @@ export function veryfrontStudioMcpServer():
   return { kind: "veryfront-studio" };
 }
 
-/** Options accepted by node Veryfront Cloud agent service. */
+/** Options accepted by node Veryfront Cloud agent service, including deploymentArtifact for GET /version. */
 export type NodeVeryfrontCloudAgentServiceOptions = {
   /**
    * Stable service identity used by the control plane and service runtime.
