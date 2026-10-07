@@ -4850,6 +4850,7 @@ describe("RedisBackend", () => {
         `test:schema-v1:queue-live-messages:${runId}`,
         `test:schema-v1:event-state:${runId}`,
         "test:schema-v1:index:event-state",
+        "test:schema-v1:index:event-mailboxes",
       ]);
       assertStringIncludes(mockRedis.lastScript, "for index = 1, 7");
       assertStringIncludes(mockRedis.lastScript, "for index = 8, 15");

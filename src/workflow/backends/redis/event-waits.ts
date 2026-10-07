@@ -9,6 +9,7 @@ import type { WorkflowStatus } from "#veryfront/workflow/types.ts";
 import {
   MAX_WORKFLOW_PENDING_EVENT_WAIT_ENTRIES,
   MAX_WORKFLOW_RUN_EVENT_MAILBOX_ENTRIES,
+  MAX_WORKFLOW_RUN_EVENT_MAILBOXES,
 } from "#veryfront/workflow/limits.ts";
 import { serializeWorkflowJson } from "#veryfront/workflow/context-serialization.ts";
 
@@ -52,8 +53,44 @@ local function restore(e)
   end
   table.insert(s.mail,i,e)
 end
+local function reserveMailbox()
+  if redis.call('zscore',KEYS[6],ARGV[6]) then return end
+  if redis.call('zcard',KEYS[6]) >= tonumber(ARGV[7]) then
+    local eligible=nil
+    for _,id in ipairs(redis.call('zrange',KEYS[6],0,-1)) do
+      local stateKey=ARGV[8] .. 'event-state:' .. id
+      local otherRaw=redis.call('get',stateKey)
+      local other=otherRaw and cjson.decode(otherRaw) or {waits={},mail={},claims={}}
+      local status=redis.call('hget',ARGV[8] .. 'run:' .. id,'status')
+      local protected=status == 'pending' or status == 'running' or status == 'waiting' or status == 'failed'
+      if next(other.claims) then protected=true end
+      for _,w in ipairs(other.waits) do if w.status == 'pending' or timed(w) then protected=true end end
+      if not protected then eligible={id=id,key=stateKey,state=other,status=status}; break end
+    end
+    if not eligible then return redis.error_reply('Run event mailbox capacity reached') end
+    redis.call('zrem',KEYS[6],eligible.id)
+    if not eligible.status then
+      redis.call('del',eligible.key)
+      redis.call('srem',KEYS[2],eligible.id)
+    else
+      eligible.state.mail={}; redis.call('set',eligible.key,encode(eligible.state))
+      local revision=redis.call('incr',KEYS[5])
+      redis.call('hset',ARGV[8] .. 'run:' .. eligible.id,'__runRetentionRevision',tostring(revision))
+      local metadata=redis.call('hget',KEYS[4],eligible.id)
+      if metadata then
+        local m=cjson.decode(metadata); m.revision=revision
+        redis.call('hset',KEYS[4],eligible.id,encode(m))
+      end
+    end
+  end
+  return nil
+end
 local function commit(result)
-  redis.call('set', KEYS[1], encode(s))
+  if #s.mail > 0 then redis.call('zadd',KEYS[6],'NX',s.mail[1].order or now,ARGV[6])
+  else redis.call('zrem',KEYS[6],ARGV[6]) end
+  if #s.waits == 0 and #s.mail == 0 and not next(s.claims) and redis.call('exists',KEYS[3]) == 0 then
+    redis.call('del',KEYS[1])
+  else redis.call('set', KEYS[1], encode(s)) end
   local active=next(s.claims) ~= nil
   for _,w in ipairs(s.waits) do if w.status == 'pending' or timed(w) then active=true end end
   if active then redis.call('sadd',KEYS[2],ARGV[6])
@@ -115,7 +152,8 @@ elseif op == 'finalize-timeout' then
 elseif op == 'append' then
   local claims=0; for _ in pairs(s.claims) do claims=claims+1 end
   if #s.mail + claims >= tonumber(ARGV[4]) then return redis.error_reply('Run event mailbox full; unconsumed events cannot be evicted') end
-  s.sequence=(s.sequence or 0)+1; p.event.order=s.sequence
+  local capacityError=reserveMailbox(); if capacityError then return capacityError end
+  p.event.order=redis.call('incr',KEYS[7])
   table.insert(s.mail,p.event); return commit(true)
 elseif op == 'remove' then
   for i,e in ipairs(s.mail) do if e.id == p.id then table.remove(s.mail,i); return commit(true) end end
@@ -215,9 +253,9 @@ function waitValue(wait: StoredWait): PersistedPendingEventWait {
 /** Durable wait, mailbox and recovery mutations share one Redis turn. */
 export class RedisEventWaitStore {
   constructor(
-    private client: RedisAdapter,
-    private prefix: string,
-    private strictContext = false,
+    private readonly client: RedisAdapter,
+    private readonly prefix: string,
+    private readonly strictContext = false,
   ) {}
   stateKey(runId: string): string {
     return `${this.prefix}event-state:${runId}`;
@@ -233,6 +271,8 @@ export class RedisEventWaitStore {
         `${this.prefix}run:${runId}`,
         `${this.prefix}index:terminal-completed-at-members`,
         `${this.prefix}index:terminal-retention-generation`,
+        `${this.prefix}index:event-mailboxes`,
+        `${this.prefix}event-publication-sequence`,
       ], [
         operation,
         JSON.stringify(payload),
@@ -240,6 +280,8 @@ export class RedisEventWaitStore {
         String(MAX_WORKFLOW_RUN_EVENT_MAILBOX_ENTRIES),
         String(Date.now()),
         runId,
+        String(MAX_WORKFLOW_RUN_EVENT_MAILBOXES),
+        this.prefix,
       ]);
       if (typeof result !== "string") throw new Error("Invalid Redis event-state result");
       return JSON.parse(result) as T;
@@ -254,20 +296,31 @@ export class RedisEventWaitStore {
     }
   }
   private async state(runId: string): Promise<StoredState> {
-    const state = await this.command<StoredState>(runId, "read");
-    return {
-      ...state,
-      waits: Array.isArray(state.waits) ? state.waits : [],
-      mail: Array.isArray(state.mail) ? state.mail : [],
-    };
+    try {
+      const raw = await this.client.get(this.stateKey(runId));
+      const state: StoredState = raw ? JSON.parse(raw) : { waits: [], mail: [], claims: {} };
+      return {
+        ...state,
+        waits: Array.isArray(state.waits) ? state.waits : [],
+        mail: Array.isArray(state.mail) ? state.mail : [],
+      };
+    } catch (cause) {
+      throw ORCHESTRATION_ERROR.create({
+        detail: "Redis workflow event-state read failed",
+        cause,
+      });
+    }
   }
   private storedWait(wait: PersistedPendingEventWait): StoredWait {
-    wait.requestedAt.toISOString();
-    wait.expiresAt?.toISOString();
-    wait.claimedAt?.toISOString();
-    wait.recoveryClaimedAt?.toISOString();
+    const value = JSON.stringify({
+      ...wait,
+      requestedAt: wait.requestedAt.toISOString(),
+      expiresAt: wait.expiresAt?.toISOString(),
+      claimedAt: wait.claimedAt?.toISOString(),
+      recoveryClaimedAt: wait.recoveryClaimedAt?.toISOString(),
+    });
     return {
-      value: JSON.stringify(wait),
+      value,
       id: wait.id,
       nodeId: wait.nodeId,
       instance: wait.waitInstanceId,
@@ -287,7 +340,8 @@ export class RedisEventWaitStore {
     const value = `{"id":${JSON.stringify(event.id)},"eventName":${
       JSON.stringify(event.eventName)
     },"payload":${payload},"publishedAt":${JSON.stringify(publishedAt)}}`;
-    return { value, id: event.id, name: event.eventName, at: event.publishedAt.getTime() };
+    const order = (event as RunEventEnvelope & { _publicationOrder?: number })._publicationOrder;
+    return { value, id: event.id, name: event.eventName, at: event.publishedAt.getTime(), order };
   }
   async savePendingEventWait(runId: string, wait: PersistedPendingEventWait): Promise<void> {
     await this.command(runId, "save", { wait: this.storedWait(wait) });
@@ -303,15 +357,23 @@ export class RedisEventWaitStore {
   async getPendingEventWaits(runId: string): Promise<PersistedPendingEventWait[]> {
     return (await this.state(runId)).waits.filter((w) => w.status === "pending").map(waitValue);
   }
-  private async states(runId?: string): Promise<Array<{ runId: string; state: StoredState }>> {
+  private async *states(runId?: string): AsyncGenerator<{ runId: string; state: StoredState }> {
     const ids = runId === undefined ? await this.client.smembers(this.indexKey()) : [runId];
-    return await Promise.all(ids.map(async (id) => ({ runId: id, state: await this.state(id) })));
+    for (let offset = 0; offset < ids.length; offset += 50) {
+      const batch = await Promise.all(
+        ids.slice(offset, offset + 50).map(async (id) => ({
+          runId: id,
+          state: await this.state(id),
+        })),
+      );
+      for (const entry of batch) yield entry;
+    }
   }
   async listPendingEventWaits(): Promise<
     Array<{ runId: string; wait: PersistedPendingEventWait }>
   > {
     const result = [];
-    for (const { runId, state } of await this.states()) {
+    for await (const { runId, state } of this.states()) {
       if (!await this.client.exists(`${this.prefix}run:${runId}`)) continue;
       for (const wait of state.waits) {
         if (wait.status === "pending") result.push({ runId, wait: waitValue(wait) });
@@ -336,14 +398,19 @@ export class RedisEventWaitStore {
     return this.command(runId, "restore-wait", { id });
   }
   async listTimedEventWaitClaims(runId?: string): Promise<PersistedPendingEventWait[]> {
-    return (await this.states(runId)).flatMap(({ state }) =>
-      state.waits.filter((w) =>
-        w.claimedAt !== undefined &&
-        ((w.kind === "delay" && w.status === "delivered") ||
-          (w.kind === "event" && w.status === "expired"))
-      ).map(waitValue)
-    );
+    const result: PersistedPendingEventWait[] = [];
+    for await (const { state } of this.states(runId)) {
+      result.push(
+        ...state.waits.filter((w) =>
+          w.claimedAt !== undefined &&
+          ((w.kind === "delay" && w.status === "delivered") ||
+            (w.kind === "event" && w.status === "expired"))
+        ).map(waitValue),
+      );
+    }
+    return result;
   }
+
   reserveTimedEventWaitClaim(runId: string, id: string, at: Date, stale: Date): Promise<boolean> {
     return this.command(runId, "reserve-timeout", { id, at: at.getTime(), stale: stale.getTime() });
   }
@@ -362,7 +429,10 @@ export class RedisEventWaitStore {
   }
   async takeRunEvent(runId: string, name: string): Promise<RunEventEnvelope | null> {
     const event = await this.command<StoredEvent | null>(runId, "take", { name });
-    return event ? eventValue(event) : null;
+    // The same private marker used by MemoryBackend survives standalone rollback.
+    if (!event) return null;
+    const retainedEnvelope = { ...eventValue(event), _publicationOrder: event.order };
+    return retainedEnvelope;
   }
   async claimRunEventForWait(
     runId: string,
@@ -378,18 +448,21 @@ export class RedisEventWaitStore {
     return event ? eventValue(event) : null;
   }
   async listRunEventDeliveryClaims(runId?: string): Promise<RunEventDeliveryClaim[]> {
-    return (await this.states(runId)).flatMap(({ state }) =>
-      Object.values(state.claims).map((claim) => {
+    const result: RunEventDeliveryClaim[] = [];
+    for await (const { state } of this.states(runId)) {
+      for (const claim of Object.values(state.claims)) {
         const wait = state.waits.find((w) => w.id === claim.waitId);
         if (!wait) throw ORCHESTRATION_ERROR.create({ detail: "Redis delivery claim has no wait" });
-        return {
+        result.push({
           wait: waitValue(wait),
           event: eventValue(claim.event),
           claimedAt: new Date(claim.claimedAt),
-        };
-      })
-    );
+        });
+      }
+    }
+    return result;
   }
+
   reserveRunEventDeliveryClaim(
     runId: string,
     id: string,

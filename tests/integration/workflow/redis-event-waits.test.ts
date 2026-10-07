@@ -12,6 +12,7 @@ import { waitForEvent } from "#veryfront/workflow/dsl/wait.ts";
 import {
   MAX_WORKFLOW_PENDING_EVENT_WAIT_ENTRIES,
   MAX_WORKFLOW_RUN_EVENT_MAILBOX_ENTRIES,
+  MAX_WORKFLOW_RUN_EVENT_MAILBOXES,
 } from "#veryfront/workflow/limits.ts";
 
 async function withReceivers(
@@ -20,15 +21,29 @@ async function withReceivers(
     b: RedisBackend,
     runId: string,
     cleanup: Array<() => Promise<void>>,
+    openReceiver: (observeRead?: (active: number) => void) => Promise<RedisBackend>,
   ) => Promise<void>,
 ) {
   const prefix = `event-test:${crypto.randomUUID()}`;
-  const open = async () => {
+  const open = async (observeRead?: (active: number) => void) => {
     const provider = createRedisRuntimeProvider();
     const module = await provider.loadModule();
     const client = module.createClient({ url: Deno.env.get("WORKFLOW_EVENT_TEST_REDIS_URL") });
     await client.connect();
-    return new RedisBackend({ prefix, client: new NodeRedisAdapter(client) });
+    const adapter = new NodeRedisAdapter(client);
+    if (observeRead) {
+      const get = adapter.get.bind(adapter);
+      let active = 0;
+      adapter.get = async (key) => {
+        observeRead(++active);
+        try {
+          return await get(key);
+        } finally {
+          active--;
+        }
+      };
+    }
+    return new RedisBackend({ prefix, client: adapter });
   };
   const a = await open(), b = await open(), runId = crypto.randomUUID();
   const cleanup: Array<() => Promise<void>> = [];
@@ -50,7 +65,7 @@ async function withReceivers(
       createdAt: new Date(),
       sourceIntegrationPolicy: normalizeSourceIntegrationPolicy(undefined),
     });
-    await fn(a, b, runId, cleanup);
+    await fn(a, b, runId, cleanup, open);
   } finally {
     await b.deleteRun(runId);
     for (const close of cleanup) await close();
@@ -80,18 +95,29 @@ describe("Redis durable event waits", () => {
       await b.appendRunEvent(runId, event);
       assertEquals(await a.claimRunEventForWait(runId, "wait", "ready"), event);
       await a.updateRun(runId, { status: "completed", completedAt: now });
-      const candidates = await b.listTerminalRunRetentionCandidates(
-        new Date(now.getTime() + 1),
-        10,
-      );
+      const readCandidates = async (receiver: RedisBackend) => {
+        // Index repair is incremental; an empty page with hasMore is not EOF.
+        let page = await receiver.listTerminalRunRetentionCandidates(
+          new Date(now.getTime() + 1),
+          10,
+        );
+        for (
+          let attempt = 0;
+          page.hasMore && page.candidates.length === 0 && attempt < 20;
+          attempt++
+        ) {
+          page = await receiver.listTerminalRunRetentionCandidates(new Date(now.getTime() + 1), 10);
+        }
+        return page;
+      };
+      const candidates = await readCandidates(b);
       const candidate = candidates.candidates.find((c) => c.runId === runId);
       assertExists(candidate);
       assertEquals(await b.deleteTerminalRunIfUnchanged(candidate), false);
       assertEquals((await b.listRunEventDeliveryClaims(runId)).length, 1);
       await b.finalizeRunEventDelivery(runId, event.id, true);
       assertEquals(await a.deleteTerminalRunIfUnchanged(candidate), false);
-      const fresh = (await a.listTerminalRunRetentionCandidates(new Date(now.getTime() + 1), 10))
-        .candidates.find((c) => c.runId === runId);
+      const fresh = (await readCandidates(a)).candidates.find((c) => c.runId === runId);
       assertExists(fresh);
       assertEquals(await a.deleteTerminalRunIfUnchanged(fresh), true);
       assertEquals(await b.listRunEventDeliveryClaims(runId), []);
@@ -323,12 +349,25 @@ describe("Redis durable event waits", () => {
     ignore: !Deno.env.get("WORKFLOW_EVENT_TEST_REDIS_URL"),
   }, async () => {
     const prefix = `event-test:${crypto.randomUUID()}`;
-    const open = async () => {
+    const open = async (observeRead?: (active: number) => void) => {
       const provider = createRedisRuntimeProvider();
       const module = await provider.loadModule();
       const client = module.createClient({ url: Deno.env.get("WORKFLOW_EVENT_TEST_REDIS_URL") });
       await client.connect();
-      return new RedisBackend({ prefix, client: new NodeRedisAdapter(client) });
+      const adapter = new NodeRedisAdapter(client);
+      if (observeRead) {
+        const get = adapter.get.bind(adapter);
+        let active = 0;
+        adapter.get = async (key) => {
+          observeRead(++active);
+          try {
+            return await get(key);
+          } finally {
+            active--;
+          }
+        };
+      }
+      return new RedisBackend({ prefix, client: adapter });
     };
     const first = await open();
     const second = await open();
@@ -418,5 +457,136 @@ describe("Redis durable event waits", () => {
       await a.restoreRunEvent(runId, taken);
       assertEquals(await b.takeRunEvent(runId, "ready"), taken);
       assertEquals((await b.takeRunEvent(runId, "ready"))?.id, "restore-bound-1");
+    }));
+  it({
+    name:
+      "Redis standalone rollback preserves two publication sequences across receiver replacement",
+    ignore: !Deno.env.get("WORKFLOW_EVENT_TEST_REDIS_URL"),
+  }, async () => {
+    for (const restoreOrder of [[0, 1], [1, 0]]) {
+      await withReceivers(async (a, _b, runId, cleanup, openReceiver) => {
+        const now = new Date();
+        for (const id of ["first", "second"]) {
+          await a.appendRunEvent(runId, {
+            id,
+            eventName: "ready",
+            payload: { id },
+            publishedAt: now,
+          });
+        }
+        const first = await a.takeRunEvent(runId, "ready"),
+          second = await a.takeRunEvent(runId, "ready");
+        assertExists(first);
+        assertExists(second);
+        const snapshots = JSON.parse(JSON.stringify([first, second])).map((
+          event: typeof first,
+        ) => ({ ...event, publishedAt: new Date(event.publishedAt) }));
+        await a.destroy();
+        const replacement = await openReceiver();
+        cleanup.push(() => replacement.destroy());
+        for (const index of restoreOrder) {
+          await replacement.restoreRunEvent(runId, snapshots[index]);
+        }
+        assertEquals((await replacement.takeRunEvent(runId, "ready"))?.id, "first");
+        assertEquals((await replacement.takeRunEvent(runId, "ready"))?.id, "second");
+      });
+    }
+  });
+  it({
+    name: "Redis recovery sweeps preserve all persisted waits with bounded concurrent reads",
+    ignore: !Deno.env.get("WORKFLOW_EVENT_TEST_REDIS_URL"),
+  }, () =>
+    withReceivers(async (a, _b, runId, cleanup, open) => {
+      const run = await a.getRun(runId);
+      assertExists(run);
+      const ids = Array.from({ length: 101 }, () => crypto.randomUUID());
+      for (const id of ids) {
+        await a.createRun({ ...run, id });
+        cleanup.push(() => a.deleteRun(id));
+        await a.savePendingEventWait(id, {
+          id: "wait",
+          runId: id,
+          nodeId: "event",
+          waitKind: "event",
+          eventName: "ready",
+          status: "pending",
+          requestedAt: new Date(),
+        });
+      }
+      let maximumReads = 0;
+      let totalReads = 0;
+      const replacement = await open((active) => {
+        maximumReads = Math.max(maximumReads, active);
+        totalReads++;
+      });
+      cleanup.push(() => replacement.destroy());
+      const waits = await replacement.listPendingEventWaits();
+      assertEquals(waits.map((entry) => entry.runId).sort(), ids.sort());
+      assertEquals(totalReads, ids.length);
+      assertEquals(maximumReads <= 50, true);
+    }));
+  it({
+    name: "Redis mailbox pressure bounds reserved IDs without evicting live run data",
+    ignore: !Deno.env.get("WORKFLOW_EVENT_TEST_REDIS_URL"),
+  }, () =>
+    withReceivers(async (a, b, runId, cleanup) => {
+      const event = { id: "reserved", eventName: "ready", payload: {}, publishedAt: new Date() };
+      await a.appendRunEvent(runId, event);
+      const ids = Array.from(
+        { length: MAX_WORKFLOW_RUN_EVENT_MAILBOXES },
+        () => crypto.randomUUID(),
+      );
+      cleanup.push(async () => {
+        for (let offset = 0; offset < ids.length; offset += 50) {
+          await Promise.all(ids.slice(offset, offset + 50).map((id) => a.deleteRun(id)));
+        }
+      });
+      const first = ids[0], retryable = ids[1];
+      assertExists(first);
+      assertExists(retryable);
+      await a.appendRunEvent(first, event);
+      for (let offset = 1; offset < ids.length; offset += 50) {
+        await Promise.all(ids.slice(offset, offset + 50).map((id) => a.appendRunEvent(id, event)));
+      }
+      assertEquals(await b.peekRunEvent(first, "ready"), null);
+      assertEquals((await b.peekRunEvent(ids.at(-1)!, "ready"))?.id, event.id);
+      assertEquals((await b.peekRunEvent(runId, "ready"))?.id, event.id);
+      const base = await a.getRun(runId);
+      assertExists(base);
+      for (let offset = 0; offset < ids.length; offset += 50) {
+        await Promise.all(ids.slice(offset, offset + 50).map((id) => a.createRun({ ...base, id })));
+      }
+      await a.updateRun(retryable, { status: "failed" });
+      const overflow = crypto.randomUUID();
+      await assertRejects(() => a.appendRunEvent(overflow, event));
+      assertEquals(await b.peekRunEvent(overflow, "ready"), null);
+      assertEquals((await b.peekRunEvent(retryable, "ready"))?.id, event.id);
+    }));
+
+  it({
+    name: "Redis reserved ID rollback keeps ordering after its empty mailbox is removed",
+    ignore: !Deno.env.get("WORKFLOW_EVENT_TEST_REDIS_URL"),
+  }, () =>
+    withReceivers(async (a, b, _runId, cleanup) => {
+      const reserved = crypto.randomUUID();
+      cleanup.push(() => a.deleteRun(reserved));
+      const at = new Date();
+      await a.appendRunEvent(reserved, {
+        id: "first",
+        eventName: "ready",
+        payload: {},
+        publishedAt: at,
+      });
+      const first = await a.takeRunEvent(reserved, "ready");
+      assertExists(first);
+      await b.appendRunEvent(reserved, {
+        id: "second",
+        eventName: "ready",
+        payload: {},
+        publishedAt: at,
+      });
+      await b.restoreRunEvent(reserved, first);
+      assertEquals((await b.takeRunEvent(reserved, "ready"))?.id, "first");
+      assertEquals((await b.takeRunEvent(reserved, "ready"))?.id, "second");
     }));
 });

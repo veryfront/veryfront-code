@@ -1,4 +1,3 @@
-import { RedisEventWaitStore } from "#veryfront/workflow/backends/redis/event-waits.ts";
 /****
  * Redis Workflow Backend
  *
@@ -7,6 +6,8 @@ import { RedisEventWaitStore } from "#veryfront/workflow/backends/redis/event-wa
  *
  * @module ai/workflow/backends/redis
  */
+
+import { RedisEventWaitStore } from "#veryfront/workflow/backends/redis/event-waits.ts";
 
 import type {
   ApprovalDecision,
@@ -375,6 +376,7 @@ if retentionMetadata then
 end
 removed = removed + redis.call('del', KEYS[18], KEYS[20], KEYS[21])
 redis.call('srem', KEYS[22], ARGV[6])
+redis.call('zrem', KEYS[23], ARGV[6])
 if removed > 0 then return 1 end
 if runExists == 0 then return 2 end
 return 0`;
@@ -513,6 +515,7 @@ if metadataRaw then
 end
 removed = removed + redis.call('del', KEYS[18], KEYS[19], KEYS[20])
 redis.call('srem', KEYS[21], ARGV[1])
+redis.call('zrem', KEYS[22], ARGV[1])
 return 1`;
 
 const READ_TERMINAL_RETENTION_FIELDS_SCRIPT = `-- read-terminal-retention-fields
@@ -2602,11 +2605,12 @@ export class RedisBackend implements WorkflowBackend {
     const identity = await client.eval(MARK_RUN_DELETING_SCRIPT, [this.runKey(runId)], []);
     if (arrayIsArray(identity) && identity.length === 0) {
       await client.eval(
-        "if redis.call('exists',KEYS[1]) == 0 then redis.call('del',KEYS[2]); redis.call('srem',KEYS[3],ARGV[1]) end return 1",
+        "if redis.call('exists',KEYS[1]) == 0 then redis.call('del',KEYS[2]); redis.call('srem',KEYS[3],ARGV[1]); redis.call('zrem',KEYS[4],ARGV[1]) end return 1",
         [
           this.runKey(runId),
           `${this.storagePrefix()}event-state:${runId}`,
           `${this.storagePrefix()}index:event-state`,
+          `${this.storagePrefix()}index:event-mailboxes`,
         ],
         [runId],
       );
@@ -2646,6 +2650,7 @@ export class RedisBackend implements WorkflowBackend {
         this.liveQueueMessagesKey(runId),
         `${this.storagePrefix()}event-state:${runId}`,
         `${this.storagePrefix()}index:event-state`,
+        `${this.storagePrefix()}index:event-mailboxes`,
       ],
       [runId],
     );
@@ -2734,6 +2739,7 @@ export class RedisBackend implements WorkflowBackend {
         this.liveQueueMessagesKey(candidate.runId),
         `${this.storagePrefix()}event-state:${candidate.runId}`,
         `${this.storagePrefix()}index:event-state`,
+        `${this.storagePrefix()}index:event-mailboxes`,
       ],
       [
         candidate.status,
