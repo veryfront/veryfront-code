@@ -10,7 +10,11 @@ import {
 import { isProxyWithoutHooks } from "./error-introspection.ts";
 import { isNotFoundError } from "./not-found-error.ts";
 import { primordialPromiseAll, primordialPromiseCatch } from "./primordials/promise.ts";
-import { openNativeStreamFile, removeNativeStreamFile } from "./native-stream-file.ts";
+import {
+  openNativeStreamFile,
+  removeNativeStreamFile,
+  renameNativeStreamFile,
+} from "./native-stream-file.ts";
 
 export { isNotFoundError };
 
@@ -344,8 +348,7 @@ class NodeFileSystem implements FileSystem {
   }
 
   async rename(from: string, to: string): Promise<void> {
-    await this.ensureInitialized();
-    await this.getFs().rename(from, to);
+    await renameNativeStreamFile(from, to);
   }
 
   async exists(path: string): Promise<boolean> {
@@ -495,7 +498,7 @@ class DenoFileSystem implements FileSystem {
   }
 
   async rename(from: string, to: string): Promise<void> {
-    await denoGlobal().rename(from, to);
+    await renameNativeStreamFile(from, to);
   }
 
   async exists(path: string): Promise<boolean> {

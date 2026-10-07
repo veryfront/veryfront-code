@@ -1,6 +1,9 @@
 import { isBun, isDeno, isNode } from "./runtime.ts";
 
-type NodeFileOperations = Pick<typeof import("node:fs"), "open" | "write" | "close" | "unlink">;
+type NodeFileOperations = Pick<
+  typeof import("node:fs"),
+  "open" | "write" | "close" | "unlink" | "rename"
+>;
 type HostRequire = (specifier: string) => unknown;
 declare const require: HostRequire | undefined;
 
@@ -14,6 +17,7 @@ const NativePromise = Promise;
 const deno = isDeno ? Deno : undefined;
 const denoOpen = deno?.open;
 const denoRemove = deno?.remove;
+const denoRename = deno?.rename;
 const denoWrite = deno?.FsFile.prototype.write;
 const denoClose = deno?.FsFile.prototype.close;
 
@@ -44,7 +48,7 @@ function captureNodeFileOperations(): NodeFileOperations | undefined {
     throw new Error("Native filesystem stream operations are unavailable");
   }
   const operations = createObject(null) as NodeFileOperations;
-  for (const key of ["open", "write", "close", "unlink"] as const) {
+  for (const key of ["open", "write", "close", "unlink", "rename"] as const) {
     const method = ownFunction(module, key);
     if (!method) throw new Error(`Native filesystem ${key} operation is unavailable`);
     const descriptor = createObject(null) as PropertyDescriptor;
@@ -122,6 +126,18 @@ export function removeNativeStreamFile(path: string): Promise<void> {
   if (!node) throw new Error("Native filesystem stream operations are unavailable");
   return new NativePromise<void>((resolve, reject) => {
     node.unlink(path, (error) => {
+      if (error) reject(error);
+      else resolve();
+    });
+  });
+}
+
+/** Promote a completed private file through authority captured at host bootstrap. */
+export function renameNativeStreamFile(from: string, to: string): Promise<void> {
+  if (deno && denoRename) return apply(denoRename, deno, [from, to]) as Promise<void>;
+  if (!node) throw new Error("Native filesystem stream operations are unavailable");
+  return new NativePromise<void>((resolve, reject) => {
+    node.rename(from, to, (error) => {
       if (error) reject(error);
       else resolve();
     });
