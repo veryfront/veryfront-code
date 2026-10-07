@@ -1,7 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { makeTempDir, readFile, remove } from "#veryfront/testing/deno-compat.ts";
+import { createFileSystem, makeTempDir, readFile, remove } from "#veryfront/testing/deno-compat.ts";
 import {
   openNativeStreamFile,
   removeNativeStreamFile,
@@ -11,6 +11,9 @@ import {
 describe("native stream file authority", () => {
   it("promotes private files without invoking replaced filesystem rename hooks", async () => {
     const directory = await makeTempDir();
+    const fs = createFileSystem();
+    assertExists(fs.promoteStreamFile);
+    assertExists(fs.removeStreamFile);
     const source = `${directory}/private.bin`;
     const destination = `${directory}/promoted.bin`;
     const nodeFs = await import("node:fs");
@@ -23,29 +26,31 @@ describe("native stream file authority", () => {
       const file = await openNativeStreamFile(source);
       await file.write(new Uint8Array([1, 2, 3]));
       await file.close();
-      nodeFs.default.rename = () => {
+      Reflect.set(nodeFs.default, "rename", (..._args: unknown[]) => {
+        hookCalls++;
+        throw new Error("untrusted rename");
+      });
+      nodePromises.default.rename = (..._args: unknown[]) => {
         hookCalls++;
         throw new Error("untrusted rename");
       };
-      nodePromises.default.rename = () => {
-        hookCalls++;
-        throw new Error("untrusted rename");
-      };
-      if (globalThis.Deno && originalDenoRename) {
-        globalThis.Deno.rename = () => {
+      if (globalThis.Deno) {
+        globalThis.Deno.rename = (..._args: unknown[]) => {
           hookCalls++;
           throw new Error("untrusted rename");
         };
       }
-      await renameNativeStreamFile(source, destination);
+      await fs.promoteStreamFile(source, destination);
       assertEquals(hookCalls, 0);
       assertEquals([...await readFile(destination)], [1, 2, 3]);
       await assertRejects(() => renameNativeStreamFile(source, destination), Error);
       assertEquals(hookCalls, 0);
+      await fs.removeStreamFile(destination);
+      await assertRejects(() => readFile(destination), Error);
     } finally {
       nodeFs.default.rename = originalNodeRename;
       nodePromises.default.rename = originalPromiseRename;
-      if (globalThis.Deno && originalDenoRename) globalThis.Deno.rename = originalDenoRename;
+      if (globalThis.Deno) globalThis.Deno.rename = originalDenoRename;
       await remove(directory, { recursive: true });
     }
   });

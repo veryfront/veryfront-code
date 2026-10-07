@@ -6,6 +6,7 @@ type SafeParseResult<T> = { success: true; data: T } | {
   error: Error & { issues: unknown[] };
 };
 import { createFileSystem, cwd, lookupMimeType } from "veryfront/platform";
+
 import { dirname, join, normalize, resolve } from "veryfront/platform/path";
 import { withSpan } from "veryfront/observability/otlp-setup";
 import { INVALID_ARGUMENT } from "veryfront/errors";
@@ -275,18 +276,18 @@ export async function downloadUploadToFile(
   let created = false;
   try {
     await fs.mkdir(dirname(localPath), { recursive: true });
-    if (!fs.writeFileStream || !fs.rename) {
+    if (!fs.writeFileStream || !fs.promoteStreamFile || !fs.removeStreamFile) {
       throw new Error("Filesystem does not support streaming upload downloads");
     }
     const bytes = await fs.writeFileStream(temporaryPath, response, signal);
     created = true;
     signal?.throwIfAborted();
-    await fs.rename(temporaryPath, localPath);
+    await fs.promoteStreamFile(temporaryPath, localPath);
     created = false;
     return { uploadPath: normalizeUploadPath(uploadPath), localPath, bytes };
   } finally {
     await response.cancel().catch(() => {});
-    if (created) await fs.remove(temporaryPath);
+    if (created) await fs.removeStreamFile!(temporaryPath);
   }
 }
 

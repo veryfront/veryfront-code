@@ -187,6 +187,10 @@ export interface FileSystem {
     source: ReadableStream<Uint8Array>,
     signal?: AbortSignal,
   ): Promise<number>;
+  /** Promote a completed private stream file through captured host operations. */
+  promoteStreamFile?(from: string, to: string): Promise<void>;
+  /** Remove a private stream file through captured host operations. */
+  removeStreamFile?(path: string): Promise<void>;
   createFileBytesExclusive?(path: string, data: Uint8Array): Promise<void>;
   /** Atomically replace a path when same-filesystem rename is supported. */
   rename?(from: string, to: string): Promise<void>;
@@ -347,8 +351,17 @@ class NodeFileSystem implements FileSystem {
     );
   }
 
-  async rename(from: string, to: string): Promise<void> {
+  async promoteStreamFile(from: string, to: string): Promise<void> {
     await renameNativeStreamFile(from, to);
+  }
+
+  async removeStreamFile(path: string): Promise<void> {
+    await removeNativeStreamFile(path);
+  }
+
+  async rename(from: string, to: string): Promise<void> {
+    await this.ensureInitialized();
+    await this.getFs().rename(from, to);
   }
 
   async exists(path: string): Promise<boolean> {
@@ -497,8 +510,16 @@ class DenoFileSystem implements FileSystem {
     );
   }
 
-  async rename(from: string, to: string): Promise<void> {
+  async promoteStreamFile(from: string, to: string): Promise<void> {
     await renameNativeStreamFile(from, to);
+  }
+
+  async removeStreamFile(path: string): Promise<void> {
+    await removeNativeStreamFile(path);
+  }
+
+  async rename(from: string, to: string): Promise<void> {
+    await denoGlobal().rename(from, to);
   }
 
   async exists(path: string): Promise<boolean> {

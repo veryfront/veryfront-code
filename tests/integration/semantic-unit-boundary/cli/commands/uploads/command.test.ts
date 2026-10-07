@@ -7,7 +7,14 @@ import {
   assertThrows,
 } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { makeTempDir } from "#veryfront/testing/deno-compat.ts";
+import {
+  makeTempDir,
+  mkdir,
+  readDir,
+  readTextFile,
+  remove,
+  writeTextFile,
+} from "#veryfront/testing/deno-compat.ts";
 import { VeryfrontError } from "veryfront/errors";
 import {
   buildUploadCreateUrl,
@@ -19,9 +26,9 @@ import {
   resolveUploadOutputPath,
   uploadLocalFileToUploads,
   uploadsCommand,
-} from "./command.ts";
-import type { ApiClient } from "#cli/shared/config";
-import type { ParsedArgs } from "#cli/shared/types";
+} from "#cli/commands/uploads/command";
+import type { ApiClient } from "../../../../../../cli/shared/config.ts";
+import type { ParsedArgs } from "../../../../../../cli/shared/types.ts";
 
 function createMockClient(overrides: {
   getStream?: (path: string) => Promise<ReadableStream<Uint8Array>>;
@@ -153,8 +160,57 @@ describe("uploadsCommand", () => {
 });
 
 describe("downloadUploadToFile", () => {
+  it("promotes and cleans private downloads without project filesystem hooks", async () => {
+    const tempDir = await makeTempDir();
+    const nodeFs = (await import("node:fs")).default;
+    const nodePromises = (await import("node:fs/promises")).default;
+    const originalNodeRename = nodeFs.rename;
+    const originalNodeUnlink = nodeFs.unlink;
+    const originalPromiseRename = nodePromises.rename;
+    const originalPromiseRemove = nodePromises.rm;
+    const deno = typeof Deno === "undefined" ? undefined : Deno;
+    const originalRename = deno?.rename;
+    const originalRemove = deno?.remove;
+    let hookCalls = 0;
+    const untrustedHook = (..._args: unknown[]): never => {
+      hookCalls++;
+      throw new Error("untrusted filesystem hook");
+    };
+    try {
+      await mkdir(`${tempDir}/blocked`);
+      Reflect.set(nodeFs, "rename", untrustedHook);
+      Reflect.set(nodeFs, "unlink", untrustedHook);
+      nodePromises.rename = untrustedHook;
+      nodePromises.rm = untrustedHook;
+      if (deno) {
+        deno.rename = untrustedHook;
+        deno.remove = untrustedHook;
+      }
+      const client = createMockClient({
+        getStream: () => Promise.resolve(new Response("private report").body!),
+      });
+      const result = await downloadUploadToFile(client, "my-project", "file", tempDir);
+      assertEquals(await readTextFile(result.localPath), "private report");
+      await assertRejects(() => downloadUploadToFile(client, "my-project", "blocked", tempDir));
+      const names = [];
+      for await (const entry of readDir(tempDir)) names.push(entry.name);
+      names.sort();
+      assertEquals(names, ["blocked", "file"]);
+      assertEquals(hookCalls, 0);
+    } finally {
+      nodeFs.rename = originalNodeRename;
+      nodeFs.unlink = originalNodeUnlink;
+      nodePromises.rename = originalPromiseRename;
+      nodePromises.rm = originalPromiseRemove;
+      if (deno && originalRename && originalRemove) {
+        deno.rename = originalRename;
+        deno.remove = originalRemove;
+      }
+      await remove(tempDir, { recursive: true });
+    }
+  });
   it("downloads authenticated API content into the output directory", async () => {
-    const tempDir = await Deno.makeTempDir();
+    const tempDir = await makeTempDir();
     let requestedPath = "";
     try {
       const client = createMockClient({
@@ -165,10 +221,10 @@ describe("downloadUploadToFile", () => {
       });
       const result = await downloadUploadToFile(client, "my-project", "contracts/q1.pdf", tempDir);
       assertEquals(requestedPath, "/projects/my-project/uploads/contracts%2Fq1.pdf");
-      assertEquals(await Deno.readTextFile(result.localPath), "quarterly report");
+      assertEquals(await readTextFile(result.localPath), "quarterly report");
       assertEquals(result.bytes, 16);
     } finally {
-      await Deno.remove(tempDir, { recursive: true });
+      await remove(tempDir, { recursive: true });
     }
   });
   it("validates the output path before opening the download stream", async () => {
@@ -190,14 +246,14 @@ describe("downloadUploadToFile", () => {
         getStream: () => Promise.resolve(new Response("content").body!),
       });
       const result = await downloadUploadToFile(client, "my-project", filename, tempDir);
-      assertEquals(await Deno.readTextFile(result.localPath), "content");
+      assertEquals(await readTextFile(result.localPath), "content");
     } finally {
-      await Deno.remove(tempDir, { recursive: true });
+      await remove(tempDir, { recursive: true });
     }
   });
   it("preserves the existing output and removes temporary data on a download failure", async () => {
     const tempDir = await makeTempDir();
-    await Deno.writeTextFile(`${tempDir}/file`, "original");
+    await writeTextFile(`${tempDir}/file`, "original");
     try {
       const client = createMockClient({
         getStream: () =>
@@ -217,12 +273,12 @@ describe("downloadUploadToFile", () => {
         Error,
         "download interrupted",
       );
-      assertEquals(await Deno.readTextFile(`${tempDir}/file`), "original");
+      assertEquals(await readTextFile(`${tempDir}/file`), "original");
       const names = [];
-      for await (const entry of Deno.readDir(tempDir)) names.push(entry.name);
+      for await (const entry of readDir(tempDir)) names.push(entry.name);
       assertEquals(names, ["file"]);
     } finally {
-      await Deno.remove(tempDir, { recursive: true });
+      await remove(tempDir, { recursive: true });
     }
   });
 });
@@ -230,7 +286,7 @@ describe("downloadUploadToFile", () => {
 describe("uploadLocalFileToUploads", () => {
   it("creates an upload URL then PUTs the local file bytes", async () => {
     const originalFetch = globalThis.fetch;
-    const tempDir = await Deno.makeTempDir();
+    const tempDir = await makeTempDir();
     const localPath = `${tempDir}/q1.pdf`;
     let metadataPath = "";
     let metadataBody: unknown = null;
@@ -238,7 +294,7 @@ describe("uploadLocalFileToUploads", () => {
     let uploadedHeaders = new Headers();
     let uploadedBytes = 0;
 
-    await Deno.writeTextFile(localPath, "quarterly report");
+    await writeTextFile(localPath, "quarterly report");
 
     globalThis.fetch = async (input: string | URL | Request, init?: RequestInit) => {
       const url = typeof input === "string"
@@ -290,7 +346,7 @@ describe("uploadLocalFileToUploads", () => {
       assertEquals(result.upload_id, "upload-123");
     } finally {
       globalThis.fetch = originalFetch;
-      await Deno.remove(tempDir, { recursive: true });
+      await remove(tempDir, { recursive: true });
     }
   });
 });
