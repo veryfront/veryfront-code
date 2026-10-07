@@ -670,29 +670,41 @@ describe("fetchWithPinnedAddresses", () => {
 
   it("rejects guard failures without waiting for body cancellation to finish", async () => {
     const { ClientRequest, createServer } = await import("node:http");
-    let releaseRequest!: () => void;
-    const requestSeen = new Promise<void>((resolve) => {
-      releaseRequest = resolve;
-    });
     const server = createServer((request, _response) => {
       request.resume();
-      releaseRequest();
     });
     await new Promise<void>((resolve, reject) => {
       server.once("error", reject);
       server.listen(0, "127.0.0.1", resolve);
     });
 
-    const originalSetHeader = Object.getOwnPropertyDescriptor(
+    const mutationMember = Object.getOwnPropertyDescriptor(ClientRequest.prototype, "setHeader")
+        ?.value !== undefined
+      ? "setHeader"
+      : "setTimeout";
+    const originalMember = Object.getOwnPropertyDescriptor(
       ClientRequest.prototype,
-      "setHeader",
+      mutationMember,
     );
+    if (originalMember?.value === undefined) {
+      await closeNodeTestServer(server);
+      throw new Error(`Missing test mutation member: ${mutationMember}`);
+    }
+
     let bodyController!: ReadableStreamDefaultController<Uint8Array>;
+    let releaseBodyPull!: () => void;
+    const bodyPullStarted = new Promise<void>((resolve) => {
+      releaseBodyPull = resolve;
+    });
     let cancelStarted = false;
     const body = new ReadableStream<Uint8Array>({
       start(controller) {
         bodyController = controller;
         controller.enqueue(new Uint8Array(1024));
+      },
+      pull() {
+        releaseBodyPull();
+        return new Promise(() => {});
       },
       cancel() {
         cancelStarted = true;
@@ -710,14 +722,14 @@ describe("fetchWithPinnedAddresses", () => {
         ["127.0.0.1"],
         { method: "POST", headers: { authorization: BEARER }, body },
       );
-      await requestSeen;
+      await bodyPullStarted;
 
-      Object.defineProperty(ClientRequest.prototype, "setHeader", {
+      Object.defineProperty(ClientRequest.prototype, mutationMember, {
         configurable: true,
         writable: true,
-        ...originalSetHeader,
-        value(this: { setHeader(name: string, value: string): unknown }, ...args: unknown[]) {
-          return Reflect.apply(originalSetHeader!.value, this, args);
+        ...originalMember,
+        value(this: unknown, ...args: unknown[]) {
+          return Reflect.apply(originalMember.value, this, args);
         },
       });
       bodyController.enqueue(new Uint8Array(1024));
@@ -733,12 +745,10 @@ describe("fetchWithPinnedAddresses", () => {
         }),
       ]);
       if (timeout !== undefined) clearTimeout(timeout);
-      assertEquals(result.includes("setHeader"), true);
+      assertEquals(result.includes(mutationMember), true);
       assertEquals(cancelStarted, true);
     } finally {
-      if (originalSetHeader) {
-        Object.defineProperty(ClientRequest.prototype, "setHeader", originalSetHeader);
-      } else Reflect.deleteProperty(ClientRequest.prototype, "setHeader");
+      Object.defineProperty(ClientRequest.prototype, mutationMember, originalMember);
       await closeNodeTestServer(server);
     }
   });
