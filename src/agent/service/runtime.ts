@@ -36,20 +36,7 @@ import {
 } from "./server.ts";
 import type { VeryfrontServiceServerLogger } from "../../server/service-server.ts";
 import type { HostedRuntimeSourceIdentity } from "../hosted/runtime-source-binding.ts";
-
-const DEPLOYMENT_ARTIFACT_PATTERN = /^\d{14}-[a-f0-9]{12,40}$/;
-
-function normalizeDeploymentArtifact(deploymentArtifact: string | null | undefined): string | null {
-  if (deploymentArtifact === undefined || deploymentArtifact === null) return null;
-  if (
-    !DEPLOYMENT_ARTIFACT_PATTERN.test(deploymentArtifact)
-  ) {
-    throw new TypeError(
-      "Agent service deploymentArtifact must be null or an immutable artifact tag formatted as yyyymmddHHMMSS-12-to-40-lowercase-hex.",
-    );
-  }
-  return deploymentArtifact;
-}
+import { snapshotOwnDeploymentArtifactOption } from "./deployment-artifact.ts";
 
 /** Configuration used by hosted agent service runtime. */
 export type HostedAgentServiceRuntimeConfig = AgentServiceAuthConfig & {
@@ -271,8 +258,8 @@ export function createAgentServiceRuntime<
 >(
   options: CreateAgentServiceRuntimeOptions<TExecution, TConfig>,
 ): AgentServiceRuntimeBundle<TExecution, TConfig> {
+  const deploymentArtifact = snapshotOwnDeploymentArtifactOption(options);
   const config = options.getConfig();
-  const deploymentArtifact = normalizeDeploymentArtifact(options.deploymentArtifact);
   const tracker = options.tracker ?? createDetachedRunTracker<AgUiResumeValue>();
   const trace = options.trace ?? defaultTrace;
   const auth = createAgentServiceAuth({

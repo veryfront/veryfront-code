@@ -24,6 +24,7 @@ import {
 } from "./runtime-source-binding.ts";
 import type { CreateNodeAgentServiceRuntimeInfrastructureOptions } from "../service/node-runtime-infrastructure.ts";
 import type { RunAgentServiceMainOptions } from "../service/bootstrap.ts";
+import { snapshotOwnDeploymentArtifactOption } from "../service/deployment-artifact.ts";
 import type { AgentServiceMcpServerConfig } from "../service/mcp-server-config.ts";
 import type { ProjectAgentRuntimeAgentSource } from "../project/agent-runtime.ts";
 import type { HostedHostToolPolicy } from "./chat-runtime-tool-assembly.ts";
@@ -199,16 +200,39 @@ export function resolveHostedRuntimeSourceIdentity(
 export async function resolveNodeVeryfrontCloudAgentServiceOptions(
   options: BootstrapInput,
 ): Promise<ResolvedNodeVeryfrontCloudAgentServiceOptions> {
+  const deploymentArtifact = snapshotOwnDeploymentArtifactOption(options);
+  const environment = resolveEnvironment(options);
+
   await ensureDefaultSchemaValidator();
   await ensureDefaultAuthProvider();
   await ensureDefaultNodeTelemetryProvider();
+
   return {
-    ...options,
-    runtimeSource: resolveHostedRuntimeSourceIdentity(options.runtimeSource),
     serviceName: resolveServiceName({
-      ...options,
-      env: resolveEnvironment(options),
+      serviceName: options.serviceName,
+      baseDir: options.baseDir,
+      entrypointUrl: options.entrypointUrl,
+      projectDir: options.projectDir,
+      env: environment,
+      processTarget: options.processTarget,
     }),
+    agentId: options.agentId,
+    baseDir: options.baseDir,
+    projectDir: options.projectDir,
+    entrypointUrl: options.entrypointUrl,
+    runtimeSource: resolveHostedRuntimeSourceIdentity(options.runtimeSource),
+    deploymentArtifact,
+    agentSource: options.agentSource,
+    mcpServers: options.mcpServers,
+    forwardedConfigNamespace: options.forwardedConfigNamespace,
+    hostToolPolicy: options.hostToolPolicy,
+    hostedModelCallCapture: options.hostedModelCallCapture,
+    createRemoteToolSource: options.createRemoteToolSource,
     createBashTool: options.createBashTool ?? await loadDefaultCreateBashTool(),
+    env: options.env,
+    processTarget: options.processTarget,
+    drainTimeoutMs: options.drainTimeoutMs,
+    hardShutdownTimeoutMs: options.hardShutdownTimeoutMs,
+    signals: options.signals,
   };
 }

@@ -143,6 +143,70 @@ describe("agent/agent-service-runtime", () => {
     assertEquals(await version.json(), { artifact: null });
   });
 
+  it("ignores inherited deployment artifact options", async () => {
+    const bundle = createHostedAgentServiceRuntime(
+      Object.assign(Object.create({ deploymentArtifact: "20261007183045-ffffffffffff" }), {
+        serviceName: "test-agent-service",
+        getConfig: () => ({
+          VERYFRONT_API_URL: "https://api.example.test",
+          NODE_ENV: "test",
+          PORT: 3180,
+          ALLOWED_ORIGINS: ["https://studio.example.test"],
+        }),
+        getAgentConfig: () => ({
+          id: "assistant",
+          name: "Assistant",
+          description: "",
+          instructions: "You are a test assistant.",
+        }),
+        logger: createLogger(),
+        prepareExecution: async () => ({ ok: true }),
+        streamExecutionToAgUiResponse: () => new Response("streamed"),
+        startDetachedExecution: async () => {},
+      }),
+    );
+
+    const version = await bundle.runtime.request("/version");
+
+    assertEquals(await version.json(), { artifact: null });
+  });
+
+  it("does not invoke deployment artifact accessors during startup", async () => {
+    let accessorReads = 0;
+    const options = {
+      serviceName: "test-agent-service",
+      getConfig: () => ({
+        VERYFRONT_API_URL: "https://api.example.test",
+        NODE_ENV: "test",
+        PORT: 3180,
+        ALLOWED_ORIGINS: ["https://studio.example.test"],
+      }),
+      getAgentConfig: () => ({
+        id: "assistant",
+        name: "Assistant",
+        description: "",
+        instructions: "You are a test assistant.",
+      }),
+      logger: createLogger(),
+      prepareExecution: async () => ({ ok: true }),
+      streamExecutionToAgUiResponse: () => new Response("streamed"),
+      startDetachedExecution: async () => {},
+    };
+    Object.defineProperty(options, "deploymentArtifact", {
+      get() {
+        accessorReads += 1;
+        return "20261007183045-ffffffffffff";
+      },
+      configurable: true,
+    });
+
+    const bundle = createHostedAgentServiceRuntime(options);
+    const version = await bundle.runtime.request("/version");
+
+    assertEquals(accessorReads, 0);
+    assertEquals(await version.json(), { artifact: null });
+  });
+
   it("snapshots deployment artifact at runtime startup", async () => {
     const options = {
       serviceName: "test-agent-service",
@@ -167,6 +231,37 @@ describe("agent/agent-service-runtime", () => {
     const bundle = createHostedAgentServiceRuntime(options);
     options.deploymentArtifact = "20261007183100-bbbbbbbbbbbb";
 
+    const version = await bundle.runtime.request("/version");
+
+    assertEquals(await version.json(), { artifact: "20261007183045-a1b2c3d4e5f6" });
+  });
+
+  it("snapshots deployment artifact before startup callbacks can mutate options", async () => {
+    const options = {
+      serviceName: "test-agent-service",
+      deploymentArtifact: "20261007183045-a1b2c3d4e5f6",
+      getConfig: () => {
+        options.deploymentArtifact = "20261007183100-bbbbbbbbbbbb";
+        return {
+          VERYFRONT_API_URL: "https://api.example.test",
+          NODE_ENV: "test",
+          PORT: 3180,
+          ALLOWED_ORIGINS: ["https://studio.example.test"],
+        };
+      },
+      getAgentConfig: () => ({
+        id: "assistant",
+        name: "Assistant",
+        description: "",
+        instructions: "You are a test assistant.",
+      }),
+      logger: createLogger(),
+      prepareExecution: async () => ({ ok: true }),
+      streamExecutionToAgUiResponse: () => new Response("streamed"),
+      startDetachedExecution: async () => {},
+    };
+
+    const bundle = createHostedAgentServiceRuntime(options);
     const version = await bundle.runtime.request("/version");
 
     assertEquals(await version.json(), { artifact: "20261007183045-a1b2c3d4e5f6" });
