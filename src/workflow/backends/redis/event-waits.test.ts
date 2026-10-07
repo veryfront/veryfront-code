@@ -177,4 +177,12 @@ describe("Redis event-wait transport boundary", () => {
     client.eval = () => Promise.resolve("not-json");
     await assertRejects(() => store.removeRunEvent("run", "event"));
   });
+  it("round-trips absent payloads without converting them to null or rejecting publication", async () => {
+    const empty = { ...event, payload: undefined };
+    const { store, calls } = boundary({ ...storedEvent, value: JSON.stringify(empty) });
+    await store.appendRunEvent("run", empty);
+    const encoded = JSON.parse(recordedPayload(calls[0]).event.value);
+    assertEquals(Object.hasOwn(encoded, "payload"), false);
+    assertEquals(await store.peekRunEvent("run", "ready"), empty);
+  });
 });

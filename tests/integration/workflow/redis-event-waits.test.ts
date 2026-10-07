@@ -532,6 +532,16 @@ describe("Redis durable event waits", () => {
     withReceivers(async (a, b, runId, cleanup) => {
       const event = { id: "reserved", eventName: "ready", payload: {}, publishedAt: new Date() };
       await a.appendRunEvent(runId, event);
+      await a.savePendingEventWait(runId, {
+        id: "reservation",
+        runId,
+        nodeId: "ready",
+        waitKind: "event",
+        eventName: "ready",
+        status: "pending",
+        requestedAt: event.publishedAt,
+      });
+      assertEquals(await a.claimRunEventForWait(runId, "reservation", "ready"), event);
       const ids = Array.from(
         { length: MAX_WORKFLOW_RUN_EVENT_MAILBOXES },
         () => crypto.randomUUID(),
@@ -550,6 +560,8 @@ describe("Redis durable event waits", () => {
       }
       assertEquals(await b.peekRunEvent(first, "ready"), null);
       assertEquals((await b.peekRunEvent(ids.at(-1)!, "ready"))?.id, event.id);
+      assertEquals((await b.listRunEventDeliveryClaims(runId)).length, 1);
+      assertEquals(await b.restoreRunEventDelivery(runId, "reservation", event), true);
       assertEquals((await b.peekRunEvent(runId, "ready"))?.id, event.id);
       const base = await a.getRun(runId);
       assertExists(base);
@@ -588,5 +600,29 @@ describe("Redis durable event waits", () => {
       await b.restoreRunEvent(reserved, first);
       assertEquals((await b.takeRunEvent(reserved, "ready"))?.id, "first");
       assertEquals((await b.takeRunEvent(reserved, "ready"))?.id, "second");
+    }));
+  it({
+    name: "Redis public event publication accepts an omitted payload and resumes a durable wait",
+    ignore: !Deno.env.get("WORKFLOW_EVENT_TEST_REDIS_URL"),
+  }, () =>
+    withReceivers(async (_a, b, _runId, cleanup) => {
+      const definition = workflow({
+        id: "empty-payload-event",
+        steps: [waitForEvent("receive", { eventName: "ready" })],
+        output: (context) => context.receive,
+      });
+      const client = createWorkflowClient({ backend: b });
+      cleanup.push(() => client.destroy());
+      client.register(definition);
+      const handle = await client.start(definition.id, {});
+      cleanup.unshift(() => b.deleteRun(handle.runId));
+      await handle.settled();
+      assertEquals((await b.getRun(handle.runId))?.status, "waiting");
+      assertEquals(await client.publishEvent(handle.runId, "ready"), "delivered");
+      const completed = await b.getRun(handle.runId);
+      assertEquals(completed?.status, "completed");
+      assertEquals((completed?.context.receive as { payload?: unknown }).payload, undefined);
+      assertEquals(await b.getPendingEventWaits(handle.runId), []);
+      assertEquals(await b.listRunEventDeliveryClaims(handle.runId), []);
     }));
 });
