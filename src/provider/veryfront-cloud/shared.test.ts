@@ -458,6 +458,34 @@ describe("provider/veryfront-cloud/shared", () => {
     assertEquals(probe?.saw(bearer), false);
   });
 
+  it("does not undo shared billing usage when a concurrent call is refused", async () => {
+    const context: VeryfrontCloudContext = { billingGroupId: "evalrun_concurrent" };
+    const wrappedFetch = createVeryfrontCloudFetch(
+      "vf_test_provider",
+      "https://93.184.216.34/ai/v1",
+    );
+    let complete!: (response: Response) => void;
+    const pending = new Promise<Response>((resolve) => {
+      complete = resolve;
+    });
+    await withMockFetch(() => pending, async () => {
+      const sent = runWithVeryfrontCloudContext(
+        context,
+        () => wrappedFetch("https://93.184.216.34/ai/v1/chat/completions"),
+      );
+      const refused = assertRejects(() =>
+        runWithVeryfrontCloudContext(
+          context,
+          () => wrappedFetch("https://93.184.216.35/ai/v1/chat/completions"),
+        )
+      );
+      complete(new Response(null, { status: 200 }));
+      await Promise.all([sent, refused]);
+      assertEquals(context.billingGroupUsed, true);
+      assertEquals(context.billingGroupRequestAdmitted, true);
+    });
+  });
+
   it("leaves the billing group unused when a neutral-route call is refused", async () => {
     const bearer = "vf_model_call_neutral_bearer_7c20";
     const wrappedFetch = createVeryfrontCloudFetch(

@@ -906,10 +906,13 @@ async function writeRequestPayload(
   intrinsics: NodeTransportIntrinsics,
   request: ClientRequest,
   payload: RequestPayload,
+  onRequestDispatched?: () => void,
 ): Promise<void> {
   if (payload.kind === "chunk") {
+    assertNodeRequestMembersUnchanged(intrinsics);
     if (payload.chunk === undefined) request.end();
     else request.end(payload.chunk);
+    onRequestDispatched?.();
     return;
   }
   const reader = payload.source.getReader();
@@ -920,10 +923,13 @@ async function writeRequestPayload(
       const { done, value } = await readRequestPayloadChunk(intrinsics, reader, request);
       if (done) break;
       assertNodeRequestMembersUnchanged(intrinsics);
-      if (!request.write(value)) await waitForRequestEvent(intrinsics, request, "drain");
+      const readyForMore = request.write(value);
+      onRequestDispatched?.();
+      if (!readyForMore) await waitForRequestEvent(intrinsics, request, "drain");
     }
     assertNodeRequestMembersUnchanged(intrinsics);
     request.end();
+    onRequestDispatched?.();
     await waitForRequestEvent(intrinsics, request, "finish");
   } catch (error) {
     releaseReader = false;
@@ -1041,6 +1047,7 @@ export async function fetchWithPinnedAddresses(
   addresses: readonly string[],
   init: RequestInit,
   tls: PinnedFetchTlsOptions = {},
+  onRequestDispatched?: () => void,
 ): Promise<Response> {
   if (addresses.length === 0) {
     throw new Error(`No validated addresses are available for ${url.host}`);
@@ -1066,6 +1073,14 @@ export async function fetchWithPinnedAddresses(
   const attempts = planPinnedConnectAttempts(addresses);
   const bodyIsReplayable = isReplayableRequestBody(body);
   let lastConnectError: unknown;
+  let dispatchObserved = false;
+  const observeRequestDispatch = onRequestDispatched
+    ? () => {
+      if (dispatchObserved) return;
+      dispatchObserved = true;
+      onRequestDispatched();
+    }
+    : undefined;
 
   for (let attemptIndex = 0; attemptIndex < attempts.length; attemptIndex++) {
     // Null-prototype options and headers: whatever node:http reads from them
@@ -1167,6 +1182,9 @@ export async function fetchWithPinnedAddresses(
           abort();
           return;
         }
+        // The aborted getter can invoke the registered listener while still
+        // returning false. Honor that rejection before creating the native request.
+        if (rejectedBeforeRequest) return;
         try {
           // Same turn as the call and every request operation below: node:http
           // processes the headers synchronously, and nothing between here and
@@ -1264,16 +1282,20 @@ export async function fetchWithPinnedAddresses(
         // error still rejects through `rejectBeforeResponse`.
         request.on("error", () => {});
         pendingRequest = request;
-        void writeRequestPayload(intrinsics, request, payload).catch((error) => {
-          const teardownError = teardownDeferredNodeRequest(
-            intrinsics,
-            request,
-            undefined,
-            errorForNodeDestroy(error),
-            activeSocket,
-          );
-          rejectBeforeResponse(teardownError ?? error);
-        });
+        // Observe commitment to a guarded native send, not eventual delivery.
+        // Pre-send refusals remain unused; later aborts must not undo usage.
+        void writeRequestPayload(intrinsics, request, payload, observeRequestDispatch).catch(
+          (error) => {
+            const teardownError = teardownDeferredNodeRequest(
+              intrinsics,
+              request,
+              undefined,
+              errorForNodeDestroy(error),
+              activeSocket,
+            );
+            rejectBeforeResponse(teardownError ?? error);
+          },
+        );
       });
     } catch (error) {
       // Release the socket of the attempt being abandoned. The sink above stays

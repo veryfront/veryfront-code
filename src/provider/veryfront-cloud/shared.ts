@@ -530,14 +530,15 @@ function sendOnNeutralRoute(
   headers: Headers,
   wireModelProvider: string | undefined,
   initBody: unknown,
-  onBuilt: (outbound: Request) => Request,
+  onRequestDispatched: () => void,
 ): Promise<Response> {
   const send = (outbound: Request): Promise<Response> =>
     IntrinsicReflectApply(
       PromisePrototypeThen,
       createVeryfrontApiOriginBoundOutboundFetch(
         apiBaseUrl,
-      )(onBuilt(outbound)),
+        onRequestDispatched,
+      )(outbound),
       [normalizeNeutralGatewayRefusal],
     ) as Promise<Response>;
 
@@ -806,23 +807,23 @@ export function createVeryfrontCloudFetch(
       ]);
     }
 
-    // The billing group counts as used only once the outbound request is
-    // built, past every refusal check: a refused call sends nothing, and an
-    // eval must not finalize a group no request reached.
-    // Marked on the context read before the bearer joined the headers, not
-    // through another live store lookup that project code could hook.
-    const built = (outbound: Request): Request => {
+    // Native pinned transport observes commitment to send after its refusal checks.
+    // Marking is monotonic, so a refused concurrent call cannot undo real usage.
+    const dispatched = (): void => {
       if (billingGroupId && cloudContext) cloudContext.billingGroupUsed = true;
-      return outbound;
     };
     const responsePromise = IntrinsicReflectApply(
       PromisePrototypeThen,
       wireModelProvider || neutralRoute
-        ? sendOnNeutralRoute(apiBaseUrl, request, headers, wireModelProvider, initBody, built)
-        : createVeryfrontApiOriginBoundOutboundFetch(apiBaseUrl)(
-          built(withCredentialHeaders(request, headers)),
+        ? sendOnNeutralRoute(apiBaseUrl, request, headers, wireModelProvider, initBody, dispatched)
+        : createVeryfrontApiOriginBoundOutboundFetch(apiBaseUrl, dispatched)(
+          withCredentialHeaders(request, headers),
         ),
-      [markVeryfrontGatewayResponse, rethrowAsGatewayTransportFailure],
+      [(response: Response) => {
+        // A response also proves dispatch for injected or broker transports.
+        dispatched();
+        return markVeryfrontGatewayResponse(response);
+      }, rethrowAsGatewayTransportFailure],
     ) as Promise<Response>;
     if (!billingGroupId || !cloudContext || !ResponseStatusGet) return responsePromise;
     return IntrinsicReflectApply(PromisePrototypeThen, responsePromise, [

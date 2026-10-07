@@ -1281,6 +1281,8 @@ export type WorkerEgressPinnedFetch = (
   url: URL,
   addresses: readonly string[],
   init: RequestInit,
+  tls?: import("#veryfront/platform/compat/http/pinned-fetch.ts").PinnedFetchTlsOptions,
+  onRequestDispatched?: () => void,
 ) => Promise<Response>;
 
 /** Redirect hop whose guarded destination request returned a response. */
@@ -1308,6 +1310,8 @@ export interface GuardedEgressFetchDeps {
   authorizeUrl?: (url: URL) => void | Promise<void>;
   /** Observe each redirect after its guarded destination request succeeds. */
   onRedirect?: (redirect: WorkerEgressRedirect) => void | Promise<void>;
+  /** Host-only observer; never sourced from request init or project payloads. */
+  onRequestDispatched?: () => void;
   /** Captured runtime primitives used to establish the DNS-pinned tunnel. */
   runtime?: Partial<PinnedEgressRuntime>;
   /** Resolved addresses admitted by an installed test transport. */
@@ -1459,7 +1463,13 @@ export async function guardedEgressFetch(
               () => {
                 // Checked in the same turn as the call, after the last await.
                 assertNativeRequestProcessing();
-                return pinnedFetch(parsedUrl, addresses, requestInit);
+                return pinnedFetch(
+                  parsedUrl,
+                  addresses,
+                  requestInit,
+                  undefined,
+                  deps.onRequestDispatched,
+                );
               },
             );
           } else {
@@ -1479,7 +1489,9 @@ export async function guardedEgressFetch(
             url,
             client ? createNativeRequestInit(requestInit, { client }) : requestInit,
           );
-          return doFetch(fetchArguments[0], fetchArguments[1]);
+          const response = doFetch(fetchArguments[0], fetchArguments[1]);
+          deps.onRequestDispatched?.();
+          return response;
         });
       try {
         response = await waitForOperation(pendingResponse, requestInit.signal ?? undefined);

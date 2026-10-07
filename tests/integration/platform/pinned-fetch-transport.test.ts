@@ -348,6 +348,55 @@ describe("pinned fetch transport integration", () => {
     });
   });
 
+  it("does not construct a native request when the post-registration aborted getter rejects", () => {
+    const script = `
+      import nodeHttp from "node:http";
+      import * as nodeModule from "node:module";
+      const originalRequest = nodeHttp.request;
+      let requestCalls = 0;
+      let dispatchCalls = 0;
+      nodeHttp.request = function(...args) {
+        requestCalls++;
+        return Reflect.apply(originalRequest, this, args);
+      };
+      nodeModule.syncBuiltinESMExports?.();
+      const { fetchWithPinnedAddresses } = await import("./src/platform/compat/http/pinned-fetch.ts");
+      const reason = new Error("getter aborted");
+      let listener;
+      const signal = {
+        get aborted() {
+          listener?.();
+          return false;
+        },
+        reason,
+        addEventListener(_event, value) { listener = value; },
+        removeEventListener() {},
+      };
+      const rejectedWithReason = await fetchWithPinnedAddresses(
+        new URL("http://pinned-getter-abort.test:1/"),
+        ["127.0.0.1"],
+        { headers: { authorization: "Bearer vf-getter-abort" }, signal },
+        {},
+        () => { dispatchCalls++; },
+      ).then(() => false, (error) => error === reason);
+      console.log(JSON.stringify({ requestCalls, dispatchCalls, rejectedWithReason }));
+    `;
+    const command = isNode || isBun ? process.execPath : "deno";
+    const args = isNode
+      ? ["--import", "./tests/node/resolver.mjs", "--input-type=module", "--eval", script]
+      : isBun
+      ? ["--no-env-file", "--preload", "./tests/bun/preload.ts", "--eval", script]
+      : ["eval", "--config=deno.json", script];
+    const output = spawnSync(command, args, { encoding: "utf8" });
+    assertEquals(output.stderr, "");
+    assertEquals(output.status, 0);
+    assertEquals(JSON.parse(output.stdout), {
+      requestCalls: 0,
+      dispatchCalls: 0,
+      rejectedWithReason: true,
+    });
+  });
+
   it("keeps a patched array iterator from seeing private agents during socket locking", () => {
     const script = `
       const bearer = "Bearer vf-array-iterator-agent-secret";
