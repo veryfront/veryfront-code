@@ -471,37 +471,50 @@ describe("fetchWithPinnedAddresses", () => {
     }
   });
 
-  it("does not create a credential request when listener registration synchronously aborts", async () => {
-    if (!isNode) return;
+  for (const timing of ["before", "after"] as const) {
+    it(`does not create a credential request when registration aborts ${timing} installing the listener`, async () => {
+      if (!isNode) return;
 
-    const { channel } = await import("node:diagnostics_channel");
-    const requests = channel("http.client.request.created");
-    let createdRequests = 0;
-    const observeRequest = () => {
-      createdRequests++;
-    };
-    const controller = new AbortController();
-    const registerListener = controller.signal.addEventListener.bind(controller.signal);
-    controller.signal.addEventListener = (...args: Parameters<AbortSignal["addEventListener"]>) => {
-      registerListener(...args);
-      controller.abort(new DOMException("registration stopped", "AbortError"));
-    };
-    requests.subscribe(observeRequest);
-    try {
-      await assertRejects(
-        () =>
-          fetchWithPinnedAddresses(new URL("http://pinned-abort.test:1/resource"), ["127.0.0.1"], {
-            headers: { authorization: BEARER },
-            signal: controller.signal,
-          }),
-        DOMException,
-        "registration stopped",
-      );
-      assertEquals(createdRequests, 0, "A synchronous abort must stop request construction");
-    } finally {
-      requests.unsubscribe(observeRequest);
-    }
-  });
+      const { channel } = await import("node:diagnostics_channel");
+      const requests = channel("http.client.request.created");
+      let createdRequests = 0;
+      const observeRequest = () => {
+        createdRequests++;
+      };
+      const controller = new AbortController();
+      const registerListener = controller.signal.addEventListener.bind(controller.signal);
+      controller.signal.addEventListener = (
+        ...args: Parameters<AbortSignal["addEventListener"]>
+      ) => {
+        if (timing === "before") {
+          controller.abort(new DOMException("registration stopped", "AbortError"));
+        }
+        registerListener(...args);
+        if (timing === "after") {
+          controller.abort(new DOMException("registration stopped", "AbortError"));
+        }
+      };
+      requests.subscribe(observeRequest);
+      try {
+        await assertRejects(
+          () =>
+            fetchWithPinnedAddresses(
+              new URL("http://pinned-abort.test:1/resource"),
+              ["127.0.0.1"],
+              {
+                headers: { authorization: BEARER },
+                signal: controller.signal,
+              },
+            ),
+          DOMException,
+          "registration stopped",
+        );
+        assertEquals(createdRequests, 0, "A synchronous abort must stop request construction");
+      } finally {
+        requests.unsubscribe(observeRequest);
+      }
+    });
+  }
 
   for (const method of ["GET", "POST"] as const) {
     it(`closes the HTTP provider socket when an in-flight ${method} request is aborted`, async () => {

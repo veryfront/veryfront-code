@@ -1179,6 +1179,10 @@ export async function fetchWithPinnedAddresses(
         }
         signal?.addEventListener("abort", abort, { once: true });
         if (rejectedBeforeRequest) return;
+        if (signal?.aborted) {
+          abort();
+          return;
+        }
         try {
           // Same turn as the call and every request operation below: node:http
           // processes the headers synchronously, and nothing between here and
