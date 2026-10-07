@@ -854,11 +854,15 @@ describe("pruneSupersededJsxArtifacts", () => {
     removeJsxArtifactUnlessServed,
     retainJsxArtifact,
     scheduleJsxCachePruneRetry,
+    waitForJsxCacheMaintenance,
   } = __jsxCacheInternals;
 
-  afterEach(() => {
+  afterEach(async () => {
     // A pass that leaves protected variants behind arms an unref'd follow-up
-    // timer; drop it so no test observes a neighbour's pending cleanup.
+    // timer; drain already-started filesystem work so no test observes a
+    // neighbour's pending cleanup.
+    cancelScheduledJsxCachePrunes();
+    await waitForJsxCacheMaintenance();
     cancelScheduledJsxCachePrunes();
   });
 
