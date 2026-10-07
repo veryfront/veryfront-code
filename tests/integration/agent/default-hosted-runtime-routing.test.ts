@@ -10,18 +10,18 @@ import {
   runWithVeryfrontCloudContext,
   type VeryfrontCloudContext,
 } from "#veryfront/provider/veryfront-cloud/context.ts";
-import { resolveRuntimeModel } from "../runtime/model-resolution.ts";
-import { resolveAgentModelTransport } from "../runtime/model-transport.ts";
+import { resolveRuntimeModel } from "#veryfront/agent/runtime/model-resolution.ts";
+import { resolveAgentModelTransport } from "#veryfront/agent/runtime/model-transport.ts";
 import {
   createDefaultHostedChatRuntime,
   createPreparedHostedRuntimeAgent,
   type DefaultHostedChatRuntimeTaskContext,
-} from "./default-chat-runtime.ts";
+} from "#veryfront/agent/hosted/default-chat-runtime.ts";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { sealIngressCredentials } from "#veryfront/security/http/ingress-credentials.ts";
-import { parseHostedChatRequestFromRequest } from "./chat-request-parser.ts";
-import { prepareHostedChatRuntimeCreationOptions } from "./chat-preparation.ts";
-import { createHostedInferenceModelResolver } from "./inference-credential.ts";
+import { parseHostedChatRequestFromRequest } from "#veryfront/agent/hosted/chat-request-parser.ts";
+import { prepareHostedChatRuntimeCreationOptions } from "#veryfront/agent/hosted/chat-preparation.ts";
+import { createHostedInferenceModelResolver } from "#veryfront/agent/hosted/inference-credential.ts";
 
 const policy = { schemaVersion: 1, mode: "allowlist", integrations: {} } as const;
 const cloud = {
