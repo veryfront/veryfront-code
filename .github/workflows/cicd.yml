@@ -2,6 +2,11 @@ name: CI/CD
 
 on:
   workflow_dispatch:
+    inputs:
+      maintenance_release_number:
+        description: Older immutable RC number for a maintenance branch (no deploy dispatch)
+        required: false
+        type: string
   pull_request:
   # Required for merge-queue entries: queued runs report checks via merge_group.
   merge_group:
@@ -47,17 +52,47 @@ jobs:
     outputs:
       reuse: ${{ steps.decide.outputs.reuse || 'false' }}
       run_id: ${{ steps.decide.outputs.run_id }}
-      release_number: ${{ steps.decide.outputs.release_number || github.run_number }}
+      release_number: ${{ steps.maintenance.outputs.release_number || steps.decide.outputs.release_number || github.run_number }}
     steps:
+      - name: Validate maintenance release number
+        if: github.event_name == 'workflow_dispatch' && inputs.maintenance_release_number != ''
+        id: maintenance
+        env:
+          RELEASE_NUMBER: ${{ inputs.maintenance_release_number }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if ! [[ "$RELEASE_NUMBER" =~ ^[1-9][0-9]*$ ]]; then
+            echo "::error::maintenance_release_number must be a positive integer RC build number." >&2
+            exit 1
+          fi
+          if ! [[ "${GITHUB_REF}" =~ ^refs/heads/maintenance/rc\.([1-9][0-9]*)$ ]]; then
+            echo "::error::Maintenance RC publication must be dispatched from a protected maintenance/rc.<number> branch." >&2
+            exit 1
+          fi
+          if [ "${BASH_REMATCH[1]}" != "$RELEASE_NUMBER" ]; then
+            echo "::error::maintenance_release_number must match the maintenance branch suffix." >&2
+            exit 1
+          fi
+          if [ "${GITHUB_REF_PROTECTED:-false}" != "true" ]; then
+            echo "::error::Maintenance source branch must be protected." >&2
+            exit 1
+          fi
+          branch_name="$(jq -rn --arg branch "${GITHUB_REF#refs/heads/}" '$branch | @uri')"
+          branch_identity="$(gh api "repos/${GITHUB_REPOSITORY}/branches/${branch_name}" --jq '{sha: .commit.sha, protected: .protected}')"
+          if ! jq -e --arg sha "${GITHUB_SHA}" '.protected == true and .sha == $sha' <<< "$branch_identity" >/dev/null; then
+            echo "::error::Maintenance source branch protection or exact commit differs." >&2
+            exit 1
+          fi
+          echo "release_number=$RELEASE_NUMBER" >> "$GITHUB_OUTPUT"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        if: github.ref == 'refs/heads/main'
+        if: github.ref == 'refs/heads/main' && inputs.maintenance_release_number == ''
         with:
           persist-credentials: false
       - uses: ./.github/actions/setup-deno
-        if: github.ref == 'refs/heads/main'
+        if: github.ref == 'refs/heads/main' && inputs.maintenance_release_number == ''
         timeout-minutes: 5
       - name: Find the tested merge-queue run
-        if: github.ref == 'refs/heads/main'
+        if: github.ref == 'refs/heads/main' && inputs.maintenance_release_number == ''
         id: decide
         env:
           GH_TOKEN: ${{ github.token }}
@@ -71,17 +106,17 @@ jobs:
             coverage-shard-5 coverage-shard-6 coverage-shard-7 coverage-shard-8 \
             coverage-native-executor coverage-integration-client
       - name: Record release number
-        if: github.ref == 'refs/heads/main'
+        if: (github.ref == 'refs/heads/main' && inputs.maintenance_release_number == '') || (github.event_name == 'workflow_dispatch' && inputs.maintenance_release_number != '' && startsWith(github.ref, 'refs/heads/maintenance/rc.'))
         env:
-          RELEASE_NUMBER: ${{ steps.decide.outputs.release_number }}
+          RELEASE_NUMBER: ${{ steps.maintenance.outputs.release_number || steps.decide.outputs.release_number }}
         run: |
           mkdir -p dist/release-number
           echo "${RELEASE_NUMBER}" > dist/release-number/release-number.txt
       - name: Upload release number
-        if: github.ref == 'refs/heads/main'
+        if: (github.ref == 'refs/heads/main' && inputs.maintenance_release_number == '') || (github.event_name == 'workflow_dispatch' && inputs.maintenance_release_number != '' && startsWith(github.ref, 'refs/heads/maintenance/rc.'))
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: release-number-${{ steps.decide.outputs.release_number }}
+          name: release-number-${{ steps.maintenance.outputs.release_number || steps.decide.outputs.release_number }}
           path: dist/release-number
           retention-days: 7
           if-no-files-found: error
@@ -393,10 +428,11 @@ jobs:
       - name: Build and pack tested npm output
         env:
           # Merge-queue builds carry their RC number so main can publish them.
+          MAINTENANCE_RELEASE: ${{ github.event_name == 'workflow_dispatch' && inputs.maintenance_release_number != '' }}
           RELEASE_NUMBER: ${{ needs.tested-run.outputs.release_number || github.run_number }}
         run: |
           BASE_VERSION=$(jq -r '.version' deno.json)
-          if { [ "${GITHUB_REF}" = "refs/heads/main" ] || [ "${GITHUB_EVENT_NAME}" = "merge_group" ]; } && [[ ! "${BASE_VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+          if { [ "${GITHUB_REF}" = "refs/heads/main" ] || [ "${GITHUB_EVENT_NAME}" = "merge_group" ] || [ "${MAINTENANCE_RELEASE}" = "true" ]; } && [[ ! "${BASE_VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             export VERSION="${BASE_VERSION}.${RELEASE_NUMBER}"
             deno run -A scripts/ci/prepare-rc-build.ts
           fi
@@ -1271,7 +1307,7 @@ jobs:
       - npm-compatibility-artifact
       - tests-sentry-runtime-packages
       - tests-windows-localhost
-    if: ${{ always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && github.ref == 'refs/heads/main' }}
+    if: ${{ always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && ((github.ref == 'refs/heads/main' && inputs.maintenance_release_number == '') || (github.event_name == 'workflow_dispatch' && inputs.maintenance_release_number != '' && startsWith(github.ref, 'refs/heads/maintenance/rc.'))) }}
     steps:
       - name: Require release test results
         env:
@@ -1392,7 +1428,7 @@ jobs:
 
   version-check:
     timeout-minutes: 5
-    if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && github.ref == 'refs/heads/main' }}
+    if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && ((github.ref == 'refs/heads/main' && inputs.maintenance_release_number == '') || (github.event_name == 'workflow_dispatch' && inputs.maintenance_release_number != '' && startsWith(github.ref, 'refs/heads/maintenance/rc.'))) }}
     runs-on: ${{ (github.event_name == 'push' || github.event_name == 'merge_group') && 'ubuntu-latest-m' || 'ubuntu-latest' }}
     outputs:
       version: ${{ steps.check.outputs.version }}
@@ -1405,8 +1441,14 @@ jobs:
           fetch-depth: 0
       - name: Detect release type
         id: check
+        env:
+          MAINTENANCE_RELEASE_NUMBER: ${{ inputs.maintenance_release_number }}
         run: |
           VERSION=$(jq -r '.version' deno.json)
+          if [[ -n "${MAINTENANCE_RELEASE_NUMBER}" && ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+-rc$ ]]; then
+            echo "::error::Maintenance publication requires the existing numeric RC release line." >&2
+            exit 1
+          fi
           if ! [[ "$VERSION" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-((0|[1-9][0-9]*)|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*)(\.((0|[1-9][0-9]*)|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*))*)?$ ]]; then
             echo "::error::deno.json version must be a valid npm semver or prerelease"
             exit 1
@@ -1466,7 +1508,7 @@ jobs:
         run: bash scripts/build/smoke-proxy-memory.sh ./veryfront-proxy-linux-x64
 
   build-binaries:
-    if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && github.ref == 'refs/heads/main' }}
+    if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && ((github.ref == 'refs/heads/main' && inputs.maintenance_release_number == '') || (github.event_name == 'workflow_dispatch' && inputs.maintenance_release_number != '' && startsWith(github.ref, 'refs/heads/maintenance/rc.'))) }}
     needs: [version-check, tested-run]
     runs-on: ${{ matrix.os }}
     continue-on-error: ${{ contains(matrix.os, 'windows') }}
@@ -1691,6 +1733,7 @@ jobs:
           VERSION: ${{ steps.version.outputs.version }}
           NPM_PACK_DIR: ${{ github.workspace }}/dist/npm-compatibility
           NPM_GIT_HEAD_WAIT_TOTAL_SECONDS: "180"
+          NPM_MAINTENANCE_RELEASE: ${{ github.event_name == 'workflow_dispatch' && inputs.maintenance_release_number != '' }}
         run: |
           deno run --config=scripts/test.deno.json --frozen --allow-read --allow-write --allow-run=tar \
             scripts/ci/npm-compatibility-artifact.ts materialize dist/npm-compatibility npm
@@ -1997,6 +2040,7 @@ jobs:
         env:
           VERSION: ${{ steps.version.outputs.version }}
           IS_STABLE: ${{ needs.version-check.outputs.is_stable }}
+          MAINTENANCE_RELEASE: ${{ github.event_name == 'workflow_dispatch' && inputs.maintenance_release_number != '' }}
           GH_TOKEN: ${{ steps.release-app-token.outputs.token }}
         run: |
           # Fixed workflow implementation, kept in parity with the tested helper.
@@ -2232,8 +2276,12 @@ jobs:
           ```'
             mode=--latest
           else
+            install_target="veryfront@rc"
+            if [[ "${MAINTENANCE_RELEASE}" == "true" ]]; then
+              install_target="veryfront@${VERSION}"
+            fi
             notes='```bash
-          npx veryfront@rc
+          npx '"${install_target}"'
           ```'
             mode=--prerelease
           fi
@@ -2569,7 +2617,7 @@ jobs:
           echo "payload=$payload" >> "$GITHUB_OUTPUT"
 
       - name: Create release GitHub App token
-        if: ${{ success() && needs.publish-public-release.result == 'success' && ((needs.version-check.outputs.is_stable == 'true' && needs.release.result == 'success') || (needs.version-check.outputs.is_stable == 'false' && needs.prerelease.result == 'success' && needs.github-prerelease.result == 'success' && needs.registry-validation-rc.result == 'success')) && steps.current.outputs.dispatch == 'true' }}
+        if: ${{ success() && needs.publish-public-release.result == 'success' && ((needs.version-check.outputs.is_stable == 'true' && needs.release.result == 'success') || (needs.version-check.outputs.is_stable == 'false' && needs.prerelease.result == 'success' && needs.github-prerelease.result == 'success' && needs.registry-validation-rc.result == 'success')) && steps.current.outputs.dispatch == 'true' && !(github.event_name == 'workflow_dispatch' && inputs.maintenance_release_number != '') }}
         timeout-minutes: 5
         id: release-app-token
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
@@ -2584,7 +2632,7 @@ jobs:
           permission-contents: write
 
       - name: Trigger server deploy
-        if: ${{ success() && needs.publish-public-release.result == 'success' && ((needs.version-check.outputs.is_stable == 'true' && needs.release.result == 'success') || (needs.version-check.outputs.is_stable == 'false' && needs.prerelease.result == 'success' && needs.github-prerelease.result == 'success' && needs.registry-validation-rc.result == 'success')) && steps.current.outputs.dispatch == 'true' }}
+        if: ${{ success() && needs.publish-public-release.result == 'success' && ((needs.version-check.outputs.is_stable == 'true' && needs.release.result == 'success') || (needs.version-check.outputs.is_stable == 'false' && needs.prerelease.result == 'success' && needs.github-prerelease.result == 'success' && needs.registry-validation-rc.result == 'success')) && steps.current.outputs.dispatch == 'true' && !(github.event_name == 'workflow_dispatch' && inputs.maintenance_release_number != '') }}
         timeout-minutes: 5
         uses: peter-evans/repository-dispatch@28959ce8df70de7be546dd1250a005dd32156697 # v4.0.1
         with:
@@ -2594,7 +2642,7 @@ jobs:
           client-payload: ${{ steps.payload.outputs.payload }}
 
       - name: Trigger job-runner deploy
-        if: ${{ success() && needs.publish-public-release.result == 'success' && ((needs.version-check.outputs.is_stable == 'true' && needs.release.result == 'success') || (needs.version-check.outputs.is_stable == 'false' && needs.prerelease.result == 'success' && needs.github-prerelease.result == 'success' && needs.registry-validation-rc.result == 'success')) && steps.current.outputs.dispatch == 'true' }}
+        if: ${{ success() && needs.publish-public-release.result == 'success' && ((needs.version-check.outputs.is_stable == 'true' && needs.release.result == 'success') || (needs.version-check.outputs.is_stable == 'false' && needs.prerelease.result == 'success' && needs.github-prerelease.result == 'success' && needs.registry-validation-rc.result == 'success')) && steps.current.outputs.dispatch == 'true' && !(github.event_name == 'workflow_dispatch' && inputs.maintenance_release_number != '') }}
         timeout-minutes: 5
         uses: peter-evans/repository-dispatch@28959ce8df70de7be546dd1250a005dd32156697 # v4.0.1
         with:
@@ -2604,7 +2652,7 @@ jobs:
           client-payload: ${{ steps.payload.outputs.payload }}
 
       - name: Trigger sandbox deploy
-        if: ${{ success() && needs.publish-public-release.result == 'success' && ((needs.version-check.outputs.is_stable == 'true' && needs.release.result == 'success') || (needs.version-check.outputs.is_stable == 'false' && needs.prerelease.result == 'success' && needs.github-prerelease.result == 'success' && needs.registry-validation-rc.result == 'success')) && steps.current.outputs.dispatch == 'true' }}
+        if: ${{ success() && needs.publish-public-release.result == 'success' && ((needs.version-check.outputs.is_stable == 'true' && needs.release.result == 'success') || (needs.version-check.outputs.is_stable == 'false' && needs.prerelease.result == 'success' && needs.github-prerelease.result == 'success' && needs.registry-validation-rc.result == 'success')) && steps.current.outputs.dispatch == 'true' && !(github.event_name == 'workflow_dispatch' && inputs.maintenance_release_number != '') }}
         timeout-minutes: 5
         uses: peter-evans/repository-dispatch@28959ce8df70de7be546dd1250a005dd32156697 # v4.0.1
         with:

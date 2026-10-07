@@ -2668,4 +2668,162 @@ describe("RC metadata verification order", () => {
       "publish:npm:rc",
     ]);
   });
+  it("refuses a maintenance batch before any publish if any package would move rc", async () => {
+    const output = await runBash(
+      [
+        "set -euo pipefail",
+        'source "$SCRIPT_PATH"',
+        "verify_npm_compatibility_artifact() { :; }",
+        "package_dirs() { printf '%s\\n' extension npm; }",
+        "canonical_tarball_for_package_dir() { echo package.tgz; }",
+        'jq() { echo "$PACKAGE_DIR"; }',
+        'rc_tag_for_package() { if [ "$1" = extension ]; then echo rc-history; else echo rc; fi; }',
+        'npm() { printf "%s\n" "npm error code E404" >&2; return 1; }',
+        'rc_publish_package_dir() { echo "UNSAFE-PUBLISH"; }',
+        "run_rc_publish",
+      ].join("\n"),
+      {
+        VERSION: "0.1.0-rc.1",
+        GITHUB_SHA: "expected-head",
+        NPM_PACK_DIR: "artifact",
+        NPM_MAINTENANCE_RELEASE: "true",
+      },
+    );
+    assertEquals(output.code, 1);
+    assertEquals(
+      decoder.decode(output.stdout).includes("UNSAFE-PUBLISH"),
+      false,
+    );
+  });
+
+  it("refuses a maintenance batch before any publish if a later immutable version belongs to another commit", async () => {
+    const output = await runBash(
+      [
+        "set -euo pipefail",
+        'source "$SCRIPT_PATH"',
+        "verify_npm_compatibility_artifact() { :; }",
+        "package_dirs() { printf '%s\\n' extension npm; }",
+        "canonical_tarball_for_package_dir() { echo package.tgz; }",
+        'jq() { echo "$PACKAGE_DIR"; }',
+        "rc_tag_for_package() { echo rc-history; }",
+        'npm() { case "$*" in "view npm@0.1.0-rc.1 version") echo 0.1.0-rc.1 ;; "view npm@0.1.0-rc.1 gitHead") echo other-head ;; "view "*" version") printf "%s\n" "npm error code E404" >&2; return 1 ;; *) return 90 ;; esac; }',
+        'rc_publish_package_dir() { echo "UNSAFE-PUBLISH"; }',
+        "run_rc_publish",
+      ].join("\n"),
+      {
+        VERSION: "0.1.0-rc.1",
+        GITHUB_SHA: "expected-head",
+        NPM_PACK_DIR: "artifact",
+        NPM_MAINTENANCE_RELEASE: "true",
+      },
+    );
+    assertEquals(output.code, 1);
+    assertStringIncludes(
+      decoder.decode(output.stderr),
+      "npm@0.1.0-rc.1 already exists, but its gitHead does not match this commit.",
+    );
+    assertEquals(
+      decoder.decode(output.stdout).includes("UNSAFE-PUBLISH"),
+      false,
+    );
+  });
+
+  it("refuses a maintenance batch before any publish if an immutable version lookup fails", async () => {
+    const output = await runBash(
+      [
+        "set -euo pipefail",
+        'source "$SCRIPT_PATH"',
+        "verify_npm_compatibility_artifact() { :; }",
+        "package_dirs() { printf '%s\n' extension npm; }",
+        "canonical_tarball_for_package_dir() { echo package.tgz; }",
+        'jq() { echo "$PACKAGE_DIR"; }',
+        "rc_tag_for_package() { echo rc-history; }",
+        'npm() { case "$*" in "view extension@0.1.0-rc.1 version") printf "%s\n" "npm error code E503" >&2; printf "%s\n" "npm error 503 Service Unavailable" >&2; return 1 ;; "view npm@0.1.0-rc.1 version") printf "%s\n" "npm error code E404" >&2; return 1 ;; *) return 90 ;; esac; }',
+        'rc_publish_package_dir() { echo "UNSAFE-PUBLISH"; }',
+        "run_rc_publish",
+      ].join("\n"),
+      {
+        VERSION: "0.1.0-rc.1",
+        GITHUB_SHA: "expected-head",
+        NPM_PACK_DIR: "artifact",
+        NPM_MAINTENANCE_RELEASE: "true",
+      },
+    );
+    assertEquals(output.code, 1);
+    assertStringIncludes(
+      decoder.decode(output.stderr),
+      "npm registry version lookup failed for extension@0.1.0-rc.1",
+    );
+    assertEquals(
+      decoder.decode(output.stdout).includes("UNSAFE-PUBLISH"),
+      false,
+    );
+  });
+
+  it("keeps the maintenance publish lookup fail-closed after batch preflight", async () => {
+    const output = await runBash([
+      "set -euo pipefail",
+      'source "$SCRIPT_PATH"',
+      "jq() { echo veryfront; }",
+      'npm() { echo "npm error code ETIMEDOUT" >&2; return 1; }',
+      'publish_npm_package_with_retry() { echo "UNSAFE-PUBLISH"; }',
+      "rc_publish_package_dir package",
+    ].join("\n"), { VERSION: "0.1.0-rc.1", GITHUB_SHA: "expected-head", NPM_MAINTENANCE_RELEASE: "true" });
+    assertEquals(output.code, 1);
+    assertEquals(decoder.decode(output.stdout).includes("UNSAFE-PUBLISH"), false);
+    assertStringIncludes(decoder.decode(output.stderr), "npm registry version lookup failed");
+  });
+
+  it("keeps maintenance dispatch disabled while retaining the release gates", async () => {
+    const workflow = parse(
+      await Deno.readTextFile(
+        new URL("../../.github/workflows/cicd.yml", import.meta.url),
+      ),
+    ) as {
+      jobs: Record<
+        string,
+        {
+          if?: string;
+          steps?: Array<{
+            name?: string;
+            if?: string;
+            env?: Record<string, string>;
+            run?: string;
+          }>;
+        }
+      >;
+    };
+    for (
+      const name of ["quality-gate-release", "version-check", "build-binaries"]
+    ) {
+      assertStringIncludes(workflow.jobs[name].if ?? "", "workflow_dispatch");
+      assertStringIncludes(
+        workflow.jobs[name].if ?? "",
+        "maintenance_release_number",
+      );
+    }
+    for (const step of workflow.jobs["quality-gate-registry"].steps ?? []) {
+      if (step.name?.startsWith("Trigger ")) {
+        assertStringIncludes(
+          step.if ?? "",
+          "!(github.event_name == 'workflow_dispatch' && inputs.maintenance_release_number != '')",
+        );
+      }
+    }
+    const githubRelease = workflow.jobs["publish-public-release"].steps?.find(
+      (step) => step.name === "Create GitHub releases",
+    );
+    assertEquals(
+      githubRelease?.env?.MAINTENANCE_RELEASE,
+      "${{ github.event_name == 'workflow_dispatch' && inputs.maintenance_release_number != '' }}",
+    );
+    assertStringIncludes(
+      githubRelease?.run ?? "",
+      'install_target="veryfront@${VERSION}"',
+    );
+    assertStringIncludes(
+      githubRelease?.run ?? "",
+      'install_target="veryfront@rc"',
+    );
+  });
 });
