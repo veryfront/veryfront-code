@@ -204,7 +204,10 @@ function createHostedChatFinalizeDetachedBuildState(
 
     return {
       finalizedMessage: finalizedFallbackMessage,
-      hasContent: fallbackParts.some((part) => part.type !== "step-start"),
+      // Runtime context is diagnostic data, not a completed assistant response.
+      hasContent: fallbackParts.some((part) =>
+        part.type !== "step-start" && part.type !== "data-veryfront.runtime_context"
+      ),
       fallbackChunks,
       hasIncompleteToolParts: hasIncompleteFallbackToolParts,
     };
