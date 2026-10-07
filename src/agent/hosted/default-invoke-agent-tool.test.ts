@@ -269,6 +269,32 @@ it("fixed hosted delegates preserve requested Studio names from another source",
   assertEquals(requestedTools, ["studio_todo_write", "create_file"]);
 });
 
+it("fixed hosted delegates preserve requested provider-native tools during Studio pruning", () => {
+  const requestedTools = defaultHostedInvokeAgentToolInternals
+    .withoutUnavailableOptionalStudioRequestedTools({
+      requestedTools: ["web_search", "studio_todo_write"],
+      config: {
+        apiUrl: "https://api.example.com",
+        apiMcpUrl: "https://api.example.com/mcp",
+        studioMcpUrl: undefined,
+        mcpServers: [{
+          kind: "veryfront-studio",
+          required: false,
+          toolPolicy: { allow: ["web_search", "studio_todo_write"] },
+        }],
+      },
+      clientProfile: null,
+      toolSources: {
+        ok: true,
+        forkTools: {},
+      },
+      provider: "openai",
+      forkModel: "gpt-4.1",
+    });
+
+  assertEquals(requestedTools, ["web_search"]);
+});
+
 it("fixed hosted delegates drop denied tools from assembled fork tool sources", () => {
   const echoTool = {
     description: "Echo",

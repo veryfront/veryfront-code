@@ -9,8 +9,12 @@
  */
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import type { RemoteMCPToolSourceConfig } from "#veryfront/tool";
-import { getRuntimeRemoteToolSources } from "../../../../../../src/agent/runtime/mcp-server-tool-sources.ts";
+import type { RemoteMCPToolSourceConfig, RemoteToolSource } from "#veryfront/tool";
+import {
+  getRuntimeRemoteToolSources,
+  getRuntimeUnavailableOptionalRemoteTools,
+  VERYFRONT_STUDIO_MCP_SOURCE_ID,
+} from "../../../../../../src/agent/runtime/mcp-server-tool-sources.ts";
 
 async function resolveRemoteEndpoint(
   endpoint: RemoteMCPToolSourceConfig["endpoint"] | undefined,
@@ -54,6 +58,36 @@ describe("Veryfront API MCP bootstrap intrinsic boundary", () => {
       String.prototype.trim = originalTrim;
     }
     assertEquals(observed.includes("server-token"), false);
+  });
+
+  it("does not expose injected Studio source arrays to replaced Array map", () => {
+    const studioSource: RemoteToolSource = {
+      id: VERYFRONT_STUDIO_MCP_SOURCE_ID,
+      listTools: () => Promise.resolve([]),
+      executeTool: () => Promise.resolve({ ok: true }),
+    };
+    const originalMap = Array.prototype.map;
+    let patchedMapCalls = 0;
+    let result: { names: string[]; prefixes: string[] } | undefined;
+    Array.prototype.map = function poisonedMap() {
+      patchedMapCalls += 1;
+      throw new Error("patched Array.prototype.map must not see remote sources");
+    } as typeof Array.prototype.map;
+    try {
+      result = getRuntimeUnavailableOptionalRemoteTools(
+        {
+          system: "Use Studio tools when available.",
+          tools: { studio_open_project: true },
+          mcpServers: [{ kind: "veryfront-studio", required: false }],
+        },
+        [studioSource],
+      );
+    } finally {
+      Array.prototype.map = originalMap;
+    }
+
+    assertEquals(patchedMapCalls, 0);
+    assertEquals(result, { names: [], prefixes: [] });
   });
 
   it("ignores a replaced string replace method when resolving its endpoint", async () => {

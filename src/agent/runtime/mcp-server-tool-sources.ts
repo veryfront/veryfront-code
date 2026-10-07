@@ -99,7 +99,9 @@ export function getRuntimeUnavailableOptionalRemoteTools(
   const runtimeConfig = config as RuntimeRemoteToolConfig;
   const names = snapshotStringArray(runtimeConfig.__vfUnavailableOptionalRemoteToolNames);
   const prefixes = snapshotStringArray(runtimeConfig.__vfUnavailableOptionalRemoteToolPrefixes);
-  const remoteSourceIds = new Set((remoteToolSources ?? []).map((source) => source.id));
+  const remoteSourceIds = createPrivateSet(
+    mapPrivateArray(remoteToolSources ?? [], (source) => source.id),
+  );
   for (let index = 0; index < (config.mcpServers?.length ?? 0); index++) {
     const server = config.mcpServers![index];
     if (server?.kind !== "veryfront-studio" || server.required !== false) continue;

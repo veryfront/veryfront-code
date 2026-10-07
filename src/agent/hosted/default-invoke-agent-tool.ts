@@ -68,7 +68,10 @@ import type {
 } from "./child-requested-tools.ts";
 import { prepareDefaultHostedChildForkToolAssembly } from "./child-requested-tools.ts";
 import { clientAllowsStudioMcp, type RuntimeClientProfile } from "../runtime/client-profile.ts";
-import { getForkRuntimeAllowedToolNames } from "../runtime/provider-native-tool-inventory.ts";
+import {
+  getForkRuntimeAllowedToolNames,
+  getProviderNativeToolNames,
+} from "../runtime/provider-native-tool-inventory.ts";
 import type { RuntimeLoadSkillToolContext } from "../runtime/load-skill-tool.ts";
 import type { RuntimeReasoningOption } from "../types.ts";
 import { withRootOwnedChildResultHint } from "../conversation/delegation-policy.ts";
@@ -422,6 +425,7 @@ function withoutUnavailableOptionalStudioRequestedTools(input: {
   toolSources: DefaultHostedChildForkToolAssemblySourceResult;
   provider: string;
   forkModel?: string;
+  hostedModel?: boolean;
 }): HostedChildForkToolInput["tools"] {
   if (!input.requestedTools?.length || !input.toolSources.ok) return input.requestedTools;
   const unavailableNames = getUnavailableOptionalStudioToolNames(input.config, input.clientProfile);
@@ -432,6 +436,15 @@ function withoutUnavailableOptionalStudioRequestedTools(input: {
     forkModel: input.forkModel,
     forkTools: input.toolSources.forkTools,
   }));
+  for (
+    const toolName of getProviderNativeToolNames({
+      provider: input.provider,
+      model: input.forkModel,
+      hosted: input.hostedModel,
+    })
+  ) {
+    availableNames.add(toolName);
+  }
   const requestedTools = input.requestedTools.filter((toolName) =>
     !isUnavailableOptionalStudioTool(toolName, unavailableNames) || availableNames.has(toolName)
   );
@@ -473,6 +486,7 @@ async function prepareForkToolAssembly<TContext extends DefaultHostedInvokeAgent
     toolSources,
     provider: input.provider,
     forkModel: input.forkModel,
+    hostedModel: input.hostedModel,
   });
 
   const toolAssembly = await prepareDefaultHostedChildForkToolAssembly({
