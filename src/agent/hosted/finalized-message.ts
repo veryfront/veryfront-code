@@ -75,15 +75,17 @@ export function buildFinalizedMessageState(
     ? markIncompleteToolPartsAsStopped(input.responseMessage)
     : input.responseMessage;
   const finalStepFallbackParts = buildFallbackUiMessageParts(input.finalStep);
-  const fallbackParts = persistedMessage.parts.length === 0 ? finalStepFallbackParts : [
-    ...appendMissingFallbackTextPart(persistedMessage.parts, input.finalStep),
-    ...finalStepFallbackParts.filter((fallbackPart) =>
-      isToolUiPart(fallbackPart) &&
-      !persistedMessage.parts.some((part) =>
-        isToolUiPart(part) && part.toolCallId === fallbackPart.toolCallId
-      )
-    ),
-  ];
+  const fallbackParts = persistedMessage.parts.length === 0
+    ? finalStepFallbackParts
+    : appendMissingFallbackTextPart([
+      ...persistedMessage.parts,
+      ...finalStepFallbackParts.filter((fallbackPart) =>
+        isToolUiPart(fallbackPart) &&
+        !persistedMessage.parts.some((part) =>
+          isToolUiPart(part) && part.toolCallId === fallbackPart.toolCallId
+        )
+      ),
+    ], input.finalStep);
   const finalizedMessage = fallbackParts.length !== persistedMessage.parts.length
     ? {
       ...persistedMessage,

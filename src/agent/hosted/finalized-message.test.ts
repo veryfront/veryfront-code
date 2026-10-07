@@ -25,6 +25,30 @@ Deno.test("buildFinalizedMessageState builds fallback parts for an empty finaliz
   assertEquals(result.hasIncompleteFinalizedToolParts, false);
 });
 
+Deno.test("buildFinalizedMessageState preserves tool-before-text fallback ordering after runtime metadata", () => {
+  const result = buildFinalizedMessageState({
+    responseMessage: {
+      id: "assistant-1",
+      role: "assistant",
+      parts: [{ type: "data-veryfront.runtime_context", data: { currentDateUtc: "2026-10-07" } }],
+    },
+    isAborted: false,
+    finalStep: {
+      text: "Done",
+      toolCalls: [{ toolCallId: "call-1", toolName: "form_input", input: { title: "Continue?" } }],
+      toolResults: [{ toolCallId: "call-1", toolName: "form_input", output: { submitted: true } }],
+    },
+    incompleteToolCallsPartErrorText: "tool error",
+  });
+
+  assertEquals(result.sanitizedFinalizedMessage.parts.map((part) => part.type), [
+    "data-veryfront.runtime_context",
+    "dynamic-tool",
+    "text",
+  ]);
+  assertEquals(result.hasIncompleteFinalizedToolParts, false);
+});
+
 Deno.test("buildFinalizedMessageState does not fail provider-owned input-available tools", () => {
   const result = buildFinalizedMessageState({
     responseMessage: {
