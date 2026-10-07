@@ -437,7 +437,7 @@ describe("componentsFromLock", () => {
     );
     assertStringIncludes(
       summary,
-      "| Sandbox execution | `extensions/ext-sandbox-shell-tools/deno.json` | 2 | `ai`, `just-bash`, `zod` |",
+      "| Sandbox execution | `extensions/ext-sandbox-shell-tools/deno.json` | 2 | `ai`, `zod` |",
     );
   });
 });
