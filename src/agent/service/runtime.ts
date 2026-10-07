@@ -36,6 +36,7 @@ import {
 } from "./server.ts";
 import type { VeryfrontServiceServerLogger } from "../../server/service-server.ts";
 import type { HostedRuntimeSourceIdentity } from "../hosted/runtime-source-binding.ts";
+import { snapshotOwnDeploymentArtifactOption } from "./deployment-artifact.ts";
 
 /** Configuration used by hosted agent service runtime. */
 export type HostedAgentServiceRuntimeConfig = AgentServiceAuthConfig & {
@@ -64,12 +65,14 @@ export type HostedAgentServiceRuntimeTrace = <TResult>(
 /** Public API contract for agent service runtime trace. */
 export type AgentServiceRuntimeTrace = HostedAgentServiceRuntimeTrace;
 
-/** Options accepted by create hosted agent service runtime. */
+/** Options accepted by create hosted agent service runtime, including deploymentArtifact for GET /version. */
 export type CreateHostedAgentServiceRuntimeOptions<
   TExecution extends object,
   TConfig extends HostedAgentServiceRuntimeConfig = HostedAgentServiceRuntimeConfig,
 > = {
   serviceName: string;
+  /** Exact immutable deployment artifact tag served by GET /version. Pass null when unknown. */
+  deploymentArtifact?: string | null;
   /** Exact immutable source snapshot served by control-plane runtime invocations. */
   runtimeSource?: HostedRuntimeSourceIdentity;
   getConfig: () => TConfig;
@@ -255,6 +258,7 @@ export function createAgentServiceRuntime<
 >(
   options: CreateAgentServiceRuntimeOptions<TExecution, TConfig>,
 ): AgentServiceRuntimeBundle<TExecution, TConfig> {
+  const deploymentArtifact = snapshotOwnDeploymentArtifactOption(options);
   const config = options.getConfig();
   const tracker = options.tracker ?? createDetachedRunTracker<AgUiResumeValue>();
   const trace = options.trace ?? defaultTrace;
@@ -265,6 +269,7 @@ export function createAgentServiceRuntime<
   });
   const routeSet = createAgentServiceRouteSet({
     forwardedConfigNamespace: options.forwardedConfigNamespace,
+    deploymentArtifact,
     runtimeSource: options.runtimeSource,
     authenticateRequest: auth.authenticateRequest,
     verifyProjectAccess: (projectId, authToken) => auth.verifyProjectAccess(projectId, authToken),

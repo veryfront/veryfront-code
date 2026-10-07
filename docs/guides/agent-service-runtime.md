@@ -54,6 +54,8 @@ existing behavior.
   [Configuration](./configuration.md) for the full list.
 - Immutable deployment metadata for `runtimeSource` when the control plane
   invokes the service.
+- An immutable deployment artifact tag when release qualification needs the
+  service to report the exact running artifact.
 
 ## Create a service entrypoint
 
@@ -222,6 +224,52 @@ Do not resolve `runtimeSource` from the latest deployment at request time. Pass
 the environment and release identifiers that produced the running service
 artifact. Direct `/api/runs` requests do not select project source and do not
 require this binding.
+
+## Report the deployed service artifact
+
+Pass `deploymentArtifact` when the deployment wrapper knows the immutable
+artifact tag for the running service. The value must use a 14-digit
+timestamp, a hyphen, and 12 to 40 lowercase hex characters, for example
+`20261007183045-a1b2c3d4e5f6`. Pass `null` when the artifact is
+unknown. Mutable labels such as `latest`, branch names,
+or npm dist tags are rejected during startup.
+
+```ts
+import { startNodeVeryfrontCloudAgentService } from "veryfront/agent";
+
+const deploymentArtifact = process.env.VERYFRONT_DEPLOYMENT_ARTIFACT ?? null;
+const environmentName = process.env.DEPLOYED_ENVIRONMENT_NAME;
+const releaseId = process.env.DEPLOYED_RELEASE_ID;
+if (!environmentName || !releaseId) {
+  throw new Error("Missing immutable agent service deployment identity");
+}
+
+await startNodeVeryfrontCloudAgentService({
+  runtimeSource: {
+    type: "environment",
+    environmentName,
+    releaseId,
+  },
+  deploymentArtifact,
+});
+```
+
+The service exposes a public `GET /version` endpoint before authenticated agent
+routes. The response is never cached and has this shape:
+
+```json
+{ "artifact": "20261007183045-a1b2c3d4e5f6" }
+```
+
+When `deploymentArtifact` is `null` or omitted, the response is:
+
+```json
+{ "artifact": null }
+```
+
+Use this endpoint for release qualification checks that must prove which
+service artifact served a request. Do not derive `deploymentArtifact` from a
+mutable source at request time.
 
 ## Add remote MCP tools
 
