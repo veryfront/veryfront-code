@@ -191,13 +191,15 @@ export function getCachedWithBatching(
 ): Promise<string | null> {
   const ctx = getRequestCacheContextStore();
   if (!ctx) {
+    let read: Promise<string | null>;
     try {
-      return backend.get(key, options);
+      read = backend.get(key, options);
     } catch (error) {
       const completion = createPrivateDeferred<string | null>();
       completion.reject(error);
-      return completion.promise;
+      read = completion.promise;
     }
+    return read;
   }
 
   if (mapHas(ctx.cache, key)) {
