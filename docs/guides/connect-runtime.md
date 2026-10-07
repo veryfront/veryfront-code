@@ -1,0 +1,220 @@
+---
+title: "Connect a runtime"
+description: "Connect a local or self-hosted Veryfront agent runtime to a project and inspect its runs."
+order: 32
+---
+
+Connect a developer-owned Veryfront runtime to a project with the external
+worker client. Registration binds the worker to the project. The API admits
+the run, and a worker claim provides the authority to append events and finish
+that run. The client keeps those credentials private.
+
+This guide runs one Veryfront agent from a route served by `veryfront dev`.
+The same route works on a self-hosted Veryfront server. The runtime initiates
+outbound requests, so a local runtime does not need a public tunnel. For a
+push service with a public endpoint and an immutable deployment source, use
+[Agent service runtime](./agent-service-runtime.md).
+
+## Prerequisites
+
+- A Veryfront project with `veryfront` installed.
+- A token with access to the project and `project.runtime.manage` permission.
+- An inference provider configured for the local runtime. See
+  [Providers](./providers.md).
+- The project UUID. Keep the API token on the server.
+
+Set these values in your project environment:
+
+```bash
+export VERYFRONT_API_URL="https://api.example.com"
+export VERYFRONT_API_TOKEN="<TOKEN>"
+export VERYFRONT_PROJECT_ID="<PROJECT_ID>"
+```
+
+Use the API origin for your deployment without an `/api` suffix. Do not put
+these credentials in browser code, event payloads, or source control.
+
+## Add the runtime route
+
+Create `app/api/runtime/route.ts`:
+
+```ts
+import {
+  agent,
+  ConversationRunEventEncoder,
+  createExternalAgentWorkerClient,
+} from "veryfront/agent";
+import { getEnv } from "veryfront/platform";
+
+const assistant = agent({
+  id: "runtime-assistant",
+  system: "Reply with one short greeting.",
+  tools: {},
+  skills: [],
+  maxSteps: 1,
+});
+
+export async function POST(request: Request): Promise<Response> {
+  const apiUrl = getEnv("VERYFRONT_API_URL")?.replace(/\/$/, "");
+  const token = getEnv("VERYFRONT_API_TOKEN");
+  const projectId = getEnv("VERYFRONT_PROJECT_ID");
+  if (!apiUrl || !token || !projectId) {
+    return Response.json({ error: "Missing runtime connection settings" }, { status: 503 });
+  }
+  if (request.headers.get("Authorization") !== `Bearer ${token}`) {
+    return Response.json({ error: "Authentication required" }, { status: 401 });
+  }
+
+  async function api<T>(path: string, body: unknown): Promise<T> {
+    const response = await fetch(`${apiUrl}${path}`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (!response.ok) throw new Error(`Runtime API request failed: ${response.status}`);
+    return await response.json() as T;
+  }
+
+  const client = createExternalAgentWorkerClient({ apiUrl, authToken: token });
+  // Each demonstration gets its own worker so another process cannot claim it.
+  const workerKey = `runtime-demo:${crypto.randomUUID()}`;
+  const worker = await client.registerWorker({
+    projectReference: projectId,
+    implementationKind: "veryfront-local",
+    implementationDisplayName: "Veryfront local runtime",
+    workerKey,
+    displayName: "Runtime connection demo",
+  });
+  await client.heartbeatWorker(worker.id);
+
+  const conversation = await api<{ id: string }>("/conversations", {
+    project_reference: projectId,
+    title: "Runtime connection demo",
+  });
+  const accepted = await api<{ run: { run_id: string } }>("/runs", {
+    kind: "agent",
+    owner: { kind: "conversation", id: conversation.id },
+    request: {
+      mode: "agent",
+      agent_id: assistant.id,
+      implementation_kind: "veryfront-local",
+      worker_key: workerKey,
+      initial_status: "pending",
+    },
+  });
+  const run = await client.claimRun({ workerId: worker.id, leaseDurationSeconds: 60 });
+  if (!run) throw new Error("The runtime did not receive its queued run");
+
+  try {
+    // This bounded, one-step demonstration finishes before the 60-second lease.
+    const result = await assistant.generate({
+      input: "Say hello to the teammate inspecting this run.",
+      abortSignal: AbortSignal.timeout(20_000),
+    });
+    const messageId = crypto.randomUUID();
+    const encoder = new ConversationRunEventEncoder();
+    const events = [
+      ...encoder.encode({ type: "start", messageId }),
+      ...encoder.encode({ type: "text-start", id: messageId }),
+      ...encoder.encode({ type: "text-delta", id: messageId, delta: result.text }),
+      ...encoder.encode({ type: "text-end", id: messageId }),
+    ];
+    await client.appendRunEvents({
+      conversationId: run.conversation_id,
+      runId: run.run_id,
+      events,
+      expectedPreviousExternalEventSequence: run.latest_external_event_sequence,
+    });
+    await client.completeRun({ runId: run.run_id, status: "completed", output: result.text });
+    return Response.json({ worker_id: worker.id, run_id: accepted.run.run_id });
+  } catch {
+    await client.completeRun({
+      runId: run.run_id,
+      status: "failed",
+      terminalErrorCode: "RUNTIME_DEMO_FAILED",
+      terminalErrorMessage: "The runtime connection demo failed",
+    });
+    return Response.json({ error: "Runtime demo failed", run_id: accepted.run.run_id }, {
+      status: 502,
+    });
+  }
+}
+```
+
+The route requires the project credential before it registers a worker or
+creates a run. Use this route as an operator-only demonstration. A deployed
+application should use its own operator authorization instead of sharing the
+project credential with browser users.
+
+The example records the final text with the existing framework event encoder.
+It does not stream intermediate tool calls or reasoning. Event appends do not
+complete the run: `completeRun` performs the terminal operation using the
+claim's separate terminal credential. See the
+[`veryfront/agent` API reference](../api-reference/veryfront/agent.md).
+
+## Start and execute the runtime
+
+1. Start the local runtime:
+
+   ```bash
+   veryfront dev
+   ```
+
+2. In another terminal with `VERYFRONT_API_TOKEN` set, execute the agent:
+
+   ```bash
+   curl --fail-with-body --silent --show-error \
+     -X POST http://localhost:3000/api/runtime \
+     -H "Authorization: Bearer $VERYFRONT_API_TOKEN"
+   ```
+
+   The response contains `worker_id` and the canonical `run_id`. It contains no
+   worker token or run credential. Keep the returned run ID for verification.
+
+For a self-hosted runtime, build and start the same project with the normal
+Veryfront production commands and call its authenticated `/api/runtime` route.
+Use HTTPS for a remote runtime. The runtime still connects outbound to the
+project's API origin.
+
+## Verify it worked
+
+1. Read the run independently. Set `RUN_ID` to the returned run ID:
+
+   ```bash
+   curl --fail-with-body --silent --show-error \
+     "$VERYFRONT_API_URL/runs/$RUN_ID" \
+     -H "Authorization: Bearer $VERYFRONT_API_TOKEN"
+   ```
+
+   Verify `status` is `completed`, the owner is the new conversation, and
+   `output` is the agent's greeting.
+
+2. Read its stored events:
+
+   ```bash
+   curl --fail-with-body --silent --show-error \
+     "$VERYFRONT_API_URL/runs/$RUN_ID/events" \
+     -H "Authorization: Bearer $VERYFRONT_API_TOKEN"
+   ```
+
+   Verify the assistant message start, content, and end events are present.
+   The content matches the run output. The API assigns durable event IDs.
+
+3. Open the same project in Studio. Open its Runs panel and select the returned
+   run. Verify the completed status, output, and recorded message events.
+
+See [Runs](./runs.md) for additional read and inspection operations.
+
+## Operate a long-running worker
+
+The demonstration claims and executes one short run per request. A persistent
+worker must heartbeat its registration, claim only its implementation and
+worker key, and call `renewLease` before the active lease expires. The client
+replaces its private run credentials when renewal returns fresh authority.
+Stop execution when renewal returns `null`, cancellation is reported, or
+ownership cannot be confirmed. Pass an abort signal to your agent.
+
+Never reuse a claim after lease loss or use the project token to replace a
+missing event or terminal credential. Do not retry user execution after an
+ambiguous terminal response without an idempotency strategy. Retire demo
+workers through `DELETE /agent-workers/workers/<WORKER_ID>` when finished.
