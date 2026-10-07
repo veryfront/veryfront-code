@@ -21,11 +21,17 @@ async function withReceivers(
     b: RedisBackend,
     runId: string,
     cleanup: Array<() => Promise<void>>,
-    openReceiver: (observeRead?: (active: number) => void) => Promise<RedisBackend>,
+    openReceiver: (
+      observeRead?: (active: number) => void,
+      observeEval?: (script: string, keys: string[], args: string[]) => void,
+    ) => Promise<RedisBackend>,
   ) => Promise<void>,
 ) {
   const prefix = `event-test:${crypto.randomUUID()}`;
-  const open = async (observeRead?: (active: number) => void) => {
+  const open = async (
+    observeRead?: (active: number) => void,
+    observeEval?: (script: string, keys: string[], args: string[]) => void,
+  ) => {
     const provider = createRedisRuntimeProvider();
     const module = await provider.loadModule();
     const client = module.createClient({ url: Deno.env.get("WORKFLOW_EVENT_TEST_REDIS_URL") });
@@ -41,6 +47,13 @@ async function withReceivers(
         } finally {
           active--;
         }
+      };
+    }
+    if (observeEval) {
+      const evalScript = adapter.eval.bind(adapter);
+      adapter.eval = async (script, keys, args) => {
+        observeEval(script, keys, args);
+        return await evalScript(script, keys, args);
       };
     }
     return new RedisBackend({ prefix, client: adapter });
@@ -121,7 +134,7 @@ describe("Redis durable event waits", () => {
     name: "Redis terminal transitions discard buffered mail and settle delivery claims",
     ignore: !Deno.env.get("WORKFLOW_EVENT_TEST_REDIS_URL"),
   }, () =>
-    withReceivers(async (a, b, runId) => {
+    withReceivers(async (a, b, runId, cleanup, openReceiver) => {
       const now = new Date();
       const claimed = { id: "claimed", eventName: "ready", payload: {}, publishedAt: now };
       await a.savePendingEventWait(runId, {
@@ -145,7 +158,19 @@ describe("Redis durable event waits", () => {
 
       const buffered = { id: "buffered", eventName: "late", payload: {}, publishedAt: now };
       await a.appendRunEvent(runId, buffered);
-      await b.updateRun(runId, { status: "cancelled", completedAt: now });
+      const terminalEvalScripts: string[] = [];
+      const c = await openReceiver(undefined, (script) => terminalEvalScripts.push(script));
+      cleanup.push(() => c.destroy());
+      assertEquals(
+        await c.updateRunIfStatus(runId, ["completed"], {
+          status: "cancelled",
+          completedAt: now,
+        }),
+        true,
+      );
+      assertEquals(terminalEvalScripts.length, 1);
+      assertEquals(terminalEvalScripts[0]?.includes("conditional-run-update"), true);
+      assertEquals(terminalEvalScripts[0]?.includes("clearTerminalRunEvents"), true);
       assertEquals(await a.takeRunEvent(runId, "late"), null);
     }));
 

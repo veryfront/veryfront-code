@@ -96,6 +96,57 @@ const TERMINAL_RETENTION_REPAIR_PAGE_LIMIT = 100;
 const CLEAR_LEGACY_RUN_TTL_SCRIPT =
   "-- clear-legacy-run-ttl\nreturn redis.call('persist', KEYS[1])";
 
+const CLEAR_TERMINAL_RUN_EVENTS_LUA = String.raw`
+local function clearTerminalRunEvents(runKey, eventStateKey, eventStateIndexKey, eventMailboxIndexKey, runId)
+  local raw = redis.call('get', eventStateKey)
+  if not raw then return end
+  local status = redis.call('hget', runKey, 'status')
+  if status ~= 'completed' and status ~= 'cancelled' then return end
+  local s = cjson.decode(raw)
+  if not s.waits then s.waits = {} end
+  if not s.mail then s.mail = {} end
+  if not s.claims then s.claims = {} end
+  local function findWait(id)
+    for _, w in ipairs(s.waits) do if w.id == id then return w end end
+  end
+  local function clearClaim(w)
+    w.claimedAt = nil
+    w.recoveryClaimedAt = nil
+    w.claimedEventId = nil
+  end
+  local function timed(w)
+    return w.claimedAt and ((w.kind == 'delay' and w.status == 'delivered') or
+      (w.kind == 'event' and w.status == 'expired'))
+  end
+  local nodes = {}
+  if status == 'completed' then
+    nodes = cjson.decode(redis.call('hget', runKey, 'nodeStates') or '{}')
+  end
+  for eventId, claim in pairs(s.claims) do
+    local w = findWait(claim.waitId)
+    if w then
+      clearClaim(w)
+      local node = nodes[w.nodeId]
+      if status == 'completed' and node and node.status == 'completed' then
+        w.deliveredEventId = eventId
+      end
+    end
+  end
+  s.mail = {}
+  s.claims = {}
+  local active = false
+  for _, w in ipairs(s.waits) do
+    if w.status == 'pending' or timed(w) then active = true end
+  end
+  redis.call('zrem', eventMailboxIndexKey, runId)
+  if active then
+    redis.call('sadd', eventStateIndexKey, runId)
+  else
+    redis.call('srem', eventStateIndexKey, runId)
+  end
+  redis.call('set', eventStateKey, cjson.encode(s))
+end`;
+
 /**
  * Merge top-level JSON objects without decoding their values through Redis's
  * bundled cjson. Standard Redis 7 turns a decoded empty array into an empty
@@ -950,6 +1001,7 @@ return 1`;
  *
  * KEYS[1] = run hash key
  * KEYS[2..3] = terminal completion index and member metadata
+ * KEYS[5..7] = event-state key, active index, and mailbox index
  * ARGV[1] = runId
  * ARGV[2] = new status
  * ARGV[3] = status index key prefix (the status value is appended to it)
@@ -962,6 +1014,7 @@ const UPDATE_RUN_SCRIPT = `-- observable-run-update
 if redis.call('exists', KEYS[1]) == 0 then return 0 end
 ${JSON_OBJECT_PATCH_LUA}
 ${UPDATE_TERMINAL_RETENTION_INDEX_LUA}
+${CLEAR_TERMINAL_RUN_EVENTS_LUA}
 local function applyPatchField(field, value)
   if field == 'nodeStateDeletes' then
     local current = redis.call('hget', KEYS[1], 'nodeStates') or '{}'
@@ -996,6 +1049,7 @@ redis.call(
 )
 local status = redis.call('hget', KEYS[1], 'status')
 updateTerminalRetentionIndex(KEYS[1], KEYS[2], KEYS[3], ARGV[1], '')
+clearTerminalRunEvents(KEYS[1], KEYS[5], KEYS[6], KEYS[7], ARGV[1])
 local rawNodes = redis.call('hget', KEYS[1], 'nodeStates') or '{}'
 local sourceNodes = cjson.decode(rawNodes)
 local nodes = {}
@@ -1031,6 +1085,7 @@ local expectedCount = tonumber(ARGV[1])
 local replaceMaps = ARGV[expectedCount + 8] == '1'
 ${JSON_OBJECT_PATCH_LUA}
 ${UPDATE_TERMINAL_RETENTION_INDEX_LUA}
+${CLEAR_TERMINAL_RUN_EVENTS_LUA}
 local function applyPatchField(field, value)
   if field == 'nodeStateDeletes' then
     local current = redis.call('hget', KEYS[1], 'nodeStates') or '{}'
@@ -1111,6 +1166,7 @@ redis.call(
 )
 local status = redis.call('hget', KEYS[1], 'status')
 updateTerminalRetentionIndex(KEYS[1], KEYS[2], KEYS[3], runId, '')
+clearTerminalRunEvents(KEYS[1], KEYS[5], KEYS[6], KEYS[7], runId)
 local sourceNodes = cjson.decode(redis.call('hget', KEYS[1], 'nodeStates') or '{}')
 local nodes = {}
 for nodeId, node in pairs(sourceNodes) do
@@ -2466,6 +2522,9 @@ export class RedisBackend implements WorkflowBackend {
         this.terminalRunRetentionIndexKey(),
         this.terminalRunRetentionMembersKey(),
         this.terminalRunRetentionGenerationKey(),
+        `${this.storagePrefix()}event-state:${runId}`,
+        `${this.storagePrefix()}index:event-state`,
+        `${this.storagePrefix()}index:event-mailboxes`,
       ],
       [
         runId,
@@ -2482,9 +2541,6 @@ export class RedisBackend implements WorkflowBackend {
     // Terminal states should clear stale-claim markers.
     if (patch.status && patch.status !== "running") {
       await client.del(this.claimKey(runId));
-    }
-    if (patch.status === "completed" || patch.status === "cancelled") {
-      await (await this.eventWaits()).clearTerminalRunEvents(runId);
     }
   }
 
@@ -2563,6 +2619,9 @@ export class RedisBackend implements WorkflowBackend {
         this.terminalRunRetentionIndexKey(),
         this.terminalRunRetentionMembersKey(),
         this.terminalRunRetentionGenerationKey(),
+        `${this.storagePrefix()}event-state:${runId}`,
+        `${this.storagePrefix()}index:event-state`,
+        `${this.storagePrefix()}index:event-mailboxes`,
       ],
       [
         String(expectedStatuses.length),
@@ -2582,9 +2641,6 @@ export class RedisBackend implements WorkflowBackend {
 
     if (updated && patch.status && patch.status !== "running") {
       await client.del(this.claimKey(runId));
-    }
-    if (updated && (patch.status === "completed" || patch.status === "cancelled")) {
-      await (await this.eventWaits()).clearTerminalRunEvents(runId);
     }
     return updated;
   }
