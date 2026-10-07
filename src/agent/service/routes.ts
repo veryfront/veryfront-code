@@ -48,11 +48,12 @@ import { runWithHostedRequestPreparationSignal } from "./request-preparation-con
 import {
   runWithVerifiedHostedRunEventWriterRequest,
 } from "../hosted/child-run-event-writer-token.ts";
+import { privateJsonStringify } from "#veryfront/security/private-json.ts";
 
 const IntrinsicReflectApply = Reflect.apply;
 const NativeHeaders = Headers;
 const NativeRequest = Request;
-const NativeResponseJson = Response.json;
+const NativeResponse = Response;
 const RequestClone = Request.prototype.clone;
 const RequestJson = Request.prototype.json;
 const RequestHeadersGet = Object.getOwnPropertyDescriptor(NativeRequest.prototype, "headers")?.get;
@@ -66,14 +67,17 @@ const ArrayFilter = Array.prototype.filter;
 const ArrayIsArray = Array.isArray;
 
 function createVersionResponse(deploymentArtifact: string | null): Response {
-  return IntrinsicReflectApply(NativeResponseJson, Response, [
-    { artifact: deploymentArtifact },
+  return new NativeResponse(
+    privateJsonStringify({ artifact: deploymentArtifact }),
     {
       status: 200,
       statusText: "",
-      headers: { "Cache-Control": "no-store" },
+      headers: {
+        "Cache-Control": "no-store",
+        "Content-Type": "application/json",
+      },
     },
-  ]) as Response;
+  );
 }
 
 function readRequestValue<T>(request: Request, getter: (() => T) | undefined): T {
