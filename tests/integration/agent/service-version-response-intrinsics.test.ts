@@ -1,4 +1,4 @@
-import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists, assertThrows } from "#veryfront/testing/assert.ts";
 import { createHostedAgentServiceRouteSet } from "#veryfront/agent/service/routes.ts";
 import { createDetachedRunTracker } from "#veryfront/agent/service/detached-run-tracker.ts";
 
@@ -71,6 +71,60 @@ Deno.test("agent service version route ignores inherited response status and JSO
       Object.defineProperty(Object.prototype, "status", originalStatus);
     } else {
       Reflect.deleteProperty(Object.prototype, "status");
+    }
+  }
+});
+
+Deno.test("agent service version route fails closed for inherited response option accessors", () => {
+  const fields = ["headers", "status", "statusText"] as const;
+  const originals = fields.map((field) =>
+    [
+      field,
+      Object.getOwnPropertyDescriptor(Object.prototype, field),
+    ] as const
+  );
+  let accessorCalls = 0;
+  for (const field of fields) {
+    Object.defineProperty(Object.prototype, field, {
+      get() {
+        accessorCalls += 1;
+        return undefined;
+      },
+      set() {
+        accessorCalls += 1;
+      },
+      configurable: true,
+    });
+  }
+  try {
+    const routeSet = createHostedAgentServiceRouteSet<{ ok: true }>({
+      tracker: createDetachedRunTracker(),
+      deploymentArtifact: "20261007183045-a1b2c3d4e5f6",
+      authenticateRequest: async () => ({ authToken: "token", userId: "user-1" }),
+      verifyProjectAccess: async () => ({ success: true }),
+      verifyRunCancellationToken: async () => true,
+      verifyRunEventAppendToken: async () => false,
+      prepareExecution: async () => ({ ok: true }),
+      streamExecutionToAgUiResponse: () => new Response("streamed"),
+      startDetachedExecution: async () => {},
+      resolveRuntimeOwnerInvokeUrl: async () => null,
+    });
+    const versionRoute = routeSet.routes.find((route) => route.path === "/version");
+    assertExists(versionRoute);
+
+    assertThrows(
+      () => versionRoute.handler(new Request("https://agent.example.test/version"), {}),
+      TypeError,
+      "Cannot construct a response with inherited option accessors",
+    );
+    assertEquals(accessorCalls, 0);
+  } finally {
+    for (const [field, descriptor] of originals) {
+      if (descriptor) {
+        Object.defineProperty(Object.prototype, field, descriptor);
+      } else {
+        Reflect.deleteProperty(Object.prototype, field);
+      }
     }
   }
 });

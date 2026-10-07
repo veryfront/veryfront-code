@@ -50,10 +50,11 @@ import {
 } from "../hosted/child-run-event-writer-token.ts";
 import { privateJsonStringify } from "#veryfront/security/private-json.ts";
 import { snapshotOwnDeploymentArtifactOption } from "./deployment-artifact.ts";
+import { buildResponseInit } from "./response-init.ts";
 
 const IntrinsicReflectApply = Reflect.apply;
 const NativeHeaders = Headers;
-const createNullPrototypeObject = Object.create;
+const NativeObjectPrototype = Object.prototype;
 const NativeRequest = Request;
 const NativeResponse = Response;
 const RequestClone = Request.prototype.clone;
@@ -69,19 +70,13 @@ const ArrayFilter = Array.prototype.filter;
 const ArrayIsArray = Array.isArray;
 
 function createVersionResponse(deploymentArtifact: string | null): Response {
-  const headers = IntrinsicReflectApply(createNullPrototypeObject, Object, [null]) as Record<
-    string,
-    string
-  >;
+  const init = buildResponseInit(NativeObjectPrototype, 200, "");
+  const headers = init.headers as Record<string, string>;
   headers["Cache-Control"] = "no-store";
   headers["Content-Type"] = "application/json";
   return new NativeResponse(
     privateJsonStringify({ artifact: deploymentArtifact }),
-    {
-      status: 200,
-      statusText: "",
-      headers,
-    },
+    init,
   );
 }
 
