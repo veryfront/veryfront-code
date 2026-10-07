@@ -5,22 +5,14 @@ export default function LandingPage(): React.JSX.Element {
       <nav className="border-b border-neutral-100 dark:border-neutral-900">
         <div className="max-w-5xl mx-auto flex items-center justify-between px-6 h-14">
           <span className="font-semibold text-neutral-900 dark:text-white">
-            AI SaaS
+            AI SaaS Starter
           </span>
-          <div className="flex items-center gap-4">
-            <a
-              href="/login"
-              className="text-sm text-neutral-600 dark:text-neutral-400 hover:text-neutral-900 dark:hover:text-white transition-colors"
-            >
-              Sign in
-            </a>
-            <a
-              href="/login"
-              className="text-sm px-4 py-1.5 bg-neutral-900 dark:bg-white text-white dark:text-neutral-900 rounded-full font-medium hover:opacity-90 transition-opacity"
-            >
-              Get started
-            </a>
-          </div>
+          <a
+            href="/login"
+            className="text-sm px-4 py-1.5 bg-neutral-900 dark:bg-white text-white dark:text-neutral-900 rounded-full font-medium hover:opacity-90 transition-opacity"
+          >
+            Preview dashboard
+          </a>
         </div>
       </nav>
 
@@ -28,17 +20,18 @@ export default function LandingPage(): React.JSX.Element {
       <main className="max-w-5xl mx-auto px-6">
         <div className="pt-24 pb-16 text-center">
           <h1 className="text-4xl md:text-5xl font-bold tracking-tight text-neutral-900 dark:text-white">
-            Your AI-powered platform
+            Build an AI SaaS dashboard
           </h1>
           <p className="mt-4 text-lg text-neutral-500 dark:text-neutral-400 max-w-lg mx-auto">
-            Built with Veryfront. Agents, tools, and memory are ready for production.
+            Start with a polished chat dashboard, an agent endpoint, and demo conversation storage.
+            Add OIDC auth before you protect real users.
           </p>
           <div className="mt-8 flex gap-3 justify-center">
             <a
               href="/login"
               className="px-6 py-2.5 bg-neutral-900 dark:bg-white text-white dark:text-neutral-900 rounded-full font-medium hover:opacity-90 transition-opacity"
             >
-              Start free
+              Preview dashboard
             </a>
             <a
               href="https://veryfront.com/docs/code/guides"
@@ -58,13 +51,14 @@ export default function LandingPage(): React.JSX.Element {
                 "Define agents with tools, memory, and streaming. Veryfront auto-discovers them from your project.",
             },
             {
-              title: "Per-User Memory",
-              desc: "Each user gets their own conversation history, persisted across sessions.",
+              title: "Demo Memory",
+              desc:
+                "The starter persists preview conversations in the browser so you can test the UI immediately.",
             },
             {
-              title: "Production Ready",
+              title: "OIDC Ready",
               desc:
-                "Use auth, rate limiting, and deployment to ship to production with one command.",
+                "Generate Veryfront's built-in OIDC scaffold when you are ready to configure provider login.",
             },
           ].map(({ title, desc }) => (
             <div key={title}>
