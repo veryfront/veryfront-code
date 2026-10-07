@@ -82,37 +82,6 @@ describe("cache/request-cache-batcher", () => {
     assertEquals(observed === failure, true);
   });
 
-  for (const mutation of ["constructor", "species"] as const) {
-    it(`returns cache reads despite a project-mutated Promise ${mutation}`, async () => {
-      const backend = createMockBackend({ source: "published configuration" });
-      const target = mutation === "constructor" ? Promise.prototype : Promise;
-      const property = mutation === "constructor" ? "constructor" : Symbol.species;
-      const original = Object.getOwnPropertyDescriptor(target, property)!;
-      await runWithCacheBatching(async () => {
-        assertEquals(await getCachedWithBatching(backend, "source"), "published configuration");
-        let read: Promise<string | null> | undefined;
-        Object.defineProperty(
-          target,
-          property,
-          mutation === "constructor" ? { configurable: true, value: 1 } : {
-            configurable: true,
-            get() {
-              throw new Error("Project species accessed");
-            },
-          },
-        );
-        try {
-          read = getCachedWithBatching(backend, "source");
-        } finally {
-          Object.defineProperty(target, property, original);
-        }
-        assertExists(read);
-        assertEquals(await read, "published configuration");
-        assertEquals(backend.getCalls, ["source"]);
-      });
-    });
-  }
-
   describe("runWithCacheBatching", () => {
     it("returns a rejected promise when its callback throws synchronously", async () => {
       const reason = new Error("synchronous cache callback failure");

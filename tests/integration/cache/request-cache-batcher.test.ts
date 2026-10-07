@@ -1,8 +1,54 @@
 import { fileURLToPath } from "node:url";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 
+import type { CacheBackend } from "#veryfront/cache/backend.ts";
+import {
+  getCachedWithBatching,
+  runWithCacheBatching,
+} from "#veryfront/cache/request-cache-batcher.ts";
+
 describe("cache producer retirement", () => {
+  for (const mutation of ["constructor", "species"] as const) {
+    it(`returns cache reads despite a project-mutated Promise ${mutation}`, async () => {
+      let getCalls = 0;
+      const backend: CacheBackend = {
+        type: "memory",
+        get: () => {
+          getCalls++;
+          return Promise.resolve("published configuration");
+        },
+        set: () => Promise.resolve(),
+        del: () => Promise.resolve(),
+      };
+      const target = mutation === "constructor" ? Promise.prototype : Promise;
+      const property = mutation === "constructor" ? "constructor" : Symbol.species;
+      const original = Object.getOwnPropertyDescriptor(target, property)!;
+      await runWithCacheBatching(async () => {
+        assertEquals(await getCachedWithBatching(backend, "source"), "published configuration");
+        let read: Promise<string | null> | undefined;
+        Object.defineProperty(
+          target,
+          property,
+          mutation === "constructor" ? { configurable: true, value: 1 } : {
+            configurable: true,
+            get() {
+              throw new Error("Project species accessed");
+            },
+          },
+        );
+        try {
+          read = getCachedWithBatching(backend, "source");
+        } finally {
+          Object.defineProperty(target, property, original);
+        }
+        assertExists(read);
+        assertEquals(await read, "published configuration");
+        assertEquals(getCalls, 1);
+      });
+    });
+  }
+
   it("drains detached failing reads without an unhandled rejection", async () => {
     const fixture = await Deno.makeTempFile({ suffix: ".ts" });
     const code = `
