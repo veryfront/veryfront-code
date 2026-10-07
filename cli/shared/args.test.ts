@@ -310,6 +310,10 @@ describe("cli/shared/args", () => {
 
       assertEquals(args["definitely-bad"], true);
       assertEquals(args._, ["schema"]);
+
+      const help = parseCliArgs(["--definitely-bad", "help", "--json"]);
+      assertEquals(help["definitely-bad"], true);
+      assertEquals(help._, ["help"]);
     });
 
     it("should preserve a command alias after an unknown pre-command option", () => {
@@ -335,7 +339,19 @@ describe("cli/shared/args", () => {
       assertEquals(shortOutput.output, "schema");
       assertEquals(shortOutput.o, "schema");
       assertEquals(shortOutput._, []);
+    });
 
+    it("should preserve implicit start command option values", () => {
+      const projectDir = parseCliArgs(["--project-dir", "dev", "--json"]);
+      assertEquals(projectDir["project-dir"], "dev");
+      assertEquals(projectDir._, []);
+
+      const project = parseCliArgs(["--project", "dev", "--json"]);
+      assertEquals(project.project, "dev");
+      assertEquals(project._, []);
+    });
+
+    it("should preserve pre-command option values when a later command accepts them", () => {
       const project = parseCliArgs(["--project", "dev", "pull", "--json"]);
       assertEquals(project.project, "dev");
       assertEquals(project._, ["pull"]);
@@ -343,13 +359,119 @@ describe("cli/shared/args", () => {
       const projectSlug = parseCliArgs(["--project-slug", "dev", "pull", "--json"]);
       assertEquals(projectSlug["project-slug"], "dev");
       assertEquals(projectSlug._, ["pull"]);
+
+      const branch = parseCliArgs(["--branch", "dev", "pull", "--json"]);
+      assertEquals(branch.branch, "dev");
+      assertEquals(branch._, ["pull"]);
+
+      const shortBranch = parseCliArgs(["-b", "dev", "pull", "--json"]);
+      assertEquals(shortBranch.b, "dev");
+      assertEquals(shortBranch._, ["pull"]);
+
+      const dir = parseCliArgs(["--dir", "schema", "pull", "--json"]);
+      assertEquals(dir.dir, "schema");
+      assertEquals(dir._, ["pull"]);
+
+      const projectDir = parseCliArgs(["--project-dir", "schema", "pull", "--json"]);
+      assertEquals(projectDir["project-dir"], "schema");
+      assertEquals(projectDir._, ["pull"]);
+
+      const combined = parseCliArgs(["--branch", "dev", "--dir", "schema", "pull", "--json"]);
+      assertEquals(combined.branch, "dev");
+      assertEquals(combined.dir, "schema");
+      assertEquals(combined._, ["pull"]);
+
+      const withShortQuiet = parseCliArgs(["--branch", "dev", "-q", "pull", "--json"]);
+      assertEquals(withShortQuiet.branch, "dev");
+      assertEquals(withShortQuiet.q, true);
+      assertEquals(withShortQuiet._, ["pull"]);
+
+      const withShortJson = parseCliArgs(["--branch", "dev", "-j", "pull"]);
+      assertEquals(withShortJson.branch, "dev");
+      assertEquals(withShortJson.j, true);
+      assertEquals(withShortJson._, ["pull"]);
+
+      const afterTerminator = parseCliArgs(["--branch", "dev", "--", "pull"]);
+      assertEquals(afterTerminator.branch, "dev");
+      assertEquals(afterTerminator._, ["pull"]);
+
+      const undocumentedProjectDir = parseCliArgs(["--dir", "dev", "clean"]);
+      assertEquals(undocumentedProjectDir.dir, "dev");
+      assertEquals(undocumentedProjectDir._, ["clean"]);
+
+      const routesProjectDir = parseCliArgs(["--dir", "schema", "routes"]);
+      assertEquals(routesProjectDir.dir, "schema");
+      assertEquals(routesProjectDir._, ["routes"]);
+
+      const filesProjectDir = parseCliArgs(["--dir", "dev", "files", "list"]);
+      assertEquals(filesProjectDir.dir, "dev");
+      assertEquals(filesProjectDir._, ["files", "list"]);
+
+      const uploadsProjectDir = parseCliArgs(["--dir", "dev", "uploads", "list"]);
+      assertEquals(uploadsProjectDir.dir, "dev");
+      assertEquals(uploadsProjectDir._, ["uploads", "list"]);
+
+      const knowledgeProjectDir = parseCliArgs(["--dir", "dev", "knowledge", "ingest"]);
+      assertEquals(knowledgeProjectDir.dir, "dev");
+      assertEquals(knowledgeProjectDir._, ["knowledge", "ingest"]);
+
+      const projectProjectDir = parseCliArgs(["--dir", "dev", "project", "runs"]);
+      assertEquals(projectProjectDir.dir, "dev");
+      assertEquals(projectProjectDir._, ["project", "runs"]);
+
+      const serveHost = parseCliArgs(["--host", "dev", "serve"]);
+      assertEquals(serveHost.host, "dev");
+      assertEquals(serveHost._, ["serve"]);
+
+      const workerRedis = parseCliArgs(["--redis", "dev", "worker"]);
+      assertEquals(workerRedis.redis, "dev");
+      assertEquals(workerRedis._, ["worker"]);
+
+      const startPort = parseCliArgs(["-p", "dev", "start"]);
+      assertEquals(startPort.p, "dev");
+      assertEquals(startPort._, ["start"]);
+
+      const knowledgeDescription = parseCliArgs([
+        "--description",
+        "dev",
+        "knowledge",
+        "ingest",
+        "doc.md",
+      ]);
+      assertEquals(knowledgeDescription.description, "dev");
+      assertEquals(knowledgeDescription._, ["knowledge", "ingest", "doc.md"]);
+
+      const uploadsOutputDir = parseCliArgs(["--output-dir", "dev", "uploads", "pull"]);
+      assertEquals(uploadsOutputDir["output-dir"], "dev");
+      assertEquals(uploadsOutputDir._, ["uploads", "pull"]);
+
+      const projectCredentialFile = parseCliArgs([
+        "--credential-file",
+        "dev",
+        "project",
+        "runs",
+        "list",
+      ]);
+      assertEquals(projectCredentialFile["credential-file"], "dev");
+      assertEquals(projectCredentialFile._, ["project", "runs", "list"]);
     });
 
     it("should preserve command tokens after command-specific pre-command value options", () => {
       const config = parseCliArgs(["--config", "schema", "--json"]);
-
       assertEquals(config.config, true);
       assertEquals(config._, ["schema"]);
+
+      const branch = parseCliArgs(["--branch", "schema", "--json"]);
+      assertEquals(branch.branch, true);
+      assertEquals(branch._, ["schema"]);
+
+      const environment = parseCliArgs(["--environment", "schema", "--json"]);
+      assertEquals(environment.environment, true);
+      assertEquals(environment._, ["schema"]);
+
+      const release = parseCliArgs(["--release", "schema", "--json"]);
+      assertEquals(release.release, true);
+      assertEquals(release._, ["schema"]);
     });
 
     it("should parse explicit false values for boolean flags", () => {

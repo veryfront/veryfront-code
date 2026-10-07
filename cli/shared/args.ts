@@ -236,11 +236,167 @@ export const CommonArgs = {
 // Used once in cli/main.ts before routing to individual command handlers.
 
 const ARRAY_FLAGS = new Set(["candidate-model"]);
-const GLOBAL_VALUE_FLAGS: ReadonlySet<string> = new Set(
-  Object.values(CommonArgs)
-    .filter((spec) => spec.type !== "boolean")
-    .flatMap((spec) => spec.keys),
-);
+const GLOBAL_VALUE_FLAGS: ReadonlySet<string> = new Set(CommonArgs.output.keys);
+const COMMAND_VALUE_ARG_KEYS: Readonly<Record<string, readonly string[]>> = {
+  "analyze-chunks": CommonArgs.projectDir.keys,
+  build: [
+    ...CommonArgs.output.keys,
+    "preset",
+    "include",
+    "exclude",
+  ],
+  clean: CommonArgs.projectDir.keys,
+  demo: ["project-name", "login"],
+  deploy: [
+    ...CommonArgs.projectSlug.keys,
+    ...CommonArgs.projectDir.keys,
+    ...CommonArgs.branch.keys,
+    ...CommonArgs.env.keys,
+    ...CommonArgs.releaseName.keys,
+  ],
+  dev: ["port", "p", "project"],
+  doctor: ["port", "p"],
+  env: [
+    ...CommonArgs.env.keys,
+    ...CommonArgs.projectSlug.keys,
+    ...CommonArgs.projectDir.keys,
+  ],
+  eval: [
+    "id",
+    "dataset-base",
+    "report-dir",
+    "report",
+    "junit",
+    "baseline",
+    "write-baseline",
+    "baseline-pass-rate-drop-threshold",
+    "baseline-metric-pass-rate-drop-threshold",
+    "baseline-failed-delta-threshold",
+    "baseline-usage-increase-threshold",
+    "baseline-latency-increase-threshold",
+    "export",
+    "model",
+    "baseline-model",
+    "candidate-model",
+    "candidate-models",
+    "comparison-policy",
+    "max-output-tokens",
+    "record-timeout",
+  ],
+  files: [
+    ...CommonArgs.projectSlug.keys,
+    ...CommonArgs.projectDir.keys,
+    ...CommonArgs.output.keys,
+    "path",
+    "from",
+  ],
+  generate: ["type", "name"],
+  init: ["name", "template", "t", "runtime", "integrations", "config", "c"],
+  install: ["target", "t"],
+  integration: [
+    ...CommonArgs.projectSlug.keys,
+    ...CommonArgs.projectDir.keys,
+    "scope",
+    "connection",
+    "expected-generation",
+    "args",
+    "search",
+    "tool",
+    "redirect-uri",
+    "timeout",
+  ],
+  knowledge: [
+    ...CommonArgs.projectSlug.keys,
+    ...CommonArgs.projectDir.keys,
+    "path",
+    "output-dir",
+    "knowledge-path",
+    "description",
+    "desc",
+    "slug",
+  ],
+  lock: ["project"],
+  mcp: ["port"],
+  merge: CommonArgs.into.keys,
+  open: [
+    ...CommonArgs.env.keys,
+    ...CommonArgs.projectSlug.keys,
+  ],
+  project: [
+    ...CommonArgs.projectSlug.keys,
+    ...CommonArgs.projectDir.keys,
+    ...CommonArgs.output.keys,
+    "credential-file",
+    "credential-mode",
+    "query",
+    "body",
+    "idempotency-key",
+    "if-match",
+    "last-event-id",
+    "conversation-id",
+    "eval-id",
+    "event-id",
+    "input-request-id",
+    "project-reference",
+    "run-id",
+    "webhook-definition-id",
+  ],
+  pull: [
+    ...CommonArgs.projectSlug.keys,
+    ...CommonArgs.projectDir.keys,
+    ...CommonArgs.branch.keys,
+    ...CommonArgs.env.keys,
+    ...CommonArgs.release.keys,
+    "projects",
+  ],
+  push: [
+    ...CommonArgs.projectSlug.keys,
+    ...CommonArgs.projectDir.keys,
+    ...CommonArgs.branch.keys,
+  ],
+  routes: CommonArgs.projectDir.keys,
+  schedule: [
+    ...CommonArgs.projectDir.keys,
+    "action",
+    "id",
+    "input",
+  ],
+  schema: ["category", "c"],
+  serve: ["mode", "m", "port", "p", "hostname", "host", "binary-path"],
+  start: ["port", "p", "project-dir", "project"],
+  studio: ["project", "branch", "b", "file"],
+  styles: ["subcommand", "config"],
+  task: ["name", "config"],
+  test: ["filter"],
+  up: CommonArgs.projectDir.keys,
+  uploads: [
+    ...CommonArgs.projectSlug.keys,
+    ...CommonArgs.projectDir.keys,
+    "path",
+    "output-dir",
+    "from",
+    "content-type",
+  ],
+  webhook: [
+    ...CommonArgs.projectDir.keys,
+    "action",
+    "id",
+    "payload",
+  ],
+  worker: [
+    "redis-url",
+    "redis",
+    "concurrency",
+    "c",
+    "poll-interval",
+    "stalled-threshold",
+    "executor",
+    "e",
+    "entrypoint",
+  ],
+  workflow: ["action", "name", "input"],
+};
+
 /** Boolean options accepted by every command, regardless of the command word. */
 export const GLOBAL_BOOLEAN_FLAGS: ReadonlySet<string> = new Set([
   "help",
@@ -377,28 +533,104 @@ function isValue(arg: string | undefined): boolean {
   return arg !== undefined && (!arg.startsWith("-") || /^-\d/.test(arg));
 }
 
-function isKnownCommandToken(value: string | undefined): boolean {
-  if (value === undefined) return false;
-  if (value === "help" || Object.hasOwn(COMMANDS, value)) return true;
+function getCommandName(value: string | undefined): string | undefined {
+  if (value === undefined) return undefined;
+  if (value === "help") return "help";
+  if (Object.hasOwn(COMMANDS, value)) return value;
 
-  return Object.values(COMMANDS).some((definition) => (definition.aliases ?? []).includes(value));
+  return Object.entries(COMMANDS).find(([, definition]) =>
+    (definition.aliases ?? []).includes(value)
+  )?.[0];
+}
+
+function getCommandDefinition(value: string | undefined) {
+  const commandName = getCommandName(value);
+  if (commandName === undefined || commandName === "help") return undefined;
+  return COMMANDS[commandName];
+}
+
+function isKnownCommandToken(value: string | undefined): boolean {
+  return getCommandName(value) !== undefined;
+}
+
+function equivalentOptionKeys(key: string): string[] {
+  for (const spec of Object.values(CommonArgs)) {
+    if (spec.keys.includes(key)) return spec.keys;
+  }
+
+  return [key];
+}
+
+function commandAcceptsOption(command: string | undefined, key: string): boolean {
+  const commandName = getCommandName(command);
+  if (commandName === undefined) return false;
+
+  const acceptedKeys = new Set(equivalentOptionKeys(key));
+  const commonKeys = COMMAND_VALUE_ARG_KEYS[commandName] ?? [];
+  if (commonKeys.some((commonKey) => acceptedKeys.has(commonKey))) return true;
+
+  const definition = getCommandDefinition(command);
+  for (const option of definition?.options ?? []) {
+    const names = option.flag.match(/--?[a-z0-9-]+/gi) ?? [];
+    if (names.some((name) => acceptedKeys.has(name.replace(/^-+/, "")))) return true;
+  }
+
+  return false;
+}
+
+function firstFollowingCommandToken(
+  args: string[],
+  start: number,
+  aliasMap: ReadonlyMap<string, string>,
+): string | undefined {
+  for (let i = start; i < args.length; i++) {
+    const arg = args[i];
+    if (!arg) continue;
+    if (!arg.startsWith("-")) {
+      if (isKnownCommandToken(arg)) return arg;
+      continue;
+    }
+
+    if (arg === "--") {
+      return args.slice(i + 1).find((value) => isKnownCommandToken(value));
+    }
+    if (arg.startsWith("--")) {
+      const eqIdx = arg.indexOf("=");
+      if (eqIdx !== -1) continue;
+
+      const key = arg.slice(2);
+      if (!isBooleanFlag(key, [] as string[]) && isValue(args[i + 1])) i++;
+      continue;
+    }
+
+    if (arg.length === 2) {
+      const short = arg.slice(1);
+      const key = aliasMap.get(short) ?? short;
+      const isBoolean = isBooleanFlag(key, [] as string[]) || isBooleanFlag(short, [] as string[]);
+      if (!isBoolean && isValue(args[i + 1])) i++;
+    }
+  }
+
+  return undefined;
 }
 
 function shouldConsumeLongOptionValue(
   key: string,
   next: string | undefined,
   positionalArgs: string[],
+  followingCommand: string | undefined,
 ): boolean {
   if (isBooleanFlag(key, positionalArgs) || !isValue(next)) return false;
 
   // Before the command word is known, an unknown option has unknown arity. Do
   // not let it consume a valid command token and silently route to the default
-  // command. Known value-taking options still keep their value, including values
-  // that happen to match command names.
+  // command. A later command that documents the option still keeps its value,
+  // including values that happen to match command names.
   if (
     positionalArgs.length === 0 &&
     isKnownCommandToken(next) &&
-    !GLOBAL_VALUE_FLAGS.has(key)
+    !GLOBAL_VALUE_FLAGS.has(key) &&
+    !commandAcceptsOption(followingCommand ?? "start", key)
   ) return false;
 
   return true;
@@ -447,7 +679,8 @@ function parse(
       const key = arg.slice(2);
       const next = args[i + 1];
 
-      if (shouldConsumeLongOptionValue(key, next, result._ as string[])) {
+      const followingCommand = firstFollowingCommandToken(args, i + 2, aliasMap);
+      if (shouldConsumeLongOptionValue(key, next, result._ as string[], followingCommand)) {
         setValue(key, next);
         i++;
         continue;
@@ -464,10 +697,13 @@ function parse(
 
       const isBoolean = isBooleanFlag(key, result._ as string[]) ||
         isBooleanFlag(short, result._ as string[]);
+      const followingCommand = firstFollowingCommandToken(args, i + 2, aliasMap);
       const shouldPreserveCommandToken = (result._ as string[]).length === 0 &&
         isKnownCommandToken(next) &&
         !GLOBAL_VALUE_FLAGS.has(key) &&
-        !GLOBAL_VALUE_FLAGS.has(short);
+        !GLOBAL_VALUE_FLAGS.has(short) &&
+        !commandAcceptsOption(followingCommand ?? "start", key) &&
+        !commandAcceptsOption(followingCommand ?? "start", short);
 
       if (!isBoolean && isValue(next) && !shouldPreserveCommandToken) {
         setValue(key, next);

@@ -85,19 +85,28 @@ describe("CLI agent UX contract", () => {
   });
 
   it("routes command-specific pre-command value options to the intended command", async () => {
-    const result = await runCli(["--config", "schema", "--json"]);
+    const cases = [
+      ["--config", "Unknown option --config"],
+      ["--branch", "Unknown option --branch"],
+      ["--environment", "Unknown option --environment"],
+      ["--release", "Unknown option --release"],
+    ] as const;
 
-    assertEquals(result.code, 2);
-    assertEquals(result.stderr, "");
-    const payload = parseJson(result.stdout) as {
-      success: boolean;
-      command: string;
-      error: { slug: string; message: string };
-    };
-    assertEquals(payload.success, false);
-    assertEquals(payload.command, "schema");
-    assertEquals(payload.error.slug, "invalid-arguments");
-    assertStringIncludes(payload.error.message, "Unknown option --config");
+    for (const [option, message] of cases) {
+      const result = await runCli([option, "schema", "--json"]);
+
+      assertEquals(result.code, 2);
+      assertEquals(result.stderr, "");
+      const payload = parseJson(result.stdout) as {
+        success: boolean;
+        command: string;
+        error: { slug: string; message: string };
+      };
+      assertEquals(payload.success, false);
+      assertEquals(payload.command, "schema");
+      assertEquals(payload.error.slug, "invalid-arguments");
+      assertStringIncludes(payload.error.message, message);
+    }
   });
 
   it("emits JSON for unknown schema command usage errors", async () => {
