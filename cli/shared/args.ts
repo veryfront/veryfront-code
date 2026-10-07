@@ -236,6 +236,11 @@ export const CommonArgs = {
 // Used once in cli/main.ts before routing to individual command handlers.
 
 const ARRAY_FLAGS = new Set(["candidate-model"]);
+const GLOBAL_VALUE_FLAGS: ReadonlySet<string> = new Set(
+  Object.values(CommonArgs)
+    .filter((spec) => spec.type !== "boolean")
+    .flatMap((spec) => spec.keys),
+);
 /** Boolean options accepted by every command, regardless of the command word. */
 export const GLOBAL_BOOLEAN_FLAGS: ReadonlySet<string> = new Set([
   "help",
@@ -379,26 +384,6 @@ function isKnownCommandToken(value: string | undefined): boolean {
   return Object.values(COMMANDS).some((definition) => (definition.aliases ?? []).includes(value));
 }
 
-function isCommonValueFlag(key: string): boolean {
-  return Object.values(CommonArgs).some((spec) =>
-    spec.type !== "boolean" && spec.keys.includes(key)
-  );
-}
-
-function isDocumentedValueFlag(key: string): boolean {
-  if (isCommonValueFlag(key)) return true;
-
-  for (const definition of Object.values(COMMANDS)) {
-    for (const option of definition.options ?? []) {
-      if (!option.flag.includes("<")) continue;
-      const names = option.flag.match(/--?[a-z0-9-]+/gi) ?? [];
-      if (names.some((name) => name.replace(/^-+/, "") === key)) return true;
-    }
-  }
-
-  return false;
-}
-
 function shouldConsumeLongOptionValue(
   key: string,
   next: string | undefined,
@@ -413,7 +398,7 @@ function shouldConsumeLongOptionValue(
   if (
     positionalArgs.length === 0 &&
     isKnownCommandToken(next) &&
-    !isDocumentedValueFlag(key)
+    !GLOBAL_VALUE_FLAGS.has(key)
   ) return false;
 
   return true;
@@ -481,8 +466,8 @@ function parse(
         isBooleanFlag(short, result._ as string[]);
       const shouldPreserveCommandToken = (result._ as string[]).length === 0 &&
         isKnownCommandToken(next) &&
-        !isDocumentedValueFlag(key) &&
-        !isDocumentedValueFlag(short);
+        !GLOBAL_VALUE_FLAGS.has(key) &&
+        !GLOBAL_VALUE_FLAGS.has(short);
 
       if (!isBoolean && isValue(next) && !shouldPreserveCommandToken) {
         setValue(key, next);
@@ -513,6 +498,7 @@ export function parseCliArgs(args: string[]): ParsedArgs {
       f: "force",
       s: "strict",
       j: "json",
+      o: "output",
       y: "yes",
       m: "mode",
     },

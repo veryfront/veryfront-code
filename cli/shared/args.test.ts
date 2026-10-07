@@ -331,6 +331,11 @@ describe("cli/shared/args", () => {
       assertEquals(output.output, "schema");
       assertEquals(output._, []);
 
+      const shortOutput = parseCliArgs(["-o", "schema", "--help", "--json"]);
+      assertEquals(shortOutput.output, "schema");
+      assertEquals(shortOutput.o, "schema");
+      assertEquals(shortOutput._, []);
+
       const project = parseCliArgs(["--project", "dev", "pull", "--json"]);
       assertEquals(project.project, "dev");
       assertEquals(project._, ["pull"]);
@@ -338,6 +343,13 @@ describe("cli/shared/args", () => {
       const projectSlug = parseCliArgs(["--project-slug", "dev", "pull", "--json"]);
       assertEquals(projectSlug["project-slug"], "dev");
       assertEquals(projectSlug._, ["pull"]);
+    });
+
+    it("should preserve command tokens after command-specific pre-command value options", () => {
+      const config = parseCliArgs(["--config", "schema", "--json"]);
+
+      assertEquals(config.config, true);
+      assertEquals(config._, ["schema"]);
     });
 
     it("should parse explicit false values for boolean flags", () => {

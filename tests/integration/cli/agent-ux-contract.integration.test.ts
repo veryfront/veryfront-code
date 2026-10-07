@@ -68,6 +68,38 @@ describe("CLI agent UX contract", () => {
     assertStringIncludes(payload.error.message, "Unknown option --definitely-bad");
   });
 
+  it("routes an unknown pre-command short option to the intended command JSON error", async () => {
+    const result = await runCli(["-x", "schema", "--json"]);
+
+    assertEquals(result.code, 2);
+    assertEquals(result.stderr, "");
+    const payload = parseJson(result.stdout) as {
+      success: boolean;
+      command: string;
+      error: { slug: string; message: string };
+    };
+    assertEquals(payload.success, false);
+    assertEquals(payload.command, "schema");
+    assertEquals(payload.error.slug, "invalid-arguments");
+    assertStringIncludes(payload.error.message, "Unknown option -x");
+  });
+
+  it("routes command-specific pre-command value options to the intended command", async () => {
+    const result = await runCli(["--config", "schema", "--json"]);
+
+    assertEquals(result.code, 2);
+    assertEquals(result.stderr, "");
+    const payload = parseJson(result.stdout) as {
+      success: boolean;
+      command: string;
+      error: { slug: string; message: string };
+    };
+    assertEquals(payload.success, false);
+    assertEquals(payload.command, "schema");
+    assertEquals(payload.error.slug, "invalid-arguments");
+    assertStringIncludes(payload.error.message, "Unknown option --config");
+  });
+
   it("emits JSON for unknown schema command usage errors", async () => {
     const result = await runCli(["schema", "no-such-command", "--json"]);
 
