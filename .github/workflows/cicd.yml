@@ -221,7 +221,7 @@ jobs:
       # how it shipped omitting the request headers `fetch` normally supplies.
       - name: Run Node egress transport tests
         if: ${{ matrix.shard == 2 }}
-        run: node ./tests/node/run-tests.mjs 'src/platform/compat/http/pinned-fetch.test.ts'
+        run: node ./tests/node/run-tests.mjs 'src/platform/compat/http/pinned-fetch.test.ts' 'tests/integration/semantic-unit-boundary/src/platform/compat/http/pinned-fetch.test.ts'
       - name: Generate integration inputs
         run: deno task generate
       - name: Run integration shard
