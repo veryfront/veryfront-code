@@ -27,7 +27,7 @@ function isSubstantiveReasoningPart(part: ReasoningPart): boolean {
 }
 
 function hasSameReasoningContent(left: ReasoningPart, right: ReasoningPart): boolean {
-  return left.text === right.text && left.signature === right.signature &&
+  return left.text.trim() === right.text.trim() && left.signature === right.signature &&
     left.redactedData === right.redactedData;
 }
 
@@ -107,12 +107,31 @@ export function buildFinalizedMessageState(
   const unmatchedPersistedReasoningParts = persistedMessage.parts.filter(
     (part): part is ReasoningPart => part.type === "reasoning" && isSubstantiveReasoningPart(part),
   );
+  const relocatedParts = new Set<ChatUiMessage["parts"][number]>();
+  const unmatchedTextParts = completedParts.filter((part) => part.type === "text");
   let hasPlacedMissingText = false;
   const missingFallbackParts = finalStepFallbackParts.flatMap((fallbackPart) => {
     if (fallbackPart.type === "text") {
       hasPlacedMissingText = true;
-      return appendMissingFallbackTextPart(persistedMessage.parts, { text: fallbackPart.text })
-        .slice(persistedMessage.parts.length);
+      const exactIndex = unmatchedTextParts.findIndex((part) =>
+        part.text.trim() === fallbackPart.text.trim()
+      );
+      if (!input.isAborted && exactIndex >= 0) {
+        const [matched] = unmatchedTextParts.splice(exactIndex, 1);
+        relocatedParts.add(matched!);
+        return [matched!];
+      }
+      const missing = appendMissingFallbackTextPart(unmatchedTextParts, { text: fallbackPart.text })
+        .slice(unmatchedTextParts.length);
+      const hasPrefix = unmatchedTextParts.length > 0 && ["\n\n", "\n", " ", ""]
+        .map((separator) => unmatchedTextParts.map((part) => part.text.trim()).join(separator))
+        .some((prefix) => prefix.length > 0 && fallbackPart.text.startsWith(prefix));
+      if (!input.isAborted && hasPrefix) {
+        const matched = unmatchedTextParts.splice(0);
+        matched.forEach((part) => relocatedParts.add(part));
+        return [...matched, ...missing];
+      }
+      return missing;
     }
     if (fallbackPart.type === "reasoning") {
       const matchingIndex = unmatchedPersistedReasoningParts.findIndex((part) =>
@@ -121,30 +140,33 @@ export function buildFinalizedMessageState(
       if (matchingIndex < 0) {
         return [fallbackPart];
       }
-      unmatchedPersistedReasoningParts.splice(matchingIndex, 1);
-      return [];
+      const [matched] = unmatchedPersistedReasoningParts.splice(matchingIndex, 1);
+      if (input.isAborted) return [];
+      relocatedParts.add(matched!);
+      return [matched!];
     }
     if (!isToolUiPart(fallbackPart)) return [];
     const persisted = completedParts.find((part) =>
       isToolUiPart(part) && part.toolCallId === fallbackPart.toolCallId
     );
+    if (persisted && !input.isAborted) relocatedParts.add(persisted);
     return persisted ? input.isAborted ? [] : [persisted] : [fallbackPart];
   });
-  const retainedParts = input.isAborted
-    ? completedParts
-    : completedParts.filter((part) =>
-      !isToolUiPart(part) || !finalStepFallbackParts.some((fallback) =>
-        isToolUiPart(fallback) && fallback.toolCallId === part.toolCallId
-      )
+  const retainedPrefix: ChatUiMessage["parts"] = [];
+  const reconciledParts = [...missingFallbackParts];
+  completedParts.forEach((part, index) => {
+    if (relocatedParts.has(part)) return;
+    const anchor = completedParts.slice(0, index).findLast((previous) =>
+      reconciledParts.includes(previous)
     );
+    if (anchor) reconciledParts.splice(reconciledParts.indexOf(anchor) + 1, 0, part);
+    else retainedPrefix.push(part);
+  });
   const fallbackParts = persistedMessage.parts.length === 0
     ? finalStepFallbackParts
     : hasPlacedMissingText
-    ? [...retainedParts, ...missingFallbackParts]
-    : appendMissingFallbackTextPart([
-      ...retainedParts,
-      ...missingFallbackParts,
-    ], input.finalStep);
+    ? [...retainedPrefix, ...reconciledParts]
+    : appendMissingFallbackTextPart([...retainedPrefix, ...reconciledParts], input.finalStep);
   const finalizedMessage = fallbackParts.length !== persistedMessage.parts.length ||
       fallbackParts.some((part, index) => part !== persistedMessage.parts[index])
     ? {

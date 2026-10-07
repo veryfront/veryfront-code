@@ -113,6 +113,88 @@ function getToolOutputErrorChunks(
 }
 
 describe("agent/hosted-chat-finalization", () => {
+  it("fails streamed empty reasoning shells with the canonical empty response error", async () => {
+    for (const extra of [{}, { signature: "" }, { redactedData: "" }]) {
+      const calls: string[] = [];
+      const terminalStates: HostedLifecycleTerminalState[] = [];
+      const chunks: ChatUiMessageChunk<MessageMetadata>[] = [];
+      await finalizeHostedChatRun({
+        kind: "response",
+        responseMessage: createResponseMessage({
+          parts: [
+            { type: "data-veryfront.runtime_context", data: { currentDateUtc: "2026-10-07" } },
+            { type: "reasoning", text: "", ...extra },
+          ],
+        }),
+        isAborted: false,
+        streamResult: createStreamResult({}),
+        lifecycleAdapter: createLifecycleAdapter({
+          calls,
+          terminalStates,
+          mirror: createDurableRunMirror({ calls, chunks }),
+        }),
+        mirroredToolChunkState: createMirroredToolChunkState(),
+        capturedMessageId: "assistant-message-1",
+        incompleteToolCallsPartErrorText: "Tool call did not complete",
+        streamError: null,
+        cleanup: async () => {},
+      });
+      assertEquals(terminalStates[0]!.status, "failed");
+      assertEquals(terminalStates[0]!.terminalErrorCode, "EMPTY_RESPONSE");
+      assertEquals(chunks, []);
+    }
+  });
+
+  it("projects recovered earlier reasoning before matched exact and partial streamed text", async () => {
+    for (const partial of [true, false]) {
+      const calls: string[] = [];
+      const terminalStates: HostedLifecycleTerminalState[] = [];
+      const chunks: ChatUiMessageChunk<MessageMetadata>[] = [];
+      const original = { type: "text" as const, text: partial ? "Hello" : "Done" };
+      const reasoning = { type: "reasoning" as const, text: "Why", signature: "sig" };
+      const finalText = partial ? "Hello world" : "Done";
+      const input = {
+        kind: "response" as const,
+        responseMessage: createResponseMessage({ parts: [original] }),
+        isAborted: false,
+        streamResult: createStreamResult({
+          response: {
+            messages: [{
+              role: "assistant",
+              content: [reasoning, { type: "text", text: finalText }],
+            }],
+          },
+        }),
+        lifecycleAdapter: createLifecycleAdapter({
+          calls,
+          terminalStates,
+          mirror: createDurableRunMirror({ calls, chunks }),
+        }),
+        mirroredToolChunkState: createMirroredToolChunkState(),
+        capturedMessageId: "assistant-message-1",
+        incompleteToolCallsPartErrorText: "Tool call did not complete",
+        streamError: null,
+        cleanup: async () => {},
+      };
+      await finalizeHostedChatRun(input);
+      const output = terminalStates[0]!.output as ChatUiMessage;
+      assertEquals(output.parts, [
+        reasoning,
+        original,
+        ...(partial ? [{ type: "text" as const, text: "world" }] : []),
+      ]);
+      assertEquals(chunks.map((chunk) => chunk.type), [
+        "reasoning-start",
+        "reasoning-delta",
+        "reasoning-end",
+        ...(partial ? ["text-start", "text-delta", "text-end"] : []),
+      ]);
+      chunks.length = 0;
+      await finalizeHostedChatRun({ ...input, responseMessage: output });
+      assertEquals(terminalStates[1]!.output, output);
+      assertEquals(chunks, []);
+    }
+  });
   for (const reasoning of [true, false]) {
     it(`orders recovered ${reasoning ? "reasoning" : "text suffix"} before an upgraded persisted tool in terminal and replay`, async () => {
       const calls: string[] = [];

@@ -1,6 +1,7 @@
 import { isRecord } from "../../chat/conversation.ts";
 import { extractFinalStepTerminalError } from "../../chat/final-step-fallback.ts";
 import { parseProviderError } from "../../chat/provider-errors.ts";
+import { isPersistedReasoningPart } from "../runtime/streamed-assistant-message.ts";
 import { isStreamTimeoutError } from "../streaming/stream-outcome.ts";
 
 const EMPTY_RESPONSE_TERMINAL_ERROR_CODE = "EMPTY_RESPONSE";
@@ -150,6 +151,12 @@ export function shouldFailEmptyHostedFinalizedMessage(input: {
   return !input.isAborted &&
     input.message.parts.every((part) =>
       isRecord(part) &&
-      (part.type === "data-veryfront.runtime_context" || part.type === "step-start")
+      (part.type === "data-veryfront.runtime_context" || part.type === "step-start" ||
+        (part.type === "reasoning" && !isPersistedReasoningPart({
+          id: "",
+          text: typeof part.text === "string" ? part.text : "",
+          signature: typeof part.signature === "string" ? part.signature : undefined,
+          redactedData: typeof part.redactedData === "string" ? part.redactedData : undefined,
+        })))
     );
 }

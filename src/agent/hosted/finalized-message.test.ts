@@ -524,3 +524,49 @@ Deno.test("final-step tool completion preserves terminal refusal and aborted inp
     );
   }
 });
+
+Deno.test("reasoning normalization retains the original signed part without duplicate replay", () => {
+  const original = { type: "reasoning" as const, text: " Thinking ", signature: "sig" };
+  const finalStep = { response: { messages: [{ role: "assistant", content: [original] }] } };
+  const state = buildFinalizedMessageState({
+    responseMessage: { id: "m", role: "assistant", parts: [original] },
+    isAborted: false,
+    finalStep,
+    incompleteToolCallsPartErrorText: "tool error",
+  });
+  assertEquals(state.sanitizedFinalizedMessage.parts, [original]);
+  assertEquals(
+    buildFinalizedMessageFallbackChunks({
+      ...state,
+      finalStep,
+      mirroredToolChunkState: createMirroredToolChunkState(),
+      capturedMessageId: "m",
+    }),
+    [],
+  );
+});
+
+Deno.test("recovered earlier reasoning precedes matched streamed reasoning and text", () => {
+  const first = { type: "reasoning" as const, text: "First", signature: "first" };
+  const second = { type: "reasoning" as const, text: "Second", signature: "second" };
+  const text = { type: "text" as const, text: "Done" };
+  for (const parts of [[text], [second, text]]) {
+    const finalStep = {
+      response: { messages: [{ role: "assistant", content: [first, second, text] }] },
+    };
+    const state = buildFinalizedMessageState({
+      responseMessage: { id: "m", role: "assistant", parts },
+      isAborted: false,
+      finalStep,
+      incompleteToolCallsPartErrorText: "tool error",
+    });
+    assertEquals(state.sanitizedFinalizedMessage.parts, [first, second, text]);
+    const repeated = buildFinalizedMessageState({
+      responseMessage: state.sanitizedFinalizedMessage,
+      isAborted: false,
+      finalStep,
+      incompleteToolCallsPartErrorText: "tool error",
+    });
+    assertEquals(repeated.sanitizedFinalizedMessage, state.sanitizedFinalizedMessage);
+  }
+});
