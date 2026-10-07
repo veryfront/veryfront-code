@@ -264,6 +264,26 @@ If `mcpServers` is omitted, the Veryfront Cloud preset includes
 `veryfrontApiMcpServer()` by default. Pass `mcpServers: []` to run without
 remote MCP tools.
 
+`veryfrontStudioMcpServer()` requires a usable Studio MCP transport. If the
+same service artifact should also run for clients or environments where Studio
+is unavailable, use the literal optional Studio server config:
+
+```ts
+import { startNodeVeryfrontCloudAgentService, veryfrontApiMcpServer } from "veryfront/agent";
+
+await startNodeVeryfrontCloudAgentService({
+  mcpServers: [
+    veryfrontApiMcpServer(),
+    { kind: "veryfront-studio", required: false },
+  ],
+});
+```
+
+With `required: false`, the service keeps Studio tools when the request has an
+eligible Studio client profile and `VERYFRONT_STUDIO_MCP_URL` is configured.
+Otherwise it omits those tools and continues running. Configured Studio
+transport and authentication failures still fail setup.
+
 ### Reach trusted deployment-local MCP servers
 
 The default remote MCP source uses guarded outbound networking. Keep that
