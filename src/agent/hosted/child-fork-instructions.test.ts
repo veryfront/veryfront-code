@@ -20,9 +20,13 @@ Deno.test("buildHostedChildForkInstructions scopes project_reference guidance", 
   const result = buildHostedChildForkInstructions({ projectId: "proj-123" });
 
   assert(
-    result.includes("Use project_reference when a tool schema requires it or the operation selects a billing project"),
+    result.includes(
+      "Use project_reference when a tool schema requires it or the operation selects a billing project",
+    ),
   );
-  assert(result.includes("Sandbox command and file tools use the sandbox_id returned by create_sandbox"));
+  assert(
+    result.includes("Sandbox command and file tools use the sandbox_id returned by create_sandbox"),
+  );
   assert(!result.includes("Almost ALL MCP tools require project_reference"));
   assert(!result.includes("create_sandbox_session"));
   assert(result.includes("Do not add project_reference or branch_id to those sandbox operations"));
