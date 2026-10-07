@@ -81,9 +81,14 @@ const intrinsicHasOwn = Object.hasOwn;
 const intrinsicIsArray = Array.isArray;
 const intrinsicArrayPush = Array.prototype.push;
 const intrinsicArrayIncludes = Array.prototype.includes;
+const intrinsicStringStartsWith = String.prototype.startsWith;
 
 function intrinsicIncludes<T>(values: readonly T[], value: T): boolean {
   return intrinsicReflectApply(intrinsicArrayIncludes, values, [value]);
+}
+
+function intrinsicStartsWith(value: string, prefix: string): boolean {
+  return intrinsicReflectApply(intrinsicStringStartsWith, value, [prefix]);
 }
 
 function filterToolDefinitions(
@@ -547,6 +552,19 @@ function appendForwardedToolDefinitions(
   }
 }
 
+function isUnavailableOptionalRemoteTool(
+  toolName: string,
+  names: readonly string[] | undefined,
+  prefixes: readonly string[] | undefined,
+): boolean {
+  if (names !== undefined && intrinsicIncludes(names, toolName)) return true;
+  for (let index = 0; index < (prefixes?.length ?? 0); index++) {
+    const prefix = prefixes?.[index];
+    if (prefix !== undefined && intrinsicStartsWith(toolName, prefix)) return true;
+  }
+  return false;
+}
+
 /**
  * Get available tools based on agent configuration.
  * When tools === true, loads all tools from registry.
@@ -564,6 +582,8 @@ export async function getAvailableTools(
     forwardedRemoteToolDefinitions?: ToolDefinition[];
     remoteToolSources?: RemoteToolSource[];
     remoteToolContext?: ToolExecutionContext;
+    unavailableOptionalRemoteToolNames?: string[];
+    unavailableOptionalRemoteToolPrefixes?: string[];
     onIntegrationToolDiscovery?: (result: RemoteIntegrationToolDiscoveryResult) => void;
     sourceIntegrationPolicy?: SourceIntegrationPolicyManifest;
     strictConfiguredToolsOnly?: boolean;
@@ -676,6 +696,16 @@ export async function getAvailableTools(
 
       if (remoteToolNames.has(name)) {
         explicitlyRequestedRemoteToolNames.add(name);
+        continue;
+      }
+
+      if (
+        isUnavailableOptionalRemoteTool(
+          name,
+          options?.unavailableOptionalRemoteToolNames,
+          options?.unavailableOptionalRemoteToolPrefixes,
+        )
+      ) {
         continue;
       }
 

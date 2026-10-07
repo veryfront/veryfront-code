@@ -14,14 +14,20 @@ import {
   resolveRelativeFrameworkSourceImport,
 } from "#veryfront/platform/compat/framework-source-resolver.ts";
 import { isWithinDirectory } from "#veryfront/utils/path-utils.ts";
-import { resolveInternalModuleTarget } from "../../../veryfront-module-urls.ts";
+import {
+  resolveInternalModuleTarget,
+  resolveVeryfrontModuleTarget,
+} from "../../../veryfront-module-urls.ts";
+import { ROOT_BUNDLED_EXTENSION_SOURCES } from "#veryfront/extensions/root-bundled-sources.ts";
 import {
   EMBEDDED_SRC_DIR,
   EXTENSIONS,
   FRAMEWORK_LOOKUPS,
   FRAMEWORK_ROOT,
+  getFrameworkLookups,
   LOG_PREFIX,
 } from "./constants.ts";
+import { isCompiledBinary } from "#veryfront/utils/platform.ts";
 
 export async function tryReadWithExtensions(
   fs: ReturnType<typeof createFileSystem>,
@@ -146,9 +152,9 @@ export async function resolveVeryfrontSourcePath(
   specifier: string,
   existsFn: (path: string) => Promise<boolean> = exists,
 ): Promise<string | null> {
-  if (!specifier.startsWith("#veryfront/")) return null;
-
-  const mappedTarget = resolveInternalModuleTarget(specifier);
+  const mappedTarget = specifier.startsWith("#veryfront/")
+    ? resolveInternalModuleTarget(specifier)
+    : resolveVeryfrontModuleTarget(specifier);
   if (!mappedTarget?.startsWith("./src/")) return null;
 
   const relativePath = mappedTarget.slice("./src/".length);
@@ -203,6 +209,29 @@ export async function resolveVeryfrontSourcePath(
     }
   }
 
+  return null;
+}
+
+/** Only exact, build-owned root-bundled entries can enter the framework transform graph. */
+export async function resolveRootBundledExtensionSourcePath(
+  specifier: string,
+  existsFn: (path: string) => Promise<boolean> = exists,
+  compiled = isCompiledBinary(),
+): Promise<string | null> {
+  const entry = Object.hasOwn(ROOT_BUNDLED_EXTENSION_SOURCES, specifier)
+    ? ROOT_BUNDLED_EXTENSION_SOURCES[specifier]
+    : undefined;
+  if (!entry) return null;
+  for (const [, directory] of getFrameworkLookups(compiled)) {
+    const candidate = directory === EMBEDDED_SRC_DIR
+      ? join(directory, "root-bundled", entry + ".src")
+      : join(FRAMEWORK_ROOT, entry);
+    if (await existsFn(candidate)) return candidate;
+    if (directory !== EMBEDDED_SRC_DIR) {
+      const javascript = candidate.replace(/\.ts$/, ".js");
+      if (await existsFn(javascript)) return javascript;
+    }
+  }
   return null;
 }
 

@@ -109,6 +109,19 @@ describe("executor discovery operations", () => {
     assertEquals(definition.mcpServers, [{ kind: "veryfront-studio", required: false }]);
   });
 
+  it("rejects required on API MCP at the strict executor definition boundary", () => {
+    assertThrows(
+      () =>
+        parseDiscoveryData(getExecutorAgentDefinitionSchema(), {
+          id: "api-required",
+          name: "API Required",
+          description: "Use available tools",
+          instructions: "Use available tools",
+          mcpServers: [{ kind: "veryfront-api", required: false }],
+        }, true),
+    );
+  });
+
   it("validates only own definition fields without reading inherited selectors", () => {
     let reads = 0;
     const definition = Object.create({

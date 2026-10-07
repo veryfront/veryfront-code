@@ -5,9 +5,59 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   resolveFrameworkFile,
   resolveRelativeFrameworkImport,
+  resolveRootBundledExtensionSourcePath,
   tryReadWithExtensions,
 } from "./path-resolver.ts";
 import { EMBEDDED_SRC_DIR, FRAMEWORK_ROOT, getFrameworkLookups } from "./constants.ts";
+
+describe("root-bundled extension sources", () => {
+  const specifier = "@veryfront/ext-eval-report-mlflow";
+  const entry = "extensions/ext-eval-report-mlflow/src/index.ts";
+  const sourcePath = join(FRAMEWORK_ROOT, entry);
+  const embeddedPath = join(EMBEDDED_SRC_DIR, "root-bundled", entry + ".src");
+
+  it("uses live sources in development and pristine embedded sources in compiled binaries", async () => {
+    const exists = (path: string) => Promise.resolve(path === sourcePath || path === embeddedPath);
+    assertEquals(await resolveRootBundledExtensionSourcePath(specifier, exists, false), sourcePath);
+    assertEquals(
+      await resolveRootBundledExtensionSourcePath(specifier, exists, true),
+      embeddedPath,
+    );
+  });
+
+  it("supports the JavaScript entry in a published root package", async () => {
+    const javascript = sourcePath.replace(/\.ts$/, ".js");
+    assertEquals(
+      await resolveRootBundledExtensionSourcePath(
+        specifier,
+        (path) => Promise.resolve(path === javascript),
+        false,
+      ),
+      javascript,
+    );
+  });
+
+  it("refuses unknown packages, subpaths, and traversal without probing the filesystem", async () => {
+    let probes = 0;
+    for (
+      const candidate of [
+        "@veryfront/ext-unknown",
+        specifier + "/src/index.ts",
+        specifier + "/../../../secret",
+        "__proto__",
+      ]
+    ) {
+      assertEquals(
+        await resolveRootBundledExtensionSourcePath(candidate, () => {
+          probes++;
+          return Promise.resolve(true);
+        }),
+        null,
+      );
+    }
+    assertEquals(probes, 0);
+  });
+});
 
 function createMockFs(files: Record<string, string>) {
   return {

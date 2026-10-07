@@ -569,7 +569,8 @@ jobs:
             tests/integration/observability/project-http-lifecycle.test.ts
           # The CLI regression changes cwd, so give it a separate process.
           deno task test:file --coverage=coverage-cli \
-            tests/integration/cli/merge-preview.integration.test.ts
+            tests/integration/cli/merge-preview.integration.test.ts \
+            tests/integration/cli/production-startup-cache.integration.test.ts
           # Kept as separate reports: block ids are normalized only when every
           # report is merged at once (coverage gate and Sonar), so an early
           # merge here must not rewrite them.

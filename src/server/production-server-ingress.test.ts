@@ -1,4 +1,4 @@
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { isDeno } from "#veryfront/platform/compat/runtime.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
@@ -53,7 +53,11 @@ describe("production server ingress", () => {
           headers: { "x-project-slug": "demo", "x-token": "proxy-resolved-token" },
         });
       },
-    }, { bootstrap: () => Promise.reject(new Error("unexpected bootstrap")) });
+    }, {
+      bootstrap: () => Promise.reject(new Error("unexpected bootstrap")),
+      // The CLI's local combined mode, the one setup the interceptor is for.
+      isLocalCliProxyMode: () => true,
+    });
 
     const request = new Request("http://localhost/page", {
       headers: { "x-token": API_TOKEN, "X-Veryfront-Inference-Token": INFERENCE_TOKEN },
@@ -72,5 +76,49 @@ describe("production server ingress", () => {
     assertEquals(seenByInterceptor, [null]);
     assertEquals(probes.saw(API_TOKEN), false);
     assertEquals(probes.saw(INFERENCE_TOKEN), false);
+  });
+
+  it("refuses the interceptor for a bootstrapped proxy runtime outside the local CLI", async () => {
+    const adapter = createMockAdapter();
+    await assertRejects(
+      () =>
+        startProductionServerWithDependencies({
+          projectDir: "/combined-mode",
+          port: 0,
+          adapter,
+          bootstrapResult: createBootstrap(adapter),
+          unhandledRejectionGuard: false,
+          requestInterceptor: (request) => request,
+        }, {
+          bootstrap: () => Promise.reject(new Error("unexpected bootstrap")),
+          isLocalCliProxyMode: () => false,
+        }),
+      TypeError,
+      "local development only",
+    );
+  });
+
+  it("reads the local CLI marker before bootstrap, so project code cannot forge it", async () => {
+    let forged = false;
+    const adapter = createMockAdapter();
+    await assertRejects(
+      () =>
+        startProductionServerWithDependencies({
+          projectDir: "/combined-mode",
+          port: 0,
+          adapter,
+          unhandledRejectionGuard: false,
+          requestInterceptor: (request) => request,
+        }, {
+          // Stands in for project code, loaded by bootstrap, setting the marker.
+          bootstrap: () => {
+            forged = true;
+            return Promise.resolve(createBootstrap(adapter));
+          },
+          isLocalCliProxyMode: () => forged,
+        }),
+      TypeError,
+      "local development only",
+    );
   });
 });

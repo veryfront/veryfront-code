@@ -63,7 +63,7 @@ export function ChatInputField(
       disabled={c.isLoading || c.isListening}
       multiline
       className={cn(
-        "min-h-9 w-full min-w-0 py-1.5 text-base leading-6 text-[var(--foreground)] placeholder:text-[var(--faint)]",
+        "min-h-9 w-full min-w-0 py-1.5 text-base leading-6 text-[var(--foreground)] placeholder:text-[var(--input-placeholder)]",
         className,
       )}
     />

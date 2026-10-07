@@ -142,6 +142,10 @@ const TaskDateParse = Date.parse;
 const TaskSetTimeout = globalThis.setTimeout;
 const TaskClearTimeout = globalThis.clearTimeout;
 const TaskAbortController = AbortController;
+const TaskAbortControllerSignalGetter = Object.getOwnPropertyDescriptor(
+  AbortController.prototype,
+  "signal",
+)!.get!;
 const TaskAbort = AbortController.prototype.abort;
 const TaskAbortSignalAny = AbortSignal.any;
 const RunStopTimeout = AbortSignal.timeout;
@@ -168,6 +172,8 @@ const WORKFLOW_PAUSE_ACK_RETRY_MS = 100;
 const WORKFLOW_PAUSE_ACK_TIMEOUT_MS = 2_000;
 /** Backoff between unknown decision rounds while retaining the safe boundary. */
 const WORKFLOW_PAUSE_CHECK_BACKOFF_MS = 30_000;
+/** Overall decision deadline; unknown authority leaves a resumable hold. */
+const DEFAULT_WORKFLOW_PAUSE_DECISION_TIMEOUT_MS = 60_000;
 /**
  * How often a manual resume retries, 100ms apart, while the paused execution still holds the
  * run: about 35s, past the 30s workflow lock lease a parking execution that died may leave.
@@ -465,6 +471,8 @@ export interface ProjectRunExecuteHandlerDeps {
     signal: AbortSignal;
   }): Promise<ProjectRunExecuteResponse>;
   workflowResumeTimeoutMs?: number;
+  /** Overall pause decision deadline; defaults to 60 seconds. */
+  workflowPauseDecisionTimeoutMs?: number;
   /** How long a response waits for workflow client cleanup; defaults to 5 seconds. */
   workflowClientDestroyTimeoutMs?: number;
   sleep(ms: number): Promise<void>;
@@ -1514,7 +1522,7 @@ async function resumeWaitingWorkflowRun(
   deps: ProjectRunExecuteHandlerDeps,
   pollingStopped: AbortSignal,
   cancelRun: () => Promise<void>,
-  acknowledgePause?: () => Promise<boolean | undefined>,
+  acknowledgePause?: (decisionStopped?: AbortSignal) => Promise<boolean | undefined>,
 ): Promise<{ run: WorkflowRunView } | { failure: string }> {
   if (client.statePersistence !== "durable") {
     return { failure: "Cannot resume a workflow run without durable workflow persistence" };
@@ -1614,36 +1622,64 @@ async function resumeWaitingWorkflowRun(
  * the pause instead of releasing it.
  */
 async function awaitRunPauseDecision(
-  acknowledge: () => Promise<boolean | undefined>,
+  acknowledge: (decisionStopped?: AbortSignal) => Promise<boolean | undefined>,
   signal: AbortSignal,
-  deps: Pick<ProjectRunExecuteHandlerDeps, "sleep">,
+  deps: Pick<ProjectRunExecuteHandlerDeps, "sleep" | "workflowPauseDecisionTimeoutMs">,
   runId: string,
   pollingStopped?: AbortSignal,
 ): Promise<boolean> {
-  // A stopped poll (the resume request already answered) ends the wait like a
-  // cancellation: the run holds its boundary and a later dispatch decides.
-  const ended = () =>
-    isAbortSignalAborted(signal) ||
-    (pollingStopped !== undefined && isAbortSignalAborted(pollingStopped));
-  for (let round = 1; !ended(); round++) {
-    const decision = await acknowledge();
-    // A decision that arrives after the wait ended answers nobody: the request
-    // already reported the hold, so even a continue must not release the run.
-    if (ended()) break;
-    if (decision !== undefined) return decision;
-    // An unknown reply may hide a committed stop. Hold the durable boundary until
-    // the current authority explicitly permits continuation or cancellation ends it.
-    serverLogger.warn("[project-run-execute] Pause decision unknown; holding the boundary", {
-      runId,
-      round,
-    });
-    await sleepUntilAborted(
-      (ms) => deps.sleep(ms),
-      WORKFLOW_PAUSE_CHECK_BACKOFF_MS,
-      pollingStopped === undefined ? [signal] : [signal, pollingStopped],
-    );
+  const deadline = new TaskAbortController();
+  const timer = TaskSetTimeout(
+    () => ReflectApply(TaskAbort, deadline, []),
+    deps.workflowPauseDecisionTimeoutMs ?? DEFAULT_WORKFLOW_PAUSE_DECISION_TIMEOUT_MS,
+  );
+  const stopped = ReflectApply(TaskAbortSignalAny, AbortSignal, [[
+    signal,
+    ReflectApply(TaskAbortControllerSignalGetter, deadline, []) as AbortSignal,
+    ...(pollingStopped ? [pollingStopped] : []),
+  ]]) as AbortSignal;
+  try {
+    for (let round = 1; !isAbortSignalAborted(stopped); round++) {
+      const decision = await pauseAcknowledgementUntilStopped(acknowledge, stopped);
+      // A late continue cannot release a boundary already reported as held.
+      if (isAbortSignalAborted(stopped)) break;
+      if (decision !== undefined) return decision;
+      serverLogger.warn("[project-run-execute] Pause decision unknown; holding the boundary", {
+        runId,
+        round,
+      });
+      await sleepUntilAborted(
+        (ms) => deps.sleep(ms),
+        WORKFLOW_PAUSE_CHECK_BACKOFF_MS,
+        [stopped],
+      );
+    }
+    return true;
+  } finally {
+    TaskClearTimeout(timer);
   }
-  return true;
+}
+
+/** A deadline must also end an in-flight acknowledgement that never answers. */
+async function pauseAcknowledgementUntilStopped(
+  acknowledge: (decisionStopped?: AbortSignal) => Promise<boolean | undefined>,
+  stopped: AbortSignal,
+): Promise<boolean | undefined> {
+  if (isAbortSignalAborted(stopped)) return true;
+  let finish: (decision: boolean | undefined) => void = () => {};
+  let fail: (error: unknown) => void = () => {};
+  const answer = new IntrinsicPromise<boolean | undefined>((resolve, reject) => {
+    finish = resolve;
+    fail = reject;
+  });
+  const onAbort = () => finish(true);
+  addAbortSignalListenerOnce(stopped, onAbort);
+  try {
+    void primordialPromiseThen(acknowledge(stopped), finish, fail);
+    return await answer;
+  } finally {
+    removeAbortSignalListener(stopped, onAbort);
+  }
 }
 
 /**
@@ -1697,7 +1733,7 @@ async function resumeManuallyPausedRun(
   deps: ProjectRunExecuteHandlerDeps,
   pollingStopped: AbortSignal,
   cancelRun: () => Promise<void>,
-  acknowledgePause?: () => Promise<boolean | undefined>,
+  acknowledgePause?: (decisionStopped?: AbortSignal) => Promise<boolean | undefined>,
 ): Promise<{ run: WorkflowRunView } | { failure: string }> {
   const settle = () =>
     waitForWorkflowResult(client, runId, signal, deps, undefined, pollingStopped, cancelRun);
@@ -1768,7 +1804,7 @@ async function executeWorkflowRun(
   signal: AbortSignal,
   deps: ProjectRunExecuteHandlerDeps,
   acknowledgeStop?: () => Promise<void>,
-  acknowledgePause?: () => Promise<boolean | undefined>,
+  acknowledgePause?: (decisionStopped?: AbortSignal) => Promise<boolean | undefined>,
   releaseStop?: () => void,
   runAgentNode?: ReturnType<typeof createWorkflowAgentNodeRunner>,
 ): Promise<ProjectRunExecuteResponse> {
@@ -1844,7 +1880,7 @@ async function runDiscoveredWorkflow(
   deps: ProjectRunExecuteHandlerDeps,
   startedAt: number,
   acknowledgeStop?: () => Promise<void>,
-  acknowledgePause?: () => Promise<boolean | undefined>,
+  acknowledgePause?: (decisionStopped?: AbortSignal) => Promise<boolean | undefined>,
   releaseStop?: () => void,
   runAgentNode?: ReturnType<typeof createWorkflowAgentNodeRunner>,
 ): Promise<ProjectRunExecuteResponse> {
@@ -1914,8 +1950,8 @@ async function runDiscoveredWorkflow(
 
     let run: WorkflowRunView;
     if (request.resume) {
-      const resumeRequest = new AbortController();
-      const pollingStopped = new AbortController();
+      const resumeRequest = new TaskAbortController();
+      const pollingStopped = new TaskAbortController();
       let cancellation: Promise<void> | undefined;
       let cancellationResult: WorkflowRunView | undefined;
       const cancelRun = () =>
@@ -1939,7 +1975,7 @@ async function runDiscoveredWorkflow(
           };
         })();
       const forwardCancellation = () => {
-        resumeRequest.abort();
+        ReflectApply(TaskAbort, resumeRequest, []);
         void cancelRun().catch(() => {});
       };
       signal.addEventListener("abort", forwardCancellation, { once: true });
@@ -1948,9 +1984,9 @@ async function runDiscoveredWorkflow(
         client,
         request.runId,
         request.resume,
-        resumeRequest.signal,
+        ReflectApply(TaskAbortControllerSignalGetter, resumeRequest, []) as AbortSignal,
         deps,
-        pollingStopped.signal,
+        ReflectApply(TaskAbortControllerSignalGetter, pollingStopped, []) as AbortSignal,
         cancelRun,
         acknowledgePause,
       ).then(async (result) => {
@@ -1973,7 +2009,7 @@ async function runDiscoveredWorkflow(
         new Promise<{ timedOut: true }>((resolve) => {
           timer = setTimeout(() => {
             signal.removeEventListener("abort", forwardCancellation);
-            pollingStopped.abort();
+            ReflectApply(TaskAbort, pollingStopped, []);
             resolve({ timedOut: true });
           }, deps.workflowResumeTimeoutMs ?? DEFAULT_WORKFLOW_STATUS_TIMEOUT_MS);
         }),
@@ -2410,13 +2446,14 @@ function readSealedBearerToken(req: Request): string | undefined {
  * A `{ "stop": true }` reply means the API confirmed a requested pause for this
  * attempt, or the attempt no longer holds the run. The call is idempotent, so a
  * transport error or 5xx is retried a few times and then answers `undefined`.
- * Unknown, rejected, and malformed replies never authorize continuation.
+ * Permanent 401/403/404 rejections hold immediately. Other unknown and malformed
+ * replies never authorize continuation.
  */
 function createRunPauseAcknowledger(
   req: Request,
   runId: string,
   sleep: (ms: number) => Promise<void>,
-): (() => Promise<boolean | undefined>) | undefined {
+): ((decisionStopped?: AbortSignal) => Promise<boolean | undefined>) | undefined {
   const rawToken = readIngressCredential(req, INGRESS_RUN_STOP_TOKEN_HEADER);
   if (rawToken === null) return undefined;
   const token = requireInferenceProviderCredential(rawToken, "Run stop token header");
@@ -2435,8 +2472,12 @@ function createRunPauseAcknowledger(
   // Captured before project code runs, so a replaced `Request.prototype.signal` getter cannot
   // throw from or forge the acknowledgement.
   const signal = IntrinsicReflectApply(RequestSignalGetter, req, []) as AbortSignal;
-  return async () => {
+  return async (decisionStopped) => {
+    const requestStopped = decisionStopped
+      ? ReflectApply(TaskAbortSignalAny, AbortSignal, [[signal, decisionStopped]]) as AbortSignal
+      : signal;
     for (let attempt = 1;; attempt++) {
+      if (isAbortSignalAborted(requestStopped)) return true;
       try {
         const response = await transport(url, {
           method: "POST",
@@ -2445,18 +2486,23 @@ function createRunPauseAcknowledger(
           body: "{}",
           // A cancelled request stops waiting for the answer at once.
           signal: ReflectApply(TaskAbortSignalAny, AbortSignal, [[
-            signal,
+            requestStopped,
             ReflectApply(RunStopTimeout, AbortSignal, [WORKFLOW_PAUSE_ACK_TIMEOUT_MS]),
           ]]),
         });
         const status = ReflectApply(ResponseStatusGetter, response, []) as number;
         if (status < 500) {
           if (!ReflectApply(ResponseOkGetter, response, [])) {
-            if (status === 401 || status === 403) {
-              serverLogger.warn("[project-run-execute] Pause acknowledgement was not authorized", {
-                runId,
-                status,
-              });
+            if (status === 401 || status === 403 || status === 404) {
+              serverLogger.warn(
+                "[project-run-execute] Pause acknowledgement was rejected; holding the boundary",
+                {
+                  runId,
+                  status,
+                },
+              );
+              await cancelAcknowledgementBody(response);
+              return true;
             }
             await cancelAcknowledgementBody(response);
             return undefined;
@@ -2474,14 +2520,14 @@ function createRunPauseAcknowledger(
         // A transport failure or unreadable reply is retried like a 5xx.
       }
       // A cancelled request stops at this boundary; the cancellation then ends the run.
-      if (isAbortSignalAborted(signal)) return true;
+      if (isAbortSignalAborted(requestStopped)) return true;
       if (attempt >= WORKFLOW_PAUSE_ACK_ATTEMPTS) {
         serverLogger.warn("[project-run-execute] Could not read the pause acknowledgement", {
           runId,
         });
         return undefined;
       }
-      await sleep(WORKFLOW_PAUSE_ACK_RETRY_MS);
+      await sleepUntilAborted(sleep, WORKFLOW_PAUSE_ACK_RETRY_MS, [requestStopped]);
     }
   };
 }
@@ -4118,7 +4164,7 @@ function executeProjectRun(
   deps: ProjectRunExecuteHandlerDeps,
   taskClock: TaskDeadlineClock,
   acknowledgeStop?: () => Promise<void>,
-  acknowledgePause?: () => Promise<boolean | undefined>,
+  acknowledgePause?: (decisionStopped?: AbortSignal) => Promise<boolean | undefined>,
   releaseStop?: () => void,
 ): Promise<ProjectRunExecuteResponse> {
   if (request.kind === "task") {

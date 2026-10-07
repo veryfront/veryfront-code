@@ -203,7 +203,11 @@ describe("dependency metadata history API", () => {
       ...response(),
       entries: [{ dependencies: { [marker]: "1.0.0" }, expires_at: 1_800_000_000_000 }],
     });
-    installMockFetch(() => Promise.resolve(prepared));
+    let transportCalls = 0;
+    installMockFetch(() => {
+      transportCalls++;
+      return Promise.resolve(prepared);
+    });
     const ops = createOps();
     const prior = Object.getOwnPropertyDescriptor(Array.prototype, "0");
     const define = Object.defineProperty;
@@ -222,15 +226,21 @@ describe("dependency metadata history API", () => {
         define(this, "0", { value, writable: true, enumerable: true, configurable: true });
       },
     });
-    let history: Awaited<ReturnType<typeof ops.readDependencyMetadataHistory>>;
     try {
-      history = await ops.readDependencyMetadataHistory("project-slug", PROJECT_ID, null);
+      const error = await assertRejects(
+        () => ops.readDependencyMetadataHistory("project-slug", PROJECT_ID, null),
+        Error,
+        "Refused a credential-bearing request",
+      );
+      assertInstanceOf(error, Error);
+      assertEquals(error.message.includes(marker), false);
+      assertEquals(error.message.includes("project-token"), false);
     } finally {
       if (prior) define(Array.prototype, "0", prior);
       else Reflect.deleteProperty(Array.prototype, "0");
     }
     assertEquals(exposed, false);
-    assertEquals(history.entries[0]?.dependencies[marker], "1.0.0");
+    assertEquals(transportCalls, 0);
   });
 
   it("parses authenticated history without calling a replaced JSON parser", async () => {

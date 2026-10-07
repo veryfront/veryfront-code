@@ -535,6 +535,11 @@ await extension.teardown?.();
 if (registry.has("mlflow")) {
   throw new Error("bundled MLflow exporter did not unregister");
 }
+
+const { runRootBundledSsrProbe } = await import(${JSON.stringify(
+  new URL("./npm-root-bundled-ssr-probe.mjs", import.meta.url).href,
+)});
+await runRootBundledSsrProbe("./node_modules/veryfront/esm");
 `;
 	const child = new Deno.Command("node", {
 		args: [

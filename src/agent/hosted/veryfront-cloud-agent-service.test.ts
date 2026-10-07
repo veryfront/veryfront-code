@@ -61,6 +61,9 @@ type CaptureRecord = {
   context: ApplicationErrorContext;
 };
 
+const DEPLOYMENT_ARTIFACT_GETTER_READS_KEY = "__veryfrontDeploymentArtifactGetterReads";
+const SPOOFED_DEPLOYMENT_ARTIFACT = "20261007183045-ffffffffffff";
+
 function systemIncludes(system: AgentSystem | undefined, text: string): boolean {
   return typeof system === "string"
     ? system.includes(text)
@@ -406,7 +409,11 @@ Help users build with Veryfront.
 
 function writeCodeAgentDefinition(
   rootDir: string,
-  options: { agentsDir?: string; toolsDir?: string } = {},
+  options: {
+    agentsDir?: string;
+    toolsDir?: string;
+    agentModulePrelude?: readonly string[];
+  } = {},
 ): void {
   const agentsDir = resolve(rootDir, options.agentsDir ?? "agents");
   const toolsDir = resolve(rootDir, options.toolsDir ?? "tools");
@@ -417,6 +424,7 @@ function writeCodeAgentDefinition(
     [
       'import { agent } from "veryfront/agent";',
       "",
+      ...(options.agentModulePrelude ?? []),
       "export default agent({",
       '  id: "support",',
       '  model: "openai/gpt-5.4",',
@@ -441,6 +449,34 @@ function writeCodeAgentDefinition(
       "",
     ].join("\n"),
   );
+}
+
+function deploymentArtifactGetterPrelude(): readonly string[] {
+  return [
+    `Reflect.set(globalThis, "${DEPLOYMENT_ARTIFACT_GETTER_READS_KEY}", 0);`,
+    'Object.defineProperty(Object.prototype, "deploymentArtifact", {',
+    "  get() {",
+    `    const current = Reflect.get(globalThis, "${DEPLOYMENT_ARTIFACT_GETTER_READS_KEY}");`,
+    `    Reflect.set(globalThis, "${DEPLOYMENT_ARTIFACT_GETTER_READS_KEY}", typeof current === "number" ? current + 1 : 1);`,
+    `    return "${SPOOFED_DEPLOYMENT_ARTIFACT}";`,
+    "  },",
+    "  configurable: true,",
+    "});",
+    "",
+  ];
+}
+
+function restoreDeploymentArtifactPrototype(original: PropertyDescriptor | undefined): void {
+  if (original) {
+    Object.defineProperty(Object.prototype, "deploymentArtifact", original);
+  } else {
+    Reflect.deleteProperty(Object.prototype, "deploymentArtifact");
+  }
+  Reflect.deleteProperty(globalThis, DEPLOYMENT_ARTIFACT_GETTER_READS_KEY);
+}
+
+function deploymentArtifactGetterReads(): unknown {
+  return Reflect.get(globalThis, DEPLOYMENT_ARTIFACT_GETTER_READS_KEY);
 }
 
 const createBashTool: CreateSandboxBashTool = () => Promise.resolve({ tools: {} });
@@ -2079,6 +2115,87 @@ Deno.test("hosted child execution config keeps exact non-empty skill authorizati
 });
 
 Deno.test({
+  name:
+    "createNodeVeryfrontCloudAgentServiceRuntime ignores deploymentArtifact inherited during project imports",
+  fn: async () => {
+    const originalDeploymentArtifact = Object.getOwnPropertyDescriptor(
+      Object.prototype,
+      "deploymentArtifact",
+    );
+    try {
+      await withTempDir(async (rootDir) => {
+        writeCodeAgentDefinition(rootDir, {
+          agentModulePrelude: deploymentArtifactGetterPrelude(),
+        });
+
+        const bundle = await createNodeVeryfrontCloudAgentServiceRuntime({
+          serviceName: "inherited-artifact-agent-test",
+          agentSource: "code",
+          entrypointUrl: pathToFileURL(resolve(rootDir, "src", "main.ts")),
+          createBashTool,
+          signals: [],
+          env: {
+            NODE_ENV: "test",
+            VERYFRONT_API_URL: "https://api.example.com",
+            PORT: "3152",
+            ALLOWED_ORIGINS: "https://studio.example.com",
+          },
+        });
+
+        const response = await bundle.runtime.request("/version");
+
+        assertEquals(response.status, 200);
+        assertEquals(await response.json(), { artifact: null });
+        assertEquals(deploymentArtifactGetterReads(), 0);
+      });
+    } finally {
+      restoreDeploymentArtifactPrototype(originalDeploymentArtifact);
+    }
+  },
+});
+
+Deno.test({
+  name:
+    "createNodeVeryfrontCloudAgentServiceRuntime snapshots own deploymentArtifact before project imports",
+  fn: async () => {
+    const originalDeploymentArtifact = Object.getOwnPropertyDescriptor(
+      Object.prototype,
+      "deploymentArtifact",
+    );
+    try {
+      await withTempDir(async (rootDir) => {
+        writeCodeAgentDefinition(rootDir, {
+          agentModulePrelude: deploymentArtifactGetterPrelude(),
+        });
+
+        const bundle = await createNodeVeryfrontCloudAgentServiceRuntime({
+          serviceName: "own-artifact-agent-test",
+          deploymentArtifact: "20261007183045-a1b2c3d4e5f6",
+          agentSource: "code",
+          entrypointUrl: pathToFileURL(resolve(rootDir, "src", "main.ts")),
+          createBashTool,
+          signals: [],
+          env: {
+            NODE_ENV: "test",
+            VERYFRONT_API_URL: "https://api.example.com",
+            PORT: "3153",
+            ALLOWED_ORIGINS: "https://studio.example.com",
+          },
+        });
+
+        const response = await bundle.runtime.request("/version");
+
+        assertEquals(response.status, 200);
+        assertEquals(await response.json(), { artifact: "20261007183045-a1b2c3d4e5f6" });
+        assertEquals(deploymentArtifactGetterReads(), 0);
+      });
+    } finally {
+      restoreDeploymentArtifactPrototype(originalDeploymentArtifact);
+    }
+  },
+});
+
+Deno.test({
   name: "createNodeVeryfrontCloudAgentServiceRuntime uses veryfront.config.ts discovery paths",
   // Code primitive discovery invokes the esbuild-backed transpiler, which starts
   // an esbuild child process. This matches the sanitizer policy in
@@ -2190,7 +2307,7 @@ Deno.test({
   },
 });
 
-it("Studio availability survives service intersection without weakening explicit requirements", () => {
+Deno.test("Studio availability survives service intersection without weakening explicit requirements", () => {
   for (const hostRequired of [undefined, false, true]) {
     for (const agentRequired of [undefined, false, true]) {
       const result = veryfrontCloudAgentServiceInternals.resolveMcpServers({

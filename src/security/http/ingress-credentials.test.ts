@@ -433,6 +433,8 @@ describe("security/http/ingress-credentials", () => {
 
     assert(sealed !== source);
     assertEquals(sealed.headers.get("x-token"), null);
+    // The edited input loses the token it was given, too.
+    assertEquals(source.headers.get("x-token"), null);
     assertEquals(readIngressCredential(sealed, INGRESS_API_TOKEN_HEADER), "proxy-resolved-token");
     assertEquals(readIngressCredential(sealed, INGRESS_INFERENCE_TOKEN_HEADER), INFERENCE_TOKEN);
   });
