@@ -2,6 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { MemoryCacheBackend } from "#veryfront/cache/backend.ts";
+import { waitFor } from "#veryfront/testing/deno-compat.ts";
 import {
   getCachedWithBatching,
   runWithCacheBatching,
@@ -81,8 +82,19 @@ describe("hosted config cache cancellation", () => {
         }),
       ]);
       assertEquals(config.title, "published configuration");
-      const state = __getHostedConfigSourceReadStateForTests();
-      assertEquals([state.active, state.queued, state.flights, state.waiters], [0, 0, 0, 0]);
+      await waitFor(
+        () => {
+          const state = __getHostedConfigSourceReadStateForTests();
+          return state.active === 0 &&
+            state.queued === 0 &&
+            state.flights === 0 &&
+            state.waiters === 0;
+        },
+        {
+          interval: 10,
+          message: "Expected hosted source-read state to drain after recovery",
+        },
+      );
     } finally {
       if (timer !== undefined) clearTimeout(timer);
       follower.abort();

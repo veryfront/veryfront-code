@@ -13,7 +13,7 @@ export type { DirectoryEntry };
 export interface FSAdapter {
   readonly symlinkSemantics?: "none";
   readonly projectContextSemantics?: "fixed";
-  readFile(path: string): Promise<Uint8Array | string>;
+  readFile(path: string, options?: { signal?: AbortSignal }): Promise<Uint8Array | string>;
   readFileBytes?(path: string): Promise<Uint8Array>;
   readonly maxWholeFileReadBytes?: number;
   readFileBytesBounded?(path: string, byteLimit: number): Promise<Uint8Array>;
@@ -23,8 +23,8 @@ export interface FSAdapter {
     containmentRoot: string,
     byteLimit: number,
   ): Promise<Uint8Array>;
-  readTextFile?(path: string): Promise<string>;
-  readOptionalTextFile?(path: string): Promise<string>;
+  readTextFile?(path: string, options?: { signal?: AbortSignal }): Promise<string>;
+  readOptionalTextFile?(path: string, options?: { signal?: AbortSignal }): Promise<string>;
   exists(path: string): Promise<boolean>;
   stat(path: string): Promise<{
     isFile: boolean;

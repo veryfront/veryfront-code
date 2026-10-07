@@ -531,6 +531,44 @@ function rejectPromise<T = never>(error: unknown): Promise<T> {
   return ReflectApply(PromiseReject, IntrinsicPromise, [error]) as Promise<T>;
 }
 
+function awaitHostedConfigAbortable<T>(
+  value: T | PromiseLike<T>,
+  signal: AbortSignal | undefined,
+): Promise<T> {
+  if (!signal) {
+    return ReflectApply(PromiseResolve, IntrinsicPromise, [value]) as Promise<T>;
+  }
+  if (isSignalAborted(signal)) {
+    return rejectPromise(createDeclarativeConfigWorkerInfrastructureError("worker-aborted"));
+  }
+
+  const deferred = promiseWithResolvers<T>();
+  let settled = false;
+  const onAbort = () => {
+    if (settled) return;
+    settled = true;
+    removeAbortListener(signal, onAbort);
+    deferred.reject(createDeclarativeConfigWorkerInfrastructureError("worker-aborted"));
+  };
+  addAbortListener(signal, onAbort);
+  void thenPromise(
+    ReflectApply(PromiseResolve, IntrinsicPromise, [value]) as Promise<T>,
+    (result) => {
+      if (settled) return;
+      settled = true;
+      removeAbortListener(signal, onAbort);
+      deferred.resolve(result);
+    },
+    (error) => {
+      if (settled) return;
+      settled = true;
+      removeAbortListener(signal, onAbort);
+      deferred.reject(error);
+    },
+  );
+  return deferred.promise;
+}
+
 function promiseWithResolvers<T>(): PromiseWithResolvers<T> {
   return ReflectApply(PromiseWithResolvers, IntrinsicPromise, []) as PromiseWithResolvers<T>;
 }
@@ -896,6 +934,7 @@ type HostedConfigSourceReadState = "queued" | "active" | "ready" | "failed";
 
 interface HostedConfigSourceReadFlight {
   readonly key: HostedConfigSourceReadKey;
+  readonly controller: AbortController;
   readonly start: PromiseWithResolvers<void>;
   readonly promise: Promise<HostedConfigSourceFlightValue>;
   queueNode: HostedConfigSourceReadQueueNode | null;
@@ -1062,18 +1101,35 @@ function canCaptureHostedConfigSourceSnapshot(adapter: RuntimeAdapter): boolean 
  */
 async function captureHostedConfigSourceSnapshot(
   adapter: RuntimeAdapter,
+  signal?: AbortSignal,
 ): Promise<HostedConfigSourceSnapshot | undefined> {
   if (!canCaptureHostedConfigSourceSnapshot(adapter)) return undefined;
   const fs = adapter.fs;
   const getIdentity = fs.getSourceSnapshotIdentity!;
   const getVersion = fs.getSourceSnapshotVersion!;
   try {
-    const identity = await ReflectApply(getIdentity, fs, []);
-    const version = await ReflectApply(getVersion, fs, []);
+    const identity = await awaitHostedConfigAbortable(
+      ReflectApply(getIdentity, fs, []) as string | undefined | Promise<string | undefined>,
+      signal,
+    );
+    const version = await awaitHostedConfigAbortable(
+      ReflectApply(getVersion, fs, []) as number | undefined | Promise<number | undefined>,
+      signal,
+    );
     if (typeof identity !== "string" || typeof version !== "number") return undefined;
     // A reused contextual adapter can switch source across either await.
-    if (await ReflectApply(getIdentity, fs, []) !== identity) return undefined;
-    if (await ReflectApply(getVersion, fs, []) !== version) return undefined;
+    if (
+      await awaitHostedConfigAbortable(
+        ReflectApply(getIdentity, fs, []) as string | undefined | Promise<string | undefined>,
+        signal,
+      ) !== identity
+    ) return undefined;
+    if (
+      await awaitHostedConfigAbortable(
+        ReflectApply(getVersion, fs, []) as number | undefined | Promise<number | undefined>,
+        signal,
+      ) !== version
+    ) return undefined;
     return freezeObject({ identity, version });
   } catch {
     // The read itself surfaces adapter failures with their normal contract.
@@ -1165,7 +1221,8 @@ async function captureAdmittedHostedConfigSourceSnapshot(
     `hosted-config-preview-source-probe-v2:${
       buildHostedConfigSourceIdentity(effectiveCacheKey, configBaseDir, adapter, revisionAtStart)
     }${frameConfigIdentityString(selectorIdentity)}`,
-    async () => (await captureHostedConfigSourceSnapshot(adapter)) ?? null,
+    async (flightSignal) =>
+      (await captureHostedConfigSourceSnapshot(adapter, flightSignal)) ?? null,
   );
   const warmupLease = await waitForHostedConfigSourceReadFlight(warmupFlight, signal);
   const snapshot = warmupLease.value;
@@ -1178,12 +1235,14 @@ async function captureAdmittedHostedConfigSourceSnapshot(
 async function readHostedConfigSource(
   adapter: RuntimeAdapter,
   configBaseDir: string,
+  signal?: AbortSignal,
 ): Promise<HostedConfigSourceSelection | null> {
   let apiNotFound: { error: unknown } | undefined;
   for (const configFile of VERYFRONT_CONFIG_FILES) {
     const configPath = join(configBaseDir, configFile);
     try {
-      const content = await adapter.fs.readFile(configPath);
+      throwIfHostedConfigAborted(signal);
+      const content = await adapter.fs.readFile(configPath, { signal });
       return freezeObject({
         configPath,
         configFile,
@@ -1336,15 +1395,18 @@ function cancelQueuedHostedConfigSourceRead(
 
 function createHostedConfigSourceReadFlight(
   key: HostedConfigSourceReadKey,
-  operation: () => Promise<HostedConfigSourceFlightValue>,
+  operation: (signal: AbortSignal) => Promise<HostedConfigSourceFlightValue>,
 ): HostedConfigSourceReadFlight {
+  const controller = createHostedAbortController();
+  const signal = getAbortControllerSignal(controller);
   const start = promiseWithResolvers<void>();
   // Register the deferred operation in the caller's async context now. A
   // queued multi-project read must not inherit the request context of whichever
   // earlier flight later releases capacity.
-  const promise = thenPromise(start.promise, operation);
+  const promise = thenPromise(start.promise, () => operation(signal));
   const flight: HostedConfigSourceReadFlight = {
     key,
+    controller,
     start,
     promise,
     queueNode: null,
@@ -1370,7 +1432,7 @@ function createHostedConfigSourceReadFlight(
 
 function getOrCreateHostedConfigSourceReadFlight(
   key: HostedConfigSourceReadKey,
-  operation: () => Promise<HostedConfigSourceFlightValue>,
+  operation: (signal: AbortSignal) => Promise<HostedConfigSourceFlightValue>,
 ): HostedConfigSourceReadFlight {
   const existing = mapGet(hostedConfigSourceReadFlights, key);
   if (existing && existing.state !== "failed") return existing;
@@ -1395,6 +1457,11 @@ function releaseHostedConfigSourceReadLease(
       flight,
       createDeclarativeConfigWorkerInfrastructureError("worker-aborted"),
     );
+  } else if (flight.state === "active") {
+    if (mapGet(hostedConfigSourceReadFlights, flight.key) === flight) {
+      mapDelete(hostedConfigSourceReadFlights, flight.key);
+    }
+    abortController(flight.controller);
   } else if (
     flight.state === "ready" &&
     mapGet(hostedConfigSourceReadFlights, flight.key) === flight
@@ -8983,12 +9050,12 @@ function getConfigInternal(
             const sourceReadFlight = getOrCreateHostedConfigSourceReadFlight(
               sourceReadKey,
               previewSnapshot === undefined
-                ? () => readHostedConfigSource(adapter, configBaseDir)
+                ? (signal) => readHostedConfigSource(adapter, configBaseDir, signal)
                 // Other requests share this read, so it must not return bytes
                 // the creating request pinned before the snapshot advanced.
-                : () =>
+                : (signal) =>
                   runWithoutRequestScopedFileCache(() =>
-                    readHostedConfigSource(adapter, configBaseDir)
+                    readHostedConfigSource(adapter, configBaseDir, signal)
                   ),
             );
             sourceReadLease = await waitForHostedConfigSourceReadFlight(

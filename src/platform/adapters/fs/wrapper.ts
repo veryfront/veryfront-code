@@ -20,7 +20,7 @@ import {
 } from "../file-system-capabilities.ts";
 
 type CapturedMethod = (...args: never[]) => unknown;
-type CapturedTextFileReader = (path: string) => Promise<string>;
+type CapturedTextFileReader = (path: string, options?: { signal?: AbortSignal }) => Promise<string>;
 type CapturedContextRunner = <T>(
   projectSlug: string,
   token: string,
@@ -129,7 +129,7 @@ export interface ExtendedFileSystemAdapter extends FileSystemAdapter {
     byteLimit: number,
   ) => Promise<Uint8Array>;
   readonly createFileBytesExclusive?: (path: string, content: Uint8Array) => Promise<void>;
-  readOptionalTextFile(path: string): Promise<string>;
+  readOptionalTextFile(path: string, options?: { signal?: AbortSignal }): Promise<string>;
   readonly readDependencyMetadataHistory?: (
     signal?: AbortSignal,
   ) => Promise<DependencyMetadataHistory>;
@@ -216,11 +216,14 @@ export class FSAdapterWrapper implements ExtendedFileSystemAdapter {
     const readTextFile = captureOptionalMethod(fsAdapter, "readTextFile");
     const readFile = captureOptionalMethod(fsAdapter, "readFile");
     if (readFile === undefined) throw new TypeError("FSAdapter readFile must be a function");
-    this.#textFileReader = async (path: string): Promise<string> => {
+    this.#textFileReader = async (
+      path: string,
+      options?: { signal?: AbortSignal },
+    ): Promise<string> => {
       if (readTextFile !== undefined) {
-        return await IntrinsicReflectApply(readTextFile, fsAdapter, [path]) as string;
+        return await IntrinsicReflectApply(readTextFile, fsAdapter, [path, options]) as string;
       }
-      const result = await IntrinsicReflectApply(readFile, fsAdapter, [path]) as
+      const result = await IntrinsicReflectApply(readFile, fsAdapter, [path, options]) as
         | string
         | Uint8Array;
       if (typeof result === "string") return result;
@@ -472,16 +475,19 @@ export class FSAdapterWrapper implements ExtendedFileSystemAdapter {
     return isContextualAdapter(this._fsAdapter) && !this.isFixedProjectMode();
   }
 
-  async readFile(path: string): Promise<string> {
-    return await this.#textFileReader(path);
+  async readFile(path: string, options: { signal?: AbortSignal } = {}): Promise<string> {
+    return await this.#textFileReader(path, options);
   }
 
-  async readOptionalTextFile(path: string): Promise<string> {
+  async readOptionalTextFile(
+    path: string,
+    options: { signal?: AbortSignal } = {},
+  ): Promise<string> {
     if (this._fsAdapter.readOptionalTextFile) {
-      return this._fsAdapter.readOptionalTextFile(path);
+      return this._fsAdapter.readOptionalTextFile(path, options);
     }
 
-    return this.readFile(path);
+    return this.readFile(path, options);
   }
 
   async readFileBytes(path: string): Promise<Uint8Array> {

@@ -2904,6 +2904,48 @@ describe("Login Module", { sanitizeOps: false, sanitizeResources: false }, () =>
         console.log = originalLog;
       }
     });
+    it("prints a manual login URL when the default OAuth opener observes a failed launcher", async () => {
+      const originalLog = console.log;
+      const output: string[] = [];
+      const spinnerEvents: string[] = [];
+      const launchCalls: Array<{ url: string; timeoutMs: number | undefined }> = [];
+
+      try {
+        console.log = (...args: unknown[]) => output.push(args.map(String).join(" "));
+        const { __setOAuthBrowserLauncherForTests, openOAuthLogin } = await import("./login.ts");
+        __setOAuthBrowserLauncherForTests((url, options) => {
+          launchCalls.push({ url, timeoutMs: options?.timeoutMs });
+          if (options?.timeoutMs === undefined) return Promise.resolve();
+          return Promise.reject(new Error("browser launcher exited unsuccessfully"));
+        });
+
+        const opened = await openOAuthLogin(
+          "https://auth.example.test/login?state=default-opener",
+          {
+            update: (text) => spinnerEvents.push(`update:${text}`),
+            success: (text) => spinnerEvents.push(`success:${text ?? ""}`),
+            error: (text) => spinnerEvents.push(`error:${text ?? ""}`),
+            stop: () => spinnerEvents.push("stop"),
+          },
+        );
+
+        assertEquals(opened, false);
+        assertEquals(launchCalls, [{
+          url: "https://auth.example.test/login?state=default-opener",
+          timeoutMs: 10_000,
+        }]);
+        assertEquals(spinnerEvents, ["stop"]);
+        assertStringIncludes(output.join("\n"), "Could not open the browser");
+        assertStringIncludes(
+          output.join("\n"),
+          "https://auth.example.test/login?state=default-opener",
+        );
+      } finally {
+        const { __setOAuthBrowserLauncherForTests } = await import("./login.ts");
+        __setOAuthBrowserLauncherForTests();
+        console.log = originalLog;
+      }
+    });
   });
 
   describe("logout", { sanitizeOps: false, sanitizeResources: false }, () => {
@@ -3076,7 +3118,17 @@ describe("Login Module", { sanitizeOps: false, sanitizeResources: false }, () =>
           const envelope = JSON.parse(output.join("\n"));
 
           assertEquals(result, null);
-          assertEquals(envelope.data, { authenticated: false });
+          assertEquals(envelope, {
+            success: false,
+            command: "whoami",
+            error: {
+              code: "AUTHENTICATION_ERROR",
+              slug: "authentication-required",
+              registrySlug: "authentication-required",
+              message: "Not logged in. Run 'veryfront login' to authenticate.",
+              context: { authenticated: false },
+            },
+          });
           assertEquals(requestedAuth, ["Bearer stored-unavailable-token"]);
           assertEquals(await readToken(testEnv), "stored-unavailable-token");
           assertEquals(output.join("\n").includes("env@example.com"), false);
@@ -3234,7 +3286,17 @@ describe("Login Module", { sanitizeOps: false, sanitizeResources: false }, () =>
 
         assertEquals(result, null);
         assertEquals(requestedAuth, ["Bearer config-invalid-token"]);
-        assertEquals(JSON.parse(output.join("\n")).data, { authenticated: false });
+        assertEquals(JSON.parse(output.join("\n")), {
+          success: false,
+          command: "whoami",
+          error: {
+            code: "AUTHENTICATION_ERROR",
+            slug: "authentication-required",
+            registrySlug: "authentication-required",
+            message: "Not logged in. Run 'veryfront login' to authenticate.",
+            context: { authenticated: false },
+          },
+        });
         assertEquals(output.join("\n").includes("config-invalid-token"), false);
       } finally {
         const { setJsonMode } = await import("../shared/json-output.ts");

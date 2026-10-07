@@ -64,6 +64,7 @@ export type ResolvedNodeVeryfrontCloudAgentServiceOptions = {
   mcpServers?: readonly AgentServiceMcpServerConfig[];
   forwardedConfigNamespace?: string;
   hostToolPolicy?: HostedHostToolPolicy;
+  hostedModelCallCapture?: boolean;
   createRemoteToolSource?: (config: RemoteMCPToolSourceConfig) => RemoteToolSource;
   createBashTool: AgentServiceSandboxToolsOptions["createBashTool"];
   env?: CreateNodeAgentServiceRuntimeInfrastructureOptions["env"];

@@ -27,7 +27,11 @@ import {
 } from "#veryfront/provider/veryfront-cloud/context.ts";
 import { createEphemeralAgentWithRuntimeOptions } from "../factory.ts";
 import type { AgentRuntimeInternalOptions } from "../runtime/index.ts";
-import { createRuntimeObservationCapability } from "#veryfront/runtime/runtime-observation-carrier.ts";
+import {
+  attachRuntimeObservationWriterLiveness,
+  createRuntimeObservationCapability,
+  revokeRuntimeObservationWriterCapability,
+} from "#veryfront/runtime/runtime-observation-carrier.ts";
 import { getHostedAgentPauseCreationOptions } from "./manual-pause-credential.ts";
 import { markRuntimeLocalTool } from "../runtime/local-tool.ts";
 import { isVeryfrontCloudRuntimeModel } from "../runtime/model-resolution.ts";
@@ -239,6 +243,12 @@ async function buildToolAssembly(
   },
 ): Promise<HostedChatRuntimeToolAssemblyResult> {
   const liveProjectSteering = input.options.liveProjectSteering;
+  const runtimeObservationWriterCapability = input.options.runtimeObservationWriterCapability;
+  attachRuntimeObservationWriterLiveness(runtimeObservationWriterCapability, () => {
+    if (input.taskContext.projectId !== input.options.projectId) {
+      throw new Error("Runtime observation writer project scope is no longer active");
+    }
+  });
   const localTools = await input.buildLocalTools(input.taskContext);
   const toolAssembly = await prepareConfigDerivedHostedChatRuntimeToolAssembly({
     taskContext: input.taskContext,
@@ -308,6 +318,7 @@ async function buildToolAssembly(
         taskContext: input.taskContext,
       });
       if (changed) {
+        revokeRuntimeObservationWriterCapability(runtimeObservationWriterCapability);
         incrementSteeringRevision(input.taskContext);
       }
     },

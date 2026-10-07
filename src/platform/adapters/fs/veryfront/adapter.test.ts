@@ -2,6 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import {
   assertEquals,
   assertExists,
+  assertInstanceOf,
   assertNotEquals,
   assertRejects,
   assertStrictEquals,
@@ -279,6 +280,112 @@ describe("VeryfrontFSAdapter", () => {
       }
 
       assertEquals(poisonedCalls, 0);
+    });
+
+    it("does not invoke mutable client initialize accessors while initializing", async () => {
+      const adapter = createAdapter({
+        veryfront: {
+          apiBaseUrl: "https://api.example.com",
+          apiToken: "test-token",
+          projectSlug: "test-project",
+          projectId: "test-project-id",
+          contentSource: { type: "branch", branch: "main" },
+          cache: { enabled: false },
+        },
+      });
+      const internals = adapter as unknown as {
+        client: {
+          getProjectSlug(): string;
+          getProjectId(): string;
+          getCachedProject(): { provider: string; layout: string };
+          listAllFiles(): Promise<Array<{ path: string; content: string }>>;
+        };
+        wsManager: { connect(projectId: string): void };
+      };
+      const originalClientPrototype = Object.getPrototypeOf(internals.client) as object;
+      const poisonedClientPrototype = Object.create(originalClientPrototype) as object;
+      let accessorCalls = 0;
+      internals.client.getProjectSlug = () => "test-project";
+      internals.client.getProjectId = () => "test-project-id";
+      internals.client.getCachedProject = () => ({ provider: "veryfront", layout: "default" });
+      internals.client.listAllFiles = () => Promise.resolve([]);
+      internals.wsManager.connect = () => {};
+
+      Object.defineProperty(poisonedClientPrototype, "initialize", {
+        configurable: true,
+        get() {
+          accessorCalls++;
+          throw new Error("project initialize getter must not run");
+        },
+      });
+      Object.defineProperty(poisonedClientPrototype, "initializeForHost", {
+        configurable: true,
+        get() {
+          accessorCalls++;
+          throw new Error("project initializeForHost getter must not run");
+        },
+      });
+      Object.setPrototypeOf(internals.client, poisonedClientPrototype);
+
+      try {
+        await adapter.initialize();
+      } finally {
+        Object.setPrototypeOf(internals.client, originalClientPrototype);
+        adapter.dispose();
+      }
+
+      assertEquals(accessorCalls, 0);
+    });
+
+    it("keeps the owner initialization flight for a third caller after one peer aborts", async () => {
+      const adapter = createAdapter({
+        veryfront: {
+          apiBaseUrl: "https://api.example.com",
+          apiToken: "test-token",
+          projectSlug: "test-project",
+          projectId: "test-project-id",
+          contentSource: { type: "branch", branch: "main" },
+          cache: { enabled: false },
+        },
+      });
+      const clientInitialize = Promise.withResolvers<void>();
+      const internals = adapter as unknown as {
+        client: {
+          initialize(signal?: AbortSignal): Promise<void>;
+          getProjectSlug(): string;
+          getProjectId(): string;
+          getCachedProject(): { provider: string; layout: string };
+          listAllFiles(): Promise<Array<{ path: string; content: string }>>;
+        };
+        wsManager: { connect(projectId: string): void };
+      };
+      let initializeCalls = 0;
+      internals.client.initialize = (_signal?: AbortSignal) => {
+        initializeCalls++;
+        return clientInitialize.promise;
+      };
+      internals.client.getProjectSlug = () => "test-project";
+      internals.client.getProjectId = () => "test-project-id";
+      internals.client.getCachedProject = () => ({ provider: "veryfront", layout: "default" });
+      internals.client.listAllFiles = () => Promise.resolve([]);
+      internals.wsManager.connect = () => {};
+
+      const controller = new AbortController();
+      const first = adapter.initialize(controller.signal);
+      const firstRejected = assertRejects(() => first, Error);
+      const second = adapter.initialize();
+      controller.abort();
+      await firstRejected;
+
+      const third = adapter.initialize();
+      assertEquals(
+        initializeCalls,
+        1,
+        "a later caller must join the still-running adapter initialization flight",
+      );
+      clientInitialize.resolve();
+      await Promise.all([second, third]);
+      assertEquals(initializeCalls, 1);
     });
   });
 
@@ -2939,6 +3046,280 @@ describe("VeryfrontFSAdapter", () => {
       assertEquals(listAllFilesCalls, 3);
     });
 
+    it("rejects already-aborted reads when initialization and source bodies are warm", async () => {
+      const adapter = createAdapter({
+        veryfront: {
+          apiBaseUrl: "https://api.example.com",
+          apiToken: "test-token",
+          projectSlug: "test-project",
+          contentSource: { type: "branch", branch: "main" },
+          cache: { enabled: true },
+        },
+      });
+      const client = (adapter as unknown as {
+        client: {
+          initialize: () => Promise<void>;
+          getProjectSlug: () => string;
+          getProjectId: () => string;
+          getCachedProject: () => { provider: string; layout: string };
+          listAllFiles: () => Promise<Array<{ path: string; content?: string }>>;
+        };
+      }).client;
+      client.initialize = () => Promise.resolve();
+      client.getProjectSlug = () => "test-project";
+      client.getProjectId = () => "project-123";
+      client.getCachedProject = () => ({ provider: "veryfront", layout: "default" });
+      client.listAllFiles = () => Promise.resolve([{ path: "cached.ts", content: "cached body" }]);
+      (adapter as unknown as { wsManager: { connect: (_projectId: string) => void } }).wsManager
+        .connect = () => {};
+      try {
+        await adapter.initialize();
+        assertEquals(await adapter.readTextFile("cached.ts"), "cached body");
+        const controller = new AbortController();
+        const reason = new Error("reader already cancelled");
+        controller.abort(reason);
+        for (
+          const read of [
+            () => adapter.readFile("cached.ts", { signal: controller.signal }),
+            () => adapter.readTextFile("cached.ts", { signal: controller.signal }),
+            () => adapter.readOptionalTextFile("cached.ts", { signal: controller.signal }),
+          ]
+        ) {
+          assertEquals(await assertRejects(read), reason);
+        }
+      } finally {
+        adapter.dispose();
+      }
+    });
+
+    it("aborts the branch-miss listing when the only recovering reader aborts", async () => {
+      const adapter = createAdapter({
+        veryfront: {
+          apiBaseUrl: "https://api.example.com",
+          apiToken: "test-token",
+          projectSlug: "test-project",
+          contentSource: { type: "branch", branch: "main" },
+          cache: { enabled: true },
+        },
+      });
+      const staleFiles = [{
+        path: "components/GraphViewer.tsx",
+        content: "import '../lib/graph-performance';",
+      }];
+      const refreshStarted = Promise.withResolvers<void>();
+      const refreshSettled = Promise.withResolvers<Array<{ path: string; content?: string }>>();
+      let listAllFilesCalls = 0;
+      let refreshSignal: AbortSignal | undefined;
+      const client = (adapter as unknown as {
+        client: {
+          initialize: () => Promise<void>;
+          getProjectSlug: () => string;
+          getProjectId: () => string;
+          getCachedProject: () => { provider: string; layout: string };
+          listAllFiles: (
+            options?: { signal?: AbortSignal },
+          ) => Promise<Array<{ path: string; content?: string }>>;
+        };
+      }).client;
+
+      client.initialize = () => Promise.resolve();
+      client.getProjectSlug = () => "test-project";
+      client.getProjectId = () => "project-123";
+      client.getCachedProject = () => ({ provider: "veryfront", layout: "default" });
+      client.listAllFiles = (options = {}) => {
+        listAllFilesCalls++;
+        if (listAllFilesCalls === 1) return Promise.resolve(staleFiles);
+        refreshSignal = options.signal;
+        refreshStarted.resolve();
+        return refreshSettled.promise;
+      };
+      (adapter as unknown as { wsManager: { connect: (_projectId: string) => void } }).wsManager
+        .connect = () => {};
+
+      try {
+        await adapter.initialize();
+        const controller = new AbortController();
+        const read = adapter.readTextFile("lib/graph-performance.ts", {
+          signal: controller.signal,
+        });
+        await refreshStarted.promise;
+
+        controller.abort("reader closed");
+
+        const rejected = await assertRejects(() => read, Error);
+        assertInstanceOf(rejected, Error);
+        assertEquals(rejected.name, "AbortError");
+        assertEquals(refreshSignal?.aborted, true);
+        assertEquals(listAllFilesCalls, 2);
+      } finally {
+        refreshSettled.resolve(staleFiles);
+        adapter.dispose();
+      }
+    });
+
+    it("keeps a healthy branch-miss waiter on the physical listing after another caller aborts", async () => {
+      const adapter = createAdapter({
+        veryfront: {
+          apiBaseUrl: "https://api.example.com",
+          apiToken: "test-token",
+          projectSlug: "test-project",
+          contentSource: { type: "branch", branch: "main" },
+          cache: { enabled: true },
+        },
+      });
+      const staleFiles = [{
+        path: "components/GraphViewer.tsx",
+        content: "import '../lib/graph-performance';",
+      }];
+      const refreshedFiles = [
+        ...staleFiles,
+        {
+          path: "lib/graph-performance.ts",
+          content: "export const chooseSampleSize = () => 10000;",
+        },
+      ];
+      const refreshStarted = Promise.withResolvers<void>();
+      const refreshSettled = Promise.withResolvers<Array<{ path: string; content?: string }>>();
+      let listAllFilesCalls = 0;
+      let refreshSignal: AbortSignal | undefined;
+      const client = (adapter as unknown as {
+        client: {
+          initialize: () => Promise<void>;
+          getProjectSlug: () => string;
+          getProjectId: () => string;
+          getCachedProject: () => { provider: string; layout: string };
+          listAllFiles: (
+            options?: { signal?: AbortSignal },
+          ) => Promise<Array<{ path: string; content?: string }>>;
+        };
+      }).client;
+
+      client.initialize = () => Promise.resolve();
+      client.getProjectSlug = () => "test-project";
+      client.getProjectId = () => "project-123";
+      client.getCachedProject = () => ({ provider: "veryfront", layout: "default" });
+      client.listAllFiles = (options = {}) => {
+        listAllFilesCalls++;
+        if (listAllFilesCalls === 1) return Promise.resolve(staleFiles);
+        refreshSignal = options.signal;
+        refreshStarted.resolve();
+        return refreshSettled.promise;
+      };
+      (adapter as unknown as { wsManager: { connect: (_projectId: string) => void } }).wsManager
+        .connect = () => {};
+
+      try {
+        await adapter.initialize();
+        const controller = new AbortController();
+        const abortedRead = adapter.readTextFile("lib/graph-performance.ts", {
+          signal: controller.signal,
+        });
+        const healthyRead = adapter.readTextFile("lib/graph-performance.ts");
+        await refreshStarted.promise;
+
+        controller.abort("reader closed");
+
+        const rejected = await assertRejects(() => abortedRead, Error);
+        assertInstanceOf(rejected, Error);
+        assertEquals(rejected.name, "AbortError");
+        assertEquals(refreshSignal?.aborted, false);
+        refreshSettled.resolve(refreshedFiles);
+        assertEquals(await healthyRead, "export const chooseSampleSize = () => 10000;");
+        assertEquals(listAllFilesCalls, 2);
+      } finally {
+        refreshSettled.resolve(refreshedFiles);
+        adapter.dispose();
+      }
+    });
+
+    it("keeps an aborted final branch-miss refresh owned until the physical listing settles", async () => {
+      const adapter = createAdapter({
+        veryfront: {
+          apiBaseUrl: "https://api.example.com",
+          apiToken: "test-token",
+          projectSlug: "test-project",
+          contentSource: { type: "branch", branch: "main" },
+          cache: { enabled: true },
+        },
+      });
+      const staleFiles = [{
+        path: "components/GraphViewer.tsx",
+        content: "import '../lib/graph-performance';",
+      }];
+      const refreshedFiles = [
+        ...staleFiles,
+        {
+          path: "lib/graph-performance.ts",
+          content: "export const chooseSampleSize = () => 10000;",
+        },
+      ];
+      const firstRefreshStarted = Promise.withResolvers<void>();
+      const firstPhysicalSettled = Promise.withResolvers<
+        Array<{ path: string; content?: string }>
+      >();
+      let listAllFilesCalls = 0;
+      let firstRefreshSignal: AbortSignal | undefined;
+      const client = (adapter as unknown as {
+        client: {
+          initialize: () => Promise<void>;
+          getProjectSlug: () => string;
+          getProjectId: () => string;
+          getCachedProject: () => { provider: string; layout: string };
+          listAllFiles: (
+            options?: { signal?: AbortSignal },
+          ) => Promise<Array<{ path: string; content?: string }>>;
+        };
+      }).client;
+
+      client.initialize = () => Promise.resolve();
+      client.getProjectSlug = () => "test-project";
+      client.getProjectId = () => "project-123";
+      client.getCachedProject = () => ({ provider: "veryfront", layout: "default" });
+      client.listAllFiles = (options = {}) => {
+        listAllFilesCalls++;
+        if (listAllFilesCalls === 1) return Promise.resolve(staleFiles);
+        if (listAllFilesCalls === 2) {
+          firstRefreshSignal = options.signal;
+          firstRefreshStarted.resolve();
+          return firstPhysicalSettled.promise;
+        }
+        return Promise.resolve(refreshedFiles);
+      };
+      (adapter as unknown as { wsManager: { connect: (_projectId: string) => void } }).wsManager
+        .connect = () => {};
+
+      try {
+        await adapter.initialize();
+        const controller = new AbortController();
+        const abortedRead = adapter.readTextFile("lib/graph-performance.ts", {
+          signal: controller.signal,
+        });
+        await firstRefreshStarted.promise;
+
+        controller.abort("reader closed");
+
+        const rejected = await assertRejects(() => abortedRead, Error);
+        assertInstanceOf(rejected, Error);
+        assertEquals(rejected.name, "AbortError");
+        assertEquals(firstRefreshSignal?.aborted, true);
+
+        const healthyRead = adapter.readTextFile("lib/graph-performance.ts");
+        await Promise.resolve();
+        assertEquals(
+          listAllFilesCalls,
+          2,
+          "a new caller must wait for the abandoned physical refresh before starting a replacement",
+        );
+
+        firstPhysicalSettled.resolve(staleFiles);
+        assertEquals(await healthyRead, "export const chooseSampleSize = () => 10000;");
+        assertEquals(listAllFilesCalls, 3);
+      } finally {
+        firstPhysicalSettled.resolve(staleFiles);
+        adapter.dispose();
+      }
+    });
+
     it("isolates concurrent branch-miss recoveries by request snapshot", async () => {
       const adapter = createAdapter({
         veryfront: {
@@ -2950,7 +3331,9 @@ describe("VeryfrontFSAdapter", () => {
         },
       });
       const branchARefresh = Promise.withResolvers<Array<{ path: string; content?: string }>>();
+      const branchBRefresh = Promise.withResolvers<Array<{ path: string; content?: string }>>();
       let branchAListCalls = 0;
+      let branchBListCalls = 0;
       const client = (adapter as unknown as {
         client: {
           initialize: () => Promise<void>;
@@ -2968,9 +3351,15 @@ describe("VeryfrontFSAdapter", () => {
       client.getProjectId = () => "project-123";
       client.getCachedProject = () => ({ provider: "veryfront", layout: "default" });
       client.listAllFiles = (_options, context) => {
-        if (context?.name !== "branch-a") return Promise.resolve([]);
-        branchAListCalls++;
-        return branchAListCalls === 2 ? branchARefresh.promise : Promise.resolve([]);
+        if (context?.name === "branch-a") {
+          branchAListCalls++;
+          return branchAListCalls === 2 ? branchARefresh.promise : Promise.resolve([]);
+        }
+        if (context?.name === "branch-b") {
+          branchBListCalls++;
+          return branchBListCalls === 2 ? branchBRefresh.promise : Promise.resolve([]);
+        }
+        return Promise.resolve([]);
       };
       (adapter as unknown as { wsManager: { connect: (_projectId: string) => void } }).wsManager
         .connect = () => {};
@@ -2996,15 +3385,16 @@ describe("VeryfrontFSAdapter", () => {
           () => adapter.readdir("new-directory"),
         );
         const recoveries = (adapter as unknown as {
-          branchMissRecoveryPromises: Map<string, Promise<void>>;
-        }).branchMissRecoveryPromises;
-        await waitFor(async () => recoveries.size === 2);
-
+          branchMissRecoveryFlights: Map<string, unknown>;
+        }).branchMissRecoveryFlights;
+        await waitFor(async () => branchBListCalls === 2);
         assertEquals(recoveries.size, 2);
         branchARefresh.resolve([]);
+        branchBRefresh.resolve([]);
         assertEquals(await Promise.all([branchA, branchB]), [[], []]);
       } finally {
         branchARefresh.resolve([]);
+        branchBRefresh.resolve([]);
         removePendingInvalidation(buildFileCacheKeyPrefix(branchAContext));
         removePendingInvalidation(buildFileCacheKeyPrefix(branchBContext));
         adapter.dispose();
