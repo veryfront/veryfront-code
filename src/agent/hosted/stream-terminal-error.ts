@@ -147,5 +147,8 @@ export function shouldFailEmptyHostedFinalizedMessage(input: {
   isAborted: boolean;
   message: { parts: ReadonlyArray<unknown> };
 }): boolean {
-  return !input.isAborted && input.message.parts.length === 0;
+  return !input.isAborted &&
+    input.message.parts.every((part) =>
+      isRecord(part) && part.type === "data-veryfront.runtime_context"
+    );
 }

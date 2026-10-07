@@ -110,6 +110,25 @@ Deno.test("shouldFailEmptyHostedFinalizedMessage fails non-aborted empty assista
   );
 });
 
+Deno.test("shouldFailEmptyHostedFinalizedMessage fails runtime-metadata-only responses", () => {
+  assertEquals(
+    shouldFailEmptyHostedFinalizedMessage({
+      isAborted: false,
+      message: {
+        parts: [{
+          type: "data-veryfront.runtime_context",
+          data: {
+            currentDateUtc: "2026-10-07",
+            currentTimeUtc: "09:30:41",
+            runStartedAtUtc: "2026-10-07T09:30:40.526Z",
+          },
+        }],
+      },
+    }),
+    true,
+  );
+});
+
 Deno.test("shouldFailEmptyHostedFinalizedMessage keeps aborted empty assistant responses cancellable", () => {
   assertEquals(
     shouldFailEmptyHostedFinalizedMessage({
@@ -125,6 +144,21 @@ Deno.test("shouldFailEmptyHostedFinalizedMessage keeps non-empty assistant respo
     shouldFailEmptyHostedFinalizedMessage({
       isAborted: false,
       message: { parts: [{ type: "text", text: "Done" }] },
+    }),
+    false,
+  );
+});
+
+Deno.test("shouldFailEmptyHostedFinalizedMessage keeps form data responses successful", () => {
+  assertEquals(
+    shouldFailEmptyHostedFinalizedMessage({
+      isAborted: false,
+      message: {
+        parts: [{
+          type: "data-form_input",
+          data: { requestId: "input-request-1" },
+        }],
+      },
     }),
     false,
   );
