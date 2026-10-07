@@ -34,7 +34,7 @@ import {
 } from "#veryfront/runtime/runtime-observation-carrier.ts";
 import { getHostedAgentPauseCreationOptions } from "./manual-pause-credential.ts";
 import { markRuntimeLocalTool } from "../runtime/local-tool.ts";
-import { isVeryfrontCloudRuntimeModel } from "../runtime/model-resolution.ts";
+import { isVeryfrontCloudRuntimeModel, resolveRuntimeModel } from "../runtime/model-resolution.ts";
 import { getProviderNativeToolNames } from "../runtime/provider-native-tool-inventory.ts";
 import {
   applyDefaultResearchArtifactPath,
@@ -341,6 +341,8 @@ export type PreparedHostedRuntimeAgentOptions = {
   taskContext: HostedRuntimeStateResolverContext;
   toolAssembly: HostedChatRuntimeToolAssemblyResult;
   modelId: string;
+  /** Runtime route resolved by trusted preparation; the catalog model id stays canonical. */
+  runtimeModelId?: string;
   sourceIntegrationPolicy: SourceIntegrationPolicyManifest;
   refreshSystem?: () => Promise<AgentSystem> | AgentSystem;
 };
@@ -363,7 +365,7 @@ function createRuntimeAgentConfig(input: PreparedHostedRuntimeAgentOptions): Age
   });
   const runtimeConfig: RuntimeToolFilterConfig = {
     id: input.runtimeAgentId ?? resolveRuntimeAgentId(input.options.agentId),
-    model: input.modelId,
+    model: input.runtimeModelId ?? input.modelId,
     system: input.toolAssembly.systemMessages ?? input.toolAssembly.systemInstructions,
     tools: runtimeTools,
     __vfToolLoadingMode: input.toolAssembly.toolLoadingMode,
@@ -586,6 +588,10 @@ export async function createDefaultHostedChatRuntime(
         cloudContext,
         () => resolveVeryfrontCloudModelId(input.options.model),
       );
+      const runtimeModelId = runWithVeryfrontCloudContext(
+        cloudContext,
+        () => resolveRuntimeModel(modelId),
+      );
       const taskContext = input.createTaskContext
         ? input.createTaskContext({ options: input.options, modelId })
         : createDefaultTaskContext({ options: input.options, modelId });
@@ -618,6 +624,7 @@ export async function createDefaultHostedChatRuntime(
               taskContext,
               toolAssembly,
               modelId,
+              runtimeModelId,
               sourceIntegrationPolicy: input.sourceIntegrationPolicy,
               ...(refreshSystem && liveProjectSteering
                 ? {
