@@ -519,7 +519,9 @@ export function createHostedProjectRemoteToolSources(
       conversationId: input.conversationId,
     });
     if (!remoteConfig) {
-      if (hasExplicitMcpServers && server.kind === "veryfront-studio") {
+      if (
+        hasExplicitMcpServers && server.kind === "veryfront-studio" && server.required !== false
+      ) {
         throwExplicitStudioMcpUnavailable(input);
       }
       continue;
