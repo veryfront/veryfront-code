@@ -9,6 +9,8 @@
 #   rc-publish       Publish every verified tarball from $NPM_PACK_DIR with
 #                    `--tag rc`, skipping packages already published at
 #                    $VERSION. Requires: VERSION, GITHUB_SHA, NPM_PACK_DIR.
+#                    NPM_MAINTENANCE_RELEASE=true requires an older RC for every
+#                    package before publishing; only rc-history can move.
 #   preflight        Runs BEFORE the build: enumerate package names from the
 #                    deno.json workspace and fail if any name@$VERSION already
 #                    exists on npm. Requires: VERSION.
@@ -401,37 +403,68 @@ wait_for_npm_git_head() {
   [ "${PUBLISHED_GIT_HEAD}" = "${GITHUB_SHA}" ]
 }
 
+ensure_rc_version_absent_or_matches_commit() {
+  local package_name="$1"
+  local version_lookup_mode="${2:-recover}"
+  PUBLISHED_GIT_HEAD=""
+  set +e
+  NPM_VERSION_LOOKUP_OUTPUT="$(npm view "${package_name}@${VERSION}" version 2>&1)"
+  NPM_VERSION_LOOKUP_STATUS=$?
+  set -e
+  if [[ "${NPM_VERSION_LOOKUP_STATUS}" -ne 0 ]]; then
+    if is_npm_package_not_found "${NPM_VERSION_LOOKUP_OUTPUT}"; then
+      return 0
+    fi
+    if [[ "${version_lookup_mode}" != "fail-closed" ]]; then
+      return 0
+    fi
+    echo "::error::npm registry version lookup failed for ${package_name}@${VERSION} (status ${NPM_VERSION_LOOKUP_STATUS})." >&2
+    SANITIZED_NPM_LOOKUP_OUTPUT="$(sanitize_npm_lookup_output "${NPM_VERSION_LOOKUP_OUTPUT}")"
+    if [[ -n "${SANITIZED_NPM_LOOKUP_OUTPUT}" ]]; then
+      printf '%s\n' "${SANITIZED_NPM_LOOKUP_OUTPUT}" >&2
+    fi
+    return "${NPM_VERSION_LOOKUP_STATUS}"
+  fi
+
+  set +e
+  PUBLISHED_GIT_HEAD="$(npm view "${package_name}@${VERSION}" gitHead 2>&1)"
+  PUBLISHED_GIT_HEAD_STATUS=$?
+  set -e
+  if [[ "${PUBLISHED_GIT_HEAD_STATUS}" -ne 0 ]]; then
+    echo "::error::npm registry gitHead lookup failed for ${package_name}@${VERSION} (status ${PUBLISHED_GIT_HEAD_STATUS})." >&2
+    SANITIZED_NPM_LOOKUP_OUTPUT="$(sanitize_npm_lookup_output "${PUBLISHED_GIT_HEAD}")"
+    if [[ -n "${SANITIZED_NPM_LOOKUP_OUTPUT}" ]]; then
+      printf '%s\n' "${SANITIZED_NPM_LOOKUP_OUTPUT}" >&2
+    fi
+    return "${PUBLISHED_GIT_HEAD_STATUS}"
+  fi
+  if [[ -z "${PUBLISHED_GIT_HEAD}" ]] && ! wait_for_npm_git_head "${package_name}"; then
+    if [[ -n "${PUBLISHED_GIT_HEAD}" ]]; then
+      echo "::error::${package_name}@${VERSION} already exists, but its gitHead does not match this commit." >&2
+    else
+      echo "::error::${package_name}@${VERSION} already exists, but its gitHead metadata did not converge." >&2
+    fi
+    return 1
+  fi
+  if [[ "${PUBLISHED_GIT_HEAD}" == "${GITHUB_SHA}" ]]; then
+    return 0
+  fi
+  echo "::error::${package_name}@${VERSION} already exists, but its gitHead does not match this commit." >&2
+  return 1
+}
+
 rc_publish_package_dir() {
   PACKAGE_DIR="$1"
   PUBLISH_SPEC="${2:-${PACKAGE_DIR}}"
   PACKAGE_NAME="$(jq -r '.name' "${PACKAGE_DIR}/package.json")"
-  if npm view "${PACKAGE_NAME}@${VERSION}" version 2>/dev/null; then
-    set +e
-    PUBLISHED_GIT_HEAD="$(npm view "${PACKAGE_NAME}@${VERSION}" gitHead 2>&1)"
-    PUBLISHED_GIT_HEAD_STATUS=$?
-    set -e
-    if [[ "${PUBLISHED_GIT_HEAD_STATUS}" -ne 0 ]]; then
-      echo "::error::npm registry gitHead lookup failed for ${PACKAGE_NAME}@${VERSION} (status ${PUBLISHED_GIT_HEAD_STATUS})." >&2
-      SANITIZED_NPM_LOOKUP_OUTPUT="$(sanitize_npm_lookup_output "${PUBLISHED_GIT_HEAD}")"
-      if [[ -n "${SANITIZED_NPM_LOOKUP_OUTPUT}" ]]; then
-        printf '%s\n' "${SANITIZED_NPM_LOOKUP_OUTPUT}" >&2
-      fi
-      return "${PUBLISHED_GIT_HEAD_STATUS}"
-    fi
-    if [[ -z "${PUBLISHED_GIT_HEAD}" ]] && ! wait_for_npm_git_head "${PACKAGE_NAME}"; then
-      if [[ -n "${PUBLISHED_GIT_HEAD}" ]]; then
-        echo "::error::${PACKAGE_NAME}@${VERSION} already exists, but its gitHead does not match this commit." >&2
-      else
-        echo "::error::${PACKAGE_NAME}@${VERSION} already exists, but its gitHead metadata did not converge." >&2
-      fi
-      return 1
-    fi
-    if [[ "${PUBLISHED_GIT_HEAD}" == "${GITHUB_SHA}" ]]; then
-      echo "::notice::${PACKAGE_NAME}@${VERSION} already published for this commit; skipping npm publish"
-      return 0
-    fi
-    echo "::error::${PACKAGE_NAME}@${VERSION} already exists, but its gitHead does not match this commit." >&2
-    return 1
+  local version_lookup_mode=recover
+  if [[ "${NPM_MAINTENANCE_RELEASE:-false}" == "true" ]]; then
+    version_lookup_mode=fail-closed
+  fi
+  ensure_rc_version_absent_or_matches_commit "${PACKAGE_NAME}" "${version_lookup_mode}" || return $?
+  if [[ "${PUBLISHED_GIT_HEAD}" == "${GITHUB_SHA}" ]]; then
+    echo "::notice::${PACKAGE_NAME}@${VERSION} already published for this commit; skipping npm publish"
+    return 0
   fi
 
   local publish_tag="${3:-rc}"
@@ -510,6 +543,18 @@ run_rc_publish() {
   require_env VERSION GITHUB_SHA NPM_PACK_DIR
   verify_npm_compatibility_artifact
 
+  if [[ "${NPM_MAINTENANCE_RELEASE:-false}" == "true" ]]; then
+    # Check the entire batch before publishing any immutable package.
+    for PACKAGE_DIR in $(package_dirs); do
+      PACKAGE_NAME="$(jq -r '.name' "${PACKAGE_DIR}/package.json")"
+      if [[ "$(rc_tag_for_package "${PACKAGE_NAME}")" != "rc-history" ]]; then
+        echo "::error::Maintenance versions must be older than every current rc tag." >&2
+        return 1
+      fi
+      ensure_rc_version_absent_or_matches_commit "${PACKAGE_NAME}" fail-closed || return $?
+    done
+  fi
+
   for PACKAGE_DIR in $(package_dirs); do
     PUBLISH_SPEC="$(canonical_tarball_for_package_dir "${PACKAGE_DIR}")" || PUBLISH_SPEC=""
     if [[ -z "${PUBLISH_SPEC}" ]]; then
@@ -519,6 +564,10 @@ run_rc_publish() {
     fi
     PACKAGE_NAME="$(jq -r '.name' "${PACKAGE_DIR}/package.json")"
     RC_PUBLISH_TAG="$(rc_tag_for_package "${PACKAGE_NAME}")"
+    if [[ "${NPM_MAINTENANCE_RELEASE:-false}" == "true" && "${RC_PUBLISH_TAG}" != "rc-history" ]]; then
+      echo "::error::Maintenance rc selector changed during publication." >&2
+      return 1
+    fi
     rc_publish_package_dir "${PACKAGE_DIR}" "${PUBLISH_SPEC}" "${RC_PUBLISH_TAG}"
   done
   # The required read-only registry validator checks immutable identities and
