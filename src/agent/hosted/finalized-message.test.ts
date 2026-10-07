@@ -49,23 +49,37 @@ Deno.test("buildFinalizedMessageState preserves tool-before-text fallback orderi
   assertEquals(result.hasIncompleteFinalizedToolParts, false);
 });
 
-Deno.test("buildFinalizedMessageState preserves reasoning fallback after runtime metadata", () => {
+Deno.test("buildFinalizedMessageState matches persisted reasoning fallbacks one at a time", () => {
   const result = buildFinalizedMessageState({
     responseMessage: {
       id: "assistant-1",
       role: "assistant",
-      parts: [{ type: "data-veryfront.runtime_context", data: { currentDateUtc: "2026-10-07" } }],
+      parts: [
+        { type: "data-veryfront.runtime_context", data: { currentDateUtc: "2026-10-07" } },
+        {
+          type: "reasoning",
+          text: "Checking the retained state.",
+          signature: "sig_123",
+        },
+      ],
     },
     isAborted: false,
     finalStep: {
       response: {
         messages: [{
           role: "assistant",
-          content: [{
-            type: "reasoning",
-            text: "Checking the retained state.",
-            signature: "sig_123",
-          }],
+          content: [
+            {
+              type: "reasoning",
+              text: "Checking the retained state.",
+              signature: "sig_123",
+            },
+            {
+              type: "reasoning",
+              text: "Checking the retained state.",
+              signature: "sig_123",
+            },
+          ],
         }],
       },
     },
@@ -74,6 +88,11 @@ Deno.test("buildFinalizedMessageState preserves reasoning fallback after runtime
 
   assertEquals(result.sanitizedFinalizedMessage.parts, [
     { type: "data-veryfront.runtime_context", data: { currentDateUtc: "2026-10-07" } },
+    {
+      type: "reasoning",
+      text: "Checking the retained state.",
+      signature: "sig_123",
+    },
     {
       type: "reasoning",
       text: "Checking the retained state.",

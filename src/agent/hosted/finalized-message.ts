@@ -6,7 +6,7 @@ import {
 } from "../../chat/conversation.ts";
 import {
   appendMissingFallbackTextPart,
-  buildFallbackUiMessageChunks,
+  buildFallbackUiMessageChunksFromParts,
   buildFallbackUiMessageParts,
   buildMissingFallbackTextChunks,
   buildMissingFallbackToolChunks,
@@ -18,6 +18,18 @@ import {
   type MirroredToolChunkState,
   recordMirroredToolChunkState,
 } from "../streaming/mirrored-tool-chunk-state.ts";
+
+type ReasoningPart = Extract<ChatUiMessage["parts"][number], { type: "reasoning" }>;
+
+function isSubstantiveReasoningPart(part: ReasoningPart): boolean {
+  return part.text.length > 0 || (part.signature?.length ?? 0) > 0 ||
+    (part.redactedData?.length ?? 0) > 0;
+}
+
+function hasSameReasoningContent(left: ReasoningPart, right: ReasoningPart): boolean {
+  return left.text === right.text && left.signature === right.signature &&
+    left.redactedData === right.redactedData;
+}
 
 /** Input payload for build finalized message state. */
 export interface BuildFinalizedMessageStateInput {
@@ -79,23 +91,33 @@ export function buildFinalizedMessageState(
   const hasPersistedText = persistedMessage.parts.some((part) =>
     part.type === "text" && part.text.length > 0
   );
-  const hasPersistedReasoning = persistedMessage.parts.some((part) =>
-    part.type === "reasoning" &&
-    (part.text.length > 0 || (part.signature?.length ?? 0) > 0 ||
-      (part.redactedData?.length ?? 0) > 0)
+  const unmatchedPersistedReasoningParts = persistedMessage.parts.filter(
+    (part): part is ReasoningPart => part.type === "reasoning" && isSubstantiveReasoningPart(part),
   );
+  const missingFallbackParts = finalStepFallbackParts.filter((fallbackPart) => {
+    if (fallbackPart.type === "text") {
+      return !hasPersistedText;
+    }
+    if (fallbackPart.type === "reasoning") {
+      const matchingIndex = unmatchedPersistedReasoningParts.findIndex((part) =>
+        hasSameReasoningContent(part, fallbackPart)
+      );
+      if (matchingIndex < 0) {
+        return true;
+      }
+      unmatchedPersistedReasoningParts.splice(matchingIndex, 1);
+      return false;
+    }
+    return isToolUiPart(fallbackPart) &&
+      !persistedMessage.parts.some((part) =>
+        isToolUiPart(part) && part.toolCallId === fallbackPart.toolCallId
+      );
+  });
   const fallbackParts = persistedMessage.parts.length === 0
     ? finalStepFallbackParts
     : appendMissingFallbackTextPart([
       ...persistedMessage.parts,
-      ...finalStepFallbackParts.filter((fallbackPart) =>
-        (fallbackPart.type === "text" && !hasPersistedText) ||
-        (fallbackPart.type === "reasoning" && !hasPersistedReasoning) ||
-        (isToolUiPart(fallbackPart) &&
-          !persistedMessage.parts.some((part) =>
-            isToolUiPart(part) && part.toolCallId === fallbackPart.toolCallId
-          ))
-      ),
+      ...missingFallbackParts,
     ], input.finalStep);
   const finalizedMessage = fallbackParts.length !== persistedMessage.parts.length
     ? {
@@ -153,18 +175,15 @@ export function buildFinalizedMessageFallbackChunks(
     return [];
   }
 
-  const hasPersistedTextOrReasoning = input.persistedMessage.parts.some((part) =>
-    (part.type === "text" && part.text.length > 0) ||
-    (part.type === "reasoning" &&
-      (part.text.length > 0 || (part.signature?.length ?? 0) > 0 ||
-        (part.redactedData?.length ?? 0) > 0))
+  const appendedFallbackParts = input.sanitizedFinalizedMessage.parts.slice(
+    input.persistedMessage.parts.length,
   );
-  const hasOrderedFallbackContent = buildFallbackUiMessageParts(input.finalStep).some((part) =>
+  const hasOrderedFallbackContent = appendedFallbackParts.some((part) =>
     part.type === "text" || part.type === "reasoning"
   );
-  if (!hasPersistedTextOrReasoning && hasOrderedFallbackContent) {
-    const orderedFallbackChunks = buildFallbackUiMessageChunks(
-      input.finalStep,
+  if (hasOrderedFallbackContent) {
+    const orderedFallbackChunks = buildFallbackUiMessageChunksFromParts(
+      appendedFallbackParts,
       fallbackMessageId,
       input.mirroredToolChunkState,
     );

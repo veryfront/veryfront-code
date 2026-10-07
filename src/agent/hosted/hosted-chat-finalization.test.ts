@@ -336,6 +336,71 @@ describe("agent/hosted-chat-finalization", () => {
     ]);
   });
 
+  it("recovers each missing final-step reasoning block into terminal output and durable replay", async () => {
+    const calls: string[] = [];
+    const chunks: ChatUiMessageChunk<MessageMetadata>[] = [];
+    const terminalStates: HostedLifecycleTerminalState[] = [];
+
+    await finalizeHostedChatRun({
+      kind: "response",
+      responseMessage: createResponseMessage({
+        parts: [
+          {
+            type: "data-veryfront.runtime_context",
+            data: { currentDateUtc: "2026-10-07" },
+          },
+          { type: "reasoning", text: "First thought.", signature: "sig_first" },
+        ],
+      }),
+      isAborted: false,
+      streamResult: createStreamResult({
+        response: {
+          messages: [{
+            role: "assistant",
+            content: [
+              { type: "reasoning", text: "First thought.", signature: "sig_first" },
+              { type: "reasoning", text: "Second thought.", signature: "sig_second" },
+            ],
+          }],
+        },
+      }),
+      lifecycleAdapter: createLifecycleAdapter({
+        calls,
+        terminalStates,
+        mirror: createDurableRunMirror({ calls, chunks }),
+      }),
+      mirroredToolChunkState: createMirroredToolChunkState(),
+      capturedMessageId: "assistant-message-1",
+      incompleteToolCallsPartErrorText: "Tool call did not complete",
+      cleanup: async () => {
+        calls.push("cleanup");
+      },
+      streamError: null,
+    });
+
+    assertEquals(chunks, [
+      { type: "reasoning-start", id: "assistant-message-1:reasoning" },
+      {
+        type: "reasoning-delta",
+        id: "assistant-message-1:reasoning",
+        delta: "Second thought.",
+      },
+      {
+        type: "reasoning-end",
+        id: "assistant-message-1:reasoning",
+        signature: "sig_second",
+      },
+    ]);
+    assertEquals((terminalStates.at(0)!.output as ChatUiMessage).parts, [
+      {
+        type: "data-veryfront.runtime_context",
+        data: { currentDateUtc: "2026-10-07" },
+      },
+      { type: "reasoning", text: "First thought.", signature: "sig_first" },
+      { type: "reasoning", text: "Second thought.", signature: "sig_second" },
+    ]);
+  });
+
   it("fails runtime-metadata-only response output with an empty final-step reasoning shell", async () => {
     const calls: string[] = [];
     const terminalStates: HostedLifecycleTerminalState[] = [];

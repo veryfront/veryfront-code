@@ -105,10 +105,14 @@ function isSubstantiveFallbackReasoningPart(
 }
 
 function toChatParts(parts: readonly FallbackParsedPart[]): ChatPart[] {
-  return parts.flatMap((part) =>
-    part.kind === "reasoning" && !isSubstantiveFallbackReasoningPart(part)
-      ? []
-      : [buildChatPartFromParsedPart(part)]
+  return parts.map(buildChatPartFromParsedPart);
+}
+
+function retainSubstantiveFallbackParts(
+  parts: readonly FallbackParsedPart[],
+): FallbackParsedPart[] {
+  return parts.filter((part) =>
+    part.kind !== "reasoning" || isSubstantiveFallbackReasoningPart(part)
   );
 }
 
@@ -388,35 +392,39 @@ function buildFallbackParsedPartsFromInput(input: {
   extractFinalStepToolCalls: (step: unknown) => FinalStepToolCall[];
   extractFinalStepToolResults: (step: unknown) => FinalStepToolResult[];
 }): FallbackParsedPart[] {
-  const orderedResponseParts = buildFallbackParsedPartsFromResponseMessages(input.step);
+  const orderedResponseParts = retainSubstantiveFallbackParts(
+    buildFallbackParsedPartsFromResponseMessages(input.step),
+  );
   if (orderedResponseParts.length > 0) {
     return orderedResponseParts;
   }
 
   if (isRecord(input.step) && Array.isArray(input.step.messages)) {
-    const orderedTopLevelContentParts = buildOrderedFallbackParsedPartsFromContentMessages(
-      input.step.messages,
+    const orderedTopLevelContentParts = retainSubstantiveFallbackParts(
+      buildOrderedFallbackParsedPartsFromContentMessages(input.step.messages),
     );
     if (orderedTopLevelContentParts.length > 0) {
       return orderedTopLevelContentParts;
     }
   }
 
-  const orderedUiResponseParts = buildFallbackParsedPartsFromUiResponseMessages(input.step);
+  const orderedUiResponseParts = retainSubstantiveFallbackParts(
+    buildFallbackParsedPartsFromUiResponseMessages(input.step),
+  );
   if (orderedUiResponseParts.length > 0) {
     return orderedUiResponseParts;
   }
 
   if (isRecord(input.step) && Array.isArray(input.step.messages)) {
-    const orderedUiTopLevelParts = buildOrderedFallbackParsedPartsFromUiMessages(
-      input.step.messages,
+    const orderedUiTopLevelParts = retainSubstantiveFallbackParts(
+      buildOrderedFallbackParsedPartsFromUiMessages(input.step.messages),
     );
     if (orderedUiTopLevelParts.length > 0) {
       return orderedUiTopLevelParts;
     }
   }
 
-  return buildFallbackParsedPartsFromExtractedStep(input);
+  return retainSubstantiveFallbackParts(buildFallbackParsedPartsFromExtractedStep(input));
 }
 
 // --- Part extraction ---
@@ -831,9 +839,6 @@ function buildFallbackUiMessageChunksFromParsedParts(
   for (const part of parts) {
     switch (part.kind) {
       case "reasoning": {
-        if (!isSubstantiveFallbackReasoningPart(part)) {
-          break;
-        }
         const id = getIndexedFallbackChunkId(messageId, "reasoning", reasoningIndex);
         reasoningIndex += 1;
 
@@ -1098,6 +1103,33 @@ export function buildFallbackUiMessageChunks(
     messageId,
     state,
   );
+}
+
+/** Builds fallback UI message chunks from already selected parts. */
+export function buildFallbackUiMessageChunksFromParts(
+  parts: readonly ChatPart[],
+  messageId: string,
+  state?: Partial<FallbackToolChunkState>,
+): ChatUiMessageChunk<MessageMetadata>[] {
+  const parsedParts = retainSubstantiveFallbackParts(parts.flatMap<FallbackParsedPart>((part) => {
+    if (part.type === "text") {
+      return [{ kind: "text" as const, text: part.text }];
+    }
+    if (part.type === "reasoning") {
+      return [{
+        kind: "reasoning" as const,
+        text: part.text,
+        ...(part.signature ? { signature: part.signature } : {}),
+        ...(part.redactedData ? { redactedData: part.redactedData } : {}),
+      }];
+    }
+    return buildToolChunkDescriptorsFromParts([part]).map((descriptor) => ({
+      kind: "tool" as const,
+      ...descriptor,
+    }));
+  }));
+
+  return buildFallbackUiMessageChunksFromParsedParts(parsedParts, messageId, state);
 }
 
 /** Builds missing fallback tool chunks. */

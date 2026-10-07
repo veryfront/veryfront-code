@@ -197,6 +197,23 @@ describe("chat/final-step-fallback", () => {
     assertEquals(buildFallbackUiMessageChunks(step, "assistant-1"), []);
   });
 
+  it("uses lower-priority step output when response messages contain only an empty reasoning shell", () => {
+    const step = {
+      text: "Recovered top-level text.",
+      response: {
+        messages: [{
+          role: "assistant",
+          content: [{ type: "reasoning", text: "" }],
+        }],
+      },
+    };
+
+    assertEquals(buildFallbackUiMessageParts(step), [{
+      type: "text",
+      text: "Recovered top-level text.",
+    }]);
+  });
+
   it("retains opaque reasoning fallback data without text", () => {
     const step = {
       response: {
