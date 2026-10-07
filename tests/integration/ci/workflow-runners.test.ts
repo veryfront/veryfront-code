@@ -2,14 +2,9 @@ import { assert, assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { parse } from "#std/yaml/parse";
 
-// Pull request jobs share the org-wide standard-runner limit. With many PRs in
-// flight, main and merge-queue jobs queued ~15 minutes behind them, so main
-// and merge-queue runs use the larger-runner pool, which has its own limit.
-// Same jobs and checks; only the machine changes. See
-// veryfront-issue-inbox#2350.
-const LINUX_RUNNER =
-  "${{ (github.event_name == 'push' || github.event_name == 'merge_group') && 'ubuntu-latest-m' || 'ubuntu-latest' }}";
-const LARGER_LINUX_RUNNER = "ubuntu-latest-m";
+// Standard GitHub-hosted runners are free for this public repository.
+// Push, merge-queue and pull request jobs share the standard runner pool.
+const LINUX_RUNNER = "ubuntu-latest";
 const OTHER_RUNNERS = ["windows-2022", "${{ matrix.os }}"];
 
 function asRecord(value: unknown, context: string): Record<string, unknown> {
@@ -29,7 +24,7 @@ async function cicdJobs(): Promise<Record<string, Record<string, unknown>>> {
 }
 
 describe("cicd.yml runner pools", () => {
-  it("runs Linux jobs on the larger pool for main and merge queue only", async () => {
+  it("runs Linux jobs on the standard public runner pool", async () => {
     for (const [name, job] of Object.entries(await cicdJobs())) {
       // Reusable-workflow calls pick their runner in the called workflow.
       if ("uses" in job) continue;
@@ -38,12 +33,12 @@ describe("cicd.yml runner pools", () => {
       assertEquals(
         runsOn,
         LINUX_RUNNER,
-        `${name} must pick its Linux runner by event`,
+        `${name} must use the standard public Linux runner`,
       );
     }
   });
 
-  it("runs main-only matrix Linux entries on the larger pool", async () => {
+  it("runs main-only matrix Linux entries on the standard public runner pool", async () => {
     for (const [name, job] of Object.entries(await cicdJobs())) {
       if (job["runs-on"] !== "${{ matrix.os }}") continue;
       assert(
@@ -55,7 +50,7 @@ describe("cicd.yml runner pools", () => {
       for (const entry of matrix.include as Record<string, unknown>[]) {
         const os = String(entry.os);
         if (!os.startsWith("ubuntu")) continue;
-        assertEquals(os, LARGER_LINUX_RUNNER, `${name} ${entry.name} runner`);
+        assertEquals(os, LINUX_RUNNER, `${name} ${entry.name} runner`);
       }
     }
   });
