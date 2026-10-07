@@ -9,6 +9,8 @@
 #   rc-publish       Publish every verified tarball from $NPM_PACK_DIR with
 #                    `--tag rc`, skipping packages already published at
 #                    $VERSION. Requires: VERSION, GITHUB_SHA, NPM_PACK_DIR.
+#                    NPM_MAINTENANCE_RELEASE=true requires an older RC for every
+#                    package before publishing; only rc-history can move.
 #   preflight        Runs BEFORE the build: enumerate package names from the
 #                    deno.json workspace and fail if any name@$VERSION already
 #                    exists on npm. Requires: VERSION.
@@ -510,6 +512,17 @@ run_rc_publish() {
   require_env VERSION GITHUB_SHA NPM_PACK_DIR
   verify_npm_compatibility_artifact
 
+  if [[ "${NPM_MAINTENANCE_RELEASE:-false}" == "true" ]]; then
+    # Check the entire batch before publishing any immutable package.
+    for PACKAGE_DIR in $(package_dirs); do
+      PACKAGE_NAME="$(jq -r '.name' "${PACKAGE_DIR}/package.json")"
+      if [[ "$(rc_tag_for_package "${PACKAGE_NAME}")" != "rc-history" ]]; then
+        echo "::error::Maintenance versions must be older than every current rc tag." >&2
+        return 1
+      fi
+    done
+  fi
+
   for PACKAGE_DIR in $(package_dirs); do
     PUBLISH_SPEC="$(canonical_tarball_for_package_dir "${PACKAGE_DIR}")" || PUBLISH_SPEC=""
     if [[ -z "${PUBLISH_SPEC}" ]]; then
@@ -519,6 +532,10 @@ run_rc_publish() {
     fi
     PACKAGE_NAME="$(jq -r '.name' "${PACKAGE_DIR}/package.json")"
     RC_PUBLISH_TAG="$(rc_tag_for_package "${PACKAGE_NAME}")"
+    if [[ "${NPM_MAINTENANCE_RELEASE:-false}" == "true" && "${RC_PUBLISH_TAG}" != "rc-history" ]]; then
+      echo "::error::Maintenance rc selector changed during publication." >&2
+      return 1
+    fi
     rc_publish_package_dir "${PACKAGE_DIR}" "${PUBLISH_SPEC}" "${RC_PUBLISH_TAG}"
   done
   # The required read-only registry validator checks immutable identities and
