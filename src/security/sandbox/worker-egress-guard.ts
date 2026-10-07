@@ -66,6 +66,7 @@ const RequestGetters = Object.freeze({
   url: Object.getOwnPropertyDescriptor(NativeRequest.prototype, "url")?.get,
 });
 const UrlHrefGet = Object.getOwnPropertyDescriptor(NativeURL.prototype, "href")?.get;
+const UrlOriginGet = Object.getOwnPropertyDescriptor(NativeURL.prototype, "origin")?.get;
 
 function getNativeRequestProperty<TKey extends keyof typeof RequestGetters>(
   request: Request,
@@ -102,6 +103,16 @@ function isNativeUrl(value: unknown): value is URL {
   } catch {
     return false;
   }
+}
+
+function getNativeUrlHref(value: URL): string {
+  if (!UrlHrefGet) throw new TypeError("URL href accessor is unavailable");
+  return IntrinsicReflectApply(UrlHrefGet, value, []) as string;
+}
+
+function getNativeUrlOrigin(value: URL): string {
+  if (!UrlOriginGet) throw new TypeError("URL origin accessor is unavailable");
+  return IntrinsicReflectApply(UrlOriginGet, value, []) as string;
 }
 
 export const WORKER_INTERNAL_EGRESS_OVERRIDE_ENV = "VERYFRONT_WORKER_ALLOW_INTERNAL_EGRESS";
@@ -1345,7 +1356,7 @@ export async function guardedEgressFetch(
   let url = requestInput
     ? getNativeRequestProperty(requestInput, "url")
     : isNativeUrl(input)
-    ? IntrinsicReflectApply(UrlHrefGet!, input, []) as string
+    ? getNativeUrlHref(input)
     : String(input);
   let method = (readOwnInitField(init, "method") ??
     (requestInput ? getNativeRequestProperty(requestInput, "method") : "GET")).toUpperCase();
@@ -1544,8 +1555,8 @@ export async function guardedEgressFetch(
     // Every value the header edits depend on is read first: the URL and
     // Response getters are live prototype members project code can replace,
     // and must not run between the check and the edits.
-    const crossOrigin = nextUrl.origin !== new NativeURL(url).origin;
-    const nextHref = nextUrl.href;
+    const crossOrigin = getNativeUrlOrigin(nextUrl) !== getNativeUrlOrigin(new NativeURL(url));
+    const nextHref = getNativeUrlHref(nextUrl);
     const status = response.status;
     // Standard fetch redirect method/body rules: 301/302 downgrade POST, while
     // 303 downgrades every method except GET and HEAD. 307/308 always preserve.
