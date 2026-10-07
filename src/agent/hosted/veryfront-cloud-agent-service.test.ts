@@ -2189,3 +2189,28 @@ Deno.test({
     });
   },
 });
+
+Deno.test("Studio availability survives service intersection without weakening explicit requirements", () => {
+  for (const hostRequired of [undefined, false, true]) {
+    for (const agentRequired of [undefined, false, true]) {
+      const result = veryfrontCloudAgentServiceInternals.resolveMcpServers({
+        mcpServers: [{
+          kind: "veryfront-studio",
+          ...(hostRequired === undefined ? {} : { required: hostRequired }),
+        }],
+      }, {
+        mcpServers: [{
+          kind: "veryfront-studio",
+          ...(agentRequired === undefined ? {} : { required: agentRequired }),
+        }],
+      });
+      const expected = hostRequired === true || agentRequired === true
+        ? true
+        : agentRequired ?? hostRequired;
+      assertEquals(result, [{
+        kind: "veryfront-studio",
+        ...(expected === undefined ? {} : { required: expected }),
+      }]);
+    }
+  }
+});

@@ -170,6 +170,11 @@ fork setup. Trusted Studio clients with a configured transport retain their
 existing tools and policies. Configured transport connection and authentication
 errors still fail setup; the optional setting does not suppress them.
 
+The `required` setting survives code and Markdown agent-definition serialization,
+including the strict executor boundary. When agent and service presets intersect,
+an explicit `required: true` on either side remains required; otherwise an
+explicit `false` is preserved.
+
 Generic MCP servers can pass a static or dynamic endpoint and headers through to
 the remote MCP source adapter.
 
