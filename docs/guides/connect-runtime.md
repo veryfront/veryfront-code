@@ -91,15 +91,19 @@ export async function POST(request: Request): Promise<Response> {
     project_reference: projectId,
     title: "Runtime connection demo",
   });
-  const accepted = await api<{ run: { run_id: string } }>("/runs", {
-    kind: "agent",
-    owner: { kind: "conversation", id: conversation.id },
-    request: {
-      mode: "agent",
-      agent_id: assistant.id,
-      implementation_kind: "veryfront-local",
-      worker_key: workerKey,
-      initial_status: "pending",
+  const prompt = "Say hello to the teammate inspecting this run.";
+  const accepted = await api<{ id: string }>("/runs", {
+    project_id: projectId,
+    conversation_id: conversation.id,
+    title: "Runtime connection demo",
+    target: { type: "agent", id: assistant.id },
+    input: prompt,
+    config: {
+      agent_admission: {
+        mode: "worker",
+        implementation_kind: "veryfront-local",
+        worker_key: workerKey,
+      },
     },
   });
   const run = await client.claimRun({ workerId: worker.id, leaseDurationSeconds: 60 });
@@ -108,7 +112,7 @@ export async function POST(request: Request): Promise<Response> {
   try {
     // This bounded, one-step demonstration finishes before the 60-second lease.
     const result = await assistant.generate({
-      input: "Say hello to the teammate inspecting this run.",
+      input: prompt,
       abortSignal: AbortSignal.timeout(20_000),
     });
     const messageId = crypto.randomUUID();
@@ -126,7 +130,11 @@ export async function POST(request: Request): Promise<Response> {
       expectedPreviousExternalEventSequence: run.latest_external_event_sequence,
     });
     await client.completeRun({ runId: run.run_id, status: "completed", output: result.text });
-    return Response.json({ worker_id: worker.id, run_id: accepted.run.run_id });
+    return Response.json({
+      worker_id: worker.id,
+      run_id: accepted.id,
+      conversation_id: conversation.id,
+    });
   } catch {
     await client.completeRun({
       runId: run.run_id,
@@ -134,7 +142,7 @@ export async function POST(request: Request): Promise<Response> {
       terminalErrorCode: "RUNTIME_DEMO_FAILED",
       terminalErrorMessage: "The runtime connection demo failed",
     });
-    return Response.json({ error: "Runtime demo failed", run_id: accepted.run.run_id }, {
+    return Response.json({ error: "Runtime demo failed", run_id: accepted.id }, {
       status: 502,
     });
   }
@@ -152,6 +160,11 @@ complete the run: `completeRun` performs the terminal operation using the
 claim's separate terminal credential. See the
 [`veryfront/agent` API reference](../api-reference/veryfront/agent.md).
 
+The canonical request selects an agent with `target` and records its prompt as
+`input`. `config.agent_admission` selects the conversation-owned worker path.
+Use the registered worker's implementation kind and worker key. A bare
+`execution.runtime` override is not supported by this admission path.
+
 ## Start and execute the runtime
 
 1. Start the local runtime:
@@ -168,7 +181,7 @@ claim's separate terminal credential. See the
      -H "Authorization: Bearer $VERYFRONT_API_TOKEN"
    ```
 
-   The response contains `worker_id` and the canonical `run_id`. It contains no
+   The response contains `worker_id`, `conversation_id`, and the canonical `run_id`. It contains no
    worker token or run credential. Keep the returned run ID for verification.
 
 For a self-hosted runtime, build and start the same project with the normal
@@ -186,7 +199,7 @@ project's API origin.
      -H "Authorization: Bearer $VERYFRONT_API_TOKEN"
    ```
 
-   Verify `status` is `completed`, the owner is the new conversation, and
+   Verify `status` is `completed`, `conversation_id` matches the returned conversation, and
    `output` is the agent's greeting.
 
 2. Read its stored events:
