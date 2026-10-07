@@ -2697,7 +2697,7 @@ describe("RC metadata verification order", () => {
 
   it("keeps maintenance dispatch disabled while retaining the release gates", async () => {
     const workflow = parse(
-      await Deno.readTextFile(".github/workflows/cicd.yml"),
+      await Deno.readTextFile(new URL("../../.github/workflows/cicd.yml", import.meta.url)),
     ) as {
       jobs: Record<
         string,

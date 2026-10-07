@@ -1638,7 +1638,7 @@ fi
     const token = namedStep(dispatch, "Create release GitHub App token");
     assertEquals(
       token.if,
-      "${{ success() && needs.publish-public-release.result == 'success' && ((needs.version-check.outputs.is_stable == 'true' && needs.release.result == 'success') || (needs.version-check.outputs.is_stable == 'false' && needs.prerelease.result == 'success' && needs.github-prerelease.result == 'success' && needs.registry-validation-rc.result == 'success')) && steps.current.outputs.dispatch == 'true' }}",
+      "${{ success() && needs.publish-public-release.result == 'success' && ((needs.version-check.outputs.is_stable == 'true' && needs.release.result == 'success') || (needs.version-check.outputs.is_stable == 'false' && needs.prerelease.result == 'success' && needs.github-prerelease.result == 'success' && needs.registry-validation-rc.result == 'success')) && steps.current.outputs.dispatch == 'true' && !(github.event_name == 'workflow_dispatch' && inputs.maintenance_release_number != '') }}",
     );
     assert(dispatchSteps.indexOf(guard) < dispatchSteps.indexOf(token));
     for (
@@ -1648,7 +1648,7 @@ fi
     ) {
       assertEquals(
         step.if,
-        "${{ success() && needs.publish-public-release.result == 'success' && ((needs.version-check.outputs.is_stable == 'true' && needs.release.result == 'success') || (needs.version-check.outputs.is_stable == 'false' && needs.prerelease.result == 'success' && needs.github-prerelease.result == 'success' && needs.registry-validation-rc.result == 'success')) && steps.current.outputs.dispatch == 'true' }}",
+        "${{ success() && needs.publish-public-release.result == 'success' && ((needs.version-check.outputs.is_stable == 'true' && needs.release.result == 'success') || (needs.version-check.outputs.is_stable == 'false' && needs.prerelease.result == 'success' && needs.github-prerelease.result == 'success' && needs.registry-validation-rc.result == 'success')) && steps.current.outputs.dispatch == 'true' && !(github.event_name == 'workflow_dispatch' && inputs.maintenance_release_number != '') }}",
       );
       assert(dispatchSteps.indexOf(guard) < dispatchSteps.indexOf(step));
     }
@@ -1967,7 +1967,10 @@ describe("folded registry dispatch", () => {
       assertEquals(
         step.if,
         "${{ success() && needs.publish-public-release.result == 'success' && ((needs.version-check.outputs.is_stable == 'true' && needs.release.result == 'success') || (needs.version-check.outputs.is_stable == 'false' && needs.prerelease.result == 'success' && needs.github-prerelease.result == 'success' && needs.registry-validation-rc.result == 'success'))" +
-          (step.uses ? " && steps.current.outputs.dispatch == 'true'" : "") + " }}",
+          (step.uses
+            ? " && steps.current.outputs.dispatch == 'true' && !(github.event_name == 'workflow_dispatch' && inputs.maintenance_release_number != '')"
+            : "") +
+          " }}",
       );
       assertEquals(step["timeout-minutes"], 5);
       assertEquals(String(step.run).includes("scripts/"), false);
