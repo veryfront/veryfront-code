@@ -81,9 +81,14 @@ const intrinsicHasOwn = Object.hasOwn;
 const intrinsicIsArray = Array.isArray;
 const intrinsicArrayPush = Array.prototype.push;
 const intrinsicArrayIncludes = Array.prototype.includes;
+const intrinsicStringStartsWith = String.prototype.startsWith;
 
 function intrinsicIncludes<T>(values: readonly T[], value: T): boolean {
   return intrinsicReflectApply(intrinsicArrayIncludes, values, [value]);
+}
+
+function intrinsicStartsWith(value: string, prefix: string): boolean {
+  return intrinsicReflectApply(intrinsicStringStartsWith, value, [prefix]);
 }
 
 function filterToolDefinitions(
@@ -552,10 +557,10 @@ function isUnavailableOptionalRemoteTool(
   names: readonly string[] | undefined,
   prefixes: readonly string[] | undefined,
 ): boolean {
-  if (names?.includes(toolName)) return true;
+  if (names !== undefined && intrinsicIncludes(names, toolName)) return true;
   for (let index = 0; index < (prefixes?.length ?? 0); index++) {
     const prefix = prefixes?.[index];
-    if (prefix !== undefined && toolName.startsWith(prefix)) return true;
+    if (prefix !== undefined && intrinsicStartsWith(toolName, prefix)) return true;
   }
   return false;
 }

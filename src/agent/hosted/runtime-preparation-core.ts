@@ -22,7 +22,7 @@ import {
   runWithVeryfrontCloudContextAsync,
 } from "#veryfront/provider/veryfront-cloud/context.ts";
 import { getExecutorModelAdditiveReasoningTokens } from "#veryfront/agent/hosted/executor-model-grant.ts";
-import type { HostToolSet, RemoteToolSource } from "#veryfront/tool";
+import type { HostToolSet, RemoteToolSource, ToolDefinition } from "#veryfront/tool";
 import type { AgentSystem } from "#veryfront/agent/types.ts";
 import {
   type AgentModelRuntimeResolver,
@@ -93,6 +93,7 @@ import {
 const apply = Reflect.apply;
 const mapGet = Map.prototype.get;
 const mapHas = Map.prototype.has;
+const mapSet = Map.prototype.set;
 const hasOwn = Object.hasOwn;
 const objectSetPrototypeOf = Object.setPrototypeOf;
 const objectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
@@ -100,6 +101,7 @@ const objectGetPrototypeOf = Object.getPrototypeOf;
 const objectPrototype = Object.prototype;
 const objectEntries = Object.entries;
 const arrayIncludes = Array.prototype.includes;
+const stringStartsWith = String.prototype.startsWith;
 const arrayIsArray = Array.isArray;
 const abortController = AbortController.prototype.abort;
 const abortSignalAny = AbortSignal.any;
@@ -133,12 +135,84 @@ function filter<T>(values: readonly T[], predicate: (value: T) => boolean): T[] 
 function includes<T>(values: readonly T[], value: T): boolean {
   return apply(arrayIncludes, values, [value]) as boolean;
 }
+function startsWith(value: string, prefix: string): boolean {
+  return apply(stringStartsWith, value, [prefix]) as boolean;
+}
 
 function privateMapGet<K, V>(map: ReadonlyMap<K, V>, key: K): V | undefined {
   return apply(mapGet, map, [key]) as V | undefined;
 }
 function privateMapHas<K, V>(map: ReadonlyMap<K, V>, key: K): boolean {
   return apply(mapHas, map, [key]) as boolean;
+}
+function privateMapSet<K, V>(map: Map<K, V>, key: K, value: V): void {
+  apply(mapSet, map, [key, value]);
+}
+
+async function pruneUnavailableOptionalStudioToolNames(
+  names: readonly string[],
+  definition: RuntimeAgentMarkdownDefinition,
+  effective: ExecutorRuntimeGrantData,
+  localTools: HostToolSet,
+  remoteToolSources: readonly RemoteToolSource[],
+  remoteToolCatalogs: Map<RemoteToolSource, Promise<readonly ToolDefinition[]>>,
+  signal: AbortSignal,
+): Promise<string[]> {
+  const configuredServers = definition.mcpServers ?? [];
+  const unavailableNames = createPrivateSet<string>();
+  const unavailablePrefixes = createPrivateSet<string>();
+  const isUnavailable = (name: string) => {
+    if (unavailableNames.has(name)) return true;
+    for (const prefix of unavailablePrefixes) {
+      if (startsWith(name, prefix)) return true;
+    }
+    return false;
+  };
+  for (let index = 0; index < configuredServers.length; index++) {
+    const server = configuredServers[index];
+    if (server?.kind !== "veryfront-studio" || server.required !== false) continue;
+    const sourceId = server.id ?? server.kind;
+    if (includes(effective.remoteToolSourceIds, sourceId)) continue;
+    const allowedNames = server.toolPolicy?.allow;
+    if (allowedNames === undefined) {
+      unavailablePrefixes.add("studio_");
+      continue;
+    }
+    unavailableNames.add("studio_open_project");
+    for (const toolName of allowedNames) unavailableNames.add(toolName);
+  }
+  if (unavailableNames.size === 0 && unavailablePrefixes.size === 0) return [...names];
+  const remoteCandidates = filter(
+    names,
+    (name) => isUnavailable(name) && !hasOwn(localTools, name),
+  );
+  if (remoteCandidates.length === 0) return [...names];
+  if (remoteToolSources.length === 0) {
+    return filter(names, (name) => !isUnavailable(name) || hasOwn(localTools, name));
+  }
+
+  const remoteCandidateSet = createPrivateSet(remoteCandidates);
+  const remoteAvailableNames = createPrivateSet<string>();
+  for (let index = 0; index < remoteToolSources.length; index++) {
+    const source = remoteToolSources[index];
+    if (source === undefined) continue;
+    let toolsPromise = privateMapGet(remoteToolCatalogs, source);
+    if (toolsPromise === undefined) {
+      toolsPromise = observePrivatePromise(source.listTools({ abortSignal: signal }));
+      privateMapSet(remoteToolCatalogs, source, toolsPromise);
+    }
+    const tools = await observePrivatePromise(toolsPromise);
+    for (let toolIndex = 0; toolIndex < tools.length; toolIndex++) {
+      const tool = tools[toolIndex];
+      if (tool !== undefined && remoteCandidateSet.has(tool.name)) {
+        remoteAvailableNames.add(tool.name);
+      }
+    }
+  }
+  return filter(
+    names,
+    (name) => !isUnavailable(name) || hasOwn(localTools, name) || remoteAvailableNames.has(name),
+  );
 }
 
 function selectAllowedHostTools(
@@ -589,6 +663,33 @@ export function createRuntimePreparationCore(input: RuntimePreparationCoreOption
         if (name !== undefined) deniedToolSet.add(name);
       }
       const deniedToolNames = [...deniedToolSet];
+      const remoteToolSources: RemoteToolSource[] = [];
+      const remoteToolCatalogs = new Map<RemoteToolSource, Promise<readonly ToolDefinition[]>>();
+      for (let index = 0; index < grant.remoteToolSourceIds.length; index++) {
+        const id = grant.remoteToolSourceIds[index];
+        if (id === undefined) continue;
+        let remoteToolSource = privateMapGet(facades.remoteToolSources, id)!;
+        const servers = filter(
+          definition.mcpServers ?? [],
+          (server) => (server.id ?? server.kind) === id,
+        );
+        for (let serverIndex = 0; serverIndex < servers.length; serverIndex++) {
+          const server = servers[serverIndex];
+          if (server !== undefined) {
+            remoteToolSource = wrapRemoteToolSourceWithMcpPolicy(
+              remoteToolSource,
+              server.toolPolicy,
+            );
+          }
+        }
+        defineOwnDataProperty(
+          remoteToolSources,
+          remoteToolSources.length,
+          remoteToolSource,
+          { enumerable: true, configurable: true, writable: true },
+        );
+      }
+      if (remoteToolSources.length > 0) resourcesStarted = true;
       const sourceToolNames = resolveHostedRuntimeAllowedTools({
         configuredTools: definition.tools,
         configuredDeniedTools: definition.deniedTools,
@@ -604,6 +705,15 @@ export function createRuntimePreparationCore(input: RuntimePreparationCoreOption
           ? undefined
           : normalizeToolNames(request.allowedToolNames),
         deniedToolNames,
+      );
+      allowedToolNames = await pruneUnavailableOptionalStudioToolNames(
+        allowedToolNames,
+        definition,
+        grant,
+        localTools,
+        remoteToolSources,
+        remoteToolCatalogs,
+        context.signal,
       );
       if (includes(allowedToolNames, "studio_open_project")) {
         refuse("EXECUTOR_RUNTIME_CAPABILITY_UNAVAILABLE");
@@ -667,6 +777,15 @@ export function createRuntimePreparationCore(input: RuntimePreparationCoreOption
             ? undefined
             : normalizeToolNames(request.allowedToolNames),
           deniedToolNames,
+        );
+        allowedToolNames = await pruneUnavailableOptionalStudioToolNames(
+          allowedToolNames,
+          definition,
+          grant,
+          localTools,
+          remoteToolSources,
+          remoteToolCatalogs,
+          context.signal,
         );
       }
       const taskContext = {
@@ -746,31 +865,6 @@ export function createRuntimePreparationCore(input: RuntimePreparationCoreOption
           : {}),
       };
       objectSetPrototypeOf(options, null);
-      const remoteToolSources: RemoteToolSource[] = [];
-      for (let index = 0; index < grant.remoteToolSourceIds.length; index++) {
-        const id = grant.remoteToolSourceIds[index];
-        if (id === undefined) continue;
-        let remoteToolSource = privateMapGet(facades.remoteToolSources, id)!;
-        const servers = filter(
-          definition.mcpServers ?? [],
-          (server) => (server.id ?? server.kind) === id,
-        );
-        for (let serverIndex = 0; serverIndex < servers.length; serverIndex++) {
-          const server = servers[serverIndex];
-          if (server !== undefined) {
-            remoteToolSource = wrapRemoteToolSourceWithMcpPolicy(
-              remoteToolSource,
-              server.toolPolicy,
-            );
-          }
-        }
-        defineOwnDataProperty(
-          remoteToolSources,
-          remoteToolSources.length,
-          remoteToolSource,
-          { enumerable: true, configurable: true, writable: true },
-        );
-      }
       const facadeAllowedToolSet = createPrivateSet<string>();
       for (let index = 0; index < allowedToolNames.length; index++) {
         const name = allowedToolNames[index];
