@@ -74,3 +74,92 @@ Deno.test("agent service version route ignores inherited response status and JSO
     }
   }
 });
+
+Deno.test("agent service version route ignores inherited header iterators", async () => {
+  const artifact = "20261007183045-a1b2c3d4e5f6";
+  const originalObjectIterator = Object.getOwnPropertyDescriptor(Object.prototype, Symbol.iterator);
+  const originalHeadersIterator = Object.getOwnPropertyDescriptor(
+    Headers.prototype,
+    Symbol.iterator,
+  );
+  let iteratorCalls = 0;
+  const poisonedIterator = function* () {
+    iteratorCalls += 1;
+    yield ["Cache-Control", "max-age=999"];
+  };
+  Object.defineProperty(Object.prototype, Symbol.iterator, {
+    value: poisonedIterator,
+    configurable: true,
+  });
+  Object.defineProperty(Headers.prototype, Symbol.iterator, {
+    value: poisonedIterator,
+    configurable: true,
+  });
+  try {
+    const vulnerableResponse = new Response(
+      JSON.stringify({ artifact }),
+      {
+        status: 200,
+        statusText: "",
+        headers: {
+          "Cache-Control": "no-store",
+          "Content-Type": "application/json",
+        },
+      },
+    );
+    assertEquals(vulnerableResponse.headers.get("Cache-Control"), "max-age=999");
+    assertEquals(vulnerableResponse.headers.get("Content-Type"), "text/plain;charset=UTF-8");
+
+    const vulnerableHeaders = new Headers();
+    vulnerableHeaders.set("Cache-Control", "no-store");
+    vulnerableHeaders.set("Content-Type", "application/json");
+    const vulnerableHeadersResponse = new Response(
+      JSON.stringify({ artifact }),
+      {
+        status: 200,
+        statusText: "",
+        headers: vulnerableHeaders,
+      },
+    );
+    assertEquals(vulnerableHeadersResponse.headers.get("Cache-Control"), "max-age=999");
+    assertEquals(vulnerableHeadersResponse.headers.get("Content-Type"), "text/plain;charset=UTF-8");
+
+    iteratorCalls = 0;
+    const routeSet = createHostedAgentServiceRouteSet<{ ok: true }>({
+      tracker: createDetachedRunTracker(),
+      deploymentArtifact: artifact,
+      authenticateRequest: async () => ({ authToken: "token", userId: "user-1" }),
+      verifyProjectAccess: async () => ({ success: true }),
+      verifyRunCancellationToken: async () => true,
+      verifyRunEventAppendToken: async () => false,
+      prepareExecution: async () => ({ ok: true }),
+      streamExecutionToAgUiResponse: () => new Response("streamed"),
+      startDetachedExecution: async () => {},
+      resolveRuntimeOwnerInvokeUrl: async () => null,
+    });
+    const versionRoute = routeSet.routes.find((route) => route.path === "/version");
+    assertExists(versionRoute);
+
+    const response = await versionRoute.handler(
+      new Request("https://agent.example.test/version"),
+      {},
+    );
+
+    assertEquals(response.status, 200);
+    assertEquals(response.headers.get("Cache-Control"), "no-store");
+    assertEquals(response.headers.get("Content-Type"), "application/json");
+    assertEquals(await response.json(), { artifact });
+    assertEquals(iteratorCalls, 0);
+  } finally {
+    if (originalHeadersIterator) {
+      Object.defineProperty(Headers.prototype, Symbol.iterator, originalHeadersIterator);
+    } else {
+      Reflect.deleteProperty(Headers.prototype, Symbol.iterator);
+    }
+    if (originalObjectIterator) {
+      Object.defineProperty(Object.prototype, Symbol.iterator, originalObjectIterator);
+    } else {
+      Reflect.deleteProperty(Object.prototype, Symbol.iterator);
+    }
+  }
+});

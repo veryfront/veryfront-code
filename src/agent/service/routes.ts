@@ -49,9 +49,11 @@ import {
   runWithVerifiedHostedRunEventWriterRequest,
 } from "../hosted/child-run-event-writer-token.ts";
 import { privateJsonStringify } from "#veryfront/security/private-json.ts";
+import { snapshotOwnDeploymentArtifactOption } from "./deployment-artifact.ts";
 
 const IntrinsicReflectApply = Reflect.apply;
 const NativeHeaders = Headers;
+const createNullPrototypeObject = Object.create;
 const NativeRequest = Request;
 const NativeResponse = Response;
 const RequestClone = Request.prototype.clone;
@@ -67,15 +69,18 @@ const ArrayFilter = Array.prototype.filter;
 const ArrayIsArray = Array.isArray;
 
 function createVersionResponse(deploymentArtifact: string | null): Response {
+  const headers = IntrinsicReflectApply(createNullPrototypeObject, Object, [null]) as Record<
+    string,
+    string
+  >;
+  headers["Cache-Control"] = "no-store";
+  headers["Content-Type"] = "application/json";
   return new NativeResponse(
     privateJsonStringify({ artifact: deploymentArtifact }),
     {
       status: 200,
       statusText: "",
-      headers: {
-        "Cache-Control": "no-store",
-        "Content-Type": "application/json",
-      },
+      headers,
     },
   );
 }
@@ -329,9 +334,9 @@ function createAgUiSetupErrorResponse(input: {
 export function createHostedAgentServiceRouteSet<TExecution extends object>(
   options: HostedAgentServiceRouteSetOptions<TExecution>,
 ): HostedAgentServiceRouteSet<TExecution> {
+  const deploymentArtifact = snapshotOwnDeploymentArtifactOption(options);
   const trace = options.trace ?? defaultTrace;
   const forwardedConfigNamespace = options.forwardedConfigNamespace ?? "veryfront";
-  const deploymentArtifact = options.deploymentArtifact ?? null;
   const runtimeSource = options.runtimeSource
     ? snapshotHostedRuntimeSourceIdentity(options.runtimeSource)
     : undefined;
