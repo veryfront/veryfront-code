@@ -16,6 +16,7 @@ const objectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 export const EXECUTOR_AGENT_MAX_PAYLOAD_BYTES = EXECUTOR_MAX_FRAME_BYTES - 2048;
 
 const failureStatus = {
+  "agent-provider-auth-error": 401,
   EXECUTOR_AGENT_INVALID_INPUT: 400,
   EXECUTOR_AGENT_INPUT_TOO_LARGE: 413,
   EXECUTOR_AGENT_ALREADY_STARTED: 409,
@@ -48,6 +49,7 @@ const failureStatus = {
 /** @internal Fixed executor failure codes accepted by hosted response boundaries. */
 export const EXECUTOR_AGENT_FAILURE_CODES = Object.freeze(
   [
+    "agent-provider-auth-error",
     "EXECUTOR_AGENT_INVALID_INPUT",
     "EXECUTOR_AGENT_INPUT_TOO_LARGE",
     "EXECUTOR_AGENT_ALREADY_STARTED",
@@ -105,6 +107,8 @@ export function executorAgentFailureCode(error: unknown, fallback: FailureCode):
     if (explicit.success) return explicit.data;
   }
   const snapshot = snapshotVeryfrontError(error);
+  const exactSlug = getExecutorAgentFailureCodeSchema().safeParse(snapshot?.slug);
+  if (exactSlug.success) return exactSlug.data;
   const code = snapshot?.slug.toUpperCase().replaceAll("-", "_") ?? parseProviderError(error).code;
   const result = getExecutorAgentFailureCodeSchema().safeParse(code);
   return result.success ? result.data : fallback;
