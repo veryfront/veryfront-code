@@ -4,6 +4,8 @@
  * Host header and TLS SNI name.
  */
 
+import { defineOwnDataProperty } from "#veryfront/security/own-data-property.ts";
+
 import type { ClientRequest, IncomingMessage, RequestOptions } from "node:http";
 import type { Readable } from "node:stream";
 import { VERSION } from "#veryfront/utils/version-constant.ts";
@@ -21,6 +23,7 @@ const NULL_BODY_STATUSES = new Set([204, 205, 304]);
 // touched through methods captured before project code could replace them.
 const IntrinsicReflectApply = Reflect.apply;
 const NativeRequest = Request;
+const NativeResponse = Response;
 const HeadersHas = Headers.prototype.has;
 const HeadersSet = Headers.prototype.set;
 const RequestHeadersGetter = Object.getOwnPropertyDescriptor(NativeRequest.prototype, "headers")!
@@ -113,11 +116,9 @@ export function createPinnedFetchResponse(
   const responseBody = requestMethod.toUpperCase() === "HEAD" || NULL_BODY_STATUSES.has(status)
     ? null
     : body;
-  return new Response(responseBody, {
-    status,
-    statusText,
-    headers,
-  });
+  const response = new NativeResponse(responseBody, { status, statusText, headers });
+  // Seal before the transport resolves its promise with credential-bearing content.
+  return defineOwnDataProperty(response, "then", undefined, { configurable: true });
 }
 
 function addressFamily(address: string): 4 | 6 {

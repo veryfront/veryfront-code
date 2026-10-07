@@ -35,12 +35,11 @@ import type { ApiClient } from "../../../../../../cli/shared/config.ts";
 import type { ParsedArgs } from "../../../../../../cli/shared/types.ts";
 
 const denoOnlyIt = typeof Deno === "undefined" ? it.skip : it;
-const nodeOnlyIt =
-  typeof Deno === "undefined" &&
+const nodeOnlyIt = typeof Deno === "undefined" &&
     typeof process !== "undefined" &&
     Boolean(process.versions?.node)
-    ? it
-    : it.skip;
+  ? it
+  : it.skip;
 
 function createMockClient(overrides: {
   getStream?: (path: string) => Promise<ReadableStream<Uint8Array>>;
@@ -172,6 +171,46 @@ describe("uploadsCommand", () => {
 });
 
 describe("downloadUploadToFile", () => {
+  it("preserves the write failure when closing and removing temporary data also fail", async () => {
+    const primary = new Error("private download write failed");
+    let closes = 0;
+    let removals = 0;
+    const source = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new Uint8Array([1]));
+        controller.close();
+      },
+    });
+    const failure = await assertRejects(
+      () =>
+        writeStreamExclusive(
+          source,
+          undefined,
+          async () => ({
+            write() {
+              return Promise.reject(primary);
+            },
+            close() {
+              closes++;
+              throw new Error("temporary handle cleanup failed");
+            },
+          }),
+          async () => {
+            removals++;
+            throw new Error("temporary file cleanup failed");
+          },
+        ),
+      Error,
+      "private download write failed",
+    );
+    assertEquals(failure, primary);
+    assertEquals({ closes, removals, locked: source.locked }, {
+      closes: 1,
+      removals: 1,
+      locked: false,
+    });
+  });
+
   it("closes private download streams through captured promise intrinsics", async () => {
     const nativeThen = Promise.prototype.then;
     let hooked = false;
@@ -520,7 +559,7 @@ try {
           child.stdout.on("data", (chunk: string) => stdout += chunk);
           child.stderr.on("data", (chunk: string) => stderr += chunk);
           child.on("error", reject);
-          child.on("exit", (code) => resolve({ code, stdout, stderr }));
+          child.on("close", (code) => resolve({ code, stdout, stderr }));
         });
         assertEquals(result.code, 0, `${result.stdout}${result.stderr}`);
         assertStringIncludes(

@@ -814,6 +814,58 @@ describe("createVeryfrontApiOriginBoundOutboundFetch", () => {
 });
 
 describe("authenticated download transport settlement", () => {
+  it("shadows inherited then hooks before authenticated response settlement", async () => {
+    const response = new Response("authenticated content");
+    const original = Object.getOwnPropertyDescriptor(Response.prototype, "then");
+    let intercepted = false;
+    let settled: Response;
+    Object.defineProperty(Response.prototype, "then", {
+      configurable: true,
+      get() {
+        intercepted = true;
+        return undefined;
+      },
+    });
+    try {
+      settled = await Promise.resolve(__bindHostResponseAccessorsForTests(response));
+    } finally {
+      if (original) Object.defineProperty(Response.prototype, "then", original);
+      else Reflect.deleteProperty(Response.prototype, "then");
+    }
+    assertEquals(intercepted, false);
+    assertEquals(await settled.text(), "authenticated content");
+  });
+
+  it("does not expose authenticated downloads to inherited response then hooks", async () => {
+    const pendingResponse = Promise.resolve(new Response("authenticated content"));
+    const original = Object.getOwnPropertyDescriptor(Response.prototype, "then");
+    let intercepted = false;
+    let response: Response;
+    const fetchImpl: typeof fetch = () => pendingResponse;
+    await __runWithOutboundFetchTransportForTests({
+      fetch: fetchImpl,
+      pinnedFetch: (url, _addresses, init) => fetchImpl(url, init),
+      resolveHost: () => Promise.resolve(["93.184.216.34"]),
+    }, async () => {
+      const download = createVeryfrontApiDownloadOutboundFetch("https://api.example.test");
+      Object.defineProperty(Response.prototype, "then", {
+        configurable: true,
+        get() {
+          intercepted = true;
+          return undefined;
+        },
+      });
+      try {
+        response = await download("https://api.example.test/file");
+      } finally {
+        if (original) Object.defineProperty(Response.prototype, "then", original);
+        else Reflect.deleteProperty(Response.prototype, "then");
+      }
+      assertEquals(intercepted, false);
+      assertEquals(await response.text(), "authenticated content");
+    });
+  });
+
   it("waits for cancellation of a late transport response body", async () => {
     const controller = new AbortController();
     let resolveTransport!: (response: Response) => void;

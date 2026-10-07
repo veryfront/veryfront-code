@@ -183,7 +183,13 @@ async function writeStreamAtomic(
     created = false;
     return bytes;
   } finally {
-    if (created) await removeNativeStreamFile(temporaryPath);
+    if (created) {
+      try {
+        await removeNativeStreamFile(temporaryPath);
+      } catch {
+        // Preserve the promotion or cancellation failure that triggered cleanup.
+      }
+    }
   }
 }
 
@@ -1002,8 +1008,13 @@ export async function writeStreamExclusive(
       if (handle) {
         try {
           await closeHandle();
-        } finally {
+        } catch {
+          // Preserve the stream failure while still attempting file cleanup.
+        }
+        try {
           await remove();
+        } catch {
+          // Cleanup failures must not replace the original stream failure.
         }
       }
     }

@@ -184,6 +184,12 @@ export function __bindHostResponseAccessorsForTests(response: Response): Respons
 }
 
 function bindHostResponseAccessors(response: Response): Response {
+  // Promise resolution reads then before returning the authenticated response.
+  IntrinsicReflectApply(ObjectDefineProperty, Object, [
+    response,
+    "then",
+    createValueDescriptor(undefined, false, false),
+  ]);
   const bodyGet = ResponseBodyGet;
   const headersGet = ResponseHeadersGet;
   const okGet = ResponseOkGet;
