@@ -6,6 +6,7 @@ import {
 } from "../../chat/conversation.ts";
 import {
   appendMissingFallbackTextPart,
+  buildFallbackUiMessageChunks,
   buildFallbackUiMessageParts,
   buildMissingFallbackTextChunks,
   buildMissingFallbackToolChunks,
@@ -75,13 +76,21 @@ export function buildFinalizedMessageState(
     ? markIncompleteToolPartsAsStopped(input.responseMessage)
     : input.responseMessage;
   const finalStepFallbackParts = buildFallbackUiMessageParts(input.finalStep);
+  const hasPersistedText = persistedMessage.parts.some((part) =>
+    part.type === "text" && part.text.length > 0
+  );
+  const hasPersistedReasoning = persistedMessage.parts.some((part) =>
+    part.type === "reasoning" &&
+    (part.text.length > 0 || (part.signature?.length ?? 0) > 0 ||
+      (part.redactedData?.length ?? 0) > 0)
+  );
   const fallbackParts = persistedMessage.parts.length === 0
     ? finalStepFallbackParts
     : appendMissingFallbackTextPart([
       ...persistedMessage.parts,
       ...finalStepFallbackParts.filter((fallbackPart) =>
-        (fallbackPart.type === "reasoning" &&
-          !persistedMessage.parts.some((part) => part.type === "reasoning")) ||
+        (fallbackPart.type === "text" && !hasPersistedText) ||
+        (fallbackPart.type === "reasoning" && !hasPersistedReasoning) ||
         (isToolUiPart(fallbackPart) &&
           !persistedMessage.parts.some((part) =>
             isToolUiPart(part) && part.toolCallId === fallbackPart.toolCallId
@@ -142,6 +151,36 @@ export function buildFinalizedMessageFallbackChunks(
     input.capturedMessageId;
   if (!fallbackMessageId) {
     return [];
+  }
+
+  const hasPersistedTextOrReasoning = input.persistedMessage.parts.some((part) =>
+    (part.type === "text" && part.text.length > 0) ||
+    (part.type === "reasoning" &&
+      (part.text.length > 0 || (part.signature?.length ?? 0) > 0 ||
+        (part.redactedData?.length ?? 0) > 0))
+  );
+  const hasOrderedFallbackText = buildFallbackUiMessageParts(input.finalStep).some((part) =>
+    part.type === "text"
+  );
+  if (!hasPersistedTextOrReasoning && hasOrderedFallbackText) {
+    const orderedFallbackChunks = buildFallbackUiMessageChunks(
+      input.finalStep,
+      fallbackMessageId,
+      input.mirroredToolChunkState,
+    );
+    const mirroredToolChunkStateWithOrderedFallbacks = cloneMirroredToolChunkState(
+      input.mirroredToolChunkState,
+    );
+    for (const chunk of orderedFallbackChunks) {
+      recordMirroredToolChunkState(mirroredToolChunkStateWithOrderedFallbacks, chunk);
+    }
+    return [
+      ...orderedFallbackChunks,
+      ...buildMissingFallbackToolChunksFromParts(
+        input.sanitizedFinalizedMessage.parts,
+        mirroredToolChunkStateWithOrderedFallbacks,
+      ),
+    ];
   }
 
   const toolFallbackChunksFromParts = buildMissingFallbackToolChunksFromParts(

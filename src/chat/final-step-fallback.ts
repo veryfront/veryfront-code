@@ -97,8 +97,19 @@ function buildChatPartFromParsedPart(part: FallbackParsedPart): ChatPart {
   }
 }
 
+function isSubstantiveFallbackReasoningPart(
+  part: Extract<FallbackParsedPart, { kind: "reasoning" }>,
+): boolean {
+  return part.text.length > 0 || (part.signature?.length ?? 0) > 0 ||
+    (part.redactedData?.length ?? 0) > 0;
+}
+
 function toChatParts(parts: readonly FallbackParsedPart[]): ChatPart[] {
-  return parts.map(buildChatPartFromParsedPart);
+  return parts.flatMap((part) =>
+    part.kind === "reasoning" && !isSubstantiveFallbackReasoningPart(part)
+      ? []
+      : [buildChatPartFromParsedPart(part)]
+  );
 }
 
 function upsertParsedToolResult(
@@ -820,6 +831,9 @@ function buildFallbackUiMessageChunksFromParsedParts(
   for (const part of parts) {
     switch (part.kind) {
       case "reasoning": {
+        if (!isSubstantiveFallbackReasoningPart(part)) {
+          break;
+        }
         const id = getIndexedFallbackChunkId(messageId, "reasoning", reasoningIndex);
         reasoningIndex += 1;
 
@@ -1072,6 +1086,7 @@ export function appendMissingFallbackTextPart(
 export function buildFallbackUiMessageChunks(
   step: unknown,
   messageId: string,
+  state?: Partial<FallbackToolChunkState>,
 ): ChatUiMessageChunk<MessageMetadata>[] {
   return buildFallbackUiMessageChunksFromParsedParts(
     buildFallbackParsedPartsFromInput({
@@ -1081,6 +1096,7 @@ export function buildFallbackUiMessageChunks(
       extractFinalStepToolResults,
     }),
     messageId,
+    state,
   );
 }
 

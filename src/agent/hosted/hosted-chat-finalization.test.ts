@@ -311,6 +311,109 @@ describe("agent/hosted-chat-finalization", () => {
     ]);
   });
 
+  it("fails runtime-metadata-only response output with an empty final-step reasoning shell", async () => {
+    const calls: string[] = [];
+    const terminalStates: HostedLifecycleTerminalState[] = [];
+
+    await finalizeHostedChatRun({
+      kind: "response",
+      responseMessage: createResponseMessage({
+        parts: [{
+          type: "data-veryfront.runtime_context",
+          data: { currentDateUtc: "2026-10-07" },
+        }],
+      }),
+      isAborted: false,
+      streamResult: createStreamResult({
+        response: {
+          messages: [{
+            role: "assistant",
+            content: [{ type: "reasoning", text: "" }],
+          }],
+        },
+      }),
+      lifecycleAdapter: createLifecycleAdapter({
+        calls,
+        terminalStates,
+        mirror: createDurableRunMirror({ calls }),
+      }),
+      mirroredToolChunkState: createMirroredToolChunkState(),
+      capturedMessageId: "assistant-message-1",
+      incompleteToolCallsPartErrorText: "Tool call did not complete",
+      cleanup: async () => {
+        calls.push("cleanup");
+      },
+      streamError: null,
+    });
+
+    assertEquals(calls, ["flush", "terminal:failed:EMPTY_RESPONSE", "cleanup"]);
+    assertEquals(terminalStates.at(0)!.status, "failed");
+    assertEquals(terminalStates.at(0)!.terminalErrorCode, "EMPTY_RESPONSE");
+  });
+
+  it("preserves text-before-tool fallback stream ordering after runtime metadata", async () => {
+    const calls: string[] = [];
+    const terminalStates: HostedLifecycleTerminalState[] = [];
+
+    await finalizeHostedChatRun({
+      kind: "response",
+      responseMessage: createResponseMessage({
+        parts: [{
+          type: "data-veryfront.runtime_context",
+          data: { currentDateUtc: "2026-10-07" },
+        }],
+      }),
+      isAborted: false,
+      streamResult: createStreamResult({
+        response: {
+          messages: [{
+            role: "assistant",
+            content: [
+              { type: "text", text: "Checking now." },
+              {
+                type: "tool-call",
+                toolCallId: "fallback-tool-1",
+                toolName: "form_input",
+                input: { title: "Continue?" },
+              },
+              {
+                type: "tool-result",
+                toolCallId: "fallback-tool-1",
+                toolName: "form_input",
+                output: { submitted: true },
+              },
+            ],
+          }],
+        },
+      }),
+      lifecycleAdapter: createLifecycleAdapter({
+        calls,
+        terminalStates,
+        mirror: createDurableRunMirror({ calls }),
+      }),
+      mirroredToolChunkState: createMirroredToolChunkState(),
+      capturedMessageId: "assistant-message-1",
+      incompleteToolCallsPartErrorText: "Tool call did not complete",
+      cleanup: async () => {
+        calls.push("cleanup");
+      },
+      streamError: null,
+    });
+
+    assertEquals(calls, [
+      "append:text-start:assistant-message-1",
+      "append:text-delta:assistant-message-1",
+      "append:text-end:assistant-message-1",
+      "append:tool-input-start:",
+      "append:tool-input-available:",
+      "append:tool-output-available:",
+      "flush",
+      "terminal:completed:",
+      "cleanup",
+    ]);
+    assertEquals(terminalStates.at(0)!.status, "completed");
+  });
+
   it("fails runtime-metadata-only response output with unfinished final-step tool fallback", async () => {
     const calls: string[] = [];
     const chunks: ChatUiMessageChunk<MessageMetadata>[] = [];

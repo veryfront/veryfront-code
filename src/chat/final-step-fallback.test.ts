@@ -183,6 +183,37 @@ describe("chat/final-step-fallback", () => {
     ]);
   });
 
+  it("drops empty reasoning shells from response message content", () => {
+    const step = {
+      response: {
+        messages: [{
+          role: "assistant",
+          content: [{ type: "reasoning", text: "" }],
+        }],
+      },
+    };
+
+    assertEquals(buildFallbackUiMessageParts(step), []);
+    assertEquals(buildFallbackUiMessageChunks(step, "assistant-1"), []);
+  });
+
+  it("retains opaque reasoning fallback data without text", () => {
+    const step = {
+      response: {
+        messages: [{
+          role: "assistant",
+          content: [{ type: "reasoning", text: "", redactedData: "opaque_123" }],
+        }],
+      },
+    };
+
+    assertEquals(buildFallbackUiMessageParts(step), [{
+      type: "reasoning",
+      text: "",
+      redactedData: "opaque_123",
+    }]);
+  });
+
   it("builds fallback chunks from response message reasoning, tool calls, tool results, and text", () => {
     const step = {
       response: {
