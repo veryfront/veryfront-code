@@ -123,14 +123,26 @@ export type AgentMcpServerAuth =
 /** Veryfront-owned MCP server kind. */
 export type AgentVeryfrontMcpServerKind = "veryfront-api" | "veryfront-studio";
 
-/** Veryfront-owned MCP server available to an agent. */
-export interface AgentVeryfrontMcpServerConfig {
-  kind: AgentVeryfrontMcpServerKind;
-  /** Require Studio availability for a Studio preset; defaults to true. */
+/** Veryfront API MCP server available to an agent. */
+export interface AgentVeryfrontApiMcpServerConfig {
+  kind: "veryfront-api";
+  id?: string;
+  toolPolicy?: AgentMcpToolPolicy;
+}
+
+/** Veryfront Studio MCP server available to an agent. */
+export interface AgentVeryfrontStudioMcpServerConfig {
+  kind: "veryfront-studio";
+  /** Require Studio availability; defaults to true. */
   required?: boolean;
   id?: string;
   toolPolicy?: AgentMcpToolPolicy;
 }
+
+/** Veryfront-owned MCP server available to an agent. */
+export type AgentVeryfrontMcpServerConfig =
+  | AgentVeryfrontApiMcpServerConfig
+  | AgentVeryfrontStudioMcpServerConfig;
 
 /** HTTP MCP server available to an agent. */
 export interface AgentHttpMcpServerConfig {

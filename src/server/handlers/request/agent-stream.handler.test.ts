@@ -2843,19 +2843,36 @@ describe("server/handlers/request/agent-stream.handler", () => {
         ]
       ) {
         let remoteSources = -1;
+        let unavailableNames: string[] | undefined;
+        let unavailablePrefixes: string[] | undefined;
+        let availableToolNames: string[] | undefined;
         const handler = createTestAgentStreamHandler({
           ensureProjectDiscovery: async () => createEmptyDiscoveryResult(),
           getAgent: () =>
             createAgentWithConfig("assistant-1", {
-              tools: true,
-              mcpServers: [{ kind: "veryfront-studio", required: false }],
+              tools: { studio_todo_write: true },
+              mcpServers: [{
+                kind: "veryfront-studio",
+                required: false,
+                toolPolicy: { allow: ["studio_todo_write"] },
+              }],
             }),
           getAllAgentIds: () => ["assistant-1"],
           sessionManager: new AgentRunSessionManager(),
           createRuntime: (runtimeAgent) => {
-            remoteSources = getRuntimeRemoteToolSources(runtimeAgent.config)?.length ?? 0;
+            const runtimeConfig = runtimeAgent.config as
+              & typeof runtimeAgent.config
+              & RuntimeRemoteToolConfig;
+            remoteSources = getRuntimeRemoteToolSources(runtimeConfig)?.length ?? 0;
+            unavailableNames = runtimeConfig.__vfUnavailableOptionalRemoteToolNames;
+            unavailablePrefixes = runtimeConfig.__vfUnavailableOptionalRemoteToolPrefixes;
             return {
               stream: async (_messages, _context, callbacks) => {
+                availableToolNames = (await getAvailableTools(runtimeAgent.config.tools, {
+                  remoteToolSources: runtimeConfig.__vfRemoteToolSources,
+                  unavailableOptionalRemoteToolNames: unavailableNames,
+                  unavailableOptionalRemoteToolPrefixes: unavailablePrefixes,
+                })).map((tool) => tool.name);
                 callbacks?.onFinish?.({
                   text: "ok",
                   messages: [],
@@ -2887,6 +2904,9 @@ describe("server/handlers/request/agent-stream.handler", () => {
         assertExists(result.response);
         assertEquals(result.response.status, 200, await result.response.clone().text());
         assertEquals(remoteSources, 0);
+        assertEquals(unavailableNames, ["studio_todo_write"]);
+        assertEquals(unavailablePrefixes, ["studio_"]);
+        assertEquals(availableToolNames?.includes("studio_todo_write"), false);
       }
     } finally {
       if (previousUrl === undefined) Deno.env.delete("VERYFRONT_STUDIO_MCP_URL");

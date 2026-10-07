@@ -54,12 +54,16 @@ export type RuntimeRemoteToolConfig = {
   __vfRemoteToolSources?: RemoteToolSource[];
   __vfAllowedRemoteTools?: string[];
   __vfSourceIntegrationPolicy?: SourceIntegrationPolicyManifest;
+  __vfUnavailableOptionalRemoteToolNames?: string[];
+  __vfUnavailableOptionalRemoteToolPrefixes?: string[];
 };
 
 /** Canonical source id for the Veryfront API MCP server. */
 export const VERYFRONT_API_MCP_SOURCE_ID = "veryfront-platform-mcp";
 /** Canonical source id for the Veryfront Studio MCP server. */
 export const VERYFRONT_STUDIO_MCP_SOURCE_ID = "studio-mcp";
+/** Naming prefix for Studio MCP tools. */
+export const VERYFRONT_STUDIO_TOOL_PREFIX = "studio_";
 
 const RUNTIME_PROVIDED_BOOLEAN_TOOL_NAMES = new Set(["bash", "invoke_agent"]);
 const FRAMEWORK_KNOWLEDGE_TOOL_NAME = "search_knowledge";
@@ -71,6 +75,39 @@ const stringReplace = String.prototype.replace;
 
 function trimString(value: string | undefined): string | undefined {
   return value === undefined ? undefined : applyIntrinsic(stringTrim, value, []) as string;
+}
+
+function snapshotStringArray(value: unknown): string[] {
+  if (!isArray(value)) return [];
+  const result: string[] = [];
+  for (let index = 0; index < value.length; index++) {
+    if (!hasOwn(value, index)) continue;
+    const item = value[index];
+    if (typeof item === "string") result[result.length] = item;
+  }
+  return result;
+}
+
+function appendUnique(target: string[], value: string): void {
+  if (!target.includes(value)) target[target.length] = value;
+}
+
+export function getRuntimeUnavailableOptionalRemoteTools(
+  config: AgentConfig,
+  remoteToolSources: readonly RemoteToolSource[] | undefined,
+): { names: string[]; prefixes: string[] } {
+  const runtimeConfig = config as RuntimeRemoteToolConfig;
+  const names = snapshotStringArray(runtimeConfig.__vfUnavailableOptionalRemoteToolNames);
+  const prefixes = snapshotStringArray(runtimeConfig.__vfUnavailableOptionalRemoteToolPrefixes);
+  const remoteSourceIds = new Set((remoteToolSources ?? []).map((source) => source.id));
+  for (let index = 0; index < (config.mcpServers?.length ?? 0); index++) {
+    const server = config.mcpServers![index];
+    if (server?.kind !== "veryfront-studio" || server.required !== false) continue;
+    if (remoteSourceIds.has(getFirstPartyMcpSourceId(server))) continue;
+    appendUnique(prefixes, VERYFRONT_STUDIO_TOOL_PREFIX);
+    for (const toolName of server.toolPolicy?.allow ?? []) appendUnique(names, toolName);
+  }
+  return { names, prefixes };
 }
 
 function stripTrailingSlashes(value: string): string {

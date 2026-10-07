@@ -547,6 +547,19 @@ function appendForwardedToolDefinitions(
   }
 }
 
+function isUnavailableOptionalRemoteTool(
+  toolName: string,
+  names: readonly string[] | undefined,
+  prefixes: readonly string[] | undefined,
+): boolean {
+  if (names?.includes(toolName)) return true;
+  for (let index = 0; index < (prefixes?.length ?? 0); index++) {
+    const prefix = prefixes?.[index];
+    if (prefix !== undefined && toolName.startsWith(prefix)) return true;
+  }
+  return false;
+}
+
 /**
  * Get available tools based on agent configuration.
  * When tools === true, loads all tools from registry.
@@ -564,6 +577,8 @@ export async function getAvailableTools(
     forwardedRemoteToolDefinitions?: ToolDefinition[];
     remoteToolSources?: RemoteToolSource[];
     remoteToolContext?: ToolExecutionContext;
+    unavailableOptionalRemoteToolNames?: string[];
+    unavailableOptionalRemoteToolPrefixes?: string[];
     onIntegrationToolDiscovery?: (result: RemoteIntegrationToolDiscoveryResult) => void;
     sourceIntegrationPolicy?: SourceIntegrationPolicyManifest;
     strictConfiguredToolsOnly?: boolean;
@@ -676,6 +691,16 @@ export async function getAvailableTools(
 
       if (remoteToolNames.has(name)) {
         explicitlyRequestedRemoteToolNames.add(name);
+        continue;
+      }
+
+      if (
+        isUnavailableOptionalRemoteTool(
+          name,
+          options?.unavailableOptionalRemoteToolNames,
+          options?.unavailableOptionalRemoteToolPrefixes,
+        )
+      ) {
         continue;
       }
 

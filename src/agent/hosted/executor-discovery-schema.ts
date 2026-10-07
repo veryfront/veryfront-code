@@ -100,16 +100,27 @@ export const getExecutorAgentDefinitionSchema = defineSchema((v) => {
     thinking: v.object({ enabled: v.boolean(), budgetTokens: v.number().positive().optional() })
       .strict().optional(),
     mcpServers: v.array(
-      v.object({
-        kind: v.enum(["veryfront-api", "veryfront-studio"] as const),
-        id: getExecutorDiscoveryIdSchema().optional(),
-        required: v.boolean().optional(),
-        toolPolicy: v.object({
-          allow: ids().optional(),
-          deny: ids().optional(),
-          approval: v.literal("never").optional(),
-        }).strict().optional(),
-      }).strict(),
+      v.union([
+        v.object({
+          kind: v.literal("veryfront-api"),
+          id: getExecutorDiscoveryIdSchema().optional(),
+          toolPolicy: v.object({
+            allow: ids().optional(),
+            deny: ids().optional(),
+            approval: v.literal("never").optional(),
+          }).strict().optional(),
+        }).strict(),
+        v.object({
+          kind: v.literal("veryfront-studio"),
+          id: getExecutorDiscoveryIdSchema().optional(),
+          required: v.boolean().optional(),
+          toolPolicy: v.object({
+            allow: ids().optional(),
+            deny: ids().optional(),
+            approval: v.literal("never").optional(),
+          }).strict().optional(),
+        }).strict(),
+      ]),
     ).max(64).optional(),
   }).strict().refine((value) =>
     privateByteLength(encodePrivateText(privateJsonStringify(value))) <=

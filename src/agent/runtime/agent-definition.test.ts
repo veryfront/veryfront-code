@@ -480,3 +480,20 @@ Use available project tools.
   });
   assertEquals(definition.mcpServers, [{ kind: "veryfront-studio", required: false }]);
 });
+
+it("Markdown agent definitions reject required on API MCP", () => {
+  assertThrows(
+    () =>
+      parseRuntimeAgentMarkdownDefinition({
+        id: "api-required",
+        content: `---
+name: API Required
+mcp-servers:
+  - kind: veryfront-api
+    required: false
+---
+Use available project tools.
+`,
+      }),
+  );
+});
