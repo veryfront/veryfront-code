@@ -128,6 +128,57 @@ describe("putRemoteFileFromLocal", () => {
       await Deno.remove(tempDir, { recursive: true });
     }
   });
+  it("rejects an empty explicit destination before reading or uploading", async () => {
+    let writes = 0;
+    const client = createMockClient({
+      put: () => {
+        writes++;
+        return Promise.resolve({});
+      },
+    });
+    await assertRejects(
+      () =>
+        putRemoteFileFromLocal(
+          client,
+          "my-project",
+          "knowledge/proof.md",
+          "/missing/proof.md",
+          undefined,
+          { branchId: "" },
+        ),
+      VeryfrontError,
+    );
+    assertEquals(writes, 0);
+  });
+
+  it("encodes the explicit destination as a single branch selector", async () => {
+    const tempDir = await Deno.makeTempDir();
+    const localPath = `${tempDir}/proof.md`;
+    await Deno.writeTextFile(localPath, "Branch proof");
+    let path = "";
+    try {
+      const client = createMockClient({
+        put: (url) => {
+          path = url;
+          return Promise.resolve({});
+        },
+      });
+      await putRemoteFileFromLocal(
+        client,
+        "my-project",
+        "knowledge/proof.md",
+        localPath,
+        undefined,
+        { branchId: "branch&ref=main" },
+      );
+      assertEquals(
+        path,
+        "/projects/my-project/files/knowledge%2Fproof.md?branch_id=branch%26ref%3Dmain",
+      );
+    } finally {
+      await Deno.remove(tempDir, { recursive: true });
+    }
+  });
 });
 
 describe("deleteRemoteFile", () => {

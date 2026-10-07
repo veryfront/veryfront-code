@@ -3247,6 +3247,9 @@ async function executeKnowledgeIngestRun(input: {
           remotePath,
           localPath,
           input.signal,
+          input.request.runtimeTargetKind === "preview_branch"
+            ? { branchId: input.request.runtimeTargetBranchId ?? "" }
+            : undefined,
         ),
       signal: input.signal,
     });
