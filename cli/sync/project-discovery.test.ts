@@ -72,7 +72,7 @@ describe("project-discovery", () => {
       const apiUrl = "https://api.staging.example/api";
       setEnv("VERYFRONT_API_URL", apiUrl);
       const paths: string[] = [];
-      const fetchStub: typeof fetch = (input) => {
+      const fetchStub: typeof fetch = (input, _init) => {
         const path = new URL(String(input)).pathname;
         paths.push(path);
         return Promise.resolve(Response.json(

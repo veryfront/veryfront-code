@@ -16,6 +16,7 @@ import { dim } from "../ui/colors.ts";
 import { getTerminalWidth } from "../ui/layout.ts";
 import { formatError } from "../utils/string.ts";
 import { resolveApiCredentialCandidatesForAuth } from "../shared/config.ts";
+import { trustOperatorConfiguredVeryfrontApiOrigins } from "#cli/outbound-fetch";
 
 import type { App, AppConfig } from "./types.ts";
 import {
@@ -77,6 +78,8 @@ async function fetchQualifiedRemoteProjects() {
  * Create the CLI app
  */
 export function createApp(config: AppConfig): App {
+  trustOperatorConfiguredVeryfrontApiOrigins();
+
   let state = createInitialState();
   let running = false;
   let spinnerInterval: number | null = null;

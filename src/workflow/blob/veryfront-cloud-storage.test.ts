@@ -254,7 +254,7 @@ describe("VeryfrontCloudBlobStorage", () => {
       projectSlug: "test-project",
     });
     const paths: string[] = [];
-    const fetchStub: typeof fetch = (input) => {
+    const fetchStub: typeof fetch = (input, _init) => {
       paths.push(new URL(String(input)).pathname);
       return Promise.resolve(Response.json({ data: [] }));
     };
