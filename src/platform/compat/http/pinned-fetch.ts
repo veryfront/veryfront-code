@@ -4,13 +4,15 @@
  * Host header and TLS SNI name.
  */
 
-import type { ClientRequest, IncomingMessage, RequestOptions } from "node:http";
-import * as nodeHttp from "node:http";
-import * as nodeHttps from "node:https";
-import * as nodeNet from "node:net";
-import * as nodeTls from "node:tls";
-import * as nodeStream from "node:stream";
-import * as nodeZlib from "node:zlib";
+import type {
+  Agent,
+  AgentOptions,
+  ClientRequest,
+  IncomingMessage,
+  RequestOptions,
+} from "node:http";
+import type { NetConnectOpts, Socket } from "node:net";
+import type { ConnectionOptions, TLSSocket } from "node:tls";
 import type { Readable } from "node:stream";
 import { VERSION } from "#veryfront/utils/version-constant.ts";
 import { isErrorAcrossRealms } from "../error-introspection.ts";
@@ -47,36 +49,208 @@ const NativeBlob = Blob;
 const NativeFormData = typeof FormData === "undefined" ? undefined : FormData;
 const BlobTypeGetter = Object.getOwnPropertyDescriptor(Blob.prototype, "type")!.get!;
 
-type NodeRequestFunction = typeof import("node:http").request;
-const capturedClientRequestDestroy = nodeHttp.ClientRequest.prototype.destroy;
-const capturedClientRequestOff = nodeHttp.ClientRequest.prototype.off;
-const capturedIncomingMessageDestroy = nodeHttp.IncomingMessage.prototype.destroy;
-const capturedNetCreateConnection = nodeNet.createConnection;
-const capturedTlsConnect = nodeTls.connect;
-const capturedReadableToWeb = nodeStream.Readable.toWeb;
-const capturedReadablePipe = nodeStream.Readable.prototype.pipe;
-const capturedCreateGunzip = nodeZlib.createGunzip;
-const capturedCreateInflate = nodeZlib.createInflate;
-const capturedCreateBrotliDecompress = nodeZlib.createBrotliDecompress;
+type NodeHttpModule = typeof import("node:http");
+type NodeHttpsModule = typeof import("node:https");
+type NodeNetModule = typeof import("node:net");
+type NodeTlsModule = typeof import("node:tls");
+type NodeZlibModule = typeof import("node:zlib");
+type NodeRequestFunction = NodeHttpModule["request"];
 
-/**
- * `node:http` and `node:https` `request`, copied into constants while this
- * module evaluates. Static imports evaluate before any module that imports
- * this one, project code included, and the copies do not follow later
- * changes to the live bindings (`syncBuiltinESMExports`): the function
- * receives the options and their credential-bearing headers.
- *
- * This assumes the host is the process entry and loads this module while the
- * framework starts, before any project module, as hosted runtimes do. A
- * project that is itself the process entry and evaluates first owns the
- * process; keeping credentials out of such a process is the out-of-isolate
- * hop, not something this module can attest.
- */
-const capturedHttpRequest: NodeRequestFunction = nodeHttp.request;
-const capturedHttpsRequest: NodeRequestFunction = nodeHttps.request;
+interface NodeTransportIntrinsics {
+  readonly nodeHttp: NodeHttpModule;
+  readonly nodeHttps: NodeHttpsModule;
+  readonly nodeNet: NodeNetModule;
+  readonly nodeTls: NodeTlsModule;
+  readonly nodeReadable: typeof Readable;
+  readonly capturedClientRequestDestroy: ClientRequest["destroy"];
+  readonly capturedClientRequestOff: ClientRequest["off"];
+  readonly capturedIncomingMessageDestroy: IncomingMessage["destroy"];
+  readonly capturedNetCreateConnection: NodeNetModule["createConnection"];
+  readonly capturedTlsConnect: NodeTlsModule["connect"];
+  readonly capturedReadableToWeb: typeof Readable.toWeb;
+  readonly capturedReadablePipe: Readable["pipe"];
+  readonly capturedCreateGunzip: NodeZlibModule["createGunzip"];
+  readonly capturedCreateInflate: NodeZlibModule["createInflate"];
+  readonly capturedCreateBrotliDecompress: NodeZlibModule["createBrotliDecompress"];
+  readonly capturedHttpRequest: NodeRequestFunction;
+  readonly capturedHttpsRequest: NodeRequestFunction;
+  readonly privateHttpAgent: Agent;
+  readonly privateHttpsAgent: Agent;
+  readonly nodeRequestMembers: MemberSnapshot[];
+}
 
-function nodeRequestFor(protocol: string): NodeRequestFunction {
-  return protocol === "https:" ? capturedHttpsRequest : capturedHttpRequest;
+let nodeTransportIntrinsics: NodeTransportIntrinsics | undefined;
+
+type NodeBuiltinLoader = (specifier: string) => unknown;
+
+type HostProcess = {
+  getBuiltinModule?: (specifier: string) => unknown;
+  versions?: { node?: string; deno?: string };
+};
+
+type HostRequire = (specifier: string) => unknown;
+
+// Bun exposes this lexical binding in ESM without installing it on globalThis.
+declare const require: HostRequire | undefined;
+
+function createNodeTransportIntrinsics(
+  nodeHttp: NodeHttpModule,
+  nodeHttps: NodeHttpsModule,
+  nodeNet: NodeNetModule,
+  nodeTls: NodeTlsModule,
+  nodeReadable: typeof Readable,
+  nodeZlib: NodeZlibModule,
+): NodeTransportIntrinsics {
+  if (nodeTransportIntrinsics !== undefined) return nodeTransportIntrinsics;
+
+  const capturedClientRequestDestroy = nodeHttp.ClientRequest.prototype.destroy;
+  const capturedClientRequestOff = nodeHttp.ClientRequest.prototype.off;
+  const capturedIncomingMessageDestroy = nodeHttp.IncomingMessage.prototype.destroy;
+  const capturedNetCreateConnection = nodeNet.createConnection;
+  const capturedTlsConnect = nodeTls.connect;
+  const capturedReadableToWeb = nodeReadable.toWeb;
+  const capturedReadablePipe = nodeReadable.prototype.pipe;
+  const capturedCreateGunzip = nodeZlib.createGunzip;
+  const capturedCreateInflate = nodeZlib.createInflate;
+  const capturedCreateBrotliDecompress = nodeZlib.createBrotliDecompress;
+
+  /**
+   * `node:http` and `node:https` `request`, copied once the Node/Bun transport is
+   * selected. On Node and Bun, synchronous builtin loading captures these before
+   * sibling project imports can patch prototypes. Cloudflare imports this module
+   * without resolving `node:*` modules when it never selects the Node transport.
+   */
+  const capturedHttpRequest: NodeRequestFunction = nodeHttp.request;
+  const capturedHttpsRequest: NodeRequestFunction = nodeHttps.request;
+  // deno-lint-ignore prefer-const -- createConnection closures need the initialized object.
+  let intrinsics!: NodeTransportIntrinsics;
+  const privateHttpAgent = new nodeHttp.Agent(copyAgentOptions(nodeHttp.globalAgent));
+  const privateHttpsAgent = new nodeHttps.Agent(copyAgentOptions(nodeHttps.globalAgent));
+  IntrinsicReflectApply(ObjectDefineProperty, Object, [
+    privateHttpAgent,
+    "createConnection",
+    {
+      configurable: false,
+      writable: false,
+      value: (options: NetConnectOpts, callback?: () => void) =>
+        createPinnedPlainSocket(intrinsics, options, callback),
+    },
+  ]);
+  IntrinsicReflectApply(ObjectDefineProperty, Object, [
+    privateHttpsAgent,
+    "createConnection",
+    {
+      configurable: false,
+      writable: false,
+      value: (options: ConnectionOptions, callback?: () => void) =>
+        createPinnedTlsSocket(intrinsics, options, callback),
+    },
+  ]);
+
+  const nodeRequestMembers: MemberSnapshot[] = [];
+  intrinsics = {
+    nodeHttp,
+    nodeHttps,
+    nodeNet,
+    nodeTls,
+    nodeReadable,
+    capturedClientRequestDestroy,
+    capturedClientRequestOff,
+    capturedIncomingMessageDestroy,
+    capturedNetCreateConnection,
+    capturedTlsConnect,
+    capturedReadableToWeb,
+    capturedReadablePipe,
+    capturedCreateGunzip,
+    capturedCreateInflate,
+    capturedCreateBrotliDecompress,
+    capturedHttpRequest,
+    capturedHttpsRequest,
+    privateHttpAgent,
+    privateHttpsAgent,
+    nodeRequestMembers,
+  };
+
+  captureNodeRequestMembers(intrinsics, nodeRequestMembers);
+  Object.freeze(nodeRequestMembers);
+  nodeTransportIntrinsics = intrinsics;
+  return nodeTransportIntrinsics;
+}
+
+function loadNodeTransportIntrinsicsSync(
+  loadBuiltin: NodeBuiltinLoader,
+): NodeTransportIntrinsics {
+  return createNodeTransportIntrinsics(
+    loadBuiltin("node:http") as NodeHttpModule,
+    loadBuiltin("node:https") as NodeHttpsModule,
+    loadBuiltin("node:net") as NodeNetModule,
+    loadBuiltin("node:tls") as NodeTlsModule,
+    (loadBuiltin("node:stream") as { Readable: typeof Readable }).Readable,
+    loadBuiltin("node:zlib") as NodeZlibModule,
+  );
+}
+
+async function loadNodeTransportIntrinsics(): Promise<NodeTransportIntrinsics> {
+  if (nodeTransportIntrinsics !== undefined) return nodeTransportIntrinsics;
+  const loadBuiltin = getSynchronousNodeBuiltinLoader();
+  if (loadBuiltin) return loadNodeTransportIntrinsicsSync(loadBuiltin);
+
+  const [nodeHttp, nodeHttps, nodeNet, nodeTls, nodeStream, nodeZlib] = await Promise.all([
+    import("node:http"),
+    import("node:https"),
+    import("node:net"),
+    import("node:tls"),
+    import("node:stream"),
+    import("node:zlib"),
+  ]);
+  return createNodeTransportIntrinsics(
+    nodeHttp,
+    nodeHttps,
+    nodeNet,
+    nodeTls,
+    nodeStream.Readable,
+    nodeZlib,
+  );
+}
+
+function getSynchronousNodeBuiltinLoader(): NodeBuiltinLoader | undefined {
+  const hostProcess = (globalThis as { process?: HostProcess }).process;
+  if (hostProcess?.versions?.deno) return undefined;
+  const getBuiltinModule = hostProcess?.getBuiltinModule;
+  if (typeof getBuiltinModule === "function") {
+    return (specifier) => IntrinsicReflectApply(getBuiltinModule, hostProcess, [specifier]);
+  }
+  if (typeof require === "function") return require;
+  return undefined;
+}
+
+function shouldPreloadNodeTransportIntrinsics(): boolean {
+  const globalObject = globalThis as {
+    Bun?: unknown;
+    caches?: unknown;
+    process?: HostProcess;
+    WebSocketPair?: unknown;
+  };
+  const hasCloudflareGlobals = globalObject.caches !== undefined &&
+    globalObject.WebSocketPair !== undefined;
+  if (hasCloudflareGlobals) return false;
+  return (
+    typeof globalObject.process?.versions?.node === "string" &&
+    globalObject.process.versions.deno === undefined
+  ) || globalObject.Bun !== undefined;
+}
+
+const synchronousNodeBuiltinLoader = getSynchronousNodeBuiltinLoader();
+const preloadedNodeTransportIntrinsics = shouldPreloadNodeTransportIntrinsics() &&
+    synchronousNodeBuiltinLoader !== undefined
+  ? loadNodeTransportIntrinsicsSync(synchronousNodeBuiltinLoader)
+  : undefined;
+
+function nodeRequestFor(
+  intrinsics: NodeTransportIntrinsics,
+  protocol: string,
+): NodeRequestFunction {
+  return protocol === "https:" ? intrinsics.capturedHttpsRequest : intrinsics.capturedHttpRequest;
 }
 
 /**
@@ -86,31 +260,11 @@ function nodeRequestFor(protocol: string): NodeRequestFunction {
  * property added to a shared agent would get it.
  */
 // `options` is a runtime field node:http's typings do not declare.
-function copyAgentOptions(agent: nodeHttp.Agent): nodeHttp.AgentOptions | undefined {
+function copyAgentOptions(agent: Agent): AgentOptions | undefined {
   const options: unknown = Reflect.get(agent, "options");
   if (typeof options !== "object" || options === null) return undefined;
-  return { ...options };
+  return { ...options } as AgentOptions;
 }
-const privateHttpAgent = new nodeHttp.Agent(copyAgentOptions(nodeHttp.globalAgent));
-const privateHttpsAgent = new nodeHttps.Agent(copyAgentOptions(nodeHttps.globalAgent));
-IntrinsicReflectApply(ObjectDefineProperty, Object, [
-  privateHttpAgent,
-  "createConnection",
-  {
-    configurable: false,
-    writable: false,
-    value: createPinnedPlainSocket,
-  },
-]);
-IntrinsicReflectApply(ObjectDefineProperty, Object, [
-  privateHttpsAgent,
-  "createConnection",
-  {
-    configurable: false,
-    writable: false,
-    value: createPinnedTlsSocket,
-  },
-]);
 
 interface MemberSnapshot {
   readonly target: object;
@@ -134,8 +288,10 @@ type PrototypeTarget = NonNullable<ReturnType<typeof ReflectGetPrototypeOf>>;
  * holds the credential-bearing headers. Snapshotted as this module loads,
  * down to (not including) Object.prototype, which has its own check.
  */
-const NODE_REQUEST_MEMBERS: readonly MemberSnapshot[] = (() => {
-  const snapshots: MemberSnapshot[] = [];
+function captureNodeRequestMembers(
+  intrinsics: NodeTransportIntrinsics,
+  snapshots: MemberSnapshot[],
+): void {
   const seen: object[] = [];
   const addChain = (start: ReturnType<typeof ReflectGetPrototypeOf>) => {
     for (
@@ -153,18 +309,17 @@ const NODE_REQUEST_MEMBERS: readonly MemberSnapshot[] = (() => {
       });
     }
   };
-  addChain(nodeHttp.ClientRequest.prototype);
+  addChain(intrinsics.nodeHttp.ClientRequest.prototype);
   // The response's `req` is the request, so its members reach the headers too.
-  addChain(nodeHttp.IncomingMessage.prototype);
+  addChain(intrinsics.nodeHttp.IncomingMessage.prototype);
   // The serialized header block, bearer included, is written to the socket.
-  addChain(nodeTls.TLSSocket.prototype);
-  addChain(nodeNet.Socket.prototype);
-  addChain(nodeHttps.Agent.prototype);
-  addChain(nodeHttp.Agent.prototype);
-  addChain(privateHttpAgent);
-  addChain(privateHttpsAgent);
-  return Object.freeze(snapshots);
-})();
+  addChain(intrinsics.nodeTls.TLSSocket.prototype);
+  addChain(intrinsics.nodeNet.Socket.prototype);
+  addChain(intrinsics.nodeHttps.Agent.prototype);
+  addChain(intrinsics.nodeHttp.Agent.prototype);
+  addChain(intrinsics.privateHttpAgent);
+  addChain(intrinsics.privateHttpsAgent);
+}
 
 function isSameMember(
   current: PropertyDescriptor | undefined,
@@ -201,8 +356,8 @@ function isFunctionOrAccessor(descriptor: PropertyDescriptor | undefined): boole
  * an object into their chains. node:http calls these live, so a replacement
  * would receive the request and its headers.
  */
-export function assertNodeRequestMembersUnchanged(): void {
-  const changed = findChangedNodeRequestMember();
+export function assertNodeRequestMembersUnchanged(intrinsics: NodeTransportIntrinsics): void {
+  const changed = findChangedNodeRequestMember(intrinsics);
   if (changed) throw changedNodeRequestMemberError(changed.member);
 }
 
@@ -215,10 +370,11 @@ function changedNodeRequestMemberError(member: string): TypeError {
 }
 
 function findChangedNodeRequestMember(
+  intrinsics: NodeTransportIntrinsics,
   allowChangedMember?: (changed: ChangedNodeRequestMember) => boolean,
 ): ChangedNodeRequestMember | undefined {
-  for (let index = 0; index < NODE_REQUEST_MEMBERS.length; index++) {
-    const snapshot = NODE_REQUEST_MEMBERS[index]!;
+  for (let index = 0; index < intrinsics.nodeRequestMembers.length; index++) {
+    const snapshot = intrinsics.nodeRequestMembers[index]!;
     if (ReflectGetPrototypeOf(snapshot.target) !== snapshot.prototype) {
       const changed = { target: snapshot.target, key: undefined, member: "its prototype" };
       if (!allowChangedMember?.(changed)) return changed;
@@ -263,14 +419,22 @@ function findChangedNodeRequestMember(
   return undefined;
 }
 
-function isNativeDestroyChange(changed: ChangedNodeRequestMember): boolean {
+function isNativeDestroyChange(
+  intrinsics: NodeTransportIntrinsics,
+  changed: ChangedNodeRequestMember,
+): boolean {
   return changed.key === "destroy" &&
-    (changed.target === nodeHttp.ClientRequest.prototype ||
-      changed.target === nodeHttp.IncomingMessage.prototype);
+    (changed.target === intrinsics.nodeHttp.ClientRequest.prototype ||
+      changed.target === intrinsics.nodeHttp.IncomingMessage.prototype);
 }
 
-function assertNodeRequestMembersUnchangedExceptNativeDestroy(): void {
-  const changed = findChangedNodeRequestMember(isNativeDestroyChange);
+function assertNodeRequestMembersUnchangedExceptNativeDestroy(
+  intrinsics: NodeTransportIntrinsics,
+): void {
+  const changed = findChangedNodeRequestMember(
+    intrinsics,
+    (changed) => isNativeDestroyChange(intrinsics, changed),
+  );
   if (changed) throw changedNodeRequestMemberError(changed.member);
 }
 
@@ -278,16 +442,19 @@ function isCredentialRequestLockKey(key: PropertyKey): boolean {
   return key === "off" || key === "removeListener" || key === "emit";
 }
 
-function lockCredentialRequestInstance(request: ClientRequest): void {
+function lockCredentialRequestInstance(
+  intrinsics: NodeTransportIntrinsics,
+  request: ClientRequest,
+): void {
   for (
     let target = ReflectGetPrototypeOf(request);
     target !== null && target !== Object.prototype;
     target = ReflectGetPrototypeOf(target)
   ) {
     let snapshot: MemberSnapshot | undefined;
-    for (let index = 0; index < NODE_REQUEST_MEMBERS.length; index++) {
-      if (NODE_REQUEST_MEMBERS[index]!.target === target) {
-        snapshot = NODE_REQUEST_MEMBERS[index];
+    for (let index = 0; index < intrinsics.nodeRequestMembers.length; index++) {
+      if (intrinsics.nodeRequestMembers[index]!.target === target) {
+        snapshot = intrinsics.nodeRequestMembers[index];
         break;
       }
     }
@@ -321,7 +488,10 @@ function isCredentialSocketLockKey(key: PropertyKey): boolean {
     key === "_write" || key === "_writev" || key === "_final" || key === "_destroy";
 }
 
-function lockCredentialSocketInstance(socket: nodeNet.Socket): void {
+function lockCredentialSocketInstance(
+  intrinsics: NodeTransportIntrinsics,
+  socket: Socket,
+): void {
   // Preserve the effective socket override. Snapshot insertion order also
   // contains stream ancestors, whose generic teardown does not close a socket.
   for (
@@ -330,9 +500,9 @@ function lockCredentialSocketInstance(socket: nodeNet.Socket): void {
     target = ReflectGetPrototypeOf(target)
   ) {
     let snapshot: MemberSnapshot | undefined;
-    for (let index = 0; index < NODE_REQUEST_MEMBERS.length; index++) {
-      if (NODE_REQUEST_MEMBERS[index]!.target === target) {
-        snapshot = NODE_REQUEST_MEMBERS[index];
+    for (let index = 0; index < intrinsics.nodeRequestMembers.length; index++) {
+      if (intrinsics.nodeRequestMembers[index]!.target === target) {
+        snapshot = intrinsics.nodeRequestMembers[index];
         break;
       }
     }
@@ -362,24 +532,34 @@ function lockCredentialSocketInstance(socket: nodeNet.Socket): void {
 }
 
 function createPinnedPlainSocket(
-  options: nodeNet.NetConnectOpts,
+  intrinsics: NodeTransportIntrinsics,
+  options: NetConnectOpts,
   callback?: () => void,
-): nodeNet.Socket {
-  const socket = callback === undefined
-    ? capturedNetCreateConnection(options)
-    : capturedNetCreateConnection(options, callback);
-  lockCredentialSocketInstance(socket);
+): Socket {
+  const lockedCallback = callback === undefined ? undefined : () => {
+    lockCredentialSocketInstance(intrinsics, socket);
+    callback();
+  };
+  const socket = lockedCallback === undefined
+    ? intrinsics.capturedNetCreateConnection(options)
+    : intrinsics.capturedNetCreateConnection(options, lockedCallback);
+  lockCredentialSocketInstance(intrinsics, socket);
   return socket;
 }
 
 function createPinnedTlsSocket(
-  options: nodeTls.ConnectionOptions,
+  intrinsics: NodeTransportIntrinsics,
+  options: ConnectionOptions,
   callback?: () => void,
-): nodeTls.TLSSocket {
-  const socket = callback === undefined
-    ? capturedTlsConnect(options)
-    : capturedTlsConnect(options, callback);
-  lockCredentialSocketInstance(socket);
+): TLSSocket {
+  const lockedCallback = callback === undefined ? undefined : () => {
+    lockCredentialSocketInstance(intrinsics, socket);
+    callback();
+  };
+  const socket = lockedCallback === undefined
+    ? intrinsics.capturedTlsConnect(options)
+    : intrinsics.capturedTlsConnect(options, lockedCallback);
+  lockCredentialSocketInstance(intrinsics, socket);
   return socket;
 }
 
@@ -634,22 +814,24 @@ async function prepareRequestPayload(body: BodyInit | null): Promise<RequestPayl
 }
 
 function removeRequestListener(
+  intrinsics: NodeTransportIntrinsics,
   request: ClientRequest,
   event: string,
   listener: (...args: unknown[]) => void,
 ): void {
-  IntrinsicReflectApply(capturedClientRequestOff, request, [event, listener]);
+  IntrinsicReflectApply(intrinsics.capturedClientRequestOff, request, [event, listener]);
 }
 
 function waitForRequestEvent(
+  intrinsics: NodeTransportIntrinsics,
   request: ClientRequest,
   event: "drain" | "finish",
 ): Promise<void> {
   return new Promise<void>((resolve, reject) => {
     const cleanup = () => {
-      removeRequestListener(request, event, done);
-      removeRequestListener(request, "error", fail);
-      removeRequestListener(request, "close", closed);
+      removeRequestListener(intrinsics, request, event, done);
+      removeRequestListener(intrinsics, request, "error", fail);
+      removeRequestListener(intrinsics, request, "close", closed);
     };
     const done = () => {
       cleanup();
@@ -693,14 +875,15 @@ function observeReaderCancellation(
 }
 
 async function readRequestPayloadChunk(
+  intrinsics: NodeTransportIntrinsics,
   reader: ReadableStreamDefaultReader<Uint8Array>,
   request: ClientRequest,
 ): Promise<ReadableStreamReadResult<Uint8Array>> {
   return await new Promise<ReadableStreamReadResult<Uint8Array>>((resolve, reject) => {
     let settled = false;
     const cleanup = () => {
-      removeRequestListener(request, "error", fail);
-      removeRequestListener(request, "close", closed);
+      removeRequestListener(intrinsics, request, "error", fail);
+      removeRequestListener(intrinsics, request, "close", closed);
     };
     const resolveRead = (result: ReadableStreamReadResult<Uint8Array>) => {
       if (settled) return;
@@ -723,7 +906,11 @@ async function readRequestPayloadChunk(
   });
 }
 
-async function writeRequestPayload(request: ClientRequest, payload: RequestPayload): Promise<void> {
+async function writeRequestPayload(
+  intrinsics: NodeTransportIntrinsics,
+  request: ClientRequest,
+  payload: RequestPayload,
+): Promise<void> {
   if (payload.kind === "chunk") {
     if (payload.chunk === undefined) request.end();
     else request.end(payload.chunk);
@@ -733,15 +920,15 @@ async function writeRequestPayload(request: ClientRequest, payload: RequestPaylo
   let releaseReader = true;
   try {
     while (true) {
-      assertNodeRequestMembersUnchanged();
-      const { done, value } = await readRequestPayloadChunk(reader, request);
+      assertNodeRequestMembersUnchanged(intrinsics);
+      const { done, value } = await readRequestPayloadChunk(intrinsics, reader, request);
       if (done) break;
-      assertNodeRequestMembersUnchanged();
-      if (!request.write(value)) await waitForRequestEvent(request, "drain");
+      assertNodeRequestMembersUnchanged(intrinsics);
+      if (!request.write(value)) await waitForRequestEvent(intrinsics, request, "drain");
     }
-    assertNodeRequestMembersUnchanged();
+    assertNodeRequestMembersUnchanged(intrinsics);
     request.end();
-    await waitForRequestEvent(request, "finish");
+    await waitForRequestEvent(intrinsics, request, "finish");
   } catch (error) {
     releaseReader = false;
     observeReaderCancellation(reader, error);
@@ -756,23 +943,25 @@ function errorForNodeDestroy(error: unknown): Error | undefined {
 }
 
 function teardownDeferredNodeRequest(
+  intrinsics: NodeTransportIntrinsics,
   request: ClientRequest | undefined,
   response: IncomingMessage | undefined,
   error: Error | undefined,
-  socket?: nodeNet.Socket,
+  socket?: Socket,
 ): unknown | undefined {
   try {
-    assertNodeRequestMembersUnchanged();
+    assertNodeRequestMembersUnchanged(intrinsics);
     if (response) {
       response.destroy(error);
       // `response.destroy()` can synchronously re-enter stream teardown. Check
       // again before touching the request graph in the same cleanup path.
-      assertNodeRequestMembersUnchanged();
+      assertNodeRequestMembersUnchanged(intrinsics);
     }
     request?.destroy(error);
     return undefined;
   } catch (teardownError) {
     const capturedDestroyError = teardownDeferredNodeRequestWithCapturedDestroy(
+      intrinsics,
       request,
       response,
       error,
@@ -786,7 +975,7 @@ function teardownDeferredNodeRequest(
 }
 
 function teardownLockedCredentialSocket(
-  socket: nodeNet.Socket | undefined,
+  socket: Socket | undefined,
   _error: Error | undefined,
 ): unknown | undefined {
   if (socket === undefined) return undefined;
@@ -805,17 +994,18 @@ function teardownLockedCredentialSocket(
 }
 
 function teardownDeferredNodeRequestWithCapturedDestroy(
+  intrinsics: NodeTransportIntrinsics,
   request: ClientRequest | undefined,
   response: IncomingMessage | undefined,
   error: Error | undefined,
 ): unknown | undefined {
   try {
-    assertNodeRequestMembersUnchangedExceptNativeDestroy();
+    assertNodeRequestMembersUnchangedExceptNativeDestroy(intrinsics);
     if (response) {
-      IntrinsicReflectApply(capturedIncomingMessageDestroy, response, [error]);
-      assertNodeRequestMembersUnchangedExceptNativeDestroy();
+      IntrinsicReflectApply(intrinsics.capturedIncomingMessageDestroy, response, [error]);
+      assertNodeRequestMembersUnchangedExceptNativeDestroy(intrinsics);
     }
-    if (request) IntrinsicReflectApply(capturedClientRequestDestroy, request, [error]);
+    if (request) IntrinsicReflectApply(intrinsics.capturedClientRequestDestroy, request, [error]);
     return undefined;
   } catch (capturedDestroyError) {
     return capturedDestroyError;
@@ -823,6 +1013,7 @@ function teardownDeferredNodeRequestWithCapturedDestroy(
 }
 
 async function decodeResponseBody(
+  intrinsics: NodeTransportIntrinsics,
   response: IncomingMessage,
   headers: Headers,
 ): Promise<Readable> {
@@ -830,22 +1021,22 @@ async function decodeResponseBody(
   if (!encoding || encoding === "identity") return response;
 
   let decoder:
-    | ReturnType<typeof capturedCreateGunzip>
-    | ReturnType<typeof capturedCreateInflate>
-    | ReturnType<typeof capturedCreateBrotliDecompress>;
+    | ReturnType<typeof intrinsics.capturedCreateGunzip>
+    | ReturnType<typeof intrinsics.capturedCreateInflate>
+    | ReturnType<typeof intrinsics.capturedCreateBrotliDecompress>;
   if (encoding === "gzip" || encoding === "x-gzip") {
-    decoder = capturedCreateGunzip();
+    decoder = intrinsics.capturedCreateGunzip();
   } else if (encoding === "deflate") {
-    decoder = capturedCreateInflate();
+    decoder = intrinsics.capturedCreateInflate();
   } else if (encoding === "br") {
-    decoder = capturedCreateBrotliDecompress();
+    decoder = intrinsics.capturedCreateBrotliDecompress();
   } else {
     return response;
   }
   headers.delete("content-encoding");
   headers.delete("content-length");
-  assertNodeRequestMembersUnchanged();
-  return IntrinsicReflectApply(capturedReadablePipe, response, [decoder]) as Readable;
+  assertNodeRequestMembersUnchanged(intrinsics);
+  return IntrinsicReflectApply(intrinsics.capturedReadablePipe, response, [decoder]) as Readable;
 }
 
 /** @internal Used by the central egress guard after DNS policy validation. */
@@ -858,6 +1049,7 @@ export async function fetchWithPinnedAddresses(
   if (addresses.length === 0) {
     throw new Error(`No validated addresses are available for ${url.host}`);
   }
+  const intrinsics = preloadedNodeTransportIntrinsics ?? await loadNodeTransportIntrinsics();
   // Filling and reading a native Headers writes into arrays an index accessor
   // or a replaced array species would observe; each turn that touches the
   // credential-bearing headers is checked first.
@@ -874,7 +1066,7 @@ export async function fetchWithPinnedAddresses(
   const setCookies = readSeparateSetCookies(requestHeaders);
   const signal = readOwnInitField(init, "signal") ?? undefined;
 
-  const sendRequest = nodeRequestFor(url.protocol);
+  const sendRequest = nodeRequestFor(intrinsics, url.protocol);
   const attempts = planPinnedConnectAttempts(addresses);
   const bodyIsReplayable = isReplayableRequestBody(body);
   let lastConnectError: unknown;
@@ -905,8 +1097,12 @@ export async function fetchWithPinnedAddresses(
       path: `${url.pathname}${url.search}`,
       method,
       headers: outgoingHeaders,
-      agent: url.protocol === "https:" ? privateHttpsAgent : privateHttpAgent,
-      createConnection: url.protocol === "https:" ? createPinnedTlsSocket : createPinnedPlainSocket,
+      agent: url.protocol === "https:" ? intrinsics.privateHttpsAgent : intrinsics.privateHttpAgent,
+      createConnection: url.protocol === "https:"
+        ? (options: ConnectionOptions, callback?: () => void) =>
+          createPinnedTlsSocket(intrinsics, options, callback)
+        : (options: NetConnectOpts, callback?: () => void) =>
+          createPinnedPlainSocket(intrinsics, options, callback),
 
       ...(url.protocol === "https:"
         ? {
@@ -926,7 +1122,7 @@ export async function fetchWithPinnedAddresses(
         const abortReason = () =>
           signal?.reason ?? new DOMException("The operation was aborted", "AbortError");
         let request: ClientRequest | undefined;
-        let activeSocket: nodeNet.Socket | undefined;
+        let activeSocket: Socket | undefined;
         const abort = () => {
           let reason: unknown;
           let destroyError: Error | undefined;
@@ -938,6 +1134,7 @@ export async function fetchWithPinnedAddresses(
             return;
           }
           const teardownError = teardownDeferredNodeRequest(
+            intrinsics,
             request,
             responseMessage,
             destroyError,
@@ -971,13 +1168,13 @@ export async function fetchWithPinnedAddresses(
           // the cleanup path because the abort listener is already registered.
           assertNativeRequestProcessing();
           assertObjectPrototypeUnchanged();
-          assertNodeRequestMembersUnchanged();
+          assertNodeRequestMembersUnchanged(intrinsics);
           request = sendRequest(requestOptions, async (message) => {
             responseMessage = message;
             try {
               // The response's `req` is the request: checked again before any
               // member of either runs in this turn.
-              assertNodeRequestMembersUnchanged();
+              assertNodeRequestMembersUnchanged(intrinsics);
               const responseHeaders = copyResponseHeaders(message);
               const status = message.statusCode ?? 500;
               if (method === "HEAD" || NULL_BODY_STATUSES.has(status)) {
@@ -997,16 +1194,18 @@ export async function fetchWithPinnedAddresses(
                 ));
                 return;
               }
-              const decoded = await decodeResponseBody(message, responseHeaders);
-              assertNodeRequestMembersUnchanged();
+              const decoded = await decodeResponseBody(intrinsics, message, responseHeaders);
+              assertNodeRequestMembersUnchanged(intrinsics);
               decoded.once("end", cleanupAbortListener);
               decoded.once("close", cleanupAbortListener);
               decoded.once("error", cleanupAbortListener);
-              assertNodeRequestMembersUnchanged();
+              assertNodeRequestMembersUnchanged(intrinsics);
               const statusMessage = message.statusMessage ?? "";
-              const webBody = IntrinsicReflectApply(capturedReadableToWeb, nodeStream.Readable, [
-                decoded,
-              ]) as globalThis.ReadableStream<Uint8Array>;
+              const webBody = IntrinsicReflectApply(
+                intrinsics.capturedReadableToWeb,
+                intrinsics.nodeReadable,
+                [decoded],
+              ) as globalThis.ReadableStream<Uint8Array>;
               settled = true;
               resolve(createPinnedFetchResponse(
                 status,
@@ -1019,26 +1218,27 @@ export async function fetchWithPinnedAddresses(
               rejectBeforeResponse(error);
             }
           });
-          lockCredentialRequestInstance(request);
+          lockCredentialRequestInstance(intrinsics, request);
         } catch (error) {
           rejectBeforeResponse(error);
           return;
         }
         if (request.socket) {
           activeSocket = request.socket;
-          lockCredentialSocketInstance(request.socket);
+          lockCredentialSocketInstance(intrinsics, request.socket);
         }
 
         // node:http writes the header block once a socket is assigned, a later
         // turn than the check above: check again when the socket arrives, and
         // destroy the request before anything is written if a member changed.
-        request.once("socket", (socket: nodeNet.Socket) => {
+        request.once("socket", (socket: Socket) => {
           activeSocket = socket;
           try {
-            assertNodeRequestMembersUnchanged();
-            lockCredentialSocketInstance(socket);
+            assertNodeRequestMembersUnchanged(intrinsics);
+            lockCredentialSocketInstance(intrinsics, socket);
           } catch (error) {
             const teardownError = teardownDeferredNodeRequest(
+              intrinsics,
               request,
               undefined,
               errorForNodeDestroy(error),
@@ -1058,8 +1258,9 @@ export async function fetchWithPinnedAddresses(
         // error still rejects through `rejectBeforeResponse`.
         request.on("error", () => {});
         pendingRequest = request;
-        void writeRequestPayload(request, payload).catch((error) => {
+        void writeRequestPayload(intrinsics, request, payload).catch((error) => {
           const teardownError = teardownDeferredNodeRequest(
+            intrinsics,
             request,
             undefined,
             errorForNodeDestroy(error),
@@ -1071,7 +1272,12 @@ export async function fetchWithPinnedAddresses(
     } catch (error) {
       // Release the socket of the attempt being abandoned. The sink above stays
       // attached, so a teardown error from this destroy has somewhere to land.
-      const teardownError = teardownDeferredNodeRequest(pendingRequest, undefined, undefined);
+      const teardownError = teardownDeferredNodeRequest(
+        intrinsics,
+        pendingRequest,
+        undefined,
+        undefined,
+      );
       lastConnectError = teardownError ?? error;
       const hasAnotherAddress = attemptIndex < attempts.length - 1;
       if (

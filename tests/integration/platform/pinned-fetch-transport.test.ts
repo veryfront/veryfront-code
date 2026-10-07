@@ -2,9 +2,61 @@ import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { isBun, isNode } from "#veryfront/platform/compat/runtime.ts";
 import { spawnSync } from "node:child_process";
+import { readFile } from "node:fs/promises";
 import process from "node:process";
 
 describe("pinned fetch transport integration", () => {
+  it("keeps Node transport imports lazy for constrained runtimes", async () => {
+    const source = await readFile(
+      new URL("../../../src/platform/compat/http/pinned-fetch.ts", import.meta.url),
+      "utf8",
+    );
+    const eagerNodeImport = source.split("\n").find((line) =>
+      /^import\s+(?!type\b).*from\s+["']node:/.test(line.trim())
+    );
+    assertEquals(eagerNodeImport, undefined);
+  });
+
+  it("captures Node transport before sibling imports can patch request members", () => {
+    if (!isNode) return;
+
+    const script = `
+      let patchedSetHeaderSawBearer = false;
+
+      import { fetchWithPinnedAddresses } from "./src/platform/compat/http/pinned-fetch.ts";
+      import "data:text/javascript,import { ClientRequest } from 'node:http'; const originalSetHeader = ClientRequest.prototype.setHeader; ClientRequest.prototype.setHeader = function(name, value) { if (String(name).toLowerCase() === 'authorization' && value === 'Bearer vf-sibling-import-secret') globalThis.patchedSetHeaderSawBearer = true; return Reflect.apply(originalSetHeader, this, [name, value]); };";
+
+      globalThis.patchedSetHeaderSawBearer = false;
+      const outcome = await fetchWithPinnedAddresses(
+        new URL("http://pinned-sibling-import.test:1/"),
+        ["127.0.0.1"],
+        { headers: { authorization: "Bearer vf-sibling-import-secret" } },
+      ).then(
+        () => "resolved",
+        (error) => error instanceof Error ? error.message : String(error),
+      );
+      console.log(JSON.stringify({
+        patchedSetHeaderSawBearer: globalThis.patchedSetHeaderSawBearer,
+        refused: outcome.includes("Refused a credential-bearing request"),
+      }));
+    `;
+
+    const output = spawnSync("node", [
+      "--import",
+      "./tests/node/resolver.mjs",
+      "--input-type=module",
+      "--eval",
+      script,
+    ], { encoding: "utf8" });
+
+    assertEquals(output.stderr, "");
+    assertEquals(output.status, 0);
+    assertEquals(JSON.parse(output.stdout), {
+      patchedSetHeaderSawBearer: false,
+      refused: true,
+    });
+  });
+
   it("cleans up abort listeners when the Node request constructor rejects before assignment", () => {
     if (!isNode) return;
 
@@ -291,11 +343,12 @@ describe("pinned fetch transport integration", () => {
     assertEquals(result.socketDestroyed, true);
   });
 
-  it("keeps post-assignment socket prototype patches from seeing the bearer", () => {
+  it("keeps socket prototype patches after transport load from seeing the bearer", () => {
     const script = `
       import * as nodeHttp from "node:http";
       import * as nodeNet from "node:net";
       import { EventEmitter } from "node:events";
+      import { fetchWithPinnedAddresses } from "./src/platform/compat/http/pinned-fetch.ts";
 
       const bearer = "Bearer vf-node-after-assignment-secret";
       let patchArmed = false;
@@ -343,8 +396,6 @@ describe("pinned fetch transport integration", () => {
           return result;
         },
       });
-
-      const { fetchWithPinnedAddresses } = await import("./src/platform/compat/http/pinned-fetch.ts");
 
       let receivedAuthorization;
       const server = nodeHttp.createServer((request, response) => {
@@ -398,7 +449,7 @@ describe("pinned fetch transport integration", () => {
     assertEquals(JSON.parse(output.stdout), {
       emitSawBearer: false,
       status:
-        "Refused a credential-bearing request to protect its token: the node:http member emit was replaced, added or removed after load, and node:http calls it with the request headers in reach. Do not patch node:http, node:net, node:tls, streams or EventEmitter.",
+        "Refused a credential-bearing request to protect its token: the node:http member connect was replaced, added or removed after load, and node:http calls it with the request headers in reach. Do not patch node:http, node:net, node:tls, streams or EventEmitter.",
       writeSawBearer: false,
     });
   });
