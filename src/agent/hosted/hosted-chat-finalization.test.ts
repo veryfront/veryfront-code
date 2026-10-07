@@ -268,6 +268,49 @@ describe("agent/hosted-chat-finalization", () => {
     assertEquals(terminalStates.at(0)!.status, "completed");
   });
 
+  it("fails runtime-metadata-only response output with unfinished final-step tool fallback", async () => {
+    const calls: string[] = [];
+    const chunks: ChatUiMessageChunk<MessageMetadata>[] = [];
+    const terminalStates: HostedLifecycleTerminalState[] = [];
+
+    await finalizeHostedChatRun({
+      kind: "response",
+      responseMessage: createResponseMessage({
+        parts: [{
+          type: "data-veryfront.runtime_context",
+          data: { currentDateUtc: "2026-10-07" },
+        }],
+      }),
+      isAborted: false,
+      streamResult: createStreamResult({
+        toolCalls: [{
+          toolCallId: "unfinished-fallback-tool-1",
+          toolName: "web_fetch",
+          input: { url: "https://example.com/docs" },
+        }],
+      }),
+      lifecycleAdapter: createLifecycleAdapter({
+        calls,
+        terminalStates,
+        mirror: createDurableRunMirror({ calls, chunks }),
+      }),
+      mirroredToolChunkState: createMirroredToolChunkState(),
+      capturedMessageId: "assistant-message-1",
+      incompleteToolCallsPartErrorText: "Tool call did not complete",
+      cleanup: async () => {
+        calls.push("cleanup");
+      },
+      streamError: null,
+    });
+
+    assertEquals(
+      getToolOutputErrorChunks(chunks, "unfinished-fallback-tool-1").length,
+      1,
+    );
+    assertEquals(terminalStates.at(0)!.status, "failed");
+    assertEquals(terminalStates.at(0)!.terminalErrorCode, "INCOMPLETE_TOOL_CALLS");
+  });
+
   it("preserves response metadata on terminal states", async () => {
     const calls: string[] = [];
     const terminalStates: HostedLifecycleTerminalState[] = [];

@@ -1,5 +1,6 @@
 import {
   hasIncompleteToolParts,
+  isToolUiPart,
   markIncompleteToolPartsAsErrored,
   markIncompleteToolPartsAsStopped,
 } from "../../chat/conversation.ts";
@@ -73,9 +74,16 @@ export function buildFinalizedMessageState(
   const persistedMessage = input.isAborted
     ? markIncompleteToolPartsAsStopped(input.responseMessage)
     : input.responseMessage;
-  const fallbackParts = persistedMessage.parts.length === 0
-    ? buildFallbackUiMessageParts(input.finalStep)
-    : appendMissingFallbackTextPart(persistedMessage.parts, input.finalStep);
+  const finalStepFallbackParts = buildFallbackUiMessageParts(input.finalStep);
+  const fallbackParts = persistedMessage.parts.length === 0 ? finalStepFallbackParts : [
+    ...appendMissingFallbackTextPart(persistedMessage.parts, input.finalStep),
+    ...finalStepFallbackParts.filter((fallbackPart) =>
+      isToolUiPart(fallbackPart) &&
+      !persistedMessage.parts.some((part) =>
+        isToolUiPart(part) && part.toolCallId === fallbackPart.toolCallId
+      )
+    ),
+  ];
   const finalizedMessage = fallbackParts.length !== persistedMessage.parts.length
     ? {
       ...persistedMessage,
