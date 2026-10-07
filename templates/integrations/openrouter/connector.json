@@ -28,7 +28,7 @@
     {
       "id": "openrouter__list_models",
       "name": "List Models",
-      "description": "List the models available through OpenRouter",
+      "description": "List models",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -51,7 +51,7 @@
     {
       "id": "openrouter__create_chat_completion",
       "name": "Create Chat Completion",
-      "description": "Generate a chat completion from any OpenRouter model",
+      "description": "Create chat completion",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -81,7 +81,7 @@
     {
       "id": "openrouter__get_generation",
       "name": "Get Generation",
-      "description": "Get metadata, token counts, and cost for a past generation by ID",
+      "description": "Get generation",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -99,7 +99,7 @@
     {
       "id": "openrouter__get_key",
       "name": "Get Current Key",
-      "description": "Get the current API key's label, credit usage (total/daily/weekly/monthly in USD), spend limit, remaining limit, and free-tier status — works with the regular inference key",
+      "description": "Get current key",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -112,7 +112,7 @@
     {
       "id": "openrouter__get_credits",
       "name": "Get Credits",
-      "description": "Get total credits purchased and used for the account (OpenRouter requires a management key for this endpoint)",
+      "description": "Get credits",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",

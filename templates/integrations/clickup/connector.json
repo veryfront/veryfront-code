@@ -38,7 +38,7 @@
     {
       "id": "clickup__list_workspaces",
       "name": "List Workspaces",
-      "description": "List ClickUp Workspaces (teams) the authorized user can access",
+      "description": "List workspaces",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -48,7 +48,7 @@
     {
       "id": "clickup__list_spaces",
       "name": "List Spaces",
-      "description": "List Spaces in a ClickUp Workspace",
+      "description": "List spaces",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -72,7 +72,7 @@
     {
       "id": "clickup__list_lists",
       "name": "List Lists",
-      "description": "List folderless Lists in a ClickUp Space",
+      "description": "List lists",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -96,7 +96,7 @@
     {
       "id": "clickup__list_tasks",
       "name": "List Tasks",
-      "description": "List tasks in a ClickUp List",
+      "description": "List tasks",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -150,7 +150,7 @@
     {
       "id": "clickup__get_task",
       "name": "Get Task",
-      "description": "Get details of a ClickUp task",
+      "description": "Get task",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -174,7 +174,7 @@
     {
       "id": "clickup__create_task",
       "name": "Create Task",
-      "description": "Create a new task in a ClickUp List",
+      "description": "Create task",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -219,7 +219,7 @@
     {
       "id": "clickup__update_task",
       "name": "Update Task",
-      "description": "Update fields on an existing ClickUp task",
+      "description": "Update task",
       "requiresWrite": true,
       "endpoint": {
         "method": "PUT",

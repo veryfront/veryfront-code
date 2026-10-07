@@ -43,7 +43,7 @@
     {
       "id": "pipedrive__list_deals",
       "name": "List Deals",
-      "description": "List deals in the Pipedrive account",
+      "description": "List deals",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -127,7 +127,7 @@
     {
       "id": "pipedrive__get_deal",
       "name": "Get Deal",
-      "description": "Get full details of a Pipedrive deal",
+      "description": "Get deal",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -148,7 +148,7 @@
     {
       "id": "pipedrive__create_deal",
       "name": "Create Deal",
-      "description": "Create a new deal in Pipedrive",
+      "description": "Create deal",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -193,7 +193,7 @@
     {
       "id": "pipedrive__update_deal",
       "name": "Update Deal",
-      "description": "Update fields on an existing Pipedrive deal",
+      "description": "Update deal",
       "requiresWrite": true,
       "endpoint": {
         "method": "PUT",
@@ -232,7 +232,7 @@
     {
       "id": "pipedrive__list_persons",
       "name": "List Persons",
-      "description": "List persons (contacts) in the Pipedrive account",
+      "description": "List persons",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -264,7 +264,7 @@
     {
       "id": "pipedrive__create_person",
       "name": "Create Person",
-      "description": "Create a new person (contact) in Pipedrive",
+      "description": "Create person",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -296,7 +296,7 @@
     {
       "id": "pipedrive__list_organizations",
       "name": "List Organizations",
-      "description": "List organizations in the Pipedrive account",
+      "description": "List organizations",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",

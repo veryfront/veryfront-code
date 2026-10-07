@@ -28,7 +28,7 @@
     {
       "id": "fireflies__list_transcripts",
       "name": "List Transcripts",
-      "description": "List meeting transcripts, optionally filtered by date, participants, or keyword",
+      "description": "List transcripts",
       "requiresWrite": false,
       "endpoint": {
         "type": "graphql",
@@ -96,7 +96,7 @@
     {
       "id": "fireflies__get_transcript",
       "name": "Get Transcript",
-      "description": "Get a transcript with its sentences and AI summary",
+      "description": "Get transcript",
       "requiresWrite": false,
       "endpoint": {
         "type": "graphql",
@@ -119,7 +119,7 @@
     {
       "id": "fireflies__search_transcripts",
       "name": "Search Transcripts",
-      "description": "Keyword-search transcripts and return matches with summaries",
+      "description": "Search transcripts",
       "requiresWrite": false,
       "endpoint": {
         "type": "graphql",
@@ -148,7 +148,7 @@
     {
       "id": "fireflies__list_users",
       "name": "List Users",
-      "description": "List teammates in the Fireflies workspace",
+      "description": "List users",
       "requiresWrite": false,
       "endpoint": {
         "type": "graphql",
@@ -163,7 +163,7 @@
     {
       "id": "fireflies__get_user",
       "name": "Get User",
-      "description": "Get a workspace user by ID",
+      "description": "Get user",
       "requiresWrite": false,
       "endpoint": {
         "type": "graphql",

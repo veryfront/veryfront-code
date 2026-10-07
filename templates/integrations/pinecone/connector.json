@@ -28,7 +28,7 @@
     {
       "id": "pinecone__list_indexes",
       "name": "List Indexes",
-      "description": "List all indexes in the Pinecone project",
+      "description": "List indexes",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -75,7 +75,7 @@
     {
       "id": "pinecone__describe_index",
       "name": "Describe Index",
-      "description": "Get an index's configuration and its data-plane host. Drop the trailing '.pinecone.io' from the returned host to get the indexHostPrefix that Query Vectors and Upsert Vectors take.",
+      "description": "Describe index",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -100,7 +100,7 @@
     {
       "id": "pinecone__create_index",
       "name": "Create Index",
-      "description": "Create a new serverless or pod-based index",
+      "description": "Create index",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -140,7 +140,7 @@
     {
       "id": "pinecone__query_vectors",
       "name": "Query Vectors",
-      "description": "Query a Pinecone index for the nearest vectors. Select the index with indexHostPrefix (its data-plane host from Describe Index without the trailing '.pinecone.io').",
+      "description": "Query vectors",
       "requiresWrite": false,
       "endpoint": {
         "method": "POST",
@@ -195,7 +195,7 @@
     {
       "id": "pinecone__upsert_vectors",
       "name": "Upsert Vectors",
-      "description": "Write vectors into a Pinecone index selected via indexHostPrefix; verify the prefix names the intended index before writing",
+      "description": "Upsert vectors",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",

@@ -87,7 +87,7 @@
     {
       "id": "sharepoint__list_sites",
       "name": "List SharePoint Sites",
-      "description": "List all SharePoint sites the user has access to",
+      "description": "List share point sites",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -114,7 +114,7 @@
     {
       "id": "sharepoint__get_site",
       "name": "Get Site Details",
-      "description": "Get detailed information about a specific SharePoint site",
+      "description": "Get site details",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -132,7 +132,7 @@
     {
       "id": "sharepoint__list_files",
       "name": "List Files",
-      "description": "List files and folders in a SharePoint document library",
+      "description": "List files",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -156,7 +156,7 @@
     {
       "id": "sharepoint__get_file",
       "name": "Get File",
-      "description": "Get file metadata and content from SharePoint",
+      "description": "Get file",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -180,7 +180,7 @@
     {
       "id": "sharepoint__upload_file",
       "name": "Upload File",
-      "description": "Upload a file to a SharePoint document library",
+      "description": "Upload file",
       "requiresWrite": true,
       "endpoint": {
         "method": "PUT",
@@ -218,7 +218,7 @@
     {
       "id": "sharepoint__search_files",
       "name": "Search Files",
-      "description": "Search for files and folders in a SharePoint document library by name or content",
+      "description": "Search files",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -251,7 +251,7 @@
     {
       "id": "sharepoint__download_file",
       "name": "Download File",
-      "description": "Download file content from a SharePoint document library",
+      "description": "Download file",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",

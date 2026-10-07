@@ -80,7 +80,7 @@
     {
       "id": "figma__get_me",
       "name": "Get Me",
-      "description": "Get the authenticated user's Figma profile (id, email, handle). Use this to verify the connection and identify the user.",
+      "description": "Get me",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -90,7 +90,7 @@
     {
       "id": "figma__get_file",
       "name": "Get File",
-      "description": "Get detailed information about a Figma file, including pages, frames, components, and styles. Requires a Figma file key from a file or design URL.",
+      "description": "Get file",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -128,7 +128,7 @@
     {
       "id": "figma__get_comments",
       "name": "Get Comments",
-      "description": "Get all comments on a Figma file",
+      "description": "Get comments",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -149,7 +149,7 @@
     {
       "id": "figma__post_comment",
       "name": "Post Comment",
-      "description": "Post a comment on a Figma file",
+      "description": "Post comment",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",

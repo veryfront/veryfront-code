@@ -28,7 +28,7 @@
     {
       "id": "coda__list_docs",
       "name": "List Docs",
-      "description": "List Coda docs accessible to the token",
+      "description": "List docs",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -99,7 +99,7 @@
     {
       "id": "coda__get_doc",
       "name": "Get Doc",
-      "description": "Get metadata for a Coda doc",
+      "description": "Get doc",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -117,7 +117,7 @@
     {
       "id": "coda__create_doc",
       "name": "Create Doc",
-      "description": "Create a new Coda doc, optionally copying an existing doc",
+      "description": "Create doc",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -141,7 +141,7 @@
     {
       "id": "coda__list_pages",
       "name": "List Pages",
-      "description": "List pages in a Coda doc",
+      "description": "List pages",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -207,7 +207,7 @@
     {
       "id": "coda__get_page",
       "name": "Get Page",
-      "description": "Get metadata for a page in a Coda doc",
+      "description": "Get page",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -231,7 +231,7 @@
     {
       "id": "coda__update_page",
       "name": "Update Page",
-      "description": "Update a page's name, subtitle, or content in a Coda doc",
+      "description": "Update page",
       "requiresWrite": true,
       "endpoint": {
         "method": "PUT",

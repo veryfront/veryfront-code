@@ -28,7 +28,7 @@
     {
       "id": "new-relic__run_nrql_query",
       "name": "Run NRQL Query",
-      "description": "Run an NRQL query against a New Relic account and return the results",
+      "description": "Run nrql query",
       "requiresWrite": false,
       "endpoint": {
         "type": "graphql",
@@ -57,7 +57,7 @@
     {
       "id": "new-relic__search_entities",
       "name": "Search Entities",
-      "description": "Search monitored entities (apps, hosts, services) with an entity search query",
+      "description": "Search entities",
       "requiresWrite": false,
       "endpoint": {
         "type": "graphql",
@@ -97,7 +97,7 @@
     {
       "id": "new-relic__get_entity",
       "name": "Get Entity",
-      "description": "Get an entity's details and tags by GUID",
+      "description": "Get entity",
       "requiresWrite": false,
       "endpoint": {
         "type": "graphql",
@@ -120,7 +120,7 @@
     {
       "id": "new-relic__list_issues",
       "name": "List Issues",
-      "description": "List alert issues from the last day in an account (queries the NrAiIssue event type via NRQL)",
+      "description": "List issues",
       "requiresWrite": false,
       "endpoint": {
         "type": "graphql",

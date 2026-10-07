@@ -28,7 +28,7 @@
     {
       "id": "huggingface__search_models",
       "name": "Search Models",
-      "description": "Search models on the Hugging Face Hub",
+      "description": "Search models",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -79,7 +79,7 @@
     {
       "id": "huggingface__get_model",
       "name": "Get Model",
-      "description": "Get details about a model repository on the Hub",
+      "description": "Get model",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -103,7 +103,7 @@
     {
       "id": "huggingface__search_datasets",
       "name": "Search Datasets",
-      "description": "Search datasets on the Hugging Face Hub",
+      "description": "Search datasets",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -131,7 +131,7 @@
     {
       "id": "huggingface__whoami",
       "name": "Who Am I",
-      "description": "Get the account and permissions associated with the access token",
+      "description": "Who am i",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -141,7 +141,7 @@
     {
       "id": "huggingface__create_chat_completion",
       "name": "Create Chat Completion",
-      "description": "Generate a chat completion through the Hugging Face Inference Providers router (OpenAI-compatible)",
+      "description": "Create chat completion",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",

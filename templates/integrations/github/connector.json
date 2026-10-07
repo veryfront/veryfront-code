@@ -68,7 +68,7 @@
     {
       "id": "github__get_current_user",
       "name": "Get Current User",
-      "description": "Get the authenticated GitHub user identity",
+      "description": "Get current user",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -78,7 +78,7 @@
     {
       "id": "github__list_repos",
       "name": "List Repositories",
-      "description": "Get list of user's repositories",
+      "description": "List repositories",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -177,7 +177,7 @@
     {
       "id": "github__get_user",
       "name": "Get User",
-      "description": "Get a GitHub user profile by username. Use this to verify repository owners, assignees, and other GitHub usernames before acting.",
+      "description": "Get user",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -195,7 +195,7 @@
     {
       "id": "github__get_repo",
       "name": "Get Repository",
-      "description": "Get details of a specific repository",
+      "description": "Get repository",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -219,7 +219,7 @@
     {
       "id": "github__list_prs",
       "name": "List Pull Requests",
-      "description": "Get pull requests for a repository",
+      "description": "List pull requests",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -329,7 +329,7 @@
     {
       "id": "github__create_issue",
       "name": "Create Issue",
-      "description": "Create a new issue in a repository",
+      "description": "Create issue",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -372,7 +372,7 @@
     {
       "id": "github__get_pr_diff",
       "name": "Get PR Diff",
-      "description": "Get the diff for a pull request",
+      "description": "Get pr diff",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -408,7 +408,7 @@
     {
       "id": "github__list_issues",
       "name": "List Issues",
-      "description": "List issues for a repository",
+      "description": "List issues",
       "requiresWrite": false,
       "endpoint": {
         "type": "graphql",
@@ -526,7 +526,7 @@
     {
       "id": "github__get_issue",
       "name": "Get Issue",
-      "description": "Get details of a GitHub issue",
+      "description": "Get issue",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -617,7 +617,7 @@
     {
       "id": "github__update_issue",
       "name": "Update Issue",
-      "description": "Update, close, or reopen a GitHub issue",
+      "description": "Update issue",
       "requiresWrite": true,
       "endpoint": {
         "method": "PATCH",
@@ -669,7 +669,7 @@
     {
       "id": "github__add_issue_comment",
       "name": "Add Issue Comment",
-      "description": "Add a comment to a GitHub issue or pull request",
+      "description": "Add issue comment",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -706,7 +706,7 @@
     {
       "id": "github__get_pr",
       "name": "Get Pull Request",
-      "description": "Get details of a specific pull request (title, body, status, author, reviewers, labels)",
+      "description": "Get pull request",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -806,7 +806,7 @@
     {
       "id": "github__create_pr",
       "name": "Create Pull Request",
-      "description": "Create a new pull request in a repository",
+      "description": "Create pull request",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -856,7 +856,7 @@
     {
       "id": "github__merge_pr",
       "name": "Merge Pull Request",
-      "description": "Merge an open pull request",
+      "description": "Merge pull request",
       "requiresWrite": true,
       "endpoint": {
         "method": "PUT",
@@ -901,7 +901,7 @@
     {
       "id": "github__list_commits",
       "name": "List Commits",
-      "description": "List commits for a repository, branch, or file path",
+      "description": "List commits",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",

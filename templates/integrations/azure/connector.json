@@ -43,7 +43,7 @@
     {
       "id": "azure__list_subscriptions",
       "name": "List Subscriptions",
-      "description": "List all Azure subscriptions the signed-in user can access; use this first to get subscription IDs for the other tools",
+      "description": "List subscriptions",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -64,7 +64,7 @@
     {
       "id": "azure__list_resource_groups",
       "name": "List Resource Groups",
-      "description": "List the resource groups in an Azure subscription",
+      "description": "List resource groups",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -101,7 +101,7 @@
     {
       "id": "azure__list_virtual_machines",
       "name": "List Virtual Machines",
-      "description": "List all virtual machines in an Azure subscription, optionally with runtime power state",
+      "description": "List virtual machines",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -133,7 +133,7 @@
     {
       "id": "azure__start_virtual_machine",
       "name": "Start Virtual Machine",
-      "description": "Start a stopped or deallocated virtual machine (returns 202 Accepted; the operation completes asynchronously)",
+      "description": "Start virtual machine",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -169,7 +169,7 @@
     {
       "id": "azure__deallocate_virtual_machine",
       "name": "Deallocate Virtual Machine",
-      "description": "Shut down a virtual machine and release its compute resources so it stops incurring compute charges (returns 202 Accepted)",
+      "description": "Deallocate virtual machine",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -210,7 +210,7 @@
     {
       "id": "azure__list_storage_accounts",
       "name": "List Storage Accounts",
-      "description": "List all storage accounts in an Azure subscription (storage keys are not returned)",
+      "description": "List storage accounts",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -237,7 +237,7 @@
     {
       "id": "azure__list_function_apps",
       "name": "List Function and Web Apps",
-      "description": "List all App Service sites (function apps and web apps, Microsoft.Web/sites) in an Azure subscription; function apps have kind 'functionapp'",
+      "description": "List function and web apps",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -264,7 +264,7 @@
     {
       "id": "azure__restart_virtual_machine",
       "name": "Restart Virtual Machine",
-      "description": "Restart a running virtual machine (returns 202 Accepted; the operation completes asynchronously)",
+      "description": "Restart virtual machine",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -300,7 +300,7 @@
     {
       "id": "azure__get_vm_instance_view",
       "name": "Get VM Instance View",
-      "description": "Get the runtime state of a single virtual machine, including power state (statuses with code PowerState/running etc.), OS info, and boot diagnostics — cheaper than listing all VMs with statusOnly",
+      "description": "Get vm instance view",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -336,7 +336,7 @@
     {
       "id": "azure__list_resources",
       "name": "List Resources",
-      "description": "List all resources in an Azure subscription across every resource type — a generic inventory beyond the dedicated list tools",
+      "description": "List resources",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",

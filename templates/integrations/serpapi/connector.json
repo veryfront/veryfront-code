@@ -29,7 +29,7 @@
     {
       "id": "serpapi__google_search",
       "name": "Google Search",
-      "description": "Run a Google web search and get structured organic results, answer boxes, and related data",
+      "description": "Google search",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -68,7 +68,7 @@
     {
       "id": "serpapi__google_news",
       "name": "Google News Search",
-      "description": "Search Google News and get structured article results with titles, sources, and publish dates",
+      "description": "Google news search",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -92,7 +92,7 @@
     {
       "id": "serpapi__google_maps",
       "name": "Google Maps Search",
-      "description": "Search Google Maps for places and get structured local results with addresses, ratings, and coordinates",
+      "description": "Google maps search",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -121,7 +121,7 @@
     {
       "id": "serpapi__google_shopping",
       "name": "Google Shopping Search",
-      "description": "Search Google Shopping and get structured product results with prices, merchants, and ratings",
+      "description": "Google shopping search",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",

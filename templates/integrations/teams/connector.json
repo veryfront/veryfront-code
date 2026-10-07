@@ -88,7 +88,7 @@
     {
       "id": "teams__list_chats",
       "name": "List Chats",
-      "description": "List recent Teams chats",
+      "description": "List chats",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -109,7 +109,7 @@
     {
       "id": "teams__get_messages",
       "name": "Get Messages",
-      "description": "Get messages from a specific chat",
+      "description": "Get messages",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -136,7 +136,7 @@
     {
       "id": "teams__send_message",
       "name": "Send Channel Message",
-      "description": "Send a message to a Teams channel",
+      "description": "Send channel message",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -167,7 +167,7 @@
     {
       "id": "teams__send_chat_message",
       "name": "Send Chat Message",
-      "description": "Send a message to a Teams 1:1 or group chat",
+      "description": "Send chat message",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -192,7 +192,7 @@
     {
       "id": "teams__list_teams",
       "name": "List Teams",
-      "description": "List all joined Teams",
+      "description": "List teams",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -213,7 +213,7 @@
     {
       "id": "teams__list_channels",
       "name": "List Channels",
-      "description": "List channels in a specific Team",
+      "description": "List channels",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -234,7 +234,7 @@
     {
       "id": "teams__create_chat",
       "name": "Create Chat",
-      "description": "Create a new 1:1 or group chat so a message can be sent to someone without an existing chat",
+      "description": "Create chat",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",

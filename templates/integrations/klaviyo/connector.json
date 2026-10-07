@@ -29,7 +29,7 @@
     {
       "id": "klaviyo__list_profiles",
       "name": "List Profiles",
-      "description": "List customer profiles",
+      "description": "List profiles",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -77,7 +77,7 @@
     {
       "id": "klaviyo__get_profile",
       "name": "Get Profile",
-      "description": "Get a customer profile by ID",
+      "description": "Get profile",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -104,7 +104,7 @@
     {
       "id": "klaviyo__create_profile",
       "name": "Create Profile",
-      "description": "Create a new customer profile",
+      "description": "Create profile",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -132,7 +132,7 @@
     {
       "id": "klaviyo__list_lists",
       "name": "List Lists",
-      "description": "List marketing lists",
+      "description": "List lists",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -168,7 +168,7 @@
     {
       "id": "klaviyo__list_segments",
       "name": "List Segments",
-      "description": "List audience segments",
+      "description": "List segments",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -192,7 +192,7 @@
     {
       "id": "klaviyo__list_metrics",
       "name": "List Metrics",
-      "description": "List tracked event metrics (e.g. Placed Order, Opened Email)",
+      "description": "List metrics",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -216,7 +216,7 @@
     {
       "id": "klaviyo__create_event",
       "name": "Create Event",
-      "description": "Track a custom event for a profile",
+      "description": "Create event",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",

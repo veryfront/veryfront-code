@@ -36,7 +36,7 @@
     {
       "id": "unzer__get_payment",
       "name": "Get Payment",
-      "description": "Retrieve a payment resource with its state, amounts (total, charged, canceled, remaining), and linked transactions",
+      "description": "Get payment",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -54,7 +54,7 @@
     {
       "id": "unzer__get_charge",
       "name": "Get Charge",
-      "description": "Retrieve a specific charge transaction of a payment, including amount, status, and processing details",
+      "description": "Get charge",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -78,7 +78,7 @@
     {
       "id": "unzer__create_charge",
       "name": "Create Charge",
-      "description": "Directly charge a payment type (one-step payment without prior authorization) using a payment type ID",
+      "description": "Create charge",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -117,7 +117,7 @@
     {
       "id": "unzer__refund_charge",
       "name": "Refund Charge",
-      "description": "Cancel (refund) a charge fully or partially, returning money to the customer",
+      "description": "Refund charge",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -151,7 +151,7 @@
     {
       "id": "unzer__authorize_payment",
       "name": "Authorize Payment",
-      "description": "Reserve funds on a payment type without charging yet (first step of the two-step authorize-then-charge flow, e.g. charge on shipment); reservations are held for about 7 days",
+      "description": "Authorize payment",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -190,7 +190,7 @@
     {
       "id": "unzer__charge_authorization",
       "name": "Charge Authorization",
-      "description": "Capture a previously authorized payment, fully (empty body) or partially (with amount) — the second step of the authorize-then-charge flow",
+      "description": "Charge authorization",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -218,7 +218,7 @@
     {
       "id": "unzer__cancel_authorization",
       "name": "Cancel Authorization",
-      "description": "Cancel (reverse) an uncaptured authorization fully or partially, releasing the reserved funds — distinct from refunding a charge",
+      "description": "Cancel authorization",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",

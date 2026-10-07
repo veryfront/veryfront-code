@@ -30,7 +30,7 @@
     {
       "id": "customer-io__search_customers",
       "name": "Search Customers",
-      "description": "Search Customer.io people by attribute or segment filter conditions",
+      "description": "Search customers",
       "requiresWrite": false,
       "endpoint": {
         "method": "POST",
@@ -63,7 +63,7 @@
     {
       "id": "customer-io__list_campaigns",
       "name": "List Campaigns",
-      "description": "List campaigns in the Customer.io workspace with their state and goals",
+      "description": "List campaigns",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -76,7 +76,7 @@
     {
       "id": "customer-io__get_campaign_metrics",
       "name": "Get Campaign Metrics",
-      "description": "Get delivery and conversion metrics for a Customer.io campaign over a time period",
+      "description": "Get campaign metrics",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -117,7 +117,7 @@
     {
       "id": "customer-io__get_person_attributes",
       "name": "Get Person Attributes",
-      "description": "Get a person's full attribute profile by ID, email, or cio_id (Search Customers returns only identifiers)",
+      "description": "Get person attributes",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -143,7 +143,7 @@
     {
       "id": "customer-io__list_transactional_messages",
       "name": "List Transactional Messages",
-      "description": "List the workspace's transactional message templates so agents can find a valid transactional_message_id before sending",
+      "description": "List transactional messages",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -156,7 +156,7 @@
     {
       "id": "customer-io__trigger_broadcast",
       "name": "Trigger Broadcast",
-      "description": "Trigger an API-triggered broadcast campaign, optionally overriding the recipients and passing liquid data into the messages",
+      "description": "Trigger broadcast",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -200,7 +200,7 @@
     {
       "id": "customer-io__list_segments",
       "name": "List Segments",
-      "description": "List segments in the Customer.io workspace so agents can target or filter people",
+      "description": "List segments",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -213,7 +213,7 @@
     {
       "id": "customer-io__send_transactional_email",
       "name": "Send Transactional Email",
-      "description": "Send a transactional email to a recipient, using a transactional message template or inline subject and body",
+      "description": "Send transactional email",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",

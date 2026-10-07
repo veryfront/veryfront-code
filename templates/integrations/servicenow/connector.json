@@ -24,7 +24,7 @@
     {
       "id": "servicenow__list_incidents",
       "name": "List Incidents",
-      "description": "List ServiceNow incidents with optional filters",
+      "description": "List incidents",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -57,7 +57,7 @@
     {
       "id": "servicenow__get_incident",
       "name": "Get Incident",
-      "description": "Get details of a specific incident",
+      "description": "Get incident",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -84,7 +84,7 @@
     {
       "id": "servicenow__create_incident",
       "name": "Create Incident",
-      "description": "Create a new incident in ServiceNow",
+      "description": "Create incident",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -124,7 +124,7 @@
     {
       "id": "servicenow__update_incident",
       "name": "Update Incident",
-      "description": "Update an existing incident",
+      "description": "Update incident",
       "requiresWrite": true,
       "endpoint": {
         "method": "PATCH",
@@ -171,7 +171,7 @@
     {
       "id": "servicenow__list_interactions",
       "name": "List Interactions",
-      "description": "List ServiceNow Interaction records used for request-desk intake and routing",
+      "description": "List interactions",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -204,7 +204,7 @@
     {
       "id": "servicenow__get_interaction",
       "name": "Get Interaction",
-      "description": "Get details of a specific ServiceNow Interaction record",
+      "description": "Get interaction",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -231,7 +231,7 @@
     {
       "id": "servicenow__create_interaction",
       "name": "Create Interaction",
-      "description": "Create a ServiceNow Interaction intake record before converting or linking it to an incident or request",
+      "description": "Create interaction",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -275,7 +275,7 @@
     {
       "id": "servicenow__update_interaction",
       "name": "Update Interaction",
-      "description": "Update an existing ServiceNow Interaction with routing status, parent record, notes, or comments",
+      "description": "Update interaction",
       "requiresWrite": true,
       "endpoint": {
         "method": "PATCH",
@@ -322,7 +322,7 @@
     {
       "id": "servicenow__list_requests",
       "name": "List Requests",
-      "description": "List ServiceNow service request records from the sc_request table",
+      "description": "List requests",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -355,7 +355,7 @@
     {
       "id": "servicenow__get_request",
       "name": "Get Request",
-      "description": "Get details of a specific ServiceNow service request",
+      "description": "Get request",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -382,7 +382,7 @@
     {
       "id": "servicenow__create_request",
       "name": "Create Request",
-      "description": "Order a Service Catalog item to create a workflow-backed ServiceNow request",
+      "description": "Create request",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -414,7 +414,7 @@
     {
       "id": "servicenow__list_request_items",
       "name": "List Request Items",
-      "description": "List ServiceNow requested item records from the sc_req_item table",
+      "description": "List request items",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -447,7 +447,7 @@
     {
       "id": "servicenow__get_request_item",
       "name": "Get Request Item",
-      "description": "Get details of a specific ServiceNow requested item",
+      "description": "Get request item",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -474,7 +474,7 @@
     {
       "id": "servicenow__create_request_item",
       "name": "Create Request Item",
-      "description": "Create a requested item table record when direct sc_req_item writes are allowed",
+      "description": "Create request item",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -531,7 +531,7 @@
     {
       "id": "servicenow__search_knowledge",
       "name": "Search Knowledge Base",
-      "description": "Search ServiceNow knowledge base articles",
+      "description": "Search knowledge base",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -564,7 +564,7 @@
     {
       "id": "servicenow__search_users",
       "name": "Search Users",
-      "description": "Search ServiceNow users to find the sys_id needed for assigning incidents",
+      "description": "Search users",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",

@@ -46,7 +46,7 @@
     {
       "id": "google-forms__get_form",
       "name": "Get Form",
-      "description": "Get a form's metadata, settings, and items (questions) including the question IDs needed to interpret responses",
+      "description": "Get form",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -64,7 +64,7 @@
     {
       "id": "google-forms__list_form_responses",
       "name": "List Form Responses",
-      "description": "List submitted responses for a form, with answers keyed by question ID",
+      "description": "List form responses",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -101,7 +101,7 @@
     {
       "id": "google-forms__get_form_response",
       "name": "Get Form Response",
-      "description": "Get a single response submitted to a form",
+      "description": "Get form response",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -125,7 +125,7 @@
     {
       "id": "google-forms__create_form",
       "name": "Create Form",
-      "description": "Create a new form with a title; add questions afterwards with Batch Update Form",
+      "description": "Create form",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -142,7 +142,7 @@
     {
       "id": "google-forms__set_publish_settings",
       "name": "Set Publish Settings",
-      "description": "Publish or unpublish a form and toggle whether it accepts responses, e.g. to open a survey after building it or close it when done (requires the forms.body scope)",
+      "description": "Set publish settings",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -171,7 +171,7 @@
     {
       "id": "google-forms__batch_update_form",
       "name": "Batch Update Form",
-      "description": "Apply a batch of updates to a form, such as adding questions, updating form info, or changing settings",
+      "description": "Batch update form",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",

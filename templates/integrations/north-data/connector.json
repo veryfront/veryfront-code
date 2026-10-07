@@ -29,7 +29,7 @@
     {
       "id": "north-data__search_companies",
       "name": "Search Companies",
-      "description": "Fuzzy universal search for companies (and optionally persons) by free-text query, e.g. 'Siemens, München'. Use this to find a company before fetching its details.",
+      "description": "Search companies",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -74,7 +74,7 @@
     {
       "id": "north-data__get_company",
       "name": "Get Company",
-      "description": "Retrieve a single company's profile (register info, address, status, financial indicators). Identify it either by name + address (city), or by registerId + registerCity, or by companyId from a previous search.",
+      "description": "Get company",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -117,7 +117,7 @@
     {
       "id": "north-data__power_search",
       "name": "Power Search",
-      "description": "Structured company search with filters for location radius, industry segment, legal form, status, and countries. Billed per unique company returned, so keep filters narrow.",
+      "description": "Power search",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -164,7 +164,7 @@
     {
       "id": "north-data__suggest",
       "name": "Suggest Companies",
-      "description": "Auto-complete suggestions for a partial company or person name. Free of charge — suggested companies do not count toward the monthly quota, so use this as a cheap first pass before Get Company.",
+      "description": "Suggest companies",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -207,7 +207,7 @@
     {
       "id": "north-data__get_person",
       "name": "Get Person",
-      "description": "Look up a person (officer, shareholder, representative) by name and address or by a person ID from a previous search result. Billed like company lookups.",
+      "description": "Get person",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",

@@ -28,7 +28,7 @@
     {
       "id": "telegram__send_message",
       "name": "Send Message",
-      "description": "Send a text message to a chat, group, or channel the bot has access to",
+      "description": "Send message",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -54,7 +54,7 @@
     {
       "id": "telegram__get_updates",
       "name": "Get Updates",
-      "description": "Receive incoming updates (messages sent to the bot) via long polling; use it to discover chat ids",
+      "description": "Get updates",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -83,7 +83,7 @@
     {
       "id": "telegram__get_me",
       "name": "Get Me",
-      "description": "Return basic information about the bot itself; useful for verifying the token works",
+      "description": "Get me",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -93,7 +93,7 @@
     {
       "id": "telegram__send_photo",
       "name": "Send Photo",
-      "description": "Send a photo to a chat by passing a publicly reachable HTTP URL or an existing Telegram file_id",
+      "description": "Send photo",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -119,7 +119,7 @@
     {
       "id": "telegram__edit_message_text",
       "name": "Edit Message Text",
-      "description": "Edit the text of a message previously sent by the bot",
+      "description": "Edit message text",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",

@@ -28,7 +28,7 @@
     {
       "id": "jotform__list_forms",
       "name": "List Forms",
-      "description": "List forms owned by the account",
+      "description": "List forms",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -82,7 +82,7 @@
     {
       "id": "jotform__get_form",
       "name": "Get Form",
-      "description": "Get basic details of a form",
+      "description": "Get form",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -103,7 +103,7 @@
     {
       "id": "jotform__get_form_questions",
       "name": "Get Form Questions",
-      "description": "List the questions/fields on a form",
+      "description": "Get form questions",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -124,7 +124,7 @@
     {
       "id": "jotform__list_submissions",
       "name": "List Submissions",
-      "description": "List submissions for a form",
+      "description": "List submissions",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -168,7 +168,7 @@
     {
       "id": "jotform__get_submission",
       "name": "Get Submission",
-      "description": "Get a single submission with its answers",
+      "description": "Get submission",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -189,7 +189,7 @@
     {
       "id": "jotform__get_user",
       "name": "Get User",
-      "description": "Get the authenticated account profile and usage",
+      "description": "Get user",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",

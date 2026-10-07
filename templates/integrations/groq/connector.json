@@ -28,7 +28,7 @@
     {
       "id": "groq__list_models",
       "name": "List Models",
-      "description": "List the models available on Groq",
+      "description": "List models",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -52,7 +52,7 @@
     {
       "id": "groq__get_model",
       "name": "Get Model",
-      "description": "Get details about a specific Groq model",
+      "description": "Get model",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -70,7 +70,7 @@
     {
       "id": "groq__create_chat_completion",
       "name": "Create Chat Completion",
-      "description": "Generate a chat completion from a list of messages",
+      "description": "Create chat completion",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -100,7 +100,7 @@
     {
       "id": "groq__list_batches",
       "name": "List Batches",
-      "description": "List the organization's batch jobs",
+      "description": "List batches",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",

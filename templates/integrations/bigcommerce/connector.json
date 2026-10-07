@@ -36,7 +36,7 @@
     {
       "id": "bigcommerce__list_orders",
       "name": "List Orders",
-      "description": "List store orders with optional status, customer, and date filtering (Orders are served by the v2 API)",
+      "description": "List orders",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -87,7 +87,7 @@
     {
       "id": "bigcommerce__get_order",
       "name": "Get Order",
-      "description": "Get full details of a single order (Orders are served by the v2 API)",
+      "description": "Get order",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -111,7 +111,7 @@
     {
       "id": "bigcommerce__list_order_products",
       "name": "List Order Products",
-      "description": "List the line items of an order — v2 order responses do not embed products, so use this to see what was bought",
+      "description": "List order products",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -147,7 +147,7 @@
     {
       "id": "bigcommerce__update_order",
       "name": "Update Order",
-      "description": "Update an order, e.g. change its status to Shipped/Cancelled/Refunded or add staff notes",
+      "description": "Update order",
       "requiresWrite": true,
       "endpoint": {
         "method": "PUT",
@@ -185,7 +185,7 @@
     {
       "id": "bigcommerce__list_products",
       "name": "List Products",
-      "description": "List catalog products with optional keyword, SKU, and availability filtering",
+      "description": "List products",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -238,7 +238,7 @@
     {
       "id": "bigcommerce__get_product",
       "name": "Get Product",
-      "description": "Get full details of a single catalog product",
+      "description": "Get product",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -270,7 +270,7 @@
     {
       "id": "bigcommerce__list_customers",
       "name": "List Customers",
-      "description": "List store customers with optional email and name filtering",
+      "description": "List customers",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -313,7 +313,7 @@
     {
       "id": "bigcommerce__create_product",
       "name": "Create Product",
-      "description": "Create a new product in the catalog",
+      "description": "Create product",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -376,7 +376,7 @@
     {
       "id": "bigcommerce__update_product",
       "name": "Update Product",
-      "description": "Update fields of an existing catalog product, such as price, visibility, or inventory",
+      "description": "Update product",
       "requiresWrite": true,
       "endpoint": {
         "method": "PUT",

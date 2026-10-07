@@ -39,7 +39,7 @@
     {
       "id": "monday__list_boards",
       "name": "List Boards",
-      "description": "List boards in the monday.com account",
+      "description": "List boards",
       "requiresWrite": false,
       "endpoint": {
         "type": "graphql",
@@ -82,7 +82,7 @@
     {
       "id": "monday__list_items",
       "name": "List Items",
-      "description": "List items on a monday.com board with their column values",
+      "description": "List items",
       "requiresWrite": false,
       "endpoint": {
         "type": "graphql",
@@ -116,7 +116,7 @@
     {
       "id": "monday__get_item",
       "name": "Get Item",
-      "description": "Get a monday.com item by ID with its column values and updates",
+      "description": "Get item",
       "requiresWrite": false,
       "endpoint": {
         "type": "graphql",
@@ -139,7 +139,7 @@
     {
       "id": "monday__create_item",
       "name": "Create Item",
-      "description": "Create a new item on a monday.com board",
+      "description": "Create item",
       "requiresWrite": true,
       "endpoint": {
         "type": "graphql",
@@ -178,7 +178,7 @@
     {
       "id": "monday__update_column_values",
       "name": "Update Column Values",
-      "description": "Update one or more column values on an existing monday.com item",
+      "description": "Update column values",
       "requiresWrite": true,
       "endpoint": {
         "type": "graphql",

@@ -28,7 +28,7 @@
     {
       "id": "apollo__search_people",
       "name": "Search People",
-      "description": "Search the Apollo database for people by keywords, titles, and locations",
+      "description": "Search people",
       "requiresWrite": false,
       "endpoint": {
         "method": "POST",
@@ -82,7 +82,7 @@
     {
       "id": "apollo__search_organizations",
       "name": "Search Organizations",
-      "description": "Search the Apollo database for companies; consumes Apollo credits",
+      "description": "Search organizations",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -116,7 +116,7 @@
     {
       "id": "apollo__enrich_person",
       "name": "Enrich Person",
-      "description": "Enrich a person's profile by name, email, domain, or LinkedIn URL; consumes Apollo credits",
+      "description": "Enrich person",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -163,7 +163,7 @@
     {
       "id": "apollo__enrich_organization",
       "name": "Enrich Organization",
-      "description": "Enrich a company profile from its domain; consumes Apollo credits",
+      "description": "Enrich organization",
       "requiresWrite": true,
       "endpoint": {
         "method": "GET",
@@ -184,7 +184,7 @@
     {
       "id": "apollo__search_contacts",
       "name": "Search Contacts",
-      "description": "Search contacts already saved to your Apollo account",
+      "description": "Search contacts",
       "requiresWrite": false,
       "endpoint": {
         "method": "POST",
@@ -214,7 +214,7 @@
     {
       "id": "apollo__create_contact",
       "name": "Create Contact",
-      "description": "Create a new contact in your Apollo account",
+      "description": "Create contact",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -254,7 +254,7 @@
     {
       "id": "apollo__update_contact",
       "name": "Update Contact",
-      "description": "Update an existing contact in your Apollo account",
+      "description": "Update contact",
       "requiresWrite": true,
       "endpoint": {
         "method": "PUT",

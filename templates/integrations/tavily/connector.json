@@ -28,7 +28,7 @@
     {
       "id": "tavily__search",
       "name": "Search",
-      "description": "Search the web and get ranked results with optional LLM answer",
+      "description": "Search",
       "requiresWrite": false,
       "endpoint": {
         "method": "POST",
@@ -83,7 +83,7 @@
     {
       "id": "tavily__extract",
       "name": "Extract",
-      "description": "Extract clean page content from one or more URLs",
+      "description": "Extract",
       "requiresWrite": false,
       "endpoint": {
         "method": "POST",
@@ -110,7 +110,7 @@
     {
       "id": "tavily__crawl",
       "name": "Crawl",
-      "description": "Crawl a website from a root URL and extract content from discovered pages",
+      "description": "Crawl",
       "requiresWrite": false,
       "endpoint": {
         "method": "POST",
@@ -141,7 +141,7 @@
     {
       "id": "tavily__map",
       "name": "Map",
-      "description": "Get a list of URLs discovered on a website without extracting content",
+      "description": "Map",
       "requiresWrite": false,
       "endpoint": {
         "method": "POST",

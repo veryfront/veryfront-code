@@ -36,7 +36,7 @@
     {
       "id": "freshdesk__list_tickets",
       "name": "List Tickets",
-      "description": "List support tickets in the Freshdesk account",
+      "description": "List tickets",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -101,7 +101,7 @@
     {
       "id": "freshdesk__get_ticket",
       "name": "Get Ticket",
-      "description": "Get details of a Freshdesk ticket",
+      "description": "Get ticket",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -130,7 +130,7 @@
     {
       "id": "freshdesk__create_ticket",
       "name": "Create Ticket",
-      "description": "Create a new support ticket in Freshdesk",
+      "description": "Create ticket",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -181,7 +181,7 @@
     {
       "id": "freshdesk__update_ticket",
       "name": "Update Ticket",
-      "description": "Update fields on an existing Freshdesk ticket",
+      "description": "Update ticket",
       "requiresWrite": true,
       "endpoint": {
         "method": "PUT",
@@ -219,7 +219,7 @@
     {
       "id": "freshdesk__list_contacts",
       "name": "List Contacts",
-      "description": "List contacts in the Freshdesk account",
+      "description": "List contacts",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",

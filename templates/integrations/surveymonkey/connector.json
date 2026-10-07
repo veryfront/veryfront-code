@@ -30,7 +30,7 @@
     {
       "id": "surveymonkey__list_surveys",
       "name": "List Surveys",
-      "description": "List surveys owned by or shared with the authenticated account",
+      "description": "List surveys",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -84,7 +84,7 @@
     {
       "id": "surveymonkey__get_survey_details",
       "name": "Get Survey Details",
-      "description": "Get a survey's full design, including pages, questions, and answer option IDs needed to interpret responses",
+      "description": "Get survey details",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -102,7 +102,7 @@
     {
       "id": "surveymonkey__list_survey_responses",
       "name": "List Survey Responses",
-      "description": "List full responses for a survey, including each answer keyed by question and choice IDs",
+      "description": "List survey responses",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -135,7 +135,7 @@
     {
       "id": "surveymonkey__get_response_details",
       "name": "Get Response Details",
-      "description": "Get a single survey response with all answers expanded",
+      "description": "Get response details",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -159,7 +159,7 @@
     {
       "id": "surveymonkey__get_survey_rollups",
       "name": "Get Survey Rollups",
-      "description": "Get aggregated answer counts and statistics per question — summarize results without paging every response",
+      "description": "Get survey rollups",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -197,7 +197,7 @@
     {
       "id": "surveymonkey__list_survey_folders",
       "name": "List Survey Folders",
-      "description": "List the survey folders in the account to find folder IDs for filtering surveys",
+      "description": "List survey folders",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -224,7 +224,7 @@
     {
       "id": "surveymonkey__list_collectors",
       "name": "List Collectors",
-      "description": "List the collectors (web links, email invitations, etc.) that gather responses for a survey",
+      "description": "List collectors",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",

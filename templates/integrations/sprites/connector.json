@@ -31,7 +31,7 @@
     {
       "id": "sprites__list_sprites",
       "name": "List Sprites",
-      "description": "List sprites in the organization, optionally filtered by name prefix and paginated",
+      "description": "List sprites",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -59,7 +59,7 @@
     {
       "id": "sprites__create_sprite",
       "name": "Create Sprite",
-      "description": "Create a new sprite — a persistent, hardware-isolated Linux VM that keeps its filesystem state between runs",
+      "description": "Create sprite",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -80,7 +80,7 @@
     {
       "id": "sprites__get_sprite",
       "name": "Get Sprite",
-      "description": "Get a sprite by name, including its URL, runtime status (cold, warm, or running), and creation/activity timestamps",
+      "description": "Get sprite",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -98,7 +98,7 @@
     {
       "id": "sprites__delete_sprite",
       "name": "Destroy Sprite",
-      "description": "Destroy a sprite by name, permanently deleting the VM and its persisted filesystem state",
+      "description": "Destroy sprite",
       "requiresWrite": true,
       "endpoint": {
         "method": "DELETE",
@@ -116,7 +116,7 @@
     {
       "id": "sprites__exec_command",
       "name": "Execute Command",
-      "description": "Execute a command inside a sprite over HTTP (non-interactive) and return its output as JSON",
+      "description": "Execute command",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -150,7 +150,7 @@
     {
       "id": "sprites__create_checkpoint",
       "name": "Create Checkpoint",
-      "description": "Create a point-in-time checkpoint of a sprite (filesystem and memory) before risky operations; the response is a stream of NDJSON progress events",
+      "description": "Create checkpoint",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -174,7 +174,7 @@
     {
       "id": "sprites__list_checkpoints",
       "name": "List Checkpoints",
-      "description": "List a sprite's checkpoints with their IDs (e.g. v7), creation times, and comments — discover restore points",
+      "description": "List checkpoints",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -192,7 +192,7 @@
     {
       "id": "sprites__restore_checkpoint",
       "name": "Restore Checkpoint",
-      "description": "Roll a sprite back to a checkpoint, replacing its current state with the snapshot; the response is a stream of NDJSON progress events",
+      "description": "Restore checkpoint",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",

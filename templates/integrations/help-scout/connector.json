@@ -41,7 +41,7 @@
     {
       "id": "help-scout__list_mailboxes",
       "name": "List Mailboxes",
-      "description": "List Help Scout mailboxes (inboxes) so agents can find a mailbox ID before reading conversations",
+      "description": "List mailboxes",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -62,7 +62,7 @@
     {
       "id": "help-scout__list_conversations",
       "name": "List Conversations",
-      "description": "List Help Scout conversations, optionally filtered by mailbox, status, tag, or assignee",
+      "description": "List conversations",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -123,7 +123,7 @@
     {
       "id": "help-scout__get_conversation",
       "name": "Get Conversation",
-      "description": "Get a Help Scout conversation by ID, including its message threads",
+      "description": "Get conversation",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -147,7 +147,7 @@
     {
       "id": "help-scout__list_customers",
       "name": "List Customers",
-      "description": "List Help Scout customers, optionally filtered by mailbox, name, or a search query",
+      "description": "List customers",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -198,7 +198,7 @@
     {
       "id": "help-scout__list_users",
       "name": "List Users",
-      "description": "List Help Scout users (team members) so agents can find user IDs for assignment and reply attribution",
+      "description": "List users",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -229,7 +229,7 @@
     {
       "id": "help-scout__add_note",
       "name": "Add Note",
-      "description": "Add an internal note to a conversation - visible to the team only, never emailed to the customer",
+      "description": "Add note",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -258,7 +258,7 @@
     {
       "id": "help-scout__update_tags",
       "name": "Update Tags",
-      "description": "Replace the tag list of a conversation, e.g. to label it during triage. Send the full list: tags omitted from the payload are removed.",
+      "description": "Update tags",
       "requiresWrite": true,
       "endpoint": {
         "method": "PUT",
@@ -283,7 +283,7 @@
     {
       "id": "help-scout__create_reply",
       "name": "Reply to Conversation",
-      "description": "Send a reply on an existing Help Scout conversation, optionally changing its status",
+      "description": "Reply to conversation",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -333,7 +333,7 @@
     {
       "id": "help-scout__create_conversation",
       "name": "Create Conversation",
-      "description": "Create a new Help Scout conversation in a mailbox with an initial thread",
+      "description": "Create conversation",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",

@@ -41,7 +41,7 @@
     {
       "id": "digitalocean__list_droplets",
       "name": "List Droplets",
-      "description": "List Droplets in the account",
+      "description": "List droplets",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -113,7 +113,7 @@
     {
       "id": "digitalocean__get_droplet",
       "name": "Get Droplet",
-      "description": "Get a Droplet by ID",
+      "description": "Get droplet",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -134,7 +134,7 @@
     {
       "id": "digitalocean__create_droplet",
       "name": "Create Droplet",
-      "description": "Create a new Droplet (provisions billable infrastructure)",
+      "description": "Create droplet",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -182,7 +182,7 @@
     {
       "id": "digitalocean__delete_droplet",
       "name": "Delete Droplet",
-      "description": "Permanently destroy a Droplet by ID",
+      "description": "Delete droplet",
       "requiresWrite": true,
       "endpoint": {
         "method": "DELETE",
@@ -200,7 +200,7 @@
     {
       "id": "digitalocean__list_databases",
       "name": "List Database Clusters",
-      "description": "List managed database clusters in the account",
+      "description": "List database clusters",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -244,7 +244,7 @@
     {
       "id": "digitalocean__get_account",
       "name": "Get Account",
-      "description": "Get account information and limits for the authenticated user",
+      "description": "Get account",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",

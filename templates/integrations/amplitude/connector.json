@@ -49,7 +49,7 @@
     {
       "id": "amplitude__list_events",
       "name": "List Events",
-      "description": "List event types visible in the project with current week totals",
+      "description": "List events",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -87,7 +87,7 @@
     {
       "id": "amplitude__query_event_segmentation",
       "name": "Query Event Segmentation",
-      "description": "Get metrics for an event over a date range (Event Segmentation chart data)",
+      "description": "Query event segmentation",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -137,7 +137,7 @@
     {
       "id": "amplitude__query_active_users",
       "name": "Query Active Users",
-      "description": "Get active or new user counts over a date range",
+      "description": "Query active users",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -181,7 +181,7 @@
     {
       "id": "amplitude__get_chart_results",
       "name": "Get Chart Results",
-      "description": "Get JSON results from a saved Amplitude chart by chart ID",
+      "description": "Get chart results",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -199,7 +199,7 @@
     {
       "id": "amplitude__track_event",
       "name": "Track Event",
-      "description": "Send events to Amplitude via the HTTP V2 ingestion API",
+      "description": "Track event",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",

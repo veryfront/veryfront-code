@@ -28,7 +28,7 @@
     {
       "id": "exa__search",
       "name": "Search",
-      "description": "Search the web with Exa's neural and keyword search",
+      "description": "Search",
       "requiresWrite": false,
       "endpoint": {
         "method": "POST",
@@ -77,7 +77,7 @@
     {
       "id": "exa__get_contents",
       "name": "Get Contents",
-      "description": "Get parsed page contents, summaries, and metadata for a list of URLs",
+      "description": "Get contents",
       "requiresWrite": false,
       "endpoint": {
         "method": "POST",
@@ -107,7 +107,7 @@
     {
       "id": "exa__find_similar",
       "name": "Find Similar Links",
-      "description": "Find pages similar in meaning to a given URL",
+      "description": "Find similar links",
       "requiresWrite": false,
       "endpoint": {
         "method": "POST",
@@ -133,7 +133,7 @@
     {
       "id": "exa__answer",
       "name": "Answer",
-      "description": "Get an LLM-generated answer to a question grounded in Exa search results with citations",
+      "description": "Answer",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",

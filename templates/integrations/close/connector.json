@@ -36,7 +36,7 @@
     {
       "id": "close__list_leads",
       "name": "List Leads",
-      "description": "List or search leads in Close using the lead query language",
+      "description": "List leads",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -82,7 +82,7 @@
     {
       "id": "close__get_lead",
       "name": "Get Lead",
-      "description": "Get full details of a Close lead, including contacts and opportunities",
+      "description": "Get lead",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -100,7 +100,7 @@
     {
       "id": "close__create_lead",
       "name": "Create Lead",
-      "description": "Create a new lead in Close, optionally with contacts",
+      "description": "Create lead",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -133,7 +133,7 @@
     {
       "id": "close__update_lead",
       "name": "Update Lead",
-      "description": "Update fields on an existing Close lead",
+      "description": "Update lead",
       "requiresWrite": true,
       "endpoint": {
         "method": "PUT",
@@ -169,7 +169,7 @@
     {
       "id": "close__list_opportunities",
       "name": "List Opportunities",
-      "description": "List opportunities, optionally filtered by lead",
+      "description": "List opportunities",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -198,7 +198,7 @@
     {
       "id": "close__create_opportunity",
       "name": "Create Opportunity",
-      "description": "Create an opportunity on a Close lead",
+      "description": "Create opportunity",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -236,7 +236,7 @@
     {
       "id": "close__list_contacts",
       "name": "List Contacts",
-      "description": "List contacts, optionally filtered by lead",
+      "description": "List contacts",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",

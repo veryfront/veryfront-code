@@ -34,7 +34,7 @@
     {
       "id": "metabase__list_databases",
       "name": "List Databases",
-      "description": "List databases connected to the Metabase instance",
+      "description": "List databases",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -75,7 +75,7 @@
     {
       "id": "metabase__list_cards",
       "name": "List Questions",
-      "description": "List saved questions (cards) on the Metabase instance",
+      "description": "List questions",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -92,7 +92,7 @@
     {
       "id": "metabase__run_card_query",
       "name": "Run Question Query",
-      "description": "Execute a saved question (card) and return its query results",
+      "description": "Run question query",
       "requiresWrite": false,
       "endpoint": {
         "method": "POST",
@@ -116,7 +116,7 @@
     {
       "id": "metabase__search",
       "name": "Search",
-      "description": "Search questions, dashboards, collections, and tables across the instance",
+      "description": "Search",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -139,7 +139,7 @@
     {
       "id": "metabase__get_dashboard",
       "name": "Get Dashboard",
-      "description": "Get a dashboard and its cards by ID",
+      "description": "Get dashboard",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -157,7 +157,7 @@
     {
       "id": "metabase__list_collections",
       "name": "List Collections",
-      "description": "List collections that organize questions and dashboards",
+      "description": "List collections",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",

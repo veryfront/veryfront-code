@@ -89,7 +89,7 @@
     {
       "id": "docs-google__list_documents",
       "name": "List Documents",
-      "description": "List recent Google Docs documents from Drive",
+      "description": "List documents",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -127,7 +127,7 @@
     {
       "id": "docs-google__get_document",
       "name": "Get Document",
-      "description": "Get document content and metadata",
+      "description": "Get document",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -150,7 +150,7 @@
     {
       "id": "docs-google__create_document",
       "name": "Create Document",
-      "description": "Create a new document with optional initial content",
+      "description": "Create document",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -167,7 +167,7 @@
     {
       "id": "docs-google__update_document",
       "name": "Update Document",
-      "description": "Update document content using batch requests",
+      "description": "Update document",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -196,7 +196,7 @@
     {
       "id": "docs-google__search_documents",
       "name": "Search Documents",
-      "description": "Search for documents by query string",
+      "description": "Search documents",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",

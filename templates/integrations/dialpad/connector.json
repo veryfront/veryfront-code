@@ -38,7 +38,7 @@
     {
       "id": "dialpad__list_contacts",
       "name": "List Contacts",
-      "description": "List Dialpad contacts visible to the authenticated user",
+      "description": "List contacts",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -83,7 +83,7 @@
     {
       "id": "dialpad__get_contact",
       "name": "Get Contact",
-      "description": "Get details of a Dialpad contact",
+      "description": "Get contact",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -101,7 +101,7 @@
     {
       "id": "dialpad__create_contact",
       "name": "Create Contact",
-      "description": "Create a new contact in Dialpad",
+      "description": "Create contact",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -139,7 +139,7 @@
     {
       "id": "dialpad__update_contact",
       "name": "Update Contact",
-      "description": "Update an existing Dialpad contact",
+      "description": "Update contact",
       "requiresWrite": true,
       "endpoint": {
         "method": "PATCH",
@@ -183,7 +183,7 @@
     {
       "id": "dialpad__list_users",
       "name": "List Users",
-      "description": "List Dialpad users in the company",
+      "description": "List users",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -210,7 +210,7 @@
     {
       "id": "dialpad__send_sms",
       "name": "Send SMS",
-      "description": "Send an SMS message on behalf of a Dialpad user",
+      "description": "Send sms",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",

@@ -44,7 +44,7 @@
     {
       "id": "neo4j__run_cypher_query",
       "name": "Run Cypher Query",
-      "description": "Execute a read-only Cypher query (MATCH ... RETURN) in an implicit transaction and get back fields and result rows; use for lookups, traversals, and GraphRAG retrieval. The request runs in the Query API read access mode, so Neo4j rejects write statements; use Run Cypher Write to change the graph",
+      "description": "Run cypher query",
       "requiresWrite": false,
       "endpoint": {
         "method": "POST",
@@ -82,7 +82,7 @@
     {
       "id": "neo4j__run_cypher_write",
       "name": "Run Cypher Write",
-      "description": "Execute a Cypher statement that modifies the graph (CREATE, MERGE, SET, DELETE) in an implicit transaction",
+      "description": "Run cypher write",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",

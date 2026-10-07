@@ -42,6 +42,16 @@ function getLocalToolIds(connectorName: string, tools: { id?: string }[]): (stri
 }
 
 describe("integration endpoint specs", () => {
+  it("keeps every generated tool summary within six words", () => {
+    for (const connector of connectors) {
+      for (const tool of connector.tools) {
+        assert(
+          tool.description.trim().split(/\s+/).length <= 6,
+          `${connector.name}:${tool.id} exceeds the six-word summary limit`,
+        );
+      }
+    }
+  });
   it("keeps all source connectors while showing only the supported end-user surface by default", () => {
     const supportedConnectors = [
       "airtable",
@@ -746,7 +756,7 @@ describe("integration endpoint specs", () => {
     );
 
     const getFile = getTool("figma", "get_file");
-    assertStringIncludes(getFile.description, "pages");
+    assertEquals(getFile.description, "Get file");
   });
 
   it("adds static endpoint specs for the next configured integration providers", () => {

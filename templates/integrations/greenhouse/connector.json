@@ -37,7 +37,7 @@
     {
       "id": "greenhouse__list_jobs",
       "name": "List Jobs",
-      "description": "List jobs in the Greenhouse organization with optional status and date filtering",
+      "description": "List jobs",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -75,7 +75,7 @@
     {
       "id": "greenhouse__list_candidates",
       "name": "List Candidates",
-      "description": "List candidates with optional job, email, and date filtering",
+      "description": "List candidates",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -118,7 +118,7 @@
     {
       "id": "greenhouse__get_candidate",
       "name": "Get Candidate",
-      "description": "Get a candidate's full record, including applications, attachments, and contact details",
+      "description": "Get candidate",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -136,7 +136,7 @@
     {
       "id": "greenhouse__list_applications",
       "name": "List Applications",
-      "description": "List applications with optional job, status, and activity filtering",
+      "description": "List applications",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -179,7 +179,7 @@
     {
       "id": "greenhouse__list_users",
       "name": "List Users",
-      "description": "List Greenhouse users to find the numeric user IDs needed for On-Behalf-Of headers and notes",
+      "description": "List users",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -212,7 +212,7 @@
     {
       "id": "greenhouse__list_job_stages",
       "name": "List Job Stages",
-      "description": "List the interview stages of a job to find the stage IDs needed to move applications",
+      "description": "List job stages",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -241,7 +241,7 @@
     {
       "id": "greenhouse__move_application",
       "name": "Move Application",
-      "description": "Move an active application to another stage on the same job (the core pipeline action)",
+      "description": "Move application",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -277,7 +277,7 @@
     {
       "id": "greenhouse__add_candidate_note",
       "name": "Add Candidate Note",
-      "description": "Create a note on a candidate's activity feed (requires the acting Greenhouse user's ID)",
+      "description": "Add candidate note",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",

@@ -28,7 +28,7 @@
     {
       "id": "together-ai__list_models",
       "name": "List Models",
-      "description": "List the models available on Together AI",
+      "description": "List models",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -51,7 +51,7 @@
     {
       "id": "together-ai__create_chat_completion",
       "name": "Create Chat Completion",
-      "description": "Generate a chat completion from a list of messages",
+      "description": "Create chat completion",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -81,7 +81,7 @@
     {
       "id": "together-ai__create_embedding",
       "name": "Create Embedding",
-      "description": "Create an embedding vector for input text",
+      "description": "Create embedding",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -103,7 +103,7 @@
     {
       "id": "together-ai__generate_image",
       "name": "Generate Image",
-      "description": "Generate an image from a text prompt",
+      "description": "Generate image",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",

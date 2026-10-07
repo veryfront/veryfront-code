@@ -43,7 +43,7 @@
     {
       "id": "ramp__list_transactions",
       "name": "List Transactions",
-      "description": "List card transactions with optional filtering by state, user, card, or date window",
+      "description": "List transactions",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -118,7 +118,7 @@
     {
       "id": "ramp__get_transaction",
       "name": "Get Transaction",
-      "description": "Fetch full details of a single card transaction",
+      "description": "Get transaction",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -141,7 +141,7 @@
     {
       "id": "ramp__list_cards",
       "name": "List Cards",
-      "description": "List corporate cards with optional filtering by owner or activation state",
+      "description": "List cards",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -200,7 +200,7 @@
     {
       "id": "ramp__list_users",
       "name": "List Users",
-      "description": "List employees on the Ramp account with optional filtering by email, role, department, or status",
+      "description": "List users",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -259,7 +259,7 @@
     {
       "id": "ramp__get_user",
       "name": "Get User",
-      "description": "Fetch a single employee by ID, e.g. to resolve the user_id referenced on a transaction or card",
+      "description": "Get user",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -277,7 +277,7 @@
     {
       "id": "ramp__get_card",
       "name": "Get Card",
-      "description": "Fetch a single corporate card by ID, e.g. to resolve the card_id referenced on a transaction",
+      "description": "Get card",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -295,7 +295,7 @@
     {
       "id": "ramp__list_reimbursements",
       "name": "List Reimbursements",
-      "description": "List employee reimbursements with optional filtering by user, state, or date window",
+      "description": "List reimbursements",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",

@@ -30,7 +30,7 @@
     {
       "id": "gocardless__list_customers",
       "name": "List Customers",
-      "description": "List GoCardless customers to find customer IDs and contact details",
+      "description": "List customers",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -68,7 +68,7 @@
     {
       "id": "gocardless__list_payments",
       "name": "List Payments",
-      "description": "List GoCardless payments with optional status, customer, or mandate filtering",
+      "description": "List payments",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -116,7 +116,7 @@
     {
       "id": "gocardless__get_payment",
       "name": "Get Payment",
-      "description": "Get a single GoCardless payment by ID to check its status, amount, and linked mandate",
+      "description": "Get payment",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -141,7 +141,7 @@
     {
       "id": "gocardless__list_mandates",
       "name": "List Mandates",
-      "description": "List Direct Debit mandates to find an active mandate before collecting a payment",
+      "description": "List mandates",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -184,7 +184,7 @@
     {
       "id": "gocardless__create_payment",
       "name": "Create Payment",
-      "description": "Collect a one-off payment against an existing active Direct Debit mandate",
+      "description": "Create payment",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -215,7 +215,7 @@
     {
       "id": "gocardless__create_subscription",
       "name": "Create Subscription",
-      "description": "Set up a recurring payment collection against an existing active Direct Debit mandate",
+      "description": "Create subscription",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -246,7 +246,7 @@
     {
       "id": "gocardless__retry_payment",
       "name": "Retry Payment",
-      "description": "Retry a failed payment if its mandate is still active; a payment can be retried at most three times",
+      "description": "Retry payment",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -271,7 +271,7 @@
     {
       "id": "gocardless__list_events",
       "name": "List Events",
-      "description": "List GoCardless events (status changes such as payment failures, chargebacks, and mandate cancellations) for monitoring and audit workflows",
+      "description": "List events",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",

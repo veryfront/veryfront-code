@@ -37,7 +37,7 @@
     {
       "id": "workable__list_jobs",
       "name": "List Jobs",
-      "description": "List jobs in the Workable account with optional state filtering",
+      "description": "List jobs",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -102,7 +102,7 @@
     {
       "id": "workable__get_job",
       "name": "Get Job",
-      "description": "Get the full details of a job by its shortcode",
+      "description": "Get job",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -126,7 +126,7 @@
     {
       "id": "workable__list_candidates",
       "name": "List Candidates",
-      "description": "List candidates account-wide or for a specific job (filter by job shortcode, stage, or email)",
+      "description": "List candidates",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -196,7 +196,7 @@
     {
       "id": "workable__get_candidate",
       "name": "Get Candidate",
-      "description": "Get the full profile of a candidate by ID, including stage, answers, and attachments",
+      "description": "Get candidate",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -220,7 +220,7 @@
     {
       "id": "workable__list_members",
       "name": "List Members",
-      "description": "List account members to find the member IDs required by the comment and move-candidate tools",
+      "description": "List members",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -278,7 +278,7 @@
     {
       "id": "workable__list_stages",
       "name": "List Stages",
-      "description": "List the recruitment pipeline stages to find stage slugs for candidate filtering and moves",
+      "description": "List stages",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -296,7 +296,7 @@
     {
       "id": "workable__create_candidate",
       "name": "Create Candidate",
-      "description": "Add a candidate to a job, either as sourced or as having applied",
+      "description": "Create candidate",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -335,7 +335,7 @@
     {
       "id": "workable__create_candidate_comment",
       "name": "Create Candidate Comment",
-      "description": "Post a comment on a candidate's timeline on behalf of a team member",
+      "description": "Create candidate comment",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -371,7 +371,7 @@
     {
       "id": "workable__move_candidate",
       "name": "Move Candidate",
-      "description": "Move a candidate to another pipeline stage on behalf of a team member",
+      "description": "Move candidate",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",

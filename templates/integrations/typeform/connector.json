@@ -44,7 +44,7 @@
     {
       "id": "typeform__list_forms",
       "name": "List Forms",
-      "description": "List forms in the account or a workspace",
+      "description": "List forms",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -93,7 +93,7 @@
     {
       "id": "typeform__get_form",
       "name": "Get Form",
-      "description": "Get a form definition including its fields",
+      "description": "Get form",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -111,7 +111,7 @@
     {
       "id": "typeform__list_responses",
       "name": "List Responses",
-      "description": "List responses submitted to a form",
+      "description": "List responses",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -175,7 +175,7 @@
     {
       "id": "typeform__list_workspaces",
       "name": "List Workspaces",
-      "description": "List workspaces in the account",
+      "description": "List workspaces",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -204,7 +204,7 @@
     {
       "id": "typeform__get_me",
       "name": "Get Me",
-      "description": "Get the authenticated Typeform account profile",
+      "description": "Get me",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",

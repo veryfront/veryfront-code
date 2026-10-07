@@ -37,31 +37,31 @@
     {
       "id": "trello__list_boards",
       "name": "List Boards",
-      "description": "List all boards accessible to the user",
+      "description": "List boards",
       "requiresWrite": false
     },
     {
       "id": "trello__list_cards",
       "name": "List Cards",
-      "description": "List cards in a board or list",
+      "description": "List cards",
       "requiresWrite": false
     },
     {
       "id": "trello__get_card",
       "name": "Get Card",
-      "description": "Get details of a specific card",
+      "description": "Get card",
       "requiresWrite": false
     },
     {
       "id": "trello__create_card",
       "name": "Create Card",
-      "description": "Create a new card in a list",
+      "description": "Create card",
       "requiresWrite": true
     },
     {
       "id": "trello__update_card",
       "name": "Update Card",
-      "description": "Update an existing card",
+      "description": "Update card",
       "requiresWrite": true
     }
   ],

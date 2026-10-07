@@ -45,7 +45,7 @@
     {
       "id": "xero__list_connections",
       "name": "List Connections",
-      "description": "List Xero tenants (organisations) connected to this token — run this first to discover the tenantId used by every other tool",
+      "description": "List connections",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -70,7 +70,7 @@
     {
       "id": "xero__list_invoices",
       "name": "List Invoices",
-      "description": "List invoices in a Xero organisation",
+      "description": "List invoices",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -133,7 +133,7 @@
     {
       "id": "xero__get_invoice",
       "name": "Get Invoice",
-      "description": "Get a Xero sales invoice or supplier bill with its line items",
+      "description": "Get invoice",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -168,7 +168,7 @@
     {
       "id": "xero__create_invoice",
       "name": "Create Invoice",
-      "description": "Create an invoice in a Xero organisation",
+      "description": "Create invoice",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -205,7 +205,7 @@
     {
       "id": "xero__list_bills",
       "name": "List Bills",
-      "description": "List supplier bills (accounts payable) in a Xero organisation — bills are Invoices with Type ACCPAY",
+      "description": "List bills",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -269,7 +269,7 @@
     {
       "id": "xero__create_bill",
       "name": "Create Bill",
-      "description": "Create a supplier bill (accounts payable) in a Xero organisation — a bill is an Invoice with Type \"ACCPAY\"",
+      "description": "Create bill",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -306,7 +306,7 @@
     {
       "id": "xero__create_invoice_attachment",
       "name": "Create Invoice Attachment",
-      "description": "Attach a file to a Xero sales invoice or supplier bill (max 10 MB per attachment)",
+      "description": "Create invoice attachment",
       "requiresWrite": true,
       "endpoint": {
         "method": "PUT",
@@ -357,7 +357,7 @@
     {
       "id": "xero__create_purchase_order",
       "name": "Create Purchase Order",
-      "description": "Create a purchase order in a Xero organisation",
+      "description": "Create purchase order",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -394,7 +394,7 @@
     {
       "id": "xero__list_contacts",
       "name": "List Contacts",
-      "description": "List contacts in a Xero organisation",
+      "description": "List contacts",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -439,7 +439,7 @@
     {
       "id": "xero__list_accounts",
       "name": "List Accounts",
-      "description": "List the chart of accounts in a Xero organisation",
+      "description": "List accounts",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -473,7 +473,7 @@
     {
       "id": "xero__list_invoice_attachments",
       "name": "List Invoice Attachments",
-      "description": "List the attachments on an invoice or bill (AttachmentID, FileName, MimeType, ContentLength) — see what Create Invoice Attachment uploaded",
+      "description": "List invoice attachments",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -508,7 +508,7 @@
     {
       "id": "xero__list_purchase_orders",
       "name": "List Purchase Orders",
-      "description": "List purchase orders in a Xero organisation — the read counterpart to Create Purchase Order",
+      "description": "List purchase orders",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",

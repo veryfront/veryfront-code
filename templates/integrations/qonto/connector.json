@@ -30,7 +30,7 @@
     {
       "id": "qonto__get_organization",
       "name": "Get Organization",
-      "description": "Retrieve the authenticated organization with its bank accounts, including IBAN, BIC, currency, status, and current/authorized balances",
+      "description": "Get organization",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -48,7 +48,7 @@
     {
       "id": "qonto__list_transactions",
       "name": "List Transactions",
-      "description": "List transactions for one bank account (identified by bank_account_id or IBAN) with status, side, and date filtering",
+      "description": "List transactions",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -144,7 +144,7 @@
     {
       "id": "qonto__get_transaction",
       "name": "Get Transaction",
-      "description": "Retrieve a single transaction by its UUID, optionally embedding VAT details, labels, or attachments",
+      "description": "Get transaction",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -167,7 +167,7 @@
     {
       "id": "qonto__list_transaction_attachments",
       "name": "List Transaction Attachments",
-      "description": "List the attachments (receipts, invoices) of a transaction with download URLs",
+      "description": "List transaction attachments",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -195,7 +195,7 @@
     {
       "id": "qonto__upload_transaction_attachment",
       "name": "Upload Transaction Attachment",
-      "description": "Upload a receipt or invoice (JPEG, PNG, or PDF) onto a transaction to justify it for bookkeeping; the file is processed in the background, so the attachment is not visible immediately",
+      "description": "Upload transaction attachment",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -229,7 +229,7 @@
     {
       "id": "qonto__get_attachment",
       "name": "Get Attachment",
-      "description": "Retrieve an attachment by id to get a fresh download URL — URLs returned by the attachment endpoints expire after 30 minutes, so re-fetch before any delayed download",
+      "description": "Get attachment",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -247,7 +247,7 @@
     {
       "id": "qonto__list_supplier_invoices",
       "name": "List Supplier Invoices",
-      "description": "List the organization's supplier invoices (accounts payable inbox) with status and payment matching; available on all price plans except Solo Basic",
+      "description": "List supplier invoices",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",

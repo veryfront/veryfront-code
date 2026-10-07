@@ -80,7 +80,7 @@
     {
       "id": "slack__list_channels",
       "name": "List Channels",
-      "description": "Get list of Slack channels",
+      "description": "List channels",
       "requiresWrite": false,
       "endpoint": {
         "method": "POST",
@@ -138,7 +138,7 @@
     {
       "id": "slack__send_message",
       "name": "Send Message",
-      "description": "Send a message to a Slack channel",
+      "description": "Send message",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -154,7 +154,7 @@
     {
       "id": "slack__update_message",
       "name": "Update Message",
-      "description": "Update a message previously sent by this integration",
+      "description": "Update message",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -169,7 +169,7 @@
     {
       "id": "slack__delete_message",
       "name": "Delete Message",
-      "description": "Delete a message previously sent by this integration",
+      "description": "Delete message",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -183,7 +183,7 @@
     {
       "id": "slack__get_messages",
       "name": "Get Messages",
-      "description": "Get recent messages from a channel",
+      "description": "Get messages",
       "requiresWrite": false,
       "endpoint": {
         "method": "POST",
@@ -199,7 +199,7 @@
     {
       "id": "slack__get_thread",
       "name": "Get Thread",
-      "description": "Get all replies in a Slack message thread",
+      "description": "Get thread",
       "requiresWrite": false,
       "endpoint": {
         "method": "POST",
@@ -215,7 +215,7 @@
     {
       "id": "slack__list_users",
       "name": "List Users",
-      "description": "List members of the Slack workspace",
+      "description": "List users",
       "requiresWrite": false,
       "endpoint": {
         "method": "POST",

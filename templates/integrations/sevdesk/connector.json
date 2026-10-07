@@ -29,7 +29,7 @@
     {
       "id": "sevdesk__list_contacts",
       "name": "List Contacts",
-      "description": "List sevdesk contacts (organizations and persons), e.g. to find a contact id before creating an invoice",
+      "description": "List contacts",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -66,7 +66,7 @@
     {
       "id": "sevdesk__list_invoices",
       "name": "List Invoices",
-      "description": "List sevdesk invoices with optional status, number, date, and contact filters",
+      "description": "List invoices",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -122,7 +122,7 @@
     {
       "id": "sevdesk__get_invoice",
       "name": "Get Invoice",
-      "description": "Retrieve a single sevdesk invoice by its id",
+      "description": "Get invoice",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -143,7 +143,7 @@
     {
       "id": "sevdesk__create_invoice",
       "name": "Create Invoice",
-      "description": "Create a sevdesk invoice with positions via the saveInvoice factory endpoint; create with status 100 for an editable draft",
+      "description": "Create invoice",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -181,7 +181,7 @@
     {
       "id": "sevdesk__upload_voucher_file",
       "name": "Upload Voucher File",
-      "description": "Upload a receipt or invoice file to sevdesk; returns an internal filename that can be attached when creating a voucher",
+      "description": "Upload voucher file",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -210,7 +210,7 @@
     {
       "id": "sevdesk__list_vouchers",
       "name": "List Vouchers",
-      "description": "List sevdesk accounting vouchers (receipts) with optional status, type, date, and description filters",
+      "description": "List vouchers",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -261,7 +261,7 @@
     {
       "id": "sevdesk__create_voucher",
       "name": "Create Voucher",
-      "description": "Create a bookable voucher (receipt) with positions via the saveVoucher factory endpoint — the step that turns a file staged with Upload Voucher File into an actual accounting record",
+      "description": "Create voucher",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -294,7 +294,7 @@
     {
       "id": "sevdesk__get_invoice_pdf",
       "name": "Get Invoice PDF",
-      "description": "Retrieve the rendered PDF document of an invoice for sending or archiving",
+      "description": "Get invoice PDF",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -325,7 +325,7 @@
     {
       "id": "sevdesk__book_invoice_amount",
       "name": "Book Invoice Amount",
-      "description": "Register a (partial) payment on an invoice and mark it paid when settled — closes the reconciliation loop after money arrives",
+      "description": "Book invoice amount",
       "requiresWrite": true,
       "endpoint": {
         "method": "PUT",

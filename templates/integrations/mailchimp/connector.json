@@ -38,7 +38,7 @@
     {
       "id": "mailchimp__list_audiences",
       "name": "List Audiences",
-      "description": "List audiences (lists) in the Mailchimp account",
+      "description": "List audiences",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -82,7 +82,7 @@
     {
       "id": "mailchimp__list_members",
       "name": "List Members",
-      "description": "List members of a Mailchimp audience",
+      "description": "List members",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -123,7 +123,7 @@
     {
       "id": "mailchimp__get_member",
       "name": "Get Member",
-      "description": "Get a single audience member by email (MD5 hash of the lowercase address) or contact ID",
+      "description": "Get member",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -153,7 +153,7 @@
     {
       "id": "mailchimp__add_member",
       "name": "Add Member",
-      "description": "Add a new member to a Mailchimp audience",
+      "description": "Add member",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -198,7 +198,7 @@
     {
       "id": "mailchimp__list_campaigns",
       "name": "List Campaigns",
-      "description": "List campaigns in the Mailchimp account",
+      "description": "List campaigns",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",

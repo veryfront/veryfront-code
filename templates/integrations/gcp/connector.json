@@ -54,7 +54,7 @@
     {
       "id": "gcp__list_compute_instances",
       "name": "List Compute Instances",
-      "description": "List Compute Engine VM instances in a specific zone of a project",
+      "description": "List compute instances",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -97,7 +97,7 @@
     {
       "id": "gcp__list_all_compute_instances",
       "name": "List All Compute Instances",
-      "description": "List Compute Engine VM instances across all zones of a project (aggregated list), useful when you don't know which zones are in use",
+      "description": "List all compute instances",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -140,7 +140,7 @@
     {
       "id": "gcp__get_compute_instance",
       "name": "Get Compute Instance",
-      "description": "Get one Compute Engine VM instance's details - machine type, status, IPs, and disks - e.g. to confirm a start or stop completed",
+      "description": "Get compute instance",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -170,7 +170,7 @@
     {
       "id": "gcp__list_zones",
       "name": "List Zones",
-      "description": "List the Compute Engine zones available in a project, so agents can discover valid zone names for the zone-scoped tools",
+      "description": "List zones",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -207,7 +207,7 @@
     {
       "id": "gcp__start_compute_instance",
       "name": "Start Compute Instance",
-      "description": "Start a stopped Compute Engine VM instance (returns a zone operation that completes asynchronously) — requires the full cloud-platform scope",
+      "description": "Start compute instance",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -237,7 +237,7 @@
     {
       "id": "gcp__stop_compute_instance",
       "name": "Stop Compute Instance",
-      "description": "Stop a running Compute Engine VM instance so it stops incurring compute charges (returns a zone operation that completes asynchronously) — requires the full cloud-platform scope",
+      "description": "Stop compute instance",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -267,7 +267,7 @@
     {
       "id": "gcp__list_cloud_run_services",
       "name": "List Cloud Run Services",
-      "description": "List Cloud Run services in a project location (region)",
+      "description": "List cloud run services",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -311,7 +311,7 @@
     {
       "id": "gcp__get_cloud_run_service",
       "name": "Get Cloud Run Service",
-      "description": "Get one Cloud Run service's details - URL, container image, environment, and traffic split",
+      "description": "Get cloud run service",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -341,7 +341,7 @@
     {
       "id": "gcp__list_cloud_functions",
       "name": "List Cloud Functions",
-      "description": "List Cloud Functions (2nd gen API) in a project location — requires the optional cloud-platform scope (the only scope the Cloud Functions API accepts)",
+      "description": "List cloud functions",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",

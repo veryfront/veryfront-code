@@ -87,7 +87,7 @@
     {
       "id": "onedrive__list_files",
       "name": "List Files",
-      "description": "List files and folders in a OneDrive folder",
+      "description": "List files",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -110,7 +110,7 @@
     {
       "id": "onedrive__search_files",
       "name": "Search Files",
-      "description": "Search for files and folders in OneDrive by name or content",
+      "description": "Search files",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -134,7 +134,7 @@
     {
       "id": "onedrive__upload_file",
       "name": "Upload File",
-      "description": "Upload or update a file in OneDrive",
+      "description": "Upload file",
       "requiresWrite": true,
       "endpoint": {
         "method": "PUT",
@@ -166,7 +166,7 @@
     {
       "id": "onedrive__download_file",
       "name": "Download File",
-      "description": "Download file content from OneDrive",
+      "description": "Download file",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -184,7 +184,7 @@
     {
       "id": "onedrive__get_file",
       "name": "Get File",
-      "description": "Get metadata for a OneDrive file or folder",
+      "description": "Get file",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -207,7 +207,7 @@
     {
       "id": "onedrive__create_folder",
       "name": "Create Folder",
-      "description": "Create a new folder in OneDrive",
+      "description": "Create folder",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -242,7 +242,7 @@
     {
       "id": "onedrive__delete_file",
       "name": "Delete File",
-      "description": "Delete a file or folder from OneDrive (moves it to the recycle bin)",
+      "description": "Delete file",
       "requiresWrite": true,
       "endpoint": {
         "method": "DELETE",

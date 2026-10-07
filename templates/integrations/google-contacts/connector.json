@@ -45,7 +45,7 @@
     {
       "id": "google-contacts__list_contacts",
       "name": "List Contacts",
-      "description": "List the authenticated user's contacts (connections) with the requested person fields",
+      "description": "List contacts",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -83,7 +83,7 @@
     {
       "id": "google-contacts__search_contacts",
       "name": "Search Contacts",
-      "description": "Search the user's contacts by prefix match on names, nicknames, email addresses, and phone numbers. For best results send a warmup request with an empty query first, then search.",
+      "description": "Search contacts",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -117,7 +117,7 @@
     {
       "id": "google-contacts__get_contact",
       "name": "Get Contact",
-      "description": "Get a single contact by person ID, including the etag needed for updates",
+      "description": "Get contact",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -142,7 +142,7 @@
     {
       "id": "google-contacts__list_contact_groups",
       "name": "List Contact Groups",
-      "description": "List the user's contact groups (labels), including system groups and member counts, e.g. to organize or filter contacts",
+      "description": "List contact groups",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -173,7 +173,7 @@
     {
       "id": "google-contacts__create_contact",
       "name": "Create Contact",
-      "description": "Create a new contact in the user's Google Contacts (requires the full contacts scope)",
+      "description": "Create contact",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -214,7 +214,7 @@
     {
       "id": "google-contacts__update_contact",
       "name": "Update Contact",
-      "description": "Update an existing contact (requires the full contacts scope). You must pass updatePersonFields naming the fields you are changing, and the body must include the contact's current etag (fetch it with Get Contact including metadata first); a stale etag fails with a 400 failedPrecondition error.",
+      "description": "Update contact",
       "requiresWrite": true,
       "endpoint": {
         "method": "PATCH",

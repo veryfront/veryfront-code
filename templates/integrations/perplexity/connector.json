@@ -28,7 +28,7 @@
     {
       "id": "perplexity__search_web",
       "name": "Search Web",
-      "description": "Search the web with Perplexity's Search API and get ranked results",
+      "description": "Search web",
       "requiresWrite": false,
       "endpoint": {
         "method": "POST",
@@ -63,7 +63,7 @@
     {
       "id": "perplexity__create_chat_completion",
       "name": "Create Chat Completion",
-      "description": "Generate a web-grounded chat completion with citations using a Sonar model",
+      "description": "Create chat completion",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -102,7 +102,7 @@
     {
       "id": "perplexity__create_agent_response",
       "name": "Create Agent Response",
-      "description": "Generate a response with Perplexity's Agent API using optional web search and reasoning",
+      "description": "Create agent response",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",

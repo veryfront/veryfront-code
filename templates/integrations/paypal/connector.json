@@ -36,7 +36,7 @@
     {
       "id": "paypal__list_transactions",
       "name": "List Transactions",
-      "description": "Search account transactions in a date window (max 31 days per request)",
+      "description": "List transactions",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -92,7 +92,7 @@
     {
       "id": "paypal__list_balances",
       "name": "List Balances",
-      "description": "Get current account balances by currency",
+      "description": "List balances",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -152,7 +152,7 @@
     {
       "id": "paypal__get_invoice",
       "name": "Get Invoice",
-      "description": "Get details of an invoice",
+      "description": "Get invoice",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -170,7 +170,7 @@
     {
       "id": "paypal__get_order",
       "name": "Get Order",
-      "description": "Get details of a checkout order",
+      "description": "Get order",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",

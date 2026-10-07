@@ -89,7 +89,7 @@
     {
       "id": "outlook__list_emails",
       "name": "List Emails",
-      "description": "List recent emails from inbox or a specific folder",
+      "description": "List emails",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -211,7 +211,7 @@
     {
       "id": "outlook__get_email",
       "name": "Get Email",
-      "description": "Get detailed information about a specific email",
+      "description": "Get email",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -235,7 +235,7 @@
     {
       "id": "outlook__send_email",
       "name": "Send Email",
-      "description": "Send a new email message",
+      "description": "Send email",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -257,7 +257,7 @@
     {
       "id": "outlook__search_emails",
       "name": "Search Emails",
-      "description": "Search emails by query, subject, sender, or date",
+      "description": "Search emails",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -369,7 +369,7 @@
     {
       "id": "outlook__list_folders",
       "name": "List Folders",
-      "description": "List all mail folders in the mailbox",
+      "description": "List folders",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -433,7 +433,7 @@
     {
       "id": "outlook__get_folder",
       "name": "Get Folder",
-      "description": "Get metadata for a mail folder",
+      "description": "Get folder",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -451,7 +451,7 @@
     {
       "id": "outlook__create_folder",
       "name": "Create Folder",
-      "description": "Create a mail folder",
+      "description": "Create folder",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -468,7 +468,7 @@
     {
       "id": "outlook__update_folder",
       "name": "Update Folder",
-      "description": "Rename a mail folder",
+      "description": "Update folder",
       "requiresWrite": true,
       "endpoint": {
         "method": "PATCH",
@@ -493,7 +493,7 @@
     {
       "id": "outlook__delete_folder",
       "name": "Delete Folder",
-      "description": "Delete a mail folder",
+      "description": "Delete folder",
       "requiresWrite": true,
       "endpoint": {
         "method": "DELETE",
@@ -511,7 +511,7 @@
     {
       "id": "outlook__mark_email_read",
       "name": "Mark Email Read",
-      "description": "Mark an email as read",
+      "description": "Mark email read",
       "requiresWrite": true,
       "endpoint": {
         "method": "PATCH",
@@ -536,7 +536,7 @@
     {
       "id": "outlook__mark_email_unread",
       "name": "Mark Email Unread",
-      "description": "Mark an email as unread",
+      "description": "Mark email unread",
       "requiresWrite": true,
       "endpoint": {
         "method": "PATCH",
@@ -561,7 +561,7 @@
     {
       "id": "outlook__delete_email",
       "name": "Delete Email",
-      "description": "Delete an email message",
+      "description": "Delete email",
       "requiresWrite": true,
       "endpoint": {
         "method": "DELETE",
@@ -579,7 +579,7 @@
     {
       "id": "outlook__move_email",
       "name": "Move Email",
-      "description": "Move an email to another folder",
+      "description": "Move email",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -604,7 +604,7 @@
     {
       "id": "outlook__archive_email",
       "name": "Archive Email",
-      "description": "Move an email to the archive folder",
+      "description": "Archive email",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -629,7 +629,7 @@
     {
       "id": "outlook__flag_email",
       "name": "Flag Email",
-      "description": "Set a follow-up flag on an email",
+      "description": "Flag email",
       "requiresWrite": true,
       "endpoint": {
         "method": "PATCH",
@@ -654,7 +654,7 @@
     {
       "id": "outlook__clear_email_flag",
       "name": "Clear Email Flag",
-      "description": "Clear the follow-up flag on an email",
+      "description": "Clear email flag",
       "requiresWrite": true,
       "endpoint": {
         "method": "PATCH",
@@ -681,7 +681,7 @@
     {
       "id": "outlook__categorize_email",
       "name": "Categorize Email",
-      "description": "Replace the categories on an email",
+      "description": "Categorize email",
       "requiresWrite": true,
       "endpoint": {
         "method": "PATCH",
@@ -706,7 +706,7 @@
     {
       "id": "outlook__list_categories",
       "name": "List Categories",
-      "description": "List Outlook master categories",
+      "description": "List categories",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -747,7 +747,7 @@
     {
       "id": "outlook__create_category",
       "name": "Create Category",
-      "description": "Create an Outlook master category",
+      "description": "Create category",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -768,7 +768,7 @@
     {
       "id": "outlook__update_category",
       "name": "Update Category",
-      "description": "Update an Outlook master category color",
+      "description": "Update category",
       "requiresWrite": true,
       "endpoint": {
         "method": "PATCH",
@@ -793,7 +793,7 @@
     {
       "id": "outlook__delete_category",
       "name": "Delete Category",
-      "description": "Delete an Outlook master category",
+      "description": "Delete category",
       "requiresWrite": true,
       "endpoint": {
         "method": "DELETE",
@@ -811,7 +811,7 @@
     {
       "id": "outlook__create_draft",
       "name": "Create Draft",
-      "description": "Create a draft email message",
+      "description": "Create draft",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -858,7 +858,7 @@
     {
       "id": "outlook__list_drafts",
       "name": "List Drafts",
-      "description": "List draft email messages",
+      "description": "List drafts",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -968,7 +968,7 @@
     {
       "id": "outlook__get_draft",
       "name": "Get Draft",
-      "description": "Get a draft message",
+      "description": "Get draft",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -992,7 +992,7 @@
     {
       "id": "outlook__update_draft",
       "name": "Update Draft",
-      "description": "Update a draft email message",
+      "description": "Update draft",
       "requiresWrite": true,
       "endpoint": {
         "method": "PATCH",
@@ -1044,7 +1044,7 @@
     {
       "id": "outlook__send_draft",
       "name": "Send Draft",
-      "description": "Send a draft email message",
+      "description": "Send draft",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -1062,7 +1062,7 @@
     {
       "id": "outlook__delete_draft",
       "name": "Delete Draft",
-      "description": "Delete a draft email message",
+      "description": "Delete draft",
       "requiresWrite": true,
       "endpoint": {
         "method": "DELETE",
@@ -1080,7 +1080,7 @@
     {
       "id": "outlook__reply_email",
       "name": "Reply Email",
-      "description": "Reply to an email",
+      "description": "Reply email",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -1105,7 +1105,7 @@
     {
       "id": "outlook__reply_all_email",
       "name": "Reply All Email",
-      "description": "Reply all to an email",
+      "description": "Reply all email",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -1130,7 +1130,7 @@
     {
       "id": "outlook__forward_email",
       "name": "Forward Email",
-      "description": "Forward an email",
+      "description": "Forward email",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -1159,7 +1159,7 @@
     {
       "id": "outlook__create_reply_draft",
       "name": "Create Reply Draft",
-      "description": "Create a reply draft for an email",
+      "description": "Create reply draft",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -1177,7 +1177,7 @@
     {
       "id": "outlook__create_reply_all_draft",
       "name": "Create Reply All Draft",
-      "description": "Create a reply-all draft for an email",
+      "description": "Create reply all draft",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -1195,7 +1195,7 @@
     {
       "id": "outlook__create_forward_draft",
       "name": "Create Forward Draft",
-      "description": "Create a forward draft for an email",
+      "description": "Create forward draft",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -1213,7 +1213,7 @@
     {
       "id": "outlook__list_attachments",
       "name": "List Attachments",
-      "description": "List attachments for an email message",
+      "description": "List attachments",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -1271,7 +1271,7 @@
     {
       "id": "outlook__get_attachment",
       "name": "Get Attachment",
-      "description": "Get metadata and content for an email attachment",
+      "description": "Get attachment",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -1295,7 +1295,7 @@
     {
       "id": "outlook__add_attachment_to_message",
       "name": "Add Attachment To Message",
-      "description": "Add a small attachment to a draft message",
+      "description": "Add attachment to message",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -1339,7 +1339,7 @@
     {
       "id": "outlook__list_conversation_messages",
       "name": "List Conversation Messages",
-      "description": "List messages in an Outlook conversation",
+      "description": "List conversation messages",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -1449,7 +1449,7 @@
     {
       "id": "outlook__list_threads",
       "name": "List Threads",
-      "description": "List recent Outlook conversation threads for request-desk triage. Returns one representative message per conversationId; pass that value as thread_id to get_thread.",
+      "description": "List threads",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -1571,7 +1571,7 @@
     {
       "id": "outlook__get_thread",
       "name": "Get Thread",
-      "description": "Get Outlook messages in a conversation by thread ID.",
+      "description": "Get thread",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -1606,7 +1606,7 @@
     {
       "id": "outlook__list_shared_mailbox_emails",
       "name": "List Shared Mailbox Emails",
-      "description": "List messages from a shared or delegated mailbox that the signed-in Microsoft account can access",
+      "description": "List shared mailbox emails",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -1734,7 +1734,7 @@
     {
       "id": "outlook__search_shared_mailbox_emails",
       "name": "Search Shared Mailbox Emails",
-      "description": "Search messages in a shared or delegated mailbox that the signed-in Microsoft account can access",
+      "description": "Search shared mailbox emails",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -1852,7 +1852,7 @@
     {
       "id": "outlook__list_calendars",
       "name": "List Calendars",
-      "description": "List Outlook calendars",
+      "description": "List calendars",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -1914,7 +1914,7 @@
     {
       "id": "outlook__get_calendar",
       "name": "Get Calendar",
-      "description": "Get metadata for an Outlook calendar",
+      "description": "Get calendar",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -1932,7 +1932,7 @@
     {
       "id": "outlook__create_calendar",
       "name": "Create Calendar",
-      "description": "Create an Outlook calendar",
+      "description": "Create calendar",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -1949,7 +1949,7 @@
     {
       "id": "outlook__update_calendar",
       "name": "Update Calendar",
-      "description": "Update an Outlook calendar",
+      "description": "Update calendar",
       "requiresWrite": true,
       "endpoint": {
         "method": "PATCH",
@@ -1977,7 +1977,7 @@
     {
       "id": "outlook__delete_calendar",
       "name": "Delete Calendar",
-      "description": "Delete an Outlook calendar",
+      "description": "Delete calendar",
       "requiresWrite": true,
       "endpoint": {
         "method": "DELETE",
@@ -1995,7 +1995,7 @@
     {
       "id": "outlook__list_events",
       "name": "List Events",
-      "description": "List events from a specific Outlook calendar",
+      "description": "List events",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -2101,7 +2101,7 @@
     {
       "id": "outlook__list_calendar_view",
       "name": "List Calendar View",
-      "description": "List occurrences in a calendar time window",
+      "description": "List calendar view",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -2208,7 +2208,7 @@
     {
       "id": "outlook__get_event",
       "name": "Get Event",
-      "description": "Get details for an Outlook event",
+      "description": "Get event",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -2232,7 +2232,7 @@
     {
       "id": "outlook__create_event",
       "name": "Create Event",
-      "description": "Create an Outlook calendar event",
+      "description": "Create event",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -2299,7 +2299,7 @@
     {
       "id": "outlook__update_event",
       "name": "Update Event",
-      "description": "Update an Outlook calendar event",
+      "description": "Update event",
       "requiresWrite": true,
       "endpoint": {
         "method": "PATCH",
@@ -2371,7 +2371,7 @@
     {
       "id": "outlook__delete_event",
       "name": "Delete Event",
-      "description": "Delete an Outlook calendar event",
+      "description": "Delete event",
       "requiresWrite": true,
       "endpoint": {
         "method": "DELETE",
@@ -2389,7 +2389,7 @@
     {
       "id": "outlook__respond_to_event",
       "name": "Respond To Event",
-      "description": "Accept, tentatively accept, or decline an event invitation",
+      "description": "Respond to event",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -2424,7 +2424,7 @@
     {
       "id": "outlook__get_event_instances",
       "name": "Get Event Instances",
-      "description": "List instances of a recurring event in a time window",
+      "description": "Get event instances",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -2531,7 +2531,7 @@
     {
       "id": "outlook__list_event_attachments",
       "name": "List Event Attachments",
-      "description": "List attachments for an event",
+      "description": "List event attachments",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -2589,7 +2589,7 @@
     {
       "id": "outlook__get_event_attachment",
       "name": "Get Event Attachment",
-      "description": "Get metadata and content for an event attachment",
+      "description": "Get event attachment",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -2613,7 +2613,7 @@
     {
       "id": "outlook__add_event_attachment",
       "name": "Add Event Attachment",
-      "description": "Add a small attachment to an event",
+      "description": "Add event attachment",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -2657,7 +2657,7 @@
     {
       "id": "outlook__find_free_time",
       "name": "Find Free Time",
-      "description": "Return free/busy schedule information for users or resources",
+      "description": "Find free time",
       "requiresWrite": false,
       "endpoint": {
         "method": "POST",
@@ -2721,7 +2721,7 @@
     {
       "id": "outlook__get_schedule",
       "name": "Get Schedule",
-      "description": "Get detailed free/busy schedule information",
+      "description": "Get schedule",
       "requiresWrite": false,
       "endpoint": {
         "method": "POST",
@@ -2785,7 +2785,7 @@
     {
       "id": "outlook__find_meeting_times",
       "name": "Find Meeting Times",
-      "description": "Find meeting time suggestions from attendees and constraints",
+      "description": "Find meeting times",
       "requiresWrite": false,
       "endpoint": {
         "method": "POST",

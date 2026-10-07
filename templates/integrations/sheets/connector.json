@@ -90,7 +90,7 @@
     {
       "id": "sheets__list_spreadsheets",
       "name": "List Spreadsheets",
-      "description": "List recent Google Sheets spreadsheets from Drive",
+      "description": "List spreadsheets",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -128,7 +128,7 @@
     {
       "id": "sheets__get_spreadsheet",
       "name": "Get Spreadsheet",
-      "description": "Get spreadsheet metadata including sheet names and properties",
+      "description": "Get spreadsheet",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -157,7 +157,7 @@
     {
       "id": "sheets__read_range",
       "name": "Read Range",
-      "description": "Read cell data from a spreadsheet range",
+      "description": "Read range",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -191,7 +191,7 @@
     {
       "id": "sheets__write_range",
       "name": "Write Range",
-      "description": "Write data to a spreadsheet range",
+      "description": "Write range",
       "requiresWrite": true,
       "endpoint": {
         "method": "PUT",
@@ -239,7 +239,7 @@
     {
       "id": "sheets__create_spreadsheet",
       "name": "Create Spreadsheet",
-      "description": "Create a new spreadsheet with optional initial data",
+      "description": "Create spreadsheet",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -260,7 +260,7 @@
     {
       "id": "sheets__append_rows",
       "name": "Append Rows",
-      "description": "Append rows to a spreadsheet range",
+      "description": "Append rows",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -314,7 +314,7 @@
     {
       "id": "sheets__clear_range",
       "name": "Clear Range",
-      "description": "Clear values from a spreadsheet range",
+      "description": "Clear range",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -339,7 +339,7 @@
     {
       "id": "sheets__batch_update",
       "name": "Batch Update",
-      "description": "Run raw Google Sheets batchUpdate requests for formatting and structural changes",
+      "description": "Batch update",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -368,7 +368,7 @@
     {
       "id": "sheets__add_sheet",
       "name": "Add Sheet",
-      "description": "Add a new sheet/tab to a spreadsheet",
+      "description": "Add sheet",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -393,7 +393,7 @@
     {
       "id": "sheets__delete_sheet",
       "name": "Delete Sheet",
-      "description": "Delete a sheet/tab from a spreadsheet by sheet ID",
+      "description": "Delete sheet",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -418,7 +418,7 @@
     {
       "id": "sheets__rename_sheet",
       "name": "Rename Sheet",
-      "description": "Rename a sheet/tab by sheet ID",
+      "description": "Rename sheet",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -443,7 +443,7 @@
     {
       "id": "sheets__delete_spreadsheet",
       "name": "Delete Spreadsheet",
-      "description": "Move an app-accessible spreadsheet file to trash",
+      "description": "Delete spreadsheet",
       "requiresWrite": true,
       "endpoint": {
         "method": "PATCH",
@@ -468,7 +468,7 @@
     {
       "id": "sheets__find_replace",
       "name": "Find and Replace",
-      "description": "Find and replace text in a spreadsheet or sheet",
+      "description": "Find and replace",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -493,7 +493,7 @@
     {
       "id": "sheets__copy_sheet",
       "name": "Copy Sheet",
-      "description": "Copy a sheet/tab to another spreadsheet",
+      "description": "Copy sheet",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -524,7 +524,7 @@
     {
       "id": "sheets__create_chart",
       "name": "Create Chart",
-      "description": "Create an embedded chart using a Sheets API chart specification",
+      "description": "Create chart",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -549,7 +549,7 @@
     {
       "id": "sheets__set_data_validation",
       "name": "Set Data Validation",
-      "description": "Set data validation rules on a sheet range",
+      "description": "Set data validation",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",

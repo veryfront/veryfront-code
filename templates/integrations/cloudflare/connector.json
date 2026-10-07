@@ -28,7 +28,7 @@
     {
       "id": "cloudflare__verify_token",
       "name": "Verify Token",
-      "description": "Check that the configured Cloudflare API token is valid and active",
+      "description": "Verify token",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -41,7 +41,7 @@
     {
       "id": "cloudflare__list_zones",
       "name": "List Zones",
-      "description": "List zones (domains) the token can access",
+      "description": "List zones",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -110,7 +110,7 @@
     {
       "id": "cloudflare__get_zone",
       "name": "Get Zone",
-      "description": "Get details of a zone by ID",
+      "description": "Get zone",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -131,7 +131,7 @@
     {
       "id": "cloudflare__list_dns_records",
       "name": "List DNS Records",
-      "description": "List DNS records in a zone",
+      "description": "List dns records",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -209,7 +209,7 @@
     {
       "id": "cloudflare__create_dns_record",
       "name": "Create DNS Record",
-      "description": "Create a DNS record in a zone",
+      "description": "Create dns record",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -261,7 +261,7 @@
     {
       "id": "cloudflare__update_dns_record",
       "name": "Update DNS Record",
-      "description": "Update fields of an existing DNS record",
+      "description": "Update dns record",
       "requiresWrite": true,
       "endpoint": {
         "method": "PATCH",
@@ -310,7 +310,7 @@
     {
       "id": "cloudflare__list_accounts",
       "name": "List Accounts",
-      "description": "List Cloudflare accounts the token can access (account IDs are needed for account-scoped APIs)",
+      "description": "List accounts",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",

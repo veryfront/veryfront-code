@@ -79,7 +79,7 @@
     {
       "id": "hubspot__list_forms",
       "name": "List Forms",
-      "description": "List HubSpot forms so agents can find a form ID before reading submissions",
+      "description": "List forms",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -114,7 +114,7 @@
     {
       "id": "hubspot__list_form_submissions",
       "name": "List Form Submissions",
-      "description": "List recent submissions for a HubSpot form in reverse chronological order",
+      "description": "List form submissions",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -146,7 +146,7 @@
     {
       "id": "hubspot__get_contact",
       "name": "Get Contact",
-      "description": "Get a HubSpot contact by ID or email before scoring, dedupe, or updates",
+      "description": "Get contact",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -185,7 +185,7 @@
     {
       "id": "hubspot__search_contacts",
       "name": "Search Contacts",
-      "description": "Search HubSpot contacts by filters for lead research and CRM lookup",
+      "description": "Search contacts",
       "requiresWrite": false,
       "endpoint": {
         "method": "POST",
@@ -225,7 +225,7 @@
     {
       "id": "hubspot__create_contact",
       "name": "Create Contact",
-      "description": "Create a HubSpot contact from form submission or researched lead data",
+      "description": "Create contact",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -242,7 +242,7 @@
     {
       "id": "hubspot__update_contact",
       "name": "Update Contact",
-      "description": "Update HubSpot contact properties, including lead score or research notes",
+      "description": "Update contact",
       "requiresWrite": true,
       "endpoint": {
         "method": "PATCH",
@@ -272,7 +272,7 @@
     {
       "id": "hubspot__get_lead",
       "name": "Get Lead",
-      "description": "Get a HubSpot CRM lead before scoring, routing, or updates",
+      "description": "Get lead",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -306,7 +306,7 @@
     {
       "id": "hubspot__list_leads",
       "name": "List Leads",
-      "description": "List HubSpot CRM leads for scoring, spreadsheet updates, or research workflows",
+      "description": "List leads",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -348,7 +348,7 @@
     {
       "id": "hubspot__search_leads",
       "name": "Search Leads",
-      "description": "Search HubSpot CRM leads for dedupe, scoring, and routing workflows",
+      "description": "Search leads",
       "requiresWrite": false,
       "endpoint": {
         "method": "POST",
@@ -388,7 +388,7 @@
     {
       "id": "hubspot__create_lead",
       "name": "Create Lead",
-      "description": "Create a HubSpot CRM lead associated with an existing contact or company",
+      "description": "Create lead",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -409,7 +409,7 @@
     {
       "id": "hubspot__update_lead",
       "name": "Update Lead",
-      "description": "Update a HubSpot CRM lead with score, qualification, owner, or research fields",
+      "description": "Update lead",
       "requiresWrite": true,
       "endpoint": {
         "method": "PATCH",
@@ -434,7 +434,7 @@
     {
       "id": "hubspot__get_company",
       "name": "Get Company",
-      "description": "Get a HubSpot company by ID or domain before lead research or association",
+      "description": "Get company",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -473,7 +473,7 @@
     {
       "id": "hubspot__search_companies",
       "name": "Search Companies",
-      "description": "Search HubSpot companies by domain, name, or firmographic properties",
+      "description": "Search companies",
       "requiresWrite": false,
       "endpoint": {
         "method": "POST",
@@ -513,7 +513,7 @@
     {
       "id": "hubspot__create_company",
       "name": "Create Company",
-      "description": "Create a HubSpot company for researched lead accounts",
+      "description": "Create company",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -530,7 +530,7 @@
     {
       "id": "hubspot__update_company",
       "name": "Update Company",
-      "description": "Update HubSpot company properties with research or enrichment data",
+      "description": "Update company",
       "requiresWrite": true,
       "endpoint": {
         "method": "PATCH",
@@ -560,7 +560,7 @@
     {
       "id": "hubspot__list_properties",
       "name": "List Properties",
-      "description": "List HubSpot CRM properties for contacts, leads, or companies before updating custom fields",
+      "description": "List properties",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -592,7 +592,7 @@
     {
       "id": "hubspot__list_owners",
       "name": "List Owners",
-      "description": "List HubSpot owners so agents can assign or route contacts and leads",
+      "description": "List owners",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -629,7 +629,7 @@
     {
       "id": "hubspot__list_association_labels",
       "name": "List Association Labels",
-      "description": "List HubSpot association labels between CRM object types before associating records",
+      "description": "List association labels",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -656,7 +656,7 @@
     {
       "id": "hubspot__list_associations",
       "name": "List Associations",
-      "description": "List records associated with a HubSpot CRM record",
+      "description": "List associations",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -700,7 +700,7 @@
     {
       "id": "hubspot__associate_records",
       "name": "Associate Records",
-      "description": "Create a default HubSpot association between two CRM records",
+      "description": "Associate records",
       "requiresWrite": true,
       "endpoint": {
         "method": "PUT",
@@ -736,7 +736,7 @@
     {
       "id": "hubspot__remove_association",
       "name": "Remove Association",
-      "description": "Remove all HubSpot associations between two CRM records",
+      "description": "Remove association",
       "requiresWrite": true,
       "endpoint": {
         "method": "DELETE",

@@ -54,7 +54,7 @@
     {
       "id": "zoho-crm__list_records",
       "name": "List Records",
-      "description": "List records from a Zoho CRM module such as Leads, Contacts, Deals, or Accounts",
+      "description": "List records",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -103,7 +103,7 @@
     {
       "id": "zoho-crm__get_record",
       "name": "Get Record",
-      "description": "Get a single Zoho CRM record by ID from any module",
+      "description": "Get record",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -135,7 +135,7 @@
     {
       "id": "zoho-crm__search_records",
       "name": "Search Records",
-      "description": "Search records in a Zoho CRM module by criteria, email, phone, or a free-text word",
+      "description": "Search records",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -193,7 +193,7 @@
     {
       "id": "zoho-crm__get_fields",
       "name": "Get Fields Metadata",
-      "description": "List the field metadata of a Zoho CRM module so agents can discover the field API names required by list, search, and write tools",
+      "description": "Get fields metadata",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -214,7 +214,7 @@
     {
       "id": "zoho-crm__coql_query",
       "name": "Run COQL Query",
-      "description": "Run a CRM Object Query Language (COQL) SELECT query for filtered reads, joins, and aggregation that the list and search tools cannot express",
+      "description": "Run coql query",
       "requiresWrite": false,
       "endpoint": {
         "method": "POST",
@@ -234,7 +234,7 @@
     {
       "id": "zoho-crm__create_records",
       "name": "Create Records",
-      "description": "Create up to 100 records in a Zoho CRM module (requires the ZohoCRM.modules.CREATE scope)",
+      "description": "Create records",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -262,7 +262,7 @@
     {
       "id": "zoho-crm__update_record",
       "name": "Update Record",
-      "description": "Update fields on an existing Zoho CRM record (requires the ZohoCRM.modules.UPDATE scope)",
+      "description": "Update record",
       "requiresWrite": true,
       "endpoint": {
         "method": "PUT",

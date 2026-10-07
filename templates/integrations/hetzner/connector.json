@@ -30,7 +30,7 @@
     {
       "id": "hetzner__list_servers",
       "name": "List Servers",
-      "description": "List servers in the Hetzner Cloud project with optional name, label, and status filtering",
+      "description": "List servers",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -84,7 +84,7 @@
     {
       "id": "hetzner__get_server",
       "name": "Get Server",
-      "description": "Get a server by ID, including status, server type, image, and public network info",
+      "description": "Get server",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -105,7 +105,7 @@
     {
       "id": "hetzner__create_server",
       "name": "Create Server",
-      "description": "Create a new server (provisions billable infrastructure)",
+      "description": "Create server",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -153,7 +153,7 @@
     {
       "id": "hetzner__power_on_server",
       "name": "Power On Server",
-      "description": "Power on a server by ID",
+      "description": "Power on server",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -174,7 +174,7 @@
     {
       "id": "hetzner__power_off_server",
       "name": "Power Off Server",
-      "description": "Cut power to a server by ID (hard power off, like pulling the plug; data may be lost if the OS is running)",
+      "description": "Power off server",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -195,7 +195,7 @@
     {
       "id": "hetzner__list_images",
       "name": "List Images",
-      "description": "List available images (system images, backups, snapshots) usable for server creation",
+      "description": "List images",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -250,7 +250,7 @@
     {
       "id": "hetzner__list_server_types",
       "name": "List Server Types",
-      "description": "List available server types (sizes) with cores, memory, disk, and pricing",
+      "description": "List server types",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -295,7 +295,7 @@
     {
       "id": "hetzner__shutdown_server",
       "name": "Shutdown Server",
-      "description": "Gracefully shut down a server by sending an ACPI shutdown signal to the OS — prefer this over Power Off for running workloads",
+      "description": "Shutdown server",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -316,7 +316,7 @@
     {
       "id": "hetzner__reboot_server",
       "name": "Reboot Server",
-      "description": "Gracefully reboot a server by sending an ACPI reboot signal to the OS",
+      "description": "Reboot server",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -337,7 +337,7 @@
     {
       "id": "hetzner__list_ssh_keys",
       "name": "List SSH Keys",
-      "description": "List SSH keys in the project — use these IDs or names in the ssh_keys field of Create Server",
+      "description": "List ssh keys",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",

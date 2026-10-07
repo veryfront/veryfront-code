@@ -28,7 +28,7 @@
     {
       "id": "resend__send_email",
       "name": "Send Email",
-      "description": "Send an email",
+      "description": "Send email",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -75,7 +75,7 @@
     {
       "id": "resend__get_email",
       "name": "Get Email",
-      "description": "Get a sent email and its delivery status by ID",
+      "description": "Get email",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -93,7 +93,7 @@
     {
       "id": "resend__list_domains",
       "name": "List Domains",
-      "description": "List sending domains and their verification status",
+      "description": "List domains",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -118,7 +118,7 @@
     {
       "id": "resend__list_audiences",
       "name": "List Audiences",
-      "description": "List audiences (contact groups)",
+      "description": "List audiences",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -131,7 +131,7 @@
     {
       "id": "resend__list_contacts",
       "name": "List Contacts",
-      "description": "List contacts in an audience",
+      "description": "List contacts",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -152,7 +152,7 @@
     {
       "id": "resend__create_contact",
       "name": "Create Contact",
-      "description": "Add a contact to an audience",
+      "description": "Create contact",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",

@@ -48,7 +48,7 @@
     {
       "id": "power-bi__list_workspaces",
       "name": "List Workspaces",
-      "description": "List Power BI workspaces (groups) the signed-in user has access to",
+      "description": "List workspaces",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -79,7 +79,7 @@
     {
       "id": "power-bi__list_datasets",
       "name": "List My Workspace Datasets",
-      "description": "List datasets in the signed-in user's My workspace",
+      "description": "List my workspace datasets",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -92,7 +92,7 @@
     {
       "id": "power-bi__list_workspace_datasets",
       "name": "List Workspace Datasets",
-      "description": "List datasets in a specific Power BI workspace",
+      "description": "List workspace datasets",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -113,7 +113,7 @@
     {
       "id": "power-bi__list_reports",
       "name": "List My Workspace Reports",
-      "description": "List reports in the signed-in user's My workspace",
+      "description": "List my workspace reports",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -126,7 +126,7 @@
     {
       "id": "power-bi__list_workspace_reports",
       "name": "List Workspace Reports",
-      "description": "List reports in a specific Power BI workspace",
+      "description": "List workspace reports",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -147,7 +147,7 @@
     {
       "id": "power-bi__execute_dax_query",
       "name": "Execute DAX Query",
-      "description": "Run a read-only DAX query against a dataset and return the resulting rows",
+      "description": "Execute dax query",
       "requiresWrite": false,
       "endpoint": {
         "method": "POST",
@@ -183,7 +183,7 @@
     {
       "id": "power-bi__refresh_dataset",
       "name": "Refresh Dataset",
-      "description": "Trigger a data refresh for a dataset in the signed-in user's My workspace (returns 202 Accepted; the refresh runs asynchronously). Datasets in shared workspaces are not supported by this endpoint",
+      "description": "Refresh dataset",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -209,7 +209,7 @@
     {
       "id": "power-bi__refresh_workspace_dataset",
       "name": "Refresh Workspace Dataset",
-      "description": "Trigger a data refresh for a dataset in a specific workspace (returns 202 Accepted; the refresh runs asynchronously)",
+      "description": "Refresh workspace dataset",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -241,7 +241,7 @@
     {
       "id": "power-bi__list_refresh_history",
       "name": "List Refresh History",
-      "description": "Get the refresh history of a dataset in the signed-in user's My workspace — the way to follow up the 202 returned by Refresh Dataset",
+      "description": "List refresh history",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -267,7 +267,7 @@
     {
       "id": "power-bi__list_workspace_refresh_history",
       "name": "List Workspace Refresh History",
-      "description": "Get the refresh history of a dataset in a specific workspace, including status and failure error codes",
+      "description": "List workspace refresh history",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",

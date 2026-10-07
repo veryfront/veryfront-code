@@ -28,7 +28,7 @@
     {
       "id": "cohere__list_models",
       "name": "List Models",
-      "description": "List the Cohere models available to the API key",
+      "description": "List models",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -70,7 +70,7 @@
     {
       "id": "cohere__create_chat",
       "name": "Create Chat",
-      "description": "Generate a chat response with a Cohere Command model (v2 Chat API)",
+      "description": "Create chat",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -100,7 +100,7 @@
     {
       "id": "cohere__create_embedding",
       "name": "Create Embedding",
-      "description": "Create embedding vectors for input texts (v2 Embed API)",
+      "description": "Create embedding",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -132,7 +132,7 @@
     {
       "id": "cohere__rerank_documents",
       "name": "Rerank Documents",
-      "description": "Rank a list of documents by relevance to a query (v2 Rerank API)",
+      "description": "Rerank documents",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",

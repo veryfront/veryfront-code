@@ -37,7 +37,7 @@
     {
       "id": "databricks__list_clusters",
       "name": "List Clusters",
-      "description": "List all-purpose and job compute clusters in the workspace with their state and configuration",
+      "description": "List clusters",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -97,7 +97,7 @@
     {
       "id": "databricks__list_jobs",
       "name": "List Jobs",
-      "description": "List jobs defined in the workspace, optionally filtered by name",
+      "description": "List jobs",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -153,7 +153,7 @@
     {
       "id": "databricks__run_job_now",
       "name": "Run Job Now",
-      "description": "Trigger an immediate run of an existing job, optionally overriding job parameters",
+      "description": "Run job now",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -178,7 +178,7 @@
     {
       "id": "databricks__list_job_runs",
       "name": "List Job Runs",
-      "description": "List recent job runs, optionally filtered to one job or to active/completed runs",
+      "description": "List job runs",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -247,7 +247,7 @@
     {
       "id": "databricks__cancel_job_run",
       "name": "Cancel Job Run",
-      "description": "Cancel a job run; the cancellation happens asynchronously, so the run may still be running briefly",
+      "description": "Cancel job run",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -264,7 +264,7 @@
     {
       "id": "databricks__get_job_run",
       "name": "Get Job Run",
-      "description": "Get the status, timing, and task results of a job run (use the run_id returned by Run Job Now)",
+      "description": "Get job run",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -282,7 +282,7 @@
     {
       "id": "databricks__execute_sql_statement",
       "name": "Execute SQL Statement",
-      "description": "Execute a SQL query against a SQL warehouse and return the result rows (queries; the warehouse enforces table permissions)",
+      "description": "Execute SQL statement",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -321,7 +321,7 @@
     {
       "id": "databricks__get_sql_statement",
       "name": "Get SQL Statement",
-      "description": "Poll the status and result of a previously submitted SQL statement, e.g. after an async or timed-out execution",
+      "description": "Get SQL statement",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -339,7 +339,7 @@
     {
       "id": "databricks__list_sql_warehouses",
       "name": "List SQL Warehouses",
-      "description": "List SQL warehouses in the workspace to find a warehouse_id for executing SQL statements",
+      "description": "List SQL warehouses",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",

@@ -42,7 +42,7 @@
     {
       "id": "langfuse__list_traces",
       "name": "List Traces",
-      "description": "List traces in the Langfuse project with optional filters",
+      "description": "List traces",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -132,7 +132,7 @@
     {
       "id": "langfuse__get_trace",
       "name": "Get Trace",
-      "description": "Get a single trace with its full observation tree and scores",
+      "description": "Get trace",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -150,7 +150,7 @@
     {
       "id": "langfuse__list_observations",
       "name": "List Observations",
-      "description": "List observations (spans, generations, events) with optional filters",
+      "description": "List observations",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -194,7 +194,7 @@
     {
       "id": "langfuse__create_score",
       "name": "Create Score",
-      "description": "Attach a score (evaluation result) to a trace or observation",
+      "description": "Create score",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",

@@ -42,7 +42,7 @@
     {
       "id": "klarna__get_order",
       "name": "Get Order",
-      "description": "Retrieve a Klarna order including status, amounts, order lines, captures, and refunds",
+      "description": "Get order",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -60,7 +60,7 @@
     {
       "id": "klarna__capture_order",
       "name": "Capture Order",
-      "description": "Capture a full or partial amount of an authorized order (activates the payment after fulfillment)",
+      "description": "Capture order",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -93,7 +93,7 @@
     {
       "id": "klarna__refund_order",
       "name": "Refund Order",
-      "description": "Refund a full or partial captured amount back to the customer",
+      "description": "Refund order",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -122,7 +122,7 @@
     {
       "id": "klarna__cancel_order",
       "name": "Cancel Order",
-      "description": "Cancel an authorized order that has not been captured, releasing the full authorization",
+      "description": "Cancel order",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -140,7 +140,7 @@
     {
       "id": "klarna__release_remaining_authorization",
       "name": "Release Remaining Authorization",
-      "description": "Release the remaining (uncaptured) authorized amount of an order after the final partial capture: the standard end-of-fulfillment step that frees the customer's remaining authorization",
+      "description": "Release remaining authorization",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -158,7 +158,7 @@
     {
       "id": "klarna__get_capture",
       "name": "Get Capture",
-      "description": "Get a single capture of an order with its status and amounts",
+      "description": "Get capture",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",

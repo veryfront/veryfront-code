@@ -84,7 +84,7 @@
     {
       "id": "gmail__list_emails",
       "name": "List Emails",
-      "description": "List Gmail message summaries with IDs, sender, recipient, subject, date, snippet, labels, and pagination tokens. Use get-email only when full message content is needed.",
+      "description": "List emails",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -146,7 +146,7 @@
     {
       "id": "gmail__send_email",
       "name": "Send Email",
-      "description": "Send an email to recipients",
+      "description": "Send email",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -167,7 +167,7 @@
     {
       "id": "gmail__get_email",
       "name": "Get Email",
-      "description": "Get a specific email by ID with full content",
+      "description": "Get email",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -196,7 +196,7 @@
     {
       "id": "gmail__search_emails",
       "name": "Search Emails",
-      "description": "Search Gmail messages and return summaries with IDs, sender, recipient, subject, date, snippet, labels, and pagination tokens.",
+      "description": "Search emails",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -254,7 +254,7 @@
     {
       "id": "gmail__mark_email_read",
       "name": "Mark Email Read",
-      "description": "Mark an email as read",
+      "description": "Mark email read",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -281,7 +281,7 @@
     {
       "id": "gmail__archive_email",
       "name": "Archive Email",
-      "description": "Archive an email",
+      "description": "Archive email",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -308,7 +308,7 @@
     {
       "id": "gmail__list_labels",
       "name": "List Labels",
-      "description": "List Gmail labels",
+      "description": "List labels",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -340,7 +340,7 @@
     {
       "id": "gmail__get_label",
       "name": "Get Label",
-      "description": "Get a Gmail label",
+      "description": "Get label",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -358,7 +358,7 @@
     {
       "id": "gmail__create_label",
       "name": "Create Label",
-      "description": "Create a Gmail user label",
+      "description": "Create label",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -387,7 +387,7 @@
     {
       "id": "gmail__update_label",
       "name": "Update Label",
-      "description": "Update a Gmail user label",
+      "description": "Update label",
       "requiresWrite": true,
       "endpoint": {
         "method": "PUT",
@@ -424,7 +424,7 @@
     {
       "id": "gmail__delete_label",
       "name": "Delete Label",
-      "description": "Delete a Gmail user label",
+      "description": "Delete label",
       "requiresWrite": true,
       "endpoint": {
         "method": "DELETE",
@@ -442,7 +442,7 @@
     {
       "id": "gmail__apply_labels",
       "name": "Apply Labels",
-      "description": "Apply or remove labels on an email",
+      "description": "Apply labels",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -470,7 +470,7 @@
     {
       "id": "gmail__modify_email_labels",
       "name": "Modify Email Labels",
-      "description": "Modify labels on an email",
+      "description": "Modify email labels",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -498,7 +498,7 @@
     {
       "id": "gmail__trash_email",
       "name": "Trash Email",
-      "description": "Move an email to trash",
+      "description": "Trash email",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -516,7 +516,7 @@
     {
       "id": "gmail__untrash_email",
       "name": "Untrash Email",
-      "description": "Remove an email from trash",
+      "description": "Untrash email",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -534,7 +534,7 @@
     {
       "id": "gmail__delete_email",
       "name": "Delete Email",
-      "description": "Permanently delete an email",
+      "description": "Delete email",
       "requiresWrite": true,
       "endpoint": {
         "method": "DELETE",
@@ -552,7 +552,7 @@
     {
       "id": "gmail__batch_modify_emails",
       "name": "Batch Modify Emails",
-      "description": "Modify labels on multiple emails",
+      "description": "Batch modify emails",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -577,7 +577,7 @@
     {
       "id": "gmail__batch_delete_emails",
       "name": "Batch Delete Emails",
-      "description": "Permanently delete multiple emails",
+      "description": "Batch delete emails",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -594,7 +594,7 @@
     {
       "id": "gmail__list_threads",
       "name": "List Threads",
-      "description": "List Gmail threads",
+      "description": "List threads",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -658,7 +658,7 @@
     {
       "id": "gmail__get_thread",
       "name": "Get Thread",
-      "description": "Get a Gmail thread",
+      "description": "Get thread",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -682,7 +682,7 @@
     {
       "id": "gmail__modify_thread_labels",
       "name": "Modify Thread Labels",
-      "description": "Modify labels on a Gmail thread",
+      "description": "Modify thread labels",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -710,7 +710,7 @@
     {
       "id": "gmail__trash_thread",
       "name": "Trash Thread",
-      "description": "Move a Gmail thread to trash",
+      "description": "Trash thread",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -728,7 +728,7 @@
     {
       "id": "gmail__untrash_thread",
       "name": "Untrash Thread",
-      "description": "Remove a Gmail thread from trash",
+      "description": "Untrash thread",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -746,7 +746,7 @@
     {
       "id": "gmail__delete_thread",
       "name": "Delete Thread",
-      "description": "Permanently delete a Gmail thread",
+      "description": "Delete thread",
       "requiresWrite": true,
       "endpoint": {
         "method": "DELETE",
@@ -764,7 +764,7 @@
     {
       "id": "gmail__create_draft",
       "name": "Create Draft",
-      "description": "Create a Gmail draft",
+      "description": "Create draft",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -781,7 +781,7 @@
     {
       "id": "gmail__list_drafts",
       "name": "List Drafts",
-      "description": "List Gmail drafts",
+      "description": "List drafts",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -837,7 +837,7 @@
     {
       "id": "gmail__get_draft",
       "name": "Get Draft",
-      "description": "Get a Gmail draft",
+      "description": "Get draft",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -861,7 +861,7 @@
     {
       "id": "gmail__update_draft",
       "name": "Update Draft",
-      "description": "Replace a Gmail draft",
+      "description": "Update draft",
       "requiresWrite": true,
       "endpoint": {
         "method": "PUT",
@@ -886,7 +886,7 @@
     {
       "id": "gmail__send_draft",
       "name": "Send Draft",
-      "description": "Send an existing Gmail draft",
+      "description": "Send draft",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -903,7 +903,7 @@
     {
       "id": "gmail__delete_draft",
       "name": "Delete Draft",
-      "description": "Permanently delete a Gmail draft",
+      "description": "Delete draft",
       "requiresWrite": true,
       "endpoint": {
         "method": "DELETE",
@@ -921,7 +921,7 @@
     {
       "id": "gmail__get_attachment",
       "name": "Get Attachment",
-      "description": "Get a Gmail message attachment",
+      "description": "Get attachment",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -945,7 +945,7 @@
     {
       "id": "gmail__get_profile",
       "name": "Get Profile",
-      "description": "Get the Gmail mailbox profile",
+      "description": "Get profile",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -955,7 +955,7 @@
     {
       "id": "gmail__list_history",
       "name": "List History",
-      "description": "List Gmail mailbox history changes",
+      "description": "List history",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",

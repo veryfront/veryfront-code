@@ -33,7 +33,7 @@
     {
       "id": "zendesk__list_tickets",
       "name": "List Tickets",
-      "description": "List Zendesk support tickets",
+      "description": "List tickets",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -64,7 +64,7 @@
     {
       "id": "zendesk__get_ticket",
       "name": "Get Ticket",
-      "description": "Get a Zendesk ticket by ID",
+      "description": "Get ticket",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -89,7 +89,7 @@
     {
       "id": "zendesk__search_tickets",
       "name": "Search Tickets",
-      "description": "Search Zendesk tickets with the Zendesk search API",
+      "description": "Search tickets",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -114,7 +114,7 @@
     {
       "id": "zendesk__update_ticket",
       "name": "Update Ticket",
-      "description": "Update a Zendesk ticket status, priority, tags, or comment",
+      "description": "Update ticket",
       "requiresWrite": true,
       "endpoint": {
         "method": "PUT",
@@ -146,7 +146,7 @@
     {
       "id": "zendesk__create_ticket",
       "name": "Create Ticket",
-      "description": "Create a new Zendesk support ticket",
+      "description": "Create ticket",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -172,7 +172,7 @@
     {
       "id": "zendesk__list_ticket_comments",
       "name": "List Ticket Comments",
-      "description": "List comments on a Zendesk ticket",
+      "description": "List ticket comments",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",

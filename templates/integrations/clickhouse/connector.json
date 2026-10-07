@@ -35,7 +35,7 @@
     {
       "id": "clickhouse__list_organizations",
       "name": "List Organizations",
-      "description": "List organizations the API key has access to",
+      "description": "List organizations",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -58,7 +58,7 @@
     {
       "id": "clickhouse__get_organization",
       "name": "Get Organization",
-      "description": "Get details of an organization",
+      "description": "Get organization",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -79,7 +79,7 @@
     {
       "id": "clickhouse__list_services",
       "name": "List Services",
-      "description": "List all ClickHouse services in an organization",
+      "description": "List services",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -114,7 +114,7 @@
     {
       "id": "clickhouse__get_service",
       "name": "Get Service",
-      "description": "Get details of a ClickHouse service, including endpoints and state",
+      "description": "Get service",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",

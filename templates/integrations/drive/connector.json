@@ -79,7 +79,7 @@
     {
       "id": "drive__list_files",
       "name": "List Files",
-      "description": "List files and folders in a Google Drive folder or root",
+      "description": "List files",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -116,7 +116,7 @@
     {
       "id": "drive__get_file",
       "name": "Get File",
-      "description": "Get metadata and details about a specific file or folder",
+      "description": "Get file",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -140,7 +140,7 @@
     {
       "id": "drive__search_files",
       "name": "Search Files",
-      "description": "Search for files and folders using queries",
+      "description": "Search files",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -178,7 +178,7 @@
     {
       "id": "drive__create_folder",
       "name": "Create Folder",
-      "description": "Create a new folder in Google Drive",
+      "description": "Create folder",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -204,7 +204,7 @@
     {
       "id": "drive__upload_file",
       "name": "Upload File",
-      "description": "Upload or create a file in Google Drive",
+      "description": "Upload file",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -249,7 +249,7 @@
     {
       "id": "drive__update_file",
       "name": "Update File",
-      "description": "Rename a file, update its description, or move it to a different folder in Google Drive",
+      "description": "Update file",
       "requiresWrite": true,
       "endpoint": {
         "method": "PATCH",
@@ -293,7 +293,7 @@
     {
       "id": "drive__delete_file",
       "name": "Delete File",
-      "description": "Permanently delete a file or folder from Google Drive",
+      "description": "Delete file",
       "requiresWrite": true,
       "endpoint": {
         "method": "DELETE",
@@ -311,7 +311,7 @@
     {
       "id": "drive__download_file",
       "name": "Download File",
-      "description": "Download the content of a binary or text file stored in Google Drive (not Google Docs/Sheets/Slides; use export_file for those)",
+      "description": "Download file",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -335,7 +335,7 @@
     {
       "id": "drive__export_file",
       "name": "Export File",
-      "description": "Export a Google Docs/Sheets/Slides file to another format such as text/plain, text/csv, or application/pdf",
+      "description": "Export file",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",

@@ -44,7 +44,7 @@
     {
       "id": "datev__list_clients",
       "name": "List Clients",
-      "description": "List the DATEV clients (Mandanten) the connected user may upload documents for, including each client's ID needed by the other tools",
+      "description": "List clients",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -54,7 +54,7 @@
     {
       "id": "datev__list_document_types",
       "name": "List Document Types",
-      "description": "List the document types (e.g. incoming invoices, outgoing invoices, cash receipts) available in Belege online for a specific DATEV client, used to classify uploads",
+      "description": "List document types",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -72,7 +72,7 @@
     {
       "id": "datev__upload_document",
       "name": "Upload Document",
-      "description": "Upload a receipt or invoice file to DATEV Unternehmen online (Belege online) for a client so the tax advisor can process it for bookkeeping",
+      "description": "Upload document",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",

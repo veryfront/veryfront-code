@@ -28,7 +28,7 @@
     {
       "id": "gemini__list_models",
       "name": "List Models",
-      "description": "List the Gemini models available to the API key",
+      "description": "List models",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -65,7 +65,7 @@
     {
       "id": "gemini__get_model",
       "name": "Get Model",
-      "description": "Get details about a specific Gemini model",
+      "description": "Get model",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -83,7 +83,7 @@
     {
       "id": "gemini__generate_content",
       "name": "Generate Content",
-      "description": "Generate a model response from text or multimodal content",
+      "description": "Generate content",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -116,7 +116,7 @@
     {
       "id": "gemini__embed_content",
       "name": "Embed Content",
-      "description": "Create an embedding vector for input text",
+      "description": "Embed content",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -149,7 +149,7 @@
     {
       "id": "gemini__count_tokens",
       "name": "Count Tokens",
-      "description": "Count the tokens a prompt would use for a given model",
+      "description": "Count tokens",
       "requiresWrite": false,
       "endpoint": {
         "method": "POST",
@@ -174,7 +174,7 @@
     {
       "id": "gemini__generate_image",
       "name": "Generate Image",
-      "description": "Generate or edit an image with a Nano Banana model via generateContent; the response returns image parts as base64 inlineData",
+      "description": "Generate image",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -204,7 +204,7 @@
     {
       "id": "gemini__edit_image",
       "name": "Edit Image",
-      "description": "Edit an existing image with a Nano Banana model: send the source image as a base64 inlineData part plus a text instruction (add/remove/modify elements, change style, adjust color grading); the edited image is returned as base64 inlineData",
+      "description": "Edit image",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -234,7 +234,7 @@
     {
       "id": "gemini__imagen_generate",
       "name": "Generate Image (Imagen)",
-      "description": "Generate text-to-image samples with an Imagen 4 model via the predict endpoint; returns base64-encoded images in predictions",
+      "description": "Generate image (imagen)",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -263,7 +263,7 @@
     {
       "id": "gemini__upload_file",
       "name": "Upload File",
-      "description": "Upload content to the Files API for use in later generateContent calls via its file URI; this simple media upload sends the decoded bytes directly as the request body (a custom displayName requires the multipart or resumable X-Goog-Upload protocol), and files expire after 48 hours",
+      "description": "Upload file",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -297,7 +297,7 @@
     {
       "id": "gemini__list_files",
       "name": "List Files",
-      "description": "List files uploaded to the Files API for this project",
+      "description": "List files",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -335,7 +335,7 @@
     {
       "id": "gemini__get_file",
       "name": "Get File",
-      "description": "Get metadata for an uploaded file, including its uri and processing state",
+      "description": "Get file",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -353,7 +353,7 @@
     {
       "id": "gemini__delete_file",
       "name": "Delete File",
-      "description": "Delete an uploaded file before its automatic 48-hour expiry",
+      "description": "Delete file",
       "requiresWrite": true,
       "endpoint": {
         "method": "DELETE",

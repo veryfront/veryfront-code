@@ -43,7 +43,7 @@
     {
       "id": "productboard__list_notes",
       "name": "List Notes",
-      "description": "List customer feedback notes in the Productboard workspace",
+      "description": "List notes",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -111,7 +111,7 @@
     {
       "id": "productboard__get_note",
       "name": "Get Note",
-      "description": "Get a Productboard note by ID",
+      "description": "Get note",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -129,7 +129,7 @@
     {
       "id": "productboard__create_note",
       "name": "Create Note",
-      "description": "Create a feedback note in Productboard",
+      "description": "Create note",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -146,7 +146,7 @@
     {
       "id": "productboard__list_entities",
       "name": "List Entities",
-      "description": "List product hierarchy entities (features, components, initiatives, releases, etc.)",
+      "description": "List entities",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -216,7 +216,7 @@
     {
       "id": "productboard__get_entity",
       "name": "Get Entity",
-      "description": "Get a hierarchy entity (e.g. a feature) by ID",
+      "description": "Get entity",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -234,7 +234,7 @@
     {
       "id": "productboard__create_entity",
       "name": "Create Entity",
-      "description": "Create a hierarchy entity such as a feature or initiative",
+      "description": "Create entity",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -251,7 +251,7 @@
     {
       "id": "productboard__update_entity",
       "name": "Update Entity",
-      "description": "Update fields of a hierarchy entity (e.g. rename a feature or change its status)",
+      "description": "Update entity",
       "requiresWrite": true,
       "endpoint": {
         "method": "PATCH",

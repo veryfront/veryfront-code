@@ -30,7 +30,7 @@
     {
       "id": "rippling__list_employees",
       "name": "List Employees",
-      "description": "List active employees in the Rippling company with pagination",
+      "description": "List employees",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -54,7 +54,7 @@
     {
       "id": "rippling__get_employee",
       "name": "Get Employee",
-      "description": "Get a single employee's record (title, department, work location, employment type) by ID",
+      "description": "Get employee",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -72,7 +72,7 @@
     {
       "id": "rippling__list_departments",
       "name": "List Departments",
-      "description": "List the company's departments",
+      "description": "List departments",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -96,7 +96,7 @@
     {
       "id": "rippling__list_teams",
       "name": "List Teams",
-      "description": "List the company's teams",
+      "description": "List teams",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -120,7 +120,7 @@
     {
       "id": "rippling__list_leave_requests",
       "name": "List Leave Requests",
-      "description": "List leave (time off) requests with optional status and date filtering",
+      "description": "List leave requests",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -147,7 +147,7 @@
     {
       "id": "rippling__process_leave_request",
       "name": "Process Leave Request",
-      "description": "Approve or decline a pending leave request",
+      "description": "Process leave request",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",

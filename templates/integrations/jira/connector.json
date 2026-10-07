@@ -98,7 +98,7 @@
     {
       "id": "jira__list_sites",
       "name": "List Atlassian Sites",
-      "description": "List Atlassian cloud sites/resources the OAuth token can access; use the returned id as cloudId for Jira and Confluence tools",
+      "description": "List atlassian sites",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -216,7 +216,7 @@
     {
       "id": "jira__list_projects",
       "name": "List Projects",
-      "description": "List all accessible Jira projects",
+      "description": "List projects",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -359,7 +359,7 @@
     {
       "id": "jira__get_project",
       "name": "Get Project",
-      "description": "Get detailed information about a Jira project",
+      "description": "Get project",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -383,7 +383,7 @@
     {
       "id": "jira__search_issues",
       "name": "Search Issues",
-      "description": "Search Jira issues using JQL (Jira Query Language)",
+      "description": "Search issues",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -494,7 +494,7 @@
     {
       "id": "jira__get_issue",
       "name": "Get Issue",
-      "description": "Get detailed information about a specific Jira issue",
+      "description": "Get issue",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -523,7 +523,7 @@
     {
       "id": "jira__create_issue",
       "name": "Create Issue",
-      "description": "Create a new Jira issue in a project",
+      "description": "Create issue",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -548,7 +548,7 @@
     {
       "id": "jira__update_issue",
       "name": "Update Issue",
-      "description": "Update an existing Jira issue (status, fields, etc.)",
+      "description": "Update issue",
       "requiresWrite": true,
       "endpoint": {
         "method": "PUT",
@@ -582,7 +582,7 @@
     {
       "id": "jira__list_comments",
       "name": "List Comments",
-      "description": "List comments on a Jira issue",
+      "description": "List comments",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -658,7 +658,7 @@
     {
       "id": "jira__add_comment",
       "name": "Add Comment",
-      "description": "Add a comment to a Jira issue",
+      "description": "Add comment",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -689,7 +689,7 @@
     {
       "id": "jira__get_transitions",
       "name": "Get Transitions",
-      "description": "List available workflow transitions for a Jira issue",
+      "description": "Get transitions",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -713,7 +713,7 @@
     {
       "id": "jira__transition_issue",
       "name": "Transition Issue",
-      "description": "Move a Jira issue to a new workflow status. First call get_transitions to get valid transition IDs, then pass the ID here.",
+      "description": "Transition issue",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -752,7 +752,7 @@
     {
       "id": "jira__search_users",
       "name": "Search Users",
-      "description": "Search Jira users by name or email to find the accountId needed for assigning issues",
+      "description": "Search users",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",

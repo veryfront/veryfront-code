@@ -37,7 +37,7 @@
     {
       "id": "trusted-shops__list_reviews",
       "name": "List Reviews",
-      "description": "List service and product reviews for the whole account or specific channels, with filters and cursor pagination",
+      "description": "List reviews",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -121,7 +121,7 @@
     {
       "id": "trusted-shops__get_review",
       "name": "Get Review",
-      "description": "Get a single review with full comment, customer, transaction, product, and reply details",
+      "description": "Get review",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -139,7 +139,7 @@
     {
       "id": "trusted-shops__list_channels",
       "name": "List Channels",
-      "description": "List all review channels (shops/touchpoints) of the account with their IDs, names, URLs, and locales",
+      "description": "List channels",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -149,7 +149,7 @@
     {
       "id": "trusted-shops__get_channel_rating",
       "name": "Get Channel Aggregate Rating",
-      "description": "Get aggregate service review ratings for a channel across 7-day, 30-day, 90-day, 365-day, and overall periods, including star distribution",
+      "description": "Get channel aggregate rating",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -167,7 +167,7 @@
     {
       "id": "trusted-shops__create_review_invites",
       "name": "Create Review Invites",
-      "description": "Schedule review invite emails for one or more customers of a channel after a transaction",
+      "description": "Create review invites",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -199,7 +199,7 @@
     {
       "id": "trusted-shops__get_reviews_count",
       "name": "Get Reviews Count",
-      "description": "Get the total number of reviews matching a filter — cheap KPI queries without paging through review lists",
+      "description": "Get reviews count",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -252,7 +252,7 @@
     {
       "id": "trusted-shops__reply_to_review",
       "name": "Reply to Review",
-      "description": "Save a public reply on a review — the natural follow-up to negative reviews",
+      "description": "Reply to review",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",

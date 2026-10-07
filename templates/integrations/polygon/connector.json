@@ -30,7 +30,7 @@
     {
       "id": "polygon__get_aggregates",
       "name": "Get Aggregate Bars",
-      "description": "Get OHLCV aggregate bars (candles) for a stock ticker over a custom date range and time window",
+      "description": "Get aggregate bars",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -111,7 +111,7 @@
     {
       "id": "polygon__get_previous_close",
       "name": "Get Previous Close",
-      "description": "Get the previous trading day's open, high, low, close, and volume for a stock ticker",
+      "description": "Get previous close",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -135,7 +135,7 @@
     {
       "id": "polygon__get_daily_open_close",
       "name": "Get Daily Open/Close",
-      "description": "Get the open, close, high, low, volume, and pre-market/after-hours prices for a stock ticker on a specific date",
+      "description": "Get daily open/close",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -165,7 +165,7 @@
     {
       "id": "polygon__list_tickers",
       "name": "Search Tickers",
-      "description": "Search and list ticker symbols across stocks, indices, forex, and crypto reference data",
+      "description": "Search tickers",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -229,7 +229,7 @@
     {
       "id": "polygon__get_ticker_details",
       "name": "Get Ticker Details",
-      "description": "Get reference details for a single ticker: company name, market, exchange, market cap, description, and identifiers",
+      "description": "Get ticker details",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -252,7 +252,7 @@
     {
       "id": "polygon__get_market_status",
       "name": "Get Market Status",
-      "description": "Get the current trading status of US exchanges and market-wide sessions (open, closed, early hours, after hours) — a cheap check before quoting prices",
+      "description": "Get market status",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -262,7 +262,7 @@
     {
       "id": "polygon__get_ticker_news",
       "name": "Get Ticker News",
-      "description": "Get recent news articles for a ticker, including publisher, summary, and per-ticker sentiment insights",
+      "description": "Get ticker news",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",

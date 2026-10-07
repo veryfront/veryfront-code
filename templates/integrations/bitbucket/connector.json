@@ -36,7 +36,7 @@
     {
       "id": "bitbucket__list_repositories",
       "name": "List Repositories",
-      "description": "Get list of user's repositories",
+      "description": "List repositories",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -131,7 +131,7 @@
     {
       "id": "bitbucket__get_repository",
       "name": "Get Repository",
-      "description": "Get details of a specific repository",
+      "description": "Get repository",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -155,7 +155,7 @@
     {
       "id": "bitbucket__list_pull_requests",
       "name": "List Pull Requests",
-      "description": "Get pull requests for a repository",
+      "description": "List pull requests",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -247,7 +247,7 @@
     {
       "id": "bitbucket__get_pull_request",
       "name": "Get Pull Request",
-      "description": "Get details of a specific pull request",
+      "description": "Get pull request",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -277,7 +277,7 @@
     {
       "id": "bitbucket__create_pull_request",
       "name": "Create Pull Request",
-      "description": "Create a new pull request",
+      "description": "Create pull request",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -329,7 +329,7 @@
     {
       "id": "bitbucket__add_pull_request_comment",
       "name": "Add Pull Request Comment",
-      "description": "Add a comment to a pull request",
+      "description": "Add pull request comment",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -366,7 +366,7 @@
     {
       "id": "bitbucket__list_issues",
       "name": "List Issues",
-      "description": "Get issues for a repository",
+      "description": "List issues",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",

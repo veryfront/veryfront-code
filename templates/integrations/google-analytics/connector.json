@@ -42,7 +42,7 @@
     {
       "id": "google-analytics__list_account_summaries",
       "name": "List Account Summaries",
-      "description": "List GA4 accounts and their properties accessible to the connected user (use this to find property IDs)",
+      "description": "List account summaries",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -78,7 +78,7 @@
     {
       "id": "google-analytics__run_report",
       "name": "Run Report",
-      "description": "Run a GA4 report for a property over one or more date ranges",
+      "description": "Run report",
       "requiresWrite": false,
       "endpoint": {
         "method": "POST",
@@ -129,7 +129,7 @@
     {
       "id": "google-analytics__run_realtime_report",
       "name": "Run Realtime Report",
-      "description": "Run a GA4 realtime report showing activity from the last 30 minutes",
+      "description": "Run realtime report",
       "requiresWrite": false,
       "endpoint": {
         "method": "POST",
@@ -163,7 +163,7 @@
     {
       "id": "google-analytics__get_metadata",
       "name": "Get Report Metadata",
-      "description": "List the dimensions and metrics available for a GA4 property (use before building reports)",
+      "description": "Get report metadata",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",

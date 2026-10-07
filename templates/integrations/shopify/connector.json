@@ -44,31 +44,31 @@
     {
       "id": "shopify__list_products",
       "name": "List Products",
-      "description": "List products in your Shopify store",
+      "description": "List products",
       "requiresWrite": false
     },
     {
       "id": "shopify__get_product",
       "name": "Get Product",
-      "description": "Get details of a specific product",
+      "description": "Get product",
       "requiresWrite": false
     },
     {
       "id": "shopify__list_orders",
       "name": "List Orders",
-      "description": "List orders from your Shopify store",
+      "description": "List orders",
       "requiresWrite": false
     },
     {
       "id": "shopify__get_order",
       "name": "Get Order",
-      "description": "Get details of a specific order",
+      "description": "Get order",
       "requiresWrite": false
     },
     {
       "id": "shopify__list_customers",
       "name": "List Customers",
-      "description": "List customers in your Shopify store",
+      "description": "List customers",
       "requiresWrite": false
     }
   ],
