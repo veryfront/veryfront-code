@@ -14,6 +14,7 @@ import {
   toConversationHostedTerminalState,
 } from "../conversation/hosted-terminal.ts";
 import type { MirroredToolChunkState } from "../streaming/mirrored-tool-chunk-state.ts";
+import { DurableRunEventPersistenceError } from "../conversation/private-run-event.ts";
 import { hasCompletedStepSignal, isStreamTimeoutError } from "../streaming/stream-outcome.ts";
 import type { HostedChatExecutionLifecycleAdapter } from "./chat-execution-lifecycle-types.ts";
 import { hasHostedAgentPauseStopped } from "./manual-pause-credential.ts";
@@ -25,6 +26,7 @@ import {
 } from "./finalized-message.ts";
 import type { HostedLifecycleTerminalState } from "./lifecycle.ts";
 import {
+  createCodedHostedStreamError,
   getEmptyHostedFinalizedMessageTerminalError,
   shouldFailEmptyHostedFinalizedMessage,
 } from "./stream-terminal-error.ts";
@@ -325,8 +327,11 @@ async function appendFallbackChunks(
 
 async function flushMirror(
   lifecycleAdapter: HostedChatExecutionLifecycleAdapter,
-): Promise<void> {
-  await lifecycleAdapter.durableRunMirror?.flush();
+): Promise<boolean> {
+  const snapshot = await lifecycleAdapter.durableRunMirror?.flush();
+  return snapshot === undefined || snapshot.disableReason === "run_terminal" ||
+    (!snapshot.disabled && snapshot.pendingEventCount === 0 && !snapshot.inFlight &&
+      !snapshot.hasRetryTimer);
 }
 
 /**
@@ -462,7 +467,21 @@ export async function finalizeHostedChatRun(
     chunks: fallbackChunks,
     lifecycleAdapter: input.lifecycleAdapter,
   });
-  await flushMirror(input.lifecycleAdapter);
+  const mirrorDrained = await flushMirror(input.lifecycleAdapter);
+
+  if (!input.isAborted && !mirrorDrained) {
+    await dispatchFailedTerminalError({
+      lifecycleAdapter: input.lifecycleAdapter,
+      finalStep,
+      streamError: createCodedHostedStreamError(
+        new DurableRunEventPersistenceError("Durable run mirror did not finish persisting output"),
+        "DURABLE_RUN_EVENT_PERSISTENCE_FAILED",
+      ),
+      metadata,
+    });
+    await cleanupAfterFinalization({ cleanup: input.cleanup, logger: input.logger });
+    return;
+  }
 
   if (
     shouldFailStreamError({
