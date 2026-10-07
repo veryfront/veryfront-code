@@ -479,6 +479,7 @@ export function createRuntimePreparationCore(input: RuntimePreparationCoreOption
     for (let index = 0; index < configuredServers.length; index++) {
       const server = configuredServers[index];
       if (server === undefined) continue;
+      if (server.kind === "veryfront-studio" && server.required === false) continue;
       if (!includes(effective.remoteToolSourceIds, server.id ?? server.kind)) {
         if (server.kind === "veryfront-studio" && server.required === false) continue;
         refuse("EXECUTOR_RUNTIME_CAPABILITY_UNAVAILABLE");

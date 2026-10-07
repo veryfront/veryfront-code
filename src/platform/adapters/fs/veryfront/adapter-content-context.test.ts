@@ -196,6 +196,33 @@ describe("veryfront/adapter-content-context", () => {
     );
   });
 
+  it("passes cancellation to domain content-source lookup", async () => {
+    const controller = new AbortController();
+    let observedSignal: AbortSignal | undefined;
+    const resolverClient: ContextResolverClient = {
+      listEnvironmentFiles: async () => ({ release_id: "env-rel-1" } as any),
+      lookupProjectByDomain: async (_domain, options) => {
+        observedSignal = options?.signal;
+        return {
+          project_slug: "demo-from-domain",
+          environment: { name: "production" },
+          release_id: "domain-rel-1",
+        } as any;
+      },
+    };
+
+    await resolveContentContext(
+      resolverClient,
+      { type: "domain", domain: "example.com" },
+      "demo",
+      controller.signal,
+    );
+
+    assertEquals(observedSignal?.aborted, false);
+    controller.abort();
+    assertEquals(observedSignal?.aborted, true);
+  });
+
   it("throws for invalid domain/release source configuration", async () => {
     const missingDomainClient: ContextResolverClient = {
       listEnvironmentFiles: async () => ({ release_id: "env-rel-1" } as any),

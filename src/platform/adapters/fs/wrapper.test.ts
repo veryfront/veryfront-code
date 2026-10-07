@@ -547,6 +547,23 @@ describe("FSAdapterWrapper", () => {
       assertEquals(content, "text content");
     });
 
+    it("forwards abort options through the captured text reader", async () => {
+      const controller = new AbortController();
+      let observedSignal: AbortSignal | undefined;
+      const fsAdapter = createMockFSAdapter({
+        readTextFile: (_path, options) => {
+          observedSignal = options?.signal;
+          return Promise.resolve("text content");
+        },
+      });
+      const wrapper = new FSAdapterWrapper(fsAdapter);
+
+      const content = await wrapper.readFile("/any.txt", { signal: controller.signal });
+
+      assertEquals(content, "text content");
+      assertEquals(observedSignal, controller.signal);
+    });
+
     it("should read file using readFile and decode if readTextFile not available", async () => {
       const fsAdapter = createMockFSAdapter({
         readFile: () => Promise.resolve(new TextEncoder().encode("binary content")),

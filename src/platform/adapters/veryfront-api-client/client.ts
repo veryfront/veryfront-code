@@ -1,4 +1,14 @@
 import { logger as baseLogger } from "#veryfront/utils";
+import { throwIfAborted } from "#veryfront/utils/abort.ts";
+import {
+  cancelSharedInitialization,
+  drainSharedInitialization,
+  isSharedInitializationAborted,
+  joinSharedInitialization,
+  onSharedInitializationSettled,
+  type SharedInitialization,
+  startSharedInitialization,
+} from "../shared-initialization.ts";
 import {
   type EnsureStyleArtifactBuildInput,
   type FileDetail,
@@ -75,7 +85,7 @@ export class VeryfrontApiClient {
   private requestBranch?: string | null;
   private useContextualToken = false;
   private initialized = false;
-  private initializingPromise?: Promise<void>;
+  private initializationFlight?: SharedInitialization;
   /** Cached project data from initialization - avoids redundant API calls */
   private cachedProjectData?: Awaited<ReturnType<VeryfrontAPIOperations["getProject"]>>;
   /** Kept off `config`: a plain property is readable by any code holding the client. */
@@ -208,23 +218,18 @@ export class VeryfrontApiClient {
   // Initialization
   // =============================================================================
 
-  async initialize(): Promise<void> {
+  async initialize(signal?: AbortSignal): Promise<void> {
+    throwIfAborted(signal);
     const slug = this.getProjectSlug();
     logger.debug("initialize() called", {
       slug,
       initialized: this.initialized,
-      hasPendingPromise: !!this.initializingPromise,
+      hasPendingPromise: !!this.initializationFlight,
     });
 
-    if (this.initializingPromise) {
-      logger.debug("Waiting for pending initialization", { slug });
-      const waitStart = performance.now();
-      await this.initializingPromise;
-      logger.debug("Pending initialization resolved", {
-        slug,
-        waitDuration: `${(performance.now() - waitStart).toFixed(2)}ms`,
-      });
-      return;
+    if (this.initializationFlight && isSharedInitializationAborted(this.initializationFlight)) {
+      await drainSharedInitialization(this.initializationFlight, signal);
+      return await this.initialize(signal);
     }
 
     if (this.initialized) {
@@ -232,15 +237,41 @@ export class VeryfrontApiClient {
       return;
     }
 
-    this.initializingPromise = this.doInitialize();
+    let flight = this.initializationFlight;
+    if (!flight) {
+      flight = this.startInitializationFlight();
+    }
+    await joinSharedInitialization(flight, signal);
+  }
+
+  /** @internal Retain ownership of the physical client initialization after caller abort. */
+  async initializeForHost(signal?: AbortSignal): Promise<void> {
+    throwIfAborted(signal);
+    if (this.initializationFlight && isSharedInitializationAborted(this.initializationFlight)) {
+      await drainSharedInitialization(this.initializationFlight);
+      return await this.initializeForHost(signal);
+    }
+
+    if (this.initialized) return;
+
+    const flight = this.initializationFlight ?? this.startInitializationFlight();
     try {
-      await this.initializingPromise;
+      await joinSharedInitialization(flight, signal);
     } finally {
-      this.initializingPromise = undefined;
+      await drainSharedInitialization(flight);
     }
   }
 
-  private async doInitialize(): Promise<void> {
+  private startInitializationFlight(): SharedInitialization {
+    const flight = startSharedInitialization((sharedSignal) => this.doInitialize(sharedSignal));
+    this.initializationFlight = flight;
+    onSharedInitializationSettled(flight, () => {
+      if (this.initializationFlight === flight) this.initializationFlight = undefined;
+    });
+    return flight;
+  }
+
+  private async doInitialize(signal?: AbortSignal): Promise<void> {
     const initStartTime = performance.now();
     const slug = this.getProjectSlug();
     logger.debug("doInitialize START", { slug });
@@ -267,7 +298,7 @@ export class VeryfrontApiClient {
     // with tokens that have project access but not list access
     logger.debug("Calling getProject API", { slug });
     const getProjectStart = performance.now();
-    const project = await this.operations.getProject(slug);
+    const project = await this.operations.getProject(slug, signal);
     logger.debug("getProject API completed", {
       slug,
       projectId: project.id,
@@ -277,6 +308,7 @@ export class VeryfrontApiClient {
     // Cache the project data to avoid redundant API calls
     // Adapter can use getCachedProject() instead of calling getProject() again
     this.cachedProjectData = project;
+    throwIfAborted(signal);
     this.operations.setProjectId(project.id);
     this.initialized = true;
     logger.debug("doInitialize DONE", {
@@ -288,7 +320,7 @@ export class VeryfrontApiClient {
 
   reset(): void {
     this.initialized = false;
-    this.initializingPromise = undefined;
+    cancelSharedInitialization(this.initializationFlight ?? undefined);
     this.operations.setProjectId("");
   }
 
@@ -313,8 +345,8 @@ export class VeryfrontApiClient {
     return this.operations.listProjects();
   }
 
-  getProject(projectRef?: string) {
-    return this.operations.getProject(projectRef ?? this.requireProjectSlug());
+  getProject(projectRef?: string, signal?: AbortSignal) {
+    return this.operations.getProject(projectRef ?? this.requireProjectSlug(), signal);
   }
 
   readDependencyMetadataHistory(
@@ -352,13 +384,18 @@ export class VeryfrontApiClient {
       case "environment":
         return this.operations.listAllEnvironmentFiles(projectRef, context.name, options);
       case "release":
-        return this.operations.listAllReleaseFiles(projectRef, context.version, options);
+        return this.operations.listAllReleaseFiles(
+          projectRef,
+          context.version,
+          options,
+          options.signal,
+        );
     }
   }
 
   getFile(
     pathOrId: string,
-    options: { expectedMissing?: boolean } = {},
+    options: GetFileOptions = {},
     context: FileContext = this.getContext(),
   ): Promise<FileDetail> {
     const projectRef = this.requireProjectSlug();
@@ -485,8 +522,8 @@ export class VeryfrontApiClient {
   // Domain Lookup
   // =============================================================================
 
-  lookupProjectByDomain(domain: string) {
-    return this.operations.lookupProjectByDomain(domain);
+  lookupProjectByDomain(domain: string, options: { signal?: AbortSignal } = {}) {
+    return this.operations.lookupProjectByDomain(domain, options);
   }
 
   resolveStyleArtifact(
@@ -645,8 +682,13 @@ export class VeryfrontApiClient {
   async searchFilesWithContent(
     pattern: string,
     context: FileContext = this.getContext(),
+    options: { signal?: AbortSignal } = {},
   ): Promise<Array<{ path: string; content: string }>> {
-    const result = await this.listFiles({ pattern, limit: DEFAULT_SEARCH_LIMIT }, context);
+    throwIfAborted(options.signal);
+    const result = await this.listFiles(
+      { pattern, limit: DEFAULT_SEARCH_LIMIT, signal: options.signal },
+      context,
+    );
 
     const filesWithContent: Array<{ path: string; content: string }> = [];
     const filesNeedingContent: string[] = [];
@@ -664,9 +706,10 @@ export class VeryfrontApiClient {
     const fetched = await Promise.all(
       filesNeedingContent.map(async (path) => {
         try {
-          const content = await this.getFileContent(path, {}, context);
+          const content = await this.getFileContent(path, { signal: options.signal }, context);
           return { path, content };
         } catch (error) {
+          throwIfAborted(options.signal);
           logger.debug("Failed to fetch file content during search", { path, error });
           return null;
         }
@@ -707,8 +750,9 @@ export class VeryfrontApiClient {
     basePath: string,
     extensionPriority = [".tsx", ".ts", ".jsx", ".js", ".mdx", ".md"],
     context: FileContext = this.getContext(),
+    options: { signal?: AbortSignal } = {},
   ): Promise<{ path: string; content: string } | null> {
-    const matches = await this.searchFilesWithContent(`${basePath}.*`, context);
+    const matches = await this.searchFilesWithContent(`${basePath}.*`, context, options);
     if (matches.length === 0) return null;
 
     matches.sort((a, b) => {
@@ -720,15 +764,20 @@ export class VeryfrontApiClient {
     return matches[0] ?? null;
   }
 
-  listPublishedFiles(_projectId?: string, releaseId?: string, environmentName?: string) {
+  listPublishedFiles(
+    _projectId?: string,
+    releaseId?: string,
+    environmentName?: string,
+    signal?: AbortSignal,
+  ) {
     const projectRef = this.requireProjectSlug();
 
     if (releaseId) {
-      return this.operations.listAllReleaseFiles(projectRef, releaseId);
+      return this.operations.listAllReleaseFiles(projectRef, releaseId, {}, signal);
     }
 
     if (environmentName) {
-      return this.operations.listAllEnvironmentFiles(projectRef, environmentName);
+      return this.operations.listAllEnvironmentFiles(projectRef, environmentName, { signal });
     }
 
     throw API_CLIENT_ERROR.create({

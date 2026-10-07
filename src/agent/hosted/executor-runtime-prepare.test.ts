@@ -188,6 +188,41 @@ async function prepare(
 }
 
 describe("executor runtime preparation", () => {
+  it("prepares without absent optional Studio but rejects required or granted missing facades", async () => {
+    for (const required of [false, true, undefined]) {
+      const f = fixture({
+        config: {
+          mcpServers: [{
+            kind: "veryfront-studio",
+            ...(required === undefined ? {} : { required }),
+          }],
+        },
+      });
+      try {
+        const result = await prepare(f.owner);
+        if (required === false) {
+          assert(
+            result && typeof result === "object" && !Array.isArray(result) && result.ok === true,
+          );
+        } else assertEquals(result, { ok: false, code: "EXECUTOR_RUNTIME_CAPABILITY_UNAVAILABLE" });
+      } finally {
+        await f.owner.close();
+      }
+    }
+    const f = fixture({
+      config: { mcpServers: [{ kind: "veryfront-studio", required: false }] },
+      grant: { ...grant, remoteToolSourceIds: ["veryfront-studio"] },
+    });
+    try {
+      assertEquals(await prepare(f.owner), {
+        ok: false,
+        code: "EXECUTOR_RUNTIME_CAPABILITY_UNAVAILABLE",
+      });
+    } finally {
+      await f.owner.close();
+    }
+  });
+
   beforeEach(seedServedCatalogForTests);
   afterEach(__resetVeryfrontCloudCatalogForTests);
   it("accepts rules skill selector policies in serialized steering", () => {

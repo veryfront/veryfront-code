@@ -1622,6 +1622,241 @@ describe("ProxyFSAdapterManager", () => {
       }
     });
 
+    it("aborts abandoned initialization while retaining capacity until it physically drains", async () => {
+      const started = Promise.withResolvers<void>();
+      const drain = Promise.withResolvers<void>();
+      let transportSignal: AbortSignal | undefined;
+      const manager = createManager({
+        maxAdapters: 1,
+        adapterFactory: (config) => {
+          const adapter = new VeryfrontFSAdapter(config);
+          adapter.initialize = async (signal) => {
+            transportSignal = signal;
+            started.resolve();
+            await drain.promise;
+            signal?.throwIfAborted();
+          };
+          return adapter;
+        },
+      });
+      const controller = new AbortController();
+      const abandoned = manager.getAdapter(
+        "tenant-one",
+        "credential-one",
+        undefined,
+        false,
+        null,
+        null,
+        "main",
+        undefined,
+        controller.signal,
+      );
+      const rejected = assertRejects(() => abandoned, Error);
+      try {
+        await started.promise;
+        controller.abort();
+        assertEquals(transportSignal?.aborted, true);
+        const overload = await assertRejects(() =>
+          manager.getAdapter("tenant-two", "credential-two", undefined, false)
+        );
+        assertEquals((overload as { slug?: string }).slug, "service-overloaded");
+        drain.resolve();
+        await rejected;
+        const recovered = await manager.getAdapter(
+          "tenant-two",
+          "credential-two",
+          undefined,
+          false,
+        );
+        assertExists(recovered);
+      } finally {
+        drain.resolve();
+        await rejected;
+        manager.dispose();
+      }
+    });
+
+    it("lets a new caller abort while an abandoned initialization drains without releasing capacity", async () => {
+      const started = Promise.withResolvers<void>();
+      const drain = Promise.withResolvers<void>();
+      const manager = createManager({
+        maxAdapters: 1,
+        adapterFactory: (config) => {
+          const adapter = new VeryfrontFSAdapter(config);
+          adapter.initialize = async () => {
+            started.resolve();
+            await drain.promise;
+          };
+          return adapter;
+        },
+      });
+      const firstController = new AbortController();
+      const abandoned = manager.getAdapter(
+        "tenant-one",
+        "credential-one",
+        undefined,
+        false,
+        null,
+        null,
+        "main",
+        undefined,
+        firstController.signal,
+      );
+      const abandonedRejected = assertRejects(() => abandoned, Error);
+      try {
+        await started.promise;
+        firstController.abort();
+        await abandonedRejected;
+
+        const drainController = new AbortController();
+        const drainingCaller = manager.getAdapter(
+          "tenant-one",
+          "credential-one",
+          undefined,
+          false,
+          null,
+          null,
+          "main",
+          undefined,
+          drainController.signal,
+        );
+        const drainingRejected = assertRejects(() => drainingCaller, Error);
+        drainController.abort();
+        await drainingRejected;
+
+        const overload = await assertRejects(() =>
+          manager.getAdapter("tenant-two", "credential-two", undefined, false)
+        );
+        assertEquals((overload as { slug?: string }).slug, "service-overloaded");
+
+        drain.resolve();
+        const recovered = await manager.getAdapter(
+          "tenant-two",
+          "credential-two",
+          undefined,
+          false,
+        );
+        assertExists(recovered);
+      } finally {
+        drain.resolve();
+        await abandonedRejected;
+        manager.dispose();
+      }
+    });
+
+    it("retains capacity while a real adapter and client physical initialization ignore abort", async () => {
+      const started = Promise.withResolvers<void>();
+      const project = Promise.withResolvers<{
+        id: string;
+        provider: string;
+        layout: string;
+      }>();
+      let getProjectCalls = 0;
+      let listAllFilesCalls = 0;
+      let transportSignal: AbortSignal | undefined;
+      const manager = createManager({
+        maxAdapters: 1,
+        adapterFactory: (config) => {
+          const adapter = new VeryfrontFSAdapter({
+            ...config,
+            veryfront: {
+              ...config.veryfront!,
+              contentSource: { type: "branch", branch: "main" },
+              cache: { enabled: false },
+            },
+          });
+          const client = (adapter as unknown as {
+            client: {
+              operations: {
+                getProject(
+                  projectRef: string,
+                  signal?: AbortSignal,
+                ): Promise<{ id: string; provider: string; layout: string }>;
+              };
+              listAllFiles(): Promise<Array<{ path: string; content: string }>>;
+            };
+            wsManager: { connect(projectId: string): void };
+          }).client;
+          Object.defineProperty(client.operations, "getProject", {
+            value: (_projectRef: string, signal?: AbortSignal) => {
+              getProjectCalls++;
+              transportSignal = signal;
+              started.resolve();
+              return project.promise;
+            },
+          });
+          client.listAllFiles = () => {
+            listAllFilesCalls++;
+            return Promise.resolve([]);
+          };
+          (adapter as unknown as { wsManager: { connect(projectId: string): void } }).wsManager
+            .connect = () => {};
+          return adapter;
+        },
+      });
+      const controller = new AbortController();
+      const abandoned = manager.getAdapter(
+        "tenant-one",
+        "credential-one",
+        undefined,
+        false,
+        null,
+        null,
+        "main",
+        undefined,
+        controller.signal,
+      );
+      const abandonedRejected = assertRejects(() => abandoned, Error);
+      try {
+        await started.promise;
+        controller.abort();
+        await abandonedRejected;
+        assertEquals(transportSignal?.aborted, true);
+        assertEquals(getProjectCalls, 1);
+
+        const overload = await assertRejects(() =>
+          manager.getAdapter("tenant-two", "credential-two", undefined, false)
+        );
+        assertEquals((overload as { slug?: string }).slug, "service-overloaded");
+        assertEquals(getProjectCalls, 1);
+        assertEquals(listAllFilesCalls, 0);
+
+        project.resolve({
+          id: "11111111-2222-3333-4444-555555555555",
+          provider: "veryfront",
+          layout: "default",
+        });
+        let recovered: VeryfrontFSAdapter | undefined;
+        await waitFor(async () => {
+          try {
+            recovered = await manager.getAdapter(
+              "tenant-two",
+              "credential-two",
+              undefined,
+              false,
+            );
+            return true;
+          } catch (error) {
+            if ((error as { slug?: string }).slug === "service-overloaded") return false;
+            throw error;
+          }
+        }, {
+          message: "capacity must recover after the ignored transport abort settles",
+        });
+        assertExists(recovered);
+        assertEquals(getProjectCalls, 2);
+        assertEquals(listAllFilesCalls, 1);
+      } finally {
+        project.resolve({
+          id: "11111111-2222-3333-4444-555555555555",
+          provider: "veryfront",
+          layout: "default",
+        });
+        await abandonedRejected;
+        manager.dispose();
+      }
+    });
+
     it("reserves capacity for pending adapter initialization", async () => {
       const initializationGate = Promise.withResolvers<void>();
       const firstInitializationStarted = Promise.withResolvers<void>();

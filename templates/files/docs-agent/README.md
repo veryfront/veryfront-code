@@ -27,13 +27,13 @@ A chatbot that answers questions from your own documents using Retrieval-Augment
    npx veryfront dev
    ```
 
-3. Index the sample docs in `content/`:
+3. Open `/uploads` and upload a sample document from `content/`.
 
-   ```bash
-   curl -X POST http://localhost:3000/api/ingest
-   ```
+4. Open the Chat tab and ask a question about your document.
 
-4. Open the app and upload a document or ask a question.
+The `/api/ingest` route indexes all bundled documents. Call it from your app
+with `csrfMutationHeaders` from `veryfront/index.client`; a bare POST without the
+CSRF cookie and matching header returns 403 in development and after deployment.
 
 If you are using a self-hosted Veryfront API, also set `VERYFRONT_API_URL`.
 

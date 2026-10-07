@@ -322,6 +322,88 @@ describe("ReadOperations", () => {
   });
 
   describe("readTextFile", () => {
+    it("does not let a caller abort signal cancel an unrelated shared in-flight read", async () => {
+      const normalStarted = Promise.withResolvers<void>();
+      const signalStarted = Promise.withResolvers<void>();
+      const releaseNormal = Promise.withResolvers<void>();
+      const controller = new AbortController();
+      const signals: Array<AbortSignal | undefined> = [];
+      let calls = 0;
+      const client = createMockClient({
+        getFileContent: async (path: string, options?: { signal?: AbortSignal }) => {
+          assertEquals(path, "pages/index.tsx");
+          const callIndex = calls;
+          calls += 1;
+          signals.push(options?.signal);
+          if (callIndex === 0) {
+            normalStarted.resolve();
+            await releaseNormal.promise;
+            return "normal content";
+          }
+          signalStarted.resolve();
+          return await new Promise<string>((_resolve, reject) => {
+            options?.signal?.addEventListener(
+              "abort",
+              () => reject(new Error("caller cancelled")),
+              { once: true },
+            );
+          });
+        },
+      });
+      const readOps = createReadyReadOps(client, false, createBranchContext());
+
+      const normal = readOps.readTextFile("pages/index.tsx");
+      await normalStarted.promise;
+      const signaled = readOps.readTextFile("pages/index.tsx", { signal: controller.signal });
+      await signalStarted.promise;
+
+      controller.abort();
+      await assertRejects(() => signaled, Error, "caller cancelled");
+      releaseNormal.resolve();
+      assertEquals(await normal, "normal content");
+      assertEquals(calls, 2);
+      assertEquals(signals, [undefined, controller.signal]);
+    });
+
+    it("cancels API extension resolution for extensionless branch reads", async () => {
+      const resolutionStarted = Promise.withResolvers<void>();
+      const controller = new AbortController();
+      let observedSignal: AbortSignal | undefined;
+      let fallbackReads = 0;
+      const client = createMockClient({
+        resolveFileWithExtension: (
+          _basePath: string,
+          _extensionPriority: string[],
+          _context: unknown,
+          options?: { signal?: AbortSignal },
+        ) => {
+          observedSignal = options?.signal;
+          resolutionStarted.resolve();
+          if (!options?.signal) return Promise.reject(new Error("missing resolution signal"));
+          return new Promise((_resolve, reject) => {
+            options.signal?.addEventListener(
+              "abort",
+              () => reject(options.signal?.reason),
+              { once: true },
+            );
+          });
+        },
+        getFileContent: () => {
+          fallbackReads += 1;
+          return Promise.resolve("unexpected fallback");
+        },
+      });
+      const readOps = createReadyReadOps(client, false, createBranchContext());
+
+      const read = readOps.readTextFile("components/Button", { signal: controller.signal });
+      await resolutionStarted.promise;
+      assertEquals(observedSignal, controller.signal);
+
+      controller.abort(new Error("caller cancelled"));
+      await assertRejects(() => read, Error, "caller cancelled");
+      assertEquals(fallbackReads, 0);
+    });
+
     it("should fetch draft content for branch context", async () => {
       let fetchedPath: string | undefined;
       const client = createMockClient({
@@ -944,6 +1026,27 @@ describe("ReadOperations", () => {
       // All non-original extensions are fetched in parallel
       assertEquals(publishedFetchPaths.includes("pages/guide.tsx"), true);
       assertEquals(publishedFetchPaths.includes("pages/guide.jsx"), true);
+    });
+
+    it("preserves caller cancellation during published extension fallback", async () => {
+      const controller = new AbortController();
+      const reason = new Error("caller cancelled extension fallback");
+      const client = createMockClient({
+        getPublishedFileContent: (path: string) => {
+          if (path === "pages/guide.tsx") return Promise.reject(notFoundError());
+          controller.abort(reason);
+          return Promise.reject(reason);
+        },
+        resolveFileWithExtension: () => Promise.reject(new Error("pattern search unavailable")),
+      });
+      const readOps = createReadyReadOps(client, false, createReleaseContext("release-cancelled"));
+
+      const error = await assertRejects(
+        () => readOps.readTextFile("pages/guide.tsx", { signal: controller.signal }),
+        Error,
+        reason.message,
+      );
+      assertEquals(error, reason);
     });
 
     it("should return highest-priority extension when multiple match in parallel fallback", async () => {
