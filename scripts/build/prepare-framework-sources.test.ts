@@ -1,10 +1,29 @@
-import { assertEquals } from "#std/assert";
+import { assertEquals, assertRejects } from "#std/assert";
 import { join } from "#std/path.ts";
 import { describe, it } from "#std/testing/bdd";
 import { prepareFrameworkSources } from "./prepare-framework-sources.ts";
 import { ROOT_BUNDLED_EXTENSION_SOURCES } from "../../src/extensions/root-bundled-sources.ts";
 
 describe("prepareFrameworkSources", () => {
+  it("fails if an explicitly selected distribution lacks required bundled sources", async () => {
+    const root = await Deno.makeTempDir();
+    try {
+      const srcRoot = join(root, "src");
+      await Deno.mkdir(srcRoot);
+      await assertRejects(
+        () =>
+          prepareFrameworkSources({
+            srcRoot,
+            outputDir: join(root, "dist"),
+            frameworkRoot: root,
+          }),
+        Deno.errors.NotFound,
+      );
+    } finally {
+      await Deno.remove(root, { recursive: true });
+    }
+  });
+
   it("excludes tests and test helpers from binary framework sources", async () => {
     const temporaryRoot = await Deno.makeTempDir();
     const sourceRoot = join(temporaryRoot, "src");
@@ -40,6 +59,7 @@ describe("prepareFrameworkSources", () => {
       const result = await prepareFrameworkSources({
         srcRoot: sourceRoot,
         outputDir: outputRoot,
+        frameworkRoot: temporaryRoot,
       });
 
       assertEquals(

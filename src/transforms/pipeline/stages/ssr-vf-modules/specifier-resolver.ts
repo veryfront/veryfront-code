@@ -83,6 +83,8 @@ export function createFrameworkSpecifierResolver(
   const reactImportMap = input.reactImportMap ?? getReactImportMap(input.reactVersion);
 
   return (specifier: string): string | null => {
+    // The transform populates this map only from validated framework source
+    // imports, excluding React and the separate #deno-config stub.
     const frameworkReplacement = input.veryfrontReplacements.get(specifier);
     if (frameworkReplacement) return frameworkReplacement;
     if (specifier === "#deno-config") {

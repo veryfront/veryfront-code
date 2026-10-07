@@ -46,6 +46,11 @@ URL. This preserves shared environment readers and registry state. The source
 resolver accepts only exact root-bundled package entries. It does not expose
 extension subpaths or permit paths outside the framework source boundaries.
 
+Custom `srcRoot` calls to `prepareFrameworkSources` copy only that source tree.
+Set `frameworkRoot` explicitly to include required root-bundled entries from a
+custom distribution. The default production build includes them automatically
+and fails if an entry is missing.
+
 ## Change checks
 
 - Add tests for route collection, manifest output, generated assets, and
