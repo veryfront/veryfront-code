@@ -59,6 +59,7 @@ jobs:
         id: maintenance
         env:
           RELEASE_NUMBER: ${{ inputs.maintenance_release_number }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           if ! [[ "$RELEASE_NUMBER" =~ ^[1-9][0-9]*$ ]]; then
             echo "::error::maintenance_release_number must be a positive integer RC build number." >&2
@@ -70,6 +71,16 @@ jobs:
           fi
           if [ "${BASH_REMATCH[1]}" != "$RELEASE_NUMBER" ]; then
             echo "::error::maintenance_release_number must match the maintenance branch suffix." >&2
+            exit 1
+          fi
+          if [ "${GITHUB_REF_PROTECTED:-false}" != "true" ]; then
+            echo "::error::Maintenance source branch must be protected." >&2
+            exit 1
+          fi
+          branch_name="$(jq -rn --arg branch "${GITHUB_REF#refs/heads/}" '$branch | @uri')"
+          branch_identity="$(gh api "repos/${GITHUB_REPOSITORY}/branches/${branch_name}" --jq '{sha: .commit.sha, protected: .protected}')"
+          if ! jq -e --arg sha "${GITHUB_SHA}" '.protected == true and .sha == $sha' <<< "$branch_identity" >/dev/null; then
+            echo "::error::Maintenance source branch protection or exact commit differs." >&2
             exit 1
           fi
           echo "release_number=$RELEASE_NUMBER" >> "$GITHUB_OUTPUT"

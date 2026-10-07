@@ -225,14 +225,55 @@ describe("tested merge-queue run workflow", () => {
     }
   });
 
+  it("rejects unprotected, moved or unreadable maintenance branches before recording a release", async () => {
+    const tested = job(await readJobs(), "tested-run");
+    const validation = String(namedStep(tested, "Validate maintenance release number").run);
+    for (
+      const [protectedRef, identity, failRead] of [
+        ["false", '{"sha":"expected-head","protected":true}', "false"],
+        ["true", '{"sha":"expected-head","protected":false}', "false"],
+        ["true", '{"sha":"different-head","protected":true}', "false"],
+        ["true", '{"sha":"expected-head","protected":true}', "true"],
+      ]
+    ) {
+      const output = await new Deno.Command("bash", {
+        args: [
+          "-c",
+          'gh() { if [ "$FAIL_READ" = true ]; then return 1; fi; echo "$BRANCH_IDENTITY"; }\n' +
+          validation,
+        ],
+        env: {
+          GITHUB_OUTPUT: "/dev/null",
+          GITHUB_REF: "refs/heads/maintenance/rc.21996",
+          RELEASE_NUMBER: "21996",
+          GITHUB_REF_PROTECTED: protectedRef,
+          GITHUB_REPOSITORY: "veryfront/test",
+          GITHUB_SHA: "expected-head",
+          BRANCH_IDENTITY: identity,
+          FAIL_READ: failRead,
+        },
+        stdout: "piped",
+        stderr: "piped",
+      }).output();
+      assertEquals(output.code === 0, false);
+      assertEquals(new TextDecoder().decode(output.stdout).includes("release_number="), false);
+    }
+  });
+
   it("accepts maintenance RC publication only from the matching maintenance branch", async () => {
     const tested = job(await readJobs(), "tested-run");
     const validation = String(namedStep(tested, "Validate maintenance release number").run);
     const outputPath = await Deno.makeTempFile();
     try {
       const output = await new Deno.Command("bash", {
-        args: ["-c", validation],
+        args: [
+          "-c",
+          'gh() { echo "{\\"sha\\":\\"expected-head\\",\\"protected\\":true}"; }\n' + validation,
+        ],
         env: {
+          GITHUB_REF_PROTECTED: "true",
+          GITHUB_REPOSITORY: "veryfront/test",
+          GITHUB_SHA: "expected-head",
           GITHUB_OUTPUT: outputPath,
           GITHUB_REF: "refs/heads/maintenance/rc.21996",
           RELEASE_NUMBER: "21996",
