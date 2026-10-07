@@ -2678,6 +2678,7 @@ describe("RC metadata verification order", () => {
         "canonical_tarball_for_package_dir() { echo package.tgz; }",
         'jq() { echo "$PACKAGE_DIR"; }',
         'rc_tag_for_package() { if [ "$1" = extension ]; then echo rc-history; else echo rc; fi; }',
+        "npm() { return 1; }",
         'rc_publish_package_dir() { echo "UNSAFE-PUBLISH"; }',
         "run_rc_publish",
       ].join("\n"),
@@ -2695,13 +2696,55 @@ describe("RC metadata verification order", () => {
     );
   });
 
+  it("refuses a maintenance batch before any publish if a later immutable version belongs to another commit", async () => {
+    const output = await runBash(
+      [
+        "set -euo pipefail",
+        'source "$SCRIPT_PATH"',
+        "verify_npm_compatibility_artifact() { :; }",
+        "package_dirs() { printf '%s\\n' extension npm; }",
+        "canonical_tarball_for_package_dir() { echo package.tgz; }",
+        'jq() { echo "$PACKAGE_DIR"; }',
+        "rc_tag_for_package() { echo rc-history; }",
+        'npm() { case "$*" in "view npm@0.1.0-rc.1 version") echo 0.1.0-rc.1 ;; "view npm@0.1.0-rc.1 gitHead") echo other-head ;; "view "*" version") return 1 ;; *) return 90 ;; esac; }',
+        'rc_publish_package_dir() { echo "UNSAFE-PUBLISH"; }',
+        "run_rc_publish",
+      ].join("\n"),
+      {
+        VERSION: "0.1.0-rc.1",
+        GITHUB_SHA: "expected-head",
+        NPM_PACK_DIR: "artifact",
+        NPM_MAINTENANCE_RELEASE: "true",
+      },
+    );
+    assertEquals(output.code, 1);
+    assertStringIncludes(
+      decoder.decode(output.stderr),
+      "npm@0.1.0-rc.1 already exists, but its gitHead does not match this commit.",
+    );
+    assertEquals(
+      decoder.decode(output.stdout).includes("UNSAFE-PUBLISH"),
+      false,
+    );
+  });
+
   it("keeps maintenance dispatch disabled while retaining the release gates", async () => {
     const workflow = parse(
-      await Deno.readTextFile(new URL("../../.github/workflows/cicd.yml", import.meta.url)),
+      await Deno.readTextFile(
+        new URL("../../.github/workflows/cicd.yml", import.meta.url),
+      ),
     ) as {
       jobs: Record<
         string,
-        { if?: string; steps?: Array<{ name?: string; if?: string }> }
+        {
+          if?: string;
+          steps?: Array<{
+            name?: string;
+            if?: string;
+            env?: Record<string, string>;
+            run?: string;
+          }>;
+        }
       >;
     };
     for (
@@ -2721,5 +2764,20 @@ describe("RC metadata verification order", () => {
         );
       }
     }
+    const githubRelease = workflow.jobs["publish-public-release"].steps?.find(
+      (step) => step.name === "Create GitHub releases",
+    );
+    assertEquals(
+      githubRelease?.env?.MAINTENANCE_RELEASE,
+      "${{ github.event_name == 'workflow_dispatch' && inputs.maintenance_release_number != '' }}",
+    );
+    assertStringIncludes(
+      githubRelease?.run ?? "",
+      'install_target="veryfront@${VERSION}"',
+    );
+    assertStringIncludes(
+      githubRelease?.run ?? "",
+      'install_target="veryfront@rc"',
+    );
   });
 });
