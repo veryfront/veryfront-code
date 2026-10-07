@@ -42,6 +42,10 @@ const SONAR_COVERAGE_JOB_EXPRESSION =
   `\${{ !cancelled() && (needs.tested-run.outputs.reuse != 'true' || needs.version-check.outputs.is_stable != 'false') && (needs.tested-run.outputs.reuse == 'true' || (needs.coverage-shards.result == 'success' && needs.coverage-node-executor.result == 'success' && needs.coverage-integration-client.result == 'success')) && (${SONAR_REQUIRED_CONDITION}) }}`;
 const SONAR_JOB_EXPRESSION =
   `\${{ !cancelled() && (needs.tested-run.outputs.reuse != 'true' || needs.version-check.outputs.is_stable != 'false') && needs.sonar-coverage.result == 'success' && (${SONAR_REQUIRED_CONDITION}) }}`;
+const MAIN = "github.ref == 'refs/heads/main'";
+const MAINTENANCE =
+  "(github.event_name == 'workflow_dispatch' && inputs.maintenance_release_number != '')";
+const MAIN_OR_MAINTENANCE = `${MAIN} || ${MAINTENANCE}`;
 const REUSED_RUN_ID_EXPRESSION =
   "${{ needs.tested-run.outputs.reuse == 'true' && needs.tested-run.outputs.run_id || '' }}";
 const TESTED_RUN_ID_EXPRESSION = "${{ needs.tested-run.outputs.run_id || github.run_id }}";
@@ -1125,7 +1129,7 @@ describe("trusted merge-group cancellation workflow", () => {
       if (name === "version-check") {
         assertEquals(
           asRecord(jobs[name], name).if,
-          "${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && github.ref == 'refs/heads/main' }}",
+          `\${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && (${MAIN_OR_MAINTENANCE}) }}`,
         );
         continue; // The merge queue ref is never refs/heads/main.
       }

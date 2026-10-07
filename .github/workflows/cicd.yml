@@ -2018,6 +2018,7 @@ jobs:
         env:
           VERSION: ${{ steps.version.outputs.version }}
           IS_STABLE: ${{ needs.version-check.outputs.is_stable }}
+          MAINTENANCE_RELEASE: ${{ github.event_name == 'workflow_dispatch' && inputs.maintenance_release_number != '' }}
           GH_TOKEN: ${{ steps.release-app-token.outputs.token }}
         run: |
           # Fixed workflow implementation, kept in parity with the tested helper.
@@ -2253,8 +2254,12 @@ jobs:
           ```'
             mode=--latest
           else
+            install_target="veryfront@rc"
+            if [[ "${MAINTENANCE_RELEASE}" == "true" ]]; then
+              install_target="veryfront@${VERSION}"
+            fi
             notes='```bash
-          npx veryfront@rc
+          npx '"${install_target}"'
           ```'
             mode=--prerelease
           fi

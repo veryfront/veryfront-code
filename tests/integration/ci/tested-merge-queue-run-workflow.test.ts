@@ -10,6 +10,11 @@ type YamlRecord = Record<string, unknown>;
 
 const TRUSTED =
   "(github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)";
+const MAIN = "github.ref == 'refs/heads/main'";
+const MAINTENANCE =
+  "(github.event_name == 'workflow_dispatch' && inputs.maintenance_release_number != '')";
+const MAIN_OR_MAINTENANCE = `${MAIN} || ${MAINTENANCE}`;
+const MAIN_WITHOUT_MAINTENANCE = `${MAIN} && inputs.maintenance_release_number == ''`;
 const SKIP_ON_REUSE = "!cancelled() && needs.tested-run.outputs.reuse != 'true'";
 const REUSED_RUN_ID_EXPRESSION =
   "${{ needs.tested-run.outputs.reuse == 'true' && needs.tested-run.outputs.run_id || '' }}";
@@ -151,18 +156,33 @@ async function runReleaseGate(env: Record<string, string>): Promise<Deno.Command
 }
 
 describe("tested merge-queue run workflow", () => {
-  it("decides on main only, with read access to other runs", async () => {
+  it("decides tested runs on main while accepting explicit maintenance RC numbers", async () => {
     const tested = job(await readJobs(), "tested-run");
 
     assertEquals(tested.if, `\${{ ${TRUSTED} }}`);
-    for (const step of steps(tested, "tested-run")) {
-      assertEquals(step.if, "github.ref == 'refs/heads/main'", "tested-run works on main only");
-    }
+    assertEquals(
+      namedStep(tested, "Validate maintenance release number").if,
+      "github.event_name == 'workflow_dispatch' && inputs.maintenance_release_number != ''",
+    );
+    assertEquals(
+      namedStep(tested, "Find the tested merge-queue run").if,
+      MAIN_WITHOUT_MAINTENANCE,
+      "tested-run lookup works on main only for normal releases",
+    );
+    assertEquals(
+      namedStep(tested, "Record release number").if,
+      MAIN_OR_MAINTENANCE,
+    );
+    assertEquals(
+      namedStep(tested, "Upload release number").if,
+      MAIN_OR_MAINTENANCE,
+    );
     assertEquals(tested.permissions, { actions: "read", contents: "read" });
     assertEquals(tested.outputs, {
       reuse: "${{ steps.decide.outputs.reuse || 'false' }}",
       run_id: "${{ steps.decide.outputs.run_id }}",
-      release_number: "${{ steps.decide.outputs.release_number || github.run_number }}",
+      release_number:
+        "${{ steps.maintenance.outputs.release_number || steps.decide.outputs.release_number || github.run_number }}",
     });
     assertStringIncludes(
       String(namedStep(tested, "Find the tested merge-queue run").run),
@@ -198,7 +218,7 @@ describe("tested merge-queue run workflow", () => {
 
     assertEquals(
       asRecord(upload.with, "release number upload").name,
-      "release-number-${{ steps.decide.outputs.release_number }}",
+      "release-number-${{ steps.maintenance.outputs.release_number || steps.decide.outputs.release_number }}",
     );
     for (const name of ["build-binaries", "prerelease", "release"]) {
       assert(needs(job(jobs, name)).includes("tested-run"), `${name} must wait for tested-run`);
@@ -344,7 +364,7 @@ describe("tested merge-queue run workflow", () => {
     assertEquals(gate.name, "quality gate (release)");
     assertEquals(
       gate.if,
-      `\${{ always() && ${TRUSTED} && github.ref == 'refs/heads/main' }}`,
+      `\${{ always() && ${TRUSTED} && (${MAIN_OR_MAINTENANCE}) }}`,
     );
     assertEquals(
       asRecord(namedStep(gate, "Require release test results").env, "env").REUSED_RUN_ID,
