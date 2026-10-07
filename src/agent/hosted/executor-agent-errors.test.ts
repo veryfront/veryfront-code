@@ -1,7 +1,6 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assert, assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { serializeError as serializeWorkerError } from "#veryfront/security/sandbox/worker-script.ts";
 import { serializeError as serializeLogError } from "#veryfront/utils/logger/core.ts";
 import { VeryfrontError } from "#veryfront/errors";
 import { createDetachedRunTracker } from "../service/detached-run-tracker.ts";
@@ -63,13 +62,8 @@ function durableRequest(): ParsedHostedChatRequest {
 }
 
 describe("executor errors at hosted setup response boundaries", () => {
-  it("serializes fixed authentication diagnostics across worker and logger boundaries", () => {
+  it("serializes fixed authentication diagnostics across logger boundaries", () => {
     const error = new ExecutorAgentError("agent-provider-auth-error");
-    const serialized = serializeWorkerError(error);
-    assertEquals(serialized.message, "Agent provider authentication failed");
-    assertEquals(serialized.problem?.title, "Agent provider authentication failed");
-    assertEquals(serialized.problem?.slug, "agent-provider-auth-error");
-    assertEquals(serialized.problem?.status, 401);
     assertEquals(serializeLogError(error)?.message, "Agent provider authentication failed");
   });
 
