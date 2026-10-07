@@ -22,6 +22,8 @@ import {
   assertResolvedSkillSelector,
   createNoneSkillSelectorSnapshot,
   type ResolvedSkillSelectorPolicy,
+  type SkillSelector,
+  skillSelectorPolicyToSelector,
 } from "#veryfront/skill/selector.ts";
 import { compareStrings } from "#veryfront/utils/compare.ts";
 
@@ -175,29 +177,29 @@ async function fetchSkillsWithFallback(input: {
 function resolveRefreshedSkillSnapshot(input: {
   skills: readonly RuntimeSkillDefinition[];
   agentId: string;
-  selector: true | false | readonly string[] | undefined;
+  selector: SkillSelector;
   policy: ResolvedSkillSelectorPolicy | undefined;
 }) {
-  if (
-    !input.policy &&
-    (input.selector === false || (Array.isArray(input.selector) && input.selector.length === 0))
-  ) {
-    return createNoneSkillSelectorSnapshot<RuntimeSkillDefinition>();
-  }
+  if (!input.policy) {
+    if (
+      input.selector === false ||
+      (Array.isArray(input.selector) && input.selector.length === 0)
+    ) {
+      return createNoneSkillSelectorSnapshot<RuntimeSkillDefinition>();
+    }
 
-  if (!input.policy && Array.isArray(input.selector)) {
     return resolveRuntimeSkillSelectorSnapshotForAgent({
       skills: input.skills,
       agentId: input.agentId,
-      selector: [...input.selector],
+      selector: Array.isArray(input.selector) ? [...input.selector] : input.selector,
     });
   }
 
-  if (!input.policy || input.policy.kind === "all-visible") {
+  if (input.policy.kind === "all-visible") {
     return resolveRuntimeSkillSelectorSnapshotForAgent({
       skills: input.skills,
       agentId: input.agentId,
-      selector: input.policy?.source === "true" ? true : undefined,
+      selector: input.policy.source === "true" ? true : undefined,
     });
   }
 
@@ -208,7 +210,7 @@ function resolveRefreshedSkillSnapshot(input: {
   return resolveRuntimeSkillSelectorSnapshotForAgent({
     skills: input.skills,
     agentId: input.agentId,
-    selector: input.policy.entries,
+    selector: skillSelectorPolicyToSelector(input.policy),
   });
 }
 

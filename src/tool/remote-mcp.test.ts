@@ -220,6 +220,7 @@ describe("tool/remote-mcp", () => {
   }, async () => {
     const BEARER = "Bearer vf-remote-mcp-run-token-canary-4b8e";
     const authorizations: (string | undefined)[] = [];
+    const writerTokens: (string | undefined)[] = [];
     const createSource = createRemoteMCPToolSourceFactoryWithTransport({
       trustedEndpoints: ["http://veryfront-api/mcp"],
       // Stands in for the native send: it reads the null-prototype record.
@@ -228,6 +229,7 @@ describe("tool/remote-mcp", () => {
         authorizations.push(
           headers && Object.hasOwn(headers, "authorization") ? headers.authorization : undefined,
         );
+        writerTokens.push(headers?.["x-veryfront-run-event-writer-token"]);
         const body = JSON.parse(String(init?.body)) as { id: string };
         return Promise.resolve(
           Response.json({ jsonrpc: "2.0", id: body.id, result: { tools: [] } }),
@@ -236,7 +238,10 @@ describe("tool/remote-mcp", () => {
     });
     const source = createSource({
       endpoint: "http://veryfront-api/mcp",
-      headers: { Authorization: BEARER },
+      headers: {
+        Authorization: BEARER,
+        "X-Veryfront-Run-Event-Writer-Token": "caller-supplied-writer-token",
+      },
     });
     // Project code loaded in the isolate: every Headers member native fetch
     // does not call itself, and the init getters, are replaced.
@@ -250,6 +255,7 @@ describe("tool/remote-mcp", () => {
     }
 
     assertEquals(authorizations, [BEARER]);
+    assertEquals(writerTokens, [undefined]);
     assertEquals(probes.saw(BEARER), false);
   });
 

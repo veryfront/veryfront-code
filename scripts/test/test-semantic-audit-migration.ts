@@ -964,15 +964,6 @@ export const TEST_SEMANTIC_AUDIT_MIGRATION_ENTRIES:
         "Inject a fetch or transport dependency owned by the test instead of replacing the shared runtime fetch and resolver.",
       "removalPr": "PR 4a",
     }),
-    entry("cli/shared/runtime-auth.test.ts", ["filesystem-write", "process"], {
-      "disposition": "integration-relocation",
-      "owner": "cli",
-      "rationale":
-        "Exercises filesystem mutation, process, server, network, browser, or multi-component runtime behavior outside the colocated unit boundary.",
-      "destination":
-        "tests/integration/semantic-unit-boundary/cli/shared/runtime-auth.test.ts",
-      "removalPr": "PR 4a",
-    }),
     entry("cli/skills/loader.test.ts", ["filesystem-write"], {
       "disposition": "integration-relocation",
       "owner": "cli",

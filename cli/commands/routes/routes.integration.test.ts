@@ -103,11 +103,18 @@ describe("CLI routes command", () => {
       }
 
       const parsed = JSON.parse(text) as {
-        pages: Array<{ pattern: string; file: string }>;
-        apis: Array<{ pattern: string; file: string }>;
+        success: boolean;
+        command: string;
+        data: {
+          pages: Array<{ pattern: string; file: string }>;
+          apis: Array<{ pattern: string; file: string }>;
+        };
       };
 
-      if (!Array.isArray(parsed.pages) || !Array.isArray(parsed.apis)) {
+      if (!parsed.success || parsed.command !== "routes") {
+        throw new Error("invalid json envelope");
+      }
+      if (!Array.isArray(parsed.data.pages) || !Array.isArray(parsed.data.apis)) {
         throw new Error("invalid json");
       }
     });

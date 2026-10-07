@@ -13,9 +13,9 @@ const getSchemaArgsSchema = defineSchema((v) =>
 
 const SchemaArgsSchema = lazySchema(getSchemaArgsSchema);
 
-const parseSchemaArgs = createArgParser(SchemaArgsSchema, {
+export const parseSchemaArgs = createArgParser(SchemaArgsSchema, {
   category: { keys: ["category", "c"], type: "string" },
-});
+}, { rejectUnknown: true });
 
 export async function handleSchemaCommand(args: ParsedArgs): Promise<void> {
   const opts = parseArgsOrThrow(parseSchemaArgs, "schema", args);

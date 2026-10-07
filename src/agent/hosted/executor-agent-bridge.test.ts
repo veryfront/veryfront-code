@@ -14,6 +14,7 @@ import {
   createExecutorHostedChatRuntimeAgent,
 } from "./executor-agent-bridge.ts";
 import { ExecutorAgentError } from "./executor-agent-schema.ts";
+import { getRuntimeObservation } from "#veryfront/runtime/runtime-observation-carrier.ts";
 
 const handle = "prepared-synthetic-runtime";
 const sourceIntegrationPolicy = { schemaVersion: 1, mode: "unrestricted" } as const;
@@ -198,6 +199,80 @@ describe("executor hosted agent bridge", () => {
       assertEquals(chunks.at(-1)?.type, "finish");
     } finally {
       persisted.resolve();
+      await channels.close();
+    }
+  });
+
+  it("carries trusted runtime observations through executor serialization and strips public chunks", async () => {
+    const stepId = "11111111-1111-4111-8111-111111111111";
+    const messageSpanId = "22222222-2222-4222-8222-222222222222";
+    const occurrenceId = "33333333-3333-4333-8333-333333333333";
+    let streamInput: HostedChatRuntimeStreamInput | undefined;
+    const channels = pair(
+      createExecutorAgentOperations({
+        preparedRuntimeHandle: handle,
+        startStream(input) {
+          streamInput = input;
+          return Promise.resolve(sse([
+            { type: "message-start", messageId: "executor-message" },
+            {
+              type: "data-veryfront.runtime_context",
+              data: { projectId: "project-1" },
+              privateRuntimeObservation: { version: 1, kind: "execution_entry", occurrenceId },
+            },
+            {
+              type: "step-start",
+              privateRuntimeObservation: { version: 1, kind: "step_started", stepId },
+            },
+            {
+              type: "text-delta",
+              id: "text-1",
+              delta: "hello",
+              privateRuntimeObservation: {
+                version: 1,
+                kind: "step_message",
+                stepId,
+                messageSpanId,
+              },
+            },
+            { type: "message-finish" },
+          ]));
+        },
+      }),
+    );
+    try {
+      const runtime = await createExecutorHostedChatRuntimeAgent({
+        channel: channels.broker,
+        preparedRuntimeHandle: handle,
+        runtimeObservations: true,
+      }).stream({ messages, abortSignal: new AbortController().signal });
+      const chunks = await collect(runtime.toUIMessageStream({
+        generateMessageId: () => "broker-message",
+      }));
+
+      assertEquals(streamInput?.runtimeObservations, true);
+      const observations = chunks.map((chunk) => getRuntimeObservation(chunk)).filter((value) =>
+        value !== undefined
+      );
+      assertEquals(observations.find((observation) => observation.kind === "execution_entry"), {
+        version: 1,
+        kind: "execution_entry",
+        occurrenceId,
+      });
+      assertEquals(observations.find((observation) => observation.kind === "step_started"), {
+        version: 1,
+        kind: "step_started",
+        stepId,
+      });
+      assertEquals(observations.find((observation) => observation.kind === "step_message"), {
+        version: 1,
+        kind: "step_message",
+        stepId,
+        messageSpanId,
+      });
+      assertEquals(JSON.stringify(chunks).includes("privateRuntimeObservation"), false);
+      assertEquals(JSON.stringify(chunks).includes(messageSpanId), false);
+    } finally {
       await channels.close();
     }
   });

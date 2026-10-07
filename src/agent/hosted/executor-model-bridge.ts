@@ -1,4 +1,5 @@
 const hasOwn = Object.hasOwn;
+import { randomUUID } from "node:crypto";
 import {
   readServedVeryfrontCloudCatalogModel,
   readVeryfrontCloudModelFacts,
@@ -42,6 +43,7 @@ export interface ExecutorModelDispatch {
   readonly identity: {
     readonly binding: ExecutorOperationContext["binding"];
     readonly sequence: number;
+    readonly modelCallId: string;
   };
   readonly mode: "generate" | "stream";
   readonly model: ExecutorModelMetadata;
@@ -51,6 +53,8 @@ export interface ExecutorModelDispatch {
 /** Recheck owner authority synchronously at the provider invocation boundary. */
 export interface ExecutorModelDispatchPermit {
   assertActive(): void;
+  /** Enter the owner-selected scope for this exact provider invocation. */
+  run?<T>(operation: () => T): T;
 }
 
 /** Generic broker hook; hosted callers use the required persistence wrapper. */
@@ -110,13 +114,14 @@ export function createExecutorModelBroker(options: {
       throw new TypeError("Managed model call limit exceeded");
     }
     const callSequence = ++sequence;
+    const modelCallId = randomUUID();
     if (beforeModelDispatch || normalizeModelCall) {
       const metadata = parseExecutorModelData(
         getExecutorModelMetadataSchema(),
         executorModelJson([modelMetadata(call.modelId, call.model)]),
       )[0]!;
       const snapshot = (): ExecutorModelDispatch => ({
-        identity: { binding: { ...context.binding }, sequence: callSequence },
+        identity: { binding: { ...context.binding }, sequence: callSequence, modelCallId },
         mode,
         model: parseExecutorModelData(
           getExecutorModelMetadataSchema(),
@@ -221,7 +226,9 @@ export function createExecutorModelBroker(options: {
           const permit = await authorizeDispatch(call, "generate", context);
           context.signal.throwIfAborted();
           permit?.assertActive();
-          result = await call.model.doGenerate({ ...call.options, abortSignal: context.signal });
+          const dispatch = () =>
+            call.model.doGenerate({ ...call.options, abortSignal: context.signal });
+          result = await (permit?.run ? permit.run(dispatch) : dispatch());
         } catch (error) {
           return modelFailureOrThrow(error, context);
         }
@@ -248,7 +255,9 @@ export function createExecutorModelBroker(options: {
           const permit = await authorizeDispatch(call, "stream", context);
           context.signal.throwIfAborted();
           permit?.assertActive();
-          result = await call.model.doStream({ ...call.options, abortSignal: context.signal });
+          const dispatch = () =>
+            call.model.doStream({ ...call.options, abortSignal: context.signal });
+          result = await (permit?.run ? permit.run(dispatch) : dispatch());
         } catch (error) {
           yield modelFailureOrThrow(error, context);
           return;

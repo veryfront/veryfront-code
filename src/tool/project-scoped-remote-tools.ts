@@ -222,6 +222,19 @@ export function hydrateProjectScopedRemoteToolInput(input: {
     input.toolInput,
     "project_reference",
   );
+  // Integration catalog reads do not select private connection readiness. That
+  // mode requires project_reference and tool_name together; adding only the
+  // project would turn a valid catalog lookup into an invalid selection request.
+  if (
+    (input.toolDefinition.name === "get_integration" ||
+      input.toolDefinition.name === "veryfront__get_integration") &&
+    !requiresProjectReference(input.toolDefinition) &&
+    hasToolProperty(input.toolDefinition, "tool_name") &&
+    !projectReferenceDescriptor &&
+    !Object.getOwnPropertyDescriptor(input.toolInput, "tool_name")
+  ) {
+    return input.toolInput;
+  }
   if (
     projectReferenceDescriptor &&
     "value" in projectReferenceDescriptor &&

@@ -15,7 +15,10 @@ import {
 import { deleteEnv, getEnv, setEnv } from "#veryfront/platform/compat/process.ts";
 import { makeTempDir, remove } from "#veryfront/platform/compat/fs.ts";
 import { deleteToken } from "../auth/token-store.ts";
-import { createTestEnvironmentConfig } from "#veryfront/config/environment-config.ts";
+import {
+  _resetEnvironmentConfig,
+  createTestEnvironmentConfig,
+} from "#veryfront/config/environment-config.ts";
 import { observeFetchRequestInit, withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import {
   fetchRemoteProjects,
@@ -34,18 +37,24 @@ describe("project-discovery", () => {
     originalXdgConfig = getEnv("XDG_CONFIG_HOME");
   });
 
+  function tokenStoreEnv() {
+    return createTestEnvironmentConfig({ xdgConfigHome: tempDir });
+  }
+
   beforeEach(async () => {
     setEnv("XDG_CONFIG_HOME", tempDir);
-    await deleteToken();
+    _resetEnvironmentConfig();
+    await deleteToken(tokenStoreEnv());
   });
 
   afterEach(async () => {
-    await deleteToken();
+    await deleteToken(tokenStoreEnv());
     if (originalXdgConfig == null) {
       deleteEnv("XDG_CONFIG_HOME");
     } else {
       setEnv("XDG_CONFIG_HOME", originalXdgConfig);
     }
+    _resetEnvironmentConfig();
   });
 
   afterAll(async () => {

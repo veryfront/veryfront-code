@@ -7,8 +7,11 @@ import { deleteEnv, setEnv } from "#veryfront/compat/process.ts";
 import { join } from "#veryfront/compat/path";
 import { VeryfrontError } from "#veryfront/errors";
 import { runWithRequestContext } from "#veryfront/platform/adapters/fs/veryfront/multi-project-adapter.ts";
+import { runWithVeryfrontCloudContext } from "#veryfront/provider/veryfront-cloud/context.ts";
 import { withLocalJsonStoreLock } from "./local-json-store-lock.ts";
 import { ragStore } from "./rag-store.ts";
+import { createVeryfrontCloudRagStore } from "./veryfront-cloud/rag-store.ts";
+import { ensureBuiltinLLMProviders } from "#veryfront/extensions/builtin-extensions.ts";
 import { clearEmbeddingProviders, registerEmbeddingProvider } from "./resolve.ts";
 
 const CLOUD_ENV_KEYS = [
@@ -40,6 +43,29 @@ function registerTestEmbeddingProvider(): void {
         return {
           embeddings: values.map((value, index) => {
             const vector = new Array<number>(1536).fill(index);
+            vector[0] = value.length;
+            return vector;
+          }),
+          usage: { tokens: 0 },
+          rawResponse: undefined,
+          warnings: [],
+        };
+      },
+    }) as never);
+}
+
+function registerTestLocalEmbeddingProvider(): void {
+  registerEmbeddingProvider("local", () =>
+    ({
+      specificationVersion: "v2",
+      provider: "local",
+      modelId: "local/test-auto",
+      maxEmbeddingsPerCall: undefined,
+      supportsParallelCalls: true,
+      async doEmbed({ values }: { values: string[] }) {
+        return {
+          embeddings: values.map((value, index) => {
+            const vector = new Array<number>(384).fill(index);
             vector[0] = value.length;
             return vector;
           }),
@@ -248,6 +274,46 @@ describe("ragStore", () => {
       } finally {
         Object.defineProperty(Deno, "writeTextFile", writeTextFileDescriptor);
       }
+    });
+  });
+
+  it("rejects invalid document sizes before local store writes", async () => {
+    await withTempDir(async (tempDir) => {
+      const storagePath = join(tempDir, "data", "index.json");
+      const store = ragStore({
+        model: "local/test-model",
+        storagePath,
+      });
+
+      for (const size of [-1, 1.5, NaN, Infinity]) {
+        const error = await assertRejects(
+          () => store.ingest("Doc", "Hello world", { size }),
+          VeryfrontError,
+          "RAG document size must be a non-negative integer",
+        );
+        assert(error instanceof VeryfrontError);
+        assertEquals(error.slug, "invalid-argument");
+      }
+
+      assertEquals(await exists(storagePath), false);
+    });
+  });
+
+  it("accepts zero as a local document size", async () => {
+    await withTempDir(async (tempDir) => {
+      const storagePath = join(tempDir, "data", "index.json");
+      const store = ragStore({
+        model: "local/test-model",
+        storagePath,
+      });
+
+      const id = await store.ingest("Empty file", "Hello world", { size: 0 });
+      const documents = await store.listDocuments();
+
+      assertEquals(documents.length, 1);
+      assertEquals(documents[0]?.id, id);
+      assertEquals(documents[0]?.title, "Empty file");
+      assertEquals(documents[0]?.size, 0);
     });
   });
 
@@ -1451,6 +1517,62 @@ describe("ragStore", () => {
     });
   });
 
+  it("rejects invalid document sizes before cloud RAG requests", async () => {
+    setEnv("VERYFRONT_API_TOKEN", "vf_test_cloud");
+    setEnv("VERYFRONT_PROJECT_SLUG", "cloud-project");
+
+    let fetchCalls = 0;
+    await withMockFetch(
+      () => {
+        fetchCalls++;
+        throw new Error("fetch should not run for invalid document sizes");
+      },
+      async () => {
+        const store = ragStore({ model: "test/demo" });
+
+        for (const size of [-1, 1.5, NaN, Infinity]) {
+          const error = await assertRejects(
+            () => store.ingest("Cloud Doc", "Hello cloud world", { size }),
+            VeryfrontError,
+            "RAG document size must be a non-negative integer",
+          );
+          assert(error instanceof VeryfrontError);
+          assertEquals(error.slug, "invalid-argument");
+        }
+      },
+    );
+
+    assertEquals(fetchCalls, 0);
+  });
+
+  it("rejects invalid document sizes before direct cloud RAG requests", async () => {
+    setEnv("VERYFRONT_API_TOKEN", "vf_test_cloud");
+    setEnv("VERYFRONT_PROJECT_SLUG", "cloud-project");
+
+    let fetchCalls = 0;
+    await withMockFetch(
+      () => {
+        fetchCalls++;
+        throw new Error("fetch should not run for invalid direct cloud document sizes");
+      },
+      async () => {
+        const store = createVeryfrontCloudRagStore({ model: "test/demo" });
+
+        for (const size of [-1, 1.5, NaN, Infinity]) {
+          const error = await assertRejects(
+            () => store.ingest("Cloud Doc", "Hello cloud world", { size }),
+            VeryfrontError,
+            "RAG document size must be a non-negative integer",
+          );
+          assert(error instanceof VeryfrontError);
+          assertEquals(error.slug, "invalid-argument");
+        }
+      },
+    );
+
+    assertEquals(fetchCalls, 0);
+  });
+
   it("auto-upgrades to the veryfront-cloud backend when cloud bootstrap is present", async () => {
     setEnv("VERYFRONT_API_TOKEN", "vf_test_cloud");
     setEnv("VERYFRONT_PROJECT_SLUG", "cloud-project");
@@ -1634,11 +1756,14 @@ describe("ragStore", () => {
         const id = await store.ingest("Cloud Doc", "Hello cloud world", {
           source: "upload:cloud.txt",
           type: "txt",
+          size: 0,
         });
 
         const documents = await store.listDocuments();
         assertEquals(documents.length, 1);
         assertEquals(documents[0]?.id, id);
+        assertEquals(documents[0]?.size, 0);
+        assertEquals(ragDocuments.get(id)?.metadata?.size, 0);
 
         const results = await store.search("cloud", { topK: 1 });
         assertEquals(results.length, 1);
@@ -1656,6 +1781,75 @@ describe("ragStore", () => {
         assertEquals(await store.listDocuments(), []);
       },
     );
+  });
+
+  it("keeps auto RAG local when service-layer cloud has a token but no project slug", async () => {
+    setEnv("VERYFRONT_API_TOKEN", "vf_test_cloud");
+    setEnv("VERYFRONT_SERVICE_LAYER", "cloud");
+    registerTestLocalEmbeddingProvider();
+
+    await withTempDir(async (tempDir) => {
+      const storagePath = join(tempDir, "data", "index.json");
+      let fetchCalls = 0;
+
+      await withMockFetch(
+        () => {
+          fetchCalls++;
+          throw new Error("auto RAG without a project slug must not use cloud");
+        },
+        async () => {
+          const store = ragStore({ storagePath });
+
+          const id = await store.ingest("Local Doc", "hello local document", {
+            source: "upload:local.txt",
+            type: "txt",
+          });
+          const results = await store.search("hello", { topK: 1 });
+
+          assertEquals((await store.listDocuments()).map((document) => document.id), [id]);
+          assertEquals(results.length, 1);
+          assertEquals(results[0]?.documentId, id);
+          assertEquals(fetchCalls, 0);
+          assertEquals(await exists(storagePath), true);
+        },
+      );
+    });
+  });
+
+  it("keeps auto RAG local when scoped cloud credentials omit the project slug", async () => {
+    registerTestLocalEmbeddingProvider();
+
+    await withTempDir(async (tempDir) => {
+      const storagePath = join(tempDir, "data", "index.json");
+      let fetchCalls = 0;
+
+      await withMockFetch(
+        () => {
+          fetchCalls++;
+          throw new Error("auto RAG without a scoped project slug must not use cloud");
+        },
+        async () => {
+          const store = ragStore({ storagePath });
+
+          await runWithVeryfrontCloudContext(
+            { apiToken: "vf_scoped_token" },
+            async () => {
+              const id = await store.ingest("Scoped Local Doc", "hello scoped local document", {
+                source: "upload:scoped-local.txt",
+                type: "txt",
+              });
+              const results = await store.search("scoped", { topK: 1 });
+
+              assertEquals((await store.listDocuments()).map((document) => document.id), [id]);
+              assertEquals(results.length, 1);
+              assertEquals(results[0]?.documentId, id);
+            },
+          );
+          assertEquals(fetchCalls, 0);
+          assertEquals(await exists(storagePath), true);
+        },
+      );
+    });
   });
 
   it("refuses cloud refresh and removal before mutation when the API has no document revision", async () => {
@@ -1787,7 +1981,7 @@ describe("ragStore", () => {
           type: "pptx",
           created_at: "2026-06-25T00:00:00.000Z",
           updated_at: "2026-06-25T00:00:00.000Z",
-          metadata: { filePath: ".veryfront/rag/documents/doc-pptx.pptx" },
+          metadata: { filePath: ".veryfront/rag/documents/doc-pptx.pptx", size: 24 },
         },
       ],
     ]);
@@ -1930,6 +2124,7 @@ describe("ragStore", () => {
           metadata: {
             filePath: refreshedFilePath,
             cleanupFilePaths: [".veryfront/rag/documents/doc-pptx.pptx"],
+            size: 24,
           },
         });
         const chunks = fileChunks.get(refreshedFilePath as string) ?? [];
@@ -1948,6 +2143,7 @@ describe("ragStore", () => {
           Record<string, unknown>
         >;
         assertEquals("filePath" in listedDocuments[0]!, false);
+        assertEquals(listedDocuments[0]?.size, 24);
       },
     );
   });
@@ -2102,6 +2298,84 @@ describe("ragStore", () => {
         assertEquals(fetchCalls, 0);
       },
     );
+  });
+
+  it("uses cloudModel for project-scoped cloud inference even with local JSON storage", async () => {
+    setEnv("VERYFRONT_API_TOKEN", "vf_test_cloud");
+    setEnv("VERYFRONT_PROJECT_SLUG", "cloud-project");
+    setEnv("VERYFRONT_RAG_BACKEND", "local-json");
+    ensureBuiltinLLMProviders();
+
+    await withTempDir(async (tempDir) => {
+      const storagePath = join(tempDir, "data", "index.json");
+      let gatewayEmbeddingUrl: string | undefined;
+      let projectSlugHeader: string | null = null;
+
+      await withMockFetch(
+        (input: string | URL | Request, init?: RequestInit) => {
+          const request = input instanceof Request ? input : new Request(input, init);
+          const url = new URL(request.url);
+
+          if (
+            request.method === "POST" &&
+            url.pathname === "/ai/v1beta/models/gemini-embedding-001:embedContent"
+          ) {
+            gatewayEmbeddingUrl = url.toString();
+            projectSlugHeader = request.headers.get("x-veryfront-project-slug");
+            return Promise.resolve(
+              Response.json({ embedding: { values: new Array(3072).fill(0.1) } }),
+            );
+          }
+
+          return Promise.resolve(new Response("unexpected request", { status: 500 }));
+        },
+        async () => {
+          const store = ragStore({
+            storagePath,
+            cloudModel: "veryfront-cloud/google/gemini-embedding-001",
+          });
+
+          await store.ingest("Cloud Doc", "cloud model document content", {
+            source: "upload:cloud.txt",
+            type: "txt",
+          });
+          await store.search("cloud model", { topK: 1 });
+        },
+      );
+
+      assertEquals(
+        gatewayEmbeddingUrl,
+        "https://api.veryfront.com/ai/v1beta/models/gemini-embedding-001:embedContent",
+      );
+      assertEquals(projectSlugHeader, "cloud-project");
+    });
+  });
+
+  it("ignores cloudModel for token-only cloud bootstrap without a project slug", async () => {
+    setEnv("VERYFRONT_API_TOKEN", "vf_test_cloud");
+    setEnv("VERYFRONT_SERVICE_LAYER", "cloud");
+
+    await withTempDir(async (tempDir) => {
+      const storagePath = join(tempDir, "data", "index.json");
+      let fetchCalls = 0;
+
+      await withMockFetch(
+        () => {
+          fetchCalls++;
+          return Promise.resolve(new Response("unexpected request", { status: 500 }));
+        },
+        async () => {
+          const store = ragStore({
+            storagePath,
+            cloudModel: "veryfront-cloud/google/gemini-embedding-001",
+          });
+
+          assertEquals(await store.listDocuments(), []);
+        },
+      );
+
+      assertEquals(fetchCalls, 0);
+    });
   });
 
   it("resolves cloud backend from request-scoped credentials at call time", async () => {

@@ -24,7 +24,7 @@ import {
   outputJson,
   setJsonMode,
   setOutputPath,
-} from "./shared/json-output.ts";
+} from "#cli/shared/json-output";
 import { detectCI, setAutoConfirm, setNonInteractive } from "./shared/interactive.ts";
 import type { ParsedArgs } from "./shared/types.ts";
 import { redactForSerialization } from "veryfront/utils";
@@ -37,7 +37,7 @@ type CommandLoader = () => Promise<CommandHandler>;
  * Aliases (e.g. "preview" → serve, "g" → generate) are duplicate entries.
  */
 const commands: Record<string, CommandLoader> = {
-  "init": async () => (await import("./commands/init/handler.ts")).handleInitCommand,
+  "init": async () => (await import("#cli/commands/init/handler")).handleInitCommand,
   "dev": async () => (await import("./commands/dev/handler.ts")).handleDevCommand,
   "build": async () => (await import("./commands/build/handler.ts")).handleBuildCommand,
   "preview": async () => (await import("./commands/serve/handler.ts")).handleServeCommand,
@@ -46,7 +46,7 @@ const commands: Record<string, CommandLoader> = {
   "clean": async () => (await import("./commands/clean/handler.ts")).handleCleanCommand,
   "analyze-chunks": async () =>
     (await import("./commands/analyze-chunks/handler.ts")).handleAnalyzeChunksCommand,
-  "routes": async () => (await import("./commands/routes/handler.ts")).handleRoutesCommand,
+  "routes": async () => (await import("#cli/commands/routes/handler")).handleRoutesCommand,
   "studio": async () => (await import("./commands/studio/handler.ts")).handleStudioCommand,
   "styles": async () => (await import("./commands/styles/handler.ts")).handleStylesCommand,
   "lock": async () => (await import("./commands/lock/handler.ts")).handleLockCommand,

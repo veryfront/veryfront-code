@@ -250,6 +250,19 @@ The runtime records `reason` `invalid` or `schema_uncompilable` for the
 depth, serialized without whitespace). A task without that schema records
 `null`. Runs created before identities existed are never revalidated.
 
+## Child runs
+
+Project runtimes provide `ctx.runChild({ target, input, idempotencyKey })`. It creates a durable child under the current Task, waits for completion, and returns its output. Children inherit the parent project, runtime, and original credential. Failed or cancelled children throw; a failed or cancelled parent cancels its descendants. Reuse the same key and input when retrying an invocation. Local CLI contexts omit this capability.
+
+```ts
+if (!ctx.runChild) throw new Error("Project runtime required");
+const result = await ctx.runChild({
+  target: { type: "workflow", id: "daily-brief" },
+  input: { topic: "release notes" },
+  idempotencyKey: "daily-brief",
+});
+```
+
 ## Waiting on child runs
 
 Tasks do not support durable child-dependency waiting. Using `await` inside

@@ -1,4 +1,5 @@
 import { createVeryfrontApiDownloadOutboundFetch } from "#veryfront/security/http/outbound-fetch.ts";
+import { createTaskChildRunner } from "./task-child.ts";
 import { createWorkflowAgentNodeRunner } from "./workflow-agent-child.ts";
 import { adaptManagedEvalRunStream } from "./managed-eval-run-stream.ts";
 import { RunStopRegistry } from "#veryfront/internal-agents/run-stop-registry.ts";
@@ -1086,6 +1087,7 @@ async function executeDiscoveredTaskRun(
   signal: AbortSignal,
   deps: ProjectRunExecuteHandlerDeps,
   control?: TaskDeadlineControl,
+  runChild?: ReturnType<typeof createTaskChildRunner>,
 ): Promise<ProjectRunExecuteResponse> {
   const taskId = stripTargetPrefix(request.target, "task:");
   if (taskId === "knowledge-ingest") {
@@ -1109,6 +1111,7 @@ async function executeDiscoveredTaskRun(
   control?.throwIfExpired();
   const result = await deps.runTask({
     task,
+    ...(runChild === undefined ? {} : { runChild }),
     ...(request.attempt === undefined ? {} : { attempt: request.attempt }),
     config: request.config ?? {},
     input: request.input,
@@ -3858,15 +3861,25 @@ function resolveStyleArtifactBuildSelector(
   config: Record<string, unknown>,
   ctx: HandlerContext,
 ): StyleArtifactBuildSelector {
-  const selector: StyleArtifactBuildSelector = {
-    branch: getStringConfig(config, ["branch"]) ?? optionalString(ctx.parsedDomain?.branch),
-    environmentName: getStringConfig(config, ["environment_name", "environmentName"]) ??
-      optionalString(ctx.environmentName),
-    releaseId: getStringConfig(config, ["release_id", "releaseId"]) ??
-      optionalString(ctx.releaseId),
+  const explicitSelector: StyleArtifactBuildSelector = {
+    branch: getStringConfig(config, ["branch"]),
+    environmentName: getStringConfig(config, ["environment_name", "environmentName"]),
+    releaseId: getStringConfig(config, ["release_id", "releaseId"]),
   };
-  const count = [selector.branch, selector.environmentName, selector.releaseId]
-    .filter((value) => typeof value === "string" && value.length > 0).length;
+  const hasExplicitSelector = ReflectApply(ArraySome, ObjectValues(explicitSelector), [
+    (value: unknown) => typeof value === "string" && value.length > 0,
+  ]) as boolean;
+  const selector: StyleArtifactBuildSelector = hasExplicitSelector ? explicitSelector : {
+    branch: optionalString(ctx.parsedDomain?.branch),
+    environmentName: optionalString(ctx.environmentName),
+    releaseId: optionalString(ctx.releaseId),
+  };
+  let count = 0;
+  if (typeof selector.branch === "string" && selector.branch.length > 0) count += 1;
+  if (typeof selector.environmentName === "string" && selector.environmentName.length > 0) {
+    count += 1;
+  }
+  if (typeof selector.releaseId === "string" && selector.releaseId.length > 0) count += 1;
 
   if (count !== 1) {
     throw INVALID_ARGUMENT.create({ detail: "Exactly one style artifact selector is required" });
@@ -4156,7 +4169,27 @@ function executeProjectRun(
             case "task:style-artifact-build":
               return await deps.executeStyleArtifactBuild({ request, ctx, req, signal });
             default:
-              return await executeDiscoveredTaskRun(request, ctx, req.signal, deps, control);
+              return await executeDiscoveredTaskRun(
+                request,
+                ctx,
+                req.signal,
+                deps,
+                control,
+                async (child) => {
+                  const apiUrl = requireHostPrivateApiHttps(resolveHostOwnedSourceApiBaseUrl());
+                  return await createTaskChildRunner({
+                    runId: request.runId,
+                    projectId: request.projectId,
+                    apiUrl,
+                    eventToken: readIngressCredential(req, INGRESS_RUN_EVENT_TOKEN_HEADER) ??
+                      undefined,
+                    authToken: getRuntimeApiToken(req, ctx),
+                    signal,
+                    fetch: createVeryfrontApiOriginBoundOutboundFetch(apiUrl),
+                    sleep: deps.sleep,
+                  })(child);
+                },
+              );
           }
         } finally {
           await acknowledgeStop?.();

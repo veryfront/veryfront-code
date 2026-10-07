@@ -6,6 +6,7 @@ import {
   patchDntDenoShim,
 } from "./dnt-polyfill.ts";
 import { NPM_DNT_COMPILER_OPTIONS } from "./dnt-compiler-options.ts";
+import { pruneUnreachableExtensionDirectories } from "./npm-extension-reachability.ts";
 import {
   bareImportPackageNames,
   createExtensionPackageSpecs,
@@ -105,10 +106,24 @@ async function buildExtensionPackage(
           await transpileDocumentExtractionWorker(options.rootDir, outDir);
         }
 
-        await removeUnusedBundledRootSource(outDir, pkg);
-        await removeDntImportMapArtifacts(outDir, spec);
-        await removeUnreferencedTopLevelDir(outDir, "react");
-        await removeUnreferencedDntDeps(outDir);
+        const graph = await pruneUnreachableExtensionDirectories({
+          outDir,
+          entryPointPaths: extensionPackageEntryPointPaths(pkg),
+        });
+        if (graph.kind === "complete") {
+          if (!graph.referencedTopLevelEntries.has("src")) {
+            await removeUnusedBundledRootSource(outDir, pkg);
+          }
+          if (!graph.referencedTopLevelEntries.has("deno.js")) {
+            await removeDntImportMapArtifacts(outDir, spec);
+          }
+          if (!graph.referencedTopLevelEntries.has("react")) {
+            await removeUnreferencedTopLevelDir(outDir, "react");
+          }
+          if (!graph.referencedTopLevelEntries.has("deps")) {
+            await removeUnreferencedDntDeps(outDir);
+          }
+        }
 
         await assertPackageEntryPointsExist({
           outDir,

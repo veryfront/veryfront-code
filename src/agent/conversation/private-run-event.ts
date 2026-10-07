@@ -203,6 +203,14 @@ export function isPrivateConversationRunEvent(value: unknown): boolean {
   }
   const messages = ownDataValue(value, "messages");
   if (!Array.isArray(messages) || !messages.every(isMessage)) return false;
+  const modelCallIdDescriptor = Object.getOwnPropertyDescriptor(value, "modelCallId");
+  if (
+    modelCallIdDescriptor !== undefined &&
+    (!("value" in modelCallIdDescriptor) || typeof modelCallIdDescriptor.value !== "string" ||
+      !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+        modelCallIdDescriptor.value,
+      ))
+  ) return false;
   const toolsDescriptor = Object.getOwnPropertyDescriptor(value, "tools");
   if (
     toolsDescriptor !== undefined &&
@@ -221,6 +229,7 @@ export function isPrivateConversationRunEvent(value: unknown): boolean {
   }
   return hasOnlyKeys(value as Record<string, unknown>, [
     "type",
+    "modelCallId",
     "model",
     "request",
     "messages",

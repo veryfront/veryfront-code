@@ -22,10 +22,11 @@ interface LiveAdapterToolState {
   dynamic?: boolean;
   deltas: string[];
   announced: boolean;
+  observedFromResult?: true;
 }
 
 export function createStreamLifecycleLiveAdapter(
-  input: { textPartId?: string },
+  input: { textPartId?: string; privateToolCallAdmissions?: boolean },
 ) {
   const tools = createPrivateMap<string, LiveAdapterToolState>();
   let activeTextPartId: string | undefined;
@@ -94,6 +95,7 @@ export function createStreamLifecycleLiveAdapter(
             ...(event.dynamic ? { dynamic: true } : {}),
             deltas: [],
             announced: false,
+            ...(event.observedFromResult ? { observedFromResult: true } : {}),
           });
           return [];
         }
@@ -111,6 +113,9 @@ export function createStreamLifecycleLiveAdapter(
               type: "tool-input-start",
               toolCallId: event.toolCallId,
               toolName: event.toolName,
+              ...(input.privateToolCallAdmissions && tool?.observedFromResult
+                ? { privateObservedToolResult: true }
+                : {}),
               ...(dynamic ? { dynamic: true } : {}),
             });
             for (let index = 0; tool && index < tool.deltas.length; index++) {

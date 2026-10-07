@@ -1,7 +1,7 @@
 ---
 title: "veryfront/task"
 description: "Source-defined tasks for Veryfront projects."
-order: 39
+order: 40
 ---
 
 ## Import
@@ -63,7 +63,8 @@ export default {
 | `ProjectTaskRuntimeOptions`   | Options for discovering tasks through the unified project runtime.          | [source](https://github.com/veryfront/veryfront-code/blob/main/src/task/project-runtime.ts) |
 | `RunnableTask`                |                                                                             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/task/runner.ts)          |
 | `RunTaskOptions`              | Options for running a task                                                  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/task/runner.ts)          |
-| `TaskContext`                 | Context passed to task run() function                                       | [source](https://github.com/veryfront/veryfront-code/blob/main/src/task/types.ts)           |
+| `TaskChildRequest`            | A durable child invocation under the current project Task.                  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/task/types.ts)           |
+| `TaskContext`                 | Context passed to a task run function.                                      | [source](https://github.com/veryfront/veryfront-code/blob/main/src/task/types.ts)           |
 | `TaskDefinition`              | Task definition exported from a tasks/ file                                 | [source](https://github.com/veryfront/veryfront-code/blob/main/src/task/types.ts)           |
 | `TaskDiscoveryOptions`        | Options for file-based task discovery.                                      | [source](https://github.com/veryfront/veryfront-code/blob/main/src/task/discovery.ts)       |
 | `TaskDiscoveryResult`         | Result of file-based task discovery.                                        | [source](https://github.com/veryfront/veryfront-code/blob/main/src/task/discovery.ts)       |

@@ -9,6 +9,7 @@ import { generateDefaultProjectId } from "../../utils/project.ts";
 import { clearAllLocalCaches } from "veryfront/transforms/mdx-cache";
 import { startCliDevServer, startCliProxyModeServer } from "#cli/shared/server-startup";
 import { applyQualifiedRuntimeAuth, resolveLinkedProjectSlug } from "#cli/shared/runtime-auth";
+import { INITIALIZATION_ERROR, isVeryfrontError } from "veryfront/errors";
 
 const logger = cliLogger.component("global");
 
@@ -170,7 +171,7 @@ export function hasProxyCredentials(
   return Boolean(clientId && clientSecret);
 }
 
-async function trySetupProxy(localProjects: Map<string, string>): Promise<ProxySetup> {
+export async function trySetupProxy(localProjects: Map<string, string>): Promise<ProxySetup> {
   if (!hasProxyCredentials()) {
     return { interceptor: undefined, close: () => Promise.resolve() };
   }
@@ -201,7 +202,12 @@ async function trySetupProxy(localProjects: Map<string, string>): Promise<ProxyS
         injectContextHeaders(req, await handler.processRequest(req)),
       close: () => handler.close(),
     };
-  } catch {
+  } catch (error) {
+    if (
+      isVeryfrontError(error) && (error as { slug?: unknown }).slug === INITIALIZATION_ERROR.slug
+    ) {
+      throw error;
+    }
     return { interceptor: undefined, close: async () => {} };
   }
 }
