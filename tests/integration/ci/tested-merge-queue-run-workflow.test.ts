@@ -11,10 +11,10 @@ type YamlRecord = Record<string, unknown>;
 const TRUSTED =
   "(github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)";
 const MAIN = "github.ref == 'refs/heads/main'";
-const MAINTENANCE =
-  "(github.event_name == 'workflow_dispatch' && inputs.maintenance_release_number != '')";
-const MAIN_OR_MAINTENANCE = `${MAIN} || ${MAINTENANCE}`;
 const MAIN_WITHOUT_MAINTENANCE = `${MAIN} && inputs.maintenance_release_number == ''`;
+const MAINTENANCE =
+  "(github.event_name == 'workflow_dispatch' && inputs.maintenance_release_number != '' && github.ref != 'refs/heads/main')";
+const MAIN_OR_MAINTENANCE = `(${MAIN_WITHOUT_MAINTENANCE}) || ${MAINTENANCE}`;
 const SKIP_ON_REUSE = "!cancelled() && needs.tested-run.outputs.reuse != 'true'";
 const REUSED_RUN_ID_EXPRESSION =
   "${{ needs.tested-run.outputs.reuse == 'true' && needs.tested-run.outputs.run_id || '' }}";
@@ -187,6 +187,27 @@ describe("tested merge-queue run workflow", () => {
     assertStringIncludes(
       String(namedStep(tested, "Find the tested merge-queue run").run),
       "scripts/ci/tested-merge-queue-run.ts",
+    );
+  });
+
+  it("rejects maintenance RC publication from main before recording a release number", async () => {
+    const tested = job(await readJobs(), "tested-run");
+    const validation = String(namedStep(tested, "Validate maintenance release number").run);
+    const output = await new Deno.Command("bash", {
+      args: ["-c", validation],
+      env: {
+        GITHUB_OUTPUT: "/dev/null",
+        GITHUB_REF: "refs/heads/main",
+        RELEASE_NUMBER: "21996",
+      },
+      stdout: "piped",
+      stderr: "piped",
+    }).output();
+
+    assertEquals(output.code, 1);
+    assertStringIncludes(
+      new TextDecoder().decode(output.stderr),
+      "Maintenance RC publication must be dispatched from the maintenance branch, not main.",
     );
   });
 

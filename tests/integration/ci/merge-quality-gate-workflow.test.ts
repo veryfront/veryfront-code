@@ -43,9 +43,10 @@ const SONAR_COVERAGE_JOB_EXPRESSION =
 const SONAR_JOB_EXPRESSION =
   `\${{ !cancelled() && (needs.tested-run.outputs.reuse != 'true' || needs.version-check.outputs.is_stable != 'false') && needs.sonar-coverage.result == 'success' && (${SONAR_REQUIRED_CONDITION}) }}`;
 const MAIN = "github.ref == 'refs/heads/main'";
+const MAIN_WITHOUT_MAINTENANCE = `${MAIN} && inputs.maintenance_release_number == ''`;
 const MAINTENANCE =
-  "(github.event_name == 'workflow_dispatch' && inputs.maintenance_release_number != '')";
-const MAIN_OR_MAINTENANCE = `${MAIN} || ${MAINTENANCE}`;
+  "(github.event_name == 'workflow_dispatch' && inputs.maintenance_release_number != '' && github.ref != 'refs/heads/main')";
+const MAIN_OR_MAINTENANCE = `(${MAIN_WITHOUT_MAINTENANCE}) || ${MAINTENANCE}`;
 const REUSED_RUN_ID_EXPRESSION =
   "${{ needs.tested-run.outputs.reuse == 'true' && needs.tested-run.outputs.run_id || '' }}";
 const TESTED_RUN_ID_EXPRESSION = "${{ needs.tested-run.outputs.run_id || github.run_id }}";
