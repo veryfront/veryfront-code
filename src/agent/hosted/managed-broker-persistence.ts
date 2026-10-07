@@ -47,7 +47,10 @@ import {
 } from "#veryfront/runtime/tool-call-admission-dispatch.ts";
 import { defineSchema } from "#veryfront/schemas/index.ts";
 import { DurableRunEventPersistenceError } from "../conversation/private-run-event.ts";
-import { bindRuntimeObservationWriterScope } from "#veryfront/runtime/runtime-observation-carrier.ts";
+import {
+  bindRuntimeObservationWriterCapability,
+  createRuntimeObservationWriterCapability,
+} from "#veryfront/runtime/runtime-observation-carrier.ts";
 
 const getAdmissionScopeSchema = defineSchema((v) =>
   v.object({ projectId: v.string().uuid() }).strict()
@@ -271,11 +274,24 @@ export function createManagedBrokerPersistenceFromCapability(input: {
   const modelRunEventSink: AgentRunEventSink = (event) =>
     queue(async () => await durableSink(event));
   if (runtimeObservationScope) {
-    bindRuntimeObservationWriterScope(modelRunEventSink, {
-      runId: run.runId,
-      canonicalRunId: canonicalRunId!,
-      projectId: runtimeObservationScope.projectId,
-    });
+    bindRuntimeObservationWriterCapability(
+      modelRunEventSink,
+      createRuntimeObservationWriterCapability({
+        scope: {
+          runId: run.runId,
+          canonicalRunId: canonicalRunId!,
+          projectId: runtimeObservationScope.projectId,
+        },
+        assertActive: () => {
+          const snapshot = durableMirror.getSnapshot();
+          if (finished || snapshot.disabled) {
+            throw new DurableRunEventPersistenceError(
+              "Model call capture scope is no longer active",
+            );
+          }
+        },
+      }),
+    );
   }
   const output: ManagedBrokerOutput = {
     write(chunk) {
