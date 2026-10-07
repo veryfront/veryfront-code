@@ -59,6 +59,28 @@ async function readPublishedGuide(path: string): Promise<string> {
 }
 
 const GUIDE_CONTRACTS: Record<string, GuideContract> = {
+  "guides/connect-runtime.md": {
+    references: [
+      "./agent-service-runtime.md",
+      "./runs.md",
+      "../api-reference/veryfront/agent.md",
+    ],
+    snippets: [
+      "createExternalAgentWorkerClient",
+      "registerWorker",
+      "claimRun",
+      "ConversationRunEventEncoder",
+      "const messageId = run.message_id;",
+      "x-csrf-token",
+      "project editor access",
+      '}, { "Idempotency-Key": admissionKey });',
+      "VERYFRONT_PROJECT_ID",
+      "veryfront dev",
+      "worker_key",
+      "completeRun",
+      "Runs panel",
+    ],
+  },
   "guides/agent-service-runtime.md": {
     references: [
       "../api-reference/veryfront/agent.md",

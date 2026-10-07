@@ -35,6 +35,7 @@ import { integrationHelp } from "../../cli/commands/integration/command-help.ts"
 
 const ROOT = new URL("../../", import.meta.url);
 const SNIPPET_GUIDES = [
+  "docs/guides/connect-runtime.md",
   "docs/guides/integrations.md",
   "docs/guides/integrations/recovery.md",
   "docs/guides/integrations/credentials.md",
