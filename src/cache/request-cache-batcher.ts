@@ -191,15 +191,9 @@ export function getCachedWithBatching(
 ): Promise<string | null> {
   const ctx = getRequestCacheContextStore();
   if (!ctx) {
-    let read: Promise<string | null>;
-    try {
-      read = backend.get(key, options);
-    } catch (error) {
-      const completion = createPrivateDeferred<string | null>();
-      completion.reject(error);
-      read = completion.promise;
-    }
-    return read;
+    // Retain the original async boundary only for unbatched backend reads.
+    // Batched reads below must expose their protected completion promise directly.
+    return (async () => await backend.get(key, options))();
   }
 
   if (mapHas(ctx.cache, key)) {
