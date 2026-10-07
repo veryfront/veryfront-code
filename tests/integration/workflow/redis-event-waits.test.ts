@@ -76,8 +76,7 @@ async function withReceivers(
 
 describe("Redis durable event waits", () => {
   it({
-    name:
-      "Redis retention cannot delete an unfinished event delivery and deletes finalized event state",
+    name: "Redis terminal transitions clear unfinished event deliveries before retention",
     ignore: !Deno.env.get("WORKFLOW_EVENT_TEST_REDIS_URL"),
   }, () =>
     withReceivers(async (a, b, runId) => {
@@ -95,6 +94,9 @@ describe("Redis durable event waits", () => {
       await b.appendRunEvent(runId, event);
       assertEquals(await a.claimRunEventForWait(runId, "wait", "ready"), event);
       await a.updateRun(runId, { status: "completed", completedAt: now });
+      assertEquals(await b.listRunEventDeliveryClaims(runId), []);
+      assertEquals(await b.hasRunEventDeliveryReceipt(runId, event.id), false);
+
       const readCandidates = async (receiver: RedisBackend) => {
         // Index repair is incremental; an empty page with hasMore is not EOF.
         let page = await receiver.listTerminalRunRetentionCandidates(
@@ -110,18 +112,41 @@ describe("Redis durable event waits", () => {
         }
         return page;
       };
-      const candidates = await readCandidates(b);
-      const candidate = candidates.candidates.find((c) => c.runId === runId);
+      const candidate = (await readCandidates(b)).candidates.find((c) => c.runId === runId);
       assertExists(candidate);
-      assertEquals(await b.deleteTerminalRunIfUnchanged(candidate), false);
-      assertEquals((await b.listRunEventDeliveryClaims(runId)).length, 1);
-      await b.finalizeRunEventDelivery(runId, event.id, true);
-      assertEquals(await a.deleteTerminalRunIfUnchanged(candidate), false);
-      const fresh = (await readCandidates(a)).candidates.find((c) => c.runId === runId);
-      assertExists(fresh);
-      assertEquals(await a.deleteTerminalRunIfUnchanged(fresh), true);
-      assertEquals(await b.listRunEventDeliveryClaims(runId), []);
-      assertEquals(await b.hasRunEventDeliveryReceipt(runId, event.id), false);
+      assertEquals(await b.deleteTerminalRunIfUnchanged(candidate), true);
+    }));
+
+  it({
+    name: "Redis terminal transitions discard buffered mail and settle delivery claims",
+    ignore: !Deno.env.get("WORKFLOW_EVENT_TEST_REDIS_URL"),
+  }, () =>
+    withReceivers(async (a, b, runId) => {
+      const now = new Date();
+      const claimed = { id: "claimed", eventName: "ready", payload: {}, publishedAt: now };
+      await a.savePendingEventWait(runId, {
+        id: "wait",
+        runId,
+        nodeId: "ready",
+        eventName: "ready",
+        waitKind: "event",
+        requestedAt: now,
+        status: "pending",
+      });
+      await b.appendRunEvent(runId, claimed);
+      assertEquals(await a.claimRunEventForWait(runId, "wait", "ready"), claimed);
+      await b.updateRun(runId, {
+        status: "completed",
+        completedAt: now,
+        nodeStates: { ready: { nodeId: "ready", status: "completed", attempt: 1 } },
+      });
+      assertEquals(await a.listRunEventDeliveryClaims(runId), []);
+      assertEquals(await a.hasRunEventDeliveryReceipt(runId, claimed.id), true);
+
+      const buffered = { id: "buffered", eventName: "late", payload: {}, publishedAt: now };
+      await a.appendRunEvent(runId, buffered);
+      await b.updateRun(runId, { status: "cancelled", completedAt: now });
+      assertEquals(await a.takeRunEvent(runId, "late"), null);
     }));
 
   it({

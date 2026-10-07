@@ -2483,6 +2483,9 @@ export class RedisBackend implements WorkflowBackend {
     if (patch.status && patch.status !== "running") {
       await client.del(this.claimKey(runId));
     }
+    if (patch.status === "completed" || patch.status === "cancelled") {
+      await (await this.eventWaits()).clearTerminalRunEvents(runId);
+    }
   }
 
   async updateRunIfStatus(
@@ -2579,6 +2582,9 @@ export class RedisBackend implements WorkflowBackend {
 
     if (updated && patch.status && patch.status !== "running") {
       await client.del(this.claimKey(runId));
+    }
+    if (updated && (patch.status === "completed" || patch.status === "cancelled")) {
+      await (await this.eventWaits()).clearTerminalRunEvents(runId);
     }
     return updated;
   }

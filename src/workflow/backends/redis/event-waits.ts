@@ -206,6 +206,21 @@ elseif op == 'finalize-delivery' then
   local w=findWait(c.waitId)
   if w then clearClaim(w); if p.delivered then w.deliveredEventId=p.eventId end end
   s.claims[p.eventId]=nil; return commit(true)
+elseif op == 'terminal-run' then
+  if not raw then return encode(false) end
+  local status=redis.call('hget',KEYS[3],'status')
+  if status ~= 'completed' and status ~= 'cancelled' then return encode(false) end
+  local nodes={}
+  if status == 'completed' then nodes=cjson.decode(redis.call('hget',KEYS[3],'nodeStates') or '{}') end
+  for eventId,c in pairs(s.claims) do
+    local w=findWait(c.waitId)
+    if w then
+      clearClaim(w)
+      local node=nodes[w.nodeId]
+      if status == 'completed' and node and node.status == 'completed' then w.deliveredEventId=eventId end
+    end
+  end
+  s.mail={}; s.claims={}; return commit(true)
 end
 return redis.error_reply('Unknown workflow event-state operation')`;
 
@@ -507,5 +522,9 @@ export class RedisEventWaitStore {
   }
   async hasRunEventDeliveryReceipt(runId: string, eventId: string): Promise<boolean> {
     return (await this.state(runId)).waits.some((w) => w.deliveredEventId === eventId);
+  }
+  async clearTerminalRunEvents(runId: string): Promise<void> {
+    if (await this.client.get(this.stateKey(runId)) === null) return;
+    await this.command(runId, "terminal-run", {});
   }
 }
