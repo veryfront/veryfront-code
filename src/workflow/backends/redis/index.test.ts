@@ -239,6 +239,13 @@ class MockRedisAdapter implements RedisAdapter {
     this.lastArgs = [...args];
     this.scriptCalls.push({ script, keys: [...keys], args: [...args] });
 
+    if (script.includes("-- workflow-event-state")) {
+      // Approval-only fixtures have no event state. Atomic event mutations are
+      // exercised against real Redis in tests/integration/workflow/redis-event-waits.test.ts.
+      if (args[0] === "read") return Promise.resolve('{"waits":[],"mail":[],"claims":{}}');
+      return Promise.reject(new Error("Use real Redis for event-state mutations"));
+    }
+
     if (script.includes("mark-run-deleting")) {
       const hash = this.hashes.get(key);
       if (!hash) return Promise.resolve([]);
@@ -4841,6 +4848,8 @@ describe("RedisBackend", () => {
         `test:schema-v1:queue-messages:${runId}`,
         "test:stream:schema-v1",
         `test:schema-v1:queue-live-messages:${runId}`,
+        `test:schema-v1:event-state:${runId}`,
+        "test:schema-v1:index:event-state",
       ]);
       assertStringIncludes(mockRedis.lastScript, "for index = 1, 7");
       assertStringIncludes(mockRedis.lastScript, "for index = 8, 15");

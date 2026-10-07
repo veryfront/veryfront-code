@@ -1,3 +1,4 @@
+import { RedisEventWaitStore } from "#veryfront/workflow/backends/redis/event-waits.ts";
 /****
  * Redis Workflow Backend
  *
@@ -328,6 +329,12 @@ const EXTEND_LOCK_SCRIPT =
  * candidate.
  */
 const DELETE_TERMINAL_RUN_IF_UNCHANGED_SCRIPT = `-- conditional-terminal-run-delete
+local eventRaw = redis.call('get', KEYS[21])
+if eventRaw then
+  local events = cjson.decode(eventRaw)
+  if next(events.claims) ~= nil then return 0 end
+  for _, wait in ipairs(events.waits) do if wait.claimedAt then return 0 end end
+end
 local runExists = redis.call('exists', KEYS[1])
 local retentionMetadataRaw = redis.call('hget', KEYS[17], ARGV[6])
 local retentionMetadata = nil
@@ -366,7 +373,8 @@ if retentionMetadata then
   removed = removed + redis.call('zrem', KEYS[16], retentionMetadata.member)
   removed = removed + redis.call('hdel', KEYS[17], ARGV[6])
 end
-removed = removed + redis.call('del', KEYS[18], KEYS[20])
+removed = removed + redis.call('del', KEYS[18], KEYS[20], KEYS[21])
+redis.call('srem', KEYS[22], ARGV[6])
 if removed > 0 then return 1 end
 if runExists == 0 then return 2 end
 return 0`;
@@ -503,7 +511,8 @@ if metadataRaw then
   removed = removed + redis.call('zrem', KEYS[16], cjson.decode(metadataRaw).member)
   removed = removed + redis.call('hdel', KEYS[17], ARGV[1])
 end
-removed = removed + redis.call('del', KEYS[18], KEYS[19])
+removed = removed + redis.call('del', KEYS[18], KEYS[19], KEYS[20])
+redis.call('srem', KEYS[21], ARGV[1])
 return 1`;
 
 const READ_TERMINAL_RETENTION_FIELDS_SCRIPT = `-- read-terminal-retention-fields
@@ -2591,7 +2600,18 @@ export class RedisBackend implements WorkflowBackend {
     const client = await this.ensureClient();
 
     const identity = await client.eval(MARK_RUN_DELETING_SCRIPT, [this.runKey(runId)], []);
-    if (arrayIsArray(identity) && identity.length === 0) return;
+    if (arrayIsArray(identity) && identity.length === 0) {
+      await client.eval(
+        "if redis.call('exists',KEYS[1]) == 0 then redis.call('del',KEYS[2]); redis.call('srem',KEYS[3],ARGV[1]) end return 1",
+        [
+          this.runKey(runId),
+          `${this.storagePrefix()}event-state:${runId}`,
+          `${this.storagePrefix()}index:event-state`,
+        ],
+        [runId],
+      );
+      return;
+    }
     if (
       !arrayIsArray(identity) || identity.length !== 2 ||
       typeof identity[0] !== "string" || identity[0] === "" ||
@@ -2624,6 +2644,8 @@ export class RedisBackend implements WorkflowBackend {
         this.terminalRunRetentionMembersKey(),
         this.queueMessagesKey(runId),
         this.liveQueueMessagesKey(runId),
+        `${this.storagePrefix()}event-state:${runId}`,
+        `${this.storagePrefix()}index:event-state`,
       ],
       [runId],
     );
@@ -2710,6 +2732,8 @@ export class RedisBackend implements WorkflowBackend {
         this.queueMessagesKey(candidate.runId),
         this.config.streamKey,
         this.liveQueueMessagesKey(candidate.runId),
+        `${this.storagePrefix()}event-state:${candidate.runId}`,
+        `${this.storagePrefix()}index:event-state`,
       ],
       [
         candidate.status,
@@ -2994,6 +3018,134 @@ export class RedisBackend implements WorkflowBackend {
     }
 
     return (await this.enumerateAllRunIds(client)).length;
+  }
+
+  private async eventWaits(): Promise<RedisEventWaitStore> {
+    return new RedisEventWaitStore(
+      await this.ensureClient(),
+      this.storagePrefix(),
+      this.config.strictContext,
+    );
+  }
+
+  async savePendingEventWait(
+    ...args: Parameters<RedisEventWaitStore["savePendingEventWait"]>
+  ): ReturnType<RedisEventWaitStore["savePendingEventWait"]> {
+    return await (await this.eventWaits()).savePendingEventWait(...args);
+  }
+
+  async savePendingEventWaitIfStatusAndWorker(
+    ...args: Parameters<RedisEventWaitStore["savePendingEventWaitIfStatusAndWorker"]>
+  ): ReturnType<RedisEventWaitStore["savePendingEventWaitIfStatusAndWorker"]> {
+    return await (await this.eventWaits()).savePendingEventWaitIfStatusAndWorker(...args);
+  }
+
+  async getPendingEventWaits(
+    ...args: Parameters<RedisEventWaitStore["getPendingEventWaits"]>
+  ): ReturnType<RedisEventWaitStore["getPendingEventWaits"]> {
+    return await (await this.eventWaits()).getPendingEventWaits(...args);
+  }
+
+  async listPendingEventWaits(
+    ...args: Parameters<RedisEventWaitStore["listPendingEventWaits"]>
+  ): ReturnType<RedisEventWaitStore["listPendingEventWaits"]> {
+    return await (await this.eventWaits()).listPendingEventWaits(...args);
+  }
+
+  async resolvePendingEventWait(
+    ...args: Parameters<RedisEventWaitStore["resolvePendingEventWait"]>
+  ): ReturnType<RedisEventWaitStore["resolvePendingEventWait"]> {
+    return await (await this.eventWaits()).resolvePendingEventWait(...args);
+  }
+
+  async restorePendingEventWait(
+    ...args: Parameters<RedisEventWaitStore["restorePendingEventWait"]>
+  ): ReturnType<RedisEventWaitStore["restorePendingEventWait"]> {
+    return await (await this.eventWaits()).restorePendingEventWait(...args);
+  }
+
+  async listTimedEventWaitClaims(
+    ...args: Parameters<RedisEventWaitStore["listTimedEventWaitClaims"]>
+  ): ReturnType<RedisEventWaitStore["listTimedEventWaitClaims"]> {
+    return await (await this.eventWaits()).listTimedEventWaitClaims(...args);
+  }
+
+  async reserveTimedEventWaitClaim(
+    ...args: Parameters<RedisEventWaitStore["reserveTimedEventWaitClaim"]>
+  ): ReturnType<RedisEventWaitStore["reserveTimedEventWaitClaim"]> {
+    return await (await this.eventWaits()).reserveTimedEventWaitClaim(...args);
+  }
+
+  async finalizeTimedEventWaitClaim(
+    ...args: Parameters<RedisEventWaitStore["finalizeTimedEventWaitClaim"]>
+  ): ReturnType<RedisEventWaitStore["finalizeTimedEventWaitClaim"]> {
+    return await (await this.eventWaits()).finalizeTimedEventWaitClaim(...args);
+  }
+
+  async appendRunEvent(
+    ...args: Parameters<RedisEventWaitStore["appendRunEvent"]>
+  ): ReturnType<RedisEventWaitStore["appendRunEvent"]> {
+    return await (await this.eventWaits()).appendRunEvent(...args);
+  }
+
+  async removeRunEvent(
+    ...args: Parameters<RedisEventWaitStore["removeRunEvent"]>
+  ): ReturnType<RedisEventWaitStore["removeRunEvent"]> {
+    return await (await this.eventWaits()).removeRunEvent(...args);
+  }
+
+  async peekRunEvent(
+    ...args: Parameters<RedisEventWaitStore["peekRunEvent"]>
+  ): ReturnType<RedisEventWaitStore["peekRunEvent"]> {
+    return await (await this.eventWaits()).peekRunEvent(...args);
+  }
+
+  async takeRunEvent(
+    ...args: Parameters<RedisEventWaitStore["takeRunEvent"]>
+  ): ReturnType<RedisEventWaitStore["takeRunEvent"]> {
+    return await (await this.eventWaits()).takeRunEvent(...args);
+  }
+
+  async claimRunEventForWait(
+    ...args: Parameters<RedisEventWaitStore["claimRunEventForWait"]>
+  ): ReturnType<RedisEventWaitStore["claimRunEventForWait"]> {
+    return await (await this.eventWaits()).claimRunEventForWait(...args);
+  }
+
+  async listRunEventDeliveryClaims(
+    ...args: Parameters<RedisEventWaitStore["listRunEventDeliveryClaims"]>
+  ): ReturnType<RedisEventWaitStore["listRunEventDeliveryClaims"]> {
+    return await (await this.eventWaits()).listRunEventDeliveryClaims(...args);
+  }
+
+  async reserveRunEventDeliveryClaim(
+    ...args: Parameters<RedisEventWaitStore["reserveRunEventDeliveryClaim"]>
+  ): ReturnType<RedisEventWaitStore["reserveRunEventDeliveryClaim"]> {
+    return await (await this.eventWaits()).reserveRunEventDeliveryClaim(...args);
+  }
+
+  async restoreRunEvent(
+    ...args: Parameters<RedisEventWaitStore["restoreRunEvent"]>
+  ): ReturnType<RedisEventWaitStore["restoreRunEvent"]> {
+    return await (await this.eventWaits()).restoreRunEvent(...args);
+  }
+
+  async restoreRunEventDelivery(
+    ...args: Parameters<RedisEventWaitStore["restoreRunEventDelivery"]>
+  ): ReturnType<RedisEventWaitStore["restoreRunEventDelivery"]> {
+    return await (await this.eventWaits()).restoreRunEventDelivery(...args);
+  }
+
+  async finalizeRunEventDelivery(
+    ...args: Parameters<RedisEventWaitStore["finalizeRunEventDelivery"]>
+  ): ReturnType<RedisEventWaitStore["finalizeRunEventDelivery"]> {
+    return await (await this.eventWaits()).finalizeRunEventDelivery(...args);
+  }
+
+  async hasRunEventDeliveryReceipt(
+    ...args: Parameters<RedisEventWaitStore["hasRunEventDeliveryReceipt"]>
+  ): ReturnType<RedisEventWaitStore["hasRunEventDeliveryReceipt"]> {
+    return await (await this.eventWaits()).hasRunEventDeliveryReceipt(...args);
   }
 
   async saveCheckpoint(runId: string, checkpoint: Checkpoint): Promise<void> {
