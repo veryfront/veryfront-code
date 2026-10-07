@@ -66,7 +66,11 @@ Container package scans do not enumerate dependencies embedded in compiled
 framework executables. Release qualification also scans the framework's published
 `all.json` and `proxy.json` CycloneDX files. The dependency index maps findings to
 their owning extension manifests. Retain residual findings and their exposure
-limits; a successful container scan does not certify the embedded graph.
+limits; a successful container scan does not certify the embedded graph. The
+proxy has a separate lock and can retain a vulnerable transitive version even
+when the full-runtime graph is patched. Refresh its minimal graph with the
+`--node-modules-dir=none` setting used by `deno task build:proxy-lock`, regenerate
+embedded discovery, and scan the published `proxy.json` independently.
 
 ## Server timing
 
