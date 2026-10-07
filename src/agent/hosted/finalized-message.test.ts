@@ -308,6 +308,70 @@ Deno.test("buildFinalizedMessageFallbackChunks builds finalized fallback text ch
   ]);
 });
 
+Deno.test("buildFinalizedMessageFallbackChunks preserves ordered text without duplicating mirrored tools", () => {
+  const mirroredToolChunkState = createMirroredToolChunkState();
+  mirroredToolChunkState.startedToolCallIds.add("call-1");
+  mirroredToolChunkState.inputAvailableToolCallIds.add("call-1");
+  mirroredToolChunkState.outputAvailableToolCallIds.add("call-1");
+
+  const finalStep = {
+    response: {
+      messages: [{
+        role: "assistant",
+        content: [
+          { type: "text", text: "Checking now." },
+          {
+            type: "tool-call",
+            toolCallId: "call-1",
+            toolName: "form_input",
+            input: { title: "Continue?" },
+          },
+          {
+            type: "tool-result",
+            toolCallId: "call-1",
+            toolName: "form_input",
+            output: { submitted: true },
+          },
+        ],
+      }],
+    },
+  };
+
+  const result = buildFinalizedMessageFallbackChunks({
+    persistedMessage: {
+      id: "assistant-1",
+      role: "assistant",
+      parts: [{ type: "data-veryfront.runtime_context", data: {} }],
+    },
+    sanitizedFinalizedMessage: {
+      id: "assistant-1",
+      role: "assistant",
+      parts: [
+        { type: "data-veryfront.runtime_context", data: {} },
+        { type: "text", text: "Checking now." },
+        {
+          type: "dynamic-tool",
+          toolName: "form_input",
+          toolCallId: "call-1",
+          input: { title: "Continue?" },
+          state: "output-available",
+          output: { submitted: true },
+        },
+      ],
+    },
+    finalStep,
+    mirroredToolChunkState,
+    capturedMessageId: null,
+    hasIncompleteFinalizedToolParts: false,
+  });
+
+  assertEquals(result, [
+    { type: "text-start", id: "assistant-1" },
+    { type: "text-delta", id: "assistant-1", delta: "Checking now." },
+    { type: "text-end", id: "assistant-1" },
+  ]);
+});
+
 Deno.test("buildDetachedFallbackChunks omits detached fallback text chunks when durable output is already mirrored", () => {
   const result = buildDetachedFallbackChunks({
     fallbackParts: [{ type: "text", text: "Done" }],

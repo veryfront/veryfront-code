@@ -270,6 +270,7 @@ describe("agent/hosted-chat-finalization", () => {
 
   it("completes runtime-metadata-only response output with final-step reasoning fallback", async () => {
     const calls: string[] = [];
+    const chunks: ChatUiMessageChunk<MessageMetadata>[] = [];
     const terminalStates: HostedLifecycleTerminalState[] = [];
 
     await finalizeHostedChatRun({
@@ -285,14 +286,18 @@ describe("agent/hosted-chat-finalization", () => {
         response: {
           messages: [{
             role: "assistant",
-            content: [{ type: "reasoning", text: "Checking the retained state." }],
+            content: [{
+              type: "reasoning",
+              text: "Checking the retained state.",
+              signature: "sig_123",
+            }],
           }],
         },
       }),
       lifecycleAdapter: createLifecycleAdapter({
         calls,
         terminalStates,
-        mirror: createDurableRunMirror({ calls }),
+        mirror: createDurableRunMirror({ calls, chunks }),
       }),
       mirroredToolChunkState: createMirroredToolChunkState(),
       capturedMessageId: "assistant-message-1",
@@ -303,11 +308,31 @@ describe("agent/hosted-chat-finalization", () => {
       streamError: null,
     });
 
-    assertEquals(calls, ["flush", "terminal:completed:", "cleanup"]);
+    assertEquals(calls, [
+      "append:reasoning-start:assistant-message-1:reasoning",
+      "append:reasoning-delta:assistant-message-1:reasoning",
+      "append:reasoning-end:assistant-message-1:reasoning",
+      "flush",
+      "terminal:completed:",
+      "cleanup",
+    ]);
+    assertEquals(chunks, [
+      { type: "reasoning-start", id: "assistant-message-1:reasoning" },
+      {
+        type: "reasoning-delta",
+        id: "assistant-message-1:reasoning",
+        delta: "Checking the retained state.",
+      },
+      {
+        type: "reasoning-end",
+        id: "assistant-message-1:reasoning",
+        signature: "sig_123",
+      },
+    ]);
     assertEquals(terminalStates.at(0)!.status, "completed");
     assertEquals((terminalStates.at(0)!.output as ChatUiMessage).parts, [
       { type: "data-veryfront.runtime_context", data: { currentDateUtc: "2026-10-07" } },
-      { type: "reasoning", text: "Checking the retained state." },
+      { type: "reasoning", text: "Checking the retained state.", signature: "sig_123" },
     ]);
   });
 

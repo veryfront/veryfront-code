@@ -159,10 +159,10 @@ export function buildFinalizedMessageFallbackChunks(
       (part.text.length > 0 || (part.signature?.length ?? 0) > 0 ||
         (part.redactedData?.length ?? 0) > 0))
   );
-  const hasOrderedFallbackText = buildFallbackUiMessageParts(input.finalStep).some((part) =>
-    part.type === "text"
+  const hasOrderedFallbackContent = buildFallbackUiMessageParts(input.finalStep).some((part) =>
+    part.type === "text" || part.type === "reasoning"
   );
-  if (!hasPersistedTextOrReasoning && hasOrderedFallbackText) {
+  if (!hasPersistedTextOrReasoning && hasOrderedFallbackContent) {
     const orderedFallbackChunks = buildFallbackUiMessageChunks(
       input.finalStep,
       fallbackMessageId,
