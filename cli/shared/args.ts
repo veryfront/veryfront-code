@@ -479,7 +479,12 @@ function parse(
 
       const isBoolean = isBooleanFlag(key, result._ as string[]) ||
         isBooleanFlag(short, result._ as string[]);
-      if (!isBoolean && isValue(next)) {
+      const shouldPreserveCommandToken = (result._ as string[]).length === 0 &&
+        isKnownCommandToken(next) &&
+        !isDocumentedValueFlag(key) &&
+        !isDocumentedValueFlag(short);
+
+      if (!isBoolean && isValue(next) && !shouldPreserveCommandToken) {
         setValue(key, next);
         if (key !== short) setValue(short, next);
         i++;

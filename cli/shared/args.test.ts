@@ -319,6 +319,13 @@ describe("cli/shared/args", () => {
       assertEquals(args._, ["projects"]);
     });
 
+    it("should preserve a command after an unknown pre-command short option", () => {
+      const args = parseCliArgs(["-x", "schema", "--json"]);
+
+      assertEquals(args.x, true);
+      assertEquals(args._, ["schema"]);
+    });
+
     it("should preserve known pre-command value-taking options", () => {
       const output = parseCliArgs(["--output", "schema", "--help", "--json"]);
       assertEquals(output.output, "schema");
