@@ -308,9 +308,8 @@ describe("auditDependencyBoundaries", () => {
         {
           sourceLocation: "extensions/ext-sandbox-shell-tools/deno.json",
           group: "extension",
-          componentCount: 2,
+          componentCount: 1,
           components: [
-            { name: "ai", version: "7.0.41", purl: "pkg:npm/ai@7.0.41" },
             { name: "zod", version: "4.3.6", purl: "pkg:npm/zod@4.3.6" },
           ],
         },
@@ -330,7 +329,7 @@ describe("auditDependencyBoundaries", () => {
     });
 
     assertEquals(issueMessages(issues), [
-      "sensitive extension sandbox execution boundary is missing expected component just-bash",
+      "sensitive extension sandbox execution boundary is missing expected component ai",
       "sensitive extension native SQLite storage boundary is missing from dependency index",
       "sensitive extension document extraction boundary is missing from dependency index",
       "sensitive extension Node WebSocket transport boundary is missing from dependency index",
