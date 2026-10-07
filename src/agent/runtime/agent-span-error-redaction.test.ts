@@ -7,12 +7,13 @@ import { defineSchema } from "#veryfront/schemas/index.ts";
 import { type Tool, tool } from "#veryfront/tool";
 import { agent } from "../index.ts";
 import * as otelApi from "npm:@opentelemetry/api@1.9.1";
+import { type ExportResult, ExportResultCode } from "npm:@opentelemetry/core@2.10.0";
 import { AsyncLocalStorageContextManager } from "npm:@opentelemetry/context-async-hooks@2.10.0";
 import {
   BasicTracerProvider,
-  InMemorySpanExporter,
   type ReadableSpan,
   SimpleSpanProcessor,
+  type SpanExporter,
 } from "npm:@opentelemetry/sdk-trace-base@2.10.0";
 import {
   _resetShimForTests,
@@ -22,13 +23,42 @@ import {
   SpanStatusCode,
 } from "#veryfront/observability/tracing/api-shim.ts";
 
+class ImmediateInMemorySpanExporter implements SpanExporter {
+  #finishedSpans: ReadableSpan[] = [];
+  #stopped = false;
+
+  export(spans: ReadableSpan[], resultCallback: (result: ExportResult) => void): void {
+    if (this.#stopped) {
+      resultCallback({ code: ExportResultCode.FAILED });
+      return;
+    }
+    this.#finishedSpans.push(...spans);
+    resultCallback({ code: ExportResultCode.SUCCESS });
+  }
+
+  shutdown(): Promise<void> {
+    this.#stopped = true;
+    this.#finishedSpans = [];
+    return this.forceFlush();
+  }
+
+  forceFlush(): Promise<void> {
+    return Promise.resolve();
+  }
+
+  getFinishedSpans(): readonly ReadableSpan[] {
+    return this.#finishedSpans;
+  }
+}
+
 /**
  * The real SDK, wired the way server bootstrap wires it. A hand-rolled tracer
- * double cannot show what actually reaches an exporter, which is the only thing
- * this file is about.
+ * double cannot show what actually reaches a span processor, which is the only
+ * thing this file is about. The in-memory exporter completes synchronously so
+ * poison-global tests do not exercise OpenTelemetry's timer implementation.
  */
 function installRealTracing() {
-  const exporter = new InMemorySpanExporter();
+  const exporter = new ImmediateInMemorySpanExporter();
   const provider = new BasicTracerProvider({ spanProcessors: [new SimpleSpanProcessor(exporter)] });
   const contextManager = new AsyncLocalStorageContextManager();
   contextManager.enable();
