@@ -18,20 +18,9 @@ import { printJson } from "../../shared/json-output.ts";
 import { getBooleanArg, getStringArg } from "../../shared/parsed-args.ts";
 
 const privateDownloadFileSystem = createFileSystem();
-const writePrivateDownload = privateDownloadFileSystem.writeFileStream?.bind(
+const writePrivateDownload = privateDownloadFileSystem.writeFileStreamAtomic?.bind(
   privateDownloadFileSystem,
 );
-const promotePrivateDownload = privateDownloadFileSystem.promoteStreamFile?.bind(
-  privateDownloadFileSystem,
-);
-const removePrivateDownload = privateDownloadFileSystem.removeStreamFile?.bind(
-  privateDownloadFileSystem,
-);
-
-const createDownloadNonce = crypto.randomUUID.bind(crypto);
-const downloadNoncePattern =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-const validateDownloadNonce = RegExp.prototype.exec.bind(downloadNoncePattern);
 
 export interface UploadItem {
   type: "file" | "folder";
@@ -284,30 +273,19 @@ export async function downloadUploadToFile(
   signal?.throwIfAborted();
   if (!client.getStream) throw new Error("API client does not support upload downloads");
   const localPath = resolveUploadOutputPath(uploadPath, outputDir);
-  const nonce = createDownloadNonce();
-  if (typeof nonce !== "string" || validateDownloadNonce(nonce) === null) {
-    throw new Error("Invalid private download nonce");
-  }
-  const temporaryPath = join(dirname(localPath), `.vf-download-${nonce}`);
   const response = await client.getStream(
     `${buildUploadsListUrl(projectSlug)}/${encodeURIComponent(normalizeUploadPath(uploadPath))}`,
     { signal },
   );
-  let created = false;
   try {
     await fs.mkdir(dirname(localPath), { recursive: true });
-    if (!writePrivateDownload || !promotePrivateDownload || !removePrivateDownload) {
-      throw new Error("Filesystem does not support streaming upload downloads");
+    if (!writePrivateDownload) {
+      throw new Error("Filesystem does not support atomic streaming upload downloads");
     }
-    const bytes = await writePrivateDownload(temporaryPath, response, signal);
-    created = true;
-    signal?.throwIfAborted();
-    await promotePrivateDownload(temporaryPath, localPath);
-    created = false;
+    const bytes = await writePrivateDownload(localPath, response, signal);
     return { uploadPath: normalizeUploadPath(uploadPath), localPath, bytes };
   } finally {
     await response.cancel().catch(() => {});
-    if (created) await removePrivateDownload!(temporaryPath);
   }
 }
 

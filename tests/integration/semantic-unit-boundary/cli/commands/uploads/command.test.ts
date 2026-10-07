@@ -1,3 +1,4 @@
+// @veryfront-test runtime-guarded-deno
 import "#veryfront/schemas/_test-setup.ts";
 import {
   assertEquals,
@@ -31,6 +32,8 @@ import {
 } from "#cli/commands/uploads/command";
 import type { ApiClient } from "../../../../../../cli/shared/config.ts";
 import type { ParsedArgs } from "../../../../../../cli/shared/types.ts";
+
+const denoOnlyIt = typeof Deno === "undefined" ? it.skip : it;
 
 function createMockClient(overrides: {
   getStream?: (path: string) => Promise<ReadableStream<Uint8Array>>;
@@ -232,6 +235,126 @@ describe("downloadUploadToFile", () => {
       await remove(tempDir, { recursive: true });
     }
   });
+
+  denoOnlyIt(
+    "keeps late-imported download bytes behind the host atomic stream capability",
+    async () => {
+      const script = await Deno.makeTempFile({ prefix: "vf-upload-late-import-", suffix: ".ts" });
+      try {
+        await Deno.writeTextFile(
+          script,
+          `import { assertEquals } from "#veryfront/testing/assert.ts";
+import { createFileSystem } from "veryfront/platform";
+
+const fs = createFileSystem();
+const prototype = Object.getPrototypeOf(fs);
+const streamDescriptor = Object.getOwnPropertyDescriptor(prototype, "writeFileStream")!;
+const streamAtomicDescriptor = Object.getOwnPropertyDescriptor(prototype, "writeFileStreamAtomic");
+const originalRandomUUID = crypto.randomUUID;
+const originalRegExpExec = RegExp.prototype.exec;
+const originalOpen = Deno.open;
+const originalRemove = Deno.remove;
+const originalRename = Deno.rename;
+const originalWrite = Deno.FsFile.prototype.write;
+const originalClose = Deno.FsFile.prototype.close;
+let interceptedPrivateBytes = false;
+let interceptedNonce = false;
+let interceptedNative = false;
+const interceptStream = async (path: string, source: ReadableStream<Uint8Array>, signal?: AbortSignal) => {
+  const [privateCopy, forwarded] = source.tee();
+  interceptedPrivateBytes = await new Response(privateCopy).text() === "PRIVATE_PROBE_BYTES";
+  return Reflect.apply(streamDescriptor.value, fs, [path, forwarded, signal]);
+};
+try {
+  Object.defineProperty(prototype, "writeFileStream", {
+    ...streamDescriptor,
+    value: interceptStream,
+  });
+  Object.defineProperty(prototype, "writeFileStreamAtomic", {
+    configurable: true,
+    value: interceptStream,
+  });
+  crypto.randomUUID = () => "00000000-0000-4000-8000-000000000000" as ReturnType<typeof crypto.randomUUID>;
+  RegExp.prototype.exec = function (input: string) {
+    if (input.length === 36) interceptedNonce = true;
+    return Reflect.apply(originalRegExpExec, this, [input]);
+  };
+  const { downloadUploadToFile } = await import("#cli/commands/uploads/command");
+  crypto.randomUUID = () => {
+    interceptedNonce = true;
+    return "00000000-0000-4000-8000-000000000000" as ReturnType<typeof crypto.randomUUID>;
+  };
+  Deno.open = async (path, options) => {
+    interceptedNative = true;
+    return await originalOpen(path, options);
+  };
+  Deno.remove = async (path, options) => {
+    interceptedNative = true;
+    await originalRemove(path, options);
+  };
+  Deno.rename = async (from, to) => {
+    interceptedNative = true;
+    await originalRename(from, to);
+  };
+  Deno.FsFile.prototype.write = function (chunk) {
+    interceptedNative = true;
+    return Reflect.apply(originalWrite, this, [chunk]);
+  };
+  Deno.FsFile.prototype.close = function () {
+    interceptedNative = true;
+    Reflect.apply(originalClose, this, []);
+  };
+  const output = await Deno.makeTempDir({ prefix: "vf-upload-late-import-" });
+  try {
+    const result = await downloadUploadToFile({
+      getStream: () => Promise.resolve(new Response("PRIVATE_PROBE_BYTES").body!),
+    } as never, "probe-project", "probe.txt", output);
+    assertEquals(await Deno.readTextFile(result.localPath), "PRIVATE_PROBE_BYTES");
+    assertEquals(interceptedPrivateBytes, false);
+    assertEquals(interceptedNonce, false);
+    assertEquals(interceptedNative, false);
+  } finally {
+    await originalRemove(output, { recursive: true });
+  }
+} finally {
+  Object.defineProperty(prototype, "writeFileStream", streamDescriptor);
+  if (streamAtomicDescriptor) {
+    Object.defineProperty(prototype, "writeFileStreamAtomic", streamAtomicDescriptor);
+  } else {
+    delete (prototype as { writeFileStreamAtomic?: unknown }).writeFileStreamAtomic;
+  }
+  crypto.randomUUID = originalRandomUUID;
+  RegExp.prototype.exec = originalRegExpExec;
+  Deno.open = originalOpen;
+  Deno.remove = originalRemove;
+  Deno.rename = originalRename;
+  Deno.FsFile.prototype.write = originalWrite;
+  Deno.FsFile.prototype.close = originalClose;
+}
+`,
+        );
+        const result = await new Deno.Command(Deno.execPath(), {
+          args: [
+            "run",
+            "--config=deno.json",
+            "--no-check",
+            "--allow-all",
+            script,
+          ],
+          cwd: Deno.cwd(),
+          stdout: "piped",
+          stderr: "piped",
+        }).output();
+        assertEquals(
+          result.code,
+          0,
+          `${new TextDecoder().decode(result.stdout)}${new TextDecoder().decode(result.stderr)}`,
+        );
+      } finally {
+        await remove(script);
+      }
+    },
+  );
   it("downloads authenticated API content into the output directory", async () => {
     const tempDir = await makeTempDir();
     let requestedPath = "";

@@ -48,6 +48,19 @@ const NativeWritableStream = WritableStream;
 const NativePromise = Promise;
 const NativePromiseResolve = Promise.resolve;
 const NativePromiseThen = Promise.prototype.then;
+const StringPrototypeCharCodeAt = String.prototype.charCodeAt;
+const StringPrototypeLastIndexOf = String.prototype.lastIndexOf;
+const StringPrototypeSlice = String.prototype.slice;
+const capturedRandomUUID = globalThis.crypto?.randomUUID?.bind(globalThis.crypto);
+const capturedUsesWindowsSeparators = (() => {
+  if (isDeno) {
+    const deno = Reflect.get(globalThis, "Deno") as typeof Deno | undefined;
+    return deno?.build?.os === "windows";
+  }
+  if (!isNode && !isBun) return false;
+  const process = Reflect.get(globalThis, "process") as { platform?: string } | undefined;
+  return process?.platform === "win32";
+})();
 
 function createDataDescriptor<T>(
   value: T,
@@ -91,6 +104,87 @@ function createByteWriteView(value: Uint8Array, offset: number): Uint8Array {
   void defineProperty(view, "byteOffset", createDataDescriptor(byteOffset + offset, false));
   void defineProperty(view, "byteLength", createDataDescriptor(byteLength - offset, false));
   return view;
+}
+
+function stringLastIndexOf(value: string, search: string): number {
+  return reflectApply(StringPrototypeLastIndexOf, value, [search]) as number;
+}
+
+function stringSlice(value: string, start: number, end?: number): string {
+  return reflectApply(
+    StringPrototypeSlice,
+    value,
+    end === undefined ? [start] : [start, end],
+  ) as string;
+}
+
+function stringCharCodeAt(value: string, index: number): number {
+  return reflectApply(StringPrototypeCharCodeAt, value, [index]) as number;
+}
+
+function isHexAt(value: string, index: number): boolean {
+  const code = stringCharCodeAt(value, index);
+  return (code >= 48 && code <= 57) || (code >= 97 && code <= 102) ||
+    (code >= 65 && code <= 70);
+}
+
+function isCapturedUuid(value: string): boolean {
+  if (value.length !== 36) return false;
+  for (let index = 0; index < value.length; index++) {
+    if (index === 8 || index === 13 || index === 18 || index === 23) {
+      if (stringCharCodeAt(value, index) !== 45) return false;
+      continue;
+    }
+    if (index === 14) {
+      if (stringCharCodeAt(value, index) !== 52) return false;
+      continue;
+    }
+    if (index === 19) {
+      const code = stringCharCodeAt(value, index);
+      if (code !== 56 && code !== 57 && code !== 97 && code !== 98 && code !== 65 && code !== 66) {
+        return false;
+      }
+      continue;
+    }
+    if (!isHexAt(value, index)) return false;
+  }
+  return true;
+}
+
+function createPrivateStreamPath(path: string): string {
+  if (!capturedRandomUUID) throw new Error("Secure random UUID capability unavailable");
+  const nonce = capturedRandomUUID();
+  if (!isCapturedUuid(nonce)) throw new Error("Invalid private stream nonce");
+  const slashIndex = stringLastIndexOf(path, "/");
+  const backslashIndex = capturedUsesWindowsSeparators ? stringLastIndexOf(path, "\\") : -1;
+  const separatorIndex = slashIndex > backslashIndex ? slashIndex : backslashIndex;
+  if (separatorIndex < 0) return `.vf-download-${nonce}`;
+  return `${stringSlice(path, 0, separatorIndex + 1)}.vf-download-${nonce}`;
+}
+
+async function writeStreamAtomic(
+  path: string,
+  source: ReadableStream<Uint8Array>,
+  signal?: AbortSignal,
+): Promise<number> {
+  signal?.throwIfAborted();
+  const temporaryPath = createPrivateStreamPath(path);
+  let created = false;
+  try {
+    const bytes = await writeStreamExclusive(
+      source,
+      signal,
+      () => openNativeStreamFile(temporaryPath),
+      () => removeNativeStreamFile(temporaryPath),
+    );
+    created = true;
+    signal?.throwIfAborted();
+    await renameNativeStreamFile(temporaryPath, path);
+    created = false;
+    return bytes;
+  } finally {
+    if (created) await removeNativeStreamFile(temporaryPath);
+  }
 }
 
 function bindNativePromiseConstructor<T>(promise: Promise<T>): Promise<T> {
@@ -183,6 +277,12 @@ export interface FileSystem {
   writeFile(path: string, data: Uint8Array): Promise<void>;
   /** Create an exclusive file and stream bytes without buffering the complete input. */
   writeFileStream?(
+    path: string,
+    source: ReadableStream<Uint8Array>,
+    signal?: AbortSignal,
+  ): Promise<number>;
+  /** Stream to a private sibling path, then atomically promote it over the target. */
+  writeFileStreamAtomic?(
     path: string,
     source: ReadableStream<Uint8Array>,
     signal?: AbortSignal,
@@ -646,6 +746,11 @@ export function createFileSystem(): FileSystem {
       },
       true,
     ),
+  );
+  defineProperty(
+    fileSystem,
+    "writeFileStreamAtomic",
+    createDataDescriptor(writeStreamAtomic, true),
   );
   defineProperty(
     fileSystem,

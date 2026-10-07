@@ -121,6 +121,30 @@ describe("Filesystem Compat", () => {
   });
 
   describe("stream cancellation", () => {
+    it("exposes atomic stream writes as an own sealed filesystem capability", () => {
+      const fs = createFileSystem();
+      const descriptor = Object.getOwnPropertyDescriptor(fs, "writeFileStreamAtomic");
+      assertExists(descriptor);
+      assertEquals(typeof descriptor.value, "function");
+      assertEquals(descriptor.configurable, false);
+      assertEquals(descriptor.enumerable, true);
+      assertEquals(descriptor.writable, false);
+    });
+
+    it("keeps POSIX backslashes inside target filenames out of temporary basenames", async () => {
+      if (Deno.build.os === "windows") return;
+      const fs = createFileSystem();
+      const dir = await fs.makeTempDir({ prefix: "vf-stream-backslash-" });
+      try {
+        const fileName = `${"a".repeat(230)}\\file.txt`;
+        const target = `${dir}/${fileName}`;
+        await fs.writeFileStreamAtomic!(target, new Response("private report").body!);
+        assertEquals(await fs.readTextFile(target), "private report");
+      } finally {
+        await fs.remove(dir, { recursive: true });
+      }
+    });
+
     it("writes ordered stream chunks and refuses to overwrite an existing file", async () => {
       const fs = createFileSystem();
       assertExists(fs.writeFileStream);
