@@ -773,30 +773,51 @@ describe("pinned fetch transport integration", () => {
     if (!isNode) return;
 
     const script = `
+      import { createServer } from "node:http";
       import { fetchWithPinnedAddresses } from "./src/platform/compat/http/pinned-fetch.ts";
-      const abort = new AbortController();
-      let cancelReason = "";
-      const body = new ReadableStream({
-        pull() {
-          return new Promise(() => {});
-        },
-        cancel(reason) {
-          cancelReason = reason instanceof Error ? reason.name : String(reason);
-        },
+      const server = createServer((request) => request.resume());
+      await new Promise((resolve, reject) => {
+        server.once("error", reject);
+        server.listen(0, "127.0.0.1", resolve);
       });
-      const response = fetchWithPinnedAddresses(
-        new URL("http://pinned-abort-pending.test/"),
-        ["127.0.0.1"],
-        { method: "POST", signal: abort.signal, body },
-      );
-      await new Promise((resolve) => setTimeout(resolve, 0));
-      abort.abort(new DOMException("stop", "AbortError"));
-      const result = await response.then(
-        () => "resolved",
-        (error) => error instanceof Error ? error.name + ":" + error.message : String(error),
-      );
-      await new Promise((resolve) => setTimeout(resolve, 100));
-      console.log(JSON.stringify({ result, cancelReason }));
+      try {
+        const address = server.address();
+        if (!address || typeof address === "string") throw new Error("Missing test TCP address");
+        const abort = new AbortController();
+        let cancelReason = "";
+        let markReadPending;
+        const readPending = new Promise((resolve) => { markReadPending = resolve; });
+        let markCancelled;
+        const cancelled = new Promise((resolve) => { markCancelled = resolve; });
+        const body = new ReadableStream({
+          pull() {
+            markReadPending();
+            return new Promise(() => {});
+          },
+          cancel(reason) {
+            cancelReason = reason instanceof Error ? reason.name : String(reason);
+            markCancelled();
+          },
+        }, { highWaterMark: 0 });
+        const response = fetchWithPinnedAddresses(
+          new URL("http://pinned-abort-pending.test:" + address.port + "/"),
+          ["127.0.0.1"],
+          { method: "POST", signal: abort.signal, body },
+        ).then(
+          () => "resolved",
+          (error) => error instanceof Error ? error.name + ":" + error.message : String(error),
+        );
+        await readPending;
+        abort.abort(new DOMException("stop", "AbortError"));
+        const result = await response;
+        await cancelled;
+        console.log(JSON.stringify({ result, cancelReason }));
+      } finally {
+        server.closeAllConnections();
+        await new Promise((resolve, reject) => {
+          server.close((error) => error ? reject(error) : resolve());
+        });
+      }
     `;
 
     const output = spawnSync("node", [
