@@ -543,6 +543,45 @@ describe("fetchWithPinnedAddresses", () => {
     }
   });
 
+  it("does not invoke mutated request listener cleanup during stream body reads", async () => {
+    if (!isNode) return;
+    const { EventEmitter } = await import("node:events");
+    const originalOff = Object.getOwnPropertyDescriptor(EventEmitter.prototype, "off");
+    const inheritedOff = EventEmitter.prototype.off;
+    let observedAuthorization: unknown;
+    try {
+      const body = new ReadableStream<Uint8Array>({
+        pull(controller) {
+          Object.defineProperty(EventEmitter.prototype, "off", {
+            configurable: true,
+            writable: true,
+            ...originalOff,
+            value(this: { getHeader?(name: string): unknown }, ...args: unknown[]) {
+              observedAuthorization ??= this.getHeader?.("authorization");
+              return Reflect.apply(inheritedOff, this, args);
+            },
+          });
+          controller.enqueue(new TextEncoder().encode("chunk"));
+          controller.close();
+        },
+      }, { highWaterMark: 0 }) as unknown as BodyInit;
+
+      await assertRejects(
+        () =>
+          fetchWithPinnedAddresses(new URL("http://pinned-listener-cleanup.test:9/upload"), [
+            "127.0.0.1",
+          ], { method: "POST", headers: { authorization: BEARER }, body }),
+        TypeError,
+        "Refused a credential-bearing request",
+      );
+      assertEquals(observedAuthorization, undefined);
+    } finally {
+      if (originalOff) {
+        Object.defineProperty(EventEmitter.prototype, "off", originalOff);
+      } else Reflect.deleteProperty(EventEmitter.prototype, "off");
+    }
+  });
+
   it("does not invoke a mutated request destroy during late abort teardown", async () => {
     const { ClientRequest, createServer } = await import("node:http");
     let releaseRequest!: () => void;

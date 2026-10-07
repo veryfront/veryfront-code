@@ -47,6 +47,7 @@ const BlobTypeGetter = Object.getOwnPropertyDescriptor(Blob.prototype, "type")!.
 
 type NodeRequestFunction = typeof import("node:http").request;
 const capturedClientRequestDestroy = nodeHttp.ClientRequest.prototype.destroy;
+const capturedClientRequestOff = nodeHttp.ClientRequest.prototype.off;
 const capturedIncomingMessageDestroy = nodeHttp.IncomingMessage.prototype.destroy;
 const capturedNetCreateConnection = nodeNet.createConnection;
 const capturedTlsConnect = nodeTls.connect;
@@ -583,15 +584,23 @@ async function prepareRequestPayload(body: BodyInit | null): Promise<RequestPayl
   };
 }
 
+function removeRequestListener(
+  request: ClientRequest,
+  event: string,
+  listener: (...args: unknown[]) => void,
+): void {
+  IntrinsicReflectApply(capturedClientRequestOff, request, [event, listener]);
+}
+
 function waitForRequestEvent(
   request: ClientRequest,
   event: "drain" | "finish",
 ): Promise<void> {
   return new Promise<void>((resolve, reject) => {
     const cleanup = () => {
-      request.off(event, done);
-      request.off("error", fail);
-      request.off("close", closed);
+      removeRequestListener(request, event, done);
+      removeRequestListener(request, "error", fail);
+      removeRequestListener(request, "close", closed);
     };
     const done = () => {
       cleanup();
@@ -641,8 +650,8 @@ async function readRequestPayloadChunk(
   return await new Promise<ReadableStreamReadResult<Uint8Array>>((resolve, reject) => {
     let settled = false;
     const cleanup = () => {
-      request.off("error", fail);
-      request.off("close", closed);
+      removeRequestListener(request, "error", fail);
+      removeRequestListener(request, "close", closed);
     };
     const resolveRead = (result: ReadableStreamReadResult<Uint8Array>) => {
       if (settled) return;

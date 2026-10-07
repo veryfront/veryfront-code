@@ -17,6 +17,7 @@ import {
   assertNativeRequestProcessing,
   createNativeRequest,
   createNativeRequestInit,
+  readOwnInitField,
 } from "#veryfront/platform/compat/http/native-request-init.ts";
 import {
   getCurrentVeryfrontCloudContext,
@@ -770,9 +771,7 @@ export function createVeryfrontCloudFetch(
     const billingGroupId = billingGroup === undefined
       ? undefined
       : IntrinsicReflectApply(StringPrototypeTrim, billingGroup, []) as string;
-    const initBody = init && IntrinsicReflectApply(ObjectHasOwn, undefined, [init, "body"])
-      ? init.body
-      : undefined;
+    const initBody = readOwnInitField(init, "body");
     // Consults the internal-provider-origin allowlist and the operator-configured Veryfront API
     // origin; resolved per call since it snapshots the host transport eagerly.
     const wireModelProvider = options?.wireModelProvider;
