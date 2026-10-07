@@ -10446,6 +10446,58 @@ export default config as const;
         });
       });
 
+      it("cancels an abandoned preview snapshot probe even when the probe ignores abort", async () => {
+        const adapter = createHostedAdapter();
+        const probeStarted = Promise.withResolvers<void>();
+        Object.assign(adapter.fs, {
+          getSourceSnapshotIdentity: () => "branch:preview-burst-project:feature/preview-burst",
+          getSourceSnapshotVersion: async () => {
+            probeStarted.resolve();
+            return await new Promise<number>(() => {});
+          },
+        });
+        const preparedContext = await prepareDeclarativeConfigContext({
+          environmentName: "preview",
+          environment: {},
+        });
+        let reads = 0;
+        adapter.fs.readFile = async (path: string) => {
+          if (path !== "/veryfront.config.js") throw configCandidateNotFound(path);
+          reads += 1;
+          return 'export default { title: "source" };';
+        };
+        __setHostedConfigEvaluatorForTests(async () => ({ title: "must-not-evaluate" }));
+
+        const controller = new AbortController();
+        const request = loadSnapshotPreviewConfig(adapter, preparedContext, controller.signal);
+        const failure = assertRejects(
+          () => request,
+          DeclarativeConfigEvaluationError,
+        ) as Promise<DeclarativeConfigEvaluationError>;
+        try {
+          await probeStarted.promise;
+          await waitForHostedSourceReadState({
+            active: 1,
+            queued: 0,
+            flights: 1,
+            waiters: 1,
+          });
+          controller.abort();
+          const error = await failure;
+          assertEquals(error.reason, "worker-aborted");
+          assertEquals(reads, 0);
+        } finally {
+          controller.abort();
+          await Promise.allSettled([request]);
+        }
+        await waitForHostedSourceReadState({
+          active: 0,
+          queued: 0,
+          flights: 0,
+          waiters: 0,
+        });
+      });
+
       it("admits cold preview snapshot probes through the source-read budget", async () => {
         const adapter = createHostedAdapter();
         const releaseProbes = Promise.withResolvers<void>();

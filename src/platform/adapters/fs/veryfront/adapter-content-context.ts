@@ -119,7 +119,7 @@ export async function resolveContentContext(
     }
 
     case "domain": {
-      const lookup = await client.lookupProjectByDomain(contentSource.domain);
+      const lookup = await client.lookupProjectByDomain(contentSource.domain, { signal });
       if (!lookup) {
         throw API_CLIENT_ERROR.create({
           detail: `Domain lookup failed for: ${contentSource.domain}`,

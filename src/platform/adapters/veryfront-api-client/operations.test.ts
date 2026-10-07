@@ -869,6 +869,28 @@ describe("VeryfrontAPIOperations", () => {
       );
     });
 
+    it("passes domain lookup abort signals to the transport request", async () => {
+      let observedSignal: AbortSignal | undefined;
+      const controller = new AbortController();
+      stubJsonFetch((_url, init) => {
+        observedSignal = init?.signal ?? undefined;
+        return {
+          id: "550e8400-e29b-41d4-a716-446655440000",
+          name: "P",
+          slug: "p",
+          environments: [],
+        };
+      });
+
+      await createOps().lookupProjectByDomain("app.example.com", {
+        signal: controller.signal,
+      });
+
+      assertEquals(observedSignal?.aborted, false);
+      controller.abort();
+      assertEquals(observedSignal?.aborted, true);
+    });
+
     it("resolves to null when the domain has no project", async () => {
       const originalWarn = console.warn;
       console.warn = () => {};

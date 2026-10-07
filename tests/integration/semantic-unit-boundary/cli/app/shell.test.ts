@@ -1,3 +1,8 @@
+/**
+ * The app shell reads and mutates process environment state while exercising the
+ * guarded outbound transport. Keep this regression at the semantic integration
+ * boundary rather than in the colocated CLI unit suite.
+ */
 import "#veryfront/schemas/_test-setup.ts";
 
 import { assertEquals } from "#veryfront/testing/assert.ts";
@@ -9,7 +14,7 @@ import {
   __resetOperatorVeryfrontApiOriginsForTests,
   __runWithOutboundFetchTransportForTests,
 } from "#cli/outbound-fetch";
-import { createApp } from "./shell.ts";
+import { createApp } from "../../../../../cli/app/shell.ts";
 
 const ENV_KEYS = ["VERYFRONT_API_URL", "VERYFRONT_API_TOKEN"] as const;
 const originalEnv = new Map(ENV_KEYS.map((key) => [key, Deno.env.get(key)]));

@@ -522,8 +522,8 @@ export class VeryfrontApiClient {
   // Domain Lookup
   // =============================================================================
 
-  lookupProjectByDomain(domain: string) {
-    return this.operations.lookupProjectByDomain(domain);
+  lookupProjectByDomain(domain: string, options: { signal?: AbortSignal } = {}) {
+    return this.operations.lookupProjectByDomain(domain, options);
   }
 
   resolveStyleArtifact(

@@ -867,7 +867,10 @@ export class VeryfrontAPIOperations {
     );
   }
 
-  lookupProjectByDomain(domain: string): Promise<LookupDomainResponse | null> {
+  lookupProjectByDomain(
+    domain: string,
+    options: { signal?: AbortSignal } = {},
+  ): Promise<LookupDomainResponse | null> {
     return withSpan(
       SpanNames.API_DOMAIN_LOOKUP,
       async () => {
@@ -876,7 +879,7 @@ export class VeryfrontAPIOperations {
         logger.debug("lookupProjectByDomain", { domain });
 
         try {
-          const raw = await this.request(url);
+          const raw = await this.request(url, { signal: options.signal });
           const project = getProjectWithEnvironmentsSchema().parse(raw);
 
           const matchingEnv = project.environments?.find((env) =>
