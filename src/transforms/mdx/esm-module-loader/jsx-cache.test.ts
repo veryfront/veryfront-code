@@ -864,6 +864,7 @@ describe("pruneSupersededJsxArtifacts", () => {
     cancelScheduledJsxCachePrunes();
     await waitForJsxCacheMaintenance();
     cancelScheduledJsxCachePrunes();
+    await waitForJsxCacheMaintenance();
   });
 
   /** A clock far enough ahead that every artifact written now is prunable. */
@@ -2271,10 +2272,12 @@ describe("jsx artifact references", () => {
     jsxArtifactActiveRefCount,
     removeJsxArtifactUnlessServed,
     wasJsxArtifactRecentlyServed,
+    waitForJsxCacheMaintenance,
   } = __jsxCacheInternals;
 
-  afterEach(() => {
+  afterEach(async () => {
     cancelScheduledJsxCachePrunes();
+    await waitForJsxCacheMaintenance();
   });
 
   it("pins the artifacts a rewritten module imports until released", async () => {

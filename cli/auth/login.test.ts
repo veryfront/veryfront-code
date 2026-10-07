@@ -2904,6 +2904,48 @@ describe("Login Module", { sanitizeOps: false, sanitizeResources: false }, () =>
         console.log = originalLog;
       }
     });
+    it("prints a manual login URL when the default OAuth opener observes a failed launcher", async () => {
+      const originalLog = console.log;
+      const output: string[] = [];
+      const spinnerEvents: string[] = [];
+      const launchCalls: Array<{ url: string; timeoutMs: number | undefined }> = [];
+
+      try {
+        console.log = (...args: unknown[]) => output.push(args.map(String).join(" "));
+        const { __setOAuthBrowserLauncherForTests, openOAuthLogin } = await import("./login.ts");
+        __setOAuthBrowserLauncherForTests((url, options) => {
+          launchCalls.push({ url, timeoutMs: options?.timeoutMs });
+          if (options?.timeoutMs === undefined) return Promise.resolve();
+          return Promise.reject(new Error("browser launcher exited unsuccessfully"));
+        });
+
+        const opened = await openOAuthLogin(
+          "https://auth.example.test/login?state=default-opener",
+          {
+            update: (text) => spinnerEvents.push(`update:${text}`),
+            success: (text) => spinnerEvents.push(`success:${text ?? ""}`),
+            error: (text) => spinnerEvents.push(`error:${text ?? ""}`),
+            stop: () => spinnerEvents.push("stop"),
+          },
+        );
+
+        assertEquals(opened, false);
+        assertEquals(launchCalls, [{
+          url: "https://auth.example.test/login?state=default-opener",
+          timeoutMs: 10_000,
+        }]);
+        assertEquals(spinnerEvents, ["stop"]);
+        assertStringIncludes(output.join("\n"), "Could not open the browser");
+        assertStringIncludes(
+          output.join("\n"),
+          "https://auth.example.test/login?state=default-opener",
+        );
+      } finally {
+        const { __setOAuthBrowserLauncherForTests } = await import("./login.ts");
+        __setOAuthBrowserLauncherForTests();
+        console.log = originalLog;
+      }
+    });
   });
 
   describe("logout", { sanitizeOps: false, sanitizeResources: false }, () => {
