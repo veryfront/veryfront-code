@@ -3118,7 +3118,17 @@ describe("Login Module", { sanitizeOps: false, sanitizeResources: false }, () =>
           const envelope = JSON.parse(output.join("\n"));
 
           assertEquals(result, null);
-          assertEquals(envelope.data, { authenticated: false });
+          assertEquals(envelope, {
+            success: false,
+            command: "whoami",
+            error: {
+              code: "AUTHENTICATION_ERROR",
+              slug: "authentication-required",
+              registrySlug: "authentication-required",
+              message: "Not logged in. Run 'veryfront login' to authenticate.",
+              context: { authenticated: false },
+            },
+          });
           assertEquals(requestedAuth, ["Bearer stored-unavailable-token"]);
           assertEquals(await readToken(testEnv), "stored-unavailable-token");
           assertEquals(output.join("\n").includes("env@example.com"), false);
@@ -3276,7 +3286,17 @@ describe("Login Module", { sanitizeOps: false, sanitizeResources: false }, () =>
 
         assertEquals(result, null);
         assertEquals(requestedAuth, ["Bearer config-invalid-token"]);
-        assertEquals(JSON.parse(output.join("\n")).data, { authenticated: false });
+        assertEquals(JSON.parse(output.join("\n")), {
+          success: false,
+          command: "whoami",
+          error: {
+            code: "AUTHENTICATION_ERROR",
+            slug: "authentication-required",
+            registrySlug: "authentication-required",
+            message: "Not logged in. Run 'veryfront login' to authenticate.",
+            context: { authenticated: false },
+          },
+        });
         assertEquals(output.join("\n").includes("config-invalid-token"), false);
       } finally {
         const { setJsonMode } = await import("../shared/json-output.ts");

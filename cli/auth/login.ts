@@ -991,7 +991,13 @@ export async function whoami(
   }
 
   if (isJsonMode()) {
-    await outputJson(createSuccessEnvelope("whoami", { authenticated: false }));
+    await outputJson(createErrorEnvelope("whoami", {
+      code: "AUTHENTICATION_ERROR",
+      slug: "authentication-required",
+      registrySlug: "authentication-required",
+      message: "Not logged in. Run 'veryfront login' to authenticate.",
+      context: { authenticated: false },
+    }));
     return null;
   }
 
