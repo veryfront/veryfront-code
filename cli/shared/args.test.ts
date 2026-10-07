@@ -312,6 +312,13 @@ describe("cli/shared/args", () => {
       assertEquals(args._, ["schema"]);
     });
 
+    it("should preserve a command alias after an unknown pre-command option", () => {
+      const args = parseCliArgs(["--definitely-bad", "projects", "--json"]);
+
+      assertEquals(args["definitely-bad"], true);
+      assertEquals(args._, ["projects"]);
+    });
+
     it("should preserve known pre-command value-taking options", () => {
       const output = parseCliArgs(["--output", "schema", "--help", "--json"]);
       assertEquals(output.output, "schema");

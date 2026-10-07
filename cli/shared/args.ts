@@ -373,7 +373,10 @@ function isValue(arg: string | undefined): boolean {
 }
 
 function isKnownCommandToken(value: string | undefined): boolean {
-  return value === "help" || (value !== undefined && Object.hasOwn(COMMANDS, value));
+  if (value === undefined) return false;
+  if (value === "help" || Object.hasOwn(COMMANDS, value)) return true;
+
+  return Object.values(COMMANDS).some((definition) => (definition.aliases ?? []).includes(value));
 }
 
 function isCommonValueFlag(key: string): boolean {
