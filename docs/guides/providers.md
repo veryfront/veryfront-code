@@ -39,6 +39,11 @@ the AI Gateway, it does not authenticate you to a vendor.
 
 Model selection follows these rules:
 
+Hosted chat retains the route selected during trusted preparation when execution
+has no ambient API token. A managed run's private inference credential stays
+separate from its callback credential. The catalog model ID and publisher remain
+unchanged, and application-registered direct providers retain their own route.
+
 | Agent model                            | With Cloud context                                  | With a matching direct provider key                      |
 | -------------------------------------- | --------------------------------------------------- | -------------------------------------------------------- |
 | Omitted                                | Uses the Cloud default through the AI Gateway       | Uses the direct default only without Cloud context       |
