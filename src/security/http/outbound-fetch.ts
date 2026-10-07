@@ -213,6 +213,12 @@ function bindHostResponseAccessors(response: Response): Response {
     }, false),
   ]);
   if (body !== null) {
+    // getStream returns this body through an async promise settlement boundary.
+    IntrinsicReflectApply(ObjectDefineProperty, Object, [
+      body,
+      "then",
+      createValueDescriptor(undefined, false, false),
+    ]);
     IntrinsicReflectApply(ObjectDefineProperty, Object, [
       body,
       "cancel",

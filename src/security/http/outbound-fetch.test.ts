@@ -814,6 +814,29 @@ describe("createVeryfrontApiOriginBoundOutboundFetch", () => {
 });
 
 describe("authenticated download transport settlement", () => {
+  it("seals authenticated body streams before async getStream settlement", async () => {
+    const response = __bindHostResponseAccessorsForTests(new Response("authenticated content"));
+    const original = Object.getOwnPropertyDescriptor(ReadableStream.prototype, "then");
+    let intercepted = false;
+    let body: ReadableStream<Uint8Array> | null;
+    Object.defineProperty(ReadableStream.prototype, "then", {
+      configurable: true,
+      get() {
+        intercepted = true;
+        return undefined;
+      },
+    });
+    try {
+      const getStream = async () => response.body;
+      body = await getStream();
+    } finally {
+      if (original) Object.defineProperty(ReadableStream.prototype, "then", original);
+      else Reflect.deleteProperty(ReadableStream.prototype, "then");
+    }
+    assertEquals(intercepted, false);
+    assertEquals(await new Response(body).text(), "authenticated content");
+  });
+
   it("shadows inherited then hooks before authenticated response settlement", async () => {
     const response = new Response("authenticated content");
     const original = Object.getOwnPropertyDescriptor(Response.prototype, "then");
