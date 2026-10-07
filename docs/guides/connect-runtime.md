@@ -23,6 +23,9 @@ push service with a public endpoint and an immutable deployment source, use
 - An inference provider configured for the local runtime. See
   [Providers](./providers.md).
 - The project UUID. Keep the API token on the server.
+- The framework default CSRF names: cookie `__Host-vf_csrf` and header
+  `x-csrf-token`. The curl commands below require those defaults; projects with
+  custom CSRF names must adapt the cookie lookup and header to their configuration.
 
 Set these values in your project environment:
 
