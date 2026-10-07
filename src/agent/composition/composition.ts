@@ -85,6 +85,13 @@ async function runAgentAsStreamingTool(
     const privateRuntime = useApplicationRuntime
       ? await getPrivateApplicationInferenceRuntimeOptions(agent.id, signal)
       : undefined;
+    if (useApplicationRuntime && !privateRuntime) {
+      if (signal?.aborted) {
+        throw signal.reason ??
+          new DOMException("Application inference admission was cancelled", "AbortError");
+      }
+      throw new Error("Application inference admission was cancelled");
+    }
     try {
       const streamAgent = privateRuntime && createAdmittedAgent
         ? await privateRuntime.prepareAgent(() => {

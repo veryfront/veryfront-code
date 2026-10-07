@@ -15,7 +15,10 @@ import {
   assertStrictEquals,
   assertThrows,
 } from "#veryfront/testing/assert.ts";
-import { runWithApplicationInferenceAdmission } from "../runtime/application-inference-admission.ts";
+import {
+  type ApplicationInferenceAdmission,
+  runWithApplicationInferenceAdmission,
+} from "../runtime/application-inference-admission.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { Agent, AgentResponse, AgentStreamResult } from "../types.ts";
 import type { ToolExecutionContext } from "#veryfront/tool";
@@ -170,6 +173,96 @@ describe("agentAsTool", () => {
     assertEquals(admissions, 0);
     assertEquals(result, { text: "ok", toolCalls: 0, status: "completed" });
   });
+  it("fails closed when delegated managed admission is cancelled before it resolves", async () => {
+    const child = createMinimalAgent("managed-cancelled-child");
+    child.config.model = "admitted-alias";
+    let streamCalls = 0;
+    child.stream = () => {
+      streamCalls += 1;
+      throw new Error("original child stream must not run after admission cancellation");
+    };
+    const admissionStarted = Promise.withResolvers<void>();
+    const releaseAdmission = Promise.withResolvers<ApplicationInferenceAdmission>();
+    const finalizations: string[] = [];
+    const controller = new AbortController();
+
+    const execution = runWithApplicationInferenceAdmission(
+      () => {
+        admissionStarted.resolve();
+        return releaseAdmission.promise;
+      },
+      () =>
+        agentAsTool(child, "Managed child").execute(
+          { input: "hello" },
+          { abortSignal: controller.signal } as ToolExecutionContext,
+        ),
+      controller.signal,
+    );
+
+    await admissionStarted.promise;
+    controller.abort(new Error("request aborted"));
+    releaseAdmission.resolve({
+      runId: "550e8400-e29b-41d4-a716-446655440020",
+      inferenceToken: "vf_inference_private_delegate_cancelled",
+      expiresAt: new Date(Date.now() + 60_000).toISOString(),
+      finalize: (status) => {
+        finalizations.push(status);
+      },
+    });
+
+    await assertRejects(() => execution, Error, "request aborted");
+    assertEquals(streamCalls, 0);
+    assertEquals(finalizations, ["cancelled"]);
+  });
+
+  it("fails closed when delegated managed admission scope is revoked before the child aborts", async () => {
+    const child = createMinimalAgent("managed-revoked-child");
+    child.config.model = "admitted-alias";
+    let streamCalls = 0;
+    child.stream = () => {
+      streamCalls += 1;
+      throw new Error("original child stream must not run after admission revocation");
+    };
+    const admissionStarted = Promise.withResolvers<void>();
+    const releaseAdmission = Promise.withResolvers<ApplicationInferenceAdmission>();
+    const finalizations: string[] = [];
+    const scopeController = new AbortController();
+    const childController = new AbortController();
+
+    const execution = runWithApplicationInferenceAdmission(
+      () => {
+        admissionStarted.resolve();
+        return releaseAdmission.promise;
+      },
+      () =>
+        agentAsTool(child, "Managed child").execute(
+          { input: "hello" },
+          { abortSignal: childController.signal } as ToolExecutionContext,
+        ),
+      scopeController.signal,
+    );
+
+    await admissionStarted.promise;
+    scopeController.abort(new DOMException("admission revoked", "AbortError"));
+    releaseAdmission.resolve({
+      runId: "550e8400-e29b-41d4-a716-446655440021",
+      inferenceToken: "vf_inference_private_delegate_revoked",
+      expiresAt: new Date(Date.now() + 60_000).toISOString(),
+      finalize: (status) => {
+        finalizations.push(status);
+      },
+    });
+
+    await assertRejects(
+      () => execution,
+      Error,
+      "Application inference admission was cancelled",
+    );
+    assertEquals(childController.signal.aborted, false);
+    assertEquals(streamCalls, 0);
+    assertEquals(finalizations, ["cancelled"]);
+  });
+
   it("executes child agents through the streaming path", async () => {
     let generated = false;
     let streamedInput: string | undefined;

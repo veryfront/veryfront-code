@@ -397,7 +397,13 @@ async function updateVeryfrontDependency(
   Object.assign(pkg.dependencies, localExtensions);
   if (runtime === "bun") {
     pkg.overrides ??= {};
-    Object.assign(pkg.overrides, localExtensions);
+    // Bun resolves framework peers through the registry unless the root is
+    // overridden too, even when the direct dependency already names a tarball.
+    Object.assign(
+      pkg.overrides,
+      { veryfront: pkg.dependencies.veryfront },
+      localExtensions,
+    );
   }
   await Deno.writeTextFile(packagePath, `${JSON.stringify(pkg, null, 2)}\n`);
 }
