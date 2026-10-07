@@ -1,6 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
+import { isVeryfrontError, ORCHESTRATION_ERROR } from "#veryfront/errors";
 import type { RedisAdapter } from "#veryfront/platform/adapters/redis/index.ts";
 import { RedisBackend } from "#veryfront/workflow/backends/redis/index.ts";
 import type { PersistedPendingEventWait } from "#veryfront/workflow/backends/types.ts";
@@ -70,10 +71,11 @@ function boundary(response: unknown = true, state: unknown = { waits: [], mail: 
   // Predetermined transport replies test encoding/decoding only; Lua behavior
   // is qualified separately with real Redis receivers.
   const client = {
-    eval: (_script: string, keys: string[], args: string[]) => {
+    eval: (_script: string, keys: string[], args: string[]): Promise<unknown> => {
       calls.push({ keys, args });
       return Promise.resolve(JSON.stringify(response));
     },
+    del: (_key: string) => Promise.resolve(1),
     get: () => Promise.resolve(state === null ? null : JSON.stringify(state)),
     smembers: () => Promise.resolve(["run", "gone"]),
     exists: (key: string) => Promise.resolve(key.endsWith(":run:run") ? 1 : 0),
@@ -204,5 +206,70 @@ describe("Redis event-wait transport boundary", () => {
     await assertRejects(() => store.appendRunEvent("run", event));
     client.eval = () => Promise.resolve("not-json");
     await assertRejects(() => store.removeRunEvent("run", "event"));
+  });
+  it("repairs legacy mailbox eligibility in bounded turns before retrying the same publication", async () => {
+    const { store, client, calls } = boundary();
+    const ids = Array.from({ length: 51 }, (_, i) => `legacy-${i}`);
+    const replies: unknown[] = [
+      new Error("Run event mailbox capacity reached"),
+      ids,
+      50,
+      1,
+      "true",
+    ];
+    const deleted: string[] = [];
+    client.eval = (_script, keys, args) => {
+      calls.push({ keys, args });
+      const reply = replies.shift();
+      return reply instanceof Error ? Promise.reject(reply) : Promise.resolve(reply);
+    };
+    client.del = (key) => {
+      deleted.push(key);
+      return Promise.resolve(1);
+    };
+    await store.appendRunEvent("run", event);
+    assertEquals(calls.length, 5);
+    const [initial, snapshot, first, second, retry] = calls;
+    assertExists(initial);
+    assertExists(snapshot);
+    assertExists(first);
+    assertExists(second);
+    assertExists(retry);
+    assertEquals(snapshot.keys, [initial.keys[5]]);
+    assertEquals(deleted, [`${initial.keys[5]}:evictable`]);
+    assertEquals(recordedPayload(first), ids.slice(0, 50));
+    assertEquals(recordedPayload(second), ids.slice(50));
+    assertEquals(first.args[0], initial.args[7]);
+    assertEquals(retry.keys, initial.keys);
+    assertEquals(recordedPayload(retry), recordedPayload(initial));
+  });
+  it("rejects invalid legacy index replies and preserves reconciliation errors as registered failures", async () => {
+    for (const reply of [null, [1], new Error("index unavailable")]) {
+      const { store, client } = boundary();
+      let calls = 0;
+      client.eval = () => {
+        if (++calls === 1) return Promise.reject(new Error("Run event mailbox capacity reached"));
+        return reply instanceof Error ? Promise.reject(reply) : Promise.resolve(reply);
+      };
+      const error = await assertRejects(() => store.appendRunEvent("run", event));
+      if (!isVeryfrontError(error)) {
+        throw new Error("Reconciliation error lost registered identity");
+      }
+      assertEquals(error.slug, ORCHESTRATION_ERROR.slug);
+      assertEquals(error.message, "Redis workflow mailbox reconciliation failed");
+      assertEquals(calls, 2);
+    }
+  });
+  it("does not loop on a full protected mailbox after one repair attempt", async () => {
+    const { store, client } = boundary();
+    let calls = 0;
+    client.eval = () =>
+      ++calls === 2
+        ? Promise.resolve([])
+        : Promise.reject(new Error("Run event mailbox capacity reached"));
+    const error = await assertRejects(() => store.appendRunEvent("run", event));
+    if (!isVeryfrontError(error)) throw new Error("Capacity error lost registered identity");
+    assertEquals(error.slug, ORCHESTRATION_ERROR.slug);
+    assertEquals(calls, 3);
   });
 });
