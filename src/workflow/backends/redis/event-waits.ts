@@ -1,0 +1,423 @@
+import type { RedisAdapter } from "#veryfront/platform/adapters/redis/index.ts";
+import { ORCHESTRATION_ERROR, RESOURCE_NOT_FOUND } from "#veryfront/errors";
+import type {
+  PersistedPendingEventWait,
+  RunEventDeliveryClaim,
+  RunEventEnvelope,
+} from "#veryfront/workflow/backends/types.ts";
+import type { WorkflowStatus } from "#veryfront/workflow/types.ts";
+import {
+  MAX_WORKFLOW_PENDING_EVENT_WAIT_ENTRIES,
+  MAX_WORKFLOW_RUN_EVENT_MAILBOX_ENTRIES,
+} from "#veryfront/workflow/limits.ts";
+import { serializeWorkflowJson } from "#veryfront/workflow/context-serialization.ts";
+
+// Payloads remain opaque JSON strings inside Redis state. Lua only interprets
+// envelope metadata, so an empty array in a user payload never becomes {}.
+const EVENT_STATE_SCRIPT = `-- workflow-event-state
+local op = ARGV[1]
+local p = cjson.decode(ARGV[2])
+local raw = redis.call('get', KEYS[1])
+local s = raw and cjson.decode(raw) or {waits={}, mail={}, claims={}}
+local now = tonumber(ARGV[5])
+local function encode(v) return cjson.encode(v) end
+local function findWait(id)
+  for _, w in ipairs(s.waits) do if w.id == id then return w end end
+end
+local function clearClaim(w)
+  w.claimedAt=nil; w.recoveryClaimedAt=nil; w.claimedEventId=nil
+end
+local function timed(w)
+  return w.claimedAt and ((w.kind == 'delay' and w.status == 'delivered') or
+    (w.kind == 'event' and w.status == 'expired'))
+end
+local function sameNode(a,b)
+  return a.nodeId == b.nodeId and (not a.instance or not b.instance or a.instance == b.instance)
+end
+local function mailIndex(name, cutoff)
+  for i,e in ipairs(s.mail) do
+    if e.name == name and (not cutoff or e.at <= cutoff) then return i end
+  end
+end
+local function restore(e)
+  for _, existing in ipairs(s.mail) do if existing.id == e.id then return end end
+  if not e.order then table.insert(s.mail,1,e); return end
+  local i=1
+  while i <= #s.mail do
+    local existing=s.mail[i]
+    if e.order and existing.order then
+      if existing.order > e.order then break end
+    elseif existing.at > e.at then break end
+    i=i+1
+  end
+  table.insert(s.mail,i,e)
+end
+local function commit(result)
+  redis.call('set', KEYS[1], encode(s))
+  local active=next(s.claims) ~= nil
+  for _,w in ipairs(s.waits) do if w.status == 'pending' or timed(w) then active=true end end
+  if active then redis.call('sadd',KEYS[2],ARGV[6])
+  else redis.call('srem',KEYS[2],ARGV[6]) end
+  if redis.call('exists', KEYS[3]) == 1 then
+    local revision=redis.call('incr',KEYS[5])
+    redis.call('hset',KEYS[3],'__runRetentionRevision',tostring(revision))
+    local metadata=redis.call('hget',KEYS[4],ARGV[6])
+    if metadata then
+      local m=cjson.decode(metadata); m.revision=revision
+      redis.call('hset',KEYS[4],ARGV[6],encode(m))
+    end
+  end
+  return encode(result)
+end
+if op == 'read' then return encode(s) end
+if redis.call('hget',KEYS[3],'__runDeleting') == '1' then
+  return redis.error_reply('Workflow run is being deleted')
+end
+if op == 'save' or op == 'save-owned' then
+  if op == 'save-owned' then
+    local status=redis.call('hget',KEYS[3],'status')
+    if not status then return redis.error_reply('Workflow run not found') end
+    local matches=false
+    for _, allowed in ipairs(p.statuses) do if status == allowed then matches=true end end
+    if not matches or redis.call('hget',KEYS[3],'workerId') ~= p.worker then return encode(false) end
+  end
+  for _,w in ipairs(s.waits) do
+    if (w.status == 'pending' or w.claimedEventId or timed(w)) and sameNode(w,p.wait) then
+      return encode(false)
+    end
+  end
+  if #s.waits >= tonumber(ARGV[3]) then
+    local evict=nil
+    for i,w in ipairs(s.waits) do if w.status ~= 'pending' and not w.claimedAt then evict=i; break end end
+    if not evict then return redis.error_reply('Event wait list full; unresolved waits cannot be evicted') end
+    table.remove(s.waits,evict)
+  end
+  table.insert(s.waits,p.wait); return commit(true)
+elseif op == 'resolve' then
+  local w=findWait(p.id)
+  if not w or w.status ~= 'pending' then return encode(false) end
+  if p.name and mailIndex(p.name,p.cutoff) then return encode(false) end
+  w.status=p.status
+  if p.status == 'delivered' or p.status == 'expired' then w.claimedAt=now end
+  return commit(true)
+elseif op == 'restore-wait' then
+  local w=findWait(p.id)
+  if not w or (w.status ~= 'delivered' and w.status ~= 'expired') then return encode(false) end
+  w.status='pending'; clearClaim(w); return commit(true)
+elseif op == 'reserve-timeout' then
+  local w=findWait(p.id)
+  if not w or not timed(w) or (w.recoveryClaimedAt and w.recoveryClaimedAt > p.stale) then return encode(false) end
+  w.recoveryClaimedAt=p.at; return commit(true)
+elseif op == 'finalize-timeout' then
+  local w=findWait(p.id)
+  if w then w.claimedAt=nil; w.recoveryClaimedAt=nil; return commit(true) end
+  return encode(false)
+elseif op == 'append' then
+  local claims=0; for _ in pairs(s.claims) do claims=claims+1 end
+  if #s.mail + claims >= tonumber(ARGV[4]) then return redis.error_reply('Run event mailbox full; unconsumed events cannot be evicted') end
+  s.sequence=(s.sequence or 0)+1; p.event.order=s.sequence
+  table.insert(s.mail,p.event); return commit(true)
+elseif op == 'remove' then
+  for i,e in ipairs(s.mail) do if e.id == p.id then table.remove(s.mail,i); return commit(true) end end
+  return encode(false)
+elseif op == 'peek' or op == 'take' then
+  local i=mailIndex(p.name,p.cutoff)
+  if not i then return encode(cjson.null) end
+  local e=s.mail[i]
+  if op == 'take' then table.remove(s.mail,i); return commit(e) end
+  return encode(e)
+elseif op == 'claim' then
+  local w=findWait(p.id)
+  if not w or w.status ~= 'pending' then return encode(cjson.null) end
+  local i=mailIndex(p.name,p.cutoff)
+  if not i then return encode(cjson.null) end
+  local e=table.remove(s.mail,i)
+  w.status='delivered'; w.claimedAt=now; w.claimedEventId=e.id
+  s.claims[e.id]={waitId=w.id,event=e,claimedAt=now}
+  return commit(e)
+elseif op == 'reserve-delivery' then
+  local c=s.claims[p.eventId]
+  if not c or c.waitId ~= p.id then return encode(false) end
+  local w=findWait(p.id)
+  if not w or (w.recoveryClaimedAt and w.recoveryClaimedAt > p.stale) then return encode(false) end
+  w.recoveryClaimedAt=p.at; return commit(true)
+elseif op == 'restore-event' then
+  local c=s.claims[p.event.id]
+  if c then restore(c.event); s.claims[p.event.id]=nil
+  else
+    restore(p.event)
+  end
+  return commit(true)
+elseif op == 'restore-delivery' then
+  local c=s.claims[p.eventId]
+  if not c or c.waitId ~= p.id then return encode(false) end
+  local w=findWait(p.id)
+  local restored=w and (w.status == 'delivered' or w.status == 'expired') or false
+  if restored then w.status='pending'; clearClaim(w) end
+  restore(c.event); s.claims[p.eventId]=nil; return commit(restored)
+elseif op == 'finalize-delivery' then
+  local c=s.claims[p.eventId]
+  if not c then return encode(false) end
+  local w=findWait(c.waitId)
+  if w then clearClaim(w); if p.delivered then w.deliveredEventId=p.eventId end end
+  s.claims[p.eventId]=nil; return commit(true)
+end
+return redis.error_reply('Unknown workflow event-state operation')`;
+
+interface StoredWait {
+  value: string;
+  id: string;
+  nodeId: string;
+  instance?: string;
+  kind: string;
+  status: string;
+  claimedAt?: number;
+  recoveryClaimedAt?: number;
+  claimedEventId?: string;
+  deliveredEventId?: string;
+}
+interface StoredEvent {
+  value: string;
+  id: string;
+  name: string;
+  at: number;
+  order?: number;
+}
+interface StoredState {
+  waits: StoredWait[];
+  mail: StoredEvent[];
+  claims: Record<string, { waitId: string; event: StoredEvent; claimedAt: number }>;
+}
+function eventValue(event: StoredEvent): RunEventEnvelope {
+  const value = JSON.parse(event.value);
+  return { ...value, publishedAt: new Date(value.publishedAt) };
+}
+function waitValue(wait: StoredWait): PersistedPendingEventWait {
+  const value = JSON.parse(wait.value);
+  delete value.claimedAt;
+  delete value.recoveryClaimedAt;
+  delete value.claimedEventId;
+  delete value.deliveredEventId;
+  return {
+    ...value,
+    status: wait.status,
+    requestedAt: new Date(value.requestedAt),
+    ...(value.expiresAt ? { expiresAt: new Date(value.expiresAt) } : {}),
+    ...(wait.claimedAt !== undefined ? { claimedAt: new Date(wait.claimedAt) } : {}),
+    ...(wait.recoveryClaimedAt !== undefined
+      ? { recoveryClaimedAt: new Date(wait.recoveryClaimedAt) }
+      : {}),
+    ...(wait.claimedEventId ? { claimedEventId: wait.claimedEventId } : {}),
+    ...(wait.deliveredEventId ? { deliveredEventId: wait.deliveredEventId } : {}),
+  };
+}
+
+/** Durable wait, mailbox and recovery mutations share one Redis turn. */
+export class RedisEventWaitStore {
+  constructor(
+    private client: RedisAdapter,
+    private prefix: string,
+    private strictContext = false,
+  ) {}
+  stateKey(runId: string): string {
+    return `${this.prefix}event-state:${runId}`;
+  }
+  indexKey(): string {
+    return `${this.prefix}index:event-state`;
+  }
+  private async command<T>(runId: string, operation: string, payload: unknown = {}): Promise<T> {
+    try {
+      const result = await this.client.eval(EVENT_STATE_SCRIPT, [
+        this.stateKey(runId),
+        this.indexKey(),
+        `${this.prefix}run:${runId}`,
+        `${this.prefix}index:terminal-completed-at-members`,
+        `${this.prefix}index:terminal-retention-generation`,
+      ], [
+        operation,
+        JSON.stringify(payload),
+        String(MAX_WORKFLOW_PENDING_EVENT_WAIT_ENTRIES),
+        String(MAX_WORKFLOW_RUN_EVENT_MAILBOX_ENTRIES),
+        String(Date.now()),
+        runId,
+      ]);
+      if (typeof result !== "string") throw new Error("Invalid Redis event-state result");
+      return JSON.parse(result) as T;
+    } catch (cause) {
+      if (cause instanceof Error && cause.message.includes("Workflow run not found")) {
+        throw RESOURCE_NOT_FOUND.create({ detail: `Run not found: ${runId}`, cause });
+      }
+      throw ORCHESTRATION_ERROR.create({
+        detail: "Redis workflow event-state operation failed",
+        cause,
+      });
+    }
+  }
+  private async state(runId: string): Promise<StoredState> {
+    const state = await this.command<StoredState>(runId, "read");
+    return {
+      ...state,
+      waits: Array.isArray(state.waits) ? state.waits : [],
+      mail: Array.isArray(state.mail) ? state.mail : [],
+    };
+  }
+  private storedWait(wait: PersistedPendingEventWait): StoredWait {
+    wait.requestedAt.toISOString();
+    wait.expiresAt?.toISOString();
+    wait.claimedAt?.toISOString();
+    wait.recoveryClaimedAt?.toISOString();
+    return {
+      value: JSON.stringify(wait),
+      id: wait.id,
+      nodeId: wait.nodeId,
+      instance: wait.waitInstanceId,
+      kind: wait.waitKind,
+      status: wait.status,
+      claimedAt: wait.claimedAt?.getTime(),
+      recoveryClaimedAt: wait.recoveryClaimedAt?.getTime(),
+      claimedEventId: wait.claimedEventId,
+      deliveredEventId: wait.deliveredEventId,
+    };
+  }
+  private storedEvent(runId: string, event: RunEventEnvelope): StoredEvent {
+    const publishedAt = event.publishedAt.toISOString();
+    const payload = serializeWorkflowJson(event.payload, "workflow event payload", runId, {
+      strictContext: this.strictContext,
+    });
+    const value = `{"id":${JSON.stringify(event.id)},"eventName":${
+      JSON.stringify(event.eventName)
+    },"payload":${payload},"publishedAt":${JSON.stringify(publishedAt)}}`;
+    return { value, id: event.id, name: event.eventName, at: event.publishedAt.getTime() };
+  }
+  async savePendingEventWait(runId: string, wait: PersistedPendingEventWait): Promise<void> {
+    await this.command(runId, "save", { wait: this.storedWait(wait) });
+  }
+  savePendingEventWaitIfStatusAndWorker(
+    runId: string,
+    statuses: WorkflowStatus[],
+    worker: string,
+    wait: PersistedPendingEventWait,
+  ): Promise<boolean> {
+    return this.command(runId, "save-owned", { statuses, worker, wait: this.storedWait(wait) });
+  }
+  async getPendingEventWaits(runId: string): Promise<PersistedPendingEventWait[]> {
+    return (await this.state(runId)).waits.filter((w) => w.status === "pending").map(waitValue);
+  }
+  private async states(runId?: string): Promise<Array<{ runId: string; state: StoredState }>> {
+    const ids = runId === undefined ? await this.client.smembers(this.indexKey()) : [runId];
+    return await Promise.all(ids.map(async (id) => ({ runId: id, state: await this.state(id) })));
+  }
+  async listPendingEventWaits(): Promise<
+    Array<{ runId: string; wait: PersistedPendingEventWait }>
+  > {
+    const result = [];
+    for (const { runId, state } of await this.states()) {
+      if (!await this.client.exists(`${this.prefix}run:${runId}`)) continue;
+      for (const wait of state.waits) {
+        if (wait.status === "pending") result.push({ runId, wait: waitValue(wait) });
+      }
+    }
+    return result;
+  }
+  resolvePendingEventWait(
+    runId: string,
+    id: string,
+    status: "delivered" | "expired" | "cancelled",
+    unlessBuffered?: { eventName: string; publishedBefore: Date },
+  ): Promise<boolean> {
+    return this.command(runId, "resolve", {
+      id,
+      status,
+      name: unlessBuffered?.eventName,
+      cutoff: unlessBuffered?.publishedBefore.getTime(),
+    });
+  }
+  restorePendingEventWait(runId: string, id: string): Promise<boolean> {
+    return this.command(runId, "restore-wait", { id });
+  }
+  async listTimedEventWaitClaims(runId?: string): Promise<PersistedPendingEventWait[]> {
+    return (await this.states(runId)).flatMap(({ state }) =>
+      state.waits.filter((w) =>
+        w.claimedAt !== undefined &&
+        ((w.kind === "delay" && w.status === "delivered") ||
+          (w.kind === "event" && w.status === "expired"))
+      ).map(waitValue)
+    );
+  }
+  reserveTimedEventWaitClaim(runId: string, id: string, at: Date, stale: Date): Promise<boolean> {
+    return this.command(runId, "reserve-timeout", { id, at: at.getTime(), stale: stale.getTime() });
+  }
+  async finalizeTimedEventWaitClaim(runId: string, id: string): Promise<void> {
+    await this.command(runId, "finalize-timeout", { id });
+  }
+  async appendRunEvent(runId: string, event: RunEventEnvelope): Promise<void> {
+    await this.command(runId, "append", { event: this.storedEvent(runId, event) });
+  }
+  removeRunEvent(runId: string, id: string): Promise<boolean> {
+    return this.command(runId, "remove", { id });
+  }
+  async peekRunEvent(runId: string, name: string): Promise<RunEventEnvelope | null> {
+    const event = await this.command<StoredEvent | null>(runId, "peek", { name });
+    return event ? eventValue(event) : null;
+  }
+  async takeRunEvent(runId: string, name: string): Promise<RunEventEnvelope | null> {
+    const event = await this.command<StoredEvent | null>(runId, "take", { name });
+    return event ? eventValue(event) : null;
+  }
+  async claimRunEventForWait(
+    runId: string,
+    id: string,
+    name: string,
+    before?: Date,
+  ): Promise<RunEventEnvelope | null> {
+    const event = await this.command<StoredEvent | null>(runId, "claim", {
+      id,
+      name,
+      cutoff: before?.getTime(),
+    });
+    return event ? eventValue(event) : null;
+  }
+  async listRunEventDeliveryClaims(runId?: string): Promise<RunEventDeliveryClaim[]> {
+    return (await this.states(runId)).flatMap(({ state }) =>
+      Object.values(state.claims).map((claim) => {
+        const wait = state.waits.find((w) => w.id === claim.waitId);
+        if (!wait) throw ORCHESTRATION_ERROR.create({ detail: "Redis delivery claim has no wait" });
+        return {
+          wait: waitValue(wait),
+          event: eventValue(claim.event),
+          claimedAt: new Date(claim.claimedAt),
+        };
+      })
+    );
+  }
+  reserveRunEventDeliveryClaim(
+    runId: string,
+    id: string,
+    eventId: string,
+    at: Date,
+    stale: Date,
+  ): Promise<boolean> {
+    return this.command(runId, "reserve-delivery", {
+      id,
+      eventId,
+      at: at.getTime(),
+      stale: stale.getTime(),
+    });
+  }
+  async restoreRunEvent(runId: string, event: RunEventEnvelope): Promise<void> {
+    await this.command(runId, "restore-event", { event: this.storedEvent(runId, event) });
+  }
+  restoreRunEventDelivery(runId: string, id: string, event: RunEventEnvelope): Promise<boolean> {
+    return this.command(runId, "restore-delivery", { id, eventId: event.id });
+  }
+  async finalizeRunEventDelivery(
+    runId: string,
+    eventId: string,
+    delivered: boolean,
+  ): Promise<void> {
+    await this.command(runId, "finalize-delivery", { eventId, delivered });
+  }
+  async hasRunEventDeliveryReceipt(runId: string, eventId: string): Promise<boolean> {
+    return (await this.state(runId)).waits.some((w) => w.deliveredEventId === eventId);
+  }
+}
