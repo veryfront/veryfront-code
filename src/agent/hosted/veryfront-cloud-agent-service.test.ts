@@ -2117,11 +2117,6 @@ Deno.test("hosted child execution config keeps exact non-empty skill authorizati
 Deno.test({
   name:
     "createNodeVeryfrontCloudAgentServiceRuntime ignores deploymentArtifact inherited during project imports",
-  // Code primitive discovery invokes the esbuild-backed transpiler, which starts
-  // an esbuild child process. This matches the sanitizer policy in
-  // src/discovery/transpiler.test.ts.
-  sanitizeOps: false,
-  sanitizeResources: false,
   fn: async () => {
     const originalDeploymentArtifact = Object.getOwnPropertyDescriptor(
       Object.prototype,
@@ -2162,11 +2157,6 @@ Deno.test({
 Deno.test({
   name:
     "createNodeVeryfrontCloudAgentServiceRuntime snapshots own deploymentArtifact before project imports",
-  // Code primitive discovery invokes the esbuild-backed transpiler, which starts
-  // an esbuild child process. This matches the sanitizer policy in
-  // src/discovery/transpiler.test.ts.
-  sanitizeOps: false,
-  sanitizeResources: false,
   fn: async () => {
     const originalDeploymentArtifact = Object.getOwnPropertyDescriptor(
       Object.prototype,
