@@ -2668,4 +2668,58 @@ describe("RC metadata verification order", () => {
       "publish:npm:rc",
     ]);
   });
+  it("refuses a maintenance batch before any publish if any package would move rc", async () => {
+    const output = await runBash(
+      [
+        "set -euo pipefail",
+        'source "$SCRIPT_PATH"',
+        "verify_npm_compatibility_artifact() { :; }",
+        "package_dirs() { printf '%s\\n' extension npm; }",
+        "canonical_tarball_for_package_dir() { echo package.tgz; }",
+        'jq() { echo "$PACKAGE_DIR"; }',
+        'rc_tag_for_package() { if [ "$1" = extension ]; then echo rc-history; else echo rc; fi; }',
+        'rc_publish_package_dir() { echo "UNSAFE-PUBLISH"; }',
+        "run_rc_publish",
+      ].join("\n"),
+      {
+        VERSION: "0.1.0-rc.1",
+        GITHUB_SHA: "expected-head",
+        NPM_PACK_DIR: "artifact",
+        NPM_MAINTENANCE_RELEASE: "true",
+      },
+    );
+    assertEquals(output.code, 1);
+    assertEquals(
+      decoder.decode(output.stdout).includes("UNSAFE-PUBLISH"),
+      false,
+    );
+  });
+
+  it("keeps maintenance dispatch disabled while retaining the release gates", async () => {
+    const workflow = parse(
+      await Deno.readTextFile(new URL("../../.github/workflows/cicd.yml", import.meta.url)),
+    ) as {
+      jobs: Record<
+        string,
+        { if?: string; steps?: Array<{ name?: string; if?: string }> }
+      >;
+    };
+    for (
+      const name of ["quality-gate-release", "version-check", "build-binaries"]
+    ) {
+      assertStringIncludes(workflow.jobs[name].if ?? "", "workflow_dispatch");
+      assertStringIncludes(
+        workflow.jobs[name].if ?? "",
+        "maintenance_release_number",
+      );
+    }
+    for (const step of workflow.jobs["quality-gate-registry"].steps ?? []) {
+      if (step.name?.startsWith("Trigger ")) {
+        assertStringIncludes(
+          step.if ?? "",
+          "!(github.event_name == 'workflow_dispatch' && inputs.maintenance_release_number != '')",
+        );
+      }
+    }
+  });
 });

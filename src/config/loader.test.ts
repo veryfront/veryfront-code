@@ -1,3 +1,9 @@
+import { MemoryCacheBackend } from "#veryfront/cache/backends/memory.ts";
+import {
+  getCachedWithBatching,
+  getRequestCacheContext,
+  runWithCacheBatching,
+} from "#veryfront/cache/request-cache-batcher.ts";
 import "#veryfront/schemas/_test-setup.ts";
 import {
   assert,
@@ -9997,6 +10003,53 @@ export default config as const;
           environment: { TENANT: "tenant" },
         });
       }
+
+      it("releases shared hosted configuration admission after the creating request aborts", async () => {
+        const adapter = createHostedAdapter();
+        const preparedContext = await prepareProductionContext();
+        const backend = new MemoryCacheBackend();
+        const source = 'export default { title: "recovered" };';
+        await backend.set("source", source);
+        const started = Promise.withResolvers<void>();
+        const controller = new AbortController();
+        let context: ReturnType<typeof getRequestCacheContext>;
+        adapter.fs.readFile = async (path: string) => {
+          if (path !== "/veryfront.config.js") throw configCandidateNotFound(path);
+          context = getRequestCacheContext();
+          const pending = getCachedWithBatching(backend, "source");
+          started.resolve();
+          return (await pending)!;
+        };
+        __setHostedConfigEvaluatorForTests(async () => ({ title: "recovered" }));
+        const first = runWithCacheBatching(async () => {
+          const request = loadProductionHostedConfig(adapter, preparedContext, {
+            signal: controller.signal,
+          });
+          await started.promise;
+          controller.abort();
+          await assertRejects(() => request, DeclarativeConfigEvaluationError);
+        });
+        await first;
+        const second = runWithCacheBatching(() =>
+          loadProductionHostedConfig(adapter, preparedContext)
+        );
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        try {
+          const result = await Promise.race([
+            second,
+            new Promise<string>((resolve) => {
+              timer = setTimeout(() => resolve("stranded source admission"), 100);
+            }),
+          ]);
+          assertEquals(typeof result === "string" ? result : result.title, "recovered");
+        } finally {
+          if (timer !== undefined) clearTimeout(timer);
+          // Release stranded baseline reads so the regression never leaks global admission.
+          for (const pending of context?.batchQueue ?? []) pending.resolve(source);
+          await second;
+        }
+        await waitForHostedSourceReadState({ active: 0, queued: 0, flights: 0, waiters: 0 });
+      });
 
       it("settles an aborted caller while its admitted filesystem read remains blocked", async () => {
         const adapter = createHostedAdapter();
