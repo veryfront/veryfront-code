@@ -13,9 +13,78 @@ import {
 } from "#veryfront/workflow/limits.ts";
 import { serializeWorkflowJson } from "#veryfront/workflow/context-serialization.ts";
 
+/** Atomic mailbox eligibility shared with existing run-status mutations. */
+export const UPDATE_EVENT_MAILBOX_ELIGIBILITY_LUA = `
+local function mailboxProtected(status,state)
+  if status == 'pending' or status == 'running' or status == 'waiting' or status == 'failed' then return true end
+  if next(state.claims) then return true end
+  for _,w in ipairs(state.waits) do
+    if w.status == 'pending' or (w.claimedAt and ((w.kind == 'delay' and w.status == 'delivered') or
+      (w.kind == 'event' and w.status == 'expired'))) then return true end
+  end
+  return false
+end
+local function updateEventMailboxEligibility(runKey,runId,state)
+  local prefix=string.sub(runKey,1,#runKey-#runId-4)
+  local index=prefix .. 'index:event-mailboxes'
+  local candidates=index .. ':evictable'
+  local score=redis.call('zscore',index,runId)
+  if not score then redis.call('zrem',candidates,runId); return end
+  local status=redis.call('hget',runKey,'status')
+  if status == 'pending' or status == 'running' or status == 'waiting' or status == 'failed' then
+    redis.call('zrem',candidates,runId); return
+  end
+  if not state then
+    local raw=redis.call('get',prefix .. 'event-state:' .. runId)
+    state=raw and cjson.decode(raw) or {waits={},mail={},claims={}}
+  end
+  if mailboxProtected(status,state) then redis.call('zrem',candidates,runId)
+  else redis.call('zadd',candidates,score,runId) end
+end
+local function clearTerminalRunEvents(runKey,runId)
+  local status=redis.call('hget',runKey,'status')
+  if status ~= 'completed' and status ~= 'cancelled' then return end
+  local prefix=string.sub(runKey,1,#runKey-#runId-4)
+  local key=prefix .. 'event-state:' .. runId
+  local raw=redis.call('get',key)
+  if not raw then return end
+  local state=cjson.decode(raw)
+  local nodes={}
+  if status == 'completed' then nodes=cjson.decode(redis.call('hget',runKey,'nodeStates') or '{}') end
+  for eventId,claim in pairs(state.claims) do
+    for _,w in ipairs(state.waits) do
+      if w.id == claim.waitId then
+        w.claimedAt=nil; w.recoveryClaimedAt=nil; w.claimedEventId=nil
+        local node=nodes[w.nodeId]
+        if status == 'completed' and node and node.status == 'completed' then w.deliveredEventId=eventId end
+        break
+      end
+    end
+  end
+  state.mail={}; state.claims={}
+  redis.call('zrem',prefix .. 'index:event-mailboxes',runId)
+  local active=false
+  for _,w in ipairs(state.waits) do
+    if w.status == 'pending' or (w.claimedAt and ((w.kind == 'delay' and w.status == 'delivered') or
+      (w.kind == 'event' and w.status == 'expired'))) then active=true end
+  end
+  if active then redis.call('sadd',prefix .. 'index:event-state',runId)
+  else redis.call('srem',prefix .. 'index:event-state',runId) end
+  redis.call('set',key,cjson.encode(state))
+end
+`;
+
+const RECONCILE_EVENT_MAILBOXES_SCRIPT = `-- reconcile-event-mailboxes
+${UPDATE_EVENT_MAILBOX_ELIGIBILITY_LUA}
+local ids=cjson.decode(ARGV[2])
+for _,id in ipairs(ids) do updateEventMailboxEligibility(ARGV[1] .. 'run:' .. id,id) end
+return #ids
+`;
+
 // Payloads remain opaque JSON strings inside Redis state. Lua only interprets
 // envelope metadata, so an empty array in a user payload never becomes {}.
 const EVENT_STATE_SCRIPT = `-- workflow-event-state
+${UPDATE_EVENT_MAILBOX_ELIGIBILITY_LUA}
 local op = ARGV[1]
 local p = cjson.decode(ARGV[2])
 local raw = redis.call('get', KEYS[1])
@@ -57,18 +126,20 @@ local function reserveMailbox()
   if redis.call('zscore',KEYS[6],ARGV[6]) then return end
   if redis.call('zcard',KEYS[6]) >= tonumber(ARGV[7]) then
     local eligible=nil
-    for _,id in ipairs(redis.call('zrange',KEYS[6],0,-1)) do
+    local id=redis.call('zrange',KEYS[6] .. ':evictable',0,0)[1]
+    if id and not redis.call('zscore',KEYS[6],id) then
+      redis.call('zrem',KEYS[6] .. ':evictable',id); id=nil
+    end
+    if id then
       local stateKey=ARGV[8] .. 'event-state:' .. id
       local otherRaw=redis.call('get',stateKey)
       local other=otherRaw and cjson.decode(otherRaw) or {waits={},mail={},claims={}}
       local status=redis.call('hget',ARGV[8] .. 'run:' .. id,'status')
-      local protected=status == 'pending' or status == 'running' or status == 'waiting' or status == 'failed'
-      if next(other.claims) then protected=true end
-      for _,w in ipairs(other.waits) do if w.status == 'pending' or timed(w) then protected=true end end
-      if not protected then eligible={id=id,key=stateKey,state=other,status=status}; break end
+      if not mailboxProtected(status,other) then eligible={id=id,key=stateKey,state=other,status=status} end
     end
     if not eligible then return redis.error_reply('Run event mailbox capacity reached') end
     redis.call('zrem',KEYS[6],eligible.id)
+    redis.call('zrem',KEYS[6] .. ':evictable',eligible.id)
     if not eligible.status then
       redis.call('del',eligible.key)
       redis.call('srem',KEYS[2],eligible.id)
@@ -86,15 +157,9 @@ local function reserveMailbox()
   return nil
 end
 local function commit(result)
-  if #s.mail > 0 then redis.call('zadd',KEYS[6],'NX',s.mail[1].order or now,ARGV[6])
-  elseif next(s.claims) then
-    local score=nil
-    for _,claim in pairs(s.claims) do
-      local claimScore=claim.event.order or claim.claimedAt or now
-      if not score or claimScore < score then score=claimScore end
-    end
-    redis.call('zadd',KEYS[6],'NX',score or now,ARGV[6])
+  if #s.mail > 0 or next(s.claims) then redis.call('zadd',KEYS[6],'NX',(s.mail[1] and s.mail[1].order) or now,ARGV[6])
   else redis.call('zrem',KEYS[6],ARGV[6]) end
+  updateEventMailboxEligibility(KEYS[3],ARGV[6],s)
   if #s.waits == 0 and #s.mail == 0 and not next(s.claims) and redis.call('exists',KEYS[3]) == 0 then
     redis.call('del',KEYS[1])
   else redis.call('set', KEYS[1], encode(s)) end
@@ -206,21 +271,7 @@ elseif op == 'finalize-delivery' then
   local w=findWait(c.waitId)
   if w then clearClaim(w); if p.delivered then w.deliveredEventId=p.eventId end end
   s.claims[p.eventId]=nil; return commit(true)
-elseif op == 'terminal-run' then
-  if not raw then return encode(false) end
-  local status=redis.call('hget',KEYS[3],'status')
-  if status ~= 'completed' and status ~= 'cancelled' then return encode(false) end
-  local nodes={}
-  if status == 'completed' then nodes=cjson.decode(redis.call('hget',KEYS[3],'nodeStates') or '{}') end
-  for eventId,c in pairs(s.claims) do
-    local w=findWait(c.waitId)
-    if w then
-      clearClaim(w)
-      local node=nodes[w.nodeId]
-      if status == 'completed' and node and node.status == 'completed' then w.deliveredEventId=eventId end
-    end
-  end
-  s.mail={}; s.claims={}; return commit(true)
+
 end
 return redis.error_reply('Unknown workflow event-state operation')`;
 
@@ -290,7 +341,12 @@ export class RedisEventWaitStore {
   indexKey(): string {
     return `${this.prefix}index:event-state`;
   }
-  private async command<T>(runId: string, operation: string, payload: unknown = {}): Promise<T> {
+  private async command<T>(
+    runId: string,
+    operation: string,
+    payload: unknown = {},
+    reconciled = false,
+  ): Promise<T> {
     try {
       const result = await this.client.eval(EVENT_STATE_SCRIPT, [
         this.stateKey(runId),
@@ -313,6 +369,20 @@ export class RedisEventWaitStore {
       if (typeof result !== "string") throw new Error("Invalid Redis event-state result");
       return JSON.parse(result) as T;
     } catch (cause) {
+      if (
+        !reconciled && cause instanceof Error &&
+        cause.message.includes("Run event mailbox capacity reached")
+      ) {
+        try {
+          await this.reconcileExistingMailboxes();
+        } catch (reconciliationCause) {
+          throw ORCHESTRATION_ERROR.create({
+            detail: "Redis workflow mailbox reconciliation failed",
+            cause: reconciliationCause,
+          });
+        }
+        return await this.command<T>(runId, operation, payload, true);
+      }
       if (cause instanceof Error && cause.message.includes("Workflow run not found")) {
         throw RESOURCE_NOT_FOUND.create({ detail: `Run not found: ${runId}`, cause });
       }
@@ -322,6 +392,31 @@ export class RedisEventWaitStore {
       });
     }
   }
+  private async reconcileExistingMailboxes(): Promise<void> {
+    await this.client.del(`${this.prefix}index:event-mailboxes:evictable`);
+    let cursor = "0";
+    do {
+      const page = await this.client.eval(
+        "local page=redis.call('zscan',KEYS[1],ARGV[1],'COUNT',50); local ids={}; for i=1,#page[2],2 do table.insert(ids,page[2][i]) end; return {page[1],ids}",
+        [`${this.prefix}index:event-mailboxes`],
+        [cursor],
+      );
+      if (
+        !Array.isArray(page) || page.length !== 2 || typeof page[0] !== "string" ||
+        !/^\d+$/.test(page[0]) || !Array.isArray(page[1]) ||
+        !page[1].every((id): id is string => typeof id === "string")
+      ) throw new Error("Invalid Redis mailbox index result");
+      cursor = page[0];
+      const ids: string[] = page[1];
+      for (let offset = 0; offset < ids.length; offset += 50) {
+        await this.client.eval(RECONCILE_EVENT_MAILBOXES_SCRIPT, [], [
+          this.prefix,
+          JSON.stringify(ids.slice(offset, offset + 50)),
+        ]);
+      }
+    } while (cursor !== "0");
+  }
+
   private async state(runId: string): Promise<StoredState> {
     try {
       const raw = await this.client.get(this.stateKey(runId));
@@ -522,9 +617,5 @@ export class RedisEventWaitStore {
   }
   async hasRunEventDeliveryReceipt(runId: string, eventId: string): Promise<boolean> {
     return (await this.state(runId)).waits.some((w) => w.deliveredEventId === eventId);
-  }
-  async clearTerminalRunEvents(runId: string): Promise<void> {
-    if (await this.client.get(this.stateKey(runId)) === null) return;
-    await this.command(runId, "terminal-run", {});
   }
 }
