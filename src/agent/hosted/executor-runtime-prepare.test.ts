@@ -219,6 +219,52 @@ describe("executor runtime preparation", () => {
     assertEquals(iteratorCalls, 0);
   });
 
+  it("copies narrowed request tool names without the mutable array iterator", async () => {
+    let iteratorCalls = 0;
+    const requestedToolNames = ["safe_tool"];
+    Object.defineProperty(requestedToolNames, Symbol.iterator, {
+      configurable: true,
+      value() {
+        iteratorCalls += 1;
+        throw new Error("patched request tool iterator must not run");
+      },
+    });
+    const visible: string[][] = [];
+    const f = fixture({
+      config: { tools: { safe_tool: true, unsafe_tool: true } },
+      grant: {
+        ...grant,
+        allowedToolNames: ["safe_tool", "unsafe_tool"],
+        hostToolFacadeIds: ["local"],
+      },
+      facades: {
+        hostTools: new Map([["local", {
+          safe_tool: syntheticHostTool(),
+          unsafe_tool: syntheticHostTool(),
+        }]]),
+        resolveModelRuntime: () => ({
+          ...model,
+          doStream(options) {
+            visible.push(
+              (options as ModelRuntimeCallOptions).tools?.map((tool) => tool.name) ?? [],
+            );
+            return finishStream(undefined, {}, "Narrowed.");
+          },
+        }),
+      },
+    });
+    try {
+      const events = await Array.fromAsync(
+        await preparedStream(f, { agentId: "coder", allowedToolNames: requestedToolNames }),
+      );
+      assertCleanCompletion(events);
+    } finally {
+      await f.owner.close();
+    }
+    assertEquals(iteratorCalls, 0);
+    assertEquals(visible, [["safe_tool"]]);
+  });
+
   it("prepares without absent optional Studio but rejects required or granted missing facades", async () => {
     for (const required of [false, true, undefined]) {
       const f = fixture({
@@ -555,6 +601,11 @@ describe("executor runtime preparation", () => {
       toolLoading: "eager",
       toolResultContext: resultContextLimits,
       knowledge: knowledgeSelector,
+      mcpServers: [{
+        kind: "veryfront-studio",
+        required: false,
+        toolPolicy: { allow: ["search_knowledge"] },
+      }],
     } satisfies RuntimeAgentMarkdownDefinition;
     const largeResultTool = tool({
       id: "large_result",

@@ -1,6 +1,10 @@
 import { getHostedAgentPauseCreationOptions } from "./manual-pause-credential.ts";
 import { getPrivateAsyncIterator } from "#veryfront/security/private-iterator.ts";
-import { forEachPrivateArray, mapPrivateArray } from "#veryfront/security/private-array.ts";
+import {
+  forEachPrivateArray,
+  mapPrivateArray,
+  slicePrivateArray,
+} from "#veryfront/security/private-array.ts";
 import { createPrivateSet } from "#veryfront/security/private-set.ts";
 import { defineOwnDataProperty } from "#veryfront/security/own-data-property.ts";
 import {
@@ -89,6 +93,7 @@ import {
   getExecutorRuntimeSteeringSchema,
   parseRuntimePreparationData,
 } from "#veryfront/agent/hosted/executor-runtime-prepare-schema.ts";
+import { isKnowledgeEnabled } from "#veryfront/agent/runtime/knowledge-tools.ts";
 
 const apply = Reflect.apply;
 const mapGet = Map.prototype.get;
@@ -111,6 +116,7 @@ const numberIsSafeInteger = Number.isSafeInteger;
 const addEventListener = EventTarget.prototype.addEventListener;
 const removeEventListener = EventTarget.prototype.removeEventListener;
 const iteratorSymbol = Symbol.iterator;
+const FRAMEWORK_KNOWLEDGE_TOOL_NAME = "search_knowledge";
 
 function combineSignals(...signals: AbortSignal[]): AbortSignal {
   const inputs = createPrivateSet(signals);
@@ -159,6 +165,9 @@ async function pruneUnavailableOptionalStudioToolNames(
   signal: AbortSignal,
 ): Promise<string[]> {
   const configuredServers = definition.mcpServers ?? [];
+  const hasFrameworkKnowledgeTool = isKnowledgeEnabled(definition.knowledge);
+  const isFrameworkKnowledgeTool = (name: string) =>
+    hasFrameworkKnowledgeTool && name === FRAMEWORK_KNOWLEDGE_TOOL_NAME;
   const unavailableNames = createPrivateSet<string>();
   const unavailablePrefixes = createPrivateSet<string>();
   const isUnavailable = (name: string) => {
@@ -181,14 +190,23 @@ async function pruneUnavailableOptionalStudioToolNames(
     unavailableNames.add("studio_open_project");
     forEachPrivateArray(allowedNames, (toolName) => unavailableNames.add(toolName));
   }
-  if (unavailableNames.size === 0 && unavailablePrefixes.size === 0) return [...names];
+  if (unavailableNames.size === 0 && unavailablePrefixes.size === 0) {
+    return slicePrivateArray(names);
+  }
   const remoteCandidates = filter(
     names,
-    (name) => isUnavailable(name) && !hasOwn(localTools, name),
+    (name) =>
+      isUnavailable(name) && !hasOwn(localTools, name) &&
+      !isFrameworkKnowledgeTool(name),
   );
-  if (remoteCandidates.length === 0) return [...names];
+  if (remoteCandidates.length === 0) return slicePrivateArray(names);
   if (remoteToolSources.length === 0) {
-    return filter(names, (name) => !isUnavailable(name) || hasOwn(localTools, name));
+    return filter(
+      names,
+      (name) =>
+        !isUnavailable(name) || hasOwn(localTools, name) ||
+        isFrameworkKnowledgeTool(name),
+    );
   }
 
   const remoteCandidateSet = createPrivateSet(remoteCandidates);
@@ -211,7 +229,9 @@ async function pruneUnavailableOptionalStudioToolNames(
   }
   return filter(
     names,
-    (name) => !isUnavailable(name) || hasOwn(localTools, name) || remoteAvailableNames.has(name),
+    (name) =>
+      !isUnavailable(name) || hasOwn(localTools, name) ||
+      isFrameworkKnowledgeTool(name) || remoteAvailableNames.has(name),
   );
 }
 
