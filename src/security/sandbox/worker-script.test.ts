@@ -9,6 +9,7 @@ import {
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { join } from "node:path";
 import { API_ROUTE_ERROR } from "#veryfront/errors";
+import { ExecutorAgentError } from "#veryfront/agent/hosted/executor-agent-schema.ts";
 import { ERROR_DIAGNOSTIC_MAX_LENGTH_CHARS } from "#veryfront/errors/safe-diagnostics.ts";
 import {
   MAX_WORKER_MODULE_SOURCE_BYTES,
@@ -255,6 +256,14 @@ describe("worker-script makeProjectPathGuard", () => {
 });
 
 describe("worker-script serializeError", () => {
+  it("serializes fixed authentication diagnostics across the worker boundary", () => {
+    const serialized = serializeError(new ExecutorAgentError("agent-provider-auth-error"));
+    assertEquals(serialized.message, "Agent provider authentication failed");
+    assertEquals(serialized.problem?.title, "Agent provider authentication failed");
+    assertEquals(serialized.problem?.slug, "agent-provider-auth-error");
+    assertEquals(serialized.problem?.status, 401);
+  });
+
   it("serializes a standard Error preserving message, name, and stack", () => {
     const err = new Error("boom");
     const serialized = serializeError(err);
