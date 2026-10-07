@@ -35,7 +35,7 @@ import {
   type TracerProvider,
 } from "./api-shim.ts";
 import * as otelApi from "npm:@opentelemetry/api@1.9.1";
-import { W3CTraceContextPropagator } from "npm:@opentelemetry/core@2.9.0";
+import { W3CTraceContextPropagator } from "npm:@opentelemetry/core@2.10.0";
 
 describe("observability/tracing/api-shim", () => {
   afterEach(() => {

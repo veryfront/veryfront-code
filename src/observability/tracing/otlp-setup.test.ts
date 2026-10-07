@@ -12,7 +12,7 @@ import {
   BasicTracerProvider,
   InMemorySpanExporter,
   SimpleSpanProcessor,
-} from "npm:@opentelemetry/sdk-trace-base@2.9.0";
+} from "npm:@opentelemetry/sdk-trace-base@2.10.0";
 import {
   _resetShimForTests,
   type AttributeValue,

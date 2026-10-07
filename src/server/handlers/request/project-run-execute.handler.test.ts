@@ -81,7 +81,7 @@ import { delay, withEnv } from "#veryfront/testing/deno-compat.ts";
 import { createProjectRunInferenceModelResolver } from "#veryfront/agent/runtime/project-run-inference-credential.ts";
 import { stop as stopEsbuild } from "veryfront/extensions/bundler";
 import * as otelApi from "npm:@opentelemetry/api@1.9.1";
-import { AsyncLocalStorageContextManager } from "npm:@opentelemetry/context-async-hooks@2.9.0";
+import { AsyncLocalStorageContextManager } from "npm:@opentelemetry/context-async-hooks@2.10.0";
 import { sealIngressCredentials } from "#veryfront/security/http/ingress-credentials.ts";
 import {
   HEADER_METHODS,
@@ -93,8 +93,8 @@ import {
   type ReadableSpan,
   SimpleSpanProcessor,
   type SpanExporter,
-} from "npm:@opentelemetry/sdk-trace-base@2.9.0";
-import { ExportResultCode } from "npm:@opentelemetry/core@2.9.0";
+} from "npm:@opentelemetry/sdk-trace-base@2.10.0";
+import { ExportResultCode } from "npm:@opentelemetry/core@2.10.0";
 import {
   _resetShimForTests,
   setGlobalActiveSpanAccessor,

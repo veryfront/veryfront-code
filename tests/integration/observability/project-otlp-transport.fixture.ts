@@ -1,13 +1,13 @@
 import { context } from "npm:@opentelemetry/api@1.9.1";
-import { suppressTracing } from "npm:@opentelemetry/core@2.9.0";
-import { AsyncLocalStorageContextManager } from "npm:@opentelemetry/context-async-hooks@2.9.0";
-import { BasicTracerProvider, BatchSpanProcessor } from "npm:@opentelemetry/sdk-trace-base@2.9.0";
-import { resourceFromAttributes } from "npm:@opentelemetry/resources@2.9.0";
+import { suppressTracing } from "npm:@opentelemetry/core@2.10.0";
+import { AsyncLocalStorageContextManager } from "npm:@opentelemetry/context-async-hooks@2.10.0";
+import { BasicTracerProvider, BatchSpanProcessor } from "npm:@opentelemetry/sdk-trace-base@2.10.0";
+import { resourceFromAttributes } from "npm:@opentelemetry/resources@2.10.0";
 import {
   createOtlpNetworkExportDelegate,
   OTLPExporterBase,
-} from "npm:@opentelemetry/otlp-exporter-base@0.220.0";
-import { JsonTraceSerializer } from "npm:@opentelemetry/otlp-transformer@0.220.0";
+} from "npm:@opentelemetry/otlp-exporter-base@0.221.0";
+import { JsonTraceSerializer } from "npm:@opentelemetry/otlp-transformer@0.221.0";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { createProjectOtlpTransport } from "#veryfront/observability/tracing/project-otlp-transport.ts";
 
