@@ -4,6 +4,7 @@ import {
   createAgentKnowledgeTool,
 } from "#veryfront/agent/runtime/knowledge-tools.ts";
 import { executeConfiguredTool } from "#veryfront/agent/runtime/tool-helpers.ts";
+import { agent } from "#veryfront/agent";
 import { markTrustedPlatformSource } from "#veryfront/tool/platform-source-provenance.ts";
 import { listProjectScopedRemoteToolNames } from "#veryfront/tool/project-scoped-remote-tools.ts";
 import { assertEquals, assertExists, assertRejects, assertThrows } from "@std/assert";
@@ -27,6 +28,7 @@ import {
 import { VeryfrontError } from "#veryfront/errors";
 import { runWithExactRuntimeRemoteToolSources } from "./remote-tool-source-context.ts";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
+import { scriptedModel } from "./model-runtime.test-helpers.ts";
 
 Deno.test("getRequestedUnresolvedBooleanToolNames keeps legacy delegation local", () => {
   assertEquals(
@@ -1110,6 +1112,35 @@ Deno.test("getRuntimeRemoteToolSources requires injected control-plane source fo
     "trusted host-injected control-plane source",
   );
   assertEquals(error.slug, "config-invalid");
+});
+
+Deno.test("getRuntimeRemoteToolSources omits optional Studio MCP without injected source", () => {
+  const sources = getRuntimeRemoteToolSources({
+    system: "Use Studio tools when available.",
+    tools: { studio_open_project: true },
+    mcpServers: [{ kind: "veryfront-studio", required: false }],
+  });
+
+  assertEquals(sources, []);
+});
+
+Deno.test("optional Studio MCP suppresses named Studio tools during runtime execution", async () => {
+  const model = scriptedModel([{ text: "done" }], {
+    modelId: "hosted/optional-studio-suppression",
+    only: "generate",
+  });
+  const assistant = agent({
+    id: "optional-studio-runtime",
+    system: "Use Studio if available.",
+    tools: { studio_open_project: true },
+    mcpServers: [{ kind: "veryfront-studio", required: false }],
+    resolveModelTransport: () => Promise.resolve({ model }),
+  });
+
+  const response = await assistant.generate({ input: "hello" });
+
+  assertEquals(response.text, "done");
+  assertEquals(model.toolNames(), []);
 });
 
 Deno.test("getRuntimeRemoteToolSources reuses injected Studio MCP source for explicit Studio config", () => {

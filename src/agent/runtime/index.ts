@@ -115,6 +115,7 @@ import {
   bindRuntimeRemoteToolSourcesToCredentialOwner,
   constrainRuntimeRemoteToolSources,
   getRuntimeRemoteToolSources,
+  getRuntimeUnavailableOptionalRemoteTools,
 } from "./mcp-server-tool-sources.ts";
 import { runWithRuntimeRemoteToolSources } from "./remote-tool-source-context.ts";
 import {
@@ -3378,6 +3379,9 @@ export class AgentRuntime {
       const remoteToolSources = hasToolReplacements
         ? undefined
         : getRuntimeRemoteToolSources(this.config, undefined, this.id);
+      const unavailableOptionalRemoteTools = hasToolReplacements
+        ? { names: [], prefixes: [] }
+        : getRuntimeUnavailableOptionalRemoteTools(this.config, remoteToolSources);
       const sourceIntegrationPolicy = hasToolReplacements
         ? undefined
         : getRuntimeSourceIntegrationPolicy(this.config);
@@ -3420,6 +3424,8 @@ export class AgentRuntime {
             : undefined,
           forwardedRemoteToolDefinitions,
           getAvailableTools,
+          unavailableOptionalRemoteToolNames: unavailableOptionalRemoteTools.names,
+          unavailableOptionalRemoteToolPrefixes: unavailableOptionalRemoteTools.prefixes,
           supportsToolCalling,
           messages: currentMessages,
           mode: "generate",
@@ -4233,6 +4239,10 @@ export class AgentRuntime {
     const allowedRemoteToolNames = getRuntimeAllowedRemoteTools(this.config);
     const forwardedRemoteToolDefinitions = getRuntimeForwardedIntegrationToolDefs(this.config);
     const remoteToolSources = getRuntimeRemoteToolSources(this.config, undefined, this.id);
+    const unavailableOptionalRemoteTools = getRuntimeUnavailableOptionalRemoteTools(
+      this.config,
+      remoteToolSources,
+    );
     const sourceIntegrationPolicy = getRuntimeSourceIntegrationPolicy(this.config);
     const frameworkLocalTools = createRuntimeFrameworkLocalTools(this.config);
     const configuredProviderTools = getRuntimeProviderTools(this.config);
@@ -4361,6 +4371,8 @@ export class AgentRuntime {
           : undefined,
         forwardedRemoteToolDefinitions,
         getAvailableTools,
+        unavailableOptionalRemoteToolNames: unavailableOptionalRemoteTools.names,
+        unavailableOptionalRemoteToolPrefixes: unavailableOptionalRemoteTools.prefixes,
         supportsToolCalling,
         messages: currentMessages,
         mode: "stream",
