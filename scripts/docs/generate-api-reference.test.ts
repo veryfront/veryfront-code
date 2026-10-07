@@ -265,6 +265,12 @@ describe("generate-api-reference", () => {
       const providerReference = await Deno.readTextFile(
         `${outputDir}/veryfront/provider.md`,
       );
+      const observabilityReference = await Deno.readTextFile(
+        `${outputDir}/veryfront/observability.md`,
+      );
+      const extensionsReference = await Deno.readTextFile(
+        `${outputDir}/veryfront/extensions.md`,
+      );
       assertEquals(
         rootReference.includes(
           "\nConfiguration, server bootstrap, routing, data fetching, and input validation.\n\n## Import",
@@ -381,6 +387,33 @@ describe("generate-api-reference", () => {
         /^\|\s*`ModelRuntimeGenerateResult`\s*\|\s*\|\s*\[source\]\(https:\/\/github\.com\/veryfront\/veryfront-code\/blob\/main\/src\/provider\/types\.ts\)\s*\|$/m,
         "declarations below the first line must keep a stable file source link",
       );
+      assertMatch(
+        observabilityReference,
+        /^\|\s*`getTraceContext`\s*\|\s*Return the application's active trace context\.\s*\|\s*\[source\]\(https:\/\/github\.com\/veryfront\/veryfront-code\/blob\/main\/src\/observability\/tracing\/public-active-span\.ts\)/m,
+      );
+      assertMatch(
+        observabilityReference,
+        /^\|\s*`setActiveSpanAttributes`\s*\|\s*Add sanitized attributes to the active application span\.\s*\|\s*\[source\]\(https:\/\/github\.com\/veryfront\/veryfront-code\/blob\/main\/src\/observability\/tracing\/public-active-span\.ts\)/m,
+      );
+      assertMatch(
+        extensionsReference,
+        /^\|\s*`ProjectTraceProviderOptions`\s*\|\s*Options passed by Veryfront when an extension creates a project trace provider\.\s*\|\s*\[source\]\(https:\/\/github\.com\/veryfront\/veryfront-code\/blob\/main\/src\/extensions\/observability\/tracing-exporter\.ts\)/m,
+      );
+      for (
+        const internalPhrase of [
+          "platform context outside project execution",
+          "internal platform span",
+          "Runtime-owned resource identity",
+          "guarded transport",
+        ]
+      ) {
+        assertEquals(
+          observabilityReference.includes(internalPhrase) ||
+            extensionsReference.includes(internalPhrase),
+          false,
+          `generated observability references must not expose ${internalPhrase}`,
+        );
+      }
       // Alias re-exports must resolve to their target's JSDoc description and a
       // source link. Assert the stable leading phrase + link rather than pinning
       // the full prose, which evolves with the JSDoc.
