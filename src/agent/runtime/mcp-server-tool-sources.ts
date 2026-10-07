@@ -72,6 +72,7 @@ const isArray = Array.isArray;
 const applyIntrinsic = Reflect.apply;
 const stringTrim = String.prototype.trim;
 const stringReplace = String.prototype.replace;
+const arrayIncludes = Array.prototype.includes;
 
 function trimString(value: string | undefined): string | undefined {
   return value === undefined ? undefined : applyIntrinsic(stringTrim, value, []) as string;
@@ -89,7 +90,7 @@ function snapshotStringArray(value: unknown): string[] {
 }
 
 function appendUnique(target: string[], value: string): void {
-  if (!target.includes(value)) target[target.length] = value;
+  if (!applyIntrinsic(arrayIncludes, target, [value])) target[target.length] = value;
 }
 
 export function getRuntimeUnavailableOptionalRemoteTools(

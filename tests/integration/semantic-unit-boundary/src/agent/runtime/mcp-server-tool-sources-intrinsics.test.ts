@@ -90,6 +90,32 @@ describe("Veryfront API MCP bootstrap intrinsic boundary", () => {
     assertEquals(result, { names: [], prefixes: [] });
   });
 
+  it("deduplicates unavailable Studio tools without replaced Array includes", () => {
+    const originalIncludes = Array.prototype.includes;
+    let patchedIncludesCalls = 0;
+    let result: { names: string[]; prefixes: string[] } | undefined;
+    Array.prototype.includes = function poisonedIncludes() {
+      patchedIncludesCalls += 1;
+      throw new Error("patched Array.prototype.includes must not dedupe unavailable tools");
+    } as typeof Array.prototype.includes;
+    try {
+      result = getRuntimeUnavailableOptionalRemoteTools(
+        {
+          system: "Use Studio tools when available.",
+          tools: { studio_open_project: true },
+          __vfUnavailableOptionalRemoteToolPrefixes: ["studio_"],
+          mcpServers: [{ kind: "veryfront-studio", required: false }],
+        },
+        [],
+      );
+    } finally {
+      Array.prototype.includes = originalIncludes;
+    }
+
+    assertEquals(patchedIncludesCalls, 0);
+    assertEquals(result, { names: [], prefixes: ["studio_"] });
+  });
+
   it("ignores a replaced string replace method when resolving its endpoint", async () => {
     const originalReplace = String.prototype.replace;
     let remoteConfig: RemoteMCPToolSourceConfig | undefined;
