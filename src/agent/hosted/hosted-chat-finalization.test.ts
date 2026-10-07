@@ -128,7 +128,7 @@ describe("agent/hosted-chat-finalization", () => {
         input: { command: "x" },
         providerExecuted: true,
       };
-      await finalizeHostedChatRun({
+      const input = {
         kind: "response",
         responseMessage: createResponseMessage({
           parts: [...(reasoning ? [] : [{ type: "text" as const, text: "Hello" }]), tool],
@@ -160,7 +160,8 @@ describe("agent/hosted-chat-finalization", () => {
           calls.push("cleanup");
         },
         streamError: null,
-      });
+      } satisfies Parameters<typeof finalizeHostedChatRun>[0];
+      await finalizeHostedChatRun(input);
       assertEquals(terminalStates[0]!.status, "completed");
       assertEquals((terminalStates[0]!.output as ChatUiMessage).parts, [
         ...(reasoning ? [] : [{ type: "text" as const, text: "Hello" }]),
@@ -177,6 +178,33 @@ describe("agent/hosted-chat-finalization", () => {
       );
       assertEquals(chunks.at(-1), { type: "tool-output-available", toolCallId: "c", output: "ok" });
       assertEquals(calls.slice(-3), ["flush", "terminal:completed:", "cleanup"]);
+      const firstOutput = terminalStates[0]!.output as ChatUiMessage;
+      chunks.length = 0;
+      calls.length = 0;
+      await finalizeHostedChatRun({ ...input, responseMessage: firstOutput });
+      assertEquals(terminalStates[1]!.output, firstOutput);
+      assertEquals(chunks, []);
+      assertEquals(calls, ["flush", "terminal:completed:", "cleanup"]);
+      const rejectedState = createMirroredToolChunkState();
+      rejectedState.startedToolCallIds.add("c");
+      rejectedState.inputAvailableToolCallIds.add("c");
+      const rejectedMirror = createDurableRunMirror({ calls });
+      rejectedMirror.handleChunk = async () => {
+        throw new Error("mirror rejected");
+      };
+      let rejection: unknown;
+      try {
+        await finalizeHostedChatRun({
+          ...input,
+          responseMessage: firstOutput,
+          mirroredToolChunkState: rejectedState,
+          lifecycleAdapter: createLifecycleAdapter({ calls, mirror: rejectedMirror }),
+        });
+      } catch (error) {
+        rejection = error;
+      }
+      assertEquals(rejection instanceof Error ? rejection.message : rejection, "mirror rejected");
+      assertEquals(rejectedState.outputAvailableToolCallIds.has("c"), false);
     });
   }
   for (const partialTool of [true, false]) {

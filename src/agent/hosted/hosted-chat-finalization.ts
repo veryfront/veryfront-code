@@ -13,7 +13,10 @@ import {
   resolveConversationHostedTerminalState,
   toConversationHostedTerminalState,
 } from "../conversation/hosted-terminal.ts";
-import type { MirroredToolChunkState } from "../streaming/mirrored-tool-chunk-state.ts";
+import {
+  type MirroredToolChunkState,
+  recordMirroredToolChunkState,
+} from "../streaming/mirrored-tool-chunk-state.ts";
 import { hasCompletedStepSignal, isStreamTimeoutError } from "../streaming/stream-outcome.ts";
 import type { HostedChatExecutionLifecycleAdapter } from "./chat-execution-lifecycle-types.ts";
 import { hasHostedAgentPauseStopped } from "./manual-pause-credential.ts";
@@ -316,10 +319,14 @@ async function appendFallbackChunks(
   input: {
     chunks: readonly ChatUiMessageChunk<MessageMetadata>[];
     lifecycleAdapter: HostedChatExecutionLifecycleAdapter;
+    mirroredToolChunkState: MirroredToolChunkState;
   },
 ): Promise<void> {
+  const mirror = input.lifecycleAdapter.durableRunMirror;
+  if (!mirror) return;
   for (const chunk of input.chunks) {
-    await input.lifecycleAdapter.durableRunMirror?.handleChunk(chunk);
+    await mirror.handleChunk(chunk);
+    recordMirroredToolChunkState(input.mirroredToolChunkState, chunk);
   }
 }
 
@@ -462,6 +469,7 @@ export async function finalizeHostedChatRun(
   await appendFallbackChunks({
     chunks: fallbackChunks,
     lifecycleAdapter: input.lifecycleAdapter,
+    mirroredToolChunkState: input.mirroredToolChunkState,
   });
   await flushMirror(input.lifecycleAdapter);
 
