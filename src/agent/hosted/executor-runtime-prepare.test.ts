@@ -838,6 +838,33 @@ describe("executor runtime preparation", () => {
     }
   });
 
+  it("allows optional Studio MCP omitted from the executor grant", async () => {
+    const f = fixture({
+      config: { mcpServers: [{ kind: "veryfront-studio", required: false }] },
+      grant: { ...grant, remoteToolSourceIds: [] },
+    });
+    try {
+      assertEquals((await prepare(f.owner) as { ok: boolean }).ok, true);
+    } finally {
+      await f.owner.close();
+    }
+  });
+
+  it("still requires non-optional Studio MCP in the executor grant", async () => {
+    const f = fixture({
+      config: { mcpServers: [{ kind: "veryfront-studio" }] },
+      grant: { ...grant, remoteToolSourceIds: [] },
+    });
+    try {
+      assertEquals(await prepare(f.owner), {
+        ok: false,
+        code: "EXECUTOR_RUNTIME_CAPABILITY_UNAVAILABLE",
+      });
+    } finally {
+      await f.owner.close();
+    }
+  });
+
   it("never downgrades canonical preparation when checkpoint or parent persistence is unavailable", async () => {
     const f = fixture({
       grant: {
