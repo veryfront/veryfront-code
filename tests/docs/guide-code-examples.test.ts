@@ -634,7 +634,8 @@ describe("Guide: connect-runtime.md", () => {
 
   it("encodes the demonstrated output with matching message boundaries", () => {
     assertEquals(typeof createExternalAgentWorkerClient, "function");
-    const messageId = "runtime-demo-message";
+    const run = { message_id: "runtime-demo-message" };
+    const messageId = run.message_id;
     const result = { text: "Hello from the connected runtime." };
     const encoder = new ConversationRunEventEncoder();
     const events = [

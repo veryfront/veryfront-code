@@ -130,7 +130,7 @@ export async function POST(request: Request): Promise<Response> {
       abortSignal: AbortSignal.timeout(20_000),
     });
     output = result.text;
-    const messageId = crypto.randomUUID();
+    const messageId = run.message_id;
     const encoder = new ConversationRunEventEncoder();
     const events = [
       ...encoder.encode({ type: "start", messageId }),

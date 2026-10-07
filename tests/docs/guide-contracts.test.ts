@@ -70,6 +70,7 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
       "registerWorker",
       "claimRun",
       "ConversationRunEventEncoder",
+      "const messageId = run.message_id;",
       "x-csrf-token",
       "project editor access",
       '}, { "Idempotency-Key": admissionKey });',
