@@ -288,7 +288,8 @@ export async function runProductionServer(
             const { clearAllLocalCaches } = await import(
               "veryfront/transforms/mdx-cache"
             );
-            await clearAllLocalCaches();
+            // Keep the dependency graph materialized before startup for offline rendering.
+            await clearAllLocalCaches({ preserveHttpBundles: true });
 
             const { initializeOTLPWithApis } = await import(
               "veryfront/observability/otlp-setup"
