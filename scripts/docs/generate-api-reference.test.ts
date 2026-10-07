@@ -389,11 +389,11 @@ describe("generate-api-reference", () => {
       );
       assertMatch(
         observabilityReference,
-        /^\|\s*`getTraceContext`\s*\|\s*Return the application's active trace context\.\s*\|\s*\[source\]\(https:\/\/github\.com\/veryfront\/veryfront-code\/blob\/main\/src\/observability\/tracing\/public-active-span\.ts\)/m,
+        /^\|\s*`getTraceContext`\s*\|\s*Return the active trace context, if available\.\s*\|\s*\[source\]\(https:\/\/github\.com\/veryfront\/veryfront-code\/blob\/main\/src\/observability\/tracing\/public-active-span\.ts\)/m,
       );
       assertMatch(
         observabilityReference,
-        /^\|\s*`setActiveSpanAttributes`\s*\|\s*Add sanitized attributes to the active application span\.\s*\|\s*\[source\]\(https:\/\/github\.com\/veryfront\/veryfront-code\/blob\/main\/src\/observability\/tracing\/public-active-span\.ts\)/m,
+        /^\|\s*`setActiveSpanAttributes`\s*\|\s*Add sanitized attributes to the active span, if available\.\s*\|\s*\[source\]\(https:\/\/github\.com\/veryfront\/veryfront-code\/blob\/main\/src\/observability\/tracing\/public-active-span\.ts\)/m,
       );
       assertMatch(
         extensionsReference,
