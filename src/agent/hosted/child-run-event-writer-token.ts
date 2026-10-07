@@ -1,4 +1,13 @@
+import { createPrivateMap } from "#veryfront/security/private-map.ts";
 import { AsyncLocalStorage } from "node:async_hooks";
+import { defineSchema, getJsonValueSchema } from "#veryfront/schemas/index.ts";
+import {
+  type AdmitExecutorToolCall,
+  getCurrentToolCallAdmissionReceipt,
+  getCurrentToolCallAdmissionSource,
+} from "#veryfront/runtime/tool-call-admission-dispatch.ts";
+import { getToolCallAdmissionReceiptSchema } from "#veryfront/runtime/tool-call-admission-receipt.ts";
+import { PERMISSION_DENIED } from "#veryfront/errors";
 import { MAX_ROOT_RUN_EVENT_WRITER_TOKEN_BYTES } from "../conversation/run-event-limits.ts";
 import {
   createVeryfrontApiRequestUrlResolver,
@@ -6,6 +15,13 @@ import {
 } from "#veryfront/platform/adapters/veryfront-api-url.ts";
 import { readResponseTextPrefix } from "#veryfront/utils/response-body.ts";
 import {
+  assertNativeRequestProcessing,
+  copyNativeHeaders,
+  createNativeRequestInit,
+  readOwnInitField,
+} from "#veryfront/platform/compat/http/native-request-init.ts";
+import {
+  type ConversationRunEventQueueController,
   type ConversationRunProjection,
   type createConversationAgentRun,
   instrumentConversationRunFetch,
@@ -34,11 +50,15 @@ type Fetch = typeof globalThis.fetch;
 // These intrinsics are captured before tenant code can mutate the shared realm.
 // Secret-bearing operations below must use only these references.
 const NativeTextEncoder = TextEncoder;
+const NativeHeaders = Headers;
+const headersSet = NativeHeaders.prototype.set;
+const headersDelete = NativeHeaders.prototype.delete;
 const NativeWeakMap = WeakMap;
 const apply = Reflect.apply;
 const arrayIsArray = Array.isArray;
 const arraySome = Array.prototype.some;
 const jsonParse = JSON.parse;
+const jsonStringify = JSON.stringify;
 const objectCreate = Object.create;
 const objectDefineProperty = Object.defineProperty;
 const objectFreeze = Object.freeze;
@@ -124,7 +144,55 @@ export interface HostedRunEventWriterCapability {
   ): Promise<HostedRunEventWriterCapability>;
 }
 
+function createParentToolStartBarrier(timeoutMs: number) {
+  const committed = createPrivateMap<string, true>();
+  const waiting = createPrivateMap<string, {
+    promise: Promise<void>;
+    resolve(): void;
+    reject(error: unknown): void;
+  }>();
+  let failure: unknown;
+  let failed = false;
+  return {
+    async wait(toolCallId: string): Promise<void> {
+      if (failed) throw failure;
+      if (committed.has(toolCallId)) return;
+      const existing = waiting.get(toolCallId);
+      if (existing) return await existing.promise;
+      let resolve!: () => void;
+      let reject!: (error: unknown) => void;
+      const promise = new Promise<void>((accept, refuse) => {
+        resolve = accept;
+        reject = refuse;
+      });
+      waiting.set(toolCallId, { promise, resolve, reject });
+      const timer = setTimeout(
+        () => reject(new Error("Parent tool start was not durably persisted")),
+        timeoutMs,
+      );
+      try {
+        await promise;
+      } finally {
+        clearTimeout(timer);
+        waiting.delete(toolCallId);
+      }
+    },
+    commit(toolCallId: string) {
+      if (failed) return;
+      committed.set(toolCallId, true);
+      waiting.get(toolCallId)?.resolve();
+    },
+    fail(error: unknown) {
+      failed = true;
+      failure = error;
+      waiting.forEach((entry) => entry.reject(error));
+      waiting.clear();
+    },
+  };
+}
+
 type CapabilityState = {
+  parentToolStartBarrier?: ReturnType<typeof createParentToolStartBarrier>;
   inheritedExecution?: boolean;
   inheritedAdmitter?: InheritedRunAdmitter;
   apiUrl: string;
@@ -155,9 +223,127 @@ type VerifiedRequestWriterScope = {
 };
 
 const capabilityState = new NativeWeakMap<HostedRunEventWriterCapability, CapabilityState>();
+const admissionWriterState = new NativeWeakMap<AdmitExecutorToolCall, {
+  state: CapabilityState;
+  projectId: string;
+}>();
 const requestRunEventWriterState = new NativeWeakMap<object, VerifiedRequestWriterState>();
 const capabilityStorage = new AsyncLocalStorage<CapabilityScope>();
 const verifiedRequestWriterStorage = new AsyncLocalStorage<VerifiedRequestWriterScope>();
+
+const getAdmissionMcpRequestSchema = defineSchema((v) =>
+  v.object({
+    jsonrpc: v.literal("2.0"),
+    id: v.string().min(1),
+    method: v.literal("tools/call"),
+    params: v.object({
+      name: v.string().min(1),
+      arguments: v.record(v.string(), getJsonValueSchema()),
+      _meta: v.record(v.string(), getJsonValueSchema()).optional(),
+    }).strict(),
+  }).strict()
+);
+
+/** Bind only an opaque exact-run host capability; no caller-provided transport is admitted. */
+export function bindHostedToolCallAdmissionWriter(
+  callback: AdmitExecutorToolCall,
+  input: {
+    capability: HostedRunEventWriterCapability;
+    expectedRunId: string;
+    projectId: string;
+  },
+): void {
+  const state = getWeakMapValue(capabilityState, input.capability);
+  if (
+    !state || state.runId !== input.expectedRunId || !isRunUuid(state.canonicalRunId) ||
+    !isRunUuid(input.projectId) || getWeakMapValue(admissionWriterState, callback)
+  ) {
+    throw new TypeError("Tool-call admission requires an exact hosted writer capability");
+  }
+  setWeakMapValue(admissionWriterState, callback, { state, projectId: input.projectId });
+}
+
+/**
+ * Dispatch proof only to the exact owning MCP endpoint with captured host transport.
+ * Neither credentials nor credential-bearing headers leave this module.
+ */
+export function getHostedToolCallAdmissionRequestFetch(endpoint: string): Fetch | undefined {
+  const source = getCurrentToolCallAdmissionSource();
+  const currentReceipt = getCurrentToolCallAdmissionReceipt();
+  const writer = source && getWeakMapValue(admissionWriterState, source);
+  if (!writer || !currentReceipt) return undefined;
+  const receipt = getToolCallAdmissionReceiptSchema().parse(currentReceipt);
+  const { state, projectId } = writer;
+  if (
+    apply(stringToLowerCase, receipt.runId, []) !==
+      apply(stringToLowerCase, state.canonicalRunId!, []) ||
+    apply(stringToLowerCase, receipt.projectId, []) !== apply(stringToLowerCase, projectId, [])
+  ) {
+    throw new TypeError("Tool-call admission does not match its hosted writer");
+  }
+  let resolvedEndpoint: string;
+  try {
+    resolvedEndpoint = state.resolveApiUrl(endpoint);
+  } catch {
+    return undefined;
+  }
+  if (
+    resolvedEndpoint !== state.resolveApiUrl("/mcp") &&
+    resolvedEndpoint !== state.resolveApiUrl(`/projects/${projectId}/mcp`)
+  ) {
+    throw PERMISSION_DENIED.create({
+      detail: "Target tool-call admission requires the exact owning MCP endpoint",
+    });
+  }
+
+  return async (target, init) => {
+    const method = readOwnInitField(init, "method");
+    const requestBody = readOwnInitField(init, "body");
+    if (
+      target !== resolvedEndpoint || method !== "POST" || typeof requestBody !== "string" ||
+      getCurrentToolCallAdmissionSource() !== source ||
+      getCurrentToolCallAdmissionReceipt() !== currentReceipt
+    ) {
+      throw new TypeError("Tool-call admission dispatch scope is no longer current");
+    }
+    const signal = readOwnInitField(init, "signal");
+    signal?.throwIfAborted();
+    const request = getAdmissionMcpRequestSchema().parse(
+      apply(jsonParse, undefined, [requestBody]),
+    );
+    const body = apply(jsonStringify, undefined, [{
+      ...request,
+      params: {
+        ...request.params,
+        _meta: {
+          ...request.params._meta,
+          run_id: state.runId,
+          tool_call_admission: {
+            occurrence_id: receipt.occurrenceId,
+            admission_event_id: receipt.admissionEventId,
+            start_event_id: receipt.startEventId,
+            tool_call_id: receipt.toolCallId,
+            public_tool_call_id: receipt.publicToolCallId,
+            run_id: receipt.runId,
+            project_id: receipt.projectId,
+          },
+        },
+      },
+    }]);
+    const headers = copyNativeHeaders(readOwnInitField(init, "headers"));
+    apply(headersDelete, headers, ["X-Veryfront-Run-Event-Writer-Token"]);
+    apply(headersSet, headers, ["X-Veryfront-Run-Event-Writer-Token", state.runEventAppendToken]);
+    const requestInit = createNativeRequestInit(undefined, {
+      method: "POST",
+      headers,
+      body,
+      signal,
+      redirect: "error",
+    });
+    assertNativeRequestProcessing();
+    return await state.fetch(resolvedEndpoint, requestInit);
+  };
+}
 
 function isNoStoreResponse(response: Response): boolean {
   const value = response.headers.get("Cache-Control");
@@ -421,7 +607,11 @@ export function createHostedConversationRunChunkMirrorFromCapability(
   const state = getWeakMapValue(capabilityState, capability);
   if (!state || state.runId !== input.expectedRunId) return undefined;
   const { expectedRunId: _expectedRunId, ...mirrorInput } = input;
-  return createHostedConversationRunChunkMirror({
+  const barrier = state.inheritedAdmitter
+    ? state.parentToolStartBarrier ??= createParentToolStartBarrier(state.timeoutMs)
+    : undefined;
+  const pendingStarts = createPrivateMap<string, true>();
+  const mirror = createHostedConversationRunChunkMirror({
     ...mirrorInput,
     apiUrl: state.apiUrl,
     authToken: state.runEventAppendToken,
@@ -430,7 +620,62 @@ export function createHostedConversationRunChunkMirrorFromCapability(
     // Capability transports are host-owned, but durable persistence still
     // needs to stay in the active execution trace.
     fetch: instrumentConversationRunFetch(state.fetch),
+    ...(barrier
+      ? {
+        runQueueFlush: async <T>(operation: () => Promise<T>): Promise<T> => {
+          const result = await (input.runQueueFlush ? input.runQueueFlush(operation) : operation());
+          // This scheduler callback receives the queue controller's validated flush result.
+          const flushed = result as Awaited<
+            ReturnType<ConversationRunEventQueueController["flush"]>
+          >;
+          if (flushed.outcome === "stopped") {
+            barrier.fail(new Error("Parent event persistence is closed"));
+          } else if (flushed.outcome === "flushed" && flushed.pendingEventCount === 0) {
+            pendingStarts.forEach((_value, toolCallId) => barrier.commit(toolCallId));
+            pendingStarts.clear();
+          }
+          return result;
+        },
+      }
+      : {}),
   });
+  if (!barrier) return mirror;
+  const confirm = async (toolCallId: string) => {
+    try {
+      const snapshot = await mirror.flush();
+      if (snapshot.disabled) throw new Error("Parent event persistence is closed");
+      if (snapshot.pendingEventCount === 0 && !snapshot.inFlight) {
+        barrier.commit(toolCallId);
+        pendingStarts.delete(toolCallId);
+      }
+    } catch (error) {
+      if (mirror.getSnapshot().disabled) barrier.fail(error);
+      throw error;
+    }
+  };
+  return {
+    ...mirror,
+    async handleChunk(chunk) {
+      await mirror.handleChunk(chunk);
+      if (chunk.type === "tool-input-start") {
+        pendingStarts.set(chunk.toolCallId, true);
+        await confirm(chunk.toolCallId);
+      }
+    },
+    async appendEvents(events) {
+      await mirror.appendEvents(events);
+      for (const event of events) {
+        if (event.type === "TOOL_CALL_START" && typeof event.toolCallId === "string") {
+          pendingStarts.set(event.toolCallId, true);
+          await confirm(event.toolCallId);
+        }
+      }
+    },
+    dispose() {
+      barrier.fail(new Error("Parent event persistence is closed"));
+      mirror.dispose();
+    },
+  };
 }
 
 /** Return a routing identifier only for the exact run bound to this capability. */
@@ -474,6 +719,20 @@ export function runWithHostedRunEventWriterCapability<T>(
   }
 }
 
+/** Wait on the private exact-parent persistence barrier before a child transport runs. */
+export async function waitForHostedParentToolStart(
+  capability: HostedRunEventWriterCapability | undefined,
+  parentRunId: string,
+  toolCallId: string,
+): Promise<void> {
+  const state = capability ? getWeakMapValue(capabilityState, capability) : undefined;
+  if (!state || state.runId !== parentRunId) {
+    throw new Error("Parent tool start persistence authority is required");
+  }
+  const barrier = state.parentToolStartBarrier ??= createParentToolStartBarrier(state.timeoutMs);
+  await barrier.wait(toolCallId);
+}
+
 /** Obtain a parent-bound admission closure without disclosing its credential. */
 export function inheritedChildAdmitter(
   capability: HostedRunEventWriterCapability | undefined,
@@ -485,7 +744,11 @@ export function inheritedChildAdmitter(
   if (!state || state.runId !== parentRunId || !state.inheritedAdmitter) {
     throw new Error("Inherited child admission authority is required");
   }
-  return state.inheritedAdmitter(toolCallId, prompt);
+  const admit = state.inheritedAdmitter(toolCallId, prompt);
+  return async (input: Parameters<typeof admit>[0]) => {
+    await state.parentToolStartBarrier?.wait(toolCallId);
+    return await admit(input);
+  };
 }
 
 /** Check the private execution mode of the exact run preparing its tools. */

@@ -17,6 +17,11 @@ export const BROWSER_SAFE_EXPORTS = [
   "./markdown",
   "./mdx",
   "./agent/identity",
+  // The Agent Events Protocol parser and schema-derived contract. API, Code,
+  // and Studio consume it in browser bundles with an injected schema adapter.
+  "./events",
+  // Minimal public AG-UI interoperability entrypoint for API/Studio adapters.
+  "./events/ag-ui",
   // The typed run event contract. Studio reads a run's event log in the
   // browser bundle. The entry point is vocabulary and schemas only: no npm
   // dependency, no server module, and the single Node builtin it reaches
@@ -30,6 +35,26 @@ export const BROWSER_SAFE_DNT_TIMER_MODULES = [
   "src/agent/hosted/chat-execution-runtime.js",
   "src/agent/hosted/child-stream-watchdog.js",
   "src/chat/final-step-fallback.js",
+];
+
+// Browser-consumed entrypoints may reach these dnt-emitted modules through
+// normal relative imports. They are browser-compatible source modules, but dnt
+// injects Node shim/polyfill imports for runtime features they do not use in
+// the browser-safe graph.
+export const BROWSER_SAFE_TRANSITIVE_EXPORTS = [
+  "./chat/ag-ui",
+  "./run-events",
+  "./events/ag-ui",
+];
+
+export const BROWSER_SAFE_TRANSITIVE_MODULES = [
+  "src/extensions/contracts.js",
+  "src/schemas/index.js",
+  "src/platform/compat/process/env.js",
+  "src/platform/compat/process/lifecycle.js",
+  "src/platform/compat/process/runtime-process.js",
+  "src/platform/compat/process/scoped-process-env.js",
+  "src/utils/constants/cache.js",
 ];
 
 export const BROWSER_SAFE_CLIENT_MODULES = [

@@ -9,6 +9,10 @@ import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { deleteHostSecret, getHostEnv } from "#cli/process-env";
 import { saveToken } from "../../auth/token-store.ts";
 import {
+  _resetEnvironmentConfig,
+  createTestEnvironmentConfig,
+} from "#veryfront/config/environment-config.ts";
+import {
   createGlobalErrorLogContext,
   hasProxyCredentials,
   hydrateStartRuntimeAuth,
@@ -39,6 +43,7 @@ function restoreEnv(): void {
     else Deno.env.set(key, value);
   }
   deleteHostSecret("VERYFRONT_API_TOKEN");
+  _resetEnvironmentConfig();
 }
 
 describe("commands/start/command", () => {
@@ -188,7 +193,8 @@ describe("commands/start/command", () => {
       tempDirs.push(projectDir, configHome);
       for (const key of ENV_KEYS) Deno.env.delete(key);
       Deno.env.set("XDG_CONFIG_HOME", configHome);
-      await saveToken("stored-token");
+      _resetEnvironmentConfig();
+      await saveToken("stored-token", createTestEnvironmentConfig({ xdgConfigHome: configHome }));
       return projectDir;
     }
 

@@ -21,6 +21,7 @@ import {
   assertResolvedSkillSelector,
   type ResolvedSkillSelectorSnapshot,
   resolveSkillSelector,
+  type SkillSelector,
 } from "./selector.ts";
 import { ProjectScopedRegistryManager } from "#veryfront/registry/project-scoped-registry-manager.ts";
 import {
@@ -89,7 +90,7 @@ class SkillRegistryInternal extends ScopedRegistryFacade<Skill> {
    * exact visible ids. Explicit misses fail closed with a generic error.
    */
   resolveSelectorForAgent(
-    skillsConfig: true | string[] | undefined,
+    skillsConfig: SkillSelector,
     scope?: AgentCapabilityScope,
   ): ResolvedSkillSelectorSnapshot<Skill> {
     const snapshot = resolveSkillSelector({
@@ -112,33 +113,31 @@ class SkillRegistryInternal extends ScopedRegistryFacade<Skill> {
    * - `true` resolves to every skill visible to the caller: unowned
    *   (project-global) skills plus the caller's own skills — never another
    *   agent's owned skills.
-   * - An explicit list resolves each entry as the caller's own short name
-   *   first, then as an exact id of a visible skill (missing/invisible ids are
-   *   silently skipped, preserving prior behavior for missing ids).
+   * - An explicit selector resolves string shorthand and list entries as the
+   *   caller's own short name first, then as an exact id of a visible skill
+   *   (missing/invisible ids are silently skipped, preserving prior behavior
+   *   for missing ids). Object selectors grant exact/glob matches with `true`;
+   *   `false` rules exclude matches and win over grants.
    *
-   * @param skillsConfig - `true` for all visible skills, or array of ids/short names
+   * @param skillsConfig - skill selector for visible ids/short names
    * @param scope - caller scope; omit for project-level callers
    */
   resolveForAgent(
-    skillsConfig: true | string[],
+    skillsConfig: Exclude<SkillSelector, undefined>,
     scope?: AgentCapabilityScope,
   ): Map<string, Skill> {
     const result = new Map<string, Skill>();
-
-    if (skillsConfig === true) {
-      for (const [id, skill] of this.getAll()) {
-        if (isSkillVisibleTo(skill, scope)) {
-          result.set(id, skill);
-        }
-      }
-      return result;
-    }
-
-    for (const requested of skillsConfig) {
-      const skill = this.resolveVisibleSkill(requested, scope);
-      if (skill) {
-        result.set(skill.id, skill);
-      }
+    const snapshot = resolveSkillSelector({
+      definitions: [...this.getAll().values()],
+      selector: skillsConfig,
+      getId: (skill) => skill.id,
+      isVisible: (skill) => isSkillVisibleTo(skill, scope),
+      getShortName: (skill) => skill.shortName,
+      isOwnShortNameCandidate: (skill) =>
+        scope?.agentId !== undefined && skill.ownerAgentId === scope.agentId,
+    });
+    for (const skill of snapshot.definitions) {
+      result.set(skill.id, skill);
     }
     return result;
   }
@@ -221,7 +220,7 @@ class SkillRegistry extends ScopedRegistryView<Skill> {
   }
 
   resolveSelectorForAgent(
-    skillsConfig: true | string[] | undefined,
+    skillsConfig: SkillSelector,
     scope?: AgentCapabilityScope,
   ): ResolvedSkillSelectorSnapshot<Skill> {
     const snapshot = this.#registry.resolveSelectorForAgent(skillsConfig, scope);
@@ -240,7 +239,7 @@ class SkillRegistry extends ScopedRegistryView<Skill> {
   }
 
   resolveForAgent(
-    skillsConfig: true | string[],
+    skillsConfig: Exclude<SkillSelector, undefined>,
     scope?: AgentCapabilityScope,
   ): Map<string, Skill> {
     const result = new Map<string, Skill>();

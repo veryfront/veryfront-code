@@ -31,8 +31,14 @@ import {
 } from "./chat-execution-runtime.ts";
 import {
   getActiveRunEventSink,
+  getActiveRunEventSinks,
   runWithRunEventSink,
 } from "../../runtime/run-event-sink-context.ts";
+import {
+  createRuntimeObservationWriterCapability,
+  getRuntimeObservationWriterScope,
+  type RuntimeObservationWriterCapability,
+} from "../../runtime/runtime-observation-carrier.ts";
 import { streamText } from "../../runtime/runtime-bridge.ts";
 import { createStreamModel } from "../../runtime/runtime-bridge.test-helpers.ts";
 import { DurableRunEventPersistenceError } from "./durable-run-event-sink.ts";
@@ -101,6 +107,7 @@ function withoutEventTiming(event: unknown): unknown {
 }
 
 function createLifecycleAdapter(input?: {
+  runId?: string;
   durableRunMirror?: ConversationRunChunkMirror | null;
   messageId?: string | null;
   terminalStates?: HostedLifecycleTerminalState[];
@@ -108,7 +115,7 @@ function createLifecycleAdapter(input?: {
   const terminalStates = input?.terminalStates ?? [];
   return {
     durableRootRun: {
-      runId: "10000000-0000-4000-8000-000000000006",
+      runId: input?.runId ?? "10000000-0000-4000-8000-000000000006",
       messageId: input && "messageId" in input ? input.messageId : "stream-message-1",
     },
     durableRunMirror: input?.durableRunMirror ?? null,
@@ -515,6 +522,87 @@ describe("agent/hosted-chat-execution-runtime", () => {
       "Durable hosted root run requires an authorized private event mirror",
     );
     assertEquals(streamCalls, 0);
+  });
+
+  it("passes private runtime observations only with an exact writer scope", async () => {
+    let streamInput: HostedChatRuntimeStreamInput | undefined;
+    let writerScopeDuringStream: unknown;
+    const agent: HostedChatRuntimeAgent = {
+      stream: async (input) => {
+        streamInput = input;
+        writerScopeDuringStream = getRuntimeObservationWriterScope(
+          getActiveRunEventSinks().mandatory,
+        );
+        return createStreamResult({
+          finalStep: {},
+          captureOptions: () => {},
+        });
+      },
+    };
+
+    const runtimeObservationWriterScope = {
+      runId: "11111111-1111-4111-8111-111111111111",
+      canonicalRunId: "22222222-2222-4222-8222-222222222222",
+      projectId: "33333333-3333-4333-8333-333333333333",
+    };
+    const runtimeObservationWriterCapability = createRuntimeObservationWriterCapability({
+      scope: runtimeObservationWriterScope,
+    });
+    const bootstrap = await createHostedChatExecutionRuntimeBootstrap({
+      agent,
+      cleanup: async () => {},
+      lifecycleAdapter: createLifecycleAdapter({
+        runId: runtimeObservationWriterScope.runId,
+        messageId: "stream-message-1",
+      }),
+      finalMessages: [],
+      conversationId: "conversation-1",
+      abortSignal: new AbortController().signal,
+      durableRunEventMirror: createDurableRunMirror({ chunks: [], flushes: [] }),
+      runtimeObservationWriterCapability,
+      createRootStreamWatchdog,
+    });
+
+    assertEquals(streamInput?.runtimeObservations, true);
+    assertEquals(writerScopeDuringStream, runtimeObservationWriterScope);
+    assertEquals(bootstrap.runEventSink !== undefined, true);
+    assertEquals(
+      getRuntimeObservationWriterScope(bootstrap.runEventSink),
+      runtimeObservationWriterScope,
+    );
+  });
+
+  it("rejects forged runtime observation writer capability objects", async () => {
+    const agent: HostedChatRuntimeAgent = {
+      stream: async () =>
+        createStreamResult({
+          finalStep: {},
+          captureOptions: () => {},
+        }),
+    };
+    const forgedCapability = {
+      kind: "runtime-observation-writer-capability",
+    } satisfies RuntimeObservationWriterCapability;
+
+    await assertRejects(
+      () =>
+        createHostedChatExecutionRuntimeBootstrap({
+          agent,
+          cleanup: async () => {},
+          lifecycleAdapter: createLifecycleAdapter({
+            runId: "11111111-1111-4111-8111-111111111111",
+            messageId: "stream-message-1",
+          }),
+          finalMessages: [],
+          conversationId: "conversation-1",
+          abortSignal: new AbortController().signal,
+          durableRunEventMirror: createDurableRunMirror({ chunks: [], flushes: [] }),
+          runtimeObservationWriterCapability: forgedCapability,
+          createRootStreamWatchdog,
+        }),
+      Error,
+      "Runtime observation writer capability is no longer active",
+    );
   });
 
   it("keeps the root stream watchdog active while stream bootstrap is pending", async () => {

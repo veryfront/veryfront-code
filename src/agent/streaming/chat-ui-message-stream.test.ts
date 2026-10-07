@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { ChatUiMessageChunk } from "../../chat/types.ts";
 import {
@@ -7,6 +7,7 @@ import {
   type ChatUiMessageStreamFinishPart,
   createChatUiMessageStreamFromDataStream,
 } from "./chat-ui-message-stream.ts";
+import { getRuntimeObservation } from "#veryfront/runtime/runtime-observation-carrier.ts";
 
 const encoder = new TextEncoder();
 
@@ -32,6 +33,256 @@ async function collectChunks(
 }
 
 describe("createChatUiMessageStreamFromDataStream", () => {
+  it("strips and rebinds trusted runtime observations to exact public chunks", async () => {
+    const stepId = "11111111-1111-4111-8111-111111111111";
+    const messageSpanId = "22222222-2222-4222-8222-222222222222";
+    const occurrenceId = "33333333-3333-4333-8333-333333333333";
+    let finish: unknown;
+    const chunks = await collectChunks(
+      createChatUiMessageStreamFromDataStream(
+        {
+          stream: createSseStream([
+            { type: "message-start", messageId: "framework-message" },
+            {
+              type: "data-veryfront.runtime_context",
+              data: { runStartedAtUtc: "2026-01-01T00:00:00.000Z" },
+              privateRuntimeObservation: {
+                version: 1,
+                kind: "execution_entry",
+                occurrenceId,
+              },
+            },
+            {
+              type: "step-start",
+              privateRuntimeObservation: { version: 1, kind: "step_started", stepId },
+            },
+            {
+              type: "text-delta",
+              id: "text-1",
+              delta: "hello",
+              privateRuntimeObservation: {
+                version: 1,
+                kind: "step_message",
+                stepId,
+                messageSpanId,
+              },
+            },
+            {
+              type: "step-end",
+              privateRuntimeObservation: { version: 1, kind: "step_ended", stepId },
+            },
+            { type: "message-finish" },
+          ]),
+        },
+        {
+          generateMessageId: () => "assistant-message",
+          privateRuntimeObservations: true,
+          onFinish(value) {
+            finish = value;
+          },
+        },
+      ),
+    );
+
+    const observations = chunks.map((chunk) => getRuntimeObservation(chunk)).filter((value) =>
+      value !== undefined
+    );
+    assertEquals(observations.find((observation) => observation.kind === "execution_entry"), {
+      version: 1,
+      kind: "execution_entry",
+      occurrenceId,
+    });
+    assertEquals(observations.find((observation) => observation.kind === "step_started"), {
+      version: 1,
+      kind: "step_started",
+      stepId,
+    });
+    assertEquals(observations.find((observation) => observation.kind === "step_message"), {
+      version: 1,
+      kind: "step_message",
+      stepId,
+      messageSpanId,
+    });
+    assertEquals(observations.find((observation) => observation.kind === "step_ended"), {
+      version: 1,
+      kind: "step_ended",
+      stepId,
+    });
+    assertEquals(JSON.stringify({ chunks, finish }).includes("privateRuntimeObservation"), false);
+    assertEquals(JSON.stringify({ chunks, finish }).includes(messageSpanId), false);
+  });
+
+  it("ignores private runtime observations unless the trusted carrier option is enabled", async () => {
+    const stepId = "11111111-1111-4111-8111-111111111111";
+    const chunks = await collectChunks(
+      createChatUiMessageStreamFromDataStream(
+        {
+          stream: createSseStream([
+            {
+              type: "step-start",
+              privateRuntimeObservation: { version: 1, kind: "step_started", stepId },
+            },
+            { type: "message-finish" },
+          ]),
+        },
+        { generateMessageId: () => "assistant-message" },
+      ),
+    );
+
+    assertEquals(chunks.every((chunk) => getRuntimeObservation(chunk) === undefined), true);
+    assertEquals(JSON.stringify(chunks).includes("privateRuntimeObservation"), false);
+    assertEquals(JSON.stringify(chunks).includes(stepId), false);
+  });
+
+  it("rejects malformed trusted runtime observations instead of dropping provenance", async () => {
+    const stepId = "11111111-1111-4111-8111-111111111111";
+    const messageSpanId = "22222222-2222-4222-8222-222222222222";
+    const cases: Array<{ name: string; event: Record<string, unknown>; message: string }> = [
+      {
+        name: "invalid version",
+        event: {
+          type: "step-start",
+          privateRuntimeObservation: { version: 2, kind: "step_started", stepId },
+        },
+        message: "Invalid private runtime observation",
+      },
+      {
+        name: "invalid UUID",
+        event: {
+          type: "step-start",
+          privateRuntimeObservation: {
+            version: 1,
+            kind: "step_started",
+            stepId: "not-a-uuid",
+          },
+        },
+        message: "Invalid private runtime observation",
+      },
+      {
+        name: "unknown field",
+        event: {
+          type: "step-start",
+          privateRuntimeObservation: {
+            version: 1,
+            kind: "step_started",
+            stepId,
+            extra: true,
+          },
+        },
+        message: "Invalid private runtime observation",
+      },
+      {
+        name: "incompatible attachment",
+        event: {
+          type: "step-start",
+          privateRuntimeObservation: {
+            version: 1,
+            kind: "step_message",
+            stepId,
+            messageSpanId,
+          },
+        },
+        message: "Private runtime observation is attached to an incompatible event",
+      },
+    ];
+
+    for (const entry of cases) {
+      await assertRejects(
+        () =>
+          collectChunks(
+            createChatUiMessageStreamFromDataStream(
+              { stream: createSseStream([entry.event, { type: "message-finish" }]) },
+              {
+                generateMessageId: () => `assistant-message-${entry.name}`,
+                privateRuntimeObservations: true,
+              },
+            ),
+          ),
+        TypeError,
+        entry.message,
+      );
+    }
+  });
+
+  it("accepts trusted observations on valid raw events that emit no UI chunk", async () => {
+    const stepId = "11111111-1111-4111-8111-111111111111";
+    const messageSpanId = "22222222-2222-4222-8222-222222222222";
+    const chunks = await collectChunks(
+      createChatUiMessageStreamFromDataStream(
+        {
+          stream: createSseStream([
+            {
+              type: "reasoning-delta",
+              id: "reasoning-1",
+              delta: "hidden reasoning",
+              privateRuntimeObservation: {
+                version: 1,
+                kind: "step_message",
+                stepId,
+                messageSpanId,
+              },
+            },
+            {
+              type: "text-delta",
+              id: "text-1",
+              delta: "",
+              privateRuntimeObservation: {
+                version: 1,
+                kind: "step_message",
+                stepId,
+                messageSpanId,
+              },
+            },
+            { type: "message-finish" },
+          ]),
+        },
+        {
+          generateMessageId: () => "assistant-message",
+          privateRuntimeObservations: true,
+          sendReasoning: false,
+        },
+      ),
+    );
+
+    assertEquals(chunks[0], { type: "start", messageId: "assistant-message" });
+    assertEquals(JSON.stringify(chunks).includes("privateRuntimeObservation"), false);
+    assertEquals(JSON.stringify(chunks).includes(messageSpanId), false);
+  });
+
+  it("rejects an incompatible trusted observation before yielding that raw event's chunks", async () => {
+    const stream = createChatUiMessageStreamFromDataStream(
+      {
+        stream: createSseStream([
+          {
+            type: "step-start",
+            privateRuntimeObservation: {
+              version: 1,
+              kind: "step_message",
+              stepId: "11111111-1111-4111-8111-111111111111",
+              messageSpanId: "22222222-2222-4222-8222-222222222222",
+            },
+          },
+          { type: "message-finish" },
+        ]),
+      },
+      {
+        generateMessageId: () => "assistant-message",
+        privateRuntimeObservations: true,
+      },
+    );
+    const iterator = stream[Symbol.asyncIterator]();
+
+    assertEquals(await iterator.next(), {
+      done: false,
+      value: { type: "start", messageId: "assistant-message" },
+    });
+    await assertRejects(
+      () => iterator.next(),
+      TypeError,
+      "Private runtime observation is attached to an incompatible event",
+    );
+  });
+
   it("maps data stream events into UI chunks and finalizes a response message", async () => {
     let finish: ChatUiMessageStreamFinish<{ modelId: string }> | undefined;
     const stream = createSseStream([

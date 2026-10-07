@@ -118,7 +118,9 @@ describe("ephemeral hosted executor model dispatch", () => {
         { conversationId: null, canonicalRootRun: undefined },
       ]
     ) assertThrows(() => createEphemeralHostedExecutorModelBroker({ ...options, prepared: state }));
-    assertThrows(() => createHostedExecutorModelBroker({ ...options, runEventSink: undefined }));
+    assertThrows(() =>
+      createHostedExecutorModelBroker({ ...options, projectId: null, runEventSink: undefined })
+    );
   });
 
   it("keeps allowlist, control, lifetime, and broker-mode checks in force", async () => {

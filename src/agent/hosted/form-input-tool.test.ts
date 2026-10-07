@@ -1,3 +1,4 @@
+import { schemaToJsonSchema } from "#veryfront/schemas/json-schema.ts";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { getFormInputToolInputSchema } from "../input/request-protocol.ts";
 import {
@@ -590,4 +591,32 @@ it("reuses a privately replayed form result without parking the resumed turn aga
   );
   assertEquals((result as { reused: boolean }).reused, true);
   assertEquals((result as { values: unknown }).values, { password: "private-replayed" });
+});
+
+it("advertises only durable field controls to the hosted model", () => {
+  const form = createHostedFormInputTool(createContext(), API_URL, { controlPlaneReplay: true });
+  const json = JSON.stringify(schemaToJsonSchema(form.inputSchema));
+  for (
+    const modifier of [
+      "placeholder",
+      "rows",
+      "pattern",
+      "minLength",
+      "maxLength",
+      "confirmLabel",
+      "denyLabel",
+    ]
+  ) {
+    assertEquals(json.includes(`"${modifier}":{`), false, modifier);
+  }
+  const input = form.inputSchema.parse({
+    title: "Create a Plan",
+    fields: [{
+      name: "brief",
+      label: "What would you like to plan?",
+      type: "textarea",
+      required: true,
+    }],
+  });
+  assertEquals(input.fields[0]?.type === "textarea" ? input.fields[0].rows : undefined, 3);
 });

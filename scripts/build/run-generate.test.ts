@@ -77,8 +77,9 @@ describe("selectUnitsToRun", () => {
 });
 
 describe("UNITS", () => {
-  it("covers the eight generator steps of the stock chain", () => {
+  it("covers the generator steps of the stock chain", () => {
     assertEquals(UNITS.map((u) => u.name).sort(), [
+      "agent-events-payload-types",
       "bridge",
       "client-scripts",
       "core-skills",

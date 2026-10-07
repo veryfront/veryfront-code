@@ -6,6 +6,7 @@ import { isToolVisibleTo } from "#veryfront/tool/executor.ts";
 import type { Tool } from "#veryfront/tool/types.ts";
 import type { RunResumeSessionManager } from "../runtime/index.ts";
 import type { Agent } from "../types.ts";
+import { markRuntimeLocalTool } from "../runtime/local-tool.ts";
 
 /** Public API contract for AG-UI resume value. */
 export type AgUiResumeValue = { result: unknown; isError: boolean };
@@ -23,7 +24,7 @@ export function createInjectedAgUiTool(
   tool: AgUiInjectedToolLike,
   sessionManager: RunResumeSessionManager<AgUiResumeValue>,
 ): Tool {
-  return {
+  return markRuntimeLocalTool({
     id: tool.name,
     type: "function",
     description: tool.description ?? tool.name,
@@ -49,7 +50,7 @@ export function createInjectedAgUiTool(
       }
       return submitted.result;
     },
-  };
+  });
 }
 
 export function buildMergedAgUiTools(

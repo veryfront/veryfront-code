@@ -4,12 +4,13 @@
  */
 
 import { canOpenBrowser, openBrowser } from "../../auth/browser.ts";
-import { readConfigFile } from "#cli/shared/config";
+import { readConfigFile, readConfigJsonFile } from "#cli/shared/config";
 import { cwd } from "veryfront/platform";
 import { join } from "veryfront/platform/path";
 import { createFileSystem } from "veryfront/platform";
 import { brand, dim, muted } from "#cli/ui";
 import { type EnvironmentConfig, getEnvironmentConfig } from "veryfront/config";
+import { getCloudDomain, resolveCliApiUrl } from "#cli/shared/constants";
 
 /**
  * Build Studio URL with optional query params
@@ -17,8 +18,9 @@ import { type EnvironmentConfig, getEnvironmentConfig } from "veryfront/config";
 export function buildStudioUrl(
   project: string,
   options: { branch?: string; file?: string } = {},
+  apiUrl?: string,
 ): string {
-  const base = `https://veryfront.com/projects/${encodeURIComponent(project)}`;
+  const base = `https://${getCloudDomain(apiUrl)}/projects/${encodeURIComponent(project)}`;
   const params = new URLSearchParams();
 
   if (options.branch) params.set("branch", options.branch);
@@ -72,9 +74,10 @@ export async function studioCommand(
   env: EnvironmentConfig = getEnvironmentConfig(),
 ): Promise<{ url: string; opened: boolean }> {
   const project = options.project ?? (await resolveProjectSlug(cwd(), env));
-  const url = buildStudioUrl(project, options);
+  const config = await readConfigJsonFile(cwd());
+  const url = buildStudioUrl(project, options, resolveCliApiUrl(env, config?.apiUrl));
 
-  const opened = canOpenBrowser();
+  const opened = canOpenBrowser(env);
 
   console.log();
 

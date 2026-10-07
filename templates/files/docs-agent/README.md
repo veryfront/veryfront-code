@@ -24,16 +24,16 @@ A chatbot that answers questions from your own documents using Retrieval-Augment
 2. Start the dev server:
 
    ```bash
-   npx veryfront@latest dev
+   npx veryfront dev
    ```
 
-3. Index the sample docs in `content/`:
+3. Open `/uploads` and upload a sample document from `content/`.
 
-   ```bash
-   curl -X POST http://localhost:3000/api/ingest
-   ```
+4. Open the Chat tab and ask a question about your document.
 
-4. Open the app and upload a document or ask a question.
+The `/api/ingest` route indexes all bundled documents. Call it from your app
+with `csrfMutationHeaders` from `veryfront/index.client`; a bare POST without the
+CSRF cookie and matching header returns 403 in development and after deployment.
 
 If you are using a self-hosted Veryfront API, also set `VERYFRONT_API_URL`.
 
@@ -47,10 +47,12 @@ Veryfront Cloud automatically:
 - `veryfront-cloud/openai/...` and `veryfront-cloud/google/...` models use AI Gateway.
 - RAG documents, chunks, and embeddings are stored in the target project.
 
-The default cloud embedding model is
-`veryfront-cloud/openai/text-embedding-3-small`. Set
-`VERYFRONT_DEFAULT_EMBEDDING_MODEL` only when you need a different embedding
-model.
+This starter selects `veryfront-cloud/google/gemini-embedding-001` with
+`cloudModel` in `store.ts` for project-scoped Cloud inference. Local inference
+keeps the framework default. Set `model` in `store.ts` to override either choice.
+
+Keep the model used to create an existing index. Reindex documents before
+switching embedding models.
 
 ## Architecture
 

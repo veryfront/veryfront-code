@@ -259,7 +259,7 @@ export interface FileSystemAdapter {
   readonly symlinkSemantics?: "none";
   /** Adapter is immutably bound to one project and needs no request scope. */
   readonly projectContextSemantics?: "fixed";
-  readFile(path: string): Promise<string>;
+  readFile(path: string, options?: { signal?: AbortSignal }): Promise<string>;
   /** Read raw bytes when binary-safe access is required */
   readFileBytes?(path: string): Promise<Uint8Array>;
   /**

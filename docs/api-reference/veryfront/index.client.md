@@ -1,7 +1,7 @@
 ---
 title: "veryfront/index.client"
 description: "Browser- and SSR-safe helpers from the `veryfront` package. This entrypoint exposes the root package's client-safe configuration, platform, routing, data, and security helpers without server bootstrap functions. Most app code can import these helpers from `veryfront`; use this explicit entrypoint when a browser or SSR module needs to declare that boundary directly."
-order: 13
+order: 14
 ---
 
 ## Import

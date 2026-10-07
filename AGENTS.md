@@ -82,6 +82,8 @@ Apply these rules to CLI output, command help, docs generated from this package,
 
 Use the same concept names in code, schemas, command help, docs, tests, and errors.
 
+Global event infrastructure uses general names such as `EventRecord`, `EventEnvelope`, `EventType`, and `parseEvent`. Use `Agent` only for agent-specific execution behavior; events can belong to agents, workflows, tasks, or standalone model calls. The protocol name remains Agent Events Protocol. Preserve released names until their migration gates pass.
+
 | Term          | Meaning                                                                            | Do not confuse with                                       |
 | ------------- | ---------------------------------------------------------------------------------- | --------------------------------------------------------- |
 | Agent         | AI runtime primitive that accepts messages, tools, context, and emits AG-UI events | Workflow or task                                          |

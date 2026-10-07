@@ -1,5 +1,6 @@
 import {
   getDefaultVeryfrontCloudEmbeddingModel,
+  getVeryfrontCloudProjectSlug,
   isVeryfrontCloudEnabled,
 } from "#veryfront/platform/cloud/resolver.ts";
 import { DEFAULT_LOCAL_EMBEDDING_MODEL } from "#veryfront/provider/local/model-catalog.ts";
@@ -40,7 +41,7 @@ export function resolveConfiguredEmbeddingModel(
     return normalized;
   }
 
-  if (isVeryfrontCloudEnabled()) {
+  if (isVeryfrontCloudEnabled() && getVeryfrontCloudProjectSlug()) {
     return getDefaultVeryfrontCloudEmbeddingModel();
   }
 

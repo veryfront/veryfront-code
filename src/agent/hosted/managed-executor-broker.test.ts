@@ -21,7 +21,12 @@ const terminalTestToken = `header.${
     }),
   )
 }.signature`;
-import { assert, assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import {
+  assert,
+  assertEquals,
+  assertRejects,
+  assertStringIncludes,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { createExecutorChannel, type ExecutorOperation } from "../executor/channel.ts";
 import type { ModelRuntime } from "#veryfront/provider/types.ts";
@@ -51,12 +56,28 @@ import type { Tool, ToolExecutionContext } from "#veryfront/tool/types.ts";
 import { createTrustedManagedRuntime } from "#veryfront/agent/hosted/trusted-managed-runtime.ts";
 import type { ExecutorBinding } from "#veryfront/agent/executor/protocol.ts";
 import { ExecutorAgentError } from "#veryfront/agent/hosted/executor-agent-schema.ts";
+import { __runWithOutboundFetchTransportForTests } from "#veryfront/security/http/outbound-fetch.ts";
 
 const modelId = "veryfront-cloud/openai/synthetic";
-const owner = { scopeKind: "project" as const, projectId: "project-test" };
+const owner = { scopeKind: "project" as const, projectId: "11111111-1111-4111-8111-111111111111" };
 const source = { type: "release" as const, releaseId: "release-test" };
 const image = `registry.example.test/executor@sha256:${"a".repeat(64)}`;
 const tick = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
+
+function runWithKnowledgeApiTransport<T>(
+  handler: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>,
+  callback: () => Promise<T>,
+): Promise<T> {
+  return __runWithOutboundFetchTransportForTests(
+    {
+      fetch: handler,
+      pinnedFetch: (url, _addresses, init) => handler(url, init),
+      resolveHost: () => Promise.resolve(["192.0.2.1"]),
+    },
+    callback,
+    { allowedResolvedAddresses: ["192.0.2.1"] },
+  );
+}
 
 function runtimeModel(): ModelRuntime {
   return {
@@ -79,6 +100,8 @@ function fixture(
   options: {
     owner?: HostedExecutorSessionOptions["request"]["owner"];
     completeStream?: boolean;
+    skipModelRequest?: boolean;
+    runtimeObservationStepId?: string;
     agentId?: string;
     prepareFailure?: boolean;
     prepareModelId?: string;
@@ -100,6 +123,7 @@ function fixture(
     hardDeadlineAt: now + (options.hardDeadlineMs ?? 60_000),
   };
   const calls: string[] = [];
+  const streamInputs: JsonValue[] = [];
   let peer: ReturnType<typeof createExecutorChannel> | undefined;
   let generation = 0;
   let preparationDenied = false;
@@ -235,15 +259,37 @@ function fixture(
         }],
         ["agent.stream", {
           mode: "stream",
-          async *handle(): AsyncGenerator<JsonValue> {
+          async *handle(value): AsyncGenerator<JsonValue> {
             calls.push("stream");
-            await peer!.request("model.generate", {
-              modelId,
-              options: { prompt: [], maxOutputTokens: installed!.grant.models[0]!.maxOutputTokens },
-            });
+            streamInputs.push(value);
+            if (!options.skipModelRequest) {
+              await peer!.request("model.generate", {
+                modelId,
+                options: {
+                  prompt: [],
+                  maxOutputTokens: installed!.grant.models[0]!.maxOutputTokens,
+                },
+              });
+            }
             executionAllowed = true;
             yield { type: "ready" };
             if (options.completeStream) {
+              if (
+                options.runtimeObservationStepId && value && typeof value === "object" &&
+                !Array.isArray(value) && value.runtimeObservations === true
+              ) {
+                yield {
+                  type: "event",
+                  event: {
+                    type: "step-start",
+                    privateRuntimeObservation: {
+                      version: 1,
+                      kind: "step_started",
+                      stepId: options.runtimeObservationStepId,
+                    },
+                  },
+                };
+              }
               yield { type: "event", event: { type: "message-finish" } };
               yield { type: "complete" };
               return;
@@ -318,6 +364,7 @@ function fixture(
   }
   return {
     calls,
+    streamInputs,
     input,
     preparation,
     prepareEntered: prepareEntered.promise,
@@ -365,7 +412,177 @@ function configureCanonical(
   if (bindSessionOwnedWork) input.bindSessionOwnedWork = bindSessionOwnedWork;
 }
 
+function observationPersistence(projectId = owner.projectId) {
+  const bodies: Record<string, unknown>[] = [];
+  let cursor = 0;
+  const persistence = createManagedBrokerPersistence({
+    apiUrl: "https://api.example.test",
+    runEventToken: "run-event-token",
+    completionAuthToken: "completion-token",
+    terminalAuthToken: terminalTestToken,
+    run: {
+      runId: "run-1",
+      conversationId: "00000000-0000-4000-8000-000000000001",
+      messageId: "00000000-0000-4000-8000-000000000002",
+      latestEventId: 0,
+      latestExternalEventSequence: 0,
+      waitingToolCallId: null,
+      waitingToolName: null,
+      status: "running",
+      streamProtocolVersion: 2,
+    },
+    modelId,
+    resolveProvider: () => "provider",
+    runtimeObservations: { projectId: projectId },
+    fetch: async (_input, init) => {
+      const body = await new Request(_input, init).json();
+      bodies.push(body);
+      cursor += body.events.length;
+      return Response.json({
+        run_id: canonicalTestRunId,
+        latest_event_id: cursor,
+        latest_external_event_sequence: cursor,
+        appended_count: body.events.length,
+        model_call_captures: body.events.flatMap((event: Record<string, unknown>) =>
+          event.type === "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED"
+            ? [{
+              event_id: String(cursor),
+              model_call_id: event.modelCallId,
+              run_id: canonicalTestRunId,
+              project_id: projectId,
+            }]
+            : []
+        ),
+      });
+    },
+  });
+  return { persistence, bodies };
+}
+
 describe("managed executor broker", () => {
+  it("enables the producer from an exact runtime-observation persistence sink", async () => {
+    const stepId = "22222222-2222-4222-8222-222222222222";
+    const f = fixture({ completeStream: true, runtimeObservationStepId: stepId });
+    const { persistence, bodies } = observationPersistence();
+    configureCanonical(f.input, persistence.modelRunEventSink, persistence.bindSessionOwnedWork);
+    f.input.model.modelCallCaptureReceipts = true;
+    f.input.installation.grant.execution = {
+      kind: "canonical",
+      projectId: owner.projectId,
+      conversationId: "00000000-0000-4000-8000-000000000001",
+      runId: "run-1",
+      messageId: "00000000-0000-4000-8000-000000000002",
+      providerReplay: "disabled",
+    };
+    f.input.installation.capabilities.projectSteering = "steering";
+    f.input.state.prepareProjectSteering = ({ definition }) =>
+      Promise.resolve({ agent: definition });
+    f.input.state.refreshProjectSteering = () => "Work";
+    const broker = createManagedExecutorBroker({ maxActive: 1 });
+    let runtime: Awaited<ReturnType<typeof broker.start>> | undefined;
+    try {
+      runtime = await broker.start(f.input);
+      runtime.accept({ kind: "execution" });
+      const stream = await runtime.agent.stream({
+        messages: [],
+        abortSignal: new AbortController().signal,
+      });
+      const chunks = await Array.fromAsync(stream.toUIMessageStream());
+      const request = f.streamInputs.at(-1);
+      assert(request && typeof request === "object" && !Array.isArray(request));
+      assertEquals(request.runtimeObservations, true);
+      for (const chunk of chunks) await persistence.output.write(chunk);
+      assertEquals(
+        bodies.some((body) => JSON.stringify(body.runtime_observations ?? {}).includes(stepId)),
+        true,
+      );
+      assertEquals(JSON.stringify(chunks).includes(stepId), false);
+    } finally {
+      await runtime?.close("completed");
+      await broker.shutdown();
+      await broker.settled;
+      await persistence.cleanup();
+    }
+  });
+
+  for (const mismatch of ["run", "project", "projectless", "ephemeral"] as const) {
+    it(`rejects a runtime observation writer with a mismatched ${mismatch} grant before allocation`, async () => {
+      const otherProjectId = "44444444-4444-4444-8444-444444444444";
+      const fixtureProjectId = mismatch === "project" ? otherProjectId : owner.projectId;
+      const f = fixture({ owner: { scopeKind: "project", projectId: fixtureProjectId } });
+      const { persistence } = observationPersistence();
+      configureCanonical(f.input, persistence.modelRunEventSink, persistence.bindSessionOwnedWork);
+      f.input.installation.capabilities.projectSteering = "steering";
+      f.input.state.prepareProjectSteering = ({ definition }) =>
+        Promise.resolve({ agent: definition });
+      f.input.state.refreshProjectSteering = () => "Work";
+      f.input.installation.grant.execution = mismatch === "ephemeral"
+        ? { kind: "ephemeral", projectId: null }
+        : {
+          kind: "canonical",
+          runId: mismatch === "run" ? "another-run" : "run-1",
+          projectId: mismatch === "projectless" ? null : fixtureProjectId,
+          conversationId: "conversation-1",
+          messageId: "message-1",
+          providerReplay: "disabled",
+        };
+      const broker = createManagedExecutorBroker({ maxActive: 1 });
+      let runtime: Awaited<ReturnType<typeof broker.start>> | undefined;
+      try {
+        await assertRejects(
+          async () => {
+            runtime = await broker.start(f.input);
+          },
+          TypeError,
+          "Runtime observation writer does not match its execution grant",
+        );
+        assertEquals(f.calls, []);
+      } finally {
+        await runtime?.close();
+        await broker.shutdown();
+        await broker.settled;
+        await persistence.cleanup();
+      }
+    });
+  }
+
+  for (const forged of [false, true]) {
+    it(`ignores public observation flags on an unbound sink (forged scope ${forged})`, async () => {
+      const f = fixture({ completeStream: true, skipModelRequest: true });
+      const sink = () => Promise.resolve();
+      if (forged) {
+        Object.assign(sink, {
+          runtimeObservationScope: {
+            runId: "run-1",
+            canonicalRunId: canonicalTestRunId,
+            projectId: owner.projectId,
+          },
+        });
+      }
+      configureCanonical(f.input, sink, () => {});
+      Object.assign(f.input, { runtimeObservations: true });
+      const broker = createManagedExecutorBroker({ maxActive: 1 });
+      let runtime: Awaited<ReturnType<typeof broker.start>> | undefined;
+      try {
+        runtime = await broker.start(f.input);
+        runtime.accept({ kind: "execution" });
+        const stream = await runtime.agent.stream({
+          messages: [],
+          abortSignal: new AbortController().signal,
+          runtimeObservations: true,
+        });
+        await Array.fromAsync(stream.toUIMessageStream());
+        const request = f.streamInputs.at(-1);
+        assert(request && typeof request === "object" && !Array.isArray(request));
+        assertEquals(request.runtimeObservations, undefined);
+      } finally {
+        await runtime?.close("completed");
+        await broker.shutdown();
+        await broker.settled;
+      }
+    });
+  }
+
   it("executes an owned host tool selected by its short alias through installed runtime facades", async () => {
     const f = fixture();
     const model = scriptedModel([
@@ -1157,14 +1374,30 @@ function trustedFixture(
   projectAliases?: { name: string; shortName: string }[],
   scope: { owner: HostedExecutorSessionOptions["request"]["owner"]; projectId: string | null } = {
     owner,
-    projectId: "project-test",
+    projectId: owner.projectId,
   },
+  agentOptions: { knowledge?: true } = {},
 ) {
   const f = fixture({ owner: scope.owner, allocationLifetimeMs: 120_000, hardDeadlineMs: 120_000 });
   const privateMarker = "synthetic-private-broker-runtime";
   const steeringEntered = Promise.withResolvers<void>();
   configureCanonical(f.input, () => Promise.resolve(), () => {});
   f.input.installation.grant.execution.projectId = scope.projectId;
+  if (scope.projectId !== null) f.input.model.modelCallCaptureReceipts = true;
+  let captureEventId = 0;
+  f.input.model.runEventSink = async (event) => {
+    if (scope.projectId === null) {
+      assertEquals(event.modelCallId, undefined);
+      return;
+    }
+    assert(typeof event.modelCallId === "string");
+    return {
+      eventId: String(++captureEventId),
+      projectId: scope.projectId,
+      runId: canonicalTestRunId,
+      modelCallId: event.modelCallId,
+    };
+  };
   if (scope.projectId !== null) f.input.installation.capabilities.projectSteering = "steering";
   f.input.installation.grant.allowedToolNames = ["inspect"];
   f.input.installation.grant.remoteToolSourceIds = ["project"];
@@ -1261,6 +1494,9 @@ function trustedFixture(
                     system: "Use the project tool",
                     tools: includeHost ? { inspect: true, "host-private": true } : true,
                     skills: false,
+                    ...(agentOptions.knowledge === undefined
+                      ? {}
+                      : { knowledge: agentOptions.knowledge }),
                   }),
                 ]]),
                 tools: new Map([["inspect", registered]]),
@@ -1425,7 +1661,7 @@ describe("broker-local trusted runtime", () => {
     assertEquals(observed[0]?.runId, "run-1");
     assertEquals(observed[0]?.authToken, undefined);
     assertEquals(f.projectWire.includes(f.privateMarker), false);
-    assertEquals(f.projectWire.includes('"projectId":"project-test"'), false);
+    assertEquals(f.projectWire.includes(`"projectId":"${owner.projectId}"`), false);
     assert(f.projectWire.includes('"projectId":null'));
   });
 
@@ -1534,6 +1770,104 @@ describe("broker-local trusted runtime", () => {
     });
     assertEquals(Object.hasOwn(observed[0]!, "authToken"), false);
     assert(f.projectWire.includes('"projectContext"'));
+  });
+
+  it("uses broker-owned credentials for managed hosted knowledge without sending them to the project executor", async () => {
+    const requestedUrls: string[] = [];
+    const authorizationHeaders: string[] = [];
+    const f = trustedFixture(undefined, false, undefined, undefined, undefined, {
+      knowledge: true,
+    });
+    assert(f.input.trustedRuntime);
+    f.input.trustedRuntime.projectToolNames = [];
+    f.input.trustedRuntime.hostedKnowledgeAuthToken = "broker-knowledge-token";
+    f.input.installation.grant.allowedToolNames = ["search_knowledge"];
+    f.input.installation.grant.execution.branchId = "feature-x";
+    f.input.tools.catalog = new Map([["search_knowledge", {}]]);
+    f.input.model.resolver = () =>
+      scriptedModel([
+        {
+          toolCalls: [{
+            id: "knowledge-call",
+            name: "search_knowledge",
+            input: { query: "managed needle" },
+          }],
+        },
+        { text: "done" },
+      ], { only: "stream" });
+
+    await runWithKnowledgeApiTransport(
+      async (input: RequestInfo | URL, init?: RequestInit) => {
+        const request = input instanceof Request ? input : new Request(input, init);
+        requestedUrls.push(request.url);
+        authorizationHeaders.push(request.headers.get("authorization") ?? "");
+        return Response.json({
+          data: [{
+            id: "file-1",
+            version_id: "version-1",
+            path: "knowledge/support.md",
+            content: "Managed hosted knowledge needle.",
+            type: "file",
+            size: 32,
+            updated_at: "2026-01-01T00:00:00.000Z",
+          }],
+          page_info: { self: null, first: null, next: null, prev: null },
+        });
+      },
+      async () => {
+        const events = await drainTrustedFixture(f);
+        assert(events.some((event) => event.type === "finish"));
+      },
+    );
+
+    assertEquals(f.executions, 0);
+    assertEquals(authorizationHeaders, ["Bearer broker-knowledge-token"]);
+    assertEquals(requestedUrls.length, 1);
+    assertStringIncludes(
+      requestedUrls[0] ?? "",
+      `/projects/${owner.projectId}/releases/release-test/files`,
+    );
+    assertEquals(f.projectWire.includes("broker-knowledge-token"), false);
+    assertEquals(f.projectWire.includes('"authToken"'), false);
+  });
+
+  it("fails closed for managed hosted knowledge without a broker-owned credential", async () => {
+    let requests = 0;
+    const f = trustedFixture(undefined, false, undefined, undefined, undefined, {
+      knowledge: true,
+    });
+    assert(f.input.trustedRuntime);
+    f.input.trustedRuntime.projectToolNames = [];
+    f.input.installation.grant.allowedToolNames = ["search_knowledge"];
+    f.input.tools.catalog = new Map([["search_knowledge", {}]]);
+    f.input.model.resolver = () =>
+      scriptedModel([
+        {
+          toolCalls: [{
+            id: "knowledge-call",
+            name: "search_knowledge",
+            input: { query: "managed needle" },
+          }],
+        },
+        { text: "done" },
+      ], { only: "stream" });
+
+    await runWithKnowledgeApiTransport(
+      async () => {
+        requests++;
+        return Response.json({
+          data: [],
+          page_info: { self: null, first: null, next: null, prev: null },
+        });
+      },
+      async () => {
+        await assertRejects(() => drainTrustedFixture(f));
+      },
+    );
+
+    assertEquals(requests, 0);
+    assertEquals(f.executions, 0);
+    assertEquals(f.projectWire.includes('"authToken"'), false);
   });
 
   it("reserves project aliases within the combined host and project metadata budget", async () => {

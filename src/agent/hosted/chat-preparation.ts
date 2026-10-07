@@ -18,6 +18,7 @@ import type {
   HostedChatRuntimeProjectSteering,
 } from "./chat-runtime-contract.ts";
 import type { ParsedHostedChatRequest } from "./chat-request-parser.ts";
+import type { RuntimeObservationCaptureOptIn } from "#veryfront/runtime/runtime-observation-carrier.ts";
 import {
   type HostedConversationRootRunContext,
   prepareHostedConversationRootRunContext,
@@ -28,6 +29,7 @@ import {
   type PrepareAgentRuntimeMessagesFromUiMessagesOptions,
 } from "../runtime/message-preparation.ts";
 import type { RuntimeAgentThinkingConfig } from "../runtime/agent-definition.ts";
+import type { AgentConfig } from "../types.ts";
 import {
   type ResolvedHostedRuntimeRequestConfig,
   resolveHostedRuntimeRequestConfig,
@@ -108,6 +110,9 @@ export type HostedChatRuntimePreparationRootRunContext = {
   publishParentRunEvents?: (events: ConversationRunEvent[]) => Promise<void>;
   durableRunMirror?: ConversationRunChunkMirror | null;
   privateDurableRunMirror?: ConversationRunChunkMirror | null;
+  privateRuntimeObservationWriterCapability?: HostedConversationRootRunContext[
+    "privateRuntimeObservationWriterCapability"
+  ];
 };
 
 /** Public API contract for hosted chat runtime preparation steering. */
@@ -149,7 +154,10 @@ export type HostedChatRuntimeCreationPreparationInput<TRuntimeAgentDefinition> =
     providerTools?: string[];
     tools?: true | string[];
     deniedTools?: string[];
-    skills?: true | false | string[];
+    skills?: import("#veryfront/skill/selector.ts").SkillSelector;
+    toolLoading?: AgentConfig["toolLoading"];
+    toolResultContext?: AgentConfig["toolResultContext"];
+    knowledge?: AgentConfig["knowledge"];
   };
   projectId: string | null;
   authToken: string;
@@ -167,6 +175,8 @@ export type HostedChatRuntimeCreationPreparationInput<TRuntimeAgentDefinition> =
   providerReplayCheckpointEmissionEnabled?: boolean;
   /** Verified integration tool grant for this run, resolved by the control plane. */
   serverResolvedIntegrationToolNames?: readonly string[];
+  /** Host-owned default-off opt-in for exact model-call capture. */
+  runtimeObservationCaptureOptIn?: RuntimeObservationCaptureOptIn;
   /** Service-owned authorization ceiling for Framework host tools. */
   hostToolPolicy?: HostedHostToolPolicy;
   resolveModelId: (modelId: string | undefined) => string | undefined;
@@ -375,6 +385,8 @@ export type HostedChatExecutionPreparationInput<
   providerReplayCheckpointEmissionEnabled?: boolean;
   /** Verified integration tool grant for this run, resolved by the control plane. */
   serverResolvedIntegrationToolNames?: readonly string[];
+  /** Host-owned default-off opt-in for exact model-call capture. */
+  runtimeObservationCaptureOptIn?: RuntimeObservationCaptureOptIn;
   /** Service-owned authorization ceiling for Framework host tools. */
   hostToolPolicy?: HostedHostToolPolicy;
 };
@@ -533,6 +545,15 @@ export async function prepareHostedChatRuntimeCreationOptions<
       ...(runtimeConfig.deniedToolNames !== undefined
         ? { deniedTools: runtimeConfig.deniedToolNames }
         : {}),
+      ...(input.agentConfig.toolLoading !== undefined
+        ? { toolLoading: input.agentConfig.toolLoading }
+        : {}),
+      ...(input.agentConfig.toolResultContext !== undefined
+        ? { toolResultContext: input.agentConfig.toolResultContext }
+        : {}),
+      ...(input.agentConfig.knowledge !== undefined
+        ? { knowledge: input.agentConfig.knowledge }
+        : {}),
       allowedProviderTools: runtimeConfig.requestedAllowedProviderTools,
       includeRuntimeEssentialToolsWhenEmpty: runtimeConfig.includeRuntimeEssentialToolsWhenEmpty,
       ...(input.serverResolvedToolExposureCheckpoint
@@ -589,6 +610,12 @@ export async function prepareHostedChatRuntimeCreationOptions<
           isProviderReplayCheckpointEmissionEnabled(),
         input.serverResolvedProviderReplayCheckpoints,
       ),
+      ...(input.rootRunContext?.privateRuntimeObservationWriterCapability
+        ? {
+          runtimeObservationWriterCapability:
+            input.rootRunContext.privateRuntimeObservationWriterCapability,
+        }
+        : {}),
       clientProfile: runtimeConfig.clientProfile,
       liveProjectSteering: buildHostedChatRuntimeProjectSteering({
         agentConfig: input.agentConfig,
@@ -618,6 +645,9 @@ export async function prepareHostedChatExecution<
     providerTools?: string[];
     tools?: true | string[];
     deniedTools?: string[];
+    toolLoading?: AgentConfig["toolLoading"];
+    toolResultContext?: AgentConfig["toolResultContext"];
+    knowledge?: AgentConfig["knowledge"];
   },
   TRuntimeResult extends HostedChatRuntimeCreationResult,
 >(
@@ -660,6 +690,9 @@ export async function prepareHostedChatExecution<
         parentMessageId: normalized.parentMessageId,
         providedRun: input.request.durableRootRun,
         persistLatestUserMessageBeforeRun: input.request.persistLatestUserMessageBeforeDurableRun,
+        ...(input.runtimeObservationCaptureOptIn
+          ? { runtimeObservationCaptureOptIn: input.runtimeObservationCaptureOptIn }
+          : {}),
         ...input.rootRun,
       }, { abortSignal: input.abortSignal }),
   );

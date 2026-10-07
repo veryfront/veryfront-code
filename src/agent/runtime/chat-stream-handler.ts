@@ -25,11 +25,17 @@ import { privateJsonParse, privateJsonStringify } from "#veryfront/security/priv
 
 import type { RuntimeStreamPart, RuntimeStreamResult } from "./runtime-tool-types.ts";
 import type { ModelRuntime } from "#veryfront/provider/types.ts";
+import { forwardVeryfrontCloudModelFacts } from "#veryfront/provider/veryfront-cloud/model-catalog.ts";
 import {
   createRuntimeProviderStreamFailure,
   readRuntimeProviderStreamFailureCause,
 } from "#veryfront/runtime/provider-stream-error-provenance.ts";
 import { sendSSE } from "./sse-utils.ts";
+import {
+  introduceToolCallOccurrence,
+  isToolCallOccurrenceScopeEnabled,
+  retainToolCallOccurrence,
+} from "#veryfront/runtime/tool-call-occurrence.ts";
 import {
   mergeToolCallInput,
   mergeToolInputDelta,
@@ -182,12 +188,14 @@ export function withRuntimeProviderStreamErrorProvenance<CallOptions, ContentPar
     }
   };
   const target = Object.create(model) as ModelRuntime<CallOptions, ContentPart>;
-  return new Proxy(target, {
+  const wrapped = new Proxy(target, {
     get(_target, property) {
       if (property === "doStream") return doStream;
       return Reflect.get(model, property, model);
     },
   });
+  forwardVeryfrontCloudModelFacts(model, wrapped);
+  return wrapped;
 }
 
 function isStreamLifecycleFailure(error: unknown): error is StreamLifecycleFailure {
@@ -331,10 +339,12 @@ export function announceStreamedToolCallInput(
   }
 
   const dynamic = toolCall.dynamic ?? isDynamicTool(toolCall.name);
+  const occurrenceId = introduceToolCallOccurrence(toolCall);
   sendSSE(controller, encoder, {
     type: "tool-input-start",
     toolCallId: toolCall.id,
     toolName: toolCall.name,
+    ...(occurrenceId ? { privateToolCallOccurrenceId: occurrenceId } : {}),
     ...(dynamic ? { dynamic: true } : {}),
   });
 
@@ -435,6 +445,40 @@ export interface ChatStreamCallbacks {
   clearTimeoutFn?: typeof clearTimeout;
   traceSpanName?: string;
   traceAttributes?: Record<string, TraceAttributeValue>;
+  /** @internal Trusted runtime observation step id for exact durable provenance. */
+  runtimeObservationStepId?: string;
+  /** @internal Trusted runtime observation message span id for this step. */
+  runtimeObservationMessageSpanId?: string;
+}
+
+function withRuntimeStepMessageObservation(
+  event: Record<string, unknown>,
+  callbacks: ChatStreamCallbacks | undefined,
+): Record<string, unknown> {
+  if (
+    callbacks?.runtimeObservationStepId === undefined ||
+    callbacks.runtimeObservationMessageSpanId === undefined
+  ) {
+    return event;
+  }
+  switch (event.type) {
+    case "text-delta":
+    case "text-end":
+    case "reasoning-start":
+    case "reasoning-delta":
+    case "reasoning-end":
+      return {
+        ...event,
+        privateRuntimeObservation: {
+          version: 1,
+          kind: "step_message",
+          stepId: callbacks.runtimeObservationStepId,
+          messageSpanId: callbacks.runtimeObservationMessageSpanId,
+        },
+      };
+    default:
+      return event;
+  }
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -775,7 +819,11 @@ async function processActiveStream(
       mode: "active",
     }),
   });
-  const live = createStreamLifecycleLiveAdapter({ textPartId });
+  const live = createStreamLifecycleLiveAdapter({
+    textPartId,
+    privateToolCallAdmissions: isToolCallOccurrenceScopeEnabled(),
+  });
+  const toolOccurrences = createPrivateMap<string, { id: string }>();
   let deliveryError: unknown;
   let streamOutcome!: StreamOutcome;
   try {
@@ -788,7 +836,26 @@ async function processActiveStream(
       }
       const events = live.encode(frame);
       for (let index = 0; index < events.length; index++) {
-        if (hasOwn(events, index)) sendSSE(controller, encoder, events[index]!);
+        if (hasOwn(events, index)) {
+          const event = events[index]!;
+          let occurrenceId: string | undefined;
+          if (
+            event.type === "tool-input-start" &&
+            !("privateObservedToolResult" in event && event.privateObservedToolResult === true)
+          ) {
+            const call = { id: event.toolCallId };
+            occurrenceId = introduceToolCallOccurrence(call);
+            if (occurrenceId) toolOccurrences.set(call.id, call);
+          }
+          sendSSE(
+            controller,
+            encoder,
+            withRuntimeStepMessageObservation(
+              occurrenceId ? { ...event, privateToolCallOccurrenceId: occurrenceId } : event,
+              callbacks,
+            ),
+          );
+        }
       }
     }
   } catch (error) {
@@ -802,6 +869,9 @@ async function processActiveStream(
     state.streamOutcome = streamOutcome;
     if (deliveryError === undefined) {
       applyLifecycleSnapshotToChatStreamState(state, streamOutcome.snapshot);
+      for (const call of state.toolCalls.values()) {
+        retainToolCallOccurrence(toolOccurrences.get(call.id), call);
+      }
       finalizeActiveUnresolvedProviderToolCalls(state, controller, encoder);
     }
   }
@@ -1012,10 +1082,14 @@ export function processStreamInternal(
         ? textPartId
         : `${textPartId}:${nextTextSegmentIndex}`;
       nextTextSegmentIndex += 1;
-      sendSSE(controller, encoder, {
-        type: "text-start",
-        id: activeTextPartId,
-      });
+      sendSSE(
+        controller,
+        encoder,
+        withRuntimeStepMessageObservation({
+          type: "text-start",
+          id: activeTextPartId,
+        }, callbacks),
+      );
     };
 
     const closeTextSegment = () => {
@@ -1024,10 +1098,14 @@ export function processStreamInternal(
       }
 
       textOpen = false;
-      sendSSE(controller, encoder, {
-        type: "text-end",
-        id: activeTextPartId,
-      });
+      sendSSE(
+        controller,
+        encoder,
+        withRuntimeStepMessageObservation({
+          type: "text-end",
+          id: activeTextPartId,
+        }, callbacks),
+      );
       activeTextPartId = undefined;
     };
 
@@ -1037,10 +1115,14 @@ export function processStreamInternal(
       }
 
       if (activeReasoningId !== null) {
-        sendSSE(controller, encoder, {
-          type: "reasoning-end",
-          id: activeReasoningId,
-        });
+        sendSSE(
+          controller,
+          encoder,
+          withRuntimeStepMessageObservation({
+            type: "reasoning-end",
+            id: activeReasoningId,
+          }, callbacks),
+        );
       }
 
       activeReasoningId = reasoningId;
@@ -1049,10 +1131,14 @@ export function processStreamInternal(
         reasoningParts.set(reasoningId, part);
         pushPrivateArray(state.reasoningParts, part);
       }
-      sendSSE(controller, encoder, {
-        type: "reasoning-start",
-        id: reasoningId,
-      });
+      sendSSE(
+        controller,
+        encoder,
+        withRuntimeStepMessageObservation({
+          type: "reasoning-start",
+          id: reasoningId,
+        }, callbacks),
+      );
     };
 
     const closeReasoningSegment = () => {
@@ -1061,12 +1147,16 @@ export function processStreamInternal(
       }
 
       const reasoningPart = reasoningParts.get(activeReasoningId);
-      sendSSE(controller, encoder, {
-        type: "reasoning-end",
-        id: activeReasoningId,
-        ...(reasoningPart?.signature ? { signature: reasoningPart.signature } : {}),
-        ...(reasoningPart?.redactedData ? { redactedData: reasoningPart.redactedData } : {}),
-      });
+      sendSSE(
+        controller,
+        encoder,
+        withRuntimeStepMessageObservation({
+          type: "reasoning-end",
+          id: activeReasoningId,
+          ...(reasoningPart?.signature ? { signature: reasoningPart.signature } : {}),
+          ...(reasoningPart?.redactedData ? { redactedData: reasoningPart.redactedData } : {}),
+        }, callbacks),
+      );
       activeReasoningId = null;
     };
 
@@ -1124,6 +1214,7 @@ export function processStreamInternal(
 
       if (!existing) {
         const normalizedInput = parseToolInputObject(part.input);
+        const observationOnly = isToolCallOccurrenceScopeEnabled();
         state.toolCalls.set(part.toolCallId, {
           id: part.toolCallId,
           name: part.toolName,
@@ -1137,6 +1228,12 @@ export function processStreamInternal(
           type: "tool-input-start",
           toolCallId: part.toolCallId,
           toolName: part.toolName,
+          ...(observationOnly
+            ? {
+              privateObservedToolResult: true,
+              ...(providerExecuted !== undefined ? { providerExecuted } : {}),
+            }
+            : {}),
           ...(dynamic ? { dynamic: true } : {}),
         });
         sendSSE(controller, encoder, {
@@ -1313,11 +1410,15 @@ export function processStreamInternal(
             closeReasoningSegment();
             openTextSegment();
             state.accumulatedText += typedPart.text;
-            sendSSE(controller, encoder, {
-              type: "text-delta",
-              id: activeTextPartId,
-              delta: typedPart.text,
-            });
+            sendSSE(
+              controller,
+              encoder,
+              withRuntimeStepMessageObservation({
+                type: "text-delta",
+                id: activeTextPartId,
+                delta: typedPart.text,
+              }, callbacks),
+            );
             callbacks?.onChunk?.(typedPart.text);
             break;
           }
@@ -1336,11 +1437,15 @@ export function processStreamInternal(
             if (reasoningPart) {
               reasoningPart.text += typeof typedPart.delta === "string" ? typedPart.delta : "";
             }
-            sendSSE(controller, encoder, {
-              type: "reasoning-delta",
-              id: reasoningId,
-              delta: typeof typedPart.delta === "string" ? typedPart.delta : "",
-            });
+            sendSSE(
+              controller,
+              encoder,
+              withRuntimeStepMessageObservation({
+                type: "reasoning-delta",
+                id: reasoningId,
+                delta: typeof typedPart.delta === "string" ? typedPart.delta : "",
+              }, callbacks),
+            );
             break;
           }
 
@@ -1466,14 +1571,20 @@ export function processStreamInternal(
             const resolvedArguments = mergeToolCallInput(previousArguments, inputStr);
             const wasInputAvailable = previous?.inputAvailable === true;
             const dynamic = typedPart.dynamic ?? isDynamicTool(typedPart.toolName);
-            state.toolCalls.set(toolId, {
+            const toolCall: StreamingToolCall = {
               id: toolId,
               name: typedPart.toolName,
               arguments: resolvedArguments,
               inputAvailable: true,
               providerExecuted,
               dynamic,
-            });
+            };
+            retainToolCallOccurrence(previous, toolCall);
+            if (introduceToolCallOccurrence(toolCall)) {
+              toolCall.inputAnnounced = previous?.inputAnnounced ?? false;
+              announceToolInputStart(toolCall);
+            }
+            state.toolCalls.set(toolId, toolCall);
 
             if (!wasInputAvailable) {
               sendSSE(controller, encoder, {
@@ -1522,6 +1633,7 @@ export function processStreamInternal(
               providerExecuted,
               dynamic: typedPart.dynamic,
             };
+            retainToolCallOccurrence(previous, toolCall);
             state.toolCalls.set(toolId, toolCall);
 
             const dynamic = isDynamicTool(typedPart.toolName);

@@ -66,6 +66,7 @@ import {
   writePushReceipt,
 } from "../../shared/deployment-provenance.ts";
 import { buildStudioUrl } from "../studio/command.ts";
+import { getCloudDomain } from "#cli/shared/constants";
 import { isJsonMode, streamJsonLine } from "../../shared/json-output.ts";
 import { type PlannedDelete, type PlannedUpload, planPushChanges } from "./plan.ts";
 import {
@@ -487,6 +488,7 @@ function assertPreviewBranchName(branchName: string): void {
 export function buildPushUrls(
   projectSlug: string,
   branchName: string,
+  apiUrl?: string,
 ): { studio: string; preview: string } {
   assertPreviewBranchName(branchName);
   const previewLabel = branchName === "main" ? projectSlug : `${projectSlug}--${branchName}`;
@@ -495,10 +497,10 @@ export function buildPushUrls(
       detail: "Preview hostname is too long. Shorten the project slug or branch name.",
     });
   }
-  const preview = `https://${previewLabel}.preview.veryfront.com`;
+  const preview = `https://${previewLabel}.preview.${getCloudDomain(apiUrl)}`;
 
   return {
-    studio: buildStudioUrl(projectSlug, { branch: branchName }),
+    studio: buildStudioUrl(projectSlug, { branch: branchName }, apiUrl),
     preview,
   };
 }
@@ -510,8 +512,9 @@ function outputPushResult(
   deleted: number,
   protectedDeleted: readonly string[],
   duration?: number,
+  apiUrl?: string,
 ): void {
-  const urls = buildPushUrls(projectSlug, branchName);
+  const urls = buildPushUrls(projectSlug, branchName, apiUrl);
 
   if (isJsonMode()) {
     streamJsonLine({
@@ -566,8 +569,9 @@ function outputPushDryRunResult(
   wouldUpload: number,
   wouldDelete: number,
   protectedWouldDelete: readonly string[],
+  apiUrl?: string,
 ): void {
-  const urls = buildPushUrls(projectSlug, branchName);
+  const urls = buildPushUrls(projectSlug, branchName, apiUrl);
   streamJsonLine({
     type: "result",
     success: true,
@@ -2163,6 +2167,7 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
               0,
               0,
               protectedDeletePaths,
+              config.apiUrl,
             );
           } else if (dryRun) {
             logInfo("Dry run complete. No files would change.");
@@ -2174,6 +2179,7 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
               forcedPruneDeleteCount,
               [...appliedProtectedDeletePaths],
               Date.now() - startTime,
+              config.apiUrl,
             );
           }
         }
@@ -2210,6 +2216,7 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
             uploadOps.length,
             deleteOps.length,
             protectedDeletePaths,
+            config.apiUrl,
           );
         } else if (!quiet) {
           const parts = buildConfirmParts(uploadOps, deleteOps.map((op) => op.path));
@@ -2653,6 +2660,7 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
         deleteResult.deleted,
         [...appliedProtectedDeletePaths],
         Date.now() - startTime,
+        config.apiUrl,
       );
     },
     { "cli.dryRun": options.dryRun ?? false },

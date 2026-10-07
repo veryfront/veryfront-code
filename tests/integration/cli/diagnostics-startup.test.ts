@@ -1,5 +1,7 @@
 import { assert, assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
+import { basename } from "#std/path/basename";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { makeTempDirWithOptions } from "#veryfront/testing/deno-compat.ts";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 const root = new URL("../../../", import.meta.url);
@@ -12,6 +14,34 @@ const forbidden = [
   "src/integrations/local-tool-source.ts",
 ].map((path) => new URL(path, root).href);
 
+async function createIsolatedCliCopy(
+  entryName: string,
+  source: string,
+): Promise<{ readonly url: URL; readonly cleanup: () => Promise<void> }> {
+  const cliRoot = fileURLToPath(new URL("cli/", root));
+  const fixtureRoot = fileURLToPath(new URL("cli/__tests__/fixtures/startup-copies/", root));
+  await Deno.mkdir(fixtureRoot, { recursive: true });
+  const caseRoot = await makeTempDirWithOptions({ dir: fixtureRoot, prefix: "case-" });
+  const tempDir = `${caseRoot}/cli`;
+  await Deno.mkdir(tempDir);
+  await Deno.symlink(fileURLToPath(new URL("deno.json", root)), `${caseRoot}/deno.json`);
+  await Deno.symlink(fileURLToPath(new URL("src/", root)), `${caseRoot}/src`);
+
+  for await (const entry of Deno.readDir(cliRoot)) {
+    if (entry.name === "__tests__" || entry.name === "deno.json" || entry.name === entryName) {
+      continue;
+    }
+    await Deno.symlink(`${cliRoot}/${entry.name}`, `${tempDir}/${entry.name}`);
+  }
+
+  const path = `${tempDir}/${entryName}`;
+  await Deno.writeTextFile(path, source);
+  return {
+    url: pathToFileURL(path),
+    cleanup: () => Deno.remove(caseRoot, { recursive: true }),
+  };
+}
+
 interface ModuleGraph {
   roots: string[];
   redirects: Record<string, string>;
@@ -23,7 +53,13 @@ interface ModuleGraph {
 
 async function staticModules(entry: URL): Promise<Set<string>> {
   const result = await new Deno.Command(Deno.execPath(), {
-    args: ["info", "--json", "--frozen", entry.href],
+    args: [
+      "info",
+      `--config=${fileURLToPath(new URL("deno.json", root))}`,
+      "--json",
+      "--frozen",
+      entry.href,
+    ],
     cwd: fileURLToPath(root),
     stdout: "piped",
     stderr: "piped",
@@ -81,23 +117,20 @@ describe("public diagnostics startup graph", () => {
   it("detects the barrel regression in an isolated router copy", async () => {
     const source = await Deno.readTextFile(router);
     assert(source.includes('from "veryfront/integrations/diagnostics"'));
-    const copy = await Deno.makeTempFile({
-      dir: fileURLToPath(new URL("cli/", root)),
-      suffix: ".ts",
-    });
+    let copy: { readonly url: URL; readonly cleanup: () => Promise<void> } | undefined;
     try {
-      await Deno.writeTextFile(
-        copy,
+      copy = await createIsolatedCliCopy(
+        basename(fileURLToPath(router)),
         source.replace(
           'from "veryfront/integrations/diagnostics"',
           'from "veryfront/integrations"',
         ),
       );
-      const modules = await staticModules(pathToFileURL(copy));
+      const modules = await staticModules(copy.url);
       assert(modules.has(new URL("src/integrations/_data.ts", root).href));
       assertThrows(() => assertLightweight(modules));
     } finally {
-      await Deno.remove(copy);
+      await copy?.cleanup();
     }
   });
 });

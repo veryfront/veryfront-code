@@ -10,6 +10,7 @@ import {
   type RuntimeClientProfile,
 } from "../runtime/client-profile.ts";
 import { AGENT_DELEGATE_TOOL_PREFIX } from "../runtime/agent-delegation-names.ts";
+import { isKnowledgeEnabled } from "../runtime/knowledge-tools.ts";
 import {
   isSupportedToolExposureCheckpointVersion,
   type ToolExposureCheckpoint,
@@ -40,6 +41,7 @@ export type HostedRuntimeRequestConfigAgent = Pick<
   | "providerTools"
   | "delegates"
   | "skills"
+  | "knowledge"
 >;
 
 /** Input payload for resolve hosted runtime request config. */
@@ -70,6 +72,16 @@ export type ResolvedHostedRuntimeRequestConfig = {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function hasConfiguredSkillsForLegacyDelegation(
+  skills: RuntimeAgentMarkdownDefinition["skills"],
+): boolean {
+  if (skills === undefined || skills === true) return true;
+  if (skills === false) return false;
+  if (typeof skills === "string") return true;
+  if (arrayIsArray(skills)) return skills.length > 0;
+  return Object.values(skills).some((enabled) => enabled === true);
 }
 
 /** Read the latest checkpoint overwritten by the authenticated server caller. */
@@ -212,6 +224,7 @@ export function resolveHostedRuntimeAllowedTools(input: {
   configuredDeniedTools?: RuntimeAgentMarkdownDefinition["deniedTools"];
   configuredDelegates: RuntimeAgentMarkdownDefinition["delegates"];
   configuredSkills: RuntimeAgentMarkdownDefinition["skills"];
+  configuredKnowledge?: RuntimeAgentMarkdownDefinition["knowledge"];
   requestedTools: string[] | undefined;
 }): string[] | undefined {
   if (input.configuredTools === true) {
@@ -222,6 +235,7 @@ export function resolveHostedRuntimeAllowedTools(input: {
   }
 
   const configuredToolNames = createPrivateSet(input.configuredTools ?? []);
+  if (isKnowledgeEnabled(input.configuredKnowledge)) configuredToolNames.add("search_knowledge");
   const delegates = input.configuredDelegates ?? [];
   for (let index = 0; index < delegates.length; index++) {
     const id = delegates[index];
@@ -231,9 +245,9 @@ export function resolveHostedRuntimeAllowedTools(input: {
     return [...configuredToolNames];
   }
 
-  const hasImplicitLegacyDelegation = input.configuredSkills === undefined ||
-    input.configuredSkills === true ||
-    (arrayIsArray(input.configuredSkills) && input.configuredSkills.length > 0);
+  const hasImplicitLegacyDelegation = hasConfiguredSkillsForLegacyDelegation(
+    input.configuredSkills,
+  );
   const selectedToolNames = createPrivateSet<string>();
   for (const toolName of createPrivateSet(input.requestedTools)) {
     if (
@@ -292,6 +306,7 @@ export function resolveHostedRuntimeRequestConfig(
       configuredDeniedTools: input.agentConfig.deniedTools,
       configuredDelegates: input.agentConfig.delegates,
       configuredSkills: input.agentConfig.skills,
+      configuredKnowledge: input.agentConfig.knowledge,
       requestedTools: effectiveRuntimeOverrides?.allowedTools,
     }),
     requestedAllowedProviderTools: resolveHostedRuntimeAllowedProviderTools({

@@ -2,7 +2,7 @@ import { cliLogger, exitProcess } from "#cli/utils";
 import { type EnvironmentConfig, getEnvironmentConfig } from "veryfront/config";
 import { deleteToken, getTokenLocation, hasToken, readToken, saveToken } from "./token-store.ts";
 import { getCallbackUrl, startCallbackServer } from "./callback-server.ts";
-import { canOpenBrowser, openBrowser } from "./browser.ts";
+import { type BrowserLaunchOptions, canOpenBrowser, openBrowser } from "./browser.ts";
 import { isTTY, promptUser } from "../utils/index.ts";
 import { brand, dim, error, warning } from "../ui/colors.ts";
 import { createSpinner, type SpinnerController } from "../ui/progress.ts";
@@ -120,6 +120,7 @@ export interface CredentialValidationOptions {
  * through to the normal flow.
  */
 const DEFAULT_EXISTING_SESSION_TIMEOUT_MS = 5_000;
+const DEFAULT_OAUTH_BROWSER_LAUNCH_TIMEOUT_MS = 10_000;
 let existingSessionTimeoutMs = DEFAULT_EXISTING_SESSION_TIMEOUT_MS;
 
 function loginIdentityData(
@@ -436,10 +437,25 @@ async function promptAuthMethod(): Promise<AuthMethod> {
   }
 }
 
+type OAuthBrowserLauncher = (url: string, options?: BrowserLaunchOptions) => Promise<void>;
+
+let oauthBrowserLauncher: OAuthBrowserLauncher = openBrowser;
+
+/** Test seam for the OAuth default opener. */
+export function __setOAuthBrowserLauncherForTests(
+  launcher?: OAuthBrowserLauncher,
+): void {
+  oauthBrowserLauncher = launcher ?? openBrowser;
+}
+
+async function openOAuthBrowser(authUrl: string): Promise<void> {
+  await oauthBrowserLauncher(authUrl, { timeoutMs: DEFAULT_OAUTH_BROWSER_LAUNCH_TIMEOUT_MS });
+}
+
 export async function openOAuthLogin(
   authUrl: string,
   spinner: SpinnerController,
-  opener: (url: string) => Promise<void> = openBrowser,
+  opener: (url: string) => Promise<void> = openOAuthBrowser,
 ): Promise<boolean> {
   try {
     await opener(authUrl);
@@ -975,7 +991,13 @@ export async function whoami(
   }
 
   if (isJsonMode()) {
-    await outputJson(createSuccessEnvelope("whoami", { authenticated: false }));
+    await outputJson(createErrorEnvelope("whoami", {
+      code: "AUTHENTICATION_ERROR",
+      slug: "authentication-required",
+      registrySlug: "authentication-required",
+      message: "Not logged in. Run 'veryfront login' to authenticate.",
+      context: { authenticated: false },
+    }));
     return null;
   }
 

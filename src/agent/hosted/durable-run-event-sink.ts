@@ -11,9 +11,13 @@ import {
   createTimedAgentRunEventSink,
 } from "../../runtime/model-call-context.ts";
 import { agentLogger } from "#veryfront/utils";
+import {
+  type AgentRunModelCallCaptureReceipt,
+  getModelCallCaptureReceiptSchema,
+} from "#veryfront/runtime/model-call-capture-receipt.ts";
 
 const DEFAULT_DURABLE_RUN_EVENT_PERSISTENCE_TIMEOUT_MS = 30_000;
-const persistenceTails = new WeakMap<ConversationRunChunkMirror, Promise<void>>();
+const persistenceTails = new WeakMap<ConversationRunChunkMirror, Promise<unknown>>();
 
 export { DurableRunEventPersistenceError } from "../conversation/private-run-event.ts";
 
@@ -49,15 +53,15 @@ function assertDrained(snapshot: ConversationRunMirrorSnapshot): void {
   }
 }
 
-async function serializePersistence(
+async function serializePersistence<T>(
   mirror: ConversationRunChunkMirror,
-  operation: () => Promise<void>,
-): Promise<void> {
+  operation: () => Promise<T>,
+): Promise<T> {
   const previous = persistenceTails.get(mirror) ?? Promise.resolve();
   const current = previous.then(operation, operation);
   persistenceTails.set(mirror, current);
   try {
-    await current;
+    return await current;
   } finally {
     if (persistenceTails.get(mirror) === current) {
       persistenceTails.delete(mirror);
@@ -151,6 +155,8 @@ function truncatePrivateRunEventToLimit(
     keepTools: boolean,
   ): Record<string, unknown> => ({
     type: event.type,
+    // Clamped legacy audit records cannot acknowledge complete prepared input.
+    // Deliberately exclude modelCallId so they cannot issue a capture receipt.
     ...(event.model === undefined ? {} : { model: event.model }),
     ...(event.request === undefined ? {} : { request: event.request }),
     messages: [buildTruncationNotice({ originalByteLength, omittedMessageCount }), ...kept],
@@ -286,13 +292,14 @@ export function createDurableRunEventSink(input: {
 }): AgentRunEventSink {
   return createTimedAgentRunEventSink(async (event) => {
     let oversize: ResolvedRunEvent["oversize"];
+    let captureReceipt: AgentRunModelCallCaptureReceipt | undefined;
     try {
       assertEnabled(input.mirror.getSnapshot());
       const resolved = resolvePersistableEvent(event);
       oversize = resolved.oversize;
       const persistableEvent = resolved.event as typeof event;
-      await serializePersistence(input.mirror, async () => {
-        await withPersistenceDeadline({
+      captureReceipt = await serializePersistence(input.mirror, async () => {
+        return await withPersistenceDeadline({
           abortSignal: input.abortSignal,
           timeoutMs: input.timeoutMs ?? DEFAULT_DURABLE_RUN_EVENT_PERSISTENCE_TIMEOUT_MS,
           operation: async (abortSignal) => {
@@ -315,6 +322,19 @@ export function createDurableRunEventSink(input: {
               }),
             );
             assertDrained(input.mirror.getSnapshot());
+            if (oversize || event.modelCallId === undefined) return undefined;
+            const receipt = getModelCallCaptureReceiptSchema().safeParse(
+              input.mirror.takeModelCallCaptureReceipt?.(event.modelCallId),
+            );
+            if (
+              !receipt.success ||
+              receipt.data.modelCallId.toLowerCase() !== event.modelCallId.toLowerCase()
+            ) {
+              throw new DurableRunEventPersistenceError(
+                "Durable model capture receipt is missing or invalid",
+              );
+            }
+            return receipt.data;
           },
         });
       });
@@ -338,5 +358,6 @@ export function createDurableRunEventSink(input: {
       );
       throw buildOversizeError(oversize);
     }
+    return captureReceipt;
   }, input.timing ?? input.mirror.timing);
 }

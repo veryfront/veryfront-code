@@ -3,7 +3,86 @@ import {
 	BROWSER_SAFE_CLIENT_MODULES,
 	BROWSER_SAFE_DNT_TIMER_MODULES,
 	BROWSER_SAFE_EXPORTS,
+	BROWSER_SAFE_TRANSITIVE_EXPORTS,
+	BROWSER_SAFE_TRANSITIVE_MODULES,
 } from "./browser-safe-exports.mjs";
+
+const builtNpmRoot = new URL("../../npm/esm/", import.meta.url);
+
+function isMissingFile(error: unknown): boolean {
+	return error instanceof Deno.errors.NotFound;
+}
+
+async function pathExists(path: string | URL): Promise<boolean> {
+	try {
+		await Deno.stat(path);
+		return true;
+	} catch (error) {
+		if (isMissingFile(error)) return false;
+		throw error;
+	}
+}
+
+function builtSpecifierTarget(from: URL, specifier: string): URL | null {
+	if (!specifier.startsWith(".")) return null;
+	const base = new URL(specifier, from);
+	if (/\.[cm]?js$/.test(base.pathname)) return base;
+	return new URL(`${base.pathname}.js`, base);
+}
+
+function builtRelativePath(file: URL): string {
+	return decodeURIComponent(file.href.slice(builtNpmRoot.href.length));
+}
+
+function moduleSpecifiers(source: string): string[] {
+	const specifiers: string[] = [];
+	const pattern = /(?:import|export)\s+(?:[^"';]+?\s+from\s+)?["']([^"']+)["']|import\(["']([^"']+)["']\)/g;
+	for (const match of source.matchAll(pattern)) {
+		specifiers.push(match[1] ?? match[2]);
+	}
+	return specifiers;
+}
+
+async function collectBuiltDntImporters(entry: URL): Promise<string[]> {
+	const queue: URL[] = [entry];
+	const visited = new Set<string>();
+	const importers = new Set<string>();
+
+	while (queue.length > 0) {
+		const current = queue.shift();
+		if (!current || visited.has(current.href)) continue;
+		visited.add(current.href);
+		if (!current.href.startsWith(builtNpmRoot.href)) continue;
+		if (!(await pathExists(current))) continue;
+
+		const source = await Deno.readTextFile(current);
+		if (source.includes("_dnt.polyfills.js") || source.includes("_dnt.shims.js")) {
+			importers.add(builtRelativePath(current));
+		}
+
+		for (const specifier of moduleSpecifiers(source)) {
+			const target = builtSpecifierTarget(current, specifier);
+			if (target !== null && !visited.has(target.href)) {
+				queue.push(target);
+			}
+		}
+	}
+
+	return [...importers].toSorted();
+}
+
+async function browserSafeExportBuiltEntry(exportPath: string): Promise<URL> {
+	const denoJson = JSON.parse(await Deno.readTextFile(new URL("../../deno.json", import.meta.url)));
+	const exports = denoJson.exports as Record<string, string>;
+	const sourcePath = exports[exportPath];
+	if (!sourcePath) {
+		throw new Error(`Missing deno.json export for ${exportPath}`);
+	}
+	return new URL(
+		sourcePath.replace(/^\.\//, "").replace(/\.tsx?$/, ".js"),
+		builtNpmRoot,
+	);
+}
 
 // build-npm-dnt.ts postBuild throws "Missing browser-safe export source" when
 // an entry here no longer exists in deno.json exports — but only at release
@@ -38,6 +117,43 @@ Deno.test("every browser-safe module path points at an existing source file", as
 		missing.length === 0,
 		`Browser-safe module paths with no matching source file: ${missing.join(", ")}`,
 	);
+});
+
+
+Deno.test("browser-safe transitive modules point at existing source files", async () => {
+	const missing: string[] = [];
+	for (const builtPath of BROWSER_SAFE_TRANSITIVE_MODULES) {
+		const sourcePath = (builtPath as string).replace(/\.js$/, ".ts");
+		if (!(await pathExists(sourcePath)) && !(await pathExists(`${sourcePath}x`))) {
+			missing.push(builtPath as string);
+		}
+	}
+	assert(
+		missing.length === 0,
+		`Browser-safe transitive module paths with no matching source file: ${missing.join(", ")}`,
+	);
+});
+
+Deno.test("built browser-safe exports do not reach unstripped dnt imports", async () => {
+	if (!(await pathExists(builtNpmRoot))) {
+		console.log("Skipping built npm graph assertion because npm/esm has not been generated");
+		return;
+	}
+
+	const plannedStrippedModules = new Set(BROWSER_SAFE_TRANSITIVE_MODULES as string[]);
+	for (const exportPath of BROWSER_SAFE_TRANSITIVE_EXPORTS as string[]) {
+		const entry = await browserSafeExportBuiltEntry(exportPath);
+		const importers = await collectBuiltDntImporters(entry);
+		const plannedDirectImporter = builtRelativePath(entry);
+		const unplannedImporters = importers.filter((importer) => {
+			return importer !== plannedDirectImporter && !plannedStrippedModules.has(importer);
+		});
+		assertEquals(
+			unplannedImporters,
+			[],
+			`${exportPath} reaches dnt shim/polyfill imports that postBuild does not strip`,
+		);
+	}
 });
 
 Deno.test("browser-safe client modules include runtime shims reached by browser entrypoints", () => {
@@ -140,5 +256,33 @@ Deno.test("the run events entry point retains no browser-unsafe Node builtin", a
 		builtins,
 		["node:async_hooks"],
 		"veryfront/run-events must reach no Node builtin beyond the contract registry's async_hooks",
+  );
+});
+
+Deno.test("the agent events entry point retains no Node builtin", async () => {
+	const output = await new Deno.Command(Deno.execPath(), {
+		args: [
+			"bundle",
+			"--platform=browser",
+			"--no-check",
+			"src/events/index.ts",
+		],
+		cwd: new URL("../../", import.meta.url),
+		stdin: "null",
+		stdout: "piped",
+		stderr: "piped",
+	}).output();
+	const stderr = new TextDecoder().decode(output.stderr);
+	assert(output.success, `agent events browser bundle failed:\n${stderr}`);
+
+	const bundle = new TextDecoder().decode(output.stdout);
+	const builtins = [...new Set(bundle.match(/["']node:[a-z_/]+/g) ?? [])]
+		.map((match: string) => match.slice(1))
+		.toSorted();
+
+	assertEquals(
+		builtins,
+		[],
+		"veryfront/events must not retain Node builtin imports",
 	);
 });

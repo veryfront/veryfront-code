@@ -1,0 +1,5203 @@
+{
+  "formatVersion": 1,
+  "status": "synthetic-target-conformance-witnesses",
+  "schemaBundle": "target-payload-schemas.json",
+  "schemaBundleId": "urn:veryfront:run-events:target:payloads:1",
+  "purpose": "Synthetic portable target payloads and focused rejection witnesses, not actual producer output or deployed migration proof. envelopeContext contains only required owner/call links for the payload test.",
+  "examples": [
+    {
+      "id": "com.veryfront.run.requested/minimal",
+      "eventType": "com.veryfront.run.requested",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/RunRequested",
+      "data": {},
+      "envelopeContext": {
+        "runid": "run-a"
+      },
+      "expectValid": true
+    },
+    {
+      "id": "com.veryfront.run.requested/producer-extension",
+      "eventType": "com.veryfront.run.requested",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/RunRequested",
+      "data": {
+        "extensions": {
+          "https://example.test/extensions": {
+            "traceLabel": "sample",
+            "details": {
+              "arbitrary_key": "producer-owned"
+            }
+          }
+        }
+      },
+      "envelopeContext": {
+        "runid": "run-a"
+      },
+      "expectValid": true
+    },
+    {
+      "id": "com.veryfront.run.enqueued/minimal",
+      "eventType": "com.veryfront.run.enqueued",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/RunEnqueued",
+      "data": {},
+      "envelopeContext": {
+        "runid": "run-a"
+      },
+      "expectValid": true
+    },
+    {
+      "id": "com.veryfront.run.enqueued/producer-extension",
+      "eventType": "com.veryfront.run.enqueued",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/RunEnqueued",
+      "data": {
+        "extensions": {
+          "https://example.test/extensions": {
+            "traceLabel": "sample",
+            "details": {
+              "arbitrary_key": "producer-owned"
+            }
+          }
+        }
+      },
+      "envelopeContext": {
+        "runid": "run-a"
+      },
+      "expectValid": true
+    },
+    {
+      "id": "com.veryfront.run.started/minimal",
+      "eventType": "com.veryfront.run.started",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/RunStarted",
+      "data": {},
+      "envelopeContext": {
+        "runid": "run-a"
+      },
+      "expectValid": true
+    },
+    {
+      "id": "com.veryfront.run.started/producer-extension",
+      "eventType": "com.veryfront.run.started",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/RunStarted",
+      "data": {
+        "extensions": {
+          "https://example.test/extensions": {
+            "traceLabel": "sample",
+            "details": {
+              "arbitrary_key": "producer-owned"
+            }
+          }
+        }
+      },
+      "envelopeContext": {
+        "runid": "run-a"
+      },
+      "expectValid": true
+    },
+    {
+      "id": "com.veryfront.stream.closed/minimal",
+      "eventType": "com.veryfront.stream.closed",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/StreamClosed",
+      "data": {
+        "reason": "completed"
+      },
+      "envelopeContext": {},
+      "expectValid": true
+    },
+    {
+      "id": "com.veryfront.stream.closed/producer-extension",
+      "eventType": "com.veryfront.stream.closed",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/StreamClosed",
+      "data": {
+        "reason": "completed",
+        "extensions": {
+          "https://example.test/extensions": {
+            "traceLabel": "sample",
+            "details": {
+              "arbitrary_key": "producer-owned"
+            }
+          }
+        }
+      },
+      "envelopeContext": {},
+      "expectValid": true
+    },
+    {
+      "id": "com.veryfront.run.succeeded/minimal",
+      "eventType": "com.veryfront.run.succeeded",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/RunSucceeded",
+      "data": {},
+      "envelopeContext": {
+        "runid": "run-a"
+      },
+      "expectValid": true
+    },
+    {
+      "id": "com.veryfront.run.succeeded/producer-extension",
+      "eventType": "com.veryfront.run.succeeded",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/RunSucceeded",
+      "data": {
+        "extensions": {
+          "https://example.test/extensions": {
+            "traceLabel": "sample",
+            "details": {
+              "arbitrary_key": "producer-owned"
+            }
+          }
+        }
+      },
+      "envelopeContext": {
+        "runid": "run-a"
+      },
+      "expectValid": true
+    },
+    {
+      "id": "com.veryfront.run.failed/minimal",
+      "eventType": "com.veryfront.run.failed",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/RunFailed",
+      "data": {},
+      "envelopeContext": {
+        "runid": "run-a"
+      },
+      "expectValid": true
+    },
+    {
+      "id": "com.veryfront.run.failed/producer-extension",
+      "eventType": "com.veryfront.run.failed",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/RunFailed",
+      "data": {
+        "extensions": {
+          "https://example.test/extensions": {
+            "traceLabel": "sample",
+            "details": {
+              "arbitrary_key": "producer-owned"
+            }
+          }
+        }
+      },
+      "envelopeContext": {
+        "runid": "run-a"
+      },
+      "expectValid": true
+    },
+    {
+      "id": "com.veryfront.run.cancelled/minimal",
+      "eventType": "com.veryfront.run.cancelled",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/RunCancelled",
+      "data": {},
+      "envelopeContext": {
+        "runid": "run-a"
+      },
+      "expectValid": true
+    },
+    {
+      "id": "com.veryfront.run.cancelled/producer-extension",
+      "eventType": "com.veryfront.run.cancelled",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/RunCancelled",
+      "data": {
+        "extensions": {
+          "https://example.test/extensions": {
+            "traceLabel": "sample",
+            "details": {
+              "arbitrary_key": "producer-owned"
+            }
+          }
+        }
+      },
+      "envelopeContext": {
+        "runid": "run-a"
+      },
+      "expectValid": true
+    },
+    {
+      "id": "com.veryfront.run.log.captured/minimal",
+      "eventType": "com.veryfront.run.log.captured",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/RunLogCaptured",
+      "data": {
+        "text": "Captured execution log"
+      },
+      "envelopeContext": {
+        "runid": "run-a"
+      },
+      "expectValid": true
+    },
+    {
+      "id": "com.veryfront.run.log.captured/producer-extension",
+      "eventType": "com.veryfront.run.log.captured",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/RunLogCaptured",
+      "data": {
+        "text": "Captured execution log",
+        "extensions": {
+          "https://example.test/extensions": {
+            "traceLabel": "sample",
+            "details": {
+              "arbitrary_key": "producer-owned"
+            }
+          }
+        }
+      },
+      "envelopeContext": {
+        "runid": "run-a"
+      },
+      "expectValid": true
+    },
+    {
+      "id": "com.veryfront.child-run.reported/minimal",
+      "eventType": "com.veryfront.child-run.reported",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/ChildRunReported",
+      "data": {
+        "childRun": {
+          "id": "run-child",
+          "status": "running"
+        }
+      },
+      "envelopeContext": {
+        "runid": "run-a"
+      },
+      "expectValid": true
+    },
+    {
+      "id": "com.veryfront.child-run.reported/producer-extension",
+      "eventType": "com.veryfront.child-run.reported",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/ChildRunReported",
+      "data": {
+        "childRun": {
+          "id": "run-child",
+          "status": "running"
+        },
+        "extensions": {
+          "https://example.test/extensions": {
+            "traceLabel": "sample",
+            "details": {
+              "arbitrary_key": "producer-owned"
+            }
+          }
+        }
+      },
+      "envelopeContext": {
+        "runid": "run-a"
+      },
+      "expectValid": true
+    },
+    {
+      "id": "com.veryfront.step.started/minimal",
+      "eventType": "com.veryfront.step.started",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/StepStarted",
+      "data": {
+        "stepId": "step-a"
+      },
+      "envelopeContext": {
+        "runid": "run-a"
+      },
+      "expectValid": true
+    },
+    {
+      "id": "com.veryfront.step.started/producer-extension",
+      "eventType": "com.veryfront.step.started",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/StepStarted",
+      "data": {
+        "stepId": "step-a",
+        "extensions": {
+          "https://example.test/extensions": {
+            "traceLabel": "sample",
+            "details": {
+              "arbitrary_key": "producer-owned"
+            }
+          }
+        }
+      },
+      "envelopeContext": {
+        "runid": "run-a"
+      },
+      "expectValid": true
+    },
+    {
+      "id": "com.veryfront.step.succeeded/minimal",
+      "eventType": "com.veryfront.step.succeeded",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/StepSucceeded",
+      "data": {
+        "stepId": "step-a"
+      },
+      "envelopeContext": {
+        "runid": "run-a"
+      },
+      "expectValid": true
+    },
+    {
+      "id": "com.veryfront.step.succeeded/producer-extension",
+      "eventType": "com.veryfront.step.succeeded",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/StepSucceeded",
+      "data": {
+        "stepId": "step-a",
+        "extensions": {
+          "https://example.test/extensions": {
+            "traceLabel": "sample",
+            "details": {
+              "arbitrary_key": "producer-owned"
+            }
+          }
+        }
+      },
+      "envelopeContext": {
+        "runid": "run-a"
+      },
+      "expectValid": true
+    },
+    {
+      "id": "com.veryfront.step.failed/minimal",
+      "eventType": "com.veryfront.step.failed",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/StepFailed",
+      "data": {
+        "stepId": "step-a"
+      },
+      "envelopeContext": {
+        "runid": "run-a"
+      },
+      "expectValid": true
+    },
+    {
+      "id": "com.veryfront.step.failed/producer-extension",
+      "eventType": "com.veryfront.step.failed",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/StepFailed",
+      "data": {
+        "stepId": "step-a",
+        "extensions": {
+          "https://example.test/extensions": {
+            "traceLabel": "sample",
+            "details": {
+              "arbitrary_key": "producer-owned"
+            }
+          }
+        }
+      },
+      "envelopeContext": {
+        "runid": "run-a"
+      },
+      "expectValid": true
+    },
+    {
+      "id": "com.veryfront.step.cancelled/minimal",
+      "eventType": "com.veryfront.step.cancelled",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/StepCancelled",
+      "data": {
+        "stepId": "step-a"
+      },
+      "envelopeContext": {
+        "runid": "run-a"
+      },
+      "expectValid": true
+    },
+    {
+      "id": "com.veryfront.step.cancelled/producer-extension",
+      "eventType": "com.veryfront.step.cancelled",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/StepCancelled",
+      "data": {
+        "stepId": "step-a",
+        "extensions": {
+          "https://example.test/extensions": {
+            "traceLabel": "sample",
+            "details": {
+              "arbitrary_key": "producer-owned"
+            }
+          }
+        }
+      },
+      "envelopeContext": {
+        "runid": "run-a"
+      },
+      "expectValid": true
+    },
+    {
+      "id": "com.veryfront.step.ended/minimal",
+      "eventType": "com.veryfront.step.ended",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/StepEnded",
+      "data": {
+        "stepId": "step-a"
+      },
+      "envelopeContext": {
+        "runid": "run-a"
+      },
+      "expectValid": true
+    },
+    {
+      "id": "com.veryfront.step.ended/producer-extension",
+      "eventType": "com.veryfront.step.ended",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/StepEnded",
+      "data": {
+        "stepId": "step-a",
+        "extensions": {
+          "https://example.test/extensions": {
+            "traceLabel": "sample",
+            "details": {
+              "arbitrary_key": "producer-owned"
+            }
+          }
+        }
+      },
+      "envelopeContext": {
+        "runid": "run-a"
+      },
+      "expectValid": true
+    },
+    {
+      "id": "com.veryfront.tool-call.started/minimal",
+      "eventType": "com.veryfront.tool-call.started",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/ToolCallStarted",
+      "data": {
+        "toolCallId": "call-a",
+        "toolName": "search"
+      },
+      "envelopeContext": {},
+      "expectValid": true
+    },
+    {
+      "id": "com.veryfront.tool-call.started/producer-extension",
+      "eventType": "com.veryfront.tool-call.started",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/ToolCallStarted",
+      "data": {
+        "toolCallId": "call-a",
+        "extensions": {
+          "https://example.test/extensions": {
+            "traceLabel": "sample",
+            "details": {
+              "arbitrary_key": "producer-owned"
+            }
+          }
+        },
+        "toolName": "search"
+      },
+      "envelopeContext": {},
+      "expectValid": true
+    },
+    {
+      "id": "com.veryfront.tool-call.arguments.delta.emitted/minimal",
+      "eventType": "com.veryfront.tool-call.arguments.delta.emitted",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/ToolCallArgumentsDeltaEmitted",
+      "data": {
+        "toolCallId": "call-a",
+        "delta": "{\"query\":"
+      },
+      "envelopeContext": {},
+      "expectValid": true
+    },
+    {
+      "id": "com.veryfront.tool-call.arguments.delta.emitted/producer-extension",
+      "eventType": "com.veryfront.tool-call.arguments.delta.emitted",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/ToolCallArgumentsDeltaEmitted",
+      "data": {
+        "toolCallId": "call-a",
+        "delta": "{\"query\":",
+        "extensions": {
+          "https://example.test/extensions": {
+            "traceLabel": "sample",
+            "details": {
+              "arbitrary_key": "producer-owned"
+            }
+          }
+        }
+      },
+      "envelopeContext": {},
+      "expectValid": true
+    },
+    {
+      "id": "com.veryfront.tool-call.arguments.ended/minimal",
+      "eventType": "com.veryfront.tool-call.arguments.ended",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/ToolCallArgumentsEnded",
+      "data": {
+        "toolCallId": "call-a"
+      },
+      "envelopeContext": {},
+      "expectValid": true
+    },
+    {
+      "id": "com.veryfront.tool-call.arguments.ended/producer-extension",
+      "eventType": "com.veryfront.tool-call.arguments.ended",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/ToolCallArgumentsEnded",
+      "data": {
+        "toolCallId": "call-a",
+        "extensions": {
+          "https://example.test/extensions": {
+            "traceLabel": "sample",
+            "details": {
+              "arbitrary_key": "producer-owned"
+            }
+          }
+        }
+      },
+      "envelopeContext": {},
+      "expectValid": true
+    },
+    {
+      "id": "com.veryfront.tool-call.refused/minimal",
+      "eventType": "com.veryfront.tool-call.refused",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/ToolCallRefused",
+      "data": {
+        "toolCallId": "call-a",
+        "reason": "missing_integration_connection"
+      },
+      "envelopeContext": {},
+      "expectValid": true
+    },
+    {
+      "id": "com.veryfront.tool-call.refused/producer-extension",
+      "eventType": "com.veryfront.tool-call.refused",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/ToolCallRefused",
+      "data": {
+        "toolCallId": "call-a",
+        "reason": "missing_integration_connection",
+        "extensions": {
+          "https://example.test/extensions": {
+            "traceLabel": "sample",
+            "details": {
+              "arbitrary_key": "producer-owned"
+            }
+          }
+        }
+      },
+      "envelopeContext": {},
+      "expectValid": true
+    },
+    {
+      "id": "com.veryfront.tool-call.status.reported/minimal",
+      "eventType": "com.veryfront.tool-call.status.reported",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/ToolCallStatusReported",
+      "data": {
+        "toolCallId": "call-a",
+        "status": "waiting"
+      },
+      "envelopeContext": {},
+      "expectValid": true
+    },
+    {
+      "id": "com.veryfront.tool-call.status.reported/producer-extension",
+      "eventType": "com.veryfront.tool-call.status.reported",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/ToolCallStatusReported",
+      "data": {
+        "toolCallId": "call-a",
+        "status": "waiting",
+        "extensions": {
+          "https://example.test/extensions": {
+            "traceLabel": "sample",
+            "details": {
+              "arbitrary_key": "producer-owned"
+            }
+          }
+        }
+      },
+      "envelopeContext": {},
+      "expectValid": true
+    },
+    {
+      "id": "com.veryfront.tool-call.result.recorded/minimal",
+      "eventType": "com.veryfront.tool-call.result.recorded",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/ToolCallResultRecorded",
+      "data": {
+        "toolCallId": "call-a",
+        "output": {
+          "answer": "Found"
+        }
+      },
+      "envelopeContext": {},
+      "expectValid": true
+    },
+    {
+      "id": "com.veryfront.tool-call.result.recorded/producer-extension",
+      "eventType": "com.veryfront.tool-call.result.recorded",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/ToolCallResultRecorded",
+      "data": {
+        "toolCallId": "call-a",
+        "output": {
+          "answer": "Found"
+        },
+        "extensions": {
+          "https://example.test/extensions": {
+            "traceLabel": "sample",
+            "details": {
+              "arbitrary_key": "producer-owned"
+            }
+          }
+        }
+      },
+      "envelopeContext": {},
+      "expectValid": true
+    },
+    {
+      "id": "com.veryfront.tool-call.result.submitted/minimal",
+      "eventType": "com.veryfront.tool-call.result.submitted",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/ToolCallResultSubmitted",
+      "data": {
+        "toolCallId": "call-a",
+        "output": {
+          "answer": "Found"
+        }
+      },
+      "envelopeContext": {},
+      "expectValid": true
+    },
+    {
+      "id": "com.veryfront.tool-call.result.submitted/producer-extension",
+      "eventType": "com.veryfront.tool-call.result.submitted",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/ToolCallResultSubmitted",
+      "data": {
+        "toolCallId": "call-a",
+        "output": {
+          "answer": "Found"
+        },
+        "extensions": {
+          "https://example.test/extensions": {
+            "traceLabel": "sample",
+            "details": {
+              "arbitrary_key": "producer-owned"
+            }
+          }
+        }
+      },
+      "envelopeContext": {},
+      "expectValid": true
+    },
+    {
+      "id": "com.veryfront.tool-call.result.delivery.failed/minimal",
+      "eventType": "com.veryfront.tool-call.result.delivery.failed",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/ToolCallResultDeliveryFailed",
+      "data": {
+        "toolCallId": "call-a"
+      },
+      "envelopeContext": {},
+      "expectValid": true
+    },
+    {
+      "id": "com.veryfront.tool-call.result.delivery.failed/producer-extension",
+      "eventType": "com.veryfront.tool-call.result.delivery.failed",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/ToolCallResultDeliveryFailed",
+      "data": {
+        "toolCallId": "call-a",
+        "extensions": {
+          "https://example.test/extensions": {
+            "traceLabel": "sample",
+            "details": {
+              "arbitrary_key": "producer-owned"
+            }
+          }
+        }
+      },
+      "envelopeContext": {},
+      "expectValid": true
+    },
+    {
+      "id": "com.veryfront.model-call.input.captured/minimal",
+      "eventType": "com.veryfront.model-call.input.captured",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/ModelCallInputCaptured",
+      "data": {
+        "model": {
+          "provider": "example",
+          "name": "model-a"
+        },
+        "input": {
+          "messages": [
+            {
+              "role": "user",
+              "content": "Hello"
+            }
+          ]
+        }
+      },
+      "envelopeContext": {
+        "modelcallid": "model-call-a"
+      },
+      "expectValid": true
+    },
+    {
+      "id": "com.veryfront.model-call.input.captured/producer-extension",
+      "eventType": "com.veryfront.model-call.input.captured",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/ModelCallInputCaptured",
+      "data": {
+        "model": {
+          "provider": "example",
+          "name": "model-a"
+        },
+        "input": {
+          "messages": [
+            {
+              "role": "user",
+              "content": "Hello"
+            }
+          ]
+        },
+        "extensions": {
+          "https://example.test/extensions": {
+            "traceLabel": "sample",
+            "details": {
+              "arbitrary_key": "producer-owned"
+            }
+          }
+        }
+      },
+      "envelopeContext": {
+        "modelcallid": "model-call-a"
+      },
+      "expectValid": true
+    },
+    {
+      "id": "com.veryfront.model-call.usage.recorded/minimal",
+      "eventType": "com.veryfront.model-call.usage.recorded",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/ModelCallUsageRecorded",
+      "data": {
+        "model": {
+          "provider": "example",
+          "name": "model-a"
+        },
+        "tokens": {
+          "input": 10,
+          "output": 4
+        },
+        "scope": "call"
+      },
+      "envelopeContext": {
+        "modelcallid": "model-call-a"
+      },
+      "expectValid": true
+    },
+    {
+      "id": "com.veryfront.model-call.usage.recorded/producer-extension",
+      "eventType": "com.veryfront.model-call.usage.recorded",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/ModelCallUsageRecorded",
+      "data": {
+        "model": {
+          "provider": "example",
+          "name": "model-a"
+        },
+        "tokens": {
+          "input": 10,
+          "output": 4
+        },
+        "extensions": {
+          "https://example.test/extensions": {
+            "traceLabel": "sample",
+            "details": {
+              "arbitrary_key": "producer-owned"
+            }
+          }
+        },
+        "scope": "call"
+      },
+      "envelopeContext": {
+        "modelcallid": "model-call-a"
+      },
+      "expectValid": true
+    },
+    {
+      "id": "com.veryfront.input-request.created/minimal",
+      "eventType": "com.veryfront.input-request.created",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/InputRequestCreated",
+      "data": {
+        "inputRequest": {
+          "id": "input-a",
+          "status": "open"
+        }
+      },
+      "envelopeContext": {},
+      "expectValid": true
+    },
+    {
+      "id": "com.veryfront.input-request.created/producer-extension",
+      "eventType": "com.veryfront.input-request.created",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/InputRequestCreated",
+      "data": {
+        "inputRequest": {
+          "id": "input-a",
+          "status": "open"
+        },
+        "extensions": {
+          "https://example.test/extensions": {
+            "traceLabel": "sample",
+            "details": {
+              "arbitrary_key": "producer-owned"
+            }
+          }
+        }
+      },
+      "envelopeContext": {},
+      "expectValid": true
+    },
+    {
+      "id": "com.veryfront.input-request.updated/minimal",
+      "eventType": "com.veryfront.input-request.updated",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/InputRequestUpdated",
+      "data": {
+        "inputRequest": {
+          "id": "input-a",
+          "status": "submitted"
+        }
+      },
+      "envelopeContext": {},
+      "expectValid": true
+    },
+    {
+      "id": "com.veryfront.input-request.updated/producer-extension",
+      "eventType": "com.veryfront.input-request.updated",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/InputRequestUpdated",
+      "data": {
+        "inputRequest": {
+          "id": "input-a",
+          "status": "submitted"
+        },
+        "extensions": {
+          "https://example.test/extensions": {
+            "traceLabel": "sample",
+            "details": {
+              "arbitrary_key": "producer-owned"
+            }
+          }
+        }
+      },
+      "envelopeContext": {},
+      "expectValid": true
+    },
+    {
+      "id": "com.veryfront.message.text.started/minimal",
+      "eventType": "com.veryfront.message.text.started",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/MessageTextStarted",
+      "data": {
+        "messageId": "message-a",
+        "contentId": "segment-a"
+      },
+      "envelopeContext": {},
+      "expectValid": true
+    },
+    {
+      "id": "com.veryfront.message.text.started/producer-extension",
+      "eventType": "com.veryfront.message.text.started",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/MessageTextStarted",
+      "data": {
+        "messageId": "message-a",
+        "contentId": "segment-a",
+        "extensions": {
+          "https://example.test/extensions": {
+            "traceLabel": "sample",
+            "details": {
+              "arbitrary_key": "producer-owned"
+            }
+          }
+        }
+      },
+      "envelopeContext": {},
+      "expectValid": true
+    },
+    {
+      "id": "com.veryfront.message.text.delta.emitted/minimal",
+      "eventType": "com.veryfront.message.text.delta.emitted",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/MessageTextDeltaEmitted",
+      "data": {
+        "messageId": "message-a",
+        "contentId": "segment-a",
+        "delta": "Hello"
+      },
+      "envelopeContext": {},
+      "expectValid": true
+    },
+    {
+      "id": "com.veryfront.message.text.delta.emitted/producer-extension",
+      "eventType": "com.veryfront.message.text.delta.emitted",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/MessageTextDeltaEmitted",
+      "data": {
+        "messageId": "message-a",
+        "contentId": "segment-a",
+        "delta": "Hello",
+        "extensions": {
+          "https://example.test/extensions": {
+            "traceLabel": "sample",
+            "details": {
+              "arbitrary_key": "producer-owned"
+            }
+          }
+        }
+      },
+      "envelopeContext": {},
+      "expectValid": true
+    },
+    {
+      "id": "com.veryfront.message.text.ended/minimal",
+      "eventType": "com.veryfront.message.text.ended",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/MessageTextEnded",
+      "data": {
+        "messageId": "message-a",
+        "contentId": "segment-a"
+      },
+      "envelopeContext": {},
+      "expectValid": true
+    },
+    {
+      "id": "com.veryfront.message.text.ended/producer-extension",
+      "eventType": "com.veryfront.message.text.ended",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/MessageTextEnded",
+      "data": {
+        "messageId": "message-a",
+        "contentId": "segment-a",
+        "extensions": {
+          "https://example.test/extensions": {
+            "traceLabel": "sample",
+            "details": {
+              "arbitrary_key": "producer-owned"
+            }
+          }
+        }
+      },
+      "envelopeContext": {},
+      "expectValid": true
+    },
+    {
+      "id": "com.veryfront.message.reasoning.started/minimal",
+      "eventType": "com.veryfront.message.reasoning.started",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/MessageReasoningStarted",
+      "data": {
+        "messageId": "message-a",
+        "contentId": "segment-a"
+      },
+      "envelopeContext": {},
+      "expectValid": true
+    },
+    {
+      "id": "com.veryfront.message.reasoning.started/producer-extension",
+      "eventType": "com.veryfront.message.reasoning.started",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/MessageReasoningStarted",
+      "data": {
+        "messageId": "message-a",
+        "contentId": "segment-a",
+        "extensions": {
+          "https://example.test/extensions": {
+            "traceLabel": "sample",
+            "details": {
+              "arbitrary_key": "producer-owned"
+            }
+          }
+        }
+      },
+      "envelopeContext": {},
+      "expectValid": true
+    },
+    {
+      "id": "com.veryfront.message.reasoning.delta.emitted/minimal",
+      "eventType": "com.veryfront.message.reasoning.delta.emitted",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/MessageReasoningDeltaEmitted",
+      "data": {
+        "messageId": "message-a",
+        "contentId": "segment-a",
+        "delta": "Permitted reasoning text"
+      },
+      "envelopeContext": {},
+      "expectValid": true
+    },
+    {
+      "id": "com.veryfront.message.reasoning.delta.emitted/producer-extension",
+      "eventType": "com.veryfront.message.reasoning.delta.emitted",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/MessageReasoningDeltaEmitted",
+      "data": {
+        "messageId": "message-a",
+        "contentId": "segment-a",
+        "delta": "Permitted reasoning text",
+        "extensions": {
+          "https://example.test/extensions": {
+            "traceLabel": "sample",
+            "details": {
+              "arbitrary_key": "producer-owned"
+            }
+          }
+        }
+      },
+      "envelopeContext": {},
+      "expectValid": true
+    },
+    {
+      "id": "com.veryfront.message.reasoning.ended/minimal",
+      "eventType": "com.veryfront.message.reasoning.ended",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/MessageReasoningEnded",
+      "data": {
+        "messageId": "message-a",
+        "contentId": "segment-a"
+      },
+      "envelopeContext": {},
+      "expectValid": true
+    },
+    {
+      "id": "com.veryfront.message.reasoning.ended/producer-extension",
+      "eventType": "com.veryfront.message.reasoning.ended",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/MessageReasoningEnded",
+      "data": {
+        "messageId": "message-a",
+        "contentId": "segment-a",
+        "extensions": {
+          "https://example.test/extensions": {
+            "traceLabel": "sample",
+            "details": {
+              "arbitrary_key": "producer-owned"
+            }
+          }
+        }
+      },
+      "envelopeContext": {},
+      "expectValid": true
+    },
+    {
+      "id": "com.veryfront.message.url.referenced/minimal",
+      "eventType": "com.veryfront.message.url.referenced",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/MessageUrlReferenced",
+      "data": {
+        "messageId": "message-a",
+        "sourceId": "source-a",
+        "url": "https://example.test/source"
+      },
+      "envelopeContext": {},
+      "expectValid": true
+    },
+    {
+      "id": "com.veryfront.message.url.referenced/producer-extension",
+      "eventType": "com.veryfront.message.url.referenced",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/MessageUrlReferenced",
+      "data": {
+        "messageId": "message-a",
+        "sourceId": "source-a",
+        "url": "https://example.test/source",
+        "extensions": {
+          "https://example.test/extensions": {
+            "traceLabel": "sample",
+            "details": {
+              "arbitrary_key": "producer-owned"
+            }
+          }
+        }
+      },
+      "envelopeContext": {},
+      "expectValid": true
+    },
+    {
+      "id": "com.veryfront.message.document.referenced/minimal",
+      "eventType": "com.veryfront.message.document.referenced",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/MessageDocumentReferenced",
+      "data": {
+        "messageId": "message-a",
+        "sourceId": "source-a",
+        "mediaType": "application/pdf"
+      },
+      "envelopeContext": {},
+      "expectValid": true
+    },
+    {
+      "id": "com.veryfront.message.document.referenced/producer-extension",
+      "eventType": "com.veryfront.message.document.referenced",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/MessageDocumentReferenced",
+      "data": {
+        "messageId": "message-a",
+        "sourceId": "source-a",
+        "mediaType": "application/pdf",
+        "extensions": {
+          "https://example.test/extensions": {
+            "traceLabel": "sample",
+            "details": {
+              "arbitrary_key": "producer-owned"
+            }
+          }
+        }
+      },
+      "envelopeContext": {},
+      "expectValid": true
+    },
+    {
+      "id": "com.veryfront.message.file.attached/minimal",
+      "eventType": "com.veryfront.message.file.attached",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/MessageFileAttached",
+      "data": {
+        "messageId": "message-a",
+        "mediaType": "application/pdf"
+      },
+      "envelopeContext": {},
+      "expectValid": true
+    },
+    {
+      "id": "com.veryfront.message.file.attached/producer-extension",
+      "eventType": "com.veryfront.message.file.attached",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/MessageFileAttached",
+      "data": {
+        "messageId": "message-a",
+        "mediaType": "application/pdf",
+        "extensions": {
+          "https://example.test/extensions": {
+            "traceLabel": "sample",
+            "details": {
+              "arbitrary_key": "producer-owned"
+            }
+          }
+        }
+      },
+      "envelopeContext": {},
+      "expectValid": true
+    },
+    {
+      "id": "com.veryfront.stream.heartbeat.emitted/minimal",
+      "eventType": "com.veryfront.stream.heartbeat.emitted",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/StreamHeartbeatEmitted",
+      "data": {},
+      "envelopeContext": {},
+      "expectValid": true
+    },
+    {
+      "id": "com.veryfront.stream.heartbeat.emitted/producer-extension",
+      "eventType": "com.veryfront.stream.heartbeat.emitted",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/StreamHeartbeatEmitted",
+      "data": {
+        "extensions": {
+          "https://example.test/extensions": {
+            "traceLabel": "sample",
+            "details": {
+              "arbitrary_key": "producer-owned"
+            }
+          }
+        }
+      },
+      "envelopeContext": {},
+      "expectValid": true
+    },
+    {
+      "id": "com.veryfront.message.text.delta.emitted/explicit-content-redaction",
+      "eventType": "com.veryfront.message.text.delta.emitted",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/MessageTextDeltaEmitted",
+      "data": {
+        "messageId": "message-a",
+        "contentId": "segment-a",
+        "contentRedacted": true
+      },
+      "envelopeContext": {},
+      "expectValid": true
+    },
+    {
+      "id": "com.veryfront.message.reasoning.delta.emitted/explicit-content-redaction",
+      "eventType": "com.veryfront.message.reasoning.delta.emitted",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/MessageReasoningDeltaEmitted",
+      "data": {
+        "messageId": "message-a",
+        "contentId": "segment-a",
+        "contentRedacted": true
+      },
+      "envelopeContext": {},
+      "expectValid": true
+    },
+    {
+      "id": "com.veryfront.tool-call.result.recorded/explicit-output-redaction",
+      "eventType": "com.veryfront.tool-call.result.recorded",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/ToolCallResultRecorded",
+      "data": {
+        "toolCallId": "call-a",
+        "outputRedacted": true
+      },
+      "envelopeContext": {},
+      "expectValid": true
+    },
+    {
+      "id": "com.veryfront.tool-call.result.recorded/explicit-null-output",
+      "eventType": "com.veryfront.tool-call.result.recorded",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/ToolCallResultRecorded",
+      "data": {
+        "toolCallId": "call-a",
+        "output": null
+      },
+      "envelopeContext": {},
+      "expectValid": true
+    },
+    {
+      "id": "com.veryfront.tool-call.result.submitted/explicit-output-redaction",
+      "eventType": "com.veryfront.tool-call.result.submitted",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/ToolCallResultSubmitted",
+      "data": {
+        "toolCallId": "call-a",
+        "outputRedacted": true
+      },
+      "envelopeContext": {},
+      "expectValid": true
+    },
+    {
+      "id": "com.veryfront.tool-call.result.submitted/explicit-null-output",
+      "eventType": "com.veryfront.tool-call.result.submitted",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/ToolCallResultSubmitted",
+      "data": {
+        "toolCallId": "call-a",
+        "output": null
+      },
+      "envelopeContext": {},
+      "expectValid": true
+    },
+    {
+      "id": "com.veryfront.model-call.input.captured/explicit-input-redaction",
+      "eventType": "com.veryfront.model-call.input.captured",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/ModelCallInputCaptured",
+      "data": {
+        "model": {
+          "provider": "example",
+          "name": "model-a"
+        },
+        "input": {
+          "redacted": true
+        }
+      },
+      "envelopeContext": {
+        "modelcallid": "model-call-a"
+      },
+      "expectValid": true
+    },
+    {
+      "id": "com.veryfront.model-call.usage.recorded/reported-optional-counters",
+      "eventType": "com.veryfront.model-call.usage.recorded",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/ModelCallUsageRecorded",
+      "data": {
+        "model": {
+          "provider": "example",
+          "name": "model-a"
+        },
+        "tokens": {
+          "input": 10,
+          "output": 4,
+          "total": 14,
+          "cacheRead": 2,
+          "cacheWrite": 1,
+          "reasoning": 1
+        },
+        "durationMs": 5.5,
+        "scope": "call"
+      },
+      "envelopeContext": {
+        "modelcallid": "model-call-a"
+      },
+      "expectValid": true
+    },
+    {
+      "id": "com.veryfront.input-request.created/resolvable-reference",
+      "eventType": "com.veryfront.input-request.created",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/InputRequestCreated",
+      "data": {
+        "inputRequest": {
+          "id": "input-a",
+          "uri": "https://example.test/input-requests/input-a"
+        }
+      },
+      "envelopeContext": {},
+      "expectValid": true
+    },
+    {
+      "id": "com.veryfront.input-request.created/typed-form",
+      "eventType": "com.veryfront.input-request.created",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/InputRequestCreated",
+      "data": {
+        "inputRequest": {
+          "id": "input-a",
+          "status": "open",
+          "title": "Confirm location",
+          "fields": [
+            {
+              "name": "location",
+              "type": "text",
+              "required": true
+            }
+          ]
+        }
+      },
+      "envelopeContext": {},
+      "expectValid": true
+    },
+    {
+      "id": "com.veryfront.input-request.updated/typed-reference-changes",
+      "eventType": "com.veryfront.input-request.updated",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/InputRequestUpdated",
+      "data": {
+        "inputRequest": {
+          "id": "input-a",
+          "uri": "https://example.test/input-requests/input-a"
+        },
+        "changes": {
+          "status": "submitted",
+          "response": {
+            "location": "Stockholm"
+          }
+        }
+      },
+      "envelopeContext": {},
+      "expectValid": true
+    },
+    {
+      "id": "com.veryfront.child-run.reported/explicit-unknown-status",
+      "eventType": "com.veryfront.child-run.reported",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/ChildRunReported",
+      "data": {
+        "childRun": {
+          "id": "run-child",
+          "status": "unknown"
+        }
+      },
+      "envelopeContext": {
+        "runid": "run-a"
+      },
+      "expectValid": true
+    },
+    {
+      "id": "com.veryfront.child-run.reported/observed-recipient-association",
+      "eventType": "com.veryfront.child-run.reported",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/ChildRunReported",
+      "data": {
+        "childRun": {
+          "id": "run-child",
+          "status": "waiting",
+          "kind": "agent",
+          "conversationId": "conversation-a"
+        },
+        "toolCallId": "call-a"
+      },
+      "envelopeContext": {
+        "runid": "run-a"
+      },
+      "expectValid": true
+    },
+    {
+      "id": "com.veryfront.message.url.referenced/segment-specific-owner",
+      "eventType": "com.veryfront.message.url.referenced",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/MessageUrlReferenced",
+      "data": {
+        "messageId": "message-a",
+        "sourceId": "source-a",
+        "url": "https://example.test/source",
+        "contentId": "segment-a"
+      },
+      "envelopeContext": {},
+      "expectValid": true
+    },
+    {
+      "id": "com.veryfront.message.document.referenced/segment-specific-owner",
+      "eventType": "com.veryfront.message.document.referenced",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/MessageDocumentReferenced",
+      "data": {
+        "messageId": "message-a",
+        "sourceId": "source-a",
+        "mediaType": "application/pdf",
+        "contentId": "segment-a"
+      },
+      "envelopeContext": {},
+      "expectValid": true
+    },
+    {
+      "id": "com.veryfront.message.file.attached/segment-specific-owner",
+      "eventType": "com.veryfront.message.file.attached",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/MessageFileAttached",
+      "data": {
+        "messageId": "message-a",
+        "mediaType": "application/pdf",
+        "contentId": "segment-a"
+      },
+      "envelopeContext": {},
+      "expectValid": true
+    },
+    {
+      "id": "com.veryfront.tool-call.refused/classified-permission_denied",
+      "eventType": "com.veryfront.tool-call.refused",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/ToolCallRefused",
+      "data": {
+        "toolCallId": "call-a",
+        "reason": "permission_denied"
+      },
+      "envelopeContext": {},
+      "expectValid": true
+    },
+    {
+      "id": "com.veryfront.tool-call.refused/classified-budget_exhausted",
+      "eventType": "com.veryfront.tool-call.refused",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/ToolCallRefused",
+      "data": {
+        "toolCallId": "call-a",
+        "reason": "budget_exhausted"
+      },
+      "envelopeContext": {},
+      "expectValid": true
+    },
+    {
+      "id": "com.veryfront.tool-call.refused/classified-invalid_input",
+      "eventType": "com.veryfront.tool-call.refused",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/ToolCallRefused",
+      "data": {
+        "toolCallId": "call-a",
+        "reason": "invalid_input"
+      },
+      "envelopeContext": {},
+      "expectValid": true
+    },
+    {
+      "id": "com.veryfront.tool-call.refused/namespaced-refusal-code",
+      "eventType": "com.veryfront.tool-call.refused",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/ToolCallRefused",
+      "data": {
+        "toolCallId": "call-a",
+        "reason": "urn:org.example:tool-refusal:policy",
+        "toolName": "search"
+      },
+      "envelopeContext": {},
+      "expectValid": true
+    },
+    {
+      "id": "com.veryfront.model-call.usage.recorded/exact-attempt-bucket",
+      "eventType": "com.veryfront.model-call.usage.recorded",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/ModelCallUsageRecorded",
+      "data": {
+        "model": {
+          "provider": "example",
+          "name": "model-a"
+        },
+        "tokens": {
+          "input": 10,
+          "output": 4
+        },
+        "scope": "attempt"
+      },
+      "envelopeContext": {
+        "modelcallid": "model-call-a",
+        "attemptid": "attempt-a"
+      },
+      "expectValid": true
+    },
+    {
+      "id": "com.veryfront.stream.closed/observed-authentication-close",
+      "eventType": "com.veryfront.stream.closed",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/StreamClosed",
+      "data": {
+        "reason": "integration_auth_required"
+      },
+      "envelopeContext": {},
+      "expectValid": true
+    },
+    {
+      "id": "com.veryfront.stream.closed/urn-extension-key",
+      "eventType": "com.veryfront.stream.closed",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/StreamClosed",
+      "data": {
+        "reason": "completed",
+        "extensions": {
+          "urn:org.example:telemetry": {
+            "observed": true
+          }
+        }
+      },
+      "envelopeContext": {},
+      "expectValid": true
+    },
+    {
+      "id": "com.veryfront.input-request.created/typed-form/tool-call-correlation",
+      "eventType": "com.veryfront.input-request.created",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/InputRequestCreated",
+      "data": {
+        "inputRequest": {
+          "id": "input-a",
+          "status": "open",
+          "title": "Confirm location",
+          "fields": [
+            {
+              "name": "location",
+              "type": "text",
+              "required": true
+            }
+          ],
+          "toolCallId": "logical-call-a"
+        }
+      },
+      "envelopeContext": {},
+      "expectValid": true
+    },
+    {
+      "id": "com.veryfront.input-request.created/resolvable-reference/tool-call-correlation",
+      "eventType": "com.veryfront.input-request.created",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/InputRequestCreated",
+      "data": {
+        "inputRequest": {
+          "id": "input-a",
+          "uri": "https://example.test/input-requests/input-a",
+          "toolCallId": "logical-call-a"
+        }
+      },
+      "envelopeContext": {},
+      "expectValid": true
+    },
+    {
+      "id": "com.veryfront.input-request.updated/minimal/tool-call-correlation",
+      "eventType": "com.veryfront.input-request.updated",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/InputRequestUpdated",
+      "data": {
+        "inputRequest": {
+          "id": "input-a",
+          "status": "submitted",
+          "toolCallId": "logical-call-a"
+        }
+      },
+      "envelopeContext": {},
+      "expectValid": true
+    },
+    {
+      "id": "com.veryfront.input-request.updated/typed-reference-changes/tool-call-correlation",
+      "eventType": "com.veryfront.input-request.updated",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/InputRequestUpdated",
+      "data": {
+        "inputRequest": {
+          "id": "input-a",
+          "uri": "https://example.test/input-requests/input-a",
+          "toolCallId": "logical-call-a"
+        },
+        "changes": {
+          "status": "submitted",
+          "response": {
+            "location": "Stockholm"
+          }
+        }
+      },
+      "envelopeContext": {},
+      "expectValid": true
+    }
+  ],
+  "negativeCases": [
+    {
+      "id": "com.veryfront.run.requested/reject-data-type",
+      "eventType": "com.veryfront.run.requested",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/RunRequested",
+      "data": {
+        "type": "com.veryfront.run.requested"
+      },
+      "envelopeContext": {
+        "runid": "run-a"
+      },
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.run.requested/reject-runtime-bloat",
+      "eventType": "com.veryfront.run.requested",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/RunRequested",
+      "data": {
+        "receiverGeneration": "generation-a"
+      },
+      "envelopeContext": {
+        "runid": "run-a"
+      },
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.run.requested/invalid-extension-namespace",
+      "eventType": "com.veryfront.run.requested",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/RunRequested",
+      "data": {
+        "extensions": {
+          "unnamespaced": {}
+        }
+      },
+      "envelopeContext": {
+        "runid": "run-a"
+      },
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.run.requested/invalid-extension-value",
+      "eventType": "com.veryfront.run.requested",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/RunRequested",
+      "data": {
+        "extensions": {
+          "https://example.test/extensions": "scalar"
+        }
+      },
+      "envelopeContext": {
+        "runid": "run-a"
+      },
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.run.enqueued/reject-data-type",
+      "eventType": "com.veryfront.run.enqueued",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/RunEnqueued",
+      "data": {
+        "type": "com.veryfront.run.enqueued"
+      },
+      "envelopeContext": {
+        "runid": "run-a"
+      },
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.run.enqueued/reject-runtime-bloat",
+      "eventType": "com.veryfront.run.enqueued",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/RunEnqueued",
+      "data": {
+        "receiverGeneration": "generation-a"
+      },
+      "envelopeContext": {
+        "runid": "run-a"
+      },
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.run.enqueued/invalid-extension-namespace",
+      "eventType": "com.veryfront.run.enqueued",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/RunEnqueued",
+      "data": {
+        "extensions": {
+          "unnamespaced": {}
+        }
+      },
+      "envelopeContext": {
+        "runid": "run-a"
+      },
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.run.enqueued/invalid-extension-value",
+      "eventType": "com.veryfront.run.enqueued",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/RunEnqueued",
+      "data": {
+        "extensions": {
+          "https://example.test/extensions": "scalar"
+        }
+      },
+      "envelopeContext": {
+        "runid": "run-a"
+      },
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.run.started/reject-data-type",
+      "eventType": "com.veryfront.run.started",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/RunStarted",
+      "data": {
+        "type": "com.veryfront.run.started"
+      },
+      "envelopeContext": {
+        "runid": "run-a"
+      },
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.run.started/reject-runtime-bloat",
+      "eventType": "com.veryfront.run.started",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/RunStarted",
+      "data": {
+        "receiverGeneration": "generation-a"
+      },
+      "envelopeContext": {
+        "runid": "run-a"
+      },
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.run.started/invalid-extension-namespace",
+      "eventType": "com.veryfront.run.started",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/RunStarted",
+      "data": {
+        "extensions": {
+          "unnamespaced": {}
+        }
+      },
+      "envelopeContext": {
+        "runid": "run-a"
+      },
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.run.started/invalid-extension-value",
+      "eventType": "com.veryfront.run.started",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/RunStarted",
+      "data": {
+        "extensions": {
+          "https://example.test/extensions": "scalar"
+        }
+      },
+      "envelopeContext": {
+        "runid": "run-a"
+      },
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.stream.closed/reject-data-type",
+      "eventType": "com.veryfront.stream.closed",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/StreamClosed",
+      "data": {
+        "reason": "completed",
+        "type": "com.veryfront.stream.closed"
+      },
+      "envelopeContext": {},
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.stream.closed/reject-runtime-bloat",
+      "eventType": "com.veryfront.stream.closed",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/StreamClosed",
+      "data": {
+        "reason": "completed",
+        "receiverGeneration": "generation-a"
+      },
+      "envelopeContext": {},
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.stream.closed/missing-reason",
+      "eventType": "com.veryfront.stream.closed",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/StreamClosed",
+      "data": {},
+      "envelopeContext": {},
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.stream.closed/invalid-extension-namespace",
+      "eventType": "com.veryfront.stream.closed",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/StreamClosed",
+      "data": {
+        "reason": "completed",
+        "extensions": {
+          "unnamespaced": {}
+        }
+      },
+      "envelopeContext": {},
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.stream.closed/invalid-extension-value",
+      "eventType": "com.veryfront.stream.closed",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/StreamClosed",
+      "data": {
+        "reason": "completed",
+        "extensions": {
+          "https://example.test/extensions": "scalar"
+        }
+      },
+      "envelopeContext": {},
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.run.succeeded/reject-data-type",
+      "eventType": "com.veryfront.run.succeeded",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/RunSucceeded",
+      "data": {
+        "type": "com.veryfront.run.succeeded"
+      },
+      "envelopeContext": {
+        "runid": "run-a"
+      },
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.run.succeeded/reject-runtime-bloat",
+      "eventType": "com.veryfront.run.succeeded",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/RunSucceeded",
+      "data": {
+        "receiverGeneration": "generation-a"
+      },
+      "envelopeContext": {
+        "runid": "run-a"
+      },
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.run.succeeded/invalid-extension-namespace",
+      "eventType": "com.veryfront.run.succeeded",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/RunSucceeded",
+      "data": {
+        "extensions": {
+          "unnamespaced": {}
+        }
+      },
+      "envelopeContext": {
+        "runid": "run-a"
+      },
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.run.succeeded/invalid-extension-value",
+      "eventType": "com.veryfront.run.succeeded",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/RunSucceeded",
+      "data": {
+        "extensions": {
+          "https://example.test/extensions": "scalar"
+        }
+      },
+      "envelopeContext": {
+        "runid": "run-a"
+      },
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.run.failed/reject-data-type",
+      "eventType": "com.veryfront.run.failed",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/RunFailed",
+      "data": {
+        "type": "com.veryfront.run.failed"
+      },
+      "envelopeContext": {
+        "runid": "run-a"
+      },
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.run.failed/reject-runtime-bloat",
+      "eventType": "com.veryfront.run.failed",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/RunFailed",
+      "data": {
+        "receiverGeneration": "generation-a"
+      },
+      "envelopeContext": {
+        "runid": "run-a"
+      },
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.run.failed/invalid-extension-namespace",
+      "eventType": "com.veryfront.run.failed",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/RunFailed",
+      "data": {
+        "extensions": {
+          "unnamespaced": {}
+        }
+      },
+      "envelopeContext": {
+        "runid": "run-a"
+      },
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.run.failed/invalid-extension-value",
+      "eventType": "com.veryfront.run.failed",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/RunFailed",
+      "data": {
+        "extensions": {
+          "https://example.test/extensions": "scalar"
+        }
+      },
+      "envelopeContext": {
+        "runid": "run-a"
+      },
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.run.cancelled/reject-data-type",
+      "eventType": "com.veryfront.run.cancelled",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/RunCancelled",
+      "data": {
+        "type": "com.veryfront.run.cancelled"
+      },
+      "envelopeContext": {
+        "runid": "run-a"
+      },
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.run.cancelled/reject-runtime-bloat",
+      "eventType": "com.veryfront.run.cancelled",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/RunCancelled",
+      "data": {
+        "receiverGeneration": "generation-a"
+      },
+      "envelopeContext": {
+        "runid": "run-a"
+      },
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.run.cancelled/invalid-extension-namespace",
+      "eventType": "com.veryfront.run.cancelled",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/RunCancelled",
+      "data": {
+        "extensions": {
+          "unnamespaced": {}
+        }
+      },
+      "envelopeContext": {
+        "runid": "run-a"
+      },
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.run.cancelled/invalid-extension-value",
+      "eventType": "com.veryfront.run.cancelled",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/RunCancelled",
+      "data": {
+        "extensions": {
+          "https://example.test/extensions": "scalar"
+        }
+      },
+      "envelopeContext": {
+        "runid": "run-a"
+      },
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.run.log.captured/reject-data-type",
+      "eventType": "com.veryfront.run.log.captured",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/RunLogCaptured",
+      "data": {
+        "text": "Captured execution log",
+        "type": "com.veryfront.run.log.captured"
+      },
+      "envelopeContext": {
+        "runid": "run-a"
+      },
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.run.log.captured/reject-runtime-bloat",
+      "eventType": "com.veryfront.run.log.captured",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/RunLogCaptured",
+      "data": {
+        "text": "Captured execution log",
+        "receiverGeneration": "generation-a"
+      },
+      "envelopeContext": {
+        "runid": "run-a"
+      },
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.run.log.captured/missing-text",
+      "eventType": "com.veryfront.run.log.captured",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/RunLogCaptured",
+      "data": {},
+      "envelopeContext": {
+        "runid": "run-a"
+      },
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.run.log.captured/invalid-extension-namespace",
+      "eventType": "com.veryfront.run.log.captured",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/RunLogCaptured",
+      "data": {
+        "text": "Captured execution log",
+        "extensions": {
+          "unnamespaced": {}
+        }
+      },
+      "envelopeContext": {
+        "runid": "run-a"
+      },
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.run.log.captured/invalid-extension-value",
+      "eventType": "com.veryfront.run.log.captured",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/RunLogCaptured",
+      "data": {
+        "text": "Captured execution log",
+        "extensions": {
+          "https://example.test/extensions": "scalar"
+        }
+      },
+      "envelopeContext": {
+        "runid": "run-a"
+      },
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.child-run.reported/reject-data-type",
+      "eventType": "com.veryfront.child-run.reported",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/ChildRunReported",
+      "data": {
+        "childRun": {
+          "id": "run-child",
+          "status": "running"
+        },
+        "type": "com.veryfront.child-run.reported"
+      },
+      "envelopeContext": {
+        "runid": "run-a"
+      },
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.child-run.reported/reject-runtime-bloat",
+      "eventType": "com.veryfront.child-run.reported",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/ChildRunReported",
+      "data": {
+        "childRun": {
+          "id": "run-child",
+          "status": "running"
+        },
+        "receiverGeneration": "generation-a"
+      },
+      "envelopeContext": {
+        "runid": "run-a"
+      },
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.child-run.reported/missing-childRun",
+      "eventType": "com.veryfront.child-run.reported",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/ChildRunReported",
+      "data": {},
+      "envelopeContext": {
+        "runid": "run-a"
+      },
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.child-run.reported/invalid-extension-namespace",
+      "eventType": "com.veryfront.child-run.reported",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/ChildRunReported",
+      "data": {
+        "childRun": {
+          "id": "run-child",
+          "status": "running"
+        },
+        "extensions": {
+          "unnamespaced": {}
+        }
+      },
+      "envelopeContext": {
+        "runid": "run-a"
+      },
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.child-run.reported/invalid-extension-value",
+      "eventType": "com.veryfront.child-run.reported",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/ChildRunReported",
+      "data": {
+        "childRun": {
+          "id": "run-child",
+          "status": "running"
+        },
+        "extensions": {
+          "https://example.test/extensions": "scalar"
+        }
+      },
+      "envelopeContext": {
+        "runid": "run-a"
+      },
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.step.started/reject-data-type",
+      "eventType": "com.veryfront.step.started",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/StepStarted",
+      "data": {
+        "stepId": "step-a",
+        "type": "com.veryfront.step.started"
+      },
+      "envelopeContext": {
+        "runid": "run-a"
+      },
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.step.started/reject-runtime-bloat",
+      "eventType": "com.veryfront.step.started",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/StepStarted",
+      "data": {
+        "stepId": "step-a",
+        "receiverGeneration": "generation-a"
+      },
+      "envelopeContext": {
+        "runid": "run-a"
+      },
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.step.started/missing-stepId",
+      "eventType": "com.veryfront.step.started",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/StepStarted",
+      "data": {},
+      "envelopeContext": {
+        "runid": "run-a"
+      },
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.step.started/empty-stepId",
+      "eventType": "com.veryfront.step.started",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/StepStarted",
+      "data": {
+        "stepId": ""
+      },
+      "envelopeContext": {
+        "runid": "run-a"
+      },
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.step.started/invalid-extension-namespace",
+      "eventType": "com.veryfront.step.started",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/StepStarted",
+      "data": {
+        "stepId": "step-a",
+        "extensions": {
+          "unnamespaced": {}
+        }
+      },
+      "envelopeContext": {
+        "runid": "run-a"
+      },
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.step.started/invalid-extension-value",
+      "eventType": "com.veryfront.step.started",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/StepStarted",
+      "data": {
+        "stepId": "step-a",
+        "extensions": {
+          "https://example.test/extensions": "scalar"
+        }
+      },
+      "envelopeContext": {
+        "runid": "run-a"
+      },
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.step.succeeded/reject-data-type",
+      "eventType": "com.veryfront.step.succeeded",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/StepSucceeded",
+      "data": {
+        "stepId": "step-a",
+        "type": "com.veryfront.step.succeeded"
+      },
+      "envelopeContext": {
+        "runid": "run-a"
+      },
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.step.succeeded/reject-runtime-bloat",
+      "eventType": "com.veryfront.step.succeeded",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/StepSucceeded",
+      "data": {
+        "stepId": "step-a",
+        "receiverGeneration": "generation-a"
+      },
+      "envelopeContext": {
+        "runid": "run-a"
+      },
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.step.succeeded/missing-stepId",
+      "eventType": "com.veryfront.step.succeeded",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/StepSucceeded",
+      "data": {},
+      "envelopeContext": {
+        "runid": "run-a"
+      },
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.step.succeeded/empty-stepId",
+      "eventType": "com.veryfront.step.succeeded",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/StepSucceeded",
+      "data": {
+        "stepId": ""
+      },
+      "envelopeContext": {
+        "runid": "run-a"
+      },
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.step.succeeded/invalid-extension-namespace",
+      "eventType": "com.veryfront.step.succeeded",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/StepSucceeded",
+      "data": {
+        "stepId": "step-a",
+        "extensions": {
+          "unnamespaced": {}
+        }
+      },
+      "envelopeContext": {
+        "runid": "run-a"
+      },
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.step.succeeded/invalid-extension-value",
+      "eventType": "com.veryfront.step.succeeded",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/StepSucceeded",
+      "data": {
+        "stepId": "step-a",
+        "extensions": {
+          "https://example.test/extensions": "scalar"
+        }
+      },
+      "envelopeContext": {
+        "runid": "run-a"
+      },
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.step.failed/reject-data-type",
+      "eventType": "com.veryfront.step.failed",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/StepFailed",
+      "data": {
+        "stepId": "step-a",
+        "type": "com.veryfront.step.failed"
+      },
+      "envelopeContext": {
+        "runid": "run-a"
+      },
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.step.failed/reject-runtime-bloat",
+      "eventType": "com.veryfront.step.failed",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/StepFailed",
+      "data": {
+        "stepId": "step-a",
+        "receiverGeneration": "generation-a"
+      },
+      "envelopeContext": {
+        "runid": "run-a"
+      },
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.step.failed/missing-stepId",
+      "eventType": "com.veryfront.step.failed",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/StepFailed",
+      "data": {},
+      "envelopeContext": {
+        "runid": "run-a"
+      },
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.step.failed/empty-stepId",
+      "eventType": "com.veryfront.step.failed",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/StepFailed",
+      "data": {
+        "stepId": ""
+      },
+      "envelopeContext": {
+        "runid": "run-a"
+      },
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.step.failed/invalid-extension-namespace",
+      "eventType": "com.veryfront.step.failed",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/StepFailed",
+      "data": {
+        "stepId": "step-a",
+        "extensions": {
+          "unnamespaced": {}
+        }
+      },
+      "envelopeContext": {
+        "runid": "run-a"
+      },
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.step.failed/invalid-extension-value",
+      "eventType": "com.veryfront.step.failed",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/StepFailed",
+      "data": {
+        "stepId": "step-a",
+        "extensions": {
+          "https://example.test/extensions": "scalar"
+        }
+      },
+      "envelopeContext": {
+        "runid": "run-a"
+      },
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.step.cancelled/reject-data-type",
+      "eventType": "com.veryfront.step.cancelled",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/StepCancelled",
+      "data": {
+        "stepId": "step-a",
+        "type": "com.veryfront.step.cancelled"
+      },
+      "envelopeContext": {
+        "runid": "run-a"
+      },
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.step.cancelled/reject-runtime-bloat",
+      "eventType": "com.veryfront.step.cancelled",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/StepCancelled",
+      "data": {
+        "stepId": "step-a",
+        "receiverGeneration": "generation-a"
+      },
+      "envelopeContext": {
+        "runid": "run-a"
+      },
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.step.cancelled/missing-stepId",
+      "eventType": "com.veryfront.step.cancelled",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/StepCancelled",
+      "data": {},
+      "envelopeContext": {
+        "runid": "run-a"
+      },
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.step.cancelled/empty-stepId",
+      "eventType": "com.veryfront.step.cancelled",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/StepCancelled",
+      "data": {
+        "stepId": ""
+      },
+      "envelopeContext": {
+        "runid": "run-a"
+      },
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.step.cancelled/invalid-extension-namespace",
+      "eventType": "com.veryfront.step.cancelled",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/StepCancelled",
+      "data": {
+        "stepId": "step-a",
+        "extensions": {
+          "unnamespaced": {}
+        }
+      },
+      "envelopeContext": {
+        "runid": "run-a"
+      },
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.step.cancelled/invalid-extension-value",
+      "eventType": "com.veryfront.step.cancelled",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/StepCancelled",
+      "data": {
+        "stepId": "step-a",
+        "extensions": {
+          "https://example.test/extensions": "scalar"
+        }
+      },
+      "envelopeContext": {
+        "runid": "run-a"
+      },
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.step.ended/reject-data-type",
+      "eventType": "com.veryfront.step.ended",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/StepEnded",
+      "data": {
+        "stepId": "step-a",
+        "type": "com.veryfront.step.ended"
+      },
+      "envelopeContext": {
+        "runid": "run-a"
+      },
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.step.ended/reject-runtime-bloat",
+      "eventType": "com.veryfront.step.ended",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/StepEnded",
+      "data": {
+        "stepId": "step-a",
+        "receiverGeneration": "generation-a"
+      },
+      "envelopeContext": {
+        "runid": "run-a"
+      },
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.step.ended/missing-stepId",
+      "eventType": "com.veryfront.step.ended",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/StepEnded",
+      "data": {},
+      "envelopeContext": {
+        "runid": "run-a"
+      },
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.step.ended/empty-stepId",
+      "eventType": "com.veryfront.step.ended",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/StepEnded",
+      "data": {
+        "stepId": ""
+      },
+      "envelopeContext": {
+        "runid": "run-a"
+      },
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.step.ended/invalid-extension-namespace",
+      "eventType": "com.veryfront.step.ended",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/StepEnded",
+      "data": {
+        "stepId": "step-a",
+        "extensions": {
+          "unnamespaced": {}
+        }
+      },
+      "envelopeContext": {
+        "runid": "run-a"
+      },
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.step.ended/invalid-extension-value",
+      "eventType": "com.veryfront.step.ended",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/StepEnded",
+      "data": {
+        "stepId": "step-a",
+        "extensions": {
+          "https://example.test/extensions": "scalar"
+        }
+      },
+      "envelopeContext": {
+        "runid": "run-a"
+      },
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.tool-call.started/reject-data-type",
+      "eventType": "com.veryfront.tool-call.started",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/ToolCallStarted",
+      "data": {
+        "toolCallId": "call-a",
+        "type": "com.veryfront.tool-call.started",
+        "toolName": "search"
+      },
+      "envelopeContext": {},
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.tool-call.started/reject-runtime-bloat",
+      "eventType": "com.veryfront.tool-call.started",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/ToolCallStarted",
+      "data": {
+        "toolCallId": "call-a",
+        "receiverGeneration": "generation-a",
+        "toolName": "search"
+      },
+      "envelopeContext": {},
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.tool-call.started/missing-toolCallId",
+      "eventType": "com.veryfront.tool-call.started",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/ToolCallStarted",
+      "data": {
+        "toolName": "search"
+      },
+      "envelopeContext": {},
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.tool-call.started/empty-toolCallId",
+      "eventType": "com.veryfront.tool-call.started",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/ToolCallStarted",
+      "data": {
+        "toolCallId": "",
+        "toolName": "search"
+      },
+      "envelopeContext": {},
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.tool-call.started/missing-toolName",
+      "eventType": "com.veryfront.tool-call.started",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/ToolCallStarted",
+      "data": {
+        "toolCallId": "call-a"
+      },
+      "envelopeContext": {},
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.tool-call.started/invalid-extension-namespace",
+      "eventType": "com.veryfront.tool-call.started",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/ToolCallStarted",
+      "data": {
+        "toolCallId": "call-a",
+        "extensions": {
+          "unnamespaced": {}
+        },
+        "toolName": "search"
+      },
+      "envelopeContext": {},
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.tool-call.started/invalid-extension-value",
+      "eventType": "com.veryfront.tool-call.started",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/ToolCallStarted",
+      "data": {
+        "toolCallId": "call-a",
+        "extensions": {
+          "https://example.test/extensions": "scalar"
+        },
+        "toolName": "search"
+      },
+      "envelopeContext": {},
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.tool-call.arguments.delta.emitted/reject-data-type",
+      "eventType": "com.veryfront.tool-call.arguments.delta.emitted",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/ToolCallArgumentsDeltaEmitted",
+      "data": {
+        "toolCallId": "call-a",
+        "delta": "{\"query\":",
+        "type": "com.veryfront.tool-call.arguments.delta.emitted"
+      },
+      "envelopeContext": {},
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.tool-call.arguments.delta.emitted/reject-runtime-bloat",
+      "eventType": "com.veryfront.tool-call.arguments.delta.emitted",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/ToolCallArgumentsDeltaEmitted",
+      "data": {
+        "toolCallId": "call-a",
+        "delta": "{\"query\":",
+        "receiverGeneration": "generation-a"
+      },
+      "envelopeContext": {},
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.tool-call.arguments.delta.emitted/missing-toolCallId",
+      "eventType": "com.veryfront.tool-call.arguments.delta.emitted",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/ToolCallArgumentsDeltaEmitted",
+      "data": {
+        "delta": "{\"query\":"
+      },
+      "envelopeContext": {},
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.tool-call.arguments.delta.emitted/empty-toolCallId",
+      "eventType": "com.veryfront.tool-call.arguments.delta.emitted",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/ToolCallArgumentsDeltaEmitted",
+      "data": {
+        "toolCallId": "",
+        "delta": "{\"query\":"
+      },
+      "envelopeContext": {},
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.tool-call.arguments.delta.emitted/missing-delta",
+      "eventType": "com.veryfront.tool-call.arguments.delta.emitted",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/ToolCallArgumentsDeltaEmitted",
+      "data": {
+        "toolCallId": "call-a"
+      },
+      "envelopeContext": {},
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.tool-call.arguments.delta.emitted/invalid-extension-namespace",
+      "eventType": "com.veryfront.tool-call.arguments.delta.emitted",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/ToolCallArgumentsDeltaEmitted",
+      "data": {
+        "toolCallId": "call-a",
+        "delta": "{\"query\":",
+        "extensions": {
+          "unnamespaced": {}
+        }
+      },
+      "envelopeContext": {},
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.tool-call.arguments.delta.emitted/invalid-extension-value",
+      "eventType": "com.veryfront.tool-call.arguments.delta.emitted",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/ToolCallArgumentsDeltaEmitted",
+      "data": {
+        "toolCallId": "call-a",
+        "delta": "{\"query\":",
+        "extensions": {
+          "https://example.test/extensions": "scalar"
+        }
+      },
+      "envelopeContext": {},
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.tool-call.arguments.ended/reject-data-type",
+      "eventType": "com.veryfront.tool-call.arguments.ended",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/ToolCallArgumentsEnded",
+      "data": {
+        "toolCallId": "call-a",
+        "type": "com.veryfront.tool-call.arguments.ended"
+      },
+      "envelopeContext": {},
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.tool-call.arguments.ended/reject-runtime-bloat",
+      "eventType": "com.veryfront.tool-call.arguments.ended",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/ToolCallArgumentsEnded",
+      "data": {
+        "toolCallId": "call-a",
+        "receiverGeneration": "generation-a"
+      },
+      "envelopeContext": {},
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.tool-call.arguments.ended/missing-toolCallId",
+      "eventType": "com.veryfront.tool-call.arguments.ended",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/ToolCallArgumentsEnded",
+      "data": {},
+      "envelopeContext": {},
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.tool-call.arguments.ended/empty-toolCallId",
+      "eventType": "com.veryfront.tool-call.arguments.ended",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/ToolCallArgumentsEnded",
+      "data": {
+        "toolCallId": ""
+      },
+      "envelopeContext": {},
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.tool-call.arguments.ended/invalid-extension-namespace",
+      "eventType": "com.veryfront.tool-call.arguments.ended",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/ToolCallArgumentsEnded",
+      "data": {
+        "toolCallId": "call-a",
+        "extensions": {
+          "unnamespaced": {}
+        }
+      },
+      "envelopeContext": {},
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.tool-call.arguments.ended/invalid-extension-value",
+      "eventType": "com.veryfront.tool-call.arguments.ended",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/ToolCallArgumentsEnded",
+      "data": {
+        "toolCallId": "call-a",
+        "extensions": {
+          "https://example.test/extensions": "scalar"
+        }
+      },
+      "envelopeContext": {},
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.tool-call.refused/reject-data-type",
+      "eventType": "com.veryfront.tool-call.refused",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/ToolCallRefused",
+      "data": {
+        "toolCallId": "call-a",
+        "reason": "missing_integration_connection",
+        "type": "com.veryfront.tool-call.refused"
+      },
+      "envelopeContext": {},
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.tool-call.refused/reject-runtime-bloat",
+      "eventType": "com.veryfront.tool-call.refused",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/ToolCallRefused",
+      "data": {
+        "toolCallId": "call-a",
+        "reason": "missing_integration_connection",
+        "receiverGeneration": "generation-a"
+      },
+      "envelopeContext": {},
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.tool-call.refused/missing-toolCallId",
+      "eventType": "com.veryfront.tool-call.refused",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/ToolCallRefused",
+      "data": {
+        "reason": "missing_integration_connection"
+      },
+      "envelopeContext": {},
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.tool-call.refused/empty-toolCallId",
+      "eventType": "com.veryfront.tool-call.refused",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/ToolCallRefused",
+      "data": {
+        "toolCallId": "",
+        "reason": "missing_integration_connection"
+      },
+      "envelopeContext": {},
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.tool-call.refused/missing-reason",
+      "eventType": "com.veryfront.tool-call.refused",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/ToolCallRefused",
+      "data": {
+        "toolCallId": "call-a"
+      },
+      "envelopeContext": {},
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.tool-call.refused/invalid-extension-namespace",
+      "eventType": "com.veryfront.tool-call.refused",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/ToolCallRefused",
+      "data": {
+        "toolCallId": "call-a",
+        "reason": "missing_integration_connection",
+        "extensions": {
+          "unnamespaced": {}
+        }
+      },
+      "envelopeContext": {},
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.tool-call.refused/invalid-extension-value",
+      "eventType": "com.veryfront.tool-call.refused",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/ToolCallRefused",
+      "data": {
+        "toolCallId": "call-a",
+        "reason": "missing_integration_connection",
+        "extensions": {
+          "https://example.test/extensions": "scalar"
+        }
+      },
+      "envelopeContext": {},
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.tool-call.status.reported/reject-data-type",
+      "eventType": "com.veryfront.tool-call.status.reported",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/ToolCallStatusReported",
+      "data": {
+        "toolCallId": "call-a",
+        "status": "waiting",
+        "type": "com.veryfront.tool-call.status.reported"
+      },
+      "envelopeContext": {},
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.tool-call.status.reported/reject-runtime-bloat",
+      "eventType": "com.veryfront.tool-call.status.reported",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/ToolCallStatusReported",
+      "data": {
+        "toolCallId": "call-a",
+        "status": "waiting",
+        "receiverGeneration": "generation-a"
+      },
+      "envelopeContext": {},
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.tool-call.status.reported/missing-toolCallId",
+      "eventType": "com.veryfront.tool-call.status.reported",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/ToolCallStatusReported",
+      "data": {
+        "status": "waiting"
+      },
+      "envelopeContext": {},
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.tool-call.status.reported/empty-toolCallId",
+      "eventType": "com.veryfront.tool-call.status.reported",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/ToolCallStatusReported",
+      "data": {
+        "toolCallId": "",
+        "status": "waiting"
+      },
+      "envelopeContext": {},
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.tool-call.status.reported/missing-status",
+      "eventType": "com.veryfront.tool-call.status.reported",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/ToolCallStatusReported",
+      "data": {
+        "toolCallId": "call-a"
+      },
+      "envelopeContext": {},
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.tool-call.status.reported/invalid-extension-namespace",
+      "eventType": "com.veryfront.tool-call.status.reported",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/ToolCallStatusReported",
+      "data": {
+        "toolCallId": "call-a",
+        "status": "waiting",
+        "extensions": {
+          "unnamespaced": {}
+        }
+      },
+      "envelopeContext": {},
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.tool-call.status.reported/invalid-extension-value",
+      "eventType": "com.veryfront.tool-call.status.reported",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/ToolCallStatusReported",
+      "data": {
+        "toolCallId": "call-a",
+        "status": "waiting",
+        "extensions": {
+          "https://example.test/extensions": "scalar"
+        }
+      },
+      "envelopeContext": {},
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.tool-call.result.recorded/reject-data-type",
+      "eventType": "com.veryfront.tool-call.result.recorded",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/ToolCallResultRecorded",
+      "data": {
+        "toolCallId": "call-a",
+        "output": {
+          "answer": "Found"
+        },
+        "type": "com.veryfront.tool-call.result.recorded"
+      },
+      "envelopeContext": {},
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.tool-call.result.recorded/reject-runtime-bloat",
+      "eventType": "com.veryfront.tool-call.result.recorded",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/ToolCallResultRecorded",
+      "data": {
+        "toolCallId": "call-a",
+        "output": {
+          "answer": "Found"
+        },
+        "receiverGeneration": "generation-a"
+      },
+      "envelopeContext": {},
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.tool-call.result.recorded/missing-toolCallId",
+      "eventType": "com.veryfront.tool-call.result.recorded",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/ToolCallResultRecorded",
+      "data": {
+        "output": {
+          "answer": "Found"
+        }
+      },
+      "envelopeContext": {},
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.tool-call.result.recorded/empty-toolCallId",
+      "eventType": "com.veryfront.tool-call.result.recorded",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/ToolCallResultRecorded",
+      "data": {
+        "toolCallId": "",
+        "output": {
+          "answer": "Found"
+        }
+      },
+      "envelopeContext": {},
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.tool-call.result.recorded/invalid-extension-namespace",
+      "eventType": "com.veryfront.tool-call.result.recorded",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/ToolCallResultRecorded",
+      "data": {
+        "toolCallId": "call-a",
+        "output": {
+          "answer": "Found"
+        },
+        "extensions": {
+          "unnamespaced": {}
+        }
+      },
+      "envelopeContext": {},
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.tool-call.result.recorded/invalid-extension-value",
+      "eventType": "com.veryfront.tool-call.result.recorded",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/ToolCallResultRecorded",
+      "data": {
+        "toolCallId": "call-a",
+        "output": {
+          "answer": "Found"
+        },
+        "extensions": {
+          "https://example.test/extensions": "scalar"
+        }
+      },
+      "envelopeContext": {},
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.tool-call.result.submitted/reject-data-type",
+      "eventType": "com.veryfront.tool-call.result.submitted",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/ToolCallResultSubmitted",
+      "data": {
+        "toolCallId": "call-a",
+        "output": {
+          "answer": "Found"
+        },
+        "type": "com.veryfront.tool-call.result.submitted"
+      },
+      "envelopeContext": {},
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.tool-call.result.submitted/reject-runtime-bloat",
+      "eventType": "com.veryfront.tool-call.result.submitted",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/ToolCallResultSubmitted",
+      "data": {
+        "toolCallId": "call-a",
+        "output": {
+          "answer": "Found"
+        },
+        "receiverGeneration": "generation-a"
+      },
+      "envelopeContext": {},
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.tool-call.result.submitted/missing-toolCallId",
+      "eventType": "com.veryfront.tool-call.result.submitted",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/ToolCallResultSubmitted",
+      "data": {
+        "output": {
+          "answer": "Found"
+        }
+      },
+      "envelopeContext": {},
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.tool-call.result.submitted/empty-toolCallId",
+      "eventType": "com.veryfront.tool-call.result.submitted",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/ToolCallResultSubmitted",
+      "data": {
+        "toolCallId": "",
+        "output": {
+          "answer": "Found"
+        }
+      },
+      "envelopeContext": {},
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.tool-call.result.submitted/invalid-extension-namespace",
+      "eventType": "com.veryfront.tool-call.result.submitted",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/ToolCallResultSubmitted",
+      "data": {
+        "toolCallId": "call-a",
+        "output": {
+          "answer": "Found"
+        },
+        "extensions": {
+          "unnamespaced": {}
+        }
+      },
+      "envelopeContext": {},
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.tool-call.result.submitted/invalid-extension-value",
+      "eventType": "com.veryfront.tool-call.result.submitted",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/ToolCallResultSubmitted",
+      "data": {
+        "toolCallId": "call-a",
+        "output": {
+          "answer": "Found"
+        },
+        "extensions": {
+          "https://example.test/extensions": "scalar"
+        }
+      },
+      "envelopeContext": {},
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.tool-call.result.delivery.failed/reject-data-type",
+      "eventType": "com.veryfront.tool-call.result.delivery.failed",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/ToolCallResultDeliveryFailed",
+      "data": {
+        "toolCallId": "call-a",
+        "type": "com.veryfront.tool-call.result.delivery.failed"
+      },
+      "envelopeContext": {},
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.tool-call.result.delivery.failed/reject-runtime-bloat",
+      "eventType": "com.veryfront.tool-call.result.delivery.failed",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/ToolCallResultDeliveryFailed",
+      "data": {
+        "toolCallId": "call-a",
+        "receiverGeneration": "generation-a"
+      },
+      "envelopeContext": {},
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.tool-call.result.delivery.failed/missing-toolCallId",
+      "eventType": "com.veryfront.tool-call.result.delivery.failed",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/ToolCallResultDeliveryFailed",
+      "data": {},
+      "envelopeContext": {},
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.tool-call.result.delivery.failed/empty-toolCallId",
+      "eventType": "com.veryfront.tool-call.result.delivery.failed",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/ToolCallResultDeliveryFailed",
+      "data": {
+        "toolCallId": ""
+      },
+      "envelopeContext": {},
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.tool-call.result.delivery.failed/invalid-extension-namespace",
+      "eventType": "com.veryfront.tool-call.result.delivery.failed",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/ToolCallResultDeliveryFailed",
+      "data": {
+        "toolCallId": "call-a",
+        "extensions": {
+          "unnamespaced": {}
+        }
+      },
+      "envelopeContext": {},
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.tool-call.result.delivery.failed/invalid-extension-value",
+      "eventType": "com.veryfront.tool-call.result.delivery.failed",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/ToolCallResultDeliveryFailed",
+      "data": {
+        "toolCallId": "call-a",
+        "extensions": {
+          "https://example.test/extensions": "scalar"
+        }
+      },
+      "envelopeContext": {},
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.model-call.input.captured/reject-data-type",
+      "eventType": "com.veryfront.model-call.input.captured",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/ModelCallInputCaptured",
+      "data": {
+        "model": {
+          "provider": "example",
+          "name": "model-a"
+        },
+        "input": {
+          "messages": [
+            {
+              "role": "user",
+              "content": "Hello"
+            }
+          ]
+        },
+        "type": "com.veryfront.model-call.input.captured"
+      },
+      "envelopeContext": {
+        "modelcallid": "model-call-a"
+      },
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.model-call.input.captured/reject-runtime-bloat",
+      "eventType": "com.veryfront.model-call.input.captured",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/ModelCallInputCaptured",
+      "data": {
+        "model": {
+          "provider": "example",
+          "name": "model-a"
+        },
+        "input": {
+          "messages": [
+            {
+              "role": "user",
+              "content": "Hello"
+            }
+          ]
+        },
+        "receiverGeneration": "generation-a"
+      },
+      "envelopeContext": {
+        "modelcallid": "model-call-a"
+      },
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.model-call.input.captured/missing-model",
+      "eventType": "com.veryfront.model-call.input.captured",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/ModelCallInputCaptured",
+      "data": {
+        "input": {
+          "messages": [
+            {
+              "role": "user",
+              "content": "Hello"
+            }
+          ]
+        }
+      },
+      "envelopeContext": {
+        "modelcallid": "model-call-a"
+      },
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.model-call.input.captured/missing-input",
+      "eventType": "com.veryfront.model-call.input.captured",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/ModelCallInputCaptured",
+      "data": {
+        "model": {
+          "provider": "example",
+          "name": "model-a"
+        }
+      },
+      "envelopeContext": {
+        "modelcallid": "model-call-a"
+      },
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.model-call.input.captured/invalid-extension-namespace",
+      "eventType": "com.veryfront.model-call.input.captured",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/ModelCallInputCaptured",
+      "data": {
+        "model": {
+          "provider": "example",
+          "name": "model-a"
+        },
+        "input": {
+          "messages": [
+            {
+              "role": "user",
+              "content": "Hello"
+            }
+          ]
+        },
+        "extensions": {
+          "unnamespaced": {}
+        }
+      },
+      "envelopeContext": {
+        "modelcallid": "model-call-a"
+      },
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.model-call.input.captured/invalid-extension-value",
+      "eventType": "com.veryfront.model-call.input.captured",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/ModelCallInputCaptured",
+      "data": {
+        "model": {
+          "provider": "example",
+          "name": "model-a"
+        },
+        "input": {
+          "messages": [
+            {
+              "role": "user",
+              "content": "Hello"
+            }
+          ]
+        },
+        "extensions": {
+          "https://example.test/extensions": "scalar"
+        }
+      },
+      "envelopeContext": {
+        "modelcallid": "model-call-a"
+      },
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.model-call.usage.recorded/reject-data-type",
+      "eventType": "com.veryfront.model-call.usage.recorded",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/ModelCallUsageRecorded",
+      "data": {
+        "model": {
+          "provider": "example",
+          "name": "model-a"
+        },
+        "tokens": {
+          "input": 10,
+          "output": 4
+        },
+        "type": "com.veryfront.model-call.usage.recorded",
+        "scope": "call"
+      },
+      "envelopeContext": {
+        "modelcallid": "model-call-a"
+      },
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.model-call.usage.recorded/reject-runtime-bloat",
+      "eventType": "com.veryfront.model-call.usage.recorded",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/ModelCallUsageRecorded",
+      "data": {
+        "model": {
+          "provider": "example",
+          "name": "model-a"
+        },
+        "tokens": {
+          "input": 10,
+          "output": 4
+        },
+        "receiverGeneration": "generation-a",
+        "scope": "call"
+      },
+      "envelopeContext": {
+        "modelcallid": "model-call-a"
+      },
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.model-call.usage.recorded/missing-model",
+      "eventType": "com.veryfront.model-call.usage.recorded",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/ModelCallUsageRecorded",
+      "data": {
+        "tokens": {
+          "input": 10,
+          "output": 4
+        },
+        "scope": "call"
+      },
+      "envelopeContext": {
+        "modelcallid": "model-call-a"
+      },
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.model-call.usage.recorded/missing-tokens",
+      "eventType": "com.veryfront.model-call.usage.recorded",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/ModelCallUsageRecorded",
+      "data": {
+        "model": {
+          "provider": "example",
+          "name": "model-a"
+        },
+        "scope": "call"
+      },
+      "envelopeContext": {
+        "modelcallid": "model-call-a"
+      },
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.model-call.usage.recorded/invalid-extension-namespace",
+      "eventType": "com.veryfront.model-call.usage.recorded",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/ModelCallUsageRecorded",
+      "data": {
+        "model": {
+          "provider": "example",
+          "name": "model-a"
+        },
+        "tokens": {
+          "input": 10,
+          "output": 4
+        },
+        "extensions": {
+          "unnamespaced": {}
+        },
+        "scope": "call"
+      },
+      "envelopeContext": {
+        "modelcallid": "model-call-a"
+      },
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.model-call.usage.recorded/invalid-extension-value",
+      "eventType": "com.veryfront.model-call.usage.recorded",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/ModelCallUsageRecorded",
+      "data": {
+        "model": {
+          "provider": "example",
+          "name": "model-a"
+        },
+        "tokens": {
+          "input": 10,
+          "output": 4
+        },
+        "extensions": {
+          "https://example.test/extensions": "scalar"
+        },
+        "scope": "call"
+      },
+      "envelopeContext": {
+        "modelcallid": "model-call-a"
+      },
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.input-request.created/reject-data-type",
+      "eventType": "com.veryfront.input-request.created",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/InputRequestCreated",
+      "data": {
+        "inputRequest": {
+          "id": "input-a",
+          "status": "open"
+        },
+        "type": "com.veryfront.input-request.created"
+      },
+      "envelopeContext": {},
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.input-request.created/reject-runtime-bloat",
+      "eventType": "com.veryfront.input-request.created",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/InputRequestCreated",
+      "data": {
+        "inputRequest": {
+          "id": "input-a",
+          "status": "open"
+        },
+        "receiverGeneration": "generation-a"
+      },
+      "envelopeContext": {},
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.input-request.created/missing-inputRequest",
+      "eventType": "com.veryfront.input-request.created",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/InputRequestCreated",
+      "data": {},
+      "envelopeContext": {},
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.input-request.created/invalid-extension-namespace",
+      "eventType": "com.veryfront.input-request.created",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/InputRequestCreated",
+      "data": {
+        "inputRequest": {
+          "id": "input-a",
+          "status": "open"
+        },
+        "extensions": {
+          "unnamespaced": {}
+        }
+      },
+      "envelopeContext": {},
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.input-request.created/invalid-extension-value",
+      "eventType": "com.veryfront.input-request.created",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/InputRequestCreated",
+      "data": {
+        "inputRequest": {
+          "id": "input-a",
+          "status": "open"
+        },
+        "extensions": {
+          "https://example.test/extensions": "scalar"
+        }
+      },
+      "envelopeContext": {},
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.input-request.updated/reject-data-type",
+      "eventType": "com.veryfront.input-request.updated",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/InputRequestUpdated",
+      "data": {
+        "inputRequest": {
+          "id": "input-a",
+          "status": "submitted"
+        },
+        "type": "com.veryfront.input-request.updated"
+      },
+      "envelopeContext": {},
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.input-request.updated/reject-runtime-bloat",
+      "eventType": "com.veryfront.input-request.updated",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/InputRequestUpdated",
+      "data": {
+        "inputRequest": {
+          "id": "input-a",
+          "status": "submitted"
+        },
+        "receiverGeneration": "generation-a"
+      },
+      "envelopeContext": {},
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.input-request.updated/missing-inputRequest",
+      "eventType": "com.veryfront.input-request.updated",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/InputRequestUpdated",
+      "data": {},
+      "envelopeContext": {},
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.input-request.updated/invalid-extension-namespace",
+      "eventType": "com.veryfront.input-request.updated",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/InputRequestUpdated",
+      "data": {
+        "inputRequest": {
+          "id": "input-a",
+          "status": "submitted"
+        },
+        "extensions": {
+          "unnamespaced": {}
+        }
+      },
+      "envelopeContext": {},
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.input-request.updated/invalid-extension-value",
+      "eventType": "com.veryfront.input-request.updated",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/InputRequestUpdated",
+      "data": {
+        "inputRequest": {
+          "id": "input-a",
+          "status": "submitted"
+        },
+        "extensions": {
+          "https://example.test/extensions": "scalar"
+        }
+      },
+      "envelopeContext": {},
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.message.text.started/reject-data-type",
+      "eventType": "com.veryfront.message.text.started",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/MessageTextStarted",
+      "data": {
+        "messageId": "message-a",
+        "contentId": "segment-a",
+        "type": "com.veryfront.message.text.started"
+      },
+      "envelopeContext": {},
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.message.text.started/reject-runtime-bloat",
+      "eventType": "com.veryfront.message.text.started",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/MessageTextStarted",
+      "data": {
+        "messageId": "message-a",
+        "contentId": "segment-a",
+        "receiverGeneration": "generation-a"
+      },
+      "envelopeContext": {},
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.message.text.started/missing-messageId",
+      "eventType": "com.veryfront.message.text.started",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/MessageTextStarted",
+      "data": {
+        "contentId": "segment-a"
+      },
+      "envelopeContext": {},
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.message.text.started/empty-messageId",
+      "eventType": "com.veryfront.message.text.started",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/MessageTextStarted",
+      "data": {
+        "messageId": "",
+        "contentId": "segment-a"
+      },
+      "envelopeContext": {},
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.message.text.started/missing-contentId",
+      "eventType": "com.veryfront.message.text.started",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/MessageTextStarted",
+      "data": {
+        "messageId": "message-a"
+      },
+      "envelopeContext": {},
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.message.text.started/empty-contentId",
+      "eventType": "com.veryfront.message.text.started",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/MessageTextStarted",
+      "data": {
+        "messageId": "message-a",
+        "contentId": ""
+      },
+      "envelopeContext": {},
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.message.text.started/invalid-extension-namespace",
+      "eventType": "com.veryfront.message.text.started",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/MessageTextStarted",
+      "data": {
+        "messageId": "message-a",
+        "contentId": "segment-a",
+        "extensions": {
+          "unnamespaced": {}
+        }
+      },
+      "envelopeContext": {},
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.message.text.started/invalid-extension-value",
+      "eventType": "com.veryfront.message.text.started",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/MessageTextStarted",
+      "data": {
+        "messageId": "message-a",
+        "contentId": "segment-a",
+        "extensions": {
+          "https://example.test/extensions": "scalar"
+        }
+      },
+      "envelopeContext": {},
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.message.text.delta.emitted/reject-data-type",
+      "eventType": "com.veryfront.message.text.delta.emitted",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/MessageTextDeltaEmitted",
+      "data": {
+        "messageId": "message-a",
+        "contentId": "segment-a",
+        "delta": "Hello",
+        "type": "com.veryfront.message.text.delta.emitted"
+      },
+      "envelopeContext": {},
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.message.text.delta.emitted/reject-runtime-bloat",
+      "eventType": "com.veryfront.message.text.delta.emitted",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/MessageTextDeltaEmitted",
+      "data": {
+        "messageId": "message-a",
+        "contentId": "segment-a",
+        "delta": "Hello",
+        "receiverGeneration": "generation-a"
+      },
+      "envelopeContext": {},
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.message.text.delta.emitted/missing-messageId",
+      "eventType": "com.veryfront.message.text.delta.emitted",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/MessageTextDeltaEmitted",
+      "data": {
+        "contentId": "segment-a",
+        "delta": "Hello"
+      },
+      "envelopeContext": {},
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.message.text.delta.emitted/empty-messageId",
+      "eventType": "com.veryfront.message.text.delta.emitted",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/MessageTextDeltaEmitted",
+      "data": {
+        "messageId": "",
+        "contentId": "segment-a",
+        "delta": "Hello"
+      },
+      "envelopeContext": {},
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.message.text.delta.emitted/missing-contentId",
+      "eventType": "com.veryfront.message.text.delta.emitted",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/MessageTextDeltaEmitted",
+      "data": {
+        "messageId": "message-a",
+        "delta": "Hello"
+      },
+      "envelopeContext": {},
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.message.text.delta.emitted/empty-contentId",
+      "eventType": "com.veryfront.message.text.delta.emitted",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/MessageTextDeltaEmitted",
+      "data": {
+        "messageId": "message-a",
+        "contentId": "",
+        "delta": "Hello"
+      },
+      "envelopeContext": {},
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.message.text.delta.emitted/invalid-extension-namespace",
+      "eventType": "com.veryfront.message.text.delta.emitted",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/MessageTextDeltaEmitted",
+      "data": {
+        "messageId": "message-a",
+        "contentId": "segment-a",
+        "delta": "Hello",
+        "extensions": {
+          "unnamespaced": {}
+        }
+      },
+      "envelopeContext": {},
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.message.text.delta.emitted/invalid-extension-value",
+      "eventType": "com.veryfront.message.text.delta.emitted",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/MessageTextDeltaEmitted",
+      "data": {
+        "messageId": "message-a",
+        "contentId": "segment-a",
+        "delta": "Hello",
+        "extensions": {
+          "https://example.test/extensions": "scalar"
+        }
+      },
+      "envelopeContext": {},
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.message.text.ended/reject-data-type",
+      "eventType": "com.veryfront.message.text.ended",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/MessageTextEnded",
+      "data": {
+        "messageId": "message-a",
+        "contentId": "segment-a",
+        "type": "com.veryfront.message.text.ended"
+      },
+      "envelopeContext": {},
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.message.text.ended/reject-runtime-bloat",
+      "eventType": "com.veryfront.message.text.ended",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/MessageTextEnded",
+      "data": {
+        "messageId": "message-a",
+        "contentId": "segment-a",
+        "receiverGeneration": "generation-a"
+      },
+      "envelopeContext": {},
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.message.text.ended/missing-messageId",
+      "eventType": "com.veryfront.message.text.ended",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/MessageTextEnded",
+      "data": {
+        "contentId": "segment-a"
+      },
+      "envelopeContext": {},
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.message.text.ended/empty-messageId",
+      "eventType": "com.veryfront.message.text.ended",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/MessageTextEnded",
+      "data": {
+        "messageId": "",
+        "contentId": "segment-a"
+      },
+      "envelopeContext": {},
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.message.text.ended/missing-contentId",
+      "eventType": "com.veryfront.message.text.ended",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/MessageTextEnded",
+      "data": {
+        "messageId": "message-a"
+      },
+      "envelopeContext": {},
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.message.text.ended/empty-contentId",
+      "eventType": "com.veryfront.message.text.ended",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/MessageTextEnded",
+      "data": {
+        "messageId": "message-a",
+        "contentId": ""
+      },
+      "envelopeContext": {},
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.message.text.ended/invalid-extension-namespace",
+      "eventType": "com.veryfront.message.text.ended",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/MessageTextEnded",
+      "data": {
+        "messageId": "message-a",
+        "contentId": "segment-a",
+        "extensions": {
+          "unnamespaced": {}
+        }
+      },
+      "envelopeContext": {},
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.message.text.ended/invalid-extension-value",
+      "eventType": "com.veryfront.message.text.ended",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/MessageTextEnded",
+      "data": {
+        "messageId": "message-a",
+        "contentId": "segment-a",
+        "extensions": {
+          "https://example.test/extensions": "scalar"
+        }
+      },
+      "envelopeContext": {},
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.message.reasoning.started/reject-data-type",
+      "eventType": "com.veryfront.message.reasoning.started",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/MessageReasoningStarted",
+      "data": {
+        "messageId": "message-a",
+        "contentId": "segment-a",
+        "type": "com.veryfront.message.reasoning.started"
+      },
+      "envelopeContext": {},
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.message.reasoning.started/reject-runtime-bloat",
+      "eventType": "com.veryfront.message.reasoning.started",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/MessageReasoningStarted",
+      "data": {
+        "messageId": "message-a",
+        "contentId": "segment-a",
+        "receiverGeneration": "generation-a"
+      },
+      "envelopeContext": {},
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.message.reasoning.started/missing-messageId",
+      "eventType": "com.veryfront.message.reasoning.started",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/MessageReasoningStarted",
+      "data": {
+        "contentId": "segment-a"
+      },
+      "envelopeContext": {},
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.message.reasoning.started/empty-messageId",
+      "eventType": "com.veryfront.message.reasoning.started",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/MessageReasoningStarted",
+      "data": {
+        "messageId": "",
+        "contentId": "segment-a"
+      },
+      "envelopeContext": {},
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.message.reasoning.started/missing-contentId",
+      "eventType": "com.veryfront.message.reasoning.started",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/MessageReasoningStarted",
+      "data": {
+        "messageId": "message-a"
+      },
+      "envelopeContext": {},
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.message.reasoning.started/empty-contentId",
+      "eventType": "com.veryfront.message.reasoning.started",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/MessageReasoningStarted",
+      "data": {
+        "messageId": "message-a",
+        "contentId": ""
+      },
+      "envelopeContext": {},
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.message.reasoning.started/invalid-extension-namespace",
+      "eventType": "com.veryfront.message.reasoning.started",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/MessageReasoningStarted",
+      "data": {
+        "messageId": "message-a",
+        "contentId": "segment-a",
+        "extensions": {
+          "unnamespaced": {}
+        }
+      },
+      "envelopeContext": {},
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.message.reasoning.started/invalid-extension-value",
+      "eventType": "com.veryfront.message.reasoning.started",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/MessageReasoningStarted",
+      "data": {
+        "messageId": "message-a",
+        "contentId": "segment-a",
+        "extensions": {
+          "https://example.test/extensions": "scalar"
+        }
+      },
+      "envelopeContext": {},
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.message.reasoning.delta.emitted/reject-data-type",
+      "eventType": "com.veryfront.message.reasoning.delta.emitted",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/MessageReasoningDeltaEmitted",
+      "data": {
+        "messageId": "message-a",
+        "contentId": "segment-a",
+        "delta": "Permitted reasoning text",
+        "type": "com.veryfront.message.reasoning.delta.emitted"
+      },
+      "envelopeContext": {},
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.message.reasoning.delta.emitted/reject-runtime-bloat",
+      "eventType": "com.veryfront.message.reasoning.delta.emitted",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/MessageReasoningDeltaEmitted",
+      "data": {
+        "messageId": "message-a",
+        "contentId": "segment-a",
+        "delta": "Permitted reasoning text",
+        "receiverGeneration": "generation-a"
+      },
+      "envelopeContext": {},
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.message.reasoning.delta.emitted/missing-messageId",
+      "eventType": "com.veryfront.message.reasoning.delta.emitted",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/MessageReasoningDeltaEmitted",
+      "data": {
+        "contentId": "segment-a",
+        "delta": "Permitted reasoning text"
+      },
+      "envelopeContext": {},
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.message.reasoning.delta.emitted/empty-messageId",
+      "eventType": "com.veryfront.message.reasoning.delta.emitted",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/MessageReasoningDeltaEmitted",
+      "data": {
+        "messageId": "",
+        "contentId": "segment-a",
+        "delta": "Permitted reasoning text"
+      },
+      "envelopeContext": {},
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.message.reasoning.delta.emitted/missing-contentId",
+      "eventType": "com.veryfront.message.reasoning.delta.emitted",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/MessageReasoningDeltaEmitted",
+      "data": {
+        "messageId": "message-a",
+        "delta": "Permitted reasoning text"
+      },
+      "envelopeContext": {},
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.message.reasoning.delta.emitted/empty-contentId",
+      "eventType": "com.veryfront.message.reasoning.delta.emitted",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/MessageReasoningDeltaEmitted",
+      "data": {
+        "messageId": "message-a",
+        "contentId": "",
+        "delta": "Permitted reasoning text"
+      },
+      "envelopeContext": {},
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.message.reasoning.delta.emitted/invalid-extension-namespace",
+      "eventType": "com.veryfront.message.reasoning.delta.emitted",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/MessageReasoningDeltaEmitted",
+      "data": {
+        "messageId": "message-a",
+        "contentId": "segment-a",
+        "delta": "Permitted reasoning text",
+        "extensions": {
+          "unnamespaced": {}
+        }
+      },
+      "envelopeContext": {},
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.message.reasoning.delta.emitted/invalid-extension-value",
+      "eventType": "com.veryfront.message.reasoning.delta.emitted",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/MessageReasoningDeltaEmitted",
+      "data": {
+        "messageId": "message-a",
+        "contentId": "segment-a",
+        "delta": "Permitted reasoning text",
+        "extensions": {
+          "https://example.test/extensions": "scalar"
+        }
+      },
+      "envelopeContext": {},
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.message.reasoning.ended/reject-data-type",
+      "eventType": "com.veryfront.message.reasoning.ended",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/MessageReasoningEnded",
+      "data": {
+        "messageId": "message-a",
+        "contentId": "segment-a",
+        "type": "com.veryfront.message.reasoning.ended"
+      },
+      "envelopeContext": {},
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.message.reasoning.ended/reject-runtime-bloat",
+      "eventType": "com.veryfront.message.reasoning.ended",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/MessageReasoningEnded",
+      "data": {
+        "messageId": "message-a",
+        "contentId": "segment-a",
+        "receiverGeneration": "generation-a"
+      },
+      "envelopeContext": {},
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.message.reasoning.ended/missing-messageId",
+      "eventType": "com.veryfront.message.reasoning.ended",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/MessageReasoningEnded",
+      "data": {
+        "contentId": "segment-a"
+      },
+      "envelopeContext": {},
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.message.reasoning.ended/empty-messageId",
+      "eventType": "com.veryfront.message.reasoning.ended",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/MessageReasoningEnded",
+      "data": {
+        "messageId": "",
+        "contentId": "segment-a"
+      },
+      "envelopeContext": {},
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.message.reasoning.ended/missing-contentId",
+      "eventType": "com.veryfront.message.reasoning.ended",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/MessageReasoningEnded",
+      "data": {
+        "messageId": "message-a"
+      },
+      "envelopeContext": {},
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.message.reasoning.ended/empty-contentId",
+      "eventType": "com.veryfront.message.reasoning.ended",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/MessageReasoningEnded",
+      "data": {
+        "messageId": "message-a",
+        "contentId": ""
+      },
+      "envelopeContext": {},
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.message.reasoning.ended/invalid-extension-namespace",
+      "eventType": "com.veryfront.message.reasoning.ended",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/MessageReasoningEnded",
+      "data": {
+        "messageId": "message-a",
+        "contentId": "segment-a",
+        "extensions": {
+          "unnamespaced": {}
+        }
+      },
+      "envelopeContext": {},
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.message.reasoning.ended/invalid-extension-value",
+      "eventType": "com.veryfront.message.reasoning.ended",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/MessageReasoningEnded",
+      "data": {
+        "messageId": "message-a",
+        "contentId": "segment-a",
+        "extensions": {
+          "https://example.test/extensions": "scalar"
+        }
+      },
+      "envelopeContext": {},
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.message.url.referenced/reject-data-type",
+      "eventType": "com.veryfront.message.url.referenced",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/MessageUrlReferenced",
+      "data": {
+        "messageId": "message-a",
+        "sourceId": "source-a",
+        "url": "https://example.test/source",
+        "type": "com.veryfront.message.url.referenced"
+      },
+      "envelopeContext": {},
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.message.url.referenced/reject-runtime-bloat",
+      "eventType": "com.veryfront.message.url.referenced",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/MessageUrlReferenced",
+      "data": {
+        "messageId": "message-a",
+        "sourceId": "source-a",
+        "url": "https://example.test/source",
+        "receiverGeneration": "generation-a"
+      },
+      "envelopeContext": {},
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.message.url.referenced/missing-messageId",
+      "eventType": "com.veryfront.message.url.referenced",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/MessageUrlReferenced",
+      "data": {
+        "sourceId": "source-a",
+        "url": "https://example.test/source"
+      },
+      "envelopeContext": {},
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.message.url.referenced/empty-messageId",
+      "eventType": "com.veryfront.message.url.referenced",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/MessageUrlReferenced",
+      "data": {
+        "messageId": "",
+        "sourceId": "source-a",
+        "url": "https://example.test/source"
+      },
+      "envelopeContext": {},
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.message.url.referenced/missing-sourceId",
+      "eventType": "com.veryfront.message.url.referenced",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/MessageUrlReferenced",
+      "data": {
+        "messageId": "message-a",
+        "url": "https://example.test/source"
+      },
+      "envelopeContext": {},
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.message.url.referenced/missing-url",
+      "eventType": "com.veryfront.message.url.referenced",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/MessageUrlReferenced",
+      "data": {
+        "messageId": "message-a",
+        "sourceId": "source-a"
+      },
+      "envelopeContext": {},
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.message.url.referenced/invalid-extension-namespace",
+      "eventType": "com.veryfront.message.url.referenced",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/MessageUrlReferenced",
+      "data": {
+        "messageId": "message-a",
+        "sourceId": "source-a",
+        "url": "https://example.test/source",
+        "extensions": {
+          "unnamespaced": {}
+        }
+      },
+      "envelopeContext": {},
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.message.url.referenced/invalid-extension-value",
+      "eventType": "com.veryfront.message.url.referenced",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/MessageUrlReferenced",
+      "data": {
+        "messageId": "message-a",
+        "sourceId": "source-a",
+        "url": "https://example.test/source",
+        "extensions": {
+          "https://example.test/extensions": "scalar"
+        }
+      },
+      "envelopeContext": {},
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.message.document.referenced/reject-data-type",
+      "eventType": "com.veryfront.message.document.referenced",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/MessageDocumentReferenced",
+      "data": {
+        "messageId": "message-a",
+        "sourceId": "source-a",
+        "mediaType": "application/pdf",
+        "type": "com.veryfront.message.document.referenced"
+      },
+      "envelopeContext": {},
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.message.document.referenced/reject-runtime-bloat",
+      "eventType": "com.veryfront.message.document.referenced",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/MessageDocumentReferenced",
+      "data": {
+        "messageId": "message-a",
+        "sourceId": "source-a",
+        "mediaType": "application/pdf",
+        "receiverGeneration": "generation-a"
+      },
+      "envelopeContext": {},
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.message.document.referenced/missing-messageId",
+      "eventType": "com.veryfront.message.document.referenced",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/MessageDocumentReferenced",
+      "data": {
+        "sourceId": "source-a",
+        "mediaType": "application/pdf"
+      },
+      "envelopeContext": {},
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.message.document.referenced/empty-messageId",
+      "eventType": "com.veryfront.message.document.referenced",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/MessageDocumentReferenced",
+      "data": {
+        "messageId": "",
+        "sourceId": "source-a",
+        "mediaType": "application/pdf"
+      },
+      "envelopeContext": {},
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.message.document.referenced/missing-sourceId",
+      "eventType": "com.veryfront.message.document.referenced",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/MessageDocumentReferenced",
+      "data": {
+        "messageId": "message-a",
+        "mediaType": "application/pdf"
+      },
+      "envelopeContext": {},
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.message.document.referenced/missing-mediaType",
+      "eventType": "com.veryfront.message.document.referenced",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/MessageDocumentReferenced",
+      "data": {
+        "messageId": "message-a",
+        "sourceId": "source-a"
+      },
+      "envelopeContext": {},
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.message.document.referenced/invalid-extension-namespace",
+      "eventType": "com.veryfront.message.document.referenced",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/MessageDocumentReferenced",
+      "data": {
+        "messageId": "message-a",
+        "sourceId": "source-a",
+        "mediaType": "application/pdf",
+        "extensions": {
+          "unnamespaced": {}
+        }
+      },
+      "envelopeContext": {},
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.message.document.referenced/invalid-extension-value",
+      "eventType": "com.veryfront.message.document.referenced",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/MessageDocumentReferenced",
+      "data": {
+        "messageId": "message-a",
+        "sourceId": "source-a",
+        "mediaType": "application/pdf",
+        "extensions": {
+          "https://example.test/extensions": "scalar"
+        }
+      },
+      "envelopeContext": {},
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.message.file.attached/reject-data-type",
+      "eventType": "com.veryfront.message.file.attached",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/MessageFileAttached",
+      "data": {
+        "messageId": "message-a",
+        "mediaType": "application/pdf",
+        "type": "com.veryfront.message.file.attached"
+      },
+      "envelopeContext": {},
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.message.file.attached/reject-runtime-bloat",
+      "eventType": "com.veryfront.message.file.attached",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/MessageFileAttached",
+      "data": {
+        "messageId": "message-a",
+        "mediaType": "application/pdf",
+        "receiverGeneration": "generation-a"
+      },
+      "envelopeContext": {},
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.message.file.attached/missing-messageId",
+      "eventType": "com.veryfront.message.file.attached",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/MessageFileAttached",
+      "data": {
+        "mediaType": "application/pdf"
+      },
+      "envelopeContext": {},
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.message.file.attached/empty-messageId",
+      "eventType": "com.veryfront.message.file.attached",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/MessageFileAttached",
+      "data": {
+        "messageId": "",
+        "mediaType": "application/pdf"
+      },
+      "envelopeContext": {},
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.message.file.attached/missing-mediaType",
+      "eventType": "com.veryfront.message.file.attached",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/MessageFileAttached",
+      "data": {
+        "messageId": "message-a"
+      },
+      "envelopeContext": {},
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.message.file.attached/invalid-extension-namespace",
+      "eventType": "com.veryfront.message.file.attached",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/MessageFileAttached",
+      "data": {
+        "messageId": "message-a",
+        "mediaType": "application/pdf",
+        "extensions": {
+          "unnamespaced": {}
+        }
+      },
+      "envelopeContext": {},
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.message.file.attached/invalid-extension-value",
+      "eventType": "com.veryfront.message.file.attached",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/MessageFileAttached",
+      "data": {
+        "messageId": "message-a",
+        "mediaType": "application/pdf",
+        "extensions": {
+          "https://example.test/extensions": "scalar"
+        }
+      },
+      "envelopeContext": {},
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.stream.heartbeat.emitted/reject-data-type",
+      "eventType": "com.veryfront.stream.heartbeat.emitted",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/StreamHeartbeatEmitted",
+      "data": {
+        "type": "com.veryfront.stream.heartbeat.emitted"
+      },
+      "envelopeContext": {},
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.stream.heartbeat.emitted/reject-runtime-bloat",
+      "eventType": "com.veryfront.stream.heartbeat.emitted",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/StreamHeartbeatEmitted",
+      "data": {
+        "receiverGeneration": "generation-a"
+      },
+      "envelopeContext": {},
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.stream.heartbeat.emitted/invalid-extension-namespace",
+      "eventType": "com.veryfront.stream.heartbeat.emitted",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/StreamHeartbeatEmitted",
+      "data": {
+        "extensions": {
+          "unnamespaced": {}
+        }
+      },
+      "envelopeContext": {},
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.stream.heartbeat.emitted/invalid-extension-value",
+      "eventType": "com.veryfront.stream.heartbeat.emitted",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/StreamHeartbeatEmitted",
+      "data": {
+        "extensions": {
+          "https://example.test/extensions": "scalar"
+        }
+      },
+      "envelopeContext": {},
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.message.text.delta.emitted/redaction-and-delta-conflict",
+      "eventType": "com.veryfront.message.text.delta.emitted",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/MessageTextDeltaEmitted",
+      "data": {
+        "messageId": "message-a",
+        "contentId": "segment-a",
+        "contentRedacted": true,
+        "delta": "Secret"
+      },
+      "envelopeContext": {},
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.message.reasoning.delta.emitted/redaction-and-delta-conflict",
+      "eventType": "com.veryfront.message.reasoning.delta.emitted",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/MessageReasoningDeltaEmitted",
+      "data": {
+        "messageId": "message-a",
+        "contentId": "segment-a",
+        "contentRedacted": true,
+        "delta": "Secret"
+      },
+      "envelopeContext": {},
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.tool-call.result.recorded/missing-output",
+      "eventType": "com.veryfront.tool-call.result.recorded",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/ToolCallResultRecorded",
+      "data": {
+        "toolCallId": "call-a"
+      },
+      "envelopeContext": {},
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.tool-call.result.recorded/redaction-output-conflict",
+      "eventType": "com.veryfront.tool-call.result.recorded",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/ToolCallResultRecorded",
+      "data": {
+        "toolCallId": "call-a",
+        "output": 1,
+        "outputRedacted": true
+      },
+      "envelopeContext": {},
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.tool-call.result.submitted/missing-output",
+      "eventType": "com.veryfront.tool-call.result.submitted",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/ToolCallResultSubmitted",
+      "data": {
+        "toolCallId": "call-a"
+      },
+      "envelopeContext": {},
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.tool-call.result.submitted/redaction-output-conflict",
+      "eventType": "com.veryfront.tool-call.result.submitted",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/ToolCallResultSubmitted",
+      "data": {
+        "toolCallId": "call-a",
+        "output": 1,
+        "outputRedacted": true
+      },
+      "envelopeContext": {},
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.model-call.input.captured/input-redaction-content-conflict",
+      "eventType": "com.veryfront.model-call.input.captured",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/ModelCallInputCaptured",
+      "data": {
+        "model": {
+          "provider": "example",
+          "name": "model-a"
+        },
+        "input": {
+          "redacted": true,
+          "messages": []
+        }
+      },
+      "envelopeContext": {
+        "modelcallid": "model-call-a"
+      },
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.model-call.input.captured/legacy-model-descriptor",
+      "eventType": "com.veryfront.model-call.input.captured",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/ModelCallInputCaptured",
+      "data": {
+        "model": {
+          "id": "model-a",
+          "modelProvider": "example"
+        },
+        "input": {
+          "messages": []
+        }
+      },
+      "envelopeContext": {
+        "modelcallid": "model-call-a"
+      },
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.model-call.input.captured/malformed-input-namespace",
+      "eventType": "com.veryfront.model-call.input.captured",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/ModelCallInputCaptured",
+      "data": {
+        "model": {
+          "provider": "example",
+          "name": "model-a"
+        },
+        "input": []
+      },
+      "envelopeContext": {
+        "modelcallid": "model-call-a"
+      },
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.model-call.usage.recorded/billing-contamination",
+      "eventType": "com.veryfront.model-call.usage.recorded",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/ModelCallUsageRecorded",
+      "data": {
+        "model": {
+          "provider": "example",
+          "name": "model-a"
+        },
+        "tokens": {
+          "input": 10,
+          "output": 4
+        },
+        "costCredits": "1",
+        "scope": "call"
+      },
+      "envelopeContext": {
+        "modelcallid": "model-call-a"
+      },
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.model-call.usage.recorded/legacy-context-row-id",
+      "eventType": "com.veryfront.model-call.usage.recorded",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/ModelCallUsageRecorded",
+      "data": {
+        "model": {
+          "provider": "example",
+          "name": "model-a"
+        },
+        "tokens": {
+          "input": 10,
+          "output": 4
+        },
+        "modelCallContextEventId": 101,
+        "scope": "call"
+      },
+      "envelopeContext": {
+        "modelcallid": "model-call-a"
+      },
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.model-call.usage.recorded/negative-tokens",
+      "eventType": "com.veryfront.model-call.usage.recorded",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/ModelCallUsageRecorded",
+      "data": {
+        "model": {
+          "provider": "example",
+          "name": "model-a"
+        },
+        "tokens": {
+          "input": -1,
+          "output": 4
+        },
+        "scope": "call"
+      },
+      "envelopeContext": {
+        "modelcallid": "model-call-a"
+      },
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.model-call.usage.recorded/fractional-tokens",
+      "eventType": "com.veryfront.model-call.usage.recorded",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/ModelCallUsageRecorded",
+      "data": {
+        "model": {
+          "provider": "example",
+          "name": "model-a"
+        },
+        "tokens": {
+          "input": 1.5,
+          "output": 4
+        },
+        "scope": "call"
+      },
+      "envelopeContext": {
+        "modelcallid": "model-call-a"
+      },
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.model-call.usage.recorded/malformed-token-namespace",
+      "eventType": "com.veryfront.model-call.usage.recorded",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/ModelCallUsageRecorded",
+      "data": {
+        "model": {
+          "provider": "example",
+          "name": "model-a"
+        },
+        "tokens": [
+          10,
+          4
+        ],
+        "scope": "call"
+      },
+      "envelopeContext": {
+        "modelcallid": "model-call-a"
+      },
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.input-request.created/untyped-arbitrary-request",
+      "eventType": "com.veryfront.input-request.created",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/InputRequestCreated",
+      "data": {
+        "inputRequest": {
+          "id": "input-a",
+          "anything": {}
+        }
+      },
+      "envelopeContext": {},
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.input-request.created/created-noninitial-state",
+      "eventType": "com.veryfront.input-request.created",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/InputRequestCreated",
+      "data": {
+        "inputRequest": {
+          "id": "input-a",
+          "status": "submitted"
+        }
+      },
+      "envelopeContext": {},
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.input-request.updated/reference-without-change",
+      "eventType": "com.veryfront.input-request.updated",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/InputRequestUpdated",
+      "data": {
+        "inputRequest": {
+          "id": "input-a",
+          "uri": "https://example.test/input-requests/input-a"
+        }
+      },
+      "envelopeContext": {},
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.input-request.updated/empty-change",
+      "eventType": "com.veryfront.input-request.updated",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/InputRequestUpdated",
+      "data": {
+        "inputRequest": {
+          "id": "input-a",
+          "uri": "https://example.test/input-requests/input-a"
+        },
+        "changes": {}
+      },
+      "envelopeContext": {},
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.input-request.updated/unknown-change",
+      "eventType": "com.veryfront.input-request.updated",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/InputRequestUpdated",
+      "data": {
+        "inputRequest": {
+          "id": "input-a",
+          "uri": "https://example.test/input-requests/input-a"
+        },
+        "changes": {
+          "anything": true
+        }
+      },
+      "envelopeContext": {},
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.child-run.reported/missing-child-identity",
+      "eventType": "com.veryfront.child-run.reported",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/ChildRunReported",
+      "data": {
+        "childRun": {
+          "status": "running"
+        }
+      },
+      "envelopeContext": {
+        "runid": "run-a"
+      },
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.child-run.reported/missing-reported-status",
+      "eventType": "com.veryfront.child-run.reported",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/ChildRunReported",
+      "data": {
+        "childRun": {
+          "id": "run-child"
+        }
+      },
+      "envelopeContext": {
+        "runid": "run-a"
+      },
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.child-run.reported/unnormalized-status",
+      "eventType": "com.veryfront.child-run.reported",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/ChildRunReported",
+      "data": {
+        "childRun": {
+          "id": "run-child",
+          "status": "done"
+        }
+      },
+      "envelopeContext": {
+        "runid": "run-a"
+      },
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.child-run.reported/invented-parent",
+      "eventType": "com.veryfront.child-run.reported",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/ChildRunReported",
+      "data": {
+        "childRun": {
+          "id": "run-child",
+          "status": "running"
+        },
+        "parentRunId": "guessed-parent"
+      },
+      "envelopeContext": {
+        "runid": "run-a"
+      },
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.tool-call.refused/unsupported-refusal-reason",
+      "eventType": "com.veryfront.tool-call.refused",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/ToolCallRefused",
+      "data": {
+        "toolCallId": "call-a",
+        "reason": "generic_failure"
+      },
+      "envelopeContext": {},
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.tool-call.arguments.ended/invented-execution-outcome",
+      "eventType": "com.veryfront.tool-call.arguments.ended",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/ToolCallArgumentsEnded",
+      "data": {
+        "toolCallId": "call-a",
+        "succeeded": true
+      },
+      "envelopeContext": {},
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.tool-call.result.delivery.failed/invented-execution-outcome",
+      "eventType": "com.veryfront.tool-call.result.delivery.failed",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/ToolCallResultDeliveryFailed",
+      "data": {
+        "toolCallId": "call-a",
+        "executionFailed": true
+      },
+      "envelopeContext": {},
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.stream.closed/pause-claim",
+      "eventType": "com.veryfront.stream.closed",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/StreamClosed",
+      "data": {
+        "reason": "completed",
+        "runPaused": true
+      },
+      "envelopeContext": {},
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.run.requested/mandatory-runtime-snapshot-leak",
+      "eventType": "com.veryfront.run.requested",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/RunRequested",
+      "data": {
+        "messages": [],
+        "agentSource": {
+          "type": "branch",
+          "branch": "main"
+        },
+        "tools": [],
+        "context": [],
+        "integrationConnectionBindings": []
+      },
+      "envelopeContext": {
+        "runid": "run-a"
+      },
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.message.url.referenced/blank-segment-owner",
+      "eventType": "com.veryfront.message.url.referenced",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/MessageUrlReferenced",
+      "data": {
+        "messageId": "message-a",
+        "sourceId": "source-a",
+        "url": "https://example.test/source",
+        "contentId": ""
+      },
+      "envelopeContext": {},
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.message.document.referenced/blank-segment-owner",
+      "eventType": "com.veryfront.message.document.referenced",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/MessageDocumentReferenced",
+      "data": {
+        "messageId": "message-a",
+        "sourceId": "source-a",
+        "mediaType": "application/pdf",
+        "contentId": ""
+      },
+      "envelopeContext": {},
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.message.file.attached/blank-segment-owner",
+      "eventType": "com.veryfront.message.file.attached",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/MessageFileAttached",
+      "data": {
+        "messageId": "message-a",
+        "mediaType": "application/pdf",
+        "contentId": ""
+      },
+      "envelopeContext": {},
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.tool-call.refused/blank-refusal-reason",
+      "eventType": "com.veryfront.tool-call.refused",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/ToolCallRefused",
+      "data": {
+        "toolCallId": "call-a",
+        "reason": ""
+      },
+      "envelopeContext": {},
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.tool-call.refused/arbitrary-refusal-text",
+      "eventType": "com.veryfront.tool-call.refused",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/ToolCallRefused",
+      "data": {
+        "toolCallId": "call-a",
+        "reason": "Something went wrong"
+      },
+      "envelopeContext": {},
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.tool-call.refused/relative-refusal-code",
+      "eventType": "com.veryfront.tool-call.refused",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/ToolCallRefused",
+      "data": {
+        "toolCallId": "call-a",
+        "reason": "./policy/denied"
+      },
+      "envelopeContext": {},
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.tool-call.started/legacy-name-alias",
+      "eventType": "com.veryfront.tool-call.started",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/ToolCallStarted",
+      "data": {
+        "toolCallId": "call-a",
+        "toolName": "search",
+        "name": "search"
+      },
+      "envelopeContext": {},
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.tool-call.started/empty-toolName",
+      "eventType": "com.veryfront.tool-call.started",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/ToolCallStarted",
+      "data": {
+        "toolCallId": "call-a",
+        "toolName": ""
+      },
+      "envelopeContext": {},
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.tool-call.refused/legacy-name-alias",
+      "eventType": "com.veryfront.tool-call.refused",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/ToolCallRefused",
+      "data": {
+        "toolCallId": "call-a",
+        "reason": "permission_denied",
+        "toolName": "search",
+        "name": "search"
+      },
+      "envelopeContext": {},
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.tool-call.refused/empty-toolName",
+      "eventType": "com.veryfront.tool-call.refused",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/ToolCallRefused",
+      "data": {
+        "toolCallId": "call-a",
+        "reason": "permission_denied",
+        "toolName": ""
+      },
+      "envelopeContext": {},
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.model-call.usage.recorded/missing-scope",
+      "eventType": "com.veryfront.model-call.usage.recorded",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/ModelCallUsageRecorded",
+      "data": {
+        "model": {
+          "provider": "example",
+          "name": "model-a"
+        },
+        "tokens": {
+          "input": 10,
+          "output": 4
+        }
+      },
+      "envelopeContext": {
+        "modelcallid": "model-call-a"
+      },
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.model-call.usage.recorded/unsupported-scope",
+      "eventType": "com.veryfront.model-call.usage.recorded",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/ModelCallUsageRecorded",
+      "data": {
+        "model": {
+          "provider": "example",
+          "name": "model-a"
+        },
+        "tokens": {
+          "input": 10,
+          "output": 4
+        },
+        "scope": "unknown"
+      },
+      "envelopeContext": {
+        "modelcallid": "model-call-a"
+      },
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.model-call.usage.recorded/attempt-without-exact-identity",
+      "eventType": "com.veryfront.model-call.usage.recorded",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/ModelCallUsageRecorded",
+      "data": {
+        "model": {
+          "provider": "example",
+          "name": "model-a"
+        },
+        "tokens": {
+          "input": 10,
+          "output": 4
+        },
+        "scope": "attempt"
+      },
+      "envelopeContext": {
+        "modelcallid": "model-call-a"
+      },
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.model-call.usage.recorded/attempt-with-blank-identity",
+      "eventType": "com.veryfront.model-call.usage.recorded",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/ModelCallUsageRecorded",
+      "data": {
+        "model": {
+          "provider": "example",
+          "name": "model-a"
+        },
+        "tokens": {
+          "input": 10,
+          "output": 4
+        },
+        "scope": "attempt"
+      },
+      "envelopeContext": {
+        "modelcallid": "model-call-a",
+        "attemptid": ""
+      },
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.model-call.usage.recorded/cacheRead-exceeds-base-counter",
+      "eventType": "com.veryfront.model-call.usage.recorded",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/ModelCallUsageRecorded",
+      "data": {
+        "model": {
+          "provider": "example",
+          "name": "model-a"
+        },
+        "tokens": {
+          "input": 10,
+          "output": 4,
+          "cacheRead": 11
+        },
+        "scope": "call"
+      },
+      "envelopeContext": {
+        "modelcallid": "model-call-a"
+      },
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.model-call.usage.recorded/cacheWrite-exceeds-base-counter",
+      "eventType": "com.veryfront.model-call.usage.recorded",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/ModelCallUsageRecorded",
+      "data": {
+        "model": {
+          "provider": "example",
+          "name": "model-a"
+        },
+        "tokens": {
+          "input": 10,
+          "output": 4,
+          "cacheWrite": 11
+        },
+        "scope": "call"
+      },
+      "envelopeContext": {
+        "modelcallid": "model-call-a"
+      },
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.model-call.usage.recorded/reasoning-exceeds-base-counter",
+      "eventType": "com.veryfront.model-call.usage.recorded",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/ModelCallUsageRecorded",
+      "data": {
+        "model": {
+          "provider": "example",
+          "name": "model-a"
+        },
+        "tokens": {
+          "input": 10,
+          "output": 4,
+          "reasoning": 5
+        },
+        "scope": "call"
+      },
+      "envelopeContext": {
+        "modelcallid": "model-call-a"
+      },
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.input-request.updated/contradictory-snapshot-changes",
+      "eventType": "com.veryfront.input-request.updated",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/InputRequestUpdated",
+      "data": {
+        "inputRequest": {
+          "id": "input-a",
+          "status": "submitted"
+        },
+        "changes": {
+          "status": "cancelled"
+        }
+      },
+      "envelopeContext": {},
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.input-request.updated/snapshot-with-redundant-changes",
+      "eventType": "com.veryfront.input-request.updated",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/InputRequestUpdated",
+      "data": {
+        "inputRequest": {
+          "id": "input-a",
+          "status": "submitted"
+        },
+        "changes": {
+          "status": "submitted"
+        }
+      },
+      "envelopeContext": {},
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.stream.closed/blank-close-reason",
+      "eventType": "com.veryfront.stream.closed",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/StreamClosed",
+      "data": {
+        "reason": ""
+      },
+      "envelopeContext": {},
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.stream.closed/arbitrary-close-text",
+      "eventType": "com.veryfront.stream.closed",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/StreamClosed",
+      "data": {
+        "reason": "The stream was closed"
+      },
+      "envelopeContext": {},
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.stream.closed/reverse-dns-extension-key",
+      "eventType": "com.veryfront.stream.closed",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/StreamClosed",
+      "data": {
+        "reason": "completed",
+        "extensions": {
+          "org.example": {}
+        }
+      },
+      "envelopeContext": {},
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.input-request.created/typed-form/empty-tool-call-correlation",
+      "eventType": "com.veryfront.input-request.created",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/InputRequestCreated",
+      "data": {
+        "inputRequest": {
+          "id": "input-a",
+          "status": "open",
+          "title": "Confirm location",
+          "fields": [
+            {
+              "name": "location",
+              "type": "text",
+              "required": true
+            }
+          ],
+          "toolCallId": ""
+        }
+      },
+      "envelopeContext": {},
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.input-request.updated/typed-reference-changes/correlation-reassignment",
+      "eventType": "com.veryfront.input-request.updated",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/InputRequestUpdated",
+      "data": {
+        "inputRequest": {
+          "id": "input-a",
+          "uri": "https://example.test/input-requests/input-a"
+        },
+        "changes": {
+          "status": "submitted",
+          "response": {
+            "location": "Stockholm"
+          },
+          "toolCallId": "another-call"
+        }
+      },
+      "envelopeContext": {},
+      "expectValid": false
+    },
+    {
+      "id": "com.veryfront.input-request.created/typed-form/nonstring-tool-call-correlation",
+      "eventType": "com.veryfront.input-request.created",
+      "schemaRef": "urn:veryfront:run-events:target:payloads:1#/$defs/InputRequestCreated",
+      "data": {
+        "inputRequest": {
+          "id": "input-a",
+          "status": "open",
+          "title": "Confirm location",
+          "fields": [
+            {
+              "name": "location",
+              "type": "text",
+              "required": true
+            }
+          ],
+          "toolCallId": 42
+        }
+      },
+      "envelopeContext": {},
+      "expectValid": false
+    }
+  ],
+  "coverage": {
+    "eventTypes": 36,
+    "positiveCases": 99,
+    "negativeCases": 271
+  }
+}
