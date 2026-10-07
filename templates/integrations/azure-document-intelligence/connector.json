@@ -36,7 +36,7 @@
     {
       "id": "azure-document-intelligence__analyze_invoice",
       "name": "Analyze Invoice",
-      "description": "Analyze invoice",
+      "description": "Start invoice analysis",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -68,7 +68,7 @@
     {
       "id": "azure-document-intelligence__analyze_receipt",
       "name": "Analyze Receipt",
-      "description": "Analyze receipt",
+      "description": "Start receipt analysis",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -100,7 +100,7 @@
     {
       "id": "azure-document-intelligence__analyze_layout",
       "name": "Analyze Layout",
-      "description": "Analyze layout",
+      "description": "Start document layout analysis",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -156,7 +156,7 @@
     {
       "id": "azure-document-intelligence__analyze_read",
       "name": "Analyze Read (OCR)",
-      "description": "Extract document text",
+      "description": "Start document text extraction",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",

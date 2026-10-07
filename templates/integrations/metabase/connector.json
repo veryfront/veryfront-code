@@ -116,7 +116,7 @@
     {
       "id": "metabase__search",
       "name": "Search",
-      "description": "Search",
+      "description": "Search questions, dashboards, collections, and tables",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",

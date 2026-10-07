@@ -28,7 +28,7 @@
     {
       "id": "tavily__search",
       "name": "Search",
-      "description": "Search",
+      "description": "Search web",
       "requiresWrite": false,
       "endpoint": {
         "method": "POST",
@@ -83,7 +83,7 @@
     {
       "id": "tavily__extract",
       "name": "Extract",
-      "description": "Extract",
+      "description": "Extract URL content",
       "requiresWrite": false,
       "endpoint": {
         "method": "POST",
@@ -110,7 +110,7 @@
     {
       "id": "tavily__crawl",
       "name": "Crawl",
-      "description": "Crawl",
+      "description": "Crawl website",
       "requiresWrite": false,
       "endpoint": {
         "method": "POST",

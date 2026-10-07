@@ -42,12 +42,13 @@ function getLocalToolIds(connectorName: string, tools: { id?: string }[]): (stri
 }
 
 describe("integration endpoint specs", () => {
-  it("keeps every generated tool summary within six words", () => {
+  it("keeps every generated tool summary between two and six words", () => {
     for (const connector of connectors) {
       for (const tool of connector.tools) {
         assert(
-          tool.description.trim().split(/\s+/).length <= 6,
-          `${connector.name}:${tool.id} exceeds the six-word summary limit`,
+          tool.description.trim().split(/\s+/).length >= 2 &&
+            tool.description.trim().split(/\s+/).length <= 6,
+          `${connector.name}:${tool.id} must use an action/resource summary of two to six words`,
         );
       }
     }

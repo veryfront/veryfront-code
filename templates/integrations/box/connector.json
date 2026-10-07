@@ -157,7 +157,7 @@
     {
       "id": "box__search",
       "name": "Search",
-      "description": "Search",
+      "description": "Search files and folders",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",

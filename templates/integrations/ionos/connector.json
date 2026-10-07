@@ -176,7 +176,7 @@
     {
       "id": "ionos__stop_server",
       "name": "Stop Server",
-      "description": "Stop server",
+      "description": "Hard power off server",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",

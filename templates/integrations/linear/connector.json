@@ -246,7 +246,7 @@
     {
       "id": "linear__delete_issue",
       "name": "Delete Issue",
-      "description": "Delete issue",
+      "description": "Archive or delete issue",
       "requiresWrite": true,
       "endpoint": {
         "type": "graphql",

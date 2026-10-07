@@ -4790,7 +4790,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "azure-document-intelligence__analyze_invoice",
       "name": "Analyze Invoice",
-      "description": "Analyze invoice",
+      "description": "Start invoice analysis",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -4824,7 +4824,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "azure-document-intelligence__analyze_receipt",
       "name": "Analyze Receipt",
-      "description": "Analyze receipt",
+      "description": "Start receipt analysis",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -4858,7 +4858,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "azure-document-intelligence__analyze_layout",
       "name": "Analyze Layout",
-      "description": "Analyze layout",
+      "description": "Start document layout analysis",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -4918,7 +4918,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "azure-document-intelligence__analyze_read",
       "name": "Analyze Read (OCR)",
-      "description": "Extract document text",
+      "description": "Start document text extraction",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -7166,7 +7166,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "box__search",
       "name": "Search",
-      "description": "Search",
+      "description": "Search files and folders",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -16461,7 +16461,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "exa__search",
       "name": "Search",
-      "description": "Search",
+      "description": "Search web",
       "requiresWrite": false,
       "endpoint": {
         "method": "POST",
@@ -29970,7 +29970,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "ionos__stop_server",
       "name": "Stop Server",
-      "description": "Stop server",
+      "description": "Hard power off server",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -32862,7 +32862,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "linear__delete_issue",
       "name": "Delete Issue",
-      "description": "Delete issue",
+      "description": "Archive or delete issue",
       "requiresWrite": true,
       "endpoint": {
         "type": "graphql",
@@ -33549,7 +33549,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "metabase__search",
       "name": "Search",
-      "description": "Search",
+      "description": "Search questions, dashboards, collections, and tables",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -54005,7 +54005,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "tavily__search",
       "name": "Search",
-      "description": "Search",
+      "description": "Search web",
       "requiresWrite": false,
       "endpoint": {
         "method": "POST",
@@ -54055,7 +54055,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "tavily__extract",
       "name": "Extract",
-      "description": "Extract",
+      "description": "Extract URL content",
       "requiresWrite": false,
       "endpoint": {
         "method": "POST",
@@ -54081,7 +54081,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "tavily__crawl",
       "name": "Crawl",
-      "description": "Crawl",
+      "description": "Crawl website",
       "requiresWrite": false,
       "endpoint": {
         "method": "POST",

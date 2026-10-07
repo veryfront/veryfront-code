@@ -28,7 +28,7 @@
     {
       "id": "exa__search",
       "name": "Search",
-      "description": "Search",
+      "description": "Search web",
       "requiresWrite": false,
       "endpoint": {
         "method": "POST",
