@@ -126,6 +126,8 @@ export type AgentVeryfrontMcpServerKind = "veryfront-api" | "veryfront-studio";
 /** Veryfront-owned MCP server available to an agent. */
 export interface AgentVeryfrontMcpServerConfig {
   kind: AgentVeryfrontMcpServerKind;
+  /** Require Studio availability for a Studio preset; defaults to true. */
+  required?: boolean;
   id?: string;
   toolPolicy?: AgentMcpToolPolicy;
 }

@@ -111,8 +111,15 @@ export function resolveMcpServers(
         return [];
       }
       const toolPolicy = mergeMcpToolPolicies(hostServer.toolPolicy, agentServer.toolPolicy);
+      const required =
+        hostServer.kind === "veryfront-studio" && agentServer.kind === "veryfront-studio"
+          ? hostServer.required === true || agentServer.required === true
+            ? true
+            : agentServer.required ?? hostServer.required
+          : undefined;
       return [{
         ...hostServer,
+        ...(required === undefined ? {} : { required }),
         ...(toolPolicy === undefined ? {} : { toolPolicy }),
       }];
     });

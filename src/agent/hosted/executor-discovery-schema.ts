@@ -103,6 +103,7 @@ export const getExecutorAgentDefinitionSchema = defineSchema((v) => {
       v.object({
         kind: v.enum(["veryfront-api", "veryfront-studio"] as const),
         id: getExecutorDiscoveryIdSchema().optional(),
+        required: v.boolean().optional(),
         toolPolicy: v.object({
           allow: ids().optional(),
           deny: ids().optional(),
