@@ -241,16 +241,26 @@ type Run = RunsContractComponents["schemas"]["Run"];
 
 Executors accept a detached dispatch once through the HTTP heartbeat endpoint.
 Configure the SDK transport to use the issued execution renewal credential,
-then send the typed header before starting work:
+and disable retries for this one-shot request:
 
 ```ts
-await sdk.createRunHeartbeat({
+const executionRenewalToken = process.env.EXECUTION_RENEWAL_TOKEN!;
+const executorSdk = createRunsSdk({
+  transport: createRunsApiTransport({
+    baseUrl: "<RUNS_API_ORIGIN>",
+    getToken: () => executionRenewalToken,
+    retry: { maxRetries: 0, initialDelay: 0, maxDelay: 0 },
+  }),
+});
+
+await executorSdk.createRunHeartbeat({
   path: { run_id: "11111111-1111-4111-8111-111111111111" },
   headers: { "x-veryfront-run-dispatch-acceptance": "true" },
   body: { lease_duration_seconds: 60 },
 });
 ```
 
+A lost response leaves acceptance uncertain. Do not retry the acceptance request.
 A duplicate acceptance returns 409. Ordinary heartbeats omit this header.
 User tokens and project API keys do not grant heartbeat execution authority.
 Dispatch acceptance is HTTP bootstrap metadata; GraphQL and MCP retain ordinary
@@ -310,7 +320,7 @@ describe the run.
 
 ## Runs target CLI reference
 
-Use `veryfront project runs <command>` with an API that serves the Runs 0.8.7
+Use `veryfront project runs <command>` with an API that serves the Runs 0.8.8
 contract. The CLI calls the typed Runs SDK. Target deployment and live parity
 are tracked separately from the fixture tests for these commands.
 
@@ -454,4 +464,4 @@ schedule creation both use `create`. Existing local `task`, `workflow`, `eval`,
 and `schedule` execution commands retain their local behavior. The existing
 `schedule run --remote` legacy source-name resolver stays until the coordinated
 consumer cutover; use the target `create` invocation with a saved schedule UUID
-for the 0.8.7 contract. These tests do not prove deployed parity.
+for the 0.8.8 contract. These tests do not prove deployed parity.
