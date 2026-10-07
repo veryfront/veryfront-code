@@ -772,11 +772,12 @@ describe("workflow capability transport boundary", () => {
         withMockFetch(async (input, init) => {
           const url = input instanceof Request ? input.url : String(input);
           const headers = new Headers(
-            init?.headers ?? (input instanceof Request ? input.headers : undefined),
+            observeFetchRequestInit(init).headers ??
+              (input instanceof Request ? input.headers : undefined),
           );
           calls.push({
             url,
-            redirect: init?.redirect,
+            redirect: observeFetchRequestInit(init).redirect,
             authorization: headers.get("authorization"),
             writer: headers.get("x-veryfront-run-event-token"),
           });
@@ -4664,7 +4665,9 @@ describe("server/handlers/request/project-run-execute.handler", () => {
                 method,
                 pathname: url.pathname,
                 body: requestBody,
-                idempotencyKey: new Headers(init?.headers).get("Idempotency-Key"),
+                idempotencyKey: new Headers(observeFetchRequestInit(init).headers).get(
+                  "Idempotency-Key",
+                ),
               });
 
               if (method === "POST" && url.pathname.endsWith("/runs")) {
@@ -4853,7 +4856,9 @@ describe("server/handlers/request/project-run-execute.handler", () => {
                 method,
                 pathname: url.pathname,
                 body: requestBody,
-                idempotencyKey: new Headers(init?.headers).get("Idempotency-Key"),
+                idempotencyKey: new Headers(observeFetchRequestInit(init).headers).get(
+                  "Idempotency-Key",
+                ),
               });
 
               if (method === "POST" && url.pathname.endsWith("/runs")) {
@@ -11195,6 +11200,7 @@ describe("server/handlers/request/project-run-execute.handler manual pause (#258
       onDestroy?: () => void;
       sleep?: (ms: number) => Promise<void>;
       workflowResumeTimeoutMs?: number;
+      workflowPauseDecisionTimeoutMs?: number;
     } = {},
   ): ProjectRunExecuteHandler {
     return new ProjectRunExecuteHandler(createDeps({
@@ -11225,6 +11231,9 @@ describe("server/handlers/request/project-run-execute.handler manual pause (#258
       },
       now: options.now ?? (() => 0),
       sleep: options.sleep ?? ((ms: number) => delay(Math.min(ms, 10))),
+      ...(options.workflowPauseDecisionTimeoutMs === undefined
+        ? {}
+        : { workflowPauseDecisionTimeoutMs: options.workflowPauseDecisionTimeoutMs }),
       ...(options.workflowResumeTimeoutMs === undefined
         ? {}
         : { workflowResumeTimeoutMs: options.workflowResumeTimeoutMs }),
@@ -11566,6 +11575,237 @@ describe("server/handlers/request/project-run-execute.handler manual pause (#258
     assertEquals(pauseAckCalls(urls).length, 3);
   });
 
+  it("holds persistent 401, 403, and 404 execute replies for a later valid manual resume (#2770)", async () => {
+    for (const status of [401, 403, 404]) {
+      const backend = new SharedMemoryBackend();
+      const calls: string[] = [];
+      const definition = threeSteps(calls);
+      let authorized = false;
+      let requests = 0;
+      await withMockFetch(async () => {
+        requests++;
+        // Bound the regression on the old implementation without cancelling the run.
+        if (!authorized && requests > 3) return Response.json({ stop: false });
+        return authorized
+          ? Response.json({ stop: false })
+          : Response.json({ stop: false }, { status });
+      }, async () => {
+        const held = await dispatch(createHandler(backend, definition));
+        assertEquals(held.status, "waiting");
+        assertEquals(held.waiting_reason, "manual_pause");
+        assertEquals(calls, ["first"]);
+        assertEquals(requests, 1);
+        assertEquals((await backend.getRun(runId))?.status, "waiting");
+        authorized = true;
+        const resumed = await dispatch(createHandler(backend, definition), { type: "manual" });
+        assertEquals(resumed.success, true);
+        assertEquals(calls, ["first", "second", "third"]);
+      });
+    }
+  });
+
+  it("bounds transient execute pause failures and resumes without repeating a step (#2770)", async () => {
+    const backend = new SharedMemoryBackend();
+    const calls: string[] = [];
+    const definition = threeSteps(calls);
+    const controller = new AbortController();
+    let authorized = false;
+    const watchdog = setTimeout(() => controller.abort(), 1_000);
+    try {
+      await withMockFetch(async () => {
+        return authorized
+          ? Response.json({ stop: false })
+          : Response.json({ stop: false }, { status: 503 });
+      }, async () => {
+        const held = await dispatch(
+          createHandler(backend, definition, {
+            workflowPauseDecisionTimeoutMs: 20,
+          }),
+          undefined,
+          controller.signal,
+        );
+        assertEquals(held.status, "waiting");
+        assertEquals(held.waiting_reason, "manual_pause");
+        assertEquals(calls, ["first"]);
+        assertEquals((await backend.getRun(runId))?.status, "waiting");
+        authorized = true;
+        const resumed = await dispatch(createHandler(backend, definition), { type: "manual" });
+        assertEquals(resumed.success, true);
+        assertEquals(calls, ["first", "second", "third"]);
+      });
+    } finally {
+      clearTimeout(watchdog);
+    }
+  });
+
+  it("ends execute pause backoff at the deadline and releases its client (#2770)", async () => {
+    const backend = new SharedMemoryBackend();
+    const calls: string[] = [];
+    const controller = new AbortController();
+    const backoff = Promise.withResolvers<void>();
+    let requests = 0;
+    let destroyed = false;
+    const watchdog = setTimeout(() => controller.abort(), 1_000);
+    try {
+      await withMockFetch(async () => {
+        requests++;
+        return Response.json({ stop: false }, { status: 409 });
+      }, async () => {
+        const held = await dispatch(
+          createHandler(backend, threeSteps(calls), {
+            workflowPauseDecisionTimeoutMs: 20,
+            onDestroy: () => {
+              destroyed = true;
+            },
+            sleep: (ms) => ms === 30_000 ? backoff.promise : delay(Math.min(ms, 10)),
+          }),
+          undefined,
+          controller.signal,
+        );
+        assertEquals(held.status, "waiting");
+        assertEquals(held.waiting_reason, "manual_pause");
+        assertEquals(destroyed, true);
+        assertEquals(calls, ["first"]);
+        assertEquals(requests, 1);
+        backoff.resolve();
+        await delay(30);
+        assertEquals(requests, 1);
+      });
+    } finally {
+      clearTimeout(watchdog);
+      backoff.resolve();
+    }
+  });
+
+  it("bounds execute pause decisions after project code replaces the controller signal getter (#2770)", async () => {
+    const descriptor = Object.getOwnPropertyDescriptor(AbortController.prototype, "signal")!;
+    const neverStopped = new AbortController().signal;
+    const controller = new AbortController();
+    const requestSignal = controller.signal;
+    const backend = new SharedMemoryBackend();
+    const calls: string[] = [];
+    const backoff = Promise.withResolvers<void>();
+    const definition = workflow({
+      id: "publish",
+      steps: [
+        step("first", {
+          tool: tool({
+            id: "replace-controller-signal",
+            description: "Replace the controller signal getter before the pause boundary",
+            inputSchema: defineSchema((v) => v.object({}))(),
+            execute: () => {
+              calls.push("first");
+              Object.defineProperty(AbortController.prototype, "signal", {
+                ...descriptor,
+                get: () => neverStopped,
+              });
+              return Promise.resolve({ first: true });
+            },
+          }),
+        }),
+        dependsOn(countingStep("second", calls), "first"),
+      ],
+    }).definition as unknown as WorkflowDefinition;
+    const watchdog = setTimeout(() => controller.abort(), 1_000);
+    try {
+      await withMockFetch(async () => Response.json({ stop: false }, { status: 409 }), async () => {
+        const held = await dispatch(
+          createHandler(backend, definition, {
+            workflowPauseDecisionTimeoutMs: 20,
+            sleep: (ms) => ms === 30_000 ? backoff.promise : delay(Math.min(ms, 10)),
+          }),
+          undefined,
+          requestSignal,
+        );
+        assertEquals(held.status, "waiting");
+        assertEquals(held.waiting_reason, "manual_pause");
+        assertEquals(calls, ["first"]);
+        assertEquals((await backend.getRun(runId))?.status, "waiting");
+      });
+    } finally {
+      Object.defineProperty(AbortController.prototype, "signal", descriptor);
+      clearTimeout(watchdog);
+      backoff.resolve();
+    }
+  });
+
+  it("holds a timed-out manual resume after project code replaces the controller signal getter (#2770)", async () => {
+    const descriptor = Object.getOwnPropertyDescriptor(AbortController.prototype, "signal")!;
+    const neverStopped = new AbortController().signal;
+    const backend = new SharedMemoryBackend();
+    const calls: string[] = [];
+    const definition = threeSteps(calls);
+    const reply = Promise.withResolvers<Response>();
+    let resuming = false;
+    let resumes = 0;
+    try {
+      await withMockFetch(() => {
+        return resuming ? reply.promise : Promise.resolve(Response.json({ stop: true }));
+      }, async () => {
+        await dispatch(createHandler(backend, definition));
+        resuming = true;
+        const held = await dispatch(
+          createHandler(backend, definition, {
+            workflowResumeTimeoutMs: 20,
+            onDiscover: () =>
+              Object.defineProperty(AbortController.prototype, "signal", {
+                ...descriptor,
+                get: () => neverStopped,
+              }),
+            onResume: () => {
+              resumes++;
+            },
+          }),
+          { type: "manual" },
+        );
+        assertEquals(held.status, "waiting");
+        reply.resolve(Response.json({ stop: false }));
+        await delay(100);
+        assertEquals(resumes, 0);
+        assertEquals(calls, ["first"]);
+        assertEquals((await backend.getRun(runId))?.status, "waiting");
+      });
+    } finally {
+      Object.defineProperty(AbortController.prototype, "signal", descriptor);
+      reply.resolve(Response.json({ stop: true }));
+    }
+  });
+
+  it("holds an execute boundary when a continue reply arrives after its deadline (#2770)", async () => {
+    const backend = new SharedMemoryBackend();
+    const calls: string[] = [];
+    const controller = new AbortController();
+    const reply = Promise.withResolvers<Response>();
+    const watchdog = setTimeout(() => controller.abort(), 1_000);
+    try {
+      await withMockFetch(() => reply.promise, async () => {
+        const pending = dispatch(
+          createHandler(backend, threeSteps(calls), {
+            workflowPauseDecisionTimeoutMs: 20,
+          }),
+          undefined,
+          controller.signal,
+        );
+        // The old implementation needs a reply to end its unbounded wait.
+        const lateReply = setTimeout(() => reply.resolve(Response.json({ stop: false })), 200);
+        try {
+          const held = await pending;
+          assertEquals(held.status, "waiting");
+          assertEquals(held.waiting_reason, "manual_pause");
+          reply.resolve(Response.json({ stop: false }));
+          await delay(30);
+          assertEquals(calls, ["first"]);
+          assertEquals((await backend.getRun(runId))?.status, "waiting");
+        } finally {
+          clearTimeout(lateReply);
+        }
+      });
+    } finally {
+      clearTimeout(watchdog);
+      reply.resolve(Response.json({ stop: false }));
+    }
+  });
+
   it("keeps a committed pause boundary while replies are lost, rejected, or malformed", async () => {
     for (const reply of ["transport", "unauthorized", "malformed"] as const) {
       const backend = new SharedMemoryBackend();
@@ -11583,7 +11823,7 @@ describe("server/handlers/request/project-run-execute.handler manual pause (#258
         assertEquals(payload.waiting_reason, "manual_pause", reply);
       });
       assertEquals(calls, ["first"], reply);
-      assertEquals(requests, 6, reply);
+      assertEquals(requests, reply === "unauthorized" ? 1 : 6, reply);
     }
   });
 
@@ -11685,7 +11925,7 @@ describe("server/handlers/request/project-run-execute.handler manual pause (#258
     try {
       await withMockFetch(() => {
         requests++;
-        return Promise.resolve(Response.json({ stop: true }, { status: 401 }));
+        return Promise.resolve(Response.json({ stop: true }, { status: 409 }));
       }, async () => {
         let guard: ReturnType<typeof setTimeout> | undefined;
         const outcome = await Promise.race([
@@ -11724,7 +11964,7 @@ describe("server/handlers/request/project-run-execute.handler manual pause (#258
         async () =>
           ++requests === 1
             ? Response.json({ stop: true })
-            : Response.json({ stop: false }, { status: 401 }),
+            : Response.json({ stop: false }, { status: 409 }),
         async () => {
           await dispatch(createHandler(backend, definition));
           const pending = dispatch(
@@ -11782,7 +12022,7 @@ describe("server/handlers/request/project-run-execute.handler manual pause (#258
       await withMockFetch(() => {
         // Project code running before the boundary replaces the global race.
         Promise.race = neverSettles as unknown as typeof Promise.race;
-        return Promise.resolve(Response.json({ stop: true }, { status: 401 }));
+        return Promise.resolve(Response.json({ stop: true }, { status: 409 }));
       }, async () => {
         let guard: ReturnType<typeof setTimeout> | undefined;
         const outcome = await hostRace.call(Promise, [
