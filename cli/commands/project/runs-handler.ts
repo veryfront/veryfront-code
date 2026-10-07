@@ -197,12 +197,47 @@ export async function createProjectRunsSdk(args: ParsedArgs, projectDir: string)
     apiUrl = candidate.validationEnv.apiUrl ?? resolveCliApiUrl(candidate.validationEnv);
     token = candidate.apiToken;
   }
+  const terminalTokenFile = args["terminal-token-file"];
+  let terminalToken: string | undefined;
+  let terminalPath: string | undefined;
+  if (terminalTokenFile !== undefined) {
+    const invocation = parseRunsInvocation(args);
+    const trust = resolveApiUrlTrust(getEnvironmentConfig(), await readConfigJsonFile(projectDir));
+    if (trust.repositorySteered) {
+      throw new UntrustedApiUrlCredentialError(
+        "Set the API endpoint explicitly in your process environment before supplying a terminal token file.",
+      );
+    }
+    try {
+      terminalToken = (await Deno.readTextFile(String(terminalTokenFile))).trim();
+    } catch {
+      throw INVALID_ARGUMENT.create({ detail: "Could not read the terminal token file." });
+    }
+    if (!terminalToken || /[\r\n]/.test(terminalToken)) {
+      throw INVALID_ARGUMENT.create({
+        detail: "Supply a terminal token file containing one token.",
+      });
+    }
+    const runId = invocation.input.path?.run_id;
+    if (typeof runId !== "string") {
+      throw INVALID_ARGUMENT.create({ detail: "Supply --run-id for terminal authority." });
+    }
+    terminalPath = `/runs/${encodeURIComponent(runId)}/${args._[2]}`;
+  }
+  const transport = createRunsApiTransport({
+    baseUrl: apiUrl,
+    getToken: () => token,
+    retry: { maxRetries: 0, initialDelay: 0, maxDelay: 0 },
+    authMode: mode,
+  });
   return createRunsSdk({
-    transport: createRunsApiTransport({
-      baseUrl: apiUrl,
-      getToken: () => token,
-      retry: { maxRetries: 0, initialDelay: 0, maxDelay: 0 },
-      authMode: mode,
-    }),
+    transport: terminalToken === undefined ? transport : {
+      request(path, init) {
+        if (path !== terminalPath || init?.method !== "POST") return transport.request(path, init);
+        const headers = new Headers(init.headers);
+        headers.set("X-Veryfront-Run-Terminal-Token", terminalToken!);
+        return transport.request(path, { ...init, headers });
+      },
+    },
   });
 }

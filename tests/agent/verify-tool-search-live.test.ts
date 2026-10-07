@@ -1,20 +1,20 @@
-import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { it } from "#veryfront/testing/bdd.ts";
 import type { AgentResponse } from "#veryfront/agent";
 import type { ModelRuntime } from "#veryfront/provider";
-import {
+import type { HiMeasurement, ToolSearchLiveProof } from "../../scripts/verify-tool-search-live.ts";
+
+const { assertEquals, assertRejects, assertThrows } = await import("#veryfront/testing/assert.ts");
+await import("#veryfront/schemas/_test-setup.ts");
+const {
   createDirectModelRuntime,
   extractHiMeasurement,
   extractToolSearchLiveProof,
-  type HiMeasurement,
   parseToolSearchLiveArgs,
   runHiMeasurement,
   runToolSearchLiveProof,
-  type ToolSearchLiveProof,
   writeHiMeasurement,
   writeToolSearchLiveProof,
-} from "../../scripts/verify-tool-search-live.ts";
+} = await import("../../scripts/verify-tool-search-live.ts");
 
 const TARGET_DESCRIPTION = "Read the release marker for this verification run.";
 

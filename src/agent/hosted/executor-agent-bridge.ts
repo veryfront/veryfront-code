@@ -84,6 +84,7 @@ export function createExecutorAgentOperations(options: {
               options.startStream({
                 messages: request.messages,
                 abortSignal: context.signal,
+                ...(request.runtimeObservations ? { runtimeObservations: true } : {}),
               });
             return request.toolCallAdmissions ? runWithToolCallOccurrences(start) : start();
           },
@@ -141,6 +142,8 @@ export function createExecutorHostedChatRuntimeAgent(options: {
   timeoutMs?: number;
   /** Trusted broker opt-in, enabled only with an acknowledging private writer. */
   toolCallAdmissions?: true;
+  /** Trusted broker opt-in, enabled only with an acknowledging private writer. */
+  runtimeObservations?: true;
 }): HostedChatRuntimeAgent {
   const handle = parseExecutorAgentData(
     getExecutorPreparedRuntimeHandleSchema(),
@@ -156,6 +159,7 @@ export function createExecutorHostedChatRuntimeAgent(options: {
           preparedRuntimeHandle: handle,
           messages: input.messages,
           ...(options.toolCallAdmissions ? { toolCallAdmissions: true } : {}),
+          ...(options.runtimeObservations ? { runtimeObservations: true } : {}),
         });
         const payload = executorAgentJson(request, "EXECUTOR_AGENT_INPUT_TOO_LARGE");
         input.abortSignal.throwIfAborted();
@@ -230,6 +234,7 @@ export function createExecutorHostedChatRuntimeAgent(options: {
             const chunks = createChatUiMessageStreamFromDataStream({ stream }, {
               ...streamOptions,
               privateToolCallAdmissions: options.toolCallAdmissions === true,
+              privateRuntimeObservations: options.runtimeObservations === true,
             })
               [Symbol.asyncIterator]();
             const uiIterator: AsyncIterableIterator<ChatUiMessageChunk> = {

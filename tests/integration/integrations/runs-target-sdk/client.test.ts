@@ -43,7 +43,7 @@ export type RunsSdkTypeChecks = [
     >
   >,
   Expect<Equal<RunsOutput<"getRun">, Schemas["Run"]>>,
-  Expect<Equal<RunsOutput<"createRun">, Schemas["CreatedRun"]>>,
+  Expect<Equal<RunsOutput<"createRun">, Schemas["CreateRunResult"]>>,
   Expect<Equal<RunsOutput<"deleteRun">, undefined>>,
   Expect<Equal<RunsResult<"streamRunEvents">, AsyncIterable<RunStreamFrame>>>,
   Expect<Equal<RunStreamFrame["event"], CanonicalRunStreamFrame>>,
@@ -103,8 +103,7 @@ function problemResponse(problem: RunsProblem): Response {
   });
 }
 
-// The immutable 0.8.2 fixture has bare payload SSE. The current API serves
-// the shared five-field frame; keep its source pin untouched and test this wire shape.
+// Stream fixtures use the canonical five-field frame served by the API.
 function canonicalFrame(
   payload: { type: string; [key: string]: unknown },
   id: number,
@@ -130,10 +129,60 @@ function streamResponse(chunks: string[]): Response {
 }
 
 describe("Runs target SDK", () => {
+  it("sends explicit terminal outcomes using ordinary caller credentials", async () => {
+    const succeeded = RUNS_OPERATION_FIXTURES.succeedRun.response.body;
+    const failed = RUNS_OPERATION_FIXTURES.failRun.response.body;
+    const { transport, requests } = createFixtureTransport([
+      fixtureResponse("succeedRun"),
+      fixtureResponse("failRun"),
+    ], () => "ordinary-user-token");
+    assertEquals(succeeded.status, "completed");
+    assertEquals(failed.status, "failed");
+    assertEquals(failed.output, null);
+    assertEquals(failed.error, {
+      code: "TASK_FAILED",
+      message: "The task could not be completed.",
+    });
+    const sdk = createRunsSdk({ transport });
+    const output = { nested: { nullable: null, values: [false, 0, ""] } };
+    const error = { code: "TASK_FAILED", message: "Task failed", details: { nullable: null } };
+    assertEquals(
+      await sdk.succeedRun({
+        path: { run_id: RUN_ID },
+        headers: { "Idempotency-Key": "success-key" },
+        body: { output },
+      }),
+      succeeded,
+    );
+    assertEquals(
+      await sdk.failRun({
+        path: { run_id: RUN_ID },
+        headers: { "Idempotency-Key": "failure-key" },
+        body: { error },
+      }),
+      failed,
+    );
+    assertEquals(requests.map((request) => [request.method, request.url]), [
+      ["POST", `${BASE_URL}/runs/${RUN_ID}/succeed`],
+      ["POST", `${BASE_URL}/runs/${RUN_ID}/fail`],
+    ]);
+    assertEquals(await Promise.all(requests.map((request) => request.json())), [{ output }, {
+      error,
+    }]);
+    assertEquals(requests.map((request) => request.headers.get("Idempotency-Key")), [
+      "success-key",
+      "failure-key",
+    ]);
+    for (const request of requests) {
+      assertEquals(request.headers.get("Authorization"), "Bearer ordinary-user-token");
+      assertEquals(request.headers.has("X-Veryfront-Run-Terminal-Token"), false);
+    }
+  });
+
   it("exposes one method per contract operation", () => {
     const { sdk } = sdkWith([]);
     const operationIds = Object.keys(RUNS_OPERATIONS).sort();
-    assertEquals(operationIds.length, 31);
+    assertEquals(operationIds.length, 33);
     assertEquals(Object.keys(RUNS_OPERATION_FIXTURES).sort(), operationIds);
     for (const operationId of operationIds) {
       assertEquals(typeof sdk[operationId as RunsOperationId], "function", operationId);

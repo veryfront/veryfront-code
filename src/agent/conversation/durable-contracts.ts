@@ -9,6 +9,7 @@ import {
   getToolCallAdmissionReceiptSchema,
   getToolCallAdmissionWireReceiptSchema,
 } from "#veryfront/runtime/tool-call-admission-receipt.ts";
+import type { ConversationRunRuntimeObservation } from "#veryfront/runtime/runtime-observation-carrier.ts";
 
 /** Zod schema for get conversation run targets. */
 export const getConversationRunTargetsSchema = defineSchema((v) =>
@@ -246,7 +247,10 @@ export interface ConversationRunToolCallAdmissionStart {
 export interface ConversationRunEventQueueController {
   enqueue(
     events: unknown[],
-    options?: { toolCallStarts?: ConversationRunToolCallAdmissionStart[] },
+    options?: {
+      toolCallStarts?: ConversationRunToolCallAdmissionStart[];
+      runtimeObservations?: ConversationRunRuntimeObservation[];
+    },
   ): void;
   /** Consume the exact append acknowledgement for one submitted capture. */
   takeModelCallCaptureReceipt?(modelCallId: string): AgentRunModelCallCaptureReceipt | undefined;

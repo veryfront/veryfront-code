@@ -95,6 +95,18 @@ Missing, malformed, or ambiguous receipts refuse opted-in SDK dispatch. Dispatch
 
 This bridge requires matching worker-generation API support. Projectless admission remains unsupported. A synthetic legacy start derived from a tool result or error receives no SDK pre-dispatch admission. The durable start carries `startObservedFromResult: true`, independently of the actual `providerExecuted` flag. Target replay remains unavailable when the source cannot prove an actual tool start.
 
+## Runtime execution and step provenance
+
+The hosted runtime observes execution entry, step start, step end, and the message spans produced within each step. A run's registration or queue admission cannot supply these runtime observations.
+
+The host enables this path for an authenticated project-bound canonical run. The private append request carries `runtime_observations` with an exact `event_index` for each submitted observation. The matching API must validate the writer's execution generation and persist the observation with that accepted event. Retries retain the same observation identities and event associations.
+
+The managed broker reads this opt-in from the actual private persistence sink and validates its run and project against the execution grant before allocation. A public stream flag or an unbound sink cannot enable it. Observation-bearing batches contain at most 100 events, even when the configured batch size is larger.
+
+Runtime observations travel through private carriers and are removed from public chunks and messages. Application context fields cannot enable this authority. A mirrored step reuses the runtime's observed step identity; it does not allocate a competing identity.
+
+Enable this path only with matching API and writer-generation support. Legacy history without these proofs remains readable through the existing run-event surface, but cannot supply missing target execution, step, or message provenance.
+
 ## Validate producer output
 
 Parse each outgoing event with the shared validator before publishing it:

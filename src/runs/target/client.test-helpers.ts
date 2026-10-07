@@ -1,6 +1,7 @@
 /**
  * One request/response fixture per Runs target operation, built from the pinned contract
- * examples and typed by it: a contract change that breaks an example fails to compile.
+ * examples plus authored current-operation examples, all typed by the contract.
+ * A contract change that breaks an example fails to compile.
  * The SDK tests replay them through {@link createFixtureTransport}; the integration (#2239)
  * and CLI (#2240) lanes reuse them. A fixture response is never evidence of deployed parity.
  */

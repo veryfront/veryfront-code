@@ -74,7 +74,7 @@ const call = {
   occurrenceId,
 };
 
-function managedPersistenceFixture(fetch: typeof globalThis.fetch) {
+function managedPersistenceFixture(fetch: HostedRequestFetch) {
   const terminalToken = `header.${
     btoa(JSON.stringify({
       runId: "external-run",
@@ -416,7 +416,7 @@ describe("private tool-call admission", () => {
         return responseFor(url, init);
       },
     });
-    let retainedFetch: typeof globalThis.fetch | undefined;
+    let retainedFetch: HostedRequestFetch | undefined;
     await runWithToolCallAdmissionReceipt(receipt, () => {}, async () => {
       for (const endpoint of [...owning, ...other]) {
         const source = createSource({
