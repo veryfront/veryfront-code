@@ -7,6 +7,14 @@ import { VeryfrontFSAdapter } from "./adapter.ts";
 import type { CacheStats, FSAdapterConfig, ResolvedContentContext } from "./types.ts";
 import { getGetAdapterParamsSchema } from "./schemas/index.ts";
 import { createDefaultInvalidationCallbacks } from "./default-invalidation-callbacks.ts";
+import { throwIfAborted } from "#veryfront/utils/abort.ts";
+import {
+  drainSharedInitialization,
+  isSharedInitializationAborted,
+  joinSharedInitialization,
+  type SharedInitialization,
+  startSharedInitialization,
+} from "../../shared-initialization.ts";
 
 const logger = baseLogger.component("proxy-fs-adapter-manager");
 
@@ -44,6 +52,7 @@ interface CapturedAdapterCapabilities {
   getCacheStats: CapturedAdapterMethod;
   getContentContext: CapturedAdapterMethod;
   initialize: CapturedAdapterMethod;
+  initializeForHost: CapturedAdapterMethod;
   setContentContext: CapturedAdapterMethod;
 }
 
@@ -96,6 +105,7 @@ const VeryfrontFSAdapterDispose = VeryfrontFSAdapterPrototype.dispose;
 const VeryfrontFSAdapterGetCacheStats = VeryfrontFSAdapterPrototype.getCacheStats;
 const VeryfrontFSAdapterGetContentContext = VeryfrontFSAdapterPrototype.getContentContext;
 const VeryfrontFSAdapterInitialize = VeryfrontFSAdapterPrototype.initialize;
+const VeryfrontFSAdapterInitializeForHost = VeryfrontFSAdapterPrototype.initializeForHost;
 const VeryfrontFSAdapterSetContentContext = VeryfrontFSAdapterPrototype.setContentContext;
 type GetAdapterParamsSchema = ReturnType<typeof getGetAdapterParamsSchema>;
 type GetAdapterParamsValidationResult = ReturnType<
@@ -194,6 +204,16 @@ function captureAdapterMethod(
 }
 
 function captureAdapterCapabilities(adapter: VeryfrontFSAdapter): CapturedAdapterCapabilities {
+  const initialize = captureAdapterMethod(adapter, "initialize", VeryfrontFSAdapterInitialize);
+  const capturedInitializeForHost = captureAdapterMethod(
+    adapter,
+    "initializeForHost",
+    VeryfrontFSAdapterInitializeForHost,
+  );
+  const initializeForHost = initialize !== VeryfrontFSAdapterInitialize &&
+      capturedInitializeForHost === VeryfrontFSAdapterInitializeForHost
+    ? initialize
+    : capturedInitializeForHost;
   return {
     dispose: captureAdapterMethod(adapter, "dispose", VeryfrontFSAdapterDispose),
     getCacheStats: captureAdapterMethod(
@@ -206,7 +226,8 @@ function captureAdapterCapabilities(adapter: VeryfrontFSAdapter): CapturedAdapte
       "getContentContext",
       VeryfrontFSAdapterGetContentContext,
     ),
-    initialize: captureAdapterMethod(adapter, "initialize", VeryfrontFSAdapterInitialize),
+    initialize,
+    initializeForHost,
     setContentContext: captureAdapterMethod(
       adapter,
       "setContentContext",
@@ -308,7 +329,7 @@ interface ProxyFSAdapterManagerConfig {
 
 export class ProxyFSAdapterManager {
   #adapters = new IntrinsicMap<string, ProjectAdapter>();
-  #pendingAdapters = new IntrinsicMap<string, Promise<ProjectAdapter>>();
+  #pendingAdapters = new IntrinsicMap<string, SharedInitialization<ProjectAdapter>>();
   private adapterFactory: (config: FSAdapterConfig) => VeryfrontFSAdapter;
   private baseConfig: FSAdapterConfig;
   private maxAdapters: number;
@@ -350,7 +371,9 @@ export class ProxyFSAdapterManager {
     environmentName?: string | null,
     branch?: string | null,
     onResolved?: (initializedNow: boolean) => void,
+    signal?: AbortSignal,
   ): Promise<VeryfrontFSAdapter> {
+    throwIfAborted(signal);
     const getAdapterStartTime = performanceNow();
 
     const effectiveProductionMode = productionMode ?? false;
@@ -448,6 +471,7 @@ export class ProxyFSAdapterManager {
       totalCachedAdapters: mapSize(this.#adapters),
     });
 
+    throwIfAborted(signal);
     const existing = mapGet(this.#adapters, cacheKey);
     if (existing) {
       existing.lastAccessed = this.#now();
@@ -473,13 +497,27 @@ export class ProxyFSAdapterManager {
 
     const pending = mapGet(this.#pendingAdapters, cacheKey);
     if (pending) {
+      if (isSharedInitializationAborted(pending)) {
+        await drainSharedInitialization(pending, signal);
+        return await this.getAdapter(
+          projectSlug,
+          token,
+          projectId,
+          productionMode,
+          releaseId,
+          environmentName,
+          branch,
+          onResolved,
+          signal,
+        );
+      }
       logger.debug("Waiting for pending adapter creation", {
         cacheKey: diagnosticCacheKey,
         projectSlug,
       });
 
       const waitStartTime = performanceNow();
-      const projectAdapter = await pending;
+      const projectAdapter = await joinSharedInitialization(pending, signal);
       const initialized = mapGet(this.#adapters, cacheKey);
       if (!initialized) {
         disposeProjectAdapter(projectAdapter);
@@ -530,7 +568,7 @@ export class ProxyFSAdapterManager {
       elapsedBeforeCreate: formatDuration(performanceNow() - getAdapterStartTime),
     });
 
-    const projectAdapter = await this.#createAdapter(
+    const initialization = this.#createAdapter(
       cacheKey,
       diagnosticCacheKey,
       projectSlug,
@@ -542,6 +580,7 @@ export class ProxyFSAdapterManager {
       effectiveBranch,
       identity,
     );
+    const projectAdapter = await joinSharedInitialization(initialization, signal);
     onResolved?.(true);
     return projectAdapter.adapter;
   }
@@ -669,7 +708,7 @@ export class ProxyFSAdapterManager {
     environmentName: string | null,
     branch: string | null,
     identity: ProxyAdapterIdentity,
-  ): Promise<ProjectAdapter> {
+  ): SharedInitialization<ProjectAdapter> {
     logger.debug("Creating NEW adapter", {
       cacheKey: diagnosticCacheKey,
       projectSlug,
@@ -743,7 +782,7 @@ export class ProxyFSAdapterManager {
 
     // Defer initialization until after its promise is registered. This makes
     // capacity admission atomic even when initialize() throws synchronously.
-    const initPromise = (async (): Promise<ProjectAdapter> => {
+    const initialization = startSharedInitialization(async (signal): Promise<ProjectAdapter> => {
       await undefined;
       const initStartTime = performanceNow();
 
@@ -754,9 +793,9 @@ export class ProxyFSAdapterManager {
 
       try {
         projectAdapter.initializing = IntrinsicReflectApply(
-          capabilities.initialize,
+          capabilities.initializeForHost,
           adapter,
-          [],
+          [signal],
         ) as Promise<void>;
         await projectAdapter.initializing;
 
@@ -795,10 +834,10 @@ export class ProxyFSAdapterManager {
         projectAdapter.initializing = undefined;
         mapDelete(this.#pendingAdapters, cacheKey);
       }
-    })();
+    });
 
-    mapSet(this.#pendingAdapters, cacheKey, initPromise);
-    return initPromise;
+    mapSet(this.#pendingAdapters, cacheKey, initialization);
+    return initialization;
   }
 
   #evictLeastRecentlyUsed(): boolean {

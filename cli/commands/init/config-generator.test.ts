@@ -5,7 +5,9 @@ import "#veryfront/schemas/_test-setup.ts";
 
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { createPackageJson, createTypeScriptConfig } from "./config-generator.ts";
+import { VERSION } from "#cli/utils";
+import { getTemplateConfig } from "../../../templates/index.ts";
+import { buildPackageJson, createPackageJson, createTypeScriptConfig } from "./config-generator.ts";
 import { join } from "veryfront/platform/path";
 
 describe("config-generator", () => {
@@ -115,20 +117,31 @@ describe("config-generator", () => {
       }
     });
 
-    it("aligns template-owned first-party extensions to the framework version", async () => {
+    it("pins first-party framework packages to the exact release cohort", async () => {
       const tmpDir = await Deno.makeTempDir();
       try {
         await createPackageJson(tmpDir, "test-project", {
           firstPartyExtensions: ["@veryfront/ext-document-kreuzberg"],
         });
         const pkg = JSON.parse(await Deno.readTextFile(join(tmpDir, "package.json")));
-        assertEquals(
-          pkg.dependencies["@veryfront/ext-document-kreuzberg"],
-          pkg.dependencies.veryfront,
-        );
+        assertEquals(pkg.dependencies.veryfront, VERSION);
+        assertEquals(pkg.dependencies["@veryfront/ext-document-kreuzberg"], VERSION);
       } finally {
         await Deno.remove(tmpDir, { recursive: true });
       }
+    });
+
+    it("pins the minimal MDX extension to the same exact release cohort", () => {
+      const minimalConfig = getTemplateConfig("minimal") ?? {};
+      const pkg = JSON.parse(buildPackageJson("minimal-app", {
+        dependencies: minimalConfig.npmDependencies,
+        firstPartyExtensions: minimalConfig.firstPartyExtensions,
+      }));
+
+      assertEquals(pkg.dependencies.veryfront, VERSION);
+      assertEquals(pkg.dependencies["@veryfront/ext-content-mdx"], VERSION);
+      assertEquals(pkg.dependencies.react, "^19.2.4");
+      assertEquals(pkg.dependencies["react-dom"], "^19.2.4");
     });
 
     it("merges npmDependencies from selected integrations", async () => {

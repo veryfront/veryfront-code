@@ -1,6 +1,11 @@
 import "#veryfront/schemas/_test-setup.ts";
 import * as React from "react";
-import { assertEquals, assertRejects, assertStrictEquals } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertExists,
+  assertRejects,
+  assertStrictEquals,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { FakeTime } from "#std/testing/time";
 import {
@@ -445,6 +450,7 @@ describe("rendering/layouts/utils/component-loader", () => {
       const cache = createLayoutComponentCache();
       const controller = new AbortController();
       let observedSignal: AbortSignal | undefined;
+      const entered = Promise.withResolvers<void>();
       const loading = loadTSXComponent(
         "/project/app/signal-layout.tsx",
         "/project",
@@ -458,6 +464,7 @@ describe("rendering/layouts/utils/component-loader", () => {
         {
           loadComponentFromSource: (_source, _filePath, _projectDir, _adapter, options) => {
             observedSignal = options?.signal;
+            entered.resolve();
             return new Promise((_resolve, reject) => {
               options?.signal?.addEventListener(
                 "abort",
@@ -475,7 +482,8 @@ describe("rendering/layouts/utils/component-loader", () => {
         controller.signal,
       );
 
-      await waitFor(() => observedSignal !== undefined);
+      await entered.promise;
+      assertExists(observedSignal);
       const reason = new DOMException("layout render cancelled", "AbortError");
       controller.abort(reason);
 

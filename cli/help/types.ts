@@ -1,10 +1,13 @@
-export type CommandCategory =
-  | "development"
-  | "deploy"
-  | "project"
-  | "files"
-  | "ai"
-  | "auth";
+export const COMMAND_CATEGORIES = [
+  "development",
+  "deploy",
+  "project",
+  "files",
+  "ai",
+  "auth",
+] as const;
+
+export type CommandCategory = typeof COMMAND_CATEGORIES[number];
 
 export interface CommandOption {
   flag: string;

@@ -423,7 +423,11 @@ export async function upCommand(
   }
 
   const result = outcome.result;
-  const studioUrl = buildStudioUrl(result.projectSlug, { branch: result.branch });
+  const studioUrl = buildStudioUrl(
+    result.projectSlug,
+    { branch: result.branch },
+    context.config.apiUrl,
+  );
 
   if (jsonOutput) {
     streamJsonLine({

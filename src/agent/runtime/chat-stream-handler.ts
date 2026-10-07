@@ -25,6 +25,7 @@ import { privateJsonParse, privateJsonStringify } from "#veryfront/security/priv
 
 import type { RuntimeStreamPart, RuntimeStreamResult } from "./runtime-tool-types.ts";
 import type { ModelRuntime } from "#veryfront/provider/types.ts";
+import { forwardVeryfrontCloudModelFacts } from "#veryfront/provider/veryfront-cloud/model-catalog.ts";
 import {
   createRuntimeProviderStreamFailure,
   readRuntimeProviderStreamFailureCause,
@@ -187,12 +188,14 @@ export function withRuntimeProviderStreamErrorProvenance<CallOptions, ContentPar
     }
   };
   const target = Object.create(model) as ModelRuntime<CallOptions, ContentPart>;
-  return new Proxy(target, {
+  const wrapped = new Proxy(target, {
     get(_target, property) {
       if (property === "doStream") return doStream;
       return Reflect.get(model, property, model);
     },
   });
+  forwardVeryfrontCloudModelFacts(model, wrapped);
+  return wrapped;
 }
 
 function isStreamLifecycleFailure(error: unknown): error is StreamLifecycleFailure {

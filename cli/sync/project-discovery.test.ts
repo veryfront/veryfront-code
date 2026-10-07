@@ -21,6 +21,11 @@ import {
 } from "#veryfront/config/environment-config.ts";
 import { observeFetchRequestInit, withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import {
+  __resetOperatorVeryfrontApiOriginsForTests,
+  __runWithOutboundFetchTransportForTests,
+  trustOperatorConfiguredVeryfrontApiOrigins,
+} from "#cli/outbound-fetch";
+import {
   fetchRemoteProjects,
   getCurrentUser,
   isAuthenticated,
@@ -62,6 +67,46 @@ describe("project-discovery", () => {
   });
 
   describe("fetchRemoteProjects", () => {
+    it("discovers projects on a sealed operator-selected private API", async () => {
+      const oldUrl = getEnv("VERYFRONT_API_URL");
+      const apiUrl = "https://api.staging.example/api";
+      setEnv("VERYFRONT_API_URL", apiUrl);
+      const paths: string[] = [];
+      const fetchStub: typeof fetch = (input, _init) => {
+        const path = new URL(String(input)).pathname;
+        paths.push(path);
+        return Promise.resolve(Response.json(
+          path === "/api/me"
+            ? { id: "user-123", email: "test@example.com" }
+            : { data: [{ id: "project-123", slug: "test-project", name: "Test Project" }] },
+        ));
+      };
+      const transport = {
+        fetch: fetchStub,
+        pinnedFetch: (url: URL, _addresses: readonly string[], init: RequestInit) =>
+          fetchStub(url, init),
+        resolveHost: () => Promise.resolve(["10.255.128.3"]),
+      };
+      __resetOperatorVeryfrontApiOriginsForTests();
+      try {
+        const env = createTestEnvironmentConfig({ apiUrl });
+        await __runWithOutboundFetchTransportForTests(transport, async () => {
+          const blocked = await fetchRemoteProjects("explicit-user-token", env);
+          assertExists(blocked.error);
+          assertEquals(paths, []);
+          trustOperatorConfiguredVeryfrontApiOrigins();
+          const result = await fetchRemoteProjects("explicit-user-token", env);
+          assertEquals(result.error, undefined);
+          assertEquals(result.projects.length, 1);
+          assertEquals(paths, ["/api/me", "/api/projects"]);
+        });
+      } finally {
+        __resetOperatorVeryfrontApiOriginsForTests();
+        if (oldUrl === undefined) deleteEnv("VERYFRONT_API_URL");
+        else setEnv("VERYFRONT_API_URL", oldUrl);
+      }
+    });
+
     it("returns a discovery error for an invalid explicit API URL", async () => {
       const result = await fetchRemoteProjects(
         "vf_test_explicit",

@@ -77,6 +77,10 @@ import {
   runWithMandatoryRunEventSink,
   scopeAsyncIterableWithMandatoryRunEventSink,
 } from "../../runtime/run-event-sink-context.ts";
+import {
+  bindRuntimeObservationWriterCapability,
+  type RuntimeObservationWriterCapability,
+} from "../../runtime/runtime-observation-carrier.ts";
 import type { AgentRunEventSink } from "../../runtime/model-call-context.ts";
 import {
   createDurableRunEventSink,
@@ -138,6 +142,7 @@ export interface CreateHostedChatExecutionRuntimeBootstrapInput {
   streamBootstrapKeepaliveIntervalMs?: number;
   streamBootstrapTimeoutMs?: number;
   durableRunEventMirror?: ConversationRunChunkMirror;
+  runtimeObservationWriterCapability?: RuntimeObservationWriterCapability;
 }
 
 /** Input payload for create hosted chat execution runtime. */
@@ -365,14 +370,20 @@ export async function createHostedChatExecutionRuntimeBootstrap(
       abortSignal: streamAbortSignal,
     })
     : undefined;
-
   let streamResult: HostedChatRuntimeStreamResult;
   try {
+    if (runEventSink && input.runtimeObservationWriterCapability) {
+      bindRuntimeObservationWriterCapability(
+        runEventSink,
+        input.runtimeObservationWriterCapability,
+      );
+    }
     bindHostedAgentPauseLifetime(input.lifecycleAdapter, streamAbortSignal);
     const startStream = () =>
       input.agent.stream({
         messages: input.finalMessages,
         abortSignal: streamAbortSignal,
+        ...(input.runtimeObservationWriterCapability ? { runtimeObservations: true } : {}),
       });
     streamResult = await traceHostedChatRuntimeStream(
       input.traceStream,
@@ -423,6 +434,12 @@ async function createBootstrappedHostedChatRuntime(
       conversationId: input.conversationId,
       ...(input.rootRunContext.privateDurableRunMirror
         ? { durableRunEventMirror: input.rootRunContext.privateDurableRunMirror }
+        : {}),
+      ...(input.rootRunContext.privateRuntimeObservationWriterCapability
+        ? {
+          runtimeObservationWriterCapability:
+            input.rootRunContext.privateRuntimeObservationWriterCapability,
+        }
         : {}),
       abortSignal: input.abortSignal,
       traceStream: input.traceStream,
