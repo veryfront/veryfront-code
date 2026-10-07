@@ -1,6 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assert, assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { serializeError as serializeLogError } from "#veryfront/utils/logger/core.ts";
 import { VeryfrontError } from "#veryfront/errors";
 import { createDetachedRunTracker } from "../service/detached-run-tracker.ts";
 import { createHostedAgentServiceRouteSet } from "../service/routes.ts";
@@ -10,6 +11,7 @@ import { ExecutorAgentError } from "./executor-agent-schema.ts";
 
 const cases: Array<{ code: ConstructorParameters<typeof ExecutorAgentError>[0]; status: number }> =
   [
+    { code: "agent-provider-auth-error", status: 401 },
     { code: "PERMISSION_DENIED", status: 403 },
     { code: "CONTEXT_LENGTH_EXCEEDED", status: 413 },
     { code: "RATE_LIMITED", status: 429 },
@@ -60,7 +62,15 @@ function durableRequest(): ParsedHostedChatRequest {
 }
 
 describe("executor errors at hosted setup response boundaries", () => {
+  it("serializes fixed authentication diagnostics across logger boundaries", () => {
+    const error = new ExecutorAgentError("agent-provider-auth-error");
+    assertEquals(serializeLogError(error)?.message, "Agent provider authentication failed");
+  });
+
   for (const { code, status } of cases) {
+    const message = code === "agent-provider-auth-error"
+      ? "Agent provider authentication failed"
+      : code;
     it(`preserves ${code} through durable setup`, async () => {
       const error = new ExecutorAgentError(code);
       const response = await executeHostedDurableChatRun({
@@ -73,7 +83,8 @@ describe("executor errors at hosted setup response boundaries", () => {
       assertEquals(response.status, status);
       assertEquals(await response.json(), { errorCode: code });
       assert(error instanceof VeryfrontError);
-      assertEquals(error.toRFC9457().title, code);
+      assertEquals(error.toRFC9457().title, message);
+      assertEquals(error.message, message);
     });
 
     it(`preserves ${code} through direct AG-UI setup`, async () => {
@@ -107,7 +118,7 @@ describe("executor errors at hosted setup response boundaries", () => {
       assert(event);
       const data = JSON.parse(event.slice(5));
       assertEquals(data.code, code);
-      assertEquals(data.message, code);
+      assertEquals(data.message, message);
     });
   }
 });
