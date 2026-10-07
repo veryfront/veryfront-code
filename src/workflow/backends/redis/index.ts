@@ -7,7 +7,10 @@
  * @module ai/workflow/backends/redis
  */
 
-import { RedisEventWaitStore } from "#veryfront/workflow/backends/redis/event-waits.ts";
+import {
+  RedisEventWaitStore,
+  UPDATE_EVENT_MAILBOX_ELIGIBILITY_LUA,
+} from "#veryfront/workflow/backends/redis/event-waits.ts";
 
 import type {
   ApprovalDecision,
@@ -377,11 +380,13 @@ end
 removed = removed + redis.call('del', KEYS[18], KEYS[20], KEYS[21])
 redis.call('srem', KEYS[22], ARGV[6])
 redis.call('zrem', KEYS[23], ARGV[6])
+redis.call('zrem', KEYS[23] .. ':evictable', ARGV[6])
 if removed > 0 then return 1 end
 if runExists == 0 then return 2 end
 return 0`;
 
 const UPDATE_TERMINAL_RETENTION_INDEX_LUA = `
+${UPDATE_EVENT_MAILBOX_ELIGIBILITY_LUA}
 local function updateTerminalRetentionIndex(
   runKey,
   indexKey,
@@ -389,6 +394,7 @@ local function updateTerminalRetentionIndex(
   runId,
   backfillCompletedAtMs
 )
+  updateEventMailboxEligibility(runKey,runId,nil)
   local oldMetadata = redis.call('hget', membersKey, runId)
   local oldMember = nil
   if oldMetadata then oldMember = cjson.decode(oldMetadata).member end
@@ -516,6 +522,7 @@ end
 removed = removed + redis.call('del', KEYS[18], KEYS[19], KEYS[20])
 redis.call('srem', KEYS[21], ARGV[1])
 redis.call('zrem', KEYS[22], ARGV[1])
+redis.call('zrem', KEYS[22] .. ':evictable', ARGV[1])
 return 1`;
 
 const READ_TERMINAL_RETENTION_FIELDS_SCRIPT = `-- read-terminal-retention-fields
@@ -2605,7 +2612,7 @@ export class RedisBackend implements WorkflowBackend {
     const identity = await client.eval(MARK_RUN_DELETING_SCRIPT, [this.runKey(runId)], []);
     if (arrayIsArray(identity) && identity.length === 0) {
       await client.eval(
-        "if redis.call('exists',KEYS[1]) == 0 then redis.call('del',KEYS[2]); redis.call('srem',KEYS[3],ARGV[1]); redis.call('zrem',KEYS[4],ARGV[1]) end return 1",
+        "if redis.call('exists',KEYS[1]) == 0 then redis.call('del',KEYS[2]); redis.call('srem',KEYS[3],ARGV[1]); redis.call('zrem',KEYS[4],ARGV[1]); redis.call('zrem',KEYS[4] .. ':evictable',ARGV[1]) end return 1",
         [
           this.runKey(runId),
           `${this.storagePrefix()}event-state:${runId}`,

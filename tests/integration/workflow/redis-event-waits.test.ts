@@ -569,10 +569,42 @@ describe("Redis durable event waits", () => {
         await Promise.all(ids.slice(offset, offset + 50).map((id) => a.createRun({ ...base, id })));
       }
       await a.updateRun(retryable, { status: "failed" });
+      const provider = createRedisRuntimeProvider();
+      const module = await provider.loadModule();
+      const observer = module.createClient({ url: Deno.env.get("WORKFLOW_EVENT_TEST_REDIS_URL") });
+      await observer.connect();
+      cleanup.push(async () => {
+        await observer.close();
+      });
+      const getCalls = async () => {
+        const stats = await observer.eval("return redis.call('info','commandstats')", {
+          keys: [],
+          arguments: [],
+        });
+        assertEquals(typeof stats, "string");
+        return Number(String(stats).match(/cmdstat_get:calls=(\d+)/)?.[1] ?? 0);
+      };
+      await b.updateRun(runId, { status: "completed" });
+      const beforeGetCalls = await getCalls();
       const overflow = crypto.randomUUID();
       await assertRejects(() => a.appendRunEvent(overflow, event));
+      const capacityLookupCalls = await getCalls() - beforeGetCalls;
+      assertEquals(capacityLookupCalls <= 2, true, `Capacity used ${capacityLookupCalls} GETs`);
       assertEquals(await b.peekRunEvent(overflow, "ready"), null);
       assertEquals((await b.peekRunEvent(retryable, "ready"))?.id, event.id);
+      const last = ids.at(-1);
+      assertExists(last);
+      assertEquals(await b.updateRunIfStatus(last, ["running"], { status: "completed" }), true);
+      await a.appendRunEvent(overflow, event);
+      assertEquals(await b.peekRunEvent(last, "ready"), null);
+      assertEquals((await b.peekRunEvent(overflow, "ready"))?.id, event.id);
+      cleanup.push(() => a.deleteRun(overflow));
+      await b.updateRun(retryable, { status: "cancelled" });
+      const afterCancellation = crypto.randomUUID();
+      cleanup.push(() => a.deleteRun(afterCancellation));
+      await a.appendRunEvent(afterCancellation, event);
+      assertEquals(await b.peekRunEvent(retryable, "ready"), null);
+      assertEquals((await b.peekRunEvent(runId, "ready"))?.id, event.id);
     }));
 
   it({

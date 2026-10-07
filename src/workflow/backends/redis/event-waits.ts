@@ -13,9 +13,40 @@ import {
 } from "#veryfront/workflow/limits.ts";
 import { serializeWorkflowJson } from "#veryfront/workflow/context-serialization.ts";
 
+/** Atomic mailbox eligibility shared with existing run-status mutations. */
+export const UPDATE_EVENT_MAILBOX_ELIGIBILITY_LUA = `
+local function mailboxProtected(status,state)
+  if status == 'pending' or status == 'running' or status == 'waiting' or status == 'failed' then return true end
+  if next(state.claims) then return true end
+  for _,w in ipairs(state.waits) do
+    if w.status == 'pending' or (w.claimedAt and ((w.kind == 'delay' and w.status == 'delivered') or
+      (w.kind == 'event' and w.status == 'expired'))) then return true end
+  end
+  return false
+end
+local function updateEventMailboxEligibility(runKey,runId,state)
+  local prefix=string.sub(runKey,1,#runKey-#runId-4)
+  local index=prefix .. 'index:event-mailboxes'
+  local candidates=index .. ':evictable'
+  local score=redis.call('zscore',index,runId)
+  if not score then redis.call('zrem',candidates,runId); return end
+  local status=redis.call('hget',runKey,'status')
+  if status == 'pending' or status == 'running' or status == 'waiting' or status == 'failed' then
+    redis.call('zrem',candidates,runId); return
+  end
+  if not state then
+    local raw=redis.call('get',prefix .. 'event-state:' .. runId)
+    state=raw and cjson.decode(raw) or {waits={},mail={},claims={}}
+  end
+  if mailboxProtected(status,state) then redis.call('zrem',candidates,runId)
+  else redis.call('zadd',candidates,score,runId) end
+end
+`;
+
 // Payloads remain opaque JSON strings inside Redis state. Lua only interprets
 // envelope metadata, so an empty array in a user payload never becomes {}.
 const EVENT_STATE_SCRIPT = `-- workflow-event-state
+${UPDATE_EVENT_MAILBOX_ELIGIBILITY_LUA}
 local op = ARGV[1]
 local p = cjson.decode(ARGV[2])
 local raw = redis.call('get', KEYS[1])
@@ -57,18 +88,17 @@ local function reserveMailbox()
   if redis.call('zscore',KEYS[6],ARGV[6]) then return end
   if redis.call('zcard',KEYS[6]) >= tonumber(ARGV[7]) then
     local eligible=nil
-    for _,id in ipairs(redis.call('zrange',KEYS[6],0,-1)) do
+    local id=redis.call('zrange',KEYS[6] .. ':evictable',0,0)[1]
+    if id then
       local stateKey=ARGV[8] .. 'event-state:' .. id
       local otherRaw=redis.call('get',stateKey)
       local other=otherRaw and cjson.decode(otherRaw) or {waits={},mail={},claims={}}
       local status=redis.call('hget',ARGV[8] .. 'run:' .. id,'status')
-      local protected=status == 'pending' or status == 'running' or status == 'waiting' or status == 'failed'
-      if next(other.claims) then protected=true end
-      for _,w in ipairs(other.waits) do if w.status == 'pending' or timed(w) then protected=true end end
-      if not protected then eligible={id=id,key=stateKey,state=other,status=status}; break end
+      if not mailboxProtected(status,other) then eligible={id=id,key=stateKey,state=other,status=status} end
     end
     if not eligible then return redis.error_reply('Run event mailbox capacity reached') end
     redis.call('zrem',KEYS[6],eligible.id)
+    redis.call('zrem',KEYS[6] .. ':evictable',eligible.id)
     if not eligible.status then
       redis.call('del',eligible.key)
       redis.call('srem',KEYS[2],eligible.id)
@@ -88,6 +118,7 @@ end
 local function commit(result)
   if #s.mail > 0 or next(s.claims) then redis.call('zadd',KEYS[6],'NX',(s.mail[1] and s.mail[1].order) or now,ARGV[6])
   else redis.call('zrem',KEYS[6],ARGV[6]) end
+  updateEventMailboxEligibility(KEYS[3],ARGV[6],s)
   if #s.waits == 0 and #s.mail == 0 and not next(s.claims) and redis.call('exists',KEYS[3]) == 0 then
     redis.call('del',KEYS[1])
   else redis.call('set', KEYS[1], encode(s)) end
