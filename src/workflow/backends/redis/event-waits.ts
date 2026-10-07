@@ -41,6 +41,37 @@ local function updateEventMailboxEligibility(runKey,runId,state)
   if mailboxProtected(status,state) then redis.call('zrem',candidates,runId)
   else redis.call('zadd',candidates,score,runId) end
 end
+local function clearTerminalRunEvents(runKey,runId)
+  local status=redis.call('hget',runKey,'status')
+  if status ~= 'completed' and status ~= 'cancelled' then return end
+  local prefix=string.sub(runKey,1,#runKey-#runId-4)
+  local key=prefix .. 'event-state:' .. runId
+  local raw=redis.call('get',key)
+  if not raw then return end
+  local state=cjson.decode(raw)
+  local nodes={}
+  if status == 'completed' then nodes=cjson.decode(redis.call('hget',runKey,'nodeStates') or '{}') end
+  for eventId,claim in pairs(state.claims) do
+    for _,w in ipairs(state.waits) do
+      if w.id == claim.waitId then
+        w.claimedAt=nil; w.recoveryClaimedAt=nil; w.claimedEventId=nil
+        local node=nodes[w.nodeId]
+        if status == 'completed' and node and node.status == 'completed' then w.deliveredEventId=eventId end
+        break
+      end
+    end
+  end
+  state.mail={}; state.claims={}
+  redis.call('zrem',prefix .. 'index:event-mailboxes',runId)
+  local active=false
+  for _,w in ipairs(state.waits) do
+    if w.status == 'pending' or (w.claimedAt and ((w.kind == 'delay' and w.status == 'delivered') or
+      (w.kind == 'event' and w.status == 'expired'))) then active=true end
+  end
+  if active then redis.call('sadd',prefix .. 'index:event-state',runId)
+  else redis.call('srem',prefix .. 'index:event-state',runId) end
+  redis.call('set',key,cjson.encode(state))
+end
 `;
 
 // Payloads remain opaque JSON strings inside Redis state. Lua only interprets
@@ -230,6 +261,7 @@ elseif op == 'finalize-delivery' then
   local w=findWait(c.waitId)
   if w then clearClaim(w); if p.delivered then w.deliveredEventId=p.eventId end end
   s.claims[p.eventId]=nil; return commit(true)
+
 end
 return redis.error_reply('Unknown workflow event-state operation')`;
 

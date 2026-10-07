@@ -1002,6 +1002,7 @@ redis.call(
   tostring(redis.call('incr', KEYS[4]))
 )
 local status = redis.call('hget', KEYS[1], 'status')
+if nextStatus == 'completed' or nextStatus == 'cancelled' then clearTerminalRunEvents(KEYS[1],ARGV[1]) end
 updateTerminalRetentionIndex(KEYS[1], KEYS[2], KEYS[3], ARGV[1], '')
 local rawNodes = redis.call('hget', KEYS[1], 'nodeStates') or '{}'
 local sourceNodes = cjson.decode(rawNodes)
@@ -1117,6 +1118,7 @@ redis.call(
   tostring(redis.call('incr', KEYS[4]))
 )
 local status = redis.call('hget', KEYS[1], 'status')
+if nextStatus == 'completed' or nextStatus == 'cancelled' then clearTerminalRunEvents(KEYS[1],runId) end
 updateTerminalRetentionIndex(KEYS[1], KEYS[2], KEYS[3], runId, '')
 local sourceNodes = cjson.decode(redis.call('hget', KEYS[1], 'nodeStates') or '{}')
 local nodes = {}

@@ -21,11 +21,17 @@ async function withReceivers(
     b: RedisBackend,
     runId: string,
     cleanup: Array<() => Promise<void>>,
-    openReceiver: (observeRead?: (active: number) => void) => Promise<RedisBackend>,
+    openReceiver: (
+      observeRead?: (active: number) => void,
+      afterRunUpdate?: () => Promise<void>,
+    ) => Promise<RedisBackend>,
   ) => Promise<void>,
 ) {
   const prefix = `event-test:${crypto.randomUUID()}`;
-  const open = async (observeRead?: (active: number) => void) => {
+  const open = async (
+    observeRead?: (active: number) => void,
+    afterRunUpdate?: () => Promise<void>,
+  ) => {
     const provider = createRedisRuntimeProvider();
     const module = await provider.loadModule();
     const client = module.createClient({ url: Deno.env.get("WORKFLOW_EVENT_TEST_REDIS_URL") });
@@ -41,6 +47,14 @@ async function withReceivers(
         } finally {
           active--;
         }
+      };
+    }
+    if (afterRunUpdate) {
+      const evalScript = adapter.eval.bind(adapter);
+      adapter.eval = async (script, keys, args) => {
+        const result = await evalScript(script, keys, args);
+        if (script.startsWith("-- conditional-run-update")) await afterRunUpdate();
+        return result;
       };
     }
     return new RedisBackend({ prefix, client: adapter });
@@ -76,8 +90,53 @@ async function withReceivers(
 
 describe("Redis durable event waits", () => {
   it({
-    name:
-      "Redis retention cannot delete an unfinished event delivery and deletes finalized event state",
+    name: "Redis terminal transitions discard buffered mail and settle delivery claims",
+    ignore: !Deno.env.get("WORKFLOW_EVENT_TEST_REDIS_URL"),
+  }, () =>
+    withReceivers(async (a, b, runId, cleanup, openReceiver) => {
+      const now = new Date();
+      const claimed = { id: "claimed", eventName: "ready", payload: {}, publishedAt: now };
+      await a.savePendingEventWait(runId, {
+        id: "wait",
+        runId,
+        nodeId: "ready",
+        eventName: "ready",
+        waitKind: "event",
+        requestedAt: now,
+        status: "pending",
+      });
+      await b.appendRunEvent(runId, claimed);
+      assertEquals(await a.claimRunEventForWait(runId, "wait", "ready"), claimed);
+      let observedClaims: unknown;
+      let observedReceipt: boolean | undefined;
+      const observer = await openReceiver(undefined, async () => {
+        observedClaims = await b.listRunEventDeliveryClaims(runId);
+        observedReceipt = await b.hasRunEventDeliveryReceipt(runId, claimed.id);
+      });
+      cleanup.push(() => observer.destroy());
+      assertEquals(
+        await observer.updateRunIfStatus(runId, ["running"], {
+          status: "completed",
+          completedAt: now,
+          nodeStates: { ready: { nodeId: "ready", status: "completed", attempt: 1 } },
+        }),
+        true,
+      );
+      assertEquals(observedClaims, []);
+      assertEquals(observedReceipt, true);
+      assertEquals(await a.listRunEventDeliveryClaims(runId), []);
+      assertEquals(await a.hasRunEventDeliveryReceipt(runId, claimed.id), true);
+
+      const buffered = { id: "buffered", eventName: "late", payload: {}, publishedAt: now };
+      await a.appendRunEvent(runId, buffered);
+      await b.updateRun(runId, { heartbeatAt: new Date() });
+      assertEquals((await a.peekRunEvent(runId, "late"))?.id, buffered.id);
+      await b.updateRun(runId, { status: "cancelled", completedAt: now });
+      assertEquals(await a.takeRunEvent(runId, "late"), null);
+    }));
+
+  it({
+    name: "Redis retention protects unfinished failed-run delivery until finalization",
     ignore: !Deno.env.get("WORKFLOW_EVENT_TEST_REDIS_URL"),
   }, () =>
     withReceivers(async (a, b, runId) => {
@@ -94,7 +153,7 @@ describe("Redis durable event waits", () => {
       });
       await b.appendRunEvent(runId, event);
       assertEquals(await a.claimRunEventForWait(runId, "wait", "ready"), event);
-      await a.updateRun(runId, { status: "completed", completedAt: now });
+      await a.updateRun(runId, { status: "failed", completedAt: now });
       const readCandidates = async (receiver: RedisBackend) => {
         // Index repair is incremental; an empty page with hasMore is not EOF.
         let page = await receiver.listTerminalRunRetentionCandidates(
@@ -585,6 +644,7 @@ describe("Redis durable event waits", () => {
         return Number(String(stats).match(/cmdstat_get:calls=(\d+)/)?.[1] ?? 0);
       };
       await b.updateRun(runId, { status: "completed" });
+      await a.appendRunEvent(runId, event);
       const beforeGetCalls = await getCalls();
       const overflow = crypto.randomUUID();
       await assertRejects(() => a.appendRunEvent(overflow, event));
