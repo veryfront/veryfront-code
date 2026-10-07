@@ -81,7 +81,7 @@ export function veryfrontStudioMcpServer():
   return { kind: "veryfront-studio" };
 }
 
-/** Options accepted by node Veryfront Cloud agent service. */
+/** Options accepted by node Veryfront Cloud agent service, including deploymentArtifact for GET /version. */
 export type NodeVeryfrontCloudAgentServiceOptions = {
   /**
    * Stable service identity used by the control plane and service runtime.
@@ -110,6 +110,8 @@ export type NodeVeryfrontCloudAgentServiceOptions = {
    * Mutable branch sources are not supported by standalone agent services.
    */
   runtimeSource?: HostedRuntimeSourceIdentity;
+  /** Exact immutable deployment artifact tag served by GET /version. Pass null when unknown. */
+  deploymentArtifact?: string | null;
   agentSource?: NodeVeryfrontCloudAgentServiceAgentSource;
   /**
    * Remote MCP servers available to the runtime. Defaults to the Veryfront API

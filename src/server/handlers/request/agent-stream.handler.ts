@@ -46,6 +46,7 @@ import {
   type RuntimeRemoteToolConfig,
   VERYFRONT_API_MCP_SOURCE_ID,
   VERYFRONT_STUDIO_MCP_SOURCE_ID,
+  VERYFRONT_STUDIO_TOOL_PREFIX,
 } from "#veryfront/agent/runtime/mcp-server-tool-sources.ts";
 import {
   type AgentServiceVeryfrontStudioMcpServerConfig,
@@ -686,15 +687,40 @@ function isExplicitStudioMcpServer(
 }
 
 function withoutOptionalStudioMcpServers(agent: Agent): Agent {
-  const mcpServers = agent.config.mcpServers?.filter((server) =>
-    !isExplicitStudioMcpServer(server) || server.required !== false
-  );
-  if (mcpServers?.length === agent.config.mcpServers?.length) return agent;
+  const skippedToolNames = new Set<string>();
+  let skippedOptionalStudio = false;
+  const mcpServers = agent.config.mcpServers?.filter((server) => {
+    if (isExplicitStudioMcpServer(server) && server.required === false) {
+      skippedOptionalStudio = true;
+      for (const toolName of server.toolPolicy?.allow ?? []) skippedToolNames.add(toolName);
+      return false;
+    }
+    return true;
+  });
+  const unchangedServers = mcpServers?.length === agent.config.mcpServers?.length;
+  if (unchangedServers) return agent;
+  const runtimeConfig = agent.config as Agent["config"] & RuntimeRemoteToolConfig;
+  const unavailableNames = [
+    ...(runtimeConfig.__vfUnavailableOptionalRemoteToolNames ?? []),
+    ...skippedToolNames,
+  ];
+  const unavailablePrefixes = skippedOptionalStudio
+    ? [
+      ...(runtimeConfig.__vfUnavailableOptionalRemoteToolPrefixes ?? []),
+      VERYFRONT_STUDIO_TOOL_PREFIX,
+    ]
+    : runtimeConfig.__vfUnavailableOptionalRemoteToolPrefixes;
   return {
     ...agent,
     config: {
       ...agent.config,
       ...(mcpServers === undefined ? {} : { mcpServers }),
+      ...(unavailableNames.length > 0
+        ? { __vfUnavailableOptionalRemoteToolNames: [...new Set(unavailableNames)] }
+        : {}),
+      ...(unavailablePrefixes && unavailablePrefixes.length > 0
+        ? { __vfUnavailableOptionalRemoteToolPrefixes: [...new Set(unavailablePrefixes)] }
+        : {}),
     },
   };
 }

@@ -48,6 +48,8 @@ const WeakMapDelete = NativeWeakMap.prototype.delete;
 const WeakMapGet = NativeWeakMap.prototype.get;
 const WeakMapHas = NativeWeakMap.prototype.has;
 const WeakMapSet = NativeWeakMap.prototype.set;
+const NativeTypeError = TypeError;
+const FunctionHasInstance = Function.prototype[Symbol.hasInstance];
 
 /** The proxy-injected Veryfront API credential. */
 export const INGRESS_API_TOKEN_HEADER = "x-token";
@@ -227,6 +229,17 @@ function hasAnyCredential(credentials: IngressCredentials): boolean {
     credentials[INGRESS_AUTHORIZATION_HEADER] !== null;
 }
 
+function deleteCredentialHeaders(headers: Headers, withoutAuthorization: boolean): void {
+  IntrinsicReflectApply(HeadersDelete, headers, [INGRESS_API_TOKEN_HEADER]);
+  IntrinsicReflectApply(HeadersDelete, headers, [INGRESS_INFERENCE_TOKEN_HEADER]);
+  IntrinsicReflectApply(HeadersDelete, headers, [INGRESS_RUN_EVENT_TOKEN_HEADER]);
+  IntrinsicReflectApply(HeadersDelete, headers, [INGRESS_RUN_STOP_TOKEN_HEADER]);
+  IntrinsicReflectApply(HeadersDelete, headers, [INGRESS_RUN_TERMINAL_TOKEN_HEADER]);
+  if (withoutAuthorization) {
+    IntrinsicReflectApply(HeadersDelete, headers, [INGRESS_AUTHORIZATION_HEADER]);
+  }
+}
+
 /** A copy of `request` without the credential headers, holding `credentials`. */
 function sealWith(request: Request, credentials: IngressCredentials): Request {
   assertNativeHeaderProcessing();
@@ -241,14 +254,7 @@ function sealWith(request: Request, credentials: IngressCredentials): Request {
   // Bun can retain the source headers when the override record is empty.
   // Scrub only the private copy, through captured methods, before publishing it.
   const sealedHeaders = IntrinsicReflectApply(RequestHeadersGetter, sealed, []) as Headers;
-  IntrinsicReflectApply(HeadersDelete, sealedHeaders, [INGRESS_API_TOKEN_HEADER]);
-  IntrinsicReflectApply(HeadersDelete, sealedHeaders, [INGRESS_INFERENCE_TOKEN_HEADER]);
-  IntrinsicReflectApply(HeadersDelete, sealedHeaders, [INGRESS_RUN_EVENT_TOKEN_HEADER]);
-  IntrinsicReflectApply(HeadersDelete, sealedHeaders, [INGRESS_RUN_STOP_TOKEN_HEADER]);
-  IntrinsicReflectApply(HeadersDelete, sealedHeaders, [INGRESS_RUN_TERMINAL_TOKEN_HEADER]);
-  if (withoutAuthorization) {
-    IntrinsicReflectApply(HeadersDelete, sealedHeaders, [INGRESS_AUTHORIZATION_HEADER]);
-  }
+  deleteCredentialHeaders(sealedHeaders, withoutAuthorization);
   // Clear any cookies retained by the constructor before replaying each field.
   IntrinsicReflectApply(HeadersDelete, sealedHeaders, ["set-cookie"]);
   if (remaining.setCookies.length > 0) {
@@ -317,6 +323,20 @@ export function sealInterceptedRequest(source: Request, intercepted: Request): R
   if (hasAnyCredential(written)) {
     sealed = sealWith(intercepted, written);
     after = written;
+    // The interceptor's own request is not passed on, but it may be the
+    // sealed source it edited in place, which other framework code still
+    // holds: take the credentials it wrote off it too. Immutable headers (a
+    // runtime-created request) cannot have been written by the interceptor.
+    try {
+      deleteCredentialHeaders(
+        IntrinsicReflectApply(RequestHeadersGetter, intercepted, []) as Headers,
+        written[INGRESS_AUTHORIZATION_HEADER] !== null,
+      );
+    } catch (error) {
+      // Only the immutable-headers refusal is expected; the sealed copy above
+      // is what goes on. Anything else is a real failure.
+      if (!IntrinsicReflectApply(FunctionHasInstance, NativeTypeError, [error])) throw error;
+    }
   } else if (registered !== undefined) {
     if (intercepted === source) return source;
     sealed = intercepted;

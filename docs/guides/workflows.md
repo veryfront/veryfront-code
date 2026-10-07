@@ -653,6 +653,13 @@ Resume such a run from a checkpoint that retains the original child context.
 
 A run that pauses on an approval or an event has no output until it completes.
 
+A durable workflow run holds its completed step boundary when the control plane
+cannot confirm whether execution can continue. The runtime retries transient
+pause acknowledgement failures for up to 60 seconds, then answers with a
+resumable manual pause. A 401, 403, or 404 response holds the run immediately.
+Resume the run manually with a valid capability to execute the remaining steps.
+The runtime never treats an unknown decision as permission to continue.
+
 See [Run input and output](./run-input-output.md) for what a workflow run
 stores as input and output, and how `inputSchema` and `outputSchema` apply.
 

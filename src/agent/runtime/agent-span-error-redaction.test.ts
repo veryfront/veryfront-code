@@ -7,10 +7,11 @@ import { defineSchema } from "#veryfront/schemas/index.ts";
 import { type Tool, tool } from "#veryfront/tool";
 import { agent } from "../index.ts";
 import * as otelApi from "npm:@opentelemetry/api@1.9.1";
-import { type ExportResult, ExportResultCode } from "npm:@opentelemetry/core@2.10.0";
 import { AsyncLocalStorageContextManager } from "npm:@opentelemetry/context-async-hooks@2.10.0";
+import { type ExportResult, ExportResultCode } from "npm:@opentelemetry/core@2.10.0";
 import {
   BasicTracerProvider,
+  InMemorySpanExporter,
   type ReadableSpan,
   SimpleSpanProcessor,
   type SpanExporter,
@@ -23,42 +24,55 @@ import {
   SpanStatusCode,
 } from "#veryfront/observability/tracing/api-shim.ts";
 
-class ImmediateInMemorySpanExporter implements SpanExporter {
-  #finishedSpans: ReadableSpan[] = [];
-  #stopped = false;
+class DeferredInMemorySpanExporter implements SpanExporter {
+  readonly #exporter = new InMemorySpanExporter();
+  readonly #pendingSpans: ReadableSpan[] = [];
 
+  // Keep the real SimpleSpanProcessor -> ReadableSpan -> InMemorySpanExporter
+  // path, but defer the exporter call until after the poisoned global Error is
+  // restored. Deno's Node timer shim allocates through global Error while the
+  // in-memory exporter schedules its callback, which is outside the security
+  // behavior this fixture is asserting.
   export(spans: ReadableSpan[], resultCallback: (result: ExportResult) => void): void {
-    if (this.#stopped) {
-      resultCallback({ code: ExportResultCode.FAILED });
-      return;
-    }
-    this.#finishedSpans.push(...spans);
+    this.#pendingSpans.push(...spans);
     resultCallback({ code: ExportResultCode.SUCCESS });
   }
 
-  shutdown(): Promise<void> {
-    this.#stopped = true;
-    this.#finishedSpans = [];
-    return this.forceFlush();
+  async flushToInMemoryExporter(): Promise<void> {
+    for (const span of this.#pendingSpans) {
+      await new Promise<void>((resolve, reject) => {
+        this.#exporter.export([span], (result) => {
+          if (result.code === ExportResultCode.SUCCESS) {
+            resolve();
+            return;
+          }
+          reject(result.error ?? new Error("Deferred span export failed"));
+        });
+      });
+    }
+    this.#pendingSpans.length = 0;
+  }
+
+  getFinishedSpans(): ReadableSpan[] {
+    return this.#exporter.getFinishedSpans();
   }
 
   forceFlush(): Promise<void> {
     return Promise.resolve();
   }
 
-  getFinishedSpans(): readonly ReadableSpan[] {
-    return this.#finishedSpans;
+  shutdown(): Promise<void> {
+    this.#pendingSpans.length = 0;
+    return this.#exporter.shutdown();
   }
 }
 
 /**
  * The real SDK, wired the way server bootstrap wires it. A hand-rolled tracer
- * double cannot show what actually reaches a span processor, which is the only
- * thing this file is about. The in-memory exporter completes synchronously so
- * poison-global tests do not exercise OpenTelemetry's timer implementation.
+ * double cannot show what actually reaches an exporter, which is the only thing
+ * this file is about.
  */
-function installRealTracing() {
-  const exporter = new ImmediateInMemorySpanExporter();
+function installRealTracingWithExporter<TExporter extends SpanExporter>(exporter: TExporter) {
   const provider = new BasicTracerProvider({ spanProcessors: [new SimpleSpanProcessor(exporter)] });
   const contextManager = new AsyncLocalStorageContextManager();
   contextManager.enable();
@@ -76,6 +90,14 @@ function installRealTracing() {
       await provider.shutdown();
     },
   };
+}
+
+function installRealTracing() {
+  return installRealTracingWithExporter(new InMemorySpanExporter());
+}
+
+function installRealTracingWithDeferredInMemoryExporter() {
+  return installRealTracingWithExporter(new DeferredInMemorySpanExporter());
 }
 
 /**
@@ -250,11 +272,12 @@ describe("agent span error redaction", () => {
   });
 
   it("keeps returned tool failures bounded when application code replaces Error", async () => {
-    const tracing = installRealTracing();
+    const tracing = installRealTracingWithDeferredInMemoryExporter();
     const NativeError = Error;
     const previousError = Object.getOwnPropertyDescriptor(globalThis, "Error");
     try {
       const needle = "returned-tool-poisoned-error@example.com";
+      let errorConstructorCalls = 0;
       const assistant = createAgent(tool({
         id: "probe_tool",
         description: "probe",
@@ -265,16 +288,23 @@ describe("agent span error redaction", () => {
       Object.defineProperty(globalThis, "Error", {
         configurable: true,
         value: function Error(): never {
+          errorConstructorCalls++;
           throw new NativeError("global Error constructor must not run");
         },
         writable: true,
       });
 
       await assistant.generate({ input: "go" });
+      assertEquals(
+        errorConstructorCalls,
+        0,
+        "returned-tool instrumentation must not call the application-owned Error constructor",
+      );
       if (previousError) {
         Object.defineProperty(globalThis, "Error", previousError);
       }
       await tracing.provider.forceFlush();
+      await tracing.exporter.flushToInMemoryExporter();
       const spans = tracing.exporter.getFinishedSpans();
 
       assertNoSpanCarries(spans, needle);

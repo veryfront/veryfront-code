@@ -51,6 +51,10 @@ const FunctionHasInstance = Function.prototype[Symbol.hasInstance];
 const ReflectOwnKeys = Reflect.ownKeys;
 const GetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 const NativeTypeError = TypeError;
+const ArrayPrototype = Array.prototype;
+const ArrayConstructorDescriptor = GetOwnPropertyDescriptor(ArrayPrototype, "constructor");
+const SymbolSpecies: symbol = Symbol.species;
+const ArraySpeciesDescriptor = GetOwnPropertyDescriptor(Array, SymbolSpecies);
 
 // The captured accessors below still reach headers through these internals.
 lockNativeRequestInternals();
@@ -109,7 +113,11 @@ function isSameDescriptor(
     descriptorField(current, "set") === descriptorField(original, "set");
 }
 
-function descriptorField(descriptor: PropertyDescriptor, field: "value" | "get" | "set"): unknown {
+/** A descriptor's own `value`, `get` or `set`; never an inherited one. */
+export function descriptorField(
+  descriptor: PropertyDescriptor,
+  field: "value" | "get" | "set",
+): unknown {
   return IntrinsicReflectApply(ObjectHasOwn, undefined, [descriptor, field])
     ? descriptor[field]
     : undefined;
@@ -123,6 +131,7 @@ function descriptorField(descriptor: PropertyDescriptor, field: "value" | "get" 
  * safe answer.
  */
 export function assertNativeRequestProcessing(): void {
+  assertArrayWritesUnobserved();
   for (let index = 0; index < NATIVE_REQUEST_PROPERTIES.length; index++) {
     const snapshot = NATIVE_REQUEST_PROPERTIES[index]!;
     if (
@@ -138,6 +147,134 @@ export function assertNativeRequestProcessing(): void {
       );
     }
   }
+}
+
+/** Digits only: every array index, and a few keys no array uses, which is fine to refuse too. */
+function isIndexLikeKey(key: PropertyKey): boolean {
+  if (typeof key !== "string" || key.length === 0) return false;
+  for (let index = 0; index < key.length; index++) {
+    const code = IntrinsicReflectApply(StringCharCodeAt, key, [index]) as number;
+    if (code < 0x30 || code > 0x39) return false;
+  }
+  return true;
+}
+
+function hasOwnIndexLikeKey(target: typeof ArrayPrototype | typeof ObjectPrototype): boolean {
+  // Reflect.ownKeys on these ordinary intrinsics runs no project code; the
+  // values, which may be accessors, are never read.
+  const keys = ReflectOwnKeys(target);
+  for (let index = 0; index < keys.length; index++) {
+    if (isIndexLikeKey(keys[index]!)) return true;
+  }
+  return false;
+}
+
+/**
+ * Refuse a credential-bearing request while array writes inside the runtime
+ * can be observed. Filling or iterating a native `Headers`, and the native
+ * `Request` constructor even for a null-prototype record, push `[name, value]`
+ * pairs onto fresh arrays and build others through `ArraySpeciesCreate`:
+ *
+ * - a push stores at an index the new array does not own yet, so an accessor
+ *   for that index on `Array.prototype`, on `Object.prototype`, or on an
+ *   object spliced into `Array.prototype`'s chain, runs with the pair;
+ * - `filter`, `map` and `splice` (header `get` and `delete`) construct their
+ *   result through `Array.prototype.constructor[Symbol.species]`, so a
+ *   replaced constructor or species getter receives the matching entries.
+ *
+ * Nothing legitimate defines index-keyed members on those prototypes or swaps
+ * the array species, so this check fails closed instead of trying to work
+ * around them.
+ */
+export function assertArrayWritesUnobserved(): void {
+  let member: string | undefined;
+  if (hasOwnIndexLikeKey(ArrayPrototype)) member = "an index-keyed Array.prototype member";
+  else if (hasOwnIndexLikeKey(ObjectPrototype)) {
+    member = "an index-keyed Object.prototype member";
+  } else if (ObjectGetPrototypeOf(ArrayPrototype) !== ObjectPrototype) {
+    member = "Array.prototype's prototype";
+  } else if (
+    !isSameDescriptor(
+      GetOwnPropertyDescriptor(ArrayPrototype, "constructor"),
+      ArrayConstructorDescriptor,
+    )
+  ) {
+    member = "Array.prototype.constructor";
+  } else if (
+    !isSameDescriptor(GetOwnPropertyDescriptor(NativeArray, SymbolSpecies), ArraySpeciesDescriptor)
+  ) {
+    member = "Array[Symbol.species]";
+  }
+  if (member === undefined) return;
+  throw new NativeTypeError(
+    `Refused a credential-bearing request to protect its token: ${member} was added or ` +
+      "replaced, and the runtime's header handling writes the request headers into arrays " +
+      "it would observe. Do not define index-keyed prototype members or replace the Array species.",
+  );
+}
+
+// Object.prototype's own members as this module loaded, before project code.
+const OBJECT_PROTOTYPE_MEMBERS: readonly {
+  readonly key: PropertyKey;
+  readonly descriptor: PropertyDescriptor | undefined;
+}[] = (() => {
+  const keys = ReflectOwnKeys(ObjectPrototype);
+  const members = [];
+  for (let index = 0; index < keys.length; index++) {
+    const key = keys[index]!;
+    members[members.length] = { key, descriptor: GetOwnPropertyDescriptor(ObjectPrototype, key) };
+  }
+  return Object.freeze(members);
+})();
+
+/**
+ * Refuse a credential-bearing `node:http` request once `Object.prototype` has
+ * gained or replaced a member. `http.request` copies its options with
+ * `Object.assign({}, options)`, so even null-prototype options end up in an
+ * ordinary object, and every option it reads that the copy lacks (`agent`,
+ * `lookup`, `timeout`, ...) is looked up on `Object.prototype`, where a getter
+ * would run with the copy, and its `headers`, as `this`. Unlike a Fetch init,
+ * that option list is open-ended and version-dependent, so it cannot be filled
+ * in ahead of time.
+ */
+export function assertObjectPrototypeUnchanged(): void {
+  const changed = findChangedObjectPrototypeMember();
+  if (changed === undefined) return;
+  throw new NativeTypeError(
+    "Refused a credential-bearing request to protect its token: Object.prototype member " +
+      `${changed} was added or replaced after load, and node:http reads its request options ` +
+      "through Object.prototype. Do not add members to Object.prototype.",
+  );
+}
+
+/** The first Object.prototype key added or replaced since load, as text. */
+function findChangedObjectPrototypeMember(): string | undefined {
+  for (let index = 0; index < OBJECT_PROTOTYPE_MEMBERS.length; index++) {
+    const member = OBJECT_PROTOTYPE_MEMBERS[index]!;
+    if (
+      !isSameDescriptor(GetOwnPropertyDescriptor(ObjectPrototype, member.key), member.descriptor)
+    ) {
+      return describeKey(member.key);
+    }
+  }
+  const keys = ReflectOwnKeys(ObjectPrototype);
+  if (keys.length === OBJECT_PROTOTYPE_MEMBERS.length) return undefined;
+  for (let index = 0; index < keys.length; index++) {
+    const key = keys[index]!;
+    let known = false;
+    for (let member = 0; member < OBJECT_PROTOTYPE_MEMBERS.length; member++) {
+      if (OBJECT_PROTOTYPE_MEMBERS[member]!.key === key) {
+        known = true;
+        break;
+      }
+    }
+    if (!known) return describeKey(key);
+  }
+  return "(unknown)";
+}
+
+function describeKey(key: PropertyKey): string {
+  return typeof key === "symbol" ? `[${NativeString(key)}]` : `"${NativeString(key)}"`;
 }
 
 function describeMember(snapshot: PropertySnapshot): string {
@@ -205,7 +342,10 @@ function toPairsIfIterable(source: HeadersInit): HeadersInit {
     // conversion treats it; an inherited one is never looked up.
     const own = ObjectGetOwnPropertyDescriptor(source, SymbolIterator);
     if (own === undefined) return source;
-    if (typeof own.value !== "function" && typeof own.get !== "function") return source;
+    if (
+      typeof descriptorField(own, "value") !== "function" &&
+      typeof descriptorField(own, "get") !== "function"
+    ) return source;
     return IntrinsicReflectApply(ArrayFrom, NativeArray, [source]) as [string, string][];
   }
   const iterator: unknown = (source as Record<symbol, unknown>)[SymbolIterator];
@@ -288,6 +428,9 @@ export function createNativeRequest(input: RequestInfo | URL, init: RequestInit)
  * iteration, an array by index, and a record by its own keys.
  */
 export function copyNativeHeaders(source: HeadersInit | undefined | null): Headers {
+  // Checked here, at the fill itself, so no caller can let project code run
+  // between its own check and this point.
+  assertArrayWritesUnobserved();
   const headers = new NativeHeaders();
   if (source === undefined || source === null) return headers;
   if (isNativeHeaders(source)) {
@@ -334,6 +477,8 @@ export function copyNativeHeaders(source: HeadersInit | undefined | null): Heade
  * out of the record and travel beside it (see {@link nativeFetchArguments}).
  */
 export function toNativeHeaderRecord(headers: Headers): Record<string, string> {
+  // Native iteration pushes every entry onto a fresh array: checked at the read.
+  assertArrayWritesUnobserved();
   const record = ObjectCreate(null) as Record<string, string>;
   const iterator = IntrinsicReflectApply(HeadersEntries, headers, []) as IterableIterator<
     [string, string]
