@@ -71,6 +71,8 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
       "claimRun",
       "ConversationRunEventEncoder",
       "x-csrf-token",
+      "project editor access",
+      '}, { "Idempotency-Key": admissionKey });',
       "VERYFRONT_PROJECT_ID",
       "veryfront dev",
       "worker_key",

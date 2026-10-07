@@ -1,7 +1,7 @@
 ---
 title: "Connect a runtime"
 description: "Connect a local or self-hosted Veryfront agent runtime to a project and inspect its runs."
-order: 32
+order: 59
 ---
 
 Connect a developer-owned Veryfront runtime to a project with the external
@@ -18,7 +18,8 @@ push service with a public endpoint and an immutable deployment source, use
 ## Prerequisites
 
 - A Veryfront project with `veryfront` installed.
-- A token with access to the project and `project.runtime.manage` permission.
+- A token with project editor access (to create the conversation and root run)
+  and `project.runtime.manage` permission (to register and manage the worker).
 - An inference provider configured for the local runtime. See
   [Providers](./providers.md).
 - The project UUID. Keep the API token on the server.
@@ -65,10 +66,18 @@ export async function POST(request: Request): Promise<Response> {
     return Response.json({ error: "Authentication required" }, { status: 401 });
   }
 
-  async function api<T>(path: string, body: unknown): Promise<T> {
+  async function api<T>(
+    path: string,
+    body: unknown,
+    extraHeaders: Record<string, string> = {},
+  ): Promise<T> {
     const response = await fetch(`${apiUrl}${path}`, {
       method: "POST",
-      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      headers: {
+        ...extraHeaders,
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
       body: JSON.stringify(body),
     });
     if (!response.ok) throw new Error(`Runtime API request failed: ${response.status}`);
@@ -92,6 +101,7 @@ export async function POST(request: Request): Promise<Response> {
     title: "Runtime connection demo",
   });
   const prompt = "Say hello to the teammate inspecting this run.";
+  const admissionKey = crypto.randomUUID();
   const accepted = await api<{ id: string }>("/runs", {
     project_id: projectId,
     conversation_id: conversation.id,
@@ -105,16 +115,18 @@ export async function POST(request: Request): Promise<Response> {
         worker_key: workerKey,
       },
     },
-  });
+  }, { "Idempotency-Key": admissionKey });
   const run = await client.claimRun({ workerId: worker.id, leaseDurationSeconds: 60 });
   if (!run) throw new Error("The runtime did not receive its queued run");
 
+  let output: string;
   try {
     // This bounded, one-step demonstration finishes before the 60-second lease.
     const result = await assistant.generate({
       input: prompt,
       abortSignal: AbortSignal.timeout(20_000),
     });
+    output = result.text;
     const messageId = crypto.randomUUID();
     const encoder = new ConversationRunEventEncoder();
     const events = [
@@ -129,12 +141,6 @@ export async function POST(request: Request): Promise<Response> {
       events,
       expectedPreviousExternalEventSequence: run.latest_external_event_sequence,
     });
-    await client.completeRun({ runId: run.run_id, status: "completed", output: result.text });
-    return Response.json({
-      worker_id: worker.id,
-      run_id: accepted.id,
-      conversation_id: conversation.id,
-    });
   } catch {
     await client.completeRun({
       runId: run.run_id,
@@ -146,6 +152,22 @@ export async function POST(request: Request): Promise<Response> {
       status: 502,
     });
   }
+
+  // Keep completion outside the generation/event failure handler: never change
+  // an ambiguous completed outcome to failed. Read the canonical run instead.
+  const identities = {
+    worker_id: worker.id,
+    run_id: accepted.id,
+    conversation_id: conversation.id,
+  };
+  try {
+    await client.completeRun({ runId: run.run_id, status: "completed", output });
+  } catch {
+    return Response.json({ ...identities, error: "Read the run to confirm completion" }, {
+      status: 502,
+    });
+  }
+  return Response.json(identities);
 }
 ```
 

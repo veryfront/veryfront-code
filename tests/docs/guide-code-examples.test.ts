@@ -620,6 +620,18 @@ describe("Guide: agent-service-runtime.md", () => {
 });
 
 describe("Guide: connect-runtime.md", () => {
+  it("does not retry an ambiguous successful finalization as failed", async () => {
+    const guide = await readGuide("connect-runtime.md");
+    const completed = guide.indexOf(
+      'await client.completeRun({ runId: run.run_id, status: "completed"',
+    );
+    const failed = guide.indexOf('status: "failed"');
+    assert(
+      failed >= 0 && completed > failed,
+      "Successful finalization must follow the generation/event failure handler",
+    );
+  });
+
   it("encodes the demonstrated output with matching message boundaries", () => {
     assertEquals(typeof createExternalAgentWorkerClient, "function");
     const messageId = "runtime-demo-message";
