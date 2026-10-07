@@ -15,6 +15,7 @@ import {
   remove,
   writeTextFile,
 } from "#veryfront/testing/deno-compat.ts";
+import { installMockFetch, restoreMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { VeryfrontError } from "veryfront/errors";
 import {
   buildUploadCreateUrl,
@@ -285,7 +286,6 @@ describe("downloadUploadToFile", () => {
 
 describe("uploadLocalFileToUploads", () => {
   it("creates an upload URL then PUTs the local file bytes", async () => {
-    const originalFetch = globalThis.fetch;
     const tempDir = await makeTempDir();
     const localPath = `${tempDir}/q1.pdf`;
     let metadataPath = "";
@@ -296,7 +296,7 @@ describe("uploadLocalFileToUploads", () => {
 
     await writeTextFile(localPath, "quarterly report");
 
-    globalThis.fetch = async (input: string | URL | Request, init?: RequestInit) => {
+    installMockFetch(async (input: string | URL | Request, init?: RequestInit) => {
       const url = typeof input === "string"
         ? input
         : input instanceof URL
@@ -309,7 +309,7 @@ describe("uploadLocalFileToUploads", () => {
         return new Response(null, { status: 200 });
       }
       throw new Error(`Unexpected fetch: ${url}`);
-    };
+    });
 
     try {
       const client = createMockClient({
@@ -345,7 +345,7 @@ describe("uploadLocalFileToUploads", () => {
       assertEquals(uploadedBytes, 16);
       assertEquals(result.upload_id, "upload-123");
     } finally {
-      globalThis.fetch = originalFetch;
+      restoreMockFetch();
       await remove(tempDir, { recursive: true });
     }
   });
