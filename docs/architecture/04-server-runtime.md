@@ -28,6 +28,16 @@ Primary source areas:
    or stream protocol responses.
 5. Shared response helpers normalize CORS, not-found, static, and error output.
 
+## Hosted request cancellation
+
+A hosted configuration caller owns its cancellation separately from the shared
+configuration evaluation. Cancelling one waiter must not cancel peers. The
+request boundary returns an empty 499 response only when its inbound request is
+aborted and the loader identifies the exact error as that caller's cancellation.
+Independent worker errors still produce server failures, and a request deadline
+still produces 504. Cancellation ownership is not inferred from an error name
+or message, and genuine evaluator failures remain reported.
+
 ## RSS recycle containment
 
 Production process owners can opt in to a graceful recycle after sustained RSS

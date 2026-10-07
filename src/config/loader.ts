@@ -70,6 +70,7 @@ import {
   evaluatePreparedDeclarativeConfigInWorker,
 } from "./declarative-evaluator-worker-runner.ts";
 import { createDeclarativeConfigWorkerInfrastructureError } from "./declarative-evaluator-worker-protocol.ts";
+import { createHostedConfigRequestCancellation } from "./request-cancellation.ts";
 import { describeHostedConfigRejection } from "./hosted-compatibility.ts";
 import {
   type ImportMetaResolveArgumentRewriter,
@@ -1013,7 +1014,7 @@ function isHostedMultiProjectFilesystem(adapter: RuntimeAdapter): boolean {
 
 function throwIfHostedConfigAborted(signal: AbortSignal | undefined): void {
   if (signal && isSignalAborted(signal)) {
-    throw createDeclarativeConfigWorkerInfrastructureError("worker-aborted");
+    throw createHostedConfigRequestCancellation();
   }
 }
 
@@ -1415,7 +1416,7 @@ function waitForHostedConfigSourceReadFlight(
       );
     }
     return rejectPromise(
-      createDeclarativeConfigWorkerInfrastructureError("worker-aborted"),
+      createHostedConfigRequestCancellation(),
     );
   }
 
@@ -1450,7 +1451,7 @@ function waitForHostedConfigSourceReadFlight(
       finish(() => {
         release();
         reject(
-          createDeclarativeConfigWorkerInfrastructureError("worker-aborted"),
+          createHostedConfigRequestCancellation(),
         );
       });
     };
@@ -1682,7 +1683,7 @@ function waitForHostedConfigFlight(
 ): Promise<VeryfrontConfig> {
   if (signal && isSignalAborted(signal)) {
     return rejectPromise(
-      createDeclarativeConfigWorkerInfrastructureError("worker-aborted"),
+      createHostedConfigRequestCancellation(),
     );
   }
 
@@ -1730,7 +1731,7 @@ function waitForHostedConfigFlight(
     const onAbort = (): void => {
       finish(() =>
         reject(
-          createDeclarativeConfigWorkerInfrastructureError("worker-aborted"),
+          createHostedConfigRequestCancellation(),
         )
       );
     };
