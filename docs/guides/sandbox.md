@@ -207,3 +207,8 @@ await sandbox.close();
 records activity but does not extend fixed expiry. `getEnvironment()` returns
 redacted values. Closing a client obtained through `get()` or `attach()` leaves
 the sandbox available. Use `delete()` when you intend to remove it.
+
+A retained always-on workspace is not replaced automatically after a missing,
+inaccessible or unhealthy runtime response. Its ID stays available on the
+client so you can inspect it or reconnect with renewed credentials. Create a
+new workspace explicitly when you intend to replace it.

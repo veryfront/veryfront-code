@@ -1895,6 +1895,11 @@ describe("Sandbox", () => {
         ttlMode: "always_on",
       });
       await assertRejects(() => sandbox.ensure(), Error, "Sandbox heartbeat failed");
+      assertEquals(
+        sandbox.id,
+        "persistent-workspace",
+        "retained identity stays available for recovery",
+      );
       assertEquals((await sandbox.runCommand("pwd")).stdout, "same workspace");
       assertEquals(sandbox.id, "persistent-workspace");
       assertEquals(
@@ -2022,6 +2027,34 @@ describe("Sandbox", () => {
         1,
         "the command may already have run",
       );
+    });
+
+    it("retains identity without silently replacing an inaccessible always-on workspace", async () => {
+      mockFetch([
+        jsonResponse({
+          id: "persistent-workspace",
+          endpoint: "https://sb.test",
+          status: "running",
+        }),
+        textResponse("temporarily unavailable", 503),
+        textResponse("Sandbox not found", 404),
+      ]);
+      const sandbox = Sandbox.createLazy({
+        authToken: "token",
+        apiUrl: "https://api.test.com",
+        projectReference: "project",
+        ttlMode: "always_on",
+      });
+      await assertRejects(() => sandbox.ensure(), Error, "Sandbox heartbeat failed");
+      await assertRejects(() => sandbox.ensure(), Error, "Failed to get sandbox: 404");
+      assertEquals(sandbox.id, "persistent-workspace");
+      assertEquals(
+        fetchCalls.filter((call) => call.url.endsWith("/sandboxes") && call.init?.method === "POST")
+          .length,
+        1,
+        "404 can mean lost access and must not trigger another billed workspace",
+      );
+      await sandbox.close();
     });
 
     it("allows synchronous command completion beyond the metadata request timeout", async () => {
@@ -3764,6 +3797,62 @@ describe("Sandbox", () => {
     const command = await sandbox.getBackgroundCommand("pending-command");
     assertEquals(command.startedAt, null);
     assertEquals(command.command, "true");
+  });
+
+  it("preserves reported truncation in canonical eager and lazy output", async () => {
+    const receipt = {
+      command_id: "command-1",
+      command: "echo test",
+      status: "completed",
+      exit_code: 0,
+      signal: null,
+      started_at: null,
+      finished_at: null,
+      heartbeat_status: "disabled",
+      last_heartbeat_at: null,
+      last_heartbeat_error: null,
+      heartbeat_failure_count: 0,
+      stdout: "partial",
+      stderr: "",
+      stdout_truncated: true,
+      stderr_truncated: false,
+    };
+    mockFetch([jsonResponse(receipt), jsonResponse({ ok: true }), jsonResponse(receipt)]);
+    const eager = Sandbox.attach({
+      id: "existing",
+      endpoint: "https://sb.test",
+      authToken: "token",
+      apiUrl: "https://api.test.com",
+    });
+    const lazy = Sandbox.createLazy({
+      sandboxId: "existing",
+      sandboxEndpoint: "https://sb.test",
+      authToken: "token",
+      apiUrl: "https://api.test.com",
+    });
+    try {
+      assertEquals((await eager.getBackgroundCommandOutput("command-1")).stdoutTruncated, true);
+      assertEquals((await lazy.getBackgroundCommandOutput("command-1")).stdoutTruncated, true);
+    } finally {
+      await lazy.close();
+    }
+  });
+  it("rejects retired project selectors instead of silently billing a different project", async () => {
+    mockFetch([]);
+    const options = {
+      projectId: "retired-project",
+      authToken: "token",
+      apiUrl: "https://api.test.com",
+    };
+    await assertRejects(() => Sandbox.create(options), Error, "Use projectReference");
+    await assertRejects(
+      async () => {
+        Sandbox.createLazy(options);
+      },
+      Error,
+      "Use projectReference",
+    );
+    assertEquals(fetchCalls.length, 0);
   });
 
   describe("control-plane operations", () => {

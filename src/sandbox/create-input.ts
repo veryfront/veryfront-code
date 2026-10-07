@@ -6,6 +6,7 @@ export function buildSandboxCreateInput(
   options: SandboxOptions,
   projectReference = options.projectReference,
 ) {
+  assertSandboxCreationOptions(options);
   const accessScope = options.accessScope ?? "project";
   const ttlMode = options.ttlMode ?? "default";
   if (
@@ -37,4 +38,11 @@ export function buildSandboxCommandOptions(options?: import("./types.ts").Comman
     ...(options?.timeoutSeconds !== undefined ? { timeout_seconds: options.timeoutSeconds } : {}),
     ...(options?.env !== undefined ? { env: options.env } : {}),
   };
+}
+
+/** @internal Refuse retired selectors instead of silently changing the billing project. */
+export function assertSandboxCreationOptions(options: SandboxOptions): void {
+  if (Object.hasOwn(options, "projectId")) {
+    throw CONFIG_INVALID.create({ detail: "Use projectReference instead of projectId" });
+  }
 }

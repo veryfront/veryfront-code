@@ -9,6 +9,7 @@
 import {
   assertSandboxFilesWritten,
   parseSandboxBackgroundCommand,
+  parseSandboxBackgroundCommandOutput,
   parseSandboxCapabilities,
   parseSandboxCommandResult,
   parseSandboxDetails,
@@ -444,13 +445,7 @@ export class Sandbox {
     }
 
     const json = await res.json();
-    return {
-      ...Sandbox.mapBackgroundCommand(json),
-      stdout: json.stdout,
-      stderr: json.stderr,
-      stdoutTruncated: false,
-      stderrTruncated: false,
-    };
+    return parseSandboxBackgroundCommandOutput(json);
   }
 
   /** List all background commands in the sandbox. */

@@ -1,6 +1,7 @@
 import { REQUEST_ERROR } from "#veryfront/errors";
 import type {
   BackgroundCommand,
+  BackgroundCommandOutput,
   CommandResult,
   SandboxCapabilities,
   SandboxDetails,
@@ -275,4 +276,21 @@ export function parseSandboxCommandResult(value: unknown): CommandResult {
     throw REQUEST_ERROR.create({ detail: "Invalid sandbox command result" });
   }
   return { stdout: text(input.stdout), stderr: text(input.stderr), exitCode: input.exit_code };
+}
+
+/** @internal Decode output without losing truncation reported by a runtime. */
+export function parseSandboxBackgroundCommandOutput(value: unknown): BackgroundCommandOutput {
+  const input = record(value);
+  for (const flag of [input.stdout_truncated, input.stderr_truncated]) {
+    if (flag !== undefined && typeof flag !== "boolean") {
+      throw REQUEST_ERROR.create({ detail: "Invalid sandbox truncation flag" });
+    }
+  }
+  return {
+    ...parseSandboxBackgroundCommand(input),
+    stdout: text(input.stdout),
+    stderr: text(input.stderr),
+    stdoutTruncated: input.stdout_truncated === true,
+    stderrTruncated: input.stderr_truncated === true,
+  };
 }

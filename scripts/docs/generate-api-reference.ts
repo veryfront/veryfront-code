@@ -2217,6 +2217,20 @@ function generateAPISection(nodes: DocNode[], importPath: string): string[] {
 // 5d. Generate Type Reference section
 // ---------------------------------------------------------------------------
 
+function interfaceReferenceProperties(node: DocNode, nodes: DocNode[], visited = new Set<string>()): InterfaceProperty[] {
+  if (!node.interfaceDef || visited.has(node.name)) return [];
+  visited.add(node.name);
+  const inherited: InterfaceProperty[] = [];
+  for (const parent of node.interfaceDef.extends) {
+    if (!parent || typeof parent !== "object" || !("typeRef" in parent)) continue;
+    const reference = parent.typeRef;
+    if (!reference || typeof reference !== "object" || !("typeName" in reference) || typeof reference.typeName !== "string") continue;
+    const parentNode = findNode(nodes, reference.typeName);
+    if (parentNode) inherited.push(...interfaceReferenceProperties(parentNode, nodes, visited));
+  }
+  return [...new Map([...inherited, ...node.interfaceDef.properties].map(property => [property.name, property])).values()];
+}
+
 function generateTypeReference(nodes: DocNode[], importPath: string): string[] {
   const spec = API_DOCS[importPath];
   if (!spec?.expandTypes) return [];
@@ -2240,7 +2254,7 @@ function generateTypeReference(nodes: DocNode[], importPath: string): string[] {
     let properties: InterfaceProperty[] | undefined;
 
     if (node?.interfaceDef?.properties) {
-      properties = node.interfaceDef.properties;
+      properties = interfaceReferenceProperties(node, nodes);
     } else if (node?.typeAliasDef?.tsType?.kind === "typeLiteral") {
       properties = node.typeAliasDef.tsType.typeLiteral?.properties?.map((
         p,

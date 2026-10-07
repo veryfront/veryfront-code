@@ -2,10 +2,15 @@ import {
   assertSandboxFilesWritten,
   assertSandboxRuntimeFilesWritten,
   parseSandboxBackgroundCommand,
+  parseSandboxBackgroundCommandOutput,
   parseSandboxCommandResult,
   readSandboxCommandPages,
 } from "./response.ts";
-import { buildSandboxCommandOptions, buildSandboxCreateInput } from "./create-input.ts";
+import {
+  assertSandboxCreationOptions,
+  buildSandboxCommandOptions,
+  buildSandboxCreateInput,
+} from "./create-input.ts";
 import { CONFIG_INVALID, REQUEST_ERROR } from "#veryfront/errors";
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 import { logger, sleep } from "#veryfront/utils";
@@ -189,6 +194,7 @@ export class LazySandbox {
   #activeBackgroundCommands = new NativeMap<string, TrackedBackgroundCommand>();
 
   constructor(options: LazySandboxOptions = {}) {
+    assertSandboxCreationOptions(options);
     const explicitAuthToken = options.authToken === undefined
       ? ""
       : applyIntrinsic(stringTrim, options.authToken, []) as string;
@@ -436,17 +442,16 @@ export class LazySandbox {
     }
 
     const json = await res.json();
-    const output = {
-      ...mapBackgroundCommand(json, route.routeKind),
-      stdout: json.stdout,
-      stderr: json.stderr,
-      stdoutTruncated: route.routeKind === "proxy"
-        ? false
-        : Boolean(json.stdoutTruncated ?? json.stdout_truncated),
-      stderrTruncated: route.routeKind === "proxy"
-        ? false
-        : Boolean(json.stderrTruncated ?? json.stderr_truncated),
-    };
+    const output = parseSandboxBackgroundCommandOutput({
+      ...json,
+      command_id: route.routeKind === "proxy" ? json.command_id : json.id ?? json.command_id,
+      stdout_truncated: route.routeKind === "proxy"
+        ? json.stdout_truncated
+        : json.stdoutTruncated ?? json.stdout_truncated,
+      stderr_truncated: route.routeKind === "proxy"
+        ? json.stderr_truncated
+        : json.stderrTruncated ?? json.stderr_truncated,
+    });
     this.#updateTrackedBackgroundCommand(output, route);
     return output;
   }
@@ -600,7 +605,10 @@ export class LazySandbox {
   }
 
   get id(): string | null {
-    return this.sessionId;
+    return this.sessionId ??
+      (this.retainedSession?.projectReference === this.resolveProjectId()
+        ? this.retainedSession.id
+        : null);
   }
 
   get url(): string | null {
