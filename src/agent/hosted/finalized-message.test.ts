@@ -403,3 +403,117 @@ Deno.test("buildDetachedFallbackChunks omits detached fallback text chunks when 
 
   assertEquals(result, []);
 });
+
+Deno.test("finalized tool input adopts matching final-step output without duplicate replay input", () => {
+  const finalStep = {
+    toolCalls: [{ toolCallId: "c", toolName: "bash", input: { command: "x" } }],
+    toolResults: [{ toolCallId: "c", toolName: "bash", output: "ok" }],
+  };
+  const state = buildFinalizedMessageState({
+    responseMessage: {
+      id: "m",
+      role: "assistant",
+      parts: [{
+        type: "tool-bash",
+        toolCallId: "c",
+        input: { command: "x" },
+        state: "input-available",
+      }],
+    },
+    isAborted: false,
+    finalStep,
+    incompleteToolCallsPartErrorText: "tool error",
+  });
+  assertEquals(state.sanitizedFinalizedMessage.parts, [{
+    type: "tool-bash",
+    toolCallId: "c",
+    input: { command: "x" },
+    state: "output-available",
+    output: "ok",
+  }]);
+  assertEquals(state.hasIncompleteFinalizedToolParts, false);
+  const mirrored = createMirroredToolChunkState();
+  mirrored.startedToolCallIds.add("c");
+  mirrored.inputAvailableToolCallIds.add("c");
+  assertEquals(
+    buildFinalizedMessageFallbackChunks({
+      ...state,
+      finalStep,
+      mirroredToolChunkState: mirrored,
+      capturedMessageId: "m",
+    }),
+    [{ type: "tool-output-available", toolCallId: "c", output: "ok" }],
+  );
+});
+
+Deno.test("partial text suffix precedes its following final-step tool in terminal and replay", () => {
+  const finalStep = {
+    response: {
+      messages: [{
+        role: "assistant",
+        content: [{ type: "text", text: "Hello world" }, {
+          type: "tool-call",
+          toolCallId: "c",
+          toolName: "bash",
+          input: { command: "x" },
+        }, { type: "tool-result", toolCallId: "c", toolName: "bash", output: "ok" }],
+      }],
+    },
+  };
+  const state = buildFinalizedMessageState({
+    responseMessage: { id: "m", role: "assistant", parts: [{ type: "text", text: "Hello" }] },
+    isAborted: false,
+    finalStep,
+    incompleteToolCallsPartErrorText: "tool error",
+  });
+  assertEquals(state.sanitizedFinalizedMessage.parts.map((part) => part.type), [
+    "text",
+    "text",
+    "dynamic-tool",
+  ]);
+  assertEquals(state.sanitizedFinalizedMessage.parts[1], { type: "text", text: "world" });
+  const chunks = buildFinalizedMessageFallbackChunks({
+    ...state,
+    finalStep,
+    mirroredToolChunkState: createMirroredToolChunkState(),
+    capturedMessageId: "m",
+  });
+  assertEquals(chunks.map((chunk) => chunk.type), [
+    "text-start",
+    "text-delta",
+    "text-end",
+    "tool-input-start",
+    "tool-input-available",
+    "tool-output-available",
+  ]);
+});
+
+Deno.test("final-step tool completion preserves terminal refusal and aborted input", () => {
+  const finalStep = { toolResults: [{ toolCallId: "c", toolName: "bash", output: "ok" }] };
+  for (const isAborted of [true, false]) {
+    const part = isAborted
+      ? {
+        type: "tool-bash" as const,
+        toolCallId: "c",
+        input: { command: "x" },
+        state: "input-available" as const,
+      }
+      : {
+        type: "tool-bash" as const,
+        toolCallId: "c",
+        input: { command: "x" },
+        state: "output-error" as const,
+        errorText: "denied",
+      };
+    const state = buildFinalizedMessageState({
+      responseMessage: { id: "m", role: "assistant", parts: [part] },
+      isAborted,
+      finalStep,
+      incompleteToolCallsPartErrorText: "tool error",
+    });
+    assertEquals(
+      state.sanitizedFinalizedMessage.parts,
+      isAborted ? [{ ...part, state: "output-error", errorText: "Stopped by user" }] : [part],
+    );
+  }
+});

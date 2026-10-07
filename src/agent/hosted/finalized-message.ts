@@ -88,38 +88,59 @@ export function buildFinalizedMessageState(
     ? markIncompleteToolPartsAsStopped(input.responseMessage)
     : input.responseMessage;
   const finalStepFallbackParts = buildFallbackUiMessageParts(input.finalStep);
-  const hasPersistedText = persistedMessage.parts.some((part) =>
-    part.type === "text" && part.text.length > 0
-  );
+  const completedParts = persistedMessage.parts.map((part) => {
+    if (
+      input.isAborted || !isToolUiPart(part) ||
+      !["pending", "input-streaming", "input-available", "approval-requested", "approval-responded"]
+        .includes(part.state)
+    ) {
+      return part;
+    }
+    const completed = finalStepFallbackParts.find((fallback) =>
+      isToolUiPart(fallback) && fallback.toolCallId === part.toolCallId &&
+      fallback.state === "output-available"
+    );
+    return completed && isToolUiPart(completed) && completed.state === "output-available"
+      ? { ...part, state: "output-available" as const, output: completed.output }
+      : part;
+  });
   const unmatchedPersistedReasoningParts = persistedMessage.parts.filter(
     (part): part is ReasoningPart => part.type === "reasoning" && isSubstantiveReasoningPart(part),
   );
-  const missingFallbackParts = finalStepFallbackParts.filter((fallbackPart) => {
+  let hasPlacedMissingText = false;
+  const missingFallbackParts = finalStepFallbackParts.flatMap((fallbackPart) => {
     if (fallbackPart.type === "text") {
-      return !hasPersistedText;
+      hasPlacedMissingText = true;
+      return appendMissingFallbackTextPart(persistedMessage.parts, { text: fallbackPart.text })
+        .slice(persistedMessage.parts.length);
     }
     if (fallbackPart.type === "reasoning") {
       const matchingIndex = unmatchedPersistedReasoningParts.findIndex((part) =>
         hasSameReasoningContent(part, fallbackPart)
       );
       if (matchingIndex < 0) {
-        return true;
+        return [fallbackPart];
       }
       unmatchedPersistedReasoningParts.splice(matchingIndex, 1);
-      return false;
+      return [];
     }
     return isToolUiPart(fallbackPart) &&
-      !persistedMessage.parts.some((part) =>
-        isToolUiPart(part) && part.toolCallId === fallbackPart.toolCallId
-      );
+        !persistedMessage.parts.some((part) =>
+          isToolUiPart(part) && part.toolCallId === fallbackPart.toolCallId
+        )
+      ? [fallbackPart]
+      : [];
   });
   const fallbackParts = persistedMessage.parts.length === 0
     ? finalStepFallbackParts
+    : hasPlacedMissingText
+    ? [...completedParts, ...missingFallbackParts]
     : appendMissingFallbackTextPart([
-      ...persistedMessage.parts,
+      ...completedParts,
       ...missingFallbackParts,
     ], input.finalStep);
-  const finalizedMessage = fallbackParts.length !== persistedMessage.parts.length
+  const finalizedMessage = fallbackParts.length !== persistedMessage.parts.length ||
+      fallbackParts.some((part, index) => part !== persistedMessage.parts[index])
     ? {
       ...persistedMessage,
       parts: fallbackParts,
