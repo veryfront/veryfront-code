@@ -140,6 +140,134 @@ describe("pinned fetch transport integration", () => {
     });
   });
 
+  it("captures Deno node transport before later project patches", () => {
+    const script = `
+      import { createServer, ClientRequest } from "node:http";
+      import { fetchWithPinnedAddresses } from "./src/platform/compat/http/pinned-fetch.ts";
+
+      const bearer = "Bearer vf-deno-first-use-secret";
+      const originalEnd = ClientRequest.prototype.end;
+      let patchedEndWasCalled = false;
+      let patchedEndSawBearer = false;
+      let receivedAuthorization = null;
+      const server = createServer((request, response) => {
+        receivedAuthorization = request.headers.authorization ?? null;
+        request.resume();
+        response.end("ok");
+      });
+      await new Promise((resolve, reject) => {
+        server.once("error", reject);
+        server.listen(0, "127.0.0.1", resolve);
+      });
+
+      try {
+        ClientRequest.prototype.end = function(...args) {
+          patchedEndWasCalled = true;
+          patchedEndSawBearer = this.getHeader("authorization") === bearer;
+          return Reflect.apply(originalEnd, this, args);
+        };
+
+        const address = server.address();
+        const outcome = await fetchWithPinnedAddresses(
+          new URL("http://pinned-deno-first-use.test:" + address.port + "/resource"),
+          ["127.0.0.1"],
+          { headers: { authorization: bearer } },
+        ).then(
+          () => "resolved",
+          (error) => error instanceof Error ? error.message : String(error),
+        );
+
+        console.log(JSON.stringify({
+          patchedEndSawBearer,
+          patchedEndWasCalled,
+          receivedAuthorization,
+          refused: outcome.includes("Refused a credential-bearing request"),
+        }));
+      } finally {
+        ClientRequest.prototype.end = originalEnd;
+        server.closeAllConnections?.();
+        await new Promise((resolve) => server.close(resolve));
+      }
+    `;
+
+    const output = spawnSync("deno", [
+      "eval",
+      "--config=deno.json",
+      "--quiet",
+      script,
+    ], { encoding: "utf8" });
+
+    assertEquals(output.stderr, "");
+    assertEquals(output.status, 0);
+    assertEquals(JSON.parse(output.stdout), {
+      patchedEndSawBearer: false,
+      patchedEndWasCalled: false,
+      receivedAuthorization: null,
+      refused: true,
+    });
+  });
+
+  it("does not construct a Node request after synchronous abort registration", () => {
+    const script = `
+      import nodeHttp from "node:http";
+      import { syncBuiltinESMExports } from "node:module";
+
+      const originalRequest = nodeHttp.request;
+      let requestCalls = 0;
+      nodeHttp.request = function(...args) {
+        requestCalls++;
+        return Reflect.apply(originalRequest, this, args);
+      };
+      syncBuiltinESMExports();
+
+      const { fetchWithPinnedAddresses } = await import("./src/platform/compat/http/pinned-fetch.ts");
+      const abortReason = new DOMException("sync stop", "AbortError");
+      let cleanupCalls = 0;
+      const synchronousSignal = {
+        aborted: false,
+        reason: abortReason,
+        addEventListener(_event, listener) {
+          listener();
+        },
+        removeEventListener() {
+          cleanupCalls++;
+        },
+      };
+
+      const outcome = await fetchWithPinnedAddresses(
+        new URL("http://pinned-sync-abort.test/"),
+        ["127.0.0.1"],
+        {
+          headers: { authorization: "Bearer vf-sync-abort-secret" },
+          signal: synchronousSignal,
+        },
+      ).then(
+        () => "resolved",
+        (error) => error instanceof Error ? error.name + ":" + error.message : String(error),
+      );
+
+      nodeHttp.request = originalRequest;
+      syncBuiltinESMExports();
+      console.log(JSON.stringify({ cleanupCalls, outcome, requestCalls }));
+    `;
+
+    const output = spawnSync("node", [
+      "--import",
+      "./tests/node/resolver.mjs",
+      "--input-type=module",
+      "--eval",
+      script,
+    ], { encoding: "utf8" });
+
+    assertEquals(output.stderr, "");
+    assertEquals(output.status, 0);
+    assertEquals(JSON.parse(output.stdout), {
+      cleanupCalls: 1,
+      outcome: "AbortError:sync stop",
+      requestCalls: 0,
+    });
+  });
+
   it("keeps a patched array iterator from seeing private agents during socket locking", () => {
     const script = `
       const bearer = "Bearer vf-array-iterator-agent-secret";

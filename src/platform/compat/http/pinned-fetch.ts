@@ -240,11 +240,26 @@ function shouldPreloadNodeTransportIntrinsics(): boolean {
   ) || globalObject.Bun !== undefined;
 }
 
+function shouldAwaitNodeTransportIntrinsicsAtImport(): boolean {
+  const globalObject = globalThis as {
+    caches?: unknown;
+    process?: HostProcess;
+    WebSocketPair?: unknown;
+  };
+  const hasCloudflareGlobals = globalObject.caches !== undefined &&
+    globalObject.WebSocketPair !== undefined;
+  return !hasCloudflareGlobals && globalObject.process?.versions?.deno !== undefined;
+}
+
 const synchronousNodeBuiltinLoader = getSynchronousNodeBuiltinLoader();
 const preloadedNodeTransportIntrinsics = shouldPreloadNodeTransportIntrinsics() &&
     synchronousNodeBuiltinLoader !== undefined
   ? loadNodeTransportIntrinsicsSync(synchronousNodeBuiltinLoader)
   : undefined;
+// Deno cannot synchronously load node:* modules, so the snapshot must finish
+// during module evaluation before a project import can patch node:http.
+const importTimeNodeTransportIntrinsics = preloadedNodeTransportIntrinsics ??
+  (shouldAwaitNodeTransportIntrinsicsAtImport() ? await loadNodeTransportIntrinsics() : undefined);
 
 function nodeRequestFor(
   intrinsics: NodeTransportIntrinsics,
@@ -1049,7 +1064,7 @@ export async function fetchWithPinnedAddresses(
   if (addresses.length === 0) {
     throw new Error(`No validated addresses are available for ${url.host}`);
   }
-  const intrinsics = preloadedNodeTransportIntrinsics ?? await loadNodeTransportIntrinsics();
+  const intrinsics = importTimeNodeTransportIntrinsics ?? await loadNodeTransportIntrinsics();
   // Filling and reading a native Headers writes into arrays an index accessor
   // or a replaced array species would observe; each turn that touches the
   // credential-bearing headers is checked first.
@@ -1123,6 +1138,7 @@ export async function fetchWithPinnedAddresses(
           signal?.reason ?? new DOMException("The operation was aborted", "AbortError");
         let request: ClientRequest | undefined;
         let activeSocket: Socket | undefined;
+        let rejectedBeforeRequest = false;
         const abort = () => {
           let reason: unknown;
           let destroyError: Error | undefined;
@@ -1152,6 +1168,7 @@ export async function fetchWithPinnedAddresses(
         };
         const rejectBeforeResponse = (error: unknown) => {
           cleanupAbortListener();
+          if (request === undefined) rejectedBeforeRequest = true;
           reject(error);
         };
         // The signal's members can run project code, so they are used before
@@ -1161,6 +1178,7 @@ export async function fetchWithPinnedAddresses(
           return;
         }
         signal?.addEventListener("abort", abort, { once: true });
+        if (rejectedBeforeRequest) return;
         try {
           // Same turn as the call and every request operation below: node:http
           // processes the headers synchronously, and nothing between here and
