@@ -564,6 +564,65 @@ describe("Redis durable event waits", () => {
     }));
 
   it({
+    name: "Redis claimed event mailboxes keep their global reservation through rollback",
+    ignore: !Deno.env.get("WORKFLOW_EVENT_TEST_REDIS_URL"),
+  }, () =>
+    withReceivers(async (a, b, runId, cleanup) => {
+      const now = new Date();
+      const base = await a.getRun(runId);
+      assertExists(base);
+      const event = {
+        id: "payload-free",
+        eventName: "ready",
+        payload: undefined,
+        publishedAt: now,
+      };
+      await a.savePendingEventWait(runId, {
+        id: "wait",
+        runId,
+        nodeId: "ready",
+        eventName: "ready",
+        waitKind: "event",
+        requestedAt: now,
+        status: "pending",
+      });
+      await a.appendRunEvent(runId, event);
+
+      const ids = Array.from(
+        { length: MAX_WORKFLOW_RUN_EVENT_MAILBOXES - 1 },
+        () => crypto.randomUUID(),
+      );
+      cleanup.push(async () => {
+        for (let offset = 0; offset < ids.length; offset += 50) {
+          await Promise.all(ids.slice(offset, offset + 50).map((id) => a.deleteRun(id)));
+        }
+      });
+      for (let offset = 0; offset < ids.length; offset += 50) {
+        await Promise.all(
+          ids.slice(offset, offset + 50).map((id) =>
+            a.createRun({ ...base, id }).then(() =>
+              a.appendRunEvent(id, { ...event, id: `reserved-${id}` })
+            )
+          ),
+        );
+      }
+
+      assertEquals(await b.claimRunEventForWait(runId, "wait", "ready"), event);
+      const overflow = crypto.randomUUID();
+      await assertRejects(() => a.appendRunEvent(overflow, { ...event, id: "overflow" }));
+      assertEquals(await b.peekRunEvent(overflow, "ready"), null);
+
+      assertEquals(await a.restoreRunEventDelivery(runId, "wait", event), true);
+      await assertRejects(() => a.appendRunEvent(overflow, { ...event, id: "still-full" }));
+      const restored = await b.takeRunEvent(runId, "ready");
+      assertExists(restored);
+      assertEquals(restored.id, event.id);
+      assertEquals(restored.payload, undefined);
+      await a.appendRunEvent(overflow, { ...event, id: "after-consume" });
+      assertEquals((await b.peekRunEvent(overflow, "ready"))?.id, "after-consume");
+    }));
+
+  it({
     name: "Redis reserved ID rollback keeps ordering after its empty mailbox is removed",
     ignore: !Deno.env.get("WORKFLOW_EVENT_TEST_REDIS_URL"),
   }, () =>

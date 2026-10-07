@@ -87,6 +87,13 @@ local function reserveMailbox()
 end
 local function commit(result)
   if #s.mail > 0 then redis.call('zadd',KEYS[6],'NX',s.mail[1].order or now,ARGV[6])
+  elseif next(s.claims) then
+    local score=nil
+    for _,claim in pairs(s.claims) do
+      local claimScore=claim.event.order or claim.claimedAt or now
+      if not score or claimScore < score then score=claimScore end
+    end
+    redis.call('zadd',KEYS[6],'NX',score or now,ARGV[6])
   else redis.call('zrem',KEYS[6],ARGV[6]) end
   if #s.waits == 0 and #s.mail == 0 and not next(s.claims) and redis.call('exists',KEYS[3]) == 0 then
     redis.call('del',KEYS[1])
@@ -228,7 +235,12 @@ interface StoredState {
 }
 function eventValue(event: StoredEvent): RunEventEnvelope {
   const value = JSON.parse(event.value);
-  return { ...value, publishedAt: new Date(value.publishedAt) };
+  const { payloadAbsent, ...envelope } = value;
+  return {
+    ...envelope,
+    ...(payloadAbsent === true ? { payload: undefined } : {}),
+    publishedAt: new Date(value.publishedAt),
+  };
 }
 function waitValue(wait: StoredWait): PersistedPendingEventWait {
   const value = JSON.parse(wait.value);
@@ -334,12 +346,15 @@ export class RedisEventWaitStore {
   }
   private storedEvent(runId: string, event: RunEventEnvelope): StoredEvent {
     const publishedAt = event.publishedAt.toISOString();
-    const payload = serializeWorkflowJson(event.payload, "workflow event payload", runId, {
-      strictContext: this.strictContext,
-    });
+    const payload = event.payload === undefined
+      ? undefined
+      : serializeWorkflowJson(event.payload, "workflow event payload", runId, {
+        strictContext: this.strictContext,
+      });
+    const payloadFragment = payload === undefined ? `"payloadAbsent":true` : `"payload":${payload}`;
     const value = `{"id":${JSON.stringify(event.id)},"eventName":${
       JSON.stringify(event.eventName)
-    },"payload":${payload},"publishedAt":${JSON.stringify(publishedAt)}}`;
+    },${payloadFragment},"publishedAt":${JSON.stringify(publishedAt)}}`;
     const order = (event as RunEventEnvelope & { _publicationOrder?: number })._publicationOrder;
     return { value, id: event.id, name: event.eventName, at: event.publishedAt.getTime(), order };
   }
