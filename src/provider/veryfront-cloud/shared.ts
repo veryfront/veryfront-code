@@ -766,6 +766,12 @@ export function createVeryfrontCloudFetch(
     // caller's init) is read before the bearer joins the headers, so nothing
     // can replace an array intrinsic between the check below and the send.
     const modelCallCapture = getCurrentVeryfrontCloudModelCallCapture();
+    const captureHeaders = modelCallCapture
+      ? {
+        modelCallId: `${modelCallCapture.modelCallId}`,
+        eventId: `${modelCallCapture.eventId}`,
+      }
+      : undefined;
     const cloudContext = getCurrentVeryfrontCloudContext();
     const billingGroup = cloudContext?.billingGroupId;
     const billingGroupId = billingGroup === undefined
@@ -783,14 +789,14 @@ export function createVeryfrontCloudFetch(
     if (projectSlug) {
       IntrinsicReflectApply(HeadersSet, headers, ["x-veryfront-project-slug", projectSlug]);
     }
-    if (modelCallCapture) {
+    if (captureHeaders) {
       IntrinsicReflectApply(HeadersSet, headers, [
         "x-veryfront-model-call-id",
-        modelCallCapture.modelCallId,
+        captureHeaders.modelCallId,
       ]);
       IntrinsicReflectApply(HeadersSet, headers, [
         "x-veryfront-model-call-capture-event-id",
-        modelCallCapture.eventId,
+        captureHeaders.eventId,
       ]);
     }
     if (billingGroupId) {
