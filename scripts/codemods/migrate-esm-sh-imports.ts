@@ -2,7 +2,7 @@
 
 import { parse } from "npm:@babel/parser@7.29.2";
 import * as generateModule from "npm:@babel/generator@7.29.1";
-import * as t from "npm:@babel/types@7.29.0";
+import * as t from "npm:@babel/types@7.29.8";
 import { lstat as lstatNativeFile } from "node:fs/promises";
 import { dirname as nativeDirname, isAbsolute, parse as parsePath, relative } from "node:path";
 import {

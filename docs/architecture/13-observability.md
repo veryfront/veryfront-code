@@ -47,6 +47,20 @@ Langfuse, LangSmith, Braintrust, or an internal gateway. OpenTelemetry trace IDs
 can be attached for correlation, but OTLP trace or metric env vars do not route
 eval report payloads.
 
+## Dependency qualification
+
+The OpenTelemetry extension pins the experimental SDK packages to 0.221 and
+the stable SDK packages to 2.10. Keep this family aligned when updating exporters
+and automatic instrumentation. Regenerate both the workspace lock and the proxy
+lock with the repository's pinned Deno version, then verify exporter startup and
+the published dependency graph.
+
+Container package scans do not enumerate dependencies embedded in compiled
+framework executables. Release qualification also scans the framework's published
+`all.json` and `proxy.json` CycloneDX files. The dependency index maps findings to
+their owning extension manifests. Retain residual findings and their exposure
+limits; a successful container scan does not certify the embedded graph.
+
 ## Server timing
 
 When `VERYFRONT_ENABLE_SERVER_TIMING=1`, HTML and page-data responses include
