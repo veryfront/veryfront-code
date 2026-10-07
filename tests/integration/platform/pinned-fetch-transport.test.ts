@@ -133,6 +133,89 @@ describe("pinned fetch transport integration", () => {
     });
   });
 
+  it("re-attests before piping a decoded response", () => {
+    const script = `
+      import { createServer, IncomingMessage } from "node:http";
+      import { gzipSync } from "node:zlib";
+      import { fetchWithPinnedAddresses } from "./src/platform/compat/http/pinned-fetch.ts";
+
+      let observedAuthorization;
+      const originalHeadersGet = Headers.prototype.get;
+      let pipeOwner = IncomingMessage.prototype;
+      let originalPipe = Object.getOwnPropertyDescriptor(pipeOwner, "pipe");
+      while (originalPipe?.value === undefined && Object.getPrototypeOf(pipeOwner)) {
+        pipeOwner = Object.getPrototypeOf(pipeOwner);
+        originalPipe = Object.getOwnPropertyDescriptor(pipeOwner, "pipe");
+      }
+      if (originalPipe?.value === undefined) throw new Error("missing IncomingMessage pipe");
+      const server = createServer((_request, response) => {
+        const body = gzipSync(Buffer.from("decoded-body"));
+        response.writeHead(200, {
+          "content-encoding": "gzip",
+          "content-length": String(body.byteLength),
+        });
+        response.end(body);
+      });
+      await new Promise((resolve, reject) => {
+        server.once("error", reject);
+        server.listen(0, "127.0.0.1", resolve);
+      });
+
+      Headers.prototype.get = function(name) {
+        const value = Reflect.apply(originalHeadersGet, this, [name]);
+        if (String(name).toLowerCase() === "content-encoding" && value) {
+          Object.defineProperty(pipeOwner, "pipe", {
+            configurable: true,
+            writable: true,
+            ...originalPipe,
+            value(...args) {
+              observedAuthorization ??= this.req?.getHeader?.("authorization");
+              return Reflect.apply(originalPipe.value, this, args);
+            },
+          });
+        }
+        return value;
+      };
+
+      try {
+        const address = server.address();
+        if (!address || typeof address === "string") throw new Error("missing server address");
+        const outcome = await fetchWithPinnedAddresses(
+          new URL(\`http://pinned-decoder.test:\${address.port}/resource\`),
+          ["127.0.0.1"],
+          { headers: { authorization: "Bearer vf-decoder-pipe" } },
+        ).then(
+          async (response) => \`resolved:\${await response.text()}\`,
+          (error) => error instanceof Error ? error.message : String(error),
+        );
+        console.log(JSON.stringify({
+          refused: outcome.includes("Refused a credential-bearing request"),
+          observedAuthorization: observedAuthorization ?? null,
+        }));
+      } finally {
+        Headers.prototype.get = originalHeadersGet;
+        Object.defineProperty(pipeOwner, "pipe", originalPipe);
+        server.closeAllConnections?.();
+        await new Promise((resolve) => server.close(resolve));
+      }
+    `;
+
+    const output = spawnSync("node", [
+      "--import",
+      "./tests/node/resolver.mjs",
+      "--input-type=module",
+      "--eval",
+      script,
+    ], { encoding: "utf8" });
+
+    assertEquals(output.stderr, "");
+    assertEquals(output.status, 0);
+    assertEquals(JSON.parse(output.stdout), {
+      refused: true,
+      observedAuthorization: null,
+    });
+  });
+
   it("closes the socket when an integrity refusal interrupts a stream write", () => {
     const script = `
       import nodeHttp from "node:http";

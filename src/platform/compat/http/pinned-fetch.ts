@@ -796,6 +796,7 @@ async function decodeResponseBody(
   }
   headers.delete("content-encoding");
   headers.delete("content-length");
+  assertNodeRequestMembersUnchanged();
   return response.pipe(decoder);
 }
 
