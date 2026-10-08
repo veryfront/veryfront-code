@@ -1,3 +1,4 @@
+import { observeFetchRequestInit } from "../../testing/mock-fetch.ts";
 import { managedStart } from "../../../tests/fixtures/managed-executor-start.ts";
 import {
   createRunBoundAgentManualPause,
@@ -1144,7 +1145,7 @@ describe("managed broker handler", () => {
           signal: sessionController.signal,
           settlementSignal: controller.signal,
           fetch: (_url, init) => {
-            if (JSON.parse(String(init?.body)).settled) {
+            if (JSON.parse(String(observeFetchRequestInit(init).body)).settled) {
               receipts++;
               assertEquals(sessionController.signal.aborted, true);
               assertEquals(controller.signal.aborted, false);
@@ -1211,7 +1212,7 @@ describe("managed broker handler", () => {
         token: "synthetic-pause-token",
         signal: new AbortController().signal,
         fetch: (_url, init) => {
-          if (JSON.parse(String(init?.body)).settled) receipts++;
+          if (JSON.parse(String(observeFetchRequestInit(init).body)).settled) receipts++;
           return Promise.resolve(Response.json({ stop: true }));
         },
       });
@@ -1257,7 +1258,7 @@ describe("managed broker handler", () => {
         token: "synthetic-pause-token",
         signal: new AbortController().signal,
         fetch: (_url, init) => {
-          if (!JSON.parse(String(init?.body)).settled) {
+          if (!JSON.parse(String(observeFetchRequestInit(init).body)).settled) {
             return Promise.resolve(Response.json({ stop: true }));
           }
           assertEquals(f.managed.active, 0);

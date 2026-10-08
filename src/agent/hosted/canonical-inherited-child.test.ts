@@ -1,3 +1,4 @@
+import { observeFetchRequestInit } from "../../testing/mock-fetch.ts";
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { it } from "#veryfront/testing/bdd.ts";
@@ -202,7 +203,10 @@ for (
           );
         }
         assertEquals(String(input), `https://api.example.test/runs/${childId}/heartbeats`);
-        assertEquals(new Headers(init?.headers).get("Authorization"), "Bearer child-renewal");
+        assertEquals(
+          new Headers(observeFetchRequestInit(init).headers).get("Authorization"),
+          "Bearer child-renewal",
+        );
         if (hangs) return new Promise<Response>(() => {});
         if (mode === "retry-expired") return Promise.resolve(Response.json({}, { status: 503 }));
         return Promise.resolve(Response.json({ detail: "generation fenced" }, { status: 403 }));

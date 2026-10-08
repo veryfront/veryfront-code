@@ -1,7 +1,11 @@
 import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { TIMEOUT_ERROR } from "#veryfront/errors";
 import { AsyncLocalStorage } from "node:async_hooks";
-import { installMockFetch, restoreMockFetch } from "#veryfront/testing/mock-fetch.ts";
+import {
+  installMockFetch,
+  observeFetchRequestInit,
+  restoreMockFetch,
+} from "#veryfront/testing/mock-fetch.ts";
 import {
   _resetShimForTests,
   setGlobalTracerProvider,
@@ -234,7 +238,9 @@ Deno.test("traced capability-backed writes keep credentials off tenant-mutable h
   const trusted: Array<{ url: string; authorization: string | null; traceparent: string | null }> =
     [];
   const trustedFetch: typeof fetch = (input, init) => {
-    const headers = init?.headers instanceof Headers ? init.headers : new Headers(init?.headers);
+    const headers = observeFetchRequestInit(init).headers instanceof Headers
+      ? observeFetchRequestInit(init).headers
+      : new Headers(observeFetchRequestInit(init).headers);
     trusted.push({
       url: String(input),
       authorization: nativeApply(nativeHeadersGet, headers, ["Authorization"]) as string | null,
@@ -1034,7 +1040,7 @@ function inheritedAdmissionFixture(timeoutMs = 1000, retryOnce = false, timeoutO
       if (retryOnce && attempts++ === 0) {
         return Response.json({ error: "temporarily unavailable" }, { status: 503 });
       }
-      const count = JSON.parse(String(init?.body)).events.length;
+      const count = JSON.parse(String(observeFetchRequestInit(init).body)).events.length;
       cursor += count;
       return Response.json({
         run_id: runId,

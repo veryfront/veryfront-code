@@ -89,6 +89,7 @@ function createRemoteSourceFixtures() {
 function commandPayload(status: BackgroundCommand["status"]): BackgroundCommand {
   return {
     id: "command-1",
+    command: "echo sandbox-command",
     status,
     exitCode: null,
     signal: null,

@@ -1,3 +1,4 @@
+import { observeFetchRequestInit } from "../../testing/mock-fetch.ts";
 import "#veryfront/schemas/_test-setup.ts";
 import {
   createHostedConversationRunChunkMirrorFromCapability,
@@ -304,7 +305,7 @@ describe("private terminal credential routing", () => {
         },
         fetch: (async (_url, init) => {
           await acknowledgement;
-          const count = JSON.parse(String(init?.body)).events.length;
+          const count = JSON.parse(String(observeFetchRequestInit(init).body)).events.length;
           cursor += count;
           return Response.json({
             run_id: "33333333-3333-4333-8333-333333333333",

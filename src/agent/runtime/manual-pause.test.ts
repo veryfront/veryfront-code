@@ -1,3 +1,4 @@
+import { observeFetchRequestInit } from "../../testing/mock-fetch.ts";
 import { registerTurnProviderRequestValidator } from "#veryfront/agent/middleware/turn-validation.ts";
 import { agentManualPauseBoundary } from "./manual-pause.ts";
 import { createRunBoundAgentManualPause } from "../hosted/manual-pause-credential.ts";
@@ -430,8 +431,8 @@ it("holds an oversized pause until its dispatch stops without claiming confirmat
     token: "pause-test-token",
     signal: cancellation.signal,
     fetch: (url, init) => {
-      if (init?.method === "POST") {
-        assertEquals(JSON.parse(String(init.body)), { checkpoint: null });
+      if (observeFetchRequestInit(init).method === "POST") {
+        assertEquals(JSON.parse(String(observeFetchRequestInit(init).body)), { checkpoint: null });
         releaseRequested = true;
         return Promise.resolve(Response.json({ stop: true }));
       }
