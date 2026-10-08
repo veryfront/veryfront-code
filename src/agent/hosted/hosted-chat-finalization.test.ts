@@ -2,7 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { ChatUiMessage, ChatUiMessageChunk, MessageMetadata } from "../../chat/types.ts";
-import { createChatStreamMessageProjection } from "../react/use-chat/streaming/handler.ts";
+import { createChatStreamMessageProjection } from "#veryfront/agent/react/use-chat/streaming/handler.ts";
 import { finalizeConversationAgentRun } from "../conversation/durable.ts";
 import { createConversationHostedTerminalAdapter } from "../conversation/hosted-terminal.ts";
 import type { ConversationRunChunkMirror } from "../conversation/run-chunk-mirror.ts";
