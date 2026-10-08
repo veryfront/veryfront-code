@@ -139,19 +139,64 @@ export function buildFinalizedMessageState(
   let persistedTextCursor = 0;
   const consumedTextIndexes = new Set<number>();
   const fallbackTextCount = finalStepFallbackParts.filter((part) => part.type === "text").length;
+  // Reserve completed occurrences before partial matching: append-only suffixes
+  // may physically follow a later provider block that has already completed.
+  const exactTextMatches = new Map<ChatUiMessage["parts"][number], number[]>();
+  const exactTextOwners = new Map<number, ChatUiMessage["parts"][number]>();
+  if (fallbackTextCount > 1) {
+    for (const fallbackPart of finalStepFallbackParts) {
+      if (fallbackPart.type !== "text") continue;
+      let completedIndexes: number[] = [];
+      for (
+        let start = 0;
+        start < persistedTextParts.length && completedIndexes.length === 0;
+        start++
+      ) {
+        for (const separator of ["\n\n", "\n", " ", ""]) {
+          const indexes: number[] = [];
+          let prefix = "";
+          for (let index = start; index < persistedTextParts.length; index++) {
+            if (exactTextOwners.has(index)) continue;
+            const candidate = (prefix + (indexes.length ? separator : "") +
+              persistedTextParts[index]!.text).trim();
+            if (!fallbackPart.text.startsWith(candidate)) continue;
+            indexes.push(index);
+            prefix = candidate;
+            if (prefix === fallbackPart.text.trim()) {
+              completedIndexes = indexes;
+              break;
+            }
+          }
+          if (completedIndexes.length > 0) break;
+        }
+      }
+      if (completedIndexes.length > 0) exactTextMatches.set(fallbackPart, completedIndexes);
+      for (const index of completedIndexes) exactTextOwners.set(index, fallbackPart);
+    }
+  }
   const recoveredFallbackParts: ChatUiMessage["parts"] = [];
   let hasPlacedMissingText = false;
   const missingFallbackParts = finalStepFallbackParts.flatMap((fallbackPart) => {
     if (fallbackPart.type === "text") {
       hasPlacedMissingText = true;
-      let matchingStart = -1;
-      let matchedCount = 0;
-      let matchedIndexes: number[] = [];
-      let matchedLength = 0;
-      for (let start = 0; start < persistedTextParts.length; start++) {
-        if (consumedTextIndexes.has(start)) continue;
+      let matchedIndexes = exactTextMatches.get(fallbackPart) ?? [];
+      let matchingStart = matchedIndexes[0] ?? -1;
+      let matchedCount = matchedIndexes.length;
+      let matchedLength = matchedCount > 0 ? fallbackPart.text.trim().length : 0;
+      for (
+        let start = 0;
+        start < persistedTextParts.length && !exactTextMatches.has(fallbackPart);
+        start++
+      ) {
+        if (
+          consumedTextIndexes.has(start) ||
+          (exactTextOwners.has(start) && exactTextOwners.get(start) !== fallbackPart)
+        ) continue;
         const availableIndexes = persistedTextParts.map((_, index) => index)
-          .filter((index) => index >= start && !consumedTextIndexes.has(index));
+          .filter((index) =>
+            index >= start && !consumedTextIndexes.has(index) &&
+            (!exactTextOwners.has(index) || exactTextOwners.get(index) === fallbackPart)
+          );
         for (let count = 1; count <= availableIndexes.length; count++) {
           const indexes = availableIndexes.slice(0, count);
           const texts = indexes.map((index) => persistedTextParts[index]!.text);

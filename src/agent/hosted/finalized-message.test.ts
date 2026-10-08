@@ -973,6 +973,49 @@ Deno.test("partial later fallback remains idempotent around an appended earlier 
   );
 });
 
+Deno.test("fallback text occurrence assignment is idempotent across partial and exact permutations", () => {
+  for (const expected of [["First", "Second"], ["Done", "Done later"]]) {
+    for (const first of ["", expected[0]!.slice(0, 2), expected[0]!]) {
+      for (const second of ["", expected[1]!.slice(0, 2), expected[1]!]) {
+        for (const reversed of [false, true]) {
+          const texts = [first, second].filter(Boolean);
+          if (reversed) texts.reverse();
+          const input = {
+            responseMessage: {
+              id: "m",
+              role: "assistant" as const,
+              parts: [
+                { type: "step-start" as const },
+                ...texts.map((text) => ({ type: "text" as const, text })),
+              ],
+            },
+            finalStep: {
+              response: {
+                messages: [{
+                  role: "assistant",
+                  content: expected.map((text) => ({ type: "text", text })),
+                }],
+              },
+            },
+            isAborted: false,
+            incompleteToolCallsPartErrorText: "tool error",
+          };
+          const once = buildFinalizedMessageState(input).sanitizedFinalizedMessage;
+          const twice = buildFinalizedMessageState({ ...input, responseMessage: once })
+            .sanitizedFinalizedMessage;
+          assertEquals(twice.parts, once.parts, JSON.stringify({ expected, texts }));
+          if (expected[0] === "First" && first === "Fi" && second === "Second" && !reversed) {
+            assertEquals(once.parts, [...input.responseMessage.parts, {
+              type: "text",
+              text: "rst",
+            }]);
+          }
+        }
+      }
+    }
+  }
+});
+
 for (const current of ["Done", "Don"]) {
   Deno.test(`without step boundaries the longest matching text wins (${current})`, () => {
     const responseMessage = {

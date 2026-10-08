@@ -19,3 +19,19 @@ matching and reversed physical-order tests remain unchanged.
 
 Focused verification passed 46 cases/200 steps; frozen checks passed for both
 changed files. No public contract or generated API-reference change is needed.
+
+## Symmetric occurrence-assignment follow-up
+
+The symmetric `Fi`, `Second` case still duplicated `rst` after recovery because
+an earlier fragmented block encountered a later completed block before that
+later block was consumed. The repair now assigns complete occurrences first,
+including ordered fragments separated by other occurrences, and reserves their
+indices before partial matching. Partial matching cannot steal a reserved
+complete occurrence. Complete matches are used directly rather than competing
+with a shorter earlier prefix. Single-block latest-prefix behavior is unchanged.
+
+A 36-combination permutation matrix covers missing, partial, and exact blocks
+in both physical orders for `First`/`Second` and repeated-prefix
+`Done`/`Done later`. Each case asserts exact twice-applied idempotence, and the
+symmetric reported case also asserts the exact first-pass durable sequence.
+Original monotonic recovery and append-only assertions remain unchanged.
