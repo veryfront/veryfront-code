@@ -3162,10 +3162,7 @@ describe("scheduled prune bound", () => {
     }
     ensureJsxCacheSweepArmed(`${persistedTestPrefix}queued`);
 
-    for (let attempt = 0; attempt < 100; attempt++) {
-      if (hasScheduledJsxCachePrune(persisted)) break;
-      await new Promise((resolve) => setTimeout(resolve, 1));
-    }
+    await waitForJsxCacheMaintenance();
 
     assertEquals(
       hasScheduledJsxCachePrune(persisted),
