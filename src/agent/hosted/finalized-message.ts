@@ -289,14 +289,18 @@ export function buildFinalizedMessageFallbackChunks(
 export function buildDetachedFallbackChunks(
   input: BuildDetachedFallbackChunksInput,
 ): ChatUiMessageChunk<MessageMetadata>[] {
+  const toolChunks = buildMissingFallbackToolChunksFromParts(
+    input.fallbackParts,
+    input.mirroredToolChunkState,
+  );
+  const reconciledToolState = cloneMirroredToolChunkState(input.mirroredToolChunkState);
+  for (const chunk of toolChunks) recordMirroredToolChunkState(reconciledToolState, chunk);
+
   return [
-    ...buildMissingFallbackToolChunksFromParts(
-      input.fallbackParts,
-      input.mirroredToolChunkState,
-    ),
+    ...toolChunks,
     ...(input.hasIncompleteFallbackToolParts ? [] : buildMissingFallbackToolChunks(
       input.finalStep,
-      input.mirroredToolChunkState,
+      reconciledToolState,
     )),
     ...(input.mirroredDurableOutput ? [] : buildMissingFallbackTextChunks(
       [],

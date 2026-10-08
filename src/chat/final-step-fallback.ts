@@ -353,6 +353,8 @@ function buildOrderedFallbackParsedPartsFromUiMessages(messages: unknown[]): Fal
 
         orderedParts[existingIndex] = {
           ...existingPart,
+          ...providerExecutionFields(part),
+          ...providerExecutionFields(existingPart),
           outputState: "output-available",
           output: "result" in part ? part.result : null,
         };

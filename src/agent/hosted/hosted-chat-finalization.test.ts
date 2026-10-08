@@ -996,127 +996,138 @@ describe("agent/hosted-chat-finalization", () => {
   });
 
   for (const kind of ["response", "detached"] as const) {
-    for (const callOwnership of [undefined, false, true]) {
-      for (const streamed of ["absent", "input-streaming", "input-available"] as const) {
-        it(`retains result ownership with ${String(callOwnership)} call ownership in ${kind} ${streamed} fallback`, async () => {
-          const calls: string[] = [];
-          const chunks: ChatUiMessageChunk<MessageMetadata>[] = [];
-          const terminalStates: HostedLifecycleTerminalState[] = [];
-          const metadata = { type: "data-veryfront.runtime_context" as const, data: {} };
-          const finalInput = { query: "final" };
-          const streamedInput = { query: "streamed" };
-          const ownership = callOwnership === undefined ? true : callOwnership;
-          const mirrored = createMirroredToolChunkState();
-          const projection = createChatStreamMessageProjection("assistant-message-1");
-          const parts: ChatUiMessage["parts"] = [metadata];
-          projection.append(metadata);
-          if (streamed !== "absent") {
-            parts.push({
-              type: "tool-web_fetch",
-              toolCallId: "result-owned",
-              state: streamed,
-              input: streamedInput,
-              ...(callOwnership === undefined ? {} : { providerExecuted: callOwnership }),
-            });
-            mirrored.startedToolCallIds.add("result-owned");
-            projection.append({
-              type: "tool-input-start",
-              toolCallId: "result-owned",
-              toolName: "web_fetch",
-              ...(callOwnership === undefined ? {} : { providerExecuted: callOwnership }),
-            });
-            if (streamed === "input-available") {
-              mirrored.inputAvailableToolCallIds.add("result-owned");
-              projection.append({
-                type: "tool-input-available",
+    for (const source of ["content", "extracted", "ui"] as const) {
+      for (
+        const [callOwnership, resultOwnership] of [[undefined, true], [undefined, false], [
+          false,
+          true,
+        ], [true, false]] as const
+      ) {
+        for (const streamed of ["absent", "input-streaming", "input-available"] as const) {
+          it(`retains result ownership with ${String(callOwnership)} call ownership in ${kind} ${source} ${streamed} fallback (result ${resultOwnership})`, async () => {
+            const calls: string[] = [];
+            const chunks: ChatUiMessageChunk<MessageMetadata>[] = [];
+            const terminalStates: HostedLifecycleTerminalState[] = [];
+            const metadata = { type: "data-veryfront.runtime_context" as const, data: {} };
+            const finalInput = { query: "final" };
+            const streamedInput = { query: "streamed" };
+            const ownership = callOwnership === undefined ? resultOwnership : callOwnership;
+            const mirrored = createMirroredToolChunkState();
+            const projection = createChatStreamMessageProjection("assistant-message-1");
+            const parts: ChatUiMessage["parts"] = [metadata];
+            projection.append(metadata);
+            if (streamed !== "absent") {
+              parts.push({
+                type: "tool-web_fetch",
                 toolCallId: "result-owned",
-                toolName: "web_fetch",
+                state: streamed,
                 input: streamedInput,
                 ...(callOwnership === undefined ? {} : { providerExecuted: callOwnership }),
               });
-            }
-          }
-          const mirror = createDurableRunMirror({ calls, chunks });
-          const append = mirror.handleChunk;
-          mirror.handleChunk = async (chunk) => {
-            await append(chunk);
-            if (chunk.type === "finish") throw new Error("Unexpected fallback finish");
-            projection.append(chunk);
-          };
-          const common = {
-            isAborted: false,
-            streamResult: createStreamResult({
-              response: {
-                messages: [
-                  {
-                    role: "assistant",
-                    content: [{
-                      type: "tool-call",
-                      toolCallId: "result-owned",
-                      toolName: "web_fetch",
-                      input: finalInput,
-                      ...(callOwnership === undefined ? {} : { providerExecuted: callOwnership }),
-                    }],
-                  },
-                  {
-                    role: "tool",
-                    content: [{
-                      type: "tool-result",
-                      toolCallId: "result-owned",
-                      toolName: "web_fetch",
-                      providerExecuted: callOwnership === true ? false : true,
-                      output: "found",
-                    }],
-                  },
-                ],
-              },
-            }),
-            lifecycleAdapter: createLifecycleAdapter({ calls, terminalStates, mirror }),
-            mirroredToolChunkState: mirrored,
-            capturedMessageId: "assistant-message-1",
-            incompleteToolCallsPartErrorText: "Tool call did not complete",
-            cleanup: async () => {},
-            streamError: null,
-          };
-          await finalizeHostedChatRun(
-            kind === "response"
-              ? { ...common, kind, responseMessage: createResponseMessage({ parts }) }
-              : {
-                ...common,
-                kind,
-                mirroredMessage: createResponseMessage({ parts }),
-                mirroredDurableOutput: false,
-              },
-          );
-          const output = terminalStates[0]!.output as ChatUiMessage;
-          assertEquals(terminalStates[0]!.status, "completed");
-          const summarize = (part: unknown) =>
-            isRecord(part) && part.toolCallId === "result-owned"
-              ? {
-                state: part.state,
-                input: part.input,
-                output: part.output,
-                providerExecuted: part.providerExecuted,
+              mirrored.startedToolCallIds.add("result-owned");
+              projection.append({
+                type: "tool-input-start",
+                toolCallId: "result-owned",
+                toolName: "web_fetch",
+                ...(callOwnership === undefined ? {} : { providerExecuted: callOwnership }),
+              });
+              if (streamed === "input-available") {
+                mirrored.inputAvailableToolCallIds.add("result-owned");
+                projection.append({
+                  type: "tool-input-available",
+                  toolCallId: "result-owned",
+                  toolName: "web_fetch",
+                  input: streamedInput,
+                  ...(callOwnership === undefined ? {} : { providerExecuted: callOwnership }),
+                });
               }
-              : null;
-          const expected = {
-            state: "output-available",
-            input: streamed === "input-available" ? streamedInput : finalInput,
-            output: "found",
-            providerExecuted: ownership,
-          };
-          assertEquals<unknown>(output.parts.map(summarize).filter(Boolean), [expected]);
-          assertEquals<unknown>(projection.snapshot().parts.map(summarize).filter(Boolean), [
-            expected,
-          ]);
-          assertEquals(chunks.filter((chunk) => chunk.type === "tool-output-available"), [{
-            type: "tool-output-available",
-            toolCallId: "result-owned",
-            output: "found",
-            providerExecuted: ownership,
-          }]);
-          assertEquals(getToolOutputErrorChunks(chunks, "result-owned"), []);
-        });
+            }
+            const mirror = createDurableRunMirror({ calls, chunks });
+            const append = mirror.handleChunk;
+            mirror.handleChunk = async (chunk) => {
+              await append(chunk);
+              if (chunk.type === "finish") throw new Error("Unexpected fallback finish");
+              projection.append(chunk);
+            };
+            const toolCall = {
+              type: "tool-call",
+              toolCallId: "result-owned",
+              toolName: "web_fetch",
+              input: finalInput,
+              ...(callOwnership === undefined ? {} : { providerExecuted: callOwnership }),
+            };
+            const toolResult = {
+              type: "tool-result",
+              toolCallId: "result-owned",
+              toolName: "web_fetch",
+              providerExecuted: resultOwnership,
+              output: "found",
+            };
+            const finalStep = source === "extracted"
+              ? { toolCalls: [toolCall], toolResults: [toolResult] }
+              : {
+                response: {
+                  messages: source === "content"
+                    ? [{ role: "assistant", content: [toolCall] }, {
+                      role: "tool",
+                      content: [toolResult],
+                    }]
+                    : [{ role: "assistant", parts: [toolCall] }, {
+                      role: "tool",
+                      parts: [{ ...toolResult, result: toolResult.output }],
+                    }],
+                },
+              };
+            const common = {
+              isAborted: false,
+              streamResult: createStreamResult(finalStep),
+              lifecycleAdapter: createLifecycleAdapter({ calls, terminalStates, mirror }),
+              mirroredToolChunkState: mirrored,
+              capturedMessageId: "assistant-message-1",
+              incompleteToolCallsPartErrorText: "Tool call did not complete",
+              cleanup: async () => {},
+              streamError: null,
+            };
+            await finalizeHostedChatRun(
+              kind === "response"
+                ? { ...common, kind, responseMessage: createResponseMessage({ parts }) }
+                : {
+                  ...common,
+                  kind,
+                  mirroredMessage: createResponseMessage({ parts }),
+                  mirroredDurableOutput: false,
+                },
+            );
+            const output = terminalStates[0]!.output as ChatUiMessage;
+            assertEquals(terminalStates[0]!.status, "completed");
+            const summarize = (part: unknown) =>
+              isRecord(part) && part.toolCallId === "result-owned"
+                ? {
+                  state: part.state,
+                  input: part.input,
+                  output: part.output,
+                  providerExecuted: part.providerExecuted,
+                }
+                : null;
+            const expected = {
+              state: "output-available",
+              input: streamed === "input-available" ? streamedInput : finalInput,
+              output: "found",
+              providerExecuted: ownership,
+            };
+            assertEquals<unknown>(output.parts.map(summarize).filter(Boolean), [expected]);
+            assertEquals<unknown>(projection.snapshot().parts.map(summarize).filter(Boolean), [
+              expected,
+            ]);
+            assertEquals(chunks.filter((chunk) => chunk.type === "tool-output-available"), [{
+              type: "tool-output-available",
+              toolCallId: "result-owned",
+              output: "found",
+              providerExecuted: ownership,
+            }]);
+            assertEquals(getToolOutputErrorChunks(chunks, "result-owned"), []);
+          });
+        }
       }
     }
   }
