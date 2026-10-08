@@ -176,7 +176,7 @@ sandbox and its workspace files.
 
 If an always-on lifetime update fails or its response is lost, `close()` preserves the workspace. Confirm its policy before changing it back to temporary cleanup or deleting it.
 
-Supplied `projectReference` and `environmentId` values must be non-empty. Omit an optional selector instead of passing an empty configuration value.
+Supplied creation selectors and project list filters must be non-empty. Omit an optional selector instead of passing an empty configuration value. Each requested file write requires a matching receipt, including repeated paths.
 
 `Sandbox.list()` returns access, storage and lifetime metadata. Storage and
 lifetime are separate policies. Changing cleanup does not migrate temporary

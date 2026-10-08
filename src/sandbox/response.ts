@@ -73,13 +73,17 @@ export function assertSandboxFilesWritten(value: unknown, expectedPaths: readonl
   if (input.results.length !== expectedPaths.length) {
     throw REQUEST_ERROR.create({ detail: "Incomplete sandbox write outcomes" });
   }
-  const remaining = new Set(expectedPaths);
+  const remaining = new Map<string, number>();
+  for (const path of expectedPaths) remaining.set(path, (remaining.get(path) ?? 0) + 1);
   for (const item of input.results) {
     const result = record(item);
     const path = text(result.path);
-    if (!remaining.delete(path)) {
+    const count = remaining.get(path) ?? 0;
+    if (count === 0) {
       throw REQUEST_ERROR.create({ detail: "Invalid sandbox write outcome path" });
     }
+    if (count === 1) remaining.delete(path);
+    else remaining.set(path, count - 1);
     if (result.status === "failed") {
       throw REQUEST_ERROR.create({ detail: `Sandbox file write failed: ${path}` });
     }

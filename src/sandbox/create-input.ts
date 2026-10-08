@@ -50,7 +50,8 @@ export function assertSandboxCreationOptions(options: SandboxOptions): void {
   }
 }
 
-function assertSandboxSelector(value: unknown, field: string): void {
+/** @internal Reject a supplied selector that cannot name a sandbox scope. */
+export function assertSandboxSelector(value: unknown, field: string): void {
   if (value !== undefined && (typeof value !== "string" || value.trim().length === 0)) {
     throw CONFIG_INVALID.create({ detail: `${field} must be a non-empty string` });
   }

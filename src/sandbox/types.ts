@@ -96,7 +96,7 @@ export interface SandboxDetails {
 
 /** Options for listing sandboxes. */
 export interface SandboxListOptions extends SandboxClientOptions {
-  /** Project UUID or slug. Omit to list your private sandboxes. */
+  /** Project UUID or slug. Omit to use your current API scope. */
   projectReference?: string;
   /** Limit results to project or private access. */
   accessScope?: SandboxAccessScope;

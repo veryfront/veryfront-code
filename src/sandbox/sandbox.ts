@@ -18,7 +18,11 @@ import {
   parseSandboxRuntimeCheck,
   readSandboxCommandPages,
 } from "./response.ts";
-import { buildSandboxCommandOptions, buildSandboxCreateInput } from "./create-input.ts";
+import {
+  assertSandboxSelector,
+  buildSandboxCommandOptions,
+  buildSandboxCreateInput,
+} from "./create-input.ts";
 import { INITIALIZATION_ERROR, REQUEST_ERROR, TIMEOUT_ERROR } from "#veryfront/errors";
 import { LazySandbox, type LazySandboxOptions } from "./lazy-sandbox.ts";
 import { fetchSandboxUrl, resolveSandboxApiUrl, resolveSandboxAuthToken } from "./config.ts";
@@ -246,6 +250,7 @@ export class Sandbox {
 
   /** List sandboxes with optional pagination. */
   static async list(options: SandboxListOptions = {}): Promise<SandboxListResult> {
+    assertSandboxSelector(options.projectReference, "projectReference");
     const apiUrl = resolveSandboxApiUrl(options);
     const authToken = resolveSandboxAuthToken(options);
 

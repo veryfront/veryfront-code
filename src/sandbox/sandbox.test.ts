@@ -4110,6 +4110,64 @@ describe("Sandbox", () => {
     assertEquals(fetchCalls.length, 0);
   });
 
+  for (const projectReference of ["", "   "]) {
+    it("rejects a blank project list filter before issuing a request", async () => {
+      mockFetch([]);
+      await assertRejects(
+        () =>
+          Sandbox.list({ authToken: "token", apiUrl: "https://api.test.com", projectReference }),
+        Error,
+        "projectReference",
+      );
+      assertEquals(fetchCalls.length, 0);
+    });
+  }
+  it("accepts a receipt for every repeated path in a write batch", async () => {
+    mockFetch([jsonResponse({
+      results: [
+        { path: "same.txt", status: "written", error: null },
+        { path: "same.txt", status: "written", error: null },
+      ],
+    })]);
+    const sandbox = Sandbox.attach({
+      id: "existing",
+      endpoint: "https://sb.test",
+      authToken: "token",
+      apiUrl: "https://api.test.com",
+    });
+    await sandbox.writeFiles([{ path: "same.txt", content: "first" }, {
+      path: "same.txt",
+      content: "second",
+    }]);
+    assertEquals(jsonBody(fetchCalls, 0), {
+      files: [{ path: "same.txt", content: "first" }, { path: "same.txt", content: "second" }],
+    });
+  });
+  it("rejects excess receipts for one path when another repeated write is missing", async () => {
+    mockFetch([jsonResponse({
+      results: [
+        { path: "a.txt", status: "written", error: null },
+        { path: "b.txt", status: "written", error: null },
+        { path: "b.txt", status: "written", error: null },
+      ],
+    })]);
+    const sandbox = Sandbox.attach({
+      id: "existing",
+      endpoint: "https://sb.test",
+      authToken: "token",
+      apiUrl: "https://api.test.com",
+    });
+    await assertRejects(
+      () =>
+        sandbox.writeFiles([{ path: "a.txt", content: "first" }, {
+          path: "a.txt",
+          content: "second",
+        }, { path: "b.txt", content: "third" }]),
+      Error,
+      "Invalid sandbox write outcome path",
+    );
+  });
+
   it("rejects retired project selectors instead of silently billing a different project", async () => {
     mockFetch([]);
     const options = {
