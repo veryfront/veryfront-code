@@ -6,7 +6,14 @@ import {
   primordialArrayPop,
   primordialArrayValues,
 } from "#veryfront/platform/compat/primordials/array.ts";
-import { createPrivateTextDecoder } from "#veryfront/security/private-text.ts";
+import {
+  createPrivateTextDecoder,
+  privateTextSlice,
+  privateTextSplit,
+  privateTextStartsWith,
+  privateTextTrim,
+  privateTextTrimStart,
+} from "#veryfront/security/private-text.ts";
 import { getPrivateStreamReader } from "#veryfront/security/private-stream.ts";
 import { privateJsonParse } from "#veryfront/security/private-json.ts";
 import { serverLogger } from "#veryfront/utils";
@@ -26,12 +33,15 @@ export function parseDataStreamSseEvents(chunk: string): {
   events: AgUiRuntimeStreamEvent[];
   remainder: string;
 } {
-  const blocks = chunk.split("\n\n");
+  const blocks = privateTextSplit(chunk, "\n\n");
   const remainder = primordialArrayPop(blocks) ?? "";
   const events = primordialArrayFlatMap(blocks, (block) => {
     const dataLines = primordialArrayMap(
-      primordialArrayFilter(block.split("\n"), (line) => line.startsWith("data:")),
-      (line) => line.slice(5).trimStart(),
+      primordialArrayFilter(
+        privateTextSplit(block, "\n"),
+        (line) => privateTextStartsWith(line, "data:"),
+      ),
+      (line) => privateTextTrimStart(privateTextSlice(line, 5)),
     );
 
     if (!dataLines.length) {
@@ -39,7 +49,7 @@ export function parseDataStreamSseEvents(chunk: string): {
     }
 
     const payload = primordialArrayJoin(dataLines, "\n");
-    if (payload.trim() === "[DONE]") {
+    if (privateTextTrim(payload) === "[DONE]") {
       return [];
     }
 
