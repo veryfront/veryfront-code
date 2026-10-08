@@ -21,3 +21,9 @@ generated fixture table through `client.test-helpers.ts`.
 The contract integration test checks the pinned hashes and compares freshly
 extracted fixtures with the table consumed by the SDK. Compatible example changes
 therefore require regeneration and cannot leave the table stale.
+
+The current pin is contract 0.8.8. Heartbeat renews execution authority across
+REST, GraphQL and MCP. Dispatch acceptance is an HTTP executor bootstrap option:
+use the literal `"true"` value in `x-veryfront-run-dispatch-acceptance` with the
+issued execution credential. It does not grant ordinary user or API-key access.
+The CLI exposes this option as `project runs heartbeat --accept-dispatch`.

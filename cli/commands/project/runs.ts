@@ -144,6 +144,7 @@ const GLOBAL_OPTIONS = [
   "idempotency-key",
   "if-match",
   "last-event-id",
+  "accept-dispatch",
 ];
 
 function resolveOperation(args: ParsedArgs): RunsOperationId {
@@ -183,6 +184,11 @@ function parseHeaders(args: ParsedArgs, operationId: RunsOperationId): Record<st
   if (ifMatch !== undefined) {
     if (operationId !== "updateRun") usage("Only update accepts --if-match.");
     headers["If-Match"] = ifMatch;
+  }
+  if (args["accept-dispatch"] !== undefined) {
+    if (operationId !== "createRunHeartbeat") usage("Only heartbeat accepts --accept-dispatch.");
+    if (args["accept-dispatch"] !== true) usage("Use --accept-dispatch without a value.");
+    headers["X-Veryfront-Run-Dispatch-Acceptance"] = "true";
   }
   return headers;
 }
