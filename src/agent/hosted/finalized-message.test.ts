@@ -939,6 +939,40 @@ Deno.test("missing earlier fallback text retains a later persisted block for rec
   );
 });
 
+Deno.test("partial later fallback remains idempotent around an appended earlier block", () => {
+  const input = {
+    responseMessage: {
+      id: "m",
+      role: "assistant" as const,
+      parts: [{ type: "step-start" as const }, { type: "text" as const, text: "Sec" }],
+    },
+    finalStep: {
+      response: {
+        messages: [{
+          role: "assistant",
+          content: [
+            { type: "text", text: "First" },
+            { type: "text", text: "Second" },
+          ],
+        }],
+      },
+    },
+    isAborted: false,
+    incompleteToolCallsPartErrorText: "tool error",
+  };
+  const first = buildFinalizedMessageState(input).sanitizedFinalizedMessage;
+  assertEquals(first.parts, [
+    ...input.responseMessage.parts,
+    { type: "text", text: "First" },
+    { type: "text", text: "ond" },
+  ]);
+  assertEquals(
+    buildFinalizedMessageState({ ...input, responseMessage: first }).sanitizedFinalizedMessage
+      .parts,
+    first.parts,
+  );
+});
+
 for (const current of ["Done", "Don"]) {
   Deno.test(`without step boundaries the longest matching text wins (${current})`, () => {
     const responseMessage = {

@@ -146,11 +146,15 @@ export function buildFinalizedMessageState(
       hasPlacedMissingText = true;
       let matchingStart = -1;
       let matchedCount = 0;
+      let matchedIndexes: number[] = [];
       let matchedLength = 0;
       for (let start = 0; start < persistedTextParts.length; start++) {
-        for (let count = 1; count <= persistedTextParts.length - start; count++) {
-          if (consumedTextIndexes.has(start + count - 1)) break;
-          const texts = persistedTextParts.slice(start, start + count).map((part) => part.text);
+        if (consumedTextIndexes.has(start)) continue;
+        const availableIndexes = persistedTextParts.map((_, index) => index)
+          .filter((index) => index >= start && !consumedTextIndexes.has(index));
+        for (let count = 1; count <= availableIndexes.length; count++) {
+          const indexes = availableIndexes.slice(0, count);
+          const texts = indexes.map((index) => persistedTextParts[index]!.text);
           const prefixLength = Math.max(...["\n\n", "\n", " ", ""].map((separator) => {
             const prefix = texts.join(separator).trim();
             return fallbackPart.text.startsWith(prefix) ? prefix.length : 0;
@@ -173,18 +177,17 @@ export function buildFinalizedMessageState(
           ) {
             matchingStart = start;
             matchedCount = count;
+            matchedIndexes = indexes;
             matchedLength = prefixLength;
           }
         }
       }
       const matchedParts = matchingStart < 0
         ? []
-        : persistedTextParts.slice(matchingStart, matchingStart + matchedCount);
+        : matchedIndexes.map((index) => persistedTextParts[index]!);
       if (matchedCount > 0) {
-        for (let index = matchingStart; index < matchingStart + matchedCount; index++) {
-          consumedTextIndexes.add(index);
-        }
-        persistedTextCursor = Math.max(persistedTextCursor, matchingStart + matchedCount);
+        for (const index of matchedIndexes) consumedTextIndexes.add(index);
+        persistedTextCursor = Math.max(persistedTextCursor, matchedIndexes.at(-1)! + 1);
       }
       const missingTextParts = appendMissingFallbackTextPart(matchedParts, {
         text: fallbackPart.text,
