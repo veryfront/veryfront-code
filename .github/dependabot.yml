@@ -18,6 +18,14 @@ updates:
       day: "monday"
       time: "06:00"
       timezone: "UTC"
+    # Self-pins need an atomic manual update to keep the trusted-revision test strict.
+    # Select a reviewed commit on main. In one commit, update every cancellation
+    # workflow uses: pin in .github/workflows/cicd.yml and
+    # TRUSTED_CANCELLATION_WORKFLOW in
+    # tests/integration/ci/merge-quality-gate-workflow.test.ts, then run:
+    # deno task test:file tests/integration/ci/merge-quality-gate-workflow.test.ts
+    ignore:
+      - dependency-name: "veryfront/veryfront-code/.github/workflows/*"
     groups:
       codeql-action:
         patterns:

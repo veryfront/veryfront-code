@@ -670,6 +670,67 @@ describe("agent/hosted-chat-finalization", () => {
     assertEquals("output" in terminalStates[0]!, false);
   });
 
+  it("keeps cancellation terminal when the mirror cannot drain", async () => {
+    const calls: string[] = [];
+    const terminalStates: HostedLifecycleTerminalState[] = [];
+    await finalizeHostedChatRun({
+      kind: "detached",
+      isAborted: true,
+      mirroredDurableOutput: true,
+      streamResult: createStreamResult({}),
+      lifecycleAdapter: createLifecycleAdapter({
+        calls,
+        terminalStates,
+        mirror: createDurableRunMirror({ calls, disableReason: "auth_rejected" }),
+      }),
+      mirroredToolChunkState: createMirroredToolChunkState(),
+      capturedMessageId: "assistant-message-1",
+      incompleteToolCallsPartErrorText: "Tool call did not complete",
+      cleanup: async () => {
+        calls.push("cleanup");
+      },
+      streamError: null,
+    });
+    assertEquals(terminalStates.map((state) => state.status), ["cancelled"]);
+    assertEquals(calls.at(-1), "cleanup");
+  });
+
+  for (const outcome of ["disabled", "pending", "in-flight", "retry"] as const) {
+    it(`does not complete detached mirrored output with a ${outcome} mirror`, async () => {
+      const calls: string[] = [];
+      const terminalStates: HostedLifecycleTerminalState[] = [];
+      const mirror = createDurableRunMirror({ calls });
+      const flush = mirror.flush;
+      mirror.flush = async () => ({
+        ...await flush(),
+        disabled: outcome === "disabled",
+        pendingEventCount: outcome === "pending" ? 1 : 0,
+        inFlight: outcome === "in-flight",
+        hasRetryTimer: outcome === "retry",
+      });
+
+      await finalizeHostedChatRun({
+        kind: "detached",
+        isAborted: false,
+        mirroredDurableOutput: true,
+        streamResult: createStreamResult({}),
+        lifecycleAdapter: createLifecycleAdapter({ calls, terminalStates, mirror }),
+        mirroredToolChunkState: createMirroredToolChunkState(),
+        capturedMessageId: "assistant-message-1",
+        incompleteToolCallsPartErrorText: "Tool call did not complete",
+        cleanup: async () => {
+          calls.push("cleanup");
+        },
+        streamError: null,
+      });
+      assertEquals(terminalStates.map((state) => [state.status, state.terminalErrorCode]), [[
+        "failed",
+        "DURABLE_RUN_EVENT_PERSISTENCE_FAILED",
+      ]]);
+      assertEquals(calls.at(-1), "cleanup");
+    });
+  }
+
   for (const kind of ["response", "detached"] as const) {
     it(`dispatches failed stream error after fallback append and flush in ${kind} mode`, async () => {
       const calls: string[] = [];
@@ -924,7 +985,7 @@ describe("agent/hosted-chat-finalization", () => {
   // The critical guard: every other mirror stop leaves a live run that still needs
   // completing. Only `run_terminal` may skip finalization -- widening this would
   // trade a noisy bug for runs stranded in `running` forever.
-  it("still finalizes the durable run for every other mirror stop reason", async () => {
+  it("fails the durable run for every other mirror stop reason", async () => {
     const otherReasons: ConversationRunMirrorDisableReason[] = [
       "cursor_resyncs_exhausted",
       "cursor_mismatch_ambiguous",
@@ -959,12 +1020,10 @@ describe("agent/hosted-chat-finalization", () => {
 
       assertEquals(
         calls.filter((call) => call.startsWith("terminal:")),
-        ["terminal:completed:"],
+        ["terminal:failed:DURABLE_RUN_EVENT_PERSISTENCE_FAILED"],
         `expected ${disableReason} to still finalize the durable run`,
       );
-      assertEquals(terminalStates.map(({ output: _output, ...state }) => state), [{
-        status: "completed",
-      }]);
+      assertEquals(terminalStates.map((state) => state.status), ["failed"]);
     }
   });
 
