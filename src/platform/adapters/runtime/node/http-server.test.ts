@@ -1326,7 +1326,7 @@ describe("NodeServer lifecycle", () => {
     const server = await createNodeServer((incoming) => {
       tracker.start(requestId, incoming.method, new URL(incoming.url).pathname);
       const lifetime = getRequestTransportLifetime(incoming);
-      void lifetime?.completed?.then(transportFinished.resolve, transportFinished.reject);
+      void lifetime?.completed?.then(() => transportFinished.resolve(), transportFinished.reject);
       const response = new Response(
         new ReadableStream<Uint8Array>({
           pull(controller) {
