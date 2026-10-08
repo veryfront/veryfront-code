@@ -16,6 +16,7 @@ import {
 import { afterAll, describe, it } from "#veryfront/testing/bdd.ts";
 import { FakeTime } from "#std/testing/time";
 import type { Agent } from "#veryfront/agent";
+import { agent } from "#veryfront/agent/factory.ts";
 import { tool } from "#veryfront/tool";
 import {
   createWorkflowClient,
@@ -27,8 +28,14 @@ import {
 import { defineSchema } from "#veryfront/schemas/index.ts";
 import { schemaIdentitySha256 } from "#veryfront/schemas/schema-identity.ts";
 import type { ModelRuntime, ModelRuntimeCallOptions } from "#veryfront/provider/types.ts";
+import type { RuntimeStreamPart } from "#veryfront/agent/runtime/runtime-tool-types.ts";
 import type { Message } from "#veryfront/agent/types.ts";
 import { agentRegistry } from "#veryfront/agent/composition/index.ts";
+import {
+  observeGeneratedAgentTurn,
+  withLocalChildRuntime,
+} from "#veryfront/agent/composition/local-child-execution.ts";
+import { AgentRuntime } from "#veryfront/agent/runtime/index.ts";
 import { createEmptyDiscoveryResult } from "#veryfront/discovery";
 import { runWithProjectEnv } from "#veryfront/server/project-env/storage.ts";
 import { resolveHostOwnedSourceApiBaseUrl } from "#veryfront/config/host-api-base.ts";
@@ -79,6 +86,7 @@ import type { WorkflowNode, WorkflowRun } from "#veryfront/workflow/types.ts";
 import type { DiscoveredWorkflow } from "#veryfront/workflow/discovery";
 import { delay, withEnv } from "#veryfront/testing/deno-compat.ts";
 import { createProjectRunInferenceModelResolver } from "#veryfront/agent/runtime/project-run-inference-credential.ts";
+import { getActiveRunEventSink } from "#veryfront/runtime/run-event-sink-context.ts";
 import { stop as stopEsbuild } from "veryfront/extensions/bundler";
 import * as otelApi from "npm:@opentelemetry/api@1.9.1";
 import { AsyncLocalStorageContextManager } from "npm:@opentelemetry/context-async-hooks@2.10.0";
@@ -138,6 +146,28 @@ class SynchronousInMemorySpanExporter implements SpanExporter {
  * replacing a runtime method: the ceiling is then observed exactly where it has
  * to hold, in the tool list and prompt the provider receives.
  */
+function createProjectRunEventToken(input: {
+  runId: string;
+  projectId: string;
+  canonicalRunId: string;
+  attemptId?: string;
+}): string {
+  return `test.${
+    btoa(
+      JSON.stringify({
+        tokenUse: "run_event_writer",
+        runId: input.runId,
+        projectId: input.projectId,
+        projectExecutionAttempt: {
+          canonicalRunId: input.canonicalRunId,
+          workerId: "worker",
+          attemptId: input.attemptId ?? "attempt",
+        },
+      }),
+    )
+  }.signature`;
+}
+
 function createEvalTransportModel(input: {
   text: string;
   usage?: { inputTokens: number; outputTokens: number; totalTokens: number };
@@ -160,6 +190,32 @@ function createEvalTransportModel(input: {
               finishReason: "stop",
               ...(input.usage ? { usage: input.usage } : {}),
             });
+            controller.close();
+          },
+        }),
+      });
+    },
+  };
+}
+
+function createScriptedStreamModel(
+  modelId: string,
+  turns: readonly (readonly RuntimeStreamPart[])[],
+): ModelRuntime<ModelRuntimeCallOptions> {
+  let call = 0;
+  return {
+    provider: "hosted",
+    modelId,
+    doGenerate: () => {
+      throw new Error(`Expected ${modelId} to use the streaming path`);
+    },
+    doStream: () => {
+      const parts = turns[call++];
+      if (!parts) throw new Error(`Unexpected ${modelId} stream call ${call}`);
+      return Promise.resolve({
+        stream: new ReadableStream<RuntimeStreamPart>({
+          start(controller) {
+            for (const part of parts) controller.enqueue(part);
             controller.close();
           },
         }),
@@ -545,6 +601,7 @@ const runTaskDefinition: ProjectRunExecuteHandlerDeps["runTask"] = async (option
       environmentId: options.environmentId,
       signal: options.signal,
       attempt: options.attempt ?? 1,
+      ...(options.runChild === undefined ? {} : { runChild: options.runChild }),
     });
     return { success: true, result, durationMs: performance.now() - startedAt };
   } catch (error) {
@@ -788,7 +845,9 @@ describe("workflow capability transport boundary", () => {
             VERYFRONT_API_BASE_URL: "https://tenant.example.test",
             VERYFRONT_API_URL: "https://tenant.example.test",
           }, async () => {
-            const result = await handler.handle(signed.request, createCtx(signed.publicKeyPem));
+            const ctx = createCtx(signed.publicKeyPem);
+            ctx.projectId = "proj-1";
+            const result = await handler.handle(sealIngressCredentials(signed.request), ctx);
             assertExists(result.response);
             const response = await result.response.json();
             assertEquals(response.success, false);
@@ -849,6 +908,12 @@ describe("workflow capability transport boundary", () => {
         kind: "workflow",
         target: "workflow:publish",
         projectId: "proj-1",
+      }, {
+        "x-veryfront-run-event-token": createProjectRunEventToken({
+          runId,
+          projectId: "proj-1",
+          canonicalRunId: "88888888-8888-4888-8888-888888888888",
+        }),
       });
       await withEnv(
         { VERYFRONT_API_BASE_URL: "http://api.example.test", VERYFRONT_API_URL: "" },
@@ -8177,6 +8242,31 @@ describe("project run inference credential header", () => {
   };
   const taskPath = "/api/control-plane/runs/run_task_inference/execute";
 
+  async function withAcknowledgedRuntimeEntry<T>(operation: () => Promise<T>): Promise<T> {
+    return await withMockFetch(async (input, init) => {
+      const request = new Request(input, init);
+      assertMatch(request.url, /\/runs\/[0-9a-f-]+\/events$/);
+      const body = requestJsonBody(init);
+      assertExists(body);
+      assertEquals(body.events, [{
+        type: "RUNTIME_EVENT_RECORDED",
+        runtime: "veryfront",
+        kind: "runtime_context",
+        value: {
+          runId:
+            JSON.parse(atob(request.headers.get("x-veryfront-run-event-token")!.split(".")[1]!))
+              .runId,
+        },
+      }]);
+      assertMatch(JSON.stringify(body.runtime_observations), /execution_entry/);
+      return Response.json({
+        run_id: request.url.split("/").at(-2),
+        latest_event_id: 2,
+        appended_count: 2,
+      });
+    }, operation);
+  }
+
   async function withCapturedConsole<T>(
     fn: () => Promise<T>,
   ): Promise<{ value: T; lines: string[] }> {
@@ -8201,18 +8291,32 @@ describe("project run inference credential header", () => {
 
   it("scopes a managed-model resolver to a task run that carries the header", async () => {
     let resolverInScope: boolean | undefined;
+    const runId = "run_task_inference";
+    const canonicalRunId = "11111111-1111-4111-8111-111111111111";
+    const projectId = "22222222-2222-4222-8222-222222222222";
     const handler = new ProjectRunExecuteHandler(createDeps({
       runTask: async () => {
         resolverInScope = createProjectRunInferenceModelResolver() !== undefined;
         return { success: true, result: { ok: true }, durationMs: 1 };
       },
     }));
-    const { request, publicKeyPem } = await signedRequest(taskPath, taskBody, {
-      "X-Veryfront-Inference-Token": INFERENCE_TOKEN,
-    });
+    const { request, publicKeyPem } = await signedRequest(
+      taskPath,
+      { ...taskBody, projectId, canonicalRunId },
+      {
+        "X-Veryfront-Inference-Token": INFERENCE_TOKEN,
+        "x-veryfront-run-event-token": createProjectRunEventToken({
+          runId,
+          projectId,
+          canonicalRunId,
+        }),
+      },
+    );
+    const ctx = createCtx(publicKeyPem);
+    ctx.projectId = projectId;
 
-    const { value: result, lines } = await withCapturedConsole(() =>
-      handler.handle(request, createCtx(publicKeyPem))
+    const { value: result, lines } = await withAcknowledgedRuntimeEntry(() =>
+      withCapturedConsole(() => handler.handle(request, ctx))
     );
 
     assertExists(result.response);
@@ -8237,23 +8341,1113 @@ describe("project run inference credential header", () => {
         destroy: async () => {},
       }),
     }));
+    const canonicalRunId = "11111111-1111-4111-8111-111111111111";
+    const projectId = "22222222-2222-4222-8222-222222222222";
     const body = {
       runId: "run_workflow_inference",
+      canonicalRunId,
       kind: "workflow",
       target: "workflow:publish",
-      projectId: "proj-1",
+      projectId,
     };
     const { request, publicKeyPem } = await signedRequest(
       "/api/control-plane/runs/run_workflow_inference/execute",
       body,
-      { "X-Veryfront-Inference-Token": INFERENCE_TOKEN },
+      {
+        "X-Veryfront-Inference-Token": INFERENCE_TOKEN,
+        "x-veryfront-run-event-token": createProjectRunEventToken({
+          runId: "run_workflow_inference",
+          projectId,
+          canonicalRunId,
+        }),
+      },
     );
+    const ctx = createCtx(publicKeyPem);
+    ctx.projectId = projectId;
+
+    const result = await withAcknowledgedRuntimeEntry(() => handler.handle(request, ctx));
+
+    assertExists(result.response);
+    assertEquals(result.response.status, 200);
+    assertEquals(resolverInScope, true);
+  });
+
+  it("captures inline task agent.generate model context and output events before dispatch", async () => {
+    const runId = "run_inline_generate_observed";
+    const canonicalRunId = "11111111-1111-4111-8111-111111111111";
+    const projectId = "22222222-2222-4222-8222-222222222222";
+    const eventToken = createProjectRunEventToken({ runId, projectId, canonicalRunId });
+    let toolExecutions = 0;
+    let entryObservations = 0;
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      runTask: runTaskDefinition,
+      ensureProjectDiscovery: async () => {
+        const discovery = createEmptyDiscoveryResult();
+        discovery.tasks.set("inline-generate", {
+          name: "Inline generate",
+          run: async () => {
+            assertEquals(
+              entryObservations,
+              1,
+              "parent runtime entry must persist before task code",
+            );
+            const assistant = agent({
+              id: "managed-inference-probe",
+              model: "veryfront-cloud/openai/gpt-test",
+              system: "Say OK.",
+              skills: false,
+              maxSteps: 3,
+              tools: {
+                lookup: tool({
+                  id: "lookup",
+                  description: "Lookup",
+                  inputSchema: defineSchema((v) => v.object({ query: v.string() }))(),
+                  execute: () => {
+                    toolExecutions++;
+                    return { fact: "known" };
+                  },
+                }),
+              },
+            });
+            const response = await assistant.generate({ input: "Say OK." });
+            const reviewer = agent({
+              id: "managed-inference-reviewer",
+              model: "veryfront-cloud/openai/gpt-test",
+              system: "Say Second.",
+              skills: false,
+            });
+            const second = await reviewer.generate({ input: "Say Second." });
+            return { text: `${response.text} ${second.text}` };
+          },
+        });
+        return discovery;
+      },
+    }));
+    const body = {
+      runId,
+      canonicalRunId,
+      kind: "task",
+      target: "task:inline-generate",
+      projectId,
+    };
+    const { request, publicKeyPem } = await signedRequest(
+      `/api/control-plane/runs/${runId}/execute`,
+      body,
+      {
+        "X-Veryfront-Inference-Token": INFERENCE_TOKEN,
+        "x-veryfront-run-event-token": eventToken,
+      },
+    );
+    const ctx = createCtx(publicKeyPem);
+    ctx.projectId = projectId;
+    const appended: Record<string, unknown>[] = [];
+    const idempotencyKeys: string[] = [];
+    const gatewayCaptures: Array<{ modelCallId: string | null; captureEventId: string | null }> =
+      [];
+    let cursor = 0;
+    let gatewayCalls = 0;
+    const encoder = new TextEncoder();
+    const sse = (chunks: readonly Record<string, unknown>[]) =>
+      new Response(
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            for (const chunk of chunks) {
+              controller.enqueue(encoder.encode(`data: ${JSON.stringify(chunk)}\n\n`));
+            }
+            controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+            controller.close();
+          },
+        }),
+        { headers: { "content-type": "text/event-stream" } },
+      );
+
+    const result = await withEnv(
+      { VERYFRONT_API_BASE_URL: "https://api.veryfront.com" },
+      () =>
+        withMockFetch(async (input, init) => {
+          const request = new Request(input, init);
+          const url = request.url;
+          if (url === "https://api.veryfront.com/ai/models") {
+            return Response.json({
+              models: [{
+                id: "gpt-test",
+                modelId: "openai/gpt-test",
+                provider: "openai",
+                surface: "openai",
+                operations: ["chat-completions"],
+                aliases: ["openai/gpt-test", "gpt-test"],
+                capabilities: { transport: "chat-completions" },
+              }],
+            });
+          }
+          if (url === "https://api.veryfront.com/ai/v1/chat/completions") {
+            gatewayCaptures.push({
+              modelCallId: request.headers.get("x-veryfront-model-call-id"),
+              captureEventId: request.headers.get("x-veryfront-model-call-capture-event-id"),
+            });
+            gatewayCalls++;
+            if (gatewayCalls === 1) {
+              return sse([
+                {
+                  id: "chatcmpl-1",
+                  object: "chat.completion.chunk",
+                  created: 0,
+                  model: "gpt-test",
+                  choices: [{ index: 0, delta: { role: "assistant", content: "Looking up" } }],
+                },
+                {
+                  id: "chatcmpl-1",
+                  object: "chat.completion.chunk",
+                  created: 0,
+                  model: "gpt-test",
+                  choices: [{
+                    index: 0,
+                    delta: {
+                      tool_calls: [{
+                        index: 0,
+                        id: "lookup-call",
+                        type: "function",
+                        function: { name: "lookup", arguments: '{"query":"brief"}' },
+                      }],
+                    },
+                  }],
+                },
+                {
+                  id: "chatcmpl-1",
+                  object: "chat.completion.chunk",
+                  created: 0,
+                  model: "gpt-test",
+                  choices: [{ index: 0, delta: {}, finish_reason: "tool_calls" }],
+                  usage: { prompt_tokens: 3, completion_tokens: 2, total_tokens: 5 },
+                },
+              ]);
+            }
+            if (gatewayCalls === 2) {
+              return sse([
+                {
+                  id: "chatcmpl-2",
+                  object: "chat.completion.chunk",
+                  created: 0,
+                  model: "gpt-test",
+                  choices: [{ index: 0, delta: { role: "assistant", content: "OK." } }],
+                },
+                {
+                  id: "chatcmpl-2",
+                  object: "chat.completion.chunk",
+                  created: 0,
+                  model: "gpt-test",
+                  choices: [{ index: 0, delta: {}, finish_reason: "stop" }],
+                  usage: { prompt_tokens: 6, completion_tokens: 1, total_tokens: 7 },
+                },
+              ]);
+            }
+            return sse([
+              {
+                id: "chatcmpl-3",
+                object: "chat.completion.chunk",
+                created: 0,
+                model: "gpt-test",
+                choices: [{ index: 0, delta: { role: "assistant", content: "Second." } }],
+              },
+              {
+                id: "chatcmpl-3",
+                object: "chat.completion.chunk",
+                created: 0,
+                model: "gpt-test",
+                choices: [{ index: 0, delta: {}, finish_reason: "stop" }],
+                usage: { prompt_tokens: 3, completion_tokens: 1, total_tokens: 4 },
+              },
+            ]);
+          }
+          assertEquals(url, `${"https://api.veryfront.com"}/runs/${canonicalRunId}/events`);
+          const headers = new Headers(observeFetchRequestInit(init).headers);
+          assertEquals(headers.get("x-veryfront-run-event-token"), eventToken);
+          assertEquals(headers.get("authorization"), null);
+          const idempotencyKey = headers.get("idempotency-key");
+          assertExists(idempotencyKey);
+          idempotencyKeys.push(idempotencyKey);
+          const payload = requestJsonBody(init);
+          const events = payload?.events;
+          if (!Array.isArray(events)) throw new Error("Expected event batch");
+          if (events.some((event) => event.type === "RUNTIME_EVENT_RECORDED")) {
+            entryObservations++;
+            assertEquals(events, [{
+              type: "RUNTIME_EVENT_RECORDED",
+              runtime: "veryfront",
+              kind: "runtime_context",
+              value: { runId },
+            }]);
+            assertMatch(JSON.stringify(payload?.runtime_observations), /"kind":"execution_entry"/);
+            assertMatch(JSON.stringify(payload?.runtime_observations), /"event_index":0/);
+          } else {
+            assertEquals(payload?.runtime_observations, undefined);
+          }
+          appended.push(...events as Record<string, unknown>[]);
+          cursor += events.length;
+          assertEquals(
+            (events as Record<string, unknown>[]).some((event) =>
+              event.type === "RUN_STARTED" || event.type === "RUN_FINISHED" ||
+              event.type === "RUN_ERROR"
+            ),
+            false,
+          );
+          const captures = (events as Record<string, unknown>[])
+            .filter((event) => event.type === "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED")
+            .map((event, index) => ({
+              event_id: String(9007199254740993n + BigInt(cursor - events.length + index)),
+              project_id: projectId,
+              run_id: canonicalRunId,
+              model_call_id: event.modelCallId,
+            }));
+          return Response.json({
+            run_id: canonicalRunId,
+            latest_event_id: cursor,
+            appended_count: events.length,
+            ...(captures.length > 0 ? { model_call_captures: captures } : {}),
+          });
+        }, () => handler.handle(request, ctx)),
+    );
+
+    assertExists(result.response);
+    assertEquals(result.response.status, 200);
+    const payload = await result.response.json();
+    assertEquals(payload.success, true);
+    assertEquals(payload.result, { text: "OK. Second." });
+    assertEquals(payload.logs, null);
+    assertEquals(typeof payload.duration_ms, "number");
+    assertEquals(toolExecutions, 1);
+    assertEquals(entryObservations, 1);
+    assertEquals(gatewayCaptures.length, 3);
+    assertEquals(new Set(gatewayCaptures.map((capture) => capture.captureEventId)).size, 3);
+    assertEquals(
+      gatewayCaptures.every((capture) =>
+        typeof capture.modelCallId === "string" &&
+        typeof capture.captureEventId === "string" &&
+        BigInt(capture.captureEventId) > 9007199254740991n
+      ),
+      true,
+    );
+    assertEquals(idempotencyKeys.length, new Set(idempotencyKeys).size);
+    assertEquals(
+      appended.filter((event) => event.type === "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED").length,
+      3,
+    );
+    assertEquals(
+      appended.filter((event) => event.type === "TEXT_MESSAGE_CONTENT").map((event) => event.delta),
+      ["Looking up", "OK.", "Second."],
+    );
+    assertEquals(
+      appended.filter((event) => event.type === "TOOL_CALL_START").map((event) => event.toolCallId),
+      ["lookup-call"],
+    );
+    assertEquals(
+      appended.filter((event) => event.type === "TOOL_CALL_RESULT").map((event) =>
+        event.toolCallId
+      ),
+      ["lookup-call"],
+    );
+  });
+
+  it("captures hosted invoke_agent child and nested child stream observations", async () => {
+    const runId = "run_delegated_agent_observed";
+    const canonicalRunId = "11111111-1111-4111-8111-111111111111";
+    const projectId = "22222222-2222-4222-8222-222222222222";
+    const eventToken = createProjectRunEventToken({ runId, projectId, canonicalRunId });
+    const appended: Record<string, unknown>[] = [];
+    let entryObservations = 0;
+    let cursor = 0;
+
+    const childLookup = tool({
+      id: "child_lookup",
+      description: "Lookup child data",
+      inputSchema: defineSchema((v) => v.object({ query: v.string() }))(),
+      execute: () => ({ found: "alpha fact" }),
+    });
+    const parent = agent({
+      id: "delegating-parent",
+      model: "hosted/parent",
+      system: "Delegate to children.",
+      skills: false,
+      maxSteps: 4,
+      tools: { invoke_agent: true },
+      resolveModelTransport: () =>
+        Promise.resolve({
+          model: createScriptedStreamModel("hosted/parent", [[
+            { type: "reasoning-start", id: "parent-reason" },
+            { type: "reasoning-delta", id: "parent-reason", delta: "parent thinks" },
+            { type: "reasoning-end", id: "parent-reason" },
+            { type: "text-delta", text: "Parent before children. " },
+            {
+              type: "tool-call",
+              toolCallId: "parent-alpha",
+              toolName: "invoke_agent",
+              input: {
+                agent_id: "child-alpha",
+                description: "Run alpha",
+                prompt: "Run alpha child.",
+                context: {},
+              },
+            },
+            {
+              type: "tool-call",
+              toolCallId: "parent-beta",
+              toolName: "invoke_agent",
+              input: {
+                agent_id: "child-beta",
+                description: "Run beta",
+                prompt: "Run beta child.",
+                context: {},
+              },
+            },
+            { type: "finish", finishReason: "tool-calls", totalUsage: null },
+          ], [
+            { type: "text-delta", text: "Parent done." },
+            { type: "finish", finishReason: "stop", totalUsage: null },
+          ]]),
+        }),
+    });
+    const childAlpha = agent({
+      id: "child-alpha",
+      model: "hosted/child-alpha",
+      system: "Run alpha and delegate once.",
+      skills: false,
+      maxSteps: 5,
+      tools: { invoke_agent: true, child_lookup: childLookup },
+      resolveModelTransport: () =>
+        Promise.resolve({
+          model: createScriptedStreamModel("hosted/child-alpha", [[
+            { type: "reasoning-start", id: "alpha-reason" },
+            { type: "reasoning-delta", id: "alpha-reason", delta: "alpha thinks" },
+            { type: "reasoning-end", id: "alpha-reason" },
+            { type: "text-delta", text: "Alpha before nested. " },
+            {
+              type: "tool-call",
+              toolCallId: "alpha-nested",
+              toolName: "invoke_agent",
+              input: {
+                agent_id: "child-grand",
+                description: "Run grand",
+                prompt: "Run grand child.",
+                context: {},
+              },
+            },
+            { type: "finish", finishReason: "tool-calls", totalUsage: null },
+          ], [
+            {
+              type: "tool-call",
+              toolCallId: "alpha-lookup",
+              toolName: "child_lookup",
+              input: { query: "alpha" },
+            },
+            { type: "finish", finishReason: "tool-calls", totalUsage: null },
+          ], [
+            { type: "text-delta", text: "Alpha final." },
+            { type: "finish", finishReason: "stop", totalUsage: null },
+          ]]),
+        }),
+    });
+    const childBeta = agent({
+      id: "child-beta",
+      model: "hosted/child-beta",
+      system: "Run beta.",
+      skills: false,
+      resolveModelTransport: () =>
+        Promise.resolve({
+          model: createScriptedStreamModel("hosted/child-beta", [[
+            { type: "reasoning-start", id: "beta-reason" },
+            { type: "reasoning-delta", id: "beta-reason", delta: "beta thinks" },
+            { type: "reasoning-end", id: "beta-reason" },
+            { type: "text-delta", text: "Beta final." },
+            { type: "finish", finishReason: "stop", totalUsage: null },
+          ]]),
+        }),
+    });
+    const childGrand = agent({
+      id: "child-grand",
+      model: "hosted/child-grand",
+      system: "Run grand child.",
+      skills: false,
+      resolveModelTransport: () =>
+        Promise.resolve({
+          model: createScriptedStreamModel("hosted/child-grand", [[
+            { type: "reasoning-start", id: "grand-reason" },
+            { type: "reasoning-delta", id: "grand-reason", delta: "grand thinks" },
+            { type: "reasoning-end", id: "grand-reason" },
+            { type: "text-delta", text: "Grand final." },
+            { type: "finish", finishReason: "stop", totalUsage: null },
+          ]]),
+        }),
+    });
+    agentRegistry.register("child-alpha", childAlpha);
+    agentRegistry.register("child-beta", childBeta);
+    agentRegistry.register("child-grand", childGrand);
+
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      runTask: runTaskDefinition,
+      ensureProjectDiscovery: async () => {
+        const discovery = createEmptyDiscoveryResult();
+        discovery.tasks.set("delegated-agent", {
+          name: "Delegated agent",
+          run: async () => {
+            let finalText = "";
+            const stream = await parent.stream({
+              input: "Coordinate child work.",
+              onFinish: (response) => {
+                finalText = response.text;
+              },
+            });
+            const body = stream.toDataStreamResponse().body;
+            if (body) {
+              for await (const _chunk of body) {
+                // The regression must consume the real runtime stream because
+                // child observation is wired through streaming delegation.
+              }
+            }
+            return { text: finalText };
+          },
+        });
+        return discovery;
+      },
+    }));
+    const body = {
+      runId,
+      canonicalRunId,
+      kind: "task",
+      target: "task:delegated-agent",
+      projectId,
+    };
+    const { request, publicKeyPem } = await signedRequest(
+      `/api/control-plane/runs/${runId}/execute`,
+      body,
+      {
+        "X-Veryfront-Inference-Token": INFERENCE_TOKEN,
+        "x-veryfront-run-event-token": eventToken,
+      },
+    );
+    const ctx = createCtx(publicKeyPem);
+    ctx.projectId = projectId;
+
+    try {
+      const result = await withEnv(
+        { VERYFRONT_API_BASE_URL: "https://api.veryfront.com" },
+        () =>
+          withMockFetch(async (input, init) => {
+            const request = new Request(input, init);
+            assertEquals(
+              request.url,
+              `${"https://api.veryfront.com"}/runs/${canonicalRunId}/events`,
+            );
+            const headers = new Headers(observeFetchRequestInit(init).headers);
+            assertEquals(headers.get("x-veryfront-run-event-token"), eventToken);
+            assertEquals(headers.get("authorization"), null);
+            const payload = requestJsonBody(init);
+            const events = payload?.events;
+            if (!Array.isArray(events)) throw new Error("Expected event batch");
+            if (events.some((event) => event.type === "RUNTIME_EVENT_RECORDED")) {
+              entryObservations++;
+              assertEquals(events, [{
+                type: "RUNTIME_EVENT_RECORDED",
+                runtime: "veryfront",
+                kind: "runtime_context",
+                value: { runId },
+              }]);
+              assertMatch(
+                JSON.stringify(payload?.runtime_observations),
+                /"kind":"execution_entry"/,
+              );
+            } else {
+              assertEquals(payload?.runtime_observations, undefined);
+            }
+            appended.push(...events as Record<string, unknown>[]);
+            cursor += events.length;
+            return Response.json({
+              run_id: canonicalRunId,
+              latest_event_id: cursor,
+              appended_count: events.length,
+            });
+          }, () => handler.handle(request, ctx)),
+      );
+
+      assertExists(result.response);
+      assertEquals(result.response.status, 200);
+      const payload = await result.response.json();
+      assertEquals(payload.success, true, JSON.stringify(payload));
+      assertEquals(payload.result, { text: "Parent done." });
+      assertEquals(entryObservations, 1);
+      assertEquals(
+        appended.filter((event) => event.type === "TEXT_MESSAGE_CONTENT").map((event) =>
+          event.delta
+        ).sort(),
+        [
+          "Alpha before nested. ",
+          "Alpha final.",
+          "Beta final.",
+          "Grand final.",
+          "Parent before children. ",
+          "Parent done.",
+        ],
+      );
+      assertEquals(
+        appended.filter((event) => event.type === "REASONING_MESSAGE_CONTENT").map((event) =>
+          event.delta
+        ).sort(),
+        ["alpha thinks", "beta thinks", "grand thinks", "parent thinks"],
+      );
+      assertEquals(
+        appended.filter((event) => event.type === "TOOL_CALL_START").map((event) =>
+          event.toolCallId
+        ).sort(),
+        ["alpha-lookup", "alpha-nested", "parent-alpha", "parent-beta"],
+      );
+      assertEquals(
+        appended.filter((event) => event.type === "TOOL_CALL_RESULT").map((event) =>
+          event.toolCallId
+        ).sort(),
+        ["alpha-lookup", "alpha-nested", "parent-alpha", "parent-beta"],
+      );
+
+      const textStarts = appended.filter((event) => event.type === "TEXT_MESSAGE_START");
+      const textEnds = appended.filter((event) => event.type === "TEXT_MESSAGE_END");
+      assertEquals(textEnds.length, textStarts.length);
+      const startIds = new Set(textStarts.map((event) => `${event.messageId}:${event.contentId}`));
+      assertEquals(startIds.size, textStarts.length);
+      for (const event of textEnds) {
+        assert(
+          startIds.has(`${event.messageId}:${event.contentId}`),
+          `missing text start for ${event.messageId}:${event.contentId}`,
+        );
+      }
+      const identityByDelta = new Map(
+        appended
+          .filter((event) => event.type === "TEXT_MESSAGE_CONTENT")
+          .map((event) => [event.delta, `${event.messageId}:${event.contentId}`]),
+      );
+      assertNotEquals(
+        identityByDelta.get("Alpha before nested. "),
+        identityByDelta.get("Beta final."),
+      );
+      assertNotEquals(identityByDelta.get("Grand final."), identityByDelta.get("Alpha final."));
+    } finally {
+      agentRegistry.delete("child-alpha");
+      agentRegistry.delete("child-beta");
+      agentRegistry.delete("child-grand");
+    }
+  });
+
+  for (const failure of ["transport", "wrong-run", "invalid-capture", "invalid-json"] as const) {
+    it(`fails closed when task code catches a mandatory output observation failure (${failure})`, async () => {
+      let caughtObservationFailure = false;
+      const runId = `run_observation_append_failed_${failure}`;
+      const canonicalRunId = "11111111-1111-4111-8111-111111111111";
+      const projectId = "22222222-2222-4222-8222-222222222222";
+      const eventToken = createProjectRunEventToken({ runId, projectId, canonicalRunId });
+      const handler = new ProjectRunExecuteHandler(createDeps({
+        runTask: async () => {
+          try {
+            await withLocalChildRuntime(
+              new AgentRuntime("observation-probe", { model: "test/model", system: "Observe" }),
+              () => observeGeneratedAgentTurn("observed-message", { text: "Output must persist." }),
+            );
+          } catch {
+            caughtObservationFailure = true;
+          }
+          return { success: true, result: { ignored: true }, durationMs: 1 };
+        },
+      }));
+      const body = { ...taskBody, runId, projectId, canonicalRunId };
+      const { request, publicKeyPem } = await signedRequest(
+        `/api/control-plane/runs/${runId}/execute`,
+        body,
+        {
+          "X-Veryfront-Inference-Token": INFERENCE_TOKEN,
+          "x-veryfront-run-event-token": eventToken,
+        },
+      );
+      const ctx = createCtx(publicKeyPem);
+      ctx.projectId = projectId;
+      let appendCalls = 0;
+
+      const result = await withEnv(
+        { VERYFRONT_API_BASE_URL: "https://api.veryfront.com" },
+        () =>
+          withMockFetch(async (input, init) => {
+            const request = new Request(input, init);
+            assertEquals(
+              request.url,
+              `${"https://api.veryfront.com"}/runs/${canonicalRunId}/events`,
+            );
+            const body = requestJsonBody(init);
+            assertExists(body);
+            appendCalls++;
+            if (appendCalls === 1) {
+              return Response.json({
+                run_id: canonicalRunId,
+                latest_event_id: 1,
+                appended_count: 1,
+              });
+            }
+            if (failure === "wrong-run") return Response.json({ run_id: "other-run" });
+            if (failure === "invalid-capture") {
+              return Response.json({ run_id: canonicalRunId, model_call_captures: [{}] });
+            }
+            if (failure === "invalid-json") {
+              return new Response("{");
+            }
+            throw new TypeError("append transport unavailable");
+          }, () => handler.handle(request, ctx)),
+      );
+
+      assertExists(result.response);
+      assertEquals(result.response.status, 200);
+      const payload = await result.response.json();
+      assertEquals(payload.success, false);
+      assertStringIncludes(payload.error, "Project run observation sink is disabled");
+      assertEquals(caughtObservationFailure, true);
+      assertEquals(appendCalls, 2);
+    });
+  }
+
+  for (const patchedRace of [false, true]) {
+    it(`releases managed task inference when observation receipt stalls and request aborts (patched race: ${patchedRace})`, async () => {
+      const runId = "run_inline_generate_observation_abort";
+      const canonicalRunId = "12121212-1212-4121-8121-121212121212";
+      const projectId = "23232323-2323-4232-8232-232323232323";
+      const eventToken = createProjectRunEventToken({ runId, projectId, canonicalRunId });
+      const controller = new AbortController();
+      let appendStarted = false;
+      let appendSignal: AbortSignal | undefined;
+      let gatewayCalls = 0;
+      const handler = new ProjectRunExecuteHandler(createDeps({
+        runTask: runTaskDefinition,
+        ensureProjectDiscovery: async () => {
+          const discovery = createEmptyDiscoveryResult();
+          discovery.tasks.set("abort-observation", {
+            name: "Abort observation",
+            run: async () => {
+              const assistant = agent({
+                id: "managed-inference-abort",
+                model: "veryfront-cloud/openai/gpt-test",
+                system: "Say never dispatched.",
+                skills: false,
+              });
+              const originalRace = Promise.race;
+              if (patchedRace) {
+                Promise.race = <T>(values: Iterable<T | PromiseLike<T>>): Promise<Awaited<T>> => {
+                  for (const value of values) return Promise.resolve(value);
+                  return new Promise<Awaited<T>>(() => {});
+                };
+              }
+              try {
+                const response = await assistant.generate({ input: "Say hello." });
+                return { text: response.text };
+              } finally {
+                Promise.race = originalRace;
+              }
+            },
+          });
+          return discovery;
+        },
+      }));
+      const body = {
+        runId,
+        canonicalRunId,
+        kind: "task",
+        target: "task:abort-observation",
+        projectId,
+      };
+      const signed = await signedRequest(
+        `/api/control-plane/runs/${runId}/execute`,
+        body,
+        {
+          "X-Veryfront-Inference-Token": INFERENCE_TOKEN,
+          "x-veryfront-run-event-token": eventToken,
+        },
+      );
+      const ctx = createCtx(signed.publicKeyPem);
+      ctx.projectId = projectId;
+      const request = new Request(signed.request, { signal: controller.signal });
+
+      const result = await withEnv(
+        { VERYFRONT_API_BASE_URL: "https://api.veryfront.com" },
+        () =>
+          withMockFetch(async (input, init) => {
+            const upstream = new Request(input, init);
+            if (upstream.url === "https://api.veryfront.com/ai/models") {
+              return Response.json({
+                models: [{
+                  id: "gpt-test",
+                  modelId: "openai/gpt-test",
+                  provider: "openai",
+                  surface: "openai",
+                  operations: ["chat-completions"],
+                  aliases: ["openai/gpt-test", "gpt-test"],
+                  capabilities: { transport: "chat-completions" },
+                }],
+              });
+            }
+            if (upstream.url === "https://api.veryfront.com/ai/v1/chat/completions") {
+              gatewayCalls++;
+              return Response.json({});
+            }
+            assertEquals(
+              upstream.url,
+              `${"https://api.veryfront.com"}/runs/${canonicalRunId}/events`,
+            );
+            const appendBody = requestJsonBody(init);
+            if (appendBody?.runtime_observations !== undefined) {
+              return Response.json({
+                run_id: canonicalRunId,
+                latest_event_id: 2,
+                appended_count: 2,
+              });
+            }
+            appendStarted = true;
+            appendSignal = observeFetchRequestInit(init).signal as AbortSignal | undefined;
+            controller.abort(new Error("run cancelled"));
+            return new Response(new ReadableStream<Uint8Array>({ start() {} }), {
+              headers: { "content-type": "application/json" },
+            });
+          }, () => handler.handle(request, ctx)),
+      );
+
+      assertExists(result.response);
+      assertEquals(result.response.status, 200);
+      const payload = await result.response.json();
+      assertEquals(payload.success, false);
+      assertStringIncludes(payload.error, "run cancelled");
+      assertEquals(appendStarted, true);
+      assertEquals(appendSignal?.aborted, true);
+      assertEquals(gatewayCalls, 0);
+    });
+  }
+
+  it("times out managed entry persistence at the task deadline before user code", async () => {
+    const clock = manualTaskDeadlineClock();
+    const started = Promise.withResolvers<void>();
+    const controller = new AbortController();
+    const runId = "run_entry_deadline";
+    const canonicalRunId = "12121212-1212-4121-8121-121212121212";
+    const projectId = "23232323-2323-4232-8232-232323232323";
+    let taskRan = false;
+    let appendSignal: AbortSignal | undefined;
+    const handler = new ProjectRunExecuteHandler(
+      createDeps({
+        runTask: async () => {
+          taskRan = true;
+          return { success: true, result: "unexpected", durationMs: 0 };
+        },
+      }),
+      clock,
+    );
+    const signed = await signedRequest(`/api/control-plane/runs/${runId}/execute`, {
+      ...taskBody,
+      runId,
+      canonicalRunId,
+      projectId,
+      deadlineAt: new Date(clock.now() + 25).toISOString(),
+    }, {
+      "X-Veryfront-Inference-Token": INFERENCE_TOKEN,
+      "x-veryfront-run-event-token": createProjectRunEventToken({
+        runId,
+        projectId,
+        canonicalRunId,
+      }),
+    });
+    const ctx = createCtx(signed.publicKeyPem);
+    ctx.projectId = projectId;
+    const result = await withEnv(
+      { VERYFRONT_API_BASE_URL: "https://api.veryfront.com" },
+      () =>
+        withMockFetch((_input, init) => {
+          appendSignal = observeFetchRequestInit(init).signal ?? undefined;
+          assertExists(appendSignal);
+          const signal = appendSignal;
+          started.resolve();
+          return new Promise<Response>((_resolve, reject) =>
+            signal.addEventListener("abort", () => reject(signal.reason), { once: true })
+          );
+        }, async () => {
+          const pending = handler.handle(
+            new Request(signed.request, { signal: controller.signal }),
+            ctx,
+          );
+          await started.promise;
+          clock.advance(25);
+          const cancelledByDeadline = appendSignal?.aborted;
+          // Bound the regression's old behavior without waiting for its 30-second timeout.
+          controller.abort(new Error("test cleanup"));
+          const result = await pending;
+          assertEquals(cancelledByDeadline, true);
+          return result;
+        }),
+    );
+    assertExists(result.response);
+    assertEquals((await result.response.json()).error_code, "RUN_TIMEOUT");
+    assertEquals(taskRan, false);
+  });
+
+  it("keeps mandatory model input unchanged when project code replaces JSON serialization", async () => {
+    const runId = "run_private_observation_json";
+    const canonicalRunId = "12121212-1212-4121-8121-121212121212";
+    const projectId = "23232323-2323-4232-8232-232323232323";
+    const modelCallId = "34343434-3434-4343-8343-343434343434";
+    let hooksCalled = 0;
+    let observedMessages: unknown;
+    const receiptBody = JSON.stringify({
+      run_id: canonicalRunId,
+      latest_event_id: 3,
+      appended_count: 1,
+      model_call_captures: [{
+        event_id: "9007199254740993",
+        run_id: canonicalRunId,
+        project_id: projectId,
+        model_call_id: modelCallId,
+      }],
+    });
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      runTask: async () => {
+        const originalStringify = JSON.stringify;
+        const originalToJson = Object.getOwnPropertyDescriptor(Object.prototype, "toJSON");
+        JSON.stringify = () => {
+          hooksCalled++;
+          throw new Error("Project JSON replacement invoked");
+        };
+        Object.defineProperty(Object.prototype, "toJSON", {
+          configurable: true,
+          value: () => {
+            hooksCalled++;
+            return "changed-input";
+          },
+        });
+        try {
+          await getActiveRunEventSink()?.({
+            type: "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED",
+            modelCallId,
+            messages: [{ role: "user", content: [{ type: "text", text: "Exact provider input" }] }],
+            tools: [],
+          });
+        } finally {
+          JSON.stringify = originalStringify;
+          if (originalToJson) Object.defineProperty(Object.prototype, "toJSON", originalToJson);
+          else Reflect.deleteProperty(Object.prototype, "toJSON");
+        }
+        return { success: true, result: "recorded", durationMs: 0 };
+      },
+    }));
+    const signed = await signedRequest(`/api/control-plane/runs/${runId}/execute`, {
+      ...taskBody,
+      runId,
+      canonicalRunId,
+      projectId,
+    }, {
+      "X-Veryfront-Inference-Token": INFERENCE_TOKEN,
+      "x-veryfront-run-event-token": createProjectRunEventToken({
+        runId,
+        projectId,
+        canonicalRunId,
+      }),
+    });
+    const ctx = createCtx(signed.publicKeyPem);
+    ctx.projectId = projectId;
+    const result = await withEnv(
+      { VERYFRONT_API_BASE_URL: "https://api.veryfront.com" },
+      () =>
+        withMockFetch(async (_input, init) => {
+          const events = requestJsonBody(init)?.events;
+          if (Array.isArray(events)) {
+            for (const event of events) {
+              if (event.type === "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED") {
+                observedMessages = event.messages;
+              }
+            }
+          }
+          return new Response(receiptBody, { headers: { "content-type": "application/json" } });
+        }, () => handler.handle(signed.request, ctx)),
+    );
+    assertExists(result.response);
+    const payload = await result.response.json();
+    assertEquals(payload.success, true, JSON.stringify(payload));
+    assertEquals(hooksCalled, 0);
+    assertEquals(observedMessages, [{
+      role: "user",
+      content: [{ type: "text", text: "Exact provider input" }],
+    }]);
+  });
+
+  it("releases managed workflow stop registration when entry persistence fails", async () => {
+    const registry = new RunStopRegistry();
+    const runId = "run_workflow_entry_failed";
+    const canonicalRunId = "12121212-1212-4121-8121-121212121212";
+    const projectId = "23232323-2323-4232-8232-232323232323";
+    const handler = new ProjectRunExecuteHandler(createDeps(), undefined, registry);
+    const signed = await signedRequest(`/api/control-plane/runs/${runId}/execute`, {
+      runId,
+      canonicalRunId,
+      projectId,
+      kind: "workflow",
+      target: "workflow:publish",
+    }, {
+      "X-Veryfront-Inference-Token": INFERENCE_TOKEN,
+      "x-veryfront-run-event-token": createProjectRunEventToken({
+        runId,
+        projectId,
+        canonicalRunId,
+      }),
+    });
+    const ctx = createCtx(signed.publicKeyPem);
+    ctx.projectId = projectId;
+    const result = await withEnv(
+      { VERYFRONT_API_BASE_URL: "https://api.veryfront.com" },
+      () =>
+        withMockFetch(() => {
+          throw new TypeError("entry transport failed");
+        }, () => handler.handle(signed.request, ctx)),
+    );
+    assertExists(result.response);
+    assertEquals((await result.response.json()).success, false);
+    assertEquals(registry.requestStop(runId), { accepted: false, stopped: false });
+  });
+
+  for (const kind of ["task", "workflow"] as const) {
+    it(`retains host event authority for ${kind} child admission after request sanitization`, async () => {
+      const runId = `run_retained_${kind}_child`;
+      const canonicalRunId = "12121212-1212-4121-8121-121212121212";
+      const projectId = "23232323-2323-4232-8232-232323232323";
+      const eventToken = createProjectRunEventToken({ runId, projectId, canonicalRunId });
+      let admissions = 0;
+      let admittedToken: string | null = null;
+      let admittedParent: unknown;
+      const handler = new ProjectRunExecuteHandler(createDeps({
+        runTask: runTaskDefinition,
+        ensureProjectDiscovery: async () => {
+          const discovery = createEmptyDiscoveryResult();
+          discovery.tasks.set("child-probe", {
+            name: "Child probe",
+            run: async (context) => {
+              assertExists(context.runChild);
+              try {
+                await context.runChild({
+                  target: { type: "agent", id: "researcher" },
+                  input: "probe",
+                  idempotencyKey: "probe-child",
+                });
+              } catch { /* The fake API deliberately refuses after checking authority. */ }
+              return "handled";
+            },
+          });
+          return discovery;
+        },
+        createWorkflowClient: (config) => ({
+          register: () => {},
+          start: async () => {
+            const runAgentNode = config?.executor?.stepExecutor?.runAgentNode;
+            assertExists(runAgentNode);
+            try {
+              await runAgentNode({
+                runId,
+                nodeId: "probe",
+                agentId: "researcher",
+                input: "probe",
+                execute: async () => ({ success: true, output: {}, executionTime: 0 }),
+              });
+            } catch { /* The fake API deliberately refuses after checking authority. */ }
+            return { runId };
+          },
+          getRun: async () => ({ status: "completed", output: "handled" }),
+          cancel: async () => {},
+          destroy: async () => {},
+        }),
+      }));
+      const signed = await signedRequest(`/api/control-plane/runs/${runId}/execute`, {
+        runId,
+        canonicalRunId,
+        projectId,
+        kind,
+        target: kind === "task" ? "task:child-probe" : "workflow:publish",
+      }, {
+        "X-Veryfront-Inference-Token": INFERENCE_TOKEN,
+        "x-veryfront-run-event-token": eventToken,
+      });
+      const ctx = createCtx(signed.publicKeyPem);
+      ctx.projectId = projectId;
+      ctx.proxyToken = "test-runtime-api-token";
+      const result = await withEnv(
+        { VERYFRONT_API_BASE_URL: "https://api.veryfront.com" },
+        () =>
+          withMockFetch(async (input, init) => {
+            const request = new Request(input, init);
+            if (new URL(request.url).pathname === "/runs") {
+              admissions++;
+              admittedToken = request.headers.get("x-veryfront-run-event-token");
+              admittedParent = requestJsonBody(init)?.parent_run_id;
+              return new Response("deliberate admission refusal", { status: 409 });
+            }
+            assertEquals(request.url, `https://api.veryfront.com/runs/${canonicalRunId}/events`);
+            return Response.json({ run_id: canonicalRunId, latest_event_id: 2, appended_count: 2 });
+          }, () => handler.handle(signed.request, ctx)),
+      );
+      assertExists(result.response);
+      assertEquals((await result.response.json()).success, true);
+      assertEquals(admissions, 1);
+      assertEquals(admittedToken, eventToken);
+      assertEquals(admittedParent, canonicalRunId);
+    });
+  }
+
+  it("fails closed before managed task inference when run-event authority is absent", async () => {
+    let taskRan = false;
+    const registry = new RunStopRegistry();
+    const handler = new ProjectRunExecuteHandler(
+      createDeps({
+        runTask: async () => {
+          taskRan = true;
+          return { success: true, result: null, durationMs: 0 };
+        },
+      }),
+      undefined,
+      registry,
+    );
+    const { request, publicKeyPem } = await signedRequest(taskPath, taskBody, {
+      "X-Veryfront-Inference-Token": INFERENCE_TOKEN,
+    });
 
     const result = await handler.handle(request, createCtx(publicKeyPem));
 
     assertExists(result.response);
     assertEquals(result.response.status, 200);
-    assertEquals(resolverInScope, true);
+    const payload = await result.response.json();
+    assertEquals(payload.success, false);
+    assertStringIncludes(payload.error, "Project run observation requires run event authority");
+    assertEquals(taskRan, false);
+    assertEquals(registry.requestStop(taskBody.runId), { accepted: false, stopped: false });
+  });
+
+  it("fails closed before managed task inference when run-event authority targets another run", async () => {
+    let taskRan = false;
+    const projectId = "proj-1";
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      runTask: async () => {
+        taskRan = true;
+        return { success: true, result: null, durationMs: 0 };
+      },
+    }));
+    const { request, publicKeyPem } = await signedRequest(taskPath, taskBody, {
+      "X-Veryfront-Inference-Token": INFERENCE_TOKEN,
+      "x-veryfront-run-event-token": createProjectRunEventToken({
+        runId: "run_other",
+        projectId,
+        canonicalRunId: "11111111-1111-4111-8111-111111111111",
+      }),
+    });
+
+    const result = await handler.handle(request, createCtx(publicKeyPem));
+
+    assertExists(result.response);
+    assertEquals(result.response.status, 200);
+    const payload = await result.response.json();
+    assertEquals(payload.success, false);
+    assertStringIncludes(payload.error, "Project child execution requires current run authority");
+    assertEquals(taskRan, false);
   });
 
   it("keeps the current behaviour when the header is absent", async () => {
@@ -8325,22 +9519,36 @@ describe("project run inference credential header", () => {
         return async () => ({ text: "Paris" });
       },
     }));
+    const projectId = "33333333-3333-4333-8333-333333333333";
+    const canonicalRunId = "44444444-4444-4444-8444-444444444444";
     const { request, publicKeyPem } = await signedRequest(
       "/api/control-plane/runs/run_eval_sealed/execute",
       {
         runId: "run_eval_sealed",
+        canonicalRunId,
         kind: "task",
         target: "task:eval",
-        projectId: "proj-1",
+        projectId,
         config: { eval_id: "eval:deep-research", agent_id: "researcher" },
       },
-      { "x-token": "project-runtime-token", "X-Veryfront-Inference-Token": INFERENCE_TOKEN },
+      {
+        "x-token": "project-runtime-token",
+        "X-Veryfront-Inference-Token": INFERENCE_TOKEN,
+        "x-veryfront-run-event-token": createProjectRunEventToken({
+          runId: "run_eval_sealed",
+          projectId,
+          canonicalRunId,
+        }),
+      },
     );
     const sealed = sealIngressCredentials(request);
     assertEquals(sealed.headers.get("x-token"), null);
     assertEquals(sealed.headers.get("X-Veryfront-Inference-Token"), null);
 
-    const result = await handler.handle(sealed, createCtx(publicKeyPem));
+    const ctx = createCtx(publicKeyPem);
+    ctx.projectId = projectId;
+
+    const result = await handler.handle(sealed, ctx);
 
     assertExists(result.response);
     assertEquals(result.response.status, 200, JSON.stringify(await result.response.json()));
@@ -8370,22 +9578,35 @@ describe("project run inference credential header", () => {
         return async () => ({ text: "Paris" });
       },
     }));
+    const projectId = "55555555-5555-4555-8555-555555555555";
+    const canonicalRunId = "66666666-6666-4666-8666-666666666666";
     const body = {
       runId: "run_eval_inference",
+      canonicalRunId,
       kind: "task",
       target: "task:eval",
-      projectId: "proj-1",
+      projectId,
       config: { eval_id: "eval:deep-research", agent_id: "researcher" },
     };
     const { request, publicKeyPem } = await signedRequest(
       "/api/control-plane/runs/run_eval_inference/execute",
       body,
-      { "x-token": "project-runtime-token", "X-Veryfront-Inference-Token": INFERENCE_TOKEN },
+      {
+        "x-token": "project-runtime-token",
+        "X-Veryfront-Inference-Token": INFERENCE_TOKEN,
+        "x-veryfront-run-event-token": createProjectRunEventToken({
+          runId: "run_eval_inference",
+          projectId,
+          canonicalRunId,
+        }),
+      },
     );
+    const ctx = createCtx(publicKeyPem);
+    ctx.projectId = projectId;
 
     let result;
     try {
-      result = await handler.handle(request, createCtx(publicKeyPem));
+      result = await handler.handle(request, ctx);
     } finally {
       Headers.prototype.get = originalGet;
     }
@@ -8439,19 +9660,32 @@ describe("project run inference credential header", () => {
           return { success: true, result: null, logs: null, duration_ms: 0 };
         },
       }));
+      const projectId = "77777777-7777-4777-8777-777777777777";
+      const canonicalRunId = "88888888-8888-4888-8888-888888888888";
       const { request, publicKeyPem } = await signedRequest(
         "/api/control-plane/runs/run_iterate_inference/execute",
         {
           runId: "run_iterate_inference",
+          canonicalRunId,
           kind: "task",
           target: "task:knowledge-ingest",
-          projectId: "proj-1",
+          projectId,
         },
-        { "x-token": "project-runtime-token", "X-Veryfront-Inference-Token": INFERENCE_TOKEN },
+        {
+          "x-token": "project-runtime-token",
+          "X-Veryfront-Inference-Token": INFERENCE_TOKEN,
+          "x-veryfront-run-event-token": createProjectRunEventToken({
+            runId: "run_iterate_inference",
+            projectId,
+            canonicalRunId,
+          }),
+        },
       );
+      const ctx = createCtx(publicKeyPem);
+      ctx.projectId = projectId;
       // Only what the handler does from here on is observed.
       seen.length = 0;
-      result = await handler.handle(request, createCtx(publicKeyPem));
+      result = await handler.handle(request, ctx);
     } finally {
       prototype[Symbol.iterator] = originals.iterator;
       prototype.entries = originals.entries;
@@ -8463,6 +9697,7 @@ describe("project run inference credential header", () => {
     assertEquals(result.response.status, 200);
     assertExists(received);
     assertEquals(received.headers.get("x-token"), "project-runtime-token");
+    assertEquals(received.headers.get("x-veryfront-run-event-token"), null);
     assertEquals(seen.some((value) => value.includes(INFERENCE_TOKEN)), false);
   });
 
@@ -8474,25 +9709,39 @@ describe("project run inference credential header", () => {
         return { success: true, result: null, logs: null, duration_ms: 0 };
       },
     }));
+    const projectId = "99999999-9999-4999-8999-999999999999";
+    const canonicalRunId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
     const body = {
       runId: "run_ingest_inference",
+      canonicalRunId,
       kind: "task",
       target: "task:knowledge-ingest",
-      projectId: "proj-1",
+      projectId,
     };
     const { request, publicKeyPem } = await signedRequest(
       "/api/control-plane/runs/run_ingest_inference/execute",
       body,
-      { "x-token": "project-runtime-token", "X-Veryfront-Inference-Token": INFERENCE_TOKEN },
+      {
+        "x-token": "project-runtime-token",
+        "X-Veryfront-Inference-Token": INFERENCE_TOKEN,
+        "x-veryfront-run-event-token": createProjectRunEventToken({
+          runId: "run_ingest_inference",
+          projectId,
+          canonicalRunId,
+        }),
+      },
     );
+    const ctx = createCtx(publicKeyPem);
+    ctx.projectId = projectId;
 
-    const result = await handler.handle(request, createCtx(publicKeyPem));
+    const result = await withAcknowledgedRuntimeEntry(() => handler.handle(request, ctx));
 
     assertExists(result.response);
     assertEquals(result.response.status, 200);
     assertExists(received);
     assertEquals(received.headers.get("X-Veryfront-Inference-Token"), null);
     assertEquals(received.headers.get("x-token"), "project-runtime-token");
+    assertEquals(received.headers.get("x-veryfront-run-event-token"), null);
     assertEquals(received.url, request.url);
     assertEquals(received.method, "POST");
   });
@@ -8511,13 +9760,23 @@ describe("project run inference credential header", () => {
         return { success: true, result: { synced: 1 }, durationMs: 1 };
       },
     }));
-    const signed = await signedRequest(taskPath, taskBody, {
+    const projectId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+    const canonicalRunId = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
+    const body = { ...taskBody, projectId, canonicalRunId };
+    const signed = await signedRequest(taskPath, body, {
       "X-Veryfront-Inference-Token": INFERENCE_TOKEN,
+      "x-veryfront-run-event-token": createProjectRunEventToken({
+        runId: taskBody.runId,
+        projectId,
+        canonicalRunId,
+      }),
     });
+    const ctx = createCtx(signed.publicKeyPem);
+    ctx.projectId = projectId;
     const controller = new AbortController();
     const request = new Request(signed.request, { signal: controller.signal });
 
-    const pending = handler.handle(request, createCtx(signed.publicKeyPem));
+    const pending = withAcknowledgedRuntimeEntry(() => handler.handle(request, ctx));
     await taskStarted.promise;
     controller.abort(new Error("run cancelled"));
 
@@ -8556,20 +9815,32 @@ describe("project run inference credential header", () => {
         if (polls > 5) status = "completed";
       },
     }));
+    const projectId = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
+    const canonicalRunId = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee";
     const signed = await signedRequest(
       "/api/control-plane/runs/run_workflow_inference_cancel/execute",
       {
         runId: "run_workflow_inference_cancel",
+        canonicalRunId,
         kind: "workflow",
         target: "workflow:publish",
-        projectId: "proj-1",
+        projectId,
         input: {},
       },
-      { "X-Veryfront-Inference-Token": INFERENCE_TOKEN },
+      {
+        "X-Veryfront-Inference-Token": INFERENCE_TOKEN,
+        "x-veryfront-run-event-token": createProjectRunEventToken({
+          runId: "run_workflow_inference_cancel",
+          projectId,
+          canonicalRunId,
+        }),
+      },
     );
+    const ctx = createCtx(signed.publicKeyPem);
+    ctx.projectId = projectId;
     const request = new Request(signed.request, { signal: controller.signal });
 
-    const result = await handler.handle(request, createCtx(signed.publicKeyPem));
+    const result = await withAcknowledgedRuntimeEntry(() => handler.handle(request, ctx));
 
     assertEquals(cancelled, ["run_workflow_inference_cancel"]);
     assertExists(result.response);

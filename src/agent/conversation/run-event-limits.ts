@@ -1,3 +1,5 @@
+import { privateJsonStringify } from "#veryfront/security/private-json.ts";
+
 /**
  * Per-event payload budget the conversation run append endpoint accepts.
  *
@@ -17,10 +19,15 @@ const encoder = new TextEncoder();
 /** Return the conservative append-request size for one private durable event. */
 export function getPrivateRunEventAppendRequestByteLength(event: unknown): number {
   try {
-    return encoder.encode(JSON.stringify({
-      expected_previous_event_id: Number.MAX_SAFE_INTEGER,
-      events: [event],
-    })).byteLength;
+    return encoder.encode(privateJsonStringify(
+      {
+        expected_previous_event_id: Number.MAX_SAFE_INTEGER,
+        events: [event],
+      },
+      null,
+      undefined,
+      MAX_CONVERSATION_RUN_EVENT_APPEND_REQUEST_BYTES,
+    )).byteLength;
   } catch {
     return Number.POSITIVE_INFINITY;
   }

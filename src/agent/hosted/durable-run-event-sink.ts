@@ -1,3 +1,7 @@
+import {
+  IntrinsicPromise,
+  primordialPromiseThen,
+} from "#veryfront/platform/compat/primordials/promise.ts";
 import type { ConversationRunChunkMirror } from "../conversation/run-chunk-mirror.ts";
 import type { ConversationRunMirrorSnapshot } from "../conversation/run-mirror.ts";
 import {
@@ -270,13 +274,16 @@ async function withPersistenceDeadline<T>(input: {
   const timeout = setTimeout(() => controller.abort(timeoutError), input.timeoutMs);
   const onCallerAbort = () => controller.abort(getAbortReason(input.abortSignal!));
   input.abortSignal?.addEventListener("abort", onCallerAbort, { once: true });
-  const aborted = new Promise<never>((_resolve, reject) => {
+  const aborted = new IntrinsicPromise<never>((_resolve, reject) => {
     controller.signal.addEventListener("abort", () => reject(controller.signal.reason), {
       once: true,
     });
   });
   try {
-    return await Promise.race([input.operation(controller.signal), aborted]);
+    return await new IntrinsicPromise<T>((resolve, reject) => {
+      void primordialPromiseThen(aborted, resolve, reject);
+      void primordialPromiseThen(input.operation(controller.signal), resolve, reject);
+    });
   } finally {
     clearTimeout(timeout);
     input.abortSignal?.removeEventListener("abort", onCallerAbort);

@@ -23,6 +23,7 @@ const stringValue = String.prototype.valueOf;
 const booleanValue = Boolean.prototype.valueOf;
 const bigintValue = BigInt.prototype.valueOf;
 const finite = Number.isFinite;
+const safeInteger = Number.isSafeInteger;
 const notScalar = Symbol("not-native-json-scalar");
 
 /** A private array could not be copied for serialization. */
@@ -60,12 +61,16 @@ export function privateJsonStringify(
   value: unknown,
   _replacer: null = null,
   space?: string | number,
+  maxNodes = 100_000,
 ) {
   if (_replacer !== null) {
     throw new NativeTypeError("Private JSON supports data-only serialization");
   }
+  if (!safeInteger(maxNodes) || maxNodes <= 0) {
+    throw new NativeTypeError("Invalid private JSON structural budget");
+  }
   const ancestors = new NativeSet<object>();
-  let remaining = 100_000;
+  let remaining = maxNodes;
   const copy = (input: unknown, depth = 0): unknown => {
     if (--remaining < 0 || depth > 128) {
       throw new NativeTypeError("Private JSON data exceeds its structural limit");
@@ -81,7 +86,7 @@ export function privateJsonStringify(
     }
     if (array) {
       try {
-        if (input.length > 100_000) throw new PrivateJsonArrayError();
+        if (input.length > maxNodes) throw new PrivateJsonArrayError();
       } catch {
         throw new PrivateJsonArrayError();
       }

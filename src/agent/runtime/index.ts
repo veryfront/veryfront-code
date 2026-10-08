@@ -3,6 +3,7 @@ import {
   observeAdmittedAgentToolCalls,
   observeGeneratedAgentMessage,
   observeGeneratedAgentTurn,
+  observeRuntimeStream,
   withLocalChildRuntime,
 } from "../composition/local-child-execution.ts";
 import { forEachSequential } from "./sequential.ts";
@@ -3284,7 +3285,7 @@ export class AgentRuntime {
           }
         },
       });
-      return runtimeStream;
+      return observeRuntimeStream(runtimeStream);
     } catch (error) {
       abortScope.dispose();
       throw error;

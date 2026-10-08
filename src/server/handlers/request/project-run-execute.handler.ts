@@ -1,4 +1,6 @@
+import { randomUUID as createObservationOccurrenceId } from "node:crypto";
 import { createTaskChildRunner } from "./task-child.ts";
+import { readProjectExecutionParent } from "./project-run-parent.ts";
 import { createWorkflowAgentNodeRunner } from "./workflow-agent-child.ts";
 import { adaptManagedEvalRunStream } from "./managed-eval-run-stream.ts";
 import { RunStopRegistry } from "#veryfront/internal-agents/run-stop-registry.ts";
@@ -13,6 +15,7 @@ import {
   INPUT_VALIDATION_FAILED,
   INVALID_ARGUMENT,
   NOT_SUPPORTED,
+  ORCHESTRATION_ERROR,
   RESOURCE_NOT_FOUND,
   TIMEOUT_ERROR,
   VeryfrontError,
@@ -42,6 +45,8 @@ import {
   primordialPromiseThen,
 } from "#veryfront/platform/compat/primordials/promise.ts";
 import { primordialArrayMap } from "#veryfront/platform/compat/primordials/array.ts";
+import { privateJsonStringify } from "#veryfront/security/private-json.ts";
+import { MAX_CONVERSATION_RUN_EVENT_APPEND_REQUEST_BYTES } from "#veryfront/agent/conversation/run-event-limits.ts";
 import { getRequestTransportLifetime } from "#veryfront/platform/adapters/runtime/shared/request-peer.ts";
 import {
   createVeryfrontApiOriginBoundOutboundFetch,
@@ -129,6 +134,25 @@ import {
   runWithProjectRunInferenceCredential,
 } from "#veryfront/agent/runtime/project-run-inference-credential.ts";
 import { requireInferenceProviderCredential } from "#veryfront/provider/runtime-loader/provider-request-init.ts";
+import type { ConversationRunChunkMirror } from "#veryfront/agent/conversation/run-chunk-mirror.ts";
+import {
+  createDurableRunEventSink,
+  DurableRunEventPersistenceError,
+} from "#veryfront/agent/hosted/durable-run-event-sink.ts";
+import { runWithMandatoryRunEventSink } from "#veryfront/runtime/run-event-sink-context.ts";
+import {
+  bindRuntimeObservationWriterCapability,
+  createRuntimeObservationWriterCapability,
+  revokeRuntimeObservationWriterCapability,
+} from "#veryfront/runtime/runtime-observation-carrier.ts";
+import { withLocalChildExecution } from "#veryfront/agent/composition/local-child-execution.ts";
+import {
+  type AgUiRuntimeStreamEvent,
+  createAgUiEncoderState,
+  mapRuntimeStreamEventToAgUiEvents,
+} from "#veryfront/agent/ag-ui/encoder.ts";
+import { coerceWireEvent } from "#veryfront/agent/ag-ui/sse-parser.ts";
+import { computeHash as computeObservationHash } from "#veryfront/utils/hash-utils.ts";
 import { ensureProjectDiscovery } from "./api/project-discovery.ts";
 import type { HandlerContext, HandlerMetadata, HandlerPriority, HandlerResult } from "../types.ts";
 import { BaseHandler } from "../response/base.ts";
@@ -174,6 +198,7 @@ const WORKFLOW_PAUSE_ACK_TIMEOUT_MS = 2_000;
 const WORKFLOW_PAUSE_CHECK_BACKOFF_MS = 30_000;
 /** Overall decision deadline; unknown authority leaves a resumable hold. */
 const DEFAULT_WORKFLOW_PAUSE_DECISION_TIMEOUT_MS = 60_000;
+const PROJECT_RUN_OBSERVATION_APPEND_TIMEOUT_MS = 30_000;
 /**
  * How often a manual resume retries, 100ms apart, while the paused execution still holds the
  * run: about 35s, past the 30s workflow lock lease a parking execution that died may leave.
@@ -2315,7 +2340,10 @@ function withoutProjectRunInferenceToken(req: Request, signal?: AbortSignal): Re
     if (step.done) break;
     const name = step.value[0];
     const lowerName = IntrinsicReflectApply(StringToLowerCase, name, []);
-    if (lowerName === skipped || lowerName === INGRESS_RUN_STOP_TOKEN_HEADER) continue;
+    if (
+      lowerName === skipped || lowerName === INGRESS_RUN_STOP_TOKEN_HEADER ||
+      lowerName === INGRESS_RUN_EVENT_TOKEN_HEADER
+    ) continue;
     IntrinsicReflectApply(HeadersAppend, headers, [name, step.value[1]]);
   }
   const copy = new NativeRequest(IntrinsicReflectApply(RequestUrlGetter, req, []) as string, {
@@ -2342,6 +2370,366 @@ function readProjectRunInferenceToken(req: Request): string | undefined {
   const value = readIngressCredential(req, INGRESS_INFERENCE_TOKEN_HEADER);
   if (value === null) return undefined;
   return requireInferenceProviderCredential(value, "Inference token header");
+}
+
+function getProjectRunObservationAbortReason(signal: AbortSignal): unknown {
+  return signal.reason ?? new DOMException("This operation was aborted", "AbortError");
+}
+
+async function withProjectRunObservationDeadline<T>(input: {
+  abortSignal: AbortSignal;
+  timeoutMs: number;
+  operation: (signal: AbortSignal) => Promise<T>;
+}): Promise<T> {
+  if (input.abortSignal.aborted) throw getProjectRunObservationAbortReason(input.abortSignal);
+  const controller = new TaskAbortController();
+  const signal = IntrinsicReflectApply(
+    TaskAbortControllerSignalGetter,
+    controller,
+    [],
+  ) as AbortSignal;
+  const timeout = TaskSetTimeout(
+    () =>
+      IntrinsicReflectApply(TaskAbort, controller, [
+        new DurableRunEventPersistenceError("Project run observation append timed out"),
+      ]),
+    input.timeoutMs,
+  );
+  const forwardAbort = () =>
+    IntrinsicReflectApply(TaskAbort, controller, [
+      getProjectRunObservationAbortReason(input.abortSignal),
+    ]);
+  input.abortSignal.addEventListener("abort", forwardAbort, { once: true });
+  const aborted = new IntrinsicPromise<never>((_resolve, reject) => {
+    signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+  });
+  try {
+    return await new IntrinsicPromise<T>((resolve, reject) => {
+      // Observe cancellation before starting work; project code may replace Promise.race.
+      void primordialPromiseThen(aborted, resolve, reject);
+      void primordialPromiseThen(input.operation(signal), resolve, reject);
+    });
+  } finally {
+    TaskClearTimeout(timeout);
+    input.abortSignal.removeEventListener("abort", forwardAbort);
+  }
+}
+
+function createProjectRunObservationMirror(input: {
+  runId: string;
+  canonicalRunId: string;
+  attemptId: string;
+  apiUrl: string;
+  eventToken: string;
+  fetch: typeof globalThis.fetch;
+  abortSignal: AbortSignal;
+  timeoutMs?: number;
+}): ConversationRunChunkMirror & { appendExecutionEntry(): Promise<void> } {
+  let latestEventId = 0;
+  let disabled = false;
+  let appendOrdinal = 0;
+  const modelCallCaptureReceipts = new Map<
+    string,
+    { eventId: string; projectId: string; runId: string; modelCallId: string }
+  >();
+  const append = async (
+    events: Record<string, unknown>[],
+    executionEntryOccurrenceId?: string,
+  ) => {
+    if (disabled || events.length === 0) return;
+    const ordinal = ++appendOrdinal;
+    let body: unknown;
+    try {
+      const idempotencyKey =
+        `project-runtime-observation:${input.attemptId}:${ordinal}:${await computeObservationHash(
+          `${input.runId}:${ordinal}`,
+        )}`;
+      ({ body } = await withProjectRunObservationDeadline({
+        abortSignal: input.abortSignal,
+        timeoutMs: input.timeoutMs ?? PROJECT_RUN_OBSERVATION_APPEND_TIMEOUT_MS,
+        operation: async (signal) => {
+          const response = await input.fetch(
+            `${input.apiUrl}/runs/${input.canonicalRunId}/events`,
+            {
+              method: "POST",
+              headers: {
+                "X-Veryfront-Run-Event-Token": input.eventToken,
+                "Content-Type": "application/json",
+                "Idempotency-Key": idempotencyKey,
+              },
+              signal,
+              body: privateJsonStringify(
+                {
+                  events,
+                  ...(executionEntryOccurrenceId
+                    ? {
+                      runtime_observations: {
+                        version: 1,
+                        observations: [{
+                          kind: "execution_entry",
+                          occurrence_id: executionEntryOccurrenceId,
+                          event_index: 0,
+                        }],
+                      },
+                    }
+                    : {}),
+                },
+                null,
+                undefined,
+                MAX_CONVERSATION_RUN_EVENT_APPEND_REQUEST_BYTES,
+              ),
+            },
+          );
+          if (!response.ok) {
+            disabled = true;
+            throw new DurableRunEventPersistenceError(
+              `Project run observation append failed (${response.status})`,
+            );
+          }
+          const body = await IntrinsicReflectApply(ResponsePrototypeJson, response, []);
+          signal.throwIfAborted();
+          return { response, body };
+        },
+      }));
+      if (!body || typeof body !== "object" || Array.isArray(body)) {
+        throw new DurableRunEventPersistenceError(
+          "Project run observation append receipt is invalid",
+        );
+      }
+      const receipt = body as Record<string, unknown>;
+      if (receipt.run_id !== input.canonicalRunId) {
+        throw new DurableRunEventPersistenceError(
+          "Project run observation append identified a different run",
+        );
+      }
+      if (typeof receipt.latest_event_id === "number") latestEventId = receipt.latest_event_id;
+      const captures = receipt.model_call_captures;
+      if (captures !== undefined) {
+        if (!Array.isArray(captures)) {
+          throw new DurableRunEventPersistenceError(
+            "Project run observation model-call receipt is invalid",
+          );
+        }
+        for (const capture of captures) {
+          if (!capture || typeof capture !== "object" || Array.isArray(capture)) {
+            throw new DurableRunEventPersistenceError(
+              "Project run observation model-call receipt is invalid",
+            );
+          }
+          const value = capture as Record<string, unknown>;
+          if (
+            typeof value.event_id !== "string" || typeof value.project_id !== "string" ||
+            typeof value.run_id !== "string" || typeof value.model_call_id !== "string"
+          ) {
+            throw new DurableRunEventPersistenceError(
+              "Project run observation model-call receipt is invalid",
+            );
+          }
+          modelCallCaptureReceipts.set(value.model_call_id.toLowerCase(), {
+            eventId: value.event_id,
+            projectId: value.project_id,
+            runId: value.run_id,
+            modelCallId: value.model_call_id,
+          });
+        }
+      }
+    } catch (error) {
+      disabled = true;
+      throw error;
+    }
+  };
+  return {
+    appendEvents: (events) => append(events),
+    appendExecutionEntry: () =>
+      append([{
+        type: "RUNTIME_EVENT_RECORDED",
+        runtime: "veryfront",
+        kind: "runtime_context",
+        value: { runId: input.runId },
+      }], createObservationOccurrenceId()),
+    handleChunk: async () => {},
+    takeModelCallCaptureReceipt(modelCallId) {
+      const key = modelCallId.toLowerCase();
+      const receipt = modelCallCaptureReceipts.get(key);
+      if (receipt) modelCallCaptureReceipts.delete(key);
+      return receipt;
+    },
+    async flush() {
+      return {
+        disabled,
+        latestEventId,
+        latestExternalEventSequence: 0,
+        inFlight: false,
+        pendingEventCount: 0,
+        hasFlushTimer: false,
+        hasRetryTimer: false,
+        consecutiveFailures: 0,
+      };
+    },
+    getSnapshot() {
+      return {
+        disabled,
+        latestEventId,
+        latestExternalEventSequence: 0,
+        inFlight: false,
+        pendingEventCount: 0,
+        hasFlushTimer: false,
+        hasRetryTimer: false,
+        consecutiveFailures: 0,
+      };
+    },
+    dispose() {
+      disabled = true;
+    },
+  };
+}
+
+function isPermittedProjectRunObservationEventType(type: string): boolean {
+  switch (type) {
+    case "RUN_STARTED":
+    case "RUN_FINISHED":
+    case "RUN_ERROR":
+      return false;
+    default:
+      return true;
+  }
+}
+
+function shouldObserveProjectRunRuntime(request: ProjectRunExecuteRequest): boolean {
+  if (request.kind === "workflow") return true;
+  switch (request.target) {
+    case "task:eval":
+    case "task:knowledge-ingest":
+    case "task:release-asset-build":
+    case "task:dependency-artifact-build":
+    case "task:style-artifact-build":
+      return false;
+    default:
+      return true;
+  }
+}
+
+function requireProjectRunObservationParent(
+  request: ProjectRunExecuteRequest,
+  eventToken: string | undefined,
+) {
+  if (!eventToken) {
+    throw ORCHESTRATION_ERROR.create({
+      detail: "Project run observation requires run event authority",
+    });
+  }
+  const parent = readProjectExecutionParent(
+    eventToken,
+    request.runId,
+    request.projectId,
+  );
+  if (
+    request.canonicalRunId !== undefined &&
+    request.canonicalRunId.toLowerCase() !== parent.canonicalRunId.toLowerCase()
+  ) {
+    throw ORCHESTRATION_ERROR.create({ detail: "Project run observation authority mismatch" });
+  }
+
+  return { ...parent, eventToken };
+}
+
+async function withProjectRunRuntimeObservations<T>(
+  input: {
+    request: ProjectRunExecuteRequest;
+    abortSignal: AbortSignal;
+    apiUrl: string;
+    eventToken: string | undefined;
+    fetch: typeof globalThis.fetch;
+    operation: () => Promise<T>;
+  },
+): Promise<T> {
+  const parent = requireProjectRunObservationParent(input.request, input.eventToken);
+
+  const mirror = createProjectRunObservationMirror({
+    runId: input.request.runId,
+    canonicalRunId: parent.canonicalRunId,
+    attemptId: parent.attemptId,
+    apiUrl: input.apiUrl,
+    eventToken: parent.eventToken,
+    fetch: input.fetch,
+    abortSignal: input.abortSignal,
+  });
+
+  const runtimeObservationWriterCapability = createRuntimeObservationWriterCapability({
+    scope: {
+      runId: input.request.runId,
+      canonicalRunId: parent.canonicalRunId,
+      projectId: input.request.projectId,
+    },
+    assertActive: () => {
+      if (mirror.getSnapshot().disabled) {
+        throw new DurableRunEventPersistenceError(
+          "Project run observation sink is no longer active",
+        );
+      }
+    },
+  });
+  const sink = createDurableRunEventSink({
+    mirror,
+    abortSignal: input.abortSignal,
+  });
+  bindRuntimeObservationWriterCapability(sink, runtimeObservationWriterCapability);
+  const createObserver = () => {
+    const encoder = createAgUiEncoderState();
+    return async (event: AgUiRuntimeStreamEvent) => {
+      // Parent entry is recorded once by this host boundary; nested agent contexts
+      // must not create a second parent execution-start occurrence.
+      if (event.type === "data-veryfront.runtime_context") return;
+      const events = mapRuntimeStreamEventToAgUiEvents(encoder, event).map((
+        { event: type, payload },
+      ) => coerceWireEvent(type, payload));
+      await mirror.appendEvents(
+        events.filter((candidate): candidate is Record<string, unknown> & { type: string } => {
+          if (typeof candidate.type !== "string") {
+            throw new Error("Invalid encoded project run observation event");
+          }
+          return isPermittedProjectRunObservationEventType(candidate.type);
+        }),
+      );
+    };
+  };
+
+  try {
+    // This host boundary observes entry into the runtime, before project code runs.
+    // The API binds the accepted source occurrence to the current signed attempt.
+    await mirror.appendExecutionEntry();
+    const executeChild: Parameters<typeof withLocalChildExecution>[0] = (invocation) =>
+      withLocalChildExecution(
+        executeChild,
+        () => invocation.execute({ onEvent: createObserver() }),
+        undefined,
+        undefined,
+        createObserver,
+      );
+    const result = await runWithMandatoryRunEventSink(
+      sink,
+      () =>
+        withLocalChildExecution(
+          executeChild,
+          input.operation,
+          undefined,
+          undefined,
+          createObserver,
+        ),
+    );
+    const snapshot = await mirror.flush({
+      abortSignal: input.abortSignal,
+      throwOnTimeoutRetry: true,
+    });
+    const failedExecution = isRecord(result) && result.success === false;
+    if (snapshot.disabled && !failedExecution) {
+      throw new DurableRunEventPersistenceError("Project run observation sink is disabled");
+    }
+    return result;
+  } finally {
+    revokeRuntimeObservationWriterCapability(runtimeObservationWriterCapability);
+    mirror.dispose();
+  }
 }
 
 /** Release acknowledgement bodies through operations captured before project code runs. */
@@ -4157,7 +4545,7 @@ const defaultDeps: ProjectRunExecuteHandlerDeps = {
 };
 
 /** Runs the task or workflow a control-plane execute request names. */
-function executeProjectRun(
+async function executeProjectRun(
   request: ProjectRunExecuteRequest,
   ctx: HandlerContext,
   req: Request,
@@ -4166,6 +4554,11 @@ function executeProjectRun(
   acknowledgeStop?: () => Promise<void>,
   acknowledgePause?: (decisionStopped?: AbortSignal) => Promise<boolean | undefined>,
   releaseStop?: () => void,
+  retainedEventToken?: string,
+  observeExecution?: (
+    operation: () => Promise<ProjectRunExecuteResponse>,
+    signal: AbortSignal,
+  ) => Promise<ProjectRunExecuteResponse>,
 ): Promise<ProjectRunExecuteResponse> {
   if (request.kind === "task") {
     return executeTaskRun(
@@ -4175,40 +4568,42 @@ function executeProjectRun(
           const signal = control
             ? ReflectApply(TaskAbortSignalAny, AbortSignal, [[req.signal, control.signal]])
             : req.signal;
-          switch (request.target) {
-            case "task:eval":
-              return await executeEvalTaskRun(request, ctx, req, req.signal, deps, control);
-            case "task:knowledge-ingest":
-              return await deps.executeKnowledgeIngest({ request, ctx, req, signal });
-            case "task:release-asset-build":
-              return await deps.executeReleaseAssetBuild({ request, ctx, req, signal });
-            case "task:dependency-artifact-build":
-              return await deps.executeDependencyArtifactBuild({ request, ctx, req, signal });
-            case "task:style-artifact-build":
-              return await deps.executeStyleArtifactBuild({ request, ctx, req, signal });
-            default:
-              return await executeDiscoveredTaskRun(
-                request,
-                ctx,
-                req.signal,
-                deps,
-                control,
-                async (child) => {
-                  const apiUrl = requireHostPrivateApiHttps(resolveHostOwnedSourceApiBaseUrl());
-                  return await createTaskChildRunner({
-                    runId: request.runId,
-                    projectId: request.projectId,
-                    apiUrl,
-                    eventToken: readIngressCredential(req, INGRESS_RUN_EVENT_TOKEN_HEADER) ??
-                      undefined,
-                    authToken: getRuntimeApiToken(req, ctx),
-                    signal,
-                    fetch: createVeryfrontApiOriginBoundOutboundFetch(apiUrl),
-                    sleep: deps.sleep,
-                  })(child);
-                },
-              );
-          }
+          const execute = async (): Promise<ProjectRunExecuteResponse> => {
+            switch (request.target) {
+              case "task:eval":
+                return await executeEvalTaskRun(request, ctx, req, req.signal, deps, control);
+              case "task:knowledge-ingest":
+                return await deps.executeKnowledgeIngest({ request, ctx, req, signal });
+              case "task:release-asset-build":
+                return await deps.executeReleaseAssetBuild({ request, ctx, req, signal });
+              case "task:dependency-artifact-build":
+                return await deps.executeDependencyArtifactBuild({ request, ctx, req, signal });
+              case "task:style-artifact-build":
+                return await deps.executeStyleArtifactBuild({ request, ctx, req, signal });
+              default:
+                return await executeDiscoveredTaskRun(
+                  request,
+                  ctx,
+                  req.signal,
+                  deps,
+                  control,
+                  async (child) => {
+                    const apiUrl = requireHostPrivateApiHttps(resolveHostOwnedSourceApiBaseUrl());
+                    return await createTaskChildRunner({
+                      runId: request.runId,
+                      projectId: request.projectId,
+                      apiUrl,
+                      eventToken: retainedEventToken,
+                      authToken: getRuntimeApiToken(req, ctx),
+                      signal,
+                      fetch: createVeryfrontApiOriginBoundOutboundFetch(apiUrl),
+                      sleep: deps.sleep,
+                    })(child);
+                  },
+                );
+            }
+          };
+          return observeExecution ? await observeExecution(execute, signal) : await execute();
         } finally {
           await acknowledgeStop?.();
         }
@@ -4218,32 +4613,42 @@ function executeProjectRun(
     );
   }
   const hostApiUrl = resolveHostOwnedSourceApiBaseUrl();
-  const eventToken = readIngressCredential(req, INGRESS_RUN_EVENT_TOKEN_HEADER) ?? undefined;
+  const eventToken = retainedEventToken;
   const authToken = getRuntimeApiToken(req, ctx);
   let runAgentNode: ReturnType<typeof createWorkflowAgentNodeRunner> | undefined;
-  return executeWorkflowRun(
-    request,
-    ctx,
-    req.signal,
-    deps,
-    acknowledgeStop,
-    acknowledgePause,
-    releaseStop,
-    async (invocation) => {
-      if (!runAgentNode) {
-        const apiUrl = requireHostPrivateApiHttps(hostApiUrl);
-        runAgentNode = createWorkflowAgentNodeRunner({
-          runId: request.runId,
-          projectId: request.projectId,
-          apiUrl,
-          fetch: createVeryfrontApiOriginBoundOutboundFetch(apiUrl),
-          eventToken,
-          authToken,
-        });
-      }
-      return await runAgentNode(invocation);
-    },
-  );
+  let workflowStarted = false;
+  const execute = () => {
+    workflowStarted = true;
+    return executeWorkflowRun(
+      request,
+      ctx,
+      req.signal,
+      deps,
+      acknowledgeStop,
+      acknowledgePause,
+      releaseStop,
+      async (invocation) => {
+        if (!runAgentNode) {
+          const apiUrl = requireHostPrivateApiHttps(hostApiUrl);
+          runAgentNode = createWorkflowAgentNodeRunner({
+            runId: request.runId,
+            projectId: request.projectId,
+            apiUrl,
+            fetch: createVeryfrontApiOriginBoundOutboundFetch(apiUrl),
+            eventToken,
+            authToken,
+          });
+        }
+        return await runAgentNode(invocation);
+      },
+    );
+  };
+  try {
+    return observeExecution ? await observeExecution(execute, req.signal) : await execute();
+  } catch (error) {
+    if (!workflowStarted) releaseStop?.();
+    throw error;
+  }
 }
 
 export class ProjectRunExecuteHandler extends BaseHandler {
@@ -4315,6 +4720,7 @@ export class ProjectRunExecuteHandler extends BaseHandler {
           return this.respond(builder.json({ error: "Invalid control-plane signature" }, 401));
         }
         const inferenceToken = readProjectRunInferenceToken(req);
+        const eventToken = readIngressCredential(req, INGRESS_RUN_EVENT_TOKEN_HEADER) ?? undefined;
         const stopController = new TaskAbortController();
         const executionSignal = ReflectApply(TaskAbortSignalAny, AbortSignal, [[
           IntrinsicReflectApply(RequestSignalGetter, req, []) as AbortSignal,
@@ -4338,32 +4744,44 @@ export class ProjectRunExecuteHandler extends BaseHandler {
           "project_run.execute",
           async () => {
             const startedAt = this.deps.now();
+            let executionOwned = false;
             try {
+              const execute = () => {
+                if (inferenceToken !== undefined && shouldObserveProjectRunRuntime(request)) {
+                  requireProjectRunObservationParent(request, eventToken);
+                }
+                executionOwned = true;
+                return executeProjectRun(
+                  request,
+                  ctx,
+                  executionRequest,
+                  this.deps,
+                  this.taskDeadlineClock,
+                  acknowledgeStop,
+                  acknowledgePause,
+                  releaseStop,
+                  eventToken,
+                  inferenceToken !== undefined && shouldObserveProjectRunRuntime(request)
+                    ? (operation, signal) => {
+                      const apiUrl = requireHostPrivateApiHttps(resolveHostOwnedSourceApiBaseUrl());
+                      return withProjectRunRuntimeObservations({
+                        request,
+                        abortSignal: signal,
+                        apiUrl,
+                        eventToken,
+                        fetch: createVeryfrontApiOriginBoundOutboundFetch(apiUrl),
+                        operation,
+                      });
+                    }
+                    : undefined,
+                );
+              };
               const limited = enforceRunOutputLimit(
                 inferenceToken === undefined
-                  ? await executeProjectRun(
-                    request,
-                    ctx,
-                    executionRequest,
-                    this.deps,
-                    this.taskDeadlineClock,
-                    acknowledgeStop,
-                    acknowledgePause,
-                    releaseStop,
-                  )
+                  ? await execute()
                   : await runWithProjectRunInferenceCredential(
                     inferenceToken,
-                    () =>
-                      executeProjectRun(
-                        request,
-                        ctx,
-                        executionRequest,
-                        this.deps,
-                        this.taskDeadlineClock,
-                        acknowledgeStop,
-                        acknowledgePause,
-                        releaseStop,
-                      ),
+                    execute,
                   ),
               );
               const response = limited.response;
@@ -4372,6 +4790,7 @@ export class ProjectRunExecuteHandler extends BaseHandler {
                 builder.withContentType("application/json; charset=utf-8", limited.wireJson, 200),
               );
             } catch (error) {
+              if (!executionOwned) releaseStop();
               setActiveSpanErrorStatus(new Error(telemetryErrorType(error)));
               return this.respond(
                 builder.json(
