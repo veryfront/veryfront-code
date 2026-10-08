@@ -546,7 +546,7 @@ Deno.test("reasoning normalization retains the original signed part without dupl
   );
 });
 
-Deno.test("recovered earlier reasoning precedes matched streamed reasoning and text", () => {
+Deno.test("recovered reasoning preserves the persisted prefix and appends missing blocks", () => {
   const first = { type: "reasoning" as const, text: "First", signature: "first" };
   const second = { type: "reasoning" as const, text: "Second", signature: "second" };
   const text = { type: "text" as const, text: "Done" };
@@ -560,7 +560,11 @@ Deno.test("recovered earlier reasoning precedes matched streamed reasoning and t
       finalStep,
       incompleteToolCallsPartErrorText: "tool error",
     });
-    assertEquals(state.sanitizedFinalizedMessage.parts, [first, second, text]);
+    assertEquals(state.sanitizedFinalizedMessage.parts, [
+      ...parts,
+      first,
+      ...(parts.includes(second) ? [] : [second]),
+    ]);
     const repeated = buildFinalizedMessageState({
       responseMessage: state.sanitizedFinalizedMessage,
       isAborted: false,

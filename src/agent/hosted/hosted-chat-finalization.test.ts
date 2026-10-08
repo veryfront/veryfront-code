@@ -2,6 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { ChatUiMessage, ChatUiMessageChunk, MessageMetadata } from "../../chat/types.ts";
+import { createChatStreamMessageProjection } from "../react/use-chat/streaming/handler.ts";
 import { finalizeConversationAgentRun } from "../conversation/durable.ts";
 import { createConversationHostedTerminalAdapter } from "../conversation/hosted-terminal.ts";
 import type { ConversationRunChunkMirror } from "../conversation/run-chunk-mirror.ts";
@@ -145,7 +146,7 @@ describe("agent/hosted-chat-finalization", () => {
     }
   });
 
-  it("projects recovered earlier reasoning before matched exact and partial streamed text", async () => {
+  it("preserves append-only replay when earlier reasoning recovers after exact or partial text", async () => {
     for (const partial of [true, false]) {
       const calls: string[] = [];
       const terminalStates: HostedLifecycleTerminalState[] = [];
@@ -153,6 +154,28 @@ describe("agent/hosted-chat-finalization", () => {
       const original = { type: "text" as const, text: partial ? "Hello" : "Done" };
       const reasoning = { type: "reasoning" as const, text: "Why", signature: "sig" };
       const finalText = partial ? "Hello world" : "Done";
+      const projection = createChatStreamMessageProjection("assistant-message-1");
+      projection.append({ type: "text-start", id: "assistant-message-1" });
+      projection.append({ type: "text-delta", id: "assistant-message-1", delta: original.text });
+      projection.append({ type: "text-end", id: "assistant-message-1" });
+      const mirror = createDurableRunMirror({ calls, chunks });
+      const accept = mirror.handleChunk;
+      mirror.handleChunk = async (chunk) => {
+        await accept(chunk);
+        if (chunk.type === "finish") throw new Error("Unexpected finish in fallback content");
+        projection.append(chunk);
+      };
+      const canonicalProjectionParts = () =>
+        projection.snapshot().parts.map((part) => {
+          if (
+            (part.type === "text" || part.type === "reasoning") && "state" in part &&
+            part.state === "done"
+          ) {
+            const { state: _uiPhase, ...canonical } = part;
+            return canonical;
+          }
+          return part;
+        });
       const input = {
         kind: "response" as const,
         responseMessage: createResponseMessage({ parts: [original] }),
@@ -168,7 +191,7 @@ describe("agent/hosted-chat-finalization", () => {
         lifecycleAdapter: createLifecycleAdapter({
           calls,
           terminalStates,
-          mirror: createDurableRunMirror({ calls, chunks }),
+          mirror,
         }),
         mirroredToolChunkState: createMirroredToolChunkState(),
         capturedMessageId: "assistant-message-1",
@@ -178,9 +201,10 @@ describe("agent/hosted-chat-finalization", () => {
       };
       await finalizeHostedChatRun(input);
       const output = terminalStates[0]!.output as ChatUiMessage;
+      assertEquals<unknown>(canonicalProjectionParts(), output.parts);
       assertEquals(output.parts, [
-        reasoning,
         original,
+        reasoning,
         ...(partial ? [{ type: "text" as const, text: "world" }] : []),
       ]);
       assertEquals(chunks.map((chunk) => chunk.type), [
@@ -192,11 +216,12 @@ describe("agent/hosted-chat-finalization", () => {
       chunks.length = 0;
       await finalizeHostedChatRun({ ...input, responseMessage: output });
       assertEquals(terminalStates[1]!.output, output);
+      assertEquals<unknown>(canonicalProjectionParts(), output.parts);
       assertEquals(chunks, []);
     }
   });
   for (const reasoning of [true, false]) {
-    it(`orders recovered ${reasoning ? "reasoning" : "text suffix"} before an upgraded persisted tool in terminal and replay`, async () => {
+    it(`appends recovered ${reasoning ? "reasoning" : "text suffix"} after the persisted tool while completing its output`, async () => {
       const calls: string[] = [];
       const terminalStates: HostedLifecycleTerminalState[] = [];
       const chunks: ChatUiMessageChunk<MessageMetadata>[] = [];
@@ -205,11 +230,49 @@ describe("agent/hosted-chat-finalization", () => {
       mirrored.inputAvailableToolCallIds.add("c");
       const tool = {
         type: "tool-bash" as const,
+        toolName: "bash",
         toolCallId: "c",
         state: "input-available" as const,
         input: { command: "x" },
         providerExecuted: true,
       };
+      const projection = createChatStreamMessageProjection("assistant-message-1");
+      if (!reasoning) {
+        projection.append({ type: "text-start", id: "assistant-message-1" });
+        projection.append({ type: "text-delta", id: "assistant-message-1", delta: "Hello" });
+        projection.append({ type: "text-end", id: "assistant-message-1" });
+      }
+      projection.append({
+        type: "tool-input-start",
+        toolCallId: "c",
+        toolName: "bash",
+        providerExecuted: true,
+      });
+      projection.append({
+        type: "tool-input-available",
+        toolCallId: "c",
+        toolName: "bash",
+        input: { command: "x" },
+        providerExecuted: true,
+      });
+      const mirror = createDurableRunMirror({ calls, chunks });
+      const accept = mirror.handleChunk;
+      mirror.handleChunk = async (chunk) => {
+        await accept(chunk);
+        if (chunk.type === "finish") throw new Error("Unexpected finish in fallback content");
+        projection.append(chunk);
+      };
+      const canonicalProjectionParts = () =>
+        projection.snapshot().parts.map((part) => {
+          if (
+            (part.type === "text" || part.type === "reasoning") && "state" in part &&
+            part.state === "done"
+          ) {
+            const { state: _uiPhase, ...canonical } = part;
+            return canonical;
+          }
+          return part;
+        });
       const input = {
         kind: "response",
         responseMessage: createResponseMessage({
@@ -233,7 +296,7 @@ describe("agent/hosted-chat-finalization", () => {
         lifecycleAdapter: createLifecycleAdapter({
           calls,
           terminalStates,
-          mirror: createDurableRunMirror({ calls, chunks }),
+          mirror,
         }),
         mirroredToolChunkState: mirrored,
         capturedMessageId: "assistant-message-1",
@@ -247,10 +310,10 @@ describe("agent/hosted-chat-finalization", () => {
       assertEquals(terminalStates[0]!.status, "completed");
       assertEquals((terminalStates[0]!.output as ChatUiMessage).parts, [
         ...(reasoning ? [] : [{ type: "text" as const, text: "Hello" }]),
+        { ...tool, state: "output-available" as const, output: "ok" },
         reasoning
           ? { type: "reasoning" as const, text: "Why", signature: "sig" }
           : { type: "text" as const, text: "world" },
-        { ...tool, state: "output-available" as const, output: "ok" },
       ]);
       assertEquals(
         chunks.map((chunk) => chunk.type),
@@ -261,10 +324,12 @@ describe("agent/hosted-chat-finalization", () => {
       assertEquals(chunks.at(-1), { type: "tool-output-available", toolCallId: "c", output: "ok" });
       assertEquals(calls.slice(-3), ["flush", "terminal:completed:", "cleanup"]);
       const firstOutput = terminalStates[0]!.output as ChatUiMessage;
+      assertEquals<unknown>(canonicalProjectionParts(), firstOutput.parts);
       chunks.length = 0;
       calls.length = 0;
       await finalizeHostedChatRun({ ...input, responseMessage: firstOutput });
       assertEquals(terminalStates[1]!.output, firstOutput);
+      assertEquals<unknown>(canonicalProjectionParts(), firstOutput.parts);
       assertEquals(chunks, []);
       assertEquals(calls, ["flush", "terminal:completed:", "cleanup"]);
       const rejectedState = createMirroredToolChunkState();
