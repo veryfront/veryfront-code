@@ -156,6 +156,29 @@ async function runReleaseGate(env: Record<string, string>): Promise<Deno.Command
 }
 
 describe("tested merge-queue run workflow", () => {
+  it("measures PR tree reuse on the queue without exposing a reuse output", async () => {
+    const tested = job(await readJobs(), "tested-run");
+    const record = namedStep(tested, "Record the tested PR tree");
+    assertEquals(record.if, "github.event_name == 'pull_request'");
+    assertStringIncludes(String(record.run), "git rev-parse HEAD^{tree}");
+    const artifact = namedStep(tested, "Upload the tested PR tree");
+    assertEquals(artifact.if, "github.event_name == 'pull_request'");
+    assertEquals(
+      asRecord(artifact.with, "tree artifact").name,
+      "tested-tree-${{ steps.pr-tree.outputs.tree }}",
+    );
+    assertEquals(asRecord(artifact.with, "tree artifact")["retention-days"], 14);
+    const dryRun = namedStep(tested, "Measure identical queue tree (dry run)");
+    assertEquals(dryRun.if, "github.event_name == 'merge_group'");
+    assertStringIncludes(String(dryRun.run), "scripts/ci/queue-tree-dry-run.ts");
+    assertEquals(asRecord(dryRun.env, "queue env").QUEUE_HEAD_REF, "${{ github.ref_name }}");
+    assertEquals(dryRun.id, undefined, "dry-run decisions cannot drive gate conditions");
+    assertEquals(
+      asRecord(tested.outputs, "tested outputs").reuse,
+      "${{ steps.decide.outputs.reuse || 'false' }}",
+    );
+  });
+
   it("decides tested runs on main while accepting explicit maintenance RC numbers", async () => {
     const tested = job(await readJobs(), "tested-run");
 
