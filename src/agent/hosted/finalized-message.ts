@@ -62,6 +62,7 @@ export interface DetachedFallbackMessageState {
 
 /** Input payload for build finalized message fallback chunks. */
 export interface BuildFinalizedMessageFallbackChunksInput {
+  isAborted?: boolean;
   persistedMessage: ChatUiMessage;
   sanitizedFinalizedMessage: ChatUiMessage;
   finalStep: unknown;
@@ -100,14 +101,14 @@ export function buildFinalizedMessageState(
     const completed = finalStepFallbackParts.find((fallback) =>
       isToolUiPart(fallback) && fallback.toolCallId === part.toolCallId &&
       (fallback.state === "output-available" ||
-        (partialInput && fallback.state === "input-available" &&
-          fallback.providerExecuted === true))
+        (fallback.state === "input-available" && fallback.providerExecuted === true &&
+          part.providerExecuted !== false))
     );
     if (!completed || !isToolUiPart(completed)) return part;
     if (completed.state === "input-available" && completed.providerExecuted === true) {
       return {
         ...part,
-        input: completed.input,
+        input: partialInput ? completed.input : part.input,
         state: "input-available" as const,
         providerExecuted: true,
       };
@@ -124,16 +125,24 @@ export function buildFinalizedMessageState(
       }
       : part;
   });
-  const unmatchedPersistedReasoningParts = persistedMessage.parts.filter(
+  const finalStepStart = persistedMessage.parts.findLastIndex((part) => part.type === "step-start");
+  const persistedFinalStepParts = persistedMessage.parts.slice(finalStepStart + 1);
+  const unmatchedPersistedReasoningParts = persistedFinalStepParts.filter(
     (part): part is ReasoningPart => part.type === "reasoning" && isSubstantiveReasoningPart(part),
   );
-  const persistedTextParts = persistedMessage.parts.filter((part) => part.type === "text")
+  const persistedTextParts = persistedFinalStepParts.filter((part) => part.type === "text")
     .filter((part) => part.text.trim().length > 0);
   let textCursor = 0;
   let hasPlacedMissingText = false;
   const missingFallbackParts = finalStepFallbackParts.flatMap((fallbackPart) => {
     if (fallbackPart.type === "text") {
       hasPlacedMissingText = true;
+      while (
+        textCursor < persistedTextParts.length &&
+        !fallbackPart.text.startsWith(persistedTextParts[textCursor]!.text.trim())
+      ) {
+        textCursor++;
+      }
       const remainingParts = persistedTextParts.slice(textCursor);
       let matchedCount = 0;
       for (let count = 1; count <= remainingParts.length; count++) {
@@ -158,7 +167,7 @@ export function buildFinalizedMessageState(
       unmatchedPersistedReasoningParts.splice(matchingIndex, 1);
       return [];
     }
-    return isToolUiPart(fallbackPart) &&
+    return !input.isAborted && isToolUiPart(fallbackPart) &&
         !persistedMessage.parts.some((part) =>
           isToolUiPart(part) && part.toolCallId === fallbackPart.toolCallId
         )
@@ -228,6 +237,19 @@ export function buildFinalizedMessageFallbackChunks(
     return [];
   }
 
+  const reconciledToolChunkState = cloneMirroredToolChunkState(input.mirroredToolChunkState);
+  for (const part of input.sanitizedFinalizedMessage.parts) {
+    if (!isToolUiPart(part) || part.state !== "input-available" || part.providerExecuted !== true) {
+      continue;
+    }
+    const persisted = input.persistedMessage.parts.find((candidate) =>
+      isToolUiPart(candidate) && candidate.toolCallId === part.toolCallId
+    );
+    if (persisted && isToolUiPart(persisted) && persisted.providerExecuted === undefined) {
+      reconciledToolChunkState.inputAvailableToolCallIds.delete(part.toolCallId);
+    }
+  }
+
   const appendedFallbackParts = input.sanitizedFinalizedMessage.parts.filter((part) =>
     !input.persistedMessage.parts.includes(part) &&
     (!isToolUiPart(part) ||
@@ -242,10 +264,10 @@ export function buildFinalizedMessageFallbackChunks(
     const orderedFallbackChunks = buildFallbackUiMessageChunksFromParts(
       appendedFallbackParts,
       fallbackMessageId,
-      input.mirroredToolChunkState,
+      reconciledToolChunkState,
     );
     const mirroredToolChunkStateWithOrderedFallbacks = cloneMirroredToolChunkState(
-      input.mirroredToolChunkState,
+      reconciledToolChunkState,
     );
     for (const chunk of orderedFallbackChunks) {
       recordMirroredToolChunkState(mirroredToolChunkStateWithOrderedFallbacks, chunk);
@@ -261,10 +283,10 @@ export function buildFinalizedMessageFallbackChunks(
 
   const toolFallbackChunksFromParts = buildMissingFallbackToolChunksFromParts(
     input.sanitizedFinalizedMessage.parts,
-    input.mirroredToolChunkState,
+    reconciledToolChunkState,
   );
   const mirroredToolChunkStateWithPartFallbacks = cloneMirroredToolChunkState(
-    input.mirroredToolChunkState,
+    reconciledToolChunkState,
   );
 
   for (const chunk of toolFallbackChunksFromParts) {
@@ -273,10 +295,12 @@ export function buildFinalizedMessageFallbackChunks(
 
   return [
     ...toolFallbackChunksFromParts,
-    ...(input.hasIncompleteFinalizedToolParts ? [] : buildMissingFallbackToolChunks(
-      input.finalStep,
-      mirroredToolChunkStateWithPartFallbacks,
-    )),
+    ...(input.isAborted || input.hasIncompleteFinalizedToolParts
+      ? []
+      : buildMissingFallbackToolChunks(
+        input.finalStep,
+        mirroredToolChunkStateWithPartFallbacks,
+      )),
     ...buildMissingFallbackTextChunks(
       input.persistedMessage.parts,
       input.finalStep,

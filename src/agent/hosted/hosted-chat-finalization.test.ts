@@ -995,6 +995,154 @@ describe("agent/hosted-chat-finalization", () => {
     assertEquals(terminalStates.at(0)!.status, "completed");
   });
 
+  for (const scenario of ["text-complete", "text-partial", "reasoning"] as const) {
+    it(`keeps final-step ${scenario} aligned with terminal output and durable replay`, async () => {
+      const calls: string[] = [];
+      const chunks: ChatUiMessageChunk<MessageMetadata>[] = [];
+      const terminalStates: HostedLifecycleTerminalState[] = [];
+      const earlier = scenario === "reasoning"
+        ? { type: "reasoning" as const, text: "Thinking" }
+        : { type: "text" as const, text: "I'll check" };
+      const parts: ChatUiMessage["parts"] = [earlier, { type: "step-start" }];
+      if (scenario !== "reasoning") {
+        parts.push({ type: "text", text: scenario === "text-partial" ? "Do" : "Done" });
+      }
+      const finalPart = scenario === "reasoning"
+        ? earlier
+        : { type: "text" as const, text: "Done" };
+      await finalizeHostedChatRun({
+        kind: "response",
+        isAborted: false,
+        responseMessage: createResponseMessage({ parts }),
+        streamResult: createStreamResult({
+          response: { messages: [{ role: "assistant", content: [finalPart] }] },
+        }),
+        lifecycleAdapter: createLifecycleAdapter({
+          calls,
+          terminalStates,
+          mirror: createDurableRunMirror({ calls, chunks }),
+        }),
+        mirroredToolChunkState: createMirroredToolChunkState(),
+        capturedMessageId: "assistant-message-1",
+        incompleteToolCallsPartErrorText: "Tool call did not complete",
+        streamError: null,
+        cleanup: async () => {},
+      });
+      assertEquals(terminalStates[0]!.status, "completed");
+      assertEquals((terminalStates[0]!.output as ChatUiMessage).parts, [
+        ...parts,
+        ...(scenario === "text-partial"
+          ? [{ type: "text", text: "ne" }]
+          : scenario === "reasoning"
+          ? [earlier]
+          : []),
+      ]);
+      assertEquals(
+        chunks,
+        scenario === "text-complete" ? [] : scenario === "text-partial"
+          ? [
+            { type: "text-start", id: "assistant-message-1" },
+            { type: "text-delta", id: "assistant-message-1", delta: "ne" },
+            { type: "text-end", id: "assistant-message-1" },
+          ]
+          : [
+            { type: "reasoning-start", id: "assistant-message-1:reasoning" },
+            { type: "reasoning-delta", id: "assistant-message-1:reasoning", delta: "Thinking" },
+            { type: "reasoning-end", id: "assistant-message-1:reasoning" },
+          ],
+      );
+    });
+  }
+
+  for (const scenario of ["accepted-provider", "aborted-local"] as const) {
+    it(`reconciles terminal fallback for ${scenario}`, async () => {
+      const calls: string[] = [];
+      const chunks: ChatUiMessageChunk<MessageMetadata>[] = [];
+      const terminalStates: HostedLifecycleTerminalState[] = [];
+      const isAborted = scenario === "aborted-local";
+      const metadata = { type: "data-veryfront.runtime_context" as const, data: {} };
+      const parts: ChatUiMessage["parts"] = [metadata];
+      const mirrored = createMirroredToolChunkState();
+      const projection = createChatStreamMessageProjection("assistant-message-1");
+      projection.append(metadata);
+      if (!isAborted) {
+        parts.push({
+          type: "tool-web_fetch",
+          toolName: "web_fetch",
+          toolCallId: "c",
+          state: "input-available",
+          input: { accepted: true },
+        });
+        mirrored.startedToolCallIds.add("c");
+        mirrored.inputAvailableToolCallIds.add("c");
+        projection.append({ type: "tool-input-start", toolCallId: "c", toolName: "web_fetch" });
+        projection.append({
+          type: "tool-input-available",
+          toolCallId: "c",
+          toolName: "web_fetch",
+          input: { accepted: true },
+        });
+      }
+      const mirror = createDurableRunMirror({ calls, chunks });
+      const append = mirror.handleChunk;
+      mirror.handleChunk = async (chunk) => {
+        await append(chunk);
+        if (chunk.type !== "finish") projection.append(chunk);
+      };
+      await finalizeHostedChatRun({
+        kind: "response",
+        isAborted,
+        responseMessage: createResponseMessage({ parts }),
+        streamResult: createStreamResult({
+          toolCalls: [{
+            toolCallId: "c",
+            toolName: "web_fetch",
+            input: { recovered: true },
+            providerExecuted: !isAborted,
+          }],
+        }),
+        lifecycleAdapter: createLifecycleAdapter({
+          calls,
+          terminalStates,
+          mirror,
+        }),
+        mirroredToolChunkState: mirrored,
+        capturedMessageId: "assistant-message-1",
+        incompleteToolCallsPartErrorText: "Tool call did not complete",
+        streamError: null,
+        cleanup: async () => {},
+      });
+      assertEquals(terminalStates[0]!.status, isAborted ? "cancelled" : "completed");
+      assertEquals(
+        chunks,
+        isAborted ? [] : [{
+          type: "tool-input-available",
+          toolCallId: "c",
+          toolName: "web_fetch",
+          input: { accepted: true },
+          providerExecuted: true,
+        }],
+      );
+      if (isAborted) {
+        assertEquals(terminalStates[0]!.terminalErrorCode, "ABORTED");
+        assertEquals("output" in terminalStates[0]!, false);
+      } else {assertEquals(
+          projection.snapshot().parts,
+          (terminalStates[0]!.output as ChatUiMessage).parts,
+        );}
+      if (!isAborted) {
+        assertEquals((terminalStates[0]!.output as ChatUiMessage).parts, [metadata, {
+          type: "tool-web_fetch",
+          toolName: "web_fetch",
+          toolCallId: "c",
+          state: "input-available",
+          input: { accepted: true },
+          providerExecuted: true,
+        }]);
+      }
+    });
+  }
+
   for (const kind of ["response", "detached"] as const) {
     for (const source of ["content", "extracted", "ui"] as const) {
       for (

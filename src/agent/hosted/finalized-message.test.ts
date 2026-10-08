@@ -749,3 +749,128 @@ Deno.test("finalized text alignment skips empty persisted text shells", () => {
     text: "ond answer.",
   }]);
 });
+
+for (
+  const [text, boundary] of [["Done", true], ["Do", true], ["Done", false], ["Do", false]] as const
+) {
+  Deno.test(`final-step text alignment ignores earlier-step text (${text}, boundary ${boundary})`, () => {
+    const responseMessage = {
+      id: "m",
+      role: "assistant" as const,
+      parts: [
+        { type: "text" as const, text: "I'll check" },
+        ...(boundary ? [{ type: "step-start" as const }] : []),
+        { type: "text" as const, text },
+      ],
+    };
+    const finalStep = { text: "Done" };
+    const state = buildFinalizedMessageState({
+      responseMessage,
+      finalStep,
+      isAborted: false,
+      incompleteToolCallsPartErrorText: "tool error",
+    });
+    const suffix = text === "Do" ? [{ type: "text" as const, text: "ne" }] : [];
+    assertEquals(state.sanitizedFinalizedMessage.parts, [...responseMessage.parts, ...suffix]);
+    assertEquals(
+      buildFinalizedMessageState({
+        responseMessage: state.sanitizedFinalizedMessage,
+        finalStep,
+        isAborted: false,
+        incompleteToolCallsPartErrorText: "tool error",
+      })
+        .sanitizedFinalizedMessage.parts,
+      state.sanitizedFinalizedMessage.parts,
+    );
+    assertEquals(
+      buildFinalizedMessageFallbackChunks({
+        ...state,
+        finalStep,
+        mirroredToolChunkState: createMirroredToolChunkState(),
+        capturedMessageId: "m",
+      }),
+      text === "Do"
+        ? [{ type: "text-start", id: "m" }, { type: "text-delta", id: "m", delta: "ne" }, {
+          type: "text-end",
+          id: "m",
+        }]
+        : [],
+    );
+  });
+}
+
+Deno.test("final-step reasoning does not consume an identical earlier-step block", () => {
+  const reasoning = { type: "reasoning" as const, text: "Thinking" };
+  const responseMessage = {
+    id: "m",
+    role: "assistant" as const,
+    parts: [reasoning, { type: "step-start" as const }],
+  };
+  const finalStep = { response: { messages: [{ role: "assistant", content: [reasoning] }] } };
+  const state = buildFinalizedMessageState({
+    responseMessage,
+    finalStep,
+    isAborted: false,
+    incompleteToolCallsPartErrorText: "tool error",
+  });
+  assertEquals(state.sanitizedFinalizedMessage.parts, [...responseMessage.parts, reasoning]);
+  assertEquals(
+    buildFinalizedMessageState({
+      responseMessage: state.sanitizedFinalizedMessage,
+      finalStep,
+      isAborted: false,
+      incompleteToolCallsPartErrorText: "tool error",
+    })
+      .sanitizedFinalizedMessage.parts,
+    state.sanitizedFinalizedMessage.parts,
+  );
+  assertEquals(
+    buildFinalizedMessageFallbackChunks({
+      ...state,
+      finalStep,
+      mirroredToolChunkState: createMirroredToolChunkState(),
+      capturedMessageId: "m",
+    }),
+    [
+      { type: "reasoning-start", id: "m:reasoning" },
+      { type: "reasoning-delta", id: "m:reasoning", delta: "Thinking" },
+      { type: "reasoning-end", id: "m:reasoning" },
+    ],
+  );
+});
+
+for (const state of ["pending", "input-streaming", "input-available"] as const) {
+  for (const ownership of [undefined, true, false]) {
+    Deno.test(`resultless provider fallback respects ${state} call ownership ${ownership}`, () => {
+      const part = {
+        type: "tool-web_fetch" as const,
+        toolCallId: "c",
+        state,
+        input: { accepted: true },
+        ...(ownership === undefined ? {} : { providerExecuted: ownership }),
+      };
+      const result = buildFinalizedMessageState({
+        responseMessage: { id: "m", role: "assistant", parts: [part] },
+        isAborted: false,
+        finalStep: {
+          toolCalls: [{
+            toolCallId: "c",
+            toolName: "web_fetch",
+            input: { recovered: true },
+            providerExecuted: true,
+          }],
+        },
+        incompleteToolCallsPartErrorText: "tool error",
+      });
+      assertEquals(result.hasIncompleteFinalizedToolParts, ownership === false);
+      assertEquals(result.sanitizedFinalizedMessage.parts, [{
+        ...part,
+        ...(ownership === false ? { state: "output-error", errorText: "tool error" } : {
+          state: "input-available",
+          providerExecuted: true,
+          input: state === "input-available" ? { accepted: true } : { recovered: true },
+        }),
+      }]);
+    });
+  }
+}
