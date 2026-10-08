@@ -12,6 +12,13 @@ summary. A queued gate must have no execution steps, because GitHub can populate
 holder can queue the rerun. A newer successful dispatch suppresses that obsolete
 rerun and is reported on the merged PR.
 
+Before cancellation, the watchdog records the exact run, attempt, commit and
+unstarted job in one bot-owned comment on the merged PR. Later scans discover
+pending comments and resume a verified cancellation if a GitHub API operation
+failed. They never repeat a rerun already accepted as a newer attempt, even if
+that attempt failed. The same comment is updated when recovery finishes.
+Manually cancelled runs without this intent are never resumed.
+
 Use **Registry gate watchdog** in Actions with `dry_run: true` and a run id to
 inspect a live run. An empty run id scans active main runs. Scheduled runs
 enable recovery. Manual recovery runs only from `main`.

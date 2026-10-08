@@ -5,6 +5,7 @@ import {
   decideRecovery,
   type Job,
   recoverGate,
+  type RecoveryIntent,
   type Run,
   scanGates,
   type WatchdogClient,
@@ -135,8 +136,20 @@ describe("registry gate watchdog", () => {
   function client() {
     const calls: string[] = [];
     let cancelled = false;
+    let intent: RecoveryIntent | undefined;
     const api: WatchdogClient = {
       inspect: () => Promise.resolve({ run, jobs }),
+      recoveryIntent: () => Promise.resolve(intent),
+      remember: (candidate) => {
+        calls.push("intent");
+        intent = {
+          runId: candidate.run.id,
+          attempt: candidate.run.run_attempt,
+          sha: candidate.run.head_sha,
+          gateId: gate.id,
+        };
+        return Promise.resolve();
+      },
       others: () => Promise.resolve([]),
       cancel: () => {
         calls.push("cancel");
@@ -171,7 +184,7 @@ describe("registry gate watchdog", () => {
   it("rechecks before cancellation and only reruns cancelled unstarted work", async () => {
     const { api, calls } = client();
     await recoverGate(api, run.id, { dryRun: false, now: () => NOW });
-    assertEquals(calls, ["cancel", "rerun-failed", "comment"]);
+    assertEquals(calls, ["intent", "cancel", "rerun-failed", "comment"]);
   });
   it("does not act if the gate starts during the final recheck", async () => {
     const { api, calls } = client();
@@ -200,7 +213,7 @@ describe("registry gate watchdog", () => {
           }],
         );
       await recoverGate(api, run.id, { dryRun: false, now: () => NOW });
-      assertEquals(calls, ["cancel", "rerun-failed", "comment"]);
+      assertEquals(calls, ["intent", "cancel", "rerun-failed", "comment"]);
     }
   });
   it("reports a newer successful dispatch after cancellation without rerunning", async () => {
@@ -223,7 +236,7 @@ describe("registry gate watchdog", () => {
       now: () => NOW,
     });
     assertEquals(message.includes("newer main gate dispatched"), true);
-    assertEquals(calls, ["cancel", "comment"]);
+    assertEquals(calls, ["intent", "cancel", "comment"]);
   });
   it("continues inspecting other candidates and reports a scan failure", async () => {
     const { api, calls } = client();
@@ -242,6 +255,78 @@ describe("registry gate watchdog", () => {
     ]);
     assertEquals(calls, []);
   });
+  it("resumes a verified cancellation after a failed post-cancel inspection", async () => {
+    const { api, calls } = client();
+    let reads = 0;
+    api.others = () =>
+      ++reads === 3
+        ? Promise.reject(new Error("API unavailable"))
+        : Promise.resolve([]);
+    await assertRejects(() =>
+      recoverGate(api, run.id, { dryRun: false, now: () => NOW })
+    );
+    const cancelledJobs = [prerelease, {
+      ...gate,
+      status: "completed",
+      conclusion: "cancelled",
+    }];
+    api.inspect = () =>
+      Promise.resolve({
+        run: { ...run, status: "completed" },
+        jobs: cancelledJobs,
+      });
+    await recoverGate(api, run.id, { dryRun: false, now: () => NOW });
+    assertEquals(calls, ["intent", "cancel", "rerun-failed", "comment"]);
+  });
+  it("resumes a failed rerun request but never repeats an ambiguously accepted attempt", async () => {
+    for (const accepted of [false, true]) {
+      const { api, calls } = client();
+      api.rerunFailed = () => {
+        calls.push("rerun-request");
+        return Promise.reject(new Error("response lost"));
+      };
+      await assertRejects(() =>
+        recoverGate(api, run.id, { dryRun: false, now: () => NOW })
+      );
+      api.inspect = () =>
+        Promise.resolve({
+          run: { ...run, status: "completed", run_attempt: accepted ? 2 : 1 },
+          jobs: [prerelease, {
+            ...gate,
+            status: "completed",
+            conclusion: accepted ? "failure" : "cancelled",
+          }],
+        });
+      api.rerunFailed = () => {
+        calls.push("rerun-failed");
+        return Promise.resolve();
+      };
+      await recoverGate(api, run.id, { dryRun: false, now: () => NOW });
+      assertEquals(
+        calls,
+        accepted
+          ? ["intent", "cancel", "rerun-request", "comment"]
+          : ["intent", "cancel", "rerun-request", "rerun-failed", "comment"],
+      );
+    }
+  });
+  it("does not resume a manually cancelled run without persisted intent", async () => {
+    const { api, calls } = client();
+    api.inspect = () =>
+      Promise.resolve({
+        run: { ...run, status: "completed" },
+        jobs: [prerelease, {
+          ...gate,
+          status: "completed",
+          conclusion: "cancelled",
+        }],
+      });
+    assertEquals(
+      await recoverGate(api, run.id, { dryRun: false, now: () => NOW }),
+      "healthy, no action",
+    );
+    assertEquals(calls, []);
+  });
   it("refuses a rerun if cancellation raced with a real failure", async () => {
     const { api, calls } = client();
     api.completed = () =>
@@ -253,7 +338,7 @@ describe("registry gate watchdog", () => {
     await assertRejects(() =>
       recoverGate(api, run.id, { dryRun: false, now: () => NOW })
     );
-    assertEquals(calls, ["cancel"]);
+    assertEquals(calls, ["intent", "cancel"]);
   });
 });
 
@@ -312,6 +397,8 @@ describe("watchdog GitHub transport", () => {
               number: 5001,
               merged_at: "2026-10-08T10:00:00Z",
             }, { number: 5002, merged_at: null }])
+            : init.method === "GET"
+            ? Response.json([])
             : Response.json({ id: 1 }, { status: 201 }),
         );
       },
@@ -319,8 +406,116 @@ describe("watchdog GitHub transport", () => {
     await client.comment(run, "Recovered registry gate");
     assertEquals(calls, [
       `GET /repos/veryfront/veryfront-code/commits/${run.head_sha}/pulls`,
+      "GET /repos/veryfront/veryfront-code/issues/5001/comments",
       "POST /repos/veryfront/veryfront-code/issues/5001/comments",
     ]);
+  });
+  it("persists one bot-owned intent, discovers cancelled work, and updates its comment", async () => {
+    const comments: { id: number; body: string; user: { login: string } }[] =
+      [];
+    const writes: string[] = [];
+    const { client, candidates } = createWatchdogClient(
+      "veryfront/veryfront-code",
+      "test-token",
+      (url, init) => {
+        if (url.pathname === "/search/issues") {
+          return Promise.resolve(
+            Response.json({ items: [{ number: 5001 }] }),
+          );
+        }
+        if (url.pathname.endsWith("/pulls")) {
+          return Promise.resolve(
+            Response.json([{
+              number: 5001,
+              merged_at: "2026-10-08T10:00:00Z",
+            }]),
+          );
+        }
+        if (url.pathname.endsWith("/runs")) {
+          return Promise.resolve(
+            Response.json({ workflow_runs: [] }),
+          );
+        }
+        if (init.method === "GET") {
+          return Promise.resolve(
+            Response.json(comments),
+          );
+        }
+        writes.push(`${init.method} ${url.pathname}`);
+        const { body } = JSON.parse(String(init.body)) as { body: string };
+        if (init.method === "PATCH") comments[0]!.body = body;
+        else {comments.push({
+            id: 7,
+            body,
+            user: { login: "github-actions[bot]" },
+          });}
+        return Promise.resolve(
+          Response.json({ id: 7 }, {
+            status: init.method === "PATCH" ? 200 : 201,
+          }),
+        );
+      },
+    );
+    await client.remember({ run, jobs });
+    assertEquals(await client.recoveryIntent(run), {
+      runId: run.id,
+      attempt: 1,
+      sha: run.head_sha,
+      gateId: gate.id,
+    });
+    assertEquals(await candidates(), [run.id]);
+    await client.comment(run, "Recovered registry gate");
+    assertEquals(await client.recoveryIntent(run), undefined);
+    assertEquals(await candidates(), []);
+    assertEquals(writes, [
+      "POST /repos/veryfront/veryfront-code/issues/5001/comments",
+      "PATCH /repos/veryfront/veryfront-code/issues/comments/7",
+    ]);
+    assertEquals(comments.length, 1);
+  });
+  it("ignores forged recovery intent comments", async () => {
+    const intent = {
+      runId: run.id,
+      attempt: 1,
+      sha: run.head_sha,
+      gateId: gate.id,
+    };
+    const { client, candidates } = createWatchdogClient(
+      "veryfront/veryfront-code",
+      "test-token",
+      (url) =>
+        Promise.resolve(Response.json(
+          url.pathname === "/search/issues"
+            ? { items: [{ number: 5001 }] }
+            : url.pathname.endsWith("/pulls")
+            ? [{ number: 5001, merged_at: "2026-10-08T10:00:00Z" }]
+            : url.pathname.endsWith("/runs")
+            ? { workflow_runs: [] }
+            : [{
+              id: 7,
+              user: { login: "untrusted" },
+              body:
+                `<!-- registry-gate-watchdog:${run.id} -->\nRegistry gate watchdog pending recovery\n<!-- intent:${
+                  JSON.stringify(intent)
+                } -->`,
+            }],
+        )),
+    );
+    assertEquals(await client.recoveryIntent(run), undefined);
+    assertEquals(await candidates(), []);
+  });
+  it("fails closed when pending recovery search is incomplete", async () => {
+    const { candidates } = createWatchdogClient(
+      "veryfront/veryfront-code",
+      "test-token",
+      (url) =>
+        Promise.resolve(Response.json(
+          url.pathname === "/search/issues"
+            ? { items: [], incomplete_results: true }
+            : { workflow_runs: [] },
+        )),
+    );
+    await assertRejects(() => candidates());
   });
   it("fails closed on unavailable API data", async () => {
     const { client } = createWatchdogClient(

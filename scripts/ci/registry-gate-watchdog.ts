@@ -23,7 +23,15 @@ export interface Inspection {
   run: Run;
   jobs: Job[];
 }
+export interface RecoveryIntent {
+  runId: number;
+  attempt: number;
+  sha: string;
+  gateId: number;
+}
 export interface WatchdogClient {
+  recoveryIntent(run: Run): Promise<RecoveryIntent | undefined>;
+  remember(candidate: Inspection): Promise<void>;
   inspect(id: number): Promise<Inspection>;
   others(run: Run): Promise<Inspection[]>;
   cancel(id: number): Promise<void>;
@@ -101,6 +109,27 @@ function hasNewerDispatch(run: Run, others: Inspection[]): boolean {
   );
 }
 
+async function finishRecovery(
+  client: WatchdogClient,
+  candidate: Inspection,
+  minutes: number,
+) {
+  const { run } = candidate;
+  if (hasNewerDispatch(run, await client.others(run))) {
+    const message =
+      `Run ${run.id}: cancelled; newer main gate dispatched, no action`;
+    await client.comment(run, message);
+    return message;
+  }
+  await client.rerunFailed(run.id);
+  const message =
+    `Recovered registry gate in run ${run.id}, queued without starting for ${
+      Math.floor(minutes)
+    } min. Cancelled the run and reran only its cancelled jobs; no failed check was retried.`;
+  await client.comment(run, message);
+  return message;
+}
+
 export async function recoverGate(
   client: WatchdogClient,
   id: number,
@@ -108,6 +137,44 @@ export async function recoverGate(
 ) {
   const now = options.now ?? Date.now;
   let candidate = await client.inspect(id);
+  const intent = await client.recoveryIntent(candidate.run);
+  if (intent && intent.sha === candidate.run.head_sha && intent.runId === id) {
+    if (candidate.run.run_attempt > intent.attempt) {
+      const message =
+        `Run ${id}: recovery already accepted as attempt ${candidate.run.run_attempt}, no action`;
+      if (!options.dryRun) await client.comment(candidate.run, message);
+      return message;
+    }
+    const cancelledGate = candidate.jobs.find((job) =>
+      job.id === intent.gateId
+    );
+    if (
+      candidate.run.status === "completed" &&
+      candidate.run.run_attempt === intent.attempt &&
+      cancelledGate?.conclusion === "cancelled"
+    ) {
+      // A durable intent authorizes only the same zero-step cancellation. All
+      // other original checks must still be successful, never failed/cancelled.
+      const projected = {
+        run: { ...candidate.run, status: "in_progress" },
+        jobs: candidate.jobs.map((job) =>
+          job.id === intent.gateId
+            ? { ...job, status: "queued", conclusion: null }
+            : job
+        ),
+      };
+      const resumed = decideRecovery(projected, [], now());
+      if (!resumed.recover) {
+        throw new Error(
+          `Run ${id}: incomplete recovery is no longer safe; refusing rerun`,
+        );
+      }
+      if (options.dryRun) {
+        return "verified cancelled gate with pending recovery, would rerun";
+      }
+      return await finishRecovery(client, candidate, resumed.minutes);
+    }
+  }
   let decision = decideRecovery(candidate, [], now());
   if (!decision.recover) return decision.message;
   decision = decideRecovery(
@@ -125,6 +192,7 @@ export async function recoverGate(
   );
   if (!decision.recover) return decision.message;
   const gate = candidate.jobs.find((job) => job.name === GATE)!;
+  await client.remember(candidate);
   await client.cancel(id);
   const cancelled = await client.completed(id);
   const cancelledGate = cancelled.find((job) => job.id === gate.id);
@@ -142,21 +210,9 @@ export async function recoverGate(
       `Run ${id}: cancellation changed other work; refusing rerun`,
     );
   }
-  // Cancellation already freed the lock. A new holder can safely queue the
-  // rerun; only a newer completed dispatch makes this RC obsolete.
-  if (hasNewerDispatch(candidate.run, await client.others(candidate.run))) {
-    const message =
-      `Run ${id}: cancelled; newer main gate dispatched, no action`;
-    await client.comment(candidate.run, message);
-    return message;
-  }
-  await client.rerunFailed(id);
-  const message =
-    `Recovered registry gate in run ${id}, queued without starting for ${
-      Math.floor(decision.minutes)
-    } min. Cancelled the run and reran only its cancelled jobs; no failed check was retried.`;
-  await client.comment(candidate.run, message);
-  return message;
+  // A durable intent survives a failed post-cancel read or rerun response.
+  // A later scan verifies the attempt before trying the unstarted work again.
+  return await finishRecovery(client, candidate, decision.minutes);
 }
 
 export async function scanGates(
@@ -192,20 +248,36 @@ export function createWatchdogClient(
     throw new Error("Invalid repository");
   }
   const base = `https://api.github.com/repos/${repository}`;
+  const pendingHeading = "Registry gate watchdog pending recovery";
+  interface Comment {
+    id: number;
+    body: string;
+    user: { login: string };
+  }
+  const marker = (id: number) => `<!-- registry-gate-watchdog:${id} -->`;
+  const trusted = (comment: Comment) =>
+    comment.user.login === "github-actions[bot]";
   async function request<T>(
     path: string,
     method = "GET",
     body?: unknown,
   ): Promise<T> {
-    const response = await fetchImpl(new URL(base + path), {
-      method,
-      headers: {
-        accept: "application/vnd.github+json",
-        authorization: `Bearer ${token}`,
-        "x-github-api-version": "2022-11-28",
+    const response = await fetchImpl(
+      new URL(
+        path.startsWith("/search/")
+          ? "https://api.github.com" + path
+          : base + path,
+      ),
+      {
+        method,
+        headers: {
+          accept: "application/vnd.github+json",
+          authorization: `Bearer ${token}`,
+          "x-github-api-version": "2022-11-28",
+        },
+        ...(body === undefined ? {} : { body: JSON.stringify(body) }),
       },
-      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-    });
+    );
     if (!response.ok) {
       throw new Error(`GitHub API ${method} ${path}: ${response.status}`);
     }
@@ -218,6 +290,12 @@ export function createWatchdogClient(
       const data = await request<T[] | Record<string, T[]>>(
         `${path}${path.includes("?") ? "&" : "?"}per_page=100&page=${page}`,
       );
+      if (
+        path.startsWith("/search/") &&
+        (data as unknown as Record<string, unknown>).incomplete_results === true
+      ) {
+        throw new Error("GitHub search is incomplete; refusing recovery scan");
+      }
       const batch = key ? (data as Record<string, T[]>)[key]! : data as T[];
       items.push(...batch);
       if (batch.length < 100) return items;
@@ -245,7 +323,89 @@ export function createWatchdogClient(
     );
     return { run, jobs };
   }
+  async function mergedPull(run: Run) {
+    const pulls = await list<{ number: number; merged_at: string | null }>(
+      `/commits/${run.head_sha}/pulls`,
+    );
+    return pulls.find((pull) => pull.merged_at)?.number;
+  }
+  async function recoveryComment(run: Run) {
+    const pull = await mergedPull(run);
+    if (!pull) return { pull, comment: undefined };
+    const comments = await list<Comment>(`/issues/${pull}/comments`);
+    return {
+      pull,
+      comment: comments.find((comment) =>
+        trusted(comment) && comment.body.startsWith(marker(run.id))
+      ),
+    };
+  }
+  function parseIntent(comment: Comment): RecoveryIntent | undefined {
+    if (!trusted(comment) || !comment.body.includes(pendingHeading)) {
+      return undefined;
+    }
+    const match = comment.body.match(/<!-- intent:(.+) -->/);
+    if (!match) return undefined;
+    const intent = JSON.parse(match[1]!) as RecoveryIntent;
+    if (
+      ![intent.runId, intent.attempt, intent.gateId].every((n) =>
+        Number.isSafeInteger(n) && n > 0
+      ) || !/^[a-f0-9]{40}$/.test(intent.sha) ||
+      !comment.body.startsWith(marker(intent.runId))
+    ) throw new Error("Invalid persisted recovery intent");
+    return intent;
+  }
+  async function writeComment(run: Run, body: string) {
+    const { pull, comment } = await recoveryComment(run);
+    if (!pull) {
+      throw new Error(
+        `Run ${run.id}: no merged PR for durable recovery intent`,
+      );
+    }
+    await request(
+      comment ? `/issues/comments/${comment.id}` : `/issues/${pull}/comments`,
+      comment ? "PATCH" : "POST",
+      { body: marker(run.id) + "\n" + body },
+    );
+  }
+  async function pendingRuns() {
+    const query = encodeURIComponent(
+      `repo:${repository} is:pr is:merged in:comments "${pendingHeading}"`,
+    );
+    const pulls = await list<{ number: number }>(
+      `/search/issues?q=${query}`,
+      "items",
+    );
+    const ids: number[] = [];
+    for (const pull of pulls) {
+      const comments = await list<Comment>(`/issues/${pull.number}/comments`);
+      for (const comment of comments) {
+        const intent = parseIntent(comment);
+        if (intent) ids.push(intent.runId);
+      }
+    }
+    return ids;
+  }
   const client: WatchdogClient = {
+    recoveryIntent: async (run) => {
+      const { comment } = await recoveryComment(run);
+      return comment ? parseIntent(comment) : undefined;
+    },
+    remember: async (candidate) => {
+      const gate = candidate.jobs.find((job) => job.name === GATE)!;
+      const intent: RecoveryIntent = {
+        runId: candidate.run.id,
+        attempt: candidate.run.run_attempt,
+        sha: candidate.run.head_sha,
+        gateId: gate.id,
+      };
+      await writeComment(
+        candidate.run,
+        `${pendingHeading}\n<!-- intent:${
+          JSON.stringify(intent)
+        } -->\nRun ${intent.runId}: cancellation and recovery not yet confirmed.`,
+      );
+    },
     inspect,
     others: async (run) => {
       const runs = [
@@ -272,19 +432,19 @@ export function createWatchdogClient(
     },
     rerunFailed: (id) =>
       request(`/actions/runs/${id}/rerun-failed-jobs`, "POST"),
-    comment: async (run, message) => {
-      const pulls = await list<{ number: number; merged_at: string | null }>(
-        `/commits/${run.head_sha}/pulls`,
-      );
-      for (const pull of pulls.filter((pull) => pull.merged_at)) {
-        await request(`/issues/${pull.number}/comments`, "POST", {
-          body:
-            `${message}\n\nhttps://github.com/${repository}/actions/runs/${run.id}`,
-        });
-      }
-    },
+    comment: (run, message) =>
+      writeComment(
+        run,
+        `${message}\n\nhttps://github.com/${repository}/actions/runs/${run.id}`,
+      ),
   };
-  return { client, activeRuns };
+  async function candidates() {
+    const active = (await activeRuns()).filter((run) =>
+      run.event === "push" && run.head_branch === "main"
+    ).map((run) => run.id);
+    return [...new Set([...await pendingRuns(), ...active])];
+  }
+  return { client, activeRuns, candidates };
 }
 
 if (import.meta.main) {
@@ -315,15 +475,11 @@ if (import.meta.main) {
     if (!repository || !token) {
       throw new Error("GITHUB_REPOSITORY and GH_TOKEN are required");
     }
-    const { client, activeRuns } = createWatchdogClient(repository, token);
+    const { client, candidates } = createWatchdogClient(repository, token);
     if (runId && !/^[1-9][0-9]*$/.test(runId)) {
       throw new Error("Invalid run id");
     }
-    const runs = runId
-      ? [Number(runId)]
-      : (await activeRuns()).filter((run) =>
-        run.event === "push" && run.head_branch === "main"
-      ).map((run) => run.id);
+    const runs = runId ? [Number(runId)] : await candidates();
     ({ lines, failed } = await scanGates(client, runs, { dryRun }));
   }
   for (const line of lines) console.log(line);
