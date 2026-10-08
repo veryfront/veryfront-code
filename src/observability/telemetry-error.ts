@@ -47,6 +47,7 @@ const arrayPush = Array.prototype.push;
 const NativeSet = Set;
 const stringSlice = String.prototype.slice;
 const ERROR_PROTOTYPE = NativeError.prototype;
+const URL_HOSTNAME_GETTER = readOwnDescriptorGetter(NativeURL.prototype, "hostname");
 const URL_HREF_GETTER = readOwnDescriptorGetter(NativeURL.prototype, "href");
 
 const INVALID_ERROR_FIELD = Symbol("invalid-error-field");
@@ -614,6 +615,9 @@ export interface LoggedErrorCause {
   provider?: string;
   status?: number;
   retryable?: boolean;
+  viaVeryfrontGateway?: boolean;
+  /** Fixed endpoint classification; never a URL, path, credential or query. */
+  requestOrigin?: "openai" | "anthropic" | "google";
 }
 
 /**
@@ -695,6 +699,20 @@ function addBoundedProviderDiagnostics(error: Error, entry: LoggedErrorCause): v
 
   const retryable = readOwnErrorDataField(error, "retryable");
   if (typeof retryable === "boolean") entry.retryable = retryable;
+
+  const gateway = readOwnErrorDataField(error, "viaVeryfrontGateway");
+  if (typeof gateway === "boolean") entry.viaVeryfrontGateway = gateway;
+
+  const requestUrl = readOwnErrorDataField(error, "requestUrl");
+  if (typeof requestUrl !== "string" || requestUrl.length > 8192 || !URL_HOSTNAME_GETTER) return;
+  try {
+    const hostname = apply(URL_HOSTNAME_GETTER, new NativeURL(requestUrl), []);
+    if (hostname === "api.openai.com") entry.requestOrigin = "openai";
+    else if (hostname === "api.anthropic.com") entry.requestOrigin = "anthropic";
+    else if (hostname === "generativelanguage.googleapis.com") entry.requestOrigin = "google";
+  } catch (_) {
+    // Unknown or invalid endpoints are omitted, including private/custom origins.
+  }
 }
 
 /**

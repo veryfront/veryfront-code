@@ -997,6 +997,91 @@ describe("observability/telemetry-error", () => {
       }]);
     });
 
+    it("keeps bounded gateway provenance while redacting provider failure content", () => {
+      const failure = Object.assign(
+        new ProviderRequestError({
+          provider: "openai",
+          status: 503,
+          message: "secret upstream body",
+          retryable: true,
+        }),
+        {
+          viaVeryfrontGateway: true,
+          requestUrl: "https://user:secret@api.openai.com/v1/chat?token=secret",
+          nativeCode: "secret",
+        },
+      );
+      assertEquals(summarizeErrorCausesForLog(createRuntimeProviderStreamFailure(failure)), [{
+        name: "ProviderRequestError",
+        provider: "openai",
+        status: 503,
+        retryable: true,
+        viaVeryfrontGateway: true,
+        requestOrigin: "openai",
+        messageRedacted: true,
+      }]);
+    });
+
+    it("classifies only exact public endpoints without inferring gateway provenance", () => {
+      for (
+        const [requestUrl, requestOrigin] of [
+          ["https://api.openai.com/v1/responses", "openai"],
+          ["https://api.anthropic.com/v1/messages", "anthropic"],
+          ["https://generativelanguage.googleapis.com/private?key=secret", "google"],
+        ] as const
+      ) {
+        const error = Object.assign(new Error("secret"), { requestUrl });
+        assertEquals(summarizeErrorCausesForLog(createRuntimeProviderStreamFailure(error)), [{
+          name: "Error",
+          requestOrigin,
+          messageRedacted: true,
+        }]);
+      }
+      for (
+        const requestUrl of [
+          "not a URL",
+          "https://api.openai.com.customer.example/private",
+          "https://api.openai.com/" + "x".repeat(8192),
+        ]
+      ) {
+        const error = Object.assign(new Error("secret"), { requestUrl });
+        assertEquals(summarizeErrorCausesForLog(createRuntimeProviderStreamFailure(error)), [{
+          name: "Error",
+          messageRedacted: true,
+        }]);
+      }
+    });
+
+    it("omits unknown request origins and never invokes provenance accessors", () => {
+      let calls = 0;
+      const failure = new Error("secret");
+      Object.defineProperty(failure, "viaVeryfrontGateway", {
+        get() {
+          calls++;
+          return true;
+        },
+      });
+      Object.defineProperty(failure, "requestUrl", {
+        get() {
+          calls++;
+          return "https://api.openai.com";
+        },
+      });
+      assertEquals(summarizeErrorCausesForLog(createRuntimeProviderStreamFailure(failure)), [{
+        name: "Error",
+        messageRedacted: true,
+      }]);
+      assertEquals(calls, 0);
+      const custom = Object.assign(new Error("secret"), {
+        requestUrl: "https://secret.customer.example/private?token=secret",
+        viaVeryfrontGateway: "true",
+      });
+      assertEquals(summarizeErrorCausesForLog(createRuntimeProviderStreamFailure(custom)), [{
+        name: "Error",
+        messageRedacted: true,
+      }]);
+    });
+
     it("logs rate-limit retryability and normalizes statusCode to status", () => {
       const rateLimit = new ProviderRateLimitError({
         provider: "openai",
