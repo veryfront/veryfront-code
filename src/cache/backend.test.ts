@@ -674,6 +674,60 @@ it("ApiCacheBackend enforces exact bounded decoded values", async () => {
   }
 });
 
+it("ApiCacheBackend bounded reads accept the cache entry envelope and its misses", async () => {
+  const { ApiCacheBackend } = await importBackend();
+  const globals = globalThis as Record<string, unknown>;
+  const originalAdapter = globals.__vf_multi_project_adapter;
+  const paths: string[] = [];
+  globals.__vf_multi_project_adapter = {
+    getCurrentRequestContext: () => ({
+      token: "request-token",
+      projectSlug: "project-slug",
+    }),
+  };
+  installMockFetch(
+    ((input: RequestInfo | URL) => {
+      const url = new URL(String(input));
+      paths.push(url.pathname);
+      return Promise.resolve(Response.json(
+        url.pathname.endsWith("/missing")
+          ? {
+            project_id: "project-id",
+            key: "missing",
+            found: false,
+            value: null,
+            expires_at: null,
+          }
+          : {
+            project_id: "project-id",
+            key: "render:page",
+            found: true,
+            value: "html",
+            expires_at: "2026-10-08T00:05:00Z",
+          },
+      ));
+    }) as typeof fetch,
+  );
+
+  try {
+    const cache = new ApiCacheBackend({
+      apiBaseUrl: "https://93.184.216.34",
+      apiToken: "test-explicit-token",
+      circuitBreakerName: "api-cache-bounded-envelope-test",
+    });
+    assertEquals(await cache.getWithinLimit("render:page", 4), "html");
+    assertEquals(await cache.getWithinLimit("missing", 4), null);
+    assertEquals(paths, [
+      "/projects/project-slug/cache/entries/render%3Apage",
+      "/projects/project-slug/cache/entries/missing",
+    ]);
+  } finally {
+    if (originalAdapter === undefined) delete globals.__vf_multi_project_adapter;
+    else globals.__vf_multi_project_adapter = originalAdapter;
+    restoreMockFetch();
+  }
+});
+
 it("ApiCacheBackend reserves JSON escape bytes outside its response policy", async () => {
   const { ApiCacheBackend } = await importBackend();
   const globals = globalThis as Record<string, unknown>;
@@ -950,12 +1004,12 @@ it("ApiCacheBackend del-pattern timeouts do not open the read breaker", async ()
       const url = String(input instanceof Request ? input.url : input);
       if (url.includes("/projects/project-456/")) {
         otherProjectDeletes.push(url);
-        return Promise.resolve(Response.json({ deleted: 1 }));
+        return Promise.resolve(Response.json({ status: "deleted", deleted_count: 1 }));
       }
-      if (url.endsWith("/del-pattern")) {
+      if (url.includes("/cache/entries?pattern=")) {
         attemptedDeletes++;
         if (url.includes("/projects/bounded-")) {
-          return Promise.resolve(Response.json({ deleted: 0 }));
+          return Promise.resolve(Response.json({ status: "deleted", deleted_count: 0 }));
         }
         // A slow invalidation backend: never answers before the client timeout.
         return new Promise<Response>((_resolve, reject) => {
@@ -1024,8 +1078,8 @@ async function withStreamDeletes(
   const requests: Array<{ pattern: string; authorization: string }> = [];
   const waiters: Array<{ count: number; resolve: () => void }> = [];
   setEnv("VERYFRONT_API_BASE_URL", "https://93.184.216.34");
-  installMockFetch((_input: RequestInfo | URL, init?: RequestInit) => {
-    const { pattern } = JSON.parse(String(init?.body)) as { pattern: string };
+  installMockFetch((input: RequestInfo | URL, init?: RequestInit) => {
+    const pattern = new URL(String(input)).searchParams.get("pattern") ?? "";
     const authorization = new Headers(init?.headers).get("authorization") ?? "";
     requests.push({ pattern, authorization });
     for (const waiter of waiters) if (requests.length >= waiter.count) waiter.resolve();
@@ -1063,7 +1117,7 @@ it("ApiCacheBackend coalesces concurrent identical del-pattern calls per project
   await withStreamDeletes(
     async (_pattern, _authorization, sent) => {
       if (sent === 1) await firstGate;
-      return Response.json({ deleted: 1 });
+      return Response.json({ status: "deleted", deleted_count: 1 });
     },
     async ({ deleteFromStream, requests, sent }) => {
       const streams = 8;
@@ -1106,7 +1160,7 @@ it("ApiCacheBackend retries a coalesced del-pattern under a caller's own credent
       if (authorization === "Bearer revoked-token") {
         return new Response("credential revoked", { status: 401 });
       }
-      return Response.json({ deleted: 1 });
+      return Response.json({ status: "deleted", deleted_count: 1 });
     },
     async ({ deleteFromStream, requests, sent }) => {
       const first = deleteFromStream("stream-token-0", written);
@@ -1154,7 +1208,7 @@ it("ApiCacheBackend prefers the request runtime token over the host fallback", a
   installMockFetch(
     ((_input: RequestInfo | URL, init?: RequestInit) => {
       authorization = new Headers(init?.headers).get("authorization") ?? "";
-      return Promise.resolve(Response.json({ deleted: 1 }));
+      return Promise.resolve(Response.json({ status: "deleted", deleted_count: 1 }));
     }) as typeof fetch,
   );
 
@@ -1192,7 +1246,7 @@ it("ApiCacheBackend refuses host fallback for an uncredentialed tenant context",
   };
   installMockFetch(() => {
     fetchCalls += 1;
-    return Promise.resolve(Response.json({ deleted: 1 }));
+    return Promise.resolve(Response.json({ status: "deleted", deleted_count: 1 }));
   });
 
   try {
@@ -1222,10 +1276,70 @@ it("ApiCacheBackend getBatch returns nulls without auth context", async () => {
   assertEquals(results.get("k2"), null, "missing keys must map to null, not undefined");
 });
 
-it("ApiCacheBackend getBatch falls back to individual gets when the batch endpoint fails", async () => {
+it("ApiCacheBackend getBatch reads entries in one request and maps misses to null", async () => {
   const { ApiCacheBackend } = await importBackend();
   const globals = globalThis as Record<string, unknown>;
   const originalAdapter = globals.__vf_multi_project_adapter;
+  const requests: Array<{ method: string; path: string; body: unknown }> = [];
+
+  globals.__vf_multi_project_adapter = {
+    getCurrentRequestContext: () => ({
+      token: "request-token",
+      projectSlug: "project-slug",
+    }),
+  };
+  installMockFetch(
+    ((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(String(input));
+      requests.push({
+        method: init?.method ?? "GET",
+        path: url.pathname,
+        body: init?.body ? JSON.parse(String(init.body)) : null,
+      });
+      return Promise.resolve(Response.json({
+        data: [
+          {
+            project_id: "project-id",
+            key: "k1",
+            found: true,
+            value: "v-k1",
+            expires_at: "2026-10-08T00:05:00Z",
+          },
+          { project_id: "project-id", key: "k2", found: false, value: null, expires_at: null },
+        ],
+      }));
+    }) as typeof fetch,
+  );
+
+  try {
+    const cache = new ApiCacheBackend({
+      apiBaseUrl: "https://93.184.216.34",
+      apiToken: "test-explicit-token",
+      circuitBreakerName: "api-cache-read-entries-test",
+    });
+
+    const results = await cache.getBatch(["k1", "k2", "k1"]);
+
+    assertEquals(results.size, 2, "getBatch must return one entry per requested key");
+    assertEquals(results.get("k1"), "v-k1");
+    assertEquals(results.get("k2"), null, "a found=false item must read as a miss");
+    assertEquals(requests, [{
+      method: "POST",
+      path: "/projects/project-slug/cache/entries/read",
+      body: { keys: ["k1", "k2"] },
+    }]);
+  } finally {
+    if (originalAdapter === undefined) delete globals.__vf_multi_project_adapter;
+    else globals.__vf_multi_project_adapter = originalAdapter;
+    restoreMockFetch();
+  }
+});
+
+it("ApiCacheBackend getBatch treats a failed batch read as misses without per-key fallback", async () => {
+  const { ApiCacheBackend } = await importBackend();
+  const globals = globalThis as Record<string, unknown>;
+  const originalAdapter = globals.__vf_multi_project_adapter;
+  const paths: string[] = [];
 
   globals.__vf_multi_project_adapter = {
     getCurrentRequestContext: () => ({
@@ -1235,11 +1349,8 @@ it("ApiCacheBackend getBatch falls back to individual gets when the batch endpoi
   };
   installMockFetch(
     ((input: RequestInfo | URL) => {
-      const url = new URL(String(input));
-      if (url.pathname.endsWith("/get-batch")) {
-        return Promise.resolve(new Response("batch unavailable", { status: 503 }));
-      }
-      return Promise.resolve(Response.json({ value: `v-${url.searchParams.get("key")}` }));
+      paths.push(new URL(String(input)).pathname);
+      return Promise.resolve(new Response("batch unavailable", { status: 503 }));
     }) as typeof fetch,
   );
 
@@ -1247,14 +1358,158 @@ it("ApiCacheBackend getBatch falls back to individual gets when the batch endpoi
     const cache = new ApiCacheBackend({
       apiBaseUrl: "https://93.184.216.34",
       apiToken: "test-explicit-token",
-      circuitBreakerName: "api-cache-get-batch-fallback-test",
+      circuitBreakerName: "api-cache-read-entries-failure-test",
     });
 
     const results = await cache.getBatch(["k1", "k2"]);
 
     assertEquals(results.size, 2, "getBatch must return one entry per requested key");
-    assertEquals(results.get("k1"), "v-k1", "a failed batch must fall back to individual gets");
-    assertEquals(results.get("k2"), "v-k2", "a failed batch must fall back to individual gets");
+    assertEquals(results.get("k1"), null);
+    assertEquals(results.get("k2"), null);
+    assertEquals(paths, ["/projects/project-slug/cache/entries/read"]);
+  } finally {
+    if (originalAdapter === undefined) delete globals.__vf_multi_project_adapter;
+    else globals.__vf_multi_project_adapter = originalAdapter;
+    restoreMockFetch();
+  }
+});
+
+it("ApiCacheBackend writes, reads and deletes entries on the cache entry routes", async () => {
+  const { ApiCacheBackend } = await importBackend();
+  const globals = globalThis as Record<string, unknown>;
+  const originalAdapter = globals.__vf_multi_project_adapter;
+  const requests: Array<{ method: string; url: string; body: unknown }> = [];
+
+  globals.__vf_multi_project_adapter = {
+    getCurrentRequestContext: () => ({
+      token: "request-token",
+      projectSlug: "project-slug",
+    }),
+  };
+  installMockFetch(
+    ((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = init?.method ?? "GET";
+      requests.push({ method, url, body: init?.body ? JSON.parse(String(init.body)) : null });
+      if (method === "GET") {
+        return Promise.resolve(Response.json(
+          url.endsWith("/missing")
+            ? { project_id: "p", key: "missing", found: false, value: null, expires_at: null }
+            : {
+              project_id: "p",
+              key: "dir/a:b.c",
+              found: true,
+              value: "hit",
+              expires_at: "2026-10-08T00:05:00Z",
+            },
+        ));
+      }
+      if (method === "DELETE" && url.includes("?pattern=")) {
+        return Promise.resolve(
+          Response.json({ pattern: "dir/*", status: "deleted", deleted_count: 4 }),
+        );
+      }
+      if (method === "DELETE") {
+        return Promise.resolve(Response.json({ key: "dir/a:b.c", status: "deleted" }));
+      }
+      return Promise.resolve(Response.json({ key: "dir/a:b.c", expires_at: null }));
+    }) as typeof fetch,
+  );
+
+  try {
+    const cache = new ApiCacheBackend({
+      apiBaseUrl: "https://93.184.216.34",
+      apiToken: "test-explicit-token",
+      circuitBreakerName: "api-cache-entry-routes-test",
+    });
+    const base = "https://93.184.216.34/projects/project-slug/cache";
+
+    assertEquals(await cache.get("dir/a:b.c"), "hit");
+    assertEquals(await cache.get("missing"), null, "a found=false entry must read as a miss");
+    await cache.set("dir/a:b.c", "value", 90.5);
+    await cache.set("dir/a:b.c", "value", 7 * 86_400);
+    await cache.setBatch([
+      { key: "one", value: "first" },
+      { key: "two", value: "2", ttl: 60 },
+      { key: "one", value: "last", ttl: 30 },
+    ]);
+    await cache.del("dir/a:b.c");
+    assertEquals(await cache.delByPattern("dir/*"), 4);
+
+    assertEquals(requests, [
+      { method: "GET", url: `${base}/entries/dir%2Fa%3Ab.c`, body: null },
+      { method: "GET", url: `${base}/entries/missing`, body: null },
+      {
+        method: "PUT",
+        url: `${base}/entries/dir%2Fa%3Ab.c`,
+        body: { value: "value", ttl_seconds: 91 },
+      },
+      {
+        method: "PUT",
+        url: `${base}/entries/dir%2Fa%3Ab.c`,
+        body: { value: "value", ttl_seconds: 86_400 },
+      },
+      {
+        method: "POST",
+        url: `${base}/entries/write`,
+        body: {
+          entries: [
+            { key: "two", value: "2", ttl_seconds: 60 },
+            { key: "one", value: "last", ttl_seconds: 30 },
+          ],
+        },
+      },
+      { method: "DELETE", url: `${base}/entries/dir%2Fa%3Ab.c`, body: null },
+      { method: "DELETE", url: `${base}/entries?pattern=dir%2F*`, body: null },
+    ]);
+  } finally {
+    if (originalAdapter === undefined) delete globals.__vf_multi_project_adapter;
+    else globals.__vf_multi_project_adapter = originalAdapter;
+    restoreMockFetch();
+  }
+});
+
+it("ApiCacheBackend expires an entry written with a non-positive TTL instead of storing it", async () => {
+  const { ApiCacheBackend } = await importBackend();
+  const globals = globalThis as Record<string, unknown>;
+  const originalAdapter = globals.__vf_multi_project_adapter;
+  const requests: Array<{ method: string; path: string; body: unknown }> = [];
+
+  globals.__vf_multi_project_adapter = {
+    getCurrentRequestContext: () => ({
+      token: "request-token",
+      projectSlug: "project-slug",
+    }),
+  };
+  installMockFetch(
+    ((input: RequestInfo | URL, init?: RequestInit) => {
+      requests.push({
+        method: init?.method ?? "GET",
+        path: new URL(String(input)).pathname,
+        body: init?.body ? JSON.parse(String(init.body)) : null,
+      });
+      return Promise.resolve(Response.json({ key: "k", status: "deleted" }));
+    }) as typeof fetch,
+  );
+
+  try {
+    const cache = new ApiCacheBackend({
+      apiBaseUrl: "https://93.184.216.34",
+      apiToken: "test-explicit-token",
+      circuitBreakerName: "api-cache-non-positive-ttl-test",
+    });
+
+    await cache.set("k", "v", 0);
+    await cache.set("nan", "v", Number.NaN);
+    await cache.setBatch([
+      { key: "gone", value: "v", ttl: -1 },
+      { key: "bad", value: "v", ttl: Number.POSITIVE_INFINITY },
+    ]);
+
+    assertEquals(requests, [
+      { method: "DELETE", path: "/projects/project-slug/cache/entries/k", body: null },
+      { method: "DELETE", path: "/projects/project-slug/cache/entries/gone", body: null },
+    ]);
   } finally {
     if (originalAdapter === undefined) delete globals.__vf_multi_project_adapter;
     else globals.__vf_multi_project_adapter = originalAdapter;
@@ -1333,10 +1588,11 @@ it("ApiCacheBackend safely maps query-aware keys without logging key-derived dat
         url,
         body: init?.body ? JSON.parse(String(init.body)) : null,
       });
-      const response = url.includes("/get-batch")
-        ? { values: {} }
-        : url.includes("/get?")
-        ? { value: null }
+      const method = init?.method ?? "GET";
+      const response = url.includes("/entries/read")
+        ? { data: [] }
+        : method === "GET"
+        ? { found: false, value: null, expires_at: null }
         : {};
       return Promise.resolve(
         new Response(JSON.stringify(response), {
@@ -1379,12 +1635,14 @@ it("ApiCacheBackend safely maps query-aware keys without logging key-derived dat
     const setBatchEntries = setBatchRequest.body?.entries as Array<{ key: string }>;
     assertExists(getBatchKeys[0]);
     assertExists(setBatchEntries[0]);
+    const keyFromPath = (url: string) =>
+      decodeURIComponent(new URL(url).pathname.split("/cache/entries/")[1] ?? "");
     const outboundKeys = [
-      new URL(getRequest.url).searchParams.get("key"),
+      keyFromPath(getRequest.url),
       getBatchKeys[0],
-      setRequest.body?.key,
+      keyFromPath(setRequest.url),
       setBatchEntries[0].key,
-      delRequest.body?.key,
+      keyFromPath(delRequest.url),
     ];
     assertEquals(outboundKeys.length, 5);
     for (const key of outboundKeys) {
@@ -1453,7 +1711,9 @@ it("ApiCacheBackend bounds long keys and refuses malformed delete patterns", asy
     assertEquals(requests.length, 1);
     const setRequest = requests[0];
     assertExists(setRequest);
-    const outboundKey = setRequest.body?.key as string;
+    const outboundKey = decodeURIComponent(
+      new URL(setRequest.url).pathname.split("/cache/entries/")[1] ?? "",
+    );
     assertEquals(isValidCacheKey(outboundKey), true);
     assertMatch(outboundKey, API_CACHE_KEY_PATTERN);
     assertEquals(outboundKey.length <= API_CACHE_KEY_MAX_LENGTH, true);
@@ -1524,16 +1784,16 @@ it("ApiCacheBackend URL-encodes project refs and omits cache keys from span URLs
     const encodedProjectRef = encodeURIComponent(projectRef);
     assertEquals(
       capturedUrl,
-      `https://93.184.216.34/projects/${encodedProjectRef}/cache/get?key=prefix%3Asecret-cache-key`,
+      `https://93.184.216.34/projects/${encodedProjectRef}/cache/entries/prefix%3Asecret-cache-key`,
     );
 
     const span = records.find((record) => record.name === "http.client.fetch");
     assertExists(span);
     assertEquals(
       span.attributes["http.url"],
-      `https://93.184.216.34/projects/${encodedProjectRef}/cache/get`,
+      `https://93.184.216.34/projects/${encodedProjectRef}/cache/entries/{key}`,
     );
-    assertEquals(span.attributes["cache.operation"], "/get");
+    assertEquals(span.attributes["cache.operation"], "/entries/{key}");
     assertEquals(String(span.attributes["http.url"]).includes("secret-cache-key"), false);
     assertEquals(String(span.attributes["cache.operation"]).includes("secret-cache-key"), false);
   } finally {
@@ -1569,7 +1829,7 @@ it("ApiCacheBackend uses the credential paired with an explicit endpoint", async
       capturedUrls.push(String(input));
       capturedAuthorizations.push(new Headers(init?.headers).get("authorization") ?? "");
       return Promise.resolve(
-        new Response(JSON.stringify({ deleted: 3 }), {
+        new Response(JSON.stringify({ pattern: "agent:*", status: "deleted", deleted_count: 3 }), {
           status: 200,
           headers: { "content-type": "application/json" },
         }),
@@ -1596,7 +1856,7 @@ it("ApiCacheBackend uses the credential paired with an explicit endpoint", async
     assertEquals(requestScopedDeleted, 3);
     assertEquals(
       capturedUrls[0],
-      "https://93.184.216.34/projects/project-123/cache/del-pattern",
+      "https://93.184.216.34/projects/project-123/cache/entries?pattern=agent%3A*",
     );
 
     const forgedTrustDeleted = await cache.delByPattern("agent:*");
@@ -2198,7 +2458,7 @@ it(
       ((input: RequestInfo | URL) => {
         capturedUrls.push(String(input));
         return Promise.resolve(
-          Response.json({ deleted: 1 }),
+          Response.json({ status: "deleted", deleted_count: 1 }),
         );
       }) as typeof fetch,
     );
@@ -2239,7 +2499,7 @@ it({ name: "ApiCacheBackend selects the endpoint paired with credential provenan
   installMockFetch(
     ((input: RequestInfo | URL) => {
       capturedUrls.push(String(input));
-      return Promise.resolve(Response.json({ deleted: 1 }));
+      return Promise.resolve(Response.json({ status: "deleted", deleted_count: 1 }));
     }) as typeof fetch,
   );
 
@@ -2254,7 +2514,7 @@ it({ name: "ApiCacheBackend selects the endpoint paired with credential provenan
     });
     assertEquals(await cache.delByPattern("agent:*"), 1);
     assertEquals(capturedUrls, [
-      "https://93.184.216.35/projects/project-123/cache/del-pattern",
+      "https://93.184.216.35/projects/project-123/cache/entries?pattern=agent%3A*",
     ]);
 
     cache.cacheAuthority = () => ({
@@ -2263,7 +2523,10 @@ it({ name: "ApiCacheBackend selects the endpoint paired with credential provenan
       tokenSource: "env-file",
     });
     assertEquals(await cache.delByPattern("agent:*"), 1);
-    assertEquals(capturedUrls[1], "https://93.184.216.35/projects/project-123/cache/del-pattern");
+    assertEquals(
+      capturedUrls[1],
+      "https://93.184.216.35/projects/project-123/cache/entries?pattern=agent%3A*",
+    );
 
     cache.cacheAuthority = () => ({
       token: "request-token",
@@ -2271,7 +2534,10 @@ it({ name: "ApiCacheBackend selects the endpoint paired with credential provenan
       tokenSource: "request",
     });
     assertEquals(await cache.delByPattern("agent:*"), 1);
-    assertEquals(capturedUrls[2], "https://93.184.216.35/projects/project-123/cache/del-pattern");
+    assertEquals(
+      capturedUrls[2],
+      "https://93.184.216.35/projects/project-123/cache/entries?pattern=agent%3A*",
+    );
 
     cache.cacheAuthority = () => ({
       token: "verified-control-plane-token",
@@ -2281,7 +2547,7 @@ it({ name: "ApiCacheBackend selects the endpoint paired with credential provenan
     assertEquals(await cache.delByPattern("agent:*"), 1);
     assertEquals(
       capturedUrls[3],
-      "https://93.184.216.36/api/projects/project-123/cache/del-pattern",
+      "https://93.184.216.36/api/projects/project-123/cache/entries?pattern=agent%3A*",
     );
   } finally {
     restoreMockFetch();
@@ -2303,7 +2569,7 @@ it({ name: "ApiCacheBackend honors API_URL for ambient credentials" }, async () 
   installMockFetch(
     ((input: RequestInfo | URL) => {
       capturedUrls.push(String(input));
-      return Promise.resolve(Response.json({ deleted: 1 }));
+      return Promise.resolve(Response.json({ status: "deleted", deleted_count: 1 }));
     }) as typeof fetch,
   );
 
@@ -2319,7 +2585,7 @@ it({ name: "ApiCacheBackend honors API_URL for ambient credentials" }, async () 
 
     assertEquals(await cache.delByPattern("agent:*"), 1);
     assertEquals(capturedUrls, [
-      "https://93.184.216.36/api/projects/project-123/cache/del-pattern",
+      "https://93.184.216.36/api/projects/project-123/cache/entries?pattern=agent%3A*",
     ]);
   } finally {
     restoreMockFetch();
@@ -2398,7 +2664,7 @@ it("ApiCacheBackend requires HTTPS only for host-private credential requests", a
       const urls: string[] = [];
       installMockFetch((input) => {
         urls.push(String(input));
-        return Promise.resolve(Response.json({ deleted: 1 }));
+        return Promise.resolve(Response.json({ status: "deleted", deleted_count: 1 }));
       });
       const cache = new ApiCacheBackend({
         ...(explicit ? { apiBaseUrl: "https://93.184.216.35/api", apiToken: "test-token" } : {}),
@@ -2434,7 +2700,7 @@ it(
     installMockFetch(
       ((input: RequestInfo | URL) => {
         capturedUrls.push(String(input));
-        return Promise.resolve(Response.json({ deleted: 1 }));
+        return Promise.resolve(Response.json({ status: "deleted", deleted_count: 1 }));
       }) as typeof fetch,
     );
 
@@ -2450,7 +2716,7 @@ it(
 
       assertEquals(await cache.delByPattern("agent:*"), 1);
       assertEquals(capturedUrls, [
-        "https://93.184.216.36/api/projects/project-123/cache/del-pattern",
+        "https://93.184.216.36/api/projects/project-123/cache/entries?pattern=agent%3A*",
       ]);
     } finally {
       restoreMockFetch();
