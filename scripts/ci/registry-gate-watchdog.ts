@@ -190,16 +190,27 @@ export async function recoverGate(
     now(),
   );
   if (!decision.recover || options.dryRun) return decision.message;
-  // Re-read both the target and lock holders immediately before mutation.
+  const remembered = candidate;
+  const gate = remembered.jobs.find((job) => job.name === GATE)!;
+  // Persist intent first, then re-read holders and the target last, so a gate
+  // that starts or a holder that appears during the write is never cancelled.
+  await client.remember(remembered);
+  const holders = await client.others(remembered.run);
   candidate = await client.inspect(id);
-  decision = decideRecovery(
-    candidate,
-    await client.others(candidate.run),
-    now(),
-  );
-  if (!decision.recover) return decision.message;
-  const gate = candidate.jobs.find((job) => job.name === GATE)!;
-  await client.remember(candidate);
+  decision = decideRecovery(candidate, holders, now());
+  const sameGate = candidate.jobs.find((job) => job.name === GATE);
+  if (
+    !decision.recover ||
+    candidate.run.run_attempt !== remembered.run.run_attempt ||
+    candidate.run.head_sha !== remembered.run.head_sha ||
+    sameGate?.id !== gate.id
+  ) {
+    const message = `Run ${id}: ${
+      decision.recover ? "gate changed before cancellation" : decision.message
+    }; recovery intent closed without cancelling`;
+    await client.comment(candidate.run, message);
+    return message;
+  }
   await client.cancel(id);
   const cancelled = await client.completed(id);
   const cancelledGate = cancelled.find((job) => job.id === gate.id);

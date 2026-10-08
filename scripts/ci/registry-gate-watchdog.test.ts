@@ -199,7 +199,70 @@ describe("registry gate watchdog", () => {
         }],
       });
     await recoverGate(api, run.id, { dryRun: false, now: () => NOW });
-    assertEquals(calls, []);
+    assertEquals(calls, ["intent", "comment"]);
+  });
+  it("closes intent without cancelling if the gate starts while intent is written", async () => {
+    const { api, calls } = client();
+    let started = false;
+    const remember = api.remember;
+    api.remember = async (candidate) => {
+      await remember(candidate);
+      started = true;
+    };
+    api.inspect = () =>
+      Promise.resolve({
+        run,
+        jobs: started
+          ? [prerelease, {
+            ...gate,
+            status: "in_progress",
+            started_at: gate.created_at,
+            steps: [{ name: "Trigger server deploy", conclusion: null }],
+          }]
+          : jobs,
+      });
+    const message = await recoverGate(api, run.id, {
+      dryRun: false,
+      now: () => NOW,
+    });
+    assertEquals(message.includes("recovery intent closed"), true);
+    assertEquals(calls, ["intent", "comment"]);
+  });
+  it("closes intent without cancelling if a holder appears while intent is written", async () => {
+    const { api, calls } = client();
+    let written = false;
+    const remember = api.remember;
+    api.remember = async (candidate) => {
+      await remember(candidate);
+      written = true;
+    };
+    api.others = () =>
+      Promise.resolve(
+        written
+          ? [{
+            run: { ...other, head_branch: "feature" },
+            jobs: [{ ...gate, status: "in_progress" }],
+          }]
+          : [],
+      );
+    await recoverGate(api, run.id, { dryRun: false, now: () => NOW });
+    assertEquals(calls, ["intent", "comment"]);
+  });
+  it("closes intent without cancelling if a new attempt replaces the run while intent is written", async () => {
+    const { api, calls } = client();
+    let written = false;
+    const remember = api.remember;
+    api.remember = async (candidate) => {
+      await remember(candidate);
+      written = true;
+    };
+    api.inspect = () =>
+      Promise.resolve({
+        run: written ? { ...run, run_attempt: 2 } : run,
+        jobs: written ? [prerelease, { ...gate, id: gate.id + 1 }] : jobs,
+      });
+    await recoverGate(api, run.id, { dryRun: false, now: () => NOW });
+    assertEquals(calls, ["intent", "comment"]);
   });
   it("queues the rerun behind a holder appearing after verified cancellation", async () => {
     for (const head_branch of ["main", "feature"]) {
