@@ -446,6 +446,51 @@ Deno.test("finalized tool input adopts matching final-step output without duplic
   );
 });
 
+Deno.test("partially streamed tool input recovers complete arguments in terminal and replay", () => {
+  const finalStep = {
+    toolCalls: [{ toolCallId: "c", toolName: "bash", input: { command: "x" } }],
+    toolResults: [{ toolCallId: "c", toolName: "bash", output: "ok" }],
+  };
+  const state = buildFinalizedMessageState({
+    responseMessage: {
+      id: "m",
+      role: "assistant",
+      parts: [{
+        type: "tool-bash",
+        toolCallId: "c",
+        input: { command: "partial" },
+        state: "input-streaming",
+      }],
+    },
+    isAborted: false,
+    finalStep,
+    incompleteToolCallsPartErrorText: "tool error",
+  });
+  assertEquals(state.sanitizedFinalizedMessage.parts, [{
+    type: "tool-bash",
+    toolCallId: "c",
+    input: { command: "x" },
+    state: "output-available",
+    output: "ok",
+  }]);
+  assertEquals(state.hasIncompleteFinalizedToolParts, false);
+  const mirrored = createMirroredToolChunkState();
+  mirrored.startedToolCallIds.add("c");
+  assertEquals(
+    buildFinalizedMessageFallbackChunks({
+      ...state,
+      finalStep,
+      mirroredToolChunkState: mirrored,
+      capturedMessageId: "m",
+    }),
+    [{ type: "tool-input-available", toolCallId: "c", toolName: "bash", input: { command: "x" } }, {
+      type: "tool-output-available",
+      toolCallId: "c",
+      output: "ok",
+    }],
+  );
+});
+
 Deno.test("partial text suffix precedes its following final-step tool in terminal and replay", () => {
   const finalStep = {
     response: {

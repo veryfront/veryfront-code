@@ -433,6 +433,78 @@ describe("agent/hosted-chat-finalization", () => {
       assertEquals(calls.slice(-3), ["flush", "terminal:completed:", "cleanup"]);
     });
   }
+  for (const toolState of ["input-streaming", "pending"] as const) {
+    it(`completes ${toolState} tool input with coherent terminal and replay`, async () => {
+      const calls: string[] = [];
+      const terminalStates: HostedLifecycleTerminalState[] = [];
+      const chunks: ChatUiMessageChunk<MessageMetadata>[] = [];
+      const mirrored = createMirroredToolChunkState();
+      mirrored.startedToolCallIds.add("c");
+      await finalizeHostedChatRun({
+        kind: "response",
+        responseMessage: createResponseMessage({
+          parts: [{
+            type: "tool-bash",
+            toolCallId: "c",
+            state: toolState,
+            input: { command: "partial" },
+          }],
+        }),
+        isAborted: false,
+        streamResult: createStreamResult({
+          response: {
+            messages: [{
+              role: "assistant",
+              content: [
+                { type: "tool-call", toolCallId: "c", toolName: "bash", input: { command: "x" } },
+                { type: "tool-result", toolCallId: "c", toolName: "bash", output: "ok" },
+              ],
+            }],
+          },
+        }),
+        lifecycleAdapter: createLifecycleAdapter({
+          calls,
+          terminalStates,
+          mirror: createDurableRunMirror({ calls, chunks }),
+        }),
+        mirroredToolChunkState: mirrored,
+        capturedMessageId: "assistant-message-1",
+        incompleteToolCallsPartErrorText: "Tool call did not complete",
+        cleanup: async () => {
+          calls.push("cleanup");
+        },
+        streamError: null,
+      });
+      assertEquals(terminalStates[0]!.status, "completed");
+      const parts = (terminalStates[0]!.output as ChatUiMessage).parts;
+      assertEquals(parts, [{
+        type: "tool-bash",
+        toolCallId: "c",
+        state: "output-available",
+        input: { command: "x" },
+        output: "ok",
+      }]);
+      assertEquals(chunks, [{
+        type: "tool-input-available",
+        toolCallId: "c",
+        toolName: "bash",
+        input: { command: "x" },
+      }, { type: "tool-output-available", toolCallId: "c", output: "ok" }]);
+      const projection = createChatStreamMessageProjection("assistant-message-1");
+      projection.append({ type: "tool-input-start", toolCallId: "c", toolName: "bash" });
+      projection.append({
+        type: "tool-input-delta",
+        toolCallId: "c",
+        inputTextDelta: '{"command":"partial',
+      });
+      for (const chunk of chunks) {
+        if (chunk.type === "finish") throw new Error("Unexpected finish in fallback content");
+        projection.append(chunk);
+      }
+      assertEquals<unknown>(projection.snapshot().parts, [{ ...parts[0], toolName: "bash" }]);
+      assertEquals(calls.slice(-3), ["flush", "terminal:completed:", "cleanup"]);
+    });
+  }
   it("appends response fallback chunks, flushes, dispatches completed, then cleanup", async () => {
     const calls: string[] = [];
     const terminalStates: HostedLifecycleTerminalState[] = [];

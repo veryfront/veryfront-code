@@ -101,7 +101,14 @@ export function buildFinalizedMessageState(
       fallback.state === "output-available"
     );
     return completed && isToolUiPart(completed) && completed.state === "output-available"
-      ? { ...part, state: "output-available" as const, output: completed.output }
+      ? {
+        ...part,
+        input: part.state === "input-streaming" || part.state === "pending"
+          ? completed.input
+          : part.input,
+        state: "output-available" as const,
+        output: completed.output,
+      }
       : part;
   });
   const unmatchedPersistedReasoningParts = persistedMessage.parts.filter(
