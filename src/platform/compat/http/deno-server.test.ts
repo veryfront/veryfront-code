@@ -1,8 +1,103 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assert, assertEquals, assertNotEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import {
+  assert,
+  assertEquals,
+  assertNotEquals,
+  assertRejects,
+  assertStrictEquals,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { isDeno } from "#veryfront/platform/compat/runtime.ts";
+import { ProxyRequestDrainTracker } from "#veryfront/proxy/request-drain.ts";
+import { getRequestTransportLifetime } from "#veryfront/platform/adapters/runtime/shared/request-peer.ts";
 import { DenoHttpServer } from "./deno-server.ts";
+
+function createDeferred<T>(): {
+  promise: Promise<T>;
+  resolve: (value: T | PromiseLike<T>) => void;
+  reject: (reason?: unknown) => void;
+} {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
+}
+
+function withTimeout<T>(
+  promise: Promise<T>,
+  milliseconds: number,
+  detail: string,
+): Promise<T> {
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+  return Promise.race([
+    promise,
+    new Promise<never>((_, reject) => {
+      timeoutId = setTimeout(() => reject(new Error(detail)), milliseconds);
+    }),
+  ]).finally(() => {
+    if (timeoutId !== undefined) clearTimeout(timeoutId);
+  });
+}
+
+async function readUntilHeaders(
+  conn: Deno.Conn,
+): Promise<{ bytesRead: number; bodyPayloadBytesRead: number }> {
+  const chunks: Uint8Array[] = [];
+  const buffer = new Uint8Array(16 * 1024);
+  let bytesRead = 0;
+
+  while (true) {
+    const read = await conn.read(buffer);
+    if (read === null) throw new Error("connection closed before response headers");
+    const chunk = buffer.slice(0, read);
+    chunks.push(chunk);
+    bytesRead += read;
+    const combined = concatChunks(chunks);
+    const headerEnd = findHeaderEnd(combined);
+    if (headerEnd !== -1) {
+      return {
+        bytesRead,
+        bodyPayloadBytesRead: countPayloadBytes(combined.slice(headerEnd + 4)),
+      };
+    }
+  }
+}
+
+function findHeaderEnd(bytes: Uint8Array): number {
+  for (let index = 0; index <= bytes.byteLength - 4; index++) {
+    if (
+      bytes[index] === 13 &&
+      bytes[index + 1] === 10 &&
+      bytes[index + 2] === 13 &&
+      bytes[index + 3] === 10
+    ) {
+      return index;
+    }
+  }
+  return -1;
+}
+
+function countPayloadBytes(bytes: Uint8Array): number {
+  let count = 0;
+  for (const byte of bytes) {
+    if (byte === 97) count++;
+  }
+  return count;
+}
+
+function concatChunks(chunks: Uint8Array[]): Uint8Array {
+  const total = chunks.reduce((sum, chunk) => sum + chunk.byteLength, 0);
+  const combined = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    combined.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return combined;
+}
 
 describe("DenoHttpServer", () => {
   describe("serve", () => {
@@ -34,6 +129,185 @@ describe("DenoHttpServer", () => {
       }
 
       await servePromise;
+    });
+
+    it("keeps proxy drain tracking until a slow Deno client receives the closed source body", async () => {
+      if (!isDeno) return;
+      const requestId = "slow-deno-native-finish";
+      const tracker = new ProxyRequestDrainTracker();
+      const handlerReturned = createDeferred<void>();
+      const sourceClosed = createDeferred<void>();
+      const transportFinished = createDeferred<void>();
+      void transportFinished.promise.catch(() => {});
+      const bodyChunk = new Uint8Array(8 * 1024 * 1024).fill(97);
+      let resolvePort!: (port: number) => void;
+      const listening = new Promise<number>((resolve) => {
+        resolvePort = resolve;
+      });
+      let request: Request | undefined;
+      let lifetime: ReturnType<typeof getRequestTransportLifetime>;
+      let sent = false;
+      const server = new DenoHttpServer();
+      const servePromise = server.serve((incoming) => {
+        request = incoming;
+        tracker.start(requestId, incoming.method, new URL(incoming.url).pathname);
+        lifetime = getRequestTransportLifetime(incoming);
+        void lifetime?.completed?.then(
+          () => transportFinished.resolve(),
+          transportFinished.reject,
+        );
+        const response = new Response(
+          new ReadableStream<Uint8Array>({
+            pull(controller) {
+              if (sent) return;
+              sent = true;
+              controller.enqueue(bodyChunk);
+              controller.close();
+              sourceClosed.resolve();
+            },
+          }),
+        );
+        const tracked = tracker.completeOnResponseEnd(requestId, incoming, response);
+        handlerReturned.resolve();
+        return tracked;
+      }, {
+        hostname: "127.0.0.1",
+        port: 0,
+        onListen: ({ port }) => resolvePort(port),
+      });
+      const port = await listening;
+      const conn = await Deno.connect({ hostname: "127.0.0.1", port });
+      const encoder = new TextEncoder();
+      await conn.write(
+        encoder.encode(
+          "GET /slow-native-finish HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n",
+        ),
+      );
+
+      try {
+        await handlerReturned.promise;
+        assertStrictEquals(lifetime?.signal, request?.signal);
+        const headerRead = await readUntilHeaders(conn);
+        await sourceClosed.promise;
+        let completedBeforeClientDrain = false;
+        void transportFinished.promise.then(() => {
+          completedBeforeClientDrain = true;
+        });
+        await Promise.resolve();
+
+        assertEquals(headerRead.bytesRead > 0, true);
+        assertEquals(
+          tracker.getInFlightCount(),
+          1,
+          "source close must not release proxy tracking before Deno native finish",
+        );
+        assertEquals(completedBeforeClientDrain, false);
+
+        let bytes = headerRead.bodyPayloadBytesRead;
+        const buffer = new Uint8Array(64 * 1024);
+        while (true) {
+          const read = await conn.read(buffer);
+          if (read === null) break;
+          bytes += countPayloadBytes(buffer.slice(0, read));
+        }
+
+        assertEquals(bytes, bodyChunk.byteLength);
+        await withTimeout(transportFinished.promise, 1_000, "native Deno response did not finish");
+        assertEquals(await tracker.waitForDrain(1_000, 5), true);
+        assertEquals(tracker.getInFlightCount(), 0);
+        assertEquals(request && getRequestTransportLifetime(request), undefined);
+      } finally {
+        try {
+          conn.close();
+        } catch {
+          // The close-path assertion already has the evidence it needs.
+        }
+        await server.close();
+        await servePromise;
+      }
+    });
+
+    it("releases proxy drain tracking when a Deno client disconnects before the handler returns", async () => {
+      if (!isDeno) return;
+      const requestId = "deno-early-disconnect";
+      const tracker = new ProxyRequestDrainTracker();
+      const handlerStarted = createDeferred<void>();
+      const handlerReturned = createDeferred<void>();
+      const requestAborted = createDeferred<void>();
+      const transportFinished = createDeferred<"resolved" | "rejected">();
+      void transportFinished.promise.catch(() => {});
+      let resolvePort!: (port: number) => void;
+      const listening = new Promise<number>((resolve) => {
+        resolvePort = resolve;
+      });
+      let lifetime: ReturnType<typeof getRequestTransportLifetime>;
+      const server = new DenoHttpServer();
+      const servePromise = server.serve(async (incoming) => {
+        tracker.start(requestId, incoming.method, new URL(incoming.url).pathname);
+        lifetime = getRequestTransportLifetime(incoming);
+        if (lifetime?.signal.aborted) requestAborted.resolve();
+        else {
+          lifetime?.signal.addEventListener("abort", () => requestAborted.resolve(), {
+            once: true,
+          });
+        }
+        void lifetime?.completed?.then(
+          () => transportFinished.resolve("resolved"),
+          () => transportFinished.resolve("rejected"),
+        );
+        handlerStarted.resolve();
+        await requestAborted.promise;
+        const tracked = tracker.completeOnResponseEnd(
+          requestId,
+          incoming,
+          new Response(new ReadableStream<Uint8Array>()),
+        );
+        handlerReturned.resolve();
+        return tracked;
+      }, {
+        hostname: "127.0.0.1",
+        port: 0,
+        onListen: ({ port }) => resolvePort(port),
+      });
+      const port = await listening;
+      const conn = await Deno.connect({ hostname: "127.0.0.1", port });
+      const encoder = new TextEncoder();
+      await conn.write(
+        encoder.encode(
+          "GET /early-disconnect HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n",
+        ),
+      );
+
+      try {
+        await handlerStarted.promise;
+        conn.close();
+        await withTimeout(
+          requestAborted.promise,
+          1_000,
+          "Deno request did not abort after client disconnect",
+        );
+        await handlerReturned.promise;
+
+        assertEquals(lifetime?.signal.aborted, true);
+        assertEquals(
+          await withTimeout(
+            transportFinished.promise,
+            1_000,
+            "native Deno response completion did not settle after client disconnect",
+          ),
+          "resolved",
+        );
+        assertEquals(await tracker.waitForDrain(1_000, 5), true);
+        assertEquals(tracker.getInFlightCount(), 0);
+      } finally {
+        try {
+          conn.close();
+        } catch {
+          // The connection can already be closed by the early-disconnect path.
+        }
+        await server.close();
+        await servePromise;
+      }
     });
 
     it("returns native Response instances from handler", async () => {
