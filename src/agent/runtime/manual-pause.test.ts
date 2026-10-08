@@ -7,7 +7,9 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { defineSchema } from "#veryfront/schemas/index.ts";
 import type { ModelRuntime } from "#veryfront/provider/types.ts";
 import { tool } from "#veryfront/tool";
+import { markTrustedHostToolProvenance } from "#veryfront/tool/host-tool-provenance.ts";
 import { AgentRuntime } from "./index.ts";
+import { markRuntimeLocalTool } from "./local-tool.ts";
 import type { AgentConfig, Message } from "../types.ts";
 import type { RuntimeToolFilterConfig } from "./runtime-tool-config.ts";
 import { scriptedModel } from "./model-runtime.test-helpers.ts";
@@ -231,7 +233,7 @@ it("retains a trusted skill's delegation defaults across pause", async () => {
     system: "Load and delegate.",
     maxSteps: 4,
     tools: {
-      load_skill: tool({
+      load_skill: markRuntimeLocalTool(markTrustedHostToolProvenance(tool({
         id: "load_skill",
         description: "Load research skill",
         inputSchema: defineSchema((v) => v.object({}))(),
@@ -244,7 +246,7 @@ it("retains a trusted skill's delegation defaults across pause", async () => {
           thinking: false,
           maxSteps: 160,
         }),
-      }),
+      }))),
       invoke_agent: tool({
         id: "invoke_agent",
         description: "Delegate research",
@@ -282,10 +284,22 @@ it("retains a trusted skill's delegation defaults across pause", async () => {
     },
   });
   await new Response(await paused.stream(messages)).text();
+  const checkpointJson: unknown = JSON.parse(JSON.stringify(saved));
+  assertEquals(
+    checkpointJson !== null && typeof checkpointJson === "object" &&
+      "activeSkillDelegationOverrides" in checkpointJson
+      ? checkpointJson.activeSkillDelegationOverrides
+      : undefined,
+    {
+      model: "opus",
+      thinking: false,
+      maxSteps: 160,
+    },
+  );
   const resumed = new AgentRuntime("delegation", config, {
     preserveToolCatalog: true,
     manualPause: {
-      load: async () => saved,
+      load: async () => checkpointJson,
       acknowledge: async () => false,
     },
   });
