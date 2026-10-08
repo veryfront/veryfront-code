@@ -129,7 +129,6 @@ describe("putRemoteFileFromLocal", () => {
       await Deno.remove(tempDir, { recursive: true });
     }
   });
-
   it("rejects an empty explicit destination before reading or uploading", async () => {
     let writes = 0;
     const client = createMockClient({
