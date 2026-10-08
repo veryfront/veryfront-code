@@ -39,6 +39,27 @@ veryfront login
 through the built-in Kreuzberg document extension. Plain text, Markdown, JSON,
 CSV, TSV, and common code files are converted directly by the CLI.
 
+## Import an OKF bundle
+
+Preserve an existing bundle rather than converting its documents:
+
+```bash
+veryfront knowledge ingest --path ./bundle --all --okf-bundle
+```
+
+Bundle mode requires an explicit root and `--all`; it does not accept positional
+sources. Documents retain their metadata, Markdown, links and relative paths,
+including files in hidden directories. Document envelopes are validated before
+upload. Referenced computation, executor and attester companions are preserved
+with their relative paths, regardless of filename extension. Unreferenced viewer
+artifacts are excluded. The same rules apply to a bundle under `uploads/...`.
+
+Documents and companions must be valid UTF-8 because project file uploads store text. Invalid
+binary content produces an explicit ingestion failure rather than a corrupted
+file or a silent skip. Ordinary conversion retains its informational `source`
+field and records standardized provenance only when a usable absolute HTTP(S)
+source URL is available.
+
 ## Single-file examples
 
 ### Ingest a remote upload

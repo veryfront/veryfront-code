@@ -2052,3 +2052,25 @@ it("fails referenced OKF companion assets that are not valid UTF-8", async () =>
     await Deno.remove(root, { recursive: true });
   }
 });
+
+it("rejects invalid UTF-8 Markdown instead of replacing authored bytes", async () => {
+  const root = await makeTempDir({ prefix: "veryfront-okf-invalid-markdown-" });
+  const filePath = join(root, "topic.md");
+  try {
+    const prefix = new TextEncoder().encode("---\ntype: Topic\n---\n");
+    await Deno.writeFile(filePath, new Uint8Array([...prefix, 255]));
+    await assertRejects(
+      () =>
+        runKnowledgeParser({
+          filePath,
+          outputDir: join(root, "output"),
+          okfRelativePath: "topic.md",
+        }),
+      Error,
+      "UTF-8",
+    );
+    assertEquals([...await Deno.readFile(filePath)], [...prefix, 255]);
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});

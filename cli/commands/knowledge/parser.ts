@@ -224,29 +224,30 @@ function validateOkfCompanionRelativePath(path: string): string {
   return validateOkfBundleRelativePath(path);
 }
 
-function validateOkfCompanionUtf8(relativePath: string, bytes: Uint8Array): void {
+function decodeOkfUtf8(relativePath: string, bytes: Uint8Array): string {
   let decoded: string;
   try {
     decoded = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes);
   } catch {
     throw new Error(
-      `Referenced OKF companion asset is not valid UTF-8 and cannot be uploaded through text knowledge storage: ${relativePath}`,
+      `OKF bundle file is not valid UTF-8 and cannot be uploaded through text knowledge storage: ${relativePath}`,
     );
   }
 
   const reencoded = new TextEncoder().encode(decoded);
   if (reencoded.byteLength !== bytes.byteLength) {
     throw new Error(
-      `Referenced OKF companion asset is not stable UTF-8 text and cannot be uploaded through text knowledge storage: ${relativePath}`,
+      `OKF bundle file is not stable UTF-8 text and cannot be uploaded through text knowledge storage: ${relativePath}`,
     );
   }
   for (let index = 0; index < bytes.byteLength; index += 1) {
     if (bytes[index] !== reencoded[index]) {
       throw new Error(
-        `Referenced OKF companion asset is not stable UTF-8 text and cannot be uploaded through text knowledge storage: ${relativePath}`,
+        `OKF bundle file is not stable UTF-8 text and cannot be uploaded through text knowledge storage: ${relativePath}`,
       );
     }
   }
+  return decoded;
 }
 
 function okfDocumentKind(kind: "concept" | "index" | "log"):
@@ -271,7 +272,7 @@ async function preserveOkfCompanion(input: {
 }): Promise<KnowledgeParserResult> {
   const relativePath = validateOkfCompanionRelativePath(input.relativePath);
   const bytes = await Deno.readFile(input.filePath);
-  validateOkfCompanionUtf8(relativePath, bytes);
+  decodeOkfUtf8(relativePath, bytes);
   const outputPath = join(input.outputDir, ...relativePath.split("/"));
   await Deno.mkdir(dirname(outputPath), { recursive: true });
   await Deno.writeFile(outputPath, bytes);
@@ -298,7 +299,7 @@ async function preserveOkfDocument(input: {
   sourceReference?: string;
 }): Promise<KnowledgeParserResult> {
   const relativePath = validateOkfDocumentRelativePath(input.relativePath);
-  const source = await Deno.readTextFile(input.filePath);
+  const source = decodeOkfUtf8(relativePath, await Deno.readFile(input.filePath));
   const inspected = inspectOkfDocument(relativePath, source);
   if (!inspected.envelopeConforms) {
     const details = inspected.diagnostics.map((diagnostic) => diagnostic.message).join(" ");
