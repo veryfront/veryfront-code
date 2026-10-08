@@ -3313,6 +3313,10 @@ describe("internal-agents/run-stream", () => {
           name: "veryfront__invoke_agent",
           description: "Canonical platform delegation",
           parameters: { type: "object", properties: {} },
+        }, {
+          name: "invoke_agent",
+          description: "Caller-injected legacy delegation must not inherit canonical authority",
+          parameters: { type: "object", properties: {} },
         }],
         context: [],
         forwardedProps: {

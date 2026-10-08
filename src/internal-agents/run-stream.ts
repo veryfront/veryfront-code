@@ -897,15 +897,16 @@ function applyRuntimeToolAllowlist(
   // declared it; caller-injected entries in mergedTools cannot establish that
   // provenance. An empty allowlist stays deny-all, and explicit delegation
   // denial still strips the tool below.
-  const preservesConfigDelegation = hasVisibleSkills &&
-    allowedToolNames.size > 0 &&
-    (hasTrustedAgentToolDeclaration(agent, INVOKE_AGENT_TOOL_ID) ||
-      hasTrustedAgentToolDeclaration(agent, CANONICAL_INVOKE_AGENT_TOOL_ID));
+  const canPreserveConfigDelegation = hasVisibleSkills && allowedToolNames.size > 0;
+  const preservesLegacyDelegation = canPreserveConfigDelegation &&
+    hasTrustedAgentToolDeclaration(agent, INVOKE_AGENT_TOOL_ID);
+  const preservesCanonicalDelegation = canPreserveConfigDelegation &&
+    hasTrustedAgentToolDeclaration(agent, CANONICAL_INVOKE_AGENT_TOOL_ID);
   return Object.fromEntries(
     Object.entries(mergedTools).filter(([toolName, entry]) =>
       allowedToolNames.has(toolName) ||
-      (preservesConfigDelegation && toolName === INVOKE_AGENT_TOOL_ID) ||
-      (preservesConfigDelegation && toolName === CANONICAL_INVOKE_AGENT_TOOL_ID &&
+      (preservesLegacyDelegation && toolName === INVOKE_AGENT_TOOL_ID) ||
+      (preservesCanonicalDelegation && toolName === CANONICAL_INVOKE_AGENT_TOOL_ID &&
         hasTrustedHostToolProvenance(entry))
     ),
   );
