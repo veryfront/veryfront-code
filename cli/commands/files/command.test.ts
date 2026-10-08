@@ -6,6 +6,7 @@ import {
   assertThrows,
 } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { makeTempDir } from "#veryfront/testing/deno-compat.ts";
 import { VeryfrontError } from "veryfront/errors";
 import {
   buildRemoteFileUrl,
@@ -100,7 +101,7 @@ describe("putRemoteFileFromLocal", () => {
   it("reads a local file and uploads it to the project files API", async () => {
     let capturedPath = "";
     let capturedBody: unknown = null;
-    const tempDir = await Deno.makeTempDir();
+    const tempDir = await makeTempDir();
     const localPath = `${tempDir}/q1-report.md`;
 
     await Deno.writeTextFile(localPath, "# Q1 Report\n");
@@ -152,7 +153,7 @@ describe("putRemoteFileFromLocal", () => {
   });
 
   it("encodes the explicit destination as a single branch selector", async () => {
-    const tempDir = await Deno.makeTempDir();
+    const tempDir = await makeTempDir();
     const localPath = `${tempDir}/proof.md`;
     await Deno.writeTextFile(localPath, "Branch proof");
     let path = "";

@@ -420,7 +420,7 @@ describe("agent span error redaction", () => {
   });
 
   it("keeps an unmapped span error bounded when application code replaces Error", async () => {
-    const tracing = installRealTracing();
+    const tracing = installRealTracing({ synchronousExporter: true });
     const NativeError = Error;
     const previousError = Object.getOwnPropertyDescriptor(globalThis, "Error");
     try {
