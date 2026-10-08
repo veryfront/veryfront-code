@@ -648,39 +648,37 @@ Deno.test("mintChildRunEventWriterCapability applies a bounded timeout", async (
 
 Deno.test("mintChildRunEventWriterCapability keeps the first cancellation classification", async () => {
   const controller = new AbortController();
-  const callerAbort = setTimeout(
-    () => controller.abort("parent-writer-token-must-not-leak"),
-    20,
+  const error = await assertRejects(
+    () =>
+      createHostedRunEventWriterCapability({
+        apiUrl: "https://api.example.com",
+        runId: "11111111-1111-4111-8111-111111111111",
+        runEventAppendToken: "parent-writer-token",
+        timeoutMs: 1,
+        fetch: (input, init) => {
+          const signal = new Request(input, init).signal;
+          return new Promise<Response>((_resolve, reject) => {
+            signal.addEventListener("abort", () => {
+              // Observe the exchange timeout before triggering caller cancellation.
+              // Both cancellations occur before the transport rejects.
+              controller.abort("parent-writer-token-must-not-leak");
+              reject(signal.reason);
+            }, { once: true });
+          });
+        },
+      }).mintChildRunEventWriterCapability(
+        "22222222-2222-4222-8222-222222222222",
+        controller.signal,
+      ),
+    HostedChildRunEventWriterTokenExchangeError,
+    "Unable to initialize durable child event persistence",
   );
-  try {
-    const error = await assertRejects(
-      () =>
-        createHostedRunEventWriterCapability({
-          apiUrl: "https://api.example.com",
-          runId: "11111111-1111-4111-8111-111111111111",
-          runEventAppendToken: "parent-writer-token",
-          timeoutMs: 1,
-          fetch: (input, init) => {
-            const signal = new Request(input, init).signal;
-            return new Promise<Response>((_resolve, reject) => {
-              signal.addEventListener("abort", () => reject(signal.reason), { once: true });
-            });
-          },
-        }).mintChildRunEventWriterCapability(
-          "22222222-2222-4222-8222-222222222222",
-          controller.signal,
-        ),
-      HostedChildRunEventWriterTokenExchangeError,
-      "Unable to initialize durable child event persistence",
-    );
 
-    assertEquals(
-      error instanceof HostedChildRunEventWriterTokenExchangeError && error.classification,
-      "timeout",
-    );
-  } finally {
-    clearTimeout(callerAbort);
-  }
+  assertEquals(controller.signal.aborted, true);
+  assertEquals(
+    error instanceof HostedChildRunEventWriterTokenExchangeError && error.classification,
+    "timeout",
+  );
 });
 
 Deno.test("writer capabilities keep credentials private after shared-realm poisoning", async () => {
