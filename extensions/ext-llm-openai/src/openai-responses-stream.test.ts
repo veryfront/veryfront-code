@@ -1,6 +1,6 @@
 import { summarizeErrorCausesForLog } from "#veryfront/observability/telemetry-error.ts";
 import { createRuntimeProviderStreamFailure } from "#veryfront/runtime/provider-stream-error-provenance.ts";
-import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { ProviderRequestError } from "veryfront/provider/shared";
 import {
@@ -73,6 +73,10 @@ describe("ext-llm-openai/openai-responses-stream", () => {
         issue: "message delta referenced an unknown message item",
       },
       {
+        events: [{ type: "response.output_text.delta", delta: { private: "provider text" } }],
+        issue: "output-text delta was malformed",
+      },
+      {
         events: [{ type: "response.output_item.added", item: null }],
         issue: "added output item was not an object",
       },
@@ -111,6 +115,7 @@ describe("ext-llm-openai/openai-responses-stream", () => {
         () => collectParts(streamFromText(events.map(data).join(""))),
         ProviderRequestError,
       );
+      assert(error instanceof ProviderRequestError);
       assertEquals(
         error.message,
         `openai request failed: invalid successful stream (${issue ?? privateIssue})`,
