@@ -2443,10 +2443,38 @@ function createProjectRunObservationMirror(input: {
     const ordinal = ++appendOrdinal;
     let body: unknown;
     try {
-      const idempotencyKey =
-        `project-runtime-observation:${input.attemptId}:${ordinal}:${await computeObservationHash(
-          `${input.runId}:${ordinal}`,
-        )}`;
+      const encodedBody = privateJsonStringify(
+        {
+          events,
+          ...(executionEntryOccurrenceId
+            ? {
+              runtime_observations: {
+                version: 1,
+                observations: [{
+                  kind: "execution_entry",
+                  occurrence_id: executionEntryOccurrenceId,
+                  event_index: 0,
+                }],
+              },
+            }
+            : {}),
+        },
+        null,
+        undefined,
+        MAX_CONVERSATION_RUN_EVENT_APPEND_REQUEST_BYTES,
+      );
+      // Hash the exact sent bytes with scope and ordinal; fresh model facts never reuse an old key.
+      const scopeHash = await computeObservationHash(privateJsonStringify([
+        "project-runtime-observation-v1",
+        input.runId,
+        input.canonicalRunId,
+        input.attemptId,
+        ordinal,
+      ]));
+      const payloadHash = await computeObservationHash(encodedBody);
+      const idempotencyKey = `project-runtime-observation:${await computeObservationHash(
+        `${scopeHash}:${payloadHash}`,
+      )}`;
       ({ body } = await withProjectRunObservationDeadline({
         abortSignal: input.abortSignal,
         timeoutMs: input.timeoutMs ?? PROJECT_RUN_OBSERVATION_APPEND_TIMEOUT_MS,
@@ -2461,26 +2489,7 @@ function createProjectRunObservationMirror(input: {
                 "Idempotency-Key": idempotencyKey,
               },
               signal,
-              body: privateJsonStringify(
-                {
-                  events,
-                  ...(executionEntryOccurrenceId
-                    ? {
-                      runtime_observations: {
-                        version: 1,
-                        observations: [{
-                          kind: "execution_entry",
-                          occurrence_id: executionEntryOccurrenceId,
-                          event_index: 0,
-                        }],
-                      },
-                    }
-                    : {}),
-                },
-                null,
-                undefined,
-                MAX_CONVERSATION_RUN_EVENT_APPEND_REQUEST_BYTES,
-              ),
+              body: encodedBody,
             },
           );
           if (!response.ok) {

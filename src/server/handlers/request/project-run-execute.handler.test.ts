@@ -8333,19 +8333,129 @@ describe("project run inference credential header", () => {
           });
         }, async () => {
           const randomnessBefore = crypto.randomUUID();
-          assertEquals((await dispatch("attempt-redelivered", 0)).success, false);
+          assertEquals((await dispatch("45454545-4545-4545-8545-454545454545", 0)).success, false);
           assertEquals(executions, 0);
           const randomnessAfter = crypto.randomUUID();
           assertEquals(randomnessBefore === randomnessAfter, false);
-          assertEquals((await dispatch("attempt-redelivered", 1_000)).success, true);
+          assertEquals(
+            (await dispatch("45454545-4545-4545-8545-454545454545", 1_000)).success,
+            true,
+          );
           assertEquals(executions, 1);
           assertEquals(requests[1], requests[0]);
           assertEquals(recorded.size, 1);
-          assertEquals((await dispatch("attempt-new", 2_000)).success, true);
+          assertEquals(
+            (await dispatch("56565656-5656-4656-8656-565656565656", 2_000)).success,
+            true,
+          );
           assertEquals(executions, 2);
           assertEquals(requests[2]?.key === requests[0]?.key, false);
           assertEquals(requests[2]?.body === requests[0]?.body, false);
           assertEquals(recorded.size, 2);
+        }),
+    );
+  });
+
+  it("recovers a fresh model observation after the previous accepted receipt was lost", async () => {
+    const runId = "run_model_receipt_redelivery";
+    const canonicalRunId = "12121212-1212-4121-8121-121212121212";
+    const projectId = "23232323-2323-4232-8232-232323232323";
+    const recorded = new Map<string, string>();
+    const requests: { key: string; body: string }[] = [];
+    let executions = 0;
+    const originalNow = Date.now;
+    const dispatch = async (attemptId: string, elapsedMs: number) => {
+      const signed = await signedRequest(`/api/control-plane/runs/${runId}/execute`, {
+        ...taskBody,
+        runId,
+        canonicalRunId,
+        projectId,
+      }, {
+        "X-Veryfront-Inference-Token": INFERENCE_TOKEN,
+        "x-veryfront-run-event-token": createProjectRunEventToken({
+          runId,
+          canonicalRunId,
+          projectId,
+          attemptId,
+        }),
+      });
+      const ctx = createCtx(signed.publicKeyPem);
+      ctx.projectId = projectId;
+      const handler = new ProjectRunExecuteHandler(createDeps({
+        runTask: async () => {
+          executions++;
+          await getActiveRunEventSink()?.({
+            type: "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED",
+            modelCallId: crypto.randomUUID(),
+            messages: [{
+              role: "user",
+              content: [{ type: "text", text: `Fresh model input ${Date.now()}` }],
+            }],
+            tools: [],
+          });
+          return { success: true, result: "done", durationMs: 0 };
+        },
+      }));
+      Date.now = () => originalNow() + elapsedMs;
+      try {
+        const result = await handler.handle(signed.request, ctx);
+        assertExists(result.response);
+        return await result.response.json();
+      } finally {
+        Date.now = originalNow;
+      }
+    };
+    await withEnv(
+      { VERYFRONT_API_BASE_URL: "https://api.veryfront.com" },
+      () =>
+        withMockFetch((_input, init) => {
+          const observed = observeFetchRequestInit(init);
+          const key = new Headers(observed.headers).get("idempotency-key");
+          assertExists(key);
+          if (typeof observed.body !== "string") throw new Error("Expected encoded append body");
+          const body = observed.body;
+          requests.push({ key, body });
+          const existing = recorded.get(key);
+          if (existing !== undefined && existing !== body) {
+            return Response.json({ error: "Idempotency conflict" }, { status: 409 });
+          }
+          if (existing === undefined) recorded.set(key, body);
+          if (requests.length === 2) throw new Error("Accepted model receipt was lost");
+          const payload = JSON.parse(body);
+          const model = payload.events.find((event: { type: string }) =>
+            event.type === "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED"
+          );
+          return Response.json({
+            run_id: canonicalRunId,
+            latest_event_id: recorded.size,
+            appended_count: existing === undefined ? 1 : 0,
+            ...(model
+              ? {
+                model_call_captures: [{
+                  event_id: String(recorded.size),
+                  run_id: canonicalRunId,
+                  project_id: projectId,
+                  model_call_id: model.modelCallId,
+                }],
+              }
+              : {}),
+          });
+        }, async () => {
+          const randomnessBefore = crypto.randomUUID();
+          assertEquals((await dispatch("45454545-4545-4545-8545-454545454545", 0)).success, false);
+          assertEquals(executions, 1);
+          const randomnessAfter = crypto.randomUUID();
+          assertEquals(randomnessBefore === randomnessAfter, false);
+          assertEquals(
+            (await dispatch("45454545-4545-4545-8545-454545454545", 1_000)).success,
+            true,
+          );
+          assertEquals(executions, 2);
+          assertEquals(requests[2], requests[0]);
+          assertEquals(requests[3]?.body === requests[1]?.body, false);
+          assertEquals(requests[3]?.key === requests[1]?.key, false);
+          assertEquals(recorded.size, 3);
+          for (const request of requests) assertEquals(request.key.length <= 128, true);
         }),
     );
   });
