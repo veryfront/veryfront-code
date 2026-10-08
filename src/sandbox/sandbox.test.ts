@@ -2509,6 +2509,34 @@ describe("Sandbox", () => {
       }
     });
 
+    it("lets the API own the default proxy command deadline", async () => {
+      setEnv("KUBERNETES_SERVICE_HOST", "kubernetes.default.svc");
+      mockFetch([
+        jsonResponse({
+          id: "sandbox-1",
+          endpoint: "https://3912734599.sandbox.veryfront.org",
+          status: "running",
+        }),
+        jsonResponse({ ok: true }),
+        commandResponse([{ type: "exit", exitCode: 0 }]),
+        jsonResponse({ ok: true }),
+      ]);
+      const sandbox = Sandbox.createLazy({
+        authToken: "test-token",
+        apiUrl: "https://api.test.com",
+      });
+      try {
+        await sandbox.runCommand("true");
+        assertEquals(fetchCalls[2]!.init?.signal, undefined);
+        assertEquals(
+          (jsonBody(fetchCalls, 2) as Record<string, unknown>).timeout_seconds,
+          undefined,
+        );
+      } finally {
+        await sandbox.close();
+      }
+    });
+
     it("uses API proxy routes for default Kubernetes data-plane calls", async () => {
       setEnv("KUBERNETES_SERVICE_HOST", "kubernetes.default.svc");
       mockFetch([

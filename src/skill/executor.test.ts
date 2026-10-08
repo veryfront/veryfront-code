@@ -408,7 +408,7 @@ describe("src/skill/executor", () => {
 
       assertEquals(result, { stdout: "cloud-snapshot\n", stderr: "", exitCode: 0 });
       assertStringIncludes(fetchCalls[3]!.url, "/commands/run");
-      assertEquals(JSON.parse(String(fetchCalls[3]!.init?.body)).timeout_seconds, 60);
+      assertEquals(JSON.parse(String(fetchCalls[3]!.init?.body)).timeout_seconds, 55);
       const body = JSON.parse(fetchCalls[1]!.init?.body?.toString() ?? "{}") as {
         files: Array<{ path: string; content: string }>;
       };
@@ -458,6 +458,7 @@ describe("src/skill/executor", () => {
       assertStringIncludes(result.stderr, "timed out");
       assertEquals(fetchCalls.length, 6);
       assertStringIncludes(fetchCalls[4]!.init?.body?.toString() ?? "", "kill -9 -1");
+      assertEquals(JSON.parse(String(fetchCalls[3]!.init?.body)).timeout_seconds, 1);
     });
 
     it("falls back to local execution without cloud credentials", () => {

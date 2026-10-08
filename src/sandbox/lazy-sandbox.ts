@@ -257,7 +257,7 @@ export class LazySandbox {
         try {
           const response = await fetchWithTimeout(
             `${route.baseUrl}/commands/run`,
-            ((options?.timeoutSeconds ?? 30) + 5) * 1000,
+            options?.timeoutSeconds === undefined ? 0 : (options.timeoutSeconds + 5) * 1000,
             {
               method: "POST",
               headers: this.#jsonHeaders(),

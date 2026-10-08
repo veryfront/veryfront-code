@@ -34,6 +34,8 @@ import {
 
 const DEFAULT_SCRIPT_TIMEOUT_MS = 60_000;
 const MAX_SCRIPT_TIMEOUT_MS = 300_000;
+// Canonical synchronous sandbox commands have a shorter limit than local scripts.
+const MAX_SANDBOX_COMMAND_TIMEOUT_SECONDS = 55;
 const TIMEOUT_EXIT_CODE = 124;
 const ENV_KEY_REGEX = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const TIMEOUT_SENTINEL = Symbol("skill-script-timeout");
@@ -432,7 +434,7 @@ class CloudScriptExecutor implements SkillScriptExecutor {
         ? invocation
         : `cd ${shellEscapeArg(sandboxRoot)} && ${invocation}`;
       const commandPromise = sandbox.runCommand(cmdString, {
-        timeoutSeconds: Math.ceil(timeoutMs / 1000),
+        timeoutSeconds: Math.min(Math.ceil(timeoutMs / 1000), MAX_SANDBOX_COMMAND_TIMEOUT_SECONDS),
       });
       const result = await withTimeout(commandPromise, timeoutMs);
 
