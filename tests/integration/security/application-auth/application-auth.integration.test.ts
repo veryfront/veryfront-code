@@ -18,7 +18,7 @@ import type { ApplicationIdentity } from "#veryfront/security/application-auth/t
 import { __setCompiledBinaryForTests } from "#veryfront/security/sandbox/isolation-capability.ts";
 import { __resetPoolForTests } from "#veryfront/security/sandbox/worker-pool.ts";
 import { assert, assertEquals } from "#veryfront/testing/assert.ts";
-import { describe, it } from "#veryfront/testing/bdd.ts";
+import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import type { Renderer } from "#veryfront/rendering/renderer.ts";
 import {
@@ -103,6 +103,8 @@ function oidcEnvironment(
   };
 }
 
+const directHandlerResponses = new Set<Response>();
+
 function createHandler(
   values: Readonly<Record<string, string | undefined>>,
   configOverrides: Readonly<Record<string, unknown>> = {},
@@ -121,11 +123,20 @@ function createHandler(
       },
     },
   } as unknown as VeryfrontConfig;
-  return createVeryfrontHandler(PROJECT_DIR, createAdapter(values), {
+  const handler = createVeryfrontHandler(PROJECT_DIR, createAdapter(values), {
     projectDir: PROJECT_DIR,
     config,
     allowHostProjectCodeExecution: true,
   });
+  return trackDirectHandlerResponses(handler);
+}
+
+function trackDirectHandlerResponses(handler: ReturnType<typeof createVeryfrontHandler>) {
+  return async (request: Request) => {
+    const response = await handler(request);
+    directHandlerResponses.add(response);
+    return response;
+  };
 }
 
 function latestMiddlewareObservation(
@@ -388,11 +399,11 @@ async function withComposedIdentityHarness<T>(
             ],
           },
         } as unknown as VeryfrontConfig;
-        return createVeryfrontHandler(projectDir, adapter, {
+        return trackDirectHandlerResponses(createVeryfrontHandler(projectDir, adapter, {
           projectDir,
           config,
           allowHostProjectCodeExecution: true,
-        });
+        }));
       },
       async enableWorkerIsolation() {
         Deno.env.set("WORKER_ISOLATION_ENABLED", "1");
@@ -597,6 +608,13 @@ async function completeDirectCallback(
 }
 
 describe("security/application-auth composed integration", () => {
+  afterEach(async () => {
+    // Direct handler calls have no HTTP transport to consume unused bodies.
+    for (const response of directHandlerResponses) {
+      if (response.body && !response.bodyUsed) await response.body.cancel();
+    }
+    directHandlerResponses.clear();
+  });
   it("completes a horizontally portable Authelia-compatible flow across fresh handlers", async () => {
     const provider = await createMockOidcProvider({
       issuer: "https://auth.example.test",
@@ -1340,6 +1358,8 @@ describe("security/application-auth composed integration", () => {
       assertEquals(tokenRedirect.status, 400);
       assertEquals(tokenRedirect.headers.get("cache-control"), "no-store");
       assertEquals(tokenRedirect.headers.get("x-content-type-options"), "nosniff");
+      // Terminal request logs are emitted after the response body is consumed.
+      await tokenRedirect.text();
       assertTrackedFailure(records, tokenRecordStart, "/_veryfront/auth/callback", 400);
 
       provider.reset();
@@ -1367,6 +1387,8 @@ describe("security/application-auth composed integration", () => {
         )
       );
       assertEquals(verifierFailure.status, 400);
+      // Terminal request logs are emitted after the response body is consumed.
+      await verifierFailure.text();
       assertTrackedFailure(records, verifierRecordStart, "/_veryfront/auth/callback", 400);
 
       const cookieValue = "hostile-cookie-value";
@@ -1377,6 +1399,7 @@ describe("security/application-auth composed integration", () => {
         }),
       );
       assertEquals(cookieFailure.status, 401);
+      await cookieFailure.text();
       assertTrackedFailure(records, cookieRecordStart, "/api/cookie-failure", 401);
 
       const callbackState = "h".repeat(43);
@@ -1408,6 +1431,8 @@ describe("security/application-auth composed integration", () => {
         )
       );
       assertEquals(callbackFailure.status, 400);
+      // Terminal request logs are emitted after the response body is consumed.
+      await callbackFailure.text();
       assertTrackedFailure(records, callbackRecordStart, "/_veryfront/auth/callback", 400);
 
       const privateEnvironment = {
@@ -1424,6 +1449,7 @@ describe("security/application-auth composed integration", () => {
         }))(new Request(`${APP_ORIGIN}/_veryfront/auth/login`))
       );
       assertEquals(environmentFailure.status, 500);
+      await environmentFailure.text();
       assertTrackedFailure(records, environmentRecordStart, "/_veryfront/auth/login", 500);
 
       const offOriginProvider = await createMockOidcProvider({
@@ -1497,6 +1523,7 @@ describe("security/application-auth composed integration", () => {
           }),
         );
         assertEquals(workerFailure.status, 500);
+        const workerFailureSurface = await publicFailureSurface(workerFailure);
         assertTrackedFailure(records, workerRecordStart, "/api/worker-failure", 500);
         assert(
           records.slice(workerRecordStart).some((entry) =>
@@ -1505,7 +1532,7 @@ describe("security/application-auth composed integration", () => {
           ),
           "repository logger did not record the isolated worker failure boundary",
         );
-        assertOmitsSensitive(await publicFailureSurface(workerFailure), [
+        assertOmitsSensitive(workerFailureSurface, [
           CLIENT_SECRET,
           SESSION_SECRET,
           workerSession,
