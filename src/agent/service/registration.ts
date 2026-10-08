@@ -375,11 +375,10 @@ async function readAgentPushRuntimeServiceResponse(
   try {
     payload = await response.json();
   } catch (cause) {
-    // The headers landed but the body did not: the deadline fired while the
-    // JSON was still arriving, or the connection reset mid-body. No complete
-    // response came back and nothing upstream was applied, so this is as
-    // transport-level as a failed connect and gets the same retries. It
-    // carries no httpStatus, which is what marks it retryable.
+    // Complete malformed JSON is a permanent protocol failure.
+    if (cause instanceof SyntaxError) throw cause;
+    // A body interrupted by an abort or connection reset is a transport
+    // failure. Registration retains its upsert identity when replayed.
     throw NETWORK_ERROR.create({ detail: getErrorMessage(cause), cause });
   }
 

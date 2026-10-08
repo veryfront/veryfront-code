@@ -279,6 +279,30 @@ describe("agent/agent-service-registration", () => {
     }
   });
 
+  it("does not retry a successful response with malformed JSON", async () => {
+    using time = new FakeTime();
+    let attempts = 0;
+    const fetch: typeof globalThis.fetch = () => {
+      attempts++;
+      return Promise.resolve(
+        new Response("{invalid-json", {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      );
+    };
+    const pending = createAgentServiceRegistrationLifecycle(lifecycleOptions(fetch)).then(
+      (lifecycle) => {
+        lifecycle.stop();
+        return undefined;
+      },
+      (error: unknown) => error,
+    );
+    for (let tick = 0; tick < 20; tick++) await time.tickAsync(1_000);
+    assert(await pending instanceof Error);
+    assertEquals(attempts, 1, "complete malformed JSON is a permanent protocol failure");
+  });
+
   it("reports exhausted startup failures after bounded attempts", async () => {
     using time = new FakeTime();
     let attempts = 0;
