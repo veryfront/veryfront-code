@@ -23,8 +23,68 @@ export interface OkfDocumentInspection {
   diagnostics: OkfDocumentDiagnostic[];
 }
 
-function assertJsonSafeMetadata(metadata: Record<string, unknown>): void {
-  JSON.stringify(metadata);
+export function isRuntimeCapabilityError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  if (
+    error.name === "NotCapable" &&
+    /^Requires (?:read|write|env|net|run|ffi|sys) access\b/.test(error.message)
+  ) {
+    return true;
+  }
+  const cause = Object.getOwnPropertyDescriptor(error, "cause")?.value;
+  return isRuntimeCapabilityError(cause);
+}
+
+function getOkfDocumentKind(path: string): OkfDocumentInspection["kind"] {
+  const normalizedPath = path.replaceAll("\\", "/");
+  const name = normalizedPath.slice(normalizedPath.lastIndexOf("/") + 1);
+  if (name === "index.md") return "index";
+  if (name === "log.md") return "log";
+  return "concept";
+}
+
+function readOkfEnvelope(source: string) {
+  const opening = /^---\r?\n/.exec(source);
+  if (!opening) return undefined;
+  const remainder = source.slice(opening[0].length);
+  const closing = /(?:^|\r?\n)---(?:\r?\n|(?![\s\S]))/.exec(remainder);
+  if (!closing) return undefined;
+  return {
+    frontMatter: remainder.slice(0, closing.index),
+    body: remainder.slice(closing.index + closing[0].length),
+  };
+}
+
+class InvalidOkfMetadataError extends Error {}
+
+function decodeOkfMetadata(frontMatter: string): Record<string, unknown> {
+  // JSON resolution preserves timestamp strings instead of coercing them to Date.
+  const decoded: unknown = frontMatter.trim() ? parse(frontMatter, { schema: "json" }) : {};
+  if (
+    !decoded || typeof decoded !== "object" || Array.isArray(decoded) ||
+    (Object.getPrototypeOf(decoded) !== Object.prototype && Object.getPrototypeOf(decoded) !== null)
+  ) {
+    throw new InvalidOkfMetadataError("Expected a YAML mapping");
+  }
+  try {
+    JSON.stringify(decoded);
+  } catch (cause) {
+    throw new InvalidOkfMetadataError("Expected JSON-safe YAML metadata", { cause });
+  }
+  return decoded as Record<string, unknown>;
+}
+
+function getOkfTypeDiagnostic(
+  metadata: Record<string, unknown>,
+): OkfDocumentDiagnostic | undefined {
+  const type = Object.getOwnPropertyDescriptor(metadata, "type")?.value;
+  if (type === undefined) {
+    return { code: "missing_type", message: "Add a non-empty type to the frontmatter." };
+  }
+  if (typeof type !== "string" || !type.trim()) {
+    return { code: "invalid_type", message: "Set type to a non-empty string." };
+  }
+  return undefined;
 }
 
 /**
@@ -35,12 +95,8 @@ function assertJsonSafeMetadata(metadata: Record<string, unknown>): void {
  * provenance or Attested Computation contracts, and does not resolve links.
  */
 export function inspectOkfDocument(path: string, source: string): OkfDocumentInspection {
-  const name = path.slice(path.lastIndexOf("/") + 1);
-  const kind = name === "index.md" ? "index" : name === "log.md" ? "log" : "concept";
-  // Unlike the compiler's permissive matcher, OKF delimiters occupy whole lines.
-  // Inline dashes remain part of the YAML value instead of closing the envelope.
-  const matched = /^---\r?\n(?:([\s\S]*?)\r?\n)?---(?:\r?\n|$)([\s\S]*)$/.exec(source);
-  const framed = matched ? { frontMatter: matched[1] ?? "", body: matched[2] ?? "" } : undefined;
+  const kind = getOkfDocumentKind(path);
+  const framed = readOkfEnvelope(source);
   const diagnostics: OkfDocumentDiagnostic[] = [];
   let metadata: Record<string, unknown> = {};
 
@@ -57,33 +113,22 @@ export function inspectOkfDocument(path: string, source: string): OkfDocumentIns
       });
     }
   } else {
+    if (kind === "index" && path.replaceAll("\\", "/").replace(/^(?:\.\/)+/, "") !== "index.md") {
+      diagnostics.push({
+        code: "invalid_frontmatter",
+        message:
+          "Nested index.md files must not contain frontmatter; only the bundle-root index.md may declare okf_version.",
+      });
+    }
     try {
-      // JSON resolution preserves timestamp strings instead of coercing them
-      // into Date objects during the read side of an import/export cycle.
-      const decoded = framed.frontMatter.trim()
-        ? parse(framed.frontMatter, { schema: "json" })
-        : {};
+      metadata = decodeOkfMetadata(framed.frontMatter);
+      const diagnostic = kind === "concept" ? getOkfTypeDiagnostic(metadata) : undefined;
+      if (diagnostic) diagnostics.push(diagnostic);
+    } catch (error) {
       if (
-        !decoded || typeof decoded !== "object" || Array.isArray(decoded) ||
-        (Object.getPrototypeOf(decoded) !== Object.prototype &&
-          Object.getPrototypeOf(decoded) !== null)
-      ) {
-        throw new TypeError("Expected a YAML mapping");
-      }
-      assertJsonSafeMetadata(decoded as Record<string, unknown>);
-      metadata = decoded as Record<string, unknown>;
-      if (kind === "concept") {
-        const type = Object.getOwnPropertyDescriptor(metadata, "type")?.value;
-        if (type === undefined) {
-          diagnostics.push({
-            code: "missing_type",
-            message: "Add a non-empty type to the frontmatter.",
-          });
-        } else if (typeof type !== "string" || !type.trim()) {
-          diagnostics.push({ code: "invalid_type", message: "Set type to a non-empty string." });
-        }
-      }
-    } catch {
+        isRuntimeCapabilityError(error) ||
+        !(error instanceof SyntaxError || error instanceof InvalidOkfMetadataError)
+      ) throw error;
       diagnostics.push({
         code: "invalid_frontmatter",
         message: "Use one valid YAML mapping between the frontmatter delimiters.",
