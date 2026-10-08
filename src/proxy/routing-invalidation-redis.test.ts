@@ -1105,6 +1105,7 @@ describe("proxy routing invalidation Redis bus", () => {
   });
 
   it("does not count a draining replica that closes before publication", async () => {
+    using time = new FakeTime();
     const redis = createFakeRedisServer();
     const integritySecret = createIntegritySecret();
     const replicaB: ProxyRoutingInvalidationEvent[] = [];
@@ -1130,11 +1131,21 @@ describe("proxy routing invalidation Redis bus", () => {
     });
 
     await busB?.close();
-    const result = await busA?.publish(createEvent());
+    assert(busA);
+    const publish = busA.publish(createEvent());
+    try {
+      const result = await settleWithin(
+        publish,
+        "drained-replica acknowledgement",
+        () => time.runMicrotasks(),
+      );
 
-    assertEquals(result, { acknowledged: 1, converged: false, recipients: 1 });
-    assertEquals(replicaB, []);
-    await busA?.close();
+      assertEquals(result, { acknowledged: 1, converged: false, recipients: 1 });
+      assertEquals(replicaB, []);
+    } finally {
+      await busA.close();
+      await publish.catch(() => undefined);
+    }
   });
 
   it("stays disabled without the proxy Redis connection", async () => {
