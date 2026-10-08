@@ -2399,9 +2399,12 @@ async function withProjectRunObservationDeadline<T>(input: {
     IntrinsicReflectApply(TaskAbort, controller, [
       getProjectRunObservationAbortReason(input.abortSignal),
     ]);
-  input.abortSignal.addEventListener("abort", forwardAbort, { once: true });
+  addAbortSignalListenerOnce(input.abortSignal, forwardAbort);
+  let rejectAbort: (reason: unknown) => void = () => {};
+  const onAbort = () => rejectAbort(signal.reason);
   const aborted = new IntrinsicPromise<never>((_resolve, reject) => {
-    signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+    rejectAbort = reject;
+    addAbortSignalListenerOnce(signal, onAbort);
   });
   try {
     return await new IntrinsicPromise<T>((resolve, reject) => {
@@ -2411,7 +2414,8 @@ async function withProjectRunObservationDeadline<T>(input: {
     });
   } finally {
     TaskClearTimeout(timeout);
-    input.abortSignal.removeEventListener("abort", forwardAbort);
+    removeAbortSignalListener(input.abortSignal, forwardAbort);
+    removeAbortSignalListener(signal, onAbort);
   }
 }
 
@@ -2453,7 +2457,7 @@ function createProjectRunObservationMirror(input: {
             {
               method: "POST",
               headers: {
-                "X-Veryfront-Run-Event-Token": input.eventToken,
+                "Authorization": `Bearer ${input.eventToken}`,
                 "Content-Type": "application/json",
                 "Idempotency-Key": idempotencyKey,
               },

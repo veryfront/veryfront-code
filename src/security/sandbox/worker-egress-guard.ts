@@ -21,6 +21,10 @@
  */
 
 import {
+  addAbortSignalListenerOnce,
+  removeAbortSignalListener,
+} from "#veryfront/platform/compat/abort-signal.ts";
+import {
   chainPrivatePromise,
   createPrivateDeferred,
   resolvePrivatePromise,
@@ -588,14 +592,14 @@ function waitForOperation<T>(operation: Promise<T>, signal?: AbortSignal): Promi
   if (signal.aborted) {
     onAbort();
   } else {
-    signal.addEventListener("abort", onAbort, { once: true });
+    addAbortSignalListenerOnce(signal, onAbort);
   }
 
   void chainPrivatePromise(operation, (value) => {
-    signal.removeEventListener("abort", onAbort);
+    removeAbortSignalListener(signal, onAbort);
     resolve(value);
   }, (error) => {
-    signal.removeEventListener("abort", onAbort);
+    removeAbortSignalListener(signal, onAbort);
     reject(error);
   });
   return completion.promise;

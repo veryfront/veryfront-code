@@ -1,4 +1,8 @@
 import {
+  addAbortSignalListenerOnce,
+  removeAbortSignalListener,
+} from "#veryfront/platform/compat/abort-signal.ts";
+import {
   IntrinsicPromise,
   primordialPromiseThen,
 } from "#veryfront/platform/compat/primordials/promise.ts";
@@ -273,11 +277,12 @@ async function withPersistenceDeadline<T>(input: {
   );
   const timeout = setTimeout(() => controller.abort(timeoutError), input.timeoutMs);
   const onCallerAbort = () => controller.abort(getAbortReason(input.abortSignal!));
-  input.abortSignal?.addEventListener("abort", onCallerAbort, { once: true });
+  if (input.abortSignal) addAbortSignalListenerOnce(input.abortSignal, onCallerAbort);
+  let rejectAbort: (reason: unknown) => void = () => {};
+  const onAbort = () => rejectAbort(controller.signal.reason);
   const aborted = new IntrinsicPromise<never>((_resolve, reject) => {
-    controller.signal.addEventListener("abort", () => reject(controller.signal.reason), {
-      once: true,
-    });
+    rejectAbort = reject;
+    addAbortSignalListenerOnce(controller.signal, onAbort);
   });
   try {
     return await new IntrinsicPromise<T>((resolve, reject) => {
@@ -286,7 +291,8 @@ async function withPersistenceDeadline<T>(input: {
     });
   } finally {
     clearTimeout(timeout);
-    input.abortSignal?.removeEventListener("abort", onCallerAbort);
+    if (input.abortSignal) removeAbortSignalListener(input.abortSignal, onCallerAbort);
+    removeAbortSignalListener(controller.signal, onAbort);
   }
 }
 

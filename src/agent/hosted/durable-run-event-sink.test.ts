@@ -851,6 +851,50 @@ describe("agent/hosted/durable-run-event-sink", () => {
     assertEquals(target.isDisposed(), true, "mirror must be disposed after a persistence timeout");
   });
 
+  for (const cancelled of [false, true]) {
+    it(`preserves persistence cancellation with patched EventTarget methods (caller abort: ${cancelled})`, async () => {
+      const originalAdd = EventTarget.prototype.addEventListener;
+      const originalRemove = EventTarget.prototype.removeEventListener;
+      const caller = new AbortController();
+      const target = mirror({
+        append: () => {
+          if (cancelled) caller.abort(new Error("caller cancelled"));
+          return new Promise(() => {});
+        },
+      });
+      EventTarget.prototype.addEventListener = () => {};
+      EventTarget.prototype.removeEventListener = () => {
+        throw new Error("patched cleanup");
+      };
+      let guard: ReturnType<typeof setTimeout> | undefined;
+      try {
+        await assertRejects(
+          () =>
+            Promise.race([
+              createDurableRunEventSink({
+                mirror: target.result,
+                abortSignal: caller.signal,
+                timeoutMs: 5,
+              })({
+                type: "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED",
+                messages: [],
+              }),
+              new Promise<never>((_resolve, reject) => {
+                guard = setTimeout(() => reject(new Error("deadline did not settle")), 100);
+              }),
+            ]),
+          cancelled ? Error : DurableRunEventPersistenceError,
+          cancelled ? "caller cancelled" : "Durable run event persistence timed out",
+        );
+      } finally {
+        clearTimeout(guard);
+        EventTarget.prototype.addEventListener = originalAdd;
+        EventTarget.prototype.removeEventListener = originalRemove;
+      }
+      assertEquals(target.isDisposed(), true);
+    });
+  }
+
   it("uses a registered VeryfrontError for durable persistence failures", () => {
     const error = new DurableRunEventPersistenceError("persistence unavailable");
 

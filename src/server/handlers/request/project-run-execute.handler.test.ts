@@ -8246,6 +8246,8 @@ describe("project run inference credential header", () => {
     return await withMockFetch(async (input, init) => {
       const request = new Request(input, init);
       assertMatch(request.url, /\/runs\/[0-9a-f-]+\/events$/);
+      assertMatch(request.headers.get("authorization") ?? "", /^Bearer [^.]+\.[^.]+\.[^.]+$/);
+      assertEquals(request.headers.get("x-veryfront-run-event-token"), null);
       const body = requestJsonBody(init);
       assertExists(body);
       assertEquals(body.events, [{
@@ -8253,9 +8255,10 @@ describe("project run inference credential header", () => {
         runtime: "veryfront",
         kind: "runtime_context",
         value: {
-          runId:
-            JSON.parse(atob(request.headers.get("x-veryfront-run-event-token")!.split(".")[1]!))
-              .runId,
+          runId: JSON.parse(
+            atob(request.headers.get("authorization")!.slice("Bearer ".length).split(".")[1]!),
+          )
+            .runId,
         },
       }]);
       assertMatch(JSON.stringify(body.runtime_observations), /execution_entry/);
@@ -8561,8 +8564,8 @@ describe("project run inference credential header", () => {
           }
           assertEquals(url, `${"https://api.veryfront.com"}/runs/${canonicalRunId}/events`);
           const headers = new Headers(observeFetchRequestInit(init).headers);
-          assertEquals(headers.get("x-veryfront-run-event-token"), eventToken);
-          assertEquals(headers.get("authorization"), null);
+          assertEquals(headers.get("x-veryfront-run-event-token"), null);
+          assertEquals(headers.get("authorization"), `Bearer ${eventToken}`);
           const idempotencyKey = headers.get("idempotency-key");
           assertExists(idempotencyKey);
           idempotencyKeys.push(idempotencyKey);
@@ -8838,8 +8841,8 @@ describe("project run inference credential header", () => {
               `${"https://api.veryfront.com"}/runs/${canonicalRunId}/events`,
             );
             const headers = new Headers(observeFetchRequestInit(init).headers);
-            assertEquals(headers.get("x-veryfront-run-event-token"), eventToken);
-            assertEquals(headers.get("authorization"), null);
+            assertEquals(headers.get("x-veryfront-run-event-token"), null);
+            assertEquals(headers.get("authorization"), `Bearer ${eventToken}`);
             const payload = requestJsonBody(init);
             const events = payload?.events;
             if (!Array.isArray(events)) throw new Error("Expected event batch");
@@ -9186,7 +9189,7 @@ describe("project run inference credential header", () => {
     assertEquals(taskRan, false);
   });
 
-  it("keeps mandatory model input unchanged when project code replaces JSON serialization", async () => {
+  it("keeps mandatory model input unchanged when project code replaces JSON and EventTarget methods", async () => {
     const runId = "run_private_observation_json";
     const canonicalRunId = "12121212-1212-4121-8121-121212121212";
     const projectId = "23232323-2323-4232-8232-232323232323";
@@ -9207,6 +9210,16 @@ describe("project run inference credential header", () => {
     const handler = new ProjectRunExecuteHandler(createDeps({
       runTask: async () => {
         const originalStringify = JSON.stringify;
+        const originalAdd = EventTarget.prototype.addEventListener;
+        const originalRemove = EventTarget.prototype.removeEventListener;
+        EventTarget.prototype.addEventListener = () => {
+          hooksCalled++;
+          throw new Error("patched registration");
+        };
+        EventTarget.prototype.removeEventListener = () => {
+          hooksCalled++;
+          throw new Error("patched cleanup");
+        };
         const originalToJson = Object.getOwnPropertyDescriptor(Object.prototype, "toJSON");
         JSON.stringify = () => {
           hooksCalled++;
@@ -9228,6 +9241,8 @@ describe("project run inference credential header", () => {
           });
         } finally {
           JSON.stringify = originalStringify;
+          EventTarget.prototype.addEventListener = originalAdd;
+          EventTarget.prototype.removeEventListener = originalRemove;
           if (originalToJson) Object.defineProperty(Object.prototype, "toJSON", originalToJson);
           else Reflect.deleteProperty(Object.prototype, "toJSON");
         }
