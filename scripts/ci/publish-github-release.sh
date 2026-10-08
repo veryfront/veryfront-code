@@ -148,7 +148,18 @@ create_draft_release() {
     fi
 
     # A rerun may only adopt the identical qualified publication; never mutate it.
-    local verification_dir asset existing_prerelease
+    local verification_dir asset existing_prerelease expected_asset_names remote_asset_names
+    expected_asset_names="$(printf '%s\n' "${assets[@]##*/}" | LC_ALL=C sort)"
+    if ! remote_asset_names="$(
+      gh release view "$tag" --repo "$repo" --json assets --jq '.assets[].name'
+    )"; then
+      return "$retry_fatal_status"
+    fi
+    remote_asset_names="$(printf '%s\n' "$remote_asset_names" | LC_ALL=C sort)"
+    if [[ "$remote_asset_names" != "$expected_asset_names" ]]; then
+      echo "::error::Existing public release asset-name set differs for ${tag}." >&2
+      return "$retry_fatal_status"
+    fi
     verification_dir="$(mktemp -d)" || return "$retry_fatal_status"
     for asset in "${assets[@]}"; do
       if ! gh release download "$tag" --repo "$repo" \

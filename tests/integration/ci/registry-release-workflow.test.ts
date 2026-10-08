@@ -284,6 +284,14 @@ async function runReleaseScript({
         "gh() {",
         '  printf "%s\\n" "$*" >> "$GH_LOG"',
         '  if [ "$1" = "release" ] && [ "$2" = "view" ]; then',
+        '    if [[ "$*" == *"--json assets"* ]]; then',
+        "      local remote_asset",
+        '      for remote_asset in "$PUBLISHED_ASSETS_DIR"/*; do',
+        '        [ -f "$remote_asset" ] || continue',
+        '        printf "%s\\n" "${remote_asset##*/}"',
+        "      done",
+        "      return 0",
+        "    fi",
         '    if [[ "$*" == *"--json isPrerelease"* ]]; then',
         '      printf "%s\\n" "$PUBLISHED_PRERELEASE"',
         "      return 0",
@@ -637,9 +645,12 @@ printf '%064d  %s\n' 0 "$1"
 
       assertEquals(output.code, 1);
       assertEquals(
-        ghCalls.filter((call) => call.startsWith("release view ")).length,
-        1,
-        "a published-release conflict must fail without retries",
+        ghCalls.filter((call) => call.startsWith("release view ")),
+        [
+          "release view v1.2.3-rc.4 --repo veryfront/veryfront --json isDraft --jq .isDraft",
+          "release view v1.2.3-rc.4 --repo veryfront/veryfront --json assets --jq .assets[].name",
+        ],
+        "a published-release conflict must perform only identity reads without retries",
       );
       assertEquals(
         decoder.decode(output.stderr).includes("Retrying"),
@@ -2312,7 +2323,7 @@ describe("canonical public RC material verification", () => {
 });
 
 describe("immutable public release recovery", () => {
-  for (const state of ["matching", "missing", "mismatched", "wrong-mode"] as const) {
+  for (const state of ["matching", "missing", "mismatched", "wrong-mode", "extra"] as const) {
     it(`reverifies ${state} existing publication without mutation`, async () => {
       await withTempDir(async (stateDir) => {
         const asset = `${stateDir}/veryfront-linux-x64`;
@@ -2328,6 +2339,12 @@ describe("immutable public release recovery", () => {
             state === "mismatched"
               ? '{"sourceCommit":"other-source"}'
               : '{"sourceCommit":"qualified-source"}',
+          );
+        }
+        if (state === "extra") {
+          await Deno.writeTextFile(
+            `${publishedAssetsDir}/unexpected-executable`,
+            "unqualified binary",
           );
         }
         const output = await runReleaseScript({
