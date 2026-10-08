@@ -1,10 +1,11 @@
-import { basename, extname, join } from "veryfront/platform/path";
+import { basename, dirname, extname, join } from "veryfront/platform/path";
 import { importFirstPartyExtensionModule } from "veryfront/extensions/first-party-import";
 import type {
   DocumentExtractionOptions,
   DocumentExtractionProgress,
   DocumentExtractionProgressEvent,
 } from "veryfront/extensions/compat";
+import { inspectOkfDocument, type OkfDocumentDiagnostic } from "veryfront/knowledge";
 
 export interface KnowledgeParserResult {
   success: true;
@@ -19,6 +20,13 @@ export interface KnowledgeParserResult {
   summary: string;
   stats: Record<string, unknown>;
   warnings: string[];
+  document_kind?: "generated" | "okf_concept" | "okf_index" | "okf_log";
+  okf?: {
+    path: string;
+    envelope_conforms: boolean;
+    diagnostics: OkfDocumentDiagnostic[];
+    metadata: Record<string, unknown>;
+  };
 }
 
 export interface KnowledgeParserInput {
@@ -26,6 +34,7 @@ export interface KnowledgeParserInput {
   description?: string;
   slug?: string;
   sourceReference?: string;
+  okfRelativePath?: string;
 }
 
 export type ExtractDocumentText = (
@@ -163,12 +172,95 @@ function yamlQuote(value: unknown): string {
 function buildFrontmatter(source: string, sourceType: string, description: string): string {
   return [
     "---",
+    `type: ${yamlQuote("Generated Document")}`,
     `source: ${yamlQuote(source)}`,
     `source_type: ${yamlQuote(sourceType)}`,
-    `added: ${yamlQuote(new Date().toISOString().slice(0, 10))}`,
     `description: ${yamlQuote(description)}`,
+    "generated:",
+    `  by: ${yamlQuote("veryfront knowledge ingest")}`,
+    "sources:",
+    "  - id: source",
+    `    resource: ${yamlQuote(source)}`,
     "---",
   ].join("\n");
+}
+
+function validateOkfRelativePath(path: string): string {
+  const normalized = path.replace(/\\/g, "/").split("/").filter((segment) => segment.length > 0)
+    .join("/");
+  if (
+    !normalized || normalized.startsWith("/") || normalized.startsWith("../") ||
+    normalized === ".." || normalized.split("/").includes("..")
+  ) {
+    throw new Error(`Invalid OKF bundle path: ${path}`);
+  }
+  if (!normalized.toLowerCase().endsWith(".md")) {
+    throw new Error(`OKF bundle mode only ingests Markdown documents: ${path}`);
+  }
+  return normalized;
+}
+
+function okfDocumentKind(kind: "concept" | "index" | "log"):
+  | "okf_concept"
+  | "okf_index"
+  | "okf_log" {
+  if (kind === "index") return "okf_index";
+  if (kind === "log") return "okf_log";
+  return "okf_concept";
+}
+
+function okfDocumentSummary(kind: "concept" | "index" | "log"): string {
+  if (kind === "index") return "Preserved OKF reserved index document.";
+  if (kind === "log") return "Preserved OKF reserved log document.";
+  return "Preserved OKF concept document.";
+}
+
+async function preserveOkfDocument(input: {
+  filePath: string;
+  outputDir: string;
+  relativePath: string;
+  sourceReference?: string;
+}): Promise<KnowledgeParserResult> {
+  const relativePath = validateOkfRelativePath(input.relativePath);
+  const source = await Deno.readTextFile(input.filePath);
+  const inspected = inspectOkfDocument(relativePath, source);
+  if (!inspected.envelopeConforms) {
+    const details = inspected.diagnostics.map((diagnostic) => diagnostic.message).join(" ");
+    throw new Error(`OKF document failed diagnostics for ${relativePath}: ${details}`);
+  }
+  const outputPath = join(input.outputDir, ...relativePath.split("/"));
+  await Deno.mkdir(dirname(outputPath), { recursive: true });
+  await Deno.writeTextFile(outputPath, source);
+  const title = typeof inspected.metadata.title === "string" && inspected.metadata.title.trim()
+    ? inspected.metadata.title
+    : titleizeFilename(relativePath);
+  return {
+    success: true,
+    source_path: input.filePath,
+    source_filename: basename(input.filePath),
+    source_type: "okf_markdown",
+    slug: slugifyKnowledgeValue(relativePath.replace(/\.md$/i, "")),
+    sandbox_output_path: outputPath,
+    suggested_project_path: `knowledge/${relativePath}`,
+    description: inspected.kind === "concept"
+      ? "OKF concept document"
+      : `OKF ${inspected.kind} document`,
+    title,
+    summary: okfDocumentSummary(inspected.kind),
+    stats: {
+      characters: source.length,
+      metadata_keys: Object.keys(inspected.metadata).length,
+      okf_kind: inspected.kind,
+    },
+    warnings: [],
+    document_kind: okfDocumentKind(inspected.kind),
+    okf: {
+      path: relativePath,
+      envelope_conforms: inspected.envelopeConforms,
+      diagnostics: inspected.diagnostics,
+      metadata: inspected.metadata,
+    },
+  };
 }
 
 function tableToMarkdown(rows: string[][]): string {
@@ -402,6 +494,7 @@ export async function runKnowledgeParser(input: {
   description?: string;
   slug?: string;
   sourceReference?: string;
+  okfRelativePath?: string;
 }, deps: RunKnowledgeParsersDeps = {}): Promise<KnowledgeParserResult> {
   const [result] = await runKnowledgeParsers({
     files: [{
@@ -409,6 +502,7 @@ export async function runKnowledgeParser(input: {
       description: input.description,
       slug: input.slug,
       sourceReference: input.sourceReference,
+      okfRelativePath: input.okfRelativePath,
     }],
     outputDir: input.outputDir,
   }, deps);
@@ -441,6 +535,18 @@ export async function runKnowledgeParsers(input: {
       const stat = await Deno.stat(file.filePath);
       if (!stat.isFile) {
         throw new Error(`File not found: ${file.filePath}`);
+      }
+
+      if (file.okfRelativePath !== undefined) {
+        results.push(
+          await preserveOkfDocument({
+            filePath: file.filePath,
+            outputDir: input.outputDir,
+            relativePath: file.okfRelativePath,
+            sourceReference: file.sourceReference,
+          }),
+        );
+        continue;
       }
 
       const definition = selectParserDefinition(file.filePath);
@@ -480,6 +586,7 @@ export async function runKnowledgeParsers(input: {
         summary: buildSummary(definition.sourceType, parsed.stats),
         stats: parsed.stats,
         warnings: parsed.warnings,
+        document_kind: "generated",
       });
     } catch (error) {
       if (error instanceof Error && error.message.startsWith("knowledge ingest parser failed")) {

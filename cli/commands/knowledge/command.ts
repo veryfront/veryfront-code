@@ -5,7 +5,7 @@ type SafeParseResult<T> = { success: true; data: T } | {
   error: Error & { issues: unknown[] };
 };
 import { createFileSystem, getEnv } from "veryfront/platform";
-import { basename } from "veryfront/platform/path";
+import { basename, extname } from "veryfront/platform/path";
 import { withSpan } from "veryfront/observability/otlp-setup";
 import { cliLogger } from "#cli/utils";
 import { parseArgsOrThrow } from "#cli/shared/args";
@@ -55,6 +55,7 @@ const getKnowledgeIngestArgsSchema = defineSchema((v) =>
     slug: v.string().optional(),
     json: v.boolean().default(false),
     quiet: v.boolean().default(false),
+    okfBundle: v.boolean().default(false),
   }).superRefine((value, ctx) => {
     const hasExplicitSources = value.sources.length > 0;
     const hasPath = typeof value.path === "string" && value.path.length > 0;
@@ -93,12 +94,24 @@ const getKnowledgeIngestArgsSchema = defineSchema((v) =>
         message: "--slug can only be used with a single explicit source.",
       });
     }
+
+    if (value.okfBundle && (!hasPath || !value.all || hasExplicitSources)) {
+      ctx.addIssue({
+        code: "custom",
+        message:
+          "--okf-bundle requires --path <bundle-root> --all and does not accept explicit sources.",
+      });
+    }
   })
 );
 
 const KnowledgeIngestArgsSchema = lazySchema(getKnowledgeIngestArgsSchema);
 
 export type KnowledgeIngestOptions = InferSchema<ReturnType<typeof getKnowledgeIngestArgsSchema>>;
+
+export type KnowledgeIngestExecutionOptions = Omit<KnowledgeIngestOptions, "okfBundle"> & {
+  okfBundle?: boolean;
+};
 
 function createKnowledgeIngestEventLogger(): Logger | null {
   const projectId = getEnv("TENANT_PROJECT_ID");
@@ -161,6 +174,7 @@ Veryfront Knowledge
 Usage:
   veryfront knowledge ingest <source...> [options]
   veryfront knowledge ingest --path <prefix-or-dir> --all [options]
+  veryfront knowledge ingest --path <bundle-root> --all --okf-bundle [options]
 
 Subcommands:
   ingest   Orchestrate upload resolution, parsing, and knowledge file writes
@@ -183,6 +197,7 @@ export function parseKnowledgeIngestArgs(
     slug: getStringArg(args, "slug"),
     json: getBooleanArg(args, "json", "j"),
     quiet: getBooleanArg(args, "quiet", "q"),
+    okfBundle: getBooleanArg(args, "okf-bundle"),
   }) as SafeParseResult<KnowledgeIngestOptions>;
 }
 
@@ -216,6 +231,7 @@ export const resolveKnowledgeDownloadOutputDir = commandHelpers.resolveKnowledge
 export const buildSuggestedSlug = commandHelpers.buildSuggestedSlug;
 export const ensureUniqueSlugs = commandHelpers.ensureUniqueSlugs;
 export const deriveKnowledgeRemotePath = commandHelpers.deriveKnowledgeRemotePath;
+export const deriveOkfBundleRelativePath = commandHelpers.deriveOkfBundleRelativePath;
 export const createKnowledgeIngestResult = commandHelpers.createKnowledgeIngestResult;
 export {
   type KnowledgeParserInput,
@@ -273,12 +289,112 @@ function classifyListedUploadsForKnowledge(uploads: UploadItem[]): {
   return { skipped, uploadTargets };
 }
 
+function filterOkfBundleUploadTargets(
+  uploadTargets: string[],
+  skipped: KnowledgeIngestSkippedFileResult[],
+  okfBundle: boolean | undefined,
+): string[] {
+  if (!okfBundle) return uploadTargets;
+  const markdownTargets: string[] = [];
+  for (const uploadPath of uploadTargets) {
+    if (extname(uploadPath).toLowerCase() === ".md") {
+      markdownTargets.push(uploadPath);
+      continue;
+    }
+    skipped.push(commandHelpers.createSkippedKnowledgeSource({
+      source: formatKnowledgeUploadSource(uploadPath),
+      reason: "unsupported_file_type",
+      message:
+        "OKF bundle mode only ingests Markdown documents; generated viewer artifacts are skipped.",
+    }));
+  }
+  return markdownTargets;
+}
+
 function buildSourceReference(source: KnowledgeSource): string {
   return commandHelpers.buildSourceReference(source);
 }
 
+function validateOkfBundleOptions(
+  options: Pick<KnowledgeIngestExecutionOptions, "sources" | "path" | "all" | "okfBundle">,
+): void {
+  if (!options.okfBundle) return;
+  if (options.sources.length > 0 || !options.path || !options.all) {
+    throw new Error(
+      "--okf-bundle requires --path <bundle-root> --all and does not accept explicit sources.",
+    );
+  }
+}
+
+function isMarkdownKnowledgeSource(source: KnowledgeSource): boolean {
+  const path = source.kind === "upload" ? source.uploadPath : source.localPath;
+  return extname(path).toLowerCase() === ".md";
+}
+
+function filterOkfBundleCollection(
+  collection: KnowledgeSourceCollection,
+  okfBundle: boolean | undefined,
+): KnowledgeSourceCollection {
+  if (!okfBundle) return collection;
+  const filtered: KnowledgeSourceCollection = { sources: [], skipped: [...collection.skipped] };
+  for (const source of collection.sources) {
+    if (isMarkdownKnowledgeSource(source)) {
+      filtered.sources.push(source);
+      continue;
+    }
+    filtered.skipped.push(commandHelpers.createSkippedKnowledgeSource({
+      source: buildSourceReference(source),
+      localSourcePath: source.localPath,
+      reason: "unsupported_file_type",
+      message:
+        "OKF bundle mode only ingests Markdown documents; generated viewer artifacts are skipped.",
+    }));
+  }
+  return filtered;
+}
+
+function deriveOkfBundleRemotePath(relativePath: string, knowledgePath: string): string {
+  const prefix = normalizeKnowledgeInputPath(knowledgePath);
+  const normalizedRelative = commandHelpers.normalizeKnowledgeRelativePath(
+    relativePath,
+    "OKF bundle relative path",
+  );
+  return `${prefix}/${normalizedRelative}`.replace(/\\/g, "/");
+}
+
+function buildOkfBundleRelativePaths(
+  sources: KnowledgeSource[],
+  options: KnowledgeIngestExecutionOptions,
+): Map<KnowledgeSource, string> {
+  if (!options.okfBundle) return new Map();
+  if (!options.path) {
+    throw new Error("OKF bundle mode requires an explicit bundle root.");
+  }
+  const relativePaths = new Map<KnowledgeSource, string>();
+  const remotePaths = new Map<string, string>();
+  for (const source of sources) {
+    const relativePath = commandHelpers.deriveOkfBundleRelativePath(source, options.path);
+    if (!relativePath.toLowerCase().endsWith(".md")) {
+      throw new Error(`OKF bundle mode only ingests Markdown documents: ${relativePath}`);
+    }
+    const remotePath = deriveOkfBundleRemotePath(relativePath, options.knowledgePath);
+    const previous = remotePaths.get(remotePath);
+    if (previous !== undefined) {
+      throw new Error(
+        `OKF bundle output path collision: ${previous} and ${buildSourceReference(source)}`,
+      );
+    }
+    remotePaths.set(remotePath, buildSourceReference(source));
+    relativePaths.set(source, relativePath);
+  }
+  return relativePaths;
+}
+
 export async function collectKnowledgeSources(
-  options: Pick<KnowledgeIngestOptions, "sources" | "path" | "all" | "recursive">,
+  options: Pick<
+    KnowledgeIngestExecutionOptions,
+    "sources" | "path" | "all" | "recursive" | "okfBundle"
+  >,
   deps: {
     client: ApiClient;
     projectSlug: string;
@@ -286,6 +402,7 @@ export async function collectKnowledgeSources(
     signal?: AbortSignal;
   },
 ): Promise<KnowledgeSourceCollection> {
+  validateOkfBundleOptions(options);
   const fs = createFileSystem();
   deps.signal?.throwIfAborted();
 
@@ -362,10 +479,10 @@ export async function collectKnowledgeSources(
       });
     }
 
-    return {
+    return filterOkfBundleCollection({
       sources: resolvedSources,
       skipped,
-    };
+    }, options.okfBundle);
   }
 
   if (!options.path || !options.all) {
@@ -373,7 +490,10 @@ export async function collectKnowledgeSources(
   }
 
   if (!isProjectUploadReference(options.path) && await fs.exists(options.path)) {
-    return collectLocalFiles(options.path, options.recursive);
+    return filterOkfBundleCollection(
+      await collectLocalFiles(options.path, options.okfBundle ? true : options.recursive),
+      options.okfBundle,
+    );
   }
 
   const displayUploadPrefix = normalizeKnowledgeInputPath(options.path);
@@ -382,27 +502,31 @@ export async function collectKnowledgeSources(
   const listUploadsForPrefix = async (pathPrefix?: string): Promise<UploadItem[]> =>
     listAllUploads(deps.client, deps.projectSlug, {
       path: pathPrefix || undefined,
-      recursive: options.recursive ?? true,
+      recursive: options.okfBundle ? true : options.recursive ?? true,
       limit: 100,
     });
 
   let uploads = await listUploadsForPrefix(uploadPrefix || undefined);
   deps.signal?.throwIfAborted();
   let { skipped, uploadTargets } = classifyListedUploadsForKnowledge(uploads);
+  uploadTargets = filterOkfBundleUploadTargets(uploadTargets, skipped, options.okfBundle);
 
-  if (!uploadTargets.length && uploadPrefix && !uploadPrefix.endsWith("/")) {
+  if (
+    !uploadTargets.length && skipped.length === 0 && uploadPrefix && !uploadPrefix.endsWith("/")
+  ) {
     uploads = await listUploadsForPrefix(`${uploadPrefix}/`);
     deps.signal?.throwIfAborted();
     ({ skipped, uploadTargets } = classifyListedUploadsForKnowledge(uploads));
+    uploadTargets = filterOkfBundleUploadTargets(uploadTargets, skipped, options.okfBundle);
   }
 
   if (!uploadTargets.length && skipped.length === 0) {
     throw new Error(`No supported uploads found under ${displayUploadPrefix}`);
   }
 
-  const downloads = await deps.downloadUploads(uploadTargets);
+  const downloads = uploadTargets.length > 0 ? await deps.downloadUploads(uploadTargets) : [];
   deps.signal?.throwIfAborted();
-  return {
+  return filterOkfBundleCollection({
     sources: downloads.map((download) => ({
       kind: "upload",
       input: options.path!,
@@ -410,12 +534,12 @@ export async function collectKnowledgeSources(
       localPath: download.localPath,
     })),
     skipped,
-  };
+  }, options.okfBundle);
 }
 
 export async function ingestResolvedSources(
   sources: KnowledgeSource[],
-  options: KnowledgeIngestOptions,
+  options: KnowledgeIngestExecutionOptions,
   deps: {
     client: ApiClient;
     projectSlug: string;
@@ -429,10 +553,12 @@ export async function ingestResolvedSources(
   ingested: KnowledgeIngestFileResult[];
   failed: KnowledgeIngestFailedFileResult[];
 }> {
+  validateOkfBundleOptions(options);
   if (options.slug && sources.length !== 1) {
     throw new Error("--slug can only be used with a single explicit source.");
   }
 
+  const okfRelativePaths = buildOkfBundleRelativePaths(sources, options);
   const slugs = options.slug ? [options.slug] : ensureUniqueSlugs(sources);
   const ingested: KnowledgeIngestFileResult[] = [];
   const failed: KnowledgeIngestFailedFileResult[] = [];
@@ -491,6 +617,7 @@ export async function ingestResolvedSources(
         description: options.description,
         slug: slugs[index],
         sourceReference,
+        okfRelativePath: okfRelativePaths.get(source),
       }, parserDeps);
       deps.signal?.throwIfAborted();
     } catch (error) {
@@ -501,11 +628,14 @@ export async function ingestResolvedSources(
     }
 
     try {
-      const remotePath = deriveKnowledgeRemotePath(
-        parser.sandbox_output_path,
-        deps.outputDir,
-        options.knowledgePath,
-      );
+      const okfRelativePath = okfRelativePaths.get(source);
+      const remotePath = okfRelativePath === undefined
+        ? deriveKnowledgeRemotePath(
+          parser.sandbox_output_path,
+          deps.outputDir,
+          options.knowledgePath,
+        )
+        : deriveOkfBundleRemotePath(okfRelativePath, options.knowledgePath);
       const uploaded = await deps.uploadKnowledgeFile(remotePath, parser.sandbox_output_path);
       deps.signal?.throwIfAborted();
 
@@ -623,6 +753,7 @@ export async function knowledgeCommand(args: ParsedArgs): Promise<void> {
             ingested: results.ingested,
             skipped: collection.skipped,
             failed: results.failed,
+            okfBundle: options.okfBundle,
           });
 
           eventLogger?.info("Completed knowledge ingest", {

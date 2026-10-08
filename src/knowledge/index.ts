@@ -13,6 +13,14 @@
  * ```
  */
 
+export {
+  inspectOkfDocument,
+  OKF_SPEC_REVISION,
+  OKF_SPEC_VERSION,
+  type OkfDocumentDiagnostic,
+  type OkfDocumentInspection,
+} from "./okf-document.ts";
+
 import { ragStore } from "#veryfront/embedding/index.ts";
 import { INPUT_VALIDATION_FAILED } from "#veryfront/errors";
 import { base64urlEncodeBytes } from "#veryfront/utils";

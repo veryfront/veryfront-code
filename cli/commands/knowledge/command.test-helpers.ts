@@ -52,6 +52,7 @@ export function createKnowledgeCommandArgs(overrides: Record<string, unknown> = 
     slug: undefined,
     json: true,
     quiet: false,
+    okfBundle: false,
     projectDir: undefined,
     projectSlug: undefined,
     ...overrides,

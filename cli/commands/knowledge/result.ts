@@ -17,6 +17,13 @@ export interface KnowledgeIngestFileResult {
   summary: string;
   stats: Record<string, unknown>;
   warnings: string[];
+  documentKind?: "generated" | "okf_concept" | "okf_index" | "okf_log";
+  okf?: {
+    path: string;
+    envelope_conforms: boolean;
+    diagnostics: Array<{ code: string; message: string }>;
+    metadata: Record<string, unknown>;
+  };
 }
 
 export interface KnowledgeIngestSkippedFileResult {
@@ -44,6 +51,8 @@ export interface KnowledgeIngestResultMetadata {
   requested_count: number;
   source_mode: "explicit_sources" | "path_prefix";
   knowledge_path: string;
+  okf_bundle: boolean;
+  pending_acceptance: string[];
 }
 
 export interface KnowledgeIngestRunResult {
@@ -60,6 +69,7 @@ export function buildKnowledgeIngestRunResult(input: {
   requestedCount: number;
   sourceMode: KnowledgeIngestResultMetadata["source_mode"];
   knowledgePath: string;
+  okfBundle?: boolean;
   ingested: KnowledgeIngestFileResult[];
   skipped?: KnowledgeIngestSkippedFileResult[];
   failed?: KnowledgeIngestFailedFileResult[];
@@ -74,6 +84,13 @@ export function buildKnowledgeIngestRunResult(input: {
       requested_count: input.requestedCount,
       source_mode: input.sourceMode,
       knowledge_path: input.knowledgePath,
+      okf_bundle: input.okfBundle ?? false,
+      pending_acceptance: [
+        "job_retry_idempotence",
+        "derived_link_index",
+        "provider_file_flow",
+        "full_okf_import_export_roundtrip",
+      ],
     },
     summary: {
       requested_count: input.requestedCount,
