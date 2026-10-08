@@ -164,15 +164,22 @@ export async function recoverGate(
         ),
       };
       const resumed = decideRecovery(projected, [], now());
-      if (!resumed.recover) {
-        throw new Error(
-          `Run ${id}: incomplete recovery is no longer safe; refusing rerun`,
-        );
+      if (resumed.recover) {
+        if (options.dryRun) {
+          return "verified cancelled gate with pending recovery, would rerun";
+        }
+        return await finishRecovery(client, candidate, resumed.minutes);
       }
-      if (options.dryRun) {
-        return "verified cancelled gate with pending recovery, would rerun";
-      }
-      return await finishRecovery(client, candidate, resumed.minutes);
+    }
+    if (
+      candidate.run.status === "completed" &&
+      candidate.run.run_attempt === intent.attempt
+    ) {
+      const message = `Run ${id}: original attempt finished with ${
+        cancelledGate?.conclusion ?? "missing gate"
+      }, no action`;
+      if (!options.dryRun) await client.comment(candidate.run, message);
+      return message;
     }
   }
   let decision = decideRecovery(candidate, [], now());

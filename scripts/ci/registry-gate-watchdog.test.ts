@@ -310,6 +310,24 @@ describe("registry gate watchdog", () => {
       );
     }
   });
+  it("clears intent when the original attempt finishes without a safe cancellation", async () => {
+    for (const conclusion of ["success", "failure", "cancelled"]) {
+      const { api, calls } = client();
+      await api.remember({ run, jobs });
+      api.inspect = () =>
+        Promise.resolve({
+          run: { ...run, status: "completed" },
+          jobs: [prerelease, {
+            ...gate,
+            status: "completed",
+            conclusion,
+            steps: [{ name: "Set up job", conclusion: "success" }],
+          }],
+        });
+      await recoverGate(api, run.id, { dryRun: false, now: () => NOW });
+      assertEquals(calls, ["intent", "comment"]);
+    }
+  });
   it("does not resume a manually cancelled run without persisted intent", async () => {
     const { api, calls } = client();
     api.inspect = () =>
