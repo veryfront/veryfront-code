@@ -1,4 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
+import { prepareFrameworkSources } from "../../../scripts/build/prepare-framework-sources.ts";
 import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
@@ -8,6 +9,7 @@ import { fromFileUrl, join } from "#veryfront/compat/path";
 describe("compiled framework capture", () => {
   for (const selfExtracting of [false, true]) {
     it(`reads ${selfExtracting ? "native self-extracted" : "immutable embedded"} framework sources`, async () => {
+      await prepareFrameworkSources();
       const fs = createFileSystem();
       const dir = await fs.makeTempDir();
       try {
@@ -26,6 +28,8 @@ describe("compiled framework capture", () => {
             "--allow-env",
             "--include",
             "src/agent/identity-contracts.ts",
+            "--include",
+            "dist/framework-src/root-bundled/extensions/ext-eval-report-mlflow/src/index.ts.src",
             "--output",
             binary,
             "tests/integration/transforms/fixtures/framework-capture-binary.ts",

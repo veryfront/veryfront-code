@@ -239,6 +239,33 @@ for await (const frame of sdk.streamRunEvents({ path: { run_id: run.id } })) {
 type Run = RunsContractComponents["schemas"]["Run"];
 ```
 
+Executors accept a detached dispatch once through the HTTP heartbeat endpoint.
+Configure the SDK transport to use the issued execution renewal credential,
+and disable retries for this one-shot request:
+
+```ts
+const executionRenewalToken = process.env.EXECUTION_RENEWAL_TOKEN!;
+const executorSdk = createRunsSdk({
+  transport: createRunsApiTransport({
+    baseUrl: "<RUNS_API_ORIGIN>",
+    getToken: () => executionRenewalToken,
+    retry: { maxRetries: 0, initialDelay: 0, maxDelay: 0 },
+  }),
+});
+
+await executorSdk.createRunHeartbeat({
+  path: { run_id: "11111111-1111-4111-8111-111111111111" },
+  headers: { "x-veryfront-run-dispatch-acceptance": "true" },
+  body: { lease_duration_seconds: 60 },
+});
+```
+
+A lost response leaves acceptance uncertain. Do not retry the acceptance request.
+A duplicate acceptance returns 409. Ordinary heartbeats omit this header.
+User tokens and project API keys do not grant heartbeat execution authority.
+Dispatch acceptance is HTTP bootstrap metadata; GraphQL and MCP retain ordinary
+heartbeat behavior.
+
 The package ships the pinned contract as TypeScript types, not runtime
 validators. An app that consumes the SDK at its own boundary uses these types
 instead of copying the contract, for example `RunsOutput<"getRun">` or
@@ -293,7 +320,7 @@ describe the run.
 
 ## Runs target CLI reference
 
-Use `veryfront project runs <command>` with an API that serves the Runs 0.8.7
+Use `veryfront project runs <command>` with an API that serves the Runs 0.8.8
 contract. The CLI calls the typed Runs SDK. Target deployment and live parity
 are tracked separately from the fixture tests for these commands.
 
@@ -349,6 +376,16 @@ Use `--idempotency-key` for idempotent mutations and `--if-match` for `update`.
 `fail` require `--idempotency-key`. `update`
 requires `--if-match`. The table lists route flags only.
 The service validates the shared contract. The CLI adds no lifecycle policy.
+
+For executor bootstrap, accept the dispatch once before starting work:
+
+```bash
+veryfront project runs heartbeat --run-id <RUN_ID> --accept-dispatch --credential-file <EXECUTION_RENEWAL_TOKEN_FILE> --body '{"lease_duration_seconds":60}' --json
+```
+
+Use the issued execution renewal credential. A duplicate returns 409; omit
+`--accept-dispatch` for ordinary renewal. Ordinary login and API keys cannot
+replace this execution credential.
 
 Use `--all` on list commands to follow SDK pagination. Use `get --follow` or
 `create --follow` to stream after the initial response. `stream --last-event-id`
@@ -427,4 +464,4 @@ schedule creation both use `create`. Existing local `task`, `workflow`, `eval`,
 and `schedule` execution commands retain their local behavior. The existing
 `schedule run --remote` legacy source-name resolver stays until the coordinated
 consumer cutover; use the target `create` invocation with a saved schedule UUID
-for the 0.8.7 contract. These tests do not prove deployed parity.
+for the 0.8.8 contract. These tests do not prove deployed parity.

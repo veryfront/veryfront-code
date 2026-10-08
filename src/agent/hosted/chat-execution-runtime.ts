@@ -86,6 +86,10 @@ import {
   createDurableRunEventSink,
   DurableRunEventPersistenceError,
 } from "./durable-run-event-sink.ts";
+import {
+  primordialPromiseCatch,
+  primordialPromiseResolve,
+} from "../../platform/compat/primordials/promise.ts";
 export type { HostedChatExecutionLifecycleAdapter } from "./chat-execution-lifecycle-types.ts";
 
 const INCOMPLETE_TOOL_CALLS_PART_ERROR_TEXT = "Assistant ended before tool execution completed";
@@ -388,6 +392,14 @@ export async function createHostedChatExecutionRuntimeBootstrap(
     streamResult = await traceHostedChatRuntimeStream(
       input.traceStream,
       () => runEventSink ? runWithMandatoryRunEventSink(runEventSink, startStream) : startStream(),
+    );
+    // A cancelled UI iterator can fail before detached finalization reaches
+    // `steps`. Observe it at creation so that ordering cannot leave the provider
+    // cancellation rejection ownerless; finalization still awaits the original
+    // promise and preserves its result.
+    void primordialPromiseCatch(
+      primordialPromiseResolve(streamResult.steps),
+      () => undefined,
     );
   } catch (error) {
     rootStreamWatchdog.dispose();

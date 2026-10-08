@@ -67,7 +67,11 @@ import type {
   DefaultHostedChildForkToolAssemblySourceResult,
 } from "./child-requested-tools.ts";
 import { prepareDefaultHostedChildForkToolAssembly } from "./child-requested-tools.ts";
-import type { RuntimeClientProfile } from "../runtime/client-profile.ts";
+import { clientAllowsStudioMcp, type RuntimeClientProfile } from "../runtime/client-profile.ts";
+import {
+  getForkRuntimeAllowedToolNames,
+  getProviderNativeToolNames,
+} from "../runtime/provider-native-tool-inventory.ts";
 import type { RuntimeLoadSkillToolContext } from "../runtime/load-skill-tool.ts";
 import type { RuntimeReasoningOption } from "../types.ts";
 import { withRootOwnedChildResultHint } from "../conversation/delegation-policy.ts";
@@ -388,6 +392,67 @@ function withoutDeniedForkTools(
   };
 }
 
+function getUnavailableOptionalStudioToolNames(
+  config: DefaultHostedInvokeAgentConfig,
+  clientProfile: RuntimeClientProfile | null | undefined,
+): Set<string> | undefined {
+  if (config.studioMcpUrl && clientAllowsStudioMcp(clientProfile)) {
+    return undefined;
+  }
+
+  const unavailableNames = new Set<string>();
+  for (const server of config.mcpServers ?? []) {
+    if (server.kind !== "veryfront-studio" || server.required !== false) continue;
+    unavailableNames.add("studio_*");
+    for (const toolName of server.toolPolicy?.allow ?? []) unavailableNames.add(toolName);
+  }
+
+  return unavailableNames.size === 0 ? undefined : unavailableNames;
+}
+
+function isUnavailableOptionalStudioTool(
+  toolName: string,
+  unavailableNames: ReadonlySet<string> | undefined,
+): boolean {
+  return unavailableNames?.has(toolName) === true ||
+    (unavailableNames?.has("studio_*") === true && toolName.startsWith("studio_"));
+}
+
+function withoutUnavailableOptionalStudioRequestedTools(input: {
+  requestedTools?: HostedChildForkToolInput["tools"];
+  config: DefaultHostedInvokeAgentConfig;
+  clientProfile: RuntimeClientProfile | null | undefined;
+  toolSources: DefaultHostedChildForkToolAssemblySourceResult;
+  provider: string;
+  forkModel?: string;
+  hostedModel?: boolean;
+}): HostedChildForkToolInput["tools"] {
+  if (!input.requestedTools?.length || !input.toolSources.ok) return input.requestedTools;
+  const unavailableNames = getUnavailableOptionalStudioToolNames(input.config, input.clientProfile);
+  if (unavailableNames === undefined) return input.requestedTools;
+
+  const availableNames = new Set(getForkRuntimeAllowedToolNames({
+    provider: input.provider,
+    forkModel: input.forkModel,
+    forkTools: input.toolSources.forkTools,
+  }));
+  for (
+    const toolName of getProviderNativeToolNames({
+      provider: input.provider,
+      model: input.forkModel,
+      hosted: input.hostedModel,
+    })
+  ) {
+    availableNames.add(toolName);
+  }
+  const requestedTools = input.requestedTools.filter((toolName) =>
+    !isUnavailableOptionalStudioTool(toolName, unavailableNames) || availableNames.has(toolName)
+  );
+  return requestedTools.length === input.requestedTools.length
+    ? input.requestedTools
+    : requestedTools;
+}
+
 async function prepareForkToolAssembly<TContext extends DefaultHostedInvokeAgentContext>(
   options: DefaultHostedInvokeAgentToolOptions<TContext>,
   config: DefaultHostedInvokeAgentConfig,
@@ -403,24 +468,34 @@ async function prepareForkToolAssembly<TContext extends DefaultHostedInvokeAgent
     durableChildRun?: HostedChildRunIdentifiers;
   },
 ): Promise<DefaultHostedChildForkToolAssemblyResult> {
+  const toolSources = withoutDeniedForkTools(
+    await prepareForkToolSources(
+      options,
+      config,
+      input.childAgentId,
+      input.childConfig,
+      input.abortSignal,
+      input.durableChildRun,
+    ),
+    input.childConfig?.deniedToolNames,
+  );
+  const requestedTools = withoutUnavailableOptionalStudioRequestedTools({
+    requestedTools: input.requestedTools,
+    config,
+    clientProfile: options.context.clientProfile,
+    toolSources,
+    provider: input.provider,
+    forkModel: input.forkModel,
+    hostedModel: input.hostedModel,
+  });
+
   const toolAssembly = await prepareDefaultHostedChildForkToolAssembly({
-    prepareToolSources: async () =>
-      withoutDeniedForkTools(
-        await prepareForkToolSources(
-          options,
-          config,
-          input.childAgentId,
-          input.childConfig,
-          input.abortSignal,
-          input.durableChildRun,
-        ),
-        input.childConfig?.deniedToolNames,
-      ),
+    prepareToolSources: () => Promise.resolve(toolSources),
     provider: input.provider,
     forkModel: input.forkModel,
     hostedModel: input.hostedModel,
     effectivePrompt: input.effectivePrompt,
-    requestedTools: input.requestedTools,
+    requestedTools,
     ...(input.childConfig?.deniedToolNames?.length
       ? { excludedTools: new Set(input.childConfig.deniedToolNames) }
       : {}),
@@ -667,6 +742,7 @@ function applyChildAgentExecutionConfig(
 /** Test-only helpers for fixed-target hosted delegation behavior. */
 export const defaultHostedInvokeAgentToolInternals = {
   applyChildAgentExecutionConfig,
+  withoutUnavailableOptionalStudioRequestedTools,
   withoutDeniedForkTools,
 };
 

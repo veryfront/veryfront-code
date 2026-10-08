@@ -38,12 +38,19 @@ const getRuntimeAgentMcpToolPolicySchema = defineSchema((v) =>
 
 /** Schema for a first-party MCP preset that is safe to serialize with an agent definition. */
 export const getRuntimeAgentMcpServerConfigSchema = defineSchema((v) =>
-  v.object({
-    kind: v.union([v.literal("veryfront-api"), v.literal("veryfront-studio")]),
-    id: v.string().min(1).optional(),
-    required: v.boolean().optional(),
-    toolPolicy: getRuntimeAgentMcpToolPolicySchema().optional(),
-  })
+  v.union([
+    v.object({
+      kind: v.literal("veryfront-api"),
+      id: v.string().min(1).optional(),
+      toolPolicy: getRuntimeAgentMcpToolPolicySchema().optional(),
+    }).strict(),
+    v.object({
+      kind: v.literal("veryfront-studio"),
+      id: v.string().min(1).optional(),
+      required: v.boolean().optional(),
+      toolPolicy: getRuntimeAgentMcpToolPolicySchema().optional(),
+    }).strict(),
+  ])
 );
 
 /** First-party MCP preset carried over the hosted agent-definition boundary. */

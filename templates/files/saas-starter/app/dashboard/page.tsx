@@ -1,12 +1,6 @@
 "use client";
 
-import {
-  AppShell,
-  Chat,
-  ChatSidebar,
-  ChatThemeScope,
-  ConversationsProvider,
-} from "veryfront/chat";
+import { AppShell, Chat, ChatSidebar, ChatThemeScope, ConversationsProvider } from "veryfront/chat";
 import { MarkdownRendererProvider } from "veryfront/markdown";
 import { MarkdownRenderer } from "../markdown-renderer.tsx";
 
@@ -33,10 +27,10 @@ export default function Dashboard(): React.JSX.Element {
                 </div>
                 <div className="min-w-0 flex-1">
                   <p className="truncate text-sm font-medium text-neutral-900 dark:text-white">
-                    User
+                    Demo user
                   </p>
                   <p className="truncate text-xs text-neutral-500">
-                    user@example.com
+                    demo@example.com
                   </p>
                 </div>
               </div>

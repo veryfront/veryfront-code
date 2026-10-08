@@ -556,6 +556,7 @@ export function createNodeVeryfrontCloudAgentServiceRuntimeOptions(
 ): CreateAgentServiceRuntimeOptions<NodeVeryfrontCloudAgentServicePreparedExecution> {
   return {
     serviceName: context.options.serviceName,
+    deploymentArtifact: context.options.deploymentArtifact,
     runtimeSource: context.options.runtimeSource,
     forwardedConfigNamespace: context.options.forwardedConfigNamespace ??
       DEFAULT_FORWARDED_CONFIG_NAMESPACE,

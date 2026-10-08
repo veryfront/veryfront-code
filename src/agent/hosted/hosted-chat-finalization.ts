@@ -211,6 +211,7 @@ function createHostedChatFinalizeDetachedBuildState(
 
     return {
       finalizedMessage: finalizedFallbackMessage,
+      // Diagnostic metadata and empty shells are not a completed assistant response.
       hasContent: !shouldFailEmptyHostedFinalizedMessage({
         isAborted: false,
         message: finalizedFallbackMessage,

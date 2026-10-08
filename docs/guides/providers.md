@@ -491,6 +491,15 @@ const model = resolveModel("openai/gpt-5.5");
 const cloudModel = resolveModel("veryfront-cloud/openai/gpt-5.5");
 ```
 
+## Provider authentication errors
+
+Native provider HTTP 401 and 403 refusals produce `agent-provider-auth-error`
+with the message "Agent provider authentication failed". Check your provider
+credential and its permissions before running the agent again. Provider response
+text and credentials stay private. Gateway inference policy refusals retain their
+specific policy error; rate limits and service failures retain their existing
+classification.
+
 ## Verify it worked
 
 Call your agent's AG-UI route once provider env vars are set:

@@ -1311,7 +1311,7 @@ describe("routing/api/route-executor", () => {
         allow: { confluence: { allowedTools: ["get_page"] } },
       });
       const modulePath = new URL("./fixtures/source-policy-route.ts", import.meta.url).pathname;
-      const projectDir = new URL("../../../", import.meta.url).pathname;
+      const projectDir = new URL("./fixtures/", import.meta.url).pathname;
       const sourcePolicyModuleUrl = new URL(
         "../../integrations/source-policy-context.ts",
         import.meta.url,
@@ -1366,7 +1366,7 @@ describe("routing/api/route-executor", () => {
         "./fixtures/null-body-pages-route.ts",
         import.meta.url,
       ).pathname;
-      const projectDir = new URL("../../../", import.meta.url).pathname;
+      const projectDir = new URL("./fixtures/", import.meta.url).pathname;
 
       const response = await runWithExactSourceIntegrationPolicy(
         normalizeSourceIntegrationPolicy({ allow: {} }),
