@@ -4287,6 +4287,29 @@ describe("automated review timeout watchdog", () => {
     );
   });
 
+  it("ignores an obsolete draft status after the same head becomes ready", async () => {
+    const github = timeoutDiscoveryFixture([[
+      timeoutPull(1, "2026-10-08T12:00:00Z", {}, "PENDING", {
+        __typename: "Bot",
+        login: "github-actions",
+        databaseId: GITHUB_ACTIONS_ID,
+      }, "PR#1 draft waits for review"),
+      timeoutPull(2, "2026-10-08T13:05:00Z"),
+      timeoutPull(3, "2026-10-08T12:45:00Z"),
+    ]]);
+
+    assertEquals(
+      await findTimedOutAutomatedReviews({
+        github,
+        owner: "veryfront",
+        repo: "veryfront-code",
+        now: Date.parse("2026-10-08T13:15:00Z"),
+        reviewTimeoutMs: 1_800_000,
+      }),
+      [{ pullNumber: 3, headSha: HEAD }],
+    );
+  });
+
   it("does not discover a younger pending status or a completed status", async () => {
     const github = timeoutDiscoveryFixture([[
       timeoutPull(1, "2026-08-25T08:00:01Z"),

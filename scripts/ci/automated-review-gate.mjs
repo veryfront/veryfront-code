@@ -2031,7 +2031,8 @@ function reviewTimeoutContext(pull, pullNumber) {
       typeof context?.description !== "string"
     ) return false;
     if (context.state === "PENDING") {
-      return context.description.startsWith(descriptionPrefix);
+      return context.description.startsWith(descriptionPrefix) &&
+        context.description !== `PR#${pullNumber} draft waits for review`;
     }
     return context.state === "FAILURE" &&
       (context.description ===
