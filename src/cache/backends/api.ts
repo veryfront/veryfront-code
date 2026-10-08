@@ -107,7 +107,7 @@ type CacheRequestOptions = {
    * Route template recorded as `cache.operation`, in `http.url` and in logs
    * instead of the request path, so a key in the path never reaches telemetry.
    */
-  operation?: string;
+  operation: string;
   boundedJsonString?: { fieldName: string; maximumBytes: number };
   /**
    * Reports the authority this request resolves at the moment it performs the
@@ -242,8 +242,8 @@ export class ApiCacheBackend implements CacheBackend {
   private async request<T>(
     method: string,
     path: string,
-    body?: Record<string, unknown>,
-    options: CacheRequestOptions = {},
+    body: Record<string, unknown> | undefined,
+    options: CacheRequestOptions,
   ): Promise<T | null> {
     let boundedJsonString:
       | { fieldName: string; maximumBytes: number; maximumDocumentBytes: number }
@@ -275,7 +275,7 @@ export class ApiCacheBackend implements CacheBackend {
     const authority = this.cacheAuthority();
     options.onAuthority?.(authority);
     const { token, projectRef, tokenSource } = authority;
-    const operation = options.operation ?? sanitizeUrlForSpan(path);
+    const { operation } = options;
 
     if (!token || !projectRef) {
       logger.debug("Missing auth or project context", {
