@@ -10,7 +10,10 @@ import { finalizeConversationAgentRun } from "../conversation/durable.ts";
 import { createConversationHostedTerminalAdapter } from "../conversation/hosted-terminal.ts";
 import type { ConversationRunChunkMirror } from "../conversation/run-chunk-mirror.ts";
 import type { ConversationRunMirrorDisableReason } from "../conversation/run-mirror.ts";
-import { createMirroredToolChunkState } from "../streaming/mirrored-tool-chunk-state.ts";
+import {
+  createMirroredToolChunkState,
+  recordMirroredToolChunkState,
+} from "../streaming/mirrored-tool-chunk-state.ts";
 import type { HostedChatExecutionLifecycleAdapter } from "./chat-execution-lifecycle-types.ts";
 import type { HostedLifecycleTerminalState } from "./lifecycle.ts";
 import { finalizeHostedChatRun } from "./hosted-chat-finalization.ts";
@@ -117,6 +120,71 @@ function getToolOutputErrorChunks(
 }
 
 describe("agent/hosted-chat-finalization", () => {
+  it("review detached finalization mirrors new reasoning beside streamed reasoning", async () => {
+    const first = { type: "reasoning" as const, text: "First", signature: "private-first" };
+    const blocks: Array<Extract<ChatUiMessage["parts"][number], { type: "reasoning" }>> = [
+      {
+        type: "reasoning",
+        text: "Second",
+        signature: "private-second",
+        redactedData: "private-redacted",
+      },
+      { type: "reasoning", text: "", signature: "private-second" },
+      { type: "reasoning", text: "", redactedData: "private-redacted" },
+    ];
+    for (const second of blocks) {
+      const calls: string[] = [];
+      const chunks: ChatUiMessageChunk<MessageMetadata>[] = [];
+      const terminalStates: HostedLifecycleTerminalState[] = [];
+      const mirrored = createMirroredToolChunkState();
+      recordMirroredToolChunkState(mirrored, {
+        type: "reasoning-start",
+        id: "assistant-message-1:reasoning",
+      });
+      await finalizeHostedChatRun({
+        kind: "detached",
+        isAborted: false,
+        mirroredDurableOutput: true,
+        mirroredMessage: createResponseMessage({ parts: [first] }),
+        streamResult: createStreamResult({
+          response: { messages: [{ role: "assistant", content: [first, second] }] },
+        }),
+        lifecycleAdapter: createLifecycleAdapter({
+          calls,
+          terminalStates,
+          mirror: createDurableRunMirror({ calls, chunks }),
+        }),
+        mirroredToolChunkState: mirrored,
+        capturedMessageId: "assistant-message-1",
+        incompleteToolCallsPartErrorText: "tool error",
+        cleanup: async () => {},
+        streamError: null,
+      });
+      assertEquals(
+        chunks.filter((chunk) => chunk.type === "reasoning-delta").map((chunk) => chunk.delta),
+        second.text.length > 0 ? [second.text] : [],
+      );
+      const end = chunks.find((chunk) => chunk.type === "reasoning-end");
+      assertEquals(end && { signature: end.signature, redactedData: end.redactedData }, {
+        signature: second.signature,
+        redactedData: second.redactedData,
+      });
+      assertEquals((terminalStates[0]?.output as ChatUiMessage).parts, [first, second]);
+      const encoder = new ConversationRunEventEncoder();
+      const replay = readConversationRunLifecycleFrames({
+        streamProtocolVersion: 1,
+        events: chunks.flatMap((chunk) => {
+          if (chunk.type === "finish") throw new Error("Unexpected finish in recovered content");
+          return encoder.encode(chunk);
+        }),
+      });
+      assertEquals(replay.status, "ok");
+      if (replay.status === "ok") {
+        assertEquals(JSON.stringify(replay.frames).includes("private-"), false);
+      }
+    }
+  });
+
   it("fails streamed empty reasoning shells with the canonical empty response error", async () => {
     for (const extra of [{}, { signature: "" }, { redactedData: "" }]) {
       const calls: string[] = [];

@@ -40,6 +40,8 @@ export interface MirroredToolChunkState {
   outputErrorToolCallIds: Set<string>;
   outputDeniedToolCallIds: Set<string>;
   toolCallNames: Map<string, string>;
+  /** Actual durable reasoning content IDs, reserved during final-step recovery. */
+  reasoningContentIds?: Set<string>;
 }
 
 /** State for create mirrored tool chunk. */
@@ -51,6 +53,7 @@ export function createMirroredToolChunkState(): MirroredToolChunkState {
     outputErrorToolCallIds: new Set<string>(),
     outputDeniedToolCallIds: new Set<string>(),
     toolCallNames: new Map<string, string>(),
+    reasoningContentIds: new Set<string>(),
   };
 }
 
@@ -65,6 +68,7 @@ export function cloneMirroredToolChunkState(
     outputErrorToolCallIds: new Set(state.outputErrorToolCallIds),
     outputDeniedToolCallIds: new Set(state.outputDeniedToolCallIds),
     toolCallNames: new Map(state.toolCallNames),
+    reasoningContentIds: new Set(state.reasoningContentIds),
   };
 }
 
@@ -74,6 +78,12 @@ export function recordMirroredToolChunkState(
   chunk: ChatUiMessageChunk<ChatMessageMetadata>,
 ): void {
   switch (chunk.type) {
+    case "reasoning-start":
+    case "reasoning-delta":
+    case "reasoning-end":
+      (state.reasoningContentIds ??= new Set<string>()).add(chunk.id);
+      break;
+
     case "tool-input-start":
       state.startedToolCallIds.add(chunk.toolCallId);
       if (chunk.toolName.length > 0) {

@@ -1,6 +1,11 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "@std/assert";
-import { createMirroredToolChunkState } from "../streaming/mirrored-tool-chunk-state.ts";
+import { ConversationRunEventEncoder } from "../conversation/run-events.ts";
+import { readConversationRunLifecycleFrames } from "../conversation/legacy-run-read-adapter.ts";
+import {
+  createMirroredToolChunkState,
+  recordMirroredToolChunkState,
+} from "../streaming/mirrored-tool-chunk-state.ts";
 import {
   buildDetachedFallbackChunks,
   buildDetachedFallbackMessageState,
@@ -1011,4 +1016,199 @@ Deno.test("finalized text recovers the latest partial repeated block", () => {
       { type: "text-end", id: "assistant-1" },
     ],
   );
+});
+
+Deno.test("review recovery emits a reconciled tool result before later fallback text", () => {
+  const tool = {
+    type: "tool-bash" as const,
+    toolCallId: "c",
+    state: "input-available" as const,
+    input: { command: "pwd" },
+  };
+  const finalStep = {
+    response: {
+      messages: [{
+        role: "assistant",
+        content: [
+          { type: "tool-call", toolCallId: "c", toolName: "bash", input: tool.input },
+          { type: "tool-result", toolCallId: "c", toolName: "bash", output: "workspace" },
+          { type: "text", text: "Done" },
+        ],
+      }],
+    },
+  };
+  const state = buildFinalizedMessageState({
+    responseMessage: { id: "m", role: "assistant", parts: [tool] },
+    isAborted: false,
+    finalStep,
+    incompleteToolCallsPartErrorText: "tool error",
+  });
+  const mirrored = createMirroredToolChunkState();
+  recordMirroredToolChunkState(mirrored, {
+    type: "tool-input-available",
+    toolCallId: "c",
+    toolName: "bash",
+    input: tool.input,
+  });
+  const chunks = buildFinalizedMessageFallbackChunks({
+    ...state,
+    finalStep,
+    isAborted: false,
+    mirroredToolChunkState: mirrored,
+    capturedMessageId: "m",
+  });
+  const encoder = new ConversationRunEventEncoder();
+  const events = chunks.flatMap((chunk) => {
+    if (chunk.type === "finish") throw new Error("Unexpected finish in recovered content");
+    return encoder.encode(chunk);
+  });
+  assertEquals(
+    events.filter((event) => ["TOOL_CALL_RESULT", "TEXT_MESSAGE_CONTENT"].includes(event.type)).map(
+      (event) => event.type,
+    ),
+    ["TOOL_CALL_RESULT", "TEXT_MESSAGE_CONTENT"],
+  );
+});
+
+Deno.test("review repeated fallback text consumes persisted matches in order", () => {
+  const responseMessage = {
+    id: "m",
+    role: "assistant" as const,
+    parts: [{ type: "text" as const, text: "Done" }, { type: "text" as const, text: "Do" }],
+  };
+  const finalStep = {
+    response: {
+      messages: [{
+        role: "assistant",
+        content: [{ type: "text", text: "Done" }, { type: "text", text: "Done later" }],
+      }],
+    },
+  };
+  const state = buildFinalizedMessageState({
+    responseMessage,
+    finalStep,
+    isAborted: false,
+    incompleteToolCallsPartErrorText: "tool error",
+  });
+  assertEquals(state.sanitizedFinalizedMessage.parts, [...responseMessage.parts, {
+    type: "text",
+    text: "ne later",
+  }]);
+  assertEquals(
+    buildFinalizedMessageState({
+      responseMessage: state.sanitizedFinalizedMessage,
+      finalStep,
+      isAborted: false,
+      incompleteToolCallsPartErrorText: "tool error",
+    }).sanitizedFinalizedMessage.parts,
+    state.sanitizedFinalizedMessage.parts,
+  );
+  const chunks = buildFinalizedMessageFallbackChunks({
+    ...state,
+    finalStep,
+    isAborted: false,
+    mirroredToolChunkState: createMirroredToolChunkState(),
+    capturedMessageId: "m",
+  });
+  assertEquals(chunks.filter((chunk) => chunk.type === "text-delta").map((chunk) => chunk.delta), [
+    "ne later",
+  ]);
+});
+
+Deno.test("review recovered reasoning uses IDs distinct from actual mirrored blocks", () => {
+  const first = { type: "reasoning" as const, text: "First", signature: "private-first" };
+  const second = { type: "reasoning" as const, text: "Second", signature: "private-second" };
+  const finalStep = { response: { messages: [{ role: "assistant", content: [first, second] }] } };
+  const state = buildFinalizedMessageState({
+    responseMessage: { id: "m", role: "assistant", parts: [first] },
+    finalStep,
+    isAborted: false,
+    incompleteToolCallsPartErrorText: "tool error",
+  });
+  const mirrored = createMirroredToolChunkState();
+  const prefix = [
+    { type: "reasoning-start" as const, id: "m:reasoning" },
+    { type: "reasoning-delta" as const, id: "m:reasoning", delta: first.text },
+    { type: "reasoning-end" as const, id: "m:reasoning", signature: first.signature },
+  ];
+  for (const chunk of prefix) recordMirroredToolChunkState(mirrored, chunk);
+  recordMirroredToolChunkState(mirrored, {
+    type: "reasoning-start",
+    id: "m:reasoning:recovered:2",
+  });
+  const chunks = buildFinalizedMessageFallbackChunks({
+    ...state,
+    finalStep,
+    isAborted: false,
+    mirroredToolChunkState: mirrored,
+    capturedMessageId: "m",
+  });
+  const encoder = new ConversationRunEventEncoder();
+  const events = [...prefix, ...chunks].flatMap((chunk) => {
+    if (chunk.type === "finish") throw new Error("Unexpected finish in recovered content");
+    return encoder.encode(chunk);
+  });
+  const ids = events.filter((event) => event.type === "REASONING_MESSAGE_START").map((event) =>
+    event.contentId
+  );
+  assertEquals(ids.length, 2);
+  assertEquals(new Set(ids).size, 2);
+  assertEquals(ids.includes("m:reasoning:recovered:2"), false);
+  const replay = readConversationRunLifecycleFrames({ streamProtocolVersion: 1, events });
+  assertEquals(replay.status, "ok");
+  if (replay.status === "ok") {
+    assertEquals(JSON.stringify(replay.frames).includes("private-"), false);
+  }
+});
+
+Deno.test("review fallback text uses recovery position rather than an earlier identical suffix", () => {
+  const tool = {
+    type: "tool-bash" as const,
+    toolCallId: "c",
+    state: "input-available" as const,
+    input: { command: "pwd" },
+  };
+  const finalStep = {
+    response: {
+      messages: [{
+        role: "assistant",
+        content: [
+          { type: "text", text: "Hello world" },
+          { type: "tool-call", toolCallId: "c", toolName: "bash", input: tool.input },
+          { type: "tool-result", toolCallId: "c", toolName: "bash", output: "workspace" },
+          { type: "text", text: "world" },
+        ],
+      }],
+    },
+  };
+  const state = buildFinalizedMessageState({
+    responseMessage: {
+      id: "m",
+      role: "assistant",
+      parts: [{ type: "text", text: "Hello world" }, tool],
+    },
+    isAborted: false,
+    finalStep,
+    incompleteToolCallsPartErrorText: "tool error",
+  });
+  const mirrored = createMirroredToolChunkState();
+  recordMirroredToolChunkState(mirrored, {
+    type: "tool-input-available",
+    toolCallId: "c",
+    toolName: "bash",
+    input: tool.input,
+  });
+  const chunks = buildFinalizedMessageFallbackChunks({
+    ...state,
+    finalStep,
+    isAborted: false,
+    mirroredToolChunkState: mirrored,
+    capturedMessageId: "m",
+  });
+  assertEquals(chunks.map((chunk) => chunk.type), [
+    "tool-output-available",
+    "text-start",
+    "text-delta",
+    "text-end",
+  ]);
 });

@@ -587,13 +587,17 @@ export function createHostedChatFinalizeResponseBuildState(input: {
   finalStep: unknown,
 ) => Promise<HostedResponseFinalizationState<ChatUiMessage, ChatUiMessageChunk<MessageMetadata>>> {
   return async (finalStep) => {
-    const { persistedMessage, sanitizedFinalizedMessage, hasIncompleteFinalizedToolParts } =
-      buildFinalizedMessageState({
-        responseMessage: input.responseMessage,
-        isAborted: input.isAborted,
-        finalStep,
-        incompleteToolCallsPartErrorText: input.incompleteToolCallsPartErrorText,
-      });
+    const {
+      persistedMessage,
+      sanitizedFinalizedMessage,
+      hasIncompleteFinalizedToolParts,
+      recoveredFallbackParts,
+    } = buildFinalizedMessageState({
+      responseMessage: input.responseMessage,
+      isAborted: input.isAborted,
+      finalStep,
+      incompleteToolCallsPartErrorText: input.incompleteToolCallsPartErrorText,
+    });
 
     return {
       persistedMessage,
@@ -608,6 +612,7 @@ export function createHostedChatFinalizeResponseBuildState(input: {
             mirroredToolChunkState: input.mirroredToolChunkState,
             capturedMessageId: input.capturedMessageId,
             hasIncompleteFinalizedToolParts,
+            recoveredFallbackParts,
           })
           : [],
       hasIncompleteToolParts: hasIncompleteFinalizedToolParts,

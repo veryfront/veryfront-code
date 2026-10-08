@@ -82,13 +82,17 @@ function createHostedChatFinalizeResponseBuildState(
   input: Extract<FinalizeHostedChatRunInput, { kind: "response" }>,
 ): (finalStep: unknown) => HostedResponseFinalizationState {
   return (finalStep) => {
-    const { persistedMessage, sanitizedFinalizedMessage, hasIncompleteFinalizedToolParts } =
-      buildFinalizedMessageState({
-        responseMessage: input.responseMessage,
-        isAborted: input.isAborted,
-        finalStep,
-        incompleteToolCallsPartErrorText: input.incompleteToolCallsPartErrorText,
-      });
+    const {
+      persistedMessage,
+      sanitizedFinalizedMessage,
+      hasIncompleteFinalizedToolParts,
+      recoveredFallbackParts,
+    } = buildFinalizedMessageState({
+      responseMessage: input.responseMessage,
+      isAborted: input.isAborted,
+      finalStep,
+      incompleteToolCallsPartErrorText: input.incompleteToolCallsPartErrorText,
+    });
 
     const fallbackChunks =
       sanitizedFinalizedMessage.parts.length > 0 && input.lifecycleAdapter.durableRunMirror
@@ -101,6 +105,7 @@ function createHostedChatFinalizeResponseBuildState(
             mirroredToolChunkState: input.mirroredToolChunkState,
             capturedMessageId: input.capturedMessageId,
             hasIncompleteFinalizedToolParts,
+            recoveredFallbackParts,
           });
 
           return [
@@ -194,6 +199,7 @@ function createHostedChatFinalizeDetachedBuildState(
       ? (() => {
         const primaryChunks = buildDetachedFallbackChunks({
           fallbackParts,
+          mirroredParts: input.mirroredMessage?.parts,
           finalStep,
           mirroredToolChunkState: input.mirroredToolChunkState,
           mirroredDurableOutput: input.mirroredDurableOutput,

@@ -51,6 +51,8 @@ export interface BuildDetachedFallbackMessageInput {
 export interface FinalizedMessageState {
   persistedMessage: ChatUiMessage;
   sanitizedFinalizedMessage: ChatUiMessage;
+  /** Selected recovery parts in provider final-step order, never persisted in the message. */
+  recoveredFallbackParts?: ChatUiMessage["parts"];
   hasIncompleteFinalizedToolParts: boolean;
 }
 
@@ -69,11 +71,13 @@ export interface BuildFinalizedMessageFallbackChunksInput {
   mirroredToolChunkState: MirroredToolChunkState;
   capturedMessageId: string | null;
   hasIncompleteFinalizedToolParts: boolean;
+  recoveredFallbackParts?: readonly ChatUiMessage["parts"][number][];
 }
 
 /** Input payload for build detached fallback chunks. */
 export interface BuildDetachedFallbackChunksInput {
   fallbackParts: ChatUiMessage["parts"];
+  mirroredParts?: readonly ChatUiMessage["parts"][number][];
   finalStep: unknown;
   mirroredToolChunkState: MirroredToolChunkState;
   mirroredDurableOutput: boolean;
@@ -132,6 +136,10 @@ export function buildFinalizedMessageState(
   );
   const persistedTextParts = persistedFinalStepParts.filter((part) => part.type === "text")
     .filter((part) => part.text.trim().length > 0);
+  let persistedTextCursor = 0;
+  const consumedTextIndexes = new Set<number>();
+  const fallbackTextCount = finalStepFallbackParts.filter((part) => part.type === "text").length;
+  const recoveredFallbackParts: ChatUiMessage["parts"] = [];
   let hasPlacedMissingText = false;
   const missingFallbackParts = finalStepFallbackParts.flatMap((fallbackPart) => {
     if (fallbackPart.type === "text") {
@@ -141,17 +149,27 @@ export function buildFinalizedMessageState(
       let matchedLength = 0;
       for (let start = 0; start < persistedTextParts.length; start++) {
         for (let count = 1; count <= persistedTextParts.length - start; count++) {
+          if (consumedTextIndexes.has(start + count - 1)) break;
           const texts = persistedTextParts.slice(start, start + count).map((part) => part.text);
           const prefixLength = Math.max(...["\n\n", "\n", " ", ""].map((separator) => {
             const prefix = texts.join(separator).trim();
             return fallbackPart.text.startsWith(prefix) ? prefix.length : 0;
           }));
           if (prefixLength === 0) break;
-          // Prefer the latest compatible sequence; an earlier complete repeated
-          // block must not mask a later partial block from the final step.
+          // Recovery is append-only: an exact completed block may sit before a
+          // previously appended missing block. Reuse it, never a backwards prefix.
+          if (start < persistedTextCursor && prefixLength !== fallbackPart.text.trim().length) {
+            continue;
+          }
+          // Multiple fallback blocks consume prefixes in order. A single block
+          // still recovers the latest partial repetition from the final step.
           if (
-            start + count > matchingStart + matchedCount ||
-            (start + count === matchingStart + matchedCount && prefixLength > matchedLength)
+            matchingStart < 0 ||
+            (fallbackTextCount === 1
+              ? start + count > matchingStart + matchedCount ||
+                (start + count === matchingStart + matchedCount && prefixLength > matchedLength)
+              : start < matchingStart ||
+                (start === matchingStart && prefixLength > matchedLength))
           ) {
             matchingStart = start;
             matchedCount = count;
@@ -162,17 +180,36 @@ export function buildFinalizedMessageState(
       const matchedParts = matchingStart < 0
         ? []
         : persistedTextParts.slice(matchingStart, matchingStart + matchedCount);
-      if (matchedCount > 0) persistedTextParts.splice(matchingStart, matchedCount);
-      return appendMissingFallbackTextPart(matchedParts, { text: fallbackPart.text })
+      if (matchedCount > 0) {
+        for (let index = matchingStart; index < matchingStart + matchedCount; index++) {
+          consumedTextIndexes.add(index);
+        }
+        persistedTextCursor = Math.max(persistedTextCursor, matchingStart + matchedCount);
+      }
+      const missingTextParts = appendMissingFallbackTextPart(matchedParts, {
+        text: fallbackPart.text,
+      })
         .slice(matchedParts.length);
+      recoveredFallbackParts.push(...missingTextParts);
+      return missingTextParts;
     }
     if (fallbackPart.type === "reasoning") {
       const matchingIndex = unmatchedPersistedReasoningParts.findIndex((part) =>
         hasSameReasoningContent(part, fallbackPart)
       );
-      if (matchingIndex < 0) return [fallbackPart];
+      if (matchingIndex < 0) {
+        recoveredFallbackParts.push(fallbackPart);
+        return [fallbackPart];
+      }
       unmatchedPersistedReasoningParts.splice(matchingIndex, 1);
       return [];
+    }
+    if (isToolUiPart(fallbackPart)) {
+      recoveredFallbackParts.push(
+        completedParts.find((part) =>
+          isToolUiPart(part) && part.toolCallId === fallbackPart.toolCallId
+        ) ?? fallbackPart,
+      );
     }
     return !input.isAborted && isToolUiPart(fallbackPart) &&
         !persistedMessage.parts.some((part) =>
@@ -203,9 +240,19 @@ export function buildFinalizedMessageState(
     )
     : finalizedMessage;
 
+  const orderedRecoveredParts = persistedMessage.parts.length === 0
+    ? sanitizedFinalizedMessage.parts
+    : recoveredFallbackParts.map((part) =>
+      isToolUiPart(part)
+        ? sanitizedFinalizedMessage.parts.find((candidate) =>
+          isToolUiPart(candidate) && candidate.toolCallId === part.toolCallId
+        ) ?? part
+        : part
+    ).filter((part) => !persistedMessage.parts.includes(part));
   return {
     persistedMessage,
     sanitizedFinalizedMessage,
+    recoveredFallbackParts: orderedRecoveredParts,
     hasIncompleteFinalizedToolParts,
   };
 }
@@ -234,6 +281,31 @@ export function buildDetachedFallbackMessageState(
   };
 }
 
+/** Reserve recovered reasoning IDs against actual previously mirrored content. */
+function buildOrderedFallbackChunks(
+  parts: readonly ChatUiMessage["parts"][number][],
+  messageId: string,
+  state: MirroredToolChunkState,
+): ChatUiMessageChunk<MessageMetadata>[] {
+  const usedIds = new Set(state.reasoningContentIds);
+  const replacements = new Map<string, string>();
+  return buildFallbackUiMessageChunksFromParts(parts, messageId, state).map((chunk) => {
+    if (
+      chunk.type !== "reasoning-start" && chunk.type !== "reasoning-delta" &&
+      chunk.type !== "reasoning-end"
+    ) return chunk;
+    let id = replacements.get(chunk.id);
+    if (id === undefined) {
+      id = chunk.id;
+      let suffix = 2;
+      while (usedIds.has(id)) id = `${chunk.id}:recovered:${suffix++}`;
+      replacements.set(chunk.id, id);
+      usedIds.add(id);
+    }
+    return id === chunk.id ? chunk : { ...chunk, id };
+  });
+}
+
 /** Builds finalized message fallback chunks. */
 export function buildFinalizedMessageFallbackChunks(
   input: BuildFinalizedMessageFallbackChunksInput,
@@ -258,18 +330,36 @@ export function buildFinalizedMessageFallbackChunks(
   }
 
   const appendedFallbackParts = input.sanitizedFinalizedMessage.parts.filter((part) =>
-    !input.persistedMessage.parts.includes(part) &&
-    (!isToolUiPart(part) ||
-      !input.persistedMessage.parts.some((persisted) =>
-        isToolUiPart(persisted) && persisted.toolCallId === part.toolCallId
-      ))
+    !input.persistedMessage.parts.includes(part)
   );
+  // Select from reconciliation's actual recovery positions, not overlapping
+  // text suffixes that may also occur in an already streamed earlier block.
+  const recoveryOrder = input.recoveredFallbackParts ?? buildFinalizedMessageState({
+    responseMessage: input.persistedMessage,
+    isAborted: input.isAborted,
+    finalStep: input.finalStep,
+    incompleteToolCallsPartErrorText: "",
+  }).recoveredFallbackParts ?? [];
+  const remainingFallbackParts = [...appendedFallbackParts];
+  const orderedFallbackParts = recoveryOrder.flatMap((recovered) => {
+    const index = remainingFallbackParts.findIndex((part) => {
+      if (isToolUiPart(recovered) && isToolUiPart(part)) {
+        return part.toolCallId === recovered.toolCallId;
+      }
+      if (recovered.type === "reasoning" && part.type === "reasoning") {
+        return hasSameReasoningContent(part, recovered);
+      }
+      return recovered.type === "text" && part.type === "text" && recovered.text === part.text;
+    });
+    return index < 0 ? [] : remainingFallbackParts.splice(index, 1);
+  });
+  orderedFallbackParts.push(...remainingFallbackParts);
   const hasOrderedFallbackContent = appendedFallbackParts.some((part) =>
     part.type === "text" || part.type === "reasoning"
   );
   if (hasOrderedFallbackContent) {
-    const orderedFallbackChunks = buildFallbackUiMessageChunksFromParts(
-      appendedFallbackParts,
+    const orderedFallbackChunks = buildOrderedFallbackChunks(
+      orderedFallbackParts,
       fallbackMessageId,
       reconciledToolChunkState,
     );
@@ -315,23 +405,30 @@ export function buildFinalizedMessageFallbackChunks(
 export function buildDetachedFallbackChunks(
   input: BuildDetachedFallbackChunksInput,
 ): ChatUiMessageChunk<MessageMetadata>[] {
-  const toolChunks = buildMissingFallbackToolChunksFromParts(
-    input.fallbackParts,
+  const orderedParts = input.fallbackParts.filter((part) => {
+    if (part.type === "reasoning") {
+      return input.mirroredParts !== undefined
+        ? !input.mirroredParts.includes(part)
+        : !input.mirroredDurableOutput;
+    }
+    return part.type !== "text" || !input.mirroredDurableOutput;
+  });
+  const primaryChunks = buildOrderedFallbackChunks(
+    orderedParts,
+    input.capturedMessageId,
     input.mirroredToolChunkState,
   );
   const reconciledToolState = cloneMirroredToolChunkState(input.mirroredToolChunkState);
-  for (const chunk of toolChunks) recordMirroredToolChunkState(reconciledToolState, chunk);
+  for (const chunk of primaryChunks) recordMirroredToolChunkState(reconciledToolState, chunk);
 
   return [
-    ...toolChunks,
+    ...primaryChunks,
     ...(input.hasIncompleteFallbackToolParts ? [] : buildMissingFallbackToolChunks(
       input.finalStep,
       reconciledToolState,
     )),
-    ...(input.mirroredDurableOutput ? [] : buildMissingFallbackTextChunks(
-      [],
-      input.finalStep,
-      input.capturedMessageId,
-    )),
+    ...(input.mirroredDurableOutput || orderedParts.some((part) => part.type === "text")
+      ? []
+      : buildMissingFallbackTextChunks([], input.finalStep, input.capturedMessageId)),
   ];
 }

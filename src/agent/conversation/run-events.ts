@@ -460,6 +460,7 @@ export class ConversationRunEventEncoder {
           messageId: this.getToolResultMessageId(chunk.toolCallId),
           ...(this.activeMessageId ? { parentMessageId: this.activeMessageId } : {}),
           toolCallId: chunk.toolCallId,
+          ...providerExecutionMarker(chunk),
           content: "Tool output denied",
           role: "tool",
           ...(this.toolInputs.has(chunk.toolCallId)
