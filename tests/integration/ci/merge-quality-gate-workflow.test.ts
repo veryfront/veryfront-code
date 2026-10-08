@@ -728,6 +728,51 @@ done
     assertEquals(runCommands.includes("curl"), false);
   });
 
+  it("analyses the root TypeScript program before Storybook and template programs", async () => {
+    const properties = parseProperties(await readRepoFile("sonar-project.properties"));
+    const configPaths = properties.get("sonar.typescript.tsconfigPaths")?.split(",");
+    assertEquals(configPaths, [
+      "tsconfig.json",
+      "storybook/tsconfig.json",
+      "templates/files/ai-agent/tsconfig.json",
+      "templates/files/agentic-workflow/tsconfig.json",
+      "templates/files/coding-agent/tsconfig.json",
+      "templates/files/docs-agent/tsconfig.json",
+      "templates/files/minimal/tsconfig.json",
+      "templates/files/multi-agent-system/tsconfig.json",
+      "templates/files/saas-starter/tsconfig.json",
+    ]);
+    for (const path of configPaths!) {
+      const config = asRecord(JSON.parse(await readRepoFile(path)), path);
+      assert(Array.isArray(config.include), `${path} must include its source files`);
+    }
+    assertEquals(properties.get("sonar.sources"), ".");
+    assertEquals(properties.get("sonar.exclusions"), "coverage-profiles/**");
+  });
+
+  it("includes previously orphaned source roots and JavaScript in the root analysis program", async () => {
+    const config = asRecord(JSON.parse(await readRepoFile("tsconfig.json")), "root tsconfig");
+    const options = asRecord(config.compilerOptions, "root compiler options");
+    assertEquals(options.allowJs, true);
+    assert(Array.isArray(config.include), "root program must include all source roots");
+    for (const root of ["src", "cli", "tests", "scripts", "extensions", "react"]) {
+      assert(config.include.includes(`${root}/**/*`), `${root} must belong to the root program`);
+    }
+    assert(
+      config.include.includes("templates/*.ts"),
+      "template loaders must belong to the root program",
+    );
+    assert(
+      config.include.includes("templates/integrations/**/*"),
+      "integration scaffold sources must belong to the root program",
+    );
+    assert(
+      config.include.includes("templates/auth/**/*"),
+      "auth scaffold sources must belong to the root program",
+    );
+    assertEquals(config.exclude, ["node_modules", "dist", ".cache", "npm"]);
+  });
+
   it("uploads raw shard reports so block ids are normalized only in the final merge", async () => {
     const jobs = asRecord((await readWorkflow()).jobs, "cicd workflow jobs");
     const shards = asRecord(jobs["coverage-shards"], "coverage shards job");
