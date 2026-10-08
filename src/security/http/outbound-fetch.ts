@@ -123,6 +123,54 @@ const ObjectCreate = Object.create;
 const SetPrototypeAdd = NativeSet.prototype.add;
 const SetPrototypeHas = NativeSet.prototype.has;
 const ObjectDefineProperty = Object.defineProperty;
+const ObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const ObjectGetPrototypeOf = Object.getPrototypeOf;
+
+// Prototype chains a transport-created Response or body stream resolves through,
+// captured while every link is still an ordinary object.
+function captureSettlementChain(prototype: object): readonly object[] {
+  const chain: object[] = [];
+  let current: object | null = prototype;
+  while (current !== null) {
+    IntrinsicReflectApply(ObjectDefineProperty, Object, [
+      chain,
+      chain.length,
+      createValueDescriptor(current, true),
+    ]);
+    current = IntrinsicReflectApply(ObjectGetPrototypeOf, Object, [current]) as object | null;
+  }
+  return chain;
+}
+
+const SETTLEMENT_HOOK_BLOCKED_MESSAGE = "Download blocked: response settlement is not host-owned";
+const responseSettlementChain = captureSettlementChain(NativeResponse.prototype);
+const bodySettlementChain = captureSettlementChain(NativeReadableStream.prototype);
+
+function hasSettlementHook(chain: readonly object[]): boolean {
+  for (let index = 0; index < chain.length; index++) {
+    const link = chain[index]!;
+    if (
+      IntrinsicReflectApply(ObjectGetOwnPropertyDescriptor, Object, [link, "then"]) !== undefined
+    ) {
+      return true;
+    }
+    const parent = IntrinsicReflectApply(ObjectGetPrototypeOf, Object, [link]);
+    if (parent !== (index + 1 < chain.length ? chain[index + 1] : null)) return true;
+  }
+  return false;
+}
+
+/**
+ * A transport resolves its promise with a native Response before the host can
+ * seal it, and promise resolution reads `then` through the prototype chain.
+ * Refuse authenticated downloads while that chain carries a `then` member or
+ * has been re-parented.
+ */
+function assertNoResponseSettlementHook(): void {
+  if (hasSettlementHook(responseSettlementChain) || hasSettlementHook(bodySettlementChain)) {
+    throw new OutboundRequestBlockedError(SETTLEMENT_HOOK_BLOCKED_MESSAGE);
+  }
+}
 
 function createValueDescriptor<T>(
   value: T,
@@ -582,6 +630,20 @@ function createOriginBoundFetchWithTransport(
       signal?: AbortSignal | null,
     ): Promise<Response> => {
       const settled = chainPrivatePromise(operation, (response) => {
+        if (hasSettlementHook(responseSettlementChain) || hasSettlementHook(bodySettlementChain)) {
+          // A hook installed while the request was in flight: withhold the content.
+          const body = ResponseBodyGet
+            ? IntrinsicReflectApply(ResponseBodyGet, response, []) as ReadableStream | null
+            : null;
+          const refuse = (): never => {
+            throw new OutboundRequestBlockedError(SETTLEMENT_HOOK_BLOCKED_MESSAGE);
+          };
+          return body === null ? refuse() : chainPrivatePromise(
+            IntrinsicReflectApply(ReadableStreamCancel, body, []) as Promise<void>,
+            refuse,
+            refuse,
+          );
+        }
         const boundResponse = bindHostResponseAccessors(response);
         if (signal?.aborted && boundResponse.body) {
           return chainPrivatePromise(
@@ -604,18 +666,20 @@ function createOriginBoundFetchWithTransport(
     const requestTransport = retainTransportSettlement
       ? {
         ...transport,
-        fetch: ((fetchInput: RequestInfo | URL, fetchInit?: RequestInit) =>
-          track(
-            transport.fetch(fetchInput, fetchInit),
-            fetchInit?.signal,
-          )) as typeof transport.fetch,
+        fetch: ((fetchInput: RequestInfo | URL, fetchInit?: RequestInit) => {
+          // Same turn as the dispatch: nothing runs between this check and the transport call.
+          assertNoResponseSettlementHook();
+          return track(transport.fetch(fetchInput, fetchInit), fetchInit?.signal);
+        }) as typeof transport.fetch,
         ...(pinnedFetch
           ? {
-            pinnedFetch: ((url, addresses, requestInit, tls, dispatched) =>
-              track(
+            pinnedFetch: ((url, addresses, requestInit, tls, dispatched) => {
+              assertNoResponseSettlementHook();
+              return track(
                 pinnedFetch(url, addresses, requestInit, tls, dispatched),
                 requestInit.signal,
-              )) as WorkerEgressPinnedFetch,
+              );
+            }) as WorkerEgressPinnedFetch,
           }
           : {}),
       }

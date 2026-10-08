@@ -859,12 +859,16 @@ describe("authenticated download transport settlement", () => {
     assertEquals(await settled.text(), "authenticated content");
   });
 
-  it("does not expose authenticated downloads to inherited response then hooks", async () => {
-    const pendingResponse = Promise.resolve(new Response("authenticated content"));
+  it("refuses authenticated downloads while an inherited response then hook is installed", async () => {
     const original = Object.getOwnPropertyDescriptor(Response.prototype, "then");
     let intercepted = false;
-    let response: Response;
-    const fetchImpl: typeof fetch = () => pendingResponse;
+    let dispatched = false;
+    // Native fetch builds its Response after dispatch and resolves its promise with it.
+    const fetchImpl: typeof fetch = async (_input, _init) => {
+      dispatched = true;
+      await Promise.resolve();
+      return new Response("authenticated content");
+    };
     await __runWithOutboundFetchTransportForTests({
       fetch: fetchImpl,
       pinnedFetch: (url, _addresses, init) => fetchImpl(url, init),
@@ -879,12 +883,106 @@ describe("authenticated download transport settlement", () => {
         },
       });
       try {
-        response = await download("https://api.example.test/file");
+        await assertRejects(() => download("https://api.example.test/file"), Error);
       } finally {
         if (original) Object.defineProperty(Response.prototype, "then", original);
         else Reflect.deleteProperty(Response.prototype, "then");
       }
-      assertEquals(intercepted, false);
+    });
+    assertEquals({ intercepted, dispatched }, { intercepted: false, dispatched: false });
+  });
+
+  it("refuses authenticated downloads while a re-parented response prototype is installed", async () => {
+    const parent = Object.getPrototypeOf(Response.prototype);
+    let intercepted = false;
+    let dispatched = false;
+    const fetchImpl: typeof fetch = async (_input, _init) => {
+      dispatched = true;
+      await Promise.resolve();
+      return new Response("authenticated content");
+    };
+    await __runWithOutboundFetchTransportForTests({
+      fetch: fetchImpl,
+      pinnedFetch: (url, _addresses, init) => fetchImpl(url, init),
+      resolveHost: () => Promise.resolve(["93.184.216.34"]),
+    }, async () => {
+      const download = createVeryfrontApiDownloadOutboundFetch("https://api.example.test");
+      Object.setPrototypeOf(
+        Response.prototype,
+        new Proxy(parent, {
+          get(target, key, receiver) {
+            if (key === "then") intercepted = true;
+            return Reflect.get(target, key, receiver);
+          },
+        }),
+      );
+      try {
+        await assertRejects(() => download("https://api.example.test/file"), Error);
+      } finally {
+        Object.setPrototypeOf(Response.prototype, parent);
+      }
+    });
+    assertEquals({ intercepted, dispatched }, { intercepted: false, dispatched: false });
+  });
+
+  it("withholds a download whose response then hook appeared during the request", async () => {
+    const original = Object.getOwnPropertyDescriptor(Response.prototype, "then");
+    let cancelled = false;
+    let resolveTransport!: (response: Response) => void;
+    let startTransport!: () => void;
+    const transportStarted = new Promise<void>((resolve) => {
+      startTransport = resolve;
+    });
+    const fetchImpl: typeof fetch = (_input, _init) => {
+      startTransport();
+      return new Promise<Response>((resolve) => {
+        resolveTransport = resolve;
+      });
+    };
+    await __runWithOutboundFetchTransportForTests({
+      fetch: fetchImpl,
+      pinnedFetch: (url, _addresses, init) => fetchImpl(url, init),
+      resolveHost: () => Promise.resolve(["93.184.216.34"]),
+    }, async () => {
+      const download = createVeryfrontApiDownloadOutboundFetch("https://api.example.test");
+      const result = download("https://api.example.test/file");
+      const rejection = assertRejects(() => result, Error);
+      await transportStarted;
+      Object.defineProperty(Response.prototype, "then", {
+        configurable: true,
+        value: undefined,
+      });
+      try {
+        resolveTransport(
+          new Response(
+            new ReadableStream<Uint8Array>({
+              cancel() {
+                cancelled = true;
+              },
+            }),
+          ),
+        );
+        await rejection;
+      } finally {
+        if (original) Object.defineProperty(Response.prototype, "then", original);
+        else Reflect.deleteProperty(Response.prototype, "then");
+      }
+    });
+    assertEquals(cancelled, true);
+  });
+
+  it("returns authenticated downloads when no settlement hook is installed", async () => {
+    const fetchImpl: typeof fetch = async (_input, _init) => {
+      await Promise.resolve();
+      return new Response("authenticated content");
+    };
+    await __runWithOutboundFetchTransportForTests({
+      fetch: fetchImpl,
+      pinnedFetch: (url, _addresses, init) => fetchImpl(url, init),
+      resolveHost: () => Promise.resolve(["93.184.216.34"]),
+    }, async () => {
+      const download = createVeryfrontApiDownloadOutboundFetch("https://api.example.test");
+      const response = await download("https://api.example.test/file");
       assertEquals(await response.text(), "authenticated content");
     });
   });
