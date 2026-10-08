@@ -158,6 +158,28 @@ export function readConversationRunLifecycleFrames(input: {
 function readVersion1(
   events: readonly Readonly<Record<string, unknown>>[],
 ): ConversationRunLifecycleReadResult {
+  // Recover a result's explicit ownership only for one complete, unambiguous
+  // stored call. Bind it to the existing END; never reopen an input lifecycle.
+  const occurrences = new Map<string, { starts: number[]; ends: number[]; results: number[] }>();
+  for (const [index, event] of events.entries()) {
+    if (typeof event.toolCallId !== "string") continue;
+    const occurrence = occurrences.get(event.toolCallId) ?? { starts: [], ends: [], results: [] };
+    if (event.type === "TOOL_CALL_START") occurrence.starts.push(index);
+    if (event.type === "TOOL_CALL_END") occurrence.ends.push(index);
+    if (event.type === "TOOL_CALL_RESULT") occurrence.results.push(index);
+    occurrences.set(event.toolCallId, occurrence);
+  }
+  const recoveredProviderEnds = new Set<number>();
+  for (const { starts, ends, results } of occurrences.values()) {
+    if (starts.length !== 1 || ends.length !== 1 || results.length !== 1) continue;
+    const [start, end, result] = [starts[0]!, ends[0]!, results[0]!];
+    if (start >= end || end >= result || events[result]!.providerExecuted !== true) continue;
+    if (
+      typeof events[start]!.providerExecuted === "boolean" ||
+      typeof events[end]!.providerExecuted === "boolean"
+    ) continue;
+    recoveredProviderEnds.add(end);
+  }
   let reducer = createInitialReducerState();
   const frames: StreamLifecycleFrame[] = [];
   const repairs = new Set<ConversationRunLifecycleRepair>();
@@ -184,7 +206,7 @@ function readVersion1(
     });
   };
 
-  for (const event of events) {
+  for (const [eventIndex, event] of events.entries()) {
     const type = typeof event.type === "string" ? event.type : null;
     const contentId = typeof event.contentId === "string" ? event.contentId : undefined;
     const toolCallId = typeof event.toolCallId === "string" ? event.toolCallId : "";
@@ -237,7 +259,9 @@ function readVersion1(
           type: "tool_input_start",
           toolCallId,
           toolName,
-          ...(event.providerExecuted === true ? { providerExecuted: true } : {}),
+          ...(typeof event.providerExecuted === "boolean"
+            ? { providerExecuted: event.providerExecuted }
+            : {}),
         });
         break;
       case "TOOL_CALL_ARGS":
@@ -250,8 +274,10 @@ function readVersion1(
       case "TOOL_CALL_END": {
         const stored = toolInputTextFor(reducer, toolCallId);
         const parsed = parseCanonicalToolInput(stored);
-        const providerExecuted = event.providerExecuted === true ||
-          reducer.tools.get(toolCallId)?.providerExecuted === true;
+        const storedOwnership = reducer.tools.get(toolCallId)?.providerExecuted;
+        const providerExecuted = event.providerExecuted !== false && storedOwnership !== false &&
+          (recoveredProviderEnds.has(eventIndex) || event.providerExecuted === true ||
+            storedOwnership === true);
         if (parsed.ok) {
           reduce({
             type: "tool_input_ready",

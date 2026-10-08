@@ -416,3 +416,7 @@ Phase 5 target
                               -> source-tagged Stream Delivery envelope
                               -> live / durable / AG-UI Adapters
 ```
+
+### Recovered provider tool ownership in durable replay
+
+A finalized tool result can carry `providerExecuted: true` after its input has already been persisted. The version 1 writer retains that explicit marker on `TOOL_CALL_RESULT`; it does not reopen the completed input lifecycle. Replay recovers ownership at the existing `TOOL_CALL_END` only for a single ordered start/end/result occurrence with no explicit ownership on the call. Explicit local ownership, ambiguous reused IDs, incomplete calls, and out-of-order results retain their compatibility behavior. Stored events remain unchanged.

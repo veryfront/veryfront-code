@@ -87,7 +87,7 @@ export function serializeConversationToolResultContent(value: unknown): {
  * The version 1 reader replays a stored result as a provider tool result only
  * when the durable call records that it was provider-executed; a call that
  * dropped the marker replays as an opaque legacy custom event instead. The
- * marker is written on both the call start and the call end because producers
+ * marker is written on the call start, call end, and result because producers
  * do not agree on which one carries it: the live lifecycle adapter synthesizes
  * an unmarked `tool-input-start` and marks only `tool-input-available`.
  */
@@ -420,6 +420,7 @@ export class ConversationRunEventEncoder {
           messageId: this.getToolResultMessageId(chunk.toolCallId),
           ...(this.activeMessageId ? { parentMessageId: this.activeMessageId } : {}),
           toolCallId: chunk.toolCallId,
+          ...providerExecutionMarker(chunk),
           ...serializeConversationToolResultContent(chunk.output),
           role: "tool",
           ...(this.toolInputs.has(chunk.toolCallId)

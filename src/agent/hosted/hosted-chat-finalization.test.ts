@@ -4,6 +4,7 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { ChatUiMessage, ChatUiMessageChunk, MessageMetadata } from "../../chat/types.ts";
 import { isRecord } from "#veryfront/chat/conversation.ts";
 import { ConversationRunEventEncoder } from "#veryfront/agent/conversation/run-events.ts";
+import { readConversationRunLifecycleFrames } from "#veryfront/agent/conversation/legacy-run-read-adapter.ts";
 import { createChatStreamMessageProjection } from "#veryfront/agent/react/use-chat/streaming/handler.ts";
 import { finalizeConversationAgentRun } from "../conversation/durable.ts";
 import { createConversationHostedTerminalAdapter } from "../conversation/hosted-terminal.ts";
@@ -1369,24 +1370,48 @@ describe("agent/hosted-chat-finalization", () => {
             }]);
             if (kind === "response" && streamed === "input-available") {
               const encoder = new ConversationRunEventEncoder();
-              const events = chunks.flatMap((chunk) =>
-                chunk.type === "tool-input-available" || chunk.type === "tool-output-available"
-                  ? encoder.encode(chunk)
-                  : []
-              );
-              const ownershipEnds = events.filter((event) =>
-                event.type === "TOOL_CALL_END" && event.providerExecuted === true
-              );
-              assertEquals(
-                ownershipEnds.length,
-                callOwnership === undefined && resultOwnership ? 1 : 0,
-              );
-              if (ownershipEnds.length) {
-                assertEquals(
-                  events.indexOf(ownershipEnds[0]!) <
-                    events.findIndex((event) => event.type === "TOOL_CALL_RESULT"),
-                  true,
+              const events = [
+                ...encoder.encode({
+                  type: "tool-input-start",
+                  toolCallId: "result-owned",
+                  toolName: "web_fetch",
+                  ...(callOwnership === undefined ? {} : { providerExecuted: callOwnership }),
+                }),
+                ...encoder.encode({
+                  type: "tool-input-available",
+                  toolCallId: "result-owned",
+                  toolName: "web_fetch",
+                  input: streamedInput,
+                  ...(callOwnership === undefined ? {} : { providerExecuted: callOwnership }),
+                }),
+                ...chunks.flatMap((chunk) =>
+                  chunk.type === "tool-input-available" || chunk.type === "tool-output-available"
+                    ? encoder.encode(chunk)
+                    : []
+                ),
+              ];
+              assertEquals(events.filter((event) => event.type === "TOOL_CALL_END").length, 1);
+              const replay = readConversationRunLifecycleFrames({
+                streamProtocolVersion: 1,
+                events,
+              });
+              assertEquals(replay.status, "ok");
+              if (replay.status === "ok") {
+                assertEquals(replay.frames.filter((frame) => frame.class === "diagnostic"), []);
+                const results = replay.frames.filter((frame) =>
+                  frame.class === "semantic" && frame.event.type === "provider_tool_result"
                 );
+                assertEquals(results.length, ownership ? 1 : 0);
+                if (ownership) {
+                  assertEquals(results[0]!.event, {
+                    type: "provider_tool_result",
+                    toolCallId: "result-owned",
+                    toolName: "web_fetch",
+                    output: "found",
+                    isError: false,
+                    providerExecuted: true,
+                  });
+                }
               }
             }
             assertEquals(getToolOutputErrorChunks(chunks, "result-owned"), []);
